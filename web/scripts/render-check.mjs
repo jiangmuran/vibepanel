@@ -91,6 +91,9 @@ async function cleanup() {
   server.kill('SIGTERM')
   await sleep(400)
   try { execSync(`tmux -L ${SOCKET} kill-server`, { stdio: 'ignore' }) } catch { /* none */ }
+  // kill-server leaves the socket file behind; a few hundred of those pile up
+  // fast when this runs in a loop.
+  try { rmSync(join(process.env.TMUX_TMPDIR || '/tmp', `tmux-${process.getuid()}`, SOCKET), { force: true }) } catch { /* best effort */ }
   try { rmSync(DATA, { recursive: true, force: true }) } catch { /* best effort */ }
 }
 

@@ -202,6 +202,20 @@ func (c *Client) Create(ctx context.Context, o CreateOptions) error {
 	return err
 }
 
+// SocketPath is where tmux puts the socket for this client's name.
+//
+// Mirrors tmux's own rule: $TMUX_TMPDIR, else /tmp, then a tmux-<uid>
+// directory. Used by tests to remove the file after killing the server —
+// kill-server leaves it behind, and a few hundred dead sockets accumulating in
+// /tmp is a poor look for a tool whose whole job is managing tmux.
+func (c *Client) SocketPath() string {
+	dir := os.Getenv("TMUX_TMPDIR")
+	if dir == "" {
+		dir = "/tmp"
+	}
+	return filepath.Join(dir, fmt.Sprintf("tmux-%d", os.Getuid()), c.Socket)
+}
+
 // AttachArgs returns the argv (after the binary) for attaching to a session.
 //
 // The caller runs this itself on a PTY it owns, rather than going through

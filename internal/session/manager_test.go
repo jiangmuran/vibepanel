@@ -23,7 +23,10 @@ func newTestTmux(t *testing.T) *tmux.Client {
 	if err := c.EnsureServer(context.Background()); err != nil {
 		t.Fatalf("EnsureServer: %v", err)
 	}
-	t.Cleanup(func() { _ = c.KillServer(context.Background()) })
+	t.Cleanup(func() {
+		_ = c.KillServer(context.Background())
+		_ = os.Remove(c.SocketPath())
+	})
 	return c
 }
 

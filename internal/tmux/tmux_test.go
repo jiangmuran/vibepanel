@@ -24,6 +24,8 @@ func newTestClient(t *testing.T) *Client {
 	c := New(socket, t.TempDir())
 	t.Cleanup(func() {
 		_ = c.KillServer(context.Background())
+		// kill-server leaves the socket file behind.
+		_ = os.Remove(c.SocketPath())
 	})
 	return c
 }

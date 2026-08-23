@@ -40,7 +40,11 @@ func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 	if err := tm.EnsureServer(ctx); err != nil {
 		t.Fatalf("EnsureServer: %v", err)
 	}
-	t.Cleanup(func() { _ = tm.KillServer(context.Background()) })
+	t.Cleanup(func() {
+		_ = tm.KillServer(context.Background())
+		// kill-server leaves the socket file behind.
+		_ = os.Remove(tm.SocketPath())
+	})
 
 	db, err := store.Open(ctx, filepath.Join(dir, "test.db"))
 	if err != nil {
