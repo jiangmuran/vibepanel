@@ -251,7 +251,7 @@ func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int) 
 	// snapshot under the same lock that registered the subscriber, so the two
 	// join up exactly with nothing lost or repeated.
 	if len(replay) > 0 {
-		c.sendBinary(EncodeData(ref, replay))
+		c.sendBinary(EncodeReplay(ref, replay))
 	}
 
 	go c.pumpStream(sctx, s)

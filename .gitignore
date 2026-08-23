@@ -17,3 +17,6 @@
 # Editor
 .DS_Store
 *.swp
+
+# Render-check screenshots
+/web/shots/

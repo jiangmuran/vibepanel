@@ -11,6 +11,19 @@ export type SessionState = 'working' | 'waiting' | 'done'
 export const STATE_ORDER: SessionState[] = ['waiting', 'working', 'done']
 
 export const FRAME_DATA = 0x00
+
+/**
+ * Scrollback sent when a viewer subscribes, tagged so the client can tell it
+ * apart from live output.
+ *
+ * The buffer contains whatever the application sent, capability queries
+ * included. A freshly created xterm answers those as it parses them, and the
+ * answer goes to the shell, which types it at the prompt — so replaying
+ * without suppressing responses injects junk like "[?1;2c" into the session on
+ * every page reload.
+ */
+export const FRAME_REPLAY = 0x01
+
 const BINARY_HEADER_LEN = 5
 
 /** Builds a binary data frame: [type][uint32 ref][payload]. */
@@ -23,13 +36,17 @@ export function encodeData(ref: number, payload: Uint8Array): Uint8Array {
 }
 
 /** Splits a binary frame. Returns null for anything malformed. */
-export function decodeData(buf: ArrayBuffer): { ref: number; payload: Uint8Array } | null {
+export function decodeData(
+  buf: ArrayBuffer,
+): { ref: number; payload: Uint8Array; replay: boolean } | null {
   if (buf.byteLength < BINARY_HEADER_LEN) return null
   const view = new DataView(buf)
-  if (view.getUint8(0) !== FRAME_DATA) return null
+  const kind = view.getUint8(0)
+  if (kind !== FRAME_DATA && kind !== FRAME_REPLAY) return null
   return {
     ref: view.getUint32(1, false),
     payload: new Uint8Array(buf, BINARY_HEADER_LEN),
+    replay: kind === FRAME_REPLAY,
   }
 }
 

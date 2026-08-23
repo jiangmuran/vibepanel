@@ -287,6 +287,15 @@ func (l *Live) Subscribe(clientID string) (*Subscriber, []byte) {
 	}
 	replay := l.ring.Snapshot()
 	l.subs[sub] = struct{}{}
+
+	// An unowned session goes to whoever opened it. Without this the first
+	// viewer is told it is passive, renders at the stored grid and scales it
+	// into a corner of the window — the session never fits the screen it is
+	// being looked at on, and the only way out is a "take control" button the
+	// user has no reason to think they need.
+	if l.controller == "" {
+		l.controller = sub.ClientID
+	}
 	cols, rows := l.cols, l.rows
 
 	// Tell the new viewer the authoritative grid immediately; without it a
@@ -309,8 +318,19 @@ func (l *Live) Unsubscribe(sub *Subscriber) {
 	delete(l.subs, sub)
 	close(sub.Events)
 
-	// A viewer leaving gives up control, so the next one to interact can size
-	// the session without having to ask.
+	// A viewer leaving gives up control, but the grid is deliberately left
+	// unowned rather than handed to whoever else happens to be watching.
+	//
+	// Most disconnects are temporary — a reload, a phone locking, a flaky
+	// network. Handing the grid over on each one means refreshing your own
+	// page gives it to the phone glancing at the session from across the room,
+	// which immediately reflows a 147-column agent view down to 13 and leaves
+	// the returning desktop stuck watching it. Freezing the grid instead keeps
+	// it exactly as it was, and the returning viewer reclaims it on subscribe.
+	//
+	// The cost is that a lone remaining viewer keeps scaling until it taps
+	// "take control" once. That is a deliberate, visible action rather than a
+	// surprise.
 	if l.controller == sub.ClientID {
 		l.controller = ""
 	}
@@ -334,18 +354,29 @@ func (l *Live) broadcast(ev Event) {
 	}
 }
 
-// Write sends input to the session and makes the sender the controller.
+// Write sends input to the session. It does NOT change who owns the grid.
 //
-// Typing is the clearest possible statement of "I am the one using this", so it
-// transfers control without a separate gesture. On a phone, starting to type is
-// exactly when the grid should become phone-sized.
+// Input and control are deliberately separate. Two reasons:
+//
+//  1. Not every byte a terminal sends is a person typing. xterm answers device
+//     attribute queries, reports focus changes and acknowledges bracketed
+//     paste, all through the same channel as keystrokes. Treating writes as
+//     intent meant a viewer claimed the grid merely by loading the page —
+//     which is exactly how this was found.
+//
+//  2. Even for real keystrokes it is the wrong behaviour. Glancing at a
+//     session on a phone and answering "y" to a prompt is the mobile use case
+//     this panel exists for; resizing the grid to 45 columns underneath the
+//     desktop that is mid-edit is not what that person asked for.
+//
+// So a passive viewer can type freely, and taking the grid is an explicit act.
+// See TakeControl.
 func (l *Live) Write(clientID string, p []byte) (int, error) {
 	l.mu.Lock()
 	if l.closed {
 		l.mu.Unlock()
 		return 0, ErrNotAttached
 	}
-	l.controller = clientID
 	ptmx := l.ptmx
 	l.mu.Unlock()
 	return ptmx.Write(p)
@@ -365,12 +396,11 @@ func (l *Live) Controller() string {
 	return l.controller
 }
 
-// Resize sets the grid, if the caller is allowed to.
+// Resize sets the grid, if the caller owns it.
 //
-// Only the controlling viewer may resize. Without that rule, a phone opening a
-// session that a desktop is mid-edit in would reflow the agent's TUI down to 45
-// columns — the failure this whole arbitration exists to prevent. Passive
-// viewers scale instead, and take control explicitly with TakeControl.
+// A resize from a viewer that does not own the grid is ignored rather than
+// rejected: a browser window being dragged is not an error, it just does not
+// get to reflow a session somebody else is using. Those viewers scale instead.
 func (l *Live) Resize(clientID string, cols, rows int) error {
 	if cols <= 0 || rows <= 0 {
 		return fmt.Errorf("session: invalid size %dx%d", cols, rows)
@@ -380,11 +410,16 @@ func (l *Live) Resize(clientID string, cols, rows int) error {
 		l.mu.Unlock()
 		return ErrNotAttached
 	}
-	if l.controller != "" && l.controller != clientID {
+	// Only the owner may move the grid — including when it is unowned. An
+	// unowned grid is one whose owner stepped away; letting the next window
+	// resize claim it means a phone rotating in someone's pocket takes over a
+	// session the desktop is about to come back to. Claiming happens on
+	// subscribe (a viewer arriving) or through TakeControl (a deliberate tap),
+	// both of which are things a person did on purpose.
+	if l.controller != clientID {
 		l.mu.Unlock()
 		return nil // not an error: a passive viewer resizing its own window
 	}
-	l.controller = clientID
 	if l.cols == cols && l.rows == rows {
 		l.mu.Unlock()
 		return nil

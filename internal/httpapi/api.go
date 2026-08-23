@@ -563,10 +563,18 @@ func (s *Server) pollOnce(ctx context.Context) error {
 
 // deriveTitle picks the best automatic name for a session.
 //
-// #{pane_title} defaults to the hostname for a plain shell, which is the same
-// string for every session on the box and therefore useless as a tab name. When
-// the application has not set a real title, the running command is far more
-// informative — "claude" and "codex" are exactly what the user is looking for.
+// Three fallbacks, in descending order of how much they tell the user:
+//
+//  1. The title the application set over OSC 0/2. Agents set useful ones.
+//  2. The running command — "claude", "codex" is exactly what is being looked
+//     for. #{pane_title} is skipped when it is just the hostname, which is what
+//     a plain shell leaves it as and is identical for every session on the box.
+//  3. For a shell, the directory it sits in. Every shell is called "bash", so
+//     the command tells you nothing; where it is at least distinguishes the one
+//     in a worktree from the one at the repo root.
+//
+// Returning "" would leave the UI showing the raw tmux name, which is a hex id
+// no human has any use for.
 func deriveTitle(info tmux.Info) string {
 	if info.Title != "" && info.Title != hostname() && info.Title != info.Command {
 		return info.Title
@@ -574,7 +582,12 @@ func deriveTitle(info tmux.Info) string {
 	if info.Command != "" && !isShell(info.Command) {
 		return info.Command
 	}
-	return ""
+	if info.Path != "" {
+		if base := filepath.Base(info.Path); base != "." && base != string(filepath.Separator) {
+			return base
+		}
+	}
+	return info.Command
 }
 
 func isShell(cmd string) bool {

@@ -32,6 +32,11 @@ interface Props {
  * resize. Reflowing a shared session to whatever the smallest viewer happens to
  * be would rewrap the agent's TUI under the person actually using it — a phone
  * glancing at a session must not be able to do that to a desktop mid-edit.
+ *
+ * Passive viewers can still type. Only the explicit button below takes the
+ * grid, because keystrokes are not a reliable signal of intent: xterm answers
+ * device-attribute queries and focus reports through the same channel, so
+ * "sent bytes" would mean "claimed the grid on page load".
  */
 export function TerminalView({ socket, sessionId, themeKey, onTitle, onExit, className }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null)
@@ -79,17 +84,40 @@ export function TerminalView({ socket, sessionId, themeKey, onTitle, onExit, cla
     fitRef.current = fit
 
     const encoder = new TextEncoder()
-    const dataSub = term.onData((data) => socket.write(sessionId, encoder.encode(data)))
+
+    // While scrollback is being parsed, anything the terminal wants to send
+    // back is an answer to a question that was asked minutes ago and has
+    // already been answered. Letting it through types the reply at whatever
+    // prompt the session is sitting at.
+    let replaying = false
+
+    const dataSub = term.onData((data) => {
+      if (replaying) return
+      socket.write(sessionId, encoder.encode(data))
+    })
     // Binary input is what arrives for pasted bytes that are not valid UTF-16
     // text; without this branch those keystrokes vanish.
     const binarySub = term.onBinary((data) => {
+      if (replaying) return
       const bytes = new Uint8Array(data.length)
       for (let i = 0; i < data.length; i++) bytes[i] = data.charCodeAt(i) & 0xff
       socket.write(sessionId, bytes)
     })
 
     socket.subscribe(sessionId, term.cols, term.rows, {
-      onData: (bytes) => term.write(bytes),
+      onData: (bytes, replay) => {
+        if (!replay) {
+          term.write(bytes)
+          return
+        }
+        // xterm generates its responses synchronously while parsing, so the
+        // flag has to span the whole write and is cleared from the parse
+        // callback rather than on the next line.
+        replaying = true
+        term.write(bytes, () => {
+          replaying = false
+        })
+      },
       onSize: (cols, rows, isControlling) => {
         controllingRef.current = isControlling
         setControlling(isControlling)
@@ -194,7 +222,7 @@ export function TerminalView({ socket, sessionId, themeKey, onTitle, onExit, cla
           type="button"
           onClick={takeControl}
           className="absolute right-3 bottom-3 rounded-full border border-hairline bg-elevated px-3 py-1.5 text-xs text-ink-2 backdrop-blur transition-colors duration-200 ease-vp hover:text-ink"
-          title={`Another viewer owns this grid (${grid.cols}x${grid.rows}). Click to resize it to your window.`}
+          title={`Another viewer owns this grid (${grid.cols}x${grid.rows}). You can still type; click to resize it to your window.`}
         >
           <span className="tabular">
             {grid.cols}x{grid.rows}

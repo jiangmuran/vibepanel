@@ -18,6 +18,16 @@ const (
 	// it is the overwhelming majority of traffic and base64 in JSON would cost
 	// a third more bandwidth for nothing.
 	FrameData byte = 0x00
+
+	// FrameReplay is the scrollback a viewer receives when it subscribes.
+	//
+	// It has to be distinguishable from live output. The buffer contains
+	// whatever the application sent, including terminal capability queries
+	// (device attributes, cursor position reports). A freshly created xterm
+	// answers those as it parses them — and the answer goes to the shell,
+	// which types it at the prompt. Without this flag every page reload
+	// injects something like "[?1;2c" into whatever the session was doing.
+	FrameReplay byte = 0x01
 )
 
 // binaryHeaderLen is the type byte plus the uint32 stream reference.
@@ -25,6 +35,13 @@ const binaryHeaderLen = 5
 
 // ErrShortFrame means a binary frame was too small to contain a header.
 var ErrShortFrame = errors.New("ws: short binary frame")
+
+// EncodeReplay builds a replay frame. See FrameReplay for why it is separate.
+func EncodeReplay(ref uint32, payload []byte) []byte {
+	out := EncodeData(ref, payload)
+	out[0] = FrameReplay
+	return out
+}
 
 // EncodeData builds a binary data frame for a stream.
 //
@@ -47,7 +64,7 @@ func DecodeData(frame []byte) (ref uint32, payload []byte, err error) {
 	if len(frame) < binaryHeaderLen {
 		return 0, nil, ErrShortFrame
 	}
-	if frame[0] != FrameData {
+	if frame[0] != FrameData && frame[0] != FrameReplay {
 		return 0, nil, errors.New("ws: unknown binary frame type")
 	}
 	return binary.BigEndian.Uint32(frame[1:5]), frame[binaryHeaderLen:], nil

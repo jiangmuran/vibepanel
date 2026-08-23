@@ -31,8 +31,14 @@
 
   /* Text, most to least prominent. */
   --vp-ink: #1d1d1f;
-  --vp-ink-2: rgb(60 60 67 / 0.60);
-  --vp-ink-3: rgb(60 60 67 / 0.30);
+  /* Alpha values verified against the frosted surface they actually sit on,
+     not against a flat white assumption. Apple's own secondaryLabel (0.60) and
+     tertiaryLabel (0.30) measure 3.44:1 and 1.73:1 here — the second of those
+     is barely visible. Secondary carries real content and meets AA at 4.5:1;
+     tertiary is decorative only and meets 3:1. Anything informational uses
+     secondary. See scripts/render-check for the measurement. */
+  --vp-ink-2: rgb(60 60 67 / 0.75); /* 5.2:1 */
+  --vp-ink-3: rgb(60 60 67 / 0.55); /* 3.0:1 */
 
   --vp-accent: #007aff;
   --vp-accent-ink: #ffffff;
@@ -86,8 +92,8 @@
     --vp-hairline-strong: rgb(255 255 255 / 0.20);
 
     --vp-ink: #f5f5f7;
-    --vp-ink-2: rgb(235 235 245 / 0.60);
-    --vp-ink-3: rgb(235 235 245 / 0.30);
+    --vp-ink-2: rgb(235 235 245 / 0.65); /* 6.9:1 */
+    --vp-ink-3: rgb(235 235 245 / 0.45); /* 4.0:1 */
 
     --vp-accent: #0a84ff;
     --vp-accent-ink: #ffffff;
@@ -130,8 +136,8 @@
   --vp-hairline-strong: rgb(255 255 255 / 0.20);
 
   --vp-ink: #f5f5f7;
-  --vp-ink-2: rgb(235 235 245 / 0.60);
-  --vp-ink-3: rgb(235 235 245 / 0.30);
+  --vp-ink-2: rgb(235 235 245 / 0.65); /* 6.9:1 */
+  --vp-ink-3: rgb(235 235 245 / 0.45); /* 4.0:1 */
 
   --vp-accent: #0a84ff;
   --vp-accent-ink: #ffffff;

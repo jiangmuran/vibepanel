@@ -13,12 +13,62 @@ import type { ThemeChoice } from './components/theme'
 /** How often the panel re-reads the session list. */
 const STATE_POLL_MS = 2000
 
+/**
+ * A name to show for a session.
+ *
+ * Never the tmux name: that is a hex id, and showing it means the automatic
+ * naming failed in a way the user has to decode. The command, or failing that
+ * the word "session", is at least readable.
+ */
+function sessionLabel(s: Session): string {
+  return s.title || s.command || 'session'
+}
+
+const SELECTED_KEY = 'vibepanel.selected'
+
+/**
+ * The session the user was last looking at.
+ *
+ * Without this a reload drops you on whichever session sorts first, and the
+ * sort is by recent output — so a session that prints constantly (a monitor, a
+ * build) steals your place every time you refresh. The page is meant to be
+ * something you can close and reopen without losing anything.
+ */
+function loadSelected(): string | null {
+  try {
+    return localStorage.getItem(SELECTED_KEY)
+  } catch {
+    return null
+  }
+}
+
+function saveSelected(id: string | null) {
+  try {
+    if (id) localStorage.setItem(SELECTED_KEY, id)
+    else localStorage.removeItem(SELECTED_KEY)
+  } catch {
+    /* private mode: the choice simply does not persist */
+  }
+}
+
 export function App() {
   const socket = useMemo(() => new PanelSocket(), [])
   const [status, setStatus] = useState<SocketStatus>('closed')
   const [state, setState] = useState<PanelState>({ projects: [], sessions: [], live: [] })
-  const [selected, setSelected] = useState<string | null>(null)
-  const [theme, setTheme] = useState<ThemeChoice>(loadTheme)
+  const [selected, setSelected] = useState<string | null>(loadSelected)
+  const [theme, setThemeState] = useState<ThemeChoice>(loadTheme)
+
+  // The attribute is written synchronously here rather than from an effect.
+  //
+  // React runs a child's effects before its parent's, so an effect in App
+  // would set data-theme *after* TerminalView has already re-read the CSS
+  // custom properties to rebuild the xterm palette — leaving the terminal, the
+  // largest surface on the page, one theme behind on every switch. Writing to
+  // the DOM before the state update means every child sees the new palette.
+  const setTheme = useCallback((next: ThemeChoice) => {
+    applyTheme(next)
+    setThemeState(next)
+  }, [])
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -69,8 +119,8 @@ export function App() {
   }, [refresh])
 
   useEffect(() => {
-    applyTheme(theme)
-  }, [theme])
+    saveSelected(selected)
+  }, [selected])
 
   // The xterm palette is rebuilt when this key changes. It has to react to the
   // system preference too, not just the toggle, or a laptop switching to dark
@@ -123,7 +173,7 @@ export function App() {
   }
 
   const killSession = async (s: Session) => {
-    if (!window.confirm(`Kill ${s.title || s.tmuxName}? The process is terminated.`)) return
+    if (!window.confirm(`Kill ${sessionLabel(s)}? The process is terminated.`)) return
     try {
       await api.deleteSession(s.id)
       await refresh()
@@ -192,10 +242,10 @@ export function App() {
             <>
               <StateDot state={current.state} />
               <span className="truncate text-[13px] font-medium">
-                {current.title || current.tmuxName}
+                {sessionLabel(current)}
               </span>
               <span className="truncate text-[12px] text-ink-2">{currentProject?.name}</span>
-              <span className="ml-auto tabular text-[11px] text-ink-3">
+              <span className="ml-auto tabular text-[11px] text-ink-2">
                 {current.cols}x{current.rows}
               </span>
             </>
@@ -297,10 +347,8 @@ function ProjectGroup({
             onClick={() => onSelect(s.id)}
           >
             <StateDot state={s.state} />
-            <span className="min-w-0 flex-1 truncate text-[12.5px]">
-              {s.title || s.tmuxName}
-            </span>
-            {!isLive && <span className="text-[10px] text-ink-3">idle</span>}
+            <span className="min-w-0 flex-1 truncate text-[12.5px]">{sessionLabel(s)}</span>
+            {!isLive && <span className="text-[10px] text-ink-2">idle</span>}
             <button
               type="button"
               onClick={(e) => {

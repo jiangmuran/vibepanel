@@ -159,10 +159,12 @@ func TestPassiveViewerCannotResize(t *testing.T) {
 		t.Fatalf("Attach: %v", err)
 	}
 
-	// The desktop types, which makes it the controller.
-	if _, err := live.Write("desktop", []byte("")); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
+	// Subscribing to an unowned session is what makes a viewer the controller.
+	desktop, _ := live.Subscribe("desktop")
+	defer live.Unsubscribe(desktop)
+	phoneSub, _ := live.Subscribe("phone")
+	defer live.Unsubscribe(phoneSub)
+
 	if err := live.Resize("desktop", 160, 48); err != nil {
 		t.Fatalf("Resize by controller: %v", err)
 	}
@@ -201,6 +203,10 @@ func TestResizeReachesTmux(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
+	// Subscribing is what makes a viewer the owner of an unowned grid; a
+	// resize from anyone else is ignored by design.
+	desktop, _ := live.Subscribe("desktop")
+	defer live.Unsubscribe(desktop)
 	if err := live.Resize("desktop", 132, 43); err != nil {
 		t.Fatalf("Resize: %v", err)
 	}
@@ -337,5 +343,142 @@ func TestSlowViewerIsDroppedNotBlocking(t *testing.T) {
 		case <-deadline:
 			t.Fatal("fast viewer never received the final line")
 		}
+	}
+}
+
+func TestFirstViewerTakesControl(t *testing.T) {
+	ctx := context.Background()
+	tm := newTestTmux(t)
+	const name = "vp_firstctl"
+	if err := tm.Create(ctx, tmux.CreateOptions{
+		Name: name, Dir: t.TempDir(), Width: 80, Height: 24,
+		Command: []string{"sh", "-c", "sleep 30"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	m := NewManager(tm, 64<<10)
+	defer m.DetachAll()
+
+	live, err := m.Attach(ctx, "s1", name, 120, 32)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+
+	// Nobody owns a freshly attached session. If the first viewer is not given
+	// control it renders passively, scaling the stored grid into a corner of a
+	// window it could have filled — and the user is shown a "take control"
+	// button for a session nobody else is using.
+	a, _ := live.Subscribe("first")
+	defer live.Unsubscribe(a)
+	if got := live.Controller(); got != "first" {
+		t.Fatalf("controller after first subscribe = %q, want %q", got, "first")
+	}
+
+	// A second viewer must not steal it just by showing up.
+	b, _ := live.Subscribe("second")
+	defer live.Unsubscribe(b)
+	if got := live.Controller(); got != "first" {
+		t.Errorf("controller after second subscribe = %q, want it to stay with %q", got, "first")
+	}
+}
+
+func TestTypingDoesNotStealTheGrid(t *testing.T) {
+	ctx := context.Background()
+	tm := newTestTmux(t)
+	const name = "vp_nosteal"
+	if err := tm.Create(ctx, tmux.CreateOptions{
+		Name: name, Dir: t.TempDir(), Width: 80, Height: 24,
+		Command: []string{"sh", "-c", "sleep 30"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	m := NewManager(tm, 64<<10)
+	defer m.DetachAll()
+
+	live, err := m.Attach(ctx, "s1", name, 120, 32)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	desktop, _ := live.Subscribe("desktop")
+	defer live.Unsubscribe(desktop)
+	phone, _ := live.Subscribe("phone")
+	defer live.Unsubscribe(phone)
+
+	if got := live.Controller(); got != "desktop" {
+		t.Fatalf("controller = %q, want the first viewer", got)
+	}
+
+	// Answering a prompt from a phone must not reflow the desktop that is
+	// mid-edit. Writing is not a claim on the grid — and it cannot be, because
+	// xterm sends device-attribute and focus replies down the same channel, so
+	// a viewer would take the grid just by loading the page.
+	if _, err := live.Write("phone", []byte("y\n")); err != nil {
+		t.Fatalf("Write from a passive viewer must be allowed: %v", err)
+	}
+	if got := live.Controller(); got != "desktop" {
+		t.Errorf("controller after the phone typed = %q, want it to stay %q", got, "desktop")
+	}
+	if cols, rows := live.Size(); cols != 120 || rows != 32 {
+		t.Errorf("grid = %dx%d, want the desktop's 120x32", cols, rows)
+	}
+
+	// The explicit gesture still works.
+	if err := live.TakeControl("phone", 45, 20); err != nil {
+		t.Fatalf("TakeControl: %v", err)
+	}
+	if got := live.Controller(); got != "phone" {
+		t.Errorf("controller after TakeControl = %q, want %q", got, "phone")
+	}
+}
+
+func TestControlIsFrozenNotHandedOverWhenTheControllerLeaves(t *testing.T) {
+	ctx := context.Background()
+	tm := newTestTmux(t)
+	const name = "vp_ctlfreeze"
+	if err := tm.Create(ctx, tmux.CreateOptions{
+		Name: name, Dir: t.TempDir(), Width: 80, Height: 24,
+		Command: []string{"sh", "-c", "sleep 30"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	m := NewManager(tm, 64<<10)
+	defer m.DetachAll()
+
+	live, err := m.Attach(ctx, "s1", name, 120, 32)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	desktop, _ := live.Subscribe("desktop")
+	phone, _ := live.Subscribe("phone")
+	defer live.Unsubscribe(phone)
+
+	if err := live.Resize("desktop", 147, 46); err != nil {
+		t.Fatalf("Resize: %v", err)
+	}
+
+	// The desktop reloads its page, which closes its connection. Handing the
+	// grid to the phone here would reflow a 147-column agent view down to
+	// phone width, and the desktop would come back to find it that way.
+	live.Unsubscribe(desktop)
+	if got := live.Controller(); got != "" {
+		t.Errorf("controller after the owner left = %q, want it unowned", got)
+	}
+	if cols, rows := live.Size(); cols != 147 || rows != 46 {
+		t.Errorf("grid = %dx%d, want it frozen at 147x46", cols, rows)
+	}
+
+	// The phone is still passive and cannot move it by resizing its window.
+	if err := live.Resize("phone", 13, 30); err != nil {
+		t.Fatalf("passive resize: %v", err)
+	}
+	if cols, _ := live.Size(); cols != 147 {
+		t.Errorf("a passive viewer moved the frozen grid to %d columns", cols)
+	}
+
+	// The desktop comes back and reclaims it by subscribing.
+	back, _ := live.Subscribe("desktop-2")
+	defer live.Unsubscribe(back)
+	if got := live.Controller(); got != "desktop-2" {
+		t.Errorf("controller after the owner returned = %q, want %q", got, "desktop-2")
 	}
 }

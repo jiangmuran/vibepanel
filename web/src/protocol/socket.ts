@@ -3,7 +3,8 @@ import type { ClientMessage, ServerMessage } from './wire'
 
 /** What a subscriber to one session receives. */
 export interface StreamHandlers {
-  onData: (bytes: Uint8Array) => void
+  /** `replay` marks buffered scrollback rather than live output. */
+  onData: (bytes: Uint8Array, replay: boolean) => void
   onSize: (cols: number, rows: number, controlling: boolean) => void
   onTitle?: (title: string) => void
   onClipboard?: (text: string) => void
@@ -74,7 +75,7 @@ export class PanelSocket {
       if (ev.data instanceof ArrayBuffer) {
         const frame = decodeData(ev.data)
         if (!frame) return
-        this.byRef.get(frame.ref)?.handlers.onData(frame.payload)
+        this.byRef.get(frame.ref)?.handlers.onData(frame.payload, frame.replay)
         return
       }
       let msg: ServerMessage

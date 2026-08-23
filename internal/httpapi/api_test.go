@@ -334,3 +334,84 @@ func TestPollDerivesTitleFromCommand(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 }
+
+// TestReplayIsTaggedSeparately pins the fix for a bug only a real browser
+// found: the replay buffer contains the terminal capability queries the
+// application sent, and a freshly created xterm answers them as it parses.
+// That answer goes to the shell, which types it at the prompt — so every page
+// reload was injecting something like "[?1;2c" into the running session.
+//
+// The client suppresses its responses while parsing replay, which it can only
+// do if the frame is distinguishable from live output.
+func TestReplayIsTaggedSeparately(t *testing.T) {
+	ts, _ := newTestServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"test"}`)
+	sess := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sh","-c","echo REPLAY_TAG_MARKER; exec sh"]}`)
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
+
+	// First viewer: fills the ring buffer, then leaves.
+	first, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	b, _ := json.Marshal(ws.ClientMessage{Type: ws.MsgSubscribe, SessionID: sess.ID, Cols: 80, Rows: 24})
+	if err := first.Write(ctx, websocket.MessageText, b); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			t.Fatal("first viewer never saw the marker")
+		}
+		typ, data, rerr := first.Read(ctx)
+		if rerr != nil {
+			t.Fatalf("read: %v", rerr)
+		}
+		if typ == websocket.MessageBinary {
+			_, payload, derr := ws.DecodeData(data)
+			if derr == nil && strings.Contains(string(payload), "REPLAY_TAG_MARKER") {
+				break
+			}
+		}
+	}
+	_ = first.CloseNow()
+
+	// Second viewer: its scrollback must arrive tagged as replay.
+	second, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial second: %v", err)
+	}
+	defer second.CloseNow()
+	if err := second.Write(ctx, websocket.MessageText, b); err != nil {
+		t.Fatalf("subscribe second: %v", err)
+	}
+
+	deadline = time.Now().Add(10 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			t.Fatal("second viewer never received its scrollback")
+		}
+		typ, data, rerr := second.Read(ctx)
+		if rerr != nil {
+			t.Fatalf("read: %v", rerr)
+		}
+		if typ != websocket.MessageBinary {
+			continue
+		}
+		if !strings.Contains(string(data), "REPLAY_TAG_MARKER") {
+			continue
+		}
+		if data[0] != ws.FrameReplay {
+			t.Fatalf("scrollback arrived as frame type 0x%02x, want FrameReplay (0x%02x); "+
+				"the client cannot suppress its terminal responses without this",
+				data[0], ws.FrameReplay)
+		}
+		return
+	}
+}
