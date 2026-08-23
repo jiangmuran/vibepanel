@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/StateDot.tsx","./src/components/Terminal.tsx","./src/components/theme.ts","./src/protocol/api.ts","./src/protocol/socket.ts","./src/protocol/wire.ts"],"version":"5.9.3"}

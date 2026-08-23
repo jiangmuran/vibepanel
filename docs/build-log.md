@@ -92,3 +92,79 @@ set at the wrong scope in the first draft.
   `session.State.SortWeight`.
 - Isolation: the panel's socket shows zero foreign sessions; the pre-existing
   ttyd/zellij setup on this host was untouched throughout.
+
+## 2026-08-23 — M2: terminals end to end
+
+The browser can open a session, type into it, close the tab and come back to
+find its scrollback intact, and watch the same session from two places at once.
+A single static binary serves the whole thing.
+
+Landed: `internal/session` (ring buffer, OSC scanner, attachment manager),
+`internal/ws` (multiplexed protocol), `internal/httpapi` (REST, reconcile,
+tmux poller), `internal/webui` (embedded frontend), and `web/` (React 19 +
+Vite + Tailwind v4 + xterm.js 6).
+
+### Size arbitration, and why the browser scales instead of reflowing
+
+A desktop at 200×50 and a phone at 45×20 cannot both size the same tmux
+session. Reflowing to the smaller one turns an agent's full-screen TUI into
+confetti under the person actually using it.
+
+The rule that shipped: the backend attaches exactly one tmux client per
+session, so tmux itself never has to arbitrate. One viewer *controls* the grid
+— whoever last typed — and everyone else renders at that grid and scales it
+with a CSS transform. Typing claims control implicitly, which is what makes it
+feel right on a phone: you start typing, and the session becomes phone-sized.
+A passive viewer's resize is ignored rather than rejected, because a browser
+window being resized is not an error.
+
+### Bugs found by tests rather than by users
+
+**`Done()` fired before the manager forgot the session.** The pump's cleanup
+closed the channel and *then* removed the entry from the live map, leaving a
+window where a caller woken by `Done()` still saw the session listed. Long
+enough for a reconnect to attach to a corpse. Deregistration now happens first,
+so the signal means what it says.
+
+**The OSC terminator was being counted as an application bell.** Every OSC
+sequence ends in BEL, and the shell sets its title on every prompt — so a naive
+bell detector marks every session "waiting for you" several times a second.
+The scanner consumes the terminator as part of the sequence, and there is a
+test pinning it.
+
+**Ring buffer: filling exactly to capacity was flagged as overflow.** That made
+`Snapshot` trim a prefix of real output on a buffer that had lost nothing.
+
+**Ring buffer: `trimPartialEscape` ate the first character of ordinary text.**
+An empty parameter prefix counted as "all parameter bytes", so any line
+starting with a letter looked like the tail of a CSI sequence. The trim now
+requires at least one parameter byte, and the remaining ambiguity (digits then
+a letter, which is genuinely indistinguishable from a truncated sequence) is
+pinned as a documented false positive rather than pretended away.
+
+### Frontend notes
+
+Every version in the first `package.json` was wrong — guessed from memory
+rather than looked up. xterm is on 6.0, not 5.6; lucide-react on 1.33, not
+0.550; vite on 8.2. Worth remembering that this ecosystem moves faster than
+recall.
+
+The React 19 lint rules caught two real correctness problems: a ref written
+during render (replaced with the `setSelected` updater form) and a state poll
+that used `setInterval` (replaced with a self-scheduling loop, which also stops
+requests piling up when the server is slow).
+
+Polling `/api/state` every two seconds is a stopgap. Terminal output already
+arrives over the WebSocket; the project and session lists should too, and that
+loop should disappear in M3.
+
+### Verified
+
+- Full terminal round trip over a real WebSocket against a real tmux: subscribe,
+  type `echo`, read the output back.
+- Session survives the server being torn down and rebuilt.
+- A slow viewer is dropped rather than stalling the pump that feeds everyone.
+- `remain-on-exit`, replay after reconnect, and resize reaching tmux, all with
+  `-race`.
+- 13 MB static binary (`CGO_ENABLED=0`) serving the embedded frontend, with
+  fingerprinted assets marked immutable and SPA fallback working.

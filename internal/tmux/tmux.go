@@ -202,6 +202,19 @@ func (c *Client) Create(ctx context.Context, o CreateOptions) error {
 	return err
 }
 
+// AttachArgs returns the argv (after the binary) for attaching to a session.
+//
+// The caller runs this itself on a PTY it owns, rather than going through
+// Client.run, because attaching is the one tmux command whose whole purpose is
+// to keep a terminal open and stream through it.
+//
+// Deliberately a plain attach, not `attach -d`: detaching other clients is
+// pointless when the panel is the only one, and hostile if someone is
+// debugging the same socket from a shell.
+func (c *Client) AttachArgs(name string) []string {
+	return c.args("attach-session", "-t", target(name))
+}
+
 // Has reports whether the named session exists.
 func (c *Client) Has(ctx context.Context, name string) (bool, error) {
 	_, err := c.run(ctx, "has-session", "-t", sessionTarget(name))

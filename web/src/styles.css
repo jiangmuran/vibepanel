@@ -1,0 +1,268 @@
+@import 'tailwindcss';
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Design tokens.
+
+   RULE, and it is not negotiable: theme blocks below redefine *tokens only*.
+   No component ever gets its colours inside a media query or a [data-theme]
+   block. The moment one does, that component has two definitions that drift
+   apart, and the drift shows up as white text on a white background in
+   whichever theme was tested less.
+
+   Three states have to be covered, because "system" stamps nothing on the
+   root element:
+     :root                                  -> light (the base)
+     prefers-color-scheme: dark, unforced   -> dark
+     [data-theme="dark"|"light"]            -> the explicit toggle, wins both ways
+   ───────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* Surfaces, back to front. */
+  --vp-bg: #f5f5f7;
+  --vp-surface: #ffffff;
+  --vp-surface-2: #ffffff;
+  --vp-elevated: rgb(255 255 255 / 0.72);
+  --vp-terminal-bg: #ffffff;
+
+  /* Hairlines. Apple's separators are translucent so they sit correctly on
+     whatever is behind them rather than assuming a flat backdrop. */
+  --vp-hairline: rgb(0 0 0 / 0.10);
+  --vp-hairline-strong: rgb(0 0 0 / 0.18);
+
+  /* Text, most to least prominent. */
+  --vp-ink: #1d1d1f;
+  --vp-ink-2: rgb(60 60 67 / 0.60);
+  --vp-ink-3: rgb(60 60 67 / 0.30);
+
+  --vp-accent: #007aff;
+  --vp-accent-ink: #ffffff;
+  --vp-selection: rgb(0 122 255 / 0.20);
+
+  /* Session states. Never the only signal — each is paired with a distinct
+     shape in the UI, because colour alone fails for colour-blind users and in
+     a dark room at 2am, which is exactly when this panel gets read. */
+  --vp-state-waiting: #ff9500;
+  --vp-state-working: #007aff;
+  --vp-state-done: #34c759;
+  --vp-state-dead: rgb(60 60 67 / 0.40);
+
+  /* Terminal palette, light. Tuned for contrast on white rather than lifted
+     straight from a dark theme — inverted dark palettes wash out badly. */
+  --vp-term-fg: #1d1d1f;
+  --vp-term-cursor: #007aff;
+  --vp-term-black: #3a3a3c;
+  --vp-term-red: #d70015;
+  --vp-term-green: #0f7b32;
+  --vp-term-yellow: #a05a00;
+  --vp-term-blue: #0040dd;
+  --vp-term-magenta: #a316b8;
+  --vp-term-cyan: #00707c;
+  --vp-term-white: #8e8e93;
+  --vp-term-bright-black: #6c6c70;
+  --vp-term-bright-red: #ff3b30;
+  --vp-term-bright-green: #34c759;
+  --vp-term-bright-yellow: #c77700;
+  --vp-term-bright-blue: #007aff;
+  --vp-term-bright-magenta: #af52de;
+  --vp-term-bright-cyan: #00a0b0;
+  --vp-term-bright-white: #1d1d1f;
+
+  /* iOS spring easing. Everything that moves uses this one curve so the whole
+     interface feels like a single object. */
+  --vp-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --vp-radius: 12px;
+  --vp-radius-lg: 16px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --vp-bg: #000000;
+    --vp-surface: #1c1c1e;
+    --vp-surface-2: #2c2c2e;
+    --vp-elevated: rgb(28 28 30 / 0.72);
+    --vp-terminal-bg: #000000;
+
+    --vp-hairline: rgb(255 255 255 / 0.12);
+    --vp-hairline-strong: rgb(255 255 255 / 0.20);
+
+    --vp-ink: #f5f5f7;
+    --vp-ink-2: rgb(235 235 245 / 0.60);
+    --vp-ink-3: rgb(235 235 245 / 0.30);
+
+    --vp-accent: #0a84ff;
+    --vp-accent-ink: #ffffff;
+    --vp-selection: rgb(10 132 255 / 0.30);
+
+    --vp-state-waiting: #ff9f0a;
+    --vp-state-working: #0a84ff;
+    --vp-state-done: #30d158;
+    --vp-state-dead: rgb(235 235 245 / 0.30);
+
+    --vp-term-fg: #f5f5f7;
+    --vp-term-cursor: #0a84ff;
+    --vp-term-black: #48484a;
+    --vp-term-red: #ff453a;
+    --vp-term-green: #30d158;
+    --vp-term-yellow: #ffd60a;
+    --vp-term-blue: #0a84ff;
+    --vp-term-magenta: #bf5af2;
+    --vp-term-cyan: #40c8e0;
+    --vp-term-white: #aeaeb2;
+    --vp-term-bright-black: #636366;
+    --vp-term-bright-red: #ff6961;
+    --vp-term-bright-green: #64d97e;
+    --vp-term-bright-yellow: #ffe066;
+    --vp-term-bright-blue: #64b5ff;
+    --vp-term-bright-magenta: #da8fff;
+    --vp-term-bright-cyan: #7ce0f0;
+    --vp-term-bright-white: #ffffff;
+  }
+}
+
+:root[data-theme='dark'] {
+  --vp-bg: #000000;
+  --vp-surface: #1c1c1e;
+  --vp-surface-2: #2c2c2e;
+  --vp-elevated: rgb(28 28 30 / 0.72);
+  --vp-terminal-bg: #000000;
+
+  --vp-hairline: rgb(255 255 255 / 0.12);
+  --vp-hairline-strong: rgb(255 255 255 / 0.20);
+
+  --vp-ink: #f5f5f7;
+  --vp-ink-2: rgb(235 235 245 / 0.60);
+  --vp-ink-3: rgb(235 235 245 / 0.30);
+
+  --vp-accent: #0a84ff;
+  --vp-accent-ink: #ffffff;
+  --vp-selection: rgb(10 132 255 / 0.30);
+
+  --vp-state-waiting: #ff9f0a;
+  --vp-state-working: #0a84ff;
+  --vp-state-done: #30d158;
+  --vp-state-dead: rgb(235 235 245 / 0.30);
+
+  --vp-term-fg: #f5f5f7;
+  --vp-term-cursor: #0a84ff;
+  --vp-term-black: #48484a;
+  --vp-term-red: #ff453a;
+  --vp-term-green: #30d158;
+  --vp-term-yellow: #ffd60a;
+  --vp-term-blue: #0a84ff;
+  --vp-term-magenta: #bf5af2;
+  --vp-term-cyan: #40c8e0;
+  --vp-term-white: #aeaeb2;
+  --vp-term-bright-black: #636366;
+  --vp-term-bright-red: #ff6961;
+  --vp-term-bright-green: #64d97e;
+  --vp-term-bright-yellow: #ffe066;
+  --vp-term-bright-blue: #64b5ff;
+  --vp-term-bright-magenta: #da8fff;
+  --vp-term-bright-cyan: #7ce0f0;
+  --vp-term-bright-white: #ffffff;
+}
+
+/* Expose the tokens to Tailwind as utilities (bg-surface, text-ink-2, ...).
+   `inline` keeps them as var() references so a theme switch repaints without
+   Tailwind having to regenerate anything. */
+@theme inline {
+  --color-bg: var(--vp-bg);
+  --color-surface: var(--vp-surface);
+  --color-surface-2: var(--vp-surface-2);
+  --color-elevated: var(--vp-elevated);
+  --color-hairline: var(--vp-hairline);
+  --color-hairline-strong: var(--vp-hairline-strong);
+  --color-ink: var(--vp-ink);
+  --color-ink-2: var(--vp-ink-2);
+  --color-ink-3: var(--vp-ink-3);
+  --color-accent: var(--vp-accent);
+  --color-accent-ink: var(--vp-accent-ink);
+  --color-state-waiting: var(--vp-state-waiting);
+  --color-state-working: var(--vp-state-working);
+  --color-state-done: var(--vp-state-done);
+  --color-state-dead: var(--vp-state-dead);
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI',
+    system-ui, 'Helvetica Neue', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  --font-mono: 'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, Consolas,
+    'Liberation Mono', monospace;
+
+  --radius-vp: var(--vp-radius);
+  --radius-vp-lg: var(--vp-radius-lg);
+  --ease-vp: var(--vp-ease);
+}
+
+/* ── base ───────────────────────────────────────────────────────────────── */
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--vp-bg);
+  color: var(--vp-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  /* iOS bounce-scrolls the whole document behind a full-screen app, which
+     drags the terminal away from under the user's finger mid-selection. */
+  overscroll-behavior: none;
+}
+
+::selection {
+  background: var(--vp-selection);
+}
+
+/* Numbers that sit above one another must not jitter as they change. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Frosted chrome, the way the platform does it. */
+.vp-blur {
+  background: var(--vp-elevated);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* The working indicator breathes rather than blinking: a blink in the corner
+   of the eye reads as an alert, and "working" is the state that needs no
+   attention at all. */
+@keyframes vp-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+.vp-breathe {
+  animation: vp-breathe 2s var(--vp-ease) infinite;
+}
+
+/* xterm sizes itself against the element it is given; without an explicit
+   height it collapses and renders a single row. */
+.xterm,
+.xterm-viewport,
+.xterm-screen {
+  height: 100%;
+}
+
+.xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+}
+
+.xterm-viewport::-webkit-scrollbar-thumb {
+  background: var(--vp-ink-3);
+  border-radius: 4px;
+}

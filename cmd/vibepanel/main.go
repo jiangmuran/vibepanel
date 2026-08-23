@@ -10,6 +10,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -19,11 +21,13 @@ import (
 	"time"
 
 	"github.com/jiangmuran/vibepanel/internal/config"
+	"github.com/jiangmuran/vibepanel/internal/httpapi"
 	"github.com/jiangmuran/vibepanel/internal/id"
-	"github.com/jiangmuran/vibepanel/internal/session"
+	sessionpkg "github.com/jiangmuran/vibepanel/internal/session"
 	"github.com/jiangmuran/vibepanel/internal/store"
 	"github.com/jiangmuran/vibepanel/internal/tmux"
 	"github.com/jiangmuran/vibepanel/internal/version"
+	"github.com/jiangmuran/vibepanel/internal/webui"
 )
 
 func main() {
@@ -106,20 +110,66 @@ func cmdServe(args []string) error {
 	}
 	defer a.Close()
 
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	mgr := sessionpkg.NewManager(a.tmux, sessionpkg.DefaultRingSize)
+
+	srv := &httpapi.Server{
+		Cfg: a.cfg, DB: a.db, Tmux: a.tmux, Manager: mgr, Log: logger,
+	}
+	if err := srv.Reconcile(ctx); err != nil {
+		return err
+	}
+	go srv.Poll(ctx)
+
+	httpServer := &http.Server{
+		Addr:    a.cfg.Addr,
+		Handler: srv.Routes(),
+		// No WriteTimeout: a WebSocket carrying a terminal is a long-lived
+		// response, and any deadline here would sever idle sessions on a timer.
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+
 	fmt.Printf("vibepanel %s\n", version.String())
 	fmt.Printf("  data dir     %s\n", a.cfg.DataDir)
 	fmt.Printf("  tmux socket  %s\n", a.cfg.TmuxSocket)
-	fmt.Printf("  listen       %s\n", a.cfg.Addr)
 	fmt.Printf("  url          %s\n", a.cfg.PublicURL())
 	if !a.cfg.PasskeysUsable() {
-		fmt.Printf("  passkeys     unavailable (needs --domain with TLS, or localhost)\n")
+		fmt.Printf("  passkeys     disabled (needs --domain with TLS, or localhost)\n")
+	}
+	if a.cfg.StaticDir != "" {
+		fmt.Printf("  frontend     %s (from disk)\n", a.cfg.StaticDir)
+	} else if !webui.Built() {
+		fmt.Printf("  frontend     NOT BUILT — run `npm run build` in web/, or pass --static-dir\n")
 	}
 
-	// The HTTP server arrives in M2 together with the terminal transport.
-	// Until then `serve` exists so the wiring above is exercised on every run.
-	fmt.Println("\nHTTP server not implemented yet (milestone M2). Ctrl-C to exit.")
-	<-ctx.Done()
-	fmt.Println("\nshutting down; tmux sessions keep running")
+	errCh := make(chan error, 1)
+	go func() {
+		switch a.cfg.TLSMode {
+		case config.TLSFiles:
+			errCh <- httpServer.ListenAndServeTLS(a.cfg.CertFile, a.cfg.KeyFile)
+		case config.TLSACME:
+			errCh <- errors.New("acme is not implemented yet (milestone M6); use --tls files or --tls off")
+		default:
+			errCh <- httpServer.ListenAndServe()
+		}
+	}()
+
+	select {
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+	case <-ctx.Done():
+	}
+
+	// Shut the HTTP server down, then detach. Detaching is not the same as
+	// killing: every tmux session, and every agent inside it, keeps running.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = httpServer.Shutdown(shutdownCtx)
+	mgr.DetachAll()
+	fmt.Println("\nstopped; tmux sessions keep running")
 	return nil
 }
 
@@ -280,7 +330,7 @@ func cmdSession(args []string) error {
 		s, err := a.db.CreateSession(ctx, store.Session{
 			ID: sid, ProjectID: p.ID, TmuxName: tmuxName,
 			Title: *title, CWD: p.Path, Cols: *cols, Rows: *rows,
-			State: session.StateWorking,
+			State: sessionpkg.StateWorking,
 		})
 		if err != nil {
 			// The tmux session exists but we cannot track it. Removing it is
