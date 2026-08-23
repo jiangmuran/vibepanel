@@ -1,0 +1,93 @@
+package session
+
+// State is what a session looks like to the human scanning the sidebar.
+//
+// THIS FILE IS THE SINGLE SOURCE OF TRUTH FOR THE STATE ENUM.
+// web/src/protocol/state.ts is generated from it by `go generate ./...`.
+// Never hand-edit the TypeScript side: the two drifting apart means the
+// sidebar renders a state the backend never emits, which is invisible until
+// a session sits in the wrong colour for an hour and you miss a prompt.
+//
+//go:generate go run ../../scripts/gen-ts-state
+type State string
+
+const (
+	// StateWorking — the agent is producing output right now. Nothing to do.
+	StateWorking State = "working"
+
+	// StateWaiting — the agent stopped and wants a human. This is the only
+	// state that actually costs you something when it goes unnoticed, so
+	// everything downstream (sort order, badge counts, push notifications)
+	// is tuned to surface it first.
+	StateWaiting State = "waiting"
+
+	// StateDone — finished, nothing pending. Also the resting state of a
+	// plain shell sitting at its prompt.
+	StateDone State = "done"
+)
+
+// AllStates is the iteration order used by the TS generator and by tests that
+// assert exhaustive handling. Ordered by urgency, not alphabetically.
+var AllStates = []State{StateWaiting, StateWorking, StateDone}
+
+// Valid reports whether s came from this enum. Anything arriving over the wire
+// (hook POSTs especially, which are written by users) must pass through here
+// before it reaches the store.
+func (s State) Valid() bool {
+	switch s {
+	case StateWorking, StateWaiting, StateDone:
+		return true
+	}
+	return false
+}
+
+// SortWeight orders sessions within a project: lower sorts first.
+//
+// Waiting outranks working because a waiting session is blocked on you, while
+// a working one is making progress without you. Done sinks to the bottom.
+func (s State) SortWeight() int {
+	switch s {
+	case StateWaiting:
+		return 0
+	case StateWorking:
+		return 1
+	case StateDone:
+		return 2
+	}
+	return 3 // unknown states sort last rather than crashing the comparator
+}
+
+// Source records how a state was decided. Kept alongside the state itself
+// because the resolution rules differ: a manual override must not be stomped
+// by the next heuristic tick, and a hook report must win over a heuristic
+// guess even when the heuristic fired more recently.
+type Source string
+
+const (
+	// SourceHeuristic — inferred from the PTY byte stream. Always available,
+	// never perfectly accurate.
+	SourceHeuristic Source = "heuristic"
+
+	// SourceHook — reported by the agent itself via /api/hook/state. Precise,
+	// but only present for sessions whose agent has the hook installed.
+	SourceHook Source = "hook"
+
+	// SourceManual — the human clicked the status dot. Sticks until the next
+	// activity signal, so you can mark something "done" and have it stay down
+	// the list instead of bouncing back on a stray newline.
+	SourceManual Source = "manual"
+)
+
+// Precedence ranks how much a source is trusted; higher wins a conflict within
+// the same debounce window.
+func (src Source) Precedence() int {
+	switch src {
+	case SourceManual:
+		return 3
+	case SourceHook:
+		return 2
+	case SourceHeuristic:
+		return 1
+	}
+	return 0
+}

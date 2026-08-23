@@ -1,0 +1,19 @@
+# Build output
+/vibepanel
+/dist/
+/web/dist/
+/web/node_modules/
+
+# Runtime data — never commit a database with real session/credential data
+/data/
+*.db
+*.db-wal
+*.db-shm
+
+# Local config & secrets
+.env
+.env.local
+
+# Editor
+.DS_Store
+*.swp

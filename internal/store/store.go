@@ -1,0 +1,135 @@
+// Package store owns the SQLite database: schema, migrations and typed access.
+//
+// SQLite via modernc.org/sqlite (a pure-Go translation, no cgo) because the
+// whole distribution story is CGO_ENABLED=0 static binaries that cross-compile
+// to arm64 without a toolchain. Linking the C library would trade that away for
+// nothing this workload needs.
+package store
+
+import (
+	"context"
+	"database/sql"
+	_ "embed"
+	"fmt"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+//go:embed schema.sql
+var schemaSQL string
+
+// schemaVersion is bumped whenever a migration is added. It is compared against
+// SQLite's user_version pragma to decide what to apply.
+const schemaVersion = 1
+
+// DB wraps the connection pool with the queries the panel needs.
+type DB struct {
+	sql *sql.DB
+}
+
+// Open connects to the database at path, applying the schema if needed.
+func Open(ctx context.Context, path string) (*DB, error) {
+	// Pragmas go in the DSN so they apply to every pooled connection.
+	// busy_timeout in particular: without it a concurrent writer fails
+	// immediately with SQLITE_BUSY instead of waiting, which shows up as
+	// random save failures under two browser tabs.
+	dsn := path + "?_pragma=journal_mode(WAL)" +
+		"&_pragma=busy_timeout(5000)" +
+		"&_pragma=foreign_keys(ON)" +
+		"&_pragma=synchronous(NORMAL)"
+
+	sqlDB, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("store: open %s: %w", path, err)
+	}
+
+	// SQLite takes a single write lock for the whole database. More than one
+	// writer connection buys nothing and turns lock contention into errors, so
+	// the pool is deliberately kept small.
+	sqlDB.SetMaxOpenConns(4)
+	sqlDB.SetMaxIdleConns(4)
+	sqlDB.SetConnMaxLifetime(0)
+
+	if err := sqlDB.PingContext(ctx); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("store: ping %s: %w", path, err)
+	}
+
+	db := &DB{sql: sqlDB}
+	if err := db.migrate(ctx); err != nil {
+		sqlDB.Close()
+		return nil, err
+	}
+	return db, nil
+}
+
+// Close releases the pool.
+func (d *DB) Close() error { return d.sql.Close() }
+
+// SQL exposes the underlying handle for packages that need their own queries.
+func (d *DB) SQL() *sql.DB { return d.sql }
+
+// migrate brings the database up to schemaVersion.
+func (d *DB) migrate(ctx context.Context) error {
+	var current int
+	if err := d.sql.QueryRowContext(ctx, "PRAGMA user_version").Scan(&current); err != nil {
+		return fmt.Errorf("store: read user_version: %w", err)
+	}
+	if current > schemaVersion {
+		// Refuse rather than guess. An older binary opening a newer database
+		// and silently ignoring columns it does not know about is how data gets
+		// quietly dropped on a rollback.
+		return fmt.Errorf("store: database is version %d but this build only knows %d; "+
+			"upgrade vibepanel or restore an older copy of the database",
+			current, schemaVersion)
+	}
+	if current == schemaVersion {
+		return nil
+	}
+	if _, err := d.sql.ExecContext(ctx, schemaSQL); err != nil {
+		return fmt.Errorf("store: apply schema: %w", err)
+	}
+	// PRAGMA does not accept a bound parameter.
+	if _, err := d.sql.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+		return fmt.Errorf("store: set user_version: %w", err)
+	}
+	return nil
+}
+
+// Version reports the schema version currently on disk.
+func (d *DB) Version(ctx context.Context) (int, error) {
+	var v int
+	err := d.sql.QueryRowContext(ctx, "PRAGMA user_version").Scan(&v)
+	return v, err
+}
+
+// now is the timestamp helper used across the package. Seconds, not
+// milliseconds: every consumer is a human-facing "when did this last do
+// something", and integer seconds keep the JSON small and the comparisons
+// obvious.
+func now() int64 { return time.Now().Unix() }
+
+// GetSetting reads a settings row, returning def when absent.
+func (d *DB) GetSetting(ctx context.Context, key, def string) (string, error) {
+	var v string
+	err := d.sql.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, key).Scan(&v)
+	if err == sql.ErrNoRows {
+		return def, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("store: get setting %s: %w", key, err)
+	}
+	return v, nil
+}
+
+// SetSetting writes a settings row.
+func (d *DB) SetSetting(ctx context.Context, key, value string) error {
+	_, err := d.sql.ExecContext(ctx,
+		`INSERT INTO settings (key, value) VALUES (?, ?)
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
+	if err != nil {
+		return fmt.Errorf("store: set setting %s: %w", key, err)
+	}
+	return nil
+}
