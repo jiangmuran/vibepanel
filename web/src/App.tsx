@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ChevronUp, Menu, Moon, Monitor, PanelRight, Sun } from 'lucide-react'
+import { ChevronUp, LogOut, Menu, Moon, Monitor, PanelRight, Sun } from 'lucide-react'
 
-import { api } from './protocol/api'
+import { api, UnauthorizedError } from './protocol/api'
 import { PanelSocket } from './protocol/socket'
 import type { SocketStatus } from './protocol/socket'
-import type { PanelState, Project, Session } from './protocol/wire'
+import type { AuthState, PanelState, Project, Session } from './protocol/wire'
 import { TerminalView } from './components/Terminal'
 import { StateDot } from './components/StateDot'
 import { Sidebar } from './components/Sidebar'
@@ -62,7 +62,7 @@ function writeStored(key: string, value: string | null) {
   }
 }
 
-export function App() {
+export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => void }) {
   const socket = useMemo(() => new PanelSocket(), [])
   const narrow = useMediaQuery(NARROW_QUERY)
 
@@ -148,9 +148,15 @@ export function App() {
       applyState(await api.state())
       setError(null)
     } catch (e) {
+      if (e instanceof UnauthorizedError) {
+        onSignOut()
+        return
+      }
       setError(e instanceof Error ? e.message : String(e))
     }
-  }, [applyState])
+    // onSignOut is stable — the gate memoises it — so this does not restart
+    // the resync loop on every render.
+  }, [applyState, onSignOut])
 
   useEffect(() => {
     // Self-scheduling rather than setInterval: a slow response must not let
@@ -212,6 +218,13 @@ export function App() {
       await fn()
       setError(null)
     } catch (e) {
+      // A session that expired while a tab was asleep should return to the
+      // sign-in screen, not paint a permission error inside a panel that no
+      // longer works.
+      if (e instanceof UnauthorizedError) {
+        onSignOut()
+        return
+      }
       setError(e instanceof Error ? e.message : String(e))
     }
   }
@@ -328,6 +341,15 @@ export function App() {
             </button>
           )}
           <ThemeToggle theme={theme} onChange={setTheme} />
+          <button
+            type="button"
+            data-testid="sign-out"
+            onClick={onSignOut}
+            title={`Signed in as ${auth.username ?? 'unknown'} — sign out`}
+            className="ml-1 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+          >
+            <LogOut size={15} />
+          </button>
           <ConnectionDot status={status} />
         </header>
 

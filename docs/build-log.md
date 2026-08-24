@@ -549,3 +549,64 @@ after the directory changed overwrites the newer one.
 
 **`schema.sql` shipped PRAGMAs that cannot run where it runs** — found last
 round by the migration test, fixed here alongside the notes and todo tables.
+
+## 2026-08-23 — M6 part one: authentication
+
+Everything except the health probe and the agent-hook endpoint now needs a
+session, the WebSocket included — it is the terminal itself, so leaving it open
+would have made the rest decoration.
+
+First run prints a one-time setup token to the console. That is the handover:
+whoever can read the server's output is entitled to claim the panel, and merely
+reaching it over the network is not. The endpoint closes permanently once an
+account exists.
+
+argon2id at 64 MiB and two passes, with the parameters written into the encoded
+hash so raising them later does not lock anyone out. Sessions are rows rather
+than signed cookies, so they can be revoked individually. Failed sign-ins back
+off exponentially per source address — delay rather than lockout, because
+locking an account means anyone who knows the username can deny its owner
+access. `X-Forwarded-For` is believed only from proxies the operator listed;
+trusting it by default would let an attacker invent a new address on every
+attempt and skip the throttle entirely.
+
+An unknown username and a wrong password produce the same response and the same
+work: a fast "no such user" and a slow "wrong password" tells an attacker which
+usernames exist, which is the first half of guessing one.
+
+### Merely looking at a session cleared the state that said it wanted you
+
+The trace made it obvious once the check recorded state at each step:
+
+```
+seeded=waiting -> signed-in=working -> typed=done -> ...
+```
+
+Signing in auto-selects the first session, and the first session is the waiting
+one, because waiting sorts first. Subscribing resizes its grid, tmux repaints
+the pane, and the repaint counted as output — which cleared the bell.
+
+Third instance of the same underlying mistake, after the attach repaint and
+tmux's re-initialisation: a redraw is the terminal being configured, not the
+session doing something. The settle window now covers resizes as well as
+attaches, and the constant is named for what it means rather than for one of
+its causes.
+
+### A successful request reported as a network failure
+
+The check flagged `POST /api/projects/reorder — net::ERR_ABORTED`, on a request
+that had already received its 204 and whose effect had visibly worked. Logging
+the request lifecycle showed a response arriving and `requestfinished` never
+following.
+
+A `Response` whose body is never read is reported by Chromium as aborted, even
+when there is no body to read. The client drains empty responses now. The check
+also distinguishes an abort that follows a response from a real network
+failure, because the two mean different things.
+
+### Still to do in M6
+
+Passkey registration and sign-in, and TLS: certificate files with hot reload,
+and ACME over DNS-01. The panel reports honestly in the meantime — the sign-in
+screen says *why* passkeys are unavailable rather than showing a dead button,
+which is the part that would otherwise be baffling.

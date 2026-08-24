@@ -121,23 +121,55 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
   })
 }
 
+const USERNAME = 'render-check'
+const PASSWORD = 'a sufficiently long password'
+let cookie = ''
+
+/** Fetch carrying the session cookie, for seeding through the API. */
+const authed = (path, init = {}) =>
+  fetch(BASE + path, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}), ...(init.headers ?? {}) },
+  })
+
 try {
   if (!(await waitHealth(BASE))) {
     note('FAIL', 'server', `did not become healthy on ${BASE}\n${serverLog}`)
     throw new Error('server not healthy')
   }
 
-  // Seed content through the API, the same way the UI would.
-  const proj = await (await fetch(`${BASE}/api/projects`, {
+  // The panel now guards everything behind a session, so the check has to go
+  // through the real setup flow rather than reaching past it.
+  const tokenMatch = serverLog.match(/one-time setup token:\s*\n\s*\n\s*(\S+)/)
+  if (!tokenMatch) {
+    note('FAIL', 'auth', `no setup token in the server output:\n${serverLog}`)
+    throw new Error('no setup token')
+  }
+  const setupRes = await authed('/api/auth/setup', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: tokenMatch[1], username: USERNAME, password: PASSWORD }),
+  })
+  if (setupRes.status !== 201) {
+    note('FAIL', 'auth', `setup failed: ${setupRes.status} ${await setupRes.text()}`)
+    throw new Error('setup failed')
+  }
+  cookie = (setupRes.headers.getSetCookie?.() ?? [])
+    .map((c) => c.split(';')[0])
+    .join('; ')
+  if (!cookie) {
+    note('FAIL', 'auth', 'setup returned no session cookie')
+    throw new Error('no cookie')
+  }
+
+  // Seed content through the API, the same way the UI would.
+  const proj = await (await authed('/api/projects', {
+    method: 'POST',
     body: JSON.stringify({ path: process.cwd(), name: 'render-check' }),
   })).json()
 
   const mkSession = (cmd) =>
-    fetch(`${BASE}/api/sessions`, {
+    authed('/api/sessions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ projectId: proj.id, command: cmd }),
     }).then((r) => r.json())
 
@@ -150,9 +182,8 @@ try {
   await mkSession(['sh', '-c', "sleep 1; printf 'needs you\\a'; exec sleep 300"])
 
   // A second project, so ordering can be exercised.
-  await fetch(`${BASE}/api/projects`, {
+  await authed('/api/projects', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path: DATA, name: 'zzz-second' }),
   })
   await sleep(2500) // let the poller derive titles
@@ -170,12 +201,58 @@ try {
   page.on('pageerror', (e) => pageErrors.push(String(e)))
   page.on('requestfailed', (r) => failedReqs.push(`${r.url()} — ${r.failure()?.errorText}`))
 
+  // Tracks the bell session across the run, so a state that gets clobbered
+  // says which step did it rather than only that it happened.
+  const bellTrace = []
+  const traceBell = async (phase) => {
+    try {
+      const st = await (await authed('/api/state')).json()
+      const row = st.sessions.find((x) => (x.title || x.command) === 'sleep')
+      bellTrace.push(`${phase}=${row ? row.state : 'gone'}`)
+    } catch {
+      bellTrace.push(`${phase}=?`)
+    }
+  }
+  await traceBell('seeded')
+
   await page.goto(BASE, { waitUntil: 'networkidle' })
   await sleep(1200)
 
+  // A stranger must land on a sign-in form, not on somebody's terminals.
+  const loginForm = page.locator('[data-testid="login-form"]')
+  await page.screenshot({ path: join(SHOTS, 'login.png') })
+  if (!(await loginForm.isVisible().catch(() => false))) {
+    note('FAIL', 'auth', 'the browser reached the panel without signing in')
+  } else {
+    // Wrong credentials must be refused and say so.
+    await page.locator('[data-testid="auth-username"]').fill(USERNAME)
+    await page.locator('[data-testid="auth-password"]').fill('definitely not it')
+    await page.locator('[data-testid="auth-submit"]').click()
+    await sleep(1200)
+    if (!(await page.locator('[data-testid="auth-error"]').isVisible().catch(() => false))) {
+      note('FAIL', 'auth', 'a wrong password produced no visible error')
+    }
+    if (!(await loginForm.isVisible().catch(() => false))) {
+      note('FAIL', 'auth', 'a wrong password let the browser in')
+    }
+
+    // The throttle now stands in the way, which is the point. Wait it out.
+    await sleep(1500)
+    await page.locator('[data-testid="auth-password"]').fill(PASSWORD)
+    await page.locator('[data-testid="auth-submit"]').click()
+    await page.waitForSelector('[data-testid="sidebar"], [data-testid="sidebar-rail"]', { timeout: 15000 })
+      .catch(() => note('FAIL', 'auth', 'signing in did not reach the panel'))
+    await sleep(1500)
+  }
+
+  await traceBell('signed-in')
+
+  // The sign-in step deliberately submits a wrong password, so its 401 is
+  // expected noise. Start collecting once past it.
+  consoleErrors.length = 0
+  failedReqs.length = 0
+  await sleep(500)
   for (const e of pageErrors) note('FAIL', 'js', `uncaught: ${e}`)
-  for (const e of consoleErrors) note('WARN', 'console', e)
-  for (const f of failedReqs) note('FAIL', 'net', f)
 
   // ── structure ────────────────────────────────────────────────────────────
   const sidebarText = await page.locator('[data-testid="sidebar"]').innerText().catch(() => '')
@@ -221,6 +298,8 @@ try {
     await sleep(250)
   }
   if (!typed) note('FAIL', 'term', 'typing into the terminal produced no output')
+
+  await traceBell('typed')
 
   // ── contrast, both themes ────────────────────────────────────────────────
   const probeContrast = async (label) => {
@@ -340,6 +419,8 @@ try {
   if (!(await setTheme('dark'))) note('WARN', 'theme', 'could not return to the dark theme')
   await sleep(400)
 
+  await traceBell('themes')
+
   // ── two viewers: sync and size arbitration ───────────────────────────────
   const page2 = await ctx.newPage()
   const p2Errors = []
@@ -374,11 +455,13 @@ try {
   if (!synced) note('FAIL', 'sync', 'the second viewer never saw output typed in the first')
   await page2.screenshot({ path: join(SHOTS, 'viewer2-narrow.png') })
 
+  await traceBell('two-viewers')
+
   // A passive viewer resizing its own window must not move the shared grid.
-  const gridBefore = await (await fetch(`${BASE}/api/state`)).json()
+  const gridBefore = await (await authed('/api/state')).json()
   await page2.setViewportSize({ width: 380, height: 600 })
   await sleep(1800)
-  const gridAfter = await (await fetch(`${BASE}/api/state`)).json()
+  const gridAfter = await (await authed('/api/state')).json()
   const before = gridBefore.sessions.map((s) => `${s.id}:${s.cols}x${s.rows}`).join(',')
   const after = gridAfter.sessions.map((s) => `${s.id}:${s.cols}x${s.rows}`).join(',')
   if (before !== after) {
@@ -414,6 +497,8 @@ try {
         afterReload.replace(/\s+/g, ' ').trim().slice(-120),
       )}`)
   }
+
+  await traceBell('reloaded')
 
   // ── right panel ──────────────────────────────────────────────────────────
   await page.setViewportSize({ width: 1440, height: 900 })
@@ -522,6 +607,8 @@ try {
     await page.screenshot({ path: join(SHOTS, 'right-panel.png') })
   }
 
+  await traceBell('right-panel')
+
   // ── bottom terminals ─────────────────────────────────────────────────────
   // They belong to the session above them and follow it. A terminal opened
   // while working on one thing must not still be sitting there, pointing at
@@ -592,6 +679,8 @@ try {
     await page.screenshot({ path: join(SHOTS, 'bottom.png') })
   }
 
+  await traceBell('bottom')
+
   // ── session state ────────────────────────────────────────────────────────
   // The bell has to reach the panel through tmux, the PTY and the detector.
   // tmux's bell-action swallowed it entirely once, silently, so this is worth
@@ -605,7 +694,15 @@ try {
     await sleep(500)
   }
   if (!sawWaiting) {
-    note('FAIL', 'state', 'a session that rang the bell never showed as waiting')
+    const truth = await (await authed('/api/state')).json()
+    const summary = truth.sessions
+      .map((x) => `${x.title || x.command}=${x.state}/${x.stateSource}`)
+      .join(' ')
+    const dots = await page.$$eval('[data-testid="state-dot"]', (els) =>
+      els.map((el) => el.getAttribute('data-state')),
+    )
+    note('FAIL', 'state',
+      `a session that rang the bell never showed as waiting\n         trace: ${bellTrace.join(' -> ')}\n         server: [${summary}]\n         UI dots: ${JSON.stringify(dots)}`)
   } else {
     // And it must be visible from another tab, which is where the user
     // actually is.
@@ -714,6 +811,9 @@ try {
   } else {
     note('WARN', 'layout/drawer', 'no menu button at phone width; the sidebar may be taking the screen')
   }
+
+  for (const e of consoleErrors) note('WARN', 'console', e)
+  for (const f of failedReqs) note('FAIL', 'net', f)
 
   // ── horizontal overflow, desktop and phone ───────────────────────────────
   for (const [label, vp] of [['desktop', { width: 1440, height: 900 }], ['phone', { width: 390, height: 844 }]]) {

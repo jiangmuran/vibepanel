@@ -78,6 +78,10 @@ export function useDragList(ids: string[], onCommit: (ordered: string[]) => void
       if (e.currentTarget.hasPointerCapture(e.pointerId)) {
         e.currentTarget.releasePointerCapture(e.pointerId)
       }
+      // pointerup and pointercancel can both arrive for one gesture, and the
+      // state read below comes from the render that started it — so without
+      // this the same reorder is committed twice.
+      if (!armed.current) return
       armed.current = false
       const { draggingId, overIndex } = state
       setState({ draggingId: null, overIndex: null })

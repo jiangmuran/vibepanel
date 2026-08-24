@@ -73,6 +73,11 @@ type Config struct {
 	// TrustedProxies lists CIDRs whose X-Forwarded-For header is believed.
 	// Empty means trust nobody, which is correct when the panel is the edge.
 	TrustedProxies []string
+
+	// AllowFrom restricts which addresses may reach the panel at all. Empty
+	// allows everything, which is the default — this is a way to narrow an
+	// internet-facing deployment, not a requirement for a local one.
+	AllowFrom []string
 }
 
 // Default returns the configuration used when nothing is specified.
@@ -125,6 +130,9 @@ func (c *Config) envOverlay() {
 	}
 	if v, ok := os.LookupEnv("VIBEPANEL_TRUSTED_PROXIES"); ok && v != "" {
 		c.TrustedProxies = splitAndTrim(v)
+	}
+	if v, ok := os.LookupEnv("VIBEPANEL_ALLOW_FROM"); ok && v != "" {
+		c.AllowFrom = splitAndTrim(v)
 	}
 }
 
@@ -198,6 +206,11 @@ func (c Config) Validate() error {
 	for _, cidr := range c.TrustedProxies {
 		if _, _, err := net.ParseCIDR(cidr); err != nil {
 			return fmt.Errorf("config: trusted proxy %q is not a CIDR: %w", cidr, err)
+		}
+	}
+	for _, cidr := range c.AllowFrom {
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			return fmt.Errorf("config: allow-from %q is not a CIDR: %w", cidr, err)
 		}
 	}
 	return nil

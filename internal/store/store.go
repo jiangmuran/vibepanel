@@ -49,6 +49,41 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+	// v3: browser sessions and an audit trail.
+	//
+	// Login sessions are their own table rather than a signed cookie so they
+	// can be revoked: a panel that hands out a terminal on the public internet
+	// needs a way to say "not that device any more" without changing the
+	// password everywhere.
+	func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`CREATE TABLE IF NOT EXISTS auth_sessions (
+			     token_hash   BLOB PRIMARY KEY,
+			     user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			     created_at   INTEGER NOT NULL,
+			     expires_at   INTEGER NOT NULL,
+			     last_seen_at INTEGER NOT NULL,
+			     user_agent   TEXT NOT NULL DEFAULT '',
+			     ip           TEXT NOT NULL DEFAULT ''
+			 )`,
+			`CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at)`,
+			`CREATE TABLE IF NOT EXISTS audit_log (
+			     id       INTEGER PRIMARY KEY AUTOINCREMENT,
+			     at       INTEGER NOT NULL,
+			     event    TEXT NOT NULL,
+			     username TEXT NOT NULL DEFAULT '',
+			     ip       TEXT NOT NULL DEFAULT '',
+			     detail   TEXT NOT NULL DEFAULT ''
+			 )`,
+			`CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log(at DESC)`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	},
 }
 
 // schemaVersion is the version this build writes.

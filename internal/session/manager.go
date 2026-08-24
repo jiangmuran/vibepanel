@@ -78,22 +78,25 @@ type Live struct {
 	done    chan struct{}
 	closed  bool
 
-	// attachedAt is when the tmux client started. See attachSettle.
-	attachedAt time.Time
+	// reconfiguredAt is when the terminal was last set up — attached or
+	// resized. See settleWindow.
+	reconfiguredAt time.Time
 }
 
-// attachSettle is how long after attaching the pump stops treating output as
-// activity.
+// settleWindow is how long after reconfiguring the terminal the pump stops
+// treating output as activity.
 //
-// Attaching makes tmux repaint the pane, which is a redraw of content that was
-// already there — the terminal being set up, not the session doing something.
-// Counting it as activity marks every session "working" the moment the panel
-// starts, and clears any manual state the user had set.
+// Attaching makes tmux repaint the pane, and so does resizing it. Both are a
+// redraw of content that was already there — the terminal being set up, not
+// the session doing anything. Counting them as activity has two consequences,
+// both bad: every session reads as "working" the moment the panel starts, and
+// merely opening a session that was waiting for you clears the state that said
+// so, because subscribing resizes the grid.
 //
 // A quarter of a second is comfortably longer than a repaint and short enough
 // that real output is not lost: the worst case is a session that printed in
 // that window reading as quiet a couple of seconds early.
-const attachSettle = 250 * time.Millisecond
+const settleWindow = 250 * time.Millisecond
 
 // Signals is what the pump observed in a slice of output. The manager hands it
 // to whatever is deciding session state.
@@ -202,17 +205,17 @@ func (m *Manager) Attach(ctx context.Context, sessionID, tmuxName string, cols, 
 	}
 
 	l := &Live{
-		ID:         sessionID,
-		TmuxName:   tmuxName,
-		ptmx:       ptmx,
-		cmd:        cmd,
-		ring:       ring,
-		subs:       map[*Subscriber]struct{}{},
-		cols:       cols,
-		rows:       rows,
-		scanner:    newOSCScanner(),
-		done:       make(chan struct{}),
-		attachedAt: time.Now(),
+		ID:             sessionID,
+		TmuxName:       tmuxName,
+		ptmx:           ptmx,
+		cmd:            cmd,
+		ring:           ring,
+		subs:           map[*Subscriber]struct{}{},
+		cols:           cols,
+		rows:           rows,
+		scanner:        newOSCScanner(),
+		done:           make(chan struct{}),
+		reconfiguredAt: time.Now(),
 	}
 
 	m.mu.Lock()
@@ -294,7 +297,10 @@ func (m *Manager) pump(l *Live) {
 			if m.OnSignals != nil {
 				// A bell is always reported: it is an event, not a redraw, and
 				// tmux does not manufacture one while repainting.
-				settled := time.Since(l.attachedAt) > attachSettle
+				l.mu.RLock()
+				since := time.Since(l.reconfiguredAt)
+				l.mu.RUnlock()
+				settled := since > settleWindow
 				m.OnSignals(Signals{
 					SessionID: l.ID, Bell: bell, Titles: titles,
 					Bytes: n, Visible: settled && hasPrintable(chunk),
@@ -514,6 +520,10 @@ func (l *Live) Resize(clientID string, cols, rows int) error {
 		return nil
 	}
 	l.cols, l.rows = cols, rows
+	// A resize makes tmux repaint the pane. That redraw is not the session
+	// producing output, and treating it as such clears the very state the user
+	// opened the session to act on.
+	l.reconfiguredAt = time.Now()
 	ptmx := l.ptmx
 	l.mu.Unlock()
 

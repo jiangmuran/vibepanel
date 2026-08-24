@@ -20,6 +20,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/jiangmuran/vibepanel/internal/auth"
 	"github.com/jiangmuran/vibepanel/internal/config"
 	"github.com/jiangmuran/vibepanel/internal/hooks"
 	"github.com/jiangmuran/vibepanel/internal/httpapi"
@@ -118,10 +119,42 @@ func cmdServe(args []string) error {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	mgr := sessionpkg.NewManager(a.tmux, sessionpkg.DefaultRingSize)
 
+	trusted, err := auth.ParseCIDRs(a.cfg.TrustedProxies)
+	if err != nil {
+		return fmt.Errorf("trusted proxies: %w", err)
+	}
+	allow, err := auth.ParseCIDRs(a.cfg.AllowFrom)
+	if err != nil {
+		return fmt.Errorf("allow-from: %w", err)
+	}
+
 	srv := &httpapi.Server{
 		Cfg: a.cfg, DB: a.db, Tmux: a.tmux, Manager: mgr,
 		Hub: ws.NewHub(), Detector: sessionpkg.NewDetector(),
-		Sampler: &sysmon.Sampler{DiskPath: a.cfg.DataDir}, Log: logger,
+		Sampler: &sysmon.Sampler{DiskPath: a.cfg.DataDir},
+		Auth: &httpapi.Auth{
+			Throttle:       auth.NewThrottle(),
+			TrustedProxies: trusted,
+			Allow:          allow,
+		},
+		Log: logger,
+	}
+
+	// A setup token exists only while there is no account. Printing it to the
+	// console is the handover: whoever can read the server's output is the
+	// person entitled to claim the panel, and anyone who merely reaches it
+	// over the network is not.
+	users, err := a.db.CountUsers(ctx)
+	if err != nil {
+		return err
+	}
+	if users == 0 {
+		token, terr := auth.NewToken()
+		if terr != nil {
+			return terr
+		}
+		srv.Auth.SetupToken = token
+		defer func() { srv.Auth.SetupToken = "" }()
 	}
 	// The pump reports output and bells straight into the server, which is how
 	// last_output_at stays honest and, from M4, how session state is decided.
@@ -151,6 +184,13 @@ func cmdServe(args []string) error {
 		fmt.Printf("  frontend     %s (from disk)\n", a.cfg.StaticDir)
 	} else if !webui.Built() {
 		fmt.Printf("  frontend     NOT BUILT — run `npm run build` in web/, or pass --static-dir\n")
+	}
+	if len(allow) > 0 {
+		fmt.Printf("  allowed from %s\n", strings.Join(a.cfg.AllowFrom, ", "))
+	}
+	if srv.Auth.SetupToken != "" {
+		fmt.Printf("\n  No account yet. Open %s and use this one-time setup token:\n\n      %s\n\n",
+			a.cfg.PublicURL(), srv.Auth.SetupToken)
 	}
 
 	errCh := make(chan error, 1)

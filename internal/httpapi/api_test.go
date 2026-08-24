@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/jiangmuran/vibepanel/internal/auth"
 	"github.com/jiangmuran/vibepanel/internal/config"
 	"github.com/jiangmuran/vibepanel/internal/session"
 	"github.com/jiangmuran/vibepanel/internal/store"
@@ -67,12 +69,46 @@ func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 		Hub:      ws.NewHub(),
 		Detector: session.NewDetector(),
 		Sampler:  &sysmon.Sampler{DiskPath: dir},
+		Auth:     &Auth{Throttle: auth.NewThrottle(), SetupToken: "test-setup-token"},
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	mgr.OnSignals = srv.HandleSignals
 	ts := httptest.NewServer(srv.Routes())
 	t.Cleanup(ts.Close)
+
+	// Every endpoint that matters requires a session, so the tests sign in
+	// once through the real setup flow rather than reaching past it.
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("cookiejar: %v", err)
+	}
+	ts.Client().Jar = jar
+	res, err := ts.Client().Post(ts.URL+"/api/auth/setup", "application/json",
+		strings.NewReader(`{"token":"test-setup-token","username":"tester","password":"a sufficiently long password"}`))
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(res.Body)
+		t.Fatalf("setup: %s: %s", res.Status, b)
+	}
 	return ts, srv
+}
+
+// wsDialOptions carries the test session cookie onto WebSocket dials, which do
+// not go through the http.Client's jar.
+func wsDialOptions(t *testing.T, ts *httptest.Server) *websocket.DialOptions {
+	t.Helper()
+	u, err := url.Parse(ts.URL)
+	if err != nil {
+		t.Fatalf("parse url: %v", err)
+	}
+	header := http.Header{}
+	for _, c := range ts.Client().Jar.Cookies(u) {
+		header.Add("Cookie", c.Name+"="+c.Value)
+	}
+	return &websocket.DialOptions{HTTPHeader: header}
 }
 
 func postJSON[T any](t *testing.T, ts *httptest.Server, path string, body string) T {
@@ -156,7 +192,7 @@ func TestTerminalRoundTrip(t *testing.T) {
 		`{"projectId":"`+project.ID+`","command":["sh","-c","PS1=; export PS1; exec sh"]}`)
 
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
-	c, _, err := websocket.Dial(ctx, wsURL, nil)
+	c, _, err := websocket.Dial(ctx, wsURL, wsDialOptions(t, ts))
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -368,7 +404,7 @@ func TestReplayIsTaggedSeparately(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
 
 	// First viewer: fills the ring buffer, then leaves.
-	first, _, err := websocket.Dial(ctx, wsURL, nil)
+	first, _, err := websocket.Dial(ctx, wsURL, wsDialOptions(t, ts))
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -395,7 +431,7 @@ func TestReplayIsTaggedSeparately(t *testing.T) {
 	_ = first.CloseNow()
 
 	// Second viewer: its scrollback must arrive tagged as replay.
-	second, _, err := websocket.Dial(ctx, wsURL, nil)
+	second, _, err := websocket.Dial(ctx, wsURL, wsDialOptions(t, ts))
 	if err != nil {
 		t.Fatalf("dial second: %v", err)
 	}
@@ -438,7 +474,7 @@ func TestStateIsPushedToEveryViewer(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
 	viewers := make([]*websocket.Conn, 2)
 	for i := range viewers {
-		c, _, err := websocket.Dial(ctx, wsURL, nil)
+		c, _, err := websocket.Dial(ctx, wsURL, wsDialOptions(t, ts))
 		if err != nil {
 			t.Fatalf("dial %d: %v", i, err)
 		}

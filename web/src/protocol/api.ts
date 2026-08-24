@@ -1,4 +1,5 @@
 import type {
+  AuthState,
   FileListing,
   Note,
   PanelState,
@@ -19,19 +20,57 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // crash can produce something else; fall back to the status rather than
     // throwing a parse error that hides what actually happened.
     let message = `${res.status} ${res.statusText}`
+    let setupRequired = false
     try {
-      const body = (await res.json()) as { error?: string }
+      const body = (await res.json()) as { error?: string; setupRequired?: boolean }
       if (body.error) message = body.error
+      setupRequired = body.setupRequired === true
     } catch {
       /* non-JSON error body */
     }
+    // Distinguished so the shell can return to the sign-in screen rather than
+    // showing a permission error inside a panel the user cannot use.
+    if (res.status === 401) throw new UnauthorizedError(message, setupRequired)
     throw new Error(message)
   }
-  if (res.status === 204) return undefined as T
+  if (res.status === 204) {
+    // Drain it even though there is nothing there. A Response whose body is
+    // never read is reported by Chromium as an aborted request, which turns
+    // every successful delete into a network error in the devtools log and in
+    // anything watching for them.
+    await res.arrayBuffer()
+    return undefined as T
+  }
   return (await res.json()) as T
 }
 
+/** Thrown when the server says the caller is not signed in. */
+export class UnauthorizedError extends Error {
+  readonly setupRequired: boolean
+  constructor(message: string, setupRequired: boolean) {
+    super(message)
+    this.name = 'UnauthorizedError'
+    this.setupRequired = setupRequired
+  }
+}
+
 export const api = {
+  authState: () => request<AuthState>('/api/auth/state'),
+
+  setup: (token: string, username: string, password: string) =>
+    request<AuthState>('/api/auth/setup', {
+      method: 'POST',
+      body: JSON.stringify({ token, username, password }),
+    }),
+
+  login: (username: string, password: string) =>
+    request<AuthState>('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    }),
+
+  logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
+
   state: () => request<PanelState>('/api/state'),
 
   health: () =>

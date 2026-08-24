@@ -40,6 +40,7 @@ func Load(args []string, out io.Writer) (Config, error) {
 	fs.StringVar(&c.TmuxSocket, "tmux-socket", c.TmuxSocket, "tmux -L socket name; keep it dedicated to stay isolated from your own sessions")
 	fs.StringVar(&c.StaticDir, "static-dir", c.StaticDir, "serve the frontend from this directory instead of the embedded build")
 	proxies := fs.String("trusted-proxies", "", "comma-separated CIDRs whose X-Forwarded-For is trusted")
+	allowFrom := fs.String("allow-from", "", "comma-separated CIDRs allowed to reach the panel; empty allows all")
 
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
@@ -47,6 +48,9 @@ func Load(args []string, out io.Writer) (Config, error) {
 	c.TLSMode = TLSMode(tlsMode)
 	if *proxies != "" {
 		c.TrustedProxies = splitAndTrim(*proxies)
+	}
+	if *allowFrom != "" {
+		c.AllowFrom = splitAndTrim(*allowFrom)
 	}
 	if err := c.Validate(); err != nil {
 		return Config{}, err

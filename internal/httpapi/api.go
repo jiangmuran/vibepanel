@@ -39,6 +39,7 @@ type Server struct {
 	Hub      *ws.Hub
 	Detector *session.Detector
 	Sampler  *sysmon.Sampler
+	Auth     *Auth
 	Log      *slog.Logger
 
 	// hookToken authenticates state reports from agent hooks. Cached after the
@@ -70,29 +71,41 @@ func (s *Server) Routes() http.Handler {
 	r.Use(middleware.RealIP)
 
 	r.Route("/api", func(r chi.Router) {
+		// Open: the health probe says nothing sensitive, the auth endpoints are
+		// how you get in, and hooks carry their own token because they run
+		// outside the browser as children of an agent.
 		r.Get("/health", s.handleHealth)
-		r.Get("/state", s.handleState)
-
-		r.Post("/projects", s.handleCreateProject)
-		r.Post("/projects/reorder", s.handleReorderProjects)
-		r.Patch("/projects/{id}", s.handlePatchProject)
-		r.Delete("/projects/{id}", s.handleDeleteProject)
-
-		r.Post("/sessions", s.handleCreateSession)
-		// Hooks run outside the browser, as children of the agent, and
-		// authenticate with a token rather than a session cookie.
+		s.registerAuthRoutes(r)
 		r.Post("/hook/state", s.handleHookState)
 
-		s.registerPanelRoutes(r)
-		r.Patch("/sessions/{id}", s.handlePatchSession)
-		r.Delete("/sessions/{id}", s.handleDeleteSession)
+		// Everything else needs a session. This panel hands out a writable
+		// terminal; there is no such thing as a harmless unauthenticated
+		// endpoint here.
+		r.Group(func(r chi.Router) {
+			r.Use(s.RequireAuth)
+
+			r.Get("/state", s.handleState)
+
+			r.Post("/projects", s.handleCreateProject)
+			r.Post("/projects/reorder", s.handleReorderProjects)
+			r.Patch("/projects/{id}", s.handlePatchProject)
+			r.Delete("/projects/{id}", s.handleDeleteProject)
+
+			r.Post("/sessions", s.handleCreateSession)
+			r.Patch("/sessions/{id}", s.handlePatchSession)
+			r.Delete("/sessions/{id}", s.handleDeleteSession)
+
+			s.registerPanelRoutes(r)
+		})
 
 		r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusNotFound, "no such endpoint")
 		})
 	})
 
-	r.Handle("/ws", &ws.Handler{
+	// The WebSocket is the terminal itself; it needs the same session as
+	// everything else.
+	r.With(s.RequireAuth).Handle("/ws", &ws.Handler{
 		Manager: s.Manager,
 		Resolve: resolver{db: s.DB},
 		Hub:     s.Hub,

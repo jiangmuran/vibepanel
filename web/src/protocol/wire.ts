@@ -190,3 +190,12 @@ export interface Todo {
   createdAt: number
   doneAt: number | null
 }
+
+export interface AuthState {
+  configured: boolean
+  authenticated: boolean
+  username?: string
+  passkeysUsable: boolean
+  /** Why the passkey button is disabled; the browser's own error is opaque. */
+  passkeyReason?: string
+}

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -483,5 +484,56 @@ func TestControlIsFrozenNotHandedOverWhenTheControllerLeaves(t *testing.T) {
 	defer live.Unsubscribe(back)
 	if got := live.Controller(); got != "desktop-2" {
 		t.Errorf("controller after the owner returned = %q, want %q", got, "desktop-2")
+	}
+}
+
+func TestResizingDoesNotLookLikeSessionOutput(t *testing.T) {
+	ctx := context.Background()
+	tm := newTestTmux(t)
+	const name = "vp_resizequiet"
+	if err := tm.Create(ctx, tmux.CreateOptions{
+		Name: name, Dir: t.TempDir(), Width: 80, Height: 24,
+		Command: []string{"sh", "-c", "echo hello; exec sleep 60"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	m := NewManager(tm, 64<<10)
+	defer m.DetachAll()
+
+	var mu sync.Mutex
+	var visibleAfterResize bool
+	var resizedAt time.Time
+	m.OnSignals = func(sig Signals) {
+		mu.Lock()
+		defer mu.Unlock()
+		if !resizedAt.IsZero() && sig.Visible {
+			visibleAfterResize = true
+		}
+	}
+
+	live, err := m.Attach(ctx, "s1", name, 80, 24)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	viewer, _ := live.Subscribe("viewer")
+	defer live.Unsubscribe(viewer)
+	time.Sleep(600 * time.Millisecond) // let the attach burst settle
+
+	mu.Lock()
+	resizedAt = time.Now()
+	mu.Unlock()
+
+	// Opening a session in the browser resizes its grid, which makes tmux
+	// repaint. If that repaint counts as output, merely looking at a session
+	// that was waiting for you clears the state that said so.
+	if err := live.Resize("viewer", 132, 43); err != nil {
+		t.Fatalf("Resize: %v", err)
+	}
+	time.Sleep(400 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if visibleAfterResize {
+		t.Error("the repaint caused by a resize was reported as session output")
 	}
 }
