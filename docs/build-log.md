@@ -830,3 +830,23 @@ to the fix.
 The rule worth keeping: **a heuristic that cannot see the thing it is looking
 for must say so.** Every honest signal here was cheap to gather — no tokens
 spent, just a TUI left alone and a `wc -c` in a loop.
+
+## Restarting the backend, for real
+
+The one claim the whole architecture rests on — tmux owns the processes, the
+panel is a thin client, so restarting the panel costs you nothing — had never
+been tested. stress-check drops the WebSocket, which feels like the same test
+and is not: the ring buffer is still sitting in memory on the other side, so
+replay comes from the hot path. Killing the server deletes every buffer, and
+then the only thing that can put your scrollback back is `capture-pane`, and
+the only thing that can keep you logged in is the session row in SQLite.
+
+`restart-check.mjs` kills the server outright and checks four things that were
+all previously taken on faith: the pane pids are byte-identical across the
+restart (the processes were never touched), a page left open heals by itself
+and accepts input again without a reload, a page opened fresh afterwards is
+filled from the cold path, and the login survives. All four passed, which is
+the good kind of anticlimax — but they passed unverified for a week.
+
+The rule: a test that exercises a nearby path is not a test of this path. Ask
+what would have to be deleted for the fallback to run, then delete it.
