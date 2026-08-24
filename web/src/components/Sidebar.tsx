@@ -6,6 +6,7 @@ import {
   Pin,
   PinOff,
   Plus,
+  RotateCcw,
   Terminal as TerminalIcon,
   X,
 } from 'lucide-react'
@@ -32,6 +33,7 @@ export interface SidebarProps {
   onPinSession: (session: Session, pinned: boolean) => void
   onSetSessionState: (session: Session, state: SessionState) => void
   onKillSession: (session: Session) => void
+  onRestartSession: (session: Session) => void
 
   projectOrder: 'auto' | 'manual'
   onReorderProjects: (ids: string[]) => void
@@ -47,9 +49,18 @@ function sessionLabel(s: Session): string {
 }
 
 /** The most urgent state among a project's sessions, for the collapsed rail. */
-function summarise(sessions: Session[]): SessionState | null {
+/**
+ * The one glyph the collapsed rail can show for a whole project.
+ *
+ * A crash outranks "done" but not the two live states: something still running
+ * or still asking is more urgent than something that already failed and will
+ * stay failed. Returning it as a crash rather than a state is what stops a
+ * project whose every session died from wearing a green check.
+ */
+function summarise(sessions: Session[]): SessionState | 'crashed' | null {
   if (sessions.some((s) => s.state === 'waiting')) return 'waiting'
   if (sessions.some((s) => s.state === 'working')) return 'working'
+  if (sessions.some((s) => s.exited && s.exitStatus !== 0)) return 'crashed'
   return sessions.length > 0 ? 'done' : null
 }
 
@@ -108,7 +119,11 @@ export function Sidebar(props: SidebarProps) {
               {initials(p.name)}
               {state && (
                 <span className="absolute -right-0.5 -bottom-0.5">
-                  <StateDot state={state} size={8} />
+                  {state === 'crashed' ? (
+                    <StateDot state="done" size={8} exited exitStatus={1} />
+                  ) : (
+                    <StateDot state={state} size={8} />
+                  )}
                 </span>
               )}
             </button>
@@ -226,6 +241,8 @@ export function Sidebar(props: SidebarProps) {
                 >
                   <StateDot
                     state={s.state}
+                    exited={s.exited}
+                    exitStatus={s.exitStatus}
                     onToggle={(next) => props.onSetSessionState(s, next)}
                   />
                   <InlineName
@@ -234,7 +251,38 @@ export function Sidebar(props: SidebarProps) {
                     className="flex-1 text-[12.5px]"
                   />
                   {s.pinned && <Pin size={11} className="shrink-0 text-ink-2" />}
-                  {!isLive && <span className="shrink-0 text-[10px] text-ink-2">idle</span>}
+                  {/* The glyph says "gone" and this says how. A shape cannot
+                      carry an exit code, and 3 vs 0 is the difference between
+                      "it crashed" and "it finished and closed". */}
+                  {s.exited && (
+                    <span
+                      className={`shrink-0 text-[10px] tabular ${
+                        s.exitStatus === 0 ? 'text-ink-2' : 'text-state-crashed'
+                      }`}
+                    >
+                      {s.exitStatus === 0 ? 'exited' : `exit ${s.exitStatus}`}
+                    </span>
+                  )}
+                  {!isLive && !s.exited && (
+                    <span className="shrink-0 text-[10px] text-ink-2">idle</span>
+                  )}
+                  {/* Always visible, unlike pin and kill: a dead session is a
+                      thing to act on, not an affordance to discover on hover —
+                      and hover does not exist on the phone. */}
+                  {s.exited && (
+                    <button
+                      type="button"
+                      data-testid="restart-session"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        props.onRestartSession(s)
+                      }}
+                      title="Restart this session's command in the same pane"
+                      className="shrink-0 rounded p-0.5 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+                    >
+                      <RotateCcw size={12} />
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={(e) => {

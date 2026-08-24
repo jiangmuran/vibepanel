@@ -292,6 +292,25 @@ func (c *Client) CaptureScrollback(ctx context.Context, name string) (string, er
 	return c.run(ctx, "capture-pane", "-p", "-e", "-J", "-S", "-", "-E", "-1", "-t", target(name))
 }
 
+// Respawn restarts the process in a session's pane, reusing the command it was
+// created with.
+//
+// This is the only way back from a dead pane. Without it a crashed agent is a
+// corpse you can read but not revive, and the answer to "claude died overnight"
+// is to leave the panel and go find a terminal — which is the thing the panel
+// exists to avoid.
+//
+// -k kills anything still running first. A pane whose process merely stopped
+// responding is the other case people reach for this in, and respawn-pane
+// refuses on a live pane without it.
+func (c *Client) Respawn(ctx context.Context, name string) error {
+	_, err := c.run(ctx, "respawn-pane", "-k", "-t", target(name))
+	if err != nil {
+		return fmt.Errorf("tmux: respawn %s: %w", name, err)
+	}
+	return nil
+}
+
 // Info is a point-in-time snapshot of one session, used for naming, state
 // heuristics and the sidebar.
 type Info struct {
@@ -306,6 +325,10 @@ type Info struct {
 	Path    string // #{pane_current_path} — the pane's cwd right now
 	PID     int    // #{pane_pid} — first process in the pane
 	Dead    bool   // #{pane_dead} — process exited, output preserved
+	// DeadStatus is #{pane_dead_status}, the wait status of the exited
+	// process. Only meaningful while Dead; tmux leaves it empty otherwise, so
+	// it reads as 0 and a live pane must never be described by it.
+	DeadStatus int
 	// Bell is #{window_bell_flag}.
 	//
 	// Always false under the panel's configuration: with bell-action "any"
@@ -333,6 +356,8 @@ var infoFields = []string{
 	"#{window_height}",
 	"#{session_activity}",
 	"#{alternate_on}",
+	// Appended rather than inserted: parseInfo indexes this slice positionally.
+	"#{pane_dead_status}",
 }
 
 var infoFormat = strings.Join(infoFields, fieldSep)
@@ -389,6 +414,7 @@ func parseInfo(line string) (Info, error) {
 		Path:        f[3],
 		PID:         atoi(f[4]),
 		Dead:        f[5] == "1",
+		DeadStatus:  atoi(f[11]),
 		Bell:        f[6] == "1",
 		Width:       atoi(f[7]),
 		Height:      atoi(f[8]),

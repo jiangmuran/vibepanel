@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ChevronUp, LogOut, Menu, Moon, Monitor, PanelRight, Settings as SettingsIcon, Sun } from 'lucide-react'
+import {
+  ChevronUp,
+  LogOut,
+  Menu,
+  Moon,
+  Monitor,
+  PanelRight,
+  RotateCcw,
+  Settings as SettingsIcon,
+  Sun,
+} from 'lucide-react'
 
 import { api, UnauthorizedError } from './protocol/api'
 import { PanelSocket } from './protocol/socket'
@@ -264,6 +274,13 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     void guard(() => api.deleteSession(s.id))
   }
 
+  // No confirmation: unlike killing, restarting a dead session destroys
+  // nothing — the pane and its scrollback stay, so the crash is still there to
+  // read next to the new prompt.
+  const restartSession = (s: Session) => {
+    void guard(() => api.restartSession(s.id))
+  }
+
   const selectSession = (id: string) => {
     setSelected(id)
     // On a narrow screen the list is an overlay covering the terminal; leaving
@@ -299,6 +316,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           onPinSession={(s, pinned) => void guard(() => api.patchSession(s.id, { pinned }))}
           onSetSessionState={(s, st) => void guard(() => api.patchSession(s.id, { state: st }))}
           onKillSession={killSession}
+          onRestartSession={restartSession}
           projectOrder={state.projectOrder}
           onReorderProjects={(ids) => void guard(() => api.reorderProjects(ids))}
           onAutoOrderProjects={() => void guard(() => api.autoOrderProjects())}
@@ -347,6 +365,8 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             <>
               <StateDot
                 state={current.state}
+                exited={current.exited}
+                exitStatus={current.exitStatus}
                 onToggle={(st) => void guard(() => api.patchSession(current.id, { state: st }))}
               />
               <span data-testid="session-title" className="truncate text-[13px] font-medium">
@@ -354,6 +374,26 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               </span>
               {!narrow && (
                 <span className="truncate text-[12px] text-ink-2">{currentProject?.name}</span>
+              )}
+              {/* Where you are when you find out. Reading a stack trace and
+                  then having to go hunting in the sidebar for the way to try
+                  again is the kind of small friction that sends people back to
+                  a real terminal. */}
+              {current.exited && (
+                <button
+                  type="button"
+                  data-testid="restart-current"
+                  onClick={() => restartSession(current)}
+                  className="ml-1 flex shrink-0 items-center gap-1 rounded-full border border-hairline px-2 py-0.5 text-[11px] text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+                  title={
+                    current.exitStatus === 0
+                      ? 'The process exited. Run it again in this pane.'
+                      : `The process exited with status ${current.exitStatus}. Run it again in this pane.`
+                  }
+                >
+                  <RotateCcw size={11} />
+                  restart
+                </button>
               )}
               <span data-testid="grid-size" className="ml-auto tabular text-[11px] text-ink-2">
                 {current.cols}x{current.rows}

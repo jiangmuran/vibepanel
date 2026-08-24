@@ -17,10 +17,18 @@ const LABEL: Record<SessionState, string> = {
 export function StateDot({
   state,
   size = 10,
+  exited,
+  exitStatus = 0,
   onToggle,
 }: {
   state: SessionState
   size?: number
+  /**
+   * The process is gone. Overrides the state glyph, because "what the task
+   * was doing" stops being the useful thing to show once nothing is running.
+   */
+  exited?: boolean
+  exitStatus?: number
   /**
    * Makes the indicator a button that flips between "done" and "waiting".
    *
@@ -31,6 +39,11 @@ export function StateDot({
    */
   onToggle?: (next: SessionState) => void
 }) {
+  if (exited) {
+    // Not a button. Marking a session with no process "waiting for you" says
+    // something untrue about a thing that cannot change until it is restarted.
+    return renderExited(size, exitStatus)
+  }
   const title = onToggle
     ? `${LABEL[state]} — click to mark as ${state === 'done' ? 'waiting' : 'done'}`
     : LABEL[state]
@@ -52,6 +65,39 @@ export function StateDot({
     >
       {glyph}
     </button>
+  )
+}
+
+/**
+ * Two more shapes, for the two ways a process can be gone.
+ *
+ * A cross for a non-zero status and a hollow square for a clean one — both
+ * unmistakable against the triangle, circle and check at 10px, which is what
+ * red line 4 is about. The status itself goes in the label, because a shape
+ * cannot carry the number and the number is what tells you whether to worry.
+ */
+function renderExited(size: number, status: number) {
+  const title = status === 0 ? 'Exited' : `Exited with status ${status}`
+  const colour = status === 0 ? 'var(--vp-state-dead)' : 'var(--vp-state-crashed)'
+  if (status === 0) {
+    return (
+      <svg width={size} height={size} viewBox="0 0 10 10" role="img" aria-label={title}>
+        <title>{title}</title>
+        <rect x="1.4" y="1.4" width="7.2" height="7.2" rx="1.2" fill="none" stroke={colour} strokeWidth="1.5" />
+      </svg>
+    )
+  }
+  return (
+    <svg width={size} height={size} viewBox="0 0 10 10" role="img" aria-label={title}>
+      <title>{title}</title>
+      <path
+        d="M1.8 1.8 L8.2 8.2 M8.2 1.8 L1.8 8.2"
+        fill="none"
+        stroke={colour}
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </svg>
   )
 }
 

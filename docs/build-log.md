@@ -870,3 +870,42 @@ measured the grid that was already on screen and answered the question with
 itself. The measurement has to be taken with the host still filling its box,
 before the transform. The harness caught it because the new assertion was
 written as the converse of the old one, not as a restatement of it.
+
+## A crash and a finished job were the same green check
+
+Three sessions, three different realities, one row each in the sidebar:
+
+    crashed   bash -c 'echo boom >&2; exit 3'   →  done
+    finished  bash -c 'echo all done'           →  done
+    alive     sleep 300                         →  done
+
+tmux knew the difference perfectly well — `#{pane_dead}=1`, `#{pane_dead_status}=3`
+— and the panel read the first of those fields and threw the second away. The
+whole point of the sidebar is to answer "which of these needs me", and it was
+answering "all fine" over a process that had died four hours ago.
+
+The state enum is a red line and it stays three values, because the three
+states describe the *task* and the user asked for exactly those. Whether a
+process still exists is a different axis, so `exited` and `exit_status` are
+columns on the session rather than a fourth state. Sorting is untouched for the
+same reason: reordering the sidebar was a design decision, not something to
+change as a side effect of a bug fix.
+
+Two new shapes, since red line 4 rules out doing this with colour: a cross for
+a non-zero status and a hollow square for a clean exit, next to the number in
+text, because a shape cannot carry "3" and 3 is what tells you whether to care.
+
+Then the corpse needed a way back, so `respawn-pane -k` behind a restart button
+that is *not* hover-gated — a dead session is a thing to act on, and hover does
+not exist on a phone. Writing the comment for it, I claimed the scrollback
+survives a respawn. Measuring it instead: the pane's history survives, the
+visible screen does not, which is exactly where the crash message and the tail
+of a stack trace are. The comment now says that, because a comment that
+overstates what a call preserves is how someone later builds a feature on a
+guarantee that was never there.
+
+The check that would have caught the original bug is not "does the state say
+done" — it did, correctly, by its own rules. It is: do three different
+situations draw three different glyphs? render-check now compares the rendered
+SVG of a crashed, a cleanly exited and a running session pairwise and fails if
+any two are identical.

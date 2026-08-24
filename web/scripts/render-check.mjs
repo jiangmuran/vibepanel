@@ -976,6 +976,90 @@ try {
     await page.screenshot({ path: join(SHOTS, 'mobile.png') })
   }
 
+  // ── a dead process does not look like a finished job ─────────────────────
+  // tmux keeps a dead pane on screen, and the panel used to read that as
+  // "done" — the same thing it says about an agent that finished the work. A
+  // crash at 2am and a successful refactor were the same green check.
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await sleep(600)
+  const flag = join(DATA, 'restart-flag')
+  const dieOnce = `test -f ${flag} || { touch ${flag}; echo boom >&2; exit 3; }; sleep 120`
+  for (const [title, command] of [
+    ['dies', ['bash', '-c', dieOnce]],
+    ['quits', ['bash', '-c', 'true']],
+  ]) {
+    await authed('/api/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ projectId: proj.id, title, command }),
+    })
+  }
+
+  const rowOf = (title) => page.locator('[data-testid="session-row"]', { hasText: title }).first()
+  const glyphOf = async (title) => {
+    const svg = rowOf(title).locator('svg[role="img"]').first()
+    return {
+      label: await svg.getAttribute('aria-label').catch(() => null),
+      shape: await svg.innerHTML().catch(() => null),
+    }
+  }
+  let crash = null
+  for (let i = 0; i < 40; i++) {
+    crash = await glyphOf('dies')
+    if (crash.label?.startsWith('Exited')) break
+    await sleep(500)
+  }
+  const clean = await glyphOf('quits')
+  const running = await glyphOf('scratchpad')
+
+  if (crash?.label !== 'Exited with status 3') {
+    note('FAIL', 'exit',
+      `a session whose process died with status 3 is labelled ${JSON.stringify(crash?.label)}; ` +
+      'a crash is being reported as an ordinary state')
+  }
+  if (clean.label !== 'Exited') {
+    note('FAIL', 'exit', `a session that exited cleanly is labelled ${JSON.stringify(clean.label)}`)
+  }
+  // Red line 4: shape, not only hue. Three different situations must not draw
+  // the same glyph, or the distinction dies with the first colour-blind user
+  // or the first dim screen.
+  const shapes = [
+    ['crashed', crash?.shape],
+    ['exited cleanly', clean.shape],
+    ['running', running.shape],
+  ]
+  for (let i = 0; i < shapes.length; i++) {
+    for (let j = i + 1; j < shapes.length; j++) {
+      if (shapes[i][1] && shapes[i][1] === shapes[j][1]) {
+        note('FAIL', 'exit',
+          `"${shapes[i][0]}" and "${shapes[j][0]}" draw an identical glyph, so only colour ` +
+          'could tell them apart')
+      }
+    }
+  }
+  // The number, in text, next to the shape that cannot carry it.
+  const badge = await rowOf('dies').innerText()
+  if (!badge.includes('exit 3')) {
+    note('FAIL', 'exit', `the crashed row does not show the exit status: ${JSON.stringify(badge)}`)
+  }
+  await page.screenshot({ path: join(SHOTS, 'exited-sessions.png') })
+
+  // A corpse you can only delete is not much use at 2am.
+  const restart = rowOf('dies').locator('[data-testid="restart-session"]')
+  if (!(await restart.isVisible().catch(() => false))) {
+    note('FAIL', 'exit', 'a dead session offers no way to start it again')
+  } else {
+    await restart.click()
+    let revived = false
+    for (let i = 0; i < 30; i++) {
+      const g = await glyphOf('dies')
+      if (g.label && !g.label.startsWith('Exited')) { revived = true; break }
+      await sleep(500)
+    }
+    if (!revived) {
+      note('FAIL', 'exit', 'restarting a dead session left it looking dead')
+    }
+  }
+
   // ── the panel says when it is guessing ───────────────────────────────────
   // Without state reporting the heuristic has only the terminal bell, and
   // Claude Code does not ring it when it stops for a decision — so the state

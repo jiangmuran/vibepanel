@@ -1291,3 +1291,93 @@ func TestStateGuessedOnlyWhenAnAgentIsRunningUnreported(t *testing.T) {
 		t.Error("the notice survived a hook report")
 	}
 }
+
+// A crash and a success are the two things the sidebar most needs to tell
+// apart, and until the exit status was carried through they were the same row.
+func TestACrashedSessionIsNotReportedAsDone(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	project := postJSON[store.Project](t, ts, "/api/projects", `{"path":"`+dir+`","name":"exits"}`)
+
+	// Dies the first time and survives the second, so a working restart is
+	// distinguishable from a command that simply crashes again immediately.
+	flag := filepath.Join(dir, "flag")
+	script := `test -f ` + flag + ` || { touch ` + flag + `; exit 3; }; sleep 60`
+	crashed := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","title":"crashed","command":["bash","-c",`+quote(script)+`]}`)
+	alive := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","title":"alive","command":["sleep","60"]}`)
+
+	find := func(id string) store.Session {
+		t.Helper()
+		res, err := ts.Client().Get(ts.URL + "/api/state")
+		if err != nil {
+			t.Fatalf("GET: %v", err)
+		}
+		defer res.Body.Close()
+		var out struct {
+			Sessions []store.Session `json:"sessions"`
+		}
+		if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		for _, s := range out.Sessions {
+			if s.ID == id {
+				return s
+			}
+		}
+		t.Fatalf("session %s missing from the snapshot", id)
+		return store.Session{}
+	}
+	// The poller decides this, so it has to be waited for rather than read once.
+	waitExit := func(id string, want bool) store.Session {
+		t.Helper()
+		deadline := time.Now().Add(15 * time.Second)
+		var got store.Session
+		for time.Now().Before(deadline) {
+			if err := srv.pollOnce(ctx); err != nil {
+				t.Fatalf("poll: %v", err)
+			}
+			if got = find(id); got.Exited == want {
+				return got
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		t.Fatalf("session %s: exited never became %v (state=%q exited=%v status=%d)",
+			id, want, got.State, got.Exited, got.ExitStatus)
+		return got
+	}
+
+	dead := waitExit(crashed.ID, true)
+	if dead.ExitStatus != 3 {
+		t.Errorf("exit status = %d, want 3 — without it a crash cannot be told from a clean exit",
+			dead.ExitStatus)
+	}
+	if live := find(alive.ID); live.Exited {
+		t.Error("a running session was reported as exited")
+	}
+
+	res, err := ts.Client().Post(ts.URL+"/api/sessions/"+crashed.ID+"/restart", "application/json", nil)
+	if err != nil {
+		t.Fatalf("restart: %v", err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("restart: status %d", res.StatusCode)
+	}
+	// Cleared immediately by the handler rather than at the next tick, because
+	// a button that takes a poll interval to visibly do anything gets pressed
+	// again.
+	if again := find(crashed.ID); again.Exited {
+		t.Error("the session still claimed to be dead right after being restarted")
+	}
+	if back := waitExit(crashed.ID, false); back.ExitStatus != 0 {
+		t.Errorf("exit status = %d after a successful restart, want 0", back.ExitStatus)
+	}
+}
+
+func quote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}

@@ -103,6 +103,23 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+	// v5: a session's process can be gone while the session is still there.
+	//
+	// tmux keeps a dead pane on screen (remain-on-exit), and the panel used to
+	// read that as "done" — the same thing it says about an agent that finished
+	// the job. A crash and a success looked identical in the sidebar, which is
+	// the one comparison the sidebar exists to make.
+	func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`ALTER TABLE sessions ADD COLUMN exited INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE sessions ADD COLUMN exit_status INTEGER NOT NULL DEFAULT 0`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	},
 }
 
 // schemaVersion is the version this build writes.

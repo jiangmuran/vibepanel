@@ -109,6 +109,17 @@ export interface Session {
   archivedAt: number | null
 
   /**
+   * The pane's process is gone; tmux is showing its last screen.
+   *
+   * Orthogonal to `state`, which describes the task. A crashed agent and an
+   * agent that finished are both "done" as far as the heuristic can tell, and
+   * telling them apart is the whole reason this exists.
+   */
+  exited: boolean
+  /** The wait status, meaningful only while `exited`. */
+  exitStatus: number
+
+  /**
    * Set for a scratch terminal opened under a main session.
    *
    * Bottom terminals are ordinary sessions with a parent rather than their own

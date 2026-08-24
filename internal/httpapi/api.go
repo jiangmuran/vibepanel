@@ -102,6 +102,7 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/sessions", s.handleCreateSession)
 			r.Patch("/sessions/{id}", s.handlePatchSession)
 			r.Delete("/sessions/{id}", s.handleDeleteSession)
+			r.Post("/sessions/{id}/restart", s.handleRestartSession)
 
 			s.registerPanelRoutes(r)
 			s.registerSettingsRoutes(r)
@@ -771,6 +772,51 @@ func (s *Server) handlePatchSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, rec)
 }
 
+// handleRestartSession brings a dead session's process back.
+//
+// In place, reusing the pane and the session id, so the sidebar entry, its
+// name, its project and its scrollback all stay put. Deleting the session and
+// making a new one would lose every one of those.
+//
+// What respawn-pane does destroy, measured rather than assumed: the pane's
+// visible screen, which is where the crash message and the tail of any stack
+// trace are. Everything that had already scrolled into history survives. A
+// viewer watching at the time keeps the lost screen in the browser's own
+// scrollback; a viewer who reloads afterwards does not, because replay is
+// rebuilt from tmux's history.
+func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sid := chi.URLParam(r, "id")
+	rec, err := s.DB.GetSession(ctx, sid)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	if err := s.Tmux.Respawn(ctx, rec.TmuxName); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// Clear the flag here rather than waiting for the poller: the button the
+	// user just pressed has to visibly do something, and a tick of latency
+	// reads as "nothing happened" and gets pressed again.
+	if err := s.DB.SetSessionExit(ctx, sid, false, 0); err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	// A respawned pane is a new process behind the same session, so the old
+	// evidence describes somebody else. Forgetting is what stops a bell rung
+	// by the dead process from being attributed to the new one.
+	if s.Detector != nil {
+		s.Detector.Forget(sid)
+	}
+	if err := s.DB.SetSessionState(ctx, sid, session.StateWorking, session.SourceHeuristic); err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	s.notifyState()
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	sid := chi.URLParam(r, "id")
@@ -1012,6 +1058,11 @@ func (s *Server) pollOnce(ctx context.Context) error {
 			// SetSessionTitle with TitleAuto is a no-op once the user has
 			// renamed the tab, so this cannot stomp a manual name.
 			if err := s.DB.SetSessionTitle(ctx, row.ID, title, store.TitleAuto); err != nil {
+				return err
+			}
+		}
+		if info.Dead != row.Exited || (info.Dead && info.DeadStatus != row.ExitStatus) {
+			if err := s.DB.SetSessionExit(ctx, row.ID, info.Dead, info.DeadStatus); err != nil {
 				return err
 			}
 		}

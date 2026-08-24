@@ -154,6 +154,9 @@ export const api = {
 
   deleteSession: (id: string) => request<void>(`/api/sessions/${id}`, { method: 'DELETE' }),
 
+  restartSession: (id: string) =>
+    request<void>(`/api/sessions/${id}/restart`, { method: 'POST' }),
+
   system: () => request<SystemSample>('/api/system'),
 
   files: (projectId: string, path = '') =>

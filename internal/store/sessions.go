@@ -36,8 +36,16 @@ type Session struct {
 	Cols           int            `json:"cols"`
 	Rows           int            `json:"rows"`
 	LastOutputAt   int64          `json:"lastOutputAt"`
-	CreatedAt      int64          `json:"createdAt"`
-	ArchivedAt     *int64         `json:"archivedAt"`
+
+	// Exited means the pane's process is gone and tmux is showing its last
+	// screen. Orthogonal to State: the task may have been finished, abandoned
+	// or killed, and only the exit status hints at which.
+	Exited bool `json:"exited"`
+	// ExitStatus is the wait status, meaningful only while Exited.
+	ExitStatus int `json:"exitStatus"`
+
+	CreatedAt  int64  `json:"createdAt"`
+	ArchivedAt *int64 `json:"archivedAt"`
 
 	// ParentID is set for a scratch terminal opened under a main session.
 	//
@@ -87,7 +95,7 @@ func (d *DB) CreateSession(ctx context.Context, s Session) (Session, error) {
 
 const sessionColumns = `id, project_id, tmux_name, title, title_source, state, state_source,
 	state_changed_at, pinned, sort_index, cwd, command, cols, rows,
-	last_output_at, created_at, archived_at, parent_session_id`
+	last_output_at, created_at, archived_at, parent_session_id, exited, exit_status`
 
 func scanSession(sc interface{ Scan(...any) error }) (Session, error) {
 	var s Session
@@ -97,7 +105,7 @@ func scanSession(sc interface{ Scan(...any) error }) (Session, error) {
 	err := sc.Scan(&s.ID, &s.ProjectID, &s.TmuxName, &s.Title, &s.TitleSource,
 		&s.State, &s.StateSource, &s.StateChangedAt, &s.Pinned, &sortIdx,
 		&s.CWD, &s.Command, &s.Cols, &s.Rows, &s.LastOutputAt, &s.CreatedAt, &archived,
-		&parent)
+		&parent, &s.Exited, &s.ExitStatus)
 	if err != nil {
 		return Session{}, err
 	}
@@ -281,6 +289,20 @@ func (d *DB) UpdateSessionRuntime(ctx context.Context, id, cwd, command string) 
 		`UPDATE sessions SET cwd = ?, command = ? WHERE id = ?`, cwd, command, id)
 	if err != nil {
 		return fmt.Errorf("store: update session runtime: %w", err)
+	}
+	return nil
+}
+
+// SetSessionExit records whether a session's process is still there.
+//
+// Written by the poller from #{pane_dead}, and cleared again on respawn, so a
+// session restarted from the panel stops claiming to be dead without waiting
+// for the next tick.
+func (d *DB) SetSessionExit(ctx context.Context, id string, exited bool, status int) error {
+	_, err := d.sql.ExecContext(ctx,
+		`UPDATE sessions SET exited = ?, exit_status = ? WHERE id = ?`, exited, status, id)
+	if err != nil {
+		return fmt.Errorf("store: set session exit: %w", err)
 	}
 	return nil
 }
