@@ -137,3 +137,56 @@ export interface PanelState {
 export interface StateMessage extends PanelState {
   t: 'state'
 }
+
+// ── side panels ────────────────────────────────────────────────────────────
+
+export interface SystemSample {
+  at: number
+  /** Null on the very first sample: there is nothing to difference against. */
+  cpuPercent: number | null
+  cores: number
+  load1: number
+  load5: number
+  load15: number
+  memTotal: number
+  memAvailable: number
+  swapTotal: number
+  swapFree: number
+  diskTotal: number
+  diskFree: number
+  diskPath: string
+  uptime: number
+}
+
+export interface FileEntry {
+  name: string
+  /** Relative to the project root, forward slashes. */
+  path: string
+  isDir: boolean
+  size: number
+  modTime: number
+  symlink: boolean
+  readable: boolean
+}
+
+export interface FileListing {
+  path: string
+  parent: string | null
+  entries: FileEntry[]
+}
+
+export interface Note {
+  projectId: string
+  content: string
+  updatedAt: number
+}
+
+export interface Todo {
+  id: string
+  projectId: string
+  text: string
+  done: boolean
+  sortIndex: number
+  createdAt: number
+  doneAt: number | null
+}

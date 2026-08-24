@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +23,7 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/config"
 	"github.com/jiangmuran/vibepanel/internal/session"
 	"github.com/jiangmuran/vibepanel/internal/store"
+	"github.com/jiangmuran/vibepanel/internal/sysmon"
 	"github.com/jiangmuran/vibepanel/internal/tmux"
 	"github.com/jiangmuran/vibepanel/internal/ws"
 )
@@ -64,6 +66,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 		Manager:  mgr,
 		Hub:      ws.NewHub(),
 		Detector: session.NewDetector(),
+		Sampler:  &sysmon.Sampler{DiskPath: dir},
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	mgr.OnSignals = srv.HandleSignals
@@ -1020,5 +1023,183 @@ func TestScratchTerminalsAreNotAllNamedAfterTheirDirectory(t *testing.T) {
 		if rec.Title == base {
 			t.Errorf("scratch terminal was named after its directory (%q)", rec.Title)
 		}
+	}
+}
+
+func TestNotesRoundTrip(t *testing.T) {
+	ts, _ := newTestServer(t)
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"noted"}`)
+
+	// A project that has never been written to opens a blank editor rather
+	// than an error.
+	res, err := ts.Client().Get(ts.URL + "/api/projects/" + project.ID + "/notes")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	var note store.Note
+	if err := json.NewDecoder(res.Body).Decode(&note); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	res.Body.Close()
+	if note.Content != "" {
+		t.Errorf("new project's note = %q, want empty", note.Content)
+	}
+
+	put := func(body string) *http.Response {
+		req, _ := http.NewRequest(http.MethodPut,
+			ts.URL+"/api/projects/"+project.ID+"/notes", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		r, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatalf("PUT: %v", err)
+		}
+		return r
+	}
+
+	r := put(`{"content":"# plan\nship it"}`)
+	r.Body.Close()
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("PUT status = %d", r.StatusCode)
+	}
+
+	res, _ = ts.Client().Get(ts.URL + "/api/projects/" + project.ID + "/notes")
+	json.NewDecoder(res.Body).Decode(&note) //nolint:errcheck
+	res.Body.Close()
+	if note.Content != "# plan\nship it" {
+		t.Errorf("note = %q", note.Content)
+	}
+	if note.UpdatedAt == 0 {
+		t.Error("updatedAt was not set")
+	}
+
+	// Bounded so that one save cannot be arbitrarily large.
+	r = put(`{"content":"` + strings.Repeat("x", maxNoteBytes+1) + `"}`)
+	r.Body.Close()
+	if r.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("oversized note status = %d, want 413", r.StatusCode)
+	}
+}
+
+func TestTodos(t *testing.T) {
+	ts, _ := newTestServer(t)
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"listy"}`)
+	base := ts.URL + "/api/projects/" + project.ID + "/todos"
+
+	first := postJSON[store.Todo](t, ts, "/api/projects/"+project.ID+"/todos", `{"text":"write it"}`)
+	second := postJSON[store.Todo](t, ts, "/api/projects/"+project.ID+"/todos", `{"text":"test it"}`)
+
+	list := func() []store.Todo {
+		res, err := ts.Client().Get(base)
+		if err != nil {
+			t.Fatalf("GET: %v", err)
+		}
+		defer res.Body.Close()
+		var out []store.Todo
+		if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return out
+	}
+
+	got := list()
+	if len(got) != 2 || got[0].ID != first.ID {
+		t.Fatalf("list = %+v, want the order they were added in", got)
+	}
+
+	// Ticking something off moves it down but does not remove it: seeing what
+	// you just finished is most of the value of ticking it.
+	req, _ := http.NewRequest(http.MethodPatch, ts.URL+"/api/todos/"+first.ID,
+		strings.NewReader(`{"done":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("PATCH: %v", err)
+	}
+	res.Body.Close()
+
+	got = list()
+	if len(got) != 2 {
+		t.Fatalf("a completed item disappeared: %+v", got)
+	}
+	if got[0].ID != second.ID || !got[1].Done {
+		t.Errorf("order = %+v, want outstanding first", got)
+	}
+
+	req, _ = http.NewRequest(http.MethodDelete, ts.URL+"/api/todos/"+second.ID, nil)
+	res, _ = ts.Client().Do(req)
+	res.Body.Close()
+	if len(list()) != 1 {
+		t.Error("delete did not remove the item")
+	}
+}
+
+func TestTodoRejectsEmptyText(t *testing.T) {
+	ts, _ := newTestServer(t)
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"empty"}`)
+	// Whitespace is not an item, and an unclickable blank row is worse than a
+	// refused request.
+	res, err := ts.Client().Post(ts.URL+"/api/projects/"+project.ID+"/todos",
+		"application/json", strings.NewReader(`{"text":"   "}`))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", res.StatusCode)
+	}
+}
+
+func TestFileBrowserStaysInsideTheProject(t *testing.T) {
+	ts, _ := newTestServer(t)
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "src", "main.go"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+root+`","name":"browse"}`)
+
+	get := func(path string) (int, string) {
+		res, err := ts.Client().Get(ts.URL + "/api/projects/" + project.ID +
+			"/files?path=" + url.QueryEscape(path))
+		if err != nil {
+			t.Fatalf("GET %q: %v", path, err)
+		}
+		defer res.Body.Close()
+		b, _ := io.ReadAll(res.Body)
+		return res.StatusCode, string(b)
+	}
+
+	if code, body := get("src"); code != http.StatusOK || !strings.Contains(body, "main.go") {
+		t.Errorf("listing src = %d %s", code, body)
+	}
+
+	// Every one of these arrives from a URL.
+	for _, escape := range []string{"..", "../..", "/etc", "../../../../etc/passwd"} {
+		code, body := get(escape)
+		if code == http.StatusOK && strings.Contains(body, "passwd") {
+			t.Errorf("escaped the project with %q: %s", escape, body)
+		}
+	}
+}
+
+func TestSystemEndpoint(t *testing.T) {
+	ts, _ := newTestServer(t)
+	res, err := ts.Client().Get(ts.URL + "/api/system")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer res.Body.Close()
+	var sample sysmon.Sample
+	if err := json.NewDecoder(res.Body).Decode(&sample); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if sample.MemTotal == 0 || sample.Cores == 0 {
+		t.Errorf("sample looks empty: %+v", sample)
 	}
 }

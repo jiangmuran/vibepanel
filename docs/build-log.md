@@ -498,3 +498,54 @@ The server now leaves a scratch terminal's title empty when it has no useful
 automatic name, and the UI numbers those. The UI does not fall back to the
 command name: it would have to know which commands are shells, and that
 judgement already exists on the server.
+
+## 2026-08-23 — M5 part two: the side panel
+
+Four tabs in a collapsible, resizable column: files, system, notes, todo.
+Notes and todo can also sit one above the other, split by a draggable line —
+they are the pair worth seeing together, what you are thinking and what you
+have left. Files and the monitor are lookups, not companions.
+
+Everything is per project and everything persists: width, which tab, whether
+the split is on.
+
+New packages: `internal/sysmon` reads /proc directly rather than taking a
+dependency for four numbers, and `internal/browse` lists directories under a
+root and refuses to leave it.
+
+### Containment, tested as its own thing
+
+`browse` is a separate package because refusing to leave the project is the
+whole point of it and deserves testing on its own — every path it sees arrives
+from a URL. Both the root and the request are resolved through `EvalSymlinks`
+before comparison, so a symlink inside the project pointing at `/etc` is
+refused; a textual prefix check follows it happily, and that is the classic way
+this goes wrong. There is a test for exactly that case.
+
+### Numbers that would be wrong if taken from the obvious place
+
+The monitor reports `MemAvailable`, not `MemFree`: free memory on a healthy
+Linux box is near zero because the rest is cache, and showing that as "almost
+out of memory" is alarming and false. Disk uses `Bavail` rather than `Bfree`,
+which includes root's reserved blocks. CPU excludes iowait from busy time —
+a machine doing nothing but reading files is not pegged. And the first sample
+reports no CPU figure at all rather than a zero, because there is nothing yet
+to difference against.
+
+### Bugs found this round
+
+**The collapse button fell off the edge of the panel.** Labelling all four tabs
+looked better and overflowed a 280px column, pushing the last control out of
+sight. Only the selected tab is labelled now — which answers the more useful
+question anyway — and the check asserts every header control stays inside the
+header on every tab.
+
+**Three components reset state from an effect**, which React's lint rules
+caught. In each case the fix was the same and better: the caller keys the
+component by project, so switching projects is a fresh instance rather than a
+reset, and the fetch uses the documented shape where the state update happens
+in a callback guarded by an ignore flag. Without that, a response arriving
+after the directory changed overwrites the newer one.
+
+**`schema.sql` shipped PRAGMAs that cannot run where it runs** — found last
+round by the migration test, fixed here alongside the notes and todo tables.

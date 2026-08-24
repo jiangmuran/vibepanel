@@ -415,6 +415,113 @@ try {
       )}`)
   }
 
+  // ── right panel ──────────────────────────────────────────────────────────
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await sleep(500)
+  const showRight = page.locator('[data-testid="right-show"]')
+  if (await showRight.isVisible().catch(() => false)) {
+    await showRight.click()
+    await sleep(600)
+  }
+  const rightPanel = page.locator('[data-testid="right-panel"]')
+  if (!(await rightPanel.isVisible().catch(() => false))) {
+    note('FAIL', 'panel', 'the side panel never appeared')
+  } else {
+    // Every control in the header has to stay reachable. Labelling all four
+    // tabs once pushed the collapse button off the edge of a 280px column.
+    for (const id of ['files', 'monitor', 'notes', 'todos']) {
+      await page.locator(`[data-testid="panel-tab-${id}"]`).click()
+      await sleep(300)
+      const header = await page.locator('[data-testid="panel-header"]').boundingBox()
+      const collapse = await page.locator('[data-testid="panel-collapse"]').boundingBox()
+      if (!header || !collapse) {
+        note('FAIL', 'panel', `header controls missing on the ${id} tab`)
+      } else if (collapse.x + collapse.width > header.x + header.width + 1) {
+        note('FAIL', 'panel',
+          `the collapse button overflows the header on the ${id} tab`)
+      }
+    }
+
+    // Files
+    await page.locator('[data-testid="panel-tab-files"]').click()
+    await sleep(900)
+    const fileCount = await page.locator('[data-testid="file-entry"]').count()
+    if (fileCount === 0) note('FAIL', 'panel/files', 'the file browser listed nothing')
+
+    // System
+    await page.locator('[data-testid="panel-tab-monitor"]').click()
+    await sleep(3000)
+    const monitorText = await page.locator('[data-testid="system-monitor"]').innerText().catch(() => '')
+    for (const want of ['CPU', 'Memory', 'Disk']) {
+      if (!monitorText.includes(want)) {
+        note('FAIL', 'panel/monitor', `the monitor is missing ${want}: ${JSON.stringify(monitorText)}`)
+      }
+    }
+    if (/\bNaN\b|undefined/.test(monitorText)) {
+      note('FAIL', 'panel/monitor', `the monitor rendered a broken value: ${JSON.stringify(monitorText)}`)
+    }
+
+    // Notes: typing must reach the server without a save button, and the
+    // status has to say so — "did that save?" is otherwise unanswerable.
+    await page.locator('[data-testid="panel-tab-notes"]').click()
+    await sleep(700)
+    await page.locator('[data-testid="notes"] textarea').fill('remember: NOTE_PERSIST_OK')
+    let savedOk = false
+    for (let i = 0; i < 25; i++) {
+      const st = await page.locator('[data-testid="notes-status"]').getAttribute('data-status')
+      if (st === 'saved') { savedOk = true; break }
+      await sleep(400)
+    }
+    if (!savedOk) note('FAIL', 'panel/notes', 'the note never reported itself saved')
+
+    // Todos
+    await page.locator('[data-testid="panel-tab-todos"]').click()
+    await sleep(600)
+    await page.locator('[data-testid="todo-input"]').fill('ship the panel')
+    await page.keyboard.press('Enter')
+    let added = false
+    for (let i = 0; i < 25; i++) {
+      if ((await page.locator('[data-testid="todo-item"]').count()) > 0) { added = true; break }
+      await sleep(300)
+    }
+    if (!added) {
+      note('FAIL', 'panel/todos', 'adding an item produced no row')
+    } else {
+      // Completed items stay on the list; seeing what you just finished is
+      // most of the value of ticking it off.
+      await page.locator('[data-testid="todo-item"] button').first().click()
+      await sleep(1200)
+      const remaining = await page.locator('[data-testid="todo-item"]').count()
+      if (remaining !== 1) {
+        note('FAIL', 'panel/todos', `ticking an item left ${remaining} rows, want it to stay`)
+      }
+      const done = await page.locator('[data-testid="todo-item"][data-done="true"]').count()
+      if (done !== 1) note('FAIL', 'panel/todos', 'the ticked item is not marked done')
+    }
+
+    // Notes and todos side by side.
+    await page.locator('[data-testid="panel-split"]').click()
+    await sleep(800)
+    const split = await rightPanel.getAttribute('data-split')
+    if (split !== 'true') {
+      note('FAIL', 'panel', 'the split control did not show notes and todo together')
+    } else {
+      const bothVisible =
+        (await page.locator('[data-testid="notes"]').isVisible().catch(() => false)) &&
+        (await page.locator('[data-testid="todos"]').isVisible().catch(() => false))
+      if (!bothVisible) note('FAIL', 'panel', 'split is on but only one of the two is showing')
+    }
+
+    // The note must survive a reload; it is the panel's only durable prose.
+    await page.reload({ waitUntil: 'networkidle' })
+    await sleep(2500)
+    const kept = await page.locator('[data-testid="notes"] textarea').inputValue().catch(() => '')
+    if (!kept.includes('NOTE_PERSIST_OK')) {
+      note('FAIL', 'panel/notes', `the note did not survive a reload: ${JSON.stringify(kept)}`)
+    }
+    await page.screenshot({ path: join(SHOTS, 'right-panel.png') })
+  }
+
   // ── bottom terminals ─────────────────────────────────────────────────────
   // They belong to the session above them and follow it. A terminal opened
   // while working on one thing must not still be sitting there, pointing at

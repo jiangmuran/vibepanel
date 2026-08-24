@@ -26,6 +26,7 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/id"
 	sessionpkg "github.com/jiangmuran/vibepanel/internal/session"
 	"github.com/jiangmuran/vibepanel/internal/store"
+	"github.com/jiangmuran/vibepanel/internal/sysmon"
 	"github.com/jiangmuran/vibepanel/internal/tmux"
 	"github.com/jiangmuran/vibepanel/internal/version"
 	"github.com/jiangmuran/vibepanel/internal/webui"
@@ -119,7 +120,8 @@ func cmdServe(args []string) error {
 
 	srv := &httpapi.Server{
 		Cfg: a.cfg, DB: a.db, Tmux: a.tmux, Manager: mgr,
-		Hub: ws.NewHub(), Detector: sessionpkg.NewDetector(), Log: logger,
+		Hub: ws.NewHub(), Detector: sessionpkg.NewDetector(),
+		Sampler: &sysmon.Sampler{DiskPath: a.cfg.DataDir}, Log: logger,
 	}
 	// The pump reports output and bells straight into the server, which is how
 	// last_output_at stays honest and, from M4, how session state is decided.

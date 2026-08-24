@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ChevronUp, Menu, Moon, Monitor, Sun } from 'lucide-react'
+import { ChevronUp, Menu, Moon, Monitor, PanelRight, Sun } from 'lucide-react'
 
 import { api } from './protocol/api'
 import { PanelSocket } from './protocol/socket'
@@ -9,6 +9,8 @@ import { TerminalView } from './components/Terminal'
 import { StateDot } from './components/StateDot'
 import { Sidebar } from './components/Sidebar'
 import { BottomTerminals } from './components/BottomTerminals'
+import { RightPanel } from './components/RightPanel'
+import type { PanelTab } from './components/RightPanel'
 import { applyTheme, loadTheme } from './components/theme'
 import type { ThemeChoice } from './components/theme'
 import { NARROW_QUERY, useMediaQuery } from './hooks/useMediaQuery'
@@ -26,6 +28,10 @@ const SELECTED_KEY = 'vibepanel.selected'
 const SIDEBAR_KEY = 'vibepanel.sidebar'
 const BOTTOM_KEY = 'vibepanel.bottom'
 const BOTTOM_DEFAULT_HEIGHT = 220
+const RIGHT_KEY = 'vibepanel.right'
+const RIGHT_TAB_KEY = 'vibepanel.rightTab'
+const RIGHT_SPLIT_KEY = 'vibepanel.rightSplit'
+const RIGHT_DEFAULT_WIDTH = 280
 
 function sessionLabel(s: Session): string {
   return s.title || s.command || 'session'
@@ -90,6 +96,21 @@ export function App() {
     const raw = Number(readStored(BOTTOM_KEY))
     return Number.isFinite(raw) && raw >= 0 ? raw : 0
   })
+
+  // Same convention as the bottom panel: width 0 means hidden, so reopening
+  // restores the size the user chose rather than a default.
+  const [rightWidth, setRightWidth] = useState(() => {
+    const raw = Number(readStored(RIGHT_KEY))
+    return Number.isFinite(raw) && raw >= 0 ? raw : 0
+  })
+  const [rightTab, setRightTab] = useState<PanelTab>(() => {
+    const raw = readStored(RIGHT_TAB_KEY)
+    return raw === 'files' || raw === 'monitor' || raw === 'notes' || raw === 'todos'
+      ? raw
+      : 'files'
+  })
+  const [rightSplit, setRightSplit] = useState(() => readStored(RIGHT_SPLIT_KEY) === 'on')
+  const [splitRatio, setSplitRatio] = useState(0.5)
 
   // The attribute is written synchronously here rather than from an effect.
   //
@@ -161,6 +182,9 @@ export function App() {
   useEffect(() => writeStored(SELECTED_KEY, selected), [selected])
   useEffect(() => writeStored(SIDEBAR_KEY, docked ? 'open' : 'collapsed'), [docked])
   useEffect(() => writeStored(BOTTOM_KEY, String(bottomHeight)), [bottomHeight])
+  useEffect(() => writeStored(RIGHT_KEY, String(rightWidth)), [rightWidth])
+  useEffect(() => writeStored(RIGHT_TAB_KEY, rightTab), [rightTab])
+  useEffect(() => writeStored(RIGHT_SPLIT_KEY, rightSplit ? 'on' : 'off'), [rightSplit])
 
   // The xterm palette is rebuilt when this changes. It has to react to the
   // system preference as well as the toggle, or a laptop switching to dark at
@@ -292,6 +316,17 @@ export function App() {
           ) : (
             <span className="text-[13px] text-ink-2">No session selected</span>
           )}
+          {!narrow && rightWidth === 0 && (
+            <button
+              type="button"
+              data-testid="right-show"
+              onClick={() => setRightWidth(RIGHT_DEFAULT_WIDTH)}
+              title="Show side panel"
+              className="ml-1 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+            >
+              <PanelRight size={15} />
+            </button>
+          )}
           <ThemeToggle theme={theme} onChange={setTheme} />
           <ConnectionDot status={status} />
         </header>
@@ -361,6 +396,24 @@ export function App() {
           </button>
         )}
       </main>
+
+      {/* Hidden on a narrow screen: a 280px column beside a terminal on a
+          phone leaves neither usable. The panels reach mobile in their own
+          layout rather than by being squeezed into this one. */}
+      {!narrow && rightWidth > 0 && (
+        <RightPanel
+          project={currentProject}
+          tab={rightTab}
+          onTab={setRightTab}
+          width={rightWidth}
+          onWidthChange={setRightWidth}
+          onCollapse={() => setRightWidth(0)}
+          split={rightSplit}
+          onSplitChange={setRightSplit}
+          splitRatio={splitRatio}
+          onSplitRatioChange={setSplitRatio}
+        />
+      )}
     </div>
   )
 }

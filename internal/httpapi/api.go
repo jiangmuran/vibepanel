@@ -23,6 +23,7 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/id"
 	"github.com/jiangmuran/vibepanel/internal/session"
 	"github.com/jiangmuran/vibepanel/internal/store"
+	"github.com/jiangmuran/vibepanel/internal/sysmon"
 	"github.com/jiangmuran/vibepanel/internal/tmux"
 	"github.com/jiangmuran/vibepanel/internal/version"
 	"github.com/jiangmuran/vibepanel/internal/webui"
@@ -37,6 +38,7 @@ type Server struct {
 	Manager  *session.Manager
 	Hub      *ws.Hub
 	Detector *session.Detector
+	Sampler  *sysmon.Sampler
 	Log      *slog.Logger
 
 	// hookToken authenticates state reports from agent hooks. Cached after the
@@ -80,6 +82,8 @@ func (s *Server) Routes() http.Handler {
 		// Hooks run outside the browser, as children of the agent, and
 		// authenticate with a token rather than a session cookie.
 		r.Post("/hook/state", s.handleHookState)
+
+		s.registerPanelRoutes(r)
 		r.Patch("/sessions/{id}", s.handlePatchSession)
 		r.Delete("/sessions/{id}", s.handleDeleteSession)
 

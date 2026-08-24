@@ -95,7 +95,7 @@ export function BottomTerminals(props: Props) {
         // Without touch-action the browser scrolls instead of reporting the
         // drag, and on touch the gesture never arrives at all.
         style={{ touchAction: 'none' }}
-        className="-mt-1 h-2 shrink-0 cursor-row-resize"
+        className="-mt-1 h-2 shrink-0 cursor-row-resize transition-colors duration-200 ease-vp hover:bg-accent"
       />
 
       <div className="flex h-8 shrink-0 items-center gap-1 px-2 vp-blur">

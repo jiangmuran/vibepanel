@@ -1,4 +1,13 @@
-import type { PanelState, Project, Session, SessionState } from './wire'
+import type {
+  FileListing,
+  Note,
+  PanelState,
+  Project,
+  Session,
+  SessionState,
+  SystemSample,
+  Todo,
+} from './wire'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -70,4 +79,30 @@ export const api = {
   ) => request<Session>(`/api/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
 
   deleteSession: (id: string) => request<void>(`/api/sessions/${id}`, { method: 'DELETE' }),
+
+  system: () => request<SystemSample>('/api/system'),
+
+  files: (projectId: string, path = '') =>
+    request<FileListing>(`/api/projects/${projectId}/files?path=${encodeURIComponent(path)}`),
+
+  note: (projectId: string) => request<Note>(`/api/projects/${projectId}/notes`),
+
+  saveNote: (projectId: string, content: string) =>
+    request<Note>(`/api/projects/${projectId}/notes`, {
+      method: 'PUT',
+      body: JSON.stringify({ content }),
+    }),
+
+  todos: (projectId: string) => request<Todo[]>(`/api/projects/${projectId}/todos`),
+
+  addTodo: (projectId: string, text: string) =>
+    request<Todo>(`/api/projects/${projectId}/todos`, {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
+
+  patchTodo: (id: string, patch: Partial<{ text: string; done: boolean }>) =>
+    request<Todo>(`/api/todos/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+
+  deleteTodo: (id: string) => request<void>(`/api/todos/${id}`, { method: 'DELETE' }),
 }
