@@ -415,6 +415,76 @@ try {
       )}`)
   }
 
+  // ── bottom terminals ─────────────────────────────────────────────────────
+  // They belong to the session above them and follow it. A terminal opened
+  // while working on one thing must not still be sitting there, pointing at
+  // the wrong directory, after switching to another.
+  const showBottom = page.locator('[data-testid="bottom-show"]')
+  if (await showBottom.isVisible().catch(() => false)) {
+    await showBottom.click()
+    await sleep(600)
+  }
+  const bottom = page.locator('[data-testid="bottom-terminals"]')
+  if (!(await bottom.isVisible().catch(() => false))) {
+    note('FAIL', 'bottom', 'the bottom terminal panel never appeared')
+  } else {
+    await page.locator('[data-testid="bottom-new"]').click()
+    let gotTab = false
+    for (let i = 0; i < 30; i++) {
+      if ((await page.locator('[data-testid="bottom-tab"]').count()) > 0) { gotTab = true; break }
+      await sleep(400)
+    }
+    if (!gotTab) {
+      note('FAIL', 'bottom', 'creating a bottom terminal produced no tab')
+    } else {
+      // It must be a working terminal, not just a tab.
+      const bottomScreen = bottom.locator('.xterm-screen')
+      await bottomScreen.click()
+      await page.keyboard.type('echo BOTTOM_TERMINAL_OK')
+      await page.keyboard.press('Enter')
+      let echoed = false
+      for (let i = 0; i < 40; i++) {
+        const txt = await bottomScreen.innerText().catch(() => '')
+        if ((txt.match(/BOTTOM_TERMINAL_OK/g) ?? []).length >= 2) { echoed = true; break }
+        await sleep(300)
+      }
+      if (!echoed) note('FAIL', 'bottom', 'typing into a bottom terminal produced no output')
+
+      // A second terminal, to check the tabs are told apart. They all live in
+      // the same directory as the session above them, so a naming rule based
+      // on the directory would produce a row of identical tabs.
+      await page.locator('[data-testid="bottom-new"]').click()
+      await sleep(2500)
+      const labels = await page.$$eval('[data-testid="bottom-tab"]', (els) =>
+        els.map((el) => el.textContent?.trim() ?? ''),
+      )
+      if (labels.length < 2) {
+        note('WARN', 'bottom', `expected two terminal tabs, saw ${JSON.stringify(labels)}`)
+      } else if (new Set(labels).size !== labels.length) {
+        note('FAIL', 'bottom', `terminal tabs are indistinguishable: ${JSON.stringify(labels)}`)
+      }
+
+      // Switching the main session must swap the strip, not carry it across.
+      const otherRow = page.locator('[data-testid="session-row"]', { hasText: 'htop' }).first()
+      if (await otherRow.isVisible().catch(() => false)) {
+        await otherRow.click()
+        await sleep(1500)
+        const carried = await page.locator('[data-testid="bottom-tab"]').count()
+        if (carried !== 0) {
+          note('FAIL', 'bottom',
+            `switching sessions carried ${carried} terminal tab(s) from the previous one`)
+        }
+        // And switching back brings it back.
+        await page.locator('[data-testid="session-row"]', { hasText: 'scratchpad' }).first().click()
+        await sleep(1500)
+        if ((await page.locator('[data-testid="bottom-tab"]').count()) === 0) {
+          note('FAIL', 'bottom', 'the terminal did not come back when switching back')
+        }
+      }
+    }
+    await page.screenshot({ path: join(SHOTS, 'bottom.png') })
+  }
+
   // ── session state ────────────────────────────────────────────────────────
   // The bell has to reach the panel through tmux, the PTY and the detector.
   // tmux's bell-action swallowed it entirely once, silently, so this is worth

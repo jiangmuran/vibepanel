@@ -4,8 +4,10 @@
 -- files, never edits to this one: a released binary must be able to open a
 -- database written by an older release without a manual step.
 
-PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
+-- No PRAGMAs here. journal_mode and foreign_keys are per-connection settings,
+-- applied through the DSN in Open so they hold for every pooled connection;
+-- a schema file is applied once, on one connection, inside a transaction —
+-- and journal_mode cannot even be changed from inside one.
 
 -- A project is a directory the user has named. Sessions belong to exactly one.
 CREATE TABLE IF NOT EXISTS projects (
@@ -53,21 +55,6 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_state ON sessions(state);
-
--- Scratch terminals that follow the main session they were opened under.
-CREATE TABLE IF NOT EXISTS bottom_terminals (
-    id                TEXT PRIMARY KEY,
-    parent_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    tmux_name         TEXT NOT NULL UNIQUE,
-    title             TEXT NOT NULL DEFAULT '',
-    title_source      TEXT NOT NULL DEFAULT 'auto',
-    sort_index        INTEGER NOT NULL DEFAULT 0,
-    cols              INTEGER NOT NULL DEFAULT 120,
-    rows              INTEGER NOT NULL DEFAULT 12,
-    created_at        INTEGER NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_bottom_parent ON bottom_terminals(parent_session_id);
 
 -- One markdown note per project.
 CREATE TABLE IF NOT EXISTS notes (

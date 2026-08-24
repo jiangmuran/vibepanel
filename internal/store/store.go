@@ -19,9 +19,40 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-// schemaVersion is bumped whenever a migration is added. It is compared against
-// SQLite's user_version pragma to decide what to apply.
-const schemaVersion = 1
+// migrations are applied in order to bring a database up to date. Index 0 is
+// the initial schema; each later entry is one step.
+//
+// Additive steps only, and never an edit to an earlier one: a released binary
+// has to be able to open a database written by an older release, and a
+// migration that has already run somewhere cannot be changed.
+var migrations = []func(tx *sql.Tx) error{
+	func(tx *sql.Tx) error {
+		_, err := tx.Exec(schemaSQL)
+		return err
+	},
+	// v2: bottom terminals become ordinary sessions with a parent.
+	//
+	// They were their own table, which would have meant a parallel
+	// implementation of everything sessions already have — attaching, replay,
+	// state detection, naming. A nullable parent column gets all of it for
+	// free, and "a terminal is a session" is one fewer concept.
+	func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`ALTER TABLE sessions ADD COLUMN parent_session_id TEXT
+			     REFERENCES sessions(id) ON DELETE CASCADE`,
+			`CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)`,
+			`DROP TABLE IF EXISTS bottom_terminals`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	},
+}
+
+// schemaVersion is the version this build writes.
+var schemaVersion = len(migrations)
 
 // DB wraps the connection pool with the queries the panel needs.
 type DB struct {
@@ -70,7 +101,7 @@ func (d *DB) Close() error { return d.sql.Close() }
 // SQL exposes the underlying handle for packages that need their own queries.
 func (d *DB) SQL() *sql.DB { return d.sql }
 
-// migrate brings the database up to schemaVersion.
+// migrate brings the database up to schemaVersion, one step at a time.
 func (d *DB) migrate(ctx context.Context) error {
 	var current int
 	if err := d.sql.QueryRowContext(ctx, "PRAGMA user_version").Scan(&current); err != nil {
@@ -84,15 +115,27 @@ func (d *DB) migrate(ctx context.Context) error {
 			"upgrade vibepanel or restore an older copy of the database",
 			current, schemaVersion)
 	}
-	if current == schemaVersion {
-		return nil
-	}
-	if _, err := d.sql.ExecContext(ctx, schemaSQL); err != nil {
-		return fmt.Errorf("store: apply schema: %w", err)
-	}
-	// PRAGMA does not accept a bound parameter.
-	if _, err := d.sql.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
-		return fmt.Errorf("store: set user_version: %w", err)
+
+	for v := current; v < schemaVersion; v++ {
+		// Each step in its own transaction, and user_version moves inside it:
+		// a migration that fails half way must leave the database on the
+		// version it actually is, not the one it was heading for.
+		tx, err := d.sql.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("store: begin migration %d: %w", v+1, err)
+		}
+		if err := migrations[v](tx); err != nil {
+			tx.Rollback() //nolint:errcheck // the error below is the useful one
+			return fmt.Errorf("store: migration %d: %w", v+1, err)
+		}
+		// PRAGMA does not accept a bound parameter.
+		if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", v+1)); err != nil {
+			tx.Rollback() //nolint:errcheck
+			return fmt.Errorf("store: set user_version after migration %d: %w", v+1, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("store: commit migration %d: %w", v+1, err)
+		}
 	}
 	return nil
 }

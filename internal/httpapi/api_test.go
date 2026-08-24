@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -854,5 +855,170 @@ func TestManualOverrideSurvivesThePoller(t *testing.T) {
 	if rec.State != session.StateWaiting || rec.StateSource != session.SourceManual {
 		t.Errorf("state = %q from %q, want the override to survive polling",
 			rec.State, rec.StateSource)
+	}
+}
+
+func TestScratchTerminalInheritsTheParentDirectory(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	root := t.TempDir()
+	sub := filepath.Join(root, "worktree")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+root+`","name":"nested"}`)
+	// A session that has moved out of the project root, as an agent working in
+	// a worktree would have.
+	parent := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sh","-c","cd `+sub+`; exec sleep 60"]}`)
+
+	// Let the poller notice where it went.
+	deadline := time.Now().Add(6 * time.Second)
+	for {
+		if err := srv.pollOnce(ctx); err != nil {
+			t.Fatalf("pollOnce: %v", err)
+		}
+		rec, err := srv.DB.GetSession(ctx, parent.ID)
+		if err != nil {
+			t.Fatalf("GetSession: %v", err)
+		}
+		if rec.CWD == sub {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("parent cwd = %q, want %q", rec.CWD, sub)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	// Opening a shell next to an agent and landing somewhere else is the kind
+	// of small wrongness that makes a panel feel untrustworthy.
+	child := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","parentSessionId":"`+parent.ID+`","command":[]}`)
+	if child.CWD != sub {
+		t.Errorf("scratch terminal cwd = %q, want the parent's %q", child.CWD, sub)
+	}
+	if child.ParentID == nil || *child.ParentID != parent.ID {
+		t.Errorf("parent = %v, want %q", child.ParentID, parent.ID)
+	}
+}
+
+func TestScratchTerminalsCannotNest(t *testing.T) {
+	ts, _ := newTestServer(t)
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"nest"}`)
+	parent := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
+	child := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","parentSessionId":"`+parent.ID+`","command":["sleep","60"]}`)
+
+	// A tab strip of tab strips is not a thing anyone asked for, and allowing
+	// it would make "the terminals belonging to this session" ambiguous.
+	res, err := ts.Client().Post(ts.URL+"/api/sessions", "application/json",
+		strings.NewReader(`{"projectId":"`+project.ID+`","parentSessionId":"`+child.ID+`","command":[]}`))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", res.StatusCode)
+	}
+}
+
+func TestDeletingASessionTakesItsTerminalsWithIt(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"cascade"}`)
+	parent := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
+	child := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","parentSessionId":"`+parent.ID+`","command":["sleep","60"]}`)
+
+	req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/sessions/"+parent.ID, nil)
+	res, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("DELETE: %v", err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", res.StatusCode)
+	}
+
+	// The row cascades away in SQLite, but the tmux session does not. Leaving
+	// it behind is a process nothing in the UI can ever reach again.
+	if ok, _ := srv.Tmux.Has(ctx, child.TmuxName); ok {
+		t.Error("the scratch terminal's tmux session survived its parent")
+	}
+	if _, err := srv.DB.GetSession(ctx, child.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("child row survived: %v", err)
+	}
+}
+
+func TestChildTerminalsKeepTheirOrder(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"order"}`)
+	parent := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
+
+	var want []string
+	for i := 0; i < 3; i++ {
+		c := postJSON[store.Session](t, ts, "/api/sessions",
+			`{"projectId":"`+project.ID+`","parentSessionId":"`+parent.ID+`","command":["sleep","60"]}`)
+		want = append(want, c.ID)
+	}
+
+	// These are tabs in a strip. A tab strip that reorders itself while you
+	// are using it is hostile, so they order by creation and not by state.
+	kids, err := srv.DB.ListChildSessions(ctx, parent.ID)
+	if err != nil {
+		t.Fatalf("ListChildSessions: %v", err)
+	}
+	got := make([]string, len(kids))
+	for i, k := range kids {
+		got[i] = k.ID
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("order = %v, want creation order %v", got, want)
+	}
+}
+
+func TestScratchTerminalsAreNotAllNamedAfterTheirDirectory(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+dir+`","name":"naming"}`)
+	parent := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
+
+	// A main shell is named after where it is, which distinguishes one in a
+	// worktree from one at the repo root. Scratch terminals all live in the
+	// same directory as the session above them, so the same rule would give a
+	// strip of identical tabs. The UI numbers those instead.
+	var kids []store.Session
+	for i := 0; i < 2; i++ {
+		kids = append(kids, postJSON[store.Session](t, ts, "/api/sessions",
+			`{"projectId":"`+project.ID+`","parentSessionId":"`+parent.ID+`","command":[]}`))
+	}
+	for i := 0; i < 4; i++ {
+		if err := srv.pollOnce(ctx); err != nil {
+			t.Fatalf("pollOnce: %v", err)
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	base := filepath.Base(dir)
+	for _, k := range kids {
+		rec, err := srv.DB.GetSession(ctx, k.ID)
+		if err != nil {
+			t.Fatalf("GetSession: %v", err)
+		}
+		if rec.Title == base {
+			t.Errorf("scratch terminal was named after its directory (%q)", rec.Title)
+		}
 	}
 }

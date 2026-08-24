@@ -454,3 +454,47 @@ The five-second mystery survived several rounds of plausible theories —
 client churn, resize storms, status-line intervals — and fell immediately once
 `VIBEPANEL_DEBUG_CHUNKS` printed what was actually arriving on each PTY. The
 env-gated dump is still there. Worth reaching for it sooner next time.
+
+## 2026-08-23 — M5 part one: bottom terminals
+
+A strip of scratch terminals under the main session, following it: switch
+sessions and the strip swaps with them. A new one starts in whatever directory
+the session above is *currently* in, not the project root — opening a shell
+next to an agent that has moved into a worktree and landing somewhere else is
+the kind of small wrongness that makes a panel feel untrustworthy.
+
+### They are sessions, not a second kind of thing
+
+The schema had a `bottom_terminals` table. Building on it would have meant a
+parallel implementation of everything sessions already have: attaching, replay,
+state detection, naming, cleanup. A nullable `parent_session_id` on `sessions`
+gets all of it for free, and "a terminal is a session" is one fewer concept to
+hold.
+
+That needed real migrations. The existing code applied `schema.sql` wholesale
+whenever `user_version` was behind, which only ever worked on a fresh database
+— an upgrade would have silently done nothing. Migrations are now a numbered
+list, each in its own transaction with the version bump inside it, so a step
+that fails leaves the database on the version it actually is.
+
+Two tests pin the part that must never break: an existing v1 database upgrades
+in place with its rows intact, and reopening does not re-run anything.
+
+`schema.sql` also carried `PRAGMA journal_mode = WAL` and
+`PRAGMA foreign_keys = ON`. Those are per-connection settings, already applied
+through the DSN for every pooled connection — and journal_mode cannot be
+changed from inside a transaction at all, which is exactly how the migration
+test found them.
+
+### A row of tabs all called "bash"
+
+Main shell sessions are named after the directory they are in, which usefully
+distinguishes one in a worktree from one at the repo root. Applied to scratch
+terminals — which all live in the same directory as the session above them —
+the same rule produced a strip of identical tabs. Caught by looking at the
+screenshot, then pinned with an assertion that the tab labels are distinct.
+
+The server now leaves a scratch terminal's title empty when it has no useful
+automatic name, and the UI numbers those. The UI does not fall back to the
+command name: it would have to know which commands are shells, and that
+judgement already exists on the server.

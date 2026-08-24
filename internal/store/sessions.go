@@ -38,6 +38,13 @@ type Session struct {
 	LastOutputAt   int64          `json:"lastOutputAt"`
 	CreatedAt      int64          `json:"createdAt"`
 	ArchivedAt     *int64         `json:"archivedAt"`
+
+	// ParentID is set for a scratch terminal opened under a main session.
+	//
+	// Bottom terminals are ordinary sessions with a parent rather than their
+	// own kind of thing, so they get attaching, replay, state detection and
+	// naming without a parallel implementation of each.
+	ParentID *string `json:"parentSessionId"`
 }
 
 // CreateSession inserts a session row. The tmux session itself is created by
@@ -61,13 +68,17 @@ func (d *DB) CreateSession(ctx context.Context, s Session) (Session, error) {
 	s.CreatedAt = now()
 	s.StateChangedAt = s.CreatedAt
 
+	var parent any
+	if s.ParentID != nil {
+		parent = *s.ParentID
+	}
 	_, err := d.sql.ExecContext(ctx, `
 		INSERT INTO sessions
 			(id, project_id, tmux_name, title, title_source, state, state_source,
-			 state_changed_at, cwd, command, cols, rows, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 state_changed_at, cwd, command, cols, rows, created_at, parent_session_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		s.ID, s.ProjectID, s.TmuxName, s.Title, s.TitleSource, s.State, s.StateSource,
-		s.StateChangedAt, s.CWD, s.Command, s.Cols, s.Rows, s.CreatedAt)
+		s.StateChangedAt, s.CWD, s.Command, s.Cols, s.Rows, s.CreatedAt, parent)
 	if err != nil {
 		return Session{}, fmt.Errorf("store: insert session: %w", err)
 	}
@@ -76,15 +87,17 @@ func (d *DB) CreateSession(ctx context.Context, s Session) (Session, error) {
 
 const sessionColumns = `id, project_id, tmux_name, title, title_source, state, state_source,
 	state_changed_at, pinned, sort_index, cwd, command, cols, rows,
-	last_output_at, created_at, archived_at`
+	last_output_at, created_at, archived_at, parent_session_id`
 
 func scanSession(sc interface{ Scan(...any) error }) (Session, error) {
 	var s Session
 	var sortIdx sql.NullInt64
 	var archived sql.NullInt64
+	var parent sql.NullString
 	err := sc.Scan(&s.ID, &s.ProjectID, &s.TmuxName, &s.Title, &s.TitleSource,
 		&s.State, &s.StateSource, &s.StateChangedAt, &s.Pinned, &sortIdx,
-		&s.CWD, &s.Command, &s.Cols, &s.Rows, &s.LastOutputAt, &s.CreatedAt, &archived)
+		&s.CWD, &s.Command, &s.Cols, &s.Rows, &s.LastOutputAt, &s.CreatedAt, &archived,
+		&parent)
 	if err != nil {
 		return Session{}, err
 	}
@@ -95,7 +108,35 @@ func scanSession(sc interface{ Scan(...any) error }) (Session, error) {
 	if archived.Valid {
 		s.ArchivedAt = &archived.Int64
 	}
+	if parent.Valid {
+		s.ParentID = &parent.String
+	}
 	return s, nil
+}
+
+// ListChildSessions returns the scratch terminals under a session, oldest
+// first.
+//
+// Ordered by creation rather than by state: these are tabs in a strip, and a
+// tab strip that reorders itself while you are using it is hostile.
+func (d *DB) ListChildSessions(ctx context.Context, parentID string) ([]Session, error) {
+	rows, err := d.sql.QueryContext(ctx, fmt.Sprintf(`
+		SELECT %s FROM sessions
+		WHERE parent_session_id = ?
+		ORDER BY sort_index ASC, created_at ASC`, sessionColumns), parentID)
+	if err != nil {
+		return nil, fmt.Errorf("store: list child sessions: %w", err)
+	}
+	defer rows.Close()
+	var out []Session
+	for rows.Next() {
+		s, err := scanSession(rows)
+		if err != nil {
+			return nil, fmt.Errorf("store: scan child session: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }
 
 // ListSessions returns every session in display order.

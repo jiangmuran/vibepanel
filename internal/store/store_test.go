@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"sort"
@@ -255,5 +256,113 @@ func TestNotFound(t *testing.T) {
 	}
 	if err := db.RenameProject(ctx, "nope", "x"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("RenameProject(missing) = %v, want ErrNotFound", err)
+	}
+}
+
+func TestMigrationUpgradesAnExistingDatabase(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "old.db")
+
+	// Build a database at version 1 by applying only the first migration, the
+	// way a release before the scratch-terminal change would have left it.
+	raw, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)")
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	tx, err := raw.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if err := migrations[0](tx); err != nil {
+		t.Fatalf("apply v1: %v", err)
+	}
+	if _, err := tx.Exec("PRAGMA user_version = 1"); err != nil {
+		t.Fatalf("set version: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	// Data an existing user would have.
+	if _, err := raw.Exec(
+		`INSERT INTO projects (id, name, path, last_active_at, created_at) VALUES ('p1','Keep','/tmp',1,1)`,
+	); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	if _, err := raw.Exec(
+		`INSERT INTO sessions (id, project_id, tmux_name, created_at) VALUES ('s1','p1','vp_s1',1)`,
+	); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	raw.Close()
+
+	// Opening with the current build must upgrade in place, not start over.
+	db, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+
+	v, err := db.Version(ctx)
+	if err != nil {
+		t.Fatalf("Version: %v", err)
+	}
+	if v != schemaVersion {
+		t.Errorf("version = %d, want %d", v, schemaVersion)
+	}
+	ps, err := db.ListProjects(ctx)
+	if err != nil {
+		t.Fatalf("ListProjects: %v", err)
+	}
+	if len(ps) != 1 || ps[0].Name != "Keep" {
+		t.Fatalf("projects after upgrade = %+v, want the existing one", ps)
+	}
+	s, err := db.GetSession(ctx, "s1")
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if s.ParentID != nil {
+		t.Errorf("existing session gained a parent: %v", s.ParentID)
+	}
+
+	// And the new column works on the upgraded database.
+	if _, err := db.CreateSession(ctx, Session{
+		ID: "s2", ProjectID: "p1", TmuxName: "vp_s2", ParentID: strptr("s1"),
+	}); err != nil {
+		t.Fatalf("CreateSession with a parent: %v", err)
+	}
+	kids, err := db.ListChildSessions(ctx, "s1")
+	if err != nil {
+		t.Fatalf("ListChildSessions: %v", err)
+	}
+	if len(kids) != 1 || kids[0].ID != "s2" {
+		t.Errorf("children = %+v, want one", kids)
+	}
+}
+
+func strptr(s string) *string { return &s }
+
+func TestMigrationIsAppliedOnlyOnce(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "twice.db")
+
+	db, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("first Open: %v", err)
+	}
+	if _, err := db.CreateProject(ctx, "p", "P", "/tmp"); err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	db.Close()
+
+	// A migration that re-ran would fail on the duplicate ALTER TABLE, or
+	// worse, quietly recreate something.
+	db, err = Open(ctx, path)
+	if err != nil {
+		t.Fatalf("second Open: %v", err)
+	}
+	defer db.Close()
+	ps, _ := db.ListProjects(ctx)
+	if len(ps) != 1 {
+		t.Errorf("projects after reopen = %d, want 1", len(ps))
 	}
 }

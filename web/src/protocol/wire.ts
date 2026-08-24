@@ -107,6 +107,15 @@ export interface Session {
   lastOutputAt: number
   createdAt: number
   archivedAt: number | null
+
+  /**
+   * Set for a scratch terminal opened under a main session.
+   *
+   * Bottom terminals are ordinary sessions with a parent rather than their own
+   * kind of thing, so they arrive in the same list and get state, replay and
+   * naming without a second implementation of each.
+   */
+  parentSessionId: string | null
 }
 
 export interface PanelState {

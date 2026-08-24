@@ -519,6 +519,10 @@ type createSessionRequest struct {
 	Command   []string `json:"command"`
 	Cols      int      `json:"cols"`
 	Rows      int      `json:"rows"`
+
+	// ParentSessionID makes this a scratch terminal under a main session,
+	// starting in whatever directory that session is currently in.
+	ParentSessionID string `json:"parentSessionId"`
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -539,6 +543,32 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		req.Rows = 32
 	}
 
+	// A scratch terminal starts where its parent currently is, not where the
+	// project root is. Opening a shell next to an agent that has cd'd into a
+	// worktree, and landing somewhere else, is the kind of small wrongness
+	// that makes a panel feel untrustworthy.
+	dir := p.Path
+	var parent *string
+	if req.ParentSessionID != "" {
+		parentRec, perr := s.DB.GetSession(ctx, req.ParentSessionID)
+		if perr != nil {
+			writeStoreErr(w, perr)
+			return
+		}
+		if parentRec.ParentID != nil {
+			writeErr(w, http.StatusBadRequest, "a scratch terminal cannot have scratch terminals of its own")
+			return
+		}
+		if parentRec.ProjectID != p.ID {
+			writeErr(w, http.StatusBadRequest, "parent session belongs to a different project")
+			return
+		}
+		if parentRec.CWD != "" {
+			dir = parentRec.CWD
+		}
+		parent = &req.ParentSessionID
+	}
+
 	sid := id.New()
 	tmuxName := id.TmuxName(sid)
 
@@ -555,7 +585,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	err = s.Tmux.Create(ctx, tmux.CreateOptions{
 		Name:    tmuxName,
-		Dir:     p.Path,
+		Dir:     dir,
 		Command: req.Command,
 		// Hooks identify their session and reach the panel through these. A
 		// session created without them simply falls back to the output
@@ -572,8 +602,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	rec, err := s.DB.CreateSession(ctx, store.Session{
 		ID: sid, ProjectID: p.ID, TmuxName: tmuxName,
-		Title: req.Title, CWD: p.Path, Cols: req.Cols, Rows: req.Rows,
-		State: session.StateWorking,
+		Title: req.Title, CWD: dir, Cols: req.Cols, Rows: req.Rows,
+		State: session.StateWorking, ParentID: parent,
 	})
 	if err != nil {
 		// Untracked tmux session: remove it rather than orphan a process the
@@ -675,13 +705,22 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
-	s.Manager.Detach(sid)
-	if s.Detector != nil {
-		s.Detector.Forget(sid)
-	}
-	if err := s.Tmux.Kill(ctx, rec.TmuxName); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+	// Children cascade away in the database, but their tmux sessions do not.
+	// Deleting the row first would leave processes nothing in the UI can reach.
+	children, err := s.DB.ListChildSessions(ctx, sid)
+	if err != nil {
+		writeStoreErr(w, err)
 		return
+	}
+	for _, child := range append(children, rec) {
+		s.Manager.Detach(child.ID)
+		if s.Detector != nil {
+			s.Detector.Forget(child.ID)
+		}
+		if err := s.Tmux.Kill(ctx, child.TmuxName); err != nil {
+			writeErr(w, http.StatusInternalServerError, "kill "+child.TmuxName+": "+err.Error())
+			return
+		}
 	}
 	if err := s.DB.DeleteSession(ctx, sid); err != nil {
 		writeStoreErr(w, err)
@@ -895,7 +934,7 @@ func (s *Server) pollOnce(ctx context.Context) error {
 		if err := s.DB.UpdateSessionRuntime(ctx, row.ID, info.Path, info.Command); err != nil {
 			return err
 		}
-		if title := deriveTitle(info); title != "" {
+		if title := deriveTitle(info, row.ParentID != nil); title != "" {
 			// SetSessionTitle with TitleAuto is a no-op once the user has
 			// renamed the tab, so this cannot stomp a manual name.
 			if err := s.DB.SetSessionTitle(ctx, row.ID, title, store.TitleAuto); err != nil {
@@ -929,19 +968,23 @@ func (s *Server) pollOnce(ctx context.Context) error {
 //     the command tells you nothing; where it is at least distinguishes the one
 //     in a worktree from the one at the repo root.
 //
-// Returning "" would leave the UI showing the raw tmux name, which is a hex id
-// no human has any use for.
-func deriveTitle(info tmux.Info) string {
+// The directory fallback is skipped for scratch terminals. They live in a tab
+// strip that already belongs to one session in one directory, so naming them
+// all after it produces a row of identical tabs. The UI numbers those instead.
+func deriveTitle(info tmux.Info, isScratch bool) string {
 	if info.Title != "" && info.Title != hostname() && info.Title != info.Command {
 		return info.Title
 	}
 	if info.Command != "" && !isShell(info.Command) {
 		return info.Command
 	}
-	if info.Path != "" {
+	if !isScratch && info.Path != "" {
 		if base := filepath.Base(info.Path); base != "." && base != string(filepath.Separator) {
 			return base
 		}
+	}
+	if isShell(info.Command) {
+		return ""
 	}
 	return info.Command
 }

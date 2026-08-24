@@ -49,10 +49,19 @@ export const api = {
   autoOrderProjects: () =>
     request<void>('/api/projects/reorder', { method: 'POST', body: JSON.stringify({ auto: true }) }),
 
-  createSession: (projectId: string, command: string[], title = '') =>
+  createSession: (
+    projectId: string,
+    command: string[],
+    opts: { title?: string; parentSessionId?: string } = {},
+  ) =>
     request<Session>('/api/sessions', {
       method: 'POST',
-      body: JSON.stringify({ projectId, command, title }),
+      body: JSON.stringify({
+        projectId,
+        command,
+        title: opts.title ?? '',
+        parentSessionId: opts.parentSessionId ?? '',
+      }),
     }),
 
   patchSession: (

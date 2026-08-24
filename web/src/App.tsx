@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Menu, Moon, Monitor, Sun } from 'lucide-react'
+import { ChevronUp, Menu, Moon, Monitor, Sun } from 'lucide-react'
 
 import { api } from './protocol/api'
 import { PanelSocket } from './protocol/socket'
@@ -8,6 +8,7 @@ import type { PanelState, Project, Session } from './protocol/wire'
 import { TerminalView } from './components/Terminal'
 import { StateDot } from './components/StateDot'
 import { Sidebar } from './components/Sidebar'
+import { BottomTerminals } from './components/BottomTerminals'
 import { applyTheme, loadTheme } from './components/theme'
 import type { ThemeChoice } from './components/theme'
 import { NARROW_QUERY, useMediaQuery } from './hooks/useMediaQuery'
@@ -23,6 +24,8 @@ const STATE_RESYNC_MS = 30_000
 
 const SELECTED_KEY = 'vibepanel.selected'
 const SIDEBAR_KEY = 'vibepanel.sidebar'
+const BOTTOM_KEY = 'vibepanel.bottom'
+const BOTTOM_DEFAULT_HEIGHT = 220
 
 function sessionLabel(s: Session): string {
   return s.title || s.command || 'session'
@@ -80,6 +83,13 @@ export function App() {
   // underneath the drawer.
   const [docked, setDocked] = useState(() => readStored(SIDEBAR_KEY) !== 'collapsed')
   const [drawerOpen, setDrawerOpen] = useState(false)
+
+  // Height doubles as the collapsed flag: 0 means hidden. One value to store,
+  // and reopening restores the size the user last chose rather than a default.
+  const [bottomHeight, setBottomHeight] = useState(() => {
+    const raw = Number(readStored(BOTTOM_KEY))
+    return Number.isFinite(raw) && raw >= 0 ? raw : 0
+  })
 
   // The attribute is written synchronously here rather than from an effect.
   //
@@ -150,6 +160,7 @@ export function App() {
 
   useEffect(() => writeStored(SELECTED_KEY, selected), [selected])
   useEffect(() => writeStored(SIDEBAR_KEY, docked ? 'open' : 'collapsed'), [docked])
+  useEffect(() => writeStored(BOTTOM_KEY, String(bottomHeight)), [bottomHeight])
 
   // The xterm palette is rebuilt when this changes. It has to react to the
   // system preference as well as the toggle, or a laptop switching to dark at
@@ -157,7 +168,17 @@ export function App() {
   const systemDark = useMediaQuery('(prefers-color-scheme: dark)')
   const themeKey = `${theme}:${systemDark}`
 
-  const current = state.sessions.find((s) => s.id === selected) ?? null
+  // Scratch terminals are ordinary sessions with a parent, so they arrive in
+  // the same list and are separated here rather than by a second query.
+  const mainSessions = useMemo(
+    () => state.sessions.filter((s) => !s.parentSessionId),
+    [state.sessions],
+  )
+  const current = mainSessions.find((s) => s.id === selected) ?? null
+  const bottomTerminals = useMemo(
+    () => (current ? state.sessions.filter((s) => s.parentSessionId === current.id) : []),
+    [state.sessions, current],
+  )
   const currentProject = current
     ? (state.projects.find((p) => p.id === current.projectId) ?? null)
     : null
@@ -178,6 +199,12 @@ export function App() {
   }
 
   const newSession = (project: Project) => void guard(() => api.createSession(project.id, []))
+
+  const newBottomTerminal = () => {
+    if (!current) return
+    if (bottomHeight === 0) setBottomHeight(BOTTOM_DEFAULT_HEIGHT)
+    void guard(() => api.createSession(current.projectId, [], { parentSessionId: current.id }))
+  }
 
   const killSession = (s: Session) => {
     if (!window.confirm(`Kill ${sessionLabel(s)}? The process is terminated.`)) return
@@ -205,7 +232,7 @@ export function App() {
       {showSidebar && (
         <Sidebar
           projects={state.projects}
-          sessions={state.sessions}
+          sessions={mainSessions}
           live={state.live}
           selected={selected}
           expanded={narrow ? true : docked}
@@ -298,6 +325,41 @@ export function App() {
             </div>
           )}
         </div>
+
+        {current && bottomHeight > 0 && (
+          <BottomTerminals
+            // Remount per parent: each main session has its own set of tabs,
+            // and carrying the previous one's active tab across a switch shows
+            // a terminal belonging to something you are no longer looking at.
+            key={current.id}
+            socket={socket}
+            parent={current}
+            terminals={bottomTerminals}
+            themeKey={themeKey}
+            height={bottomHeight}
+            onHeightChange={setBottomHeight}
+            onCollapse={() => setBottomHeight(0)}
+            onNew={newBottomTerminal}
+            onClose={(t) => void guard(() => api.deleteSession(t.id))}
+            onRename={(t, title) => void guard(() => api.patchSession(t.id, { title }))}
+          />
+        )}
+
+        {current && bottomHeight === 0 && (
+          <button
+            type="button"
+            data-testid="bottom-show"
+            onClick={() => setBottomHeight(BOTTOM_DEFAULT_HEIGHT)}
+            title="Show terminals"
+            className="flex h-6 shrink-0 items-center justify-center gap-1 border-t border-hairline text-[11px] text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink vp-blur"
+          >
+            <ChevronUp size={12} />
+            terminals
+            {bottomTerminals.length > 0 && (
+              <span className="tabular">({bottomTerminals.length})</span>
+            )}
+          </button>
+        )}
       </main>
     </div>
   )
