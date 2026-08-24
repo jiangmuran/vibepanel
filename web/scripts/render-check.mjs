@@ -985,6 +985,7 @@ try {
       hasTouch: true,
       isMobile: true,
       deviceScaleFactor: 3,
+      permissions: ['clipboard-read', 'clipboard-write'],
     })
     const touch = await touchCtx.newPage()
     await touch.goto(BASE, { waitUntil: 'networkidle' })
@@ -1025,6 +1026,112 @@ try {
       }
     }
     await touch.screenshot({ path: join(SHOTS, 'mobile-drawer.png') })
+
+    // A fresh context has no remembered session and lands on whichever is
+    // first — which was htop, so the compose box was typing into a TUI.
+    // Choose the shell deliberately; selecting also closes the drawer.
+    await touch
+      .locator('[data-testid="sidebar"][data-overlay="true"] [data-testid="session-row"]',
+        { hasText: 'scratchpad' })
+      .first()
+      .click()
+    await sleep(2500)
+
+    // ── copying terminal text with a finger ────────────────────────────────
+    // This was asked for by name and had no test at all. It cannot be checked
+    // through the browser's own selection: headless Chromium performs no
+    // native touch text selection, and a probe using it reports failure over
+    // ordinary page text too — so it would have "found" a bug in any
+    // implementation, correct or not. The gesture is ours, so it can be driven
+    // directly.
+    await touch.evaluate(() => {
+      const el = document.querySelector('.xterm-helper-textarea')
+      if (el instanceof HTMLTextAreaElement) el.blur()
+    })
+    const marker = 'FINGER' + '_COPY_TARGET'
+    // A throwaway line first. The key bar check above leaves a stray "1" at
+    // the prompt, and appending to it turned the marker command into
+    // "1echo ..." — the sort of thing that reads as a broken feature when it
+    // is a dirty prompt.
+    await touch.locator('[data-testid="compose-input"]').fill('true')
+    await touch.locator('[data-testid="compose-send"]').click()
+    await sleep(700)
+    await touch.locator('[data-testid="compose-input"]').fill(`echo ${marker.slice(0, 6)}"${marker.slice(6)}"`)
+    await touch.locator('[data-testid="compose-send"]').click()
+    let markerBox = null
+    for (let i = 0; i < 30; i++) {
+      markerBox = await touch.evaluate((needle) => {
+        const row = [...document.querySelectorAll('.xterm-rows > div')].find((d) =>
+          (d.textContent ?? '').includes(needle),
+        )
+        if (!row) return null
+        const r = row.getBoundingClientRect()
+        return { x: r.x, y: r.y, w: r.width, h: r.height }
+      }, marker)
+      if (markerBox) break
+      await sleep(400)
+    }
+    if (!markerBox) {
+      const shown = await touch.evaluate(() =>
+        [...document.querySelectorAll('.xterm-rows > div')]
+          .map((d) => d.textContent ?? '')
+          .filter((t) => t.trim())
+          .slice(-6),
+      )
+      note('FAIL', 'mobile',
+        `the phone could not send a command through the compose box; the terminal's last ` +
+        `lines are ${JSON.stringify(shown)}`)
+    } else {
+      const cdp = await touchCtx.newCDPSession(touch)
+      const y = markerBox.y + markerBox.h / 2
+      const at = (x) => ({ touchPoints: [{ x, y, radiusX: 8, radiusY: 8, force: 1, id: 1 }] })
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', ...at(markerBox.x + 2) })
+      // Longer than the hold threshold, or this is a scroll.
+      await sleep(700)
+      // Past the end of the text: dragging off the edge is how anyone selects
+      // to the end of a line, and it must clamp rather than throw.
+      for (let x = markerBox.x + 2; x < markerBox.x + markerBox.w + 40; x += 12) {
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', ...at(x) })
+        await sleep(25)
+      }
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+      await sleep(500)
+
+      const bar = await touch.locator('[data-testid="selection-bar"]').isVisible().catch(() => false)
+      if (!bar) {
+        note('FAIL', 'mobile',
+          'pressing and holding on terminal text selected nothing; there is no way to copy ' +
+          'from a phone')
+      } else {
+        const selected = await touch.evaluate(() => {
+          const el = [...document.querySelectorAll('[data-testid="selection-bar"] span')][0]
+          return el?.textContent ?? ''
+        })
+        if (!/\d+ characters selected/.test(selected)) {
+          note('FAIL', 'mobile', `the selection bar reads ${JSON.stringify(selected)}`)
+        }
+        await touch.screenshot({ path: join(SHOTS, 'touch-selection.png') })
+        await touch.locator('[data-testid="selection-copy"]').click()
+        await sleep(400)
+        const clip = await touch.evaluate(() => navigator.clipboard.readText().catch(() => ''))
+        if (!clip.includes(marker)) {
+          note('FAIL', 'mobile',
+            `the copy button put ${JSON.stringify(clip.slice(0, 60))} on the clipboard, not the ` +
+            'selected line')
+        }
+        // Tapping away has to dismiss it, or the bar sits over the key bar
+        // forever.
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchStart',
+          ...at(markerBox.x + 2),
+        })
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+        await sleep(500)
+        if (await touch.locator('[data-testid="selection-bar"]').isVisible().catch(() => false)) {
+          note('FAIL', 'mobile', 'a tap elsewhere did not dismiss the selection bar')
+        }
+      }
+    }
     await touchCtx.close()
   }
 

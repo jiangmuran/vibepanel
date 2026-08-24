@@ -939,3 +939,39 @@ The fix itself is one class: `.vp-reveal` is opaque by default and only hides
 itself inside `@media (hover: hover) and (pointer: fine)`. The failure
 direction matters — if some environment misreports, controls are visible when
 they could have been tidy, rather than absent when they are needed.
+
+## Swipe to copy did not exist
+
+It was asked for by name and shipped as a component that watches
+`document.selectionchange` — the browser's own selection. Over a terminal that
+is unlikely to work: xterm sets `user-select: none` on the terminal and handles
+pointer input itself, so what a long press does over it depends on the browser.
+There was no test of any kind.
+
+Trying to write one produced the more useful lesson. A probe that long-pressed
+and dragged over terminal text found nothing selected — and a control run of
+the same gesture over an ordinary `<div>` of plain text found nothing selected
+either. Headless Chromium performs no native touch text selection at all. That
+probe would have reported the feature broken no matter how it was built, which
+makes it worthless in both directions. Two false starts in one afternoon from
+the same root cause: the harness measuring itself rather than the app. The
+first version even dispatched `new TouchEvent()` from JavaScript, which bypasses
+Chromium's gesture recogniser entirely.
+
+The plan called for a hand-rolled touch selection layer for exactly this
+reason, and the implementation had quietly substituted the native one. So the
+gesture is now ours: press and hold for 450ms to anchor, drag to extend, lift
+to keep, driving xterm's own selection API through touch events. It behaves the
+same on every phone, and — the part that matters here — it can be driven by CDP
+touch events, so there is now a check that presses, drags past the end of the
+line, reads the character count, presses Copy and asserts on the clipboard
+contents.
+
+Two things fell out of building it. Dragging off the end of a line has to clamp
+to the last cell rather than index past the buffer, because dragging off the
+edge is precisely how anyone selects to the end of a line. And selecting down a
+column must count cells in reading order, not draw a rectangle — the unit test
+for that is three lines and would have caught the obvious wrong implementation.
+
+The gate is `(pointer: coarse)`, not the layout breakpoint. A tablet in
+landscape is not narrow and has nothing but fingers.

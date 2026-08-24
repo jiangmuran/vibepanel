@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { attachTouchSelection } from './mobile/touchSelect'
 import { Terminal as Xterm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
@@ -15,6 +16,14 @@ interface Props {
   themeKey: string
   onTitle?: (title: string) => void
   onExit?: () => void
+  /**
+   * Enables press-and-hold selection with a finger. Off by default: the
+   * gesture only makes sense where there is no pointer to drag with, and
+   * attaching it on a desktop would fight xterm's own mouse selection.
+   */
+  touchSelect?: boolean
+  /** Fires with the selected text, or '' when the selection is dropped. */
+  onSelectionChange?: (text: string) => void
   className?: string
   /**
    * Stops xterm capturing keystrokes.
@@ -55,6 +64,8 @@ export function TerminalView({
   onExit,
   className,
   readOnly = false,
+  touchSelect = false,
+  onSelectionChange,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
@@ -67,6 +78,12 @@ export function TerminalView({
   // passive, and only so the offer to take over can be withheld when there is
   // nothing to gain by it.
   const [ownFit, setOwnFit] = useState({ cols: 0, rows: 0 })
+  // Held in a ref for the same reason onTitle/onExit are not in the effect's
+  // deps: a new callback identity must not rebuild the terminal.
+  const onSelectionRef = useRef(onSelectionChange)
+  useEffect(() => {
+    onSelectionRef.current = onSelectionChange
+  })
 
   // Terminal lifetime is tied to the session, never to the theme or to
   // callbacks: recreating it would clear the screen and lose the scrollback the
@@ -157,7 +174,17 @@ export function TerminalView({
       onExit: () => onExit?.(),
     })
 
+    // Selection is reported from xterm's own event rather than the DOM's,
+    // because the gesture drives xterm's selection model and never touches
+    // window.getSelection().
+    const selSub = term.onSelectionChange(() => {
+      onSelectionRef.current?.(term.getSelection())
+    })
+    const detachTouch = touchSelect ? attachTouchSelection(host, term) : undefined
+
     return () => {
+      detachTouch?.()
+      selSub.dispose()
       dataSub.dispose()
       binarySub.dispose()
       socket.unsubscribe(sessionId)
@@ -168,7 +195,7 @@ export function TerminalView({
     // onTitle/onExit are intentionally excluded: a new callback identity must
     // not tear down and rebuild the terminal.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [socket, sessionId, readOnly])
+  }, [socket, sessionId, readOnly, touchSelect])
 
   // Repaint the palette in place when the theme changes.
   useEffect(() => {

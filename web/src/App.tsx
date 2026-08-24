@@ -79,6 +79,11 @@ function writeStored(key: string, value: string | null) {
 export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => void }) {
   const socket = useMemo(() => new PanelSocket(), [])
   const narrow = useMediaQuery(NARROW_QUERY)
+  // Width decides the layout; the pointer decides the gestures. A tablet in
+  // landscape is not narrow and still has nothing but fingers, so keying
+  // press-and-hold selection to the layout breakpoint would leave it with no
+  // way to copy at all.
+  const coarsePointer = useMediaQuery('(pointer: coarse)')
 
   const [status, setStatus] = useState<SocketStatus>('closed')
   const [state, setState] = useState<PanelState>({
@@ -118,6 +123,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     const raw = Number(readStored(RIGHT_KEY))
     return Number.isFinite(raw) && raw >= 0 ? raw : 0
   })
+  const [selection, setSelection] = useState('')
   const [rightTab, setRightTab] = useState<PanelTab>(() => {
     const raw = readStored(RIGHT_TAB_KEY)
     return raw === 'files' || raw === 'monitor' || raw === 'notes' || raw === 'todos'
@@ -455,6 +461,8 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               sessionId={current.id}
               themeKey={themeKey}
               readOnly={narrow}
+              touchSelect={narrow || coarsePointer}
+              onSelectionChange={setSelection}
               className="h-full w-full p-2"
             />
           ) : (
@@ -468,7 +476,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
 
         {current && narrow && (
           <>
-            <SelectionCopy />
+            <SelectionCopy selection={selection} />
             <ComposeInput onSend={sendToCurrent} />
             <MobileKeyBar onSend={sendToCurrent} />
           </>
