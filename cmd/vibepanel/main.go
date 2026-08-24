@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/jiangmuran/vibepanel/internal/config"
+	"github.com/jiangmuran/vibepanel/internal/hooks"
 	"github.com/jiangmuran/vibepanel/internal/httpapi"
 	"github.com/jiangmuran/vibepanel/internal/id"
 	sessionpkg "github.com/jiangmuran/vibepanel/internal/session"
@@ -56,11 +57,13 @@ func run(args []string) error {
 			return cmdSession(rest)
 		case "doctor":
 			return cmdDoctor(rest)
+		case "hook":
+			return cmdHook(rest)
 		case "version":
 			fmt.Println("vibepanel", version.String())
 			return nil
 		default:
-			return fmt.Errorf("unknown command %q (try: serve, project, session, doctor, version)", cmd)
+			return fmt.Errorf("unknown command %q (try: serve, project, session, hook, doctor, version)", cmd)
 		}
 	}
 	if len(args) > 0 && (args[0] == "--version" || args[0] == "-version") {
@@ -116,7 +119,7 @@ func cmdServe(args []string) error {
 
 	srv := &httpapi.Server{
 		Cfg: a.cfg, DB: a.db, Tmux: a.tmux, Manager: mgr,
-		Hub: ws.NewHub(), Log: logger,
+		Hub: ws.NewHub(), Detector: sessionpkg.NewDetector(), Log: logger,
 	}
 	// The pump reports output and bells straight into the server, which is how
 	// last_output_at stays honest and, from M4, how session state is decided.
@@ -421,6 +424,54 @@ func cmdSession(args []string) error {
 		return nil
 	}
 	return fmt.Errorf("unknown session subcommand %q", sub)
+}
+
+// ─── hook ─────────────────────────────────────────────────────────────────
+
+// cmdHook installs the reporter script and prints the configuration to paste.
+//
+// Printing rather than editing the user's agent configuration: those files are
+// theirs, they often contain other things, and a tool that rewrites them
+// silently is a tool people stop trusting. The panel's settings page will offer
+// to apply this, showing exactly what it would write.
+func cmdHook(args []string) error {
+	ctx := context.Background()
+	a, err := openApp(ctx, args)
+	if err != nil {
+		return err
+	}
+	defer a.Close()
+
+	script, err := hooks.Install(filepath.Join(a.cfg.DataDir, "hooks"))
+	if err != nil {
+		return err
+	}
+
+	srv := &httpapi.Server{Cfg: a.cfg, DB: a.db, Tmux: a.tmux, Log: slog.Default()}
+	if _, err := srv.HookToken(ctx); err != nil {
+		return fmt.Errorf("hook: %w", err)
+	}
+
+	fmt.Printf("Reporter installed at %s\n", script)
+	fmt.Printf(`
+State reporting is optional. Without it the panel infers state from the byte
+stream, which can tell "producing output" from "quiet" and sees the terminal
+bell, but cannot tell "finished" from "waiting for you". With it, the agent
+says which.
+
+The script no-ops outside a vibepanel session, so installing it globally does
+not affect agents you start from an ordinary terminal.
+
+── Claude Code ──  merge into ~/.claude/settings.json
+
+%s
+
+── Codex ──  add to ~/.codex/config.toml
+
+%s
+
+`, hooks.ClaudeSettings(script), hooks.CodexNotify(script))
+	return nil
 }
 
 // ─── doctor ───────────────────────────────────────────────────────────────

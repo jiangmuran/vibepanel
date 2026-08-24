@@ -30,6 +30,7 @@ export interface SidebarProps {
   onRenameProject: (project: Project, name: string) => void
   onRenameSession: (session: Session, title: string) => void
   onPinSession: (session: Session, pinned: boolean) => void
+  onSetSessionState: (session: Session, state: SessionState) => void
   onKillSession: (session: Session) => void
 
   projectOrder: 'auto' | 'manual'
@@ -219,7 +220,10 @@ export function Sidebar(props: SidebarProps) {
                   }`}
                   onClick={() => props.onSelect(s.id)}
                 >
-                  <StateDot state={s.state} />
+                  <StateDot
+                    state={s.state}
+                    onToggle={(next) => props.onSetSessionState(s, next)}
+                  />
                   <InlineName
                     value={sessionLabel(s)}
                     onCommit={(next) => props.onRenameSession(s, next)}

@@ -57,12 +57,13 @@ func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 	t.Cleanup(mgr.DetachAll)
 
 	srv := &Server{
-		Cfg:     config.Config{DataDir: dir, Addr: ":0", TmuxSocket: socket, StaticDir: dir},
-		DB:      db,
-		Tmux:    tm,
-		Manager: mgr,
-		Hub:     ws.NewHub(),
-		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Cfg:      config.Config{DataDir: dir, Addr: ":0", TmuxSocket: socket, StaticDir: dir},
+		DB:       db,
+		Tmux:     tm,
+		Manager:  mgr,
+		Hub:      ws.NewHub(),
+		Detector: session.NewDetector(),
+		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	mgr.OnSignals = srv.HandleSignals
 	ts := httptest.NewServer(srv.Routes())
@@ -607,5 +608,251 @@ func TestReorderRejectsUnknownProject(t *testing.T) {
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", res.StatusCode)
+	}
+}
+
+func TestHookRequiresTheToken(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"hooked"}`)
+	sess := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
+
+	body := `{"sessionId":"` + sess.ID + `","state":"waiting"}`
+	post := func(auth string) int {
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/hook/state", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		if auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
+		res, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatalf("post: %v", err)
+		}
+		res.Body.Close()
+		return res.StatusCode
+	}
+
+	// This endpoint has no session cookie behind it — an agent hook runs
+	// outside the browser — so the token is the only thing standing between a
+	// local process and the ability to rewrite session state.
+	if code := post(""); code != http.StatusUnauthorized {
+		t.Errorf("no token: status = %d, want 401", code)
+	}
+	if code := post("Bearer wrong"); code != http.StatusUnauthorized {
+		t.Errorf("bad token: status = %d, want 401", code)
+	}
+
+	token, err := srv.HookToken(ctx)
+	if err != nil {
+		t.Fatalf("HookToken: %v", err)
+	}
+	if code := post("Bearer " + token); code != http.StatusNoContent {
+		t.Fatalf("good token: status = %d, want 204", code)
+	}
+
+	rec, err := srv.DB.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if rec.State != session.StateWaiting || rec.StateSource != session.SourceHook {
+		t.Errorf("state = %q from %q, want %q from %q",
+			rec.State, rec.StateSource, session.StateWaiting, session.SourceHook)
+	}
+}
+
+func TestHookRejectsGarbage(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	token, err := srv.HookToken(ctx)
+	if err != nil {
+		t.Fatalf("HookToken: %v", err)
+	}
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"hooked"}`)
+	sess := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
+
+	// The body is written by whatever the user put in their agent config.
+	cases := []struct {
+		name, body string
+		want       int
+	}{
+		{"unknown state", `{"sessionId":"` + sess.ID + `","state":"banana"}`, http.StatusBadRequest},
+		{"unknown session", `{"sessionId":"nope","state":"done"}`, http.StatusNotFound},
+		{"empty body", `{}`, http.StatusBadRequest},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/hook/state", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+token)
+			res, err := ts.Client().Do(req)
+			if err != nil {
+				t.Fatalf("post: %v", err)
+			}
+			defer res.Body.Close()
+			if res.StatusCode != tc.want {
+				t.Errorf("status = %d, want %d", res.StatusCode, tc.want)
+			}
+		})
+	}
+}
+
+func TestSessionEnvironmentCarriesTheHookVariables(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"env"}`)
+	// The hook script reads these out of its environment and no-ops when they
+	// are absent. If they stop being injected, hooks silently stop reporting
+	// and everything falls back to the heuristic with no error anywhere.
+	sess := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sh","-c","printf '%s|%s|%s' \"$VIBEPANEL_SESSION_ID\" \"$VIBEPANEL_TOKEN\" \"$VIBEPANEL_URL\"; sleep 60"]}`)
+
+	token, err := srv.HookToken(ctx)
+	if err != nil {
+		t.Fatalf("HookToken: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		out, cerr := srv.Tmux.Capture(ctx, sess.TmuxName)
+		if cerr != nil {
+			t.Fatalf("Capture: %v", cerr)
+		}
+		if strings.Contains(out, sess.ID+"|"+token+"|") {
+			if !strings.Contains(out, "127.0.0.1") {
+				t.Errorf("VIBEPANEL_URL is not loopback: %q", out)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("hook variables never reached the pane; capture was %q", out)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func TestPollerTracksStateFromOutput(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"states"}`)
+
+	// htop rather than a shell loop: when a shell is running something, the
+	// pane's foreground process is that something, so `pane_current_command`
+	// reading "sh" genuinely means the shell is sitting at its prompt. A shell
+	// loop alternates between "sh" and "sleep" and would be testing the wrong
+	// thing.
+	busy := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["htop","-d","2"]}`)
+	if _, err := srv.Manager.Attach(ctx, busy.ID, busy.TmuxName, 80, 24); err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+
+	waitState := func(id string, want session.State, within time.Duration) {
+		t.Helper()
+		deadline := time.Now().Add(within)
+		var last session.State
+		for {
+			if err := srv.pollOnce(ctx); err != nil {
+				t.Fatalf("pollOnce: %v", err)
+			}
+			rec, err := srv.DB.GetSession(ctx, id)
+			if err != nil {
+				t.Fatalf("GetSession: %v", err)
+			}
+			last = rec.State
+			if last == want {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("state = %q, want %q", last, want)
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+
+	// A TUI redrawing is what "working" looks like from outside.
+	waitState(busy.ID, session.StateWorking, 10*time.Second)
+
+	// A session that printed once and then went quiet is finished.
+	quiet := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sh","-c","echo started; exec sleep 60"]}`)
+	if _, err := srv.Manager.Attach(ctx, quiet.ID, quiet.TmuxName, 80, 24); err != nil {
+		t.Fatalf("Attach quiet: %v", err)
+	}
+	waitState(quiet.ID, session.StateDone, 12*time.Second)
+}
+
+func TestBellMarksASessionWaiting(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"bell"}`)
+
+	// This is the state the whole panel exists to surface: an agent that
+	// stopped and wants a human. Without hooks the terminal bell is the only
+	// unambiguous signal available.
+	sess := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sh","-c","sleep 0.5; printf 'need you\\a'; exec sleep 60"]}`)
+	if _, err := srv.Manager.Attach(ctx, sess.ID, sess.TmuxName, 80, 24); err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+
+	deadline := time.Now().Add(12 * time.Second)
+	var last session.State
+	for {
+		if err := srv.pollOnce(ctx); err != nil {
+			t.Fatalf("pollOnce: %v", err)
+		}
+		rec, err := srv.DB.GetSession(ctx, sess.ID)
+		if err != nil {
+			t.Fatalf("GetSession: %v", err)
+		}
+		last = rec.State
+		if last == session.StateWaiting {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("state = %q, want %q after the pane rang the bell", last, session.StateWaiting)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+func TestManualOverrideSurvivesThePoller(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"manual"}`)
+	sess := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
+
+	req, _ := http.NewRequest(http.MethodPatch, ts.URL+"/api/sessions/"+sess.ID,
+		strings.NewReader(`{"state":"waiting"}`))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("PATCH: %v", err)
+	}
+	res.Body.Close()
+
+	// The poller consults the detector, so an override recorded only in the
+	// database is undone on the next tick — which makes the control useless.
+	for i := 0; i < 4; i++ {
+		if err := srv.pollOnce(ctx); err != nil {
+			t.Fatalf("pollOnce: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	rec, err := srv.DB.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if rec.State != session.StateWaiting || rec.StateSource != session.SourceManual {
+		t.Errorf("state = %q from %q, want the override to survive polling",
+			rec.State, rec.StateSource)
 	}
 }

@@ -377,3 +377,80 @@ container's correct white. It reads the viewport directly now.
 
 Worth noting that the harness reported a clean run while this was on screen.
 Looking at the screenshots is not a formality.
+
+## 2026-08-23 — M4: session state
+
+Three states, decided by whichever of {the user said, the agent said, the
+terminal did} happened last — recency rather than a fixed ranking of sources,
+so a stale declaration cannot outrank what a session is visibly doing and a
+fresh one is not undone by the output it predicted.
+
+Hooks are the precise source and are optional throughout. `vibepanel hook`
+installs a reporter script and prints the configuration to paste; the script
+no-ops outside a panel session, so installing it globally leaves agents started
+from an ordinary terminal alone. Without it the heuristic reads output activity
+and the terminal bell, which can tell working from quiet but cannot tell
+"finished" from "waiting for you".
+
+### State only worked for the session you were looking at
+
+Found by the render check: a session that rang the bell never showed as
+waiting. The detector reads the PTY stream, and the panel attached only on
+subscribe — so a session could ring, sit there wanting a human, and read as
+"done" until you happened to click it. The one failure that makes the feature
+pointless.
+
+Polling tmux's flags instead of attaching turned out not to work:
+`window_bell_flag` does latch with no client attached, but nothing clears it —
+`select-window` only clears flags for a client that is actually viewing, and
+`window_activity_flag` latches on the first byte and stays set forever. So the
+panel now attaches every session and keeps a replay buffer for each. The cost
+is one small tmux client and one buffer per session; the benefit beyond
+correctness is that switching sessions is instant, because the buffer is
+already warm.
+
+Sessions attach at creation rather than at the next poll — an agent can ring
+within a second of starting, and anything before the pump is running is simply
+not seen. A bell that rang while the panel was down is recovered from
+`window_bell_flag`, which is latched precisely because there was no client.
+
+### bell-action "none" was silently eating every bell
+
+The config said `set -g bell-action none`, with a comment claiming the bell had
+to reach the PTY intact. It does the opposite: despite reading like "take no
+action", it stops tmux forwarding the bell to its client. Captured the client
+PTY under each value — `none` and `other` yield zero bells, `any` and `current`
+yield one. Now `any`, because a session nobody is looking at is exactly the one
+whose bell matters.
+
+### tmux was re-initialising every session five seconds after attach
+
+Every session's state reset to "working" at the same instant, once, a few
+seconds in — wiping a bell that had rung a second earlier. Dumping the PTY
+chunks showed why: on attach tmux asks the terminal a batch of questions —
+
+```
+\x1b[c  \x1b[>c  \x1b[>q  \x1b]10;?  \x1b]11;?  \x1b[?996n  \x1b[18t  \x1b[14t
+```
+
+— and waits. Nothing answered, so five seconds later tmux gave up, applied
+defaults, and re-sent its whole initialisation to every client at once.
+
+The panel answers all of them now, mirroring what xterm.js reports so that
+tmux's model matches the thing actually rendering. Only the panel answers: two
+replies would be worse than none, because the second is delivered to the pane
+as though the user had typed it.
+
+Two smaller guards came out of the same investigation. A chunk containing
+nothing printable — mode sets, cursor moves — is the terminal being configured,
+not the session producing output, and no longer counts as activity. And output
+in the first 250ms after attaching is the repaint of content that was already
+there, so it does not count either; without that, every session read as
+"working" the moment the panel started and any manual state was cleared.
+
+### An hour of guessing, ended by four lines of logging
+
+The five-second mystery survived several rounds of plausible theories —
+client churn, resize storms, status-line intervals — and fell immediately once
+`VIBEPANEL_DEBUG_CHUNKS` printed what was actually arriving on each PTY. The
+env-gated dump is still there. Worth reaching for it sooner next time.

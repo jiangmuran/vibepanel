@@ -1,7 +1,9 @@
 package session
 
 import (
+	"bytes"
 	"encoding/base64"
+	"fmt"
 	"strings"
 	"unicode/utf8"
 )
@@ -153,6 +155,118 @@ func (s *oscScanner) handleOSC(payload string) {
 		// agent repeating what is already on screen.
 		s.bell = true
 	}
+}
+
+// Nominal cell size in pixels, for answering tmux's pixel-dimension query.
+//
+// Nothing measures a real cell here — the real terminal is xterm.js in a
+// browser we cannot see. These are a plausible 13px monospace cell, and the
+// answer is only used to derive pixel dimensions for image protocols.
+const (
+	cellWidthPx  = 8
+	cellHeightPx = 17
+)
+
+// terminalQueryReplies answers the capability queries tmux sends its client.
+//
+// On attach tmux asks a batch of questions and waits for the answers. Ours
+// answered none, so five seconds later tmux gave up, applied defaults, and
+// re-initialised every session at once. That burst counted as output and reset
+// every session's state — wiping any "waiting" a bell had just raised, which
+// is the one thing this panel exists to show.
+//
+// Answering is also simply correct. From tmux's point of view this PTY is the
+// terminal; a terminal that ignores the questions leaves tmux guessing about
+// colour support and cell size for every session.
+//
+// The answers deliberately mirror what xterm.js reports, because xterm.js is
+// what actually renders this: tmux's model of the terminal should match the
+// thing on the other end of it.
+//
+// Only we answer. The queries do reach the browser in the output stream, but
+// they arrive at attach — which now happens when a session is created, before
+// any viewer subscribes — and replayed scrollback is delivered with the
+// browser's responses suppressed. Two answers would be worse than none: the
+// second is delivered to the pane as if the user had typed it.
+func terminalQueryReplies(chunk []byte, cols, rows int) []byte {
+	var out []byte
+	add := func(s string) { out = append(out, s...) }
+
+	for _, q := range []struct {
+		query string
+		reply func()
+	}{
+		// Primary and secondary device attributes.
+		{"\x1b[c", func() { add("\x1b[?1;2c") }},
+		{"\x1b[>c", func() { add("\x1b[>0;276;0c") }},
+		// XTVERSION. The name is free-form and shows up in tmux's logs.
+		{"\x1b[>q", func() { add("\x1bP>|vibepanel\x1b\\") }},
+		// Foreground and background colour. The real palette lives in the
+		// browser and changes with the theme; these exist so tmux stops
+		// waiting, and it only uses them to decide light-versus-dark defaults.
+		{"\x1b]10;?\x1b\\", func() { add("\x1b]10;rgb:cccc/cccc/cccc\x1b\\") }},
+		{"\x1b]11;?\x1b\\", func() { add("\x1b]11;rgb:0000/0000/0000\x1b\\") }},
+		// Colour-scheme report: 1 is dark, 2 is light.
+		{"\x1b[?996n", func() { add("\x1b[?997;1n") }},
+		// Text area size, in characters and in pixels.
+		{"\x1b[18t", func() { add(fmt.Sprintf("\x1b[8;%d;%dt", rows, cols)) }},
+		{"\x1b[14t", func() {
+			add(fmt.Sprintf("\x1b[4;%d;%dt", rows*cellHeightPx, cols*cellWidthPx))
+		}},
+	} {
+		if bytes.Contains(chunk, []byte(q.query)) {
+			q.reply()
+		}
+	}
+	return out
+}
+
+// hasPrintable reports whether a chunk contains anything a person would see.
+//
+// Used to decide what counts as activity. A chunk of nothing but mode sets and
+// cursor moves is the terminal being reconfigured, not the session producing
+// output, and treating it as work is how a quiet session reads as busy.
+func hasPrintable(b []byte) bool {
+	for i := 0; i < len(b); i++ {
+		c := b[i]
+		switch {
+		case c == 0x1b:
+			// Skip the escape sequence rather than inspecting its parameters,
+			// which are ASCII and would otherwise look like content.
+			i += escapeLength(b[i:]) - 1
+		case c == '\n', c == '\t', c >= 0x20 && c != 0x7f:
+			return true
+		}
+	}
+	return false
+}
+
+// escapeLength returns how many bytes the escape sequence at the start of b
+// occupies, or 1 if it is not one we recognise.
+func escapeLength(b []byte) int {
+	if len(b) < 2 || b[0] != 0x1b {
+		return 1
+	}
+	switch b[1] {
+	case '[':
+		// CSI: parameters and intermediates, then a final byte in 0x40–0x7e.
+		for i := 2; i < len(b); i++ {
+			if b[i] >= 0x40 && b[i] <= 0x7e {
+				return i + 1
+			}
+		}
+		return len(b)
+	case ']':
+		// OSC: runs to BEL or ST.
+		if n, _, ok := parseOSC(b); ok {
+			return n
+		}
+		return len(b)
+	case '(', ')', '*', '+', '#', ' ':
+		// Character-set and similar two-parameter sequences.
+		return 3
+	}
+	return 2
 }
 
 // drain returns everything collected since the last call and resets.

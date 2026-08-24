@@ -283,6 +283,15 @@ func (c *Client) Capture(ctx context.Context, name string) (string, error) {
 	return c.run(ctx, "capture-pane", "-p", "-e", "-J", "-S", "-", "-t", target(name))
 }
 
+// CaptureScrollback returns only the history above the visible screen.
+//
+// Used to prime a replay buffer before attaching. Attaching makes tmux repaint
+// the visible screen, so capturing that too would draw it twice; ending the
+// range one line into the history lets the two compose exactly.
+func (c *Client) CaptureScrollback(ctx context.Context, name string) (string, error) {
+	return c.run(ctx, "capture-pane", "-p", "-e", "-J", "-S", "-", "-E", "-1", "-t", target(name))
+}
+
 // Info is a point-in-time snapshot of one session, used for naming, state
 // heuristics and the sidebar.
 type Info struct {
@@ -293,11 +302,18 @@ type Info struct {
 	// Eventually consistent: for roughly 200ms after Create it still reads
 	// "tmux", because the pane's fork has not exec'd the real command yet.
 	// Never cache the first reading as a session's identity — poll for it.
-	Command     string
-	Path        string // #{pane_current_path} — the pane's cwd right now
-	PID         int    // #{pane_pid} — first process in the pane
-	Dead        bool   // #{pane_dead} — process exited, output preserved
-	Bell        bool   // #{window_bell_flag} — unacknowledged bell
+	Command string
+	Path    string // #{pane_current_path} — the pane's cwd right now
+	PID     int    // #{pane_pid} — first process in the pane
+	Dead    bool   // #{pane_dead} — process exited, output preserved
+	// Bell is #{window_bell_flag}.
+	//
+	// Always false under the panel's configuration: with bell-action "any"
+	// tmux forwards the bell to the client instead of latching the flag for a
+	// status line that is turned off. The real signal is the \007 in the PTY
+	// stream, which the OSC scanner picks up. Kept because the field is free
+	// and a future configuration might want it — but do not build on it.
+	Bell        bool
 	Width       int
 	Height      int
 	Activity    int64 // #{session_activity} — unix seconds

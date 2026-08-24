@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/base64"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -149,5 +150,81 @@ func TestPlainOutputProducesNothing(t *testing.T) {
 	bell, clip, titles := s.drain()
 	if bell || len(clip) != 0 || len(titles) != 0 {
 		t.Errorf("plain output produced bell=%v clip=%q titles=%q", bell, clip, titles)
+	}
+}
+
+func TestHasPrintable(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"plain text", "hello", true},
+		{"text with colour", "\x1b[31mred\x1b[0m", true},
+		{"newline only", "\r\n", true},
+		{
+			// This exact shape is what tmux emits five seconds after a client
+			// attaches, when its terminal capability query goes unanswered. It
+			// is the terminal being reconfigured, not the session doing
+			// anything, and counting it as output reset every session's state.
+			name: "tmux re-initialisation",
+			in:   "\x1b[?1004h\x1b[?7727h\x1b(B\x1b[m\x1b[?12l\x1b[?25h\x1b[?1006l\x1b[1;1H\x1b[1;32r",
+			want: false,
+		},
+		{"cursor moves only", "\x1b[1;1H\x1b[2;5H\x1b[K", false},
+		{"empty", "", false},
+		{"osc title only", "\x1b]0;a title\x07", false},
+		{"osc title then text", "\x1b]0;a title\x07real output", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hasPrintable([]byte(tc.in)); got != tc.want {
+				t.Errorf("hasPrintable(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTerminalQueryReplies(t *testing.T) {
+	// The exact batch tmux sends on attach. Leaving any of it unanswered makes
+	// tmux wait five seconds and then re-initialise every session at once.
+	attach := "\x1b[?1049h\x1b[?2031h\x1b[?996n\x1b(B\x1b[m\x1b[1;1H\x1b[1;32r" +
+		"\x1b[c\x1b[>c\x1b[>q\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b[1;1H"
+	reply := string(terminalQueryReplies([]byte(attach), 120, 32))
+
+	for _, want := range []string{
+		"\x1b[?1;2c",       // DA1
+		"\x1b[>0;276;0c",   // DA2
+		"\x1bP>|vibepanel", // XTVERSION
+		"\x1b]10;rgb:",     // foreground
+		"\x1b]11;rgb:",     // background
+		"\x1b[?997;",       // colour scheme
+	} {
+		if !strings.Contains(reply, want) {
+			t.Errorf("no answer for %q in %q", want, reply)
+		}
+	}
+
+	sizes := string(terminalQueryReplies([]byte("\x1b[18t\x1b[14t"), 120, 32))
+	if !strings.Contains(sizes, "\x1b[8;32;120t") {
+		t.Errorf("character size answer missing from %q", sizes)
+	}
+	if !strings.Contains(sizes, "\x1b[4;544;960t") {
+		t.Errorf("pixel size answer missing from %q", sizes)
+	}
+}
+
+func TestOrdinaryOutputProducesNoReplies(t *testing.T) {
+	// Anything we send goes to the pane as if it were typed, so answering
+	// something that was not a question is worse than staying quiet.
+	for _, in := range []string{
+		"just some text\r\n",
+		"\x1b[31mcoloured\x1b[0m",
+		"\x1b[2J\x1b[H",
+		"a c > q 10;? 18t 14t", // the letters, not the sequences
+	} {
+		if got := terminalQueryReplies([]byte(in), 80, 24); len(got) != 0 {
+			t.Errorf("terminalQueryReplies(%q) = %q, want nothing", in, got)
+		}
 	}
 }

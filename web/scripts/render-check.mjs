@@ -144,6 +144,11 @@ try {
   await mkSession(['sh', '-c', 'echo RENDER_CHECK_MARKER; exec sh'])
   await mkSession(['htop'])
 
+  // A session that rings the terminal bell: without hooks this is the only
+  // signal that an agent has stopped and wants a person, and surfacing it is
+  // the panel's whole reason to exist.
+  await mkSession(['sh', '-c', "sleep 1; printf 'needs you\\a'; exec sleep 300"])
+
   // A second project, so ordering can be exercised.
   await fetch(`${BASE}/api/projects`, {
     method: 'POST',
@@ -196,6 +201,16 @@ try {
   if (!termText.trim()) note('FAIL', 'term', 'terminal rendered but is empty')
 
   // ── typing round trip ────────────────────────────────────────────────────
+  // Pick the shell explicitly. Sessions sort by urgency, so the one that rang
+  // the bell is at the top and gets auto-selected — typing into it would be
+  // typing into a sleep.
+  const shellRow = page.locator('[data-testid="session-row"]', { hasText: 'scratchpad' }).first()
+  if (await shellRow.isVisible().catch(() => false)) {
+    await shellRow.click()
+    await sleep(1200)
+  } else {
+    note('WARN', 'ui', 'could not find the shell session row to select')
+  }
   await page.locator('.xterm-screen').click()
   await page.keyboard.type('echo BROWSER_TYPED_OK')
   await page.keyboard.press('Enter')
@@ -398,6 +413,47 @@ try {
       `terminal responses were injected into the session by the replay: ${JSON.stringify(
         afterReload.replace(/\s+/g, ' ').trim().slice(-120),
       )}`)
+  }
+
+  // ── session state ────────────────────────────────────────────────────────
+  // The bell has to reach the panel through tmux, the PTY and the detector.
+  // tmux's bell-action swallowed it entirely once, silently, so this is worth
+  // asserting end to end rather than trusting the unit tests.
+  let sawWaiting = false
+  for (let i = 0; i < 40; i++) {
+    const states = await page.$$eval('[data-testid="state-dot"]', (els) =>
+      els.map((el) => el.getAttribute('data-state')),
+    )
+    if (states.includes('waiting')) { sawWaiting = true; break }
+    await sleep(500)
+  }
+  if (!sawWaiting) {
+    note('FAIL', 'state', 'a session that rang the bell never showed as waiting')
+  } else {
+    // And it must be visible from another tab, which is where the user
+    // actually is.
+    const title = await page.title()
+    if (!/^\(\d+\)/.test(title)) {
+      note('FAIL', 'state', `tab title is ${JSON.stringify(title)}; a waiting session should show a count`)
+    }
+
+    // Clicking the indicator is how you say "I have dealt with this".
+    const waitingDot = page.locator('[data-testid="state-dot"][data-state="waiting"]').first()
+    await waitingDot.click()
+    let cleared = false
+    for (let i = 0; i < 20; i++) {
+      const still = await page.locator('[data-testid="state-dot"][data-state="waiting"]').count()
+      if (still === 0) { cleared = true; break }
+      await sleep(400)
+    }
+    if (!cleared) {
+      note('FAIL', 'state', 'clicking the indicator did not clear the waiting state')
+    } else {
+      // And the override must survive the poller, or the control is useless.
+      await sleep(5000)
+      const back = await page.locator('[data-testid="state-dot"][data-state="waiting"]').count()
+      if (back > 0) note('FAIL', 'state', 'the manual override was undone by the poller')
+    }
   }
 
   // ── dragging a project reorders it ───────────────────────────────────────

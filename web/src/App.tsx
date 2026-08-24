@@ -138,6 +138,16 @@ export function App() {
     }
   }, [refresh])
 
+  // How many sessions are asking for something, in the tab title.
+  //
+  // The panel is usually not the tab you are looking at, and the whole point of
+  // the waiting state is that noticing it late costs you. A number in the title
+  // is the one place a browser will show it to you from another tab.
+  const waiting = state.sessions.filter((s) => s.state === 'waiting').length
+  useEffect(() => {
+    document.title = waiting > 0 ? `(${waiting}) vibepanel` : 'vibepanel'
+  }, [waiting])
+
   useEffect(() => writeStored(SELECTED_KEY, selected), [selected])
   useEffect(() => writeStored(SIDEBAR_KEY, docked ? 'open' : 'collapsed'), [docked])
 
@@ -207,6 +217,7 @@ export function App() {
           onRenameProject={(p, name) => void guard(() => api.patchProject(p.id, { name }))}
           onRenameSession={(s, title) => void guard(() => api.patchSession(s.id, { title }))}
           onPinSession={(s, pinned) => void guard(() => api.patchSession(s.id, { pinned }))}
+          onSetSessionState={(s, st) => void guard(() => api.patchSession(s.id, { state: st }))}
           onKillSession={killSession}
           projectOrder={state.projectOrder}
           onReorderProjects={(ids) => void guard(() => api.reorderProjects(ids))}
@@ -237,7 +248,10 @@ export function App() {
           )}
           {current ? (
             <>
-              <StateDot state={current.state} />
+              <StateDot
+                state={current.state}
+                onToggle={(st) => void guard(() => api.patchSession(current.id, { state: st }))}
+              />
               <span data-testid="session-title" className="truncate text-[13px] font-medium">
                 {sessionLabel(current)}
               </span>

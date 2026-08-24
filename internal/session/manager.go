@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,6 +16,19 @@ import (
 
 	"github.com/jiangmuran/vibepanel/internal/tmux"
 )
+
+// debugChunks dumps every PTY chunk to stderr when VIBEPANEL_DEBUG_CHUNKS is
+// set. Diagnosing "who wrote to this terminal" from the outside is guesswork;
+// this makes it an observation.
+var debugChunks = os.Getenv("VIBEPANEL_DEBUG_CHUNKS") != ""
+
+func truncateForLog(b []byte) string {
+	const max = 120
+	if len(b) > max {
+		return string(b[:max]) + "..."
+	}
+	return string(b)
+}
 
 // ErrNotAttached means the session has no live PTY attachment.
 var ErrNotAttached = errors.New("session: not attached")
@@ -62,7 +77,23 @@ type Live struct {
 	scanner *oscScanner
 	done    chan struct{}
 	closed  bool
+
+	// attachedAt is when the tmux client started. See attachSettle.
+	attachedAt time.Time
 }
+
+// attachSettle is how long after attaching the pump stops treating output as
+// activity.
+//
+// Attaching makes tmux repaint the pane, which is a redraw of content that was
+// already there — the terminal being set up, not the session doing something.
+// Counting it as activity marks every session "working" the moment the panel
+// starts, and clears any manual state the user had set.
+//
+// A quarter of a second is comfortably longer than a repaint and short enough
+// that real output is not lost: the worst case is a session that printed in
+// that window reading as quiet a couple of seconds early.
+const attachSettle = 250 * time.Millisecond
 
 // Signals is what the pump observed in a slice of output. The manager hands it
 // to whatever is deciding session state.
@@ -71,6 +102,14 @@ type Signals struct {
 	Bell      bool
 	Titles    []string
 	Bytes     int
+
+	// Visible is true when the chunk contained something a person would see.
+	//
+	// Separate from Bytes because terminals emit a great deal that is not
+	// output: mode changes, cursor moves, the re-initialisation tmux sends
+	// after a capability query times out. Counting those as activity makes an
+	// idle session look busy and clears the "waiting" state that matters most.
+	Visible bool
 }
 
 // Manager owns every live attachment.
@@ -84,6 +123,15 @@ type Manager struct {
 	// OnSignals, if set, is called from the pump goroutine whenever a chunk
 	// produced something worth acting on. It must not block.
 	OnSignals func(Signals)
+
+	// Log, if set, receives non-fatal problems.
+	Log *slog.Logger
+}
+
+func (m *Manager) logf(format string, args ...any) {
+	if m.Log != nil {
+		m.Log.Debug(fmt.Sprintf(format, args...))
+	}
 }
 
 // NewManager returns a manager attaching sessions on the given tmux client.
@@ -120,6 +168,23 @@ func (m *Manager) Attach(ctx context.Context, sessionID, tmuxName string, cols, 
 		return nil, fmt.Errorf("session: tmux session %s does not exist", tmuxName)
 	}
 
+	// Prime the replay buffer from tmux's own history before the client starts.
+	//
+	// After a panel restart the ring is empty, so without this the first person
+	// to open a session sees a blank terminal attached to a live process until
+	// it happens to print something. Attaching repaints the visible screen, so
+	// only the history above it is taken; the two compose exactly.
+	ring := NewRingBuffer(m.ringSize)
+	if scrollback, cerr := m.tmux.CaptureScrollback(ctx, tmuxName); cerr == nil {
+		if trimmed := strings.TrimRight(scrollback, "\n"); trimmed != "" {
+			_, _ = ring.Write([]byte(trimmed + "\r\n"))
+		}
+	} else {
+		// Not fatal: an empty replay is worse than a full one but far better
+		// than refusing to open the session.
+		m.logf("prime replay for %s: %v", tmuxName, cerr)
+	}
+
 	// A plain `attach`, not `attach -d`: detaching other clients would be
 	// pointless (we are the only one) and actively harmful if a human is
 	// debugging the same socket from a shell.
@@ -137,16 +202,17 @@ func (m *Manager) Attach(ctx context.Context, sessionID, tmuxName string, cols, 
 	}
 
 	l := &Live{
-		ID:       sessionID,
-		TmuxName: tmuxName,
-		ptmx:     ptmx,
-		cmd:      cmd,
-		ring:     NewRingBuffer(m.ringSize),
-		subs:     map[*Subscriber]struct{}{},
-		cols:     cols,
-		rows:     rows,
-		scanner:  newOSCScanner(),
-		done:     make(chan struct{}),
+		ID:         sessionID,
+		TmuxName:   tmuxName,
+		ptmx:       ptmx,
+		cmd:        cmd,
+		ring:       ring,
+		subs:       map[*Subscriber]struct{}{},
+		cols:       cols,
+		rows:       rows,
+		scanner:    newOSCScanner(),
+		done:       make(chan struct{}),
+		attachedAt: time.Now(),
 	}
 
 	m.mu.Lock()
@@ -194,10 +260,27 @@ func (m *Manager) pump(l *Live) {
 			l.mu.Lock()
 			scanner.feed(chunk)
 			bell, clips, titles := scanner.drain()
+			cols, rows := l.cols, l.rows
 			l.mu.Unlock()
+
+			// Answer tmux's terminal capability queries. Left unanswered, tmux
+			// waits five seconds and then re-initialises every session at once.
+			if reply := terminalQueryReplies(chunk, cols, rows); len(reply) > 0 {
+				if debugChunks {
+					fmt.Fprintf(os.Stderr, "[reply] %s %s %q\n",
+						time.Now().Format("15:04:05.000"), l.TmuxName, reply)
+				}
+				if _, werr := l.ptmx.Write(reply); werr != nil {
+					m.logf("reply to terminal query on %s: %v", l.TmuxName, werr)
+				}
+			}
 
 			// Copy before handing to subscribers: buf is reused on the next
 			// read, and a viewer's queue may hold the slice past that point.
+			if debugChunks {
+				fmt.Fprintf(os.Stderr, "[chunk] %s %s n=%d %q\n",
+					time.Now().Format("15:04:05.000"), l.TmuxName, n, truncateForLog(chunk))
+			}
 			out := make([]byte, n)
 			copy(out, chunk)
 			l.broadcast(Event{Kind: EventOutput, Data: out})
@@ -209,7 +292,13 @@ func (m *Manager) pump(l *Live) {
 				l.broadcast(Event{Kind: EventTitle, Text: t})
 			}
 			if m.OnSignals != nil {
-				m.OnSignals(Signals{SessionID: l.ID, Bell: bell, Titles: titles, Bytes: n})
+				// A bell is always reported: it is an event, not a redraw, and
+				// tmux does not manufacture one while repainting.
+				settled := time.Since(l.attachedAt) > attachSettle
+				m.OnSignals(Signals{
+					SessionID: l.ID, Bell: bell, Titles: titles,
+					Bytes: n, Visible: settled && hasPrintable(chunk),
+				})
 			}
 		}
 		if err != nil {

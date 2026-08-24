@@ -4,6 +4,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,12 +31,19 @@ import (
 
 // Server holds everything the HTTP layer needs.
 type Server struct {
-	Cfg     config.Config
-	DB      *store.DB
-	Tmux    *tmux.Client
-	Manager *session.Manager
-	Hub     *ws.Hub
-	Log     *slog.Logger
+	Cfg      config.Config
+	DB       *store.DB
+	Tmux     *tmux.Client
+	Manager  *session.Manager
+	Hub      *ws.Hub
+	Detector *session.Detector
+	Log      *slog.Logger
+
+	// hookToken authenticates state reports from agent hooks. Cached after the
+	// first read so the hot path does not hit the database.
+	tokenOnce  sync.Once
+	hookToken  string
+	tokenError error
 
 	// lastSnapshot is the most recent state payload that was broadcast. The
 	// poller compares against it so that a tick where nothing changed sends
@@ -68,6 +77,9 @@ func (s *Server) Routes() http.Handler {
 		r.Delete("/projects/{id}", s.handleDeleteProject)
 
 		r.Post("/sessions", s.handleCreateSession)
+		// Hooks run outside the browser, as children of the agent, and
+		// authenticate with a token rather than a session cookie.
+		r.Post("/hook/state", s.handleHookState)
 		r.Patch("/sessions/{id}", s.handlePatchSession)
 		r.Delete("/sessions/{id}", s.handleDeleteSession)
 
@@ -165,13 +177,94 @@ func (s *Server) notifyState() {
 	})
 }
 
+// HookToken returns the shared secret that authenticates state reports,
+// generating it on first use.
+func (s *Server) HookToken(ctx context.Context) (string, error) {
+	s.tokenOnce.Do(func() {
+		existing, err := s.DB.GetSetting(ctx, "hook_token", "")
+		if err != nil {
+			s.tokenError = err
+			return
+		}
+		if existing != "" {
+			s.hookToken = existing
+			return
+		}
+		// 32 hex characters from crypto/rand. It travels in an Authorization
+		// header on loopback and is written into the user's agent config, so
+		// it wants to be unguessable but does not need to be long.
+		token := id.New() + id.New()
+		if err := s.DB.SetSetting(ctx, "hook_token", token); err != nil {
+			s.tokenError = err
+			return
+		}
+		s.hookToken = token
+	})
+	return s.hookToken, s.tokenError
+}
+
+type hookStateRequest struct {
+	SessionID string `json:"sessionId"`
+	State     string `json:"state"`
+}
+
+// handleHookState accepts a state report from an agent hook.
+//
+// This is the only precise source of session state: the agent saying what it
+// is doing rather than the panel inferring it from bytes. It is optional by
+// design — a session whose agent has no hook installed falls back to the
+// output heuristic, which is why the hook script can be installed globally
+// without affecting anything outside the panel.
+func (s *Server) handleHookState(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	token, err := s.HookToken(ctx)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "hook token unavailable")
+		return
+	}
+	presented := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	// Constant time: this endpoint is unauthenticated apart from the token, so
+	// a timing oracle on it is a timing oracle on the whole thing.
+	if subtle.ConstantTimeCompare([]byte(presented), []byte(token)) != 1 {
+		writeErr(w, http.StatusUnauthorized, "bad token")
+		return
+	}
+
+	var req hookStateRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	st := session.State(req.State)
+	if !st.Valid() {
+		writeErr(w, http.StatusBadRequest, "unknown state "+req.State)
+		return
+	}
+	if _, err := s.DB.GetSession(ctx, req.SessionID); err != nil {
+		// An unknown session id is the normal case for an agent started
+		// outside the panel that happens to have the hook installed. Say so
+		// plainly rather than treating it as an error to be alarmed by.
+		writeStoreErr(w, err)
+		return
+	}
+	s.Detector.Report(req.SessionID, st, time.Now())
+	if err := s.DB.SetSessionState(ctx, req.SessionID, st, session.SourceHook); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.notifyState()
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // HandleSignals records what the PTY pump observed. Wired to
 // session.Manager.OnSignals; runs on the pump goroutine, so it must be quick.
 func (s *Server) HandleSignals(sig session.Signals) {
-	if sig.Bytes == 0 {
+	now := time.Now()
+	if s.Detector != nil {
+		s.Detector.Observe(sig.SessionID, sig, now)
+	}
+	if !sig.Visible {
 		return
 	}
-	now := time.Now()
 
 	s.outMu.Lock()
 	if s.outputSeen == nil {
@@ -247,6 +340,23 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		Live:         emptyIfNil(s.Manager.LiveIDs()),
 		ProjectOrder: orderMode(manual),
 	})
+}
+
+// loopbackURL is where a hook running on this machine should POST.
+//
+// Always loopback, never the public URL: the hook runs beside the panel, and
+// sending its reports out to the internet and back would put a secret on the
+// wire for no reason.
+func (s *Server) loopbackURL() string {
+	port := s.Cfg.Port()
+	if port == 0 {
+		port = 8443
+	}
+	scheme := "http"
+	if s.Cfg.TLSMode != config.TLSOff {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://127.0.0.1:%d", scheme, port)
 }
 
 func orderMode(manual bool) string {
@@ -431,17 +541,27 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	sid := id.New()
 	tmuxName := id.TmuxName(sid)
+
+	env := []string{
+		"VIBEPANEL_SESSION_ID=" + sid,
+		"VIBEPANEL_PROJECT_ID=" + p.ID,
+		"VIBEPANEL_URL=" + s.loopbackURL(),
+	}
+	if token, terr := s.HookToken(ctx); terr == nil {
+		env = append(env, "VIBEPANEL_TOKEN="+token)
+	} else {
+		s.Log.Warn("hook token unavailable; sessions will fall back to the heuristic", "err", terr)
+	}
+
 	err = s.Tmux.Create(ctx, tmux.CreateOptions{
 		Name:    tmuxName,
 		Dir:     p.Path,
 		Command: req.Command,
-		// Hooks identify their session from this. A session created without it
-		// simply falls back to the output heuristic, which is why the hook
-		// script is safe to install globally.
-		Env: []string{
-			"VIBEPANEL_SESSION_ID=" + sid,
-			"VIBEPANEL_PROJECT_ID=" + p.ID,
-		},
+		// Hooks identify their session and reach the panel through these. A
+		// session created without them simply falls back to the output
+		// heuristic, which is why the hook script is safe to install globally:
+		// outside the panel the variables are absent and it does nothing.
+		Env:    env,
 		Width:  req.Cols,
 		Height: req.Rows,
 	})
@@ -470,6 +590,13 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.DB.TouchProject(ctx, p.ID); err != nil {
 		s.Log.Warn("touch project", "project", p.ID, "err", err)
+	}
+
+	// Attach now, not at the next poll. A session can ring the bell within a
+	// second of starting, and anything that happens before the pump is running
+	// is simply not seen.
+	if _, aerr := s.Manager.Attach(ctx, sid, tmuxName, req.Cols, req.Rows); aerr != nil {
+		s.Log.Warn("attach new session", "session", sid, "err", aerr)
 	}
 	s.notifyState()
 	writeJSON(w, http.StatusCreated, rec)
@@ -510,6 +637,11 @@ func (s *Server) handlePatchSession(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "unknown state "+*req.State)
 			return
 		}
+		// The detector has to know as well: it is what the poller consults, so
+		// an override recorded only in the database is undone two seconds later.
+		if s.Detector != nil {
+			s.Detector.SetManual(sid, st, time.Now())
+		}
 		if err := s.DB.SetSessionState(ctx, sid, st, session.SourceManual); err != nil {
 			writeStoreErr(w, err)
 			return
@@ -544,6 +676,9 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Manager.Detach(sid)
+	if s.Detector != nil {
+		s.Detector.Forget(sid)
+	}
 	if err := s.Tmux.Kill(ctx, rec.TmuxName); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -647,6 +782,19 @@ func (s *Server) Reconcile(ctx context.Context) error {
 		if err := s.DB.UpdateSessionRuntime(ctx, row.ID, info.Path, info.Command); err != nil {
 			s.Log.Warn("reconcile runtime", "session", row.ID, "err", err)
 		}
+		// A bell that rang while the panel was down is still latched, because
+		// tmux only clears the flag when a client views the window and there
+		// was no client. Read it before attaching, which clears it: otherwise
+		// restarting the panel loses every "this needs you" raised while it
+		// was gone — exactly when the user was not watching.
+		if info.Bell && s.Detector != nil {
+			s.Detector.Observe(row.ID, session.Signals{Bell: true}, time.Now())
+		}
+		// Attach at startup too, so state is being watched from the moment the
+		// panel is up rather than from the first poll.
+		if _, aerr := s.Manager.Attach(ctx, row.ID, row.TmuxName, row.Cols, row.Rows); aerr != nil {
+			s.Log.Debug("attach at startup", "session", row.ID, "err", aerr)
+		}
 	}
 
 	orphans := 0
@@ -721,10 +869,28 @@ func (s *Server) pollOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	now := time.Now()
 	for _, row := range rows {
 		info, alive := byName[row.TmuxName]
 		if !alive {
 			continue
+		}
+
+		// Attach every live session, not only the one somebody is watching.
+		//
+		// State is inferred from the PTY byte stream, and the panel exists to
+		// tell you about the sessions you are *not* looking at. Attaching only
+		// on subscribe meant a session could ring the bell, sit there wanting
+		// a human, and show as "done" until you happened to click it — the one
+		// failure that makes the whole feature pointless.
+		//
+		// The cost is one tmux client and one replay buffer per session. For
+		// the couple of dozen sessions this is built for, that is a few tens of
+		// megabytes and a handful of small processes.
+		if _, ok := s.Manager.Get(row.ID); !ok {
+			if _, aerr := s.Manager.Attach(ctx, row.ID, row.TmuxName, row.Cols, row.Rows); aerr != nil {
+				s.Log.Debug("attach for monitoring", "session", row.ID, "err", aerr)
+			}
 		}
 		if err := s.DB.UpdateSessionRuntime(ctx, row.ID, info.Path, info.Command); err != nil {
 			return err
@@ -734,6 +900,17 @@ func (s *Server) pollOnce(ctx context.Context) error {
 			// renamed the tab, so this cannot stomp a manual name.
 			if err := s.DB.SetSessionTitle(ctx, row.ID, title, store.TitleAuto); err != nil {
 				return err
+			}
+		}
+		if s.Detector != nil {
+			st, src := s.Detector.Evaluate(row.ID, session.Observation{
+				Dead:      info.Dead,
+				ShellOnly: session.IsShellCommand(info.Command),
+			}, now)
+			if st != row.State || src != row.StateSource {
+				if err := s.DB.SetSessionState(ctx, row.ID, st, src); err != nil {
+					return err
+				}
 			}
 		}
 	}
