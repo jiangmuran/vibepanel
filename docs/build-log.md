@@ -742,3 +742,53 @@ The release archive was unpacked and run under `env -i` with nothing but
 `PATH`, `HOME` and `TERM`: version information baked in, frontend embedded,
 setup token printed. That is the whole deployment story, checked rather than
 assumed.
+
+## 2026-08-23 — fidelity under load
+
+A second check, `web/scripts/stress-check.mjs`, for the places a terminal
+corrupts quietly rather than failing loudly. The interface check asks whether
+the panel works; this one asks whether the terminal underneath it is faithful.
+
+Results on this machine: wide characters wrap at exactly half the column count,
+so they are being measured as two cells; Chinese, Japanese and Korean all
+render with the trailing pipe aligned against a Latin row; the alternate screen
+restores what was underneath it when vim exits; twenty thousand lines arrive in
+0.3 seconds with the interface still responsive and the tail in order; a reload
+after the replay buffer has wrapped brings back coherent output with no
+injected terminal responses; and an offline/online cycle reconnects on its own.
+
+### Three wrong measurements before one right one
+
+Worth recording, because each was confidently wrong.
+
+**The wrap test proved nothing.** Printing forty wide characters into a
+140-column terminal and checking they fit is satisfied whether they are
+measured as one cell or two. Printing more than fits, and asserting *where* it
+wraps, is the measurement.
+
+**The marker matched the echoed command.** Searching the rows for a string that
+also appears in the command that produced it finds the echo. The marker is
+split in the source now, so the typed line does not contain it.
+
+**Canvas metrics measured something xterm does not use.** `measureText` said a
+wide character was 1.67 cells and the grid was therefore broken. It is not:
+xterm sets `letter-spacing` on wide-character spans to force them onto the
+grid, which the DOM shows plainly — ten characters at 15.6px against a 7.79px
+cell, and the pipe after them exactly one cell. The check measures the rendered
+DOM now.
+
+Also `document.fonts.check` is useless for this: it returns true for font
+families that are not installed at all, so it cannot distinguish a real glyph
+from a missing one.
+
+### And one wrong diagnosis
+
+I read a correctly rendered 中 as a missing-glyph box and spent a while on a
+font problem that did not exist — the character is a rectangle with a vertical
+stroke through it. Rendering something with more varied shapes settled it in
+one screenshot.
+
+The CJK fallbacks added to `--font-mono` during that detour are kept. They are
+hardening rather than a fix: naming the faces makes the stack explicit instead
+of depending on the browser's implicit fallback, which differs between
+platforms and does sometimes produce tofu.

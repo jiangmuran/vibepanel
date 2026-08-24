@@ -349,7 +349,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               {!narrow && (
                 <span className="truncate text-[12px] text-ink-2">{currentProject?.name}</span>
               )}
-              <span className="ml-auto tabular text-[11px] text-ink-2">
+              <span data-testid="grid-size" className="ml-auto tabular text-[11px] text-ink-2">
                 {current.cols}x{current.rows}
               </span>
             </>

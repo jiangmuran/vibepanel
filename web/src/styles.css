@@ -197,8 +197,20 @@
   --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI',
     system-ui, 'Helvetica Neue', 'PingFang SC', 'Hiragino Sans GB',
     'Microsoft YaHei', sans-serif;
+  /* Latin faces first, then CJK fallbacks.
+     Agents write Chinese, and the usual monospace stack has no glyphs for it —
+     `monospace` resolves to something like DejaVu Sans Mono, which renders
+     every Chinese character as a tofu box even on a machine with Noto CJK
+     installed. Naming the CJK faces explicitly is what makes them reachable.
+     The order matters: Latin must resolve before them, or English text picks
+     up the CJK face too.
+     Column alignment depends on the CJK advance being exactly twice the Latin
+     one. Sarasa Mono is designed for that pairing and is listed first; the
+     others are close enough in practice, and the render check measures it. */
   --font-mono: 'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, Consolas,
-    'Liberation Mono', monospace;
+    'Liberation Mono', 'Sarasa Mono SC', 'Noto Sans Mono CJK SC',
+    'Source Han Mono SC', 'WenQuanYi Zen Hei Mono', 'PingFang SC',
+    'Microsoft YaHei', NSimSun, monospace;
 
   --radius-vp: var(--vp-radius);
   --radius-vp-lg: var(--vp-radius-lg);

@@ -30,6 +30,10 @@ check: lint test      ## Everything a change should pass before it lands
 render-check: build   ## Drive the real binary with a real browser
 	cd web && npm run check:render
 
+.PHONY: stress-check
+stress-check: build   ## Wide characters, full-screen programs, floods, dropouts
+	cd web && npm run check:stress
+
 .PHONY: release
 release:              ## Cross-compiled archives in dist/
 	scripts/build-release.sh

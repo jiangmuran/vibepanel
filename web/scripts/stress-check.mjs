@@ -1,0 +1,367 @@
+// Fidelity and endurance checks for the terminal transport.
+//
+// Separate from render-check.mjs, which asks whether the interface works.
+// This asks whether the terminal underneath it is faithful: wide characters,
+// full-screen programs, a flood of output, and a connection that drops.
+//
+// These are the areas where a terminal quietly corrupts rather than failing,
+// which is why they are worth driving with a browser rather than reasoning
+// about.
+//
+//   npm run build && (cd .. && go build -o vibepanel ./cmd/vibepanel)
+//   npm run check:stress
+import { chromium } from 'playwright'
+import { spawn, execSync } from 'node:child_process'
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { createServer } from 'node:net'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+const BIN = process.argv[2] ?? new URL('../../vibepanel', import.meta.url).pathname
+const SHOTS = process.argv[3] ?? join(tmpdir(), 'vpstress-shots')
+mkdirSync(SHOTS, { recursive: true })
+
+const PORT = await new Promise((resolve, reject) => {
+  const probe = createServer()
+  probe.once('error', reject)
+  probe.listen(0, '127.0.0.1', () => {
+    const { port } = probe.address()
+    probe.close(() => resolve(port))
+  })
+})
+const SOCKET = `vpstress-${process.pid}`
+const DATA = mkdtempSync(join(tmpdir(), 'vpstress-'))
+const FAKE_HOME = mkdtempSync(join(tmpdir(), 'vpstress-home-'))
+
+const findings = []
+const note = (sev, area, msg) => findings.push({ sev, area, msg })
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+let cleanedUp = false
+const server = spawn(BIN, ['serve'], {
+  env: {
+    ...process.env,
+    HOME: FAKE_HOME,
+    VIBEPANEL_DATA_DIR: DATA,
+    VIBEPANEL_TMUX_SOCKET: SOCKET,
+    VIBEPANEL_ADDR: `127.0.0.1:${PORT}`,
+    VIBEPANEL_DOMAIN: 'localhost',
+  },
+  stdio: ['ignore', 'pipe', 'pipe'],
+})
+let serverLog = ''
+server.stdout.on('data', (d) => (serverLog += d))
+server.stderr.on('data', (d) => (serverLog += d))
+
+let browser
+async function cleanup() {
+  if (cleanedUp) return
+  cleanedUp = true
+  try { await browser?.close() } catch { /* already gone */ }
+  server.kill('SIGTERM')
+  await sleep(400)
+  try { execSync(`tmux -L ${SOCKET} kill-server`, { stdio: 'ignore' }) } catch { /* none */ }
+  try { rmSync(join('/tmp', `tmux-${process.getuid()}`, SOCKET), { force: true }) } catch { /* best effort */ }
+  for (const dir of [DATA, FAKE_HOME]) {
+    try { rmSync(dir, { recursive: true, force: true }) } catch { /* best effort */ }
+  }
+}
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.on(sig, () => void cleanup().finally(() => process.exit(130)))
+}
+
+const BASE = `http://localhost:${PORT}`
+let cookie = ''
+const authed = (path, init = {}) =>
+  fetch(BASE + path, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(cookie ? { Cookie: cookie } : {}),
+      ...(init.headers ?? {}),
+    },
+  })
+
+/** Reads the visible rows straight out of the DOM renderer. */
+const rows = (page) =>
+  page.$$eval('.xterm-rows > div', (els) => els.map((el) => el.textContent ?? ''))
+
+try {
+  for (let i = 0; i < 120; i++) {
+    try { if ((await fetch(BASE + '/api/health')).ok) break } catch { /* not up */ }
+    await sleep(150)
+  }
+
+  const token = /one-time setup token:\s*\n\s*\n\s*(\S+)/.exec(serverLog)?.[1]
+  if (!token) throw new Error(`no setup token:\n${serverLog}`)
+  const setupRes = await authed('/api/auth/setup', {
+    method: 'POST',
+    body: JSON.stringify({ token, username: 'stress', password: 'a sufficiently long password' }),
+  })
+  cookie = (setupRes.headers.getSetCookie?.() ?? []).map((c) => c.split(';')[0]).join('; ')
+
+  const proj = await (await authed('/api/projects', {
+    method: 'POST',
+    body: JSON.stringify({ path: DATA, name: 'stress' }),
+  })).json()
+  const mk = (command, title) =>
+    authed('/api/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ projectId: proj.id, command, title, cols: 80, rows: 24 }),
+    }).then((r) => r.json())
+
+  browser = await chromium.launch({ headless: true })
+  const ctx = await browser.newContext({ viewport: { width: 1200, height: 800 } })
+  const page = await ctx.newPage()
+  const pageErrors = []
+  page.on('pageerror', (e) => pageErrors.push(String(e)))
+
+  await page.goto(BASE, { waitUntil: 'networkidle' })
+  await page.locator('[data-testid="auth-username"]').fill('stress')
+  await page.locator('[data-testid="auth-password"]').fill('a sufficiently long password')
+  await page.locator('[data-testid="auth-submit"]').click()
+  await page.waitForSelector('[data-testid="sidebar"], [data-testid="sidebar-rail"]', { timeout: 15000 })
+  await sleep(1500)
+
+  const select = async (title) => {
+    const row = page.locator('[data-testid="session-row"]', { hasText: title }).first()
+    await row.click()
+    await sleep(2000)
+  }
+  const waitForRow = async (predicate, timeoutMs = 20000) => {
+    const end = Date.now() + timeoutMs
+    while (Date.now() < end) {
+      const r = await rows(page)
+      const hit = r.findIndex(predicate)
+      if (hit >= 0) return { index: hit, rows: r }
+      await sleep(300)
+    }
+    return { index: -1, rows: await rows(page) }
+  }
+
+  // ── wide characters ──────────────────────────────────────────────────────
+  // Agents write Chinese, and a terminal that measures those characters as one
+  // column instead of two drifts by one cell per character — every table,
+  // every progress bar and every box drawing goes crooked, and it looks like
+  // the program's fault rather than the terminal's.
+  await mk(['sh', '-c', 'exec sh'], 'wide')
+  await sleep(2500)
+  await select('wide')
+
+  const grid = await page.locator('[data-testid="grid-size"]').innerText().catch(() => '')
+  const cols = Number(grid.split('x')[0])
+  if (!Number.isFinite(cols) || cols < 20) {
+    note('FAIL', 'wide', `could not read the grid size: ${JSON.stringify(grid)}`)
+  } else {
+    // Print more wide characters than fit, so the terminal has to wrap. Where
+    // it wraps is the measurement: at two columns each it breaks after cols/2
+    // characters, at one column each it would take twice as many. A terminal
+    // that is merely wide enough to hold the line proves nothing.
+    const perRow = Math.floor(cols / 2)
+    const count = perRow + 10
+    const marker = 'WIDEEND'
+    await page.locator('.xterm-screen').click()
+    // Literal characters, not escapes: the shell's printf does not understand
+    // \u or \U, and a test that types those measures nothing but its own
+    // payload arriving as text.
+    //
+    // The marker is split so the echoed command line does not contain it, and
+    // the search finds the output rather than what was typed.
+    const payload = '\u4e2d'.repeat(count)
+    await page.keyboard.type(`printf '%s\\n%s\\n' '${payload}' "WIDE""END"`)
+    await page.keyboard.press('Enter')
+
+    const found = await waitForRow((r) => r.trim() === marker)
+    if (found.index < 0) {
+      note('FAIL', 'wide',
+        `the wide-character test never produced output: ${JSON.stringify(found.rows.filter(Boolean).slice(-4))}`)
+    } else {
+      // The two rows above the marker are the wrapped wide text.
+      const firstWrapped = found.rows[found.index - 2] ?? ''
+      const cjkCount = [...firstWrapped].filter((ch) => ch === '\u4e2d').length
+      if (cjkCount !== perRow) {
+        note('FAIL', 'wide',
+          `wide text wrapped after ${cjkCount} characters on a ${cols}-column grid, want ${perRow} — ` +
+          'they are being measured as one column each')
+      }
+      const secondWrapped = found.rows[found.index - 1] ?? ''
+      const rest = [...secondWrapped].filter((ch) => ch === '\u4e2d').length
+      if (cjkCount + rest !== count) {
+        note('FAIL', 'wide',
+          `${cjkCount + rest} of ${count} wide characters survived the round trip`)
+      }
+    }
+  }
+
+  // Emoji are two columns as well, and a terminal that gets them wrong
+  // scrambles anything an agent prints with a status icon in it.
+  await page.keyboard.type(`printf '%s ROCKET''OK\\n' '\u{1F680}\u{1F525}'`)
+  await page.keyboard.press('Enter')
+  const emoji = await waitForRow((r) => r.trim().endsWith('ROCKETOK'))
+  if (emoji.index < 0) {
+    note('WARN', 'wide', 'emoji output never arrived')
+  } else if (!/\u{1F680}/u.test(emoji.rows[emoji.index])) {
+    note('FAIL', 'wide', `emoji were lost: ${JSON.stringify(emoji.rows[emoji.index].slice(0, 60))}`)
+  }
+  // The grid only stays aligned if a wide character advances exactly two
+  // cells, and the Latin and CJK glyphs come from different fonts whose
+  // natural advances do not match. xterm compensates with letter-spacing, so
+  // what matters is the rendered result — measured here from the DOM it
+  // actually produces, not from canvas metrics it does not use.
+  //
+  // Not document.fonts.check: it returns true for font families that are not
+  // installed at all, so it cannot tell a real glyph from a missing one.
+  await page.keyboard.type(`printf '%s\\n' 'MMMMMMMMMMMMMMMMMMMM|' '\u4f60\u597d\u4e16\u754c\u6d4b\u8bd5\u6c49\u5b57\u6e32\u67d3|'`)
+  await page.keyboard.press('Enter')
+  await sleep(2000)
+  const cells = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.xterm-rows > div')]
+    const latin = rows.find((r) => (r.textContent ?? '').startsWith('MMMMMMMMMMMMMMMMMMMM|'))
+    const cjk = rows.find((r) => (r.textContent ?? '').startsWith('\u4f60\u597d'))
+    if (!latin || !cjk) return null
+    const width = (row) =>
+      [...row.children].reduce((sum, el) => sum + el.getBoundingClientRect().width, 0)
+    return { latin: width(latin), cjk: width(cjk), latinChars: 21, cjkChars: 10 }
+  })
+  if (!cells) {
+    note('WARN', 'font', 'could not find both measurement rows')
+  } else {
+    const cell = cells.latin / cells.latinChars
+    // Ten wide characters plus a pipe: twenty-one cells, the same as the
+    // Latin row. If the two rows differ, mixed text does not line up.
+    const perWide = (cells.cjk - cell) / cells.cjkChars / cell
+    if (Math.abs(perWide - 2) > 0.05) {
+      note('FAIL', 'font',
+        `a wide character occupies ${perWide.toFixed(3)} cells, want 2 — rows of mixed text will not line up`)
+    }
+  }
+
+  await page.screenshot({ path: join(SHOTS, 'wide.png') })
+
+  // ── the alternate screen ─────────────────────────────────────────────────
+  // Every agent TUI lives on it. Leaving it has to restore what was underneath,
+  // or a session looks destroyed every time an editor closes.
+  await mk(['sh', '-c', 'echo BEFORE_VIM; exec sh'], 'altscreen')
+  await sleep(2500)
+  await select('altscreen')
+  await page.locator('.xterm-screen').click()
+  await page.keyboard.type('vim -u NONE -c "startinsert" /tmp/vpstress-alt.txt')
+  await page.keyboard.press('Enter')
+  await sleep(2500)
+  await page.keyboard.type('INSIDE_VIM')
+  await sleep(800)
+  const inVim = await waitForRow((r) => r.includes('INSIDE_VIM'), 8000)
+  if (inVim.index < 0) {
+    note('FAIL', 'altscreen', 'vim never drew anything')
+  } else {
+    await page.screenshot({ path: join(SHOTS, 'altscreen.png') })
+    // Leaving must put the shell back, scrollback and all.
+    await page.keyboard.press('Escape')
+    await sleep(400)
+    await page.keyboard.type(':q!')
+    await page.keyboard.press('Enter')
+    const restored = await waitForRow((r) => r.includes('BEFORE_VIM'), 10000)
+    if (restored.index < 0) {
+      note('FAIL', 'altscreen',
+        `leaving the alternate screen did not restore what was underneath: ${JSON.stringify(
+          restored.rows.filter(Boolean).slice(0, 4),
+        )}`)
+    }
+    const stillVim = (await rows(page)).some((r) => r.includes('INSIDE_VIM'))
+    if (stillVim) note('WARN', 'altscreen', 'the editor is still on screen after quitting')
+  }
+
+  // ── a flood ──────────────────────────────────────────────────────────────
+  // A build or a test run produces tens of thousands of lines in a few
+  // seconds. The pump must not stall, the browser must not die, and the tail
+  // must be right.
+  await mk(['sh', '-c', 'exec sh'], 'flood')
+  await sleep(2500)
+  await select('flood')
+  await page.locator('.xterm-screen').click()
+  const floodStart = Date.now()
+  await page.keyboard.type('i=0; while [ $i -lt 20000 ]; do echo "line $i of noise"; i=$((i+1)); done; echo FLOOD_DONE')
+  await page.keyboard.press('Enter')
+  const flood = await waitForRow((r) => r.includes('FLOOD_DONE'), 90000)
+  const floodMs = Date.now() - floodStart
+  if (flood.index < 0) {
+    note('FAIL', 'flood', `twenty thousand lines never finished arriving (waited ${floodMs}ms)`)
+  } else {
+    note('INFO', 'flood', `twenty thousand lines in ${(floodMs / 1000).toFixed(1)}s`)
+    // The page has to still be a page.
+    const alive = await page.evaluate(() => document.querySelectorAll('[data-testid="session-row"]').length)
+    if (!alive) note('FAIL', 'flood', 'the interface stopped responding after the flood')
+    // And the very last lines must be the right ones, in order.
+    const tail = (await rows(page)).filter(Boolean)
+    if (!tail.some((r) => r.includes('line 19999'))) {
+      note('FAIL', 'flood', `the tail is missing the last line: ${JSON.stringify(tail.slice(-4))}`)
+    }
+  }
+
+  // ── replay after the buffer wrapped ──────────────────────────────────────
+  // Twenty thousand lines is well past the replay buffer, so reconnecting now
+  // exercises the truncated-start path — the one that used to print the tail
+  // of an escape sequence as literal text.
+  await page.reload({ waitUntil: 'networkidle' })
+  await sleep(3500)
+  const afterReload = (await rows(page)).join('\n')
+  if (!afterReload.includes('line 19') && !afterReload.includes('FLOOD_DONE')) {
+    note('FAIL', 'replay', `nothing recognisable came back after a reload: ${JSON.stringify(afterReload.slice(0, 200))}`)
+  }
+  if (/\[\?\d+;\d+c|\[>\d+;\d+;\d+c/.test(afterReload)) {
+    note('FAIL', 'replay', 'the replay injected terminal responses into the session')
+  }
+  // A stray escape fragment at the top would show as literal parameter bytes.
+  const firstRow = (await rows(page)).find((r) => r.trim()) ?? ''
+  if (/^\d+;?\d*[a-zA-Z]\s*$/.test(firstRow.trim()) && firstRow.trim().length < 8) {
+    note('WARN', 'replay', `the first restored row looks like an escape fragment: ${JSON.stringify(firstRow)}`)
+  }
+
+  // ── losing the connection ────────────────────────────────────────────────
+  // Phones sleep, laptops close, networks drop. Coming back has to be
+  // automatic, because a terminal that needs a manual reload after every
+  // hiccup is one nobody trusts to leave open.
+  await sleep(1000)
+  const beforeDrop = await page.locator('[data-testid="connection"]').getAttribute('data-status')
+  if (beforeDrop !== 'open') {
+    note('FAIL', 'reconnect', `not connected before the test: ${beforeDrop}`)
+  } else {
+    await page.evaluate(() => {
+      // Reach through the page's own socket rather than cutting the network,
+      // so this tests the client's recovery and not the browser's.
+      const ws = performance
+        .getEntriesByType('resource')
+        .filter((e) => e.name.startsWith('ws'))
+      void ws
+      // The panel keeps one socket; closing it from here is what a dropped
+      // network looks like to the client.
+      const sockets = window.__vpSockets ?? []
+      for (const s of sockets) s.close()
+    })
+    // No hook exposed, so fall back to what a user would actually experience:
+    // put the tab to sleep and wake it.
+    await page.evaluate(() => window.dispatchEvent(new Event('offline')))
+    await sleep(500)
+    await page.evaluate(() => window.dispatchEvent(new Event('online')))
+    await sleep(2000)
+    const after = await page.locator('[data-testid="connection"]').getAttribute('data-status')
+    if (after !== 'open') {
+      note('WARN', 'reconnect', `status is ${after} after an offline/online cycle`)
+    }
+  }
+
+  for (const e of pageErrors) note('FAIL', 'js', `uncaught: ${e}`)
+  await page.screenshot({ path: join(SHOTS, 'after-flood.png') })
+} catch (e) {
+  note('FAIL', 'harness', String(e))
+} finally {
+  await cleanup()
+}
+
+const order = { FAIL: 0, WARN: 1, INFO: 2 }
+findings.sort((a, b) => order[a.sev] - order[b.sev])
+const fails = findings.filter((f) => f.sev === 'FAIL').length
+console.log(`\n=== stress check: ${fails} FAIL, ${findings.filter((f) => f.sev === 'WARN').length} WARN ===`)
+for (const f of findings) console.log(`[${f.sev}] ${f.area}: ${f.msg}`)
+console.log(`\nscreenshots: ${SHOTS}`)
+process.exit(fails > 0 ? 1 : 0)

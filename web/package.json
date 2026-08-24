@@ -8,7 +8,8 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "test": "vitest run",
-    "check:render": "node scripts/render-check.mjs"
+    "check:render": "node scripts/render-check.mjs",
+    "check:stress": "node scripts/stress-check.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
