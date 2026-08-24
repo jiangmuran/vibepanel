@@ -1,5 +1,11 @@
 @import 'tailwindcss';
 
+/* Imported here, not from the component, so that our overrides below come
+   later in the sheet and win on source order. xterm.css and our rules use the
+   same selectors at the same specificity, so whichever is emitted last wins —
+   and with the import inside Terminal.tsx that was always xterm. */
+@import '@xterm/xterm/css/xterm.css';
+
 /* ─────────────────────────────────────────────────────────────────────────
    Design tokens.
 
@@ -289,6 +295,15 @@ body {
 .xterm-viewport,
 .xterm-screen {
   height: 100%;
+}
+
+/* xterm.css hard-codes `background-color: #000` on the viewport, with a comment
+   about macOS scrollbar opacity. The rows are transparent and sit on top, so in
+   a light theme every pixel the rows do not cover shows through black: the
+   sub-row remainder at the bottom of the pane, and the scrollbar track.
+   The host owns this surface, so the host sets it. */
+.xterm .xterm-viewport {
+  background-color: var(--vp-terminal-bg);
 }
 
 .xterm-viewport::-webkit-scrollbar {

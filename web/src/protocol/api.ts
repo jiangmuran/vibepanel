@@ -41,6 +41,14 @@ export const api = {
 
   deleteProject: (id: string) => request<void>(`/api/projects/${id}`, { method: 'DELETE' }),
 
+  /** Writes an explicit project order, top first. */
+  reorderProjects: (ids: string[]) =>
+    request<void>('/api/projects/reorder', { method: 'POST', body: JSON.stringify({ ids }) }),
+
+  /** Discards manual positions and returns to most-active-first ordering. */
+  autoOrderProjects: () =>
+    request<void>('/api/projects/reorder', { method: 'POST', body: JSON.stringify({ auto: true }) }),
+
   createSession: (projectId: string, command: string[], title = '') =>
     request<Session>('/api/sessions', {
       method: 'POST',

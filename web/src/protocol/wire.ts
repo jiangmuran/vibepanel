@@ -113,6 +113,8 @@ export interface PanelState {
   projects: Project[]
   sessions: Session[]
   live: string[]
+  /** 'auto' orders projects by recent activity; 'manual' by explicit position. */
+  projectOrder: 'auto' | 'manual'
 }
 
 /**

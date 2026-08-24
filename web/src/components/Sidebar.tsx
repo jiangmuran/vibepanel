@@ -1,7 +1,17 @@
 import { useMemo } from 'react'
-import { ChevronLeft, Pin, PinOff, Plus, Terminal as TerminalIcon, X } from 'lucide-react'
+import {
+  ChevronLeft,
+  Clock,
+  GripVertical,
+  Pin,
+  PinOff,
+  Plus,
+  Terminal as TerminalIcon,
+  X,
+} from 'lucide-react'
 
 import type { Project, Session, SessionState } from '../protocol/wire'
+import { useDragList } from '../hooks/useDragList'
 import { StateDot } from './StateDot'
 import { InlineName } from './InlineName'
 
@@ -21,6 +31,10 @@ export interface SidebarProps {
   onRenameSession: (session: Session, title: string) => void
   onPinSession: (session: Session, pinned: boolean) => void
   onKillSession: (session: Session) => void
+
+  projectOrder: 'auto' | 'manual'
+  onReorderProjects: (ids: string[]) => void
+  onAutoOrderProjects: () => void
 }
 
 function sessionLabel(s: Session): string {
@@ -44,6 +58,9 @@ function initials(name: string): string {
 
 export function Sidebar(props: SidebarProps) {
   const { projects, sessions, expanded, overlay } = props
+
+  const projectIds = useMemo(() => projects.map((p) => p.id), [projects])
+  const drag = useDragList(projectIds, props.onReorderProjects)
 
   const byProject = useMemo(() => {
     const map = new Map<string, Session[]>()
@@ -122,11 +139,23 @@ export function Sidebar(props: SidebarProps) {
           <ChevronLeft size={15} />
         </button>
         <span className="text-[13px] font-semibold tracking-tight">Projects</span>
+        {props.projectOrder === 'manual' && (
+          <button
+            type="button"
+            onClick={props.onAutoOrderProjects}
+            title="Sort by recent activity again"
+            className="ml-auto rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+          >
+            <Clock size={14} />
+          </button>
+        )}
         <button
           type="button"
           onClick={props.onAddProject}
           title="Add project"
-          className="ml-auto rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+          className={`rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink ${
+            props.projectOrder === 'manual' ? '' : 'ml-auto'
+          }`}
         >
           <Plus size={15} />
         </button>
@@ -138,9 +167,30 @@ export function Sidebar(props: SidebarProps) {
             No projects yet. Add one to point the panel at a directory.
           </p>
         )}
-        {projects.map((p) => (
-          <section key={p.id} className="mb-3">
+        {projects.map((p, index) => (
+          <section
+            key={p.id}
+            ref={(el) => drag.register(p.id, el)}
+            data-testid="project-group"
+            className={`mb-3 transition-opacity duration-200 ease-vp ${
+              drag.draggingId === p.id ? 'opacity-40' : ''
+            }`}
+          >
+            {/* The gap the dragged project would land in. A ghost that follows
+                the pointer looks better but tells you less: what matters is
+                where it goes, not where your finger is. */}
+            {drag.overIndex === index && drag.draggingId !== null && (
+              <div className="mx-2 mb-1 h-0.5 rounded-full bg-accent" />
+            )}
             <div className="group flex items-center gap-1 px-2 py-1">
+              <span
+                {...drag.handleProps(p.id)}
+                data-testid="project-grip"
+                title="Drag to reorder"
+                className="-ml-1 cursor-grab rounded p-0.5 text-ink-2 opacity-0 transition-opacity duration-200 ease-vp group-hover:opacity-100 active:cursor-grabbing"
+              >
+                <GripVertical size={12} />
+              </span>
               <InlineName
                 value={p.name}
                 onCommit={(next) => props.onRenameProject(p, next)}
@@ -204,6 +254,9 @@ export function Sidebar(props: SidebarProps) {
             })}
           </section>
         ))}
+        {drag.overIndex === projects.length && drag.draggingId !== null && (
+          <div className="mx-2 h-0.5 rounded-full bg-accent" />
+        )}
       </nav>
     </aside>
   )

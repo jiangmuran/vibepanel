@@ -143,6 +143,13 @@ try {
 
   await mkSession(['sh', '-c', 'echo RENDER_CHECK_MARKER; exec sh'])
   await mkSession(['htop'])
+
+  // A second project, so ordering can be exercised.
+  await fetch(`${BASE}/api/projects`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: DATA, name: 'zzz-second' }),
+  })
   await sleep(2500) // let the poller derive titles
 
   browser = await chromium.launch({ headless: true })
@@ -282,8 +289,12 @@ try {
   // palette, so if it is not rebuilt when the theme changes it stays bright
   // white in dark mode — and React runs child effects before parent ones,
   // which is exactly how that regressed once already.
+  // Checks the viewport specifically, not just the nearest painted ancestor of
+  // the rows: the viewport is a *sibling* of .xterm-screen, so walking up from
+  // the rows skips it entirely — which is how a hard-coded black viewport
+  // survived an earlier theme check unnoticed.
   const termLuminance = async () => page.evaluate(() => {
-    const el = document.querySelector('.xterm-screen') ?? document.querySelector('.xterm')
+    const el = document.querySelector('.xterm-viewport') ?? document.querySelector('.xterm')
     if (!el) return null
     let p = el
     while (p) {
@@ -387,6 +398,51 @@ try {
       `terminal responses were injected into the session by the replay: ${JSON.stringify(
         afterReload.replace(/\s+/g, ' ').trim().slice(-120),
       )}`)
+  }
+
+  // ── dragging a project reorders it ───────────────────────────────────────
+  // Built on Pointer Events precisely so it works on touch as well as mouse,
+  // which HTML5 drag-and-drop does not, so it is worth proving it works at all.
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await sleep(600)
+  const projectNames = async () =>
+    page.$$eval('[data-testid="project-group"]', (els) =>
+      els.map((el) => el.querySelector('span')?.textContent?.trim() ?? ''),
+    )
+  const beforeDrag = await projectNames()
+  if (beforeDrag.length < 2) {
+    note('WARN', 'reorder', `expected two projects to drag, saw ${JSON.stringify(beforeDrag)}`)
+  } else {
+    const groups = page.locator('[data-testid="project-group"]')
+    const second = groups.nth(1)
+    await second.hover()
+    const grip = second.locator('[data-testid="project-grip"]')
+    const gripBox = await grip.boundingBox()
+    const firstBox = await groups.nth(0).boundingBox()
+    if (!gripBox || !firstBox) {
+      note('WARN', 'reorder', 'could not locate the drag handle')
+    } else {
+      await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2)
+      await page.mouse.down()
+      // Above the first project's midpoint, which is where the gap moves.
+      await page.mouse.move(firstBox.x + 40, firstBox.y + firstBox.height / 2 - 8, { steps: 12 })
+      await page.mouse.up()
+      await sleep(1200)
+      const afterDrag = await projectNames()
+      if (afterDrag[0] !== beforeDrag[1]) {
+        note('FAIL', 'reorder',
+          `dragging the second project to the top did nothing: ${JSON.stringify(beforeDrag)} -> ${JSON.stringify(afterDrag)}`)
+      }
+      // And the panel should now offer a way back to activity ordering.
+      const backToAuto = await page
+        .locator('button[title="Sort by recent activity again"]')
+        .isVisible()
+        .catch(() => false)
+      if (!backToAuto) {
+        note('FAIL', 'reorder',
+          'after a manual reorder there is no control to return to automatic ordering')
+      }
+    }
   }
 
   // ── the narrow-screen drawer must be opaque ──────────────────────────────

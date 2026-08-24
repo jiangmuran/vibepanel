@@ -63,6 +63,7 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/state", s.handleState)
 
 		r.Post("/projects", s.handleCreateProject)
+		r.Post("/projects/reorder", s.handleReorderProjects)
 		r.Patch("/projects/{id}", s.handlePatchProject)
 		r.Delete("/projects/{id}", s.handleDeleteProject)
 
@@ -118,15 +119,21 @@ func (s *Server) snapshot(ctx context.Context) []byte {
 		s.Log.Warn("snapshot sessions", "err", err)
 		return nil
 	}
+	manual, err := s.DB.ProjectOrderIsManual(ctx)
+	if err != nil {
+		s.Log.Warn("snapshot order mode", "err", err)
+		return nil
+	}
 	payload, err := json.Marshal(struct {
 		Type string `json:"t"`
 		stateResponse
 	}{
 		Type: ws.MsgState,
 		stateResponse: stateResponse{
-			Projects: emptyIfNil(projects),
-			Sessions: emptyIfNil(sessions),
-			Live:     emptyIfNil(s.Manager.LiveIDs()),
+			Projects:     emptyIfNil(projects),
+			Sessions:     emptyIfNil(sessions),
+			Live:         emptyIfNil(s.Manager.LiveIDs()),
+			ProjectOrder: orderMode(manual),
 		},
 	})
 	if err != nil {
@@ -210,6 +217,11 @@ type stateResponse struct {
 	Projects []store.Project `json:"projects"`
 	Sessions []store.Session `json:"sessions"`
 	Live     []string        `json:"live"`
+
+	// ProjectOrder is "auto" (most recently active first) or "manual". The UI
+	// offers "sort by activity" only when that would change something, rather
+	// than showing a control that does nothing.
+	ProjectOrder string `json:"projectOrder"`
 }
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
@@ -224,11 +236,56 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	manual, err := s.DB.ProjectOrderIsManual(ctx)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, stateResponse{
-		Projects: emptyIfNil(projects),
-		Sessions: emptyIfNil(sessions),
-		Live:     emptyIfNil(s.Manager.LiveIDs()),
+		Projects:     emptyIfNil(projects),
+		Sessions:     emptyIfNil(sessions),
+		Live:         emptyIfNil(s.Manager.LiveIDs()),
+		ProjectOrder: orderMode(manual),
 	})
+}
+
+func orderMode(manual bool) string {
+	if manual {
+		return "manual"
+	}
+	return "auto"
+}
+
+type reorderProjectsRequest struct {
+	// Ids is the desired order, top first.
+	Ids []string `json:"ids"`
+	// Auto discards manual positions and returns to activity ordering.
+	Auto bool `json:"auto"`
+}
+
+func (s *Server) handleReorderProjects(w http.ResponseWriter, r *http.Request) {
+	var req reorderProjectsRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	ctx := r.Context()
+	if req.Auto {
+		if err := s.DB.ClearProjectOrder(ctx); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	} else {
+		if len(req.Ids) == 0 {
+			writeErr(w, http.StatusBadRequest, "ids must not be empty; send auto:true to clear the order")
+			return
+		}
+		if err := s.DB.ReorderProjects(ctx, req.Ids); err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+	}
+	s.notifyState()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type createProjectRequest struct {

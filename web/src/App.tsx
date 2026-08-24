@@ -58,7 +58,12 @@ export function App() {
   const narrow = useMediaQuery(NARROW_QUERY)
 
   const [status, setStatus] = useState<SocketStatus>('closed')
-  const [state, setState] = useState<PanelState>({ projects: [], sessions: [], live: [] })
+  const [state, setState] = useState<PanelState>({
+    projects: [],
+    sessions: [],
+    live: [],
+    projectOrder: 'auto',
+  })
   const [selected, setSelected] = useState<string | null>(() => readStored(SELECTED_KEY))
   const [error, setError] = useState<string | null>(null)
   const [theme, setThemeState] = useState<ThemeChoice>(loadTheme)
@@ -203,6 +208,9 @@ export function App() {
           onRenameSession={(s, title) => void guard(() => api.patchSession(s.id, { title }))}
           onPinSession={(s, pinned) => void guard(() => api.patchSession(s.id, { pinned }))}
           onKillSession={killSession}
+          projectOrder={state.projectOrder}
+          onReorderProjects={(ids) => void guard(() => api.reorderProjects(ids))}
+          onAutoOrderProjects={() => void guard(() => api.autoOrderProjects())}
         />
       )}
 

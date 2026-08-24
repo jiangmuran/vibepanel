@@ -126,6 +126,64 @@ func (d *DB) SetProjectSortIndex(ctx context.Context, id string, idx *int) error
 	return d.exec1(ctx, `UPDATE projects SET sort_index = ? WHERE id = ?`, *idx, id)
 }
 
+// ReorderProjects writes an explicit order, replacing automatic ordering.
+//
+// Takes the whole list rather than one project's new position: a drag changes
+// where every project below it sits, and sending those one at a time leaves the
+// sidebar briefly showing an order that never existed if any request fails.
+//
+// Ids not present in the list are left on automatic ordering, so a client
+// working from a stale list cannot silently drop a project someone else just
+// added to the bottom.
+func (d *DB) ReorderProjects(ctx context.Context, ids []string) error {
+	tx, err := d.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin reorder: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op once Commit succeeded
+
+	for i, id := range ids {
+		res, err := tx.ExecContext(ctx, `UPDATE projects SET sort_index = ? WHERE id = ?`, i, id)
+		if err != nil {
+			return fmt.Errorf("store: reorder project %s: %w", id, err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("store: reorder rows: %w", err)
+		}
+		if n == 0 {
+			return fmt.Errorf("store: reorder: %w: project %s", ErrNotFound, id)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit reorder: %w", err)
+	}
+	return nil
+}
+
+// ClearProjectOrder returns every project to automatic, most-active-first
+// ordering.
+func (d *DB) ClearProjectOrder(ctx context.Context) error {
+	_, err := d.sql.ExecContext(ctx, `UPDATE projects SET sort_index = NULL`)
+	if err != nil {
+		return fmt.Errorf("store: clear project order: %w", err)
+	}
+	return nil
+}
+
+// ProjectOrderIsManual reports whether any project carries an explicit
+// position. The UI uses it to offer "sort by activity" only when that would
+// actually change something.
+func (d *DB) ProjectOrderIsManual(ctx context.Context) (bool, error) {
+	var n int
+	err := d.sql.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM projects WHERE sort_index IS NOT NULL`).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("store: project order mode: %w", err)
+	}
+	return n > 0, nil
+}
+
 // TouchProject records activity, which drives automatic ordering.
 func (d *DB) TouchProject(ctx context.Context, id string) error {
 	_, err := d.sql.ExecContext(ctx, `UPDATE projects SET last_active_at = ? WHERE id = ?`, now(), id)

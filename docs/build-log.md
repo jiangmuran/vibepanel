@@ -328,3 +328,52 @@ was wrong.
 The harness also grew `data-testid` hooks after its selectors broke on a
 refactor that only moved elements around, and a `data-layout` attribute on the
 root so a wrong layout mode is assertable rather than something to squint at.
+
+## 2026-08-23 — M3 part two: project ordering
+
+Re-read the original request before building this. It asks for two different
+things that the plan had blurred into one:
+
+> 每个窗口根据这三种状态自由排序 也可以手动把某一个置顶到项目的最前面
+> 项目之间的排序……默认最活跃的放在最前面 也允许用户手动排序
+
+Sessions sort themselves by state, with a manual pin to the top — already
+built. Only *projects* get arbitrary manual ordering. The plan had specified
+drag-reordering for sessions too, which nobody asked for and which would fight
+the state ordering that is the point of the sidebar. Dropped.
+
+Projects reorder by dragging a grip handle, built on Pointer Events rather than
+HTML5 drag-and-drop: the HTML5 API does not fire on touch at all, so a drag
+built on it simply does not exist on a phone. Reordering sends the whole list
+in one request — a drag moves every project below it, and sending those
+individually leaves the sidebar showing an order that never existed if one
+fails. An id the server does not recognise fails the whole transaction rather
+than writing the positions it does recognise, so a client working from a stale
+list cannot quietly produce an order nobody chose.
+
+An explicit order survives activity: that is what setting one means. A control
+appears in the header to go back to automatic, and only when there is something
+to go back from.
+
+### A black bar under the terminal
+
+Visible in a light-mode screenshot, invisible to every assertion.
+
+`xterm.css` hard-codes `background-color: #000` on `.xterm-viewport`, with a
+comment about macOS scrollbar opacity. The rows are transparent and sit on top,
+so every pixel the rows do not cover shows through black — the sub-row
+remainder at the bottom of the pane, and the scrollbar track.
+
+Two things had to change. The override itself: our rule and xterm's use the
+same selector at the same specificity, so it came down to source order, and
+with `import '@xterm/xterm/css/xterm.css'` sitting inside `Terminal.tsx` xterm
+always won. It is imported from `styles.css` now, above our rules, and no
+`!important` is needed.
+
+And the check that should have caught it: the theme assertion walked up from
+`.xterm-screen` looking for the nearest painted ancestor. `.xterm-viewport` is
+a *sibling* of `.xterm-screen`, so the walk skipped it entirely and found the
+container's correct white. It reads the viewport directly now.
+
+Worth noting that the harness reported a clean run while this was on screen.
+Looking at the screenshots is not a formality.

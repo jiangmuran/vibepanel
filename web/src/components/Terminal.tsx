@@ -3,7 +3,7 @@ import { Terminal as Xterm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
-import '@xterm/xterm/css/xterm.css'
+// xterm.css is imported from styles.css so our overrides come after it.
 
 import type { PanelSocket } from '../protocol/socket'
 import { terminalTheme } from './theme'

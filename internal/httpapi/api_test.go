@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -513,5 +514,98 @@ func TestPollDoesNotStampLastOutput(t *testing.T) {
 	if after.LastOutputAt != before.LastOutputAt {
 		t.Errorf("polling moved last_output_at from %d to %d on a silent session",
 			before.LastOutputAt, after.LastOutputAt)
+	}
+}
+
+func TestProjectOrdering(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+
+	// Three projects, created oldest first. Automatic ordering is by recent
+	// activity, so creation order is the starting point.
+	var ids []string
+	for _, name := range []string{"alpha", "beta", "gamma"} {
+		p := postJSON[store.Project](t, ts, "/api/projects",
+			`{"path":"`+t.TempDir()+`","name":"`+name+`"}`)
+		ids = append(ids, p.ID)
+		time.Sleep(1100 * time.Millisecond) // last_active_at has second resolution
+	}
+
+	order := func() []string {
+		ps, err := srv.DB.ListProjects(ctx)
+		if err != nil {
+			t.Fatalf("ListProjects: %v", err)
+		}
+		out := make([]string, len(ps))
+		for i, p := range ps {
+			out[i] = p.Name
+		}
+		return out
+	}
+
+	if got := order(); !slices.Equal(got, []string{"gamma", "beta", "alpha"}) {
+		t.Fatalf("automatic order = %v, want most recently active first", got)
+	}
+
+	// Drag alpha to the top.
+	body := `{"ids":["` + ids[0] + `","` + ids[1] + `","` + ids[2] + `"]}`
+	res, err := ts.Client().Post(ts.URL+"/api/projects/reorder", "application/json",
+		strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("reorder: %v", err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("reorder status = %d, want 204", res.StatusCode)
+	}
+	if got := order(); !slices.Equal(got, []string{"alpha", "beta", "gamma"}) {
+		t.Fatalf("manual order = %v, want the order that was sent", got)
+	}
+
+	// Activity must not disturb an explicit order — that is the whole point of
+	// setting one.
+	if err := srv.DB.TouchProject(ctx, ids[2]); err != nil {
+		t.Fatalf("TouchProject: %v", err)
+	}
+	if got := order(); !slices.Equal(got, []string{"alpha", "beta", "gamma"}) {
+		t.Errorf("activity reshuffled a manual order: %v", got)
+	}
+
+	manual, err := srv.DB.ProjectOrderIsManual(ctx)
+	if err != nil || !manual {
+		t.Errorf("ProjectOrderIsManual = %v, %v; want true", manual, err)
+	}
+
+	// Back to automatic.
+	res, err = ts.Client().Post(ts.URL+"/api/projects/reorder", "application/json",
+		strings.NewReader(`{"auto":true}`))
+	if err != nil {
+		t.Fatalf("auto: %v", err)
+	}
+	res.Body.Close()
+	if got := order(); !slices.Equal(got, []string{"gamma", "beta", "alpha"}) {
+		t.Errorf("order after returning to automatic = %v, want activity order", got)
+	}
+	if manual, _ := srv.DB.ProjectOrderIsManual(ctx); manual {
+		t.Error("ProjectOrderIsManual is still true after clearing")
+	}
+}
+
+func TestReorderRejectsUnknownProject(t *testing.T) {
+	ts, _ := newTestServer(t)
+	p := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"only"}`)
+
+	// A client working from a stale list must fail loudly rather than have the
+	// server quietly write positions for the ids it recognises and drop the
+	// rest, which would leave the sidebar in an order nobody chose.
+	res, err := ts.Client().Post(ts.URL+"/api/projects/reorder", "application/json",
+		strings.NewReader(`{"ids":["`+p.ID+`","does-not-exist"]}`))
+	if err != nil {
+		t.Fatalf("reorder: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", res.StatusCode)
 	}
 }

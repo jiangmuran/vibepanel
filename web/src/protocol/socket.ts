@@ -159,7 +159,12 @@ export class PanelSocket {
       case 'state': {
         const st = msg as unknown as StateMessage
         for (const fn of this.stateListeners) {
-          fn({ projects: st.projects, sessions: st.sessions, live: st.live })
+          fn({
+            projects: st.projects,
+            sessions: st.sessions,
+            live: st.live,
+            projectOrder: st.projectOrder,
+          })
         }
         break
       }
