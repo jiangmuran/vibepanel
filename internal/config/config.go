@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -78,6 +79,12 @@ type Config struct {
 	// allows everything, which is the default — this is a way to narrow an
 	// internet-facing deployment, not a requirement for a local one.
 	AllowFrom []string
+
+	// UnknownEnv lists VIBEPANEL_* variables that nothing here reads. Not an
+	// error — a future version may add names this build does not know — but
+	// worth saying out loud, because the failure mode is a setting that
+	// quietly does nothing, and the setting people misspell is the TLS one.
+	UnknownEnv []string
 }
 
 // Default returns the configuration used when nothing is specified.
@@ -103,37 +110,74 @@ func defaultDataDir() string {
 	return filepath.Join(home, ".local", "share", "vibepanel")
 }
 
+const envPrefix = "VIBEPANEL_"
+
 // envOverlay applies VIBEPANEL_* environment variables.
 //
 // Environment beats defaults but loses to explicit flags, so that a systemd
 // unit can set a baseline while an operator debugging by hand can still
 // override one value on the command line.
 func (c *Config) envOverlay() {
-	str := func(key string, dst *string) {
-		if v, ok := os.LookupEnv(key); ok {
-			*dst = v
+	seen := map[string]bool{}
+	// Both spellings for anything whose flag name does not map onto the
+	// documented VIBEPANEL_<UPPER_SNAKE> convention. The originals came first
+	// and are in the shipped env file; the conventional ones are what anyone
+	// reading the flag table would guess, and guessing wrong used to mean the
+	// setting was silently not applied — which for TLS means a panel serving
+	// plaintext on a public port while its operator believes otherwise.
+	str := func(dst *string, keys ...string) {
+		for _, key := range keys {
+			seen[key] = true
+			if v, ok := os.LookupEnv(key); ok {
+				*dst = v
+			}
 		}
 	}
-	str("VIBEPANEL_DATA_DIR", &c.DataDir)
-	str("VIBEPANEL_ADDR", &c.Addr)
-	str("VIBEPANEL_DOMAIN", &c.Domain)
-	str("VIBEPANEL_CERT_FILE", &c.CertFile)
-	str("VIBEPANEL_KEY_FILE", &c.KeyFile)
-	str("VIBEPANEL_ACME_EMAIL", &c.ACMEEmail)
-	str("VIBEPANEL_ACME_DIRECTORY", &c.ACMEDirectory)
-	str("VIBEPANEL_ACME_DNS_PROVIDER", &c.ACMEDNSProvider)
-	str("VIBEPANEL_TMUX_SOCKET", &c.TmuxSocket)
-	str("VIBEPANEL_STATIC_DIR", &c.StaticDir)
+	str(&c.DataDir, "VIBEPANEL_DATA_DIR")
+	str(&c.Addr, "VIBEPANEL_ADDR")
+	str(&c.Domain, "VIBEPANEL_DOMAIN")
+	str(&c.CertFile, "VIBEPANEL_CERT_FILE", "VIBEPANEL_TLS_CERT")
+	str(&c.KeyFile, "VIBEPANEL_KEY_FILE", "VIBEPANEL_TLS_KEY")
+	str(&c.ACMEEmail, "VIBEPANEL_ACME_EMAIL")
+	str(&c.ACMEDirectory, "VIBEPANEL_ACME_DIRECTORY")
+	str(&c.ACMEDNSProvider, "VIBEPANEL_ACME_DNS_PROVIDER", "VIBEPANEL_ACME_DNS")
+	str(&c.TmuxSocket, "VIBEPANEL_TMUX_SOCKET")
+	str(&c.StaticDir, "VIBEPANEL_STATIC_DIR")
 
-	if v, ok := os.LookupEnv("VIBEPANEL_TLS_MODE"); ok {
-		c.TLSMode = TLSMode(v)
+	for _, key := range []string{"VIBEPANEL_TLS_MODE", "VIBEPANEL_TLS"} {
+		seen[key] = true
+		if v, ok := os.LookupEnv(key); ok {
+			c.TLSMode = TLSMode(v)
+		}
 	}
-	if v, ok := os.LookupEnv("VIBEPANEL_TRUSTED_PROXIES"); ok && v != "" {
-		c.TrustedProxies = splitAndTrim(v)
+	for _, key := range []string{"VIBEPANEL_TRUSTED_PROXIES"} {
+		seen[key] = true
+		if v, ok := os.LookupEnv(key); ok && v != "" {
+			c.TrustedProxies = splitAndTrim(v)
+		}
 	}
-	if v, ok := os.LookupEnv("VIBEPANEL_ALLOW_FROM"); ok && v != "" {
-		c.AllowFrom = splitAndTrim(v)
+	for _, key := range []string{"VIBEPANEL_ALLOW_FROM"} {
+		seen[key] = true
+		if v, ok := os.LookupEnv(key); ok && v != "" {
+			c.AllowFrom = splitAndTrim(v)
+		}
 	}
+	// Anything else starting with VIBEPANEL_ is almost certainly a typo or a
+	// name from a newer version, and either way it is doing nothing. Silence
+	// here is how a security setting gets to be inert without anyone knowing.
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if !strings.HasPrefix(key, envPrefix) || seen[key] {
+			continue
+		}
+		// Set by the hook script inside a session; not configuration.
+		if key == "VIBEPANEL_SESSION_ID" || key == "VIBEPANEL_TOKEN" ||
+			key == "VIBEPANEL_URL" || strings.HasPrefix(key, "VIBEPANEL_DEBUG_") {
+			continue
+		}
+		c.UnknownEnv = append(c.UnknownEnv, key)
+	}
+	sort.Strings(c.UnknownEnv)
 }
 
 func splitAndTrim(s string) []string {

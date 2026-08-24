@@ -1131,3 +1131,42 @@ credentials — and it will not shut up about `loginctl enable-linger`, because 
 systemd user service stops when your last session ends. A panel whose entire
 purpose is outliving your terminal, that dies when you log out, is a panel that
 only appears to work.
+
+## A TLS setting that was silently ignored
+
+Everything up to here ran over http on localhost. The deployment this was built
+for terminates its own TLS on a public hostname, and three things only happen
+there: the WebSocket upgrades to `wss`, the session cookie carries `Secure`, and
+a certificate gets replaced under a running server. So `scripts/tls-check.mjs`
+generates a self-signed pair, serves with `--tls files`, logs in through a real
+browser and drives a terminal.
+
+The first run never got as far as a handshake. `VIBEPANEL_TLS=files` had done
+nothing: the variable the code reads is `VIBEPANEL_TLS_MODE`, while the README
+promises that every flag has a `VIBEPANEL_<UPPER_SNAKE>` equivalent — and
+`--tls` maps to `VIBEPANEL_TLS` under that rule. Three more diverged the same
+way: `--tls-cert`, `--tls-key`, `--acme-dns`.
+
+Every one of those is a security-relevant setting. Following the README to
+enable TLS produced a panel serving **plaintext on a public port**, with a
+banner cheerfully printing an `http://` URL, and nothing anywhere saying the
+setting had been dropped.
+
+Both spellings work now, and — the part that matters more — any `VIBEPANEL_*`
+variable nothing reads is printed at startup above the setup token and reported
+by `doctor`. A misspelling that used to be inert is now loud. The hook script's
+own variables are excluded, or every session would produce a warning.
+
+The rest passed first time: `wss` on an https page, the cookie `Secure`,
+`HttpOnly` and `SameSite=Strict`, a certificate replaced by rename picked up
+within the poll interval without disturbing an open session, and a deliberately
+corrupted certificate file *not* taking the listener down — the file source
+keeps the last good pair, which is the difference between a warning and an
+outage during a botched renewal.
+
+One assertion of mine was wrong again: I called it a failure that a plaintext
+request to the TLS port is answered at all. Go replies with a fixed 400 saying
+the client spoke HTTP to an HTTPS server, and that is right — it cannot
+redirect, because a redirect would have to follow a handshake that is never
+going to happen. The check now asserts what actually matters: no application
+response, and no hang.

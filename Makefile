@@ -38,6 +38,10 @@ stress-check: build   ## Wide characters, full-screen programs, floods, dropouts
 restart-check: build  ## Kill the backend and check the sessions outlive it
 	cd web && npm run check:restart
 
+.PHONY: tls-check
+tls-check: build      ## Serve over its own TLS: wss, Secure cookie, cert swap
+	node scripts/tls-check.mjs ./$(BIN)
+
 .PHONY: release
 release:              ## Cross-compiled archives in dist/
 	scripts/build-release.sh

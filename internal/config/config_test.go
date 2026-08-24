@@ -118,3 +118,58 @@ func TestPublicURL(t *testing.T) {
 		}
 	}
 }
+
+// The flag table in the README promises VIBEPANEL_<UPPER_SNAKE> for every
+// flag. Four of them did not hold, and the one people would reach for first is
+// the TLS mode — where the consequence of being ignored is a panel serving
+// plaintext on a public port while its operator believes otherwise.
+func TestDocumentedEnvNamesAreHonoured(t *testing.T) {
+	for _, tc := range []struct {
+		env   string
+		value string
+		check func(Config) string
+	}{
+		{"VIBEPANEL_TLS", "files", func(c Config) string { return string(c.TLSMode) }},
+		{"VIBEPANEL_TLS_MODE", "files", func(c Config) string { return string(c.TLSMode) }},
+		{"VIBEPANEL_TLS_CERT", "/x/cert.pem", func(c Config) string { return c.CertFile }},
+		{"VIBEPANEL_CERT_FILE", "/x/cert.pem", func(c Config) string { return c.CertFile }},
+		{"VIBEPANEL_TLS_KEY", "/x/key.pem", func(c Config) string { return c.KeyFile }},
+		{"VIBEPANEL_KEY_FILE", "/x/key.pem", func(c Config) string { return c.KeyFile }},
+		{"VIBEPANEL_ACME_DNS", "cloudflare", func(c Config) string { return c.ACMEDNSProvider }},
+		{"VIBEPANEL_ACME_DNS_PROVIDER", "cloudflare", func(c Config) string { return c.ACMEDNSProvider }},
+	} {
+		t.Run(tc.env, func(t *testing.T) {
+			t.Setenv(tc.env, tc.value)
+			c := Default()
+			c.envOverlay()
+			if got := tc.check(c); got != tc.value {
+				t.Errorf("%s=%s was ignored; the setting reads %q", tc.env, tc.value, got)
+			}
+			if len(c.UnknownEnv) != 0 {
+				t.Errorf("a documented name was reported as unknown: %v", c.UnknownEnv)
+			}
+		})
+	}
+}
+
+func TestMisspelledEnvIsReported(t *testing.T) {
+	t.Setenv("VIBEPANEL_TSL", "files") // the transposition someone will make
+	t.Setenv("VIBEPANEL_SESSION_ID", "s-123")
+	t.Setenv("VIBEPANEL_ADDR", ":9000")
+	c := Default()
+	c.envOverlay()
+
+	if c.TLSMode != TLSOff {
+		t.Errorf("a misspelling somehow applied: %q", c.TLSMode)
+	}
+	if len(c.UnknownEnv) != 1 || c.UnknownEnv[0] != "VIBEPANEL_TSL" {
+		t.Errorf("UnknownEnv = %v, want exactly [VIBEPANEL_TSL]", c.UnknownEnv)
+	}
+	// The hook script's own variables are set inside every session and are not
+	// configuration; reporting them would be noise on every start.
+	for _, k := range c.UnknownEnv {
+		if k == "VIBEPANEL_SESSION_ID" {
+			t.Error("the hook script's session id was reported as a stray setting")
+		}
+	}
+}

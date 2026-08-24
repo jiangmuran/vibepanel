@@ -92,6 +92,12 @@ existing tmux or zellij setup without disturbing it.
 ## Configuration
 
 Every flag has a `VIBEPANEL_<UPPER_SNAKE>` environment equivalent. Flags win.
+Four settings also answer to an older name, kept because it is what the shipped
+`vibepanel.env` uses: `VIBEPANEL_TLS_MODE`, `VIBEPANEL_CERT_FILE`,
+`VIBEPANEL_KEY_FILE`, `VIBEPANEL_ACME_DNS_PROVIDER`. Any other `VIBEPANEL_*`
+variable is reported at startup and by `doctor` rather than ignored — a
+misspelled `VIBEPANEL_TLS` used to mean a panel serving plaintext on a public
+port while its operator believed otherwise.
 
 | Flag | Default | Notes |
 |---|---|---|

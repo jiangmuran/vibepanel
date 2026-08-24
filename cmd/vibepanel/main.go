@@ -189,6 +189,15 @@ func cmdServe(args []string) error {
 	if len(allow) > 0 {
 		fmt.Printf("  allowed from %s\n", strings.Join(a.cfg.AllowFrom, ", "))
 	}
+	// Loud, and above the setup token where it cannot be scrolled past. A
+	// misspelled VIBEPANEL_TLS is a panel serving plaintext on a public port
+	// while its operator believes it is not.
+	if len(a.cfg.UnknownEnv) > 0 {
+		fmt.Printf("\n  WARNING: these environment variables are set and nothing reads them:\n")
+		fmt.Printf("           %s\n", strings.Join(a.cfg.UnknownEnv, " "))
+		fmt.Printf("           check the spelling against `vibepanel serve --help`; a setting\n")
+		fmt.Printf("           that is not applied looks exactly like one that is.\n")
+	}
 	if srv.Auth.SetupToken != "" {
 		fmt.Printf("\n  No account yet. Open %s and use this one-time setup token:\n\n      %s\n\n",
 			a.cfg.PublicURL(), srv.Auth.SetupToken)
@@ -619,6 +628,14 @@ func cmdDoctor(args []string) error {
 		fmt.Printf("[--  ] passkeys           disabled; password login only\n")
 		fmt.Printf("       needs --domain with a hostname plus TLS, or localhost\n")
 	}
+	if len(cfg.UnknownEnv) == 0 {
+		fmt.Printf("[ok  ] environment        no unrecognised VIBEPANEL_* variables\n")
+	} else {
+		fmt.Printf("[warn] environment        set but never read: %s\n",
+			strings.Join(cfg.UnknownEnv, " "))
+		fmt.Printf("       a misspelled name is silently not applied\n")
+	}
+
 	fmt.Printf("\nurl %s\n", cfg.PublicURL())
 	return nil
 }
