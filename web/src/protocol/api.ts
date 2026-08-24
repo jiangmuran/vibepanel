@@ -3,6 +3,7 @@ import type {
   FileListing,
   Note,
   PanelState,
+  Passkey,
   Project,
   Session,
   SessionState,
@@ -70,6 +71,27 @@ export const api = {
     }),
 
   logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
+
+  passkeyLoginBegin: () => request<unknown>('/api/auth/passkey/login/begin', { method: 'POST' }),
+
+  passkeyLoginFinish: (assertion: unknown) =>
+    request<AuthState>('/api/auth/passkey/login/finish', {
+      method: 'POST',
+      body: JSON.stringify(assertion),
+    }),
+
+  passkeyRegisterBegin: () =>
+    request<unknown>('/api/auth/passkey/register/begin', { method: 'POST' }),
+
+  passkeyRegisterFinish: (name: string, attestation: unknown) =>
+    request<{ name: string }>(
+      `/api/auth/passkey/register/finish?name=${encodeURIComponent(name)}`,
+      { method: 'POST', body: JSON.stringify(attestation) },
+    ),
+
+  passkeys: () => request<Passkey[]>('/api/auth/passkeys'),
+
+  deletePasskey: (id: string) => request<void>(`/api/auth/passkeys/${id}`, { method: 'DELETE' }),
 
   state: () => request<PanelState>('/api/state'),
 

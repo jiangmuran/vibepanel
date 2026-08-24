@@ -84,6 +84,25 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+	// v4: store the whole WebAuthn credential.
+	//
+	// The v1 table decomposed it into columns, which loses the fields the
+	// library adds over time (attestation type, backup state, the transport
+	// list, flags). Keeping the marshalled credential means an upgrade of the
+	// library does not silently drop something a browser relies on; the
+	// individual columns stay for indexing and for the settings page.
+	func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`ALTER TABLE credentials ADD COLUMN data BLOB NOT NULL DEFAULT x''`,
+			`ALTER TABLE credentials ADD COLUMN user_handle BLOB NOT NULL DEFAULT x''`,
+			`CREATE INDEX IF NOT EXISTS idx_credentials_handle ON credentials(user_handle)`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	},
 }
 
 // schemaVersion is the version this build writes.

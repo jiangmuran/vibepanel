@@ -199,3 +199,10 @@ export interface AuthState {
   /** Why the passkey button is disabled; the browser's own error is opaque. */
   passkeyReason?: string
 }
+
+export interface Passkey {
+  id: string
+  name: string
+  createdAt: number
+  lastUsedAt: number | null
+}

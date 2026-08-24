@@ -6,8 +6,10 @@ tmux keeps the processes alive. The browser owns everything else: how sessions
 are grouped into projects, what they are called, which ones need you right now,
 and what order they appear in.
 
-> Status: early. Milestone M1 (skeleton, tmux wrapper, storage, admin CLI) is
-> done. The HTTP server and web UI land in M2.
+> Status: usable, not finished. Terminals, session state, projects, scratch
+> terminals, the side panel, authentication and TLS all work. Still to come:
+> the mobile layout and its soft keyboard, a settings page, and the packaging
+> and release pipeline.
 
 ## The problem
 
@@ -74,9 +76,22 @@ Every flag has a `VIBEPANEL_<UPPER_SNAKE>` environment equivalent. Flags win.
 | `--domain` | — | public hostname; also the WebAuthn Relying Party ID |
 | `--tls` | `off` | `off`, `files`, or `acme` |
 | `--tls-cert` / `--tls-key` | — | for `--tls files`; reloaded on change |
-| `--acme-dns` | — | DNS-01 provider for `--tls acme` |
+| `--acme-dns` | — | DNS-01 provider for `--tls acme` (currently `cloudflare`) |
+| `--acme-email` | — | contact address for the CA |
+| `--acme-directory` | Let's Encrypt | point at a staging endpoint while testing |
+| `--allow-from` | — | comma-separated CIDRs allowed to reach the panel |
 | `--tmux-socket` | `vibepanel` | keep it dedicated to stay isolated |
 | `--static-dir` | — | serve the frontend from disk instead of the embedded build |
+
+### Signing in
+
+First run prints a one-time setup token to the console. That is the handover:
+whoever can read the server's output is entitled to claim the panel, and merely
+reaching it over the network is not. The setup endpoint closes permanently once
+an account exists.
+
+Everything except the health probe and the agent-hook endpoint needs a session,
+the WebSocket included — it is the terminal itself.
 
 ### Passkeys
 
@@ -85,11 +100,24 @@ domain name. **An IP address is never a valid RP ID**, so `https://192.168.1.10:
 cannot register a passkey no matter how the TLS is arranged. Use a hostname.
 
 Password login always works and is set up on first run. Passkeys are an
-addition on top of it, never the only way in. `vibepanel doctor` reports
-whether the current configuration can support them, and why not if it cannot.
+addition on top of it, never the only way in. Both `vibepanel doctor` and the
+sign-in screen report whether the current configuration supports them, and say
+why not if it does not.
 
-HTTP-01 ACME validation needs port 80, which this panel does not expect to
-have, so automatic certificates use DNS-01.
+### Certificates
+
+```sh
+# your own certificate, reloaded when it changes
+vibepanel --domain panel.example.com --tls files \
+          --tls-cert /etc/ssl/panel.pem --tls-key /etc/ssl/panel.key
+
+# or issued and renewed automatically
+CLOUDFLARE_API_TOKEN=... vibepanel --domain panel.example.com \
+          --tls acme --acme-dns cloudflare --acme-email you@example.com
+```
+
+HTTP-01 validation needs port 80, which this panel does not expect to have, so
+automatic certificates use DNS-01.
 
 ## Contributing
 

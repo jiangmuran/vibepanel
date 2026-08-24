@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
-import { KeyRound, LogIn } from 'lucide-react'
+import { Fingerprint, KeyRound, LogIn } from 'lucide-react'
 
 import { api } from '../protocol/api'
+import {
+  decodeRequestOptions,
+  encodeAssertion,
+  passkeysSupported,
+} from '../protocol/webauthn'
 import type { AuthState } from '../protocol/wire'
 
 /**
@@ -76,6 +81,34 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const signInWithPasskey = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const options = decodeRequestOptions(
+        (await api.passkeyLoginBegin()) as Parameters<typeof decodeRequestOptions>[0],
+      )
+      const credential = (await navigator.credentials.get({
+        publicKey: options,
+        // Discoverable: the browser offers whichever key it holds for this
+        // site, so nothing has to be typed.
+        mediation: 'optional',
+      })) as PublicKeyCredential | null
+      if (!credential) throw new Error('no passkey was chosen')
+      await api.passkeyLoginFinish(encodeAssertion(credential))
+      onDone()
+    } catch (err) {
+      // A cancelled prompt is a choice, not a failure worth shouting about.
+      if (err instanceof DOMException && err.name === 'NotAllowedError') {
+        setError(null)
+      } else {
+        setError(err instanceof Error ? err.message : String(err))
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -163,11 +196,29 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
           {busy ? 'Working…' : setup ? 'Create account' : 'Sign in'}
         </button>
 
-        {!setup && (
+        {!setup && state.passkeysUsable && passkeysSupported() && (
+          <>
+            <div className="my-4 flex items-center gap-3">
+              <span className="h-px flex-1" style={{ background: 'var(--vp-hairline)' }} />
+              <span className="text-[10.5px] text-ink-2">or</span>
+              <span className="h-px flex-1" style={{ background: 'var(--vp-hairline)' }} />
+            </div>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void signInWithPasskey()}
+              data-testid="passkey-signin"
+              className="flex w-full items-center justify-center gap-1.5 rounded-vp border border-hairline px-3 py-2 text-[13px] text-ink transition-colors duration-200 ease-vp hover:bg-surface-2 disabled:opacity-50"
+            >
+              <Fingerprint size={14} />
+              Use a passkey
+            </button>
+          </>
+        )}
+
+        {!setup && !state.passkeysUsable && (
           <p className="mt-4 text-[11px] leading-relaxed text-ink-2" data-testid="passkey-note">
-            {state.passkeysUsable
-              ? 'Passkeys can be added from settings once you are signed in.'
-              : `Passkeys unavailable: ${state.passkeyReason ?? 'not supported here'}.`}
+            Passkeys unavailable: {state.passkeyReason ?? 'not supported here'}.
           </p>
         )}
       </form>

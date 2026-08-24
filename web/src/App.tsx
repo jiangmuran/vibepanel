@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ChevronUp, LogOut, Menu, Moon, Monitor, PanelRight, Sun } from 'lucide-react'
+import { ChevronUp, Fingerprint, LogOut, Menu, Moon, Monitor, PanelRight, Sun } from 'lucide-react'
 
 import { api, UnauthorizedError } from './protocol/api'
 import { PanelSocket } from './protocol/socket'
@@ -10,6 +10,7 @@ import { StateDot } from './components/StateDot'
 import { Sidebar } from './components/Sidebar'
 import { BottomTerminals } from './components/BottomTerminals'
 import { RightPanel } from './components/RightPanel'
+import { PasskeyDialog } from './components/PasskeyDialog'
 import type { PanelTab } from './components/RightPanel'
 import { applyTheme, loadTheme } from './components/theme'
 import type { ThemeChoice } from './components/theme'
@@ -111,6 +112,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   })
   const [rightSplit, setRightSplit] = useState(() => readStored(RIGHT_SPLIT_KEY) === 'on')
   const [splitRatio, setSplitRatio] = useState(0.5)
+  const [passkeysOpen, setPasskeysOpen] = useState(false)
 
   // The attribute is written synchronously here rather than from an effect.
   //
@@ -340,6 +342,17 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               <PanelRight size={15} />
             </button>
           )}
+          {auth.passkeysUsable && (
+            <button
+              type="button"
+              data-testid="passkeys-open"
+              onClick={() => setPasskeysOpen(true)}
+              title="Passkeys"
+              className="ml-1 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+            >
+              <Fingerprint size={15} />
+            </button>
+          )}
           <ThemeToggle theme={theme} onChange={setTheme} />
           <button
             type="button"
@@ -422,6 +435,8 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
       {/* Hidden on a narrow screen: a 280px column beside a terminal on a
           phone leaves neither usable. The panels reach mobile in their own
           layout rather than by being squeezed into this one. */}
+      {passkeysOpen && <PasskeyDialog onClose={() => setPasskeysOpen(false)} />}
+
       {!narrow && rightWidth > 0 && (
         <RightPanel
           project={currentProject}

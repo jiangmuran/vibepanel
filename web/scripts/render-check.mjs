@@ -89,6 +89,9 @@ const server = spawn(BIN, ['serve'], {
     VIBEPANEL_DATA_DIR: DATA,
     VIBEPANEL_TMUX_SOCKET: SOCKET,
     VIBEPANEL_ADDR: `127.0.0.1:${PORT}`,
+    // localhost is a valid Relying Party ID and a secure context even over
+    // plain HTTP, which is what lets passkeys be exercised here at all.
+    VIBEPANEL_DOMAIN: 'localhost',
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 })
@@ -96,7 +99,7 @@ let serverLog = ''
 server.stdout.on('data', (d) => (serverLog += d))
 server.stderr.on('data', (d) => (serverLog += d))
 
-const BASE = `http://127.0.0.1:${PORT}`
+const BASE = `http://localhost:${PORT}`
 let browser
 
 async function cleanup() {
@@ -824,6 +827,66 @@ try {
     if (over > 1) note('WARN', `layout/${label}`, `page scrolls horizontally by ${over}px`)
     await page.screenshot({ path: join(SHOTS, `${label}.png`) })
   }
+  // ── passkeys ─────────────────────────────────────────────────────────────
+  // Driven through a virtual authenticator, because the only way to know a
+  // WebAuthn implementation works is to complete a ceremony with a browser.
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await sleep(500)
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('WebAuthn.enable')
+  await cdp.send('WebAuthn.addVirtualAuthenticator', {
+    options: {
+      protocol: 'ctap2',
+      transport: 'internal',
+      hasResidentKey: true,
+      hasUserVerification: true,
+      isUserVerified: true,
+      automaticPresenceSimulation: true,
+    },
+  })
+
+  const openPasskeys = page.locator('[data-testid="passkeys-open"]')
+  if (!(await openPasskeys.isVisible().catch(() => false))) {
+    note('FAIL', 'passkey', 'no passkey control, although the server reports them usable')
+  } else {
+    await openPasskeys.click()
+    await sleep(600)
+    page.once('dialog', (d) => void d.accept('Virtual key'))
+    await page.locator('[data-testid="passkey-add"]').click()
+    let registered = false
+    for (let i = 0; i < 30; i++) {
+      if ((await page.locator('[data-testid="passkey-row"]').count()) > 0) { registered = true; break }
+      await sleep(400)
+    }
+    if (!registered) {
+      note('FAIL', 'passkey', 'registering a passkey produced no entry')
+    } else {
+      // Now the part that matters: signing in with it and no password.
+      await page.locator('[data-testid="passkey-dialog"] button[title="Close"]').click()
+      await sleep(400)
+      await page.locator('[data-testid="sign-out"]').click()
+      await page.waitForSelector('[data-testid="login-form"]', { timeout: 10000 })
+        .catch(() => note('FAIL', 'passkey', 'signing out did not return to the sign-in screen'))
+      await sleep(600)
+
+      const passkeyButton = page.locator('[data-testid="passkey-signin"]')
+      if (!(await passkeyButton.isVisible().catch(() => false))) {
+        note('FAIL', 'passkey', 'the sign-in screen offers no passkey option')
+      } else {
+        await passkeyButton.click()
+        const back = await page
+          .waitForSelector('[data-testid="sidebar"], [data-testid="sidebar-rail"]', { timeout: 15000 })
+          .then(() => true)
+          .catch(() => false)
+        if (!back) {
+          const err = await page.locator('[data-testid="auth-error"]').innerText().catch(() => '')
+          note('FAIL', 'passkey', `signing in with a passkey failed: ${JSON.stringify(err)}`)
+        }
+        await page.screenshot({ path: join(SHOTS, 'passkey.png') })
+      }
+    }
+  }
+
 } catch (e) {
   note('FAIL', 'harness', String(e))
 } finally {

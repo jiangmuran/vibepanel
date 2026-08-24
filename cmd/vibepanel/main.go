@@ -28,6 +28,7 @@ import (
 	sessionpkg "github.com/jiangmuran/vibepanel/internal/session"
 	"github.com/jiangmuran/vibepanel/internal/store"
 	"github.com/jiangmuran/vibepanel/internal/sysmon"
+	"github.com/jiangmuran/vibepanel/internal/tlsmgr"
 	"github.com/jiangmuran/vibepanel/internal/tmux"
 	"github.com/jiangmuran/vibepanel/internal/version"
 	"github.com/jiangmuran/vibepanel/internal/webui"
@@ -193,16 +194,47 @@ func cmdServe(args []string) error {
 			a.cfg.PublicURL(), srv.Auth.SetupToken)
 	}
 
+	// TLS is resolved before listening. A panel that starts, binds, and only
+	// then discovers it has no usable certificate greets its first visitor
+	// with a handshake error and nothing that explains it.
+	serveTLS := false
+	switch a.cfg.TLSMode {
+	case config.TLSFiles:
+		src, terr := tlsmgr.NewFileSource(a.cfg.CertFile, a.cfg.KeyFile, logger)
+		if terr != nil {
+			return terr
+		}
+		defer src.Close()
+		httpServer.TLSConfig = src.TLSConfig()
+		serveTLS = true
+		fmt.Printf("  tls          certificate files, reloaded on change\n")
+
+	case config.TLSACME:
+		fmt.Printf("  tls          requesting a certificate for %s…\n", a.cfg.Domain)
+		tlsCfg, terr := tlsmgr.NewACME(ctx, tlsmgr.ACMEOptions{
+			Domain:     a.cfg.Domain,
+			Email:      a.cfg.ACMEEmail,
+			Directory:  a.cfg.ACMEDirectory,
+			Provider:   a.cfg.ACMEDNSProvider,
+			StorageDir: a.cfg.ACMEDir(),
+			Log:        logger,
+		})
+		if terr != nil {
+			return terr
+		}
+		httpServer.TLSConfig = tlsCfg
+		serveTLS = true
+	}
+
 	errCh := make(chan error, 1)
 	go func() {
-		switch a.cfg.TLSMode {
-		case config.TLSFiles:
-			errCh <- httpServer.ListenAndServeTLS(a.cfg.CertFile, a.cfg.KeyFile)
-		case config.TLSACME:
-			errCh <- errors.New("acme is not implemented yet (milestone M6); use --tls files or --tls off")
-		default:
-			errCh <- httpServer.ListenAndServe()
+		if serveTLS {
+			// The paths are empty because the certificate comes from
+			// TLSConfig, which is where reloading and renewal live.
+			errCh <- httpServer.ListenAndServeTLS("", "")
+			return
 		}
+		errCh <- httpServer.ListenAndServe()
 	}()
 
 	select {

@@ -610,3 +610,37 @@ Passkey registration and sign-in, and TLS: certificate files with hot reload,
 and ACME over DNS-01. The panel reports honestly in the meantime — the sign-in
 screen says *why* passkeys are unavailable rather than showing a dead button,
 which is the part that would otherwise be baffling.
+
+## 2026-08-23 — M6 part two: passkeys and TLS
+
+Passkeys register and sign in, passwordless. Discoverable credentials, so
+nothing is typed and no username is disclosed before the key proves itself. The
+challenge stays on the server and the browser carries only an opaque id for it,
+single use. An authenticator whose sign count goes backwards is refused — that
+counter exists to detect a cloned credential, and honouring it is the only
+reason it is there.
+
+TLS two ways. Certificate files, reloaded when they change so an external
+renewal needs no restart — and a reload that fails keeps serving the previous
+pair, because a renewal that writes the certificate and the key a moment apart
+would otherwise take the panel down for the length of that gap. Or ACME over
+DNS-01 with Cloudflare, resolved before the listener opens: a panel that binds
+first and discovers it has no certificate second greets its first visitor with
+a handshake error and nothing to explain it.
+
+### Tested with a real browser and a virtual authenticator
+
+WebAuthn is not something to take on faith from unit tests. The render check
+adds a CDP virtual authenticator, registers a passkey through the dialog, signs
+out, and signs back in with no password. The server runs with
+`--domain localhost` for that, which is a valid Relying Party ID and a secure
+context even over plain HTTP.
+
+### Error messages aimed at the failure people will actually hit
+
+The most likely ACME problem by far is a missing `CLOUDFLARE_API_TOKEN`, so
+that is its own error naming the variable rather than a provider failure
+surfacing from three layers down. Asking for ACME without a DNS provider says
+plainly that HTTP-01 cannot work on a non-standard port, instead of failing
+after a minute of retries. And the sign-in screen explains *why* passkeys are
+unavailable rather than showing a button that does nothing.

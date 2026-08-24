@@ -40,7 +40,10 @@ type Server struct {
 	Detector *session.Detector
 	Sampler  *sysmon.Sampler
 	Auth     *Auth
-	Log      *slog.Logger
+	// Challenges holds in-flight WebAuthn ceremonies. The challenge stays on
+	// the server; the browser only carries an opaque id for it.
+	Challenges *challengeStore
+	Log        *slog.Logger
 
 	// hookToken authenticates state reports from agent hooks. Cached after the
 	// first read so the hot path does not hit the database.
@@ -66,6 +69,9 @@ type Server struct {
 // the single-page app, so an unknown API path returns a JSON 404 instead of
 // quietly handing the caller an HTML document.
 func (s *Server) Routes() http.Handler {
+	if s.Challenges == nil {
+		s.Challenges = newChallengeStore()
+	}
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RealIP)
@@ -76,6 +82,7 @@ func (s *Server) Routes() http.Handler {
 		// outside the browser as children of an agent.
 		r.Get("/health", s.handleHealth)
 		s.registerAuthRoutes(r)
+		s.registerPasskeyRoutes(r)
 		r.Post("/hook/state", s.handleHookState)
 
 		// Everything else needs a session. This panel hands out a writable
