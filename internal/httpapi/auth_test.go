@@ -298,3 +298,85 @@ func TestPasswordHashIsNeverReturned(t *testing.T) {
 		t.Errorf("auth state leaks the hash: %s", body)
 	}
 }
+
+// A header must never decide who the caller is.
+//
+// chi's middleware.RealIP used to run in front of everything and rewrite
+// r.RemoteAddr from X-Forwarded-For or X-Real-IP with no trust model, so the
+// two controls that exist to keep strangers out both read an address the
+// stranger supplied. Both were measured bypassable before this was fixed.
+func TestAddressCannotBeSpoofedByAHeader(t *testing.T) {
+	ts, srv := newTestServer(t)
+	// A network the loopback interface is certainly not on.
+	nets, err := auth.ParseCIDRs([]string{"10.99.99.0/24"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Auth.Allow = nets
+
+	get := func(headers map[string]string) int {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/state", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		res, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatalf("GET: %v", err)
+		}
+		defer res.Body.Close()
+		return res.StatusCode
+	}
+
+	if code := get(nil); code != http.StatusForbidden {
+		t.Fatalf("an address outside the allowlist got %d, want 403", code)
+	}
+	for _, header := range []string{"X-Forwarded-For", "X-Real-IP", "Forwarded"} {
+		if code := get(map[string]string{header: "10.99.99.5"}); code != http.StatusForbidden {
+			t.Errorf("%s: claiming an allowed address got %d; the allowlist is bypassable "+
+				"with one header", header, code)
+		}
+	}
+	// Chained values are the other shape of the same attempt.
+	if code := get(map[string]string{"X-Forwarded-For": "10.99.99.5, 203.0.113.1"}); code != http.StatusForbidden {
+		t.Errorf("a chained X-Forwarded-For got %d, want 403", code)
+	}
+}
+
+// The throttle is worthless if a new header value buys a fresh budget: an
+// attacker rotates it per request and never sees a 429.
+func TestThrottleIsNotResetByAHeader(t *testing.T) {
+	ts, _ := newTestServer(t) // the account already exists
+
+	attempt := func(forwarded string) int {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/auth/login",
+			strings.NewReader(`{"username":"tester","password":"definitely wrong"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if forwarded != "" {
+			req.Header.Set("X-Forwarded-For", forwarded)
+		}
+		res, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatalf("POST: %v", err)
+		}
+		defer res.Body.Close()
+		return res.StatusCode
+	}
+
+	if code := attempt("198.51.100.1"); code != http.StatusUnauthorized {
+		t.Fatalf("first wrong password got %d, want 401", code)
+	}
+	// A different claimed address, immediately after. Same real caller, so the
+	// throttle must already be holding.
+	if code := attempt("198.51.100.2"); code != http.StatusTooManyRequests {
+		t.Errorf("a second wrong password from a new X-Forwarded-For got %d, want 429; "+
+			"brute force is unthrottled", code)
+	}
+}

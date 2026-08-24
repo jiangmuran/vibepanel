@@ -123,6 +123,14 @@ an account exists.
 Everything except the health probe and the agent-hook endpoint needs a session,
 the WebSocket included — it is the terminal itself.
 
+Failed logins are throttled per source address with exponential backoff, and
+`--allow-from` narrows who may reach the panel at all. Both judge the address
+`--trusted-proxies` says to believe: with no trusted proxy configured, that is
+the peer on the socket and `X-Forwarded-For` is ignored entirely. This matters
+more than it sounds — a header that can rename the caller turns both controls
+off, and the panel used to run chi's `RealIP` middleware, which does exactly
+that with no trust model.
+
 ### Passkeys
 
 WebAuthn requires a secure context and a Relying Party ID that is a registrable

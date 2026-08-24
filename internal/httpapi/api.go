@@ -75,7 +75,20 @@ func (s *Server) Routes() http.Handler {
 	}
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.RealIP)
+	// Deliberately NOT middleware.RealIP.
+	//
+	// It overwrites r.RemoteAddr from X-Forwarded-For or X-Real-IP with no
+	// trust model at all, and everything downstream that cares about who is
+	// calling — the CIDR allowlist, the login throttle, the audit log — then
+	// reads a value the caller chose. Measured before removing it: with
+	// --allow-from set to a network this machine is not on, a plain request
+	// was refused and the same request with "X-Forwarded-For: <an allowed
+	// address>" went through; and twelve wrong passwords with a different
+	// header value each time were never throttled, while twelve from one
+	// address were throttled after the first.
+	//
+	// auth.ClientIP does this properly: it believes the header only from a
+	// proxy the operator listed in --trusted-proxies. Use that, always.
 
 	r.Route("/api", func(r chi.Router) {
 		// Open: the health probe says nothing sensitive, the auth endpoints are

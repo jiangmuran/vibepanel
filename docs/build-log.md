@@ -1170,3 +1170,40 @@ the client spoke HTTP to an HTTPS server, and that is right — it cannot
 redirect, because a redirect would have to follow a handshake that is never
 going to happen. The check now asserts what actually matters: no application
 response, and no hang.
+
+## One header turned off both of the controls that keep strangers out
+
+`--allow-from` narrows who may reach the panel; the login throttle stops
+guessing. Neither had ever been driven over HTTP. Measured against a panel
+whose allowlist was set to a network this machine is not on:
+
+    GET /api/state                                     403  the allowlist works
+    GET /api/state  X-Forwarded-For: <allowed address> 401  ...and does not
+    GET /api/state  X-Real-IP: <allowed address>       401
+    12 wrong passwords, one address        401 429 429 429 …   throttled
+    12 wrong passwords, a new header each  401 401 401 401 …   not throttled
+
+In the Go test, where the client carries a session cookie, the spoofed request
+came back **200** — full authenticated access from an address the operator had
+excluded.
+
+The cause was one line: `r.Use(middleware.RealIP)`. chi's RealIP rewrites
+`r.RemoteAddr` from `X-Forwarded-For` or `X-Real-IP` with no trust model at
+all, and it ran in front of everything. `auth.ClientIP` right next to it does
+the job properly — it believes the header only from a proxy the operator listed
+— and its own doc comment says that trusting it by default "would let anyone
+bypass the login throttle by inventing a new address on every attempt, which is
+the whole reason the throttle exists". That is precisely what was happening,
+two lines away from the comment warning about it.
+
+RealIP is gone, the allowlist judges the same address the throttle and the
+audit log do, and both properties have tests that fail loudly against the old
+code with the messages above. The audit log deserves a mention too: while this
+was live it recorded whatever address the caller claimed, which quietly poisons
+the fail2ban story the README advertises.
+
+The general lesson, and the third time this project has produced it: a
+protective mechanism that has never been *attacked* in a test has not been
+tested. Every one of these controls passed the obvious check — the allowlist
+refused a plain request, the throttle throttled a repeated one — and both were
+defeated by the first thing an attacker would try.

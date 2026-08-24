@@ -66,7 +66,7 @@ func (s *Server) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 
-		if s.Auth != nil && !auth.Allowed(r.RemoteAddr, s.Auth.Allow) {
+		if s.Auth != nil && !auth.Allowed(s.clientIP(r), s.Auth.Allow) {
 			s.audit(ctx, "blocked", "", s.clientIP(r), "address not in the allowlist")
 			writeErr(w, http.StatusForbidden, "not allowed from this address")
 			return
@@ -235,7 +235,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	ip := s.clientIP(r)
 
-	if s.Auth != nil && !auth.Allowed(r.RemoteAddr, s.Auth.Allow) {
+	if s.Auth != nil && !auth.Allowed(s.clientIP(r), s.Auth.Allow) {
 		writeErr(w, http.StatusForbidden, "not allowed from this address")
 		return
 	}
