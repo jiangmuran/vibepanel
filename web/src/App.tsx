@@ -11,6 +11,9 @@ import { Sidebar } from './components/Sidebar'
 import { BottomTerminals } from './components/BottomTerminals'
 import { RightPanel } from './components/RightPanel'
 import { PasskeyDialog } from './components/PasskeyDialog'
+import { MobileKeyBar } from './components/mobile/MobileKeyBar'
+import { ComposeInput } from './components/mobile/ComposeInput'
+import { SelectionCopy } from './components/mobile/SelectionCopy'
 import type { PanelTab } from './components/RightPanel'
 import { applyTheme, loadTheme } from './components/theme'
 import type { ThemeChoice } from './components/theme'
@@ -211,6 +214,16 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     () => (current ? state.sessions.filter((s) => s.parentSessionId === current.id) : []),
     [state.sessions, current],
   )
+
+  // On a phone the terminal is a display: input arrives from the compose box
+  // and the key bar, so tapping it must not raise the software keyboard over
+  // the thing being read.
+  const sendToCurrent = useCallback(
+    (text: string) => {
+      if (current) socket.writeText(current.id, text)
+    },
+    [socket, current],
+  )
   const currentProject = current
     ? (state.projects.find((p) => p.id === current.projectId) ?? null)
     : null
@@ -306,10 +319,22 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             <button
               type="button"
               onClick={() => setDrawerOpen(true)}
-              title="Projects"
-              className="rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+              title={waiting > 0 ? `Projects — ${waiting} waiting for you` : 'Projects'}
+              className="relative rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
             >
               <Menu size={16} />
+              {/* The count belongs where the list is, because on a phone the
+                  list is hidden and this is the only thing on screen that can
+                  say something needs you. */}
+              {waiting > 0 && (
+                <span
+                  data-testid="waiting-badge"
+                  className="tabular absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-1 text-[9px] font-semibold"
+                  style={{ background: 'var(--vp-state-waiting)', color: '#fff' }}
+                >
+                  {waiting}
+                </span>
+              )}
             </button>
           )}
           {current ? (
@@ -385,6 +410,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               socket={socket}
               sessionId={current.id}
               themeKey={themeKey}
+              readOnly={narrow}
               className="h-full w-full p-2"
             />
           ) : (
@@ -396,7 +422,15 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           )}
         </div>
 
-        {current && bottomHeight > 0 && (
+        {current && narrow && (
+          <>
+            <SelectionCopy />
+            <ComposeInput onSend={sendToCurrent} />
+            <MobileKeyBar onSend={sendToCurrent} />
+          </>
+        )}
+
+        {current && !narrow && bottomHeight > 0 && (
           <BottomTerminals
             // Remount per parent: each main session has its own set of tabs,
             // and carrying the previous one's active tab across a switch shows
@@ -415,7 +449,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           />
         )}
 
-        {current && bottomHeight === 0 && (
+        {current && !narrow && bottomHeight === 0 && (
           <button
             type="button"
             data-testid="bottom-show"

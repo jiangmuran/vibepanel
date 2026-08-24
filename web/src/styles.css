@@ -306,6 +306,17 @@ body {
   background-color: var(--vp-terminal-bg);
 }
 
+/* On a touch screen the browser's own long-press selection is the gesture
+   people already know, and it beats anything hand-rolled on top of a grid of
+   spans. xterm turns selection off to implement its own, which is the right
+   call for a mouse and the wrong one for a thumb. */
+@media (pointer: coarse) {
+  .xterm .xterm-rows {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+}
+
 .xterm-viewport::-webkit-scrollbar {
   width: 8px;
 }

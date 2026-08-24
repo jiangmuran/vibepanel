@@ -185,7 +185,12 @@ export class PanelSocket {
     this.send({ t: 'unsubscribe', sessionId })
   }
 
-  /** Sends keystrokes. Doing so also claims control of the grid, server-side. */
+  /** Sends text, encoded as UTF-8. */
+  writeText(sessionId: string, text: string) {
+    this.write(sessionId, new TextEncoder().encode(text))
+  }
+
+  /** Sends raw bytes to a session. */
   write(sessionId: string, data: Uint8Array) {
     const stream = this.streams.get(sessionId)
     if (!stream || stream.ref === null || this.ws?.readyState !== WebSocket.OPEN) return

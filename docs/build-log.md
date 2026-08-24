@@ -644,3 +644,45 @@ surfacing from three layers down. Asking for ACME without a DNS provider says
 plainly that HTTP-01 cannot work on a non-standard port, instead of failing
 after a minute of retries. And the sign-in screen explains *why* passkeys are
 unavailable rather than showing a button that does nothing.
+
+## 2026-08-23 — M7: the phone
+
+Not a squeezed desktop. Below 768px the terminal becomes a display and input
+arrives from two things beside it.
+
+A compose box, because typing straight into a terminal is unusable on a phone
+with an input method: every composition keystroke reaches the shell, so
+Chinese, Japanese and Korean input produce garbage and even autocorrect fights
+the line editor. You compose, then send. A toggle decides whether Enter goes
+with it, for the times you want to type at a prompt rather than run something.
+
+A key bar for what a phone cannot produce: Escape, Tab, Ctrl, Alt, arrows,
+Home, End — and `y`, `n`, `1`, `2`, `3`, which are most of what anybody sends
+an agent from a phone. Ctrl and Alt are sticky: tap, then tap what they apply
+to, because holding two places at once is not a gesture a thumb can make.
+
+xterm no longer takes input at this width, so tapping the terminal does not
+raise the software keyboard over the thing being read. Selection is the
+browser's own long-press — the gesture people already know, and far better than
+anything hand-rolled over a grid of spans — with a copy button that appears
+while something is selected, because taking the selection is the part a page
+like this does not otherwise offer.
+
+### The keys that matter were off the screen
+
+The first version was one scrolling row of eighteen keys. On a 390px screen
+that shows about eight, and after any horizontal scroll the ones out of view
+were `y`, `n` and Escape — the exact set the bar exists for.
+
+Two rows now. The first holds the answers and the modifiers and never scrolls;
+the second may, because losing sight of `~` costs far less than losing sight of
+Escape. The check measures every primary key against the row's bounds.
+
+Found by looking at the screenshot. The assertions were all passing.
+
+### A badge on the menu button
+
+On a phone the session list is behind a menu, so nothing on screen could say
+that something wanted a human. The waiting count sits on the button that opens
+the list. The check marks a session waiting through the API and waits for the
+badge, rather than depending on one an earlier step happened to leave behind.

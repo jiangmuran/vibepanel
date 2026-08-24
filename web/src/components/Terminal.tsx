@@ -16,6 +16,15 @@ interface Props {
   onTitle?: (title: string) => void
   onExit?: () => void
   className?: string
+  /**
+   * Stops xterm capturing keystrokes.
+   *
+   * Set on a phone, where tapping the terminal would otherwise raise the
+   * software keyboard over the thing you were trying to read — and where
+   * typing goes through the compose box instead, because an input method
+   * cannot work against a raw terminal.
+   */
+  readOnly?: boolean
 }
 
 /**
@@ -38,7 +47,15 @@ interface Props {
  * device-attribute queries and focus reports through the same channel, so
  * "sent bytes" would mean "claimed the grid on page load".
  */
-export function TerminalView({ socket, sessionId, themeKey, onTitle, onExit, className }: Props) {
+export function TerminalView({
+  socket,
+  sessionId,
+  themeKey,
+  onTitle,
+  onExit,
+  className,
+  readOnly = false,
+}: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const termRef = useRef<Xterm | null>(null)
@@ -56,6 +73,7 @@ export function TerminalView({ socket, sessionId, themeKey, onTitle, onExit, cla
 
     const term = new Xterm({
       allowProposedApi: true,
+      disableStdin: readOnly,
       convertEol: false,
       cursorBlink: true,
       cursorStyle: 'bar',
@@ -146,7 +164,7 @@ export function TerminalView({ socket, sessionId, themeKey, onTitle, onExit, cla
     // onTitle/onExit are intentionally excluded: a new callback identity must
     // not tear down and rebuild the terminal.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [socket, sessionId])
+  }, [socket, sessionId, readOnly])
 
   // Repaint the palette in place when the theme changes.
   useEffect(() => {

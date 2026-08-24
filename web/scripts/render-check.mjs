@@ -827,6 +827,128 @@ try {
     if (over > 1) note('WARN', `layout/${label}`, `page scrolls horizontally by ${over}px`)
     await page.screenshot({ path: join(SHOTS, `${label}.png`) })
   }
+  // ── the phone layout ─────────────────────────────────────────────────────
+  // Not a squeezed desktop: typing into a raw terminal is unusable with an
+  // input method, so input arrives through a compose box and a bar of the keys
+  // a phone does not have.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await sleep(1200)
+
+  // Make sure a shell is selected, not the sleeping session that sorts first.
+  const phoneMenu = page.locator('header button[title^="Projects"]')
+  if (await phoneMenu.isVisible().catch(() => false)) {
+    await phoneMenu.click()
+    await sleep(600)
+    const shell = page.locator('[data-testid="session-row"]', { hasText: 'scratchpad' }).first()
+    if (await shell.isVisible().catch(() => false)) {
+      await shell.click()
+      await sleep(1500)
+    }
+  }
+
+  const compose = page.locator('[data-testid="compose-input"]')
+  const keyBar = page.locator('[data-testid="key-bar"]')
+  if (!(await compose.isVisible().catch(() => false))) {
+    note('FAIL', 'mobile', 'no compose box at phone width')
+  } else if (!(await keyBar.isVisible().catch(() => false))) {
+    note('FAIL', 'mobile', 'no key bar at phone width')
+  } else {
+    // Tapping the terminal must not raise the software keyboard over the thing
+    // being read, so xterm does not take input at this width.
+    const takesInput = await page.evaluate(() => {
+      const ta = document.querySelector('.xterm-helper-textarea')
+      return ta ? !ta.hasAttribute('disabled') && ta.getAttribute('readonly') === null : null
+    })
+    if (takesInput === true) {
+      note('WARN', 'mobile', 'the terminal still accepts direct keystrokes at phone width')
+    }
+
+    await compose.fill('echo MOBILE_COMPOSE_OK')
+    await page.locator('[data-testid="compose-send"]').click()
+    let sent = false
+    for (let i = 0; i < 40; i++) {
+      const txt = await page.locator('.xterm-screen').innerText().catch(() => '')
+      if ((txt.match(/MOBILE_COMPOSE_OK/g) ?? []).length >= 2) { sent = true; break }
+      await sleep(300)
+    }
+    if (!sent) note('FAIL', 'mobile', 'the compose box did not reach the terminal')
+
+    // The box must clear, or the next command is appended to the last one.
+    if ((await compose.inputValue()) !== '') {
+      note('FAIL', 'mobile', 'the compose box kept its text after sending')
+    }
+
+    // A key from the bar has to arrive as the byte a terminal expects.
+    await compose.fill('printf KEYBAR')
+    await page.locator('[data-testid="compose-newline"]').click() // send without Enter
+    await page.locator('[data-testid="compose-send"]').click()
+    await sleep(800)
+    await page.locator('[data-testid="key-enter"]').click()
+    let keyed = false
+    for (let i = 0; i < 40; i++) {
+      const txt = await page.locator('.xterm-screen').innerText().catch(() => '')
+      if ((txt.match(/KEYBAR/g) ?? []).length >= 2) { keyed = true; break }
+      await sleep(300)
+    }
+    if (!keyed) note('FAIL', 'mobile', 'the Enter key from the bar did not reach the terminal')
+
+    // The keys that matter must be on screen without scrolling. A single
+    // scrolling row put y, n and Escape off the left edge, which is exactly
+    // the set a phone is there for.
+    const primary = await page.locator('[data-testid="key-row-primary"]').boundingBox()
+    if (!primary) {
+      note('FAIL', 'mobile', 'no primary key row')
+    } else {
+      for (const label of ['y', 'n', 'esc', 'tab', 'ctrl', 'alt', 'enter']) {
+        const box = await page.locator(`[data-testid="key-${label}"]`).boundingBox()
+        if (!box) {
+          note('FAIL', 'mobile', `key ${label} is missing`)
+        } else if (box.x < 0 || box.x + box.width > primary.x + primary.width + 1) {
+          note('FAIL', 'mobile', `key ${label} is off screen without scrolling`)
+        }
+      }
+    }
+
+    // Sticky modifiers: tap, then tap what they apply to.
+    await page.locator('[data-testid="key-ctrl"]').click()
+    const ctrlOn = await page.locator('[data-testid="key-ctrl"]').getAttribute('data-active')
+    if (ctrlOn !== 'true') note('FAIL', 'mobile', 'ctrl did not latch')
+    await page.locator('[data-testid="key-c"]').click().catch(() => {})
+    await page.locator('[data-testid="key-1"]').click()
+    await sleep(400)
+    if ((await page.locator('[data-testid="key-ctrl"]').getAttribute('data-active')) !== 'false') {
+      note('FAIL', 'mobile', 'ctrl stayed latched after the key it applied to')
+    }
+
+    // A session that wants a human has to be visible from the one screen a
+    // phone shows, which is not the list. Marked through the API rather than
+    // depending on one left waiting by an earlier step.
+    const all = await (await authed('/api/state')).json()
+    const victim = all.sessions.find((x) => !x.parentSessionId && x.state !== 'waiting')
+    if (!victim) {
+      note('WARN', 'mobile', 'no session available to mark as waiting')
+    } else {
+      await authed(`/api/sessions/${victim.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ state: 'waiting' }),
+      })
+      let badge = false
+      for (let i = 0; i < 25; i++) {
+        if (await page.locator('[data-testid="waiting-badge"]').isVisible().catch(() => false)) {
+          badge = true
+          break
+        }
+        await sleep(400)
+      }
+      if (!badge) {
+        note('FAIL', 'mobile',
+          'no waiting badge on the menu button; on a phone nothing else on screen can say a session needs you')
+      }
+    }
+
+    await page.screenshot({ path: join(SHOTS, 'mobile.png') })
+  }
+
   // ── passkeys ─────────────────────────────────────────────────────────────
   // Driven through a virtual authenticator, because the only way to know a
   // WebAuthn implementation works is to complete a ceremony with a browser.
