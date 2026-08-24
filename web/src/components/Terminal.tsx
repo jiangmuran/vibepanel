@@ -63,6 +63,10 @@ export function TerminalView({
   const controllingRef = useRef(false)
   const [controlling, setControlling] = useState(false)
   const [grid, setGrid] = useState({ cols: 0, rows: 0 })
+  // What this window would render if it owned the grid. Only meaningful while
+  // passive, and only so the offer to take over can be withheld when there is
+  // nothing to gain by it.
+  const [ownFit, setOwnFit] = useState({ cols: 0, rows: 0 })
 
   // Terminal lifetime is tied to the session, never to the theme or to
   // callbacks: recreating it would clear the screen and lose the scrollback the
@@ -196,9 +200,25 @@ export function TerminalView({
         return
       }
 
-      // Passive: keep the authoritative grid and scale it into our box. Scaling
-      // never exceeds 1 — blowing a small grid up to fill a large monitor looks
-      // broken, and leaving it small is honest about what is really there.
+      // Passive. Before scaling anything, measure what this window would render
+      // if it owned the grid — with the host still filling the box, because the
+      // fit addon reads the element it is given. Measured after the transform
+      // is applied it would only ever report the grid already on screen, which
+      // is the question nobody is asking.
+      host.style.transform = ''
+      host.style.width = '100%'
+      host.style.height = '100%'
+      const mine = f.proposeDimensions()
+      setOwnFit((prev) =>
+        mine && mine.cols > 0 && (prev.cols !== mine.cols || prev.rows !== mine.rows)
+          ? { cols: mine.cols, rows: mine.rows }
+          : prev,
+      )
+
+      // Now the display: keep the authoritative grid and scale it into our box.
+      // Scaling never exceeds 1 — blowing a small grid up to fill a large
+      // monitor looks broken, and leaving it small is honest about what is
+      // really there.
       host.style.transform = 'none'
       host.style.width = 'max-content'
       host.style.height = 'max-content'
@@ -214,6 +234,16 @@ export function TerminalView({
     ro.observe(wrap)
     return () => ro.disconnect()
   }, [socket, sessionId, controlling, grid.cols, grid.rows])
+
+  // Offer to take the grid only when this window would actually render a
+  // different one. Two windows the same size see an identical picture, so a
+  // permanent call-to-action over the terminal would be inviting them to
+  // trade ownership back and forth for no visible change.
+  const offerControl =
+    !controlling &&
+    grid.cols > 0 &&
+    ownFit.cols > 0 &&
+    (ownFit.cols !== grid.cols || ownFit.rows !== grid.rows)
 
   const takeControl = () => {
     const t = termRef.current
@@ -235,13 +265,17 @@ export function TerminalView({
   return (
     <div ref={wrapRef} className={`relative overflow-hidden ${className ?? ''}`}>
       <div ref={hostRef} className="h-full w-full" />
-      {!controlling && grid.cols > 0 && (
+      {offerControl && (
         <button
           type="button"
           data-testid="take-control"
           onClick={takeControl}
           className="absolute right-3 bottom-3 rounded-full border border-hairline bg-elevated px-3 py-1.5 text-xs text-ink-2 backdrop-blur transition-colors duration-200 ease-vp hover:text-ink"
-          title={`Another viewer owns this grid (${grid.cols}x${grid.rows}). You can still type; click to resize it to your window.`}
+          title={
+            `Another viewer owns this grid (${grid.cols}x${grid.rows}); this window fits ` +
+            `${ownFit.cols}x${ownFit.rows}. You can still type. Taking over reflows it for ` +
+            `everyone, which a running TUI will notice.`
+          }
         >
           <span className="tabular">
             {grid.cols}x{grid.rows}

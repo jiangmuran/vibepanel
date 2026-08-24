@@ -469,6 +469,22 @@ try {
   if (!synced) note('FAIL', 'sync', 'the second viewer never saw output typed in the first')
   await page2.screenshot({ path: join(SHOTS, 'viewer2-narrow.png') })
 
+  // The converse. A viewer the same size as the owner sees an identical
+  // picture, so offering to take the grid would be a permanent button over
+  // the terminal that changes nothing when pressed — and invites two windows
+  // to trade ownership back and forth.
+  const page3 = await ctx.newPage()
+  await page3.setViewportSize(page.viewportSize())
+  await page3.goto(BASE, { waitUntil: 'networkidle' })
+  await sleep(3000)
+  if (await page3.locator('[data-testid="take-control"]').isVisible().catch(() => false)) {
+    const label = await page3.locator('[data-testid="take-control"]').innerText()
+    note('FAIL', 'arbitration',
+      `a viewer the same size as the grid owner is still offered "take control" (${label.trim()}); ` +
+      'pressing it would change nothing on screen')
+  }
+  await page3.close()
+
   await traceBell('two-viewers')
 
   // A passive viewer resizing its own window must not move the shared grid.

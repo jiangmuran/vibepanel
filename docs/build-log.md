@@ -850,3 +850,23 @@ the good kind of anticlimax — but they passed unverified for a week.
 
 The rule: a test that exercises a nearby path is not a test of this path. Ask
 what would have to be deleted for the fallback to run, then delete it.
+
+## The affordance that offered nothing
+
+The screenshots from that check showed a "147x45 · take control" pill floating
+over a terminal that was already exactly 147x45 in that window. The condition
+was `!controlling` — am I the owner? — when the question that matters is
+whether this viewer is being made to look at somebody else's grid. Two windows
+the same size see an identical picture, so the button changed nothing when
+pressed, except to move ownership, at which point the other window grew the
+same useless button. A permanent invitation for two monitors to pass a token
+back and forth.
+
+It now appears only when this window would render a different grid. Getting
+there took a second bug: the first attempt measured the viewer's own fit with
+`proposeDimensions()` in the passive branch, where the host element has
+already been set to `max-content` and scaled — so the fit addon dutifully
+measured the grid that was already on screen and answered the question with
+itself. The measurement has to be taken with the host still filling its box,
+before the transform. The harness caught it because the new assertion was
+written as the converse of the old one, not as a restatement of it.
