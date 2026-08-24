@@ -76,6 +76,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     sessions: [],
     live: [],
     projectOrder: 'auto',
+    stateGuessed: false,
   })
   const [selected, setSelected] = useState<string | null>(() => readStored(SELECTED_KEY))
   const [error, setError] = useState<string | null>(null)
@@ -301,6 +302,11 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           projectOrder={state.projectOrder}
           onReorderProjects={(ids) => void guard(() => api.reorderProjects(ids))}
           onAutoOrderProjects={() => void guard(() => api.autoOrderProjects())}
+          stateGuessed={state.stateGuessed}
+          onOpenSettings={() => {
+            setSettingsOpen(true)
+            if (narrow) setDrawerOpen(false)
+          }}
         />
       )}
 

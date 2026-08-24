@@ -960,6 +960,47 @@ try {
     await page.screenshot({ path: join(SHOTS, 'mobile.png') })
   }
 
+  // ── the panel says when it is guessing ───────────────────────────────────
+  // Without state reporting the heuristic has only the terminal bell, and
+  // Claude Code does not ring it when it stops for a decision — so the state
+  // the panel exists to show would be silently missed. Saying so is the
+  // difference between a limitation and a lie.
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await sleep(600)
+  // A link named after the agent, so the pane reports that command. What the
+  // program does is irrelevant; the detector keys on its name.
+  execSync(`ln -sf "$(command -v sleep)" ${JSON.stringify(join(DATA, 'claude'))}`)
+  await authed('/api/sessions', {
+    method: 'POST',
+    body: JSON.stringify({ projectId: proj.id, command: [join(DATA, 'claude'), '600'] }),
+  })
+
+  let sawNotice = false
+  for (let i = 0; i < 30; i++) {
+    if (await page.locator('[data-testid="state-guessed-notice"]').isVisible().catch(() => false)) {
+      sawNotice = true
+      break
+    }
+    await sleep(500)
+  }
+  if (!sawNotice) {
+    const st = await (await authed('/api/state')).json()
+    note('FAIL', 'honesty',
+      `an agent is running with nothing reporting its state and the panel does not say so; ` +
+      `stateGuessed=${st.stateGuessed}, commands=${JSON.stringify(st.sessions.map((x) => x.command))}`)
+  } else {
+    // It has to lead somewhere, not just complain.
+    await page.locator('[data-testid="state-guessed-notice"]').click()
+    await sleep(800)
+    if (!(await page.locator('[data-testid="settings"]').isVisible().catch(() => false))) {
+      note('FAIL', 'honesty', 'the notice does not open the place that fixes it')
+    } else {
+      await page.locator('[data-testid="settings-close"]').click()
+      await sleep(400)
+    }
+    await page.screenshot({ path: join(SHOTS, 'guessing.png') })
+  }
+
   // ── passkeys ─────────────────────────────────────────────────────────────
   // Driven through a virtual authenticator, because the only way to know a
   // WebAuthn implementation works is to complete a ceremony with a browser.

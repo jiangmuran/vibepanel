@@ -36,6 +36,10 @@ export interface SidebarProps {
   projectOrder: 'auto' | 'manual'
   onReorderProjects: (ids: string[]) => void
   onAutoOrderProjects: () => void
+
+  /** An agent is running and nothing is reporting its state. */
+  stateGuessed: boolean
+  onOpenSettings: () => void
 }
 
 function sessionLabel(s: Session): string {
@@ -262,6 +266,21 @@ export function Sidebar(props: SidebarProps) {
           <div className="mx-2 h-0.5 rounded-full bg-accent" />
         )}
       </nav>
+
+      {/* Self-clearing: it disappears the moment anything reports state, so it
+          is a statement of fact rather than a prompt to be dismissed. */}
+      {props.stateGuessed && (
+        <button
+          type="button"
+          data-testid="state-guessed-notice"
+          onClick={props.onOpenSettings}
+          className="border-t border-hairline px-3 py-2 text-left text-[11px] leading-relaxed text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+        >
+          States are being guessed from output. Claude Code does not ring the terminal bell when it
+          stops for a decision, so <span className="text-ink">waiting for you</span> will be missed.
+          Turn on state reporting →
+        </button>
+      )}
     </aside>
   )
 }

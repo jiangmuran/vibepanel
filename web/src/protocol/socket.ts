@@ -164,6 +164,7 @@ export class PanelSocket {
             sessions: st.sessions,
             live: st.live,
             projectOrder: st.projectOrder,
+            stateGuessed: st.stateGuessed,
           })
         }
         break

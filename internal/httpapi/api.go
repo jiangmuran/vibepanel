@@ -20,6 +20,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/jiangmuran/vibepanel/internal/config"
+	"github.com/jiangmuran/vibepanel/internal/hooks"
 	"github.com/jiangmuran/vibepanel/internal/id"
 	"github.com/jiangmuran/vibepanel/internal/session"
 	"github.com/jiangmuran/vibepanel/internal/store"
@@ -171,6 +172,7 @@ func (s *Server) snapshot(ctx context.Context) []byte {
 			Sessions:     emptyIfNil(sessions),
 			Live:         emptyIfNil(s.Manager.LiveIDs()),
 			ProjectOrder: orderMode(manual),
+			StateGuessed: s.stateIsGuessed(sessions),
 		},
 	})
 	if err != nil {
@@ -340,6 +342,15 @@ type stateResponse struct {
 	// offers "sort by activity" only when that would change something, rather
 	// than showing a control that does nothing.
 	ProjectOrder string `json:"projectOrder"`
+
+	// StateGuessed is true when an agent is running and nothing is reporting
+	// its state, so "waiting for you" is being inferred rather than known.
+	//
+	// It exists because the inference does not work for the agent most people
+	// run here: Claude Code does not ring the terminal bell when it stops for
+	// a decision, and the bell is the only signal the heuristic has. Saying so
+	// is better than quietly under-reporting the one state the panel is for.
+	StateGuessed bool `json:"stateGuessed"`
 }
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
@@ -364,7 +375,45 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		Sessions:     emptyIfNil(sessions),
 		Live:         emptyIfNil(s.Manager.LiveIDs()),
 		ProjectOrder: orderMode(manual),
+		StateGuessed: s.stateIsGuessed(sessions),
 	})
+}
+
+// agentCommands are the programs whose state the heuristic cannot read well.
+//
+// Not a general "is this an agent" test — just the ones known to stop and wait
+// without ringing the bell, which is the case the notice is about.
+var agentCommands = map[string]bool{"claude": true, "codex": true}
+
+// stateIsGuessed reports whether an agent is running with nothing reporting
+// its state.
+func (s *Server) stateIsGuessed(sessions []store.Session) bool {
+	var agent bool
+	for _, sess := range sessions {
+		if agentCommands[sess.Command] {
+			agent = true
+			break
+		}
+	}
+	if !agent {
+		return false
+	}
+	for _, sess := range sessions {
+		// One hook report anywhere is enough: the script is installed globally
+		// or not at all.
+		if sess.StateSource == session.SourceHook {
+			return false
+		}
+	}
+	script, err := s.scriptPath()
+	if err != nil {
+		return true
+	}
+	st, err := hooks.Inspect(script)
+	if err != nil {
+		return true
+	}
+	return !st.Installed
 }
 
 // loopbackURL is where a hook running on this machine should POST.

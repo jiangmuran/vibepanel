@@ -792,3 +792,41 @@ The CJK fallbacks added to `--font-mono` during that detour are kept. They are
 hardening rather than a fix: naming the faces makes the stack explicit instead
 of depending on the browser's implicit fallback, which differs between
 platforms and does sometimes produce tofu.
+
+## The panel admits when it is guessing
+
+I finally tested against a real Claude Code TUI, at zero API cost — start it,
+submit nothing, watch. Three things came out of ten minutes of watching a
+program do nothing.
+
+The first was good news. The M4 plan flagged a risk that an agent TUI redraws
+continuously and would therefore read as `working` forever. It does not: bytes
+went 1620 → 3348 → 3348 → 3348 while it sat at a prompt. An idle Claude Code
+is genuinely quiet, so the activity heuristic has something real to measure.
+
+The second was that `pane_current_command` reports `claude`, so automatic
+naming works without any cooperation from the agent.
+
+The third undermines the feature this whole panel exists for. It stopped on a
+real trust prompt — "Is this a project you created or one you trust?" — the
+exact moment the panel is supposed to light up orange and sort the session to
+the top. It rang **zero** bells: no BEL, no OSC 9, no OSC 777. The bell is the
+heuristic's only `waiting` signal. So without hooks installed, the panel does
+not merely detect `waiting` late for Claude Code — it never detects it at all,
+and shows `done` instead. Worse than no information: confidently wrong
+information, on the one question you open the panel to answer.
+
+Hooks fix it, and hooks are one click away in settings. But the panel was
+silent about needing them, and a user who never visits settings would just
+conclude the state dots are broken.
+
+So the panel now says so. `stateIsGuessed` is true only when all three hold:
+an agent-named process is running, nothing has ever reported a state through a
+hook, and the hook script is not installed. Any one of those failing removes
+the notice, so it clears itself the moment the situation improves rather than
+nagging. It is a line in the sidebar that names the specific failure and links
+to the fix.
+
+The rule worth keeping: **a heuristic that cannot see the thing it is looking
+for must say so.** Every honest signal here was cheap to gather — no tokens
+spent, just a TUI left alone and a `wc -c` in a loop.

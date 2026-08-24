@@ -124,6 +124,15 @@ export interface PanelState {
   live: string[]
   /** 'auto' orders projects by recent activity; 'manual' by explicit position. */
   projectOrder: 'auto' | 'manual'
+  /**
+   * True when an agent is running and nothing is reporting its state.
+   *
+   * The inference does not work for the agent most people run here: Claude
+   * Code does not ring the terminal bell when it stops for a decision, and the
+   * bell is the only signal the heuristic has. Saying so beats quietly
+   * under-reporting the one state the panel exists for.
+   */
+  stateGuessed: boolean
 }
 
 /**

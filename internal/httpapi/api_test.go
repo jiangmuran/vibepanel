@@ -1239,3 +1239,55 @@ func TestSystemEndpoint(t *testing.T) {
 		t.Errorf("sample looks empty: %+v", sample)
 	}
 }
+
+func TestStateGuessedOnlyWhenAnAgentIsRunningUnreported(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	t.Setenv("HOME", t.TempDir()) // never touch the real ~/.claude
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"guessing"}`)
+
+	state := func() bool {
+		res, err := ts.Client().Get(ts.URL + "/api/state")
+		if err != nil {
+			t.Fatalf("GET: %v", err)
+		}
+		defer res.Body.Close()
+		var out struct {
+			StateGuessed bool `json:"stateGuessed"`
+		}
+		if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return out.StateGuessed
+	}
+
+	// A shell is not an agent, and nobody needs telling that its state is
+	// inferred.
+	sess := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
+	if err := srv.DB.UpdateSessionRuntime(ctx, sess.ID, "/tmp", "bash"); err != nil {
+		t.Fatal(err)
+	}
+	if state() {
+		t.Error("a plain shell was reported as a guessed agent")
+	}
+
+	// An agent with nothing reporting for it is exactly the case worth saying
+	// out loud: Claude Code does not ring the bell when it stops for a
+	// decision, so the heuristic will never see "waiting".
+	if err := srv.DB.UpdateSessionRuntime(ctx, sess.ID, "/tmp", "claude"); err != nil {
+		t.Fatal(err)
+	}
+	if !state() {
+		t.Error("an unreported agent session was not flagged")
+	}
+
+	// Once anything has reported, the notice has to go away by itself.
+	if err := srv.DB.SetSessionState(ctx, sess.ID, session.StateWaiting, session.SourceHook); err != nil {
+		t.Fatal(err)
+	}
+	if state() {
+		t.Error("the notice survived a hook report")
+	}
+}
