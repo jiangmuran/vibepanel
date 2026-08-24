@@ -206,3 +206,43 @@ export interface Passkey {
   createdAt: number
   lastUsedAt: number | null
 }
+
+export interface SettingsInfo {
+  version: string
+  commit: string
+  built: string
+  go: string
+  uptime: number
+  tmuxVersion: string
+  tmuxSocket: string
+  sessions: number
+  attached: number
+  viewers: number
+  dataDir: string
+  dbBytes: number
+  addr: string
+  url: string
+  tlsMode: string
+  domain: string
+  allowAll: boolean
+  passkeysUsable: boolean
+  passkeyReason?: string
+  username: string
+}
+
+export interface HookStatus {
+  settingsPath: string
+  scriptPath: string
+  installed: boolean
+  events: string[] | null
+  snippet: string
+  codexSnippet: string
+}
+
+export interface AuditEntry {
+  at: number
+  event: string
+  username: string
+  ip: string
+  detail: string
+}

@@ -1,0 +1,69 @@
+# vibepanel as a user service.
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/vibepanel.service ~/.config/systemd/user/
+#   cp deploy/vibepanel.env ~/.config/vibepanel.env   # then edit it
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now vibepanel
+#   loginctl enable-linger "$USER"    # so it survives logout
+#
+# A *user* service, not a system one. The panel runs your agents as you, with
+# your SSH keys, your credentials and your dotfiles. Running it as root or as a
+# dedicated account would mean either handing that account your whole
+# environment or having agents that cannot do anything.
+
+[Unit]
+Description=vibepanel — a web console for parallel coding sessions
+Documentation=https://github.com/jiangmuran/vibepanel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+ExecStart=%h/.local/bin/vibepanel serve
+EnvironmentFile=-%h/.config/vibepanel.env
+Restart=always
+RestartSec=3
+
+# 143 is 128+15, a clean shutdown on SIGTERM. Without this the unit is left
+# looking "failed" after every ordinary stop, and the next person reading
+# `systemctl --user list-units` spends ten minutes on a failure that never was.
+SuccessExitStatus=143
+
+# Stopping the panel must not wait on anything: it detaches from tmux and the
+# sessions carry on regardless.
+TimeoutStopSec=20
+
+# Deliberately little filesystem sandboxing.
+#
+# The obvious hardening — ProtectSystem=strict, ProtectHome, a narrow
+# ReadWritePaths — is wrong here. The panel's whole job is to run coding agents
+# as you, and those agents write to your repositories, your caches and your
+# home directory. Locking that down does not make the panel safer; it makes it
+# useless, and the first thing anyone would do is delete these lines.
+#
+# What is worth keeping is the part that does not fight the job:
+NoNewPrivileges=yes
+ProtectClock=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+
+# The database holds password hashes and passkey material.
+UMask=0077
+
+# Memory accounting so a runaway session is visible and bounded, rather than
+# taking the machine into swap and dragging everything down with it. Tune to
+# the box: these suit a 32 GB machine running a dozen agents.
+MemoryAccounting=yes
+MemoryHigh=20G
+MemoryMax=26G
+
+# When a session's process is killed for memory, only that process should die.
+# Without this systemd takes down the panel — and with it every other session.
+OOMPolicy=continue
+
+[Install]
+WantedBy=default.target

@@ -90,6 +90,12 @@ func (s *Server) RequireAuth(next http.Handler) http.Handler {
 	})
 }
 
+// currentUserFrom reads the account the middleware attached to the request.
+func currentUserFrom(r *http.Request) (store.User, bool) {
+	u, ok := r.Context().Value(userContextKey).(store.User)
+	return u, ok
+}
+
 // currentUser resolves the session cookie.
 func (s *Server) currentUser(r *http.Request) (store.User, bool) {
 	token := auth.TokenFromRequest(r)

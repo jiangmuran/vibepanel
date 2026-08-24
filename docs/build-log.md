@@ -686,3 +686,59 @@ On a phone the session list is behind a menu, so nothing on screen could say
 that something wanted a human. The waiting count sits on the button that opens
 the list. The check marks a session waiting through the API and waits for the
 badge, rather than depending on one an earlier step happened to leave behind.
+
+## 2026-08-23 — M8: settings, and packaging
+
+A settings page: what the panel is running, whether agents report their own
+state, passkeys, and a log of sign-ins and configuration changes. Read-only for
+anything that lives in a flag — the panel is started by a unit file or a
+compose file, and a setting changeable in two places is one that disagrees with
+itself after the next restart.
+
+Installing the state-reporting hooks edits `~/.claude/settings.json`. That file
+is the user's, it usually has other things in it, and one of those may be their
+own hook on the same event. So: the existing contents are merged rather than
+replaced, every entry the panel adds is tagged so removing them cannot take
+anybody else's with it, the file is copied beside itself first, and the write
+goes to a temporary file and is renamed — a crash half way through must not
+leave someone with a truncated settings file and an agent that will not start.
+What it will write is shown before you agree to it, not after.
+
+Packaging: a systemd **user** service, a release script producing static
+archives for linux/amd64, linux/arm64 and darwin/arm64, a Makefile, and a
+Dockerfile offered second with a note about why.
+
+### The unit deliberately does not sandbox the filesystem
+
+The obvious hardening — `ProtectSystem=strict`, `ProtectHome`, a narrow
+`ReadWritePaths` — is wrong for this. The panel's job is to run coding agents
+as the user, and those agents write to their repositories, their caches and
+their home directory. Locking that down does not make the panel safer; it makes
+it useless, and the first thing anyone would do is delete the lines. What stays
+is the hardening that does not fight the job, plus the memory accounting and
+`OOMPolicy=continue` so one runaway session cannot take the panel and every
+other session down with it.
+
+### The check edited the real ~/.claude/settings.json
+
+The first run of the settings check installed the hooks — into the actual file
+on this machine, because the server it spawns inherits the environment and
+therefore `HOME`.
+
+Nothing was lost: the merge worked, every key survived, and removing the hooks
+left the file correct. But it was reformatted, and the original bytes are gone,
+because install and remove both wrote a backup within the same second and the
+timestamp only had second resolution, so the second overwrote the first.
+
+Two fixes. Backups are stamped to the millisecond and never overwrite an
+existing file. And the check gives its server a throwaway `HOME`, with an
+assertion that the settings path it reports is inside it — a test that reaches
+outside its own directories is not a test, it is an incident waiting for the
+right moment.
+
+### Verified
+
+The release archive was unpacked and run under `env -i` with nothing but
+`PATH`, `HOME` and `TERM`: version information baked in, frontend embedded,
+setup token printed. That is the whole deployment story, checked rather than
+assumed.

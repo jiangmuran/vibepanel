@@ -1,6 +1,9 @@
 import type {
+  AuditEntry,
   AuthState,
   FileListing,
+  HookStatus,
+  SettingsInfo,
   Note,
   PanelState,
   Passkey,
@@ -92,6 +95,16 @@ export const api = {
   passkeys: () => request<Passkey[]>('/api/auth/passkeys'),
 
   deletePasskey: (id: string) => request<void>(`/api/auth/passkeys/${id}`, { method: 'DELETE' }),
+
+  settings: () => request<SettingsInfo>('/api/settings'),
+
+  audit: () => request<AuditEntry[]>('/api/settings/audit'),
+
+  hookStatus: () => request<HookStatus>('/api/settings/hooks'),
+
+  installHooks: () => request<HookStatus>('/api/settings/hooks', { method: 'POST' }),
+
+  removeHooks: () => request<HookStatus>('/api/settings/hooks', { method: 'DELETE' }),
 
   state: () => request<PanelState>('/api/state'),
 

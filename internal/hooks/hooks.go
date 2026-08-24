@@ -18,12 +18,12 @@ import (
 //go:embed report.sh
 var ReportScript []byte
 
-// Install writes the reporter script and returns its path.
+// InstallScript writes the reporter script and returns its path.
 //
 // Rewritten on every call rather than only when missing: after an upgrade the
 // binary's copy is the truth, and a stale script on disk would keep reporting
 // in an old shape with nothing to indicate why.
-func Install(dir string) (string, error) {
+func InstallScript(dir string) (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("hooks: create %s: %w", dir, err)
 	}

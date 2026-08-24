@@ -83,9 +83,19 @@ function contrast(fg, bg) {
 }
 
 let cleanedUp = false
+// A throwaway HOME for the server.
+//
+// The settings page can install agent hooks, which edits ~/.claude/settings.json
+// — and the first run of that check did exactly that to the real one. A test
+// that reaches outside its own directories is not a test, it is an incident
+// waiting for the right moment.
+const FAKE_HOME = mkdtempSync(join(tmpdir(), 'vprender-home-'))
+mkdirSync(join(FAKE_HOME, '.claude'), { recursive: true })
+
 const server = spawn(BIN, ['serve'], {
   env: {
     ...process.env,
+    HOME: FAKE_HOME,
     VIBEPANEL_DATA_DIR: DATA,
     VIBEPANEL_TMUX_SOCKET: SOCKET,
     VIBEPANEL_ADDR: `127.0.0.1:${PORT}`,
@@ -113,6 +123,7 @@ async function cleanup() {
   // fast when this runs in a loop.
   try { rmSync(join(process.env.TMUX_TMPDIR || '/tmp', `tmux-${process.getuid()}`, SOCKET), { force: true }) } catch { /* best effort */ }
   try { rmSync(DATA, { recursive: true, force: true }) } catch { /* best effort */ }
+  try { rmSync(FAKE_HOME, { recursive: true, force: true }) } catch { /* best effort */ }
 }
 
 // The server is a child process, and a child does not die because its parent
@@ -967,12 +978,81 @@ try {
     },
   })
 
-  const openPasskeys = page.locator('[data-testid="passkeys-open"]')
-  if (!(await openPasskeys.isVisible().catch(() => false))) {
-    note('FAIL', 'passkey', 'no passkey control, although the server reports them usable')
+  const openSettings = page.locator('[data-testid="settings-open"]')
+  if (!(await openSettings.isVisible().catch(() => false))) {
+    note('FAIL', 'settings', 'no settings control')
   } else {
-    await openPasskeys.click()
-    await sleep(600)
+    await openSettings.click()
+    await sleep(900)
+
+    // ── settings ───────────────────────────────────────────────────────────
+    const status = await page.locator('[data-testid="settings-status"]').innerText().catch(() => '')
+    for (const want of ['Version', 'Uptime', 'Sessions', 'tmux socket', 'Listening']) {
+      if (!status.includes(want)) {
+        note('FAIL', 'settings', `status is missing ${want}: ${JSON.stringify(status.slice(0, 200))}`)
+      }
+    }
+    if (/undefined|NaN/.test(status)) {
+      note('FAIL', 'settings', `status rendered a broken value: ${JSON.stringify(status)}`)
+    }
+
+    // What it would write has to be readable before agreeing to it, and it
+    // has to be valid JSON — a snippet that does not parse is worse than none.
+    await page.locator('[data-testid="hooks-preview"]').click()
+    await sleep(400)
+    const snippet = await page.locator('[data-testid="hooks-status"] pre').first().innerText().catch(() => '')
+    try {
+      JSON.parse(snippet)
+    } catch {
+      note('FAIL', 'settings', `the hook snippet is not valid JSON: ${JSON.stringify(snippet.slice(0, 200))}`)
+    }
+
+    const installBtn = page.locator('[data-testid="hooks-install"]')
+    if (await installBtn.isVisible().catch(() => false)) {
+      await installBtn.click()
+      let installed = false
+      for (let i = 0; i < 25; i++) {
+        if (await page.locator('[data-testid="hooks-remove"]').isVisible().catch(() => false)) {
+          installed = true
+          break
+        }
+        await sleep(400)
+      }
+      if (!installed) {
+        note('FAIL', 'settings', 'installing the hooks did not change the state')
+      } else {
+        // Removable, or it is a change to somebody's configuration with no way
+        // back.
+        await page.locator('[data-testid="hooks-remove"]').click()
+        let removed = false
+        for (let i = 0; i < 25; i++) {
+          if (await page.locator('[data-testid="hooks-install"]').isVisible().catch(() => false)) {
+            removed = true
+            break
+          }
+          await sleep(400)
+        }
+        if (!removed) note('FAIL', 'settings', 'the hooks could not be removed again')
+      }
+    }
+
+    // The hook install must have landed in the throwaway home, not the real
+    // one. Getting this wrong edits the machine's actual agent configuration,
+    // which is what happened the first time this check ran.
+    const settingsPathShown = await page
+      .locator('[data-testid="hooks-status"]')
+      .innerText()
+      .catch(() => '')
+    if (!settingsPathShown.includes(FAKE_HOME)) {
+      note('FAIL', 'settings',
+        `the hooks target is outside the throwaway home: ${JSON.stringify(settingsPathShown.slice(0, 200))}`)
+    }
+
+    const audit = await page.locator('[data-testid="settings-audit"]').innerText().catch(() => '')
+    if (!audit.includes('login')) {
+      note('WARN', 'settings', 'the activity log shows no sign-in')
+    }
+    await page.screenshot({ path: join(SHOTS, 'settings.png') })
     page.once('dialog', (d) => void d.accept('Virtual key'))
     await page.locator('[data-testid="passkey-add"]').click()
     let registered = false
@@ -984,7 +1064,7 @@ try {
       note('FAIL', 'passkey', 'registering a passkey produced no entry')
     } else {
       // Now the part that matters: signing in with it and no password.
-      await page.locator('[data-testid="passkey-dialog"] button[title="Close"]').click()
+      await page.locator('[data-testid="settings-close"]').click()
       await sleep(400)
       await page.locator('[data-testid="sign-out"]').click()
       await page.waitForSelector('[data-testid="login-form"]', { timeout: 10000 })

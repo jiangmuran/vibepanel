@@ -516,7 +516,7 @@ func cmdHook(args []string) error {
 	}
 	defer a.Close()
 
-	script, err := hooks.Install(filepath.Join(a.cfg.DataDir, "hooks"))
+	script, err := hooks.InstallScript(filepath.Join(a.cfg.DataDir, "hooks"))
 	if err != nil {
 		return err
 	}

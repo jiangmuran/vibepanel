@@ -20,3 +20,6 @@
 
 # Render-check screenshots
 /web/shots/
+
+# Release archives
+/dist/

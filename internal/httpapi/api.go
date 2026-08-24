@@ -103,6 +103,7 @@ func (s *Server) Routes() http.Handler {
 			r.Delete("/sessions/{id}", s.handleDeleteSession)
 
 			s.registerPanelRoutes(r)
+			s.registerSettingsRoutes(r)
 		})
 
 		r.NotFound(func(w http.ResponseWriter, r *http.Request) {

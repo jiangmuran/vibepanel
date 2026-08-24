@@ -1,0 +1,19 @@
+services:
+  vibepanel:
+    build: ..
+    container_name: vibepanel
+    restart: unless-stopped
+    ports:
+      - "${VIBEPANEL_PORT:-8443}:8443"
+    env_file:
+      - .env
+    volumes:
+      # The database, the tmux config and any ACME state.
+      - ./data:/data
+      # The projects the panel manages. Sessions run inside this container, so
+      # whatever you want an agent to reach has to be mounted here.
+      - ${VIBEPANEL_PROJECTS:-../..}:/projects
+    environment:
+      - TZ=Asia/Shanghai
+      - VIBEPANEL_DATA_DIR=/data
+      - VIBEPANEL_ADDR=:8443
