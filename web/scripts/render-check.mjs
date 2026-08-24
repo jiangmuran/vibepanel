@@ -1135,6 +1135,109 @@ try {
     await touchCtx.close()
   }
 
+  // ── what a first-time visitor actually sees ──────────────────────────────
+  // Everything above runs in a context that has been clicking panels open for
+  // several minutes. A new browser has no localStorage, and that is the state
+  // every real user starts in — the one state the harness had never measured.
+  const freshCtx = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+  const first = await freshCtx.newPage()
+  await first.goto(BASE, { waitUntil: 'networkidle' })
+  await first.locator('[data-testid="auth-username"]').fill(USERNAME)
+  await first.locator('[data-testid="auth-password"]').fill(PASSWORD)
+  await first.locator('[data-testid="auth-submit"]').click()
+  await first.waitForSelector('[data-testid="sidebar"]', { timeout: 15000 })
+  await sleep(2500)
+  for (const [id, what] of [
+    ['right-panel', 'the files, system monitor, notes and todo panel'],
+    ['bottom-terminals', 'the terminal strip'],
+  ]) {
+    if (!(await first.locator(`[data-testid="${id}"]`).isVisible().catch(() => false))) {
+      note('FAIL', 'first-run',
+        `${what} is not on screen for a visitor with no stored preferences; ` +
+        'a remembered size of zero and never having chosen one are being treated alike')
+    }
+  }
+  await first.screenshot({ path: join(SHOTS, 'first-run.png') })
+  await freshCtx.close()
+
+  // ── two viewers, one note ────────────────────────────────────────────────
+  // "open it in many places and they stay in sync" was the first thing asked
+  // for, and it was true of sessions and false of the notepad: a note written
+  // in one window never appeared in the other, and the second window's next
+  // save replaced it. Silent loss of the user's own writing.
+  // The mobile section left this page at phone width, where the right panel
+  // is not rendered at all.
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await sleep(600)
+  const bCtx = await browser.newContext({ viewport: { width: 1200, height: 900 } })
+  const b = await bCtx.newPage()
+  await b.goto(BASE, { waitUntil: 'networkidle' })
+  await b.locator('[data-testid="auth-username"]').fill(USERNAME)
+  await b.locator('[data-testid="auth-password"]').fill(PASSWORD)
+  await b.locator('[data-testid="auth-submit"]').click()
+  await b.waitForSelector('[data-testid="sidebar"]', { timeout: 15000 })
+  await sleep(2000)
+  for (const p of [page, b]) {
+    // An earlier section collapses the panel, and a collapsed panel has no
+    // tabs to click.
+    if (!(await p.locator('[data-testid="right-panel"]').isVisible().catch(() => false))) {
+      await p.locator('[data-testid="right-show"]').click().catch(() => {})
+      await sleep(500)
+    }
+    await p.locator('[data-testid="panel-tab-notes"]').click().catch(() => {})
+    await sleep(500)
+  }
+  const noteBox = (p) => p.locator('[data-testid="notes"] textarea')
+  const noteStatus = (p) => p.locator('[data-testid="notes-status"]')
+
+  await page.bringToFront()
+  const written = 'WRITTEN' + '_IN_THE_FIRST_WINDOW'
+  await noteBox(page).fill(written)
+  let arrived = ''
+  for (let i = 0; i < 25; i++) {
+    arrived = await noteBox(b).inputValue().catch(() => '')
+    if (arrived === written) break
+    await sleep(400)
+  }
+  if (arrived !== written) {
+    note('FAIL', 'sync',
+      `a note written in one window never reached the other; it shows ${JSON.stringify(arrived)}`)
+  }
+
+  // Now the case the timestamp check exists for: the second window is midway
+  // through typing when the first one saves. Adopting silently would delete
+  // what is being typed; overwriting silently would delete what was saved.
+  await b.bringToFront()
+  const halfTyped = 'HALF' + '_TYPED_HERE'
+  await noteBox(b).fill(halfTyped)
+  // Inside the save debounce, so this lands under the pending write.
+  await authed(`/api/projects/${proj.id}/notes`, {
+    method: 'PUT',
+    body: JSON.stringify({ content: 'WROTE_FROM_SOMEWHERE_ELSE' }),
+  })
+  await sleep(3000)
+  const kept = await noteBox(b).inputValue().catch(() => '')
+  const noteState = await noteStatus(b).getAttribute('data-status').catch(() => null)
+  if (kept !== halfTyped) {
+    note('FAIL', 'sync',
+      `text being typed was replaced by another window's save: ${JSON.stringify(kept)}`)
+  }
+  if (noteState !== 'conflict') {
+    note('FAIL', 'sync',
+      `the note reports status ${JSON.stringify(noteState)} after a rejected save; the user is not ` +
+      'being told their text is unsaved')
+  }
+  const stored = await (await authed(`/api/projects/${proj.id}/notes`)).json()
+  if (stored.content !== 'WROTE_FROM_SOMEWHERE_ELSE') {
+    note('FAIL', 'sync',
+      `a stale window overwrote the stored note: ${JSON.stringify(stored.content)}`)
+  }
+  await b.screenshot({ path: join(SHOTS, 'note-conflict.png') })
+  await bCtx.close()
+  await page.bringToFront()
+  await page.locator('[data-testid="panel-tab-files"]').click().catch(() => {})
+  await sleep(400)
+
   // ── moving files in and out ──────────────────────────────────────────────
   // "even file transfer" was in the brief and nothing had been built. The
   // interesting half is the drop: uploading is only useful if the path ends up

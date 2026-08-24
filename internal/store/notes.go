@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -11,6 +12,10 @@ type Note struct {
 	ProjectID string `json:"projectId"`
 	Content   string `json:"content"`
 	UpdatedAt int64  `json:"updatedAt"`
+	// Rev advances on every write and is the token a client sends back to say
+	// what its text was based on. A timestamp cannot do this job: updated_at
+	// is unix seconds, and two people editing one note collide inside a second.
+	Rev int64 `json:"rev"`
 }
 
 // GetNote returns a project's note, empty if it has never been written.
@@ -21,8 +26,8 @@ type Note struct {
 func (d *DB) GetNote(ctx context.Context, projectID string) (Note, error) {
 	n := Note{ProjectID: projectID}
 	err := d.sql.QueryRowContext(ctx,
-		`SELECT content_md, updated_at FROM notes WHERE project_id = ?`, projectID).
-		Scan(&n.Content, &n.UpdatedAt)
+		`SELECT content_md, updated_at, rev FROM notes WHERE project_id = ?`, projectID).
+		Scan(&n.Content, &n.UpdatedAt, &n.Rev)
 	if err == sql.ErrNoRows {
 		return n, nil
 	}
@@ -32,18 +37,76 @@ func (d *DB) GetNote(ctx context.Context, projectID string) (Note, error) {
 	return n, nil
 }
 
-// SetNote writes a project's note.
-func (d *DB) SetNote(ctx context.Context, projectID, content string) (Note, error) {
-	now := now()
-	_, err := d.sql.ExecContext(ctx, `
-		INSERT INTO notes (project_id, content_md, updated_at) VALUES (?, ?, ?)
-		ON CONFLICT(project_id) DO UPDATE SET content_md = excluded.content_md,
-		                                      updated_at = excluded.updated_at`,
-		projectID, content, now)
+// ErrNoteStale means the note changed since the caller last read it.
+var ErrNoteStale = errors.New("store: note changed elsewhere")
+
+// SetNoteIfUnchanged writes a note only if it still has the timestamp the
+// caller loaded.
+//
+// Without this, two viewers editing the same note is silent data loss: the
+// second save simply replaces the first, and the person whose paragraph
+// vanished has no way to know it ever arrived. The note is the one place in
+// the panel that holds the user's own writing, so last-writer-wins is not an
+// acceptable default here.
+//
+// baseRev of 0 means "there was nothing when I loaded", which only matches an
+// absent row: every stored note has a revision of at least 1.
+//
+// A revision rather than the timestamp, because updated_at is unix seconds and
+// the collision this guards against — one person typing while another saves —
+// happens well inside a second. A check that cannot see the case it exists for
+// is worse than no check, because it reads as protection.
+func (d *DB) SetNoteIfUnchanged(ctx context.Context, projectID, content string, baseRev int64) (Note, error) {
+	tx, err := d.sql.BeginTx(ctx, nil)
 	if err != nil {
 		return Note{}, fmt.Errorf("store: set note: %w", err)
 	}
-	return Note{ProjectID: projectID, Content: content, UpdatedAt: now}, nil
+	defer func() { _ = tx.Rollback() }()
+
+	var current int64
+	err = tx.QueryRowContext(ctx,
+		`SELECT rev FROM notes WHERE project_id = ?`, projectID).Scan(&current)
+	if err != nil && err != sql.ErrNoRows {
+		return Note{}, fmt.Errorf("store: set note: %w", err)
+	}
+	if current != baseRev {
+		return Note{}, ErrNoteStale
+	}
+
+	now := now()
+	rev := baseRev + 1
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO notes (project_id, content_md, updated_at, rev) VALUES (?, ?, ?, ?)
+		ON CONFLICT(project_id) DO UPDATE SET content_md = excluded.content_md,
+		                                      updated_at = excluded.updated_at,
+		                                      rev = excluded.rev`,
+		projectID, content, now, rev); err != nil {
+		return Note{}, fmt.Errorf("store: set note: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Note{}, fmt.Errorf("store: set note: %w", err)
+	}
+	return Note{ProjectID: projectID, Content: content, UpdatedAt: now, Rev: rev}, nil
+}
+
+// SetNote writes a project's note unconditionally.
+//
+// Still advances the revision, so a client holding the previous one is
+// correctly told it is stale rather than being allowed to write over this.
+func (d *DB) SetNote(ctx context.Context, projectID, content string) (Note, error) {
+	now := now()
+	var rev int64
+	err := d.sql.QueryRowContext(ctx, `
+		INSERT INTO notes (project_id, content_md, updated_at, rev) VALUES (?, ?, ?, 1)
+		ON CONFLICT(project_id) DO UPDATE SET content_md = excluded.content_md,
+		                                      updated_at = excluded.updated_at,
+		                                      rev = notes.rev + 1
+		RETURNING rev`,
+		projectID, content, now).Scan(&rev)
+	if err != nil {
+		return Note{}, fmt.Errorf("store: set note: %w", err)
+	}
+	return Note{ProjectID: projectID, Content: content, UpdatedAt: now, Rev: rev}, nil
 }
 
 // Todo is one item on a project's list.

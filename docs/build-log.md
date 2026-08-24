@@ -1014,3 +1014,53 @@ Three things the tests caught, all of them mine:
   the project could not be seen without leaving the panel and coming back, so
   there is a refresh button now. The harness needed it too, which is how it
   surfaced.
+
+## The notepad was not synced, and quietly ate what you wrote
+
+"Open it in many places and they stay in sync" was the first thing asked for.
+It was true of sessions and false of the notepad. Measured with two browser
+windows:
+
+    note written in window A     →  A: "WRITTEN_ON_VIEWER_A"   B: ""
+    a todo added in window A     →  A: 1 item                  B: 0 items
+    then B typed its own note    →  the server kept only B's
+
+The last line is the one that matters. Not a stale view — silent loss of the
+user's own writing, in the one place in the panel that holds it. The state
+snapshot carries projects and sessions and nothing else, and notes and todos
+were fetched once on mount and never again.
+
+Notes and todo lists deliberately stay out of the snapshot: they are per
+project, they can be long, and pushing a document to every viewer on every
+keystroke is waste. What goes out is which project changed and what kind of
+thing it was; the panel that cares refetches. A note only adopts the remote
+text when there is nothing local to lose — overwriting a half-typed paragraph
+with someone else's is the same bug wearing a different hat.
+
+That still leaves both windows writing. So the save now carries what its text
+was based on and the server refuses a write that would land on top of another
+one, handing back the current note so the client can show both. The first
+version of that check used `updated_at`, and the harness immediately caught it
+letting a stale write through: `updated_at` is unix seconds, and *every*
+interesting conflict — one person typing while another saves — happens well
+inside a second. A precondition that cannot see the case it exists for is worse
+than none, because it reads as protection. It is a revision counter now.
+
+This is the second time in this project that second-resolution timestamps have
+been the bug; the first was two settings backups written in the same second,
+one overwriting the other. Worth remembering as a class rather than as two
+incidents.
+
+## The panel opened collapsed for everyone, once
+
+Found while setting the two-window test up: a fresh browser showed no right
+panel and no terminal strip. The layout remembers its sizes, where 0 means
+collapsed, and read them with `Number(readStored(key))` — and `Number(null)` is
+0. Every first-time visitor was therefore treated as someone who had
+deliberately closed the files, the system monitor, the notes and the todo list.
+
+The harness never saw it because the harness opens those panels itself. Same
+shape as the phone bug from the round before: state accumulated by the test
+hid the state every real user starts in. There is now a check that logs in
+through a brand-new browser context and asserts what is on screen before
+anything has been clicked.

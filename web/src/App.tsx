@@ -67,6 +67,23 @@ function readStored(key: string): string | null {
   }
 }
 
+/**
+ * A remembered panel size, or the default when nothing was ever chosen.
+ *
+ * The distinction is the whole function. `Number(null)` is 0 and 0 is the
+ * collapsed flag, so reading the raw value as a number meant every first-time
+ * visitor was treated as someone who had deliberately closed the right panel
+ * and the terminal strip — which is where the files, the system monitor, the
+ * notes and the todo list live. They opened to an empty frame and a small
+ * button, and the harness never saw it because it opens the panels itself.
+ */
+function storedSize(key: string, fallback: number): number {
+  const raw = readStored(key)
+  if (raw === null || raw.trim() === '') return fallback
+  const n = Number(raw)
+  return Number.isFinite(n) && n >= 0 ? n : fallback
+}
+
 function writeStored(key: string, value: string | null) {
   try {
     if (value === null) localStorage.removeItem(key)
@@ -112,17 +129,13 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
 
   // Height doubles as the collapsed flag: 0 means hidden. One value to store,
   // and reopening restores the size the user last chose rather than a default.
-  const [bottomHeight, setBottomHeight] = useState(() => {
-    const raw = Number(readStored(BOTTOM_KEY))
-    return Number.isFinite(raw) && raw >= 0 ? raw : 0
-  })
+  const [bottomHeight, setBottomHeight] = useState(() =>
+    storedSize(BOTTOM_KEY, BOTTOM_DEFAULT_HEIGHT),
+  )
 
   // Same convention as the bottom panel: width 0 means hidden, so reopening
   // restores the size the user chose rather than a default.
-  const [rightWidth, setRightWidth] = useState(() => {
-    const raw = Number(readStored(RIGHT_KEY))
-    return Number.isFinite(raw) && raw >= 0 ? raw : 0
-  })
+  const [rightWidth, setRightWidth] = useState(() => storedSize(RIGHT_KEY, RIGHT_DEFAULT_WIDTH))
   const [selection, setSelection] = useState('')
   const [rightTab, setRightTab] = useState<PanelTab>(() => {
     const raw = readStored(RIGHT_TAB_KEY)
@@ -600,6 +613,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
       {!narrow && rightWidth > 0 && (
         <RightPanel
           project={currentProject}
+          socket={socket}
           tab={rightTab}
           onTab={setRightTab}
           width={rightWidth}

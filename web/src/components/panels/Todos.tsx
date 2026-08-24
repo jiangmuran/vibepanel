@@ -3,6 +3,7 @@ import { Check, Plus, X } from 'lucide-react'
 
 import { api } from '../../protocol/api'
 import type { Todo } from '../../protocol/wire'
+import type { PanelSocket } from '../../protocol/socket'
 import { InlineName } from '../InlineName'
 
 /**
@@ -12,7 +13,7 @@ import { InlineName } from '../InlineName'
  * finished is most of the value of ticking it off, and a list that empties
  * itself gives no sense of having got anywhere.
  */
-export function Todos({ projectId }: { projectId: string }) {
+export function Todos({ projectId, socket }: { projectId: string; socket: PanelSocket }) {
   const [todos, setTodos] = useState<Todo[]>([])
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -25,6 +26,12 @@ export function Todos({ projectId }: { projectId: string }) {
       setError(e instanceof Error ? e.message : String(e))
     }
   }, [projectId])
+
+  // A list is not something anyone is mid-edit on the way a note is, so it can
+  // simply refetch whenever another viewer changes it.
+  useEffect(() => socket.onPanelChange((pid, kind) => {
+    if (pid === projectId && kind === 'todos') void load()
+  }), [projectId, socket, load])
 
   useEffect(() => {
     let ignore = false

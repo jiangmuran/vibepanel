@@ -120,6 +120,25 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+	// v6: notes get a revision counter.
+	//
+	// The first attempt at "refuse a write that lands on somebody else's" used
+	// updated_at, which is unix seconds — and two people editing the same note
+	// collide inside one second by definition. A counter cannot be blind that
+	// way. Starting at 1 for existing rows so that a client which has never
+	// heard of revisions still fails the check rather than passing it with a
+	// zero.
+	func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`ALTER TABLE notes ADD COLUMN rev INTEGER NOT NULL DEFAULT 0`,
+			`UPDATE notes SET rev = 1`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	},
 }
 
 // schemaVersion is the version this build writes.

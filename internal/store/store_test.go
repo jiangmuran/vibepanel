@@ -366,3 +366,57 @@ func TestMigrationIsAppliedOnlyOnce(t *testing.T) {
 		t.Errorf("projects after reopen = %d, want 1", len(ps))
 	}
 }
+
+// The point of a revision rather than a timestamp: every interesting conflict
+// happens inside one second, which is all the resolution updated_at has.
+func TestNoteRevisionCatchesWritesInTheSameSecond(t *testing.T) {
+	db := openTest(t)
+	ctx := context.Background()
+	const pid = "p-notes"
+	if _, err := db.CreateProject(ctx, pid, "notes", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := db.GetNote(ctx, pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := db.SetNoteIfUnchanged(ctx, pid, "written by A", loaded.Rev)
+	if err != nil {
+		t.Fatalf("first write: %v", err)
+	}
+	if first.Rev != loaded.Rev+1 {
+		t.Errorf("rev = %d, want %d", first.Rev, loaded.Rev+1)
+	}
+
+	// B loaded at the same moment as A and saves right behind it. Both writes
+	// land in the same second, so a timestamp precondition would let this
+	// through and A's text would be gone with nothing said.
+	_, err = db.SetNoteIfUnchanged(ctx, pid, "written by B", loaded.Rev)
+	if !errors.Is(err, ErrNoteStale) {
+		t.Fatalf("second write: %v, want ErrNoteStale", err)
+	}
+	got, err := db.GetNote(ctx, pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Content != "written by A" {
+		t.Errorf("content = %q; the stale write was applied", got.Content)
+	}
+
+	// Reloading is what makes the write legal, and it must then succeed.
+	if _, err := db.SetNoteIfUnchanged(ctx, pid, "written by B", got.Rev); err != nil {
+		t.Errorf("write after reloading: %v", err)
+	}
+
+	// An unconditional write still moves the revision, or a client holding the
+	// old one would be told it is current.
+	forced, err := db.SetNote(ctx, pid, "written by the CLI")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if forced.Rev <= got.Rev+1 {
+		t.Errorf("rev after an unconditional write = %d, want more than %d", forced.Rev, got.Rev+1)
+	}
+}

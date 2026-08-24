@@ -45,6 +45,7 @@ export class PanelSocket {
   status: SocketStatus = 'closed'
 
   private stateListeners = new Set<(s: PanelState) => void>()
+  private panelListeners = new Set<(projectId: string, kind: string) => void>()
 
   connect() {
     if (this.ws || this.closed) return
@@ -156,6 +157,17 @@ export class PanelSocket {
         stream?.handlers.onExit?.()
         break
       }
+      case 'panel': {
+        // Which project's note or list changed, not the content: pushing a
+        // document to every viewer on every keystroke would be a waste, and
+        // the panel that cares knows how to fetch it.
+        const pid = (msg as { projectId?: string }).projectId
+        const kind = (msg as { kind?: string }).kind
+        if (pid && kind) {
+          for (const fn of this.panelListeners) fn(pid, kind)
+        }
+        break
+      }
       case 'state': {
         const st = msg as unknown as StateMessage
         for (const fn of this.stateListeners) {
@@ -169,6 +181,18 @@ export class PanelSocket {
         }
         break
       }
+    }
+  }
+
+  /**
+   * Called when another viewer changed a project's note or todo list.
+   *
+   * Returns the unsubscribe function, in the shape useEffect wants.
+   */
+  onPanelChange(fn: (projectId: string, kind: string) => void) {
+    this.panelListeners.add(fn)
+    return () => {
+      this.panelListeners.delete(fn)
     }
   }
 

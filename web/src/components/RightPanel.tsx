@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react'
 import { Activity, ChevronRight, Columns2, FolderTree, ListChecks, NotebookPen } from 'lucide-react'
 
 import type { Project } from '../protocol/wire'
+import type { PanelSocket } from '../protocol/socket'
 import { FileTree } from './panels/FileTree'
 import { SystemMonitor } from './panels/SystemMonitor'
 import { Notes } from './panels/Notes'
@@ -18,6 +19,8 @@ const TABS: { id: PanelTab; icon: typeof Activity; label: string }[] = [
 
 interface Props {
   project: Project | null
+  /** Needed by the notes and todo panels so they hear about other viewers. */
+  socket: PanelSocket
   tab: PanelTab
   onTab: (t: PanelTab) => void
   width: number
@@ -97,7 +100,7 @@ export function RightPanel(props: Props) {
       return (
         <div ref={splitRef} className="flex h-full min-h-0 flex-col">
           <div className="min-h-0 overflow-hidden" style={{ flexBasis: `${props.splitRatio * 100}%` }}>
-            <Notes key={project.id} projectId={project.id} />
+            <Notes key={project.id} projectId={project.id} socket={props.socket} />
           </div>
           <div
             onPointerDown={(e) => {
@@ -117,13 +120,13 @@ export function RightPanel(props: Props) {
             className="h-1.5 shrink-0 cursor-row-resize border-y border-hairline transition-colors duration-200 ease-vp hover:bg-accent"
           />
           <div className="min-h-0 flex-1 overflow-hidden">
-            <Todos key={project.id} projectId={project.id} />
+            <Todos key={project.id} projectId={project.id} socket={props.socket} />
           </div>
         </div>
       )
     }
-    if (tab === 'notes') return <Notes key={project.id} projectId={project.id} />
-    return <Todos key={project.id} projectId={project.id} />
+    if (tab === 'notes') return <Notes key={project.id} projectId={project.id} socket={props.socket} />
+    return <Todos key={project.id} projectId={project.id} socket={props.socket} />
   }
 
   return (

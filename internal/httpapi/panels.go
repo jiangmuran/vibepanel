@@ -237,6 +237,11 @@ func (s *Server) handleGetNote(w http.ResponseWriter, r *http.Request) {
 
 type putNoteRequest struct {
 	Content string `json:"content"`
+	// BaseRev is the revision the client's text was built on. Present means
+	// "only write if nothing has changed under me". Absent is an unconditional
+	// write, which is what the CLI and the tests want and what a client that
+	// cannot merge should not be sending.
+	BaseRev *int64 `json:"baseRev"`
 }
 
 // maxNoteBytes bounds a note. Generous for prose, small enough that the whole
@@ -257,11 +262,32 @@ func (s *Server) handlePutNote(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
-	note, err := s.DB.SetNote(r.Context(), pid, req.Content)
+	var note store.Note
+	var err error
+	if req.BaseRev != nil {
+		note, err = s.DB.SetNoteIfUnchanged(r.Context(), pid, req.Content, *req.BaseRev)
+		if errors.Is(err, store.ErrNoteStale) {
+			// The current note goes back with the rejection so the client can
+			// show both versions without a second round trip.
+			current, gerr := s.DB.GetNote(r.Context(), pid)
+			if gerr != nil {
+				writeErr(w, http.StatusInternalServerError, gerr.Error())
+				return
+			}
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":   "the note changed elsewhere",
+				"current": current,
+			})
+			return
+		}
+	} else {
+		note, err = s.DB.SetNote(r.Context(), pid, req.Content)
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.notifyPanel(pid, "note")
 	writeJSON(w, http.StatusOK, note)
 }
 
@@ -310,6 +336,7 @@ func (s *Server) handleCreateTodo(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.notifyPanel(pid, "todos")
 	writeJSON(w, http.StatusCreated, todo)
 }
 
@@ -351,14 +378,25 @@ func (s *Server) handlePatchTodo(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
+	s.notifyPanel(todo.ProjectID, "todos")
 	writeJSON(w, http.StatusOK, todo)
 }
 
 func (s *Server) handleDeleteTodo(w http.ResponseWriter, r *http.Request) {
-	if err := s.DB.DeleteTodo(r.Context(), chi.URLParam(r, "todoID")); err != nil {
+	tid := chi.URLParam(r, "todoID")
+	// Read it first: after the delete there is nothing left to say which
+	// project's list changed, and a broadcast without that makes every viewer
+	// refetch every panel.
+	todo, err := s.DB.GetTodo(r.Context(), tid)
+	if err != nil {
 		writeStoreErr(w, err)
 		return
 	}
+	if err := s.DB.DeleteTodo(r.Context(), tid); err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	s.notifyPanel(todo.ProjectID, "todos")
 	w.WriteHeader(http.StatusNoContent)
 }
 

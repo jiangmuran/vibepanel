@@ -48,6 +48,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T
 }
 
+/**
+ * Thrown when a write would have landed on top of somebody else's.
+ *
+ * Carries what the server currently holds so the caller can show both without
+ * a second round trip.
+ */
+export class ConflictError extends Error {
+  readonly current: Note
+  constructor(message: string, current: Note) {
+    super(message)
+    this.name = 'ConflictError'
+    this.current = current
+  }
+}
+
 /** Thrown when the server says the caller is not signed in. */
 export class UnauthorizedError extends Error {
   readonly setupRequired: boolean
@@ -194,11 +209,34 @@ export const api = {
 
   note: (projectId: string) => request<Note>(`/api/projects/${projectId}/notes`),
 
-  saveNote: (projectId: string, content: string) =>
-    request<Note>(`/api/projects/${projectId}/notes`, {
+  /**
+   * baseRev is the revision the caller's text was built on. The server
+   * refuses the write if the note has moved since, which is what stops two
+   * windows from silently overwriting each other.
+   */
+  saveNote: async (projectId: string, content: string, baseRev: number) => {
+    const res = await fetch(`/api/projects/${projectId}/notes`, {
       method: 'PUT',
-      body: JSON.stringify({ content }),
-    }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content, baseRev }),
+    })
+    if (res.status === 409) {
+      const body = (await res.json()) as { error?: string; current: Note }
+      throw new ConflictError(body.error ?? 'the note changed elsewhere', body.current)
+    }
+    if (!res.ok) {
+      let message = `${res.status} ${res.statusText}`
+      try {
+        const body = (await res.json()) as { error?: string }
+        if (body.error) message = body.error
+      } catch {
+        /* non-JSON error body */
+      }
+      if (res.status === 401) throw new UnauthorizedError(message, false)
+      throw new Error(message)
+    }
+    return (await res.json()) as Note
+  },
 
   todos: (projectId: string) => request<Todo[]>(`/api/projects/${projectId}/todos`),
 

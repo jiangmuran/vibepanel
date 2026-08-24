@@ -184,6 +184,31 @@ func (s *Server) snapshot(ctx context.Context) []byte {
 }
 
 // notifyState pushes the current state to every viewer, coalesced.
+// notifyPanel tells every viewer that a project's note or todo list changed.
+//
+// Deliberately not part of the state snapshot: notes and todo lists are per
+// project and can be long, and pushing them to every viewer on every keystroke
+// would make the socket carry a document nobody asked for. This says what
+// changed and lets the panel that cares refetch — which is also what makes the
+// panels work at all in a second window, where before they simply never
+// updated and the second save overwrote the first.
+func (s *Server) notifyPanel(projectID, kind string) {
+	if s.Hub == nil {
+		return
+	}
+	// "t" is the discriminator every other control message uses; "type" here
+	// would be silently ignored by the client's switch.
+	payload, err := json.Marshal(map[string]string{
+		"t":         "panel",
+		"projectId": projectID,
+		"kind":      kind,
+	})
+	if err != nil {
+		return
+	}
+	s.Hub.Broadcast(payload)
+}
+
 func (s *Server) notifyState() {
 	if s.Hub == nil {
 		return

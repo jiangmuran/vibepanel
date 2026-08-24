@@ -68,6 +68,8 @@ export interface ServerMessage {
     | 'error'
     | 'pong'
     | 'state'
+    // A project's note or todo list changed in another viewer.
+    | 'panel'
   sessionId?: string
   ref?: number
   cols?: number
@@ -199,6 +201,12 @@ export interface Note {
   projectId: string
   content: string
   updatedAt: number
+  /**
+   * Advances on every write. Sent back with a save so the server can refuse
+   * one that would land on top of another window's — which `updatedAt` cannot
+   * do, being in whole seconds.
+   */
+  rev: number
 }
 
 export interface Todo {
