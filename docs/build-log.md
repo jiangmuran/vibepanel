@@ -1064,3 +1064,34 @@ shape as the phone bug from the round before: state accumulated by the test
 hid the state every real user starts in. There is now a check that logs in
 through a brand-new browser context and asserts what is on screen before
 anything has been clicked.
+
+## Copying inside tmux worked, and then silently did not
+
+The panel's answer to the WebSocket shim the old ttyd setup used: `set-clipboard
+on` makes tmux forward OSC 52 to its client, the panel parses it and writes to
+the system clipboard. Proper channel instead of sniffing the output stream.
+
+It works. A `printf '\033]52;c;...'` inside a pane reached
+`navigator.clipboard` two seconds later, which is what the first probe measured
+— because the probe granted the page `clipboard-write`. Without that grant, the
+same write comes back `NotAllowedError: Write permission`. The handler caught
+the rejection and ignored it, with a comment saying there was nothing useful to
+do.
+
+There was. The write is not inside a user gesture, and that is not an edge
+case: Chromium refuses it without the permission, Firefox and Safari require an
+activation, and over plain http `navigator.clipboard` does not exist at all —
+which is exactly how a self-hosted panel on a LAN address is reached. In all of
+those, copying inside tmux did nothing and said nothing.
+
+The outcome is now reported back to the shell, and a refused write turns into a
+line above the terminal saying what was copied and offering the click that
+makes it legal. Inside that click the write is allowed, with
+`document.execCommand('copy')` as the fallback for the insecure-origin case,
+where there is no async clipboard API to fall back *to*.
+
+The lesson is about the comment as much as the code. "Nothing useful to do" was
+written about the common case, not an edge case, and it stopped anyone looking
+again — including me, twice, until a probe happened to run without a permission
+grant. A caught-and-ignored error deserves the same suspicion as an unchecked
+one; the difference is only that it looks deliberate.

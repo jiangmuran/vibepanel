@@ -262,6 +262,9 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   // types the paths at the prompt. That last part is the point: the reason to
   // put a screenshot on the server is to hand it to the agent, and going to
   // find the path afterwards is most of the work.
+  // Text the pane copied that the browser refused to accept. Kept so it can
+  // be offered behind a click, which is the activation the write needs.
+  const [blockedClip, setBlockedClip] = useState('')
   const [dropping, setDropping] = useState(false)
   const [dropNote, setDropNote] = useState('')
   const uploadInto = useCallback(
@@ -530,6 +533,44 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               Drop to upload into {current?.cwd || currentProject?.path}
             </div>
           )}
+          {blockedClip && (
+            // Inside a click, so the write is allowed. execCommand is the
+            // fallback rather than a preference: over plain http there is no
+            // navigator.clipboard at all, and a self-hosted panel on a LAN
+            // address is exactly that.
+            <button
+              type="button"
+              data-testid="clipboard-offer"
+              onClick={() => {
+                const text = blockedClip
+                const legacy = () => {
+                  const ta = document.createElement('textarea')
+                  ta.value = text
+                  ta.style.position = 'fixed'
+                  ta.style.opacity = '0'
+                  document.body.appendChild(ta)
+                  ta.select()
+                  try {
+                    document.execCommand('copy')
+                  } finally {
+                    ta.remove()
+                  }
+                }
+                const clip = navigator.clipboard
+                if (clip) {
+                  void clip.writeText(text).catch(legacy)
+                } else {
+                  legacy()
+                }
+                setBlockedClip('')
+              }}
+              className="absolute top-2 left-1/2 z-10 -translate-x-1/2 rounded-vp border border-hairline px-3 py-1.5 text-[11.5px] vp-solid hover:text-ink"
+              title="The browser refused a clipboard write that did not come from a click"
+            >
+              The terminal copied {blockedClip.length} character
+              {blockedClip.length === 1 ? '' : 's'} — click to put it on your clipboard
+            </button>
+          )}
           {dropNote && (
             <div
               data-testid="drop-note"
@@ -550,6 +591,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               readOnly={narrow}
               touchSelect={narrow || coarsePointer}
               onSelectionChange={setSelection}
+              onClipboard={(text, ok) => setBlockedClip(ok ? '' : text)}
               className="h-full w-full p-2"
             />
           ) : (

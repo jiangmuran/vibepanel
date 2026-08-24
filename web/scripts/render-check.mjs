@@ -203,7 +203,12 @@ try {
   await sleep(2500) // let the poller derive titles
 
   browser = await chromium.launch({ headless: true })
-  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+  // clipboard-write so the OSC 52 path can be checked on its happy path; the
+  // refused case gets its own context below, without it.
+  const ctx = await browser.newContext({
+    viewport: { width: 1440, height: 900 },
+    permissions: ['clipboard-read', 'clipboard-write'],
+  })
   const page = await ctx.newPage()
 
   const consoleErrors = []
@@ -1159,6 +1164,81 @@ try {
   }
   await first.screenshot({ path: join(SHOTS, 'first-run.png') })
   await freshCtx.close()
+
+  // ── copying inside tmux ──────────────────────────────────────────────────
+  // The panel's answer to the shim the old setup used: tmux forwards OSC 52 to
+  // its client, the panel pushes it to the system clipboard. That write is not
+  // inside a user gesture, and browsers refuse those — so the interesting case
+  // is not the happy path but what the user is told when it is refused.
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await sleep(500)
+  const clipText = 'COPIED' + '_INSIDE_TMUX'
+  const b64 = Buffer.from(clipText).toString('base64')
+  const emitOSC52 = async (target) => {
+    execSync(
+      `tmux -L ${SOCKET} send-keys -t '=${target}:' ` +
+        JSON.stringify(`printf '\\033]52;c;${b64}\\007'`) +
+        ' Enter',
+    )
+  }
+  const shellSession = (await (await authed('/api/state')).json()).sessions.find(
+    (x) => x.title === 'scratchpad',
+  )
+  if (!shellSession) {
+    note('WARN', 'clipboard', 'no shell session to copy from')
+  } else {
+    // This context was granted clipboard-write, so the write goes through and
+    // nothing should be offered.
+    await emitOSC52(shellSession.tmuxName)
+    await sleep(2000)
+    if (await page.locator('[data-testid="clipboard-offer"]').isVisible().catch(() => false)) {
+      note('FAIL', 'clipboard',
+        'the panel offered a manual copy even though the clipboard write succeeded')
+    }
+    const onClip = await page.evaluate(() => navigator.clipboard.readText().catch(() => ''))
+    if (!onClip.includes('COPIED')) {
+      note('FAIL', 'clipboard',
+        `a copy inside tmux did not reach the clipboard; it holds ${JSON.stringify(onClip.slice(0, 60))}`)
+    }
+
+    // And a context in the state a real browser starts in: no clipboard
+    // permission, so the write is refused. Silently doing nothing here is the
+    // bug this checks for.
+    const plainCtx = await browser.newContext({ viewport: { width: 1200, height: 800 } })
+    const plain = await plainCtx.newPage()
+    await plain.goto(BASE, { waitUntil: 'networkidle' })
+    await plain.locator('[data-testid="auth-username"]').fill(USERNAME)
+    await plain.locator('[data-testid="auth-password"]').fill(PASSWORD)
+    await plain.locator('[data-testid="auth-submit"]').click()
+    await plain.waitForSelector('[data-testid="sidebar"]', { timeout: 15000 })
+    await plain
+      .locator('[data-testid="session-row"]', { hasText: 'scratchpad' })
+      .first()
+      .click()
+    await sleep(2500)
+    await emitOSC52(shellSession.tmuxName)
+    let offered = false
+    for (let i = 0; i < 20; i++) {
+      if (await plain.locator('[data-testid="clipboard-offer"]').isVisible().catch(() => false)) {
+        offered = true
+        break
+      }
+      await sleep(400)
+    }
+    if (!offered) {
+      note('FAIL', 'clipboard',
+        'the browser refused the clipboard write and the panel said nothing; a copy inside ' +
+        'tmux vanishes with no indication')
+    } else {
+      await plain.screenshot({ path: join(SHOTS, 'clipboard-offer.png') })
+      await plain.locator('[data-testid="clipboard-offer"]').click()
+      await sleep(600)
+      if (await plain.locator('[data-testid="clipboard-offer"]').isVisible().catch(() => false)) {
+        note('FAIL', 'clipboard', 'the offer stayed on screen after being taken')
+      }
+    }
+    await plainCtx.close()
+  }
 
   // ── two viewers, one note ────────────────────────────────────────────────
   // "open it in many places and they stay in sync" was the first thing asked

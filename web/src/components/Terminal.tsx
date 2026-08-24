@@ -17,6 +17,12 @@ interface Props {
   onTitle?: (title: string) => void
   onExit?: () => void
   /**
+   * The pane copied something over OSC 52. `ok` says whether it reached the
+   * system clipboard; when it did not, the text needs offering to the user
+   * behind a click.
+   */
+  onClipboard?: (text: string, ok: boolean) => void
+  /**
    * Enables press-and-hold selection with a finger. Off by default: the
    * gesture only makes sense where there is no pointer to drag with, and
    * attaching it on a desktop would fight xterm's own mouse selection.
@@ -66,6 +72,7 @@ export function TerminalView({
   readOnly = false,
   touchSelect = false,
   onSelectionChange,
+  onClipboard,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
@@ -81,8 +88,10 @@ export function TerminalView({
   // Held in a ref for the same reason onTitle/onExit are not in the effect's
   // deps: a new callback identity must not rebuild the terminal.
   const onSelectionRef = useRef(onSelectionChange)
+  const onClipboardRef = useRef(onClipboard)
   useEffect(() => {
     onSelectionRef.current = onSelectionChange
+    onClipboardRef.current = onClipboard
   })
 
   // Terminal lifetime is tied to the session, never to the theme or to
@@ -167,9 +176,23 @@ export function TerminalView({
       onClipboard: (text) => {
         // OSC 52 arrived: the pane copied something. Push it to the real
         // clipboard so a copy inside tmux lands where the user expects.
-        navigator.clipboard?.writeText(text).catch(() => {
-          /* denied without a user gesture; nothing useful to do */
-        })
+        //
+        // This write is not inside a user gesture, and browsers say no to
+        // that: Chromium rejects it with NotAllowedError unless the page
+        // holds clipboard-write, Firefox and Safari require an activation,
+        // and over plain http `navigator.clipboard` does not exist at all.
+        // Swallowing the failure meant copying inside tmux did nothing and
+        // said nothing, so the outcome is reported and the shell offers the
+        // click that makes it legal.
+        const clip = navigator.clipboard
+        if (!clip) {
+          onClipboardRef.current?.(text, false)
+          return
+        }
+        clip.writeText(text).then(
+          () => onClipboardRef.current?.(text, true),
+          () => onClipboardRef.current?.(text, false),
+        )
       },
       onExit: () => onExit?.(),
     })
