@@ -2,8 +2,10 @@ package httpapi
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -18,6 +20,8 @@ import (
 func (s *Server) registerPanelRoutes(r chi.Router) {
 	r.Get("/system", s.handleSystem)
 	r.Get("/projects/{id}/files", s.handleFiles)
+	r.Get("/projects/{id}/download", s.handleDownload)
+	r.Post("/projects/{id}/upload", s.handleUpload)
 	r.Get("/projects/{id}/notes", s.handleGetNote)
 	r.Put("/projects/{id}/notes", s.handlePutNote)
 	r.Get("/projects/{id}/todos", s.handleListTodos)
@@ -52,6 +56,169 @@ func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, listing)
+}
+
+// maxUploadBytes bounds one request. Generous enough for the screenshots and
+// logs this exists for, small enough that a mistyped path cannot fill the disk
+// before anyone notices.
+const maxUploadBytes = 256 << 20
+
+// handleDownload streams one file out of a project.
+//
+// Deliberately not http.FileServer over the project root: that would serve
+// directory indexes, follow symlinks by its own rules and answer ranged
+// requests for paths this code never validated. One file, resolved through the
+// same containment as the listing.
+func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
+	p, err := s.DB.GetProject(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	abs, err := browse.Resolve(p.Path, r.URL.Query().Get("path"))
+	if err != nil {
+		writeBrowseErr(w, err)
+		return
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "no such file")
+		return
+	}
+	if info.IsDir() {
+		writeErr(w, http.StatusBadRequest, "that is a directory")
+		return
+	}
+	f, err := os.Open(abs)
+	if err != nil {
+		writeErr(w, http.StatusForbidden, "cannot read that file")
+		return
+	}
+	defer f.Close()
+
+	// Quoted and with the newlines and quotes stripped: a filename is
+	// attacker-controlled the moment an agent writes one, and a raw CR in a
+	// header is a response-splitting bug.
+	name := headerSafe(filepath.Base(abs))
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	// Never let a browser decide it knows better and render the thing inline;
+	// this endpoint serves whatever an agent happened to write, HTML included.
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	http.ServeContent(w, r, name, info.ModTime(), f)
+}
+
+// handleUpload writes files into a directory inside a project.
+//
+// The response carries the absolute paths back, because the one thing the user
+// wants immediately afterwards is to name the file at a prompt.
+func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
+	p, err := s.DB.GetProject(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	dir, err := browse.Resolve(p.Path, r.URL.Query().Get("path"))
+	if err != nil {
+		writeBrowseErr(w, err)
+		return
+	}
+	if info, serr := os.Stat(dir); serr != nil || !info.IsDir() {
+		writeErr(w, http.StatusBadRequest, "upload target is not a directory")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
+	reader, err := r.MultipartReader()
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "expected a multipart upload")
+		return
+	}
+	// Streamed part by part rather than ParseMultipartForm, which buffers the
+	// whole request in memory and on disk before the handler sees any of it.
+	var written []string
+	for {
+		part, perr := reader.NextPart()
+		if errors.Is(perr, io.EOF) {
+			break
+		}
+		if perr != nil {
+			writeErr(w, http.StatusBadRequest, "malformed upload: "+perr.Error())
+			return
+		}
+		if part.FormName() != "file" || part.FileName() == "" {
+			part.Close()
+			continue
+		}
+		// The browser sends whatever the file was called, which on some
+		// platforms includes a path. Only the last element is ours to use, and
+		// it still goes through Resolve so that a crafted "..%2f" cannot land
+		// outside the directory that was validated above.
+		base := filepath.Base(filepath.FromSlash(part.FileName()))
+		if base == "." || base == ".." || strings.ContainsRune(base, filepath.Separator) {
+			part.Close()
+			writeErr(w, http.StatusBadRequest, "unusable filename")
+			return
+		}
+		// Joined rather than passed through browse.Resolve, which resolves
+		// symlinks and so requires the path to exist — which an upload target
+		// by definition does not. Containment still holds: dir came back from
+		// Resolve, and filepath.Base cannot produce a separator, so the result
+		// is one element inside an already-validated directory. A symlink
+		// sitting at that name does not help an attacker either, because
+		// O_EXCL refuses to open anything that already exists.
+		target := filepath.Join(dir, base)
+		// O_EXCL: an upload must never quietly replace a file an agent is
+		// working on. The caller renames and retries instead.
+		f, oerr := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if oerr != nil {
+			part.Close()
+			if os.IsExist(oerr) {
+				writeErr(w, http.StatusConflict, base+" already exists")
+				return
+			}
+			writeErr(w, http.StatusInternalServerError, oerr.Error())
+			return
+		}
+		_, cerr := io.Copy(f, part)
+		part.Close()
+		if closeErr := f.Close(); cerr == nil {
+			cerr = closeErr
+		}
+		if cerr != nil {
+			// A partial file is worse than no file: the agent would read it.
+			_ = os.Remove(target)
+			writeErr(w, http.StatusInternalServerError, "writing "+base+": "+cerr.Error())
+			return
+		}
+		written = append(written, target)
+	}
+	if len(written) == 0 {
+		writeErr(w, http.StatusBadRequest, "no files in the upload")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"paths": written})
+}
+
+// headerSafe strips what must never reach a response header.
+func headerSafe(name string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '"' || r == '\\' || r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, name)
+}
+
+func writeBrowseErr(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, browse.ErrOutsideRoot):
+		writeErr(w, http.StatusForbidden, "outside the project")
+	case errors.Is(err, os.ErrNotExist):
+		writeErr(w, http.StatusNotFound, "no such path")
+	default:
+		writeErr(w, http.StatusBadRequest, err.Error())
+	}
 }
 
 func (s *Server) handleGetNote(w http.ResponseWriter, r *http.Request) {

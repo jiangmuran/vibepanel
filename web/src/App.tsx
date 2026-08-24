@@ -245,6 +245,40 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     ? (state.projects.find((p) => p.id === current.projectId) ?? null)
     : null
 
+  // Dropping files onto the terminal uploads them next to the session and
+  // types the paths at the prompt. That last part is the point: the reason to
+  // put a screenshot on the server is to hand it to the agent, and going to
+  // find the path afterwards is most of the work.
+  const [dropping, setDropping] = useState(false)
+  const [dropNote, setDropNote] = useState('')
+  const uploadInto = useCallback(
+    async (files: File[]) => {
+      if (!current || !currentProject || files.length === 0) return
+      // The API takes a path relative to the project root; the session's cwd
+      // is absolute and may have wandered outside it, in which case the root
+      // is the only place we are allowed to write.
+      const root = currentProject.path.replace(/\/+$/, '')
+      const cwd = current.cwd || root
+      const rel = cwd === root ? '' : cwd.startsWith(root + '/') ? cwd.slice(root.length + 1) : ''
+      setDropNote(`Uploading ${files.length} file${files.length === 1 ? '' : 's'}…`)
+      try {
+        const { paths } = await api.upload(currentProject.id, rel, files)
+        // Quoted only when it needs to be: a shell-quoted path that did not
+        // need quoting is noise at the prompt, and an unquoted one with a
+        // space in it is a bug the user finds after pressing enter.
+        const typed = paths
+          .map((x) => (/[^\w@%+=:,./-]/.test(x) ? `'${x.replace(/'/g, `'\\''`)}'` : x))
+          .join(' ')
+        sendToCurrent(typed + ' ')
+        setDropNote(`${paths.length} file${paths.length === 1 ? '' : 's'} uploaded`)
+      } catch (err) {
+        setDropNote(err instanceof Error ? err.message : 'upload failed')
+      }
+      window.setTimeout(() => setDropNote(''), 4000)
+    },
+    [current, currentProject, sendToCurrent],
+  )
+
   const guard = async (fn: () => Promise<unknown>) => {
     try {
       await fn()
@@ -450,7 +484,47 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           </div>
         )}
 
-        <div className="min-h-0 flex-1" style={{ background: 'var(--vp-terminal-bg)' }}>
+        <div
+          className="relative min-h-0 flex-1"
+          style={{ background: 'var(--vp-terminal-bg)' }}
+          onDragOver={(e) => {
+            // Both handlers, and both preventDefault: without dragover the
+            // drop never fires, and the browser navigates to the file instead.
+            if (!current) return
+            e.preventDefault()
+            e.dataTransfer.dropEffect = 'copy'
+            setDropping(true)
+          }}
+          onDragLeave={(e) => {
+            // Only when the pointer actually left the container. Dragging over
+            // a child fires dragleave for the parent, which made the overlay
+            // flicker on every row of the terminal.
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropping(false)
+          }}
+          onDrop={(e) => {
+            if (!current) return
+            e.preventDefault()
+            setDropping(false)
+            void uploadInto([...e.dataTransfer.files])
+          }}
+        >
+          {dropping && (
+            <div
+              data-testid="drop-overlay"
+              className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-vp border-2 border-dashed text-[13px]"
+              style={{ borderColor: 'var(--vp-accent)', color: 'var(--vp-accent)' }}
+            >
+              Drop to upload into {current?.cwd || currentProject?.path}
+            </div>
+          )}
+          {dropNote && (
+            <div
+              data-testid="drop-note"
+              className="absolute top-2 right-2 z-10 rounded-vp border border-hairline px-2 py-1 text-[11px] vp-solid"
+            >
+              {dropNote}
+            </div>
+          )}
           {current ? (
             <TerminalView
               // Remounting per session is deliberate: each needs its own xterm

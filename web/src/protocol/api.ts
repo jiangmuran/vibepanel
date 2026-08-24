@@ -159,6 +159,36 @@ export const api = {
 
   system: () => request<SystemSample>('/api/system'),
 
+  /**
+   * A URL rather than a request: downloading is the browser's job, and it does
+   * it better than any fetch-into-a-blob would — progress, resume, and the
+   * save dialog, without holding the file in memory.
+   */
+  downloadURL: (projectId: string, path: string) =>
+    `/api/projects/${projectId}/download?path=${encodeURIComponent(path)}`,
+
+  /** Returns the absolute paths the files landed at, ready to type. */
+  upload: async (projectId: string, path: string, files: File[]) => {
+    const form = new FormData()
+    for (const f of files) form.append('file', f, f.name)
+    const res = await fetch(
+      `/api/projects/${projectId}/upload?path=${encodeURIComponent(path)}`,
+      { method: 'POST', body: form },
+    )
+    if (!res.ok) {
+      let message = `${res.status} ${res.statusText}`
+      try {
+        const body = (await res.json()) as { error?: string }
+        if (body.error) message = body.error
+      } catch {
+        /* non-JSON error body */
+      }
+      if (res.status === 401) throw new UnauthorizedError(message, false)
+      throw new Error(message)
+    }
+    return (await res.json()) as { paths: string[] }
+  },
+
   files: (projectId: string, path = '') =>
     request<FileListing>(`/api/projects/${projectId}/files?path=${encodeURIComponent(path)}`),
 

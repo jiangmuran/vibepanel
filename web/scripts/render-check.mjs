@@ -19,7 +19,7 @@
 import { chromium } from 'playwright'
 import { spawn, execSync } from 'node:child_process'
 import { createServer } from 'node:net'
-import { mkdtempSync, rmSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, rmSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -1133,6 +1133,86 @@ try {
       }
     }
     await touchCtx.close()
+  }
+
+  // ── moving files in and out ──────────────────────────────────────────────
+  // "even file transfer" was in the brief and nothing had been built. The
+  // interesting half is the drop: uploading is only useful if the path ends up
+  // at the prompt, because going to look it up afterwards is most of the work.
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await sleep(600)
+  // The first project is rooted at the harness's working directory, not at
+  // DATA — that belongs to the second project, whose tab is not open.
+  const projRoot = process.cwd()
+  writeFileSync(join(projRoot, 'download-me.txt'), 'DOWNLOADED_CONTENT_OK\n')
+  // Uploads refuse to overwrite, so a leftover from the last run would make
+  // this fail with a 409 that has nothing to do with the code under test.
+  rmSync(join(projRoot, 'dropped-note.txt'), { force: true })
+  await page.locator('[data-testid="panel-tab-files"]').click().catch(() => {})
+  await sleep(700)
+  // The listing is a snapshot; the file was written after it was taken.
+  await page.locator('[data-testid="file-refresh"]').click().catch(() => {})
+  await sleep(900)
+  const fileRow = page.locator('[data-testid="file-entry"]', { hasText: 'download-me.txt' }).first()
+  if ((await fileRow.count()) === 0) {
+    note('WARN', 'files', 'the new file did not appear in the tree; skipping the transfer check')
+  } else {
+    const [download] = await Promise.all([
+      page.waitForEvent('download', { timeout: 10000 }).catch(() => null),
+      fileRow.locator('[data-testid="file-download"]').click({ force: true }),
+    ])
+    if (!download) {
+      note('FAIL', 'files', 'clicking download produced no download')
+    } else {
+      const to = join(SHOTS, 'downloaded.txt')
+      await download.saveAs(to)
+      const got = readFileSync(to, 'utf8')
+      if (!got.includes('DOWNLOADED_CONTENT_OK')) {
+        note('FAIL', 'files', `the downloaded file contains ${JSON.stringify(got.slice(0, 80))}`)
+      }
+      if (download.suggestedFilename() !== 'download-me.txt') {
+        note('FAIL', 'files',
+          `the download is named ${JSON.stringify(download.suggestedFilename())}, not the file's name`)
+      }
+    }
+
+    // Dropping onto the terminal. DataTransfer has to be built in the page —
+    // Playwright cannot hand a real one across the boundary.
+    const dropped = await page.evaluateHandle(() => {
+      const dt = new DataTransfer()
+      dt.items.add(new File(['DROPPED_FILE_BODY'], 'dropped-note.txt', { type: 'text/plain' }))
+      return dt
+    })
+    const target = page.locator('[data-testid="drop-overlay"]')
+    const zone = page.locator('.xterm-screen').first()
+    await zone.dispatchEvent('dragover', { dataTransfer: dropped })
+    await sleep(300)
+    if (!(await target.isVisible().catch(() => false))) {
+      note('FAIL', 'files', 'dragging files over the terminal shows nothing; the drop looks unsupported')
+    }
+    await zone.dispatchEvent('drop', { dataTransfer: dropped })
+    await sleep(2500)
+
+    // The upload is only half of it: the path has to be waiting at the prompt.
+    let typed = ''
+    for (let i = 0; i < 25; i++) {
+      typed = await page.locator('.xterm-screen').first().innerText().catch(() => '')
+      if (typed.includes('dropped-note.txt')) break
+      await sleep(400)
+    }
+    if (!typed.includes('dropped-note.txt')) {
+      note('FAIL', 'files',
+        'a file dropped on the terminal did not put its path at the prompt: ' +
+        JSON.stringify(typed.replace(/\s+/g, ' ').trim().slice(-160)))
+    }
+    const landed = await (await authed(`/api/projects/${proj.id}/files?path=`)).json()
+    if (!(landed.entries ?? []).some((e) => e.name === 'dropped-note.txt')) {
+      note('FAIL', 'files', 'the dropped file is not in the project directory')
+    }
+    await page.screenshot({ path: join(SHOTS, 'file-transfer.png') })
+    for (const leftover of ['download-me.txt', 'dropped-note.txt']) {
+      rmSync(join(projRoot, leftover), { force: true })
+    }
   }
 
   // ── a dead process does not look like a finished job ─────────────────────

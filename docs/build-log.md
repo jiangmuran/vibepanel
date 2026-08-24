@@ -975,3 +975,42 @@ for that is three lines and would have caught the obvious wrong implementation.
 
 The gate is `(pointer: coarse)`, not the layout breakpoint. A tablet in
 landscape is not narrow and has nothing but fingers.
+
+## "Even file transfer" was never built
+
+The brief asked the terminal to support "copy and paste, even file transfer",
+and M5's acceptance criterion was that dragging a file onto the terminal
+uploads it and inserts the path. The file panel could list a directory and
+nothing else: no download, no upload, no drop target. Not a bug — a feature
+marked done that did not exist. Worth saying plainly, because the way this
+happens is that the *panel* got built and the half of the milestone that lived
+outside it did not.
+
+Download is a plain link with `download` on it rather than a fetch into a blob:
+the browser already has progress, resume and a save dialog, and a blob holds
+the whole file in memory first. It goes out as `application/octet-stream` with
+`nosniff`, because a project directory contains whatever an agent wrote and
+some of that is HTML that must never render on the panel's own origin.
+
+Upload streams part by part rather than through `ParseMultipartForm`, which
+buffers the entire request before the handler sees it, and opens with `O_EXCL`
+— an upload silently replacing a file an agent has open is a debugging session
+nobody will enjoy. The response carries the absolute paths back so the drop
+handler can type them at the prompt, shell-quoted only when they need it.
+
+Three things the tests caught, all of them mine:
+
+- `browse.Resolve` resolves symlinks, so it requires the path to *exist* — and
+  an upload target by definition does not. The target is now a `filepath.Join`
+  onto an already-validated directory with a `filepath.Base`d name, which
+  cannot contain a separator. Containment is preserved by construction rather
+  than by a call that cannot work here.
+- Two of my own assertions were wrong about what safety means. `../..` as a
+  target directory is *clamped to the project root*, not rejected — Resolve
+  cleans against "/" first — and a filename containing a path keeps only its
+  last element rather than being refused. Both tests now assert where the bytes
+  end up, which is the property that matters, instead of a status code.
+- The file listing is a snapshot taken on mount. An agent writing a file into
+  the project could not be seen without leaving the panel and coming back, so
+  there is a refresh button now. The harness needed it too, which is how it
+  surfaced.

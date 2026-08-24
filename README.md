@@ -46,6 +46,13 @@ sorts first and is the loudest thing on the screen. States come from the
 agent itself where possible (an optional hook), and from the output stream
 otherwise. The hook is never a prerequisite.
 
+**Files move by HTTP, not through the terminal.** Downloading is a link the
+browser handles; uploading is a drop onto the terminal, which writes the file
+next to the session and types its absolute path at the prompt. In-band
+transfer protocols fight with full-screen TUIs, and the reason to put a
+screenshot on the server is to hand it to the agent — so the path being ready
+to press enter on is the feature, not a detail.
+
 ## Requirements
 
 - tmux 3.2 or newer (`apt install tmux`)

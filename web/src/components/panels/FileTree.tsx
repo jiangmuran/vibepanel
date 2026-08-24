@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ChevronLeft, File, Folder } from 'lucide-react'
+import { ChevronLeft, Download, File, Folder, RefreshCw } from 'lucide-react'
 
 import { api } from '../../protocol/api'
 import type { FileListing } from '../../protocol/wire'
@@ -30,6 +30,10 @@ export function FileTree({ projectId }: { projectId: string }) {
   const [path, setPath] = useState('')
   const [listing, setListing] = useState<FileListing | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Bumped to refetch the same directory. The listing is a snapshot of a
+  // directory that agents are actively writing into, and without this the only
+  // way to see a file one just produced is to leave the panel and come back.
+  const [reloads, setReloads] = useState(0)
 
   useEffect(() => {
     // The documented shape for fetching in an effect: the state update happens
@@ -49,7 +53,7 @@ export function FileTree({ projectId }: { projectId: string }) {
     return () => {
       ignore = true
     }
-  }, [projectId, path])
+  }, [projectId, path, reloads])
 
   if (error) {
     return <p className="px-3 py-4 text-[12px]" style={{ color: 'var(--vp-state-waiting)' }}>{error}</p>
@@ -71,9 +75,18 @@ export function FileTree({ projectId }: { projectId: string }) {
             <ChevronLeft size={13} />
           </button>
         )}
-        <span className="truncate text-[11px] text-ink-2" title={listing.path || '/'}>
+        <span className="min-w-0 flex-1 truncate text-[11px] text-ink-2" title={listing.path || '/'}>
           {listing.path || '/'}
         </span>
+        <button
+          type="button"
+          data-testid="file-refresh"
+          onClick={() => setReloads((n) => n + 1)}
+          title="Read this directory again"
+          className="shrink-0 rounded p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+        >
+          <RefreshCw size={12} />
+        </button>
       </div>
 
       {listing.entries.length === 0 && (
@@ -85,7 +98,7 @@ export function FileTree({ projectId }: { projectId: string }) {
           key={e.path}
           data-testid="file-entry"
           onClick={() => e.isDir && setPath(e.path)}
-          className={`flex items-center gap-1.5 px-2 py-1 text-[12px] ${
+          className={`group flex items-center gap-1.5 px-2 py-1 text-[12px] ${
             e.isDir ? 'cursor-pointer hover:bg-surface-2' : ''
           }`}
           title={e.path}
@@ -100,6 +113,21 @@ export function FileTree({ projectId }: { projectId: string }) {
             {e.symlink && <span className="text-ink-2"> ↗</span>}
           </span>
           {!e.isDir && <span className="tabular shrink-0 text-[10.5px] text-ink-2">{bytes(e.size)}</span>}
+          {!e.isDir && e.readable && (
+            // A link, not a fetch-and-blob: the browser's own download machinery
+            // handles the progress, the resume and the save dialog, and a blob
+            // would hold the whole file in memory first.
+            <a
+              href={api.downloadURL(projectId, e.path)}
+              download={e.name}
+              data-testid="file-download"
+              onClick={(ev) => ev.stopPropagation()}
+              title={`Download ${e.name}`}
+              className="vp-reveal shrink-0 rounded p-0.5 text-ink-2 hover:text-ink"
+            >
+              <Download size={12} />
+            </a>
+          )}
         </div>
       ))}
     </div>
