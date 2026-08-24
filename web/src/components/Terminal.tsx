@@ -220,6 +220,7 @@ export function TerminalView({ socket, sessionId, themeKey, onTitle, onExit, cla
       {!controlling && grid.cols > 0 && (
         <button
           type="button"
+          data-testid="take-control"
           onClick={takeControl}
           className="absolute right-3 bottom-3 rounded-full border border-hairline bg-elevated px-3 py-1.5 text-xs text-ink-2 backdrop-blur transition-colors duration-200 ease-vp hover:text-ink"
           title={`Another viewer owns this grid (${grid.cols}x${grid.rows}). You can still type; click to resize it to your window.`}

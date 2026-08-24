@@ -1,5 +1,5 @@
 import { decodeData, encodeData } from './wire'
-import type { ClientMessage, ServerMessage } from './wire'
+import type { ClientMessage, PanelState, ServerMessage, StateMessage } from './wire'
 
 /** What a subscriber to one session receives. */
 export interface StreamHandlers {
@@ -43,6 +43,8 @@ export class PanelSocket {
   private statusListeners = new Set<(s: SocketStatus) => void>()
 
   status: SocketStatus = 'closed'
+
+  private stateListeners = new Set<(s: PanelState) => void>()
 
   connect() {
     if (this.ws || this.closed) return
@@ -154,6 +156,13 @@ export class PanelSocket {
         stream?.handlers.onExit?.()
         break
       }
+      case 'state': {
+        const st = msg as unknown as StateMessage
+        for (const fn of this.stateListeners) {
+          fn({ projects: st.projects, sessions: st.sessions, live: st.live })
+        }
+        break
+      }
     }
   }
 
@@ -186,10 +195,28 @@ export class PanelSocket {
     this.send({ t: takeControl ? 'takeControl' : 'resize', sessionId, cols, rows })
   }
 
-  onStatus(fn: (s: SocketStatus) => void) {
+  /**
+   * Subscribes to pushed state snapshots.
+   *
+   * This is what replaced polling. Every viewer sees a change the moment it
+   * happens instead of up to two seconds later, and an idle panel with six
+   * tabs open sends nothing at all.
+   */
+  onState(fn: (s: PanelState) => void): () => void {
+    this.stateListeners.add(fn)
+    // Returns void rather than Set.delete's boolean so it can be handed
+    // straight back from a React effect as its cleanup.
+    return () => {
+      this.stateListeners.delete(fn)
+    }
+  }
+
+  onStatus(fn: (s: SocketStatus) => void): () => void {
     this.statusListeners.add(fn)
     fn(this.status)
-    return () => this.statusListeners.delete(fn)
+    return () => {
+      this.statusListeners.delete(fn)
+    }
   }
 
   close() {

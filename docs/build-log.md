@@ -260,3 +260,71 @@ were visible text, and it forced the theme by setting the attribute directly —
 which changes the CSS but not React's state, so it measured a combination no
 user can produce. It also read a background tab, which Chromium throttles until
 it stops painting.
+
+## 2026-08-23 — M3 part one: pushed state, collapsible sidebar
+
+Polling is gone. A hub tracks every connection and pushes the full project and
+session list whenever anything changes, coalesced over a 60ms window so that
+creating a session — which touches several rows — is one message rather than
+four. The browser keeps a 30-second resync as a safety net for a socket that
+dropped a message while a tab was asleep, not as the primary path.
+
+A full snapshot rather than a delta: the list is small, and a delta protocol is
+a second source of truth that drifts from the first in ways nobody notices
+until the sidebar is showing a session that was killed ten minutes ago.
+
+The sidebar now collapses to a 48px rail of project badges, each carrying the
+most urgent state among its sessions. Below 768px it becomes an overlay drawer
+instead of taking a column. Renaming is a double click, on both projects and
+sessions. Pinning is a hover button.
+
+### last_output_at meant the wrong thing
+
+The poller stamped it with the current time on every tick for every live
+session, so the column recorded "when we last looked" rather than "when this
+last produced output". That broke activity ordering and would have made it
+impossible to tell that a session had gone quiet — which M4's state detection
+depends on entirely. Output timestamps now come from the PTY pump, which is the
+only thing that knows, debounced to at most one write per session per second.
+
+It also meant the state fingerprint changed on every tick, so pushing would
+have degraded straight back into polling.
+
+### Bugs found this round
+
+**The phone opened on the project drawer, with the button that closes it
+underneath.** One `sidebarOpen` flag was serving two different ideas: a
+remembered desktop preference, and a per-visit mobile overlay. A returning user
+with the sidebar open on their laptop got a drawer covering their whole phone
+screen, and the menu button was behind it. Now separate: `docked` is
+remembered, `drawerOpen` is per-visit and starts closed.
+
+**The drawer was see-through.** It reused the frosted chrome token, so terminal
+output showed through the project list. Anything floating over content is now
+opaque, and `.vp-blur` falls back to a solid surface under
+`@supports not (backdrop-filter)` and `prefers-reduced-transparency` — a design
+must not put legibility behind a filter the browser might decline to run.
+
+**Two React correctness errors, both caught by lint rather than by looking.**
+`InlineName` synced a prop into state from an effect, which also meant a rename
+arriving from another viewer would overwrite what the user was halfway through
+typing. `useMediaQuery` read matchMedia through useState plus an effect, so the
+first paint was against the wrong breakpoint; it uses `useSyncExternalStore`
+now, which is what that primitive is for.
+
+### An hour lost to an orphaned process
+
+Several probe runs reported a bug that had already been fixed. The cause was a
+server left listening from an earlier run that `timeout` had killed: a child
+does not die because its parent was, and the probes used a hard-coded port, so
+each new run bound nothing and quietly talked to the stale one — which served a
+build from twenty minutes earlier.
+
+The harness now asks the kernel for a free port and installs SIGINT/SIGTERM/
+SIGHUP handlers that tear the server down. Worth remembering the shape of this:
+every observation for that hour was real, and every conclusion drawn from them
+was wrong.
+
+The harness also grew `data-testid` hooks after its selectors broke on a
+refactor that only moved elements around, and a `data-layout` attribute on the
+root so a wrong layout mode is assertable rather than something to squint at.

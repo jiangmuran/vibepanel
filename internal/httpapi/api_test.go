@@ -60,8 +60,10 @@ func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 		DB:      db,
 		Tmux:    tm,
 		Manager: mgr,
+		Hub:     ws.NewHub(),
 		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
+	mgr.OnSignals = srv.HandleSignals
 	ts := httptest.NewServer(srv.Routes())
 	t.Cleanup(ts.Close)
 	return ts, srv
@@ -417,5 +419,99 @@ func TestReplayIsTaggedSeparately(t *testing.T) {
 				data[0], ws.FrameReplay)
 		}
 		return
+	}
+}
+
+// TestStateIsPushedToEveryViewer covers what replaced polling: a change made by
+// one client reaches every other one without anybody asking.
+func TestStateIsPushedToEveryViewer(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
+	viewers := make([]*websocket.Conn, 2)
+	for i := range viewers {
+		c, _, err := websocket.Dial(ctx, wsURL, nil)
+		if err != nil {
+			t.Fatalf("dial %d: %v", i, err)
+		}
+		defer c.CloseNow()
+		viewers[i] = c
+	}
+
+	// The dial returns before the server-side handler has necessarily
+	// registered the connection with the hub, and a change published in that
+	// window reaches nobody.
+	deadline := time.Now().Add(5 * time.Second)
+	for srv.Hub.Connections() < len(viewers) {
+		if time.Now().After(deadline) {
+			t.Fatalf("only %d of %d connections registered", srv.Hub.Connections(), len(viewers))
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"pushed"}`)
+
+	for i, c := range viewers {
+		var got struct {
+			Type     string          `json:"t"`
+			Projects []store.Project `json:"projects"`
+		}
+		found := false
+		readDeadline := time.Now().Add(10 * time.Second)
+		for !found {
+			if time.Now().After(readDeadline) {
+				t.Fatalf("viewer %d never received a state push", i)
+			}
+			_, data, err := c.Read(ctx)
+			if err != nil {
+				t.Fatalf("viewer %d read: %v", i, err)
+			}
+			if err := json.Unmarshal(data, &got); err != nil {
+				continue // binary frame or another message shape
+			}
+			if got.Type != ws.MsgState {
+				continue
+			}
+			for _, p := range got.Projects {
+				if p.ID == project.ID {
+					found = true
+				}
+			}
+		}
+	}
+}
+
+// TestPollDoesNotStampLastOutput pins a semantic fix: last_output_at means
+// "when this session last produced output", not "when we last looked". A
+// poller that stamps it every tick breaks activity ordering and makes it
+// impossible to tell that a session has gone quiet.
+func TestPollDoesNotStampLastOutput(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"quiet"}`)
+	sess := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
+
+	before, err := srv.DB.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	for i := 0; i < 3; i++ {
+		if err := srv.pollOnce(ctx); err != nil {
+			t.Fatalf("pollOnce: %v", err)
+		}
+	}
+	after, err := srv.DB.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if after.LastOutputAt != before.LastOutputAt {
+		t.Errorf("polling moved last_output_at from %d to %d on a silent session",
+			before.LastOutputAt, after.LastOutputAt)
 	}
 }

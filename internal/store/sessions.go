@@ -230,12 +230,29 @@ func (d *DB) SetSessionSize(ctx context.Context, id string, cols, rows int) erro
 }
 
 // UpdateSessionRuntime records what tmux currently reports for a session.
-func (d *DB) UpdateSessionRuntime(ctx context.Context, id, cwd, command string, lastOutputAt int64) error {
+//
+// Deliberately does not touch last_output_at. That column means "when this
+// session last produced output", and a poller that stamps it every tick makes
+// it mean "when we last looked" — which breaks the sidebar's activity ordering
+// and defeats any attempt to detect that a session has gone quiet.
+func (d *DB) UpdateSessionRuntime(ctx context.Context, id, cwd, command string) error {
 	_, err := d.sql.ExecContext(ctx,
-		`UPDATE sessions SET cwd = ?, command = ?, last_output_at = ? WHERE id = ?`,
-		cwd, command, lastOutputAt, id)
+		`UPDATE sessions SET cwd = ?, command = ? WHERE id = ?`, cwd, command, id)
 	if err != nil {
 		return fmt.Errorf("store: update session runtime: %w", err)
+	}
+	return nil
+}
+
+// TouchSessionOutput records that a session produced output at the given time.
+//
+// Called from the PTY pump's signal path, not from the poller: only the pump
+// knows when bytes actually arrived.
+func (d *DB) TouchSessionOutput(ctx context.Context, id string, at int64) error {
+	_, err := d.sql.ExecContext(ctx,
+		`UPDATE sessions SET last_output_at = ? WHERE id = ?`, at, id)
+	if err != nil {
+		return fmt.Errorf("store: touch session output: %w", err)
 	}
 	return nil
 }

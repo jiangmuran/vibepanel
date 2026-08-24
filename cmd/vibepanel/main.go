@@ -28,6 +28,7 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/tmux"
 	"github.com/jiangmuran/vibepanel/internal/version"
 	"github.com/jiangmuran/vibepanel/internal/webui"
+	"github.com/jiangmuran/vibepanel/internal/ws"
 )
 
 func main() {
@@ -114,8 +115,12 @@ func cmdServe(args []string) error {
 	mgr := sessionpkg.NewManager(a.tmux, sessionpkg.DefaultRingSize)
 
 	srv := &httpapi.Server{
-		Cfg: a.cfg, DB: a.db, Tmux: a.tmux, Manager: mgr, Log: logger,
+		Cfg: a.cfg, DB: a.db, Tmux: a.tmux, Manager: mgr,
+		Hub: ws.NewHub(), Log: logger,
 	}
+	// The pump reports output and bells straight into the server, which is how
+	// last_output_at stays honest and, from M4, how session state is decided.
+	mgr.OnSignals = srv.HandleSignals
 	if err := srv.Reconcile(ctx); err != nil {
 		return err
 	}

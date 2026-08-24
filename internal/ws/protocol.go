@@ -150,4 +150,11 @@ const (
 
 	// MsgPong answers MsgPing.
 	MsgPong = "pong"
+
+	// MsgState carries the full project and session list after anything
+	// changed. A full snapshot rather than a delta: the list is small, and a
+	// delta protocol is a second source of truth that can drift from the first
+	// in ways nobody notices until the sidebar is showing a session that was
+	// killed ten minutes ago.
+	MsgState = "state"
 )

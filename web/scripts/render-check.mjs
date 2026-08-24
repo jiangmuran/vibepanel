@@ -18,12 +18,24 @@
 // second argument.
 import { chromium } from 'playwright'
 import { spawn, execSync } from 'node:child_process'
+import { createServer } from 'node:net'
 import { mkdtempSync, rmSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const BIN = process.argv[2] ?? new URL('../../vibepanel', import.meta.url).pathname
-const PORT = 7810 + Math.floor(Math.random() * 80)
+// A free port picked by the kernel, not a guess. A hard-coded one silently
+// connects to whatever is already listening — including an orphaned server
+// from a previous run, which then serves a stale build and produces an hour of
+// confusing results.
+const PORT = await new Promise((resolve, reject) => {
+  const probe = createServer()
+  probe.once('error', reject)
+  probe.listen(0, '127.0.0.1', () => {
+    const { port } = probe.address()
+    probe.close(() => resolve(port))
+  })
+})
 const SOCKET = `vprender-${process.pid}`
 const DATA = mkdtempSync(join(tmpdir(), 'vprender-'))
 const SHOTS = process.argv[3] ?? join(DATA, 'shots')
@@ -70,6 +82,7 @@ function contrast(fg, bg) {
   return (hi + 0.05) / (lo + 0.05)
 }
 
+let cleanedUp = false
 const server = spawn(BIN, ['serve'], {
   env: {
     ...process.env,
@@ -87,6 +100,8 @@ const BASE = `http://127.0.0.1:${PORT}`
 let browser
 
 async function cleanup() {
+  if (cleanedUp) return
+  cleanedUp = true
   try { await browser?.close() } catch { /* already gone */ }
   server.kill('SIGTERM')
   await sleep(400)
@@ -95,6 +110,15 @@ async function cleanup() {
   // fast when this runs in a loop.
   try { rmSync(join(process.env.TMUX_TMPDIR || '/tmp', `tmux-${process.getuid()}`, SOCKET), { force: true }) } catch { /* best effort */ }
   try { rmSync(DATA, { recursive: true, force: true }) } catch { /* best effort */ }
+}
+
+// The server is a child process, and a child does not die because its parent
+// was killed. Without these handlers, every `timeout`-terminated run leaves a
+// panel listening on a port and a tmux server holding sessions.
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.on(sig, () => {
+    void cleanup().finally(() => process.exit(130))
+  })
 }
 
 try {
@@ -142,16 +166,19 @@ try {
   for (const f of failedReqs) note('FAIL', 'net', f)
 
   // ── structure ────────────────────────────────────────────────────────────
-  const sidebarText = await page.locator('aside').innerText().catch(() => '')
+  const sidebarText = await page.locator('[data-testid="sidebar"]').innerText().catch(() => '')
   if (!sidebarText.toLowerCase().includes('render-check')) {
     note('FAIL', 'ui', `sidebar does not list the project; saw: ${JSON.stringify(sidebarText)}`)
   }
-  const sessionRows = await page.locator('aside section div.group').count()
+  const sessionRows = await page.locator('[data-testid="session-row"]').count()
   if (sessionRows < 2) note('FAIL', 'ui', `expected 2 session rows, found ${sessionRows}`)
 
   // ── websocket status ─────────────────────────────────────────────────────
-  const status = await page.locator('aside footer').innerText().catch(() => '')
-  if (!status.includes('open')) note('FAIL', 'ws', `socket status is ${JSON.stringify(status)}, want "open"`)
+  const status = await page
+    .locator('[data-testid="connection"]')
+    .getAttribute('data-status')
+    .catch(() => null)
+  if (status !== 'open') note('FAIL', 'ws', `socket status is ${JSON.stringify(status)}, want "open"`)
 
   // ── terminal actually painted something ──────────────────────────────────
   await page.waitForSelector('.xterm-screen', { timeout: 8000 }).catch(() =>
@@ -231,7 +258,7 @@ try {
   // Drive the real control rather than setting the attribute: the attribute
   // alone changes the CSS but not React's state, so xterm keeps its old
   // palette and the check silently measures a combination no user can produce.
-  const themeButton = page.locator('aside header button').first()
+  const themeButton = page.locator('[data-testid="theme-toggle"]')
   const setTheme = async (want) => {
     for (let i = 0; i < 4; i++) {
       const cur = await page.evaluate(() => document.documentElement.dataset.theme ?? 'system')
@@ -299,7 +326,7 @@ try {
   // Wait rather than sampling: the affordance appears only once the subscribe
   // round trip has told this viewer it is passive.
   const takeControlVisible = await page2
-    .locator('button:has-text("take control")')
+    .locator('[data-testid="take-control"]')
     .waitFor({ state: 'visible', timeout: 8000 })
     .then(() => true)
     .catch(() => false)
@@ -338,10 +365,10 @@ try {
   // has nothing to read. Bring it forward before asserting on what it shows.
   await page.bringToFront()
   await sleep(500)
-  const titleBefore = await page.locator('main header span').nth(0).innerText().catch(() => '')
+  const titleBefore = await page.locator('[data-testid="session-title"]').innerText().catch(() => '')
   await page.reload({ waitUntil: 'networkidle' })
   await sleep(3000)
-  const titleAfter = await page.locator('main header span').nth(0).innerText().catch(() => '')
+  const titleAfter = await page.locator('[data-testid="session-title"]').innerText().catch(() => '')
   if (titleBefore && titleAfter && titleBefore !== titleAfter) {
     note('FAIL', 'selection',
       `a reload changed the selected session: ${JSON.stringify(titleBefore)} -> ${JSON.stringify(titleAfter)}`)
@@ -360,6 +387,43 @@ try {
       `terminal responses were injected into the session by the replay: ${JSON.stringify(
         afterReload.replace(/\s+/g, ' ').trim().slice(-120),
       )}`)
+  }
+
+  // ── the narrow-screen drawer must be opaque ──────────────────────────────
+  // It floats over the terminal. A translucent one leaves session output
+  // showing through the project list, and backdrop-filter cannot be relied on
+  // to hide it — headless browsers and prefers-reduced-transparency both skip
+  // it entirely.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await sleep(700)
+  const menu = page.locator('header button[title="Projects"]')
+  if (await menu.isVisible().catch(() => false)) {
+    await menu.click()
+    await sleep(600)
+    const drawer = await page.evaluate(() => {
+      const el = document.querySelector('[data-testid="sidebar"][data-overlay="true"]')
+      if (!el) return null
+      const cs = getComputedStyle(el)
+      const m = cs.backgroundColor.match(/rgba?\(([^)]+)\)/)
+      const parts = m ? m[1].split(/[\s,/]+/).filter(Boolean).map(Number) : []
+      return { bg: cs.backgroundColor, alpha: parts.length > 3 ? parts[3] : 1 }
+    })
+    if (!drawer) {
+      note('WARN', 'layout/drawer', 'the narrow-screen drawer did not open')
+    } else if (drawer.alpha < 0.98) {
+      note('FAIL', 'layout/drawer',
+        `the drawer is translucent (${drawer.bg}); terminal output shows through the project list`)
+    }
+    // Close through the drawer's own control; the full-screen backdrop sits
+    // underneath it and cannot be clicked where the drawer covers it.
+    await page
+      .locator('[data-testid="sidebar"][data-overlay="true"] header button')
+      .first()
+      .click({ timeout: 3000 })
+      .catch(() => {})
+    await sleep(400)
+  } else {
+    note('WARN', 'layout/drawer', 'no menu button at phone width; the sidebar may be taking the screen')
   }
 
   // ── horizontal overflow, desktop and phone ───────────────────────────────

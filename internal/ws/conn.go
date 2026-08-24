@@ -42,6 +42,9 @@ type Handler struct {
 	// same-origin only, which is what we want when the panel is the edge: a
 	// terminal reachable cross-origin is a terminal any page can drive.
 	OriginPatterns []string
+
+	// Hub receives every connection so state changes can be pushed to it.
+	Hub *Hub
 }
 
 // stream is one subscribed session on one connection.
@@ -88,6 +91,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		byID:     map[string]*stream{},
 	}
 	defer conn.closeAll()
+
+	if h.Hub != nil {
+		h.Hub.add(conn)
+		defer h.Hub.remove(conn)
+	}
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -346,6 +354,18 @@ func (c *Conn) sendJSON(msg ServerMessage) {
 	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
 	defer cancel()
 	if err := c.ws.Write(ctx, websocket.MessageText, b); err != nil {
+		_ = c.ws.CloseNow()
+	}
+}
+
+// sendRaw writes a pre-marshalled JSON payload. Used by the hub, which builds
+// one message and sends the same bytes to every connection.
+func (c *Conn) sendRaw(payload []byte) {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+	defer cancel()
+	if err := c.ws.Write(ctx, websocket.MessageText, payload); err != nil {
 		_ = c.ws.CloseNow()
 	}
 }

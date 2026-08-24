@@ -67,6 +67,7 @@ export interface ServerMessage {
     | 'dropped'
     | 'error'
     | 'pong'
+    | 'state'
   sessionId?: string
   ref?: number
   cols?: number
@@ -112,4 +113,16 @@ export interface PanelState {
   projects: Project[]
   sessions: Session[]
   live: string[]
+}
+
+/**
+ * A pushed state snapshot.
+ *
+ * The server sends the whole picture rather than a delta. The list is small,
+ * and a delta protocol would be a second source of truth that drifts from the
+ * first in ways nobody notices until the sidebar is showing a session that was
+ * killed ten minutes ago.
+ */
+export interface StateMessage extends PanelState {
+  t: 'state'
 }

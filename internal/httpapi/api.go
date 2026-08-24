@@ -2,6 +2,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -31,7 +33,19 @@ type Server struct {
 	DB      *store.DB
 	Tmux    *tmux.Client
 	Manager *session.Manager
+	Hub     *ws.Hub
 	Log     *slog.Logger
+
+	// lastSnapshot is the most recent state payload that was broadcast. The
+	// poller compares against it so that a tick where nothing changed sends
+	// nothing — otherwise pushing is just polling with extra steps.
+	snapMu       sync.Mutex
+	lastSnapshot []byte
+
+	// outputSeen debounces last_output_at writes. The pump can call into here
+	// hundreds of times a second; the column is read by humans.
+	outMu      sync.Mutex
+	outputSeen map[string]time.Time
 }
 
 // Routes builds the router.
@@ -64,6 +78,7 @@ func (s *Server) Routes() http.Handler {
 	r.Handle("/ws", &ws.Handler{
 		Manager: s.Manager,
 		Resolve: resolver{db: s.DB},
+		Hub:     s.Hub,
 		Log:     s.Log,
 	})
 
@@ -89,6 +104,90 @@ func (r resolver) RecordSize(ctx context.Context, sessionID string, cols, rows i
 }
 
 // ─── handlers ─────────────────────────────────────────────────────────────
+
+// snapshot builds the full state payload. Returns nil if it cannot be read,
+// in which case nothing is broadcast rather than something wrong.
+func (s *Server) snapshot(ctx context.Context) []byte {
+	projects, err := s.DB.ListProjects(ctx)
+	if err != nil {
+		s.Log.Warn("snapshot projects", "err", err)
+		return nil
+	}
+	sessions, err := s.DB.ListSessions(ctx)
+	if err != nil {
+		s.Log.Warn("snapshot sessions", "err", err)
+		return nil
+	}
+	payload, err := json.Marshal(struct {
+		Type string `json:"t"`
+		stateResponse
+	}{
+		Type: ws.MsgState,
+		stateResponse: stateResponse{
+			Projects: emptyIfNil(projects),
+			Sessions: emptyIfNil(sessions),
+			Live:     emptyIfNil(s.Manager.LiveIDs()),
+		},
+	})
+	if err != nil {
+		s.Log.Warn("snapshot marshal", "err", err)
+		return nil
+	}
+	return payload
+}
+
+// notifyState pushes the current state to every viewer, coalesced.
+func (s *Server) notifyState() {
+	if s.Hub == nil {
+		return
+	}
+	s.Hub.Notify(func() []byte {
+		// A short independent timeout: this runs on the hub's timer, detached
+		// from whatever request caused it, and must not hang on a locked
+		// database while holding up every other viewer's update.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		payload := s.snapshot(ctx)
+		if payload == nil {
+			return nil
+		}
+		s.snapMu.Lock()
+		s.lastSnapshot = payload
+		s.snapMu.Unlock()
+		return payload
+	})
+}
+
+// HandleSignals records what the PTY pump observed. Wired to
+// session.Manager.OnSignals; runs on the pump goroutine, so it must be quick.
+func (s *Server) HandleSignals(sig session.Signals) {
+	if sig.Bytes == 0 {
+		return
+	}
+	now := time.Now()
+
+	s.outMu.Lock()
+	if s.outputSeen == nil {
+		s.outputSeen = map[string]time.Time{}
+	}
+	last := s.outputSeen[sig.SessionID]
+	if now.Sub(last) < time.Second {
+		s.outMu.Unlock()
+		return
+	}
+	s.outputSeen[sig.SessionID] = now
+	s.outMu.Unlock()
+
+	// Off the pump goroutine: a database write must never sit between the PTY
+	// and the viewers watching it.
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.DB.TouchSessionOutput(ctx, sig.SessionID, now.Unix()); err != nil {
+			s.Log.Debug("touch output", "session", sig.SessionID, "err", err)
+		}
+	}()
+}
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	tv, _ := s.Tmux.Version(r.Context())
@@ -168,6 +267,7 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.notifyState()
 	writeJSON(w, http.StatusCreated, p)
 }
 
@@ -216,6 +316,7 @@ func (s *Server) handlePatchProject(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
+	s.notifyState()
 	writeJSON(w, http.StatusOK, p)
 }
 
@@ -241,6 +342,7 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
+	s.notifyState()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -312,6 +414,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if err := s.DB.TouchProject(ctx, p.ID); err != nil {
 		s.Log.Warn("touch project", "project", p.ID, "err", err)
 	}
+	s.notifyState()
 	writeJSON(w, http.StatusCreated, rec)
 }
 
@@ -371,6 +474,7 @@ func (s *Server) handlePatchSession(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
+	s.notifyState()
 	writeJSON(w, http.StatusOK, rec)
 }
 
@@ -391,6 +495,7 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
+	s.notifyState()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -482,7 +587,7 @@ func (s *Server) Reconcile(ctx context.Context) error {
 			// a session silently is worse than showing a dead one.
 			continue
 		}
-		if err := s.DB.UpdateSessionRuntime(ctx, row.ID, info.Path, info.Command, time.Now().Unix()); err != nil {
+		if err := s.DB.UpdateSessionRuntime(ctx, row.ID, info.Path, info.Command); err != nil {
 			s.Log.Warn("reconcile runtime", "session", row.ID, "err", err)
 		}
 	}
@@ -521,6 +626,23 @@ func (s *Server) Poll(ctx context.Context) {
 		case <-t.C:
 			if err := s.pollOnce(ctx); err != nil && ctx.Err() == nil {
 				s.Log.Debug("poll", "err", err)
+				continue
+			}
+			// Push only when the picture actually changed. A tick that
+			// broadcasts regardless is polling again, just with the cost moved
+			// onto every connected viewer.
+			payload := s.snapshot(ctx)
+			if payload == nil {
+				continue
+			}
+			s.snapMu.Lock()
+			changed := !bytes.Equal(payload, s.lastSnapshot)
+			if changed {
+				s.lastSnapshot = payload
+			}
+			s.snapMu.Unlock()
+			if changed && s.Hub != nil {
+				s.Hub.Broadcast(payload)
 			}
 		}
 	}
@@ -547,7 +669,7 @@ func (s *Server) pollOnce(ctx context.Context) error {
 		if !alive {
 			continue
 		}
-		if err := s.DB.UpdateSessionRuntime(ctx, row.ID, info.Path, info.Command, time.Now().Unix()); err != nil {
+		if err := s.DB.UpdateSessionRuntime(ctx, row.ID, info.Path, info.Command); err != nil {
 			return err
 		}
 		if title := deriveTitle(info); title != "" {
