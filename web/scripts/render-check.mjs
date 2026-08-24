@@ -974,6 +974,58 @@ try {
     }
 
     await page.screenshot({ path: join(SHOTS, 'mobile.png') })
+
+    // Everything above ran in a narrow window with a mouse attached, which is
+    // not a phone. Chromium only reports `(hover: none)` and `(pointer:
+    // coarse)` when touch is actually emulated, so any bug that hinges on
+    // hover not existing is invisible to a viewport resize. This is a separate
+    // context because touch emulation is a property of the context.
+    const touchCtx = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      hasTouch: true,
+      isMobile: true,
+      deviceScaleFactor: 3,
+    })
+    const touch = await touchCtx.newPage()
+    await touch.goto(BASE, { waitUntil: 'networkidle' })
+    await touch.locator('[data-testid="auth-username"]').fill(USERNAME)
+    await touch.locator('[data-testid="auth-password"]').fill(PASSWORD)
+    await touch.locator('[data-testid="auth-submit"]').click()
+    await touch.waitForSelector('[data-testid="sidebar"], header', { timeout: 15000 })
+    await sleep(1500)
+
+    const pointer = await touch.evaluate(() => ({
+      hover: matchMedia('(hover: hover)').matches,
+      fine: matchMedia('(pointer: fine)').matches,
+    }))
+    if (pointer.hover || pointer.fine) {
+      note('WARN', 'mobile',
+        'touch emulation did not take; the reachability check below is measuring a mouse')
+    }
+
+    await touch.locator('header button[title^="Projects"]').click()
+    await sleep(800)
+    const touchRow = touch
+      .locator('[data-testid="sidebar"][data-overlay="true"] [data-testid="session-row"]')
+      .first()
+    // Pin and kill are revealed on hover, and a phone never hovers. "Pin this
+    // to the top of the project" is a feature of the panel, not a nicety, and
+    // it was a control you had to know the pixel position of.
+    for (const control of ['pin-session', 'kill-session']) {
+      const btn = touchRow.locator(`[data-testid="${control}"]`)
+      if ((await btn.count()) === 0) {
+        note('FAIL', 'mobile', `no ${control} control in the session row at all`)
+        continue
+      }
+      const opacity = await btn.evaluate((el) => getComputedStyle(el).opacity)
+      if (Number(opacity) < 0.9) {
+        note('FAIL', 'mobile',
+          `${control} renders at opacity ${opacity} on a touch screen; it is only revealed by ` +
+          'a hover that will never happen')
+      }
+    }
+    await touch.screenshot({ path: join(SHOTS, 'mobile-drawer.png') })
+    await touchCtx.close()
   }
 
   // ── a dead process does not look like a finished job ─────────────────────

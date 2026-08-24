@@ -279,6 +279,30 @@ body {
 /* A panel that floats over content is always opaque. The drawer on a narrow
    screen covers the terminal, and a translucent one leaves the session text
    showing through the project list. */
+/* A control revealed by hovering its row — but only where hovering exists.
+   `opacity-0` plus `group-hover` is invisible for the whole life of a touch
+   session: a phone fires no hover, so "pin to the top", "kill", "close this
+   tab" and "delete this todo" were controls you had to know the pixel
+   position of. Below the hover media query they are simply always visible,
+   which costs a little tidiness on a screen where tidiness is not the
+   problem. */
+.vp-reveal {
+  opacity: 1;
+  transition: opacity 200ms var(--vp-ease);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .vp-reveal {
+    opacity: 0;
+  }
+
+  .group:hover .vp-reveal,
+  .vp-reveal:focus-visible,
+  .vp-reveal:focus-within {
+    opacity: 1;
+  }
+}
+
 .vp-solid {
   background: var(--vp-surface);
 }

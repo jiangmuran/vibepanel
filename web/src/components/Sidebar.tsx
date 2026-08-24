@@ -207,7 +207,7 @@ export function Sidebar(props: SidebarProps) {
                 {...drag.handleProps(p.id)}
                 data-testid="project-grip"
                 title="Drag to reorder"
-                className="-ml-1 cursor-grab rounded p-0.5 text-ink-2 opacity-0 transition-opacity duration-200 ease-vp group-hover:opacity-100 active:cursor-grabbing"
+                className="-ml-1 cursor-grab rounded p-0.5 text-ink-2 vp-reveal active:cursor-grabbing"
               >
                 <GripVertical size={12} />
               </span>
@@ -221,7 +221,7 @@ export function Sidebar(props: SidebarProps) {
                 type="button"
                 onClick={() => props.onNewSession(p)}
                 title="New shell in this project"
-                className="ml-auto rounded p-1 text-ink-2 opacity-0 transition-opacity duration-200 ease-vp group-hover:opacity-100 hover:text-ink focus-visible:opacity-100"
+                className="ml-auto rounded p-1 text-ink-2 vp-reveal hover:text-ink"
               >
                 <TerminalIcon size={13} />
               </button>
@@ -289,8 +289,9 @@ export function Sidebar(props: SidebarProps) {
                       e.stopPropagation()
                       props.onPinSession(s, !s.pinned)
                     }}
+                    data-testid="pin-session"
                     title={s.pinned ? 'Unpin' : 'Pin to the top of this project'}
-                    className="shrink-0 rounded p-0.5 text-ink-2 opacity-0 transition-opacity duration-200 ease-vp group-hover:opacity-100 hover:text-ink focus-visible:opacity-100"
+                    className="shrink-0 rounded p-0.5 text-ink-2 vp-reveal hover:text-ink"
                   >
                     {s.pinned ? <PinOff size={12} /> : <Pin size={12} />}
                   </button>
@@ -300,8 +301,9 @@ export function Sidebar(props: SidebarProps) {
                       e.stopPropagation()
                       props.onKillSession(s)
                     }}
+                    data-testid="kill-session"
                     title="Kill session"
-                    className="shrink-0 rounded p-0.5 text-ink-2 opacity-0 transition-opacity duration-200 ease-vp group-hover:opacity-100 hover:text-ink focus-visible:opacity-100"
+                    className="shrink-0 rounded p-0.5 text-ink-2 vp-reveal hover:text-ink"
                   >
                     <X size={12} />
                   </button>

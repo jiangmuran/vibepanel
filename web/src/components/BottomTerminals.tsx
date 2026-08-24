@@ -121,7 +121,7 @@ export function BottomTerminals(props: Props) {
                 props.onClose(t)
               }}
               title="Close terminal"
-              className="rounded p-0.5 opacity-0 transition-opacity duration-200 ease-vp group-hover:opacity-100 hover:text-ink focus-visible:opacity-100"
+              className="rounded p-0.5 vp-reveal hover:text-ink"
             >
               <X size={11} />
             </button>

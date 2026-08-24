@@ -355,7 +355,7 @@ function PasskeysSection() {
               void api.deletePasskey(k.id).then(load).catch(() => setError('could not remove it'))
             }}
             title="Remove"
-            className="shrink-0 rounded p-0.5 text-ink-2 opacity-0 transition-opacity duration-200 ease-vp group-hover:opacity-100 hover:text-ink focus-visible:opacity-100"
+            className="shrink-0 rounded p-0.5 text-ink-2 vp-reveal hover:text-ink"
           >
             <X size={12} />
           </button>

@@ -125,7 +125,7 @@ export function Todos({ projectId }: { projectId: string }) {
               type="button"
               onClick={() => void guard(() => api.deleteTodo(t.id))}
               title="Delete"
-              className="mt-0.5 shrink-0 rounded p-0.5 text-ink-2 opacity-0 transition-opacity duration-200 ease-vp group-hover:opacity-100 hover:text-ink focus-visible:opacity-100"
+              className="mt-0.5 shrink-0 rounded p-0.5 text-ink-2 vp-reveal hover:text-ink"
             >
               <X size={11} />
             </button>

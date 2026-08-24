@@ -909,3 +909,33 @@ done" — it did, correctly, by its own rules. It is: do three different
 situations draw three different glyphs? render-check now compares the rendered
 SVG of a crashed, a cleanly exited and a running session pairwise and fails if
 any two are identical.
+
+## Every phone check so far was run with a mouse attached
+
+Chasing the previous fix produced a worse finding than the fix. Seven controls
+in the panel are revealed by hovering the row they sit in — pin, kill, the
+project grip, the project menu, close-this-terminal-tab, delete-todo, delete-
+passkey — which on a phone means seven controls that are invisible for the
+entire life of the session. "Pin this to the top of the project" is a feature
+that was asked for by name. It was a button you had to know the pixel position
+of.
+
+The reason it survived a render check with a phone section in it: the harness
+emulated a phone by calling `setViewportSize`, and a narrow window is not a
+phone. Chromium reports `(hover: hover)` and `(pointer: fine)` until touch is
+actually emulated on the *context*:
+
+    viewport only          hover: true   pointer: fine
+    hasTouch: true         hover: false  pointer: coarse
+
+So every mobile assertion written so far — the key bar, the compose box, the
+drawer, swipe-to-copy — has been measured with a mouse. None of them were
+wrong, but none of them were testing what they claimed to test either. The
+check now opens a second browser context with `hasTouch` and `isMobile`, and
+warns if the media query does not actually flip, so this cannot quietly regress
+to a resized desktop again.
+
+The fix itself is one class: `.vp-reveal` is opaque by default and only hides
+itself inside `@media (hover: hover) and (pointer: fine)`. The failure
+direction matters — if some environment misreports, controls are visible when
+they could have been tidy, rather than absent when they are needed.
