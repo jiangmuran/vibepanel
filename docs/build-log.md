@@ -1095,3 +1095,39 @@ written about the common case, not an edge case, and it stopped anyone looking
 again — including me, twice, until a probe happened to run without a permission
 grant. A caught-and-ignored error deserves the same suspicion as an unchecked
 one; the difference is only that it looks deliberate.
+
+## The archive nobody had ever unpacked
+
+The distribution story is one sentence: unpack the tar.gz on a machine with
+tmux and it runs. `scripts/build-release.sh` had never been executed. Neither
+had anything downstream of it — which makes that sentence the claim in this
+repository most likely to be quietly false, because it is about files nobody in
+the development loop ever touches.
+
+`scripts/release-check.sh` now builds the archives, verifies the checksums,
+unpacks one into a throwaway HOME and drives it: is the binary actually static,
+is the version stamp real, does `doctor` pass on a machine with nothing set up,
+does it serve `/api/health` and its own embedded assets straight out of the
+archive, does the one-time token appear and work.
+
+Most of that passed first time. Three failures, two of them mine: `ldd` exits
+non-zero for a static binary, so under `pipefail` the check failed on the very
+evidence it was looking for, and creating the first account returns 201 rather
+than 200. The kind of mistake worth writing down because both made a working
+product look broken, which is the failure mode that wastes the most time.
+
+The third was real. The shipped unit names `%h/.local/bin/vibepanel`, and
+nothing put a binary there: the archive extracts into a directory of its own,
+and the only documented route from "downloaded" to "running" was five manual
+steps written in a comment inside the unit file — which you read after you have
+already found and opened it. For a project whose brief asked for deployment to
+other machines to be quick and easy, the first five minutes were undocumented
+and unscripted.
+
+So there is a `deploy/install.sh` in the archive now. It refuses to run without
+tmux, puts the binary exactly where `ExecStart` looks for it, never overwrites
+an env file the user has edited — that file holds the domain and any ACME
+credentials — and it will not shut up about `loginctl enable-linger`, because a
+systemd user service stops when your last session ends. A panel whose entire
+purpose is outliving your terminal, that dies when you log out, is a panel that
+only appears to work.

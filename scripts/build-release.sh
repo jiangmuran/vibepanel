@@ -38,6 +38,10 @@ for target in linux/amd64 linux/arm64 darwin/arm64; do
 
   mkdir -p "dist/${name}/deploy"
   cp deploy/vibepanel.service deploy/vibepanel.env "dist/${name}/deploy/"
+  # The install script is the difference between "unpack it and it runs" and
+  # five manual steps documented in a comment inside a file you have not opened.
+  cp deploy/install.sh "dist/${name}/deploy/"
+  chmod +x "dist/${name}/deploy/install.sh"
   cp LICENSE README.md "dist/${name}/"
 
   tar -czf "dist/${name}.tar.gz" -C dist "${name}"

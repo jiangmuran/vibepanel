@@ -58,6 +58,23 @@ to press enter on is the feature, not a detail.
 - tmux 3.2 or newer (`apt install tmux`)
 - Nothing else. The release binary is static and self-contained.
 
+## Install
+
+From a release archive, on any machine with tmux:
+
+```sh
+tar -xzf vibepanel_<version>_linux_amd64.tar.gz
+cd vibepanel_<version>_linux_amd64
+./deploy/install.sh --enable          # everything it touches is under $HOME
+loginctl enable-linger "$USER"        # so the panel survives logout
+journalctl --user -u vibepanel -n 30  # the one-time setup token
+```
+
+Nothing needs root: it is a systemd *user* service, because the panel runs your
+agents as you, with your keys and your dotfiles. Lingering is not optional — a
+user service stops when your last session ends, and a panel that dies when you
+log out is a panel that only appears to work.
+
 ## Try it
 
 ```sh

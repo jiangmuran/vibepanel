@@ -34,9 +34,17 @@ render-check: build   ## Drive the real binary with a real browser
 stress-check: build   ## Wide characters, full-screen programs, floods, dropouts
 	cd web && npm run check:stress
 
+.PHONY: restart-check
+restart-check: build  ## Kill the backend and check the sessions outlive it
+	cd web && npm run check:restart
+
 .PHONY: release
 release:              ## Cross-compiled archives in dist/
 	scripts/build-release.sh
+
+.PHONY: release-check
+release-check:        ## Build the archives and run one from a throwaway HOME
+	scripts/release-check.sh
 
 .PHONY: clean
 clean:
