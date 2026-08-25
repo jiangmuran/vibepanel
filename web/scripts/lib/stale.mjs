@@ -25,7 +25,13 @@ import { join } from 'node:path'
  *     unrelated process the socket is skipped, which is the safe direction:
  *     the failure mode is leaving debris, never killing something live.
  */
-const HARNESS_SOCKET = /^vp(render|stress|restart|scale|tls|clip|probe|check|release)-(\d+)$/
+// Every prefix a harness builds, plus retired ones kept so their leftovers
+// stay sweepable. `firstrun` was missing for as long as this existed, so
+// first-run-check was the one check whose interrupted runs nothing could ever
+// clean up — thirteen of its sockets were sitting in /tmp when that was
+// noticed. Pinned by harness.test.ts, because a hand-kept mirror of a list
+// that lives somewhere else is the drift this project keeps paying for.
+const HARNESS_SOCKET = /^vp(firstrun|render|stress|restart|scale|tls|clip|probe|check|release)-(\d+)$/
 
 export function sweepStaleSockets(log = () => {}) {
   const dir = join(process.env.TMUX_TMPDIR || '/tmp', `tmux-${process.getuid()}`)

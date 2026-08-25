@@ -8699,3 +8699,50 @@ adding a required field to `PanelState` fails the build in `socket.ts:298` and
 to `stateResponse` and forgotten in `wire.ts` used to be silent in all three
 places at once. Note the limit: an *optional* TS field is not caught by tsc, so
 the Go test is the only thing standing there.
+
+### The scratch terminals really were being orphaned
+
+Recorded earlier as a prediction, from reading the CLI and the HTTP handler
+against each other in a sitting where neither could be run. Confirmed: kill a
+session that has two scratch terminals with `vibepanel session kill`, and both
+of their tmux sessions are still there afterwards, while their rows cascade
+away with the parent's. The panel then reports them at every startup without
+saying who made them.
+
+Fixed by pulling the teardown into `killSessionTree` — which is where the test
+can reach it — rather than adding four lines to a switch. The extraction is the
+point: the comment beside the bug asked for "the test that would have caught
+the two paths drifting apart", and a test that can only reach one of them
+would not have.
+
+### A sweeper whose allowlist had drifted from what it sweeps
+
+`sweepStaleSockets` kills tmux servers left by harness runs that were SIGKILLed
+before their cleanup could run. It decides what is safe to touch from the socket
+name, against a hand-written list of prefixes:
+
+```
+vp(render|stress|restart|scale|tls|clip|probe|check|release)-<pid>
+```
+
+Seven harnesses build socket names. `vpfirstrun` is not in that list and never
+was, so first-run-check is the one check whose interrupted runs nothing could
+ever clean up. Thirteen of its sockets were in `/tmp` when this was noticed —
+all dead files, which is the lucky version; the sweeper exists because one
+interrupted run was found six hours later still holding a live `htop`.
+
+Three of the list's entries — `clip`, `probe`, `check` — belong to harnesses
+that no longer exist. Left in place: dropping one strands whatever it made.
+
+The fix is a word. The guard is the point: `harness.test.ts` reads the socket
+names out of the harnesses and asserts each is sweepable, and refuses to pass
+if it finds fewer than six — a reader that silently stops matching would
+otherwise be a test that passes by finding nothing, which is the failure this
+project has hit more than once.
+
+Not part of the repository, but worth writing down: the machine this was found
+on had 245 stale socket files and three live tmux servers, one still attached
+to a session created hours earlier. Almost all of it is debris from one-off
+probe scripts written during development, which use ad-hoc socket names no
+sweeper knows about. The lesson for the next probe is to name its socket like a
+harness does.
