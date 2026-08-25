@@ -5356,3 +5356,54 @@ have changed that measurement by a microsecond.
 Timing something that has more than one supplier tells you about the fastest
 one. The second probe measured what a person actually sees — a rename made in
 one window arriving in another — and that has exactly one path.
+
+## A phone showing four-pixel text
+
+A passive viewer keeps the owner's grid and scales it with a CSS transform,
+which is the design and is right: the alternative is reflowing a running TUI
+under someone else's hands. The scale was `min(fitWidth, fitHeight, 1)`. Capped
+above, and nothing below.
+
+A phone, 390 wide, watching a session a 1920 desktop owned:
+
+```
+scale 0.289, font 13px -> 3.76px on screen
+```
+
+Under four pixels is not small text, it is a grey smear with no glyphs in it.
+And the screenshot showed something the number alone did not: the entire 44-row
+grid sat in the top one per cent of the display, with more than a thousand
+vertical pixels empty underneath it. Width was the only binding constraint, and
+nothing was using the height at all.
+
+So the panel was unusable for the thing it exists to do — read an agent's
+question from a phone — while wasting the space that would have made it
+readable.
+
+There is an escape: the "take control" pill is present, correctly sized at
+154x44, and tapping it gives the phone the grid. It also reflows the desktop
+user's terminal to 45 columns, which the button's own tooltip warns about. An
+escape hatch whose cost is somebody else's running TUI is not a substitute for
+rendering something legible in the first place.
+
+The floor is one line — never shrink below nine pixels of font — and the width
+that then does not fit is panned to. `overflow` is switched on only when the
+floor actually bit, because a box left scrollable when everything fits invents
+a scrollbar and a way to push the terminal off the side of its own container.
+
+```
+scale 0.692, font 13px -> 9px on screen, 42% of the width visible at a time
+```
+
+Nine pixels is not comfortable. It is letters, and the question stops being "is
+there anything there".
+
+Panning does not disturb touch selection, which was the thing worth checking
+before changing this: `cellFor` maps a touch through
+`rows.getBoundingClientRect()`, and a bounding rect is already in viewport
+coordinates with scrolling and transforms applied.
+
+The harness check measures at phone width rather than at the second viewer's
+520px, because 520 lands at 7.73px — it would have caught the regression, by
+0.27 of a pixel. At 390 the same mutation reports 5.8px against a threshold of
+8, which is a check with an opinion rather than a coincidence.

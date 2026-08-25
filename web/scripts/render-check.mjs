@@ -584,6 +584,48 @@ try {
     await sleep(250)
   }
   if (!synced) note('FAIL', 'sync', 'the second viewer never saw output typed in the first')
+
+  // A passive viewer scales the owner's grid down to fit. It must not scale it
+  // down past the point where there is text on the screen.
+  //
+  // Measured on a phone watching a session a 1920 desktop owned: scale 0.29, a
+  // 13px font rendered at under four pixels, the whole grid squeezed into the
+  // top one per cent of the display with a thousand empty pixels underneath —
+  // because width was the only binding constraint and nothing used the height.
+  // That is not "displayed smaller", and the panel's reason to exist is being
+  // able to read an agent's question from a phone.
+  // Measured at phone width, which is where the floor actually bites and where
+  // somebody actually reads this. page2 is already the passive viewer; shrink
+  // it for the measurement and put it back.
+  const viewer2Size = page2.viewportSize()
+  await page2.setViewportSize({ width: 390, height: 844 })
+  await sleep(1500)
+  const legibility = await page2.evaluate(() => {
+    const screen = document.querySelector('.xterm-screen')
+    if (!screen) return null
+    let el = screen
+    let scale = 1
+    while (el && el !== document.body) {
+      const t = getComputedStyle(el).transform
+      if (t && t !== 'none') { scale = Number(/matrix\(([^,]+)/.exec(t)?.[1] ?? 1); break }
+      el = el.parentElement
+    }
+    const rows = document.querySelector('.xterm-rows')
+    const font = Number(getComputedStyle(rows ?? screen).fontSize.replace('px', ''))
+    return { scale: Number(scale.toFixed(3)), font, effective: Number((font * scale).toFixed(2)) }
+  })
+  if (!legibility) {
+    note('FAIL', 'arbitration', 'the passive viewer has no terminal to measure')
+  } else if (legibility.effective < 8) {
+    note('FAIL', 'arbitration',
+      `the passive viewer renders text at ${legibility.effective}px ` +
+      `(${legibility.font}px scaled by ${legibility.scale}); below about 8px there are no glyphs left`)
+  }
+
+  await page2.screenshot({ path: join(SHOTS, 'viewer2-phone.png') })
+  await page2.setViewportSize(viewer2Size)
+  await sleep(1000)
+
   await page2.screenshot({ path: join(SHOTS, 'viewer2-narrow.png') })
 
   // The converse. A viewer the same size as the owner sees an identical

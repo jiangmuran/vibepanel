@@ -9,6 +9,16 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import type { PanelSocket } from '../protocol/socket'
 import { terminalTheme } from './theme'
 
+/**
+ * The smallest a passive viewer is allowed to shrink the text to.
+ *
+ * Nine pixels is not comfortable, but it is still letters. Below that the
+ * question stops being "can I read this" and becomes "is there anything
+ * there", and a phone looking at a desktop-sized grid was answering the
+ * second one.
+ */
+const MIN_LEGIBLE_FONT_PX = 9
+
 interface Props {
   socket: PanelSocket
   sessionId: string
@@ -138,6 +148,8 @@ export function TerminalView({
     // already been answered. Letting it through types the reply at whatever
     // prompt the session is sitting at.
     let replaying = false
+    // Set when the stream restarts, cleared by the snapshot that follows.
+    let replaceOnNextReplay = false
 
     const dataSub = term.onData((data) => {
       if (replaying) return
@@ -153,15 +165,35 @@ export function TerminalView({
     })
 
     socket.subscribe(sessionId, term.cols, term.rows, {
+      // The subscription restarted, so the snapshot that follows is the whole
+      // buffer again rather than a continuation. Appending it leaves the
+      // session's history in the browser two copies deep — after every
+      // reconnect, and after the server cuts a viewer off for falling behind.
+      //
+      // Armed rather than acted on: if no snapshot follows (an empty ring
+      // buffer on a server that has just started), clearing here would blank a
+      // terminal that still had something worth reading in it.
+      onReset: () => {
+        replaceOnNextReplay = true
+      },
       onData: (bytes, replay) => {
         if (!replay) {
           term.write(bytes)
           return
         }
         // xterm generates its responses synchronously while parsing, so the
-        // flag has to span the whole write and is cleared from the parse
+        // flag has to span the whole write — and the reset, which restores
+        // modes the session never asked about — and is cleared from the parse
         // callback rather than on the next line.
         replaying = true
+        if (replaceOnNextReplay) {
+          replaceOnNextReplay = false
+          // reset() rather than clear(): the snapshot may enter the alternate
+          // screen or set modes of its own, and it has to be parsed against a
+          // terminal in a known state rather than whatever the previous stream
+          // left behind.
+          term.reset()
+        }
         term.write(bytes, () => {
           replaying = false
         })
@@ -239,6 +271,7 @@ export function TerminalView({
 
       if (controllingRef.current) {
         // We own the grid: fit to the container and publish the result.
+        wrap.style.overflow = ''
         host.style.transform = ''
         host.style.width = '100%'
         host.style.height = '100%'
@@ -274,7 +307,25 @@ export function TerminalView({
       host.style.height = 'max-content'
       const natural = host.getBoundingClientRect()
       if (natural.width === 0 || natural.height === 0) return
-      const scale = Math.min(wrap.clientWidth / natural.width, wrap.clientHeight / natural.height, 1)
+      const fit = Math.min(wrap.clientWidth / natural.width, wrap.clientHeight / natural.height, 1)
+
+      // Scaling to fit is right until the text stops being text.
+      //
+      // Measured on a phone (390 wide) watching a session a 1920 desktop
+      // owned: scale 0.29, a 13px font rendered at under four pixels — a grey
+      // smear with no glyphs in it — while more than a thousand vertical
+      // pixels underneath sat empty, because width was the only binding
+      // constraint. The whole grid was in the top one per cent of the screen
+      // and unreadable, which is not "displayed smaller", it is gone.
+      //
+      // So the floor buys legibility with the space that was being wasted
+      // anyway, and the width that no longer fits is panned to.
+      const legible = Math.min(1, MIN_LEGIBLE_FONT_PX / (t.options.fontSize ?? 13))
+      const scale = Math.max(fit, legible)
+      // Only when the floor actually bit. Leaving the box scrollable when
+      // everything fits invents a scrollbar and a way to push the terminal off
+      // the side of its own container.
+      wrap.style.overflow = scale > fit ? 'auto' : ''
       host.style.transformOrigin = 'top left'
       host.style.transform = `scale(${scale})`
     }
