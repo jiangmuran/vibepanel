@@ -5904,3 +5904,69 @@ An application that never asked for bracketed paste still receives three lines,
 because there is no way to tell it otherwise — and the test asserts that it is
 sent no markers, since garbage in the middle of the message is worse than the
 problem. The fix helps exactly the applications this panel exists to drive.
+
+## The panel told every link where it lived
+
+The terminal loads `WebLinksAddon`, so any URL an agent prints becomes
+clickable. That is a good affordance and it means the panel navigates to
+addresses chosen by whatever an agent read, echoed, or was told to print.
+
+A listener standing in for somewhere-else-on-the-internet, an agent printing
+`See http://…/docs for details`, and a click:
+
+```
+requests the third party saw: [{"url":"/docs","referer":"http://127.0.0.1:38475/"}]
+```
+
+The panel's exact origin. In the deployment this project is for, that is
+`https://direct.jmrhomecloud.com:8443/` — handed to an arbitrary host, on a
+click, by a panel whose entire exposure story is a non-standard port and a
+password.
+
+There were no security response headers at all:
+
+```
+referrer-policy              (absent)
+x-frame-options              (absent)
+content-security-policy      (absent)
+x-content-type-options       (absent)
+cross-origin-opener-policy   (absent)
+```
+
+`Referrer-Policy: no-referrer` closes it, and the same listener afterwards sees
+`referer: null`.
+
+### The thing next to it that was already right
+
+`window.opener` looked like the same bug — a page opened by a click on
+agent-controlled text, able to navigate the tab it came from. It is not. The
+addon's default handler opens a blank window, sets `opener` to null and only
+then navigates:
+
+```js
+const n = window.open()
+if (n) { try { n.opener = null } catch {} ; n.location.href = t }
+```
+
+Worth writing down, because it is the sort of thing that gets "fixed" twice —
+and because the referrer leak survives that handler exactly: a navigation from
+`about:blank` inherits the opener's referrer, which is why the leak was there
+despite the opener being cleared.
+
+### The other three headers
+
+Added in the same pass because they cost nothing and each one is a separate
+errand otherwise: `nosniff`, `frame-ancestors 'none'`, and
+`Cross-Origin-Opener-Policy: same-origin`.
+
+`frame-ancestors` rather than a real Content-Security-Policy. A full policy
+would have to survive the inline styles xterm and Tailwind generate at runtime,
+and a CSP that breaks the terminal is a CSP somebody turns off within a day.
+This one directive restricts nothing the panel does.
+
+The session cookie was already `HttpOnly; SameSite=Strict`, checked while
+measuring, which is why framing was a hardening rather than a hole.
+
+`TestSecurityHeaders` asserts all four on the API, on the page, and on a
+refused request — an attacker's browser is still a browser. Removing the
+middleware fails it seven times.

@@ -58,10 +58,32 @@ type Server struct {
 	snapMu       sync.Mutex
 	lastSnapshot []byte
 
+	// hookInstalled caches whether the reporter is wired into the agent's
+	// configuration.
+	//
+	// The state snapshot needs the answer, and snapshots are built on every
+	// broadcast — a session changing state, a note being saved. Asking properly
+	// means reading and parsing a file in the user's home directory, so asking
+	// every time meant doing that several times a second with a couple of dozen
+	// busy sessions. The TTL covers someone editing that file by hand;
+	// installing or removing through the panel invalidates it immediately.
+	hookMu        sync.Mutex
+	hookInstalled bool
+	hookCheckedAt time.Time
+
 	// outputSeen debounces last_output_at writes. The pump can call into here
 	// hundreds of times a second; the column is read by humans.
 	outMu      sync.Mutex
 	outputSeen map[string]time.Time
+	// CertExpiry, if set, reports when the certificate now being served stops
+	// being valid.
+	//
+	// Surfaced on the settings page because the failure it guards is silent by
+	// nature: a certificate nobody renewed does not announce itself, it simply
+	// stops working one morning. The panel logs a warning as it approaches, but
+	// a log line on a machine nobody reads is not where this should first be
+	// noticed.
+	CertExpiry func() time.Time
 }
 
 // Routes builds the router.
@@ -69,12 +91,44 @@ type Server struct {
 // Order matters: /api and /ws are registered before the catch-all that serves
 // the single-page app, so an unknown API path returns a JSON 404 instead of
 // quietly handing the caller an HTML document.
+// securityHeaders sets the four that cost nothing and matter for a terminal
+// that is deliberately on the public internet.
+//
+// Referrer-Policy is the one with teeth. The terminal makes every URL an agent
+// prints into a clickable link, and clicking one used to send
+// `Referer: https://<the panel>/` to whatever host that URL named — an address
+// chosen by whatever the agent read, echoed, or was told to print. Measured
+// against a listener standing in for "somewhere else on the internet": it
+// received `referer: http://127.0.0.1:38475/`, the panel's exact origin. For a
+// panel whose exposure story is a non-standard port and a password, handing
+// the address to arbitrary third parties on a link click is a real weakening.
+//
+// Not the opener: the web-links addon opens a blank window, nulls `opener` and
+// then navigates, so reverse tabnabbing was already handled. Worth stating
+// because it looks like the same bug and is not.
+//
+// frame-ancestors rather than a full CSP. A real content policy would have to
+// account for the inline styles xterm and Tailwind generate, and a CSP that
+// breaks the terminal would be turned off within a day. This one directive
+// restricts nothing the panel does.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Content-Security-Policy", "frame-ancestors 'none'")
+		h.Set("Cross-Origin-Opener-Policy", "same-origin")
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) Routes() http.Handler {
 	if s.Challenges == nil {
 		s.Challenges = newChallengeStore()
 	}
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
+	r.Use(securityHeaders)
 	// Deliberately NOT middleware.RealIP.
 	//
 	// It overwrites r.RemoteAddr from X-Forwarded-For or X-Real-IP with no
@@ -129,10 +183,17 @@ func (s *Server) Routes() http.Handler {
 	// The WebSocket is the terminal itself; it needs the same session as
 	// everything else.
 	r.With(s.RequireAuth).Handle("/ws", &ws.Handler{
-		Manager: s.Manager,
-		Resolve: resolver{db: s.DB},
-		Hub:     s.Hub,
-		Log:     s.Log,
+		Manager:  s.Manager,
+		Resolve:  resolver{db: s.DB},
+		Hub:      s.Hub,
+		Log:      s.Log,
+		Snapshot: s.snapshot,
+		// A socket is authorised once, at the handshake, and then lives for
+		// hours. Without this, signing out, a session expiring, an
+		// administrator revoking one, or changing the password left the
+		// terminals those browsers already had open still streaming — and
+		// still accepting keystrokes.
+		StillAuthorized: s.stillAuthorized,
 	})
 
 	r.Handle("/*", webui.Handler(s.Cfg.StaticDir))
@@ -212,7 +273,7 @@ func (s *Server) notifyPanel(projectID, kind string) {
 	// "t" is the discriminator every other control message uses; "type" here
 	// would be silently ignored by the client's switch.
 	payload, err := json.Marshal(map[string]string{
-		"t":         "panel",
+		"t":         ws.MsgPanel,
 		"projectId": projectID,
 		"kind":      kind,
 	})
@@ -246,25 +307,11 @@ func (s *Server) notifyState() {
 // HookToken returns the shared secret that authenticates state reports,
 // generating it on first use.
 func (s *Server) HookToken(ctx context.Context) (string, error) {
+	// The memo stays here — every hook report checks the token, so this is on
+	// a hot path — but the value itself is the store's, because the admin CLI
+	// needs the same one when it creates a session.
 	s.tokenOnce.Do(func() {
-		existing, err := s.DB.GetSetting(ctx, "hook_token", "")
-		if err != nil {
-			s.tokenError = err
-			return
-		}
-		if existing != "" {
-			s.hookToken = existing
-			return
-		}
-		// 32 hex characters from crypto/rand. It travels in an Authorization
-		// header on loopback and is written into the user's agent config, so
-		// it wants to be unguessable but does not need to be long.
-		token := id.New() + id.New()
-		if err := s.DB.SetSetting(ctx, "hook_token", token); err != nil {
-			s.tokenError = err
-			return
-		}
-		s.hookToken = token
+		s.hookToken, s.tokenError = s.DB.HookToken(ctx)
 	})
 	return s.hookToken, s.tokenError
 }
@@ -444,32 +491,43 @@ func (s *Server) stateIsGuessed(sessions []store.Session) bool {
 			return false
 		}
 	}
-	script, err := s.scriptPath()
-	if err != nil {
-		return true
-	}
-	st, err := hooks.Inspect(script)
-	if err != nil {
-		return true
-	}
-	return !st.Installed
+	return !s.hooksAreInstalled()
 }
 
-// loopbackURL is where a hook running on this machine should POST.
+// hookCheckTTL bounds how stale the cached answer may be. Short enough that
+// editing the agent's configuration by hand is noticed while you are still
+// looking at the panel, long enough that a burst of state changes costs one
+// read rather than one per change.
+const hookCheckTTL = 10 * time.Second
+
+// hooksAreInstalled reports whether the reporter is wired into the agent's
+// configuration, from cache when it can.
 //
-// Always loopback, never the public URL: the hook runs beside the panel, and
-// sending its reports out to the internet and back would put a secret on the
-// wire for no reason.
-func (s *Server) loopbackURL() string {
-	port := s.Cfg.Port()
-	if port == 0 {
-		port = 8443
+// Errors count as "not installed", which is the same answer the uncached
+// version gave: unreadable configuration and absent configuration are
+// indistinguishable from here, and both mean the panel is guessing.
+func (s *Server) hooksAreInstalled() bool {
+	s.hookMu.Lock()
+	defer s.hookMu.Unlock()
+	if !s.hookCheckedAt.IsZero() && time.Since(s.hookCheckedAt) < hookCheckTTL {
+		return s.hookInstalled
 	}
-	scheme := "http"
-	if s.Cfg.TLSMode != config.TLSOff {
-		scheme = "https"
+	installed := false
+	if script, err := s.scriptPath(); err == nil {
+		if st, ierr := hooks.Inspect(script); ierr == nil {
+			installed = st.Installed
+		}
 	}
-	return fmt.Sprintf("%s://127.0.0.1:%d", scheme, port)
+	s.hookInstalled, s.hookCheckedAt = installed, time.Now()
+	return installed
+}
+
+// forgetHookStatus drops the cached answer, so a change made through the panel
+// shows up in the next snapshot rather than up to a TTL later.
+func (s *Server) forgetHookStatus() {
+	s.hookMu.Lock()
+	s.hookCheckedAt = time.Time{}
+	s.hookMu.Unlock()
 }
 
 func orderMode(manual bool) string {
@@ -613,6 +671,13 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, sess := range sessions {
 		s.Manager.Detach(sess.ID)
+		// Same cleanup deleting a single session does. Without it the detector
+		// keeps a tracker per session for the life of the process — small, but
+		// it is the kind of asymmetry between two paths that doing the same
+		// thing eventually turns into a real bug.
+		if s.Detector != nil {
+			s.Detector.Forget(sess.ID)
+		}
 		if err := s.Tmux.Kill(ctx, sess.TmuxName); err != nil {
 			writeErr(w, http.StatusInternalServerError, "kill "+sess.TmuxName+": "+err.Error())
 			return
@@ -685,16 +750,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	sid := id.New()
 	tmuxName := id.TmuxName(sid)
 
-	env := []string{
-		"VIBEPANEL_SESSION_ID=" + sid,
-		"VIBEPANEL_PROJECT_ID=" + p.ID,
-		"VIBEPANEL_URL=" + s.loopbackURL(),
-	}
-	if token, terr := s.HookToken(ctx); terr == nil {
-		env = append(env, "VIBEPANEL_TOKEN="+token)
-	} else {
-		s.Log.Warn("hook token unavailable; sessions will fall back to the heuristic", "err", terr)
-	}
+	env := s.hookEnv(ctx, sid, p.ID)
 
 	err = s.Tmux.Create(ctx, tmux.CreateOptions{
 		Name:    tmuxName,
@@ -822,6 +878,20 @@ func (s *Server) handlePatchSession(w http.ResponseWriter, r *http.Request) {
 // viewer watching at the time keeps the lost screen in the browser's own
 // scrollback; a viewer who reloads afterwards does not, because replay is
 // rebuilt from tmux's history.
+// hookEnv builds the variables a hook inside a session needs to report back.
+//
+// Shared by creating a session and by restarting one whose tmux session has
+// disappeared, because the second builds a session too and a copy of this that
+// drifted would produce sessions that silently cannot report their state.
+func (s *Server) hookEnv(ctx context.Context, sessionID, projectID string) []string {
+	token, terr := s.HookToken(ctx)
+	if terr != nil {
+		s.Log.Warn("hook token unavailable; sessions will fall back to the heuristic", "err", terr)
+		token = ""
+	}
+	return hooks.SessionEnv(sessionID, projectID, s.Cfg.LoopbackURL(), token)
+}
+
 func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	sid := chi.URLParam(r, "id")
@@ -830,9 +900,47 @@ func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
-	if err := s.Tmux.Respawn(ctx, rec.TmuxName); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+	// Respawn needs a session to respawn into. If the tmux session is gone —
+	// killed from a shell, lost with the server, gone in a reboot — there is
+	// nothing to restart and this used to answer 500, so the button offered on
+	// exactly those rows was the one button that could not work.
+	//
+	// Build a new tmux session under the same name instead. The row keeps its
+	// id, its title, its place in the project and anything written about it;
+	// only the process is new, which is what "restart" means here.
+	//
+	// A login shell rather than the recorded command: `command` holds
+	// #{pane_current_command}, the name of whatever was running last — "node"
+	// for an agent, "bash" for a shell that had been used — and starting that
+	// as an argv would run something the user never asked for. A shell in the
+	// right directory is honest and always works.
+	exists, cerr := s.Tmux.Has(ctx, rec.TmuxName)
+	if cerr != nil {
+		writeErr(w, http.StatusInternalServerError, cerr.Error())
 		return
+	}
+	if exists {
+		if err := s.Tmux.Respawn(ctx, rec.TmuxName); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	} else {
+		dir := rec.CWD
+		if dir == "" {
+			if p, perr := s.DB.GetProject(ctx, rec.ProjectID); perr == nil {
+				dir = p.Path
+			}
+		}
+		if err := s.Tmux.Create(ctx, tmux.CreateOptions{
+			Name:   rec.TmuxName,
+			Dir:    dir,
+			Env:    s.hookEnv(ctx, rec.ID, rec.ProjectID),
+			Width:  rec.Cols,
+			Height: rec.Rows,
+		}); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	// Clear the flag here rather than waiting for the poller: the button the
 	// user just pressed has to visibly do something, and a tick of latency
@@ -971,9 +1079,9 @@ func (s *Server) Reconcile(ctx context.Context) error {
 		seen[row.TmuxName] = true
 		info, alive := byName[row.TmuxName]
 		if !alive {
-			// The tmux session is gone. The row is kept rather than deleted so
-			// the user can see what happened and dismiss it themselves; losing
-			// a session silently is worse than showing a dead one.
+			if err := s.markVanished(ctx, row); err != nil {
+				s.Log.Warn("reconcile vanished", "session", row.ID, "err", err)
+			}
 			continue
 		}
 		if err := s.DB.UpdateSessionRuntime(ctx, row.ID, info.Path, info.Command); err != nil {
@@ -1050,14 +1158,49 @@ func (s *Server) Poll(ctx context.Context) {
 	}
 }
 
+// markVanished records that a session's tmux session is no longer there.
+//
+// The row is kept rather than deleted: the user should see what happened and
+// dismiss it themselves, because losing a session silently is worse than
+// showing a dead one. What is not kept is the state, which used to be frozen
+// at whatever it last was — so a session that had been waiting for a human
+// went on showing an orange triangle for an agent that no longer exists. The
+// panel's one job is answering "which of these needs me", and a permanent
+// wrong answer is worse than no answer.
+//
+// Exited with an unknown status, because that is the truth: nothing observed
+// how it ended. Done as well, or it keeps sorting above everything running.
+//
+// Both the startup reconcile and the poller need this. The poller alone would
+// do it within a second or two, but the second or two is exactly the moment
+// after a reboot when most sessions are gone and the first thing on screen
+// would be a list of triangles asking for attention that nothing needs.
+func (s *Server) markVanished(ctx context.Context, row store.Session) error {
+	if row.Exited && row.ExitStatus == store.ExitStatusVanished {
+		return nil
+	}
+	if err := s.DB.SetSessionExit(ctx, row.ID, true, store.ExitStatusVanished); err != nil {
+		return err
+	}
+	if row.State == session.StateDone {
+		return nil
+	}
+	return s.DB.SetSessionState(ctx, row.ID, session.StateDone, session.SourceHeuristic)
+}
+
 func (s *Server) pollOnce(ctx context.Context) error {
 	infos, err := s.Tmux.List(ctx)
 	if err != nil {
 		return err
 	}
-	if len(infos) == 0 {
-		return nil
-	}
+	// No early return when tmux reports nothing.
+	//
+	// It was here to skip building an empty map, and it skipped the whole
+	// reconciliation pass instead — in precisely the state where reconciliation
+	// is the only thing that can help: every session gone. Nothing then pruned
+	// the detector, so a panel that had just lost its tmux server kept the
+	// history of sessions that no longer existed. The loop below does nothing
+	// on an empty list anyway; the work above it is what has to run.
 	byName := make(map[string]tmux.Info, len(infos))
 	for _, i := range infos {
 		byName[i.Name] = i
@@ -1066,10 +1209,20 @@ func (s *Server) pollOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if s.Detector != nil {
+		ids := make([]string, 0, len(rows))
+		for _, row := range rows {
+			ids = append(ids, row.ID)
+		}
+		s.Detector.Retain(ids)
+	}
 	now := time.Now()
 	for _, row := range rows {
 		info, alive := byName[row.TmuxName]
 		if !alive {
+			if err := s.markVanished(ctx, row); err != nil {
+				return err
+			}
 			continue
 		}
 
@@ -1152,13 +1305,19 @@ func deriveTitle(info tmux.Info, isScratch bool) string {
 	return info.Command
 }
 
-func isShell(cmd string) bool {
-	switch cmd {
-	case "bash", "sh", "zsh", "fish", "dash", "ksh", "tmux":
-		return true
-	}
-	return false
-}
+// isShell defers to the session package rather than keeping a second list.
+//
+// There were two, and they had already diverged: this one was missing csh,
+// tcsh and the empty string. A session running csh was therefore a shell to
+// the state machine — quiet means done rather than working — and not a shell
+// to the namer, so it was labelled "csh" instead of falling back to the
+// directory it sits in. Two lists that have to agree, in two packages, with
+// nothing checking.
+//
+// session owns the judgement: its version says so in as many words, and the
+// state machine is where being a shell has consequences. Naming just wants the
+// same answer.
+func isShell(cmd string) bool { return session.IsShellCommand(cmd) }
 
 var cachedHostname = func() string {
 	h, err := os.Hostname()
