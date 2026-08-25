@@ -1768,6 +1768,61 @@ try {
       }
     }
 
+    // A session whose title is whatever the agent printed.
+    //
+    // The title comes from OSC 0/2, so its length is decided by the pane. It
+    // is bounded now — 200,000 characters used to reach the database and take
+    // the state snapshot from 705 bytes to 200,710, broadcast to every viewer
+    // — but the bound is 256, and 256 characters in a 260px sidebar is still a
+    // layout question that only a browser can answer.
+    {
+      const second = (await (await authed('/api/state')).json()).projects
+        .find((x) => x.name === 'zzz-second')
+      if (second) {
+        await authed('/api/sessions', {
+          method: 'POST',
+          body: JSON.stringify({
+            projectId: second.id,
+            command: ['sh', '-c',
+              'printf "\\033]2;"; head -c 5000 /dev/zero | tr "\\0" A; printf "\\007"; exec sleep 300'],
+          }),
+        })
+        // The poller derives titles on its own schedule; this is two ticks.
+        await sleep(5000)
+        await page.setViewportSize({ width: 1440, height: 900 })
+        await sleep(600)
+
+        const overflowing = await page.evaluate(() => {
+          const doc = document.documentElement
+          const rows = [...document.querySelectorAll('[data-testid="session-row"]')]
+          const wide = rows
+            .filter((el) => el.scrollWidth > el.clientWidth + 1)
+            .map((el) => ({ text: (el.textContent ?? '').slice(0, 30), scroll: el.scrollWidth, client: el.clientWidth }))
+          return { page: doc.scrollWidth - doc.clientWidth, wide }
+        })
+        if (overflowing.page > 0) {
+          note('FAIL', 'title', `a long session title pushed the page ${overflowing.page}px wide`)
+        } else {
+          note('PASS', 'title', 'a title the pane chose does not widen the page')
+        }
+        if (overflowing.wide.length > 0) {
+          note('FAIL', 'title',
+            `${overflowing.wide.length} sidebar rows overflow: ${JSON.stringify(overflowing.wide[0])}`)
+        }
+        // Bounded in the data as well, not only clipped by CSS: what CSS hides
+        // is still in every snapshot pushed to every browser.
+        const stored = ((await (await authed('/api/state')).json()).sessions ?? [])
+          .filter((x) => x.projectId === second.id)
+          .map((x) => (x.title ?? '').length)
+        const longest = Math.max(0, ...stored)
+        if (longest > 300) {
+          note('FAIL', 'title', `a title of ${longest} characters reached the snapshot`)
+        } else {
+          note('PASS', 'title', `the longest stored title is ${longest} characters`)
+        }
+      }
+    }
+
     // Removing a project from the panel.
     //
     // You add a project by typing a path into a prompt, and a path that is

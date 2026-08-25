@@ -3,7 +3,11 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
+	"unicode/utf8"
+
+	"github.com/jiangmuran/vibepanel/internal/session"
 )
 
 func TestTrimAuditLogKeepsTheNewest(t *testing.T) {
@@ -53,5 +57,35 @@ func TestTrimAuditLogKeepsTheNewest(t *testing.T) {
 	}
 	if n, err := db.TrimAuditLog(ctx, 0); err != nil || n != 0 {
 		t.Errorf("trimming to zero: %d rows, %v", n, err)
+	}
+}
+
+func TestSessionTitleIsBoundedWhicheverWayItArrives(t *testing.T) {
+	// The automatic title is whatever the pane put in OSC 0/2, which is
+	// whatever an agent printed. Measured before this was bounded: a
+	// 200,000-character title reached the row intact and took the state
+	// snapshot — rebuilt every two seconds and broadcast to every viewer that
+	// is connected — from 705 bytes to 200,710.
+	ctx := context.Background()
+	db := openTest(t)
+	if _, err := db.CreateProject(ctx, "p", "P", "/tmp"); err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if _, err := db.CreateSession(ctx, Session{ID: "s", ProjectID: "p", TmuxName: "vp_s"}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	long := strings.Repeat("A", 200000)
+	for _, src := range []TitleSource{TitleAuto, TitleManual} {
+		if err := db.SetSessionTitle(ctx, "s", long, src); err != nil {
+			t.Fatalf("SetSessionTitle %v: %v", src, err)
+		}
+		got, err := db.GetSession(ctx, "s")
+		if err != nil {
+			t.Fatalf("GetSession: %v", err)
+		}
+		if n := utf8.RuneCountInString(got.Title); n > session.MaxTitleRunes {
+			t.Errorf("%v title stored %d runes, cap is %d", src, n, session.MaxTitleRunes)
+		}
 	}
 }

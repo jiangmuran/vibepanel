@@ -254,6 +254,11 @@ func (d *DB) SetSessionState(ctx context.Context, id string, st session.State, s
 // having a title you chose silently replaced by whatever the shell last set is
 // exactly the behaviour this project exists to fix.
 func (d *DB) SetSessionTitle(ctx context.Context, id, title string, src TitleSource) error {
+	// Both sources are bounded. The automatic one is whatever the pane put in
+	// its title, which is whatever an agent printed; the manual one is a text
+	// field, and a field with no maximum is one somebody eventually pastes a
+	// file into.
+	title = session.TruncateTitle(title)
 	if src == TitleAuto {
 		_, err := d.sql.ExecContext(ctx,
 			`UPDATE sessions SET title = ? WHERE id = ? AND title_source = 'auto'`, title, id)

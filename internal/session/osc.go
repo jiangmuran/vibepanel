@@ -133,7 +133,10 @@ func (s *oscScanner) handleOSC(payload string) {
 		// Window and icon title. This is how a session gets named without the
 		// user typing anything.
 		if utf8.ValidString(rest) {
-			s.titles = append(s.titles, rest)
+			// Bounded here as well as in the store, because this copy
+			// does not go through it: it is broadcast to every viewer
+			// as a title event the moment it arrives.
+			s.titles = append(s.titles, TruncateTitle(rest))
 		}
 	case "52":
 		// OSC 52: <targets>;<base64>. A payload of "?" is a read request, not

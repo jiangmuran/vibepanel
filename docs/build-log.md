@@ -7379,3 +7379,57 @@ problem; the rows were.
 The gate buckets per event as well as per source. One address can produce both
 kinds of noise in the same minute, and a shared window would have recorded
 whichever arrived first and lost the existence of the other.
+
+## A title is whatever the agent printed
+
+A session's automatic name comes from `#{pane_title}`, which tmux sets from
+`OSC 0` or `OSC 2` — so its length is decided by whatever is running in the
+pane. Nothing bounded it anywhere. Measured against the real binary, a pane
+emitting a 200,000-character title:
+
+```
+pane_title tmux kept:  200001
+title stored in the row: 200000
+state snapshot:  705 bytes -> 200710 bytes
+```
+
+The snapshot is the part that costs. It is rebuilt every two seconds, compared,
+and broadcast to every connected viewer whenever it changed. A couple of dozen
+sessions doing this is megabytes pushed at every browser watching, including a
+phone on mobile data.
+
+None of it needs malice. `cat` a file with an escape sequence in it and this is
+what happens, which is a thing agents do to files they did not write.
+
+Bounded at 256 runes, in `internal/session` because `internal/store` already
+imports it and a second copy of the number is the "two lists that have to
+agree" this codebase keeps finding. Applied in two places: the store, which
+covers both the automatic title and the rename field, and the OSC scanner,
+whose copy does not go through the store — it is broadcast as a title event the
+moment it arrives. Runes rather than bytes, so truncation cannot split a
+character and leave invalid UTF-8 in the row, which renders as nothing.
+
+After: 705 bytes -> 966.
+
+### The browser said it was fine
+
+The render check drives a pane that emits the sequence and looks at the sidebar
+and the page width. With the bound removed and a 5,000-character title in the
+row, that half still passed:
+
+```
+[PASS] title: a title the pane chose does not widen the page
+[FAIL] title: a title of 5000 characters reached the snapshot
+```
+
+CSS clips it, so nothing looks wrong. What CSS hides is still in every snapshot
+pushed to every browser — a check that only looked at the rendering would have
+called this build clean.
+
+### The probe reported a bound that did not exist
+
+The first attempt pasted the escape sequence into the pane with `paste-buffer`,
+where the shell took it as text to run rather than output to render, and
+`pane_title` came back as 13 characters. That reads as "tmux bounds titles",
+which is a reassuring answer and a wrong one. Delivering the sequence from
+inside the pane gave 200,001.
