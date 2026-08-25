@@ -147,6 +147,24 @@ const escapeScanLimit = 128
 // letter ("89abcdef") is indistinguishable from a truncated CSI sequence, and
 // gets trimmed. Accepted — it costs a few characters on the first line of a
 // buffer that has already lost data, and only after an overflow.
+//
+// Known miss, in the other direction: a fragment that starts with the CSI
+// introducer itself. Eviction that lands exactly between ESC and "[" leaves
+// "[31m…", and allParameterBytes rejects "[" (0x5b) as a parameter byte, so
+// nothing is trimmed and the terminal prints "[31m" as text. The other cut
+// points in the same sequence — "31m", "1m" — are handled.
+//
+// Left alone on purpose, because every way of catching it costs more than it
+// saves. Allowing a leading "[" turns "[warn] something" into "arn] something",
+// since "w" is a valid final byte. Requiring a parameter byte after the "["
+// still eats "[2024-01-01] …": "-" and the digits are all parameter bytes and
+// "]" is a final byte, so the whole timestamp goes. Bracketed prefixes are
+// everywhere in agent output; four stray characters on the first line of an
+// already-truncated replay are not.
+//
+// If this is ever revisited, it needs a measurement rather than an argument:
+// how often a real overflow lands on that byte, against how often real output
+// starts with a bracket.
 func trimPartialEscape(b []byte) []byte {
 	limit := min(len(b), escapeScanLimit)
 

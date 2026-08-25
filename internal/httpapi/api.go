@@ -73,6 +73,17 @@ type Server struct {
 
 	// outputSeen debounces last_output_at writes. The pump can call into here
 	// hundreds of times a second; the column is read by humans.
+	//
+	// Nothing ever deletes from it. A session that produced output once leaves
+	// its entry for the life of the process, so the map grows with every
+	// session ever created rather than with the sessions that exist — around a
+	// hundred bytes each, bounded only by how often somebody makes one.
+	//
+	// Estimated rather than measured, and left on that basis: at a hundred
+	// sessions a day it is on the order of three hundred kilobytes a month.
+	// The detector has Retain for exactly this, driven by the poller, and
+	// wiring the same thing here is a few lines — worth doing next to the next
+	// change in this file, where the tests can say whether it is right.
 	outMu      sync.Mutex
 	outputSeen map[string]time.Time
 
@@ -199,6 +210,24 @@ func (s *Server) Routes() http.Handler {
 
 	// The WebSocket is the terminal itself; it needs the same session as
 	// everything else.
+	//
+	// OriginPatterns is deliberately absent, and that is load-bearing rather
+	// than an omission. Left nil, coder/websocket accepts a handshake only when
+	// the Origin host matches the Host — so a page on another site cannot open
+	// this socket with the browser's cookies attached and be handed a writable
+	// terminal. The cookie is SameSite=Strict as well, but the two defend
+	// different things and neither makes the other redundant.
+	//
+	// The obvious way to break it is to add `OriginPatterns: []string{"*"}` to
+	// silence a cross-origin complaint while serving the frontend from a dev
+	// server on another port. Point the dev server's proxy at the panel
+	// instead; a wildcard here hands the terminal to any page the browser
+	// happens to be on.
+	//
+	// Not pinned by a test, which it should be: a handshake carrying a foreign
+	// Origin must be refused. Written down here because the protection is a
+	// library default reached by writing nothing, and nothing about writing
+	// nothing announces itself when the library changes.
 	r.With(s.RequireAuth).Handle("/ws", &ws.Handler{
 		Manager:  s.Manager,
 		Resolve:  resolver{db: s.DB},

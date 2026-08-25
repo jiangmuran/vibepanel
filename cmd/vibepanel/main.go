@@ -605,6 +605,30 @@ func cmdSession(args []string) error {
 		if err != nil {
 			return err
 		}
+		// KNOWN GAP, not fixed here: this kills one tmux session and the HTTP
+		// path kills the scratch terminals under it as well.
+		//
+		// handleDeleteSession lists ListChildSessions first, and says why:
+		// "Children cascade away in the database, but their tmux sessions do
+		// not. Deleting the row first would leave processes nothing in the UI
+		// can reach." That is exactly what this does — the child rows go with
+		// the parent and their panes keep running on the panel's socket with
+		// nothing left pointing at them.
+		//
+		// Established by reading the two paths against each other rather than
+		// by running either, in a sitting where nothing could be run. Whoever
+		// fixes it should do what the handler does, and add the test that
+		// would have caught the two paths drifting apart in the first place —
+		// which is the shape that has cost this project repeatedly.
+		//
+		// It is one step to confirm, and the panel already reports the
+		// symptom. Kill a session that has scratch terminals under it with
+		// this command, then start the panel: Reconcile counts tmux sessions
+		// on our socket with no database row and logs
+		//
+		//   tmux sessions on our socket with no database row count=N
+		//
+		// If that warning does not appear, this comment is wrong and should go.
 		if err := a.tmux.Kill(ctx, s.TmuxName); err != nil {
 			return err
 		}

@@ -78,6 +78,32 @@ func (h spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Reject anything that escapes the root. path.Clean above already collapses
 	// "..", but a disk-backed root deserves the belt as well as the braces:
 	// this handler is one URL away from reading the user's home directory.
+	//
+	// Textual, and that is the limit of it. Symlinks are not resolved here, and
+	// os.DirFS does not resolve them either — its documentation says it only
+	// guarantees the Open calls begin with the prefix, not that the file is
+	// within it, and that it is no substitute for chroot. A symlink inside the
+	// served directory pointing outside is followed, and these assets are
+	// served before authentication because the login page has to load.
+	//
+	// handleFiles states the principle this stops short of: browse.Resolve
+	// refuses anything leaving the root "including through a symlink, which a
+	// textual prefix check would happily follow".
+	//
+	// Left as it is, deliberately. --static-dir is a development flag aimed at
+	// a build directory the operator chose, and vite emits no symlinks; the
+	// project directory, where an agent can create one, is served by browse,
+	// which resolves them.
+	//
+	// When it is changed, the fix is not EvalSymlinks — that fails on paths
+	// which do not exist, and the single-page fallback is the commonest branch
+	// here. os.DirFS's own documentation names the replacement: "Use Root.FS to
+	// obtain a fs.FS that prevents escapes from the tree via symbolic links."
+	// So `os.OpenRoot(staticDir)` and its `.FS()` in place of `os.DirFS`, which
+	// also makes the textual check below redundant rather than merely
+	// insufficient. OpenRoot returns an error and the Root wants closing, so it
+	// is not a one-line swap, and the single-page fallback has to be re-driven
+	// in a browser afterwards.
 	if h.root != "" {
 		abs, err := filepath.Abs(filepath.Join(h.root, filepath.FromSlash(name)))
 		if err != nil || (abs != h.root && !strings.HasPrefix(abs, h.root+string(os.PathSeparator))) {

@@ -48,9 +48,6 @@ const challengeTTL = 3 * time.Minute
 // the cost of an attack becomes flat.
 const maxChallenges = 4096
 
-// errTooManyChallenges is returned when the cap is reached. Password sign-in is
-// unaffected, which is what the handler says: passkeys are an addition, never
-// the only door.
 // challengeStatus keeps a full store from being reported as a panel fault.
 // It is a temporary refusal, and 500 would send whoever is on call looking for
 // a bug that is not there.
@@ -61,6 +58,9 @@ func challengeStatus(err error) int {
 	return http.StatusInternalServerError
 }
 
+// errTooManyChallenges is returned when the cap is reached. Password sign-in is
+// unaffected, which is what the handler says: passkeys are an addition, never
+// the only door.
 var errTooManyChallenges = errors.New(
 	"too many sign-ins in progress; use your password, or try again in a moment")
 
