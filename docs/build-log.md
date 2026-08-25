@@ -8142,3 +8142,47 @@ fails it, naming the package.
 That is the fifth instrument in this session to answer a question next to the
 one being asked, and the second where the tell was a check that passed while
 the thing it checked was absent.
+
+## Two panels, one data directory
+
+Starting a second `vibepanel serve` on the same data directory and the same
+tmux socket worked. Measured: one session, one panel, one attached tmux client;
+the second panel started and there were two, with nothing logged by either.
+
+Two clients on a session is not mainly a memory problem. The panel is meant to
+be the *only* tmux client — that is what makes one authoritative grid and one
+place that decides its size possible, and the mobile story is built on it. With
+two panels the arbitration means nothing.
+
+And each keeps its detector in memory. A bell one of them saw is invisible to
+the other, so the "waiting" it set is overwritten by the other's "working" on
+the next tick — the two findings from earlier in this session, reintroduced by
+an operator mistake rather than by a bug.
+
+It is an easy mistake: the unit is running and you run `vibepanel serve` to try
+something.
+
+`flock` on a file in the data directory, taken by `serve` only — the admin
+subcommands read and write briefly and have to keep working while the panel is
+up. A lock file rather than a pid check, because a pid in a file is a guess
+about a process that may have died and been replaced, and the kernel releases
+an flock however the holder exits. Verified: SIGKILL the holder and a
+replacement starts immediately and finds its sessions still in tmux.
+
+`doctor` reports the holder rather than failing over it — a running panel is
+the normal state, and `doctor` is often run because somebody is not sure
+whether it is up.
+
+### The test seeded a pid the same length as its own
+
+The lock file is rewritten by each holder, and without a truncate a short pid
+written over a long one leaves the tail of the long one behind. The test seeded
+`1234567` — seven digits, which is exactly what pids look like on this machine
+— so removing the truncate changed nothing and it passed either way.
+
+Seeded with thirty digits it fails, and says what the next operator would have
+been told to look for:
+
+```
+the lock file says "2589214\n9012345678901234567890", want 2589214
+```

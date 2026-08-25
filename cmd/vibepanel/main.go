@@ -120,6 +120,19 @@ func cmdServe(args []string) error {
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
+	// One panel per data directory.
+	//
+	// Two start happily and the second one voids the premise the design rests
+	// on: the panel is meant to be the only tmux client, so that there is one
+	// authoritative grid and one place that decides its size. Each also keeps
+	// its own detector in memory, so a bell one of them saw is invisible to the
+	// other and the "waiting" it set is overwritten on the next tick.
+	unlock, err := config.LockDataDir(a.cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	// Expired sign-ins are already refused — AuthSessionByToken filters on
 	// expires_at — so this is housekeeping rather than security. It is done at
 	// all because nothing called it: the table only grew, one row per sign-in
@@ -704,6 +717,18 @@ func cmdDoctor(args []string) error {
 		dirsOK = false
 	} else {
 		fmt.Printf("[ok  ] data dir           %s\n", cfg.DataDir)
+	}
+
+	// A panel already running is the normal state, and worth saying: several
+	// of the checks below look different when something else is holding the
+	// data directory, and `doctor` is often run precisely because somebody is
+	// not sure whether the service is up.
+	if dirsOK {
+		if holder := config.DataDirLockedBy(cfg.DataDir); holder != "" {
+			fmt.Printf("[ok  ] running panel      %s holds %s\n", holder, cfg.DataDir)
+		} else {
+			fmt.Printf("[ok  ] running panel      none; nothing holds %s\n", cfg.DataDir)
+		}
 	}
 
 	if !dirsOK {

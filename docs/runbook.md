@@ -127,6 +127,33 @@ A corrupt or half-written pair is handled: the load fails, the previous
 certificate keeps being served, and the failure is logged. It is only the
 timestamps that can lie.
 
+## It will not start: "data directory is in use"
+
+```
+vibepanel: config: data directory is in use: pid 4711 is already running with
+/home/you/.local/share/vibepanel
+```
+
+One panel per data directory, on purpose. Two start happily otherwise, and the
+second one voids the premise the design rests on: the panel is meant to be the
+only tmux client, so that there is one authoritative grid and one place that
+decides its size. Each also keeps its own state detector in memory, so a bell
+one of them saw is invisible to the other, and the "waiting" it set is
+overwritten by the other's "working" on the next tick.
+
+Usually it is the systemd unit, and you are about to start a second one by
+hand. `systemctl --user status vibepanel` says so, and so does:
+
+```
+vibepanel doctor
+[ok  ] running panel      pid 4711 holds /home/you/.local/share/vibepanel
+```
+
+The lock is `flock` on `vibepanel.lock` in the data directory, so the kernel
+releases it however the holder exits — a SIGKILL included, which is the case a
+pid file gets wrong. If nothing is running and it still refuses, something else
+is holding that file open; `fuser` on it will say what.
+
 ## The database will not open
 
 ```
