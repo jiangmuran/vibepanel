@@ -3,8 +3,10 @@ package store
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -146,5 +148,55 @@ func TestProjectNamesAreBoundedToo(t *testing.T) {
 	}
 	if n := utf8.RuneCountInString(got.Name); n > session.MaxTitleRunes {
 		t.Errorf("renamed to %d runes, cap is %d", n, session.MaxTitleRunes)
+	}
+}
+
+func TestCheckWritableNoticesADatabaseThatCannotTakeAWrite(t *testing.T) {
+	// Opening a database and reading from it says nothing about writing to it.
+	// `doctor` reported every check ok and exited 0 against a database that
+	// could not accept a single row, which is the failure the runbook sends
+	// people to `doctor` to find.
+	ctx := context.Background()
+	db := openTest(t)
+	if err := db.CheckWritable(ctx); err != nil {
+		t.Fatalf("a healthy database says it cannot be written: %v", err)
+	}
+	// It must leave nothing behind: a diagnostic that changes the thing it is
+	// diagnosing is one people stop trusting.
+	if v, err := db.GetSetting(ctx, "doctor.write_check", ""); err != nil || v != "" {
+		t.Errorf("the write check left %q in the settings table (err %v)", v, err)
+	}
+
+	if err := db.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if err := db.CheckWritable(ctx); err == nil {
+		t.Error("a database that cannot be written reported that it could")
+	}
+
+	// A closed database fails at BeginTx, so the check above passes just as
+	// well if the "write" is a SELECT — which is what the probe would become
+	// if somebody made it cheaper. This one is readable and not writable, so
+	// only a statement that actually writes fails.
+	path := filepath.Join(t.TempDir(), "ro.db")
+	seed, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatalf("close seed: %v", err)
+	}
+	ro, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	if err != nil {
+		t.Fatalf("open read-only: %v", err)
+	}
+	defer ro.Close()
+	readOnly := &DB{sql: ro}
+	if _, err := readOnly.CountUsers(ctx); err != nil {
+		t.Fatalf("the read-only handle cannot even read: %v", err)
+	}
+	if err := readOnly.CheckWritable(ctx); err == nil {
+		t.Error("a database that can be read but not written reported that it could be written; " +
+			"the check is not attempting a write")
 	}
 }

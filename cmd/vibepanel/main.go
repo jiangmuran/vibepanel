@@ -714,6 +714,38 @@ func cmdDoctor(args []string) error {
 		defer db.Close()
 		v, _ := db.Version(ctx)
 		fmt.Printf("[ok  ] database           schema v%d at %s\n", v, cfg.DBPath())
+
+		// Opening a database says nothing about writing to one. Measured: with
+		// the database's writes capped, every line above printed [ok] and this
+		// command exited 0, against a panel that could not record a single
+		// thing — which is the failure the runbook sends people here to find.
+		if err := db.CheckWritable(ctx); err != nil {
+			fail("database writes", err)
+		} else {
+			fmt.Printf("[ok  ] database writes    accepted\n")
+		}
+	}
+
+	// Free space where the database lives.
+	//
+	// The panel's quietest failure is a full disk: it answers every request,
+	// serves every terminal, and stops recording anything. The number that
+	// predicts it was already being sampled for the monitor panel and was not
+	// being shown to the one person asking what is wrong.
+	if sample := (&sysmon.Sampler{DiskPath: cfg.DataDir}).Sample(); sample.DiskTotal > 0 {
+		free := sysmon.FormatBytes(sample.DiskFree)
+		total := sysmon.FormatBytes(sample.DiskTotal)
+		pct := float64(sample.DiskFree) / float64(sample.DiskTotal) * 100
+		switch {
+		case sample.DiskFree < 64<<20:
+			fail("disk", fmt.Errorf("%s free of %s (%.1f%%) on %s; the panel cannot write",
+				free, total, pct, sample.DiskPath))
+		case sample.DiskFree < 512<<20:
+			fmt.Printf("[--  ] disk               %s free of %s (%.1f%%) on %s — getting tight\n",
+				free, total, pct, sample.DiskPath)
+		default:
+			fmt.Printf("[ok  ] disk               %s free of %s (%.1f%%)\n", free, total, pct)
+		}
 	}
 
 	// Whether one was already running is worth saying, because starting one is

@@ -138,6 +138,34 @@ upgrade the binary or restore a copy of the database from before the upgrade.
 The panel refuses rather than opening it and ignoring unknown columns, because
 that silently drops whatever the newer version wrote.
 
+## Everything looks fine and nothing is being saved
+
+Renames revert, a session's state never changes, the sidebar order stops
+moving. The terminals are unaffected — they belong to tmux — so nothing else
+looks wrong.
+
+```
+vibepanel doctor
+```
+
+```
+[FAIL] database writes    store: write check: attempt to write a readonly database (8)
+[--  ] disk               412 MiB free of 626.4 GiB (0.1%) on /home — getting tight
+```
+
+`doctor` used to report `[ok] database` here and exit 0: opening a database and
+reading from it says nothing about writing to one. It attempts a real write now,
+inside a transaction it rolls back, so it leaves nothing behind.
+
+The panel says so too, once the failures have lasted three ticks: `/api/health`
+answers `"ok": false` with the reason, and every open page shows a banner. If
+viewers are being told to sign in instead, that is a different fault — a
+database that cannot be *read*; the panel answers 503 for that and says which
+it is.
+
+Usually the disk is full. `du -sh ~/.local/share/vibepanel` and the audit-log
+entry below are the two places it accumulates.
+
 ## The database is growing
 
 Almost always `audit_log`. Check before assuming:

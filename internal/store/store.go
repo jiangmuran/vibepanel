@@ -294,3 +294,28 @@ func (d *DB) HookToken(ctx context.Context) (string, error) {
 	}
 	return token, nil
 }
+
+// CheckWritable reports whether the database will actually accept a write.
+//
+// Opening a database and reading from it says nothing about writing to it. A
+// panel whose disk has filled reads perfectly well: `doctor` reported every
+// check ok and exited 0 against a database that could not take a single row,
+// which is the failure the runbook sends people to `doctor` to find.
+//
+// Inside a transaction that is rolled back, so a diagnostic leaves nothing
+// behind. The write still has to reach the write-ahead log to be rolled back,
+// which is what makes it a real test rather than a lock acquisition.
+func (d *DB) CheckWritable(ctx context.Context) error {
+	tx, err := d.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin write check: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // the rollback is the point
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO settings (key, value) VALUES ('doctor.write_check', ?)
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		fmt.Sprint(now())); err != nil {
+		return fmt.Errorf("store: write check: %w", err)
+	}
+	return nil
+}

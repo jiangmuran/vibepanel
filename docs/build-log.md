@@ -8056,3 +8056,47 @@ both paths go through.
 
 Notes and todos are fetched per project rather than pushed, so a large one
 costs only the person who opens it. Left alone.
+
+## The command the runbook sends you to said everything was fine
+
+`doctor` opens the database, reads its schema version, and prints `[ok]`.
+Opening a database says nothing about writing to one. Against a database that
+could not accept a single row it printed:
+
+```
+[ok  ] database           schema v6 at /…/vibepanel.db
+```
+
+and exited 0 — on the failure the runbook sends people to `doctor` to find.
+
+It now attempts a real write, inside a transaction it rolls back so a
+diagnostic leaves nothing behind:
+
+```
+[FAIL] database writes    store: write check: attempt to write a readonly database (8)
+vibepanel: 1 check(s) failed
+```
+
+And it reports free space where the database lives, failing under 64 MiB and
+warning under 512 MiB. The number was already being sampled for the monitor
+panel and was not being shown to the one person asking what is wrong.
+
+### What the simulation could not show
+
+The `ulimit -f` trick does not make this fail. A cap on file size stops the
+database *growing*; a one-row update to an existing page still succeeds, and
+the probe correctly says so. What it reproduces is "cannot grow", and a real
+full disk is "cannot append to the write-ahead log".
+
+Making the file read-only does reproduce it, and that is what the measurement
+above is.
+
+### The test that would have passed on a SELECT
+
+The first version checked a healthy database and a closed one. A closed
+database fails at `BeginTx`, so both halves pass just as well if the "write" is
+a `SELECT` — which is what the probe would become if somebody made it cheaper.
+
+The test now builds a handle that can read and not write (`mode=ro`), proves it
+can read, and requires the check to fail. Turning the INSERT into a SELECT now
+fails, and so does swallowing the error.
