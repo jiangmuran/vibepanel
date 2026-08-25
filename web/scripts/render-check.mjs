@@ -2408,6 +2408,70 @@ try {
     }
   }
 
+  // The same way out, from the header of the session you are looking at.
+  //
+  // Two buttons, two places, and only the sidebar one had ever been pressed.
+  // The header one is the one you reach for after reading the stack trace that
+  // just scrolled past, which is the whole reason it exists — and an
+  // affordance nobody clicks is one a refactor can quietly detach.
+  //
+  // Its own session and its own flag file: the check above revives `dies`, and
+  // a die-once script is what makes "it restarted" distinguishable from "it
+  // crashed again immediately".
+  const headerFlag = join(DATA, 'header-restart-flag')
+  await authed('/api/sessions', {
+    method: 'POST',
+    body: JSON.stringify({
+      projectId: proj.id,
+      title: 'header-restart',
+      command: ['bash', '-c',
+        `test -f ${headerFlag} || { touch ${headerFlag}; echo boom >&2; exit 3; }; sleep 120`],
+    }),
+  })
+  let headerDead = false
+  for (let i = 0; i < 40; i++) {
+    await sleep(500)
+    if ((await rowOf('header-restart').innerText().catch(() => '')).includes('exit 3')) {
+      headerDead = true
+      break
+    }
+  }
+  if (!headerDead) {
+    note('WARN', 'exit', 'the header restart check had no dead session to work with')
+  } else {
+    await rowOf('header-restart').click()
+    await sleep(1200)
+    const headerBtn = page.locator('[data-testid="restart-current"]')
+    if (!(await headerBtn.isVisible().catch(() => false))) {
+      note('FAIL', 'exit',
+        'a crashed session offers no way to run it again from the header you are already ' +
+        'looking at, which is where you are when you find out')
+    } else {
+      const tip = await headerBtn.getAttribute('title')
+      if (!/status 3/.test(tip ?? '')) {
+        note('WARN', 'exit',
+          `the restart tooltip does not name the status it is recovering from: ${JSON.stringify(tip)}`)
+      }
+      await headerBtn.click()
+      let back = false
+      for (let i = 0; i < 40; i++) {
+        await sleep(500)
+        if (!(await rowOf('header-restart').innerText().catch(() => '')).includes('exit 3')) {
+          back = true
+          break
+        }
+      }
+      if (!back) {
+        note('FAIL', 'exit',
+          'clicking restart in the header left the session showing its old exit status')
+      } else if (await headerBtn.isVisible().catch(() => false)) {
+        note('FAIL', 'exit',
+          'the header still offers restart after a successful one, so it still says the ' +
+          'session is dead')
+      }
+    }
+  }
+
   // ── the panel says when it is guessing ───────────────────────────────────
   // Without state reporting the heuristic has only the terminal bell, and
   // Claude Code does not ring it when it stops for a decision — so the state

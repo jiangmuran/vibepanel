@@ -6859,3 +6859,58 @@ the certificate expiry is `omitempty` on the wire *and* skipped when the time
 is zero *and* guarded again in the component — three layers where one would
 have done, which is the opposite failure and a much better one to have. There
 is no relative-time rendering anywhere else to get wrong.
+
+## A sweep that mostly found things already handled
+
+`restart-current` was one of six testids no harness referenced, so it looked
+like an untested affordance on a failure path. Driving it turned up a series of
+things that were already right, which is worth recording because the *reason*
+they were right is not obvious from the testid list.
+
+A session whose process exits with status 3 renders:
+
+- a red cross and `exit 3` in the sidebar row
+- a red cross and a `restart` button in the header, tooltipped with the status
+- the failure output, and tmux's own `Pane is dead (status 2, …)` line, still
+  readable
+
+And the harness already checks the hardest part of that: the crash glyph, the
+clean-exit glyph and the running glyph must have *different geometry*, not
+merely different colours — red line 4, checked by stripping the fills and
+comparing the shapes. There is a comment there about somebody "simplifying" the
+crashed cross into a red copy of the clean square, which is exactly the change
+that looks tidier in a diff and is invisible at 2am.
+
+The restart *mechanism* has a Go test that uses a die-once script, so "it
+restarted" and "it crashed again immediately" are distinguishable — the
+ambiguity my own probe walked straight into, twice, before I noticed the
+command I was restarting failed every time by construction.
+
+### What was actually missing
+
+Two restart buttons exist, in the sidebar row and in the session header, and
+only the sidebar one had ever been pressed. The header one is the one you reach
+for after reading the stack trace that just scrolled past, which is the whole
+reason it is there.
+
+The first attempt to check it broke a later check by reviving the session it
+needed. It now creates its own die-once session with its own flag file, after
+the sidebar check has finished with `dies`.
+
+Detaching the button's `onClick` fails it. Removing the `current.exited` guard
+does not — TypeScript refuses to compile it, because `current` is only narrowed
+to non-null inside that branch. Worth knowing which layer is holding which
+line.
+
+### Three testids down, three to go
+
+Of the six unreferenced ones: `file-truncated` renders correctly and its
+server side sorts before it caps; `restart-current` is now clicked;
+`drop-note` turned out to be the only unchecked part of a drag-and-drop that is
+otherwise covered end to end. `file-tree`, `key-row-secondary` and
+`passkey-note` are container and label elements whose contents are checked
+through other selectors.
+
+An unreferenced testid is a hint, not a finding. Following all six cost one
+afternoon and produced one real gap, which is a fair rate for a lead that cheap
+to check.
