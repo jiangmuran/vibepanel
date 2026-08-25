@@ -5110,6 +5110,23 @@ two snapshots taken with nothing happening in between must serialise
 identically. Without the fix it fails on the *second* snapshot — not
 intermittently, immediately.
 
+Measured afterwards on the real binary, four attached sessions, ninety idle
+seconds with a browser watching every frame:
+
+```
+frames received while idle: {"pong":3}
+state pushes: 0        (one every 2s would be ~45)
+websockets opened:  0  (no reconnect)
+```
+
+The pongs are the point of that second line. The client declares a connection
+dead after sixty seconds without a frame of any kind, and until this fix the
+two-second broadcast was refreshing that timer for free. Going quiet meant the
+liveness path — client pings every thirty seconds, server answers — had to
+carry it alone, and in an idle panel with sessions attached it had never once
+been asked to. It holds, with one lost pong of margin and no more. Worth
+knowing before assuming that making something stop talking is free.
+
 ### A note discarded by clicking the next tab
 
 The notes panel saves 800ms after you stop typing, and the unmount cleanup
