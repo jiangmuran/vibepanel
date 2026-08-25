@@ -1207,3 +1207,3949 @@ protective mechanism that has never been *attacked* in a test has not been
 tested. Every one of these controls passed the obvious check — the allowlist
 refused a plain request, the throttle throttled a repeated one — and both were
 defeated by the first thing an attacker would try.
+
+## A viewer the server cut loose could never come back
+
+**Status: everything from here to the end of the log came out of a read-only
+review, and is written but unbuilt and untested — the session that made these
+changes could not run anything. Nothing below has been through `make check`,
+and none of it should be believed until it has. The findings are solid; the
+fixes are unproven.**
+
+The ten files touched: `internal/ws/conn.go`, `internal/session/manager.go`,
+`internal/httpapi/api.go`, `internal/hooks/install.go`,
+`internal/webui/webui.go`, `internal/auth/throttle.go`,
+`internal/config/config.go`, `web/src/protocol/socket.ts`,
+`web/src/components/Terminal.tsx` and `web/src/hooks/useDragList.ts`.
+
+Also unrun: `web/scripts/scale-check.mjs` and the `check:scale` script it adds
+to `web/package.json`.
+
+Two of the sections below are findings with no code behind them at all — the
+missing password change, and the proposal about what a quiet agent means. Those
+are marked where they appear.
+
+`broadcast` drops a viewer whose queue is full rather than stalling the pump —
+correct, because stalling the pump stalls the agent. The viewer is told with a
+`dropped` message, and `pumpStream`'s comment says that message exists "so it
+can resubscribe and replay, rather than sitting on a dead terminal". The client
+does resubscribe. The server then ignores it.
+
+`subscribe` short-circuits when the session is already registered on that
+connection, and nothing had removed the registration when the subscriber died.
+So the resubscribe was accepted, returned nil, and sent nothing: no `subscribed`
+message, no new ref, no snapshot, no further output. The terminal stayed frozen
+until the page was reloaded — the exact state the message was added to escape.
+
+Found by reading rather than by running, which is worth noting: the stress check
+covers *losing the connection*, where a new `Conn` starts with empty maps and
+recovery works. The per-stream drop is a different path that looks like the same
+one. A test for it has to fill one viewer's queue while leaving the socket up.
+
+Two smaller things in the same file. `handleBinary` carried a comment saying
+writing marks the viewer as the controller, which is the opposite of what
+`Live.Write` does and says — the sort of comment that gets the code "fixed" to
+match it. And a dropped stream never had its context cancelled, leaving an entry
+in the connection context's child list for every drop.
+
+## The same buffer, twice
+
+Following that thread: on reconnect the client resubscribes every stream and the
+server replays the whole ring buffer, and the client writes it into a terminal
+that still holds everything from before. The scrollback ends up two copies deep.
+
+It is invisible on screen, which is why nobody noticed: tmux sends a full
+repaint to a newly attached client, so the *viewport* looks right and the
+duplicate sits above it in the scrollback. Anyone scrolling back to read what an
+agent printed sees the history twice, interleaved with redraws.
+
+The fix arms a flag when the stream restarts and acts on it when the snapshot
+actually arrives, rather than clearing on the restart itself: if no snapshot
+follows — an empty ring buffer on a server that has only just started — clearing
+eagerly would blank a terminal that still had something worth reading.
+
+## Taking the grid without moving it told nobody
+
+`TakeControl` sets the controller and then calls `Resize`, and `Resize` returns
+early when the requested size equals the current grid. `EventSize` is the only
+message that carries who the controller is, so in that case nothing was
+broadcast and nothing changed for anyone: the new owner's interface still
+offered to take a grid it already held, and — the worse half — the previous
+owner went on believing its window drove the session while its resizes were
+being silently ignored.
+
+Reachable whenever two windows are the same size, or one has been through a
+layout change and back. `TakeControl` now broadcasts the size itself when
+ownership moved but the grid did not.
+
+Same review pass, smaller: deleting a project killed its sessions but did not
+tell the detector to forget them, while deleting a single session did. A tracker
+per deleted session is a trivial leak; two paths doing almost the same thing is
+not, and that asymmetry is what turns into a real bug later.
+
+## Proposal: a quiet agent is waiting for you, not done
+
+Not implemented — it changes what the sidebar says about every agent session and
+the order it sorts them in, which is not a change to make without being able to
+run the tests. Recorded here with its evidence so it can be decided on.
+
+`done` is currently carrying three unrelated meanings: the task finished, the
+process is quiet, and nothing is known. Measured against a real Claude Code TUI
+earlier in this project: an idle one is completely silent (bytes went 1620 →
+3348 → 3348 → 3348 while it sat at a trust prompt), and it rings no bell. So
+without hooks the panel says `done` — "dealt with" — about a session that is
+sitting there waiting for a human. That is the one question the panel exists to
+answer, answered backwards.
+
+The narrow version: when the foreground process is a known agent rather than a
+shell, and it has been quiet for longer than the activity window, the honest
+state is `waiting`, not `done`. An agent that has stopped printing has finished
+its turn, and finishing its turn is precisely when it is your move. Spinners
+mean a *thinking* agent keeps reading as `working`, which the same measurement
+confirmed.
+
+Blast radius is limited to sessions whose command is an agent, which is exactly
+where today's answer is wrong. It needs `Observation` to carry the command class
+rather than only `ShellOnly`. The existing rules stay as they are:
+`TestQuietSessionIsDone` passes `Observation{}`, so an unclassified session goes
+on reading as done and only a session known to be running an agent changes.
+
+What it does interact with is the "states are being guessed" notice, which
+exists precisely because `waiting` never fires for Claude Code without hooks. If
+this lands, that notice needs rewording rather than removing: the guess would
+then be a good one, but it would still be a guess.
+
+## Writing to somebody's settings file to change nothing
+
+Reviewing the hook installer, which is the only code here that edits a file the
+user owns and which has already caused one incident. Two things, both of the
+same kind: doing something invisible to a file that is not ours.
+
+Pressing "install" when the hooks are already installed re-encoded the file,
+renamed a new copy over it, and left a backup beside it — recording an edit that
+did not happen. The settings page invites that press. Over a few months the
+result is a directory of near-identical backups around a file whose formatting
+quietly became ours. It now compares what it would write against what is there,
+through the same encoder so the comparison is about content rather than
+indentation, and does nothing when nothing would change. Uninstalling when
+nothing of ours is present does nothing too. `TestInstallIsIdempotent` already
+installs twice, so it becomes a regression test for this by accident.
+
+## The flag that could not turn a thing off
+
+`flags.go` had gone unread — the environment path was audited, the primary one
+was not. Its precedence is right and neatly done: every flag is registered with
+the environment-derived value as its default, so "not passed" and "passed the
+same thing" are identical and the ordering falls out with no bookkeeping.
+
+Two flags cannot be registered that way, being joined strings that need
+splitting, and they were handled by testing the parsed value for emptiness:
+
+    proxies := fs.String("trusted-proxies", "", ...)
+    if *proxies != "" { c.TrustedProxies = splitAndTrim(*proxies) }
+
+So `--allow-from=""` did nothing whenever the environment had set one. The
+value stays, the flag is ignored, and nothing says so.
+
+That is the scenario this function's own comment gives as the reason flags are
+parsed last: "an operator debugging a systemd-managed instance can override one
+value on the command line without editing the unit's Environment= lines". An
+allowlist is the value most likely to need it, because getting it wrong is what
+locks you out — and turning it off was the one thing the flag could not do. It
+looked like the flag had no effect, because it had none.
+
+`fs.Visit` reports which flags were actually typed, which is what the question
+was all along. Three cases are pinned: absent keeps the environment, a value
+replaces it, and an empty one clears it.
+
+One thing found in passing and already true. The usage text promises "every
+flag has a VIBEPANEL_<UPPER_SNAKE> environment equivalent" — the same claim
+that was false in the README earlier in this log. Checking all thirteen flags
+against the aliases added then: it now holds for every one of them. The README
+was corrected at the time and this copy was not looked at, which is the more
+useful half of the observation.
+
+## A partial struct used as a namespace, and a correction
+
+`cmdHook` needs the hook token, which lives behind a method on the HTTP server,
+so it builds one:
+
+    srv := &httpapi.Server{Cfg: a.cfg, DB: a.db, Tmux: a.tmux, Log: slog.Default()}
+    if _, err := srv.HookToken(ctx); err != nil { ... }
+
+No Manager, no Hub, no Auth, no Detector. It works because `HookToken` touches
+only `s.DB` — today. It is a nil dereference waiting for a change to an
+unrelated method: the moment anyone gives `HookToken` a reason to audit
+something or notify anyone, the CLI panics on a path that has nothing to do
+with what they changed.
+
+**Correcting the previous entry.** It said the CLI cannot inject
+`VIBEPANEL_TOKEN` because the token is behind that method, and used the size of
+the repair as the reason not to make it. Half of that was wrong: the precedent
+is four lines away in the same file, and `session new` could do exactly what
+`cmdHook` already does. Only the URL half genuinely blocks, `loopbackURL` being
+unexported.
+
+The two findings share a cause, which is more useful than either. The defect is
+not that the CLI forgets two variables; it is that both things a session needs
+live on the HTTP server. So the CLI does without them in one place and fakes a
+Server in another, and both are symptoms.
+
+Neither belongs there. The hook token is a row in the settings table and
+belongs in the store. `loopbackURL` is a pure function of `Addr` and `TLSMode`
+and belongs next to `BindHost` in config. Moved, `session new` becomes a few
+lines and the partial struct in `cmdHook` disappears on its own — which is the
+shape of a fix worth waiting to make properly rather than patching twice.
+
+## The container path, which nothing has ever run
+
+Continuing the sweep for secondary paths. There is a Dockerfile and a compose
+file, no test touches either, and the README does not mention them at all — a
+deployment route that ships without documentation is already a strange object,
+and it had two problems.
+
+There was no `.dockerignore`, and the build stage does `COPY . .`. The
+`.gitignore` beside it says, in as many words, "never commit a database with
+real session/credential data" and lists `/data/` and `*.db`. Those are exactly
+the files that were being copied into an image layer — somewhere considerably
+easier to hand to somebody else than a git repository. The rule had been
+written down once and not carried across the boundary, which is the shape this
+review keeps finding. Also `web/node_modules` and `.git`, which are merely
+waste.
+
+The second is not fixable, only sayable. In a container, restarting the panel
+kills every session. Everywhere else the tmux server outlives the Go process,
+and that is the entire premise: `systemctl restart` is harmless, an upgrade is
+harmless, a crash is harmless. Here tmux is a child of the entrypoint and the
+container is the boundary, so `docker restart` or `compose up -d` after a
+rebuild takes the agents with it.
+
+The Dockerfile's header already discussed the container's drawbacks — tools,
+credentials, the smaller world an agent finds itself in — and did not mention
+the one that contradicts the reason the project exists. It does now, in
+capitals, because somebody choosing between the two deployments needs that
+fact more than any of the others.
+
+## A session made from the CLI can never report its state
+
+Went looking for more of what the previous entry described — a defect on a
+secondary path, masked because the primary path does not touch it. Four were
+already known: the relative `--static-dir`, the ignored `VIBEPANEL_TLS`, the
+`go generate` that has never existed, the filename header. All of them the same
+shape.
+
+The CLI is the largest secondary path, and it has one.
+
+Creating a session over HTTP injects four variables: the session id, the
+project id, the panel's URL and the hook token. Creating one with
+`vibepanel session new` injects two — the ids. `report.sh` requires all three
+of id, token and URL, and exits silently when any is missing, which is exactly
+what it is built to do.
+
+So a session created from the command line never reports state through a hook.
+It falls back to the output heuristic, which — per an earlier entry — never
+raises `waiting` for Claude Code at all, because Claude Code does not ring the
+bell. The session sits permanently in the degraded mode.
+
+Two things hide it. The comment directly above that env block says "the hooks
+that report precise state identify themselves by reading this out of their
+environment", describing the mechanism while supplying a third of what it
+needs. And the "states are being guessed" notice added earlier in this log
+checks whether the *script* is installed, not whether a given session is
+equipped to use it — so somebody who installed hooks and creates sessions from
+the CLI gets neither the reporting nor the warning.
+
+The CLI is not an exotic route. The README's own "try it" uses it, the runbook
+is written in it, and anybody running seventeen agents is a candidate for
+scripting session creation.
+
+Not fixed. The repair needs `loopbackURL` to stop being a method on the HTTP
+server and become what it actually is — a pure function of `Addr` and
+`TLSMode`, belonging next to `BindHost` in config — plus a get-or-create for
+the token in the store. That is a cross-package move and a read-modify-write
+with a race window, neither of which should be done without being able to run
+anything. Copying `loopbackURL` into the CLI instead would manufacture exactly
+the duplication these rounds have spent their time cataloguing.
+
+## Reading my own changes against each other
+
+Thirty-seven files changed across these rounds with nothing able to run, which
+is its own risk: each change was reasoned about alone. So this round audited
+them as a set, looking for pairs that touch the same behaviour.
+
+Most are complementary, and the ones that interact do so on purpose.
+Deregistering a dropped stream is what lets the client resubscribe; clearing
+before replay is what stops that resubscription showing everything twice — one
+is useless without the other. `TakeControl` broadcasting on an unchanged size
+is what makes the take-control affordance disappear for its new owner, since
+that flag only travels on a size event. Making the hook script idempotent and
+caching the hook status both remove work from `snapshot()`, from opposite ends.
+
+One overstatement found and corrected, in the Content-Disposition entry: the
+file tree's link sets `download={e.name}`, which overrides the header for a
+same-origin URL, so the mangled name never appeared in the panel itself. The
+fix is still right — a copied link or a `curl` gets the header and nothing else
+— but the claim about what a user sees was wrong, and an entry in this log is
+worth less than nothing if it is more alarming than accurate.
+
+There is a second lesson in that. The attribute masking the header is precisely
+why the bug survived: no amount of using the panel would have surfaced it,
+because the one route anybody takes does not consult the thing that was wrong.
+
+## Two constants that are the same number
+
+Not a duplication this time but an interaction:
+
+    activityWindow = 2 * time.Second   // output this recent means working
+    pollInterval   = 2 * time.Second   // how often the state is recomputed
+
+The state is recomputed from scratch every tick, with no hysteresis. So a
+session whose last output was 1.9 seconds ago is `working` at one poll and
+`done` at the next, and any new output puts it back.
+
+That is not a corner case, it is what a tool looks like. An agent streaming
+tokens prints continuously and stays `working` correctly. An agent running a
+test suite, installing dependencies or reading a large file prints in bursts
+with quiet between them — and each quiet stretch longer than two seconds
+demotes it, each burst promotes it again.
+
+The consequence is visible twice over: the indicator alternates between the
+breathing circle and the check, and because `working` sorts above `done`, the
+row moves up and down the list while it does. On a panel built because a list
+of tabs was "messy", a row that will not hold still is the wrong failure.
+
+The fix is asymmetric thresholds — promote on any output, demote only after a
+longer silence — which is one constant and a comparison. Both existing tests
+survive it: `TestQuietSessionIsDone` waits ten seconds and
+`TestRecentOutputIsWorking` looks at 500 milliseconds, so a five-second
+demotion threshold sits between them untouched.
+
+Not made, for the same reason the "a quiet agent is waiting" proposal earlier
+in this log was not: this is the semantics of the state machine, and the
+particular number is a judgement about how still somebody wants that list to be
+while they are scanning it.
+
+## The frame layout, defined twice, agreeing so far
+
+Same search, next contract: the binary frame. `FrameData`, `FrameReplay`, a
+five-byte header and a big-endian reference, written once in Go and once in
+`wire.ts`.
+
+They agree today, which is the point at which a check is worth adding rather
+than after they do not. What drift would look like is worth writing down,
+because none of it points at a constant: a wrong header length shifts every
+byte of terminal output, a wrong frame type makes replayed scrollback arrive as
+live output — undoing the clear-before-replay fix from earlier in this log —
+and a swapped byte order routes frames to stream references that do not exist,
+so the terminal simply goes quiet. Each of those presents as "the terminal is
+broken".
+
+The values are parsed rather than string-matched, base 0, so the TypeScript is
+free to write `0x00` or `0` without a spurious failure. The byte order is
+checked by asserting both DataView calls pass `false` for littleEndian — that
+argument is the one place where a single character silently reverses the
+protocol.
+
+## Looking for the pattern instead of tripping over it
+
+Five instances of one rule kept in two places had turned up by accident. The
+sixth was found by going to look: the WebSocket message names, defined as
+constants in `internal/ws/protocol.go` and again as string unions in
+`wire.ts`, with nothing comparing them.
+
+The failure runs in the worst direction. A message the server sends and the
+client has no case for is discarded in silence — no error, no log, nothing on
+screen. That is precisely how a viewer cut off for falling behind would stop
+recovering: the server says "dropped", the client hears nothing, and the
+terminal sits frozen looking like a network problem. The same bug found earlier
+in this log by a different route, which is a reasonable argument that this
+contract deserves a check rather than care.
+
+A drift was already there, and it was mine. `panel` — added for the notes and
+todo broadcast — existed in the client union and was sent from `notifyPanel` as
+a bare string, while its nine siblings all had constants. Found by looking for
+the pattern, in the code written while cataloguing the pattern.
+
+`MsgPanel` exists now, the sender uses it, and both directions are enumerated
+into slices so a test can compare them against the TypeScript. The test reports
+each direction separately, because they fail differently: a name the server
+sends and the client ignores is a silent discard, while a name the client
+expects and nothing sends is dead code in a switch.
+
+One detail worth keeping: the parser only accepts quotes that follow the `t:`
+or a `|` continuation. One of those interfaces already contains a comment with
+an apostrophe in it, and a looser pattern would have been reading English prose
+as protocol.
+
+## The same three lines in two files, and the names they produce
+
+`sessionLabel` existed twice, character for character, in App.tsx and
+Sidebar.tsx. The fifth instance of one rule kept in two places in this review,
+after the shell lists, the state enums, the theme storage key and the header
+height. Nothing would have caught them drifting, and the symptom — the sidebar
+row and the title bar disagreeing about what the session in front of you is
+called — reads as a rendering glitch rather than as two functions.
+
+It could not simply move into App.tsx: App renders Sidebar, so importing the
+other way is a cycle. Nor into wire.ts, which describes what the server sends
+rather than how it is shown. So it is its own small module, with the ordering
+of its fallbacks written down, since that ordering is the actual content: the
+derived title first, the command as the honest second best, and a last resort
+that exists only so a row is never unlabelled and therefore unclickable.
+
+Not fixed, and worth a decision: nothing disambiguates two sessions that
+produce the same label. A shell falls back to the base name of its directory,
+and at the scale this panel is for — seventeen agents across worktrees — two of
+them sitting in directories called `src`, or two worktrees both named `main`,
+is ordinary rather than unlucky. The sidebar then shows two identical rows and
+the only way to tell them apart is to click one.
+
+That is close to the complaint the project started from: tabs that cannot be
+named and a list that is a mess. The bottom terminal strip already numbers its
+tabs when the server declines to name them, so the shape of an answer exists;
+choosing between numbering, showing the parent directory, or something else is
+a judgement about what a person scanning that list actually needs.
+
+## A filename left to the browser's guess
+
+Same method, next scenario: download a file with a Chinese name. This is code
+written earlier in this same log, and `Content-Disposition` is where HTTP is
+least forgiving about anything that is not ASCII.
+
+It put the raw UTF-8 bytes into `filename="…"`. That parameter is ISO-8859-1 by
+specification, so the result is left to the browser to guess: Chromium usually
+guesses UTF-8 and gets it right, Firefox has historically read it as Latin-1,
+and the file lands on disk with a mangled name.
+
+**Correcting the first version of this entry**, which claimed the file arrives
+mangled. Through the panel it does not: the file tree's link carries
+`download={e.name}`, and for a same-origin URL that attribute overrides the
+header entirely. The header matters for the paths that do not use it — a copied
+URL opened directly, `curl`, anything scripted.
+
+Which is also why the bug was there to find. The one route anybody exercises
+masks it, so no amount of using the panel would have shown it; only reading the
+header would. Worth keeping the fix and worth keeping the correction: a claim
+about what a user sees is not improved by being more alarming.
+
+Both forms are sent now. `filename*=UTF-8''…` states the encoding, and the
+quoted ASCII fallback stays for clients too old to understand it. One trap
+avoided on the way: `url.PathEscape` is not an RFC 5987 encoder — it leaves
+`;` and `,` unescaped, and `;` is the parameter separator, so a filename
+containing one would have broken the header outright. The encoder here escapes
+everything that is not an attr-char.
+
+The test asserts the encoded form *and* that no byte above 0x7f survives
+anywhere in the header, which is the property the whole exercise is about.
+
+Three rounds, three bugs, one question each time: what happens when the person
+this was built for uses it in their own language. A name truncated mid
+character, an emoji cut in half, a filename left to a browser's guess. All
+three read as correct code.
+
+## Half an emoji on the rail
+
+Swept both sides for the same fault as the passkey name: anywhere user text is
+*truncated* rather than rejected. Rejecting is safe — the note and todo limits
+and the username check all refuse rather than cut, so nothing invalid is ever
+stored.
+
+The Go side had only the one already fixed. The frontend had `initials()`,
+which makes the two-letter badge on the collapsed rail:
+
+    if (words.length === 1) return words[0].slice(0, 2).toUpperCase()
+    return (words[0][0] + words[1][0]).toUpperCase()
+
+`[0]` and `slice` count UTF-16 code units and an emoji is a surrogate pair, so
+the first unit of a leading emoji is half a character. "📊 monitoring" becomes a
+replacement glyph followed by an "M".
+
+Worth stating why this is not a hypothetical. The zellij setup this panel was
+built to replace names its tabs "📊 监控" and "🐚 shell" — read at the start of
+this project. The person it is for demonstrably puts an emoji in front of
+things, and the collapsed rail is where they would see it broken.
+
+Counted in code points now. CJK was already safe, being one unit per character;
+the change removes the distinction rather than adding a case.
+
+Two rounds, two bugs, both found the same way: not by reading the code for
+correctness, but by putting this project's actual user through it. Both read
+perfectly well until you do.
+
+## A passkey name cut in half
+
+Read the WebAuthn client and the registration path looking for the classic
+base64url mistakes. There are none: the padding arithmetic is right for every
+valid remainder, the alphabet swap is symmetric, an empty `userHandle`
+ArrayBuffer takes the same branch as a null one and produces the same empty
+string, and `allowCredentials: []` is what a discoverable sign-in wants. Both
+directions are used — registration lives in the settings page, sign-in in the
+gate — so nothing there is dead.
+
+The server side is careful in the way that matters: the account comes from the
+session context rather than the request, and a ceremony started by one account
+cannot be finished by another, with a comment naming the attack.
+
+One thing, in the middle of all that care:
+
+    if len(name) > 64 {
+        name = name[:64]
+    }
+
+Both of those are byte-wise. Sixty-four bytes is about twenty-one Chinese
+characters, so a descriptive name reaches it easily, and the cut lands inside a
+character — storing an invalid UTF-8 sequence that renders as a replacement
+character in the passkey list, permanently.
+
+Small, and worth fixing rather than noting because the fix is one line with no
+judgement in it. It also sits oddly against the rest of the project, which
+thinks about this constantly elsewhere: the font stack carries CJK fallbacks,
+the compose box exists because input methods and raw terminals do not mix. This
+is a field people name in their own language, and it was the one place counting
+bytes.
+
+## Machinery with no route to it
+
+Having found one dead column, the same sweep across the rest turned up three
+more paths that exist and cannot be reached. None is wrong behaviour; all four
+are surface the interface does not expose, and an unreachable path is an
+untested path that will rot.
+
+`stateChangedAt` is stored, carried in the struct, serialised into every state
+snapshot and pushed to every viewer on every broadcast. No frontend code reads
+it. Worth keeping rather than trimming, though: it is precisely the groundwork
+for the most obvious missing feature on a panel whose job is telling you what
+needs you — "waiting for five minutes". The number is already on the wire.
+
+Project pinning has a store method, a field on the patch endpoint and the first
+clause of the ordering query. The sidebar's project header offers a rename and
+a new shell, and nothing else. So the ordering honours a flag no one can set.
+
+`deleteProject` has a handler, a client method and a CLI command. The frontend
+never calls it. Projects can be created from the interface with a button and
+removed only from a terminal — and deleting one kills its sessions, which is a
+fair reason to keep it away from a stray click, but nothing in the interface
+says so.
+
+For contrast, `autoOrderProjects` *is* wired up, to the clock in the sidebar
+header. So this is not "project operations were never connected"; it is these
+particular ones, which is the harder kind to notice.
+
+## A session that no longer exists shows as whatever it was
+
+`archived_at` is in the schema, in the struct, in the column list and in the
+scan. Nothing writes it. Nothing on the frontend reads it. It is null forever.
+
+The schema says what it is for: "Set when the tmux session is gone but the user
+has not dismissed the row." `Reconcile` says what that is supposed to buy:
+
+    if !alive {
+        // The tmux session is gone. The row is kept rather than deleted so
+        // the user can see what happened and dismiss it themselves; losing
+        // a session silently is worse than showing a dead one.
+        continue
+    }
+
+The row is kept. The part that makes keeping it worth anything — saying it is
+gone — was never built, so the user cannot see what happened. `pollOnce` skips
+the same way, so this is not only a startup condition.
+
+What that looks like: the tmux server restarts, or somebody runs `kill-server`,
+or the box reboots and the panel comes back before tmux does. Every row
+survives, showing its last known state. A green check. A blue working dot that
+will never move again. Or an orange triangle meaning an agent needs you, for a
+session that does not exist — the panel's most important signal, pointing at
+nothing.
+
+Clicking it does reveal the truth, because attaching fails on a session tmux
+does not have. The list lies until then.
+
+The `exited` work earlier in this log makes it worse by contrast: a crashed
+process now gets a red cross, so a session whose entire tmux session has
+vanished is the *only* dead thing still wearing a green check.
+
+Two comments in two files describing one unbuilt feature, with a database
+column standing there making it look finished. The same shape as the
+`go generate` claim, and harder to spot for exactly that reason.
+
+Not built. It spans the store, the poller and the sidebar, and the choice
+between removing such rows automatically and marking them for the user to
+dismiss is a product decision — though both comments already lean towards
+marking, and the CLI's `session kill --id` is described as clearing the row,
+which is the dismissal half already in place. The natural shape is a sibling of
+`exited`: written where `!alive` is already detected, rendered with its own
+glyph, dismissible.
+
+## The other half, and a smaller decision inside it
+
+The top edge turned out worse than the previous entry allowed for. It is not
+only landscape: `index.html` declares the panel installable to the home screen
+and asks for a translucent status bar, and that combination means an installed
+copy starts its content at y=0 in portrait too, with the clock and battery
+drawn over whatever is there. What is there is the header — the menu button
+that is the only route to the session list on a phone, the session name and the
+connection dot.
+
+Same remedy, and worth recording the decision inside it because the obvious
+version was wrong. Tailwind's preflight makes everything `border-box`, so
+`h-11` includes padding: adding `padding-top` would have squeezed the header's
+contents rather than moving them down. The tidy fix is `box-sizing:
+content-box`, which also makes the border stop counting toward the height — so
+every device without an inset would shift by a pixel. Devices that do not have
+this problem should not pay anything for it, so the height is grown explicitly
+instead and the class repeats the 2.75rem.
+
+That repetition is a real cost of exactly the kind this log keeps finding: two
+places holding one number with nothing checking. It is written down at both
+ends, which is the least that can be done about it, and it buys not changing
+the box model under a component that is already blurred, bordered and
+positioned inside a flex column.
+
+## Half of a pair of settings
+
+`index.html` asks for `viewport-fit=cover`. Nothing in the stylesheet mentions
+`env(safe-area-inset-*)`.
+
+Those two go together. `cover` extends the layout viewport into the unsafe
+areas, and the inset is how the content is given back. With only the first
+half, the lowest thing on screen sits under the home indicator — and on a phone
+the lowest thing here is the second row of the key bar: arrows, home, end,
+digits, symbols. Drawn exactly where the system's swipe-up gesture lives, on
+every iPhone since the X.
+
+That is the hand-rolled keyboard that was asked for by name, with its bottom
+row placed where the operating system will fight it for every tap.
+
+Fixed, and the reason this one is fixed rather than reported is that it cannot
+make anything worse: `env(safe-area-inset-bottom, 0px)` is zero on hardware
+without an inset, so devices that do not have the problem pay nothing. The
+class sits with the other `vp-` utilities and the key bar is the only thing
+using it, being the only thing at the bottom.
+
+Two related things not done, both needing a device to judge. The top edge has
+the same issue in landscape, where the header would run under the notch — less
+severe, because the header's controls are not at the extreme edge. And the same
+line disables zoom entirely with `maximum-scale=1.0, user-scalable=no`, which
+matters more here than in most apps: a phone looking at a session owned by a
+desktop renders that grid scaled down, and the screenshots from these checks
+show it small enough to be genuinely hard to read. The panel's answer is "take
+control", which reflows the desktop mid-edit — precisely what the arbitration
+design exists to avoid. So the person who most needs to zoom is the one who
+cannot, and their alternative is disruptive. Whether removing it interferes
+with the press-and-hold selection is exactly the kind of thing that has to be
+tried rather than reasoned about.
+
+## Six theme cases, all correct, and one string in two places
+
+Enumerated the theme system rather than reading it: three choices against two
+system preferences, checked against the three CSS blocks.
+
+All six land correctly, and the mechanism is neat. `:root` carries light as the
+base; the dark media query is scoped `:root:not([data-theme='light'])`, which is
+exactly what lets an explicit light choice win on a dark system; and
+`:root[data-theme='dark']` wins the other direction on specificity and order.
+The documented palette-lag fix is intact too — `setTheme` calls `applyTheme`
+before `setThemeState`, so the attribute is on the DOM before anything re-reads
+the computed values — and `themeKey` includes the system preference, so the
+terminal repaints when the OS flips while the choice is "system".
+
+One thing worth pinning. `index.html` applies the stored theme before first
+paint, with the storage key spelled out inline, and `theme.ts` holds the same
+string. Nothing tied them together.
+
+Drift there does not cause a flash, which is what the inline script exists to
+prevent — it causes the theme choice to stop working entirely. The script would
+find nothing under the old key, and nothing else applies a stored choice:
+`applyTheme` runs only from the toggle's handler. The session would follow the
+system preference while the toggle showed the setting it was ignoring.
+
+The key is exported now and a test asserts `index.html` uses it, along with
+three properties that are easy to lose in a file nobody opens: the script must
+not write `data-theme="system"` (its absence is what means "follow the system"),
+it must sit above the module script or it paints once in the wrong palette
+first, and it must keep its try/catch — an exception there happens before
+anything has rendered, so private mode would produce a blank page rather than
+merely the wrong colour.
+
+## The CPU number gets worse the more people are watching
+
+The sampler keeps the previous `/proc/stat` counters on the server, shared by
+every caller, and each request advances them. So the window a percentage covers
+is not "since this viewer last asked" but "since anybody last asked".
+
+One viewer polling every two seconds gets a two-second average, which is what
+the number claims to be. Two viewers, out of phase, each get roughly a
+one-second average — noisier, but still meaningful. Two viewers landing a few
+milliseconds apart get a percentage computed across those milliseconds, which
+is not a measurement at all: it reads 0 or 100 depending on where the sample
+fell relative to a scheduler tick. The reading flaps, and it flaps *because*
+somebody else opened the panel.
+
+That is the ordinary case here rather than a corner of one. "Open it in several
+places and they stay in sync" is the first thing this project was asked for.
+
+Below a 500ms floor the previous answer is repeated and the counters are left
+alone, so the next caller still has a window worth measuring. A single viewer
+at the current two-second cadence never reaches the branch; two viewers a
+second apart do not either. It only catches the collisions, which is all it is
+for.
+
+The frontend polling was already right, and worth recording as such: it
+self-schedules after each response rather than using `setInterval`, so a slow
+answer cannot stack requests behind it, and it stops entirely when the panel is
+unmounted.
+
+## Every route, checked against who can reach it
+
+A completeness pass rather than a hunt: list every registration and see which
+sit outside `RequireAuth`. An endpoint accidentally left open on a panel that
+hands out a shell is the kind of thing worth checking once, deliberately,
+rather than assuming.
+
+It is clean. Public: the health probe, the four auth endpoints, the two passkey
+sign-in ceremonies, the hook endpoint with its own constant-time token, and the
+frontend itself — which has to be reachable or nobody could see the login page.
+Everything else is inside the authenticated group, including passkey
+registration, listing and deletion, which sit in their own inner group in
+`registerPasskeyRoutes`, and the WebSocket, which is the terminal and carries
+the same requirement.
+
+One thing for a decision rather than a fix. `/api/health` answers an
+unauthenticated caller with the version, the tmux version and the number of
+live sessions. There is a test that it leaks no password, token or hash, and
+that test is right. But the comment beside it says the probe "says nothing
+sensitive", and the count of live sessions says something: not what you are
+doing, but when you are working. The versions say which advisories to read.
+
+Left as it is, because exposing version and liveness is what health probes are
+usually for and monitoring wants it. The two ways to narrow it, if that trade
+looks wrong: answer `{ok: true}` to an unauthenticated caller and keep the
+detail for `/api/settings`, which already requires a session; or keep the
+behaviour and make the comment a list of what is deliberately public. The
+current wording is a shade more comfortable than the facts.
+
+## Two lists of what counts as a shell, already disagreeing
+
+    session.IsShellCommand:  bash sh zsh fish dash ksh tcsh csh tmux ""
+    httpapi.isShell:         bash sh zsh fish dash ksh           tmux
+
+Both answer "is this a plain shell". One drives the state machine — a shell
+sitting at its prompt is done, not working — and the other drives naming, where
+a shell falls back to the directory it is in because every shell is called
+bash and the directory is the only thing that distinguishes them.
+
+So a session running csh was a shell to the state machine and not a shell to
+the namer: labelled "csh", which tells you nothing, instead of the worktree it
+was opened in. Nothing in the repository noticed, because nothing compared the
+two lists.
+
+The same shape as the Go and TypeScript state enums earlier in this log, and
+this time the fix is better than a test: there is only one list now.
+`httpapi.isShell` calls `session.IsShellCommand`, which is where the judgement
+belongs — its own comment already claimed ownership, and being a shell has
+consequences in the state machine while naming only wants the same answer.
+
+Traced before changing it, because a shared helper is exactly where a quiet
+behaviour change hides. csh and tcsh now reach the directory fallback, which is
+the documented intent. The empty command — which happens for a moment after
+creation while `pane_current_command` still reads "tmux" — returns the empty
+string down both the old path and the new one. Nothing else moves.
+
+## The compose box fired on the input method's own confirm key
+
+The box exists because typing into a raw terminal with an input method is
+unusable: every composition keystroke reaches the shell and Chinese, Japanese
+and Korean input come out as garbage. Its own comment says so.
+
+Its Enter handler had no `isComposing` guard. With an IME, Enter is how a
+candidate is chosen, and Chromium reports that keypress as `key: "Enter"` with
+`isComposing` set — so picking the first word of a Chinese sentence sent the
+sentence. The component built to keep an input method away from the terminal
+was firing on the input method's own confirm key.
+
+Fixed rather than reported, which is a departure worth justifying: it is one
+well-understood condition, no layout and nothing asynchronous, and for anyone
+not using an IME `isComposing` is always false, so the change cannot affect
+them. That combination is rare enough in this log to be worth naming — most of
+what has been left alone was left alone because the repair needed a judgement
+about what something should look like.
+
+Found by the same method as the Ctrl finding directly above: taking the inputs
+the interface can actually produce and following them through, rather than
+reading the code for whether it looks right. Both of those bugs read perfectly
+well.
+
+Unfixed, from the same file and the same principle: the Enter-appends toggle
+beside the send button distinguishes its two states by colour alone — the same
+icon, the same border, only `text-accent` against `text-ink-2`. That control
+decides whether pressing Send runs the command or merely types it, the title
+attribute explaining it is hover-only and a phone has no hover, and this
+project's own rule is that colour is never the only carrier of meaning. Left
+alone because choosing what the off state should look like is a design
+decision, and one that wants seeing rather than reasoning.
+
+## You cannot interrupt anything from a phone
+
+`withCtrl` is written correctly — folds the top three bits, upper-cases first so
+ctrl+c and ctrl+C agree, handles space as Ctrl-@. It is also unreachable for
+every character that matters.
+
+The key bar renders no letter keys. `y`, `n`, the digits and `/ - | ~`, and
+that is all. Ctrl is applied only by `sendChar`, which only the digits and
+symbols use. So Ctrl+C, Ctrl+D, Ctrl+Z, Ctrl+R and Ctrl+L cannot be produced at
+all: the compose box sends literal text, and the terminal is read-only at phone
+width, so there is no second route.
+
+It is worse than "no letter keys", which is how this was first written down.
+Ctrl folds the top three bits, so it only changes bytes in 0x40–0x5f. Put every
+character the bar can send through the modifier path against that range —
+`1` `2` `3` are 0x31–0x33, `/` is 0x2f, `-` is 0x2d, `|` is 0x7c, `~` is 0x7e —
+and all seven fall outside it, so `withCtrl` returns each of them unchanged.
+The modifier latches, un-latches, and cannot alter a single byte. It is
+decorative.
+
+For a panel whose stated purpose includes giving agents instructions from a
+phone, interrupting a command that has gone wrong is the most urgent
+instruction there is, and it is the one that cannot be given. The render check
+knew, in a way: its ctrl test reaches for `key-c` with a `.catch()` around it,
+because that key has never existed.
+
+Second, smaller and independent: `sendRaw` clears both modifiers whether or not
+they were used, and nine of the eighteen keys go through it — y, n, enter, esc,
+tab, the four arrows, home, end. Tap ctrl, tap y, and a plain `y\r` is sent
+while the ctrl key un-highlights exactly as though it had applied. The modifier
+is consumed and silently does nothing.
+
+Neither fixed, and the reason is that the repair needs per-key knowledge rather
+than a rule. Alt before an arrow is an Escape prefix, which `withAlt` derives
+correctly; Ctrl before an arrow is `\x1b[1;5A`, which no bit-folding produces —
+applying `withCtrl` to a multi-character sequence silently returns it unchanged,
+which is another thing that looks like it worked. And whether an unapplied
+modifier should stay armed or be dropped is a judgement about how a thumb
+expects the bar to behave: staying armed risks a stuck modifier, dropping it is
+the silent loss above. Both want seeing on a real device.
+
+Neither is covered by the harness, and the reason is worth noting: the ctrl test
+verifies that the modifier *unlatches*, and it happens to use one of the seven
+keys that does apply it. A test that had used `esc` would have passed too, while
+proving the opposite.
+
+## Manual order that stops being manual
+
+`ReorderProjects` writes positions for the ids it is given and leaves the rest
+alone. Its comment said those others are "left on automatic ordering". They are
+not: a project that already carried an explicit position keeps it, so a partial
+list can leave two projects sharing an index.
+
+That matters because of how the ordering query breaks ties — `pinned`, then
+nulls last, then `sort_index`, then `last_active_at DESC`. Two projects on the
+same index are therefore ordered by *activity*, so the pair swaps places
+whenever one of them does something. The user dragged one above the other and
+the panel quietly stops honouring it, for that pair only, at a moment unrelated
+to anything they did.
+
+Reachable from a stale list: two viewers, one reordering while the other's idea
+of the project set is out of date. Narrow, but manual ordering exists precisely
+to hold still until it is changed.
+
+Comment corrected, because it was provably wrong. Behaviour left alone: the fix
+is to null the omitted ids inside the same transaction, which would make the
+original comment true — but demoting a project that somebody else can currently
+see to the bottom of their sidebar is a decision about their interface rather
+than a defect being repaired.
+
+## A clean read, and one small thing
+
+`AuthGate` and the credential rules hold up. The server enforces the twelve
+characters the hint promises — `auth.MinPasswordLength`, with an upper bound so
+a megabyte of password cannot be used to make argon2 the denial of service —
+the username is trimmed and bounded, both buttons are disabled while a request
+is in flight so a double click cannot spend a throttle budget, and the
+autocomplete attributes are right in all three fields.
+
+Recording that as a result. Two rounds in a row without a finding is worth
+saying plainly: if every round produces something, "it produced something"
+stops carrying information.
+
+One small defect. Errors are rendered only when there is no state yet:
+
+    if (error && !state) { ...show it... }
+
+After the first successful load `state` is never null again, so any later
+failure is stored and never shown. The path that matters: the network drops,
+sign-out is clicked, `logout()` fails and is swallowed deliberately, `refresh()`
+then fails too — and the interface goes on showing a signed-in panel with the
+error invisible. The user pressed sign out and nothing happened, with no
+explanation.
+
+Not fixed because the repair involves a judgement that wants seeing: whether a
+failed sign-out should clear the local state anyway. Doing so is safer on a
+shared machine and produces a false "signed out" once the network returns.
+Small, too — it needs a network failure, and by then the user usually knows.
+
+## doctor now says the thing the requirements list cannot
+
+Following the previous entry's "worth doing and not done": `doctor` printed the
+tmux version and compared it to nothing. A requirements list is read once, by
+somebody who already installed tmux; `doctor` is read on the machine where it
+is actually wrong.
+
+`tmux.ParseVersion` and `AtLeastMinimum` handle the shapes tmux really reports
+— "3.6", "3.3a" for a patch release, "next-3.6" for a development build — so a
+split on "." was not enough. An unparseable version counts as new enough:
+refusing to run because a version string looked unfamiliar would be worse than
+the problem being guarded against.
+
+Three outcomes rather than two, because the two existing markers do not fit.
+Missing tmux is fatal. Too old is a real degradation that is not worth refusing
+to start over. Neither should look like the other, so an old tmux gets the
+`--` marker that passkeys already use for "works, but not here", with the
+consequence spelled out underneath: allow-passthrough is not applied and agent
+progress bars and notifications are lost.
+
+The test covers both directions deliberately. A false "too old" nags about a
+working install until somebody stops reading doctor's output, and a false "new
+enough" leaves the passthrough problem undiagnosed on the one machine where it
+matters — and that failure is invisible by nature.
+
+## The stated tmux version is a version too low
+
+`TestEnsureServerLoadsConfig` already understands the hazard, and says so: "A
+config file with a bad option name makes tmux print an error and carry on with
+defaults, so 'the server started' proves nothing on its own." It then reads
+back one option per scope to prove the file was applied.
+
+One per scope proves the file was *read*. It does not prove that the lines
+whose failure is invisible survived. The ones it skipped include `bell-action`
+— the setting with an incident behind it, where "none" reads like "do not
+react" and actually stops tmux forwarding the bell at all, removing the only
+signal the panel has that an agent wants a human. Nothing else about the panel
+would look different.
+
+Added: `bell-action`, `visual-bell`, `allow-passthrough`, `monitor-bell`,
+`escape-time`, `default-terminal`. Chosen by asking which lines fail by doing
+nothing observable, rather than by covering the file evenly.
+
+Writing that turned up a requirement mismatch. `allow-passthrough` arrived in
+tmux 3.3; the README asks for 3.2 or newer. On 3.2 the option is unknown, tmux
+reports it and carries on, and the sequences agent TUIs use for progress and
+notifications are swallowed from then on — with no error anywhere, because that
+is precisely what this class of config failure does. README now says 3.3 and
+why.
+
+Worth doing and not done: `doctor` prints the tmux version but does not compare
+it against a floor. It is the natural place to catch this on the machine where
+it matters, rather than in a requirements list nobody re-reads.
+
+## The runbook was wrong about the thing you read it for
+
+Audited every claim in `docs/runbook.md` against the code, since it is the
+document somebody reads at two in the morning and three of the drifted comments
+found earlier were in exactly that shape.
+
+Most of it holds up: `doctor` checks what it says it checks, `GONE` really is
+printed by `session ls`, `--id` is the right flag, the database version message
+is quoted correctly, and the note about a tmux server started outside the unit
+escaping the unit's memory limits describes a real incident.
+
+The memory section was wrong, and wrong in the direction that matters. It said
+the panel's own memory "stays roughly flat regardless of session count" because
+scrollback lives in tmux. The panel attaches to *every* session — that is what
+makes state detection work for the ones you are not looking at — and each
+attachment carries a replay buffer of up to 2 MiB, a PTY and a goroutine. It is
+linear, not flat. Somebody debugging memory pressure was being told to look
+only at tmux.
+
+Rewritten with the actual numbers and where each lives, plus the threshold
+`scale-check.mjs` uses, so the page and the check agree.
+
+Two additions while there. The ACME section said a DNS-01 credential "must be
+present in the environment" without naming the variable, which at two in the
+morning is a dead end — it is `CLOUDFLARE_API_TOKEN` or `CF_API_TOKEN`, and
+Cloudflare is the only provider wired up. And there is now a section for the
+timestamp-preserving renewal found earlier in this log, with the one-line
+workaround: `touch` the pair.
+
+## A dependency for a renderer that was never used, and a check with no way to run
+
+Applying the dependency guard to the frontend turned up two things and one
+mistake of mine.
+
+`@xterm/addon-webgl` is a declared dependency and is imported nowhere. The plan
+called for the WebGL renderer; the implementation uses the DOM one. The
+dependency stayed behind.
+
+Reported rather than removed, and the reason matters: deleting it from
+package.json without running `npm install` would leave package-lock.json
+disagreeing with it, and `npm ci` — which is exactly what build-release.sh runs
+— fails on that. An obvious tidy-up that would have broken every release build,
+avoided only by thinking about the lock file before reaching for the edit.
+
+The second: `check:scale` was never in package.json. The scale harness was
+written, and the command that would have registered it was one of the ones
+refused, so the file has been sitting there with no way to run it. I reported it
+as done at the time, which it was not. Added now, and the new test asserts every
+harness in `scripts/` has a script pointing at it, because a check nobody can
+run is the same as a check that does not exist — the theme of this entire
+stretch, arriving this time in the form of my own bookkeeping.
+
+The guard itself mirrors the Go one: no component library, no state library, no
+Jest, no Prettier, and the pieces the terminal is built on must still be there.
+Both directions again, because a dependency quietly swapped out is the same
+problem as one added and only the second is obvious.
+
+## The constraint that only fails on somebody else's machine
+
+Past the red lines, the conventions deserved the same question. One of them is
+a hard constraint rather than a preference: `CGO_ENABLED=0` must keep working,
+because "download one static binary and run it" is the entire reason this is
+written in Go. It is why the SQLite driver is modernc's pure-Go one rather than
+mattn's.
+
+Nothing enforced it. A dependency that needs cgo compiles perfectly on a
+machine with a C toolchain — which every development machine has — and only
+fails when someone cross-compiles a release. Or worse, does not fail at all and
+produces a binary that will not start on the machine it was copied to, which is
+the one place nobody is watching.
+
+`release-check.sh` does catch it, since it builds the archives and runs `ldd`
+on the result. But that is a several-minute job nobody runs while editing, so
+in practice the constraint was checked once per release rather than once per
+change.
+
+A build tag cannot express this and `go vet` will not either, so it is a list:
+the packages AGENTS.md names as forbidden, the ones it names as required, and
+the minimum Go directive the tests now depend on. Short, static, instant, and
+it fails with the sentence explaining why the dependency is not allowed rather
+than with a linker error three steps later.
+
+The list cuts both ways deliberately. A driver silently swapped out is the same
+problem as a forbidden one added, and only the second half is obvious.
+
+## The last two red lines
+
+Red line 5 — theme blocks redefine tokens, never component styles — is now a
+static test. It reads `styles.css`, finds the `prefers-color-scheme` block and
+every `[data-theme]` rule by brace counting, and asserts that each declares
+custom properties and nothing else. A component's colours living inside a theme
+block is the classic white-on-white: the rule exists in one theme and simply is
+not there in the other, so whatever it was overriding comes back.
+
+It checks a second thing the file's own header warns about: every token defined
+in a dark block must also have a value on bare `:root`. A colour whose only
+definition is inside a media query is undefined in the theme that query does not
+match. Verified against the current file before writing the assertion — the dark
+blocks define 36 tokens and all 36 have light defaults, with `:root` carrying
+three more that are not colours and correctly have no theme variant.
+
+The first assertion in that file is that theme blocks were found at all. A
+parser that finds nothing finds no violations either, and this whole stretch has
+been about checks that pass because they never ran.
+
+Red line 4 — shape as well as hue — is now compared in the render check, at the
+moment a session is waiting, htop is working and others are done. It pulls the
+rendered SVG for each state and compares them pairwise. Colour is not part of
+the comparison, deliberately: the point is that the shapes differ.
+
+A state that is not on screen at that instant produces a warning rather than a
+failure. It is a setup gap, not a defect — but saying so out loud matters,
+because a comparison that did not happen reads exactly like one that passed.
+
+All seven red lines now have something behind them. Three did not when this
+review started: the TypeScript half of 3, exact-match targets in 7, and this
+pair.
+
+## The red line with an incident behind it had no test
+
+Having found one red line half-fictional, the rest were worth the same
+question: is this actually enforced, or only written down?
+
+Red line 7 — exact-match tmux targets, `=name:` — was not. Five tests in the
+tmux package and none of them creates two sessions with a shared prefix.
+`target()` and `sessionTarget()` carry the "=" and a careful comment explaining
+why; nothing would have noticed if either lost it.
+
+Writing the test needed the failure understood properly. tmux resolves a target
+by trying an exact match first and a prefix match second, so two sessions
+existing at once is *not* the dangerous case — the exact one wins. The danger is
+aiming at a session that has already gone while a longer name is still there,
+which is an ordinary event: the panel races with sessions exiting on their own,
+and a kill arriving a moment late would land on a different session entirely.
+
+So the test creates only `vp_abcd`, then asserts that `vp_ab` is not found, that
+a resize aimed at it does not move `vp_abcd`, and that killing it does not take
+`vp_abcd` with it. Drop the "=" and all three fail; leave it and every other
+test in the package is unaffected either way, which is exactly why this was
+missing.
+
+Red lines audited so far: 1 (socket isolation) holds by construction — every
+command goes through `run`, which always prefixes `-L` — and is additionally
+asserted by `doctor`. 2 (never own a session's PTY) is covered by restart-check,
+which compares pane pids across a restart. 3 is now covered on both halves. 6
+(validate hook input) has `TestHookRejectsGarbage`. 7 is this. Still unexamined:
+4 (shape as well as colour) and 5 (theme tokens only in theme blocks).
+
+## Half of a red line was fiction
+
+`internal/session/state.go` opened with a rule in capitals: it is the single
+source of truth, `web/src/protocol/state.ts` is generated from it by
+`go generate ./...`, and the TypeScript must never be hand-edited. AGENTS.md
+carries the same claim as red line 3.
+
+Neither the generated file nor the generator exists. `web/src/protocol/` holds
+api, socket, webauthn and wire; `scripts/` holds a release builder. The
+`//go:generate` directive points at `scripts/gen-ts-state`, so
+`go generate ./...` — the documented workflow — fails outright.
+
+The states are in `wire.ts`, written by hand, and that file is honest about it:
+"Mirrors internal/session/state.go, the source of truth" and "If this file and
+the Go one ever disagree, the Go one is right". So the repository contained two
+comments contradicting each other about whether a safety mechanism existed —
+the second instance of that in this log, after the tmux config's second bell
+signal.
+
+This one is worse than a stale comment. A rule that reads as enforced is a rule
+nobody re-examines: the reason nothing had drifted is that nothing had changed,
+not that anything was checking. And the drift it describes is real — a state
+the backend emits and the frontend does not know renders as a session with no
+indicator at all.
+
+Delivered the property instead of the mechanism. `TestTypeScriptStatesMatchTheEnum`
+reads `wire.ts`, extracts the union members and `STATE_ORDER`, and compares both
+against `AllStates` — as a set for the union, in order for `STATE_ORDER`, since
+that one claims to match `SortWeight`. No build step, and it fails with the line
+to edit. The comment in state.go and red line 3 now describe what is actually
+there, including what they used to say.
+
+The other half of red line 3 was true: `TestSessionOrderMatchesStateSortWeight`
+exists and does compare the SQL ordering against the enum.
+
+## A renewal that preserves timestamps is never noticed
+
+Read after finding that the check meant to exercise this code was vacuous, so
+the code was less verified than it looked. It turns out to be sound: the
+constructor loads the pair synchronously and fails at startup on a bad path, so
+there is no window where handshakes fail while nothing is loaded yet;
+`GetCertificate` resolves per handshake, so a reload lands on the next
+connection; and a failed load returns early without touching the stored pair or
+its timestamps, so a half-written renewal keeps the old certificate and retries
+on the next tick. The property the empty assertion was reaching for holds by
+construction.
+
+One real failure mode, reported rather than fixed. `reload` decides whether
+anything changed by comparing modification times. A renewal that preserves them
+— `cp -p`, a restore from backup, some sync tools — is invisible: the panel
+serves the old certificate until it expires and then serves an expired one,
+forever, in silence. `reload` returns nil, so nothing is logged.
+
+The consequence is total: every browser refuses the connection, and the cause
+is in a place nobody would think to look.
+
+The fix worth making is not hashing the files every minute. It is a expiry
+backstop: keep the `NotAfter` of the loaded certificate and reload regardless of
+timestamps once it is within a couple of days of expiring. That targets the
+outcome that actually matters rather than trying to detect every way a file can
+change without saying so.
+
+Not made here because TLS is the worst possible place for an unverified change:
+a mistake is not a degraded feature, it is a panel nobody can reach.
+
+## "It verifies" about a file it never opened
+
+The release check runs `systemd-analyze verify` on the installed unit and
+treats the absence of a complaint as a pass. With `|| true` swallowing the exit
+status, a run where the tool could not start at all — no dbus, a sandbox it
+cannot enter, an early error — produced empty output, no complaint, and the
+line "the installed unit verifies" about a file it had never opened.
+
+The exit status is no substitute here: this machine has unrelated units
+carrying deprecated directives, so a non-zero exit says nothing about ours, and
+keying on it would have introduced a failure that has nothing to do with the
+panel.
+
+A control does work. The check now writes a unit with an invented directive and
+requires `systemd-analyze` to object to *that* before believing its silence
+about the real one. If the tool is not functioning in this environment, that is
+now what gets reported, instead of a pass.
+
+The technique is the one that rescued the touch-selection work earlier in this
+log: when a probe reports "nothing found", run it against something that should
+definitely be found. Both times, the control was the difference between a
+result and a reassuring noise.
+
+## Two seconds against a sixty-second timer
+
+The TLS check ends by writing rubbish over the certificate and confirming the
+listener survives it — keeping the last good pair is the difference between a
+warning and an outage during a botched renewal.
+
+It slept two seconds. The file source polls once a minute. So the assertion ran
+against a server that had not yet looked at the file: it confirmed that a
+process which had noticed nothing was still working. The check passed on the
+one run it has had, and would have passed just as happily against a version
+that fell over the moment it read a bad certificate.
+
+The tell was in the same file. Thirty lines above, the certificate-swap check
+polls for ninety seconds precisely because the reload takes up to a minute —
+the correct waiting period was already written down, in the section immediately
+before the one that ignored it.
+
+It now watches across seventy-five seconds rather than sampling once at the
+end, because an outage that lasts a few seconds in the middle is still an
+outage, and it additionally asserts that the fingerprint being served is still
+the *previous good one* rather than merely being something.
+
+## Comparisons against a measurement that failed
+
+The same sweep, one level down: assertions whose *threshold* is fine but whose
+*measurement* can fail silently. Every comparison against NaN is false, so a
+check written as "fail if the number is too big" passes when there is no
+number at all.
+
+Three, two of them in the scale check — which is mine, and has never run:
+
+  - `Number(attached) < COUNT`, where the client count comes from a shell
+    pipeline that yields `'?'` when it fails. `Number('?')` is NaN, so a failed
+    count read as "all sessions attached", which is the one thing that check
+    exists to disprove.
+  - `loaded - baseline > COUNT * 3`, where both come from `/proc` and are NaN
+    when it cannot be read. An unmeasurable run passed.
+  - In the stress check's cell-width measurement, two rows of zero width make
+    the ratio NaN and the assertion vacuous. A terminal that had not been laid
+    out would have been reported as rendering wide characters correctly.
+
+All three now assert the measurement before the threshold. The memory one is a
+warning rather than a failure, because `/proc` is legitimately absent on
+platforms this builds for — but it says the check did not run instead of
+implying it passed.
+
+Worth noticing where these were: the two in the scale check are mine, written
+in the same stretch where I was cataloguing this exact fault in other people's
+code. Knowing the pattern is not the same as not writing it.
+
+The wide-character section, by contrast, gets it right — it validates the
+column count before using it and splits its marker so the echoed command cannot
+be mistaken for output. Both of those were lessons from earlier failures in
+this log, and they stuck.
+
+## Three product failures that were only warnings
+
+Continuing the sweep for checks that cannot fail, one level up: assertions that
+*can* fire but are graded so that the run stays green when they do. WARN does
+not affect the exit code, so those are optional.
+
+Three were grading real product failures:
+
+  - The terminal accepting direct keystrokes at phone width. That is the guard
+    keeping an input method away from the raw PTY; without it every composition
+    keystroke reaches the shell and CJK input produces garbage, which is the
+    entire reason the compose box exists.
+  - A narrow second viewer with no "take control" affordance. Either it is
+    missing — a phone stuck scaled with no way out — or the second viewer took
+    the grid merely by arriving, which is the reflow-under-somebody-else's-
+    hands the arbitration design exists to prevent.
+  - The page scrolling sideways. The scale check already calls this a failure;
+    the same defect was a warning here.
+
+All three are now failures. The last full run was green with no warnings, so
+this changes nothing today and makes a regression visible tomorrow.
+
+The rest of the warnings are a different thing: "could not find the row to
+select", "expected two projects to drag", "the drawer did not open". Those
+report that the harness could not set the scene, which is not the product
+failing — but it does mean the assertion behind them silently did not run,
+while the headline still reads 0 FAIL. They stay warnings because they are
+printed and a person reads this output, but they belong in the same family as
+everything else in this section: a check that did not happen is easy to mistake
+for a check that passed.
+
+## The reconnect check never disconnected anything
+
+stress-check's "losing the connection" section reached for
+`window.__vpSockets` — a global the application has never defined, as its own
+comment admitted — and then dispatched `offline` and `online` events that
+nothing in the client listens for. So the socket was never dropped, and the
+section's only real assertion was that an untouched connection was still open
+two and a half seconds later.
+
+The third harness bug of this shape, after the phone section that ran with a
+mouse and the drop path that was really testing a full reconnect. They are
+worth counting: a check that cannot fail is worse than a missing one, because
+it is subtracted from the list of things still to worry about.
+
+It uses Playwright's own offline switch now, which genuinely closes the
+connection, and asserts what a person would notice: the panel admits it is
+disconnected, it comes back by itself, and the scrollback returns.
+
+Then a correction, made before the ink dried. The first version of that section
+also asserted the *duplication* fix — that a replayed snapshot replaces the
+terminal's contents rather than being appended. It could never have failed:
+`.xterm-screen` holds only the viewport, the duplicate copy lands above it, and
+this page has just been through a twenty-thousand-line flood, so the buffer is
+at its limit and even a height comparison says nothing. The assertion moved to
+restart-check, where the session has five lines in it and both copies would sit
+in plain view.
+
+Writing an assertion is not the same as writing one that can fail. That is the
+second time in two entries — the throttle cap bounded nothing, this counted a
+region the evidence could not be in — and both were caught by asking what
+values actually reach the branch, rather than by re-reading the code.
+
+## Covering the rest of the blind changes
+
+Two more, both for behaviour that is invisible until it is wrong.
+
+`TestTakingControlAtTheSameSizeStillTellsEveryone` drives a real tmux session
+with two subscribers, drains the events each subscription queues on its own,
+then transfers ownership *without changing the dimensions* and asserts that
+both viewers receive a size event. That event is the only thing carrying who
+the controller is — each connection recomputes the flag when forwarding one —
+so its absence is precisely the bug: the new owner still being offered a grid
+it holds, the old one still believing it drives the session.
+
+`TestHookStatusIsCachedButNotStaleAfterInstalling` pins the cache from both
+sides: a second call must *not* re-read the file, and installing through the
+panel must drop the cache so the "states are being guessed" notice clears at
+once. A cache that is merely fast is easy; one that is fast and never lies
+about something the user just did is the part worth a test.
+
+The fourth of those — the detector cleanup on project deletion — could not be
+asserted at all from outside the session package: trackers live in an unexported
+map with no way to count them. Cleanup nothing can observe is cleanup nobody
+notices going missing, so `Detector.Tracked` now exists for exactly that, and
+the test deletes a project with two sessions and checks the count returns to
+where it started.
+
+It settles for a moment before asserting rather than polling until the number
+agrees. Detaching closes the PTY, but a chunk already read can still reach
+`OnSignals` after `Forget` has run, and `Observe` would recreate the tracker.
+Polling until equal would tolerate that — and would equally tolerate a tracker
+that is never released at all, which is the thing being tested.
+
+Still uncovered, and honestly so: the WebSocket deregister-on-drop, the
+client's clear-before-replay, and the drag-handle ref. Those need a socket or a
+DOM to mean anything.
+
+## Writing the test found the hole in the fix
+
+The throttle change earlier in this log capped what the map may hold and, when
+over the cap, dropped entries older than the forget window and then older than
+half of it. Writing its test was enough to see that this bounds nothing in the
+case it was written for: in a fast spray across addresses *every* entry is
+newer than both cutoffs, so nothing is dropped, the map grows anyway, and —
+because it is permanently over the cap — every request now walks all of it.
+Strictly worse than before the change, in exactly the scenario the change was
+about. The comment claiming a bounded worst case was wrong too.
+
+It evicts by rank now: sort by last-seen, drop the oldest down to the cap. That
+runs only on calls that find the map over its bound, and it actually brings it
+back under. The test asserts both halves — the map stays capped, and the source
+that is guessing *right now* is still remembered, because eviction that dropped
+the newest end would leave an active attacker unthrottled.
+
+Worth recording as a method rather than an incident: the fix was reasoned about
+carefully, reviewed, written up, and wrong. What caught it was trying to state
+the property as a test, which forced the question "what values actually reach
+this branch" — and the answer was none of them.
+
+## Tests for the changes that could not be run
+
+Three, covering the two blind fixes most likely to be wrong in a way that
+compiles: `Config.BindHost`, which decides where hook reports are posted, and
+the static-directory handler, which answered 404 for every relative path.
+
+They exist so that `make check` says something about these changes beyond "it
+builds". They have not been run either — but a test that fails is a far better
+outcome than a change nobody ever exercised.
+
+One deliberate choice in the containment case: it asserts that the file above
+the root is never *served*, not that a particular status comes back.
+`path.Clean` against "/" folds `../` into a name under the root, so the request
+ends at the SPA fallback and returns 200 with the app in it. Asserting 403
+would have failed against correct behaviour — the same mistake made twice in
+the upload tests earlier in this log, where "a climbing path is clamped, not
+rejected" had to be learned from a red test.
+
+## The status page does not watch anything
+
+The brief asked for a settings page that lets you observe how the backend is
+running. It fetches once, on mount, and never again.
+
+Everything on it is a live number — uptime, sessions, how many are attached,
+how many viewers, the database size. Leave the page open for ten minutes and
+the uptime still reads whatever it was when you opened it, with nothing on
+screen saying when the reading was taken. Not wrong data: a stale snapshot
+presented as current status, which is the opposite of observing.
+
+Reporting rather than fixing, because the interval is a judgement call.
+`/api/settings` shells out to tmux twice per request — `Version` and `List` —
+so polling every second is waste. The answer is a slower interval, not none.
+Five seconds while the modal is open would cost little and make the page mean
+what it says. Uptime could tick client-side from the fetched value and cost
+nothing at all.
+
+Smaller and concrete, in the same handler: `dbBytes` stats only
+`vibepanel.db`. Under WAL there is also `-wal` and `-shm`, and the write-ahead
+log is routinely larger than the database early on — 310 KiB against 4 KiB in
+one screenshot from these checks. The panel under-reports its own disk usage,
+on the page whose job is to report it.
+
+## The same hot path, still reading the user's home directory
+
+Fixing the script rewrite above only removed half of what `stateIsGuessed` was
+doing on every snapshot. The other half was still there: `hooks.Inspect` reads
+`~/.claude/settings.json`, parses it, and builds two JSON snippet strings with
+`Sprintf` — of which the caller uses exactly one boolean, `Installed`.
+
+So every state broadcast read and parsed a file in the user's home directory.
+Twenty-odd sessions moving between working and done is several times a second,
+indefinitely.
+
+Cached now, behind a ten-second TTL, with the panel's own install and uninstall
+dropping the cache so the "states are being guessed" notice does not keep
+telling somebody to install hooks they just installed. Both handlers also
+broadcast now, so the notice clears in every open window rather than in the one
+that pressed the button.
+
+The pattern worth naming, since this is the third instance in two entries: work
+that is obviously cheap when you write it, placed on a path that turns out to
+run on every broadcast. `snapshot()` is that path, and anything reaching it
+should be assumed to run several times a second.
+
+## A file rewritten on every state broadcast, while agents were executing it
+
+Also mine, and this one was doing damage rather than merely missing.
+
+`InstallScript` wrote the reporter script unconditionally — `MkdirAll` plus
+`WriteFile`, no comparison, every call. Callers treat it as "tell me where the
+script is", and the `stateIsGuessed` check added earlier in this log calls it
+from `snapshot()`. Snapshots are built for every state broadcast: a session
+changing state, a session created or renamed, a note saved. With a couple of
+dozen sessions moving between working and done, that is the same kilobyte
+rewritten several times a second, forever.
+
+The I/O is the smaller half. `os.WriteFile` truncates before it writes, and
+this particular file is executed by agents' hooks at moments nobody controls. A
+shell reads a script incrementally, so a hook that fires during the truncate
+can read half a file — failing in a way that would be attributed to almost
+anything before the panel's own housekeeping.
+
+Now it compares first and returns when the content already matches, which is
+almost always, and writes through a temp file and a rename when it does not.
+Rename swaps the name; anything already executing keeps the inode it started
+with. `TestInstallIsIdempotentAndExecutable` still describes what it does: same
+path twice, owner-only, executable.
+
+Two things this is the second instance of. Rewriting a file to change nothing —
+the same fault as the settings installer earlier in this log, found the same
+way, one file over. And `os.WriteFile` applying its mode only on creation,
+which the temp file has to be chmodded explicitly for. Worth treating as a
+pattern rather than two coincidences.
+
+Related and left alone: `handleHooksStatus` is a GET that installs the script
+as a side effect. Harmless now that installing is a no-op when nothing changes,
+but a GET that writes is still the wrong shape.
+
+## The exit indicator never reaches the terminals most likely to exit
+
+A hole in the change made earlier in this same log — worth recording as such
+rather than as a discovery about somebody else's code.
+
+`exited` and `exitStatus` were added to the session, given two shapes that a
+colour-blind reader can tell apart, and wired into the sidebar row and the
+header above the main terminal. Scratch terminals appear in neither.
+`App.tsx` filters children out of the sidebar list, and `BottomTerminals`
+renders no state at all: no glyph, no exit code, no restart.
+
+Which means the indicator is missing from exactly the place a dead pane is most
+likely to be met. A bottom terminal is where a one-off command gets run and
+where somebody types `exit`. What they get is a tab that looks live, a pane
+frozen on tmux's "Pane is dead" line, and no explanation anywhere in the
+interface.
+
+The restart path is unreachable for them too, which is the part that stings:
+restarting in place was built to keep the pane and its scrollback, and the only
+recovery available in the strip is closing the tab and opening a new one, which
+throws both away.
+
+The fix is small and entirely visual — the exit glyph beside the tab name, the
+status in the tab's tooltip, and a restart control next to the close button —
+which is why it is not being made blind. It needs the same render-check
+treatment the sidebar version got: two shapes that differ, and a restart that
+visibly brings the tab back.
+
+While reading that file: its active tab is derived rather than stored *and* the
+component is keyed by the parent session, so a switch cannot leave a selection
+pointing at a terminal belonging to something else. Two defences where one
+would have done, and both correct.
+
+## Renaming does not exist on a phone
+
+`InlineName` enters editing on `onDoubleClick` and nothing else. A phone has no
+double click — a double tap is the zoom gesture, and these labels set no
+`touch-action`, so the browser takes it.
+
+The same shape as the hover-revealed controls fixed earlier in this log: an
+interaction that does not exist on the platform the panel was explicitly asked
+to support. It sits awkwardly against the component's own comment, which says
+renaming is "the single most requested thing this panel does — the whole reason
+it exists is that tabs called 'bash' are useless — so it has to be two clicks
+away, not behind a dialog". On a phone it is behind an unbounded number of
+clicks.
+
+The mobile section of the render check never tries to rename anything, which is
+why this survived. The touch context added for the reachability check is the
+right place for it: long-press a session row's name, expect an input, type,
+expect the new name in the sidebar.
+
+Not implemented, because the fix is a new gesture — press and hold without
+moving, the same shape as `touchSelect` — and an untested gesture handler is
+exactly the kind of thing that quietly fights with scrolling or with the
+existing double click. It wants a real touch context to be believed, which this
+session could not run.
+
+The rest of the component is sound: an empty or unchanged name is not
+committed, Escape discards without the blur handler firing on unmount, and key
+events are stopped so they cannot reach the terminal underneath.
+
+## Two attaches for one session, and the invariant everything rests on
+
+The most serious thing this read-only pass turned up. Finding only: it is core
+concurrency and there was no way to run the race detector.
+
+`Attach` checks `m.live` under the lock, releases it, then does the slow work —
+`Has`, `CaptureScrollback`, `pty.StartWithSize` — and registers at the end. Two
+callers arriving in that window both build a `Live` and the second overwrites
+the first.
+
+Not theoretical. There are two callers by design: the poller attaches every
+session it does not already see, and a browser subscribing attaches the one it
+is opening. Opening a session that was just created, or two people opening the
+same one, lands squarely in the gap — and the gap is two tmux CLI executions
+and a fork, so tens of milliseconds, not nanoseconds.
+
+Three consequences, in order of how much they matter:
+
+1. Two `tmux attach` clients on one session. `vibepanel.conf` uses
+   `window-size latest` — because `manual` segfaults tmux 3.6 — and the entire
+   justification for that is the comment beside it: "The panel attaches exactly
+   one client per session and drives its size from Go, so 'latest' is always
+   us." With two clients the window follows whichever was last active, and the
+   arbitration the panel enforces in Go is being contradicted underneath it.
+2. The first `Live` is orphaned and keeps running: PTY, tmux client process,
+   2 MiB ring and goroutine, for the life of the process. `m.live` no longer
+   points at it, so even `Detach` cannot reach it. It self-heals only on
+   restart.
+3. Viewers already on the orphan keep working, because it is attached to the
+   same tmux session and the content is identical. So the symptom is not
+   "broken" but "leaking slowly and occasionally fighting over the grid",
+   which is the hardest kind to attribute.
+
+The fix wants per-session granularity: an in-flight map keyed by session id, so
+a second caller waits for the first instead of starting its own. Holding `m.mu`
+across the slow work would serialise every attach at startup — two executions
+each, times however many sessions — and block `Get` and `LiveIDs` along with
+them.
+
+## PublicURL says it is never used for anything security-sensitive
+
+It is. `webAuthn()` passes it as `RPOrigins`, which is the list the library
+checks an assertion's origin against — one of the three things standing between
+a passkey and a phishing site.
+
+    // PublicURL renders the address a user should open. Best-effort: it is
+    // used in log lines and the setup message, never for anything
+    // security-sensitive.
+
+One of those two is wrong, and the comment is the cheaper one to trust by
+mistake. It is built from `--domain` and the listen port, which is right for
+the deployment this was written for — the panel terminating its own TLS on
+`direct.example.com:8443`. It is wrong the moment a reverse proxy is in front:
+the browser's origin is then the proxy's, `https://panel.example.com` on 443,
+and every assertion is rejected against an origin nobody configured. The error
+surfaces from inside the library, so the reason is findable only by reading its
+source.
+
+Worth an explicit setting rather than a derived one — the origin a browser sees
+is not something the server can infer, and guessing it silently is how this
+ends up being debugged at two in the morning.
+
+## Another unauthenticated endpoint that allocates
+
+`passkey/login/begin` has no throttle. It must be reachable without a session —
+it is the sign-in path — and each call stores a challenge for three minutes and
+sweeps the whole challenge map while doing it.
+
+The same shape as the audit-write finding: something an anonymous caller can
+make the panel allocate and walk, repeatedly, for the cost of one request. It
+is self-limiting where the audit log is not, because entries expire in three
+minutes, so the steady state is bounded by the request rate rather than growing
+forever. Still worth the same treatment when that one is fixed.
+
+## The pump guarantees half of what its comment claims
+
+Finding only. The fix is in the hottest function in the program and there was
+no way to run the race detector against it.
+
+    ring.Write(chunk)          // ring has its own lock; l.mu is not held
+    scanner.feed / drain
+    terminalQueryReplies → l.ptmx.Write(reply)
+    l.broadcast(chunk)         // takes l.mu
+
+`Subscribe` snapshots the ring and registers the subscriber under `l.mu`, so
+the two join up exactly — against anything else that holds `l.mu`. The pump
+does not hold it while writing the ring. A viewer that subscribes between those
+two lines therefore finds the chunk already in its snapshot *and* receives it
+again live.
+
+The comment says the ordering means a viewer "either sees the chunk in its
+replay or receives it live — never neither". That half is true. The other half
+is not, and duplication is the one that shows: a line printed twice as a
+session opens, which nobody reports because everybody blames the terminal.
+
+The window matters more than its size suggests. It spans the scanner, the
+capability-query check, and `l.ptmx.Write(reply)` — a write to a PTY, which can
+block when the buffer is full. So it widens under exactly the load that makes
+subscribing slow.
+
+The fix is to merge the two critical sections: take `l.mu` once, write the
+ring, feed the scanner, and deliver to subscribers before releasing it.
+Delivery is already non-blocking — a full queue drops the viewer rather than
+waiting — so holding the lock across it is bounded. The reply write must stay
+outside, because that one can block. `broadcast` would split into a locked
+inner form and the existing wrapper.
+
+## Every rejected request costs a database write
+
+Finding only — the fix needs a policy decision and it sits in the auth path.
+
+`RequireAuth` audits each request it refuses on the allowlist, and `audit` is a
+synchronous insert. Nothing on that path is throttled: the throttle is attached
+to `/api/auth/login`, and the allowlist check runs before it — and no other
+endpoint has one at all. Nothing prunes `audit_log` either; `RecentAudit` reads
+the newest hundred rows and the rest accumulate forever.
+
+The asymmetry is the point. Reaching argon2 requires getting past the
+allowlist; reaching a database write requires a TCP connection and a request to
+any endpoint at all. SQLite takes one write lock for the whole database, and
+the panel's real work — state changes, saving a note — queues behind it. That
+is a cheaper lever than password guessing, and it is available to anyone who
+can open the port.
+
+Both halves want fixing:
+
+  - Do not write a row per rejected request. Once per source per minute, with
+    a count, says the same thing: "10.0.0.5 was refused 4,000 times in the last
+    hour" is more useful than four thousand rows, and it is one write. The
+    suppression window is a judgement call, which is why it is not made here.
+  - Give `audit_log` a retention rule — a row count or an age — applied
+    wherever `PurgeExpiredAuthSessions` ends up being called from, since that
+    function needs a home for the same reason.
+
+Worth saying plainly: this is not a way in. It is a way to make the panel slow
+for the person who owns it, which for a tool whose whole promise is "your
+sessions are always there" is its own kind of failure.
+
+## A comment promising a safety net that was never wired up
+
+`vibepanel.conf` said `monitor-bell on` was "required for window_bell_flag to
+be maintained, which the state detector polls as a second bell signal alongside
+the raw \007". Nothing polls it. `Info.Bell` in the tmux wrapper says the
+opposite in as many words — always false under this configuration, do not build
+on it — and the observation the poller hands the detector carries only `Dead`
+and `ShellOnly`.
+
+Worth more than tidiness. Forty lines above, the same file explains at length
+that `bell-action` must not be "none" because the raw `\007` would stop
+arriving. Someone who read on and found a second, independent signal described
+might reasonably conclude there was a fallback. There is not: that one control
+character is the only thing standing between the panel and never knowing an
+agent wants a human.
+
+Comment-only. Two comments in the same repository disagreeing about whether a
+mechanism exists is a bug in the thing they are both describing.
+
+## A fast drag could commit the wrong row
+
+`useDragList` tracked the gesture in React state and read it back in the
+pointerup handler. Those are different clocks. The handler closes over the
+state from the render it was created in, and a release that lands before React
+has flushed the update from the pointermove just before it sees the position
+from one move ago — or `null`, if the whole drag was quick enough that no
+render happened at all. A flick is precisely the gesture where those two events
+arrive together.
+
+Not observed, reasoned from the code — but the file already carries a comment
+about the handler seeing "the state from the render that started it", written
+when the same hazard produced a double commit, so this is the second symptom of
+something that was half-diagnosed the first time.
+
+The drag state now lives in a ref as well: state for drawing, ref for deciding.
+That also takes `state` out of the release handler's dependencies, so it is
+built once per gesture instead of once per pointermove.
+
+The render check drives this with synthetic pointer events slow enough that the
+race cannot happen, which is why it has stayed green. A case that moves and
+releases in the same frame would be the one worth adding.
+
+## Hooks posted to an address nothing was listening on
+
+`report.sh` itself is fine — it exits immediately outside a panel session,
+validates the state against a whitelist before sending anything, caps itself at
+two seconds so it can never make an agent wait, and prints nothing whatever
+happens. That last property is the one that makes the bug below invisible.
+
+It posts to `VIBEPANEL_URL`, which `loopbackURL` hard-coded to
+`127.0.0.1:<port>`. Correct for the default `--addr :8443`, which listens
+everywhere including loopback. Not correct for `--addr 192.168.8.20:8443`,
+which is an ordinary way to narrow what a panel is exposed on: then nothing is
+listening on 127.0.0.1, every hook POST is refused, and the script swallows the
+error because that is what it is built to do.
+
+What the user sees: they press "install hooks", the settings page says
+installed, and the states stay wrong — with the "states are being guessed"
+notice gone, because that notice checks whether the script is installed rather
+than whether anything ever arrived. Two subsystems each reporting success for a
+path that does not work end to end.
+
+The URL now follows the bind address, falling back to loopback only for the
+wildcard forms. `Config.BindHost` is the new accessor, and it treats "",
+"0.0.0.0" and "::" as "everywhere".
+
+Worth doing later, and not done here: `doctor` could post to that URL and say
+whether anything answers. Every failure in this chain is silent by design, so
+the only way to know it works is to try it.
+
+## The throttle walked its whole map on every attempt
+
+The backoff itself is right: exponential, capped, per source, delay rather than
+lockout, overflow-guarded. What was wrong was its bookkeeping. `sweep` ran on
+every `Delay` and every `Fail`, iterating the entire map under the mutex that
+every sign-in takes.
+
+The size of that map is chosen by whoever is attacking. Keys are source
+addresses, and since the `RealIP` fix they are real peer addresses — but one
+host with a routed IPv6 prefix can still present a new one per request. So the
+component whose job is surviving a guessing attack degraded in proportion to
+the attack, and took real sign-ins down with it, because they queue behind the
+same lock.
+
+Now it sweeps on a timer (a quarter of the forget window) or when the map has
+grown past a cap, whichever comes first. Over the cap it drops the oldest half
+of the window as well, which does let a source that can spray addresses shorten
+its own backoff — but the forget window already offers that after fifteen quiet
+minutes, and the alternative is memory with no bound. The worst case is now a
+few thousand map iterations rather than however many the attacker felt like.
+
+Checked against all six existing tests by reading them: the first call always
+sweeps because `lastSweep` starts at the zero time, which is what
+`TestQuietSourcesAreForgotten` depends on.
+
+An earlier draft of this entry claimed the passkey login path never records a
+failure with the throttle. That was wrong: it calls `failLogin`, which calls
+`Throttle.Fail` before auditing. `Delay`, `Fail` and `Succeed` are all present
+on that path. Corrected here rather than deleted, because a wrong claim about a
+security control is exactly the kind of thing that gets quoted later.
+
+What is true, and is a different endpoint: `passkey/login/begin` has no
+throttle at all. See below.
+
+## There is no way to change the password
+
+Not implemented, and not a small omission. The password set in the first-run
+wizard is the only one there will ever be: no endpoint, no settings form, no
+CLI command. `grep -rn "SetPasswordHash"` finds the store function and nothing
+that calls it.
+
+Three functions in `internal/store/auth.go` have no callers anywhere:
+`SetPasswordHash`, `DeleteUserAuthSessions` and `PurgeExpiredAuthSessions`. The
+store layer was built for this and nothing above it was. One of them documents
+behaviour that does not happen — "Used when the password changes: the point of
+changing it is that whoever had the old one stops having access" — which is
+worse than no comment, because it reads as a description of the system.
+
+Why it matters more here than in most projects: this panel is meant to be
+reachable from the internet on a non-standard port, and the thing behind the
+password is a shell on the user's machine with their keys and their dotfiles. A
+password chosen in a hurry during setup, or one typed into the wrong window
+once, cannot be replaced without editing SQLite by hand. Passkeys can be added
+and removed in settings; the credential everything falls back to cannot.
+
+It reads as finished because signing in works.
+
+The shape of the fix, for a session that can run the tests:
+
+  - `POST /api/auth/password` behind `RequireAuth`, taking the current password
+    and the new one. Verify the current one with the same argon2id path as
+    login, including `DummyVerify` on the failure branch, and apply the same
+    throttle — an endpoint that checks a password is an endpoint that can be
+    guessed at, and this one is reachable with a stolen session cookie.
+  - On success: `SetPasswordHash`, then `DeleteUserAuthSessions`, then issue a
+    fresh session for the caller. Changing a password whose whole purpose is
+    revocation, and leaving every other browser signed in, is the failure mode
+    the dead function was written to prevent.
+  - Audit it. `password_changed` belongs in the same log as the sign-ins.
+  - `PurgeExpiredAuthSessions` wants wiring into the same periodic work as the
+    tmux poller, or deleting. Expired rows are already refused at lookup, so
+    this is tidiness rather than exposure — but a maintenance function nobody
+    calls is a claim that maintenance happens.
+  - The settings page has the passkey list to sit next to, and the same
+    "current password" field pattern it already needs for re-authentication.
+
+## A relative --static-dir served 404 for everything
+
+The flag exists so a frontend change does not need a Go rebuild. It is in the
+README's flag table and nowhere else — no test, no Makefile target, no dev
+script — and it does not work.
+
+`spaHandler` kept the string it was given and compared it against a path that
+`filepath.Abs` had already resolved:
+
+    abs := filepath.Abs(filepath.Join("web/dist", "index.html"))
+        → /home/…/web/dist/index.html
+    strings.HasPrefix(abs, filepath.Clean("web/dist")+"/")   → always false
+    abs != filepath.Clean("web/dist")                        → always true
+    → http.NotFound
+
+So `--static-dir web/dist`, which is what anyone would type, answers 404 for
+every request while the files sit right there. An absolute path works, which is
+presumably how it was tried the one time it was tried.
+
+Resolved to an absolute path once at construction instead, and the containment
+check simplified to what it was trying to say: the root itself, or something
+under it, and nothing else. The check was decorative anyway — `os.DirFS` already
+refuses `..` — but a decorative check that rejects everything is worse than none.
+
+And `writeSettings` wrote 0600 unconditionally. A user whose `settings.json` was
+0644 got it silently tightened by pressing a button about hooks. Tightening is
+benign, but a tool that changes the permissions on your dotfile without saying
+so is the same trust problem as one that rewrites its contents. It keeps the
+mode it finds now, and only new files start at 0600. The temp file is chmodded
+explicitly as well: `os.WriteFile` applies its mode only when it creates the
+file, so a leftover temp from an earlier crash would have carried its own
+permissions across the rename and onto the real file.
+
+## What to do with all of this
+
+The entries above are in the order they were found, which is the wrong order to
+act in. This is the reading list, and it is the last thing written in this
+stretch.
+
+**First, before anything else.** Nothing above has been compiled or run — the
+tooling was unavailable for the whole of it. Roughly forty source files changed
+and forty new assertions were written blind.
+
+    make check
+    make render-check && make stress-check && make restart-check
+    make tls-check          # slow: it waits out a certificate reload
+    make release-check
+    cd web && npm run check:scale
+
+The two test files most likely to fail to compile are the newest —
+`internal/ws/protocol_test.go` and `web/src/styles.test.ts` — because both
+parse another file's source and neither has ever been executed.
+
+**Then, in this order, the things that are wrong rather than missing:**
+
+*(1, 2 and 3 were fixed in the verification pass below — each with a test that
+was checked against the unfixed code. 4 and 5 are still open.)*
+
+1. ~~The `Attach` race.~~ Fixed. It was worse than described: eight concurrent
+   callers produced eight tmux clients.
+2. ~~The pump's duplicate delivery.~~ Fixed, and measured — the real window is
+   nanoseconds wide.
+3. ~~Sessions whose tmux session has vanished still show their last state.~~
+   Fixed: marked as gone, in both the poller and the startup reconcile.
+4. ~~Sessions created with `vibepanel session new` can never report state.~~
+   Fixed. It was two of *three* variables, and neither of the two it had was
+   one that mattered.
+5. ~~A renewal that preserves timestamps is never noticed.~~ Fixed, along with
+   the half that detection alone could never cover: a certificate nobody
+   renewed now says so, in the log and on the settings page.
+
+**Then the two that need a product decision before any code:**
+
+*(Both decided and implemented — see "The two product decisions, decided" near
+the end of this log, which records the reasoning so either can be reversed
+without archaeology.)*
+
+- ~~What a quiet agent means.~~ Silence no longer means finished; the
+  foreground process decides. The flicker went with it.
+- ~~Whether there is a way to change the password.~~ Yes, from the settings
+  page, requiring the current one and signing every other browser out.
+
+**The gaps against what was asked for are closed.** Ctrl+C from a phone, with
+an end-to-end assertion; renaming from a phone, by press-and-hold; identical
+sidebar rows, qualified by the directory above; the settings page, polling
+while open; the exit indicator on the bottom strip, along with the tab strip
+reordering itself under the pointer.
+
+What remains is the two product decisions below — what a quiet agent means, and
+whether a password can be changed — and neither is a defect.
+
+Everything else in this log is either already fixed above or small enough to
+pick up when its file is next open.
+
+---
+
+## The verification pass, run
+
+Everything in the list above was executed. The short version: the Go suite,
+the frontend units, `make check` with the race detector, and four of the five
+browser checks now pass, and getting there cost eight fixes — five of them to
+code written during the stretch when nothing could be run, and two of those to
+the fixes themselves rather than to what they were fixing.
+
+That ratio is the finding. A fix written against a reading of the code and
+never executed is not a fix; it is a hypothesis with good handwriting.
+
+**`go vet` first, and it caught a compile error** in one of the new tests — an
+unused variable. Nothing else in roughly forty edited files failed to build,
+which is a better result than it deserved.
+
+**The throttle cap was off by one, permanently.** `Fail` swept, then inserted,
+so the map settled at `maxEntries + 1` and stayed there: the bound was checked
+on entry and exceeded on the way out, every single call. Bounded, but not at
+the number written down. The rank eviction moved into its own method and `Fail`
+now enforces the cap after its own mutation, which is the only place the count
+is final.
+
+**The detector leak was not a missing `Forget`.** Both calls fired; the
+trackers came back anyway. The poller calls `Evaluate` for every row it lists,
+and a poll landing between the handler's `Forget` and its `DeleteProject`
+rebuilds exactly what was just dropped. No amount of care in the delete paths
+fixes that, because the race is with a different goroutine reading a list that
+is still true. So cleanup is now driven by the authoritative list —
+`Detector.Retain(ids)` on every pass — and `Forget` stays as the immediate
+case. This is also the only thing that will ever clean up after a session that
+vanished without going through a handler.
+
+Finding it turned up something worse on the way. `pollOnce` opened with
+
+    if len(infos) == 0 { return nil }
+
+an optimisation to skip building an empty map, which skipped the entire
+reconciliation pass instead — in the one state where reconciliation is the only
+thing that can help: every session gone. A panel that had just lost its tmux
+server did no reconciling at all. The loop does nothing on an empty list
+anyway; it was never the loop that mattered.
+
+**`Live.close()` did not wait for its pump.** Callers were told the attachment
+had ended while a chunk already read was still in flight, so output could still
+be broadcast — and `OnSignals` still fired — for a session the caller had
+already deleted. It waits now, bounded at two seconds so that one wedged PTY
+cannot hang a shutdown that detaches every session in turn. This was not the
+cause of the leak above; it was found while looking for it, and is real.
+
+**The render check had been looking for a session that never existed.** Six
+locators searched for a row titled `scratchpad`. Nothing names it that: a shell
+is named automatically after the directory it sits in, the project's path is
+`process.cwd()`, and so the shell was called `web` — the name changing with
+wherever the harness was run from while the name being searched for did not.
+Every step after the first typed into whichever session happened to be
+selected, and the failures pointed everywhere except at the cause. The session
+is now named explicitly at creation, and the "could not find the shell row"
+`WARN` is a `FAIL`: a run that cannot find the shell is not a run with one
+thing missing, it is a run whose remaining results mean nothing.
+
+**The panel lied about being connected.** The client pinged every 25 seconds
+and never looked for the answer, and `send()` on a socket whose network has
+gone is not an error — it buffers. So the status dot stayed green through a
+dropped connection, indefinitely. For this application that is the worst
+available failure: the list of who needs you quietly stops updating and nothing
+looks wrong.
+
+Two mechanisms, because they cover different failures:
+
+- The `offline` and `online` events. The browser knows before we can — a phone
+  leaving coverage, a lid closing — and reacting is immediate. `online` also
+  reconnects at once rather than sitting out a backoff measured against a
+  problem that has gone.
+- A silence timeout, sixty seconds, as the backstop for a connection that dies
+  without the operating system noticing: a NAT timeout, a wedged proxy. It has
+  to be an application-level exchange, because the protocol ping the server
+  sends every thirty seconds is answered by the browser itself and is invisible
+  to script — a socket can be idle at this layer while the network under it has
+  been gone for minutes.
+
+Sixty seconds is a deliberate trade against a phone's radio, which is what pays
+for noticing faster. The case that actually happens to a phone is covered by
+the first mechanism, immediately.
+
+**Ctrl+C from a phone now exists**, and the harness had been saying so every
+run. The bar had no letter key, so the sticky modifier had nothing in
+`0x40-0x5f` to apply to; it latched, un-latched, and could not alter a byte.
+There is now a `^C` key on the row that never scrolls — one tap, not two, for
+the most urgent thing in the product — and the `WARN` that documented the gap
+is an end-to-end assertion: run `sleep 120`, tap it, and require the shell to
+come back.
+
+Underneath it was a second defect that the first was hiding. Every raw sequence
+cleared both modifiers, so arming ctrl and tapping `y` sent a plain `y` — a
+*yes* to whatever the agent was asking — while the user believed they had just
+interrupted it. A modifier that disappears without doing anything is worse than
+not having one. Raw keys no longer consume it.
+
+`pageUp` and `pageDown` had been sitting in `KEY_SEQUENCES` since the file was
+written with nothing rendering them. Now bound, on the scrolling row.
+
+**The sidebar had no safe-area inset in any of its three forms.** It starts at
+y=0 as a docked column, as a collapsed rail and as the narrow-screen overlay,
+and only the main header was ever given one — so on a phone with the status bar
+over the page, the control that closes the drawer sat under the clock. That is
+the same failure as the one fixed earlier by splitting docked from drawer-open,
+arriving by a different route. `vp-safe-top` could not be reused: it carries
+the main header's fixed height and would have imposed it on a header that sizes
+itself, so `.vp-safe-pad-top` adds padding only.
+
+**Three things found by reading, while the checks ran:**
+
+- `"types": ["vite/client"]` sat outside `compilerOptions` in
+  `tsconfig.app.json`, where tsc ignores it. The Vite ambient types have never
+  been applied; nothing has needed them yet, which is why nobody noticed.
+- The theme-block test's property scan was line-first, and had two holes
+  pointing opposite ways: a component rule written on one line inside a theme
+  block was invisible to it, and a bare `a:hover {` on its own line would have
+  been reported as a declaration named `a`. It decides by structure now —
+  whether the colon is followed by `;` or by `{`. A check standing in for a red
+  line has to be right in both directions or the rule is worth less than it
+  looks.
+- The settings modal opens with `py-8`, 32px, which is less than the ~44px
+  status bar inset of a notched phone. Only the card's corner is affected, no
+  control, and confirming it needs hardware — so it is reported, not changed.
+
+**One detour worth recording because it nearly went unnoticed.** Moving the
+three source-reading tests off `node:fs` and onto Vite's `?raw` looked clean
+and removed a dependency. Vitest runs with `css: false`, so a CSS import — raw
+or not — resolves to an empty stub, and the whole theme-block test passed
+against an empty string. What caught it was the assertion written for exactly
+this: *if this fails the rest proves nothing: a parser that finds no blocks
+finds no violations either.* The guard cost three lines and saved the test from
+becoming decorative. `@types/node` was added instead, and the guard is now the
+single most valuable line in that file.
+
+**Still open**, unchanged from the list above except where noted: the `Attach`
+race; the pump's duplicate delivery; sessions whose tmux session has vanished
+showing their last state (the poller now runs in that state, but the loop still
+skips rows it cannot see, so the display is unchanged); CLI-created sessions
+that cannot report; timestamp-preserving certificate renewal; the two product
+decisions; renaming from a phone; identical sidebar rows; the settings page not
+refreshing; the exit indicator missing from the bottom strip.
+
+### Three harness defects hiding a fix that worked
+
+The `^C` key was correct the first time it was written. It took three more runs
+to see that, and none of the three failures were in the code under test.
+
+1. The new assertion required the marker to appear **twice** — the pattern used
+   elsewhere in the file, where a command and its output both contain it. But
+   this marker is split across a quote precisely so the echoed command line
+   *cannot* contain it, which is what makes a single occurrence mean "the shell
+   really ran this". Asking for two made an assertion that could not pass
+   however well the key worked.
+2. The prompt was dirty. The checks above it deliberately leave things on the
+   input line — a stray `1` from the modifier test, and now an Escape from the
+   one this round added — and readline treats Escape as a meta prefix, so what
+   follows is swallowed rather than run. The run spent its whole budget waiting
+   for a `sleep` that had never been submitted.
+3. `compose-newline` is a **sticky toggle**, not a one-shot. The Enter-key
+   check flips it off to send without a newline and never flipped it back, so
+   every send after that point in the run arrived without an Enter. Commands
+   piled up unexecuted on the input line while the checks depending on them
+   reported that the feature under test had failed.
+
+The third is the one worth keeping. A harness that leaves a mode behind pays
+none of the cost itself: it is paid by whatever is added after it, by someone
+who has no reason to suspect the state they inherited. It is fixed where it is
+caused — the toggle is restored and the restoration is asserted — rather than
+worked around where it hurt.
+
+The diagnostic that broke it open was printing the terminal's last six lines in
+the failure message. `KEYBAR$ 1^[sleep 120^C` says everything at a glance: the
+stray character, the escape, the command that was never submitted, and — in
+that trailing `^C` — proof that the interrupt had been landing the whole time.
+Failure messages that carry the state they judged are worth what they cost.
+
+### Test debris on the machine this project exists not to disturb
+
+`/tmp/tmux-1000/` held a tmux server from a render check that had died six
+hours earlier, still holding eight sessions: several shells, an htop, and a
+process called `claude` — which turned out to be the harness's own symlink to
+`sleep`, made so that the automatic-naming path can be tested without spending
+anybody's API quota. That much was already right.
+
+Every check registers cleanup on SIGINT, SIGTERM and SIGHUP, which covers a
+`timeout` and a Ctrl-C, and cannot cover SIGKILL. So the checks now sweep at
+startup: any socket named `<harness prefix>-<pid>` whose pid is no longer
+running is a server nobody owns, and it is killed before the run begins.
+
+Safety is in the name. A candidate has to match a harness prefix *and* end in
+digits — the panel's own default socket is `vibepanel`, with nothing after it —
+and the pid has to be gone. A reused pid means the socket is skipped, which
+errs toward leaving debris rather than killing something live.
+
+It removed the six-hour-old server on its first run, which is the only way this
+kind of fix should be reported.
+
+### The two races, now that they can be tested
+
+Both were on the "wrong, not missing" list, both had been reasoned about and
+neither had been reproduced. With the suite running again they could be.
+
+**The `Attach` race is real and it is not subtle.** Eight goroutines calling
+`Attach` for one session produced **eight tmux clients** and seven orphaned
+PTYs. `Attach` checked the map, released the lock, and then spent a hundred
+milliseconds in `capture-pane` and `pty.Start` before writing its result back;
+every caller walked through that window. Only the last one is in the map, and
+the other seven stay attached with nothing owning them.
+
+The consequence is not a leak, it is the size arbitration. `window-size latest`
+makes the grid follow whichever client resized most recently, so a client the
+panel has forgotten about turns every resize into a fight and reflows the pane
+under a running TUI — the single failure the whole single-client design exists
+to prevent. And the two callers are not hypothetical: the poller attaches every
+live session while a subscribe attaches on demand.
+
+Fixed by claiming the session before doing the slow part — a per-session
+channel that later callers wait on, then round again to find either the
+finished attachment or their own turn. The test asks tmux for the client count
+rather than asking the manager, because a client the manager has forgotten is
+exactly the one that does the damage.
+
+**The duplicate delivery is real and it is very rare.** The ring was written
+before the broadcast with the lock released in between, so a viewer registering
+in that gap took a snapshot already containing the chunk and was then sent it
+again — a line printed twice, indistinguishable from the program having done
+it. The comment there called it the deliberate choice, on the grounds that the
+other order would lose the chunk instead. That was a false choice: holding one
+lock across the ring write and the delivery, which is the same lock `Subscribe`
+already takes for its snapshot, gives neither loss nor duplication.
+
+The test for it is worth more than the fix, and only after it was rewritten
+twice. The first version printed four hundred lines — which a shell finishes
+inside a second — and then subscribed forty times to a session that had gone
+quiet. It passed with the bug deliberately put back. The second version keeps
+output flowing and gets seven hundred subscribes in; it *also* passes with the
+bug put back, because the real window is the few instructions between the ring
+write and the lock. Widen that window by fifty microseconds and it fails on the
+second attempt.
+
+So the honest description, which is now the comment on the test: it catches a
+regression that reintroduces the gap in any form somebody would actually write,
+and it cannot certify the absence of the nanosecond-wide original — which is
+also the measure of how rarely that original fired. The fix is correct by
+construction; the test is there to notice if someone takes it apart.
+
+Two rounds of mutation testing in one session, both of which found a check that
+could not fail. The habit earns its keep: writing the test is the first half,
+and breaking the code on purpose to watch it fail is the half that decides
+whether the first half meant anything.
+
+### A verdict that could vanish
+
+The scale check was run three times and produced a different amount of output
+each time — once nothing at all, once four lines, once five and no verdict. It
+read like a crash, and two rounds were spent looking for one.
+
+Node's stdout is asynchronous when it is a pipe, which it is under `make`, in
+CI, and anywhere the output is captured. `process.exit()` abandons whatever has
+not been flushed, and the findings and the verdict are the last thing printed —
+so they are the first thing lost. One of those runs reported exit code 0 with
+an empty output file, which is the worst possible combination: a check that
+passed and said nothing, indistinguishable from a check that died.
+
+All five harnesses ended that way. They now flush and then exit:
+
+    await new Promise((resolve) => process.stdout.write('', resolve))
+    process.exit(fails ? 1 : 0)
+
+Setting only `process.exitCode` would also flush, but it waits for the event
+loop to drain, and one stray handle from a browser or a child process would
+hang the check rather than ending it. Flush, then exit deliberately.
+
+A check whose verdict can disappear is worse than no check, because its silence
+is read as success.
+
+### Measuring the machine the measurement runs on
+
+The scale check reported "sidebar showed 0/24 rows" three runs in a row, with a
+blank screenshot, and none of it was true of the panel.
+
+Ten of my own scale checks were running at once. Each starts a panel and
+twenty-four sessions, and the earlier runs had not exited when their output
+appeared to stop — the missing verdict (above) had been read as the process
+dying. So the machine was carrying five panels and something like a hundred and
+twenty tmux sessions while the check measured how quickly a sidebar populates.
+It measured that correctly.
+
+Two lessons, and the second is the useful one:
+
+- `pgrep -f <pattern>` matches the shell running the pgrep, because the pattern
+  is in its own command line. That is how "no processes" was concluded twice
+  while ten were running, and how a later `pkill -f` killed its own shell. Use
+  `ps -eo args | awk '/pattern/ && !/awk/'`, or a bracket class.
+- A check that measures throughput, latency or "how long until X appears" is
+  measuring the machine as much as the code. Running one while five others are
+  running does not produce a weaker signal, it produces a confident wrong one —
+  and the failure it invents looks exactly like a real bug, right down to the
+  screenshot.
+
+The sweep grew a second half while chasing this. Killing the stale tmux server
+leaves the panel the dead run had started, still holding a port and a data
+directory. It cannot be found by its command line — the harness starts a bare
+`vibepanel serve` with everything in the environment, so matching the name
+would put a real panel in range — but it can be found precisely by its
+environment: the process to kill is the one told to use *this* socket, the one
+whose owner has just been established as gone. A real panel uses the default
+socket name, which never matches a harness prefix.
+
+Verified rather than reasoned about: a tmux server on `vpprobe-999999`, a
+process carrying `VIBEPANEL_TMUX_SOCKET=vpprobe-999999`, one sweep, both gone.
+Cleanup code that kills processes is the last place to accept "it looks right".
+
+### The panel was blank when nothing was happening
+
+The scale check had never been run to completion. Run properly — on a quiet
+machine, once, with its output no longer truncated — it found the most serious
+defect of the session, and it found it because it is the only check whose
+sessions do nothing at all.
+
+Twenty-four `sleep 600` sessions. Log in, and the page renders **thirty-one
+bytes of body**: an empty root div. No JavaScript error, no failed request, no
+crash. The API had all three projects and all twenty-four sessions the whole
+time.
+
+The frontend renders from the WebSocket `state` message and has no other
+source — there is no fetch of `/api/state` on mount. The server sent that
+message only when something changed, and the connection handler added the new
+client to the hub without telling it anything. So the panel was blank until
+some session happened to do something.
+
+Every other check misses this because they all keep something moving: an htop
+redrawing, a bell, a flood of output. State changes constantly, the push
+arrives within a second, and the page fills in before anyone looks.
+
+And the case that does not move is the one the whole product is for. Coming
+back in the morning to see which agents finished overnight is precisely the
+moment when nothing is changing. The panel would have shown an empty page at
+exactly the moment its answer mattered most.
+
+The fix is four lines: a `Snapshot` hook on the WebSocket handler, called the
+moment a client connects. A client should not depend on somebody else changing
+something in order to learn what the world looks like.
+
+Three things this is worth remembering for:
+
+- The check that had never been run is the one that found it. Not because it
+  was cleverer — because its fixtures were idle, and every other fixture was
+  accidentally hiding the bug by being busy.
+- "No JS error, no failed request" was read early on as "not a real bug, the
+  harness must be broken". It was the opposite: silence was the symptom.
+- The diagnostic that cracked it was one line — printing the body size, the
+  sidebar text and the API's own counts alongside the failure. Two rounds were
+  spent guessing before that was added, and none after.
+
+### `"entries": null`
+
+The blank page had a second cause, and it was the real one. Adding the initial
+snapshot did not fix it; the page was still empty with twenty-four sessions,
+with one session, and — as it turned out — with none of that mattering.
+
+A focused probe, thirty lines outside the repo, put a browser on a panel and
+printed console output every two seconds. First run:
+
+    pageerror: TypeError: Cannot read properties of null (reading 'length')
+
+`browse.List` builds its `Listing` with `Entries` left nil, and a nil slice
+marshals to `null`. The file tree's very next move is `listing.entries.length`.
+React has no error boundary, so an uncaught render error unmounts the entire
+tree: no message, no controls, an empty root div, and nothing in the console
+except the one line nobody was collecting.
+
+**An empty project directory blanked the whole console.** Which is the state of
+every project on the day you create it.
+
+Why nothing caught it before: `render-check` points its project at the repo's
+own `web/` directory, which is full of files. The scale check makes fresh empty
+directories, and the scale check had never been run to completion. The bug was
+one `mkdir` away the whole time.
+
+Three fixes, because the incident exposed three separate weaknesses:
+
+1. `Entries` starts as `[]Entry{}`. The line that crashed was the one rendering
+   the "nothing here" message — the code for the empty case could not survive
+   the empty case. A test asserts the encoded form contains `"entries":[]`, and
+   it fails when the initialiser is put back.
+2. An error boundary, at the root and around each right-panel tab. A file tree
+   that cannot render should cost the file tree, not the terminals and the
+   session list. The per-tab boundary is keyed on the tab so switching away
+   from a broken one resets it.
+3. The harnesses report page errors from their `finally`. They collected them
+   inside the try and reported them near the end, so the click that timed out
+   *because the page was blank* threw past the one piece of evidence
+   explaining the blank page. `restart-check` collected them and never reported
+   them at all. An uncaught error in the page is the most informative thing a
+   run can produce, and it has to survive the run failing.
+
+The sequence is worth keeping as a method. Four runs of the full check learned
+almost nothing, because its diagnostics only print at the end and it spends
+minutes timing out before it gets there. One throwaway probe, which I could
+change and rerun in ninety seconds, found it immediately. When a slow check is
+failing for reasons you cannot see, the next move is a fast thing you control —
+not another run of the slow one.
+
+### `last_active_at` was never written
+
+The scale check's last failure was the one it calls "the point of the whole
+thing": a session marked as waiting has to reach the top of the list. It did
+not, and the reason was a column that nothing updated.
+
+Projects are ordered by `last_active_at`, and `TouchProject` — whose comment
+reads *"records activity, which drives automatic ordering"* — was called from
+exactly one place in the whole codebase: creating a session. So "most active
+first" actually meant "most recently given a new session first". A project
+whose agents had been working all day sat below one where a session was created
+in the morning and never touched again.
+
+The consequence nobody would think to check for: a project containing a session
+that is waiting for a human does not come to the top. The sidebar groups by
+project, so a waiting session in the third project cannot be near the top of
+the list however correctly the sessions within it are sorted. The one thing the
+ordering exists to do was the thing it could not do.
+
+`SetSessionState` now touches the project in the same call. State changes
+rather than output: output would mean a write per chunk, while a state change
+is already written only when the state actually differs, and it is the event a
+person cares about.
+
+The check is green, and its numbers are the first ones ever recorded for it:
+
+    created 24 sessions in 238 ms (10 ms each)
+    snapshot 10.9 KiB in 3 ms for 24 sessions
+    tmux clients: 24 (one per session is the design)
+    server RSS 82 MiB → 88 MiB (0.3 MiB per session)
+    sidebar showed 24/24 rows 731 ms after opening the page
+    waiting session reached the top in 308 ms
+    session switches: 39, 48, 51, 43, 49 ms
+
+Worth stating plainly: this check went from four failures to none, and three of
+the four were real defects in the product rather than in the check — a blank
+panel on any empty directory, a panel that showed nothing until something
+moved, and an ordering rule that had never been implemented. All three had been
+sitting behind a script that had never once been run to the end.
+
+### The release check was starting a tmux server on the panel's real socket
+
+Left behind on the machine, six hours and forty-nine minutes old: a tmux server
+on the socket named `vibepanel` — the default, the one a real deployment uses —
+holding no sessions and a config file in a temp directory that no longer
+existed.
+
+`SOCK="vprelease-$$"` was defined next to the one command it was passed to, and
+`vibepanel doctor` runs several lines earlier. Doctor calls `EnsureServer`, so
+it started a server on the default socket. On the machine running the check
+that is debris. On a machine where the panel is actually deployed, that is the
+user's socket — and red line 1 exists because reaching for the wrong socket is
+how somebody loses a week of sessions. Nothing was lost here, since the server
+was empty and a second server on the same socket is not created, but the check
+had no business being there at all.
+
+The socket is now exported once, near the top, so every invocation inherits it:
+`version`, `doctor`, `serve`, and anything `install.sh` starts.
+
+The other half is `doctor` itself. A diagnostic that starts a tmux server is
+making a change, and it was making it silently — the operator learned about it
+from `ps`, hours later, if at all. It now says so:
+
+    [ok  ] tmux server        socket "vpX", 0 session(s) (started by this check; it is the panel's own socket)
+
+and says nothing extra when a server was already there. Both halves checked.
+
+Leaving the server running is still the right behaviour: the panel needs one
+anyway, and shutting down something another process might have started in the
+meantime is worse than an idle server on a dedicated socket. Saying so is the
+part that was missing.
+
+### `cmd | grep -q` under `pipefail`, again
+
+The release check's own control — feed `systemd-analyze` a deliberately broken
+unit and require it to object, so that its silence about the real unit means
+something — was failing. `systemd-analyze` objects perfectly well; running the
+exact command by hand printed the complaint and exited 0.
+
+`grep -q` exits the moment it matches. That closes the pipe, the producer takes
+SIGPIPE, and `pipefail` reports the pipeline as failed even though the grep
+succeeded. By hand it did not reproduce, because the output was small enough to
+be written before grep exited; in the check the machine's unrelated units make
+it long enough to lose the race.
+
+Capturing first and grepping a variable fixes it:
+
+    CONTROL_OUT="$(... 2>&1 || true)"
+    if ! printf '%s' "$CONTROL_OUT" | grep -q "broken.service"; then
+
+This is the second `pipefail` trap in this project, after `ldd` exiting non-zero
+for a static binary. Different mechanism, same shape: a pipeline whose exit
+status describes something other than the question being asked. In a script with
+`set -euo pipefail`, `cmd | grep -q` deserves the same suspicion as a bare `cmd`
+whose exit code you have not checked.
+
+The failure message now carries what the tool actually said, which is what made
+the difference — a control that reports "the tool cannot be trusted here" and
+offers no evidence is asking to be believed on exactly the terms it exists to
+reject.
+
+### Where the verification pass ended
+
+All six checks and the whole suite, on a quiet machine, in one sweep:
+
+    make check          Go with -race, plus 21 frontend tests   ok
+    render-check        0 FAIL, 0 WARN
+    stress-check        0 FAIL, 0 WARN
+    restart-check       0 FAIL, 0 WARN
+    scale-check         0 FAIL, 0 WARN   (first completed run ever)
+    tls-check           0 FAIL, 0 WARN
+    release-check       0 FAIL
+
+Nothing is left running afterwards: no panels, no tmux servers on any harness
+socket, and the stale empty server that had been squatting the default socket
+since a release check six hours earlier is gone.
+
+## Looking at what it renders
+
+With the checks green, the next round was photographs: drive the panel into
+states nothing had ever rendered, and read the pictures.
+
+### The sentinel leaked into the interface
+
+`ExitStatusVanished = -1` was chosen because a real wait status is never
+negative, so the two can never be confused. In the code. On screen, the badge
+beside a vanished session read **`exit -1`**, the tooltip on its restart button
+promised "the process exited with status -1", and the project summary counted
+it as a crash — because "exited with a non-zero status" is exactly what the
+sentinel looks like to anything that does not know about it.
+
+A status a person reads as a number has to be a number a process could have
+returned. It now reads `gone`, the tooltip says the tmux session is gone, and
+the project badge no longer calls it a crash.
+
+The constant lives in `wire.ts` now, next to the other things that mirror the
+backend, because three separate places put it in front of a person and the
+first version of each had its own copy of the comparison.
+
+### The button offered on exactly the rows that could not use it
+
+Restart is shown on every exited row, and a vanished session is one of them.
+`Respawn` needs a session to respawn into, so pressing it answered 500 — the
+one control offered on those rows was the one that could not work. It builds a
+new tmux session under the same name now: same row, same id, same title, same
+notes; only the process is new, which is what restart means here.
+
+A login shell rather than the recorded command, deliberately. `command` holds
+`#{pane_current_command}` — "node" for an agent, "bash" for a shell somebody
+had been using — and starting that as an argv would run something the user
+never asked for.
+
+### Sixteen pixels
+
+Measured, in a real touch context, in the drawer that a phone user actually
+uses:
+
+    pin-session   16x16   at x=231
+    kill-session  16x16   at x=255
+    rows          31 tall
+
+A twelve-pixel icon with two pixels of padding, twenty-four pixels apart, and
+one of them kills a running agent. Every touch guideline says 44, and the
+number comes from the width of a finger pad — about nine millimetres. Missing
+kill and hitting pin is harmless; missing pin and hitting kill is not. (It does
+at least ask for confirmation, which is the only reason this is a usability
+defect rather than a data-loss one.)
+
+The project header was worse and was missed on the first pass, because the
+measurement only looked inside session rows: the drag grip is sixteen pixels,
+and reordering is a press-and-hold drag — the hardest possible gesture on the
+smallest possible target. It is driven by pointer events with
+`touch-action: none`, so it is meant to work on a phone; it just could not be
+aimed at.
+
+`.vp-tap` under `@media (pointer: coarse)` gives all five controls a 44px box
+without changing the icon. Desktop density is untouched: this asks the device
+what kind of pointer it has rather than guessing from width or user agent.
+
+Now:
+
+    pin-session   44x44   at x=175
+    kill-session  44x44   at x=227
+    rows          56 tall
+
+The check measures it, and the measurement is in the failure message. Removing
+the CSS reproduces `pin-session is 16x16 css px on a touch screen; a thumb
+needs 44`.
+
+### Two things that looked like bugs and were not
+
+A dark-mode screenshot showed a **white terminal** in an otherwise dark panel —
+the classic theme-switch failure. It was the probe: it set
+`document.documentElement.dataset.theme` directly instead of going through
+`applyTheme`, so xterm's palette, which is set from JavaScript, never heard.
+The app folds `prefers-color-scheme` into the key that repaints it, via a
+`useSyncExternalStore` subscription, so a system theme flip at sunset does
+reach the terminal. Checked rather than assumed.
+
+The settings dialog's hook snippet is cut off at the right edge. It scrolls —
+`overflow-auto` — and there is a Copy button beside it.
+
+### The tab strip moved under the pointer
+
+The bottom terminals are derived by filtering the session list, and that list
+is ordered by urgency and recent output — correct for the sidebar, wrong for a
+row of tabs. A terminal that printed something sorted to the front, so the tabs
+swapped places.
+
+The damage is worse than tabs moving, because the automatic label is
+positional: `term ${index + 1}`. The names stay exactly where they are and the
+terminals move underneath them. The tab you had been calling "term 2" is now a
+different terminal, with the same name, in the same place.
+
+That last part is also why the first two versions of the check could not see
+it. Comparing the tab *text* before and after compares `["term 1", "term 2"]`
+with `["term 1", "term 2"]` — always equal, by construction. The check now
+compares session ids, and with the fix removed it prints:
+
+    printing in a terminal reordered the tabs:
+      ["6d7f0cbd1bed86f1","597bc7e9217657c1"] became ["597bc7e9217657c1","6d7f0cbd1bed86f1"]
+
+Two other things had to be right before that assertion could fire at all, and
+both were wrong first:
+
+- It typed into the *first* tab. Under recency ordering the first tab is
+  already first, so printing in it cannot move anything. It has to be the last.
+- Output alone does not push a new session list; the browser keeps the order it
+  was last sent. The shuffle therefore appears at the next state change, which
+  is precisely when nobody is expecting the tabs to move. The check forces a
+  fresh list by reloading — the first attempt patched a session's state to
+  force a broadcast, picked the bell session, and broke a check three sections
+  away by turning it `done`.
+
+Four "cannot fail" assertions found by mutation testing in one session now.
+The rule that keeps earning its keep: after writing a check, break the code on
+purpose and watch it fail. The check that has never failed has never been
+tested.
+
+Sorted by creation, ties by id. Creation order never changes, which is the only
+property a tab strip needs.
+
+### The strip said nothing about a terminal that had died
+
+The tabs carried a name and a close button. A build that died in the bottom
+strip looked exactly like a build still running — and the bottom strip is where
+builds and tests live, which makes "did it finish" the only question anybody
+asks of it.
+
+The exit glyph now appears on the tab, shape-carried as everywhere else, and
+only when the terminal has actually exited: a row of identical dots for
+terminals that are merely running would be noise, and noise is what stops
+people looking at the thing that matters.
+
+This was on the handover list as "the exit indicator missing from the bottom
+terminal strip". It took a screenshot to make it feel like a defect rather than
+a line in a list.
+
+### Renaming, with a finger
+
+The label said "Double click to rename", and on a phone that is not a thing
+that can happen. Not because double-tap is unreliable — because on a narrow
+screen the session list is an overlay that closes when you choose a session, so
+the *first* tap dismisses the thing being tapped. The second tap arrives at a
+terminal. Renaming from a phone was impossible rather than awkward, and the
+tooltip explaining how to do it is only visible with a mouse.
+
+A press and hold now opens the editor. Nothing else in a session row uses a
+press-and-hold — only the project grip has a pointer gesture, and it is a
+different element — so the gesture was free.
+
+The awkward half is the click that follows. Releasing after a long press still
+fires a click, and it lands on the *row* rather than the label, because the
+element under the finger changed between down and up. The row selects the
+session, which on a phone closes the drawer and takes the input with it: the
+rename would open and vanish in one gesture. A one-shot capture-phase listener
+on `window` swallows that click, with a timeout in case none arrives.
+
+The check drives it through CDP, because Playwright's `tap()` cannot express
+"hold still for six hundred milliseconds", and asserts both halves: the input
+appears, and the drawer is still open.
+
+### The mutation that could not fail, twice
+
+The long-press assertion looked like the fifth "cannot fail" check of the
+session. It was not. The mutation was broken.
+
+Deleting the pointer handlers left `swallowNextClick`, `LONG_PRESS_MS` and
+`LONG_PRESS_SLOP` unused, `tsconfig` has `noUnusedLocals`, so `tsc -b` failed —
+and `make build >/dev/null 2>&1` swallowed the error. The build failing leaves
+the *previous* bundle in `internal/webui/dist`, so the check ran against the
+unmutated frontend and passed. Twice, for the same reason, before the second
+attempt printed the compiler errors instead of hiding them.
+
+Mutating a *value* rather than deleting code avoids the whole class:
+
+    -const LONG_PRESS_MS = 500
+    +const LONG_PRESS_MS = 86400000
+
+Everything still compiles, the behaviour is gone, and the check reports three
+failures. The assertion had been fine all along.
+
+Two rules out of it, both about the same mistake:
+
+- A mutation must be *verified to have been built*. Silencing the build during
+  mutation testing turns "the check cannot fail" into an unfalsifiable claim,
+  which is the exact failure mode mutation testing exists to prevent — applied
+  to itself.
+- Prefer changing a constant to removing a block. Deletion perturbs the type
+  checker; a value does not.
+
+### The settings page stopped observing the moment you opened it
+
+Uptime, how many sessions exist, how many browsers are watching, whether the
+hook script is installed — all of it fetched once, on mount, and never again.
+"A settings page for observing the backend status" that answers a question
+about the past.
+
+It polls every four seconds while open. Four because this is somewhere you
+glance to see whether things are healthy, not a monitor; the system monitor tab
+has its own cadence and its own graphs.
+
+The check reads the status block, waits six seconds and reads it again. Pinning
+the interval to a day reproduces the failure, with the stale block quoted in
+the message.
+
+### Two rows called "web"
+
+A shell is named after the directory it sits in, so a project containing
+`services/web` and `admin/web` showed two rows reading "web". The sidebar
+exists to answer which of these needs me, and two identical rows in one group
+cannot answer it — you click one to find out, which is the thing this panel was
+built to stop.
+
+Labels are qualified with the directory above when, and only when, two sessions
+in the same project would otherwise read the same: `services/web`, `admin/web`.
+
+Three choices worth stating, because each could reasonably have gone the other
+way:
+
+- **Within a project, not globally.** The sidebar prints the project name above
+  each group, so the same name under two projects is already distinguished by
+  where it is. Qualifying globally would add a prefix to rows that never needed
+  one.
+- **One level.** Deeper qualification is longer than the row and answers a
+  question nobody asked.
+- **Two sessions in the *same* directory are left alone.** Nothing the machine
+  knows tells them apart; inventing a suffix would only look like information.
+  That is what renaming is for — and renaming now works from a phone.
+
+Computed once by App and passed to the sidebar, rather than computed in both
+places. The comment at the top of `label.ts` already describes what happens
+when that rule is broken: the row and the title bar disagreeing about the name
+of the session you are looking at reads as a rendering glitch rather than as
+two functions.
+
+### `includes` is not agreement
+
+The check for that last part asked whether any sidebar row *contained* the
+title bar's text. Prefixing every row label with an "x" passed it —
+`"xscratchpad"` contains `"scratchpad"`. A check that two things agree has to
+compare them, not ask whether one is somewhere inside the other.
+
+Comparing the name elements exactly:
+
+    the title bar calls the session "sleep" and no row in the sidebar does:
+      ["xsleep","xhtop","xscratchpad"]
+
+Fifth assertion this session that could not fail, and the third distinct cause:
+a check that never ran, a check whose fixtures were idle, and now a comparison
+loose enough to accept the thing it was meant to reject.
+
+### A session made from the command line could never report anything
+
+`vibepanel session new` injected two variables into the session's environment:
+the session id and the project id. `report.sh` needs three, and neither of the
+two it got is among the ones that make it work — it exits quietly without a
+token or a URL.
+
+So a session created from the command line installed cleanly, looked
+configured, and reported nothing, forever. The script suppresses its own errors
+by design — that is what makes it safe to install globally — so the only symptom
+was a session whose state stayed guessed, in a panel whose settings page said
+hooks were installed. Nothing short of opening a shell inside the session and
+printing its environment would have shown it.
+
+Both halves of what the CLI was missing were derivable from what it already
+had. They were just in the wrong place:
+
+- `loopbackURL` was a method on the HTTP server and depends on nothing but the
+  config. It is `config.Config.LoopbackURL()` now, where its inputs live.
+- The hook token was memoised on the server and is a get-or-create on a
+  setting. It is `store.DB.HookToken()` now; the server keeps its `sync.Once`
+  around it, because every hook report checks the token and that is a hot path.
+- The variable list itself is `hooks.SessionEnv()`, in the package that owns the
+  script that reads it. There were two callers and one of them was wrong, which
+  is the whole argument for there being one.
+
+The release check now creates a project and a session through the CLI and asks
+tmux what is in its environment. Restoring the old two-variable list reproduces:
+
+    [FAIL] a CLI-created session is missing: VIBEPANEL_TOKEN VIBEPANEL_URL
+
+### A comment I invented while writing it
+
+The first version of `SessionEnv` said all four variables were required and
+explained that the project id "makes a report attributable when the session id
+has been recycled". The test I wrote next asserted the script mentions each of
+them, and failed on that one: `report.sh` reads three and never sends the
+project id anywhere.
+
+The rationale was invention, written in the same hour as the code it described,
+and it would have read as fact to anyone who found it later. It is the exact
+pattern this log has been recording all week — comments describing mechanisms
+that were never built — except this one had no age to hide behind.
+
+`VIBEPANEL_PROJECT_ID` stays: it is offered to whatever the person runs inside
+the session, which is worth having. The comment now says that, and says it is
+not part of the mechanism.
+
+The test that caught it is three lines: assert the embedded script mentions each
+variable the code claims it reads. A claim about another file is checkable when
+the other file is right there.
+
+### A renewal that keeps its timestamps
+
+The certificate reloader compared modification times, which is wrong for the
+one event it exists to catch. `cp -p`, `install -p`, rsync with `--times`, and
+anything that restores mtime after writing all leave the panel serving the
+certificate that was replaced — until it expires, and then serving an expired
+one, silently, because nothing would ever look again.
+
+It hashes the bytes of both files instead. Two files of a few kilobytes, once a
+minute, and it cannot be fooled by a timestamp. Length-prefixed into one digest
+so that moving a byte from the key to the certificate cannot collide.
+
+Restoring the mtime comparison reproduces it exactly:
+
+    common name after a timestamp-preserving renewal = "first.example",
+    want second.example; the panel is still serving the certificate that was
+    replaced
+
+Detecting the file changing was only ever half of it, though. **A file that
+never changes is exactly what an abandoned renewal looks like**, and nothing in
+the panel could have told anyone either way. So:
+
+- the reloader logs once — not every minute — when the certificate it is
+  serving falls inside fourteen days, and again when it has actually expired.
+  Fourteen because ACME attempts renewal at thirty, so anything inside that
+  window means renewal has already failed more than once and there is still
+  time to fix it by hand;
+- the settings page carries the date and a countdown, in the warning colour
+  under two weeks and the crashed colour past it. A log line on a machine
+  nobody reads is not where an operator should first learn this.
+
+The expiry is asked of the live `tls.Config` rather than of whichever source
+produced it, so it works for both certificate files and ACME and stays right
+when the certificate is replaced underneath.
+
+The check opens the settings dialog and requires a date or a countdown; with
+the wiring disabled it prints the whole status block and the absence of any
+mention of a certificate.
+
+    Certificate    8/26/2026 · 1 day left
+
+## The two product decisions, decided
+
+Both were flagged as needing a call rather than a fix, twice, and the answer
+each time was to keep going. So they are decided here, with the reasoning
+written down so that reversing either is a small edit rather than an
+archaeology exercise.
+
+### What a quiet agent means
+
+**Decided: silence no longer means finished. What is running decides.**
+
+The code asked one question — has anything printed in the last two seconds —
+and answered `done` when the answer was no. So an agent thinking for four
+seconds, or waiting on a slow tool call, or writing to a file instead of the
+screen, was announced as finished. A green check against a session in the
+middle of a task.
+
+*Done* is a claim about completion and the panel had no evidence for it. All it
+knew was that nothing had printed lately. The evidence it does have is the
+foreground process, which tmux reports and which the detector was already
+carrying in `Observation.ShellOnly` — used only to *demote* a busy shell, never
+to promote a quiet agent. Its doc comment even said "there is nothing that could
+be working"; the inverse was never asked.
+
+So: a pane running `claude` has not finished anything. A pane back at a shell
+has, because the thing that was working exited. That is the difference between
+the two states, and it is the one question tmux can answer.
+
+**Not "waiting", though the temptation was real.** A quiet agent is either
+thinking or asking, and nothing available here tells them apart. Guessing
+"asking" would put a triangle on every session that paused for a moment, and a
+panel that cries for attention it does not need is one people stop looking at —
+which costs more than the thing it was trying to buy. "Working" is true of both,
+and the two signals that genuinely mean a person is needed, the bell and a hook
+report, are checked before this and outrank it.
+
+To reverse: `Evaluate` in `internal/session/detect.go`, the branch that returns
+`StateWorking` for `!obs.ShellOnly`.
+
+**The flicker went with it, and took a second bug out on the way.**
+`activityWindow` and the poller's interval were both two seconds, so "was there
+output in the last window" was sampled at exactly the rate the window was wide
+and a session printing every couple of seconds landed on either side of the
+boundary at random. The window is five seconds now — not a multiple of the
+sampling rate — and a running agent no longer depends on it at all.
+
+Widening it broke a bell test, which turned out to be the useful part: the bell
+rule was using `activityWindow` to decide how long a ring stays authoritative.
+Two different questions sharing one constant because they happened to want the
+same number. `bellGrace` is its own two seconds now, and changing one no longer
+silently changes the other.
+
+### Whether a password can be changed
+
+**Decided: yes, from the settings page.**
+
+There was no way, from anywhere. The wizard sets one once and nothing could
+replace it, so the answer to "this leaked" or "I typed it into the wrong
+window" was to stop the panel and edit SQLite by hand.
+
+`store.DeleteUserAuthSessions` already existed, with a comment reading *"Used
+when the password changes: the point of changing it is that whoever had the old
+one stops having access."* It had no callers. Another function written for a
+feature nobody built, describing behaviour that did not exist.
+
+Three properties the endpoint has that a naive one would not:
+
+1. **The current password is required.** A stolen session cookie is then not
+   enough to lock the owner out of their own panel, which is the difference
+   between an intruder who can read your terminals and one who owns them.
+2. **Failures are throttled**, through the same limiter as sign-in. Otherwise
+   this is an unthrottled oracle for guessing the password that the login page
+   refuses to be.
+3. **Every other browser is signed out**, and this one is not. Leaving the old
+   sessions alive makes the change decorative; signing out the browser that just
+   made the change reads as the change having failed.
+
+The check does the whole flow through the page: a wrong current password must
+be refused and say so, the right one must work, this browser must stay signed
+in, and the old password must stop working. Removing the server's verification
+reproduces `a wrong current password was accepted, or reported nothing`.
+
+## Rendering the parts nothing had rendered
+
+With the handover list empty, this round was pure looking: drive the panel into
+states no check produces and read the pictures.
+
+### The error boundary, caught in the act
+
+Route interception made the file endpoint return `{"entries": null}` — the exact
+shape that blanked the whole console before it was fixed. The boundary caught
+it: the files panel showed a message and a "Try again" button, and the sidebar,
+the terminal, the bottom strip and the other tabs went on working.
+
+One thing wrong with it. The error message was `truncate`d, so it read
+
+    Cannot read properties of null (reading 'le…
+
+which names neither the property nor the place. That line is the only thing
+anybody can paste into a bug report; it wraps now.
+
+### "0%" is not "I don't know yet"
+
+The system monitor's CPU meter, on its first sample:
+
+    CPU                    0%
+    16 cores · sampling…
+
+The percentage is a difference between two samples, so the first one has
+nothing to compare against. The detail line said so. The number beside it said
+the machine was idle, and the number is what people read.
+
+The comment directly above the code said exactly the right thing:
+
+    // The first sample has nothing to difference against, so it says so
+    // rather than showing a zero that looks like an idle machine.
+    value={sample.cpuPercent ?? 0}
+
+The `?? 0` is the zero that looks like an idle machine. Comment and code
+contradicting each other inside three lines, the comment describing the
+behaviour somebody meant to write.
+
+An unknown value reads `—` now and draws no bar. The logic moved to
+`meter.ts` — a pure function, testable without a DOM, and out of the component
+file that ESLint wants to contain only components.
+
+### A third comment describing something that does not exist
+
+The right panel is hidden on a narrow screen, which is right: a 280px column
+beside a terminal on a phone leaves neither usable. The comment explaining it
+ended "the panels reach mobile in their own layout rather than by being
+squeezed into this one".
+
+They do not. There is no mobile route to the file tree, the system monitor, the
+notes or the todo list. The narrow layout is the terminal, the compose box and
+the key bar — which is what the plan scoped, so the *absence* is a decision.
+The sentence claiming they arrive by another route is what made a gap read as
+work already done.
+
+Corrected in place, and left as a gap rather than built: notes and todos were
+asked for as the third and fourth tabs of the right column, which is a desktop
+surface. Anyone who wants them on a phone is asking for something new, and
+should get to say so.
+
+That is three of these in one session — `SessionEnv` inventing a purpose for a
+variable the script never reads, `DeleteUserAuthSessions` describing a feature
+with no callers, and now two comments describing behaviour the code beside them
+contradicts. The pattern is worth naming: a comment is the one part of a change
+nothing verifies, so it is where an intention that never got implemented comes
+to rest.
+
+### Two probes that were wrong, not the panel
+
+The notes tab rendered empty after the probe wrote a note through the API. That
+looked briefly like the tab overwriting the note with a blank — worth checking
+carefully, since it would have been the worst kind of data loss.
+
+It was the probe. It sent `{content, rev: 0}`; the field is `baseRev`, and the
+API decodes with `DisallowUnknownFields`, so the write was rejected with a 400
+that the probe never looked at. A second probe wrote, read back, opened the tab
+and read back again: content correct, revision unchanged, nothing lost.
+
+The probe's fault is the same one this log keeps recording about checks — it
+did not assert that its own setup succeeded. Fixtures that fail silently
+produce findings about the wrong thing.
+
+### One phone is not phones
+
+Every mobile assertion in this project ran at 390×844. Two things were broken at
+sizes just as ordinary, and one of them was broken *by the previous round's
+fix*.
+
+**320 wide.** Eight keys at the 44px a thumb needs come to 380px. The primary
+key row — the one whose comment promises that nothing in it is ever hidden —
+overflowed by 56 pixels, and the page does not scroll, so `ctrl` and `alt` could
+not be pressed at all. Widening the touch targets did that, and measuring only
+at 390 is why it shipped.
+
+It wraps now. A second line costs 44px of a screen with room for it; a key you
+cannot press costs the feature. Wrapped with `justify-start`, because
+`justify-between` stretches the *last* line too and put `ctrl` against one edge
+and `alt` against the other with a hand's width of nothing between them.
+
+**A phone held sideways.** The layout switch was `(max-width: 767px)`, and a
+landscape phone is 844 wide. So rotating produced the desktop layout: a 260px
+sidebar, the right panel, the bottom terminal strip, and a terminal of
+
+    35x6
+
+Thirty-five columns and six lines, with no compose box and no key bar — so
+rotating also lost the ability to type Chinese, send Ctrl-C, or press an arrow.
+Turning a phone sideways is something people do to see *more* of a terminal.
+
+The query is now `(max-width: 767px), (max-height: 500px) and (pointer: coarse)`.
+The second clause is deliberately not just "is it short": a desktop window
+dragged short is still a desktop, with a keyboard and a mouse, and keeps the
+wide layout. Short *and* driven by a finger is a phone on its side, which is the
+only thing this is trying to catch. Same terminal, after:
+
+    104x11
+
+Both are checked now, at both sizes, and removing either fix reproduces its own
+failure with the measurement in the message.
+
+The general lesson is the one the scale check taught in a different costume: a
+check that only ever runs one fixture is testing that fixture. "It works on a
+phone" meant "it works on the phone in the harness".
+
+## A signed-out browser kept its terminals
+
+The scenario nothing had ever rendered: a session that stops being valid while
+the page is open. It happens on expiry, on signing out elsewhere, on an
+administrator revoking a session — and on the password change added earlier
+today, whose whole point is that whoever had the old password stops having
+access.
+
+Measured, with the session row deleted and the page untouched:
+
+    before:  {"conn":"open","rows":1}
+    session invalidated
+    typing after the session was invalidated reached the shell: true
+    t+3s     {"conn":"open","rows":1,"loginForm":false}
+    t+8s     {"conn":"open","rows":1,"loginForm":false}
+    t+20s    {"rows":0,"loginForm":true}
+
+Two things wrong, one of them serious.
+
+**The socket does not care that the session is gone.** Authorisation happens
+once, at the handshake, and then the connection lives for hours. So a
+signed-out browser kept full terminal access — reading output and sending
+keystrokes — for as long as it stayed connected. "Signs every other browser
+out", which this log claimed a few hours ago, was true of future HTTP requests
+and false of the terminals those browsers already had open.
+
+A live connection now re-runs exactly the checks `RequireAuth` makes, in the
+same order — is this address still allowed, does this session still exist — and
+closes when the answer changes. The original request is what gets re-checked,
+which is the point: its cookie does not change, the row behind it does.
+
+Every five seconds. Thirty was the first number, and it is too long for the
+case that matters: somebody changing their password *because it leaked*, while
+whoever leaked it still has a socket open. The cost is two indexed reads per
+open browser per interval, and this panel has a handful of viewers.
+
+**The page took twenty seconds to admit it.** A browser cannot see the HTTP
+status of a failed WebSocket handshake, so a socket refused with 401 looks
+exactly like one refused by a flaky network. The panel went on showing the
+session list and the last frame of a terminal, with only the connection dot to
+say otherwise, until an unrelated fetch happened to get a 401.
+
+After four seconds down it asks. Asking first is the whole design: signing out
+on a dropped connection would turn a bad wifi moment into a logout.
+
+    session invalidated
+    typing after the session was invalidated reached the shell: true
+    nine seconds later: the panel is showing the sign-in page
+
+### The test that destroyed what it was testing
+
+The first version checked liveness by reading with a short context and
+expecting a deadline error. In coder/websocket, **a read whose context expires
+closes the connection** — so the liveness check killed the thing it was
+checking, every later read returned an error, and the test passed just as
+happily with the revalidation removed.
+
+It passed the mutation. The only reason that was caught is that the mutation is
+checked at all, and that the check now includes proving the mutation reached
+the binary: `grep -c` on the source, and the build output not swallowed.
+
+One read, in a goroutine, never cancelled. Removing the revalidation now prints
+
+    the socket was still open five seconds after its session stopped being
+    valid; a signed-out browser keeps its terminals
+
+That is six assertions this session that could not fail. The causes have all
+been different — a check that never ran, fixtures that were idle, a comparison
+loose enough to accept what it should reject, a mutation that silently failed
+to build, and now a probe that destroyed its own subject. The habit is not
+optional.
+
+### A test that was passing by catching a transient
+
+The full sweep after all this turned up `TestPollerTracksStateFromOutput`
+failing — a test the previous sweep had passed, with nothing between them that
+touches the detector.
+
+It was not flaky by accident; it was racing on purpose and had been winning.
+The fixture ran `sh -c "echo started; exec sleep 60"` and expected *done*, on
+the old rule that silence meant finished. For the first moment the pane's
+command is `sh`; only after the exec does it become `sleep`. So the assertion
+passed whenever the poller happened to look during that window and failed
+whenever it looked afterwards — and once the rule changed to "what is running
+decides", looking afterwards became the only correct answer.
+
+The fixture says `exec sh` now, which is the thing that actually means nothing
+is running. And the half with teeth was missing entirely, so it is there now: a
+`sleep 60` left alone for several activity windows must still read as
+*working*, because the process is still there and nothing has finished. That is
+precisely what used to be announced as done.
+
+Worth noting how it surfaced: not from the change that broke it, but from
+running everything afterwards. A test whose result depends on when it looks
+will pass the run where you would have caught it.
+
+## Two screens nobody had rendered on a phone, and one that had never been killed
+
+### tmux dying underneath the panel
+
+`tmux -L … kill-server` while the panel is open and two sessions are running.
+This is not hypothetical: it is what an OOM kill looks like, and what somebody
+tidying up their sockets does by accident.
+
+It behaves. Within four seconds both rows carry the dashed glyph reading *"Gone
+— the tmux session no longer exists"*, the terminal shows `[server exited]`,
+each row offers restart, and nothing throws. That is the `pollOnce` early-return
+removal and `markVanished` doing exactly what they were built for, in the case
+they were built for, which had never actually been run.
+
+### iOS magnifies the page when you tap anything
+
+Every input in this panel was 12 or 13 pixels. Safari on iOS zooms the viewport
+when a focused field's text is smaller than 16, and it has ignored
+`user-scalable=no` since iOS 10 — so the meta tag in `index.html`, which is
+there for exactly this, does not prevent it. Nothing zooms back afterwards.
+
+Nine fields, and the one that matters most is the compose box: the main way to
+type on a phone. Tapping it magnified the terminal behind it and left it that
+way.
+
+    fields a finger will focus are under 16px, so iOS magnifies the page when
+    they are tapped and does not put it back:
+      [{"id":"textarea","px":13},{"id":"compose-input","px":13}]
+
+One rule, on the elements rather than on a class:
+
+    @media (pointer: coarse) {
+      input, textarea, select { font-size: 16px; }
+    }
+
+A class would have held only until somebody added the tenth input. Under a
+coarse pointer only, so desktop density is unchanged; the phone's fields go from
+34px tall to 38 as a side effect, which is the direction they wanted to move
+anyway.
+
+The check reads the computed font size of every visible field on a touch page
+and names the ones under 16. Putting the rule back to 13px reproduces it.
+
+**Not changed:** the sign-in button is 36px tall, below the 44 established for
+the icon controls earlier today. That rule was about a 16-pixel icon squeezed
+between two others; a 222×36 button is a different thing and forcing every
+button in the panel to 44 would be churn dressed as consistency. Said here so
+the inconsistency is a decision rather than an oversight.
+
+## Rows that can outgrow their box, the third and fourth of them
+
+The key bar on a phone was the first. Looking for the same shape elsewhere
+found two more, and the second one was not the failure I went looking for.
+
+### The terminal strip painted its tabs over the panel next door
+
+Eight scratch terminals in an 820px window. The tab row has no overflow
+handling at all, so four tabs ended up past its right edge — and `overflow:
+visible` does not clip, it *draws them over whatever is beside them*, with no
+way to scroll to them.
+
+The tabs scroll now; new-terminal and collapse stay outside the scroller,
+because putting them inside means they scroll away exactly when there are
+enough tabs to need them.
+
+### The collapsed rail squashed instead of spilling
+
+Twenty projects in a 560px window. `overflow-y-auto` did nothing, because
+nothing overflowed: **flex children compress before they overflow**. Every
+badge went from 36px to 17 — unreadable initials, untappable targets — and the
+scroller added to catch spilling never fired because nothing ever spilled.
+
+`shrink-0` on the badges is the actual fix; the scroller is what makes the
+result usable once they refuse to shrink.
+
+Worth stating plainly: the first fix here was wrong and the measurement is what
+said so. "Add `overflow-y-auto`" looked obviously right, the check went green,
+and the badges were still 17 pixels tall. Reachability was the wrong question —
+everything was reachable, and unreadable.
+
+### `scrollIntoViewIfNeeded` is not a reachability test
+
+The scale check has asserted since it was written that the last session row
+"cannot be scrolled to", using Playwright's `scrollIntoViewIfNeeded` and
+treating a resolved promise as success. It resolves as long as it can scroll
+*something*. Measured on the broken strip: it reported success for a tab being
+painted 350 pixels past the edge of its row.
+
+All three reachability checks now do the same thing instead — find the ancestor
+that actually scrolls on that axis, scroll it to the end, and ask whether the
+last item is inside its box. Removing either overflow rule reproduces its own
+failure; removing `shrink-0` reproduces twenty-one badges at nineteen pixels.
+
+That is four instances of one mistake in this codebase: a row of things that can
+outgrow its container, with nothing deciding what happens when it does. Worth
+naming as a thing to check for rather than a bug to fix.
+
+## Going looking for the fifth, and not finding one
+
+Four instances of "a row that can outgrow its box" is enough to stop fixing
+them one at a time. So: a scan that walks every element on the page and reports
+any whose content does not fit, whose overflow is `visible`, and which has no
+scrolling ancestor to reach the rest through.
+
+Run against a panel loaded with everything it can hold at once — a project name
+that does not fit, sessions named in Chinese and emoji, five scratch terminals,
+notes, todos, a file with a sixty-character name — at 1440×900, 820×560 and
+320×568, with the right panel dragged to its narrowest and the settings dialog
+open.
+
+**Nothing. The panel is clean.** Which is only worth saying because the scan was
+calibrated first: with the terminal strip's overflow rule removed it reports the
+strip and its ancestors, by 115 to 175 pixels, at exactly the size where they
+spill.
+
+### The detector needed three attempts, and the middle one nearly cost a fix
+
+**First version:** flag anything whose content is bigger than its box. It
+reported four audit-log rows on a phone, 162px each. Plausible: those rows are
+408px of fixed columns in a dialog about 256 wide.
+
+I fixed it — `overflow-y-auto` to `overflow-auto` — and the scan still reported
+it, which is what saved the whole thing. The rows were never the problem; their
+*container* is, and the container was already scrolling. CSS computes
+`overflow-x: visible` to `auto` when the other axis is not visible, so asking
+for vertical scrolling there had quietly granted horizontal scrolling too.
+Measured on a phone: `overflowX` computes to `auto`, and the box does scroll
+sideways.
+
+So the change was reverted. What is left in its place is a comment saying why
+`overflow-y-auto` is sufficient there and not obvious — because the next person
+to run a scan like this will find the same thing and reach for the same fix.
+
+Without re-validating the detector I would have shipped a no-op change plus a
+comment asserting a defect that never existed. Which is the pattern this log has
+been cataloguing all week, produced by the process meant to catch it.
+
+**Second version:** only report when no ancestor can scroll — and treat an
+ancestor with `overflow: hidden` and no spare room as "contained, therefore
+fine". That silenced *every* real finding, including the deliberately broken
+strip. The app root is `overflow-hidden`, so everything has such an ancestor.
+Being clipped by something four levels up is not containment; it is the content
+being invisible and unreachable.
+
+**Third version**, calibrated both ways, is what shipped.
+
+### And it has to run where the thing exists
+
+The first place it went was the desktop page, where it found nothing — including
+nothing about the key bar, which only exists on a phone. Breaking the key row on
+purpose produced a failure from the *old* targeted assertion and silence from
+the new general one.
+
+It now runs on the desktop layout, in the phone drawer, and at both phone shapes.
+Broken key row, at 320:
+
+    in a 320 wide phone, content is painted outside its container with no way
+    to scroll to it: main is 52px too wide; key-bar is 52px too wide;
+    key-row-primary is 56px too wide
+
+## Every tappable thing on a phone, measured
+
+Same move as the overflow scan, applied to touch targets: rather than fixing
+the controls somebody happened to think about, measure all of them.
+
+The five that had been given a 44px box were the five in a session row. The
+scan found the rest:
+
+- **every key on the soft keyboard was 32px tall** — the most-pressed surface
+  in the product;
+- the header's settings, theme and sign-out controls, 27 square;
+- the compose box's send and newline buttons, 32;
+- the settings dialog's close button, **23**;
+- the state dot, which is a button that cycles the state, 18.
+
+A rule about buttons rather than a class on each, for the same reason the 16px
+font rule is one: a class holds only until somebody adds the next button.
+
+    @media (pointer: coarse) {
+      button, [role='button'] { min-height: 2.75rem; }
+    }
+
+`min-width` is left alone deliberately. 44×44 is the guideline, but eighteen
+keys at 44 wide do not fit a phone, and a target 32 wide and 44 tall between two
+other targets is a different proposition from one that is 27 square in the
+corner of a dialog. Height is where the wins are, and this is written down so
+the gap is a decision.
+
+### The scan caught the consequence of its own fix, twice
+
+Making everything taller squeezes what is above it. The overflow scan added an
+hour earlier reported, immediately:
+
+    in the phone drawer, content is painted outside its container with no way
+    to scroll to it: div is 41px too tall
+
+"div" names nothing, so the scan now reports a class fragment too — the first
+thing it said was literally true of every div on the page.
+
+`div.h-full.w-full` is the element xterm is mounted into. It re-fits its grid
+asynchronously after anything changes the space it has, so it is briefly taller
+than its box whenever the layout moves. Reported once, gone on the next run,
+still intermittent after sampling twice six hundred milliseconds apart.
+
+An intermittent failure is how a check stops being read: the lesson people take
+from it is to run it again. So the terminal's immediate host is exempt — by
+`:scope > .xterm`, not by class name — with the reasoning written where the
+exemption is. Three consecutive clean runs, and breaking the tab strip still
+reports it.
+
+### One scan, two checks
+
+Exempting the terminal host revealed that the render check could no longer see
+the tab strip break at all — because it scans at 1440×900, where two tabs have
+never been close to overflowing. The crowded states live in the scale check.
+
+So the scan is `web/scripts/lib/overflow.mjs` now, imported by both, rather than
+copied. This log has recorded the cost of the same rule living in two places
+four times this week; it was not going to be the fifth. With the strip broken,
+in the crowded state:
+
+    with everything crowded, content is painted outside its container with no
+    way to scroll to it: main… is 64px too wide; [bottom-terminals] is 64px too
+    wide; div.flex.h-8… is 64px too wide; div.flex.min-w-0… is 124px too wide
+
+### And the refactor deleted a function
+
+Extracting the scan into `lib/overflow.mjs` cut from the start of the scan to
+the next top-level `const`. Three colour helpers and one `waitHealth` sat in
+between. The colour helpers were noticed and moved back; `waitHealth` was not,
+because nothing referred to it in the part I was reading.
+
+The sweep found it a minute later:
+
+    [FAIL] harness: ReferenceError: waitHealth is not defined
+
+Which is the argument for running everything after a refactor rather than the
+thing that was refactored — and for a check whose first act is to wait for the
+server, because that is the line that fails loudly when the file is broken.
+
+Restored, with the story attached to it.
+
+## Two more scans, and one of them found nothing
+
+The overflow scan worked, so the same move twice more.
+
+### Touch targets, permanently
+
+The measurement from the previous round is a check now, in
+`web/scripts/lib/tap.mjs`, run at both phone shapes and in the drawer. Removing
+the 44px floor reproduces the whole list with heights attached:
+
+    in the phone drawer, controls are too small for a thumb:
+      button:Close is 27px tall; button:Sort by recent activity again is 26px;
+      button:Add project is 27px; state-dot is 18px; button:Projects is 28px;
+      settings-open is 27px; theme-toggle is 27px …
+
+It also named one I had not measured by hand — `take-control`, 30px, which only
+appears when another viewer owns the grid.
+
+### Keyboard focus, and a check that had to be rewritten before it was right
+
+Can somebody navigating with a keyboard see where they are? The first version
+of the scan looked for an outline or a box-shadow on the focused element.
+
+That would have reported **every text field in the panel as invisible**. The
+panel does focus two different ways: buttons keep the browser's outline, and
+inputs remove it — `outline-none` — and turn their border accent-blue instead.
+Both are perfectly visible; only one of them is an outline.
+
+So the check compares the element against itself: read the computed style while
+focused, blur, read again, restore. Anything different is an indicator. Driven
+with real Tab presses rather than `.focus()`, because `:focus-visible` is what
+the styles hang off and it tells the two apart.
+
+**The result is that nothing is wrong.** Twenty tab stops across the sign-in
+page and the panel, every one of them visibly different when focused. Worth the
+hour only because the check now exists, and because the wrong version of it
+would have sent me "fixing" six inputs that were already correct — the same
+near-miss as the audit-log rows, one round earlier, from the same cause: a
+detector that encodes one way of doing something as the only way.
+
+Adding `button:focus-visible { outline: none }` reproduces:
+
+    in the desktop layout, these look the same focused as unfocused, so
+    keyboard navigation is invisible: button:Collapse, button:Add project,
+    project-new-shell, state-dot, pin-session, kill-session
+
+### Where the checks stand
+
+Three generic scans now, each in `web/scripts/lib/`, each calibrated against a
+deliberate break, each run where the thing it measures actually exists:
+
+- `overflow.mjs` — content painted where nothing can scroll to it
+- `tap.mjs` — controls too small for a thumb
+- `focus.mjs` — tab stops that look the same focused
+
+Together they replace four rounds of finding the same class of defect one
+instance at a time. The pattern worth keeping is not any of the three: it is
+that after the second instance of a mistake, the thing to write is the thing
+that finds the fourth.
+
+## Two more mechanical checks, and three ways to write one that cannot fail
+
+### Controls a screen reader would announce as nothing
+
+This panel is mostly icons: pin, kill, restart, collapse, new terminal, the
+theme toggle, the state dot. An icon with no text and no label is announced as
+nothing, and a row of them is "button, button, button".
+
+The scan accepts any of the four things that work — `aria-label`,
+`aria-labelledby`, `title`, visible text, or a `<title>` inside the svg — and
+the panel passes everywhere: sign-in, the panel, all four right-hand tabs, the
+settings dialog. Removing one `title=` reproduces `settings-open` by name.
+
+`web/scripts/lib/names.mjs`, run on the desktop layout and in the phone drawer.
+
+### Red line 4, mechanically
+
+*Colour is never the only carrier of meaning.* The rule has been in AGENTS.md
+since the beginning and nothing enforced it — unlike red line 5, which
+`styles.test.ts` has enforced since the day it was written.
+
+The check strips colour from every state glyph on screen and requires two dots
+that mean different things to still look different. Dashes count as geometry: a
+dashed outline is visible without colour, which is how *gone* differs from
+*exited*.
+
+Getting it to fail took three attempts, and each failure was the check being
+wrong in a way worth writing down.
+
+**First:** it grouped labels by their first word, so "Exited" and "Exited with
+status 3" were the same meaning. Those two are precisely the pair the rule
+exists for — finished versus crashed — and the grouping merged them. Replacing
+the crash cross with a red copy of the clean square passed.
+
+**Second:** with the meanings separated by category, it still passed — because
+it ran early in the check, before anything had exited. It was comparing working
+against done, which are different shapes, and concluding the rule held. A check
+for a distinction that runs where the distinction does not exist is a check
+about something else.
+
+**Third,** moved to the point where a crashed session and a cleanly exited one
+are both on screen:
+
+    "crashed" and "exited cleanly" are drawn with identical geometry, so they
+    differ only by colour
+
+Three failures, three different mechanisms — a classification that erased the
+distinction, a fixture that lacked it, and (in the previous round) a comparison
+too loose to see it. Every one of them produced a green check about a broken
+build.
+
+## The red lines, mechanically
+
+Seven rules in AGENTS.md. Three were enforced by something, four were enforced
+by whoever remembered them. After this round, six are enforced.
+
+| | rule | enforced by |
+|---|---|---|
+| 1 | never touch another tmux socket | `TestEveryCommandNamesOurSocket` |
+| 2 | never own a PTY a session depends on | `restart-check` |
+| 3 | one definition of the state enum | the enum tests |
+| 4 | colour is never the only carrier | the glyph geometry check |
+| 5 | theme blocks redefine tokens only | `styles.test.ts` |
+| 6 | validate anything from a hook | `TestHookRejectsGarbage` |
+| 7 | exact-match tmux targets | `TestTargetsAreExactNotPrefixes` and `TestNoHandBuiltTargetsElsewhere` |
+
+Three of those existed already. Four and seven-and-a-half were added over the
+last two rounds.
+
+**Red line 1** is now a property of the argument list rather than a habit: build
+the argv for several commands and require `-L` followed by the configured
+socket in every one. Making `attach-session` skip it reports
+
+    no -L in "-f …/tmux.conf attach-session -t =vp_x:"; this command would use
+    the user's own tmux
+
+which is the failure that ends somebody's week, caught before it runs.
+
+**Red line 7** already had the property tested — against a real tmux, with a
+real prefix collision, which is stronger than any string comparison. What it
+did not have was the *second half* of the rule: "use the helpers, never
+hand-built target strings". A helper nobody is obliged to use is a convention.
+So a source walk objects to a `-t` argument anywhere outside `internal/tmux`:
+
+    tmux targets are built outside internal/tmux, where the exact-match form
+    cannot be enforced:
+      ../httpapi/api.go:254: func handRolled(name string) []string { … "-t", name }
+
+### And one test deleted for being a second copy of a rule
+
+Writing that, I also added an assertion that `target("vp_ab")` returns
+`"=vp_ab:"`. It passed, it failed under mutation, and it was still wrong to
+keep: `TestTargetsAreExactNotPrefixes` already proves the property against real
+tmux, and catches every way of getting it wrong rather than the one way a string
+comparison knows about.
+
+Deleted, with a note where it would have gone saying why it is not there. Two
+tests for one rule is the cost this codebase keeps paying elsewhere; adding
+another instance while writing about the pattern would have been a poor joke.
+
+**Red line 2** stays behavioural — `restart-check` kills the backend and
+requires the sessions to outlive it, which is the only honest way to test it.
+
+### The guard that caught its own fixture
+
+The sweep after all that reported
+
+    [FAIL] ui: expected eight terminal tabs to test the strip with, saw 0
+
+which is the guard added two rounds ago — the one that fails rather than
+silently skipping when the state under test was not built.
+
+The cause: the crowded-strip section clicked the *first* session row to select
+the session it had hung eight scratch terminals on. The sidebar sorts by
+urgency, and a session is marked waiting a few lines above, so the first row is
+that one and its strip is empty. It had been passing because the ordering
+happened to put the right row first.
+
+Selecting by name instead. Two consecutive clean runs.
+
+Worth noting which part worked: not the assertion about the strip, which would
+have been vacuously true against zero tabs, but the line above it that refuses
+to proceed without the fixture. Every one of these checks needs that line, and
+the pattern of writing them — assert the measurement before the threshold — is
+now four rounds old and has caught three separate things.
+
+## The migration that can never be edited again
+
+AGENTS.md says migrations are "additive steps only, and never an edit to an
+earlier one", because a released binary has already run the old version of that
+step on somebody's machine. Nothing enforced it.
+
+The obvious test does not work, and finding out why was the useful part.
+
+**First attempt:** build a database at v1, upgrade it, build a fresh one, and
+require the two schemas to match. Adding a column to `schema.sql` without a
+migration would then fail — new installs would have it, upgraded ones would
+not.
+
+It passed with exactly that change made. Both paths run `migrations[0]`, and
+`migrations[0]` *is* `schema.sql` — a fresh database starts at user_version 0
+and applies the whole list. So the comparison was of a thing against itself and
+could not fail. The seventh unfalsifiable assertion of this session, and the
+first one whose premise was wrong rather than its mechanics: detecting drift
+between "then" and "now" needs a copy of "then", and nothing stores one.
+
+**What is checkable** is the rule itself. A pinned hash of `schema.sql`:
+
+    schema.sql has changed (b54744791f20…).
+    Every database in the world has already run the previous version of it, and
+    none of them will run this one. Add a migration instead; if you are certain
+    this file has never shipped, update the pin.
+
+It is deliberately not a value to refresh when the file changes. If it fails,
+the change belongs in a new migration. The comment says so, because the
+temptation when a hash test fails is to update the hash.
+
+The upgrade path itself was already covered — `TestMigrationUpgradesAnExisting
+Database` builds a v1 database with real rows in it and requires the current
+build to migrate in place rather than start over. That one is behavioural and
+strong; what was missing was the guard on the thing it cannot see.
+
+## A third race, found by hammering rather than by reading
+
+The first two races in this package were found by reading code that looked
+correct. This one was found the other way: drive every entry point on a live
+session concurrently — six viewers subscribing, draining and leaving; four
+clients writing, resizing and taking control — then close it underneath them
+and let the race detector decide.
+
+It passes once. Run six times, it fails:
+
+    WARNING: DATA RACE
+    Write at 0x…  by goroutine 59:
+      os.(*File).Close()
+      session.(*Live).close()          manager.go:690
+    Previous read at 0x… by goroutine 86:
+      os.(*File).Fd()
+      creack/pty.Setsize()
+      session.(*Live).Resize()         manager.go:603
+
+Every user of `l.ptmx` in this file copies the pointer, releases the lock, and
+then does its I/O. That is right for `Write` — a write to a full PTY buffer can
+block, and holding the lock across it would stall the pump and every other
+viewer — and it is *safe* there, because `os.File` reference-counts reads and
+writes against `Close`.
+
+It is not safe for `Resize`. `pty.Setsize` needs the raw descriptor, and
+`File.Fd()` is documented as valid only until `Close` is called: it steps
+outside the machinery that makes the other two safe. So a resize arriving as a
+session detaches raced the descriptor being destroyed — and on a panel that
+opens a PTY per session, a recycled fd taking that ioctl is not a theoretical
+outcome.
+
+The ioctl now happens with the lock held, and `close()` closes the descriptor
+with it held too. Microseconds, and it cannot block. `Write` stays outside,
+where it belongs, for the reason it was put there.
+
+Putting the ioctl back outside reproduces the race in six runs; with it inside,
+six runs are clean, and so are the two packages under `-race`.
+
+**The lesson is about the test, not the fix.** Three races in this file now.
+Two were found by reading and one by a chaos test that took twenty minutes to
+write — and that chaos test would have found all three. A concurrency review is
+worth doing; a concurrency review is not a substitute for running the thing
+concurrently and asking the detector.
+
+It also has to be run more than once. A single pass was green.
+
+## The manager, hammered — and two wrong conclusions on the way
+
+Same treatment for the manager itself: attach and detach the same names from
+eight goroutines while others ask what is live, then `DetachAll` and ask tmux
+what is still connected.
+
+    vp_c1 still has 1 client(s) after DetachAll
+    vp_c2 still has 1 client(s) after DetachAll
+
+**That was not a leak.** `close()` gives a tmux client two seconds to exit on
+its own before killing it — the comment right there says so — and the assertion
+waited five hundred milliseconds. Half a second is not a leak, it is
+impatience. With the wait past the grace period, the test passes.
+
+Which left a fix I had already written, for a bug the test no longer showed.
+The temptation is to keep it: it is small, it reads as obviously correct, and
+nobody would question it. That is the shape of most of what this log has been
+finding all week. So: prove it or delete it.
+
+**The property is real.** `Attach` spends milliseconds before it installs
+anything — capture-pane, then starting a PTY — and during that window the
+session is in neither map. A `Detach` arriving then finds nothing, returns, and
+the attach installs itself afterwards into a manager the caller has just been
+told is empty. Nothing that called `Detach` can close it.
+
+**The first test of it failed for the wrong reason.** Firing the detach
+immediately after starting the attach goroutine tests the opposite thing — a
+detach that arrives *before* an attach begins, where installing is correct,
+because "attach after detach" is an ordinary sequence. Making the code pass that
+test would have broken real behaviour.
+
+Waiting for the claim to appear before detaching tests the window that matters.
+With the fix, three runs clean; without it, attempt zero fails every time.
+
+The consequences in the panel as it stands are bounded — every caller of
+`Detach` either kills the tmux session immediately afterwards or is on its way
+out of the process — and that is a property of today's callers rather than of
+the manager. Which is the argument for the test: the next caller does not
+inherit the reasoning.
+
+Two self-corrections in one finding: an assertion that was too impatient, and a
+test that measured the opposite of what it claimed. Both would have produced a
+confident wrong answer, in opposite directions.
+
+## The rest of the concurrent surface
+
+Three more chaos tests, against the store, the detector and the hub. Two of
+them found nothing wrong with the code and something wrong with the test.
+
+### Concurrent writers, and a load-bearing DSN parameter
+
+SQLite takes one write lock for the whole database, so two writers collide by
+design; `busy_timeout` is what turns the collision into a wait rather than an
+error. The DSN sets it to five seconds with a comment explaining exactly that,
+and nothing had ever put enough writers against it to find out whether five
+seconds is enough.
+
+Eight writers — state changes, renames, project touches, notes — and four
+readers, for two seconds: **zero failures**. Dropping the timeout to one
+millisecond:
+
+    946 concurrent operations failed; the first was:
+      note: store: set note: database is locked (5) (SQLITE_BUSY)
+
+So the parameter is doing real work, and now something says so.
+
+### Two bugs in the chaos test, both of which would hang CI
+
+**`time.After` is not a broadcast.** It delivers its value to exactly one
+receiver, so a stop channel shared by twelve goroutines stops one of them and
+leaves eleven spinning. The first run of this test lasted four hundred seconds
+instead of two. A closed channel is the broadcast.
+
+**Reporting failures over a buffered channel deadlocks on failure.** Once there
+are more errors than buffer, the workers block on the send, never see the stop
+signal, and the test hangs. Which is exactly what happened when the timeout was
+deliberately broken: *the mutation meant to prove the test works proved that it
+hangs*. Non-blocking send plus an atomic count.
+
+Both are the same shape as the defects this log keeps recording, in the tool
+rather than the product: a chaos test needs its own failure path exercised, or
+its verdict on a broken build is "no verdict at all".
+
+### The detector and the hub
+
+Every entry point on the detector at once — the poller evaluating, the pump
+observing, hooks reporting, a user clicking a dot, sessions being forgotten and
+retained — and the hub with six browsers connecting, reading, closing and
+reconnecting while two goroutines broadcast through both its paths.
+
+Clean, four runs each, under `-race`. No finding, and that is the honest
+result: the mutexes were right. What the tests buy is that the *next* change to
+either one is checked by something other than reading.
+
+## The API, with the poller running
+
+The last of the concurrent surfaces. A `Server` carries three caches that HTTP
+handlers and the poller both touch — the hook token behind a `sync.Once`, the
+coalesced state snapshot, and whether the reporter script is installed — and
+each has its own guard, and each looks right. So did the two races already
+found here.
+
+Four readers polling `/api/state`, `/api/settings` and `/api/health`; four
+writers renaming and changing state on the same three sessions; two hook
+reports arriving the way they do from inside a session; and `pollOnce` running
+throughout, which is what actually happens in production.
+
+Clean, four runs, under `-race`, with no request returning 5xx.
+
+**And the test is exercising what it claims.** Removing the mutex around the
+snapshot cache produces a data race within eight seconds — so the paths are
+genuinely being hit, rather than the workers all queueing behind something and
+serialising themselves.
+
+That check matters more than the result. A concurrency test that passes because
+nothing was concurrent is the same species as a check whose fixture is empty,
+and this session has produced seven of those.
+
+### Where the concurrent surface stands
+
+Six chaos tests, all in `make check`, all verified to fail when the thing they
+guard is removed:
+
+- a live session — six viewers, four writers, closed underneath them
+- the manager — attach and detach racing on the same names
+- detach during attach — the window between claiming and installing
+- the detector — every entry point at once
+- the hub — browsers arriving and leaving while state is broadcast
+- the API — handlers and the poller together
+- the store — eight writers against one SQLite write lock
+
+Two real defects came out of them: the PTY descriptor closed while an ioctl was
+reading it, and a detach lost to an attach still being built. Both were in code
+that read as correct, and neither would have been found by reading it again.
+
+## Fuzzing the one function that is a security boundary
+
+`browse.Resolve` decides whether a path the browser sent stays inside the
+project directory. Everything the file panel and the download endpoint do goes
+through it. Its tests cover "..", absolute paths and a symlink pointing out —
+the ways somebody thought of.
+
+**The first fuzz target was theatre.** Fuzzing the relative path alone: twenty
+three million executions, half a million a second, nothing found. There was
+nothing to find. The path is collapsed on the third line of `Resolve`, by
+`Clean("/" + rel)`, so no string can climb out of the root textually. The
+fuzzer was exploring an input space that had already been flattened.
+
+The escape that matters needs the *filesystem* to cooperate. So the fuzzer
+builds that too: it chooses where a symlink inside the root points, and then
+chooses the path used to reach it.
+
+Three and a half million executions with fuzzer-chosen symlink targets: clean.
+
+**Calibrating it needed one more step than usual.** Removing the containment
+check after `EvalSymlinks` made the *existing unit test* fail, which is
+reassuring but says nothing about the fuzzer — `go test -fuzz` runs the normal
+tests first, so the fuzzer never got to speak. Running it with `-run XXXnone`
+to silence them:
+
+    Resolve("link/secret") with link -> "/tmp/…/002"
+      returned "/tmp/…/002/secret", which is outside "/tmp/…/001"
+
+Thirty milliseconds.
+
+The seeds run on every `go test`, so the regression value is there without
+anybody fuzzing; the exploration is there when somebody wants it.
+
+The lesson is about fuzzing generally, and it applies to the seven "cannot
+fail" checks this session has already produced: **a fuzzer exploring an input
+that the code collapses in its first three lines will report a clean result
+forever**, and the number of executions makes that result look stronger the
+longer it runs.
+
+## Fuzzing the parser that reads whatever an agent prints
+
+The OSC scanner is the only parser here fed by something nobody controls: a TUI
+redrawing, a program dumping a binary to the terminal by mistake, a
+half-written escape sequence split across two reads. A panic in it kills the
+pump, and the pump is the session's output.
+
+Twenty-six million executions over arbitrary bytes with arbitrary chunk
+boundaries: clean. Making `handleOSC` assume a four-byte payload — the sort of
+thing a small refactor does — is caught in forty milliseconds.
+
+**The other half of the target does not work, and the honest thing is to say
+so in the file.** It also asserts that the fragment carried between reads stays
+under 64 KiB. Removing the cap entirely leaves the fuzz target green, because
+exceeding 64 KiB needs an input larger than the fuzzer realistically produces.
+`TestUnterminatedOSCDoesNotGrowForever` catches that mutation immediately; the
+fuzzer never will.
+
+So the assertion stays — it is free and it would catch a *reachable* regression
+where a small input causes unbounded growth — with a comment saying which test
+actually proves the property.
+
+That is twice now that a fuzz target's stated purpose was partly unreachable:
+here, and the path resolver whose input is collapsed on its third line. The
+pattern is worth naming, because the failure mode is silent and flattering:
+**a fuzzer reports clean on the parts of the space it cannot reach, and the
+execution count makes that look like evidence.** Calibrating each property
+separately — not the target as a whole — is what tells the two apart.
+
+## A running session announced as dead because of the directory it sat in
+
+Looking for injection through tmux's format parser turned up a real one, and it
+was worse than the shape I went in expecting.
+
+`List` asks tmux for twelve `#{...}` fields joined by 0x1f, one session per
+line. Pane titles turned out to be safe — tmux strips control characters out of
+them, so `a\012b`, `a\037b` and `a\011b` all come back as `ab`. Working
+directories are not. A probe that made two directories, one named with a 0x1f
+and one with a newline, and started a session in each:
+
+```
+List returned 1 of 3, err=<nil>
+  listed vp_p0   path="/tmp/…/002"
+  Get(vp_p1) path="" err=tmux: expected 12 fields, got 13
+  Get(vp_p2) path="/tmp/…/c\nd" err=<nil>
+```
+
+Two of the three running sessions were simply absent from the listing. The
+field count was wrong for one and the line count was wrong for the other, and
+`List` drops a malformed line rather than blind the sidebar to everything else
+— which is the right call in isolation and the wrong outcome here.
+
+**Dropping the line is not where the damage is.** The poller reads a session it
+cannot see as gone, and `markVanished` writes that to the database. So a
+session that is alive and working gets a headstone, because of the name of the
+directory it happens to be sitting in. `mkdir $'a\nb'` is the whole exploit,
+and this is a panel for people who run agents in directories they did not
+choose.
+
+The fix is to make tmux do the sanitising, before the value is ever joined:
+`#{s/[\x01-\x1f]/?/:pane_current_path}`, and the same for `pane_title` and
+`pane_current_command`.
+
+Two things about that format string cost time and are worth writing down.
+
+The first is that `[[:cntrl:]]` does not work, and does not fail loudly. The
+substitution modifier is terminated by a colon, a POSIX character class
+contains two, so the parser splits in the wrong place and the field comes back
+**empty** — not an error, not a warning, just nothing where the path was. That
+is a strictly worse failure than the bug being fixed, and the only reason it
+did not ship is that the probe printed the value. A literal character range has
+no colon in it and works.
+
+The second is that the first probe of the substitution syntax reported empty
+for everything and nearly sent me looking for a tmux version problem. The
+substitution was fine; the ad-hoc test used `-t '=abc'` where
+`display-message` needs the pane form `=abc:`. The lesson is the ordinary one —
+a negative result from a hand-built target says something about the target
+first.
+
+`internal/tmux/paths_test.go` pins it: three sessions, one plain, one under a
+newline directory, one under a 0x1f directory, all three must appear in `List`
+and none may carry a control character through. Mutation-checked by removing
+the scrubbing and confirming the two named sessions go missing.
+
+That check needed a second try, in the way this log has recorded before. The
+first mutation was a `sed` whose pattern did not match; the file was unchanged,
+the test passed, and "passed" read as "the mutation survived" rather than "the
+mutation never happened." Printing the mutated line before running is two
+seconds and turns a silent no-op into a visible one.
+
+## Six ways the panel lost, hid, or misdelivered something
+
+Six fixes with one shape between them: in every case the panel did something
+reasonable-looking and the user's thing — a file, a directory, a name, a note,
+a command — quietly went somewhere other than where they expected.
+
+### A download that could hang the server until it was killed
+
+`handleDownload` resolved the path, checked it stayed inside the project, and
+called `os.Open`. Opening a FIFO blocks until somebody opens the other end, so
+a named pipe anywhere in a project directory — and agents make them — turned
+one click into a request that never returns. Graceful shutdown waits for
+in-flight requests, so `systemctl stop` then waited too.
+
+The fix is one check, `info.Mode().IsRegular()`, before the open. The test in
+`internal/httpapi/fifo_test.go` carries a hard deadline, because the natural
+way to write it is a test that hangs, and a hanging test tells you nothing
+about which change caused it.
+
+### A directory large enough to hide its own subdirectories
+
+`browse` capped the listing at `maxEntries` and then sorted it. The cap was
+therefore applied to whatever order the filesystem handed back, and sorting
+only rearranged the survivors. In a directory with more entries than the cap,
+the subdirectories — which sort first and are the only way to navigate further
+— could be missing entirely, and the panel gave no sign that anything had been
+left out.
+
+Sort first, cap second, and report `Total` and `Truncated` so the tree can say
+so. `Readable` also went from "we could stat it" to `Mode().IsRegular()`, which
+is the question the download button actually asks.
+
+### A filename that renders as a different filename
+
+Session titles, pane titles and file names all come from outside — the
+filesystem, or whatever the agent printed — and go straight into the DOM. A
+right-to-left override reverses everything after it, so `report‮fdp.exe`
+is displayed by every browser as `reportexe.pdf`. In a file tree with a
+download button next to it, that is not a rendering curiosity.
+
+`<bdi>` does not help, which was worth measuring rather than assuming: it
+isolates the run's directionality from its surroundings, and does nothing about
+an override *inside* the text. `safeText` replaces the C0 range, DEL, and the
+bidi control family with U+FFFD, and everything user-visible goes through it.
+
+### An idle panel that never stopped talking
+
+The poller broadcasts a state snapshot only when it differs from the last one
+sent, with a comment explaining that a tick which broadcasts regardless is
+polling with the cost moved onto every viewer. That check had never once
+suppressed a broadcast.
+
+`LiveIDs` built its result by ranging over a map. The snapshot embeds that
+list, so the serialised bytes were different on every call, so the comparison
+always saw a change. Any panel with two or more attached sessions pushed a full
+state snapshot to every connected viewer every two seconds, awake or not, and
+nothing anywhere looked wrong.
+
+The test asserts the property the poller depends on rather than the sort:
+two snapshots taken with nothing happening in between must serialise
+identically. Without the fix it fails on the *second* snapshot — not
+intermittently, immediately.
+
+### A note discarded by clicking the next tab
+
+The notes panel saves 800ms after you stop typing, and the unmount cleanup
+cancelled the pending save. Every way that component goes away hit it: the
+right panel renders one tab at a time, so clicking Files unmounted Notes; the
+component is keyed by project, so switching project did too; and so did closing
+the page.
+
+So typing and immediately clicking another tab — one click, nothing unusual —
+threw away up to 800ms of writing, on the one panel whose stated premise is
+that a note you have to remember to save is a note you lose. Reproduced against
+the real binary in a real browser first: type, click Files, and the server
+still had `""`.
+
+Unmount now flushes instead of cancelling, and `pagehide` plus
+`visibilitychange` cover the page going away. `keepalive` is used only on the
+unload path — it is what survives a closing document, but it caps the body at
+64KB, and a tab switch leaves the page very much alive.
+
+Two harness checks, one per mechanism, because they are different mechanisms
+and a single check would let either one rot. Mutating the unmount flush fails
+only the first; removing the unload listeners fails only the second. Neither
+masks the other.
+
+### A command composed for one agent, run in another
+
+The mobile compose box is rendered by position rather than keyed by session, so
+switching session left the typed text in place while its send handler
+re-pointed at the newly selected session. Compose a command for one agent,
+glance at another, tap Send, and it runs in the wrong terminal.
+
+Measured on a phone viewport before fixing: `echo MEANT_FOR_ALPHA`, typed while
+alpha was selected, survived the switch to bravo and executed in bravo. It
+never reached alpha. This is the panel's own premise turned against the user —
+many agents at once is the entire product, and sending something to the wrong
+one is the mistake that costs.
+
+The obvious fix is `key={current.id}`, which stops the misdelivery by throwing
+the draft away — reintroducing, one commit later, exactly the loss just fixed
+in the notes panel. One draft per session fixes both: nothing reaches the wrong
+terminal, and looking at another session does not cost you what you had
+written. Sending clears that session's draft and no other.
+
+The draft map lives in state rather than a ref, because the swap happens during
+render — an effect would paint one frame with the previous session's command
+still in the box — and the lint rule against reading refs during render is
+right about why.
