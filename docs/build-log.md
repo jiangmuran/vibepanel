@@ -7946,3 +7946,71 @@ panel that silently stops persisting — is still open.
 And the two harnesses I had not run all session, `tls-check` and
 `release-check`, both pass. Five of seven is not "everything passes", and I had
 been writing the latter.
+
+## The panel that could not write, and said it was fine
+
+The open question from the last session: what happens when the panel cannot
+persist. `chmod` proved nothing — permissions are checked at `open` and the
+file was already open. User namespaces are not permitted here, so no tmpfs
+either. `ulimit -f`, applied to a restart after the database exists, does work:
+Go turns SIGXFSZ into a write error, which is close enough to a full disk to
+answer the question.
+
+Three findings, in order of how quietly they fail.
+
+### Startup was already right
+
+With the limit below what the database needs, the panel refuses to start and
+says why:
+
+```
+vibepanel: store: ping .../vibepanel.db: disk I/O error (4874)
+stopped; tmux sessions keep running
+```
+
+### Running, it said nothing at all
+
+With the cap just above the database's size, the panel starts. The eleventh
+rename returns `500 {"error":"store: exec: disk I/O error (778)"}` — so the
+person who pressed a button is told, and `guard()` puts it in the banner.
+
+Everyone else saw a working panel. `/api/health` answered `"ok": true`. The
+snapshot said nothing. The terminals kept working, because they belong to tmux
+— which is the architecture doing exactly what it promises, and exactly why
+nothing else looked wrong. Every state change, every derived title, every note
+was being dropped.
+
+`ok` is a claim, and it was an unconditional one. Health now reports the
+failure, and so does the state snapshot, so every viewer gets a banner rather
+than only whoever happened to press something.
+
+### It also signed everyone out
+
+`currentUser` collapsed "no session" and "the database cannot say" into the
+same answer, so the first thing a viewer saw was `401 sign in required`. The
+sign-in goes to the same broken database, so they try again — and the login
+throttle locks them out of a panel that was only ever short of disk space.
+
+Refusing either way is right and stays. It answers 503 now, and says which of
+the two it is.
+
+### The first version of the signal never fired
+
+It cleared on every successful poll. A database capped at its current size
+still lets the poller rewrite pages it has already allocated while a request
+needing a new one fails, so the poller kept succeeding and erased the evidence
+every two seconds. Failures now have to have *stopped* for thirty seconds, not
+merely paused between two of them.
+
+Three ticks before it says anything, because one failed poll is a blip — a tmux
+call that lost a race with a delete — and a banner that comes and goes is one
+people learn to ignore.
+
+### And the two shapes that had to agree
+
+`stale` reached the WebSocket snapshot and not `/api/state`, because the two
+built `stateResponse` separately from the same six fields. One builder now, and
+a test that the socket and the REST answer carry the same keys.
+
+That is the second time this session that duplicated construction has cost
+something, and both times the duplicate was three lines away from the original.

@@ -448,7 +448,7 @@ func (s *Server) handleDeletePasskey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.DB.DeleteCredential(r.Context(), chi.URLParam(r, "credID"), user.ID); err != nil {
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 	s.audit(r.Context(), "passkey.removed", user.Username, s.clientIP(r), "")

@@ -178,6 +178,16 @@ export interface PanelState {
    * when the state is guessed rather than whether to say anything.
    */
   hooksInstalled: boolean
+
+  /**
+   * Why the panel has stopped keeping its records up to date, or '' when it
+   * has not.
+   *
+   * A full disk is the case this exists for. The terminals keep working —
+   * they belong to tmux — so nothing else on screen looks wrong while every
+   * state change, every derived title and every note is being dropped.
+   */
+  stale: string
 }
 
 /**

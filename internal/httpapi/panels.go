@@ -38,7 +38,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
 	p, err := s.DB.GetProject(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 	// The project directory is the root, and browse.Resolve refuses anything
@@ -73,7 +73,7 @@ const maxUploadBytes = 256 << 20
 func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	p, err := s.DB.GetProject(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 	abs, err := browse.Resolve(p.Path, r.URL.Query().Get("path"))
@@ -146,7 +146,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	p, err := s.DB.GetProject(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 	dir, err := browse.Resolve(p.Path, r.URL.Query().Get("path"))
@@ -288,7 +288,7 @@ func writeBrowseErr(w http.ResponseWriter, err error) {
 func (s *Server) handleGetNote(w http.ResponseWriter, r *http.Request) {
 	pid := chi.URLParam(r, "id")
 	if _, err := s.DB.GetProject(r.Context(), pid); err != nil {
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 	note, err := s.DB.GetNote(r.Context(), pid)
@@ -323,7 +323,7 @@ func (s *Server) handlePutNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.DB.GetProject(r.Context(), pid); err != nil {
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 	var note store.Note
@@ -358,7 +358,7 @@ func (s *Server) handlePutNote(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListTodos(w http.ResponseWriter, r *http.Request) {
 	pid := chi.URLParam(r, "id")
 	if _, err := s.DB.GetProject(r.Context(), pid); err != nil {
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 	todos, err := s.DB.ListTodos(r.Context(), pid)
@@ -392,7 +392,7 @@ func (s *Server) handleCreateTodo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.DB.GetProject(r.Context(), pid); err != nil {
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 	todo, err := s.DB.CreateTodo(r.Context(), id.New(), pid, text)
@@ -427,19 +427,19 @@ func (s *Server) handlePatchTodo(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.DB.SetTodoText(ctx, tid, text); err != nil {
-			writeStoreErr(w, err)
+			s.writeStoreErr(w, err)
 			return
 		}
 	}
 	if req.Done != nil {
 		if err := s.DB.SetTodoDone(ctx, tid, *req.Done); err != nil {
-			writeStoreErr(w, err)
+			s.writeStoreErr(w, err)
 			return
 		}
 	}
 	todo, err := s.DB.GetTodo(ctx, tid)
 	if err != nil {
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 	s.notifyPanel(todo.ProjectID, "todos")
@@ -453,11 +453,11 @@ func (s *Server) handleDeleteTodo(w http.ResponseWriter, r *http.Request) {
 	// refetch every panel.
 	todo, err := s.DB.GetTodo(r.Context(), tid)
 	if err != nil {
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 	if err := s.DB.DeleteTodo(r.Context(), tid); err != nil {
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 	s.notifyPanel(todo.ProjectID, "todos")

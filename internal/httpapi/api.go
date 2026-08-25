@@ -75,6 +75,23 @@ type Server struct {
 	// hundreds of times a second; the column is read by humans.
 	outMu      sync.Mutex
 	outputSeen map[string]time.Time
+
+	// staleMu guards the record of a panel that has stopped keeping up.
+	//
+	// The poller writes on every tick — session runtime, derived titles, exit
+	// status — so if the database cannot be written or tmux cannot be reached,
+	// it is the first thing to notice and it notices within two seconds.
+	//
+	// Measured with the database's writes capped: the eleventh rename returned
+	// `500 store: exec: disk I/O error`, so the person who pressed a button was
+	// told. Everyone else saw `/api/health` answering `"ok": true` on a panel
+	// that had stopped recording anything at all, and a state snapshot with no
+	// hint in it. The terminals kept working, which is the architecture doing
+	// its job — and is exactly why nothing else looked wrong.
+	staleMu     sync.Mutex
+	staleSince  time.Time
+	staleLast   time.Time
+	staleReason string
 	// CertExpiry, if set, reports when the certificate now being served stops
 	// being valid.
 	//
@@ -253,42 +270,67 @@ func (s *Server) RestoreState(ctx context.Context) error {
 	return nil
 }
 
+// staleGrace is how long the poller must keep failing before the panel says so.
+//
+// Three ticks. One failed poll is a blip — a tmux command that lost a race with
+// a session being deleted — and a banner that appears and disappears is one
+// people learn to ignore. Three in a row is a condition.
+const staleGrace = 3 * pollInterval
+
+// staleQuiet is how long writes must succeed before the panel stops saying so.
+// Long enough that a disk which is full, gets a little room and fills again
+// does not flicker.
+const staleQuiet = 30 * time.Second
+
+func (s *Server) noteStale(err error) {
+	now := time.Now()
+	s.staleMu.Lock()
+	defer s.staleMu.Unlock()
+	if s.staleSince.IsZero() {
+		s.staleSince = now
+	}
+	s.staleLast = now
+	s.staleReason = err.Error()
+}
+
+// clearStale forgets the failures once they have stopped.
+//
+// A successful poll is not enough on its own. A database capped at its current
+// size still lets the poller rewrite pages it has already allocated while a
+// request needing a new one fails — measured, and it is why the first version
+// of this signal never fired: the poller kept succeeding and erased the
+// evidence on every tick. Failures have to have stopped, not merely paused
+// between two of them.
+func (s *Server) clearStale() {
+	s.staleMu.Lock()
+	defer s.staleMu.Unlock()
+	if s.staleSince.IsZero() || time.Since(s.staleLast) < staleQuiet {
+		return
+	}
+	s.staleSince, s.staleLast, s.staleReason = time.Time{}, time.Time{}, ""
+}
+
+// stale reports why the panel's records are out of date, or "" if they are not.
+func (s *Server) stale() string {
+	s.staleMu.Lock()
+	defer s.staleMu.Unlock()
+	if s.staleSince.IsZero() || time.Since(s.staleSince) < staleGrace {
+		return ""
+	}
+	return s.staleReason
+}
+
 func (s *Server) snapshot(ctx context.Context) []byte {
-	projects, err := s.DB.ListProjects(ctx)
+	state, err := s.buildState(ctx)
 	if err != nil {
-		s.Log.Warn("snapshot projects", "err", err)
-		return nil
-	}
-	sessions, err := s.DB.ListSessions(ctx)
-	if err != nil {
-		s.Log.Warn("snapshot sessions", "err", err)
-		return nil
-	}
-	manual, err := s.DB.ProjectOrderIsManual(ctx)
-	if err != nil {
-		s.Log.Warn("snapshot order mode", "err", err)
-		return nil
-	}
-	hasOrder, err := s.DB.HasProjectOrder(ctx)
-	if err != nil {
-		s.Log.Warn("snapshot stored order", "err", err)
+		s.Log.Warn("snapshot", "err", err)
+		s.noteStale(err)
 		return nil
 	}
 	payload, err := json.Marshal(struct {
 		Type string `json:"t"`
 		stateResponse
-	}{
-		Type: ws.MsgState,
-		stateResponse: stateResponse{
-			Projects:        emptyIfNil(projects),
-			Sessions:        emptyIfNil(sessions),
-			Live:            emptyIfNil(s.Manager.LiveIDs()),
-			ProjectOrder:    orderMode(manual),
-			HasProjectOrder: hasOrder,
-			StateGuessed:    s.stateIsGuessed(sessions),
-			HooksInstalled:  s.hooksAreInstalled(),
-		},
-	})
+	}{Type: ws.MsgState, stateResponse: state})
 	if err != nil {
 		s.Log.Warn("snapshot marshal", "err", err)
 		return nil
@@ -395,7 +437,7 @@ func (s *Server) handleHookState(w http.ResponseWriter, r *http.Request) {
 		// An unknown session id is the normal case for an agent started
 		// outside the panel that happens to have the hook installed. Say so
 		// plainly rather than treating it as an error to be alarmed by.
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 	s.Detector.Report(req.SessionID, st, time.Now())
@@ -443,14 +485,23 @@ func (s *Server) HandleSignals(sig session.Signals) {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	tv, _ := s.Tmux.Version(r.Context())
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":          true,
+	// ok is a claim, and it was an unconditional one. A panel whose database
+	// cannot be written answers every request, serves every terminal, and has
+	// stopped recording anything — which is precisely the state a health check
+	// exists to find.
+	stale := s.stale()
+	body := map[string]any{
+		"ok":          stale == "",
 		"version":     version.Version,
 		"commit":      version.Commit,
 		"tmuxVersion": tv,
 		"live":        len(s.Manager.LiveIDs()),
 		"passkeys":    s.Cfg.PasskeysUsable(),
-	})
+	}
+	if stale != "" {
+		body["stale"] = stale
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 // stateResponse is the whole picture in one request.
@@ -472,6 +523,11 @@ type stateResponse struct {
 	// install the reporter, or reload the sessions that started before it.
 	HooksInstalled bool `json:"hooksInstalled"`
 
+	// Stale is why the panel has stopped keeping its records up to date, and
+	// empty when it has not. A full disk is the case this was written for: the
+	// terminals keep working, so nothing else on screen looks wrong.
+	Stale string `json:"stale"`
+
 	// HasProjectOrder is true when an arrangement is stored, whichever
 	// ordering is in use. Without it the sidebar has no way to offer the way
 	// back: switching to automatic used to erase the arrangement, so there was
@@ -488,29 +544,33 @@ type stateResponse struct {
 	StateGuessed bool `json:"stateGuessed"`
 }
 
-func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+// buildState assembles what every viewer is told about the panel.
+//
+// One builder, because there were two: this and the WebSocket snapshot listed
+// the same fields separately, and adding one to a viewer meant remembering to
+// add it to the other. A field carried over the socket and missing from the
+// REST answer — or the reverse — is not something anything would have caught.
+// It happened while this comment was being written: `stale` reached the
+// snapshot and not this handler, and the check that found it was a probe
+// looking at the wrong one.
+func (s *Server) buildState(ctx context.Context) (stateResponse, error) {
 	projects, err := s.DB.ListProjects(ctx)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
+		return stateResponse{}, err
 	}
 	sessions, err := s.DB.ListSessions(ctx)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
+		return stateResponse{}, err
 	}
 	manual, err := s.DB.ProjectOrderIsManual(ctx)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
+		return stateResponse{}, err
 	}
 	hasOrder, err := s.DB.HasProjectOrder(ctx)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
+		return stateResponse{}, err
 	}
-	writeJSON(w, http.StatusOK, stateResponse{
+	return stateResponse{
 		Projects:        emptyIfNil(projects),
 		Sessions:        emptyIfNil(sessions),
 		Live:            emptyIfNil(s.Manager.LiveIDs()),
@@ -518,7 +578,17 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		HasProjectOrder: hasOrder,
 		StateGuessed:    s.stateIsGuessed(sessions),
 		HooksInstalled:  s.hooksAreInstalled(),
-	})
+		Stale:           s.stale(),
+	}, nil
+}
+
+func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
+	state, err := s.buildState(r.Context())
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, state)
 }
 
 // agentCommands are the programs whose state the heuristic cannot read well.
@@ -647,7 +717,7 @@ func (s *Server) handleReorderProjects(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.DB.ReorderProjects(ctx, req.Ids); err != nil {
-			writeStoreErr(w, err)
+			s.writeStoreErr(w, err)
 			return
 		}
 	}
@@ -714,30 +784,30 @@ func (s *Server) handlePatchProject(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if req.Name != nil {
 		if err := s.DB.RenameProject(ctx, pid, *req.Name); err != nil {
-			writeStoreErr(w, err)
+			s.writeStoreErr(w, err)
 			return
 		}
 	}
 	if req.Pinned != nil {
 		if err := s.DB.SetProjectPinned(ctx, pid, *req.Pinned); err != nil {
-			writeStoreErr(w, err)
+			s.writeStoreErr(w, err)
 			return
 		}
 	}
 	if req.ClearSortIndex {
 		if err := s.DB.SetProjectSortIndex(ctx, pid, nil); err != nil {
-			writeStoreErr(w, err)
+			s.writeStoreErr(w, err)
 			return
 		}
 	} else if req.SortIndex != nil {
 		if err := s.DB.SetProjectSortIndex(ctx, pid, req.SortIndex); err != nil {
-			writeStoreErr(w, err)
+			s.writeStoreErr(w, err)
 			return
 		}
 	}
 	p, err := s.DB.GetProject(ctx, pid)
 	if err != nil {
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 	s.notifyState()
@@ -781,7 +851,7 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 	// while its tmux session lives on leaves a process nothing can reach.
 	sessions, err := s.DB.ListProjectSessions(ctx, pid)
 	if err != nil {
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 	for _, sess := range sessions {
@@ -791,7 +861,7 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.DB.DeleteProject(ctx, pid); err != nil {
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 	s.notifyState()
@@ -818,7 +888,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	p, err := s.DB.GetProject(ctx, req.ProjectID)
 	if err != nil {
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 	if req.Cols <= 0 {
@@ -837,7 +907,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if req.ParentSessionID != "" {
 		parentRec, perr := s.DB.GetSession(ctx, req.ParentSessionID)
 		if perr != nil {
-			writeStoreErr(w, perr)
+			s.writeStoreErr(w, perr)
 			return
 		}
 		if parentRec.ParentID != nil {
@@ -952,13 +1022,13 @@ func (s *Server) handlePatchSession(w http.ResponseWriter, r *http.Request) {
 		// A title arriving over the API is a person renaming a tab, so it is
 		// recorded as manual and stops automatic updates overwriting it.
 		if err := s.DB.SetSessionTitle(ctx, sid, *req.Title, store.TitleManual); err != nil {
-			writeStoreErr(w, err)
+			s.writeStoreErr(w, err)
 			return
 		}
 	}
 	if req.Pinned != nil {
 		if err := s.DB.SetSessionPinned(ctx, sid, *req.Pinned); err != nil {
-			writeStoreErr(w, err)
+			s.writeStoreErr(w, err)
 			return
 		}
 	}
@@ -974,24 +1044,24 @@ func (s *Server) handlePatchSession(w http.ResponseWriter, r *http.Request) {
 			s.Detector.SetManual(sid, st, time.Now())
 		}
 		if err := s.DB.SetSessionState(ctx, sid, st, session.SourceManual); err != nil {
-			writeStoreErr(w, err)
+			s.writeStoreErr(w, err)
 			return
 		}
 	}
 	if req.ClearSortIndex {
 		if err := s.DB.SetSessionSortIndex(ctx, sid, nil); err != nil {
-			writeStoreErr(w, err)
+			s.writeStoreErr(w, err)
 			return
 		}
 	} else if req.SortIndex != nil {
 		if err := s.DB.SetSessionSortIndex(ctx, sid, req.SortIndex); err != nil {
-			writeStoreErr(w, err)
+			s.writeStoreErr(w, err)
 			return
 		}
 	}
 	rec, err := s.DB.GetSession(ctx, sid)
 	if err != nil {
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 	s.notifyState()
@@ -1029,7 +1099,7 @@ func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request) {
 	sid := chi.URLParam(r, "id")
 	rec, err := s.DB.GetSession(ctx, sid)
 	if err != nil {
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 	// Respawn needs a session to respawn into. If the tmux session is gone —
@@ -1078,7 +1148,7 @@ func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request) {
 	// user just pressed has to visibly do something, and a tick of latency
 	// reads as "nothing happened" and gets pressed again.
 	if err := s.DB.SetSessionExit(ctx, sid, false, 0); err != nil {
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 	// A respawned pane is a new process behind the same session, so the old
@@ -1088,7 +1158,7 @@ func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request) {
 		s.Detector.Forget(sid)
 	}
 	if err := s.DB.SetSessionState(ctx, sid, session.StateWorking, session.SourceHeuristic); err != nil {
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 	s.notifyState()
@@ -1100,14 +1170,14 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	sid := chi.URLParam(r, "id")
 	rec, err := s.DB.GetSession(ctx, sid)
 	if err != nil {
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 	// Children cascade away in the database, but their tmux sessions do not.
 	// Deleting the row first would leave processes nothing in the UI can reach.
 	children, err := s.DB.ListChildSessions(ctx, sid)
 	if err != nil {
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 	for _, child := range append(children, rec) {
@@ -1117,7 +1187,7 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.DB.DeleteSession(ctx, sid); err != nil {
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 	s.notifyState()
@@ -1150,11 +1220,20 @@ func writeErr(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]string{"error": msg})
 }
 
-func writeStoreErr(w http.ResponseWriter, err error) {
+// writeStoreErr answers a failed database call, and remembers that it failed.
+//
+// A method rather than a function so the failure is recorded somewhere the
+// panel can act on. Measured with the database's writes capped: the request
+// that failed got a 500 with the real error, and nothing else changed at all —
+// /api/health still said ok, the snapshot said nothing, and the terminals kept
+// working because they belong to tmux. The only person who found out was the
+// one who happened to press a button.
+func (s *Server) writeStoreErr(w http.ResponseWriter, err error) {
 	if errors.Is(err, store.ErrNotFound) {
 		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
+	s.noteStale(err)
 	writeErr(w, http.StatusInternalServerError, err.Error())
 }
 
@@ -1264,8 +1343,10 @@ func (s *Server) Poll(ctx context.Context) {
 		case <-t.C:
 			if err := s.pollOnce(ctx); err != nil && ctx.Err() == nil {
 				s.Log.Debug("poll", "err", err)
+				s.noteStale(err)
 				continue
 			}
+			s.clearStale()
 			// Push only when the picture actually changed. A tick that
 			// broadcasts regardless is polling again, just with the cost moved
 			// onto every connected viewer.

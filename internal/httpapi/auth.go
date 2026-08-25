@@ -94,7 +94,17 @@ func (s *Server) RequireAuth(next http.Handler) http.Handler {
 			return
 		}
 
-		user, ok := s.currentUser(r)
+		user, ok, uerr := s.currentUser(r)
+		if uerr != nil {
+			// Not 401: the session may be perfectly good and the panel simply
+			// cannot look it up. Saying "sign in required" sends somebody to a
+			// login form that goes to the same database.
+			s.noteStale(uerr)
+			s.Log.Warn("cannot check the session", "err", uerr)
+			writeErr(w, http.StatusServiceUnavailable,
+				"the panel cannot reach its own database; your sessions are unaffected")
+			return
+		}
 		if !ok {
 			// A distinct code for "never set up" so the browser can show the
 			// setup screen rather than a login form nobody can satisfy.
@@ -123,7 +133,7 @@ func (s *Server) stillAuthorized(r *http.Request) bool {
 	if s.Auth != nil && !auth.Allowed(s.clientIP(r), s.Auth.Allow) {
 		return false
 	}
-	_, ok := s.currentUser(r)
+	_, ok, _ := s.currentUser(r)
 	return ok
 }
 
@@ -134,26 +144,43 @@ func currentUserFrom(r *http.Request) (store.User, bool) {
 }
 
 // currentUser resolves the session cookie.
-func (s *Server) currentUser(r *http.Request) (store.User, bool) {
+// currentUser answers who is making this request.
+//
+// Three outcomes, not two. "No session" and "the database cannot say" were the
+// same answer, so a panel whose disk had filled told every viewer to sign in —
+// and the sign-in went to the same broken database, so they would try again,
+// and again, until the login throttle locked them out of a panel that was only
+// ever short of space. Measured: with the database closed, every authenticated
+// request answered 401 "sign in required".
+//
+// Refusing either way is right and stays. What changes is that the panel says
+// which of the two it is.
+func (s *Server) currentUser(r *http.Request) (store.User, bool, error) {
 	token := auth.TokenFromRequest(r)
 	if token == "" {
-		return store.User{}, false
+		return store.User{}, false, nil
 	}
 	ctx := r.Context()
 	hash := auth.HashToken(token)
 	sess, err := s.DB.AuthSessionByToken(ctx, hash)
+	if errors.Is(err, store.ErrNotFound) {
+		return store.User{}, false, nil
+	}
 	if err != nil {
-		return store.User{}, false
+		return store.User{}, false, err
 	}
 	user, err := s.DB.UserByID(ctx, sess.UserID)
+	if errors.Is(err, store.ErrNotFound) {
+		return store.User{}, false, nil
+	}
 	if err != nil {
-		return store.User{}, false
+		return store.User{}, false, err
 	}
 	// Best effort; a failed touch must not fail the request.
 	if err := s.DB.TouchAuthSession(ctx, hash); err != nil {
 		s.Log.Debug("touch auth session", "err", err)
 	}
-	return user, true
+	return user, true, nil
 }
 
 // ─── handlers ─────────────────────────────────────────────────────────────
@@ -201,7 +228,7 @@ func (s *Server) handleAuthState(w http.ResponseWriter, r *http.Request) {
 			state.PasskeyReason = "passkeys need HTTPS, or localhost"
 		}
 	}
-	if u, ok := s.currentUser(r); ok {
+	if u, ok, _ := s.currentUser(r); ok {
 		state.Authenticated = true
 		state.Username = u.Username
 	}
@@ -406,7 +433,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	ip := s.clientIP(r)
 
-	user, ok := s.currentUser(r)
+	user, ok, _ := s.currentUser(r)
 	if !ok {
 		writeErr(w, http.StatusUnauthorized, "sign in required")
 		return
@@ -450,7 +477,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.DB.SetPasswordHash(ctx, user.ID, hash); err != nil {
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 
@@ -459,7 +486,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	// one row, and it means a failure half way through leaves nobody signed in
 	// rather than everybody.
 	if err := s.DB.DeleteUserAuthSessions(ctx, user.ID); err != nil {
-		writeStoreErr(w, err)
+		s.writeStoreErr(w, err)
 		return
 	}
 	s.issueSession(w, r, user)

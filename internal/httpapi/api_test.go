@@ -2171,3 +2171,168 @@ func TestAKilledAgentIsNotRecordedAsACleanExit(t *testing.T) {
 			"like one that finished", row.ExitStatus, 128+int(syscall.SIGKILL))
 	}
 }
+
+func TestThePanelSaysWhenItHasStoppedRecording(t *testing.T) {
+	// A panel whose database cannot be written answers every request, serves
+	// every terminal, and records nothing. Measured with the database's writes
+	// capped: the eleventh rename returned `500 store: exec: disk I/O error`,
+	// so the person who pressed a button was told — and /api/health went on
+	// answering `"ok": true` while the snapshot said nothing at all. The
+	// terminals kept working, which is the architecture doing its job and
+	// exactly why nothing else looked wrong.
+	ts, srv := newTestServer(t)
+
+	health := func() map[string]any {
+		res, err := ts.Client().Get(ts.URL + "/api/health")
+		if err != nil {
+			t.Fatalf("GET health: %v", err)
+		}
+		defer res.Body.Close()
+		var body map[string]any
+		if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return body
+	}
+
+	if body := health(); body["ok"] != true {
+		t.Fatalf("a healthy panel says %v", body)
+	}
+
+	srv.noteStale(errors.New("store: exec: disk I/O error (778)"))
+	// One failure is a blip — a tmux call that lost a race with a delete — and
+	// a banner that comes and goes is one people learn to ignore.
+	if body := health(); body["ok"] != true {
+		t.Errorf("a single failure already says the panel is unhealthy: %v", body)
+	}
+
+	// Backdate it past the grace period, which is what a failure that keeps
+	// happening looks like.
+	srv.staleMu.Lock()
+	srv.staleSince = time.Now().Add(-2 * staleGrace)
+	srv.staleMu.Unlock()
+
+	body := health()
+	if body["ok"] != false {
+		t.Errorf("health says %v on a panel that cannot write to its database", body)
+	}
+	if s, _ := body["stale"].(string); !strings.Contains(s, "disk I/O error") {
+		t.Errorf("health does not say why: %v", body)
+	}
+
+	state, err := srv.buildState(context.Background())
+	if err != nil {
+		t.Fatalf("buildState: %v", err)
+	}
+	if !strings.Contains(state.Stale, "disk I/O error") {
+		t.Errorf("the snapshot carries %q; every viewer should be told, not just "+
+			"whoever happened to press a button", state.Stale)
+	}
+}
+
+func TestASuccessfulPollDoesNotEraseAFailureThatIsStillHappening(t *testing.T) {
+	// A database capped at its current size still lets the poller rewrite
+	// pages it has already allocated while a request needing a new one fails.
+	// The first version of this signal cleared on every successful poll, so it
+	// never once fired against the failure it was written for.
+	_, srv := newTestServer(t)
+	srv.noteStale(errors.New("store: exec: disk I/O error (778)"))
+	srv.staleMu.Lock()
+	srv.staleSince = time.Now().Add(-2 * staleGrace)
+	srv.staleMu.Unlock()
+
+	srv.clearStale()
+	if srv.stale() == "" {
+		t.Error("a poll that happened to succeed erased a failure from a moment ago")
+	}
+
+	// Once the writes have genuinely stopped failing, it goes away.
+	srv.staleMu.Lock()
+	srv.staleLast = time.Now().Add(-2 * staleQuiet)
+	srv.staleMu.Unlock()
+	srv.clearStale()
+	if got := srv.stale(); got != "" {
+		t.Errorf("still says %q long after the writes started working again", got)
+	}
+}
+
+func TestBothWaysOfAskingForTheStateAgree(t *testing.T) {
+	// handleState and the WebSocket snapshot listed the same fields
+	// separately, so adding one to a viewer meant remembering the other. That
+	// is how `stale` reached the socket and not the REST answer.
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	postJSON[store.Project](t, ts, "/api/projects", `{"path":"`+t.TempDir()+`","name":"test"}`)
+
+	res, err := ts.Client().Get(ts.URL + "/api/state")
+	if err != nil {
+		t.Fatalf("GET state: %v", err)
+	}
+	defer res.Body.Close()
+	var rest map[string]json.RawMessage
+	if err := json.NewDecoder(res.Body).Decode(&rest); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	var pushed map[string]json.RawMessage
+	if err := json.Unmarshal(srv.snapshot(ctx), &pushed); err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	delete(pushed, "t") // the frame type, which REST has no need of
+
+	for k := range pushed {
+		if _, ok := rest[k]; !ok {
+			t.Errorf("%q is pushed over the socket and missing from /api/state", k)
+		}
+	}
+	for k := range rest {
+		if _, ok := pushed[k]; !ok {
+			t.Errorf("%q is in /api/state and never pushed", k)
+		}
+	}
+}
+
+func TestAFailedRequestRecordsThatTheDatabaseIsNotWorking(t *testing.T) {
+	// Not by calling noteStale directly: the point is that the path a real
+	// failing request takes goes through it. Removing the one line from
+	// writeStoreErr passed every other test in this file.
+	ts, srv := newTestServer(t)
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"test"}`)
+	sess := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
+
+	// A database that cannot be written at all. Everything after this fails,
+	// which is the situation being described.
+	if err := srv.DB.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	req, _ := http.NewRequest(http.MethodPatch, ts.URL+"/api/sessions/"+sess.ID,
+		strings.NewReader(`{"title":"renamed"}`))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("PATCH: %v", err)
+	}
+	res.Body.Close()
+	// 503, not 401. The session is very likely fine; the panel cannot look it
+	// up. Answering "sign in required" sends somebody to a login form that
+	// goes to the same broken database, and the login throttle then locks
+	// them out of a panel that was only ever short of disk space.
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 from a database that cannot be read", res.StatusCode)
+	}
+
+	srv.staleMu.Lock()
+	recorded := !srv.staleSince.IsZero()
+	reason := srv.staleReason
+	srv.staleMu.Unlock()
+	if !recorded {
+		t.Error("a request failed against the database and the panel did not write it down; " +
+			"the only person who would ever find out is whoever pressed the button")
+	}
+	if recorded && reason == "" {
+		t.Error("recorded a failure with no reason to show")
+	}
+}

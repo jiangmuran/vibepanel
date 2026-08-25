@@ -132,6 +132,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     sessions: [],
     live: [],
     projectOrder: 'auto',
+    stale: '',
     hasProjectOrder: false,
     stateGuessed: false,
     hooksInstalled: false,
@@ -606,6 +607,23 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             style={{ color: 'var(--vp-state-waiting)' }}
           >
             {error}
+          </div>
+        )}
+
+        {/* A panel that cannot write is the one failure with no symptom: the
+            terminals belong to tmux and keep working, so the only thing that
+            changes is that nothing is being recorded any more. Measured with
+            the database's writes capped — /api/health still said ok, and the
+            only person who found out was the one who happened to press a
+            button. */}
+        {state.stale && (
+          <div
+            data-testid="stale-notice"
+            className="border-b border-hairline px-4 py-2 text-[12px]"
+            style={{ color: 'var(--vp-state-waiting)' }}
+          >
+            The panel has stopped recording what the sessions are doing. The
+            terminals are unaffected. {state.stale}
           </div>
         )}
 
