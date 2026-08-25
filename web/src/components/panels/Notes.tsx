@@ -21,6 +21,10 @@ export function Notes({ projectId, socket }: { projectId: string; socket: PanelS
   >('loading')
   const [error, setError] = useState<string | null>(null)
   const timer = useRef(0)
+  // The text a scheduled save is going to write, kept outside React state so
+  // the flush below can reach it from an unmount or an unload, when there is
+  // no render left to read it from.
+  const queued = useRef<string | null>(null)
   // What the server last confirmed, so a save that changes nothing is skipped.
   const saved = useRef('')
   // The revision the current text is based on. Sent with every save so the
@@ -31,13 +35,59 @@ export function Notes({ projectId, socket }: { projectId: string; socket: PanelS
     statusRef.current = status
   })
 
+  // Send a scheduled save now instead of losing it.
+  //
+  // The debounce used to be cancelled on unmount, and every one of the ways
+  // this component goes away discarded whatever was still waiting: switching
+  // to the Files tab (the panel renders one tab at a time), switching project
+  // (the component is keyed by it), and closing the page. All three are
+  // ordinary one-click actions, all three silently dropped up to 800ms of
+  // typing, and the status line read "unsaved" right until it vanished — for
+  // a panel whose entire premise is that a note you have to remember to save
+  // is a note you lose.
+  //
+  // Deliberately touches no React state: two of the three callers have no
+  // component left to update. A conflict here is unreportable and is dropped,
+  // which is still strictly better than never attempting the write.
+  // `unloading` picks the transport. keepalive is what survives a document
+  // going away, but it caps the whole body at 64KB; a tab switch leaves the
+  // page very much alive, so an ordinary fetch is both sufficient there and
+  // free of that limit.
+  const flush = useCallback(
+    (unloading: boolean) => {
+      const text = queued.current
+      queued.current = null
+      window.clearTimeout(timer.current)
+      if (text === null || text === saved.current) return
+      void api.saveNote(projectId, text, base.current, unloading).catch(() => {
+        /* nothing on screen is left to tell */
+      })
+    },
+    [projectId],
+  )
+
+  // pagehide rather than beforeunload: beforeunload is unreliable on mobile
+  // and does not fire when a phone discards a backgrounded tab. visibilitychange
+  // is the one that does, and it is also the last event a swipe-away delivers.
+  useEffect(() => {
+    const onHidden = () => {
+      if (document.visibilityState === 'hidden') flush(true)
+    }
+    const onPageHide = () => flush(true)
+    window.addEventListener('pagehide', onPageHide)
+    document.addEventListener('visibilitychange', onHidden)
+    return () => {
+      window.removeEventListener('pagehide', onPageHide)
+      document.removeEventListener('visibilitychange', onHidden)
+    }
+  }, [flush])
+
   // No reset to 'loading' here: the caller keys this component by project, so
   // a different project is a fresh instance whose initial state already is
   // 'loading'. Resetting from an effect would also render one frame showing
   // the previous project's note.
   useEffect(() => {
     let ignore = false
-    const pending = timer
     api
       .note(projectId)
       .then((note) => {
@@ -54,9 +104,9 @@ export function Notes({ projectId, socket }: { projectId: string; socket: PanelS
       })
     return () => {
       ignore = true
-      window.clearTimeout(pending.current)
+      flush(false)
     }
-  }, [projectId])
+  }, [projectId, flush])
 
   // Another viewer wrote. Adopt it when there is nothing local to lose;
   // otherwise leave the text alone — overwriting a half-typed paragraph with
@@ -82,7 +132,9 @@ export function Notes({ projectId, socket }: { projectId: string; socket: PanelS
   const scheduleSave = useCallback(
     (next: string) => {
       window.clearTimeout(timer.current)
+      queued.current = next
       timer.current = window.setTimeout(() => {
+        queued.current = null
         if (next === saved.current) {
           setStatus('saved')
           return

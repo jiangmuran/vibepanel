@@ -90,6 +90,12 @@ export const api = {
 
   logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
 
+  changePassword: (current: string, next: string) =>
+    request<void>('/api/auth/password', {
+      method: 'POST',
+      body: JSON.stringify({ current, next }),
+    }),
+
   passkeyLoginBegin: () => request<unknown>('/api/auth/passkey/login/begin', { method: 'POST' }),
 
   passkeyLoginFinish: (assertion: unknown) =>
@@ -214,11 +220,15 @@ export const api = {
    * refuses the write if the note has moved since, which is what stops two
    * windows from silently overwriting each other.
    */
-  saveNote: async (projectId: string, content: string, baseRev: number) => {
+  // `keepalive` is for the save issued while the page is going away. A normal
+  // fetch from an unloading document is cancelled by the browser, so the last
+  // thing typed before closing the tab never reached the server.
+  saveNote: async (projectId: string, content: string, baseRev: number, keepalive = false) => {
     const res = await fetch(`/api/projects/${projectId}/notes`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content, baseRev }),
+      keepalive,
     })
     if (res.status === 409) {
       const body = (await res.json()) as { error?: string; current: Note }

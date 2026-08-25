@@ -22,6 +22,11 @@ import { createServer } from 'node:net'
 import { mkdtempSync, rmSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { sweepStaleSockets } from './lib/stale.mjs'
+import { findUnreachable } from './lib/overflow.mjs'
+import { findSmallTargets } from './lib/tap.mjs'
+import { findInvisibleFocus } from './lib/focus.mjs'
+import { findUnnamedControls } from './lib/names.mjs'
 
 const BIN = process.argv[2] ?? new URL('../../vibepanel', import.meta.url).pathname
 // A free port picked by the kernel, not a guess. A hard-coded one silently
@@ -37,28 +42,68 @@ const PORT = await new Promise((resolve, reject) => {
   })
 })
 const SOCKET = `vprender-${process.pid}`
+
+// Before anything else: a run killed with SIGKILL cannot clean up after
+// itself, and what it leaves behind is a tmux server holding live sessions.
+sweepStaleSockets((msg) => console.log(`==> ${msg}`))
 const DATA = mkdtempSync(join(tmpdir(), 'vprender-'))
 const SHOTS = process.argv[3] ?? join(DATA, 'shots')
 mkdirSync(SHOTS, { recursive: true })
 
 const findings = []
+
+// Collected at module scope and reported in the finally below.
+//
+// These lived inside the try and were reported near the end of it, so any
+// earlier failure — a click that timed out because the page was blank — threw
+// past the one piece of evidence that explained the blank page. One of them
+// collected these and never reported them at all. An uncaught error in the
+// page is the most informative thing a run can produce; it has to survive the
+// run failing.
+const pageErrors = []
 const note = (sev, area, msg) => findings.push({ sev, area, msg })
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-async function waitHealth(url, ms = 15000) {
-  const end = Date.now() + ms
-  while (Date.now() < end) {
-    try {
-      const r = await fetch(url + '/api/health')
-      if (r.ok) return true
-    } catch { /* not up yet */ }
-    await sleep(150)
+/** note()-reporting wrapper around the name scan. See lib/names.mjs. */
+async function scanNames(target, where) {
+  const unnamed = await findUnnamedControls(target)
+  if (unnamed.length > 0) {
+    note('FAIL', 'a11y',
+      `in ${where}, controls have no name a screen reader can announce: ${unnamed.join(', ')}`)
   }
-  return false
 }
 
-// ── relative luminance / contrast, per WCAG ────────────────────────────────
+/** note()-reporting wrapper around the focus scan. See lib/focus.mjs. */
+async function scanFocus(target, where) {
+  const invisible = await findInvisibleFocus(target)
+  if (invisible.length > 0) {
+    note('FAIL', 'a11y',
+      `in ${where}, these look the same focused as unfocused, so keyboard navigation is ` +
+      `invisible: ${invisible.join(', ')}`)
+  }
+}
+
+/** note()-reporting wrapper around the tap scan. See lib/tap.mjs. */
+async function scanTapTargets(target, where) {
+  const small = await findSmallTargets(target)
+  if (small.length > 0) {
+    note('FAIL', 'mobile',
+      `in ${where}, controls are too small for a thumb: ${small.join('; ')}`)
+  }
+}
+
+/** note()-reporting wrapper around the shared scan. See lib/overflow.mjs. */
+async function scanUnreachable(target, where) {
+  const found = await findUnreachable(target, sleep)
+  if (found.length > 0) {
+    note('FAIL', 'ui',
+      `in ${where}, content is painted outside its container with no way to scroll to it: ` +
+      found.join('; '))
+  }
+}
+
+
 function parseColor(c) {
   const m = c.match(/rgba?\(([^)]+)\)/)
   if (!m) return null
@@ -135,8 +180,31 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
   })
 }
 
+/**
+ * Waits for the panel to answer its health probe.
+ *
+ * Restored after being deleted by accident: extracting the overflow scan into
+ * a shared module cut from the scan to the next top-level const, and this sat
+ * in between. The sweep caught it a minute later as
+ * `ReferenceError: waitHealth is not defined` — which is the argument for
+ * running everything after a refactor, not only the thing that was refactored.
+ */
+async function waitHealth(base, timeoutMs = 20000) {
+  const end = Date.now() + timeoutMs
+  while (Date.now() < end) {
+    try {
+      if ((await fetch(base + '/api/health')).ok) return true
+    } catch {
+      /* not up yet */
+    }
+    await sleep(150)
+  }
+  return false
+}
+
 const USERNAME = 'render-check'
 const PASSWORD = 'a sufficiently long password'
+const NEW_PASSWORD = 'a different sufficiently long password'
 let cookie = ''
 
 /** Fetch carrying the session cookie, for seeding through the API. */
@@ -181,13 +249,21 @@ try {
     body: JSON.stringify({ path: process.cwd(), name: 'render-check' }),
   })).json()
 
-  const mkSession = (cmd) =>
+  const mkSession = (cmd, title) =>
     authed('/api/sessions', {
       method: 'POST',
-      body: JSON.stringify({ projectId: proj.id, command: cmd }),
+      body: JSON.stringify({ projectId: proj.id, command: cmd, title }),
     }).then((r) => r.json())
 
-  await mkSession(['sh', '-c', 'echo RENDER_CHECK_MARKER; exec sh'])
+  // Named, not left to the automatic title.
+  //
+  // Everything below finds the shell by its name. Automatically, a shell is
+  // named after the directory it sits in — which is this project's path, which
+  // is wherever the harness happens to be run from. The name it looked for was
+  // fixed while the directory was not, so the shell was never found, every
+  // later step typed into whichever session was selected instead, and the
+  // failures pointed anywhere but here.
+  await mkSession(['sh', '-c', 'echo RENDER_CHECK_MARKER; exec sh'], 'scratchpad')
   await mkSession(['htop'])
 
   // A session that rings the terminal bell: without hooks this is the only
@@ -212,7 +288,6 @@ try {
   const page = await ctx.newPage()
 
   const consoleErrors = []
-  const pageErrors = []
   const failedReqs = []
   page.on('console', (m) => {
     if (m.type() === 'error') consoleErrors.push(m.text())
@@ -271,7 +346,6 @@ try {
   consoleErrors.length = 0
   failedReqs.length = 0
   await sleep(500)
-  for (const e of pageErrors) note('FAIL', 'js', `uncaught: ${e}`)
 
   // ── structure ────────────────────────────────────────────────────────────
   const sidebarText = await page.locator('[data-testid="sidebar"]').innerText().catch(() => '')
@@ -280,6 +354,37 @@ try {
   }
   const sessionRows = await page.locator('[data-testid="session-row"]').count()
   if (sessionRows < 2) note('FAIL', 'ui', `expected 2 session rows, found ${sessionRows}`)
+
+  // The row and the title bar must agree on the name.
+  //
+  // They are computed from one function for exactly this reason, and the
+  // labels are now qualified when two sessions in a project would otherwise
+  // read the same — which means the qualification has to reach both. Two
+  // places disagreeing about the name of the session you are looking at reads
+  // as a rendering glitch rather than as two code paths.
+  const headerName = await page
+    .locator('[data-testid="session-title"]')
+    .innerText()
+    .catch(() => '')
+  if (headerName) {
+    // Exactly, not as a substring. The first version asked whether any row
+    // *contained* the header's text, which "xscratchpad" does — so prefixing
+    // every row label passed the check. A test for two things agreeing has to
+    // compare them, not check that one is somewhere inside the other.
+    const rowTexts = await page.$$eval(
+      '[data-testid="session-row"] [data-testid="inline-name"]',
+      (els) => els.map((el) => el.textContent?.trim() ?? ''),
+    )
+    if (!rowTexts.includes(headerName)) {
+      note('FAIL', 'ui',
+        `the title bar calls the session ${JSON.stringify(headerName)} and no row in the sidebar ` +
+        `does: ${JSON.stringify(rowTexts)}`)
+    }
+  }
+
+  await scanUnreachable(page, 'the desktop layout')
+  await scanFocus(page, 'the desktop layout')
+  await scanNames(page, 'the desktop layout')
 
   // ── websocket status ─────────────────────────────────────────────────────
   const status = await page
@@ -305,7 +410,10 @@ try {
     await shellRow.click()
     await sleep(1200)
   } else {
-    note('WARN', 'ui', 'could not find the shell session row to select')
+    // Not a warning. Everything after this types into whatever session is
+    // selected instead, so a run that cannot find the shell is not a run with
+    // one thing missing — it is a run whose remaining results mean nothing.
+    note('FAIL', 'ui', 'could not find the shell session row to select')
   }
   await page.locator('.xterm-screen').click()
   await page.keyboard.type('echo BROWSER_TYPED_OK')
@@ -457,7 +565,11 @@ try {
     .then(() => true)
     .catch(() => false)
   if (!takeControlVisible) {
-    note('WARN', 'arbitration',
+    // Not a warning either. Either the affordance is missing — leaving a phone
+    // permanently scaled with no way out — or the second viewer took the grid
+    // by arriving, which is the reflow-under-somebody-else's-hands that the
+    // whole arbitration design exists to prevent. Both are failures.
+    note('FAIL', 'arbitration',
       'the small second viewer shows no "take control" affordance; it may have silently taken the grid')
   }
 
@@ -594,6 +706,69 @@ try {
     }
     if (!savedOk) note('FAIL', 'panel/notes', 'the note never reported itself saved')
 
+    // The same note, but leaving the panel before the debounce has elapsed.
+    //
+    // The check above waits for 'saved' before doing anything else, so it only
+    // ever exercised the patient case. The impatient one lost the text: the
+    // panel renders one tab at a time, so clicking Files unmounted Notes, and
+    // the unmount cancelled the pending save. Typing and immediately switching
+    // tab — one click, entirely ordinary — silently discarded up to 800ms of
+    // it. Same for switching project, and for closing the page.
+    //
+    // Asserted against the server rather than the textarea: the question is
+    // whether the write actually landed, and a remounted panel showing the old
+    // text would answer a different one.
+    await page.locator('[data-testid="notes"] textarea')
+      .fill('remember: NOTE_PERSIST_OK\nNOTE_FLUSH_OK')
+    await page.locator('[data-testid="panel-tab-files"]').click()
+    let flushed = ''
+    for (let i = 0; i < 20; i++) {
+      await sleep(300)
+      const n = await (await authed(`/api/projects/${proj.id}/notes`)).json().catch(() => ({}))
+      flushed = n.content ?? ''
+      if (flushed.includes('NOTE_FLUSH_OK')) break
+    }
+    if (!flushed.includes('NOTE_FLUSH_OK')) {
+      note('FAIL', 'panel/notes',
+        `leaving the tab mid-edit threw the edit away; the server still has ${JSON.stringify(flushed)}`)
+    }
+    await page.locator('[data-testid="panel-tab-notes"]').click()
+    await sleep(600)
+
+    // The other way out: closing the page. That save has to go out with
+    // keepalive, because a browser cancels an ordinary fetch from a document
+    // that is going away — so this half of the fix is a different mechanism
+    // from the one above and fails on its own. Done on a throwaway page, so
+    // the check cannot disturb the rest of the run.
+    const leaving = await ctx.newPage()
+    await leaving.setViewportSize({ width: 1440, height: 900 })
+    await leaving.goto(BASE, { waitUntil: 'networkidle' })
+    await sleep(2000)
+    const leavingShow = leaving.locator('[data-testid="right-show"]')
+    if (await leavingShow.isVisible().catch(() => false)) {
+      await leavingShow.click()
+      await sleep(600)
+    }
+    await leaving.locator('[data-testid="panel-tab-notes"]').click().catch(() => {})
+    await sleep(900)
+    await leaving.locator('[data-testid="notes"] textarea')
+      .fill('remember: NOTE_PERSIST_OK\nNOTE_FLUSH_OK\nNOTE_CLOSE_OK')
+    await leaving.close({ runBeforeUnload: true })
+    let onClose = ''
+    for (let i = 0; i < 20; i++) {
+      await sleep(300)
+      const n = await (await authed(`/api/projects/${proj.id}/notes`)).json().catch(() => ({}))
+      onClose = n.content ?? ''
+      if (onClose.includes('NOTE_CLOSE_OK')) break
+    }
+    if (!onClose.includes('NOTE_CLOSE_OK')) {
+      note('FAIL', 'panel/notes',
+        `closing the page threw away the edit; the server has ${JSON.stringify(onClose)}`)
+    }
+    // Let the still-open viewer adopt the new revision before anything else
+    // touches the note, so a later save is not refused as a conflict.
+    await sleep(1500)
+
     // Todos
     await page.locator('[data-testid="panel-tab-todos"]').click()
     await sleep(600)
@@ -693,6 +868,83 @@ try {
         note('FAIL', 'bottom', `terminal tabs are indistinguishable: ${JSON.stringify(labels)}`)
       }
 
+      // Tabs must not move when a terminal prints.
+      //
+      // The strip is a filter over the session list, which is ordered by
+      // urgency and recent output — right for the sidebar, wrong for tabs. A
+      // terminal that printed jumped to the front, and since the automatic
+      // label is positional the tab was renamed as well as moved: the one you
+      // had been using was neither where you left it nor called what you had
+      // been calling it.
+      // By id, not by label. The automatic label is positional — "term 1" is
+      // whatever is first — so a reorder leaves the names exactly where they
+      // were and swaps the terminals underneath them. Comparing the text
+      // cannot see that, which is worse than not checking: the damage is that
+      // the tab called "term 2" is now a different terminal.
+      const tabIds = () =>
+        page.$$eval('[data-testid="bottom-tab"]', (els) =>
+          els.map((el) => el.getAttribute('data-session-id') ?? ''),
+        )
+      const orderBefore = await tabIds()
+      // The last tab, deliberately. Printing in the first one cannot move it
+      // when the order is by recency — it is already first — so this passed
+      // against the unsorted version and proved nothing.
+      await page.locator('[data-testid="bottom-tab"]').last().click()
+      await sleep(500)
+      await bottom.locator('.xterm-screen').last().click()
+      await page.keyboard.type('echo SHUFFLE')
+      await page.keyboard.press('Enter')
+      await sleep(1500)
+      // Reload rather than poking the API to force a fresh list.
+      //
+      // Output alone does not push a new session list — the browser keeps the
+      // order it was last sent, so the shuffle appears the next time anything
+      // changes state, which is exactly when the user is least expecting the
+      // tabs to move. The first version of this forced that by patching a
+      // session's state, and the session it happened to pick was the one a
+      // later check needed left alone: it turned the bell session to done and
+      // broke a check three sections away. A reload asks for the same fresh
+      // list and changes nothing.
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      await page.waitForSelector('[data-testid="bottom-tab"]', { timeout: 20000 }).catch(() => {})
+      await sleep(2500)
+      const orderAfter = await tabIds()
+      if (JSON.stringify(orderBefore) !== JSON.stringify(orderAfter)) {
+        note('FAIL', 'bottom',
+          `printing in a terminal reordered the tabs: ${JSON.stringify(orderBefore)} became ` +
+          `${JSON.stringify(orderAfter)}`)
+      }
+
+      // A bottom terminal whose process is gone has to say so on its tab.
+      //
+      // The strip showed a name and a close button and nothing else, so a build
+      // that died down there looked exactly like a build still running — and
+      // the bottom strip is where builds and tests live, which makes "did it
+      // finish" the only question anybody asks of it.
+      const lastTab = page.locator('[data-testid="bottom-tab"]').last()
+      await lastTab.click()
+      await sleep(600)
+      await bottom.locator('.xterm-screen').last().click()
+      await page.keyboard.type('exit')
+      await page.keyboard.press('Enter')
+      let marked = false
+      for (let i = 0; i < 40; i++) {
+        const labelled = await lastTab.locator('svg[role="img"]').count().catch(() => 0)
+        if (labelled > 0) { marked = true; break }
+        await sleep(400)
+      }
+      if (!marked) {
+        const st = await (await authed('/api/state')).json()
+        const kids = (st.sessions ?? [])
+          .filter((x) => x.parentSessionId)
+          .map((x) => ({ title: x.title, exited: x.exited, status: x.exitStatus, state: x.state }))
+        const html = await lastTab.innerHTML().catch(() => '?')
+        note('FAIL', 'bottom',
+          'a bottom terminal whose shell exited shows nothing on its tab; it is indistinguishable ' +
+          `from one still running. The API says ${JSON.stringify(kids)} and the tab is ` +
+          `${JSON.stringify(html.slice(0, 200))}`)
+      }
+
       // Switching the main session must swap the strip, not carry it across.
       const otherRow = page.locator('[data-testid="session-row"]', { hasText: 'htop' }).first()
       if (await otherRow.isVisible().catch(() => false)) {
@@ -744,6 +996,38 @@ try {
     const title = await page.title()
     if (!/^\(\d+\)/.test(title)) {
       note('FAIL', 'state', `tab title is ${JSON.stringify(title)}; a waiting session should show a count`)
+    }
+
+    // Red line 4: shape carries the meaning, not only hue. Two states that
+    // differ by colour alone are the same state to a colour-blind reader, and
+    // to anyone reading this on a phone in a dark room — which is the moment
+    // the panel was built for. Compared here rather than in a unit test
+    // because what matters is what the browser actually drew.
+    const glyphFor = async (state) => {
+      const el = page.locator(`[data-testid="state-dot"][data-state="${state}"] svg`).first()
+      if ((await el.count()) === 0) return null
+      return el.innerHTML()
+    }
+    const shapes = []
+    for (const st of ['waiting', 'working', 'done']) {
+      shapes.push([st, await glyphFor(st)])
+    }
+    const absent = shapes.filter(([, v]) => v === null).map(([k]) => k)
+    if (absent.length) {
+      // A setup gap, not a product failure — but said out loud, because a
+      // comparison that did not happen reads exactly like one that passed.
+      note('WARN', 'a11y',
+        `no session was in ${absent.join(', ')} at this moment, so those shapes were not compared`)
+    }
+    const drawn = shapes.filter(([, v]) => v !== null)
+    for (let i = 0; i < drawn.length; i++) {
+      for (let j = i + 1; j < drawn.length; j++) {
+        if (drawn[i][1] === drawn[j][1]) {
+          note('FAIL', 'a11y',
+            `"${drawn[i][0]}" and "${drawn[j][0]}" draw an identical shape; only colour ` +
+            'tells them apart')
+        }
+      }
     }
 
     // Clicking the indicator is how you say "I have dealt with this".
@@ -856,7 +1140,10 @@ try {
     await sleep(600)
     const over = await page.evaluate(() =>
       document.documentElement.scrollWidth - document.documentElement.clientWidth)
-    if (over > 1) note('WARN', `layout/${label}`, `page scrolls horizontally by ${over}px`)
+    // The scale check already treats this as a failure, and it is the same
+    // defect in both places: a panel that scrolls sideways has lost a column
+    // off the edge of somebody's screen.
+    if (over > 1) note('FAIL', `layout/${label}`, `page scrolls horizontally by ${over}px`)
     await page.screenshot({ path: join(SHOTS, `${label}.png`) })
   }
   // ── the phone layout ─────────────────────────────────────────────────────
@@ -892,7 +1179,11 @@ try {
       return ta ? !ta.hasAttribute('disabled') && ta.getAttribute('readonly') === null : null
     })
     if (takesInput === true) {
-      note('WARN', 'mobile', 'the terminal still accepts direct keystrokes at phone width')
+      // Not a warning. This is the guard that keeps an IME away from the raw
+      // PTY: with it gone, every composition keystroke reaches the shell and
+      // Chinese, Japanese and Korean input produce garbage — the failure the
+      // compose box exists to prevent.
+      note('FAIL', 'mobile', 'the terminal still accepts direct keystrokes at phone width')
     }
 
     await compose.fill('echo MOBILE_COMPOSE_OK')
@@ -912,7 +1203,9 @@ try {
 
     // A key from the bar has to arrive as the byte a terminal expects.
     await compose.fill('printf KEYBAR')
-    await page.locator('[data-testid="compose-newline"]').click() // send without Enter
+    const newlineBtn = page.locator('[data-testid="compose-newline"]')
+    const newlineWas = await newlineBtn.getAttribute('data-on')
+    await newlineBtn.click() // send without Enter
     await page.locator('[data-testid="compose-send"]').click()
     await sleep(800)
     await page.locator('[data-testid="key-enter"]').click()
@@ -924,6 +1217,17 @@ try {
     }
     if (!keyed) note('FAIL', 'mobile', 'the Enter key from the bar did not reach the terminal')
 
+    // Put the toggle back. It is sticky, not a one-shot, and leaving it off
+    // meant every send after this point in the run arrived without an Enter —
+    // so commands piled up unexecuted on the input line while the checks that
+    // depended on them reported that the feature under test had failed. The
+    // cost of a harness leaving a mode behind is paid by whatever is added
+    // after it, which is the worst way to distribute it.
+    await newlineBtn.click()
+    if ((await newlineBtn.getAttribute('data-on')) !== newlineWas) {
+      note('FAIL', 'mobile', 'could not restore the compose box Enter toggle')
+    }
+
     // The keys that matter must be on screen without scrolling. A single
     // scrolling row put y, n and Escape off the left edge, which is exactly
     // the set a phone is there for.
@@ -931,7 +1235,7 @@ try {
     if (!primary) {
       note('FAIL', 'mobile', 'no primary key row')
     } else {
-      for (const label of ['y', 'n', 'esc', 'tab', 'ctrl', 'alt', 'enter']) {
+      for (const label of ['^C', 'y', 'n', 'esc', 'tab', 'ctrl', 'alt', 'enter']) {
         const box = await page.locator(`[data-testid="key-${label}"]`).boundingBox()
         if (!box) {
           note('FAIL', 'mobile', `key ${label} is missing`)
@@ -945,11 +1249,78 @@ try {
     await page.locator('[data-testid="key-ctrl"]').click()
     const ctrlOn = await page.locator('[data-testid="key-ctrl"]').getAttribute('data-active')
     if (ctrlOn !== 'true') note('FAIL', 'mobile', 'ctrl did not latch')
-    await page.locator('[data-testid="key-c"]').click().catch(() => {})
     await page.locator('[data-testid="key-1"]').click()
     await sleep(400)
     if ((await page.locator('[data-testid="key-ctrl"]').getAttribute('data-active')) !== 'false') {
       note('FAIL', 'mobile', 'ctrl stayed latched after the key it applied to')
+    }
+
+    // Arming ctrl and then pressing a key it cannot apply to must not consume
+    // it. It used to: every raw sequence cleared both modifiers, so arming
+    // ctrl and tapping y sent a plain "y" — a yes to whatever the agent was
+    // asking — while the user believed they had just interrupted it.
+    await page.locator('[data-testid="key-ctrl"]').click()
+    await page.locator('[data-testid="key-esc"]').click()
+    await sleep(300)
+    if ((await page.locator('[data-testid="key-ctrl"]').getAttribute('data-active')) !== 'true') {
+      note('FAIL', 'mobile',
+        'ctrl was consumed by a key it cannot modify; the modifier silently did nothing')
+    }
+    await page.locator('[data-testid="key-ctrl"]').click() // put it back
+
+    // What the above does not prove, said out loud every run rather than left
+    // to be rediscovered.
+    //
+    // Ctrl+C, end to end, from the bar.
+    //
+    // This used to be a WARN explaining why it could not be tested: ctrl folds
+    // the top three bits, so it only changes bytes in 0x40-0x5f, and every key
+    // the bar could send through the modifier path — 1 2 3 / - | ~ — falls
+    // outside that range. The modifier latched, un-latched, and could not
+    // alter a single byte. The one thing anybody wants from a phone when a
+    // command has run away had no key to apply to, and saying so every run was
+    // not the same as fixing it.
+    // Start from a clean prompt. The checks above deliberately leave things
+    // on the input line — a stray "1" from the modifier test, an Escape from
+    // the one before it — and readline treats Escape as a meta prefix, so the
+    // command that follows is swallowed rather than run. The first attempt at
+    // this test spent its whole budget waiting for a `sleep` that had never
+    // been submitted, and reported it as the interrupt failing.
+    await page.locator('[data-testid="key-enter"]').click()
+    await sleep(600)
+
+    await compose.fill('sleep 120')
+    await page.locator('[data-testid="compose-send"]').click()
+    await sleep(1200)
+    await page.locator('[data-testid="key-^C"]').click()
+    await sleep(600)
+    // If the interrupt did not land, the shell is still inside sleep and this
+    // sits in its input buffer unexecuted until the sleep ends — well past the
+    // window below. So the marker appearing is proof the shell came back.
+    const backMark = 'AFTER' + '_INTERRUPT'
+    await compose.fill(`echo ${backMark.slice(0, 5)}"${backMark.slice(5)}"`)
+    await page.locator('[data-testid="compose-send"]').click()
+    let interrupted = false
+    for (let i = 0; i < 30; i++) {
+      const txt = await page.locator('.xterm-screen').innerText().catch(() => '')
+      // Once, not twice. The marker is split across a quote in the command so
+      // that the shell's echo of the typed line cannot contain it — which is
+      // the whole point of writing it that way, and asking for two occurrences
+      // made an assertion that could not pass however well the key worked.
+      if ((txt.match(new RegExp(backMark, 'g')) ?? []).length >= 1) { interrupted = true; break }
+      await sleep(400)
+    }
+    if (!interrupted) {
+      const shown = await page.evaluate(() =>
+        [...document.querySelectorAll('.xterm-rows > div')]
+          .map((d) => d.textContent ?? '')
+          .filter((t) => t.trim())
+          .slice(-6),
+      )
+      note('FAIL', 'mobile',
+        'the ^C key did not interrupt a running command; the shell never came back. ' +
+        `The terminal's last lines are ${JSON.stringify(shown)}`)
+      await page.screenshot({ path: join(SHOTS, 'ctrl-c-failed.png') })
     }
 
     // A session that wants a human has to be visible from the one screen a
@@ -1029,8 +1400,238 @@ try {
           `${control} renders at opacity ${opacity} on a touch screen; it is only revealed by ` +
           'a hover that will never happen')
       }
+
+      // Visible is not the same as hittable. These were 16x16 css pixels
+      // twenty-four apart — a 12px icon with two pixels of padding — and one of
+      // them kills a running agent. A thumb is about nine millimetres across,
+      // which is where the 44px floor comes from; missing kill and hitting pin
+      // is harmless, missing pin and hitting kill is not.
+      const box = await btn.boundingBox()
+      if (!box) {
+        note('FAIL', 'mobile', `${control} has no box on a touch screen`)
+      } else if (box.width < 40 || box.height < 40) {
+        note('FAIL', 'mobile',
+          `${control} is ${Math.round(box.width)}x${Math.round(box.height)} css px on a touch ` +
+          'screen; a thumb needs 44')
+      }
     }
+    // The project header carries controls too, and they were missed the first
+    // time this was measured because the loop above only looks inside a session
+    // row. The grip is the worst of them: reordering is a press-and-hold drag,
+    // and it was a sixteen-pixel target.
+    for (const control of ['project-grip', 'project-new-shell']) {
+      const btn = touch.locator(`[data-testid="sidebar"][data-overlay="true"] [data-testid="${control}"]`).first()
+      if ((await btn.count()) === 0) {
+        note('FAIL', 'mobile', `no ${control} control in the project header`)
+        continue
+      }
+      const box = await btn.boundingBox()
+      if (!box) {
+        note('FAIL', 'mobile', `${control} has no box on a touch screen`)
+      } else if (box.width < 40 || box.height < 40) {
+        note('FAIL', 'mobile',
+          `${control} is ${Math.round(box.width)}x${Math.round(box.height)} css px on a touch ` +
+          'screen; a thumb needs 44')
+      }
+    }
+
+    // A session that stops being valid must take its terminals with it.
+    //
+    // Authorisation happens once, at the handshake, and the socket then lives
+    // for hours. Measured before this was fixed: with the session row deleted,
+    // the panel still showed everything, the connection dot still said open,
+    // and typing still reached the shell. Signing out, an expiry, and the
+    // password change two sections below all had that hole — the last one
+    // especially, since deleting other browsers' sessions is the entire point
+    // of it.
+    //
+    // Its own context, so the rest of this run keeps its session.
+    const doomedCtx = await browser.newContext({ viewport: { width: 1024, height: 768 } })
+    const doomed = await doomedCtx.newPage()
+    await doomed.goto(BASE, { waitUntil: 'domcontentloaded' })
+    await doomed.locator('[data-testid="auth-username"]').fill(USERNAME)
+    await doomed.locator('[data-testid="auth-password"]').fill(PASSWORD)
+    await doomed.locator('[data-testid="auth-submit"]').click()
+    const doomedIn = await doomed
+      .waitForSelector('[data-layout]', { timeout: 20000 })
+      .then(() => true)
+      .catch(() => false)
+    if (!doomedIn) {
+      note('FAIL', 'auth', 'could not sign a second browser in to test session revocation')
+    } else {
+      await sleep(2000)
+      // Invalidate it without the page being told, which is what an expiry
+      // looks like from the page's point of view.
+      await doomed.evaluate(() => fetch('/api/auth/logout', { method: 'POST' }))
+      let cut = false
+      for (let i = 0; i < 40; i++) {
+        await sleep(500)
+        const state = await doomed.evaluate(() => ({
+          login: !!document.querySelector('[data-testid="auth-password"]'),
+          conn: document.querySelector('[data-testid="connection"]')?.getAttribute('data-status'),
+        }))
+        if (state.login) { cut = true; break }
+      }
+      if (!cut) {
+        const shown = await doomed.evaluate(() => ({
+          conn: document.querySelector('[data-testid="connection"]')?.getAttribute('data-status'),
+          rows: document.querySelectorAll('[data-testid="session-row"]').length,
+        }))
+        note('FAIL', 'auth',
+          'twenty seconds after its session was destroyed the browser is still in the panel: ' +
+          JSON.stringify(shown))
+      }
+      await doomedCtx.close()
+    }
+
+    // Every field a finger can focus must be at least 16px.
+    //
+    // iOS Safari zooms the page when a focused input's text is smaller than
+    // that, and has ignored `user-scalable=no` since iOS 10 — so the meta tag
+    // in index.html does not prevent it, and nothing zooms back afterwards.
+    // Every field here was 12 or 13px, the compose box included, which is the
+    // main way to type on a phone.
+    await touch.locator('[data-testid="compose-input"]').click().catch(() => {})
+    const smallFields = await touch.evaluate(() =>
+      [...document.querySelectorAll('input, textarea')]
+        .filter((el) => el.offsetParent !== null)
+        .map((el) => ({
+          id: el.getAttribute('data-testid') ?? el.tagName.toLowerCase(),
+          px: Math.round(parseFloat(getComputedStyle(el).fontSize)),
+        }))
+        .filter((f) => f.px < 16),
+    )
+    if (smallFields.length > 0) {
+      note('FAIL', 'mobile',
+        `fields a finger will focus are under 16px, so iOS magnifies the page when they are ` +
+        `tapped and does not put it back: ${JSON.stringify(smallFields)}`)
+    }
+
+    // Renaming, with a finger.
+    //
+    // "Double click to rename" is what the label said, and on a narrow screen
+    // the list is an overlay that closes when you choose a session — so the
+    // first tap of a double tap dismisses the thing being tapped and the
+    // second never arrives. Renaming from a phone was not awkward, it was
+    // impossible, and the tooltip promising otherwise is only visible with a
+    // mouse.
+    //
+    // Driven through CDP because this is our own gesture: Playwright's tap()
+    // helper cannot express "hold still for six hundred milliseconds".
+    const nameEl = touch
+      .locator('[data-testid="sidebar"][data-overlay="true"] [data-testid="session-row"] [data-testid="inline-name"]')
+      .first()
+    const nameBox = await nameEl.boundingBox()
+    if (!nameBox) {
+      note('FAIL', 'mobile', 'no session name to press and hold')
+    } else {
+      const cdp = await touchCtx.newCDPSession(touch)
+      const cx = nameBox.x + nameBox.width / 2
+      const cy = nameBox.y + nameBox.height / 2
+      const point = { touchPoints: [{ x: cx, y: cy, radiusX: 8, radiusY: 8, force: 1, id: 1 }] }
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', ...point })
+      await sleep(800)
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+      await sleep(600)
+      const editing = await touch
+        .locator('[data-testid="sidebar"][data-overlay="true"] input')
+        .count()
+      if (editing === 0) {
+        note('FAIL', 'mobile', 'pressing and holding a session name does not start a rename')
+      }
+      // And the press must not double as a selection: choosing a session
+      // closes the drawer, which would take the input away in the same
+      // gesture that opened it.
+      const stillOpen = await touch
+        .locator('[data-testid="sidebar"][data-overlay="true"]')
+        .count()
+      if (stillOpen === 0) {
+        note('FAIL', 'mobile',
+          'the long press also selected the session, so the drawer closed and took the rename ' +
+          'input with it')
+      }
+      await touch.keyboard.press('Escape')
+      await sleep(300)
+    }
+
+    await scanUnreachable(touch, 'the phone drawer')
+    await scanTapTargets(touch, 'the phone drawer')
+    await scanNames(touch, 'the phone drawer')
     await touch.screenshot({ path: join(SHOTS, 'mobile-drawer.png') })
+
+    // The two phone shapes nothing had ever been measured at.
+    //
+    // 390x844 is one phone. The checks all ran at that one size, and both of
+    // these were broken at sizes just as common.
+    for (const shape of [
+      // The narrowest phone still in use. Eight keys at the 44px a thumb needs
+      // come to 380px, which does not fit here — the row overflowed by 56 and
+      // the page does not scroll, so `ctrl` and `alt` could not be pressed at
+      // all. Widening the touch targets is what broke it, which is the sort of
+      // thing a fix does when it is only ever measured at one width.
+      { name: '320 wide', w: 320, h: 568 },
+      // A phone held sideways. The layout switch was on width alone, and 844
+      // is wide — so rotating the phone produced the *desktop* layout: a 260px
+      // sidebar, the right panel, the bottom strip, and a six-line terminal,
+      // with no compose box and no key bar. Turning a phone sideways is
+      // something people do to see more of a terminal.
+      { name: 'landscape', w: 844, h: 390 },
+    ]) {
+      const ctx2 = await browser.newContext({
+        viewport: { width: shape.w, height: shape.h },
+        hasTouch: true,
+        isMobile: true,
+      })
+      const p2 = await ctx2.newPage()
+      await p2.goto(BASE, { waitUntil: 'domcontentloaded' })
+      await p2.locator('[data-testid="auth-username"]').fill(USERNAME)
+      // PASSWORD, not NEW_PASSWORD: the section that changes it runs later in
+      // this file. If that ever moves above here, the assertions below start
+      // reporting "the null layout", which is this check saying it never got
+      // past the sign-in page rather than anything about the layout.
+      await p2.locator('[data-testid="auth-password"]').fill(PASSWORD)
+      await p2.locator('[data-testid="auth-submit"]').click()
+      const signedIn = await p2
+        .waitForSelector('[data-layout]', { timeout: 20000 })
+        .then(() => true)
+        .catch(() => false)
+      if (!signedIn) {
+        note('FAIL', 'mobile', `could not sign in at ${shape.name} to measure the layout`)
+        await ctx2.close()
+        continue
+      }
+      await sleep(2500)
+
+      const m = await p2.evaluate(() => {
+        const row = document.querySelector('[data-testid="key-row-primary"]')
+        return {
+          layout: document.querySelector('[data-layout]')?.getAttribute('data-layout') ?? null,
+          hidden: row ? row.scrollWidth - row.clientWidth : null,
+          compose: !!document.querySelector('[data-testid="compose-input"]'),
+          bar: !!document.querySelector('[data-testid="key-bar"]'),
+        }
+      })
+      if (m.layout !== 'narrow') {
+        note('FAIL', 'mobile',
+          `at ${shape.name} the panel uses the ${m.layout} layout; a touch screen this size has ` +
+          'no keyboard and no room for a sidebar and two panels')
+      }
+      if (!m.compose || !m.bar) {
+        note('FAIL', 'mobile',
+          `at ${shape.name} there is ${m.compose ? '' : 'no compose box'}${!m.compose && !m.bar ? ' and ' : ''}${m.bar ? '' : 'no key bar'}`)
+      }
+      if (m.hidden === null) {
+        note('FAIL', 'mobile', `at ${shape.name} there is no primary key row`)
+      } else if (m.hidden > 0) {
+        note('FAIL', 'mobile',
+          `at ${shape.name} the primary key row hides ${m.hidden}px of keys, and the page does ` +
+          'not scroll, so they cannot be pressed')
+      }
+      await scanUnreachable(p2, `a ${shape.name} phone`)
+      await scanTapTargets(p2, `a ${shape.name} phone`)
+      await p2.screenshot({ path: join(SHOTS, `phone-${shape.w}x${shape.h}.png`) })
+      await ctx2.close()
+    }
 
     // A fresh context has no remembered session and lands on whichever is
     // first — which was htop, so the compose box was typing into a TUI.
@@ -1465,6 +2066,69 @@ try {
   }
   await page.screenshot({ path: join(SHOTS, 'exited-sessions.png') })
 
+  // Red line 4, mechanically: state is never carried by colour alone.
+  //
+  // Here rather than earlier: this is the point in the run where a crashed
+  // session and a cleanly exited one are both on screen, and those two are the
+  // pair the rule exists for. Run before anything had exited, the check
+  // compared working against done and passed against a build where the crash
+  // glyph had been replaced by a red copy of the clean one.
+  // The sidebar at this point holds several states at once, and each dot is an
+  // svg with a <title>. Strip the colours and two dots that mean different
+  // things must still look different — a check that would have caught somebody
+  // "simplifying" the crashed cross into a red version of the clean square,
+  // which is exactly the kind of change that looks tidier in a diff and is
+  // invisible to a colourblind reader at 2am.
+  const glyphs = await page.evaluate(() => {
+    const out = []
+    for (const svg of document.querySelectorAll('svg[role="img"]')) {
+      const label = (svg.querySelector('title')?.textContent ?? '').trim()
+      if (!label) continue
+      // Geometry only: element names and their shape attributes. Dashes count
+      // as shape, because a dashed outline is visible without colour.
+      const shape = [...svg.children]
+        .filter((n) => n.tagName !== 'title')
+        .map((n) => {
+          const attrs = ['d', 'points', 'r', 'cx', 'cy', 'width', 'height', 'x', 'y',
+            'stroke-dasharray', 'stroke-width']
+            .map((a) => n.getAttribute(a))
+            .filter(Boolean)
+            .join(',')
+          return `${n.tagName}(${attrs})`
+        })
+        .join('+')
+      out.push({ label, shape })
+    }
+    return out
+  })
+  // What each label means, by category rather than by first word.
+  //
+  // The first version took the first word, which made "Exited" and "Exited
+  // with status 3" the same meaning — so replacing the crashed cross with a
+  // red copy of the clean square passed. Those two are the pair the red line
+  // exists for: finished and crashed, told apart at a glance.
+  const meaningOf = (label) => {
+    if (/^Exited with status/.test(label)) return 'crashed'
+    if (/^Exited/.test(label)) return 'exited cleanly'
+    if (/^Gone/.test(label)) return 'gone'
+    return label.split(/[ —]/)[0].toLowerCase()
+  }
+  const byShape = new Map()
+  for (const g of glyphs) {
+    const meaning = meaningOf(g.label)
+    const seen = byShape.get(g.shape)
+    if (seen && seen !== meaning) {
+      note('FAIL', 'ui',
+        `"${seen}" and "${meaning}" are drawn with identical geometry, so they differ only by ` +
+        'colour')
+    }
+    byShape.set(g.shape, meaning)
+  }
+  if (byShape.size < 2) {
+    note('WARN', 'ui', `only ${byShape.size} distinct state glyph(s) on screen to compare`)
+  }
+
+
   // A corpse you can only delete is not much use at 2am.
   const restart = rowOf('dies').locator('[data-testid="restart-session"]')
   if (!(await restart.isVisible().catch(() => false))) {
@@ -1615,6 +2279,75 @@ try {
     if (!audit.includes('login')) {
       note('WARN', 'settings', 'the activity log shows no sign-in')
     }
+    // The status has to keep being true while you are looking at it.
+    //
+    // Half of what this dialog shows is live — uptime, session count, how many
+    // browsers are watching — and it was fetched once when the dialog opened.
+    // A settings page for observing the backend that stops observing the
+    // moment you open it answers a question about the past.
+    const uptimeNow = () =>
+      page.locator('[data-testid="settings-status"]').innerText().catch(() => '')
+    const statusBefore = await uptimeNow()
+    await sleep(6000)
+    const statusAfter = await uptimeNow()
+    if (statusBefore && statusBefore === statusAfter) {
+      note('FAIL', 'settings',
+        'the status block is identical six seconds later, so nothing is being refreshed while ' +
+        `the dialog is open: ${JSON.stringify(statusBefore.slice(0, 120))}`)
+    }
+
+    // Changing the password, from the page rather than from SQLite.
+    //
+    // There was no way to do it from anywhere: the wizard set one once and
+    // nothing could replace it, so "this leaked" meant stopping the panel and
+    // editing the database by hand.
+    const wrongFirst = page.locator('[data-testid="password-current"]')
+    if ((await wrongFirst.count()) === 0) {
+      note('FAIL', 'settings', 'there is no way to change the password')
+    } else {
+      // The current one is required: a stolen cookie must not be enough to
+      // lock the owner out of their own panel.
+      await wrongFirst.fill('not the password')
+      await page.locator('[data-testid="password-next"]').fill('a brand new long password')
+      await page.locator('[data-testid="password-submit"]').click()
+      await sleep(1200)
+      if (!(await page.locator('[data-testid="password-error"]').isVisible().catch(() => false))) {
+        note('FAIL', 'settings', 'a wrong current password was accepted, or reported nothing')
+      }
+
+      await wrongFirst.fill(PASSWORD)
+      await page.locator('[data-testid="password-next"]').fill(NEW_PASSWORD)
+      await page.locator('[data-testid="password-submit"]').click()
+      let changed = false
+      for (let i = 0; i < 20; i++) {
+        if (await page.locator('[data-testid="password-done"]').isVisible().catch(() => false)) {
+          changed = true
+          break
+        }
+        await sleep(300)
+      }
+      if (!changed) {
+        const why = await page.locator('[data-testid="password-error"]').innerText().catch(() => '')
+        note('FAIL', 'settings', `the password did not change: ${JSON.stringify(why)}`)
+      } else {
+        // This browser keeps working — being signed out of the page you just
+        // used to change your password reads as the change having failed.
+        const stillIn = await page.locator('[data-testid="sidebar"]').isVisible().catch(() => false)
+        if (!stillIn) {
+          note('FAIL', 'settings', 'changing the password signed out the browser that changed it')
+        }
+        // And the old one is genuinely gone.
+        const relog = await fetch(`${BASE}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ username: USERNAME, password: PASSWORD }),
+        })
+        if (relog.ok) {
+          note('FAIL', 'settings', 'the old password still signs in after a change')
+        }
+      }
+    }
+
     await page.screenshot({ path: join(SHOTS, 'settings.png') })
     page.once('dialog', (d) => void d.accept('Virtual key'))
     await page.locator('[data-testid="passkey-add"]').click()
@@ -1655,6 +2388,7 @@ try {
 } catch (e) {
   note('FAIL', 'harness', String(e))
 } finally {
+  for (const e of [...new Set(pageErrors)]) note('FAIL', 'js', `uncaught: ${e}`)
   await cleanup()
 }
 
@@ -1664,4 +2398,18 @@ const fails = findings.filter((f) => f.sev === 'FAIL').length
 console.log(`\n=== render check: ${fails} FAIL, ${findings.filter(f => f.sev === 'WARN').length} WARN ===`)
 for (const f of findings) console.log(`[${f.sev}] ${f.area}: ${f.msg}`)
 console.log(`\nscreenshots: ${SHOTS}`)
+// Flush before exiting, and then exit deliberately.
+//
+// Node's stdout is asynchronous when it is a pipe — which it is whenever this
+// runs under make, CI, or anything capturing the output — and process.exit()
+// abandons whatever has not been flushed. The findings and the verdict are the
+// last thing printed and therefore the first thing lost: three runs of the
+// scale check in a row produced a different amount of output each time, one of
+// them stopping mid-way with no verdict at all, and the missing lines were
+// read as the run having crashed.
+//
+// Setting only process.exitCode would flush, but it also waits for the event
+// loop to drain, and one stray handle from a browser or a child process would
+// hang the check instead of ending it. Flush, then exit.
+await new Promise((resolve) => process.stdout.write('', resolve))
 process.exit(fails > 0 ? 1 : 0)
