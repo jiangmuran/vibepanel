@@ -2,8 +2,10 @@ package tmux
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -54,6 +56,26 @@ func TestEnsureServerLoadsConfig(t *testing.T) {
 		{[]string{"show-options", "-wg", "-v", "remain-on-exit"}, "on"},
 		{[]string{"show-options", "-wg", "-v", "allow-set-title"}, "on"},
 		{[]string{"show-options", "-wg", "-v", "window-size"}, "latest"},
+
+		// The settings whose failure is silent rather than loud. One per scope
+		// proves the file was read; these prove the lines that matter survived
+		// it, and each of them fails by doing nothing observable:
+		//
+		// bell-action is the one with an incident behind it — "none" reads like
+		// "do not react" and actually stops tmux forwarding the bell at all,
+		// which removes the only signal the panel has that an agent wants a
+		// human. Nothing else would look different.
+		{[]string{"show-options", "-g", "-v", "bell-action"}, "any"},
+		{[]string{"show-options", "-g", "-v", "visual-bell"}, "off"},
+		// Without passthrough, sequences tmux does not model are swallowed and
+		// agent TUIs lose progress bars and notifications. Also the option that
+		// sets the real minimum tmux version: it arrived in 3.3.
+		{[]string{"show-options", "-wg", "-v", "allow-passthrough"}, "on"},
+		{[]string{"show-options", "-wg", "-v", "monitor-bell"}, "on"},
+		// 500ms of default disambiguation makes every Esc feel like the app
+		// has hung, which reads as the agent being broken rather than tmux.
+		{[]string{"show-options", "-s", "-v", "escape-time"}, "0"},
+		{[]string{"show-options", "-s", "-v", "default-terminal"}, "tmux-256color"},
 	} {
 		got, err := c.run(ctx, tc.args...)
 		if err != nil {
@@ -145,6 +167,104 @@ func TestSessionLifecycle(t *testing.T) {
 	// a session exiting on its own and must not surface that as a failure.
 	if err := c.Kill(ctx, name); err != nil {
 		t.Errorf("Kill twice: %v", err)
+	}
+}
+
+// tmux reports its version in more shapes than a split on "." survives, and
+// getting this wrong in either direction is bad: a false "too old" nags about
+// a working install, and a false "new enough" leaves the passthrough problem
+// undiagnosed on the one machine where it matters.
+func TestParseVersion(t *testing.T) {
+	for _, tc := range []struct {
+		in           string
+		major, minor int
+		ok           bool
+		atLeast      bool
+	}{
+		{"3.6", 3, 6, true, true},
+		{"3.3", 3, 3, true, true},
+		{"3.2", 3, 2, true, false},
+		{"2.8", 2, 8, true, false},
+		// A patch release carries a letter.
+		{"3.3a", 3, 3, true, true},
+		{"3.2a", 3, 2, true, false},
+		// A development build carries a prefix.
+		{"next-3.6", 3, 6, true, true},
+		{"4.0", 4, 0, true, true},
+		// Nothing usable. Treated as new enough: refusing to run because a
+		// version string looked unfamiliar is worse than the problem.
+		{"", 0, 0, false, true},
+		{"master", 0, 0, false, true},
+	} {
+		t.Run(tc.in, func(t *testing.T) {
+			major, minor, ok := ParseVersion(tc.in)
+			if ok != tc.ok || (ok && (major != tc.major || minor != tc.minor)) {
+				t.Errorf("ParseVersion(%q) = %d, %d, %v; want %d, %d, %v",
+					tc.in, major, minor, ok, tc.major, tc.minor, tc.ok)
+			}
+			if got := AtLeastMinimum(tc.in); got != tc.atLeast {
+				t.Errorf("AtLeastMinimum(%q) = %v, want %v", tc.in, got, tc.atLeast)
+			}
+		})
+	}
+}
+
+// Red line 7, which had no test until now: targets must be exact.
+//
+// tmux resolves a target by trying an exact match, then a prefix match. So the
+// danger is not two sessions existing at once — the exact one wins — it is
+// aiming at a session that has already gone while a longer name is still
+// there. That is an ordinary event: the UI races with a session exiting on its
+// own, and a kill arriving a moment late would land on a different session
+// entirely. Silently, and only once two generated names happened to share a
+// prefix.
+//
+// Everything here goes through target()/sessionTarget(), so dropping the "="
+// from either would leave every other test in this package passing.
+func TestTargetsAreExactNotPrefixes(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	if err := c.EnsureServer(ctx); err != nil {
+		t.Fatalf("EnsureServer: %v", err)
+	}
+
+	// Only the longer name exists. The shorter one is a prefix of it.
+	const long, short = "vp_abcd", "vp_ab"
+	if err := c.Create(ctx, CreateOptions{
+		Name: long, Dir: t.TempDir(), Command: []string{"sleep", "300"},
+		Width: 80, Height: 24,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if ok, err := c.Has(ctx, short); err != nil || ok {
+		t.Fatalf("Has(%q) = %v, %v while only %q exists; the target resolved by prefix",
+			short, ok, err, long)
+	}
+
+	// A resize aimed at the absent session must not move the one that is there.
+	_ = c.Resize(ctx, short, 120, 40)
+	info, err := c.Get(ctx, long)
+	if err != nil {
+		t.Fatalf("Get(%q): %v", long, err)
+	}
+	if info.Width != 80 || info.Height != 24 {
+		t.Errorf("%s was resized to %dx%d by a command aimed at %q",
+			long, info.Width, info.Height, short)
+	}
+
+	// And the one that matters: killing something already gone must not take a
+	// live session with it.
+	if err := c.Kill(ctx, short); err != nil {
+		t.Fatalf("Kill(%q) on an absent session should be a no-op: %v", short, err)
+	}
+	if ok, err := c.Has(ctx, long); err != nil || !ok {
+		t.Fatalf("%s is gone after killing %q; the kill landed on the wrong session",
+			long, short)
+	}
+
+	if err := c.Kill(ctx, long); err != nil {
+		t.Fatalf("Kill(%q): %v", long, err)
 	}
 }
 
@@ -287,5 +407,163 @@ func TestDeadPaneIsPreserved(t *testing.T) {
 			t.Fatal("pane never reported Dead")
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// Red lines 1 and 7, as tests rather than as paragraphs somebody remembers.
+//
+// The rules are that every tmux command names the panel's own socket, and that
+// every target is the exact-match form. Both were true when this was written
+// and nothing was checking either one. The failure they guard is not subtle:
+// tmux resolves targets by prefix, so `-t vp_ab` also matches `vp_abcd`, and a
+// command without `-L` lands on whatever tmux the user is running next to this
+// one — which for the person this was built for is a session that has been
+// alive for weeks.
+
+// There is deliberately no test here asserting that target() returns
+// "=name:". TestTargetsAreExactNotPrefixes above already proves the property
+// that matters, against a real tmux with a real prefix collision, and it
+// catches every way of getting this wrong rather than the one way a string
+// comparison knows about. Two tests for one rule is the thing this codebase
+// keeps paying for elsewhere.
+
+func TestEveryCommandNamesOurSocket(t *testing.T) {
+	c := New("a-socket", t.TempDir())
+	for _, argv := range [][]string{
+		c.args("list-sessions"),
+		c.args("kill-session", "-t", sessionTarget("vp_x")),
+		c.AttachArgs("vp_x"),
+	} {
+		joined := strings.Join(argv, " ")
+		idx := -1
+		for i, a := range argv {
+			if a == "-L" {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			t.Errorf("no -L in %q; this command would use the user's own tmux", joined)
+			continue
+		}
+		if idx+1 >= len(argv) || argv[idx+1] != "a-socket" {
+			t.Errorf("-L is not followed by the configured socket in %q", joined)
+		}
+	}
+}
+
+// Nothing outside this package builds a tmux target by hand.
+//
+// The helpers exist so the '=' … ':' form cannot be forgotten, and a helper
+// nobody is obliged to use is a convention rather than a rule. This walks the
+// Go sources and objects to a `-t` argument anywhere else — which is what
+// hand-building a target looks like.
+func TestNoHandBuiltTargetsElsewhere(t *testing.T) {
+	root := ".."
+	var offenders []string
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			// The tmux package is where the helpers live; node_modules is not ours.
+			if info.Name() == "tmux" || info.Name() == "node_modules" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		src, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		for i, line := range strings.Split(string(src), "\n") {
+			if strings.Contains(line, `"-t"`) {
+				offenders = append(offenders, fmt.Sprintf("%s:%d: %s", path, i+1, strings.TrimSpace(line)))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking the source: %v", err)
+	}
+	if len(offenders) > 0 {
+		t.Errorf("tmux targets are built outside internal/tmux, where the exact-match form "+
+			"cannot be enforced:\n  %s", strings.Join(offenders, "\n  "))
+	}
+}
+
+// TestPasteIsBracketedOnlyForPanesThatAskedForIt pins why input for a
+// multi-line block goes through tmux instead of straight into the PTY.
+//
+// Written into the PTY, "line one\nline two" is indistinguishable from someone
+// typing two lines and pressing Enter twice: a shell runs each, and an agent
+// acts on the first sentence of a three-line instruction before it has read
+// the third. ESC[200~ … ESC[201~ makes it one submission — but only for an
+// application that asked for bracketed paste. Send the markers to one that did
+// not and it receives them as literal garbage in the middle of the text.
+//
+// tmux tracks that mode per pane, which is the entire reason this is
+// delegated. The test is really about `paste-buffer -p` behaving as
+// advertised, because the whole design rests on it.
+func TestPasteIsBracketedOnlyForPanesThatAskedForIt(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+
+	// `cat -v` renders ESC as ^[ so the markers are visible in a capture.
+	//
+	// `-echo` keeps the tty from printing its own copy of everything, which is
+	// what ECHOCTL does and what made the first reading of this look like a
+	// double paste. `-icanon min 1` is the one that matters: in canonical mode
+	// the driver holds a line until it sees a newline, and the closing ESC[201~
+	// arrives after the last line and before any newline — so it sat in the
+	// tty buffer and the test read half a paste.
+	const declares = "vp_paste_yes"
+	const silent = "vp_paste_no"
+	for name, prologue := range map[string]string{
+		declares: `printf '\033[?2004h'; `,
+		silent:   ``,
+	} {
+		if err := c.Create(ctx, CreateOptions{
+			Name: name, Dir: t.TempDir(), Width: 80, Height: 24,
+			Command: []string{"sh", "-c", "stty -echo -icanon min 1 time 0; " + prologue + "exec cat -v"},
+		}); err != nil {
+			t.Fatalf("Create %s: %v", name, err)
+		}
+	}
+	time.Sleep(700 * time.Millisecond)
+
+	const block = "please refactor the auth flow\nand do not touch the tmux config"
+	for _, name := range []string{declares, silent} {
+		if err := c.Paste(ctx, name, block); err != nil {
+			t.Fatalf("Paste to %s: %v", name, err)
+		}
+	}
+	time.Sleep(700 * time.Millisecond)
+
+	got := map[string]string{}
+	for _, name := range []string{declares, silent} {
+		out, err := c.Capture(ctx, name)
+		if err != nil {
+			t.Fatalf("Capture %s: %v", name, err)
+		}
+		got[name] = out
+	}
+
+	if !strings.Contains(got[declares], "^[[200~") || !strings.Contains(got[declares], "^[[201~") {
+		t.Errorf("a pane that asked for bracketed paste was not given the markers, so a "+
+			"multi-line instruction arrives as line after line of typing:\n%s", got[declares])
+	}
+	if strings.Contains(got[silent], "^[[200~") || strings.Contains(got[silent], "^[[201~") {
+		t.Errorf("a pane that never asked for bracketed paste was sent the markers, which "+
+			"it will read as text in the middle of the message:\n%s", got[silent])
+	}
+	// Both must still have the words, whatever the wrapping.
+	for _, name := range []string{declares, silent} {
+		if !strings.Contains(got[name], "please refactor the auth flow") {
+			t.Errorf("%s never received the text at all:\n%s", name, got[name])
+		}
 	}
 }

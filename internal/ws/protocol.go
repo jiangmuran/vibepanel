@@ -81,6 +81,18 @@ type ClientMessage struct {
 	Ref       uint32 `json:"ref,omitempty"`
 	Cols      int    `json:"cols,omitempty"`
 	Rows      int    `json:"rows,omitempty"`
+
+	// Text carries a MsgPaste body. Input otherwise arrives as binary frames;
+	// a paste is not keystrokes and does not travel as them.
+	Text string `json:"text,omitempty"`
+
+	// Submit asks for a carriage return after the paste.
+	//
+	// Server-side because the two travel by different roads — the paste
+	// through the tmux command socket, the return through the PTY — and a
+	// client sending them one after another is racing them. Sending the return
+	// only once the paste has been accepted is the only ordering that holds.
+	Submit bool `json:"submit,omitempty"`
 }
 
 // Client message types.
@@ -92,6 +104,17 @@ const (
 
 	// MsgUnsubscribe stops the stream and frees the reference.
 	MsgUnsubscribe = "unsubscribe"
+
+	// MsgPaste delivers a block of text as a paste rather than as typing.
+	//
+	// Keystrokes go into the PTY as bytes, and a multi-line block sent that
+	// way is indistinguishable from someone pressing Enter after every line:
+	// a shell runs each one, and an agent acts on the first sentence of a
+	// three-line instruction before it has read the third. Bracketed paste is
+	// what makes it one submission, and only the pane's own application knows
+	// whether it wants the markers — so this goes through tmux, which tracks
+	// that per pane, instead of through the PTY.
+	MsgPaste = "paste"
 
 	// MsgResize reports the viewer's viewport. Honoured only if this viewer
 	// controls the session; otherwise the server ignores it and the viewer
@@ -157,4 +180,32 @@ const (
 	// in ways nobody notices until the sidebar is showing a session that was
 	// killed ten minutes ago.
 	MsgState = "state"
+
+	// MsgPanel says a project's note or todo list changed elsewhere, without
+	// carrying either: they are per project, they can be long, and pushing a
+	// document to every viewer on every keystroke would be waste. The panel
+	// that cares refetches.
+	//
+	// This arrived as a bare string in the sender while its nine siblings had
+	// constants, which is the drift this file exists to prevent.
+	MsgPanel = "panel"
+)
+
+// AllServerMessages and AllClientMessages exist so the two ends of this
+// protocol can be compared.
+//
+// The names live here and again in web/src/protocol/wire.ts as a union type,
+// and nothing checked that the two agreed. A message the server sends and the
+// client's switch has no case for is discarded in silence — which is exactly
+// how a viewer that had been cut off would stop recovering, with no error
+// anywhere. TestMessageTypesMatchTheClient reads that file and compares.
+var (
+	AllServerMessages = []string{
+		MsgSubscribed, MsgSize, MsgClipboard, MsgTitle, MsgExit,
+		MsgDropped, MsgError, MsgPong, MsgState, MsgPanel,
+	}
+	AllClientMessages = []string{
+		MsgSubscribe, MsgUnsubscribe, MsgResize, MsgTakeControl, MsgPing,
+		MsgPaste,
+	}
 )

@@ -334,6 +334,12 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     },
     [socket, current],
   )
+  const pasteToCurrent = useCallback(
+    (text: string, submit: boolean) => {
+      if (current) socket.pasteText(current.id, text, submit)
+    },
+    [socket, current],
+  )
   const currentProject = current
     ? (state.projects.find((p) => p.id === current.projectId) ?? null)
     : null
@@ -691,7 +697,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         {current && narrow && (
           <>
             <SelectionCopy selection={selection} />
-            <ComposeInput sessionId={current.id} onSend={sendToCurrent} />
+            <ComposeInput sessionId={current.id} onSend={sendToCurrent} onPaste={pasteToCurrent} />
             <MobileKeyBar onSend={sendToCurrent} />
           </>
         )}

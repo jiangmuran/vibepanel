@@ -12,9 +12,11 @@ import { CornerDownLeft, Send } from 'lucide-react'
 export function ComposeInput({
   sessionId,
   onSend,
+  onPaste,
 }: {
   sessionId: string
   onSend: (text: string) => void
+  onPaste: (text: string, submit: boolean) => void
 }) {
   const [text, setText] = useState('')
   const [newline, setNewline] = useState(true)
@@ -47,7 +49,20 @@ export function ComposeInput({
 
   const send = () => {
     if (!text) return
-    onSend(newline ? text + '\r' : text)
+    // A block with line breaks in it is a paste, not typing.
+    //
+    // Written into the PTY byte by byte it is indistinguishable from someone
+    // pressing Enter after every line: a shell runs each one, and an agent
+    // acts on the first sentence of a three-line instruction before it has
+    // read the third. Measured against a reader that echoes one submission at
+    // a time — three lines in, three separate submissions out — on the one
+    // control whose stated premise is "composing first and sending once is
+    // the only way this works".
+    if (text.includes('\n')) {
+      onPaste(text, newline)
+    } else {
+      onSend(newline ? text + '\r' : text)
+    }
     setDrafts((d) => {
       const next = { ...d }
       delete next[sessionId]

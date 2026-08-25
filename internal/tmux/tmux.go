@@ -96,6 +96,49 @@ func target(name string) string { return "=" + name + ":" }
 // exist?" check into an unrecognised error.
 func sessionTarget(name string) string { return "=" + name }
 
+// Paste delivers text to a pane the way a paste arrives, not the way typing
+// does.
+//
+// The difference is bracketed paste. A multi-line block written byte by byte
+// into the PTY is indistinguishable from someone typing three lines and
+// pressing Enter three times, so a shell runs each line and an agent acts on
+// the first sentence before it has read the last. Wrapped in ESC[200~ / ESC[201~
+// the same block is one submission.
+//
+// The wrapping cannot be done blind: an application that has not asked for
+// bracketed paste receives the markers as literal garbage. tmux knows which
+// panes asked, because it tracks the mode for each of them, and `paste-buffer
+// -p` brackets only when the target pane wants it. Delegating that is the
+// whole reason this goes through tmux rather than through the PTY.
+//
+// `-d` deletes the buffer afterwards: the text is somebody's prompt, and the
+// paste buffer is shared with anything else on this socket.
+func (c *Client) Paste(ctx context.Context, name, text string) error {
+	const buf = "vibepanel-paste"
+	if _, err := c.runStdin(ctx, text, "load-buffer", "-b", buf, "-"); err != nil {
+		return err
+	}
+	_, err := c.run(ctx, "paste-buffer", "-d", "-p", "-b", buf, "-t", target(name))
+	return err
+}
+
+// runStdin is run with something on the command's standard input.
+func (c *Client) runStdin(ctx context.Context, stdin string, rest ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, c.Bin, c.args(rest...)...)
+	cmd.Stdin = strings.NewReader(stdin)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return "", fmt.Errorf("tmux %s: %s", strings.Join(rest, " "), msg)
+	}
+	return strings.TrimRight(stdout.String(), "\n"), nil
+}
+
 // run executes a tmux command and returns trimmed stdout.
 func (c *Client) run(ctx context.Context, rest ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, c.Bin, c.args(rest...)...)

@@ -349,6 +349,26 @@ func (c *Conn) handleControl(ctx context.Context, msg ClientMessage) {
 	case MsgUnsubscribe:
 		c.unsubscribe(msg.SessionID)
 
+	case MsgPaste:
+		// Only for a session this connection is actually watching, same as
+		// input: the session id arrives from the client and nothing else here
+		// would check it.
+		c.mu.Lock()
+		s := c.byID[msg.SessionID]
+		c.mu.Unlock()
+		if s == nil || msg.Text == "" {
+			return
+		}
+		if err := c.h.Manager.Paste(ctx, msg.SessionID, msg.Text); err != nil {
+			c.sendError(msg.SessionID, "paste failed: "+err.Error())
+			return
+		}
+		if msg.Submit {
+			if _, err := s.live.Write(c.clientID, []byte("\r")); err != nil {
+				c.sendError(msg.SessionID, "write failed: "+err.Error())
+			}
+		}
+
 	case MsgResize, MsgTakeControl:
 		c.mu.Lock()
 		s := c.byID[msg.SessionID]

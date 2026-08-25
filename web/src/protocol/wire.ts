@@ -51,10 +51,14 @@ export function decodeData(
 }
 
 export interface ClientMessage {
-  t: 'subscribe' | 'unsubscribe' | 'resize' | 'takeControl' | 'ping'
+  t: 'subscribe' | 'unsubscribe' | 'resize' | 'takeControl' | 'ping' | 'paste'
   sessionId?: string
   cols?: number
   rows?: number
+  /** MsgPaste only. Input otherwise travels as binary frames. */
+  text?: string
+  /** MsgPaste only: send a carriage return once the paste has landed. */
+  submit?: boolean
 }
 
 export interface ServerMessage {
@@ -90,6 +94,23 @@ export interface Project {
   lastActiveAt: number
   createdAt: number
 }
+
+/**
+ * The one exit status that is not a wait status.
+ *
+ * Mirrors store.ExitStatusVanished. It marks a session whose tmux session
+ * simply disappeared — killed from a shell, lost with the server, gone in a
+ * reboot — where nothing was around to observe how it ended. Real wait
+ * statuses are never negative, so the two cannot be confused.
+ *
+ * It exists here rather than in a component because three separate places put
+ * it in front of a person, and the first version leaked the raw number into
+ * all three: a badge reading "exit -1", a tooltip promising "the process
+ * exited with status -1", and a project summary that counted it as a crash.
+ * A status a person can read as a number has to be a status a process could
+ * actually have returned.
+ */
+export const EXIT_VANISHED = -1
 
 export interface Session {
   id: string
@@ -195,6 +216,10 @@ export interface FileListing {
   path: string
   parent: string | null
   entries: FileEntry[]
+  /** How many items the directory holds, which is not entries.length once the
+   * server's cap bites. */
+  total: number
+  truncated: boolean
 }
 
 export interface Note {
@@ -251,6 +276,8 @@ export interface SettingsInfo {
   addr: string
   url: string
   tlsMode: string
+  /** Unix seconds when the served certificate expires; absent if unknown. */
+  certExpiry?: number
   domain: string
   allowAll: boolean
   passkeysUsable: boolean

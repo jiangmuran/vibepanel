@@ -339,6 +339,28 @@ export class PanelSocket {
     this.write(sessionId, new TextEncoder().encode(text))
   }
 
+  /**
+   * Sends a block of text as a paste rather than as typing.
+   *
+   * Typing it is what the compose box used to do, and a three-line
+   * instruction arrived as three submissions: measured against a reader that
+   * echoes one line at a time, "please refactor the auth flow / keep the
+   * passkey path working / and do not touch the tmux config" came out as
+   * three separate GOT<> lines. An agent acts on the first sentence before it
+   * has read the third.
+   *
+   * The server routes this through tmux, which brackets it only if the pane's
+   * application asked for bracketed paste. See MsgPaste.
+   */
+  pasteText(sessionId: string, text: string, submit = false) {
+    const stream = this.streams.get(sessionId)
+    if (!stream || stream.ref === null || this.ws?.readyState !== WebSocket.OPEN) return
+    // `submit` is the server's job: the paste goes by the tmux command socket
+    // and a return would go by the PTY, so sending them from here would be
+    // racing two roads to the same pane.
+    this.send({ t: 'paste', sessionId, text, submit })
+  }
+
   /** Sends raw bytes to a session. */
   write(sessionId: string, data: Uint8Array) {
     const stream = this.streams.get(sessionId)

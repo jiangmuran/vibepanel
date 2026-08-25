@@ -460,6 +460,20 @@ func (m *Manager) LiveIDs() []string {
 	return ids
 }
 
+// Paste delivers a block of text to a session as a paste.
+//
+// Deliberately not Live.Write: writing goes into the PTY as raw bytes, which
+// makes a multi-line block arrive as line after line of typing. See
+// tmux.Client.Paste for why that has to be tmux's job rather than this
+// package's.
+func (m *Manager) Paste(ctx context.Context, sessionID, text string) error {
+	l, ok := m.Get(sessionID)
+	if !ok {
+		return ErrNotAttached
+	}
+	return m.tmux.Paste(ctx, l.TmuxName, text)
+}
+
 // Detach ends the attachment without touching the tmux session.
 //
 // This is what shutdown calls. The distinction from Kill is the whole point of

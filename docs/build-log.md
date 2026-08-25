@@ -5829,3 +5829,78 @@ Worth writing down alongside it: on a phone there is no way into copy-mode at
 all. The key bar has `pgup` and `pgdn`, which in a pane running a shell do
 nothing, so they read as scrollback controls that are inert. That is a real
 gap, and a product decision rather than a fix.
+
+## Three lines typed on a phone, three instructions to the agent
+
+The compose box exists because typing into a raw PTY on a phone is unusable
+with an input method, and its comment says what it is for:
+
+> Composing first and sending once is the only way this works.
+
+It did not send once. Shift-Enter makes a new line in the box, Send wrote the
+whole thing into the PTY as bytes, and a newline in the middle of a byte stream
+is a newline: indistinguishable from someone pressing Enter. Measured against a
+reader that echoes one submission at a time —
+
+```
+composed: "please refactor the auth flow\nkeep the passkey path working\nand
+           do not touch the tmux config"
+
+GOT<please refactor the auth flow>
+GOT<keep the passkey path working>
+GOT<and do not touch the tmux config>
+```
+
+Three submissions. An agent starts refactoring the auth flow before it has read
+the sentence telling it what not to touch. On the one control whose entire
+premise is composing a long instruction before sending it, and on the platform
+that control exists for.
+
+### Bracketed paste, and who is allowed to decide
+
+`ESC[200~ … ESC[201~` is how a terminal says "this block arrived at once, do
+not act on it line by line". Wrapping the text is the fix, and it cannot be
+done unconditionally: an application that never asked for bracketed paste
+receives the markers as literal characters in the middle of the message.
+
+tmux tracks that mode per pane. `paste-buffer -p` brackets only when the target
+pane asked. So this input goes through the tmux command socket rather than
+through the PTY — not because the PTY is wrong, but because the PTY does not
+know the answer to the question and tmux does.
+
+Only for text with a line break in it. A single-line message has no ambiguity
+to resolve, and no reason to leave the fast path.
+
+### The return has to be the server's job
+
+The paste travels by the tmux command socket and a carriage return would travel
+by the PTY. A client sending one after the other is racing two roads to the
+same pane. `MsgPaste` therefore carries `submit`, and the return is written
+once the paste has been accepted.
+
+### What the measurement looked like, twice wrong before it was right
+
+The first reading said the fix had made things *worse* — two submissions
+instead of three, with the first line missing. The line was not missing; it had
+wrapped in the pane, and the probe filtered rows with `startsWith("GOT<")`.
+
+The second reading said the paste was happening twice: `^[[200~ … ^[[201~`
+appeared in the capture twice over. That was the tty echoing its own input, and
+ECHOCTL renders ESC as `^[` exactly the way `cat -v` does. `stty -echo` and one
+copy remained.
+
+The Go test then read half a paste — `^[[200~` and the first line, no closing
+marker. Canonical mode holds a line until it sees a newline, and the closing
+marker arrives after the last line and before any newline, so it was still
+sitting in the tty buffer. `stty -icanon min 1` and it completes.
+
+Three misreadings of the same measurement, none of them in the code being
+measured. The instrument needed more care than the change did, which is worth
+remembering the next time a probe reports something surprising.
+
+### What the fix does not do
+
+An application that never asked for bracketed paste still receives three lines,
+because there is no way to tell it otherwise — and the test asserts that it is
+sent no markers, since garbage in the middle of the message is worse than the
+problem. The fix helps exactly the applications this panel exists to drive.
