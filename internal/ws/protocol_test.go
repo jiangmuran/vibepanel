@@ -1,6 +1,8 @@
 package ws
 
 import (
+	"bytes"
+	"errors"
 	"os"
 	"regexp"
 	"strconv"
@@ -130,5 +132,71 @@ func TestBinaryFrameLayoutMatchesTheClient(t *testing.T) {
 	}
 	if !strings.Contains(text, "setUint32(1, ref, false)") {
 		t.Error("wire.ts does not write the stream reference as big-endian")
+	}
+}
+
+func TestFramesSurviveTheRoundTrip(t *testing.T) {
+	// The codec carries every keystroke and every byte a session prints, and
+	// nothing exercised it. The layout is compared against the TypeScript
+	// above; this is the other half — that the bytes mean what the layout says.
+	for _, payload := range [][]byte{
+		nil,
+		{},
+		[]byte("y\r"),
+		[]byte("\x1b[?1049h\x1b[2J"),
+		bytes.Repeat([]byte("agent output "), 5000),
+	} {
+		for _, tc := range []struct {
+			name   string
+			encode func(uint32, []byte) []byte
+			kind   byte
+		}{
+			{"data", EncodeData, FrameData},
+			{"replay", EncodeReplay, FrameReplay},
+		} {
+			frame := tc.encode(0xDEADBEEF, payload)
+			if frame[0] != tc.kind {
+				t.Errorf("%s frame starts with %#x, want %#x", tc.name, frame[0], tc.kind)
+			}
+			ref, got, err := DecodeData(frame)
+			if err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			if ref != 0xDEADBEEF {
+				t.Errorf("%s: ref = %#x", tc.name, ref)
+			}
+			if !bytes.Equal(got, payload) && !(len(got) == 0 && len(payload) == 0) {
+				t.Errorf("%s: payload of %d bytes came back as %d", tc.name, len(payload), len(got))
+			}
+		}
+	}
+}
+
+func TestReplayIsDistinguishableFromLiveOutput(t *testing.T) {
+	// Not a detail. The replay buffer holds whatever the application sent,
+	// including terminal capability queries, and a freshly created xterm
+	// answers those as it parses them — at the shell prompt of whatever the
+	// session was doing. The flag is the only thing that stops a page reload
+	// typing "[?1;2c" into an agent.
+	live := EncodeData(1, []byte("x"))
+	replayed := EncodeReplay(1, []byte("x"))
+	if live[0] == replayed[0] {
+		t.Fatal("live output and replayed scrollback are the same frame type")
+	}
+	if _, _, err := DecodeData(replayed); err != nil {
+		t.Fatalf("a replay frame does not decode: %v", err)
+	}
+}
+
+func TestAMalformedFrameIsRefusedRatherThanRead(t *testing.T) {
+	// A frame shorter than its header, read anyway, is a slice out of range on
+	// the goroutine that carries a viewer's terminal.
+	for _, frame := range [][]byte{nil, {}, {FrameData}, {FrameData, 0, 0, 0}} {
+		if _, _, err := DecodeData(frame); !errors.Is(err, ErrShortFrame) {
+			t.Errorf("a %d-byte frame gave %v, want ErrShortFrame", len(frame), err)
+		}
+	}
+	if _, _, err := DecodeData([]byte{0x7f, 0, 0, 0, 1, 'x'}); err == nil {
+		t.Error("an unknown frame type was accepted; its payload would be written to a terminal")
 	}
 }
