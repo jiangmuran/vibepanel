@@ -6607,3 +6607,54 @@ was measured, and what is left undone — and the runbook gained a section for
 the symptom, because a Codex session showing a guessed state most of the time
 is behaving as designed rather than misconfigured, and that is not obvious from
 the panel.
+
+## "Reporting 4 events", to nobody
+
+The settings page installs the state-reporting hooks and then says what it
+believes:
+
+```
+Claude Code    reporting 4 events
+```
+
+It has read a file. It has not heard from anything, and for every session that
+was already open the claim is false — an agent reads its hooks when it starts.
+In a panel built for a dozen long-lived agents, that is all of them.
+
+So the honest sequence for the person who has been living with guessed states
+is: click Install, watch the status turn green, and watch nothing else change.
+Nothing on screen connects the two.
+
+Claude Code's own instruction to itself, in the 2.1.241 binary, says what has
+to happen and why the agent cannot do it:
+
+> Tell the user to open `/hooks` once (reloads config) or restart — you can't
+> do this yourself; `/hooks` is a user UI menu and opening it ends this turn.
+
+So the panel is the only thing that can say it, and it did not.
+
+Two changes. The status reads `installed for 4 events` rather than
+`reporting 4 events`, because the panel knows the file and nothing more. And a
+notice appears after installing or removing:
+
+> Sessions that are already running will not pick this up. In each one, open
+> `/hooks` once to reload, or restart the agent.
+
+Both are pinned in the render check, and each mutation fails it alone: hiding
+the notice, or putting the word "reporting" back.
+
+### Verified without spending anything
+
+Both Claude and Codex are installed on this machine, and every question here
+was answerable without running a turn.
+
+The event names the panel installs — `Notification`, `Stop`,
+`UserPromptSubmit`, `PreToolUse` — are all present in the 2.1.241 binary, so
+that mapping is still current. The reload requirement came out of the same
+binary. `codex doctor` confirmed the Codex snippet still parses.
+
+One attempt of mine reported all four event names as "not found", which was
+`grep` declining to print matches from a binary rather than the truth. The
+same shape as the instrument errors from earlier entries, caught the same way:
+absence is the answer a broken instrument gives, so it is the answer to check
+twice.

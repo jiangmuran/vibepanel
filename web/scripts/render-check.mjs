@@ -2445,6 +2445,31 @@ try {
       if (!installed) {
         note('FAIL', 'settings', 'installing the hooks did not change the state')
       } else {
+        // Installing hooks does nothing to the sessions already open, because
+        // an agent reads them when it starts — and in a panel built for a
+        // dozen long-lived agents, that is all of them. Without a word about
+        // it the status says installed, every state stays guessed, and there
+        // is nothing on screen connecting the two.
+        //
+        // Claude Code cannot explain it either. Its own instruction, in the
+        // binary: "Tell the user to open `/hooks` once (reloads config) or
+        // restart — you can't do this yourself".
+        const noteShown = await page
+          .locator('[data-testid="hooks-restart-note"]')
+          .isVisible()
+          .catch(() => false)
+        if (!noteShown) {
+          note('FAIL', 'settings',
+            'installing hooks says nothing about the sessions already running, which ' +
+            'will keep guessing until each one reloads or restarts')
+        }
+        const statusText = await page.locator('[data-testid="hooks-status"]').innerText().catch(() => '')
+        if (/reporting \d+ events/.test(statusText)) {
+          note('FAIL', 'settings',
+            'the status claims the hooks are reporting; the panel has read a file and ' +
+            'heard from nothing, and for every open session it is not true')
+        }
+
         // Removable, or it is a change to somebody's configuration with no way
         // back.
         await page.locator('[data-testid="hooks-remove"]').click()
