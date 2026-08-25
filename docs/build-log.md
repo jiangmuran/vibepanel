@@ -6458,3 +6458,83 @@ Three negative results in a row is worth noticing rather than being
 disappointed by. The sweep's value was not that it found broken code; it is
 that "no test touches this" and "this does not work" are different claims, and
 the only way to tell them apart is to go and look.
+
+## Two of the three signals cannot arrive
+
+`handleOSC` treated `OSC 9` and `OSC 777` as "this session wants attention",
+and the state table has always listed them beside the terminal bell. Pulling on
+one of them found a parsing bug, and then found that the parsing bug could
+never fire.
+
+### The parsing bug
+
+`OSC 9` carries two things that have nothing to do with each other.
+`OSC 9 ; <text>` is the iTerm2 desktop notification, and reading it as
+attention is right. `OSC 9 ; 4 ; <state> ; <percent>` is the ConEmu progress
+indicator, which anything drawing a progress bar emits over and over during a
+build, an install or a download.
+
+Both were read as somebody asking for a human. Four progress forms, all
+mis-read as attention. `waiting` sorts to the top, so a build reporting
+progress would have sat above the agent that really had stopped and asked.
+
+The guard is a prefix test on `"4;"` rather than a leading `4`, so a
+notification reading "4 tests failed" is still a notification. `OSC 777` got
+the same treatment: only `notify;` counts, because other subcommands live under
+that number.
+
+### Then the reachability check
+
+Two attempts to reproduce it end to end both came back `working`, never
+`waiting`. The first because the probe ran a shell loop, so `ShellOnly` made
+the detector ignore the bell for a different and entirely correct reason — an
+earlier fix in this same session masking this one. The second, with `python3`
+in the foreground, still would not fire.
+
+Because tmux never delivers it:
+
+```
+OSC 9;plain notification   bell_flag=0 activity=0, nothing reaches the client
+OSC 777;notify;t;b         bell_flag=0 activity=0, nothing reaches the client
+BEL                        bell_flag=1
+```
+
+tmux consumes both sequences and drops them. It does not forward them to its
+client, and does not convert them into a window bell or an activity flag.
+
+So the fix is a latent correctness fix, not a live bug fix, and saying which is
+the point. What the measurement is actually worth is the other half: **the
+terminal bell is not the most reliable of three signals available without
+hooks, it is the only one that exists.** An earlier entry concluded the
+heuristic was weak because Claude Code rings no bell — that is about one agent.
+This is about every agent, including a well-behaved one that sends a
+notification sequence instead. It would be swallowed by the multiplexer before
+the panel could see it.
+
+`TestTmuxSwallowsDesktopNotificationSequences` pins that, and its failure
+message says what it means: a tmux that starts forwarding OSC 9 fails the test,
+and the failure is good news — the parser is already right for that day.
+
+### A mutation that corrupted the source
+
+Verifying the guards was done in a shell `for` loop over strings containing
+`||`, `&&`, `!` and quotes. Word-splitting cut one pattern at the `||`, the
+assertion for the next one failed before its restore ran, and the *restore*
+step of the following iteration then replaced the first `false` it found — in
+an unrelated function — with a fragment of Go containing backslashes. Three
+separate lines of `osc.go` were damaged, in two functions that had nothing to
+do with the change.
+
+Loudly, at least: it did not compile. That is the one thing distinguishing it
+from the five earlier instrument errors, every one of which made a check
+quietly appear to pass.
+
+The replacement is a Python script that holds the original text in a variable,
+applies one mutation at a time, and ends with
+
+```python
+assert P.read_text(encoding='utf-8') == orig
+```
+
+which is the assertion the shell loop could not make. Three mutations, each
+caught by exactly one test, and the file byte-identical afterwards.

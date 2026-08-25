@@ -649,3 +649,105 @@ func TestTheBellFlagLatchesWhenNobodyIsAttached(t *testing.T) {
 			"re-observed on every poll and the session would never stop waiting")
 	}
 }
+
+// TestTmuxSwallowsDesktopNotificationSequences records which of the documented
+// "a human is needed" signals can actually arrive.
+//
+// The session package parses OSC 9 and OSC 777 as notifications, and the state
+// table has always listed them beside the terminal bell. Under this config
+// they never get the chance: tmux forwards neither to its client, and does not
+// turn either into a window bell or activity flag. They are consumed and
+// dropped. Measured — a pane emitting each, with a real client attached:
+//
+// \tOSC 9;plain notification   bell_flag=0 activity=0, nothing on the client
+// \tOSC 777;notify;t;b         bell_flag=0 activity=0, nothing on the client
+// \tBEL                        bell_flag=1
+//
+// So the terminal bell is not merely the most reliable signal without hooks,
+// it is the only one that exists. That is a stronger statement than the build
+// log's "claude rings zero bells", which is about one agent; this is about any
+// agent, including one that does the polite thing and sends OSC 9.
+//
+// The parser stays correct for the day this changes, and this test is how
+// anyone finds out that it has: a tmux that starts forwarding OSC 9 fails it,
+// and the failure is good news.
+func TestTmuxSwallowsDesktopNotificationSequences(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	if err := c.EnsureServer(ctx); err != nil {
+		t.Fatalf("EnsureServer: %v", err)
+	}
+
+	emit := func(name, seq string) string {
+		t.Helper()
+		script := "import sys,time; sys.stdout.write(" + seq + "); sys.stdout.flush(); time.sleep(20)"
+		if err := c.Create(ctx, CreateOptions{
+			Name: name, Dir: t.TempDir(), Width: 80, Height: 24,
+			Command: []string{"python3", "-u", "-c", script},
+		}); err != nil {
+			t.Fatalf("Create %s: %v", name, err)
+		}
+		time.Sleep(900 * time.Millisecond)
+
+		cmd := exec.CommandContext(ctx, c.Bin, c.args(c.AttachArgs(name)...)...)
+		f, err := pty.Start(cmd)
+		if err != nil {
+			t.Fatalf("attach %s: %v", name, err)
+		}
+		done := make(chan string, 1)
+		go func() {
+			buf := make([]byte, 64<<10)
+			var got []byte
+			deadline := time.Now().Add(2500 * time.Millisecond)
+			for time.Now().Before(deadline) {
+				_ = f.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+				n, rerr := f.Read(buf)
+				got = append(got, buf[:n]...)
+				if rerr != nil && n == 0 {
+					continue
+				}
+			}
+			done <- string(got)
+		}()
+		out := <-done
+		_ = f.Close()
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+		return out
+	}
+
+	// chr(27)+chr(93) is ESC ], chr(7) is BEL. Built this way so the test file
+	// contains no raw escape characters of its own.
+	seen := emit("vp_osc9", `chr(27)+chr(93)+"9;something needs you"+chr(7)`)
+	if strings.Contains(seen, "\x1b]9;") {
+		t.Error("tmux now forwards OSC 9 to its client. That is good news: the parser " +
+			"already handles it, and the state machine can start believing it.")
+	}
+	seen777 := emit("vp_osc777", `chr(27)+chr(93)+"777;notify;title;body"+chr(7)`)
+	if strings.Contains(seen777, "\x1b]777;") {
+		t.Error("tmux now forwards OSC 777 to its client; see the OSC 9 case above")
+	}
+
+	// The contrast that makes the point: a real BEL does arrive.
+	if err := c.Create(ctx, CreateOptions{
+		Name: "vp_realbell", Dir: t.TempDir(), Width: 80, Height: 24,
+		Command: []string{"sh", "-c", "sleep 0.3; printf '\\a'; exec sleep 20"},
+	}); err != nil {
+		t.Fatalf("Create bell: %v", err)
+	}
+	time.Sleep(1200 * time.Millisecond)
+	infos, err := c.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var belled bool
+	for _, i := range infos {
+		if i.Name == "vp_realbell" {
+			belled = i.Bell
+		}
+	}
+	if !belled {
+		t.Error("a real BEL did not register either, so this test proves nothing about " +
+			"the sequences above")
+	}
+}

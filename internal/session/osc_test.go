@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"encoding/base64"
 	"reflect"
 	"strings"
@@ -226,5 +227,128 @@ func TestOrdinaryOutputProducesNoReplies(t *testing.T) {
 		if got := terminalQueryReplies([]byte(in), 80, 24); len(got) != 0 {
 			t.Errorf("terminalQueryReplies(%q) = %q, want nothing", in, got)
 		}
+	}
+}
+
+// The scanner sees every byte an agent prints.
+//
+// It is the only parser in this project fed by something nobody controls: a
+// TUI redrawing, a program dumping a binary file to the terminal by mistake, a
+// half-written escape sequence split across two reads. A panic here kills the
+// pump, which takes the session's output with it.
+//
+// What this adds over the tests above is the *shape* of the input rather than
+// its content: arbitrary bytes, arbitrary chunk boundaries. Making handleOSC
+// assume a four-byte payload — the sort of thing a small refactor does — is
+// caught in forty milliseconds.
+//
+// The size cap is asserted here too, but honestly: it is
+// TestUnterminatedOSCDoesNotGrowForever above that proves it. Exceeding 64 KiB
+// of carried fragment needs an input larger than the fuzzer realistically
+// produces, so removing the cap leaves this target green. Which is worth
+// knowing about a fuzzer in general: it only explores what it can reach.
+func FuzzOSCScanner(f *testing.F) {
+	for _, seed := range [][]byte{
+		[]byte(""),
+		[]byte("plain output\n"),
+		[]byte("\x07"),
+		[]byte("\x1b]0;a title\x07"),
+		[]byte("\x1b]2;another\x1b\\"),
+		[]byte("\x1b]52;c;aGVsbG8=\x07"),
+		[]byte("\x1b]52;c;?\x07"),
+		[]byte("\x1b]52;c;not base64!!\x07"),
+		[]byte("\x1b]777;notify;t;b\x07"),
+		[]byte("\x1b]0;unterminated"),
+		[]byte("\x1b]"),
+		[]byte("\x1b"),
+		[]byte("\x1b]0;\x00\x01\x02\x07"),
+		bytes.Repeat([]byte("\x1b]0;x"), 500),
+		bytes.Repeat([]byte{0xff}, 4096),
+	} {
+		f.Add(seed, 3)
+	}
+
+	f.Fuzz(func(t *testing.T, data []byte, split int) {
+		if split < 1 {
+			split = 1
+		}
+		if split > 64 {
+			split = 64
+		}
+		s := newOSCScanner()
+		// Chopped into pieces, because that is how a PTY delivers it and it is
+		// the case the carried fragment exists for.
+		for i := 0; i < len(data); i += split {
+			end := i + split
+			if end > len(data) {
+				end = len(data)
+			}
+			s.feed(data[i:end])
+			if len(s.pending) > maxPending {
+				t.Fatalf("carried %d bytes between reads, over the %d cap; a pane can grow the "+
+					"panel's memory by printing", len(s.pending), maxPending)
+			}
+			s.drain()
+		}
+	})
+}
+
+func TestOSC9ProgressIsNotSomebodyAskingForYou(t *testing.T) {
+	// OSC 9 carries two things that have nothing to do with each other.
+	//
+	// `OSC 9 ; <text>` is an iTerm2-style desktop notification, and treating
+	// it as "this session wants a human" is right. `OSC 9 ; 4 ; <state> ;
+	// <percent>` is the ConEmu progress indicator, emitted repeatedly during a
+	// long operation by anything that draws a progress bar — a build, an
+	// install, a download.
+	//
+	// Reading the second as the first turns every progress update into "needs
+	// you", on the one signal the panel exists to surface, and waiting sorts to
+	// the top. A build that reports progress would sit above the agent that
+	// really is stopped and asking.
+	for _, payload := range []string{
+		"\x1b]9;4;1;10\x07",   // indeterminate -> 10%
+		"\x1b]9;4;1;80\x1b\\", // and with an ST terminator
+		"\x1b]9;4;0;0\x07",    // the "clear the progress bar" form
+		"\x1b]9;4;3;0\x07",    // indeterminate state
+	} {
+		s := newOSCScanner()
+		s.feed([]byte(payload))
+		if bell, _, _ := s.drain(); bell {
+			t.Errorf("%q was read as a request for attention; it is a progress bar", payload)
+		}
+	}
+}
+
+func TestOSC9NotificationStillMeansAttention(t *testing.T) {
+	// The converse, so the fix above cannot be widened into deafness. A plain
+	// OSC 9 notification is one of the two signals that genuinely mean a human
+	// is needed, and without hooks it is most of what there is.
+	for _, payload := range []string{
+		"\x1b]9;build finished, needs your approval\x07",
+		"\x1b]9;42 files changed\x1b\\",
+		"\x1b]9;4 tests failed\x07", // starts with "4" but is not "4;"
+	} {
+		s := newOSCScanner()
+		s.feed([]byte(payload))
+		if bell, _, _ := s.drain(); !bell {
+			t.Errorf("%q did not raise attention; it is a notification", payload)
+		}
+	}
+}
+
+func TestOSC777OnlyTheNotification(t *testing.T) {
+	// Same shape as OSC 9: `777;notify;<title>;<body>` is urxvt's notification,
+	// and other subcommands live under the same number. Only the notification
+	// is somebody asking for something.
+	s := newOSCScanner()
+	s.feed([]byte("\x1b]777;precmd\x07"))
+	if bell, _, _ := s.drain(); bell {
+		t.Error("a 777 subcommand that is not a notification raised attention")
+	}
+	s = newOSCScanner()
+	s.feed([]byte("\x1b]777;notify;done;the build finished\x07"))
+	if bell, _, _ := s.drain(); !bell {
+		t.Error("a 777 notification did not raise attention")
 	}
 }

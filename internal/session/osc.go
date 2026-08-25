@@ -149,10 +149,48 @@ func (s *oscScanner) handleOSC(payload string) {
 		if utf8.Valid(decoded) {
 			s.clipboard = append(s.clipboard, string(decoded))
 		}
-	case "9", "777":
-		// Desktop notification. Treated as "this session wants attention"
-		// rather than being shown verbatim, because the text is usually the
-		// agent repeating what is already on screen.
+	case "9":
+		// Nothing reaches this today, and that is worth knowing before
+		// reasoning about it.
+		//
+		// tmux does not forward OSC 9 or OSC 777 to its client under this
+		// panel's configuration, and does not convert either into a window
+		// bell or activity flag — measured, and pinned by
+		// TestTmuxSwallowsDesktopNotificationSequences in the tmux package. So
+		// the terminal bell is not merely the most reliable signal available
+		// without hooks; it is the only one that arrives at all, even from an
+		// agent that does the polite thing and sends a notification sequence.
+		//
+		// Kept and made correct anyway: a tmux that starts forwarding these
+		// would otherwise arrive with the bug below already in place.
+		//
+		// Two unrelated things share this number, and only one of them is
+		// somebody asking for a human.
+		//
+		// `OSC 9 ; <text>` is the iTerm2 desktop notification. That is
+		// attention, and without hooks it is most of the attention there is.
+		//
+		// `OSC 9 ; 4 ; <state> ; <percent>` is the ConEmu progress indicator,
+		// which anything drawing a progress bar emits over and over during a
+		// long operation — a build, an install, a download. Reading it as a
+		// notification turned every progress update into "needs you", on the
+		// one signal this panel exists to surface, and waiting sorts to the
+		// top: a build reporting progress would sit above the agent that
+		// really had stopped and asked.
+		//
+		// Prefix "4;" rather than a leading "4", so a notification whose text
+		// begins with a digit — "4 tests failed" — is still a notification.
+		if rest == "4" || strings.HasPrefix(rest, "4;") {
+			return
+		}
+		s.bell = true
+	case "777":
+		// urxvt's convention is `777;notify;<title>;<body>`, and other
+		// subcommands exist under the same number. Only the notification is
+		// somebody asking for something.
+		if rest != "notify" && !strings.HasPrefix(rest, "notify;") {
+			return
+		}
 		s.bell = true
 	}
 }
