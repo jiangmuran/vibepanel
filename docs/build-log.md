@@ -5970,3 +5970,63 @@ measuring, which is why framing was a hardening rather than a hole.
 `TestSecurityHeaders` asserts all four on the API, on the page, and on a
 refused request — an attacker's browser is still a browser. Removing the
 middleware fails it seven times.
+
+## The one endpoint that has to be public, and allocates
+
+`/api/auth/passkey/login/begin` cannot require a session — it is how you get
+one. It creates a WebAuthn ceremony, stores it for three minutes, and returns
+the challenge. `login/finish` is behind the login throttle. `begin` was behind
+nothing.
+
+The throttle would not have helped anyway: it counts *failed attempts*, and
+starting a ceremony has no notion of failure. What was missing was a bound.
+
+One laptop, a local panel, twenty-five seconds:
+
+```
+70,238 requests, 0 refused
+rss 49 -> 70 MiB
+rate  31k in the first 5s, then 13.6k, 10.9k, 7.9k, 6.5k
+```
+
+The decay is the real finding. Every `put` and every `take` sweeps the whole
+map for expired entries, so the cost of a request grows with the number of
+requests already made. Roughly 6,300 a second down to 1,300 in twenty-five
+seconds, with the panel spending the difference on scanning a map an anonymous
+caller controls the size of. It self-limits in the sense that a fire
+self-limits when it runs out of house.
+
+`maxChallenges = 4096`, checked after the sweep so a burst that has aged out
+costs nothing. Same flood afterwards:
+
+```
+389,344 requests: 4,095 accepted, 385,249 refused with 503
+rss flat at 31 MiB
+rate constant at ~15,600/s
+health latency unchanged at 4ms
+```
+
+The point is not the refusal. It is that the cost of an attack became flat
+instead of quadratic — the panel now answers faster under the flood than it did
+before, because scanning four thousand entries is cheap and scanning two
+hundred thousand is not.
+
+### 503, not 500
+
+A full store is a temporary refusal, and the two existing `put` call sites both
+mapped any error to 500. A 500 here sends whoever is on call looking for a
+panel fault that is not there. The message names the way through:
+
+> too many sign-ins in progress; use your password, or try again in a moment
+
+Which is true, and is the design: passkeys are an addition, never the only
+door. Refusing every passkey ceremony while under attack is a real cost, and it
+is smaller than the alternative, where nobody's panel responds.
+
+### The cap has to be a queue, not a wall
+
+Checked after the sweep rather than before, so that once a flood stops the
+entries age out and sign-in works again without restarting anything. That is a
+separate property from the cap itself, and it has its own test: fill the store,
+backdate every entry, and the next ceremony must be accepted. Moving the check
+one line earlier passes the bound test and fails that one.
