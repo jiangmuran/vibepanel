@@ -89,3 +89,52 @@ func TestCooldownKeepsEventsApart(t *testing.T) {
 		t.Error("the first event stopped being gated once a second one appeared")
 	}
 }
+
+// A full map must not be rescanned on every call.
+//
+// Allow lets an event through when the map is at its cap and every entry is
+// still inside its window — deliberately, so a distributed flood is recorded
+// rather than silently dropped. Nothing was inserted in that case, so the next
+// call found the map full again and swept again, and the caller is the
+// allowlist rejection: a path that runs before any authentication, with the
+// mutex held for the whole scan.
+//
+// Measured before the fix, cap reached and every entry fresh: 82ns per call
+// became 25.2µs, a factor of 307. Afterwards, 179ns.
+//
+// Asserted as a scan count rather than a duration. The defect is "it scans on
+// every call"; a stopwatch measures the machine as much as the code.
+func TestAFullCooldownIsNotRescannedOnEveryCall(t *testing.T) {
+	start := time.Now()
+	c := NewCooldown(time.Minute)
+
+	for i := 0; i < maxCooled; i++ {
+		c.Allow("blocked", fmt.Sprintf("10.%d.%d.%d", i/65536, (i/256)%256, i%256), start)
+	}
+	if len(c.seen) < maxCooled {
+		t.Fatalf("filled to %d of %d; this test is not measuring the full case", len(c.seen), maxCooled)
+	}
+
+	c.sweeps = 0
+	for i := 0; i < 500; i++ {
+		if !c.Allow("blocked", fmt.Sprintf("192.168.%d.%d", i/256, i%256), start) {
+			t.Fatal("a full cooldown refused an event; the flood would go unrecorded")
+		}
+	}
+	if c.sweeps > 1 {
+		t.Errorf("swept %d times for 500 calls at the same instant; nothing can expire "+
+			"between them, so every scan after the first is pure cost under the lock", c.sweeps)
+	}
+
+	// Once the window has passed the scan must happen, or the map never frees.
+	c.sweeps = 0
+	if !c.Allow("blocked", "172.16.0.1", start.Add(2*time.Minute)) {
+		t.Fatal("refused after the window passed")
+	}
+	if c.sweeps != 1 {
+		t.Errorf("swept %d times once everything had expired, want 1", c.sweeps)
+	}
+	if len(c.seen) != 1 {
+		t.Errorf("map holds %d entries after everything expired, want 1", len(c.seen))
+	}
+}

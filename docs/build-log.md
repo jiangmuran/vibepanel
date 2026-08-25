@@ -8824,3 +8824,38 @@ dark during a hiccup, which is when somebody most wants to look at it — a real
 decision either way. What is different now is that changing it is a decision
 rather than an accident, and the comment no longer claims something nobody
 checked.
+
+### A guard against a flood that the flood could turn on the panel
+
+`Cooldown` exists because enabling the IP allowlist opened an unauthenticated
+write into the database: one row per rejected request, measured at 237/sec from
+one loopback client. It gates that to one row per source per minute, and caps
+the map at 4096 so the growth does not simply move from disk to memory.
+
+Reviewing it turned up the case the cap creates. When the map is at its cap and
+every entry is still inside its window, `Allow` sweeps, finds nothing to free,
+lets the event through and — deliberately — records nothing, because a
+distributed flood that goes unaudited is worse than one that writes rows. The
+next call then finds the map full again and sweeps again.
+
+Measured, cap reached and every entry fresh:
+
+	ordinary  :    82ns per call
+	map full  : 25.19µs per call   (307x)
+
+with the mutex held for all of it, on a path that runs before any
+authentication. The flood that fills the map pays nothing; the panel pays. That
+is the shape of the original bug, one layer up: a hardening option that hands
+an unauthenticated caller a lever.
+
+The fix takes no arbitrary interval. A sweep can only remove entries whose
+window has passed, so nothing can expire before the oldest survivor does, and a
+sweep before that moment frees precisely the same set as the last one. The
+sweep records `oldest + window` and Allow skips until then. 25.19µs became
+179ns.
+
+Pinned as a scan count rather than a duration, with a counter on the struct for
+the purpose. The defect is "it scans on every call"; a stopwatch measures the
+machine as much as the code, and a flaky test in front of a security path is
+worse than none. Reverting the guard makes it read: swept 500 times for 500
+calls at the same instant.
