@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,6 +17,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +26,7 @@ import (
 
 	"github.com/jiangmuran/vibepanel/internal/auth"
 	"github.com/jiangmuran/vibepanel/internal/config"
+	"github.com/jiangmuran/vibepanel/internal/hooks"
 	"github.com/jiangmuran/vibepanel/internal/session"
 	"github.com/jiangmuran/vibepanel/internal/store"
 	"github.com/jiangmuran/vibepanel/internal/sysmon"
@@ -817,13 +821,45 @@ func TestPollerTracksStateFromOutput(t *testing.T) {
 	// A TUI redrawing is what "working" looks like from outside.
 	waitState(busy.ID, session.StateWorking, 10*time.Second)
 
-	// A session that printed once and then went quiet is finished.
+	// A session that printed once and is back at a shell is finished.
+	//
+	// This used to run `exec sleep 60` and expect done, on the old rule that
+	// silence meant finished. It passed by catching a transient: for the first
+	// moment the pane's command is `sh`, and only after the exec does it become
+	// `sleep` — so whether it saw "done" depended on when the poller happened
+	// to look. Under the rule that replaced it, what decides is what is
+	// running, and `exec sh` is the thing that means nothing is.
 	quiet := postJSON[store.Session](t, ts, "/api/sessions",
-		`{"projectId":"`+project.ID+`","command":["sh","-c","echo started; exec sleep 60"]}`)
+		`{"projectId":"`+project.ID+`","command":["sh","-c","echo started; exec sh"]}`)
 	if _, err := srv.Manager.Attach(ctx, quiet.ID, quiet.TmuxName, 80, 24); err != nil {
 		t.Fatalf("Attach quiet: %v", err)
 	}
 	waitState(quiet.ID, session.StateDone, 12*time.Second)
+
+	// And the other half of that rule, which is the part with teeth: a process
+	// that is still there has not finished, however long it stays quiet. This
+	// is what used to be announced as done — a green check against a session
+	// mid-task, which is the panel giving a confident wrong answer to the only
+	// question it exists to answer.
+	thinking := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
+	if _, err := srv.Manager.Attach(ctx, thinking.ID, thinking.TmuxName, 80, 24); err != nil {
+		t.Fatalf("Attach thinking: %v", err)
+	}
+	waitState(thinking.ID, session.StateWorking, 12*time.Second)
+	// Long enough that any activity window has expired several times over.
+	time.Sleep(3 * time.Second)
+	if err := srv.pollOnce(ctx); err != nil {
+		t.Fatalf("pollOnce: %v", err)
+	}
+	rec, err := srv.DB.GetSession(ctx, thinking.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.State != session.StateWorking {
+		t.Errorf("a silent `sleep` reads as %q; the process is still running and nothing has "+
+			"finished", rec.State)
+	}
 }
 
 func TestBellMarksASessionWaiting(t *testing.T) {
@@ -1380,4 +1416,486 @@ func TestACrashedSessionIsNotReportedAsDone(t *testing.T) {
 func quote(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// Deleting a project kills its sessions; the detector has to be told to forget
+// them too, exactly as deleting a single session does.
+//
+// The leak is small — one tracker per deleted session, for the life of the
+// process — but the asymmetry is not: two paths doing almost the same thing,
+// one of them doing it incompletely, is what turns into a real bug later.
+func TestDeletingAProjectForgetsItsSessions(t *testing.T) {
+	ts, srv := newTestServer(t)
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"forgettable"}`)
+
+	before := srv.Detector.Tracked()
+	for i := 0; i < 2; i++ {
+		sess := postJSON[store.Session](t, ts, "/api/sessions",
+			`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
+		// Evaluate is what creates a tracker, and the poller calls it for every
+		// live session. Do it directly so the test does not race a timer.
+		srv.Detector.Evaluate(sess.ID, session.Observation{}, time.Now())
+	}
+	if got := srv.Detector.Tracked(); got != before+2 {
+		t.Fatalf("tracked = %d, want %d after two sessions", got, before+2)
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, ts.URL+"/api/projects/"+project.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("DELETE: %v", err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("DELETE returned %d", res.StatusCode)
+	}
+
+	// Asserting straight after the response would be testing a race, not the
+	// cleanup: the poller calls Evaluate for every row it lists, so a poll that
+	// lands between the handler's Forget and the delete rebuilds both trackers.
+	// That is why Forget alone was never enough. What has to hold is that the
+	// history does not survive the next authoritative pass over the session
+	// list — which is a thing that can be asked for directly.
+	if err := srv.pollOnce(context.Background()); err != nil {
+		t.Fatalf("pollOnce: %v", err)
+	}
+	if got := srv.Detector.Tracked(); got != before {
+		t.Errorf("tracked = %d after deleting the project, want %d; trackers were left behind",
+			got, before)
+	}
+}
+
+// Whether hooks are installed is answered from a cache, because the state
+// snapshot asks on every broadcast and answering properly means reading and
+// parsing a file in the user's home directory.
+//
+// The cache is only safe if the panel's own install drops it: otherwise the
+// "states are being guessed" notice keeps telling somebody to install hooks
+// for up to a TTL after they just did, which reads as the button not working.
+func TestHookStatusIsCachedButNotStaleAfterInstalling(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	s := &Server{Cfg: config.Config{DataDir: t.TempDir()}}
+
+	if s.hooksAreInstalled() {
+		t.Fatal("reported installed with no settings file at all")
+	}
+
+	script, err := s.scriptPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hooks.InstallClaude(script); err != nil {
+		t.Fatal(err)
+	}
+
+	// Still the cached answer: nothing has told this Server to look again.
+	if s.hooksAreInstalled() {
+		t.Error("the cache was bypassed; every state broadcast would read the file")
+	}
+
+	s.forgetHookStatus()
+	if !s.hooksAreInstalled() {
+		t.Error("dropping the cache did not pick up the install")
+	}
+
+	// And the other direction, so the notice comes back when hooks are removed.
+	if _, err := hooks.UninstallClaude(script); err != nil {
+		t.Fatal(err)
+	}
+	s.forgetHookStatus()
+	if s.hooksAreInstalled() {
+		t.Error("still reported installed after removal")
+	}
+}
+
+// A session whose tmux session disappears must stop claiming to be alive.
+//
+// tmux sessions can go without the panel being involved: `tmux kill-session`
+// from a shell, the server being killed, a reboot. The poller used to skip any
+// row it could not find and leave it exactly as it was, so a session that had
+// been waiting for a human kept showing an orange triangle indefinitely. The
+// panel exists to answer "which of these needs me", and a permanent wrong
+// answer is worse than no answer at all.
+func TestVanishedSessionStopsLookingAlive(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"vanishing"}`)
+	sess := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
+
+	// Waiting is the state that matters: it is the one that puts the session at
+	// the top of the list and asks for a person.
+	if err := srv.DB.SetSessionState(ctx, sess.ID, session.StateWaiting,
+		session.SourceManual); err != nil {
+		t.Fatal(err)
+	}
+
+	// Behind the panel's back, the way a person with a shell would do it.
+	if err := srv.Tmux.Kill(ctx, sess.TmuxName); err != nil {
+		t.Fatalf("kill: %v", err)
+	}
+	if err := srv.pollOnce(ctx); err != nil {
+		t.Fatalf("pollOnce: %v", err)
+	}
+
+	after, err := srv.DB.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.Exited {
+		t.Error("the row still says the session is running")
+	}
+	if after.ExitStatus != store.ExitStatusVanished {
+		t.Errorf("exit status = %d, want ExitStatusVanished (%d); a status that looks like a "+
+			"wait status claims we watched it end", after.ExitStatus, store.ExitStatusVanished)
+	}
+	if after.State == session.StateWaiting {
+		t.Error("it still sorts to the top asking for a human")
+	}
+}
+
+// A client that connects is told the state at once, without waiting for
+// something to change.
+//
+// The frontend has no other source: it renders from the state message and
+// nothing else. The message used to be sent only when something changed, so a
+// panel opened while every session was quiet rendered an empty page and stayed
+// empty — thirty-one bytes of body, no error, nothing to see. Which is the
+// case the panel exists for: coming back to find out which agents finished
+// while you were away is exactly the moment when nothing is happening.
+func TestNewConnectionIsToldTheStateImmediately(t *testing.T) {
+	ts, _ := newTestServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"quiet"}`)
+	postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
+
+	// Settle, so that nothing is in flight when the client arrives.
+	time.Sleep(2 * time.Second)
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
+	c, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPClient: ts.Client()})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.CloseNow()
+
+	readCtx, cancelRead := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelRead()
+	for {
+		typ, data, rerr := c.Read(readCtx)
+		if rerr != nil {
+			t.Fatalf("nothing arrived on a quiet panel, so the page would be blank: %v", rerr)
+		}
+		if typ != websocket.MessageText {
+			continue
+		}
+		var msg struct {
+			Type     string            `json:"t"`
+			Projects []json.RawMessage `json:"projects"`
+			Sessions []json.RawMessage `json:"sessions"`
+		}
+		if json.Unmarshal(data, &msg) != nil || msg.Type != ws.MsgState {
+			continue
+		}
+		if len(msg.Projects) != 1 || len(msg.Sessions) != 1 {
+			t.Fatalf("the first snapshot has %d projects and %d sessions, want 1 and 1",
+				len(msg.Projects), len(msg.Sessions))
+		}
+		return
+	}
+}
+
+// Restarting a session whose tmux session has disappeared has to work.
+//
+// The restart button is shown on exactly the rows that have exited, and a
+// vanished session is one of them — but Respawn needs a session to respawn
+// into, so the one button offered on those rows answered 500. A new tmux
+// session under the same name keeps the row, its title and everything written
+// about it; only the process is new, which is what restart means here.
+func TestRestartingAVanishedSessionRecreatesIt(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"restartable"}`)
+	sess := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
+
+	if err := srv.Tmux.Kill(ctx, sess.TmuxName); err != nil {
+		t.Fatalf("kill: %v", err)
+	}
+	if err := srv.pollOnce(ctx); err != nil {
+		t.Fatalf("pollOnce: %v", err)
+	}
+
+	res, err := ts.Client().Post(ts.URL+"/api/sessions/"+sess.ID+"/restart", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST restart: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(res.Body)
+		t.Fatalf("restart returned %d: %s", res.StatusCode, body)
+	}
+
+	alive, err := srv.Tmux.Has(ctx, sess.TmuxName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !alive {
+		t.Error("no tmux session came back")
+	}
+	after, err := srv.DB.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Exited {
+		t.Error("the row still says it has exited")
+	}
+	if after.ExitStatus == store.ExitStatusVanished {
+		t.Error("the vanished marker was left behind, so the badge still reads gone")
+	}
+}
+
+// The API under everything at once.
+//
+// A Server carries caches that HTTP handlers and the poller both touch: the
+// hook token behind a sync.Once, the coalesced state snapshot, and whether the
+// reporter script is installed. Each has its own guard and each looks right.
+// The two races already found in this project were also in code that looked
+// right, and both were found by running it rather than by reading it.
+func TestConcurrentAPITraffic(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"busy"}`)
+
+	// A few sessions to act on, so the workers are not all creating.
+	var ids []string
+	for i := 0; i < 3; i++ {
+		s := postJSON[store.Session](t, ts, "/api/sessions",
+			`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
+		ids = append(ids, s.ID)
+	}
+
+	stop := make(chan struct{})
+	time.AfterFunc(2*time.Second, func() { close(stop) })
+	var wg sync.WaitGroup
+	var failures atomic.Int64
+	var firstErr atomic.Value
+
+	fail := func(format string, args ...any) {
+		failures.Add(1)
+		firstErr.CompareAndSwap(nil, fmt.Sprintf(format, args...))
+	}
+
+	get := func(path string) {
+		res, err := ts.Client().Get(ts.URL + path)
+		if err != nil {
+			fail("GET %s: %v", path, err)
+			return
+		}
+		defer res.Body.Close()
+		io.Copy(io.Discard, res.Body)
+		if res.StatusCode >= 500 {
+			fail("GET %s returned %d", path, res.StatusCode)
+		}
+	}
+
+	// Readers of everything the browser polls.
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			paths := []string{"/api/state", "/api/settings", "/api/health"}
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				get(paths[n%len(paths)])
+			}
+		}(i)
+	}
+
+	// Writers: renames and state changes on the same handful of sessions.
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			id := ids[n%len(ids)]
+			states := []string{"working", "waiting", "done"}
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				body := fmt.Sprintf(`{"title":"t%d"}`, n)
+				if n%2 == 0 {
+					body = fmt.Sprintf(`{"state":"%s"}`, states[n%len(states)])
+				}
+				req, _ := http.NewRequest(http.MethodPatch, ts.URL+"/api/sessions/"+id,
+					strings.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				res, err := ts.Client().Do(req)
+				if err != nil {
+					fail("PATCH: %v", err)
+					continue
+				}
+				io.Copy(io.Discard, res.Body)
+				res.Body.Close()
+				if res.StatusCode >= 500 {
+					fail("PATCH returned %d", res.StatusCode)
+				}
+			}
+		}(i)
+	}
+
+	// Hook reports, which arrive from inside sessions and take the token path.
+	token, err := srv.HookToken(ctx)
+	if err != nil {
+		t.Fatalf("HookToken: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				body := `{"sessionId":"` + ids[n%len(ids)] + `","state":"waiting"}`
+				req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/hook/state",
+					strings.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Authorization", "Bearer "+token)
+				res, herr := ts.Client().Do(req)
+				if herr != nil {
+					fail("hook: %v", herr)
+					continue
+				}
+				io.Copy(io.Discard, res.Body)
+				res.Body.Close()
+				if res.StatusCode >= 500 {
+					fail("hook returned %d", res.StatusCode)
+				}
+			}
+		}(i)
+	}
+
+	// And the poller, which is what runs alongside all of this in production.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if perr := srv.pollOnce(ctx); perr != nil {
+				fail("pollOnce: %v", perr)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("API callers did not finish; something is deadlocked")
+	}
+	if n := failures.Load(); n > 0 {
+		t.Errorf("%d requests failed under concurrent load; the first was: %v", n, firstErr.Load())
+	}
+}
+
+func TestInstallingHooksDoesNotSilenceTheNotice(t *testing.T) {
+	// The notice used to clear as soon as the hook file existed, which is the
+	// worst possible moment to stop explaining.
+	//
+	// An agent reads its hooks when it starts, so every session already open
+	// keeps guessing after the install — and in a panel built for a dozen
+	// long-lived agents that is all of them. The sequence was: see "states are
+	// being guessed", click it, install, watch the notice disappear, and watch
+	// every state stay guessed with nothing on screen saying why.
+	//
+	// Guessed now means what it says: an agent is running and nothing has
+	// reported. Whether the hooks are installed decides which way out the
+	// notice offers, and the payload carries that separately.
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	t.Setenv("HOME", t.TempDir()) // never touch the real ~/.claude
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"guessing"}`)
+
+	read := func() (guessed, installed bool) {
+		t.Helper()
+		res, err := ts.Client().Get(ts.URL + "/api/state")
+		if err != nil {
+			t.Fatalf("GET: %v", err)
+		}
+		defer res.Body.Close()
+		var out struct {
+			StateGuessed   bool `json:"stateGuessed"`
+			HooksInstalled bool `json:"hooksInstalled"`
+		}
+		if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return out.StateGuessed, out.HooksInstalled
+	}
+
+	sess := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
+	if err := srv.DB.UpdateSessionRuntime(ctx, sess.ID, "/tmp", "claude"); err != nil {
+		t.Fatal(err)
+	}
+	if guessed, installed := read(); !guessed || installed {
+		t.Fatalf("before installing: guessed=%v installed=%v, want true/false", guessed, installed)
+	}
+
+	res, err := ts.Client().Post(ts.URL+"/api/settings/hooks", "application/json", nil)
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("install returned %d", res.StatusCode)
+	}
+
+	guessed, installed := read()
+	if !installed {
+		t.Error("the payload does not say the hooks are installed, so the notice cannot " +
+			"offer the right way out")
+	}
+	if !guessed {
+		t.Error("installing the hooks silenced the notice, but every session that was " +
+			"already open keeps guessing until it reloads — and the explanation just left " +
+			"the screen")
+	}
+
+	// And an actual report is what clears it, because that is the only
+	// evidence that anything is reporting.
+	if err := srv.DB.SetSessionState(ctx, sess.ID, session.StateWaiting, session.SourceHook); err != nil {
+		t.Fatal(err)
+	}
+	if guessed, _ := read(); guessed {
+		t.Error("the notice survived a hook report")
+	}
 }

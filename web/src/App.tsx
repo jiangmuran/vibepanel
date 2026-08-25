@@ -134,6 +134,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     projectOrder: 'auto',
     hasProjectOrder: false,
     stateGuessed: false,
+    hooksInstalled: false,
   })
   const [selected, setSelected] = useState<string | null>(() => readStored(SELECTED_KEY))
   const [error, setError] = useState<string | null>(null)
@@ -222,7 +223,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         onSignOut()
         return
       }
-      setError(e instanceof Error ? e.message : String(e))
+      setError(null)
     }
     // onSignOut is stable — the gate memoises it — so this does not restart
     // the resync loop on every render.
@@ -467,6 +468,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           hasProjectOrder={state.hasProjectOrder}
           onRestoreProjectOrder={() => void guard(() => api.restoreProjectOrder())}
           stateGuessed={state.stateGuessed}
+          hooksInstalled={state.hooksInstalled}
           onOpenSettings={() => {
             setSettingsOpen(true)
             if (narrow) setDrawerOpen(false)

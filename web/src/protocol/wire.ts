@@ -174,6 +174,11 @@ export interface PanelState {
    * under-reporting the one state the panel exists for.
    */
   stateGuessed: boolean
+  /**
+   * Whether the reporter is installed, which decides which way out to offer
+   * when the state is guessed rather than whether to say anything.
+   */
+  hooksInstalled: boolean
 }
 
 /**

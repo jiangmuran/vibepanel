@@ -54,6 +54,7 @@ export interface SidebarProps {
 
   /** An agent is running and nothing is reporting its state. */
   stateGuessed: boolean
+  hooksInstalled: boolean
   onOpenSettings: () => void
 }
 
@@ -390,9 +391,21 @@ export function Sidebar(props: SidebarProps) {
           onClick={props.onOpenSettings}
           className="border-t border-hairline px-3 py-2 text-left text-[11px] leading-relaxed text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
         >
-          States are being guessed from output. Claude Code does not ring the terminal bell when it
-          stops for a decision, so <span className="text-ink">waiting for you</span> will be missed.
-          Turn on state reporting →
+          {props.hooksInstalled ? (
+            <>
+              States are still being guessed. Sessions that were open before state reporting was
+              installed keep guessing until they reload — open{' '}
+              <code className="font-mono">/hooks</code> in each, or restart the agent. →
+            </>
+          ) : (
+            <>
+              States are being guessed from output, and the terminal bell is the only signal that
+              reaches the panel — tmux swallows the notification sequences before it gets there.
+              The agent most people run here does not ring one, so{' '}
+              <span className="text-ink">waiting for you</span> will be missed. Turn on state
+              reporting →
+            </>
+          )}
         </button>
       )}
     </aside>

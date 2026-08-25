@@ -302,6 +302,7 @@ export class PanelSocket {
             projectOrder: st.projectOrder,
             hasProjectOrder: st.hasProjectOrder ?? false,
             stateGuessed: st.stateGuessed,
+            hooksInstalled: st.hooksInstalled ?? false,
           })
         }
         break

@@ -254,6 +254,7 @@ func (s *Server) snapshot(ctx context.Context) []byte {
 			ProjectOrder:    orderMode(manual),
 			HasProjectOrder: hasOrder,
 			StateGuessed:    s.stateIsGuessed(sessions),
+			HooksInstalled:  s.hooksAreInstalled(),
 		},
 	})
 	if err != nil {
@@ -435,6 +436,10 @@ type stateResponse struct {
 	// than showing a control that does nothing.
 	ProjectOrder string `json:"projectOrder"`
 
+	// HooksInstalled says which way out to offer when the state is guessed:
+	// install the reporter, or reload the sessions that started before it.
+	HooksInstalled bool `json:"hooksInstalled"`
+
 	// HasProjectOrder is true when an arrangement is stored, whichever
 	// ordering is in use. Without it the sidebar has no way to offer the way
 	// back: switching to automatic used to erase the arrangement, so there was
@@ -480,6 +485,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		ProjectOrder:    orderMode(manual),
 		HasProjectOrder: hasOrder,
 		StateGuessed:    s.stateIsGuessed(sessions),
+		HooksInstalled:  s.hooksAreInstalled(),
 	})
 }
 
@@ -509,7 +515,16 @@ func (s *Server) stateIsGuessed(sessions []store.Session) bool {
 			return false
 		}
 	}
-	return !s.hooksAreInstalled()
+	// Installing the hooks used to be enough to clear this, and that was the
+	// worst possible moment to stop explaining. An agent reads its hooks when
+	// it starts, so every session already open keeps guessing after the
+	// install — and the notice that said so vanished on the click that was
+	// meant to fix it.
+	//
+	// Guessed now means what it says: an agent is running and nothing has
+	// reported. Whether the hooks are installed decides which way out the
+	// notice offers, not whether it appears.
+	return true
 }
 
 // hookCheckTTL bounds how stale the cached answer may be. Short enough that
