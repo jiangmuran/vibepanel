@@ -284,6 +284,56 @@ func (c Config) Port() int {
 	return p
 }
 
+// BindHost is the single interface the listener is bound to, or "" when it
+// listens on all of them.
+//
+// The wildcard forms — ":8443", "0.0.0.0:8443", "[::]:8443" — all include the
+// loopback interface, so callers that just want to reach the panel from this
+// machine can use 127.0.0.1. A specific address means they cannot: nothing is
+// listening on loopback, and the difference is invisible until something that
+// assumed otherwise stops working.
+func (c Config) BindHost() string {
+	host, _, err := net.SplitHostPort(c.Addr)
+	if err != nil {
+		return ""
+	}
+	switch host {
+	case "", "0.0.0.0", "::":
+		return ""
+	}
+	return host
+}
+
+// PlaintextOnANetwork reports whether the panel is about to serve a terminal,
+// and the form you type your password into, unencrypted on an interface other
+// people can reach.
+//
+// The defaults make this the out-of-the-box state: `:8443` is every interface,
+// and `--tls off` is the default mode. Nothing said so. The banner prints
+// `url http://…`, and one letter is the whole warning — easy to read past on
+// the run where you also copy the setup token.
+//
+// Not a refusal. Plaintext on a trusted LAN, or behind a reverse proxy that
+// terminates TLS itself, is a legitimate way to run this, and a panel that
+// refused to start would be worked around within the minute. It just has to be
+// said out loud, where the operator is already looking.
+func (c Config) PlaintextOnANetwork() bool {
+	if c.TLSMode != TLSOff {
+		return false
+	}
+	host := c.BindHost()
+	if host == "" {
+		return true // wildcard: every interface this machine has
+	}
+	if host == "localhost" {
+		return false
+	}
+	ip := net.ParseIP(host)
+	// An unparseable host is a name, and a name that is not "localhost" is
+	// something this machine is reachable by.
+	return ip == nil || !ip.IsLoopback()
+}
+
 // PublicURL renders the address a user should open. Best-effort: it is used in
 // log lines and the setup message, never for anything security-sensitive.
 func (c Config) PublicURL() string {
@@ -298,6 +348,45 @@ func (c Config) PublicURL() string {
 	port := c.Port()
 	if (scheme == "https" && port == 443) || (scheme == "http" && port == 80) {
 		return scheme + "://" + host
+	}
+	return fmt.Sprintf("%s://%s:%d", scheme, host, port)
+}
+
+// LoopbackURL is where a hook running inside a session posts its state.
+//
+// Always loopback, never the public URL: the hook runs beside the panel, and
+// sending its reports out to the internet and back would put a secret on the
+// wire for no reason. From this machine to this machine, which is why the
+// script that uses it passes --insecure — under TLS the certificate is issued
+// for the public hostname and will never match a local address.
+//
+// Loopback only when the panel is actually listening there. Bound to one
+// interface — "--addr 192.168.8.20:8443", which is an ordinary way to narrow
+// exposure — nothing answers on 127.0.0.1, and the hook script suppresses every
+// error by design. The result is hooks that report nothing, a settings page
+// that says they are installed, and states that stay guessed with no
+// explanation available anywhere.
+//
+// It lives on Config rather than on the server because the admin CLI creates
+// sessions too, and it was building a different, shorter set of hook variables
+// — so a session started with `vibepanel session new` could never report its
+// state. One definition, two callers.
+func (c Config) LoopbackURL() string {
+	port := c.Port()
+	if port == 0 {
+		port = 8443
+	}
+	scheme := "http"
+	if c.TLSMode != TLSOff {
+		scheme = "https"
+	}
+	host := "127.0.0.1"
+	if bound := c.BindHost(); bound != "" {
+		host = bound
+	}
+	// An IPv6 literal needs brackets before it can go in a URL.
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
 	}
 	return fmt.Sprintf("%s://%s:%d", scheme, host, port)
 }

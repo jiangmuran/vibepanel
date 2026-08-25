@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -198,6 +199,18 @@ func cmdServe(args []string) error {
 		fmt.Printf("           check the spelling against `vibepanel serve --help`; a setting\n")
 		fmt.Printf("           that is not applied looks exactly like one that is.\n")
 	}
+	if a.cfg.PlaintextOnANetwork() {
+		where := "every interface on this machine"
+		if bound := a.cfg.BindHost(); bound != "" {
+			where = bound
+		}
+		fmt.Printf("\n  WARNING: TLS is off and the panel is listening on %s.\n", where)
+		fmt.Printf("           A terminal, the password you type into it and the session\n")
+		fmt.Printf("           cookie all cross the network in the clear, and anyone who\n")
+		fmt.Printf("           can see that traffic can replay the cookie.\n")
+		fmt.Printf("           Use --tls acme or --tls files, put a proxy that terminates\n")
+		fmt.Printf("           TLS in front, or bind to 127.0.0.1 if this is only for you.\n")
+	}
 	if srv.Auth.SetupToken != "" {
 		fmt.Printf("\n  No account yet. Open %s and use this one-time setup token:\n\n      %s\n\n",
 			a.cfg.PublicURL(), srv.Auth.SetupToken)
@@ -233,6 +246,21 @@ func cmdServe(args []string) error {
 		}
 		httpServer.TLSConfig = tlsCfg
 		serveTLS = true
+	}
+
+	// What the panel is actually serving, asked of the live TLS config rather
+	// than of whichever source produced it. Works for both modes, and stays
+	// right if the certificate is replaced underneath.
+	if serveTLS && httpServer.TLSConfig != nil {
+		tlsCfg := httpServer.TLSConfig
+		domain := a.cfg.Domain
+		srv.CertExpiry = func() time.Time {
+			cert, err := tlsCfg.GetCertificate(&tls.ClientHelloInfo{ServerName: domain})
+			if err != nil || cert == nil || cert.Leaf == nil {
+				return time.Time{}
+			}
+			return cert.Leaf.NotAfter
+		}
 	}
 
 	errCh := make(chan error, 1)
@@ -399,13 +427,25 @@ func cmdSession(args []string) error {
 		tmuxName := id.TmuxName(sid)
 
 		// The hooks that report precise state identify themselves by reading
-		// this out of their environment. A session created without it simply
-		// falls back to the output heuristic, which is why the hook script can
-		// be installed globally without affecting anything outside the panel.
-		env := []string{
-			"VIBEPANEL_SESSION_ID=" + sid,
-			"VIBEPANEL_PROJECT_ID=" + p.ID,
+		// this out of their environment.
+		//
+		// All four variables, the same ones the HTTP path injects. This used to
+		// build its own list of two, so a session created with
+		// `vibepanel session new` had no token to authenticate with and no
+		// address to post to — and since the hook script suppresses its own
+		// errors by design, the only symptom was a session whose state stayed
+		// guessed forever, in a panel whose settings page said hooks were
+		// installed.
+		token, terr := a.db.HookToken(ctx)
+		if terr != nil {
+			// Not fatal: without a token the session falls back to the output
+			// heuristic, which is the documented behaviour when hooks are not
+			// in play. Worth saying out loud, though, because the difference is
+			// invisible from inside the session.
+			fmt.Fprintf(os.Stderr, "warning: no hook token (%v); this session will fall back to the output heuristic\n", terr)
+			token = ""
 		}
+		env := hooks.SessionEnv(sid, p.ID, a.cfg.LoopbackURL(), token)
 		err = a.tmux.Create(ctx, tmux.CreateOptions{
 			Name:    tmuxName,
 			Dir:     p.Path,
@@ -578,10 +618,26 @@ func cmdDoctor(args []string) error {
 
 	tm := tmux.New(cfg.TmuxSocket, cfg.TmuxDir())
 	tv, tErr := tm.Version(ctx)
-	fmt.Printf("[%s] tmux binary         %s\n", ok(tErr == nil), tv)
+	// Three outcomes, not two: missing is fatal, too old is a real degradation
+	// that is not worth refusing to run over, and neither should look like the
+	// other. "--" is the same marker passkeys use for "works, but not here".
+	tmuxMark := ok(tErr == nil)
+	tooOld := tErr == nil && !tmux.AtLeastMinimum(tv)
+	if tooOld {
+		tmuxMark = "--  "
+	}
+	fmt.Printf("[%s] tmux binary         %s\n", tmuxMark, tv)
 	if tErr != nil {
 		fmt.Printf("       tmux is required; install it with your package manager\n")
 		return tErr
+	}
+	if tooOld {
+		// Said here because every symptom of an unknown option in the config is
+		// something quietly not happening: tmux reports it once at startup and
+		// then behaves as though the line was never written.
+		fmt.Printf("       older than %d.%d, so allow-passthrough is not applied and the\n",
+			tmux.MinMajor, tmux.MinMinor)
+		fmt.Printf("       sequences agent TUIs use for progress and notifications are lost\n")
 	}
 
 	if err := cfg.EnsureDirs(); err != nil {
@@ -599,6 +655,12 @@ func cmdDoctor(args []string) error {
 	v, _ := db.Version(ctx)
 	fmt.Printf("[ok  ] database           schema v%d at %s\n", v, cfg.DBPath())
 
+	// Whether one was already running is worth saying, because starting one is
+	// a change and a diagnostic should not make changes silently. `doctor` on a
+	// machine with nothing set up leaves a tmux server behind — harmless, since
+	// the panel needs one anyway, but the operator should learn it from the
+	// output rather than from `ps` six hours later.
+	started := !tm.ServerRunning(ctx)
 	if err := tm.EnsureServer(ctx); err != nil {
 		fmt.Printf("[FAIL] tmux server        %v\n", err)
 		return err
@@ -608,7 +670,12 @@ func cmdDoctor(args []string) error {
 		fmt.Printf("[FAIL] tmux server        %v\n", err)
 		return err
 	}
-	fmt.Printf("[ok  ] tmux server        socket %q, %d session(s)\n", cfg.TmuxSocket, len(infos))
+	note := ""
+	if started {
+		note = " (started by this check; it is the panel's own socket)"
+	}
+	fmt.Printf("[ok  ] tmux server        socket %q, %d session(s)%s\n",
+		cfg.TmuxSocket, len(infos), note)
 
 	// Isolation is the promise that lets this run next to an existing setup.
 	// Assert it rather than describe it: every session we can see must be ours.

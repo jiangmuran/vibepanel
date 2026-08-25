@@ -46,6 +46,15 @@ sorts first and is the loudest thing on the screen. States come from the
 agent itself where possible (an optional hook), and from the output stream
 otherwise. The hook is never a prerequisite.
 
+*Done* means the thing that was working has exited and the pane is back at a
+shell — not that a session has gone quiet. An agent thinking, waiting on a slow
+tool call, or writing somewhere other than the screen produces no output for as
+long as it likes, and reporting that as finished is the panel giving a confident
+wrong answer to the only question it exists to answer. Without a hook, a running
+agent that is silent is reported as *working*, because that is true whether it
+is thinking or asking; the two signals that mean a person is genuinely needed —
+the terminal bell and a hook report — are separate and outrank it.
+
 **Files move by HTTP, not through the terminal.** Downloading is a link the
 browser handles; uploading is a drop onto the terminal, which writes the file
 next to the session and types its absolute path at the prompt. In-band
@@ -55,7 +64,12 @@ to press enter on is the feature, not a detail.
 
 ## Requirements
 
-- tmux 3.2 or newer (`apt install tmux`)
+- tmux 3.3 or newer (`apt install tmux`)
+
+  3.3 rather than 3.2 because the embedded config sets `allow-passthrough`,
+  which arrived in 3.3. An older tmux does not refuse to start: it reports an
+  unknown option, carries on with defaults, and the sequences agent TUIs use
+  for progress and notifications are quietly swallowed from then on.
 - Nothing else. The release binary is static and self-contained.
 
 ## Install
@@ -102,9 +116,9 @@ port while its operator believed otherwise.
 | Flag | Default | Notes |
 |---|---|---|
 | `--data-dir` | `~/.local/share/vibepanel` | database, tmux config, ACME state |
-| `--addr` | `:8443` | listen address |
+| `--addr` | `:8443` | listen address; the default is every interface |
 | `--domain` | — | public hostname; also the WebAuthn Relying Party ID |
-| `--tls` | `off` | `off`, `files`, or `acme` |
+| `--tls` | `off` | `off`, `files`, or `acme`. `off` on anything but loopback is warned about at startup: the terminal, the password and the session cookie all cross the network in the clear |
 | `--tls-cert` / `--tls-key` | — | for `--tls files`; reloaded on change |
 | `--acme-dns` | — | DNS-01 provider for `--tls acme` (currently `cloudflare`) |
 | `--acme-email` | — | contact address for the CA |

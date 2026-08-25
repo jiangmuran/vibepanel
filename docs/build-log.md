@@ -6073,3 +6073,51 @@ entry assumed bucketing would fix both.
 
 `ClientIP` is untouched. The audit log and the CIDR allowlist still see the
 exact address, which is what they are for.
+
+## Plaintext on every interface, by default, quietly
+
+`--addr` defaults to `:8443`, which is every interface. `--tls` defaults to
+`off`. So `vibepanel serve`, with no arguments, serves a terminal and the form
+you type your password into, unencrypted, to anything that can route to the
+machine.
+
+The startup banner's entire statement of this was one letter:
+
+```
+  url          http://localhost:8443
+```
+
+on the same screen as the one-time setup token, which is the line the operator
+is actually reading.
+
+The README knew the shape of the problem and only in one form — it explains
+that a misspelled `VIBEPANEL_TLS` "used to mean a panel serving plaintext on a
+public port while its operator believed otherwise". Spelling it correctly and
+leaving it at the default meant the same thing, and nothing said so.
+
+There is now a warning in the same place as the misspelled-variable one, above
+the setup token where it cannot be scrolled past:
+
+```
+  WARNING: TLS is off and the panel is listening on every interface on this machine.
+           A terminal, the password you type into it and the session
+           cookie all cross the network in the clear, and anyone who
+           can see that traffic can replay the cookie.
+           Use --tls acme or --tls files, put a proxy that terminates
+           TLS in front, or bind to 127.0.0.1 if this is only for you.
+```
+
+Not a refusal. Plaintext on a trusted LAN, or behind a proxy that terminates
+TLS itself, is a legitimate way to run this; a panel that refused to start
+would be worked around inside a minute and would have taught the operator to
+ignore it. Bound to loopback it says nothing, because that is genuinely
+private.
+
+### What was already right
+
+The session cookie's `Secure` flag is conditional on the TLS mode, with a
+comment explaining that setting it unconditionally would break a plain-HTTP
+deployment entirely — every request silently unauthenticated, nothing on
+screen to say why. Checked while measuring this, and worth recording as a
+non-finding: the cookie is not carelessly insecure, it is deliberately
+conditional, and the missing piece was only ever the warning.

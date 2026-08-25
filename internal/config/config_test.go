@@ -173,3 +173,157 @@ func TestMisspelledEnvIsReported(t *testing.T) {
 		}
 	}
 }
+
+// Flags have to be able to override the environment, including downwards.
+//
+// The ordering exists so that somebody debugging a unit-managed instance can
+// change one value on the command line without editing Environment= lines. An
+// allowlist is the value most likely to need that treatment, because getting it
+// wrong is what locks you out — and clearing it used to be the one thing the
+// flag could not do.
+func TestFlagsOverrideTheEnvironmentInBothDirections(t *testing.T) {
+	const env = "192.168.0.0/16"
+
+	t.Run("absent flag keeps the environment", func(t *testing.T) {
+		t.Setenv("VIBEPANEL_ALLOW_FROM", env)
+		c, err := Load([]string{"--domain", "localhost"}, io.Discard)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(c.AllowFrom) != 1 || c.AllowFrom[0] != env {
+			t.Errorf("AllowFrom = %v, want the environment's %q", c.AllowFrom, env)
+		}
+	})
+
+	t.Run("a flag replaces the environment", func(t *testing.T) {
+		t.Setenv("VIBEPANEL_ALLOW_FROM", env)
+		c, err := Load([]string{"--allow-from", "10.0.0.0/8"}, io.Discard)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(c.AllowFrom) != 1 || c.AllowFrom[0] != "10.0.0.0/8" {
+			t.Errorf("AllowFrom = %v, want the flag's value", c.AllowFrom)
+		}
+	})
+
+	t.Run("an empty flag clears the environment", func(t *testing.T) {
+		t.Setenv("VIBEPANEL_ALLOW_FROM", env)
+		t.Setenv("VIBEPANEL_TRUSTED_PROXIES", "127.0.0.1/32")
+		c, err := Load([]string{"--allow-from", "", "--trusted-proxies", ""}, io.Discard)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(c.AllowFrom) != 0 {
+			t.Errorf("AllowFrom = %v; --allow-from=\"\" did not turn the allowlist off",
+				c.AllowFrom)
+		}
+		if len(c.TrustedProxies) != 0 {
+			t.Errorf("TrustedProxies = %v; the flag did not clear it", c.TrustedProxies)
+		}
+	})
+}
+
+// BindHost decides where a hook running inside a session posts its state. Get
+// it wrong and every report goes to an address nothing is listening on — which
+// the hook script swallows without a word, so the panel goes on guessing while
+// the settings page says hooks are installed.
+func TestBindHost(t *testing.T) {
+	for _, tc := range []struct {
+		addr string
+		want string
+	}{
+		// Wildcard forms all include the loopback interface, so loopback is
+		// reachable and "" means "use it".
+		{":8443", ""},
+		{"0.0.0.0:8443", ""},
+		{"[::]:8443", ""},
+		// A single interface: nothing is listening on 127.0.0.1 then.
+		{"192.168.8.20:8443", "192.168.8.20"},
+		{"127.0.0.1:8443", "127.0.0.1"},
+		{"localhost:8443", "localhost"},
+		{"[fd00::1]:8443", "fd00::1"},
+		// Malformed: answer as for the wildcard rather than inventing a host.
+		// The listener will not start anyway, and a wrong guess here would send
+		// hook reports somewhere real.
+		{"nonsense", ""},
+		{"", ""},
+	} {
+		t.Run(tc.addr, func(t *testing.T) {
+			c := Default()
+			c.Addr = tc.addr
+			if got := c.BindHost(); got != tc.want {
+				t.Errorf("BindHost(%q) = %q, want %q", tc.addr, got, tc.want)
+			}
+		})
+	}
+}
+
+// The address a hook posts to, injected into every session's environment.
+//
+// It used to be hard-coded to 127.0.0.1, which is right only while the panel
+// listens on every interface. Bound to one — an ordinary way to narrow
+// exposure — nothing answers on loopback, every report is refused, and the
+// hook script suppresses the error by design. Hooks then report nothing while
+// the settings page says they are installed.
+func TestHookURLFollowsTheBindAddress(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		addr string
+		tls  TLSMode
+		want string
+	}{
+		{"wildcard", ":8443", TLSOff, "http://127.0.0.1:8443"},
+		{"all interfaces", "0.0.0.0:8443", TLSOff, "http://127.0.0.1:8443"},
+		{"one interface", "192.168.8.20:8443", TLSOff, "http://192.168.8.20:8443"},
+		{"loopback explicitly", "127.0.0.1:9000", TLSOff, "http://127.0.0.1:9000"},
+		// The script passes --insecure precisely because this certificate is
+		// issued for the public hostname and a local address will never match.
+		{"under tls", ":8443", TLSFiles, "https://127.0.0.1:8443"},
+		// An IPv6 literal needs brackets or the URL is unparseable.
+		{"ipv6", "[fd00::1]:8443", TLSOff, "http://[fd00::1]:8443"},
+		// No usable port: fall back rather than emitting ":0".
+		{"no port", "nonsense", TLSOff, "http://127.0.0.1:8443"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Config{Addr: tc.addr, TLSMode: tc.tls}
+			if got := c.LoopbackURL(); got != tc.want {
+				t.Errorf("LoopbackURL() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPlaintextOnANetworkIsNoticed(t *testing.T) {
+	// The defaults put the panel in this state: `:8443` is every interface and
+	// `off` is the default TLS mode, so out of the box a terminal and a
+	// password form are served unencrypted to anything that can route to this
+	// machine. The only thing that said so was one letter in
+	// `url http://…:8443`, on the same screen as the setup token.
+	//
+	// Loopback is exempt because that is genuinely private, and a name that is
+	// not "localhost" is not: it is something this machine answers to.
+	cases := []struct {
+		addr string
+		tls  TLSMode
+		want bool
+	}{
+		{":8443", TLSOff, true},
+		{"0.0.0.0:8443", TLSOff, true},
+		{"[::]:8443", TLSOff, true},
+		{"192.168.1.10:8443", TLSOff, true},
+		{"panel.example.com:8443", TLSOff, true},
+		{"127.0.0.1:8443", TLSOff, false},
+		{"[::1]:8443", TLSOff, false},
+		{"localhost:8443", TLSOff, false},
+		// TLS on: the traffic is not in the clear, wherever it is bound.
+		{":8443", TLSFiles, false},
+		{"0.0.0.0:8443", TLSACME, false},
+	}
+	for _, tc := range cases {
+		c := Config{Addr: tc.addr, TLSMode: tc.tls}
+		if got := c.PlaintextOnANetwork(); got != tc.want {
+			t.Errorf("Addr=%q TLSMode=%q: PlaintextOnANetwork() = %v, want %v",
+				tc.addr, tc.tls, got, tc.want)
+		}
+	}
+}
