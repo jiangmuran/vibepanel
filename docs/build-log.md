@@ -7583,3 +7583,49 @@ does not contain the change. Run `make build`.
 Every browser harness calls it. `npm run check:*` rebuilds nothing, so "edit,
 forget to build, measure yesterday" was always one step away — and it is the
 one failure that looks exactly like a pass.
+
+## The committed history did not build
+
+Every check in this project drives a binary built from the working tree. None
+of them can tell you anything about what was *committed*, and the two had
+drifted apart: a worktree at HEAD did not compile.
+
+```
+internal/httpapi/api.go:321:36: s.DB.HookToken undefined
+  (type *store.DB has no field or method HookToken)
+```
+
+The caller was committed. `store.HookToken`, which it calls, was sitting
+untracked in the working tree, along with forty-four other files — the flag
+precedence fix, the FIFO guard on the download path, the hook installer that
+merges instead of replacing, the certificate reload keyed on bytes, half the
+frontend and the tests for all of it.
+
+Nothing was wrong with any of that work. What was wrong is that commits were
+made by naming paths, and a path that was not named stayed behind. Everything
+kept passing, because everything was measuring the tree where the missing
+pieces were.
+
+So my own reports of "all green" in this log describe a working tree, not the
+repository. Anyone cloning it got something that did not compile.
+
+### Repaired, and then guarded
+
+The tree is committed in three parts — backend, frontend, packaging — and a
+worktree at HEAD now builds, vets, passes the Go tests, and passes `npm ci`,
+`tsc`, `eslint` and 36 frontend tests.
+
+`make head-check` does exactly that, from a temporary worktree with nothing of
+the working tree in it. It is second in `verify`, right after `check`, because
+everything below it is blind to this.
+
+It was verified against real history rather than a synthetic mutation: pointed
+at the commit before the repair, it reports the failure above and exits 1.
+
+### The shape of it
+
+This is the third instrument failure in as many sessions, and the same shape
+each time: a measurement that answers a question next to the one being asked.
+`.xterm-viewport` instead of xterm's own scroll element. A build that failed
+while its output was captured and its exit code ignored. And now a checkout
+that nobody was ever checking. All three reported success.

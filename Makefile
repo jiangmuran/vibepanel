@@ -59,10 +59,15 @@ tls-check: build      ## Serve over its own TLS: wss, Secure cookie, cert swap
 # four pixels, a panel telling every link where it lived — and none of them are
 # reachable from a unit test.
 #
+# `head-check` is second, right after `check`, because everything below it
+# drives a binary built from the working tree and is therefore silent about the
+# difference between "my tree works" and "what I committed works". They were
+# not the same: HEAD had not compiled for some time, while every check passed.
+#
 # Not merged into `check`, because this takes twenty minutes and a gate people
 # stop running is worse than a slow one they run deliberately.
 .PHONY: verify
-verify: check first-run-check render-check stress-check restart-check scale-check tls-check release-check  ## Every check there is (~20 min)
+verify: check head-check first-run-check render-check stress-check restart-check scale-check tls-check release-check  ## Every check there is (~20 min)
 	@echo "all checks passed"
 
 .PHONY: release
@@ -72,6 +77,10 @@ release:              ## Cross-compiled archives in dist/
 .PHONY: release-check
 release-check:        ## Build the archives and run one from a throwaway HOME
 	scripts/release-check.sh
+
+.PHONY: head-check
+head-check:           ## Build and test a clean worktree at HEAD, not this tree
+	scripts/head-check.sh
 
 .PHONY: clean
 clean:

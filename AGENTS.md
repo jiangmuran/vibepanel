@@ -80,6 +80,16 @@ Each of these exists because the alternative broke something real.
 
   Run the one that covers what you touched, and `verify` before anything
   structural. A change that only passes `check` has not been looked at.
+- **Every one of those builds from the working tree, so none of them can tell
+  you whether what you *committed* works.** They were not the same thing: HEAD
+  did not compile for some time — a caller committed, the method it calls left
+  untracked — while every check passed. `make head-check` builds a clean
+  worktree at HEAD and runs the fast gate in it, which is what somebody cloning
+  the repository gets. It takes a ref, so `scripts/head-check.sh <branch>`
+  works too.
+
+  Commit whole changes. `git add <path>` for some of the files and not the
+  others is how that happened.
 - **Commits**: English Conventional Commits (`feat(tmux): ...`). No
   `Co-Authored-By` trailers.
 - **Docs**: English. Keep `docs/build-log.md` current as you go; a decision that
