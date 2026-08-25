@@ -143,6 +143,36 @@ func TestTrimPartialEscapeKnownFalsePositive(t *testing.T) {
 	}
 }
 
+func TestTrimPartialEscapeKnownFalseNegative(t *testing.T) {
+	// The mirror of the false positive above, and the more tempting one to
+	// "fix". The scan assumes the CSI introducer went with the ESC, so it
+	// handles "31mhello" and leaves "[31mhello" alone — the buffer cut between
+	// the ESC and the '[', and the replay opens with a literal [31m.
+	//
+	// Left alone deliberately. Skipping a leading '[' does clean that up, and
+	// it was measured against ordinary output at the same time:
+	//
+	//	"[31mhello"           -> "hello"                 fixed
+	//	"[1] done"            -> " done"                 eaten
+	//	"[1]+  Done  sleep 5" -> "+  Done  sleep 5"      eaten
+	//
+	// "[1]" is bash's job-control prefix, so the trade is a visible artifact
+	// nobody can mistake for output against silent deletion of text that was
+	// really there. This panel exists to answer what an agent did; the version
+	// that quietly drops characters is the worse one, and a reader has no way
+	// to tell it happened.
+	for in, want := range map[string]string{
+		"[31mhello":           "[31mhello",
+		"[2Jclear":            "[2Jclear",
+		"[1]+  Done  sleep 5": "[1]+  Done  sleep 5",
+	} {
+		if got := string(trimPartialEscape([]byte(in))); got != want {
+			t.Errorf("trimPartialEscape(%q) = %q, want %q — see the comment above "+
+				"before changing this; the alternative eats real text", in, got, want)
+		}
+	}
+}
+
 func TestSnapshotOnlyTrimsAfterOverflow(t *testing.T) {
 	// A buffer that never wrapped starts exactly where the session started, so
 	// its first bytes are real output and must never be trimmed.
