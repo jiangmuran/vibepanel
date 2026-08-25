@@ -223,6 +223,55 @@ try {
       `the snapshot is ${snapKiB.toFixed(0)} KiB and is pushed on every state change`)
   }
 
+  // How often that snapshot is actually pushed, with agents producing output.
+  //
+  // The poller compares each snapshot against the previous one and broadcasts
+  // only when they differ — "a tick that broadcasts regardless is polling
+  // again, just with the cost moved onto every connected viewer". last_output_at
+  // was in the payload and moves for any session that is printing, so one busy
+  // agent made every tick a broadcast: measured at six sessions, ten ticks out
+  // of ten and 85 KiB/min per viewer, which at this many sessions is about
+  // 20 MB an hour onto a phone.
+  {
+    const busy = snapshot.sessions.slice(0, 6)
+    for (const sess of busy) {
+      execSync(`tmux -L ${SOCKET} respawn-pane -k -t '=${sess.tmuxName}:' ` +
+        `"sh -c 'i=0; while :; do i=\$((i+1)); echo line \$i of build output; sleep 0.1; done'"`)
+    }
+    await sleep(6000)
+    // Prove they are printing before measuring: a respawn that silently did
+    // nothing reports the idle figure and looks like a pass.
+    const printing = busy.filter((sess) => {
+      const pane = execSync(`tmux -L ${SOCKET} capture-pane -p -t '=${sess.tmuxName}:'`, { encoding: 'utf8' })
+      return pane.includes('of build output')
+    }).length
+    if (printing < busy.length) {
+      note('WARN', 'scale', `only ${printing} of ${busy.length} sessions are producing output; not measuring`)
+    } else {
+      let prev = null
+      let changed = 0
+      const TICKS = 8
+      for (let i = 0; i < TICKS; i++) {
+        const body = await (await authed('/api/state')).text()
+        if (prev !== null && body !== prev) changed++
+        prev = body
+        await sleep(2000)
+      }
+      const perMin = (changed / ((TICKS - 1) * 2 / 60)) * snapKiB
+      console.log(`snapshot changed on ${changed} of ${TICKS - 1} ticks with ${busy.length} sessions printing ` +
+        `(${perMin.toFixed(0)} KiB/min per viewer)`)
+      if (changed > (TICKS - 1) / 2) {
+        note('FAIL', 'scale',
+          `${changed} of ${TICKS - 1} ticks broadcast a full snapshot while sessions were merely ` +
+          `printing — ${perMin.toFixed(0)} KiB/min to every viewer. Something that changes with ` +
+          'output is in the payload again.')
+      } else {
+        note('PASS', 'scale',
+          `output alone broadcasts on ${changed} of ${TICKS - 1} ticks (${perMin.toFixed(0)} KiB/min per viewer)`)
+      }
+    }
+  }
+
   const attached = tmuxClients()
   console.log(`tmux clients: ${attached} (one per session is the design)`)
   // Number('?') is NaN and NaN < COUNT is false, so a failed count used to

@@ -127,7 +127,6 @@ export interface Session {
   command: string
   cols: number
   rows: number
-  lastOutputAt: number
   createdAt: number
   archivedAt: number | null
 

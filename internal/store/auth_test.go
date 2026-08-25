@@ -1,7 +1,9 @@
 package store
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -87,5 +89,33 @@ func TestSessionTitleIsBoundedWhicheverWayItArrives(t *testing.T) {
 		if n := utf8.RuneCountInString(got.Title); n > session.MaxTitleRunes {
 			t.Errorf("%v title stored %d runes, cap is %d", src, n, session.MaxTitleRunes)
 		}
+	}
+}
+
+func TestLastOutputIsNotOnTheWire(t *testing.T) {
+	// The state snapshot is broadcast to every viewer whenever it differs from
+	// the previous one, and last_output_at moves for any session that is
+	// producing output. So one busy agent turned every two-second tick into a
+	// broadcast — measured with six sessions printing: ten ticks out of ten,
+	// 85 KiB/min per viewer, and around 20 MB an hour at two dozen sessions on
+	// a phone. That comparison exists precisely to prevent this.
+	//
+	// The column stays: the sidebar's ordering is built on it, in SQL.
+	a := Session{ID: "s", Title: "agent", LastOutputAt: 1000}
+	b := a
+	b.LastOutputAt = 999999
+	ja, err := json.Marshal(a)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	jb, err := json.Marshal(b)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !bytes.Equal(ja, jb) {
+		t.Errorf("two sessions differing only in last output serialise differently:\n%s\n%s", ja, jb)
+	}
+	if bytes.Contains(ja, []byte("lastOutput")) {
+		t.Errorf("last_output_at is on the wire: %s", ja)
 	}
 }

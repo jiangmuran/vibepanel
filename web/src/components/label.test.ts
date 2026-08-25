@@ -28,7 +28,6 @@ function session(over: Partial<Session>): Session {
     exited: false,
     exitStatus: 0,
     parentSessionId: null,
-    lastOutputAt: 0,
     stateChangedAt: 0,
     createdAt: 0,
     ...over,

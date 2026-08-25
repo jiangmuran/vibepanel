@@ -7848,3 +7848,57 @@ does not contain the change. Run `make build`.```
 
 Without it they would have driven the previous UI and reported three clean
 runs, which is what I would have written down.
+
+## Every tick was a broadcast
+
+The poller builds the state snapshot, compares it to the previous one, and
+pushes only when they differ. The comment says why: "a tick that broadcasts
+regardless is polling again, just with the cost moved onto every connected
+viewer."
+
+`last_output_at` was in the payload. It moves for any session that is printing,
+so one busy agent made every tick differ. Measured, six sessions each printing
+ten lines a second:
+
+```
+idle   0 of 10 ticks would broadcast    2889 bytes
+busy  10 of 10 ticks would broadcast    2907 bytes   85 KiB/min per viewer
+```
+
+At two dozen sessions the scale check puts it at **329 KiB/min per viewer** —
+about 20 MB an hour, onto a phone, for as long as anything is running. The
+optimisation had never once applied to a panel in use.
+
+Nothing read the field. It was declared in `wire.ts` and used nowhere; the
+ordering it drives is applied in SQL, so the array already arrives in the right
+order. The column stays, the field leaves the wire, and busy drops to 1 tick in
+10 — that one being a real change.
+
+A display of "last active" should carry a value chosen for display: bucketed,
+so it changes when the words would.
+
+### Two checks, because the cheap one cannot see the cost
+
+A store test pins that two sessions differing only in last output serialise
+identically — fast, and it says exactly which field came back. The scale check
+respawns six of its twenty-four sessions as printers and counts how many ticks
+push a snapshot, which is the number that actually matters and the one that
+names the price:
+
+```
+[FAIL] scale: 7 of 7 ticks broadcast a full snapshot while sessions were merely
+       printing — 329 KiB/min to every viewer.
+```
+
+It proves the sessions are printing before it measures. A respawn that silently
+did nothing would report the idle figure and read as a pass — which is how the
+first version of the CPU probe in this same investigation reported "0.1% busy,
+0.1% idle" and I nearly wrote it down.
+
+### What the CPU probe found, once it was measuring something
+
+Nothing wrong, which is worth recording. Fifteen sessions idle: 0.10% of one
+core for the panel, 0.03% for the tmux processes. Fifteen sessions each
+printing ten lines a second: 1.5% and 1.1%. A panel that attaches to every
+session so it can see what they are doing costs about two and a half per cent
+of one core to do it.

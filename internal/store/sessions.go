@@ -35,7 +35,18 @@ type Session struct {
 	Command        string         `json:"command"`
 	Cols           int            `json:"cols"`
 	Rows           int            `json:"rows"`
-	LastOutputAt   int64          `json:"lastOutputAt"`
+	// Not sent. It changes at most once a second per session, and the state
+	// snapshot is broadcast to every viewer whenever it differs from the last
+	// one — so a single session producing output made every tick a broadcast,
+	// which is the thing that comparison exists to prevent. Measured with six
+	// sessions printing: ten ticks out of ten, 85 KiB/min per viewer, and at
+	// two dozen sessions around 20 MB an hour on a phone.
+	//
+	// Nothing read it. It was declared in wire.ts and used nowhere, and the
+	// ordering it drives is applied in SQL, so the array arrives already in
+	// the right order. A display of "last active" should carry a value chosen
+	// for display — bucketed, so it changes when the words would.
+	LastOutputAt int64 `json:"-"`
 
 	// Exited means the pane's process is gone and tmux is showing its last
 	// screen. Orthogonal to State: the task may have been finished, abandoned
