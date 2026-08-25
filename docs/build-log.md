@@ -6538,3 +6538,40 @@ assert P.read_text(encoding='utf-8') == orig
 
 which is the assertion the shell loop could not make. Three mutations, each
 caught by exactly one test, and the file byte-identical afterwards.
+
+## The one part running outside Go, and the only path through it nobody had run
+
+Every piece of the hook mechanism had a test. The path did not.
+
+`report.sh` is the file that gets merged into somebody's `~/.claude/settings.json`
+and run by the agent on every state change. Two tests execute it, and both are
+negative: it no-ops with no environment, and it refuses an unknown state.
+Nothing established that the positive case works — that a real script, with the
+environment the panel injects, actually moves a session's state.
+
+That is a strange thing to have left untested, and it became stranger this
+session. Without hooks the panel infers state from the byte stream, and the
+only signal that reaches it is the terminal bell: tmux swallows OSC 9 and OSC
+777 before the panel can see them, and the agent most people run here does not
+ring. So the script is not an optional enhancement to state detection. It is
+most of state detection.
+
+`TestTheReporterScriptActuallyReportsState` walks all of it: the installed
+file, the injected environment, curl, the endpoint, the token check, the
+detector, and the state the sidebar reads. Report `waiting`, see `waiting`.
+Report `done`, see `done` — both directions, so the test cannot pass on a value
+that happened to be the default.
+
+Two properties beyond the happy path, and both are about the fact that this
+runs inside somebody else's program:
+
+- **It must not print.** The script's own comment promises "never fail, never
+  block, never print", because an agent surfaces whatever its hooks say. Adding
+  an `echo` to the script fails the test twice.
+- **A wrong token must change nothing.** The script is installed globally and
+  runs wherever an agent runs; the token is the only thing stopping a session
+  on somebody else's panel from being driven by it.
+
+Pointing the script at a path that does not exist fails with
+`state is "working", want "waiting"` — which is the heuristic's answer when
+nothing reports, and exactly the failure this test is for.
