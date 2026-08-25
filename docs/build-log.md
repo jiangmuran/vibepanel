@@ -8963,3 +8963,44 @@ can identify or click back into to fix the name that made it.
 Fixed at the funnel rather than at the three entrances, for the reason the
 funnel exists: covering every entrance one at a time is how one of them stays
 open.
+
+### Two methods nobody called
+
+`(*Live).Replay()` and `(*Live).Subscribers()` had no caller anywhere — not in
+the package, not in the ws handler that looks like it would want them, not in a
+test. The socket's replay comes back from `Subscribe`, which takes it under the
+same lock that registers the subscriber; `Replay()` was the version of that
+without the subscription, and nothing ever needed it.
+
+Removed. Two exported methods on a type with a mutex read as API, and the next
+person reasoning about `Live`'s locking has to account for them.
+
+### Three scenarios that turned out to be handled
+
+Written down because a negative result is the answer to the question, and the
+next person to wonder should not have to run the probe again.
+
+**A project's directory is deleted while the panel runs.** An agent running
+`rm -rf`, or a directory renamed. The path stays in the database. Measured: the
+file listing answers 404 "no such directory", creating a session answers 400
+"the project directory is not there any more: /path", and the project stays in
+the state snapshot, which is right — it has to be visible to be removed.
+
+**Somebody runs `tmux -L vibepanel kill-server`.** `pollOnce` returns no error,
+the live list empties, and the sessions are marked `exited` with
+`exitStatus = -1`, which is `ExitStatusVanished` — the one status that is not a
+wait status. The header then offers "The tmux session is gone. Start it again in
+a new one." rather than a number no process could have returned. The row's
+`state` stays `done`, which reads wrong at a glance and is not: `Exited` is
+orthogonal to `State`, and the exit status is what carries how it ended.
+
+That last one was nearly written up as a defect on the strength of a probe that
+printed the state and not the exit status. The panel's whole argument about
+*done* is that a crash and a finished job must not look alike; concluding it had
+broken that, from a probe that could not see the field carrying the difference,
+would have been the same mistake in miniature.
+
+**A partially-covered function is not an uncovered one.** `RecordSize`,
+`truncateForLog` and `Paste` all show 0.0% and all have live callers — the
+resize message, the trace path behind a debug flag, and the paste the compose
+box sends. Coverage says what the tests reach, not what the program runs.

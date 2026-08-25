@@ -780,20 +780,6 @@ func (l *Live) TakeControl(clientID string, cols, rows int) error {
 	return nil
 }
 
-// Replay returns the current replay buffer without subscribing.
-func (l *Live) Replay() []byte {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	return l.ring.Snapshot()
-}
-
-// Subscribers reports how many viewers are attached.
-func (l *Live) Subscribers() int {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	return len(l.subs)
-}
-
 func (l *Live) awaitPump() {
 	select {
 	case <-l.pumped:
