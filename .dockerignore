@@ -1,0 +1,37 @@
+# What must not reach the build context.
+#
+# The build stage runs `COPY . .`, so without this file everything here goes
+# into an image layer. .gitignore already says which of these must never be
+# committed — "never commit a database with real session/credential data" — and
+# that rule had not been carried across to Docker, where the same files end up
+# somewhere far easier to hand to somebody else.
+#
+# Each exclusion is checked against what the build actually needs: the Go
+# sources, go.mod/go.sum, and web/ for the node stage.
+
+# Runtime data. The database holds password hashes and passkey material.
+/data/
+*.db
+*.db-wal
+*.db-shm
+
+# Build output. internal/webui/dist is deliberately excluded: the node stage
+# produces it and copies it in afterwards, so the version sitting in a working
+# tree is irrelevant and only ever stale.
+/dist/
+/vibepanel
+/internal/webui/dist/
+/web/dist/
+
+# Installed by `npm ci` inside the node stage, and full of platform-specific
+# binaries that would be wrong for the image anyway.
+/web/node_modules/
+
+# History and tooling. The version is passed as a build argument.
+.git/
+.github/
+*.log
+
+# Local scratch that has no business in an image.
+/shots*/
+/tmp/

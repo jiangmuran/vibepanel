@@ -5,6 +5,17 @@
 # has whatever was put in the image and whatever was mounted, which is a
 # smaller world than most people expect. The single binary plus a systemd user
 # service is the arrangement this is built around; see deploy/vibepanel.service.
+#
+# The larger caveat, which belongs here because it is the reason the project is
+# shaped the way it is: IN A CONTAINER, RESTARTING THE PANEL KILLS EVERY
+# SESSION. Elsewhere the tmux server outlives the Go process, which is what
+# makes `systemctl restart` and an upgrade harmless — the whole premise. Here
+# tmux is a child of the entrypoint and the container is the boundary, so
+# `docker restart`, `compose up -d` after a rebuild, and anything that
+# recreates the container take the agents with them.
+#
+# Nothing can be done about that from inside the image; it is what a container
+# is. Run it this way only if the sessions are cheap to lose.
 
 FROM node:24-alpine AS web
 WORKDIR /src/web

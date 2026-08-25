@@ -14,6 +14,7 @@ import { mkdtempSync, rmSync, mkdirSync, copyFileSync, renameSync } from 'node:f
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { sweepStaleSockets } from '../web/scripts/lib/stale.mjs'
 
 const BIN = process.argv[2] ?? new URL('../vibepanel', import.meta.url).pathname
 const SHOTS = process.argv[3] ?? join(tmpdir(), 'vptls-shots')
@@ -28,6 +29,10 @@ const PORT = await new Promise((resolve, reject) => {
   })
 })
 const SOCKET = `vptls-${process.pid}`
+
+// Before anything else: a run killed with SIGKILL cannot clean up after
+// itself, and what it leaves behind is a tmux server holding live sessions.
+sweepStaleSockets((msg) => console.log(`==> ${msg}`))
 const DATA = mkdtempSync(join(tmpdir(), 'vptls-'))
 const HOME = mkdtempSync(join(tmpdir(), 'vptls-home-'))
 const CERTS = mkdtempSync(join(tmpdir(), 'vptls-certs-'))
@@ -48,11 +53,16 @@ const makeCert = (name) => {
   )
   return { key, crt }
 }
+// Both helpers silence x509 as well as s_client. Only s_client was quiet, so
+// the readiness loop below — which calls this until the server answers —
+// printed "Could not find certificate from <stdin>" on its first attempt, in
+// the middle of a run that passes. A green run that prints an error teaches
+// people to stop reading the output.
 const servedFingerprint = () => {
   try {
     return execSync(
       `echo | openssl s_client -connect 127.0.0.1:${PORT} -servername localhost 2>/dev/null ` +
-        `| openssl x509 -noout -fingerprint -sha256`,
+        `| openssl x509 -noout -fingerprint -sha256 2>/dev/null`,
       { encoding: 'utf8' },
     ).trim()
   } catch {
@@ -63,7 +73,7 @@ const servedSubject = () => {
   try {
     return execSync(
       `echo | openssl s_client -connect 127.0.0.1:${PORT} -servername localhost 2>/dev/null ` +
-        `| openssl x509 -noout -subject`,
+        `| openssl x509 -noout -subject 2>/dev/null`,
       { encoding: 'utf8' },
     ).trim()
   } catch {
@@ -229,6 +239,32 @@ try {
   }
   await page.screenshot({ path: join(SHOTS, 'over-tls.png') })
 
+  // The settings page has to say when the certificate runs out.
+  //
+  // A certificate nobody renewed does not announce itself; it stops working
+  // one morning. The panel warns in its log as the date approaches, and a log
+  // on a machine nobody reads is not where an operator should first learn it —
+  // so the date is on the page they actually open.
+  await page.locator('[data-testid="settings-open"], header button[title*="Settings" i]')
+    .first().click().catch(() => {})
+  await sleep(1500)
+  const statusText = await page
+    .locator('[data-testid="settings-status"]')
+    .innerText()
+    .catch(() => '')
+  if (!statusText) {
+    note('WARN', 'tls', 'could not open the settings dialog to check the certificate row')
+  } else if (!/Certificate/i.test(statusText)) {
+    note('FAIL', 'tls',
+      `the settings page does not mention the certificate at all: ${JSON.stringify(statusText.slice(0, 200))}`)
+  } else if (!/day|expired/i.test(statusText)) {
+    note('FAIL', 'tls',
+      `the certificate row carries no date or countdown: ${JSON.stringify(statusText.slice(0, 200))}`)
+  }
+  await page.screenshot({ path: join(SHOTS, 'settings-cert.png') })
+  await page.locator('[data-testid="settings-close"]').click().catch(() => {})
+  await sleep(500)
+
   // ── replacing the certificate under a running server ─────────────────────
   // The reason the file source polls instead of watching: a certificate is
   // renewed by a process that writes and renames, and a watcher on the old
@@ -262,16 +298,34 @@ try {
   }
 
   // A broken certificate must not take the listener down with it: keeping the
-  // old pair is the difference between a warning and an outage.
+  // old pair is the difference between a warning and an outage during a
+  // botched renewal.
+  //
+  // The wait has to outlast the reload interval. An earlier version of this
+  // slept two seconds against a source that polls once a minute, so the file
+  // had not been looked at when the assertion ran: it confirmed that a server
+  // which had not yet noticed anything was still working, which is not a
+  // property worth checking.
+  const goodFingerprint = servedFingerprint()
   execSync(`printf 'not a certificate\\n' > ${LIVE_CRT}`)
-  await sleep(2000)
-  const afterBad = servedFingerprint()
-  if (!afterBad) {
-    note('FAIL', 'tls',
-      'writing a corrupt certificate file stopped the server answering handshakes; ' +
-      'a bad renewal would be an outage')
+  // Long enough to cross the reload interval with room to spare, checking the
+  // whole way rather than only at the end: an outage that lasts a few seconds
+  // in the middle is still an outage.
+  for (let i = 0; i < 75; i++) {
+    if (!servedFingerprint()) {
+      note('FAIL', 'tls',
+        'the listener stopped answering handshakes after a corrupt certificate was written; ' +
+        'a bad renewal would be an outage')
+      break
+    }
+    await sleep(1000)
   }
-
+  // Still serving what it had before, rather than having picked up the rubbish.
+  if (servedFingerprint() !== goodFingerprint) {
+    note('FAIL', 'tls',
+      `after a corrupt certificate the server serves ${servedSubject()}; it should have kept ` +
+      'the last good pair')
+  }
   for (const e of pageErrors) note('FAIL', 'js', `uncaught: ${e}`)
 } catch (err) {
   note('FAIL', 'harness', String(err?.stack ?? err))
@@ -283,4 +337,18 @@ for (const f of findings) console.log(`[${f.sev}] ${f.area}: ${f.msg}`)
 const fails = findings.filter((f) => f.sev === 'FAIL').length
 console.log(`=== tls check: ${fails} FAIL, ${findings.length - fails} WARN ===`)
 console.log(`screenshots: ${SHOTS}`)
+// Flush before exiting, and then exit deliberately.
+//
+// Node's stdout is asynchronous when it is a pipe — which it is whenever this
+// runs under make, CI, or anything capturing the output — and process.exit()
+// abandons whatever has not been flushed. The findings and the verdict are the
+// last thing printed and therefore the first thing lost: three runs of the
+// scale check in a row produced a different amount of output each time, one of
+// them stopping mid-way with no verdict at all, and the missing lines were
+// read as the run having crashed.
+//
+// Setting only process.exitCode would flush, but it also waits for the event
+// loop to drain, and one stray handle from a browser or a child process would
+// hang the check instead of ending it. Flush, then exit.
+await new Promise((resolve) => process.stdout.write('', resolve))
 process.exit(fails ? 1 : 0)
