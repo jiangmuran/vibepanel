@@ -6408,3 +6408,53 @@ and untested.
 nothing calls it, so expired rows accumulate forever. Not a security hole —
 `AuthSessionByToken` filters on `expires_at > ?`, so an expired session cannot
 authenticate — just a table that only grows, one row per sign-in.
+
+## A table that only grew, and two promises that turned out to be kept
+
+`PurgeExpiredAuthSessions` was the last of the four functions the coverage
+sweep found with no callers. Unlike `ClearBell`, its reason for existing was
+true: nothing removed expired sign-ins, so the table grew by one row per
+sign-in and never shrank.
+
+Not a security hole. `AuthSessionByToken` filters on `expires_at > ?`, so an
+expired row cannot authenticate — it is dead weight, not a way in. Worth
+stating, because "expired sessions are never cleaned up" reads like something
+much worse than it is.
+
+Called at startup now, in `serve` rather than in `openApp`, which the admin
+subcommands share: `vibepanel project list` should not quietly write to the
+database. Not on a ticker either — a sign-in is rare enough that a panel
+restarted every few weeks accumulates nothing worth a goroutine, and a purge is
+easier to reason about when it happens at a moment somebody chose.
+
+```
+level=INFO msg="purged expired sign-ins" rows=2
+rows left: 1
+```
+
+The test pins the half that would be the louder bug: a purge that took the live
+session with it would sign everybody out at every restart. Widening the
+`WHERE` to match everything fails it on both counts.
+
+### Two things that were already right
+
+`RecordSize` also had no coverage, and it carries a promise worth checking: "a
+reconnecting browser starts at the grid the session was last used with". If the
+stored size were wrong or ignored, every panel restart would reflow every
+agent's TUI to the 120x32 attach default — with nobody watching, which is the
+worst time for it.
+
+```
+1. the grid the session was used with: 132x40
+2. while the panel is down:            132x40
+3. after the panel restarted:          132x40
+```
+
+Kept. And the earlier sweep's other suspicion — that `Info.Bell` might be a
+field nobody could rely on — turned out the same way once measured: the
+mechanism works, only the comments were wrong.
+
+Three negative results in a row is worth noticing rather than being
+disappointed by. The sweep's value was not that it found broken code; it is
+that "no test touches this" and "this does not work" are different claims, and
+the only way to tell them apart is to go and look.

@@ -715,3 +715,44 @@ func TestAutomaticOrderingKeepsTheArrangement(t *testing.T) {
 		t.Errorf("going back gave %v, want the arrangement %v", got, arranged)
 	}
 }
+
+func TestPurgingExpiredSignInsKeepsTheLiveOnes(t *testing.T) {
+	// Nothing called this, so the table only grew: one row per sign-in that
+	// stopped meaning anything thirty days earlier. Not a security hole —
+	// AuthSessionByToken filters on `expires_at > ?`, so an expired row cannot
+	// authenticate — but a table that only grows is still a table that only
+	// grows.
+	//
+	// The half worth pinning is the second one: a purge that took a live
+	// session with it would sign everybody out at every restart, which is a
+	// far louder bug than the one being fixed.
+	ctx := context.Background()
+	db := openTest(t)
+
+	u, err := db.CreateUser(ctx, "user-1", "someone", "argon2id-hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	live := []byte("live-token-hash")
+	dead := []byte("dead-token-hash")
+	if err := db.CreateAuthSession(ctx, live, u.ID, time.Hour, "browser", "127.0.0.1"); err != nil {
+		t.Fatalf("CreateAuthSession live: %v", err)
+	}
+	if err := db.CreateAuthSession(ctx, dead, u.ID, -time.Hour, "browser", "127.0.0.1"); err != nil {
+		t.Fatalf("CreateAuthSession expired: %v", err)
+	}
+
+	n, err := db.PurgeExpiredAuthSessions(ctx)
+	if err != nil {
+		t.Fatalf("PurgeExpiredAuthSessions: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("purged %d rows, want exactly the expired one", n)
+	}
+	if _, err := db.AuthSessionByToken(ctx, live); err != nil {
+		t.Errorf("the live sign-in is gone after a purge: %v", err)
+	}
+	if _, err := db.AuthSessionByToken(ctx, dead); err == nil {
+		t.Error("the expired sign-in is still there")
+	}
+}

@@ -119,6 +119,23 @@ func cmdServe(args []string) error {
 	defer a.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	// Expired sign-ins are already refused — AuthSessionByToken filters on
+	// expires_at — so this is housekeeping rather than security. It is done at
+	// all because nothing called it: the table only grew, one row per sign-in
+	// that stopped meaning anything thirty days earlier.
+	//
+	// Here rather than in openApp, which the admin subcommands share: listing
+	// projects should not quietly write to the database. At startup rather
+	// than on a ticker, because a sign-in is rare enough that a panel
+	// restarted every few weeks never accumulates anything worth a goroutine,
+	// and a purge is easier to reason about when it happens at a moment
+	// somebody chose.
+	if n, perr := a.db.PurgeExpiredAuthSessions(ctx); perr != nil {
+		logger.Warn("purge expired sign-ins", "err", perr)
+	} else if n > 0 {
+		logger.Info("purged expired sign-ins", "rows", n)
+	}
 	mgr := sessionpkg.NewManager(a.tmux, sessionpkg.DefaultRingSize)
 
 	trusted, err := auth.ParseCIDRs(a.cfg.TrustedProxies)
