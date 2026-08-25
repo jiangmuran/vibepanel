@@ -6,10 +6,16 @@ tmux keeps the processes alive. The browser owns everything else: how sessions
 are grouped into projects, what they are called, which ones need you right now,
 and what order they appear in.
 
-> Status: usable, not finished. Terminals, session state, projects, scratch
-> terminals, the side panel, authentication and TLS all work. Still to come:
-> the mobile layout and its soft keyboard, a settings page, and the packaging
-> and release pipeline.
+> Status: usable. Terminals, session state, projects, scratch terminals, the
+> side panel, authentication and TLS, the phone layout with its soft keyboard
+> and touch selection, the settings page, and the release archives with their
+> installer are all built and covered by the checks in `make verify`.
+>
+> Known gaps are kept in `docs/build-log.md` rather than here, so that this
+> paragraph does not have to be trusted: it listed the phone layout, the
+> settings page and the release pipeline as unbuilt for some time after all
+> three shipped, which is the failure mode of a status line maintained by
+> hand.
 
 ## The problem
 

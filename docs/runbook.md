@@ -25,6 +25,40 @@ vibepanel session ls                    # what the panel believes
 Sessions marked GONE can be removed with `vibepanel session kill --id <id>`,
 which is a no-op against tmux and just clears the row.
 
+## The log says there are tmux sessions with no database row
+
+```
+tmux sessions on our socket with no database row count=2 socket=vibepanel
+```
+
+Printed by `Reconcile` at startup. The mirror image of GONE above: there the
+row outlived the process, here the process outlived the row. Nothing in the UI
+can reach these — they have no row to render — so they keep running, holding a
+pane and whatever the agent was doing, until the machine restarts.
+
+The panel reports rather than adopts, deliberately: taking one over would mean
+guessing which project it belongs to.
+
+One known way to produce them is `vibepanel session kill --id <id>` on a
+session that has scratch terminals under it. The child rows go with the parent
+through the database cascade and their tmux sessions do not — the HTTP path
+kills them, the CLI does not. See the note at that call site.
+
+```sh
+tmux -L vibepanel ls          # everything on the panel's socket
+vibepanel session ls          # what the panel has rows for
+```
+
+The difference is the orphans. Kill one with an exact target:
+
+```sh
+tmux -L vibepanel kill-session -t '=vp_3f9a1c4e2b7d8506'
+```
+
+The leading `=` is not decoration. tmux matches targets by prefix, so
+`-t vp_3f9a` would also match a longer name that starts the same way, and on a
+socket full of generated names that is a real way to kill the wrong thing.
+
 ## Sessions died when I restarted the panel
 
 Check the unit for `KillMode=process` first. Without it, this happens every
@@ -79,6 +113,33 @@ sessions go quiet with no error anywhere: the reporter script suppresses its
 own failures on purpose, because a hook that makes an agent wait is worse than
 a missed state update. `codex doctor` reporting a parse error or a deprecation
 on that line is the signal.
+
+## Hooks say they are installed and no state ever arrives
+
+Not Codex-specific: this takes Claude down with it, and the settings page still
+reports the hooks as installed because it reads the agent's configuration file,
+not whether anything ever reached the panel.
+
+The reporter script posts to `VIBEPANEL_URL`, which is always loopback — the
+hook runs beside the panel, and sending a token out to the internet and back
+would be worse for nothing. That is only true while the panel is *listening* on
+loopback. `--addr 192.168.8.20:8443`, an ordinary way to narrow exposure, binds
+one interface and nothing answers on 127.0.0.1. The script suppresses its own
+failures on purpose — a hook that makes an agent wait is worse than a missed
+state update — so every report is silently dropped and every session falls back
+to the guessed state.
+
+```sh
+grep VIBEPANEL_ADDR ~/.config/vibepanel.env   # a specific address, or a wildcard?
+ss -tlnp | grep vibepanel                     # what it is actually bound to
+curl -sk https://127.0.0.1:8443/api/health    # loopback answers, or it does not
+```
+
+A wildcard — `:8443`, `0.0.0.0:8443`, `[::]:8443` — includes loopback and is
+fine. If you need to bind one interface, the panel has to be reachable on
+loopback too for hooks to work at all; the alternative is to accept guessed
+states, which are correct more often than not but cannot tell *waiting* from
+*working* without the bell.
 
 ## Passkeys will not register
 

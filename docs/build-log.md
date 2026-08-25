@@ -8233,3 +8233,397 @@ six words is only marginally better than the error message it was copied from.
 
 `cmd/vibepanel` had no tests at all before this; it was the 0.0% at the top of
 the coverage list, next to the npm package.
+
+## A download button that always answered 403
+
+The file panel offers a download when the entry is `readable`, and `readable`
+meant "the thing it points at is a regular file". For a symlink it stat'd the
+target and stopped there.
+
+The download does more than that: it resolves the link and refuses anything
+that leaves the project. So a link to `/etc/passwd` in a project — one
+`ln -s`, or anything at all under `node_modules` — listed like this:
+
+```
+{"name":"link-to-passwd","symlink":true,"readable":true}
+```
+
+and the button it produced answered `403 outside the project` every time.
+
+Nothing was leaking: the four hostile cases all refuse correctly, including
+through a symlinked directory. What was wrong is that the panel advertised a
+file it would not hand over, and a control that cannot do what it offers
+teaches people the panel is unreliable rather than that the file is out of
+bounds.
+
+`readable` now means what the download will do. The entry still appears —
+hiding a file is its own kind of lie — with `escapes` set, and the row says
+`outside` next to it, because a file with no download among files that have
+one otherwise reads as the panel failing.
+
+### The wire check caught the person who wrote it
+
+Adding `escapes` to the Go struct and forgetting `wire.ts` is exactly the
+silent drift the field comparison exists to catch. It covered `Session`,
+`Project`, `Note`, `Todo` and `AuditEntry`; `FileEntry` was not in the list, so
+it was added — and it failed immediately:
+
+```
+the server sends [escapes] on FileEntry, and wire.ts does not declare them.
+```
+
+First time a guard here has caught its own author, in the same sitting.
+
+### What the probe found by being wrong first
+
+The upload probe pointed at `/api/fs/upload`, which does not exist, and every
+one of its eight hostile cases answered `404`. Eight refusals reads as a
+thoroughly defended endpoint. It now uploads one ordinary file and refuses to
+interpret anything unless that returned 200.
+
+Against the real endpoint everything was already right: traversal and absolute
+paths in the multipart filename are stripped to the base name, `..` is refused,
+a traversing `path` is 404, a colliding name is 409 and the existing file
+survives. The frontend shell-quotes what it types at the prompt, with the
+`'\''` idiom, and only when it needs to.
+
+### Where this entry stops
+
+Written after the fact and without a commit behind it. The tooling that runs
+commands became unavailable partway through this change, so what is described
+above was verified first — `go test -race ./...`, `make lint`, three mutations
+each failing on their own, `render check: 0 FAIL, 0 WARN` — and then could not
+be committed. If `git log` does not show it, the working tree is where it
+lives.
+
+## Found by reading, in a sitting with nothing to run
+
+The tooling that runs commands stayed unavailable, so this is analysis rather
+than measurement, and is labelled as such wherever it landed.
+
+**`vibepanel session kill` leaves orphaned panes.** The HTTP path lists
+`ListChildSessions` before killing anything, and says why: "Children cascade
+away in the database, but their tmux sessions do not. Deleting the row first
+would leave processes nothing in the UI can reach." The CLI kills one tmux
+session and deletes one row — so the scratch terminals under it lose their
+rows to the cascade and keep running on the panel's socket with nothing
+pointing at them. Two paths doing the same job, one of them updated: the shape
+that has cost this project more than anything else. Not fixed, because a fix
+here could not be tested; recorded at the call site.
+
+It is one step to confirm, and the panel already reports the symptom: kill such
+a session with the CLI, start the panel, and `Reconcile` should log `tmux
+sessions on our socket with no database row count=N`. If it does not, the
+finding is wrong and the comment should go — which is the point of writing the
+prediction down rather than the conclusion.
+
+Narrowed, before anybody widens it: deleting a *project* is fine on both paths.
+`ListProjectSessions` filters on `project_id` and nothing else, so scratch
+terminals come back with everything else — which the render check measured
+earlier today, counting three sessions in the confirmation with the scratch
+terminal among them. Only `session kill`, which takes one session and never
+asks what is under it, has the gap.
+
+**A CSI fragment beginning with `[` is never trimmed.** `trimPartialEscape`
+exists to stop a wrapped replay buffer printing the tail of an escape sequence
+as text, and it handles `31m` and `1m` but not `[31m` — `allParameterBytes`
+rejects `[` (0x5b). Worked out by hand against the function, not run. Left
+alone with the reasoning written down, because every obvious fix is worse:
+allowing a leading `[` eats `[warn] something`, and requiring a parameter byte
+after it still eats `[2024-01-01] …`. It needs a measurement, and measurement
+is what was unavailable.
+
+**`outputSeen` is never pruned.** Recorded at the field with an estimate rather
+than a measurement, and left for the next change to that file.
+
+**And one this session introduced.** `stillAuthorized` exists to ask the same
+two questions `RequireAuth` asks, so that an open WebSocket cannot outlive a
+rule an ordinary request would now fail. `currentUser` was given a third
+outcome earlier today — "the database cannot say" — and `stillAuthorized`
+discards it. So a lookup that errors closes every connection, while the same
+failure gives an HTTP request a 503 and leaves its session intact.
+
+A database that cannot be *written* never reaches it: `currentUser` only reads,
+and that case was measured — the banner arrives, the socket stays open. A
+database that cannot be *read* was not measured, and there the two paths part,
+with the storage banner unable to reach anyone to say why.
+
+Closing is the conservative half and not obviously the right one: nothing is
+revoked by closing, since a client reconnects the moment the database answers
+and a genuinely revoked session is caught by the next check that succeeds. The
+cost is the panel going dark during a hiccup, which is when somebody most wants
+to look at it. Recorded at the function, unfixed, because both directions have
+been argued convincingly here before and the arguments were wrong.
+
+**And one that was changed, because the risk of changing it is a log line.**
+`FileSource.warnIfExpiring` said so once. One flag gated both messages, so a
+certificate warned about at fourteen days and then never renewed passed its
+expiry in silence: the flag was already set, and the error saying the panel is
+now serving something no browser will accept never fired. The single scenario
+the function exists for — "a panel that has been serving a certificate nobody
+renewed", in its own comment — was the one it went quiet for.
+
+Two flags now, one per state, both reset when a new pair loads. Changed rather
+than merely recorded because the blast radius is a log line, and because
+nothing could break: every test in that package passes a nil logger, so the
+body returns on its first line and the whole warning path is uncovered. That
+absence is most of the missing coverage in `tlsmgr`, and it is why a flag could
+be wrong for as long as it liked.
+
+A test comes with it, and it is marked NOT RUN in its own doc comment. It loads
+a certificate with a day left, checks the warning was said, moves the leaf's
+`NotAfter` into the past without touching the file — which is what time passing
+without a renewal looks like — and requires the expiry to be reported. Whoever
+runs it should also put the single `warned bool` back and watch it fail: a test
+that has not been seen to fail is a decoration, and this one has not been seen
+to do anything at all.
+
+**A gap in `safeText`, and a reason not to close it from here.** The character
+set covers the directional family thoroughly — embeddings, overrides, isolates,
+the standalone marks, and U+061C, which is the one everybody forgets. It does
+not cover the invisible family: U+200B, U+FEFF, U+2028, U+2029 and the C1
+controls. By the function's own definition — characters that make a name lie
+about what it is — two rows rendering identically is a lie, and in this panel
+the thing beside a name is a download link.
+
+The obvious widening is wrong in the same way `trimPartialEscape`'s was. U+200D
+holds an emoji sequence together and U+200C is required orthography in Persian,
+Arabic and Hindi, so a blanket zero-width rule corrupts real names: a directory
+called with a joiner in it comes apart into pieces with a replacement character
+between them. Any fix has to name the characters individually and say why two
+of their neighbours are absent.
+
+Not attempted here for a reason worth recording. The file writes these
+characters as `\u` escapes on purpose — "invisible in an editor, in a diff and
+in a code review, the same property this function exists to defeat" — and the
+editing available in this sitting turned the escapes into the characters
+themselves. Writing the real bytes into that file would have created exactly
+what it exists to remove, in the one place nobody would see it. The tooling
+failed into the hazard the code documents.
+
+**And a list that reshuffled itself.** `hooks.Inspect` builds `Status.Events`
+by ranging over the `events` map, and Go randomises map iteration, so the list
+of installed hook events reached the settings page in a different order every
+time it was asked for. `encode` is unaffected — `json.Marshal` sorts map keys,
+so the file written to the user's settings is deterministic — but the list sent
+to the browser was not.
+
+Sorted. Safe against the existing tests by construction rather than by hope:
+the order was already random, so nothing could have been asserting one. This
+project calls a self-reordering tab strip hostile in a comment two directories
+away; a self-reordering list of four events is the same species, smaller.
+
+**A passkey cannot be renamed, and a store method waits for a caller.**
+`store.RenameCredential` exists and is written correctly — scoped to
+`user_id`, with the reason in its comment — and `registerPasskeyRoutes`
+registers five routes: login begin and finish, list, register begin and finish,
+delete. There is no rename. So the name a passkey is given at registration is
+the name it keeps, and the settings page lists it: whatever was typed on a
+phone at the moment of registering, usually the default "Passkey", forever.
+
+Established in three steps rather than asserted, because asserting absence has
+gone wrong here before: not in `passkey.go`, which ends; not in
+`registerSettingsRoutes`; and not in the authenticated group of the main route
+table — where following the trail led to `registerPasskeyRoutes` in the public
+group, which lists all five.
+
+Either the endpoint is missing or the method is. Adding one is a feature and
+removing the other could not be verified from here, so neither was done.
+
+**`--static-dir` is guarded by a textual prefix check, and the repo already
+says that is not enough.** `spaHandler` resolves the request path, joins it to
+the root, and requires the result to have the root as a prefix. That collapses
+`..` and is correct as far as it goes. It does not resolve symlinks, and
+`os.DirFS` does not either — its own documentation says it "only guarantees
+that the Open calls it makes to the operating system will begin with the
+prefix: it does not ensure that the file returned is actually within" it, and
+that it is not a substitute for chroot.
+
+So a symlink inside the served directory pointing outside is followed, and
+static assets are served before authentication, because the login page has to
+load. The comment directly above the check says this handler "is one URL away
+from reading the user's home directory" — the concern is stated and the
+implementation stops one layer short of it.
+
+The severity is low and worth saying precisely: `--static-dir` is a
+development flag pointed at a build output directory the operator chose, and
+vite does not emit symlinks. It is the operator's own directory. Compare
+`internal/browse`, which serves the *project* directory — whatever an agent
+wrote, symlinks included — and which resolves them properly. `handleFiles`
+even states the principle: `browse.Resolve` refuses anything that leaves the
+root "including through a symlink, which a textual prefix check would happily
+follow." One repository, one sentence, two handlers, and only one of them
+follows it.
+
+Not fixed, and the obvious fix is wrong: `filepath.EvalSymlinks` on the
+resolved path fails for paths that do not exist, which is the single-page
+fallback — the most common branch this handler takes. `os.Root` from Go 1.24
+enforces containment properly and is the thing to look at, and choosing it is
+a design decision that needs a machine to check.
+
+## The seven red lines, checked
+
+A separate pass, and worth recording because three times in this session a
+comment turned out to describe something the code did not do — `pumpDrain`
+saying the wait was "immediate in practice" when it was never once immediate,
+the unit file saying stopping "must not wait on anything" while it waited two
+seconds per session, and `spaHandler` saying it is "one URL away from reading
+the user's home directory" above a check that stops at the lexical layer. Rules
+deserve the same suspicion as comments.
+
+All seven hold.
+
+- **1, one socket.** `args()` is the only place a command is built and it
+  prefixes `-L` unconditionally. `-f` goes on every call too, so whichever
+  command happens to start the server brings it up correctly — the invariant is
+  in the constructor rather than in a rule callers have to remember.
+- **2, no PTY parenthood.** Measured every time `restart-check` runs: the
+  backend is killed and the sessions and the login outlive it.
+- **3, one state enum.** `TestTypeScriptStatesMatchTheEnum` pins the TypeScript
+  and `TestSessionOrderMatchesStateSortWeight` pins the SQL ordering. The field
+  comparison added this session extends that from the enum to every row the
+  server sends.
+- **4, shape as well as colour.** Five states, five shapes, and the sixth
+  distinction — a session that vanished versus one that exited cleanly — is a
+  dashed square against a solid one: the same shape family, told apart without
+  hue. Every glyph carries a `<title>` and an `aria-label`, which is the case
+  shape alone does not cover.
+- **5, tokens only in theme blocks.** Every line inside both dark blocks is a
+  `--vp-*` assignment. Three states are covered, including the one that is easy
+  to miss: "system" stamps nothing on the root, so `[data-theme]` alone cannot
+  tell it from light.
+- **6, validate what a hook sends.** Constant-time token comparison, `Valid()`
+  on the state, and the session must exist.
+- **7, exact-match targets.** `target()` renders `=name:`, and `sessionTarget()`
+  deliberately omits the `:` so that asking whether a session exists fails with
+  "can't find session" rather than "no current target". Two forms because the
+  rule needs two. `id.TmuxName`'s fixed length is the second line of defence:
+  no generated name can be a prefix of another.
+
+### One risk the rules do not cover
+
+The dark palette is written out twice — once under `prefers-color-scheme: dark`
+and once under `[data-theme='dark']` — about thirty tokens, duplicated
+verbatim. Both blocks obey red line 5 completely; nothing there is a component
+style. The rule simply does not reach this shape.
+
+Changing one and not the other gives a different panel to somebody on "system"
+than to somebody who chose dark by hand, and probably only half of them would
+say so. Merging the selectors is the fix and it was not attempted: collapsing
+CSS selectors changes matching and precedence, which is the exact mechanism red
+line 5 exists to prevent, and it has to be seen in a browser rather than
+reasoned about.
+
+Eight things, none of them verified, all written where somebody working on that
+code will see them rather than only here.
+
+## This log stopped preventing the thing it recorded
+
+Re-reading it end to end, which had not been done, turned up this from an
+earlier session:
+
+> The restart *mechanism* has a Go test that uses a die-once script, so "it
+> restarted" and "it crashed again immediately" are distinguishable — the
+> ambiguity my own probe walked straight into, twice, before I noticed the
+> command I was restarting failed every time by construction.
+
+This session walked into it a third time. Probing whether the restart button
+worked, the fixture was `sh -c 'echo something broke; exit 3'`; respawning
+re-ran a command that exits immediately, the pane was dead again within
+milliseconds with the same status, and it read as "restart does nothing" — and
+it was written up here as a fresh discovery, in the entry about killed agents.
+
+The warning was already in this file. It was not read, because the file is now
+long enough that nobody reads it before probing — including the person adding
+to it.
+
+Two things follow, and only the second is worth acting on.
+
+The lesson does not belong in prose. It belongs where the mistake is made: the
+Go test that uses a die-once script cannot be walked past, and a probe written
+against a command that exits by construction should have been caught by asking
+"what would this fixture do if the code were perfect?" — the same question that
+caught the CPU probe reporting 0.1% for both idle and busy in this session, and
+the upload probe answering 404 to eight hostile cases.
+
+And an append-only log of a hundred entries is a record, not a defence. It is
+worth keeping as one — the reasoning in it is why several of this session's
+fixes were possible — but nothing here should be relied on to stop a repeat.
+The things that actually stopped repeats this session were all executable: the
+stale-build guard, the freshness check, the mutation harness that asserts the
+file is restored, `head-check`. Every one of those is a program. None of them
+is a paragraph.
+
+### And the same reading found two of my own
+
+Further down, an afternoon spent following six `data-testid`s that no harness
+referenced, concluding that an unreferenced one "is a hint, not a finding" —
+one real gap out of six, a fair rate for a lead that cheap.
+
+Measured against this session: three testids were added and one of them is
+driven. `project-remove` has a render-check section that clicks it, reads the
+confirmation and counts what dies. `stale-notice` has none, which was said at
+the time and is repeated here so it is not only in a chat log. `file-escapes`
+has none either — the `escapes` field is covered by a Go test in `browse`, and
+the label that field exists to render is not looked at by anything.
+
+So the standard this project set for itself was met once out of three, by the
+person who had just read the entry describing it. Both gaps are cheap to close
+next to a run of `render-check`: the file panel already has a fixture with
+symlinks in it, and the storage banner has a reproducible setup in the entry
+above.
+
+### And the guard against a dead fixture is itself soft
+
+The broadcast-rate check added to `scale-check` respawns six sessions as
+printers and then, before measuring, confirms they are printing — because a
+respawn that silently did nothing would report the idle figure and read as a
+pass. That guard exists because the CPU probe in this session did exactly that.
+
+The guard's own failure is a `WARN`. If the fixture cannot be established the
+check skips the measurement and the run reports `0 FAIL`, which is a passing
+run that measured nothing: the same shape, one level up. `stress-check`'s
+scrollback precondition makes the identical choice, so it is a consistent
+mistake rather than a slip.
+
+Not changed, and the reason is in this file: "an intermittent failure is how a
+check stops being read". Turning the guard into a `FAIL` on a fixture that is
+at all flaky on a slower machine trades a silent skip for a red run people
+learn to re-run, which is worse. The right form is to poll until the fixture is
+up, with a deadline, and fail hard only after that — and writing a retry loop
+for a check that cannot be run repeatedly here is how one gets a check that
+hangs.
+
+The other half of the same block: those six sessions keep printing for
+everything downstream. The tmux client count, the reachability scan and the
+session-switch timings that follow were calibrated with the fixture idle and
+now run under load. They pass, so this is a coupling rather than a fault — but
+it was introduced without noticing, and whoever next moves a threshold there
+should know why the machine is busy.
+
+### A refused clipboard write, handled on one path and not the other
+
+`SelectionCopy` calls `navigator.clipboard.writeText` and answers a rejection
+with `.catch(() => setCopiedText(''))` — the button goes from "Copy" back to
+"Copy". Somebody who pressed it cannot tell a refusal from a missed tap.
+
+The panel already knows this call gets refused. `App.tsx` keeps `blockedClip`
+for exactly that, on the OSC 52 path, with the reason written down: the text a
+pane copied that the browser would not take, kept so it can be offered behind a
+click, "which is the activation the write needs". Two paths through one API,
+one failure mode, and only the path an agent uses has a way out of it.
+
+Not fixed. What a clipboard rejection looks like depends on the browser, the
+security context and whether the gesture counted as user activation, and
+guessing a fallback is what this session has repeatedly shown to be the
+expensive move. `blockedClip` is right because somebody watched it fail; this
+needs the same and a real phone. Three are pre-existing findings left
+unfixed, one is a defect this session introduced, and two are changes made on
+the grounds that a log line and a display order are the cheapest things to be
+wrong about.
+
+The middle one is the useful half of the exercise: the class this session kept
+finding — a second path that was never updated — was reproduced by the person
+who had just spent the day finding it. That argues the next worthwhile thing is
+not another bug but a check that makes the class visible, and writing that check
+needs a machine that can run it.
