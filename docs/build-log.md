@@ -8801,3 +8801,26 @@ closed in the same place as the tracker.
 The test asserts the entry exists before deleting the session. Without that it
 would pass against an implementation that never records anything — which is the
 shape of every probe this project has been fooled by.
+
+### The measurement the comment asked for
+
+`stillAuthorized` carried a paragraph saying its behaviour was "deliberate but
+untested", and refused to argue the point: "both directions have been argued
+convincingly in this file's history and the arguments were wrong."
+
+Measured. With the database unable to answer a read, a live WebSocket closes
+5.1 seconds after it stops answering — one revalidation tick. Every viewer
+disconnects at once, and the storage banner the snapshot carries is exactly
+what cannot be delivered to explain it.
+
+The timing is part of the assertion, not an observation beside it. The state
+poller runs every two seconds and also touches the database, so a close at 2s
+would mean something else was doing it and the test would be reading a
+coincidence; revalidation is the only five-second timer on that path, and the
+test fails if the socket dies too early.
+
+Not changed. Closing is the conservative half and the cost is the panel going
+dark during a hiccup, which is when somebody most wants to look at it — a real
+decision either way. What is different now is that changing it is a decision
+rather than an accident, and the comment no longer claims something nobody
+checked.

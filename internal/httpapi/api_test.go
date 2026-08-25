@@ -2386,3 +2386,70 @@ func TestKillingASessionForgetsItsOutputDebounce(t *testing.T) {
 		t.Error("the debounce entry outlived the session it belongs to")
 	}
 }
+
+// What a database that cannot be READ does to a WebSocket that is already open.
+//
+// The comment on stillAuthorized asks for this measurement by name, and says
+// why it is not an argument: "both directions have been argued convincingly in
+// this file's history and the arguments were wrong."
+//
+// The shape of the question. currentUser has three outcomes — signed in, not
+// signed in, and "the database cannot say". An ordinary request gets 503 for
+// the third and keeps its session. stillAuthorized discards the error and
+// returns the bool, so the third outcome closes the socket, and every viewer
+// disconnects at once during a storage fault — which is when somebody most
+// wants to look at the panel. A database that cannot be *written* does not
+// reach here at all: currentUser only reads, and that case was already
+// measured to leave the socket up with a banner.
+//
+// This pins what actually happens rather than deciding whether it is right.
+// Changing it is a real decision with a real cost either way; changing it by
+// accident is not.
+func TestAnUnreadableDatabaseClosesOpenSockets(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
+	c, _, err := websocket.Dial(ctx, wsURL, wsDialOptions(t, ts))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.CloseNow()
+
+	// Prove the socket is alive before breaking anything, or a connection that
+	// was never up would look like the behaviour under test.
+	if _, _, err := c.Read(ctx); err != nil {
+		t.Fatalf("no snapshot on a healthy panel, so this test proves nothing: %v", err)
+	}
+
+	// Reads fail from here on. Closing is the bluntest form of "the database
+	// cannot say" and is what a disk that has gone away looks like.
+	if err := srv.DB.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	// The revalidation ticker is 5s, so give it two turns plus slack.
+	readCtx, readCancel := context.WithTimeout(ctx, 13*time.Second)
+	defer readCancel()
+	started := time.Now()
+	for {
+		if _, _, err := c.Read(readCtx); err != nil {
+			if readCtx.Err() != nil {
+				t.Fatal("the socket stayed open through an unreadable database; " +
+					"if that is now deliberate, the comment on stillAuthorized needs " +
+					"rewriting, because it says the opposite")
+			}
+			// Closed. Which timer closed it matters: the state poller runs
+			// every 2s and also touches the database, so a close at 2s would
+			// mean something else entirely and this test would be reading a
+			// coincidence. Revalidation is the only 5s timer on this path.
+			if took := time.Since(started); took < 3*time.Second {
+				t.Fatalf("the socket closed after %v, too soon to be the 5s "+
+					"revalidation — something other than stillAuthorized is "+
+					"closing it, and this test is measuring the wrong thing", took)
+			}
+			return
+		}
+	}
+}

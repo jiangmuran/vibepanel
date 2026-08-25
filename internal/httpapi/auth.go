@@ -130,17 +130,19 @@ func (s *Server) RequireAuth(next http.Handler) http.Handler {
 // allowed, and does this session still exist. Both can change while a
 // WebSocket is open, and a WebSocket is open for hours.
 //
-// They are no longer quite the same two answers, and that is deliberate but
-// untested. currentUser has three outcomes now — signed in, not signed in, and
+// They are no longer quite the same two answers, and that is deliberate. What
+// it costs is pinned by a test rather than argued about here. currentUser has three outcomes now — signed in, not signed in, and
 // "the database cannot say" — and this discards the third, so a lookup that
 // errors closes the connection while the same failure gives an ordinary request
 // a 503 and leaves its session intact.
 //
 // A database that cannot be *written* does not reach here: currentUser only
 // reads, and that case was measured — the banner arrives and the socket stays
-// open. A database that cannot be *read* was not measured, and there the two
-// paths part: every viewer disconnects, and the storage banner the snapshot
-// carries cannot be delivered to say why.
+// open. A database that cannot be *read* has now been measured too, and the two
+// paths do part: TestAnUnreadableDatabaseClosesOpenSockets watches a live
+// socket close one revalidation tick after the database stops answering. Every
+// viewer disconnects, and the storage banner the snapshot carries cannot be
+// delivered to say why.
 //
 // Closing is the conservative half, and it is not obviously the right half.
 // Nothing is revoked by closing: a client reconnects the moment the database
