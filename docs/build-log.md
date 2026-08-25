@@ -7902,3 +7902,47 @@ core for the panel, 0.03% for the tmux processes. Fifteen sessions each
 printing ten lines a second: 1.5% and 1.1%. A panel that attaches to every
 session so it can see what they are doing costs about two and a half per cent
 of one core to do it.
+
+## Nothing compared the rest of the shape
+
+`wire.ts` is written by hand, and one red line already covers it: the state
+enum is compared against `AllStates` by a test. Nothing compared any other
+field.
+
+The drift that allows is silent in the direction that matters. Panel data
+arrives as `JSON.parse` cast to the interface, so a field the server has
+stopped sending is still declared, still type-checks, and is `undefined` at
+runtime — with `strict` on and no error anywhere.
+
+This came up while removing `lastOutputAt` from the wire. Editing `wire.ts` to
+match was something I had to remember to do, and nothing would have said a
+word if I had not.
+
+`TestTypeScriptRowsMatchWhatIsSent` marshals `Session`, `Project`, `Note`,
+`Todo` and `AuditEntry`, reads the matching `export interface` out of
+`wire.ts`, and compares the two as sets. Both directions are errors, and they
+are different errors:
+
+```
+wire.ts declares [lastOutputAt] on Session, and the server does not send them.
+They are undefined at runtime and nothing type-checks that.
+
+the server sends [titleSource] on Session, and wire.ts does not declare them.
+The frontend cannot read a field it has not been told about.
+```
+
+Renaming a Go json tag is caught too, as both at once.
+
+### Two probes that proved nothing
+
+Before this, two investigations ended in nothing, and both are worth the note.
+
+`chmod 444` on the database to see what the panel does when it cannot write:
+the writes went through and returned 200. Permissions are checked at `open`,
+and the panel had the file open read-write long before the `chmod`. Simulating
+a full disk needs a filesystem I can size, which needs root. The question — a
+panel that silently stops persisting — is still open.
+
+And the two harnesses I had not run all session, `tls-check` and
+`release-check`, both pass. Five of seven is not "everything passes", and I had
+been writing the latter.

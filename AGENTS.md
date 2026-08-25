@@ -34,6 +34,14 @@ Each of these exists because the alternative broke something real.
    generator and no generated file — so the rule protected nothing while
    reading as though it did.
 
+   The same file is now pinned field by field, not only for the enum:
+   `TestTypeScriptRowsMatchWhatIsSent` marshals `Session`, `Project`, `Note`,
+   `Todo` and `AuditEntry` and compares the keys against the interfaces in
+   `wire.ts`. The drift it catches is silent in the direction that matters —
+   the data arrives from `JSON.parse` cast to the interface, so a field the
+   server has stopped sending is still declared, still type-checks, and is
+   `undefined` at runtime.
+
 4. **Colour is never the only carrier of meaning.** Session states are
    distinguished by shape as well as hue (circle / triangle / check). People
    read this panel at 2am on a phone in a dark room.
