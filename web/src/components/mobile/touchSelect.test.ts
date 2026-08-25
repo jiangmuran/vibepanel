@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cellAt, selectionRun } from './touchSelect'
+import { cellAt, selectionRun, dragRows } from './touchSelect'
 
 describe('selectionRun', () => {
   it('reads left to right on one line', () => {
@@ -41,5 +41,33 @@ describe('cellAt', () => {
     // has to land on the last cell rather than an index past the buffer.
     expect(cellAt({ x: 5000, y: 5000 }, box, 80, 20)).toEqual({ col: 79, row: 19 })
     expect(cellAt({ x: -50, y: -50 }, box, 80, 20)).toEqual({ col: 0, row: 0 })
+  })
+})
+
+describe('dragRows', () => {
+  it('carries the remainder instead of throwing it away', () => {
+    // A row is around eighteen pixels and a finger moves in ones and twos.
+    // Truncating each event on its own loses most of the movement, and the
+    // terminal crawls a long way behind the finger.
+    let carry = 0
+    let scrolled = 0
+    for (let i = 0; i < 18; i++) {
+      const step = dragRows(2, 18, carry)
+      carry = step.carry
+      scrolled += step.rows
+    }
+    expect(scrolled).toBe(2)
+  })
+
+  it('has a sign: down covers rows the same way up does', () => {
+    expect(dragRows(36, 18, 0).rows).toBe(2)
+    expect(dragRows(-36, 18, 0).rows).toBe(-2)
+  })
+
+  it('survives a terminal that has not been measured yet', () => {
+    // rowsBox() returns null before the terminal is laid out, and a division
+    // by zero here would scroll the buffer to one end and stay there.
+    expect(dragRows(100, 0, 0)).toEqual({ rows: 0, carry: 0 })
+    expect(dragRows(100, Number.NaN, 0.5)).toEqual({ rows: 0, carry: 0.5 })
   })
 })

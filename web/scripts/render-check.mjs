@@ -29,8 +29,12 @@ import { findCoveredControls } from './lib/covered.mjs'
 import { findSmallTargets } from './lib/tap.mjs'
 import { findInvisibleFocus } from './lib/focus.mjs'
 import { findUnnamedControls } from './lib/names.mjs'
+import { assertFreshBuild } from './lib/fresh.mjs'
 
 const BIN = process.argv[2] ?? new URL('../../vibepanel', import.meta.url).pathname
+// Measuring a build that does not contain the change is the one failure that
+// looks exactly like a pass. See lib/fresh.mjs.
+assertFreshBuild(BIN, new URL('../../', import.meta.url).pathname)
 // A free port picked by the kernel, not a guess. A hard-coded one silently
 // connects to whatever is already listening — including an orphaned server
 // from a previous run, which then serves a stale build and produces an hour of
@@ -2245,6 +2249,75 @@ try {
         }
       }
     }
+    // Scrolling back with a finger.
+    //
+    // tmux keeps 20,000 lines per session. Until the alternate screen was
+    // taken out of the embedded config there was no scrollback to reach at
+    // all; now there is, and on a phone nothing could still reach it. xterm's
+    // scrollable element listens for wheel events, which a touchscreen never
+    // sends, and the panel's own pgup key sends ESC[5~, which a shell ignores.
+    // Measured with 269 lines behind the screen: wheel 269 -> 268, drag
+    // 268 -> 268, pgup 268 -> 268.
+    {
+      const shown = await touch.locator('[data-testid="session-title"]').innerText().catch(() => '')
+      const sess = ((await (await authed('/api/state')).json()).sessions ?? [])
+        .find((x) => (x.title ?? '') === shown.trim())
+      if (!sess) {
+        note('WARN', 'mobile', `could not tell which session the phone is showing (${JSON.stringify(shown)})`)
+      } else {
+        execSync(
+          `tmux -L ${SOCKET} send-keys -t '=${sess.tmuxName}:' ` +
+          `'i=1; while [ $i -le 400 ]; do echo TOUCH_$i; i=$((i+1)); done' Enter`)
+        const rowsOf = () => touch.evaluate(() =>
+          [...document.querySelectorAll('.xterm-rows > div')].map((d) => (d.textContent ?? '').trim()))
+        // Wait for the burst to have arrived. Measuring a picture that is still
+        // moving is what made the first version of the desktop check pass one
+        // run in three.
+        let arrived = false
+        for (let i = 0; i < 40; i++) {
+          if ((await rowsOf()).some((r) => r.includes('TOUCH_400'))) { arrived = true; break }
+          await sleep(500)
+        }
+        if (!arrived) {
+          note('WARN', 'mobile', 'the burst never finished arriving; not measuring a moving picture')
+        } else {
+          await sleep(1200)
+          const lineNo = (rows) => {
+            const first = rows.find((r) => r)
+            return Number((/TOUCH_(\d+)/.exec(first ?? '') ?? [])[1] ?? NaN)
+          }
+          const before = lineNo(await rowsOf())
+          const tbox = await touch.locator('.xterm-screen').boundingBox()
+          if (!tbox || !Number.isFinite(before)) {
+            note('WARN', 'mobile', 'no terminal box to drag on')
+          } else {
+            const cdp2 = await touchCtx.newCDPSession(touch)
+            const x = tbox.x + tbox.width / 2
+            const y0 = tbox.y + 60
+            const pt = (y) => ({ touchPoints: [{ x, y, radiusX: 8, radiusY: 8, force: 1, id: 1 }] })
+            await cdp2.send('Input.dispatchTouchEvent', { type: 'touchStart', ...pt(y0) })
+            // Faster than the hold threshold, or this becomes a selection.
+            for (let i = 1; i <= 24; i++) {
+              await cdp2.send('Input.dispatchTouchEvent', { type: 'touchMove', ...pt(y0 + i * 20) })
+              await sleep(8)
+            }
+            await cdp2.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+            await sleep(700)
+            const after = lineNo(await rowsOf())
+            if (!Number.isFinite(after) || after >= before) {
+              note('FAIL', 'mobile',
+                `dragging down did not scroll back: top line was TOUCH_${before}, now ` +
+                `${Number.isFinite(after) ? `TOUCH_${after}` : 'unreadable'}. ` +
+                'tmux keeps the history and a phone cannot reach it.')
+            } else {
+              note('PASS', 'mobile', `a finger scrolled back from TOUCH_${before} to TOUCH_${after}`)
+            }
+            await touch.screenshot({ path: join(SHOTS, 'touch-scrollback.png') })
+          }
+        }
+      }
+    }
+
     await touchCtx.close()
   }
 

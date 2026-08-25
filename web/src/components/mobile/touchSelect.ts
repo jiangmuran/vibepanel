@@ -63,6 +63,20 @@ export function cellAt(
 }
 
 /**
+ * How many whole rows a drag of `dy` pixels covers, carrying the remainder.
+ *
+ * Carried, because a row is around eighteen pixels and a finger moves in ones
+ * and twos: truncating each event on its own throws most of the movement away
+ * and the terminal crawls behind the finger.
+ */
+export function dragRows(dy: number, rowHeight: number, carried: number) {
+  if (!(rowHeight > 0)) return { rows: 0, carry: carried }
+  const total = carried + dy / rowHeight
+  const rows = Math.trunc(total)
+  return { rows, carry: total - rows }
+}
+
+/**
  * Attaches the gesture to a terminal. Returns a function that removes it.
  *
  * `host` is the element the terminal was opened into; the rows element inside
@@ -74,6 +88,9 @@ export function attachTouchSelection(host: HTMLElement, term: Terminal): () => v
   let anchor: Cell | null = null
   let selecting = false
   let startPoint: { x: number; y: number } | null = null
+  let lastY = 0
+  let carried = 0
+  let scrolling = false
 
   const rowsBox = () => {
     const rows = host.querySelector('.xterm-rows')
@@ -105,6 +122,9 @@ export function attachTouchSelection(host: HTMLElement, term: Terminal): () => v
     if (e.touches.length !== 1) return
     const t = e.touches[0]
     startPoint = { x: t.clientX, y: t.clientY }
+    lastY = t.clientY
+    carried = 0
+    scrolling = false
     // A tap outside an existing selection dismisses it, the way tapping away
     // from selected text does everywhere else.
     if (!selecting && term.hasSelection()) term.clearSelection()
@@ -135,6 +155,38 @@ export function attachTouchSelection(host: HTMLElement, term: Terminal): () => v
       ) {
         cancelHold()
       }
+      if (!startPoint) return
+
+      // Dragging is how a phone scrolls, and until this existed it did
+      // nothing at all: xterm's scrollable element listens for wheel events,
+      // which a touchscreen never sends. Measured with 269 lines of scrollback
+      // present — wheel 269 → 268, drag 268 → 268, and the panel's own pgup
+      // key 268 → 268, because it sends ESC[5~ and a shell ignores it. The
+      // history was there and no gesture on a phone could reach it.
+      const dx = Math.abs(t.clientX - startPoint.x)
+      const dy = Math.abs(t.clientY - startPoint.y)
+      if (!scrolling) {
+        // Take the gesture only once it is clearly vertical and there is
+        // something behind the screen to show. Claiming every drag would eat
+        // the horizontal swipe that changes view, and preventing the default
+        // on a terminal with no scrollback stops the page moving for nothing.
+        if (dy <= SLOP_PX || dy <= dx || term.buffer.active.baseY === 0) return
+        scrolling = true
+      }
+
+      const box = rowsBox()
+      const rowHeight = box && term.rows > 0 ? box.height / term.rows : 0
+      const step = dragRows(t.clientY - lastY, rowHeight, carried)
+      carried = step.carry
+      lastY = t.clientY
+      if (step.rows !== 0) {
+        // Down reveals what came before, which is which way every list on a
+        // phone moves.
+        term.scrollLines(-step.rows)
+      }
+      // Non-passive for this: without it the page scrolls under the finger as
+      // well and the whole shell slides around.
+      e.preventDefault()
       return
     }
     const cell = cellFor(t)
@@ -148,6 +200,8 @@ export function attachTouchSelection(host: HTMLElement, term: Terminal): () => v
   const onEnd = () => {
     cancelHold()
     startPoint = null
+    scrolling = false
+    carried = 0
     // selecting stays true until the next touch so that lifting the finger
     // leaves the selection on screen with the copy bar over it.
   }
