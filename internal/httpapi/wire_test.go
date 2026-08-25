@@ -1,4 +1,4 @@
-package store
+package httpapi
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/jiangmuran/vibepanel/internal/browse"
+	"github.com/jiangmuran/vibepanel/internal/store"
 )
 
 // TestTypeScriptRowsMatchWhatIsSent compares the fields the server sends with
@@ -36,15 +37,17 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		name string
 		row  any
 	}{
-		{"Session", Session{}},
-		{"Project", Project{}},
-		{"Note", Note{}},
-		{"Todo", Todo{}},
-		{"AuditEntry", AuditEntry{}},
-		// Not a store type. It is here because this is where the comparison
-		// lives, and a second copy of the parser is the thing this file exists
-		// to prevent one directory over.
+		{"Session", store.Session{}},
+		{"Project", store.Project{}},
+		{"Note", store.Note{}},
+		{"Todo", store.Todo{}},
+		{"AuditEntry", store.AuditEntry{}},
 		{"FileEntry", browse.Entry{}},
+		// The largest surface and the last one to be covered. This is what the
+		// socket pushes on every change, and it lived in a package the old
+		// home of this test could not import without a cycle — so the rows
+		// were pinned and the envelope carrying them was not.
+		{"PanelState", stateResponse{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sent := jsonKeys(t, tc.row)
