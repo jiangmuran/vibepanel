@@ -24,9 +24,15 @@ Each of these exists because the alternative broke something real.
    entire premise of the project is gone.
 
 3. **`internal/session/state.go` is the only definition of the state enum.**
-   The TypeScript constants are generated from it. The SQL ordering in
-   `internal/store/sessions.go` mirrors `State.SortWeight` and there is a test
-   asserting they agree — if you change one, the test tells you about the other.
+   Two things mirror it and both are pinned by tests, so changing the enum tells
+   you what else to change: the TypeScript constants in
+   `web/src/protocol/wire.ts`, which are hand-written and compared against
+   `AllStates`, and the SQL ordering in `internal/store/sessions.go`, which
+   mirrors `State.SortWeight`.
+
+   This used to say the TypeScript was generated. It never was — there was no
+   generator and no generated file — so the rule protected nothing while
+   reading as though it did.
 
 4. **Colour is never the only carrier of meaning.** Session states are
    distinguished by shape as well as hue (circle / triangle / check). People
@@ -57,6 +63,23 @@ Each of these exists because the alternative broke something real.
 - **Tests**: Go standard `testing`; `vitest` on the frontend. The tmux wrapper
   is tested against a real tmux on a throwaway socket, not a mock — the bugs
   worth catching there are tmux's, and a mock reproduces none of them.
+
+- **The browser checks are where most of the bugs have been found.** `make
+  check` is the fast gate and never starts a browser; `make verify` runs
+  everything and takes about twenty minutes. In between:
+
+  | | |
+  |---|---|
+  | `make first-run-check` | the setup wizard and the first project — every other check reaches past them |
+  | `make render-check` | the largest: layout, states, arbitration, panels, mobile, clipboard, passkeys |
+  | `make stress-check` | wide characters, full-screen programs, floods, dropped sockets |
+  | `make restart-check` | kill the backend; the sessions and the login must outlive it |
+  | `make scale-check` | two dozen sessions: snapshot size, sidebar reachability, poller |
+  | `make tls-check` | its own TLS: wss, the Secure cookie, swapping a certificate |
+  | `make release-check` | build the archives and run one from a throwaway HOME |
+
+  Run the one that covers what you touched, and `verify` before anything
+  structural. A change that only passes `check` has not been looked at.
 - **Commits**: English Conventional Commits (`feat(tmux): ...`). No
   `Co-Authored-By` trailers.
 - **Docs**: English. Keep `docs/build-log.md` current as you go; a decision that

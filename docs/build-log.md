@@ -6802,3 +6802,60 @@ Four fields, four different shapes of the same mistake, in one component whose
 own helper file already carried the rule in a comment. Which is the part worth
 remembering: the lesson was written down, and written down well, next to one of
 the five places it applied.
+
+## The checks that find the bugs were the ones nobody was told about
+
+`make check` describes itself as "everything a change should pass before it
+lands". It runs vet, gofmt, eslint, the Go tests and the frontend units, and it
+never starts a browser.
+
+The browser checks have found most of the defects in this project. A note
+discarded by clicking the next tab. A phone rendering a desktop's grid at four
+pixels. A panel telling every link where it lived. A clock icon that deleted an
+arrangement. None of them are reachable from a unit test, and none of them are
+in `check`.
+
+They were also hard to find. `scale-check.mjs` had an npm script and no Makefile
+target, so `make help` did not list it at all. Neither `README.md` nor
+`AGENTS.md` mentioned any of them — a contributor reading the Tests bullet
+learns about `testing` and `vitest` and stops there.
+
+Three changes, all small:
+
+- `make scale-check` exists now.
+- `make verify` runs everything, in the order that fails fastest, and takes
+  about twenty minutes.
+- `check`'s help line says what it is: the fast gate.
+
+`verify` is deliberately not merged into `check`. A gate people stop running is
+worse than a slow one they run on purpose, and twenty minutes on every save
+would make `check` something to skip.
+
+`AGENTS.md` gained a table naming each harness and what it covers, ending with
+the sentence that is the actual point: **a change that only passes `check` has
+not been looked at.**
+
+First run of the new target:
+
+```
+=== first-run check: 0 FAIL, 0 WARN ===
+=== render check: 0 FAIL, 0 WARN ===
+=== stress check: 0 FAIL, 0 WARN ===
+=== restart check: 0 FAIL, 0 WARN ===
+=== scale check: 0 FAIL, 0 WARN ===
+=== tls check: 0 FAIL, 0 WARN ===
+=== release check: 0 FAIL ===
+all checks passed
+```
+
+The notes flake did not recur, and now has one more run of evidence against it
+being frequent — and diagnostics waiting if it is not gone.
+
+### Two more zero-means-unknown checks that came back clean
+
+The sweep that produced the monitor fixes was carried through the rest of the
+UI. The passkey list already guards `lastUsedAt` with `? … : 'never used'`, and
+the certificate expiry is `omitempty` on the wire *and* skipped when the time
+is zero *and* guarded again in the component — three layers where one would
+have done, which is the opposite failure and a much better one to have. There
+is no relative-time rendering anywhere else to get wrong.
