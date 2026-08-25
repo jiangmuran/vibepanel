@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -238,22 +237,28 @@ func (m *Manager) Attach(ctx context.Context, sessionID, tmuxName string, cols, 
 		return nil, fmt.Errorf("session: tmux session %s does not exist", tmuxName)
 	}
 
-	// Prime the replay buffer from tmux's own history before the client starts.
+	// The ring starts empty, and that is fine: attaching makes tmux repaint the
+	// visible screen, and the repaint goes through the pump into the ring like
+	// any other output. A viewer subscribing at any point afterwards is filled
+	// from it.
 	//
-	// After a panel restart the ring is empty, so without this the first person
-	// to open a session sees a blank terminal attached to a live process until
-	// it happens to print something. Attaching repaints the visible screen, so
-	// only the history above it is taken; the two compose exactly.
+	// This used to be primed with `capture-pane -S - -E -1`, the history above
+	// the visible screen, on the reasoning that a panel restart empties the
+	// ring and the first person to open a session would otherwise see a blank
+	// terminal. Both halves were wrong. The repaint already covers the blank
+	// terminal. And the history could never be seen: tmux's attach begins with
+	// `ESC[?1049h`, so everything after it is drawn on the alternate screen,
+	// which by definition has no scrollback. The primed lines went into the
+	// normal buffer and were covered a millisecond later.
+	//
+	// Deleting the priming changed nothing measurable — same rendered screen,
+	// same absent scrollback, same green restart check. Scrolling back through
+	// a session is tmux's copy-mode, not the browser's scrollbar. Anyone who
+	// wants it to be the browser's scrollbar wants
+	// `terminal-overrides ',*:smcup@:rmcup@'` in vibepanel.conf, which keeps
+	// tmux out of the alternate screen — and inherits its known cost, every
+	// full redraw landing in the scrollback as another copy of the screen.
 	ring := NewRingBuffer(m.ringSize)
-	if scrollback, cerr := m.tmux.CaptureScrollback(ctx, tmuxName); cerr == nil {
-		if trimmed := strings.TrimRight(scrollback, "\n"); trimmed != "" {
-			_, _ = ring.Write([]byte(trimmed + "\r\n"))
-		}
-	} else {
-		// Not fatal: an empty replay is worse than a full one but far better
-		// than refusing to open the session.
-		m.logf("prime replay for %s: %v", tmuxName, cerr)
-	}
 
 	// A plain `attach`, not `attach -d`: detaching other clients would be
 	// pointless (we are the only one) and actively harmful if a human is

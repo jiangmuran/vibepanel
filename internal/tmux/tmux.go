@@ -150,6 +150,55 @@ func (c *Client) ServerRunning(ctx context.Context) bool {
 	return err == nil
 }
 
+// MinMajor and MinMinor are the oldest tmux the embedded config is valid for.
+//
+// 3.3 because of allow-passthrough. An older tmux does not refuse the config:
+// it reports an unknown option, carries on with defaults, and from then on
+// swallows the sequences agent TUIs use for progress and notifications. Every
+// symptom of that is something not appearing, which is why it is worth saying
+// at startup rather than leaving in a requirements list.
+const (
+	MinMajor = 3
+	MinMinor = 3
+)
+
+// ParseVersion pulls the major and minor numbers out of a tmux version string.
+//
+// tmux reports "3.4", "3.3a" for a patch release, and "next-3.6" for a
+// development build, so a plain split on "." is not enough: the letters and
+// any prefix have to be ignored rather than parsed.
+func ParseVersion(s string) (major, minor int, ok bool) {
+	digits := func(r rune) bool { return r >= '0' && r <= '9' }
+	fields := strings.FieldsFunc(s, func(r rune) bool { return !digits(r) && r != '.' })
+	for _, f := range fields {
+		maj, min, found := strings.Cut(f, ".")
+		if !found {
+			continue
+		}
+		a, err1 := strconv.Atoi(maj)
+		// A minor like "3a" has already been split off by FieldsFunc, but a
+		// trailing dot or an empty half can still arrive here.
+		b, err2 := strconv.Atoi(min)
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		return a, b, true
+	}
+	return 0, 0, false
+}
+
+// AtLeastMinimum reports whether a version string is new enough for the
+// embedded config. An unparseable version is treated as new enough: refusing
+// to run because a version string looked unfamiliar would be worse than the
+// problem.
+func AtLeastMinimum(v string) bool {
+	major, minor, ok := ParseVersion(v)
+	if !ok {
+		return true
+	}
+	return major > MinMajor || (major == MinMajor && minor >= MinMinor)
+}
+
 // Version returns the tmux version string, e.g. "3.6".
 func (c *Client) Version(ctx context.Context) (string, error) {
 	out, err := exec.CommandContext(ctx, c.Bin, "-V").Output()
@@ -283,15 +332,6 @@ func (c *Client) Capture(ctx context.Context, name string) (string, error) {
 	return c.run(ctx, "capture-pane", "-p", "-e", "-J", "-S", "-", "-t", target(name))
 }
 
-// CaptureScrollback returns only the history above the visible screen.
-//
-// Used to prime a replay buffer before attaching. Attaching makes tmux repaint
-// the visible screen, so capturing that too would draw it twice; ending the
-// range one line into the history lets the two compose exactly.
-func (c *Client) CaptureScrollback(ctx context.Context, name string) (string, error) {
-	return c.run(ctx, "capture-pane", "-p", "-e", "-J", "-S", "-", "-E", "-1", "-t", target(name))
-}
-
 // Respawn restarts the process in a session's pane, reusing the command it was
 // created with.
 //
@@ -343,12 +383,37 @@ type Info struct {
 	AlternateOn bool  // #{alternate_on} — a full-screen TUI is drawing
 }
 
+// scrubbed wraps a format variable so tmux replaces control characters before
+// we ever see them.
+//
+// The field separator is 0x1f and list-sessions puts one session per line, so a
+// value containing either one takes the whole record apart. Measured, on a real
+// tmux: a session whose working directory was named with a newline in it, and
+// another with a 0x1f, both *disappeared from the listing* — parseInfo counted
+// the wrong number of fields and List drops the line rather than blind the
+// sidebar to everything else.
+//
+// Disappearing is bad enough. What made it a real defect is what happens next:
+// the poller treats a session it cannot see as gone, and now writes that to the
+// database — so a running session is announced as dead because of the name of
+// the directory it is sitting in. `mkdir $'a\nb'` is all it takes, and the
+// panel is for people who run agents in directories they did not choose.
+//
+// tmux does this substitution itself, so the value is clean before it is
+// joined. A literal character range rather than [[:cntrl:]]: the modifier is
+// terminated by a colon, and a POSIX class contains two of them, so the parser
+// splits in the wrong place and the whole field comes back empty. That failure
+// is silent, which is why this comment names the shape that works.
+func scrubbed(variable string) string {
+	return "#{s/[\x01-\x1f]/?/:" + variable + "}"
+}
+
 // infoFields must stay in the same order as parseInfo reads them.
 var infoFields = []string{
 	"#{session_name}",
-	"#{pane_title}",
-	"#{pane_current_command}",
-	"#{pane_current_path}",
+	scrubbed("pane_title"),
+	scrubbed("pane_current_command"),
+	scrubbed("pane_current_path"),
 	"#{pane_pid}",
 	"#{pane_dead}",
 	"#{window_bell_flag}",

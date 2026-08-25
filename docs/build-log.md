@@ -851,6 +851,13 @@ the good kind of anticlimax — but they passed unverified for a week.
 The rule: a test that exercises a nearby path is not a test of this path. Ask
 what would have to be deleted for the fallback to run, then delete it.
 
+> **Later, applying that rule to this entry.** The third check was not testing
+> the cold path either. Deleting the `capture-pane` priming outright left it
+> green, and left the rendered screen byte-identical. What fills a fresh page
+> is tmux repainting on attach; the priming was inert, because the attach
+> begins with `ESC[?1049h` and the alternate screen has no scrollback. See
+> "The replay that was drawn on a screen nobody could see".
+
 ## The affordance that offered nothing
 
 The screenshots from that check showed a "147x45 · take control" pill floating
@@ -5738,3 +5745,87 @@ give distinct signals: covering the grip is the WARN, forgetting the width is
 [FAIL] panel: a panel dragged to 424px reopened at 280px; closing it threw the
 width away
 ```
+
+## The replay that was drawn on a screen nobody could see
+
+The cold-start path had a mechanism, a confident comment, a test, and a browser
+check. It did nothing at all.
+
+`Attach` primed the ring from `capture-pane -S - -E -1` — the history above the
+visible screen — reasoning that a panel restart empties the ring, and that
+without it "the first person to open a session sees a blank terminal attached
+to a live process". The comment even explained why the range stops one line
+short: "attaching repaints the visible screen, so only the history above it is
+taken; the two compose exactly."
+
+They do compose exactly. Onto a buffer that is then hidden.
+
+Dumping the first bytes the attach actually sends:
+
+```
+\x1b[?1049h \x1b[22;0;0t \x1b[?1h \x1b= \x1b[H \x1b[2J …
+```
+
+`ESC[?1049h` is the switch to the alternate screen, and the alternate screen
+has no scrollback — that is its definition. The primed history is written into
+the normal buffer, and a millisecond later tmux draws everything else somewhere
+the normal buffer cannot be seen from.
+
+Measured in a browser after a real backend restart: `.xterm-viewport`
+`scrollHeight` 414, `clientHeight` 414. Nothing above the screen, on a session
+where `tmux capture-pane -S - -E -1` still returned 68 lines of history. Same
+on a live page that had never seen a restart, because the ring replays the
+`1049h` too.
+
+### Deleting it changed nothing
+
+Priming disabled, everything re-run:
+
+- the rendered screen after a restart: identical, same 22 rows
+- the scrollback: still absent, same numbers
+- `restart-check`: still `0 FAIL`, including its own "cold replay" check
+
+Which is the test that names this exactly, written in this file a few hundred
+lines above, about this very harness:
+
+> The rule: a test that exercises a nearby path is not a test of this path. Ask
+> what would have to be deleted for the fallback to run, then delete it.
+
+Nobody had run it against the entry that states it. The thing that had to be
+deleted was the priming, and deleting it left every check green.
+
+`TestReconnectReplaysScrollback` was the other half of the illusion. It prints
+one line. One line fits on the visible screen, and the visible screen comes
+from the repaint, so the test never touched scrollback in its life. It is now
+`TestReconnectReplaysRecentOutput`, which is what it checks and is worth
+checking.
+
+### What replaced it
+
+The priming and `CaptureScrollback` are gone — with the priming removed the
+helper had no callers at all, which is the same defect one level up.
+
+In their place, `TestAFreshViewerIsFilledWithoutWaitingForOutput` pins the
+guarantee that was actually being delivered the whole time: a session that has
+finished printing and is sitting idle must still fill a terminal that opens on
+it, and what delivers that is the repaint. If the repaint ever stops arriving,
+every session opened after a restart is a blank rectangle attached to a live
+process — the exact failure the priming was written to prevent, and the one it
+was never preventing.
+
+### The part that is not a bug, and the part that might be
+
+None of this is the panel mishandling tmux. tmux uses the alternate screen in
+every terminal it runs in; scrolling back is copy-mode's job, not the outer
+terminal's. Byte-perfect replay of the *screen* is what the ring promises and
+what it delivers.
+
+The lever, for anyone who wants the browser's own scrollbar to work, is
+`terminal-overrides ',*:smcup@:rmcup@'` in `vibepanel.conf`, which keeps tmux
+out of the alternate screen. Its cost is well known and not small: every full
+redraw lands in the scrollback as another copy of the screen. Not taken here.
+
+Worth writing down alongside it: on a phone there is no way into copy-mode at
+all. The key bar has `pgup` and `pgdn`, which in a pane running a shell do
+nothing, so they read as scrollback controls that are inert. That is a real
+gap, and a product decision rather than a fix.

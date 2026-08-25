@@ -115,7 +115,14 @@ func TestTwoViewersSeeTheSameBytes(t *testing.T) {
 	}
 }
 
-func TestReconnectReplaysScrollback(t *testing.T) {
+// TestReconnectReplaysRecentOutput covers the hot path: the ring still exists,
+// so a second viewer is served from memory.
+//
+// Named for scrollback once, which it never touched — one line of output fits
+// on the visible screen, and the visible screen is served by the repaint. What
+// it actually pins is that the ring keeps recent output across a disconnect,
+// which is worth pinning and is a different claim.
+func TestReconnectReplaysRecentOutput(t *testing.T) {
 	ctx := context.Background()
 	tm := newTestTmux(t)
 	const name = "vp_replay"
@@ -1201,5 +1208,48 @@ func TestTakingControlWorksOnAGridFrozenForSomebodyElse(t *testing.T) {
 	}
 	if c, r := live.Size(); c != 45 || r != 20 {
 		t.Errorf("grid is %dx%d, want the taker's 45x20", c, r)
+	}
+}
+
+func TestAFreshViewerIsFilledWithoutWaitingForOutput(t *testing.T) {
+	// A session that has printed everything it is going to print, and is now
+	// sitting idle, still has to fill a terminal that opens on it. After a
+	// panel restart the ring is empty, so nothing in the panel can supply
+	// that; what does is tmux repainting the visible screen on attach, which
+	// arrives through the pump like any other output.
+	//
+	// This is the guarantee the replay priming was written for. The priming
+	// could not deliver it: it fetched the history *above* the screen, and
+	// tmux's attach begins with ESC[?1049h, so what it fetched was covered by
+	// the alternate screen a millisecond later. Deleting it changed nothing
+	// anyone could see. The repaint was doing the work all along, and it is
+	// the thing worth a test — without it, every session opened after a
+	// restart is a blank rectangle attached to a live process.
+	ctx := context.Background()
+	tm := newTestTmux(t)
+	const name = "vp_fresh"
+	if err := tm.Create(ctx, tmux.CreateOptions{
+		Name: name, Dir: t.TempDir(), Width: 80, Height: 10,
+		Command: []string{"sh", "-c", "for i in $(seq 1 40); do echo HISTLINE_$i; done; sleep 30"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	m := NewManager(tm, 64<<10)
+	defer m.DetachAll()
+
+	// Everything is printed and over with before anything attaches, so no live
+	// output can arrive to paper over a missing repaint.
+	time.Sleep(1500 * time.Millisecond)
+
+	live, err := m.Attach(ctx, "s1", name, 80, 10)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	sub, _ := live.Subscribe("client-a")
+	defer live.Unsubscribe(sub)
+
+	if got := collect(t, sub, "HISTLINE_40", 8*time.Second); !strings.Contains(got, "HISTLINE_40") {
+		t.Errorf("a viewer opening an idle session was never sent its screen; it would "+
+			"show a blank terminal until the session happened to print something: %q", got)
 	}
 }

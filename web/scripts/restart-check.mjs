@@ -256,9 +256,22 @@ try {
     }
   }
 
-  // ── the cold replay path ─────────────────────────────────────────────────
-  // The ring buffers died with the old process, so a fresh page can only be
-  // filled by capture-pane. This is the path that has never been covered.
+  // ── a page opened after the restart ──────────────────────────────────────
+  // The ring buffers died with the old process, so a fresh page is filled by
+  // tmux repainting the screen when the panel re-attaches.
+  //
+  // This said "can only be filled by capture-pane" and called itself the path
+  // that had never been covered. It was not covering it either: deleting the
+  // capture-pane priming entirely left this check green, the rendered screen
+  // byte-identical, and the probe measuring scrollback unchanged. The priming
+  // was inert because tmux's attach opens with ESC[?1049h and everything after
+  // it is drawn on the alternate screen, which has no scrollback — so the
+  // history it fetched was covered a millisecond after it was written.
+  //
+  // What this check is worth is unchanged and real: a page opened after a
+  // restart must show the session's screen without waiting for the session to
+  // print something. What it does not show, and cannot, is scrollback; that
+  // lives in tmux and is reached with copy-mode.
   const fresh = await ctx.newPage()
   await fresh.goto(BASE, { waitUntil: 'networkidle' })
   if (await fresh.locator('[data-testid="auth-submit"]').isVisible().catch(() => false)) {
