@@ -8746,3 +8746,42 @@ to a session created hours earlier. Almost all of it is debris from one-off
 probe scripts written during development, which use ad-hoc socket names no
 sweeper knows about. The lesson for the next probe is to name its socket like a
 harness does.
+
+### Three names on screen, one of them sanitised
+
+`safeText` exists because a filename carrying U+202E renders its own extension
+backwards next to a download link. Its docstring names the second source in the
+same breath: "session titles come from `pane_title`, which any program sets with
+a two-byte escape sequence."
+
+Four places render a name that came from outside. One of them called it.
+
+- `sessionLabel` sanitised, and the sidebar and header both use it.
+- The scratch-terminal tab strip had its own `label()` in BottomTerminals, with
+  its own reasoning about fallbacks and no `safeText`. Same `pane_title`, one
+  row lower on the screen.
+- A project's name defaults to `filepath.Base` of its directory, and an agent
+  creates directories. It went to a sidebar row, a tooltip, and the text of the
+  `window.confirm` that asks before killing every session in the project. The
+  equivalent confirm for a *session* used `labelOf` and was safe. Two confirms,
+  in the same file, one of them updated.
+
+All three are funnels in `label.ts` now, which is where that file's own
+docstring already said the answer was: "one definition ... because it was two."
+
+The character set grew at the same time, and the interesting part is what was
+left out. Added: C1 (only C0 and DEL were covered), U+00AD, U+200B, U+2060,
+U+FEFF — invisible, and with no role in a name. These hide a *difference*
+rather than a suffix: "deploy" and "dep<U+200B>loy" are the same pixels in a
+sidebar, and picking the wrong one means typing into the wrong agent.
+
+Not added, deliberately: U+200C and U+200D. Completing the range to
+`​-‏` is the obvious next edit and it was measured first:
+
+	👨‍👩‍👧  ->  👨�👩�👧      U+200D is what makes it one glyph
+	می‌خواهم  ->  می�خواهم      U+200C is what makes Persian join
+
+Both are load-bearing in text people put in filenames. Breaking a Persian name
+to defeat a lookalike is the worse trade, and the test that pins this fails with
+the broken emoji printed in it, so the next person sees the cost rather than
+reading about it.

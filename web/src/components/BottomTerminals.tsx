@@ -3,6 +3,7 @@ import { ChevronDown, Plus, X } from 'lucide-react'
 
 import type { PanelSocket } from '../protocol/socket'
 import type { Session } from '../protocol/wire'
+import { terminalLabel } from './label'
 import { TerminalView } from './Terminal'
 import { InlineName } from './InlineName'
 import { StateDot } from './StateDot'
@@ -24,15 +25,6 @@ interface Props {
 const MIN_HEIGHT = 80
 /** Leave at least this much of the main terminal visible. */
 const MIN_MAIN_HEIGHT = 120
-
-function label(s: Session, index: number): string {
-  // No fallback to the command name. The server leaves a scratch terminal's
-  // title empty precisely when it has no useful automatic name — every shell
-  // is called "bash", and a strip of tabs all reading "bash" tells you
-  // nothing. Trust that judgement rather than re-deriving it here, where the
-  // two would drift.
-  return s.title || `term ${index + 1}`
-}
 
 /**
  * Scratch terminals belonging to the session above them.
@@ -135,7 +127,7 @@ export function BottomTerminals(props: Props) {
               <StateDot state={t.state} exited exitStatus={t.exitStatus} size={8} />
             )}
             <InlineName
-              value={label(t, i)}
+              value={terminalLabel(t, i)}
               onCommit={(next) => props.onRename(t, next)}
               className="max-w-32"
             />

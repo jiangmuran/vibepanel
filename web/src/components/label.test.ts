@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { disambiguatedLabels, sessionLabel, exitReason } from './label'
+import { disambiguatedLabels, projectLabel, sessionLabel, terminalLabel, exitReason } from './label'
 import type { Session } from '../protocol/wire'
 
 /**
@@ -107,5 +107,31 @@ describe('exitReason', () => {
     // 128 itself is not a signal death, and neither is a status past the range.
     expect(exitReason(128)).toBe('exited with status 128')
     expect(exitReason(255)).toBe('exited with status 255')
+  })
+})
+
+describe('projectLabel', () => {
+  it('sanitises a name that came from a directory', () => {
+    // A project's name defaults to the basename of its directory, and an agent
+    // creates directories. The same override that reverses a filename reverses
+    // this, in a sidebar row and in the confirm that kills every session in it.
+    expect(projectLabel({ name: 'billing\u202Egnp.hs' })).not.toContain('\u202E')
+    expect(projectLabel({ name: 'billing' })).toBe('billing')
+  })
+})
+
+describe('terminalLabel', () => {
+  const term = (title: string) => ({ title }) as Session
+
+  it('sanitises a title that came from pane_title', () => {
+    expect(terminalLabel(term('build\u202Egnp.hs'), 0)).not.toContain('\u202E')
+  })
+
+  it('numbers a terminal the server chose not to name', () => {
+    // Not a fallback to the command: every shell is called "bash", and a strip
+    // of tabs all reading "bash" says nothing. The empty title is the server's
+    // judgement, not a gap to fill.
+    expect(terminalLabel(term(''), 0)).toBe('term 1')
+    expect(terminalLabel(term(''), 2)).toBe('term 3')
   })
 })

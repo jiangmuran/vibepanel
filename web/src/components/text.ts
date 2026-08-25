@@ -33,13 +33,29 @@
  * same property this function exists to defeat.
  */
 const DECEPTIVE =
-  // C0 and DEL, then the bidi embeddings, overrides and isolates, then the
-  // standalone marks. U+061C is the Arabic letter mark, which belongs to the
-  // same family and is routinely forgotten.
+  // C0 and DEL, then C1, then the bidi embeddings, overrides and isolates,
+  // then the standalone marks. U+061C is the Arabic letter mark, which belongs
+  // to the same family and is routinely forgotten.
+  //
+  // Then the invisibles that are not bidi at all and hide a difference rather
+  // than a suffix: U+200B zero-width space, U+2060 word joiner, U+FEFF
+  // (zero-width no-break space, the byte-order mark) and U+00AD soft hyphen.
+  // Two sessions titled "deploy" and "dep<U+200B>loy" are the same three rows
+  // of pixels, and picking the wrong one means typing into the wrong agent.
+  // Titles come from `pane_title`, which any program sets.
+  //
+  // U+200C and U+200D are deliberately NOT here, and completing the range is
+  // the tempting mistake. Measured:
+  //
+  //   "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}" -> family emoji, three broken glyphs without it
+  //   "\u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645" -> Persian, mis-joined without it
+  //
+  // Both are load-bearing in ordinary text that people put in filenames, and
+  // breaking a Persian name to defeat a lookalike is the worse trade.
   // The control characters are the subject here, not an accident: this is the
   // function whose job is removing them.
   // eslint-disable-next-line no-control-regex
-  /[\u0000-\u001F\u007F\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]/g
+  /[\u0000-\u001F\u007F-\u009F\u00AD\u202A-\u202E\u2066-\u2069\u200E\u200F\u200B\u2060\uFEFF\u061C]/g
 
 export function safeText(s: string): string {
   return s.replace(DECEPTIVE, '\uFFFD')

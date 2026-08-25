@@ -14,7 +14,7 @@ import {
 
 import type { Project, Session, SessionState } from '../protocol/wire'
 import { useDragList } from '../hooks/useDragList'
-import { sessionLabel } from './label'
+import { projectLabel, sessionLabel } from './label'
 import { StateDot } from './StateDot'
 import { InlineName } from './InlineName'
 import { EXIT_VANISHED } from '../protocol/wire'
@@ -147,7 +147,7 @@ export function Sidebar(props: SidebarProps) {
               type="button"
               data-testid="rail-project"
               onClick={props.onToggle}
-              title={`${p.name} — ${list.length} session(s)`}
+              title={`${projectLabel(p)} — ${list.length} session(s)`}
               // shrink-0, or the scroller above never gets a chance.
               //
               // Flex children compress before they overflow, so a rail with
@@ -271,7 +271,7 @@ export function Sidebar(props: SidebarProps) {
                 <GripVertical size={12} />
               </span>
               <InlineName
-                value={p.name}
+                value={projectLabel(p)}
                 onCommit={(next) => props.onRenameProject(p, next)}
                 className="text-[11px] font-semibold tracking-wide text-ink-2 uppercase"
                 title={p.path}

@@ -25,7 +25,7 @@ import { MobileKeyBar } from './components/mobile/MobileKeyBar'
 import { ComposeInput } from './components/mobile/ComposeInput'
 import { SelectionCopy } from './components/mobile/SelectionCopy'
 import type { PanelTab } from './components/RightPanel'
-import { disambiguatedLabels, sessionLabel, exitReason } from './components/label'
+import { disambiguatedLabels, projectLabel, sessionLabel, exitReason } from './components/label'
 import { applyTheme, loadTheme } from './components/theme'
 import type { ThemeChoice } from './components/theme'
 import { NARROW_QUERY, useMediaQuery } from './hooks/useMediaQuery'
@@ -421,8 +421,8 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     const running = state.sessions.filter((s) => s.projectId === p.id).length
     const what =
       running === 0
-        ? `Remove ${p.name} from the panel?`
-        : `Remove ${p.name} from the panel? Its ${running} session${running === 1 ? '' : 's'} ` +
+        ? `Remove ${projectLabel(p)} from the panel?`
+        : `Remove ${projectLabel(p)} from the panel? Its ${running} session${running === 1 ? '' : 's'} ` +
           `will be killed.`
     if (!window.confirm(`${what}\n\nThe directory itself is left alone.`)) return
     void guard(() => api.deleteProject(p.id))

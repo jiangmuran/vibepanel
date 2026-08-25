@@ -28,6 +28,40 @@ export function sessionLabel(s: Session): string {
 }
 
 /**
+ * What to call a project on screen.
+ *
+ * A project's name defaults to the basename of the directory it points at
+ * (`filepath.Base` in handleCreateProject), so it is no more trustworthy than a
+ * filename: an agent creates directories, and a directory name is arbitrary
+ * bytes. It went to the sidebar, to a tooltip, and into the text of the
+ * `window.confirm` that asks before killing every session in it — none of them
+ * sanitised, while the equivalent question about a *session* used
+ * sessionLabel and was. Two paths, one of them updated.
+ *
+ * A funnel for the same reason as sessionLabel: sanitising at each call site is
+ * how the next one gets forgotten.
+ */
+export function projectLabel(p: { name: string }): string {
+  return safeText(p.name)
+}
+
+/**
+ * What to call a scratch terminal in the strip under a session.
+ *
+ * No fallback to the command name, unlike sessionLabel. The server leaves a
+ * scratch terminal's title empty precisely when it has no useful automatic
+ * name — every shell is called "bash", and a strip of tabs all reading "bash"
+ * tells you nothing. Trust that judgement rather than re-deriving it.
+ *
+ * Here rather than in BottomTerminals so that all three funnels are in one
+ * file: it was the one that did not sanitise, and it was the one that lived
+ * somewhere else.
+ */
+export function terminalLabel(s: Session, index: number): string {
+  return safeText(s.title) || `term ${index + 1}`
+}
+
+/**
  * Labels that can tell sessions apart.
  *
  * A shell is named after the directory it sits in, so a project containing
