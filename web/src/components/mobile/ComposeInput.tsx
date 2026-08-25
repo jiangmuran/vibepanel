@@ -9,13 +9,50 @@ import { CornerDownLeft, Send } from 'lucide-react'
  * Korean input produce garbage and even autocorrect fights the line editor.
  * Composing first and sending once is the only way this works.
  */
-export function ComposeInput({ onSend }: { onSend: (text: string) => void }) {
+export function ComposeInput({
+  sessionId,
+  onSend,
+}: {
+  sessionId: string
+  onSend: (text: string) => void
+}) {
   const [text, setText] = useState('')
   const [newline, setNewline] = useState(true)
+
+  // What is in the box belongs to the session it was typed for.
+  //
+  // This component is rendered by position, not keyed, so switching session
+  // left the text sitting there while onSend quietly re-pointed at the new
+  // one: compose a command for alpha, glance at bravo, tap Send, and it runs
+  // in bravo. Measured, not theorised — `echo MEANT_FOR_ALPHA` executed in
+  // bravo and never reached alpha. In a panel whose whole purpose is a lot of
+  // agents at once, delivering a command to the wrong one is the expensive
+  // mistake.
+  //
+  // Keying by session would fix the misdelivery by throwing the draft away,
+  // which is the same thing the notes panel used to do to a half-typed note.
+  // Keeping one draft per session fixes both: nothing goes to the wrong
+  // terminal and nothing you typed disappears when you look away.
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [shownFor, setShownFor] = useState(sessionId)
+  if (shownFor !== sessionId) {
+    // Adjusting state during render rather than in an effect, so the box never
+    // paints one frame holding the previous session's command. `drafts` is
+    // still the pre-update value here, which is what the incoming session's
+    // draft has to be read from.
+    setDrafts((d) => ({ ...d, [shownFor]: text }))
+    setShownFor(sessionId)
+    setText(drafts[sessionId] ?? '')
+  }
 
   const send = () => {
     if (!text) return
     onSend(newline ? text + '\r' : text)
+    setDrafts((d) => {
+      const next = { ...d }
+      delete next[sessionId]
+      return next
+    })
     setText('')
   }
 
@@ -30,7 +67,14 @@ export function ComposeInput({ onSend }: { onSend: (text: string) => void }) {
         onKeyDown={(e) => {
           // Enter sends; Shift-Enter is a newline inside the message, for the
           // rare multi-line paste.
-          if (e.key === 'Enter' && !e.shiftKey) {
+          //
+          // isComposing is the whole reason this box exists, applied to the box
+          // itself. With an input method, Enter is how a candidate is chosen —
+          // Chromium reports that keypress as key "Enter" with isComposing set
+          // — so without this guard, picking the first word of a Chinese
+          // sentence sends it. The component built to keep an IME away from the
+          // terminal was firing on the IME's own confirm key.
+          if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault()
             send()
           }

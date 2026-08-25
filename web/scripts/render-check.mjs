@@ -1201,6 +1201,53 @@ try {
       note('FAIL', 'mobile', 'the compose box kept its text after sending')
     }
 
+    // What is in the box belongs to the session it was typed for.
+    //
+    // The box is rendered by position rather than keyed, so switching session
+    // used to leave the text sitting there while the send handler re-pointed
+    // at the new session: compose for one agent, glance at another, tap Send,
+    // and it ran in the wrong one. Measured before it was fixed — an echo
+    // composed for alpha ran in bravo and never reached alpha. Sending a
+    // command to the wrong agent is the expensive mistake in a panel built to
+    // run a lot of them at once.
+    //
+    // The second half matters just as much: switching away must not throw the
+    // draft away either, or the fix is just a different way to lose what you
+    // typed.
+    const openPhoneMenu = async () => {
+      await page.locator('header button[title^="Projects"]').click()
+      await sleep(700)
+    }
+    await compose.fill('echo DRAFT_FOR_SCRATCHPAD')
+    await sleep(200)
+    await openPhoneMenu()
+    // By position, not by name: this only needs *a different* session.
+    const other = page.locator('[data-testid="session-row"]')
+      .filter({ hasNotText: 'scratchpad' }).first()
+    if (!(await other.isVisible().catch(() => false))) {
+      note('WARN', 'mobile', 'only one session at phone width; draft isolation not exercised')
+      await openPhoneMenu()
+    } else {
+      await other.click()
+      await sleep(1800)
+      const leaked = await compose.inputValue().catch(() => '')
+      if (leaked !== '') {
+        note('FAIL', 'mobile',
+          `a draft composed for another session is sitting in this one's box: ${JSON.stringify(leaked)}`)
+      }
+      await compose.fill('echo DRAFT_FOR_OTHER')
+      await sleep(200)
+      await openPhoneMenu()
+      await page.locator('[data-testid="session-row"]', { hasText: 'scratchpad' }).first().click()
+      await sleep(1800)
+      const back = await compose.inputValue().catch(() => '')
+      if (back !== 'echo DRAFT_FOR_SCRATCHPAD') {
+        note('FAIL', 'mobile',
+          `looking at another session threw this one's draft away; the box holds ${JSON.stringify(back)}`)
+      }
+      await compose.fill('')
+    }
+
     // A key from the bar has to arrive as the byte a terminal expects.
     await compose.fill('printf KEYBAR')
     const newlineBtn = page.locator('[data-testid="compose-newline"]')

@@ -25,9 +25,11 @@ import { MobileKeyBar } from './components/mobile/MobileKeyBar'
 import { ComposeInput } from './components/mobile/ComposeInput'
 import { SelectionCopy } from './components/mobile/SelectionCopy'
 import type { PanelTab } from './components/RightPanel'
+import { disambiguatedLabels, sessionLabel } from './components/label'
 import { applyTheme, loadTheme } from './components/theme'
 import type { ThemeChoice } from './components/theme'
 import { NARROW_QUERY, useMediaQuery } from './hooks/useMediaQuery'
+import { EXIT_VANISHED } from './protocol/wire'
 
 /**
  * Safety net only.
@@ -47,9 +49,6 @@ const RIGHT_TAB_KEY = 'vibepanel.rightTab'
 const RIGHT_SPLIT_KEY = 'vibepanel.rightSplit'
 const RIGHT_DEFAULT_WIDTH = 280
 
-function sessionLabel(s: Session): string {
-  return s.title || s.command || 'session'
-}
 
 /**
  * The session the user was last looking at.
@@ -240,10 +239,53 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     [state.sessions],
   )
   const current = mainSessions.find((s) => s.id === selected) ?? null
+  const labels = useMemo(() => disambiguatedLabels(mainSessions), [mainSessions])
+  const labelOf = (s: Session) => labels.get(s.id) ?? sessionLabel(s)
+  // Sorted by age, not by the order they arrive in.
+  //
+  // The session list is ordered by urgency and recent output, which is right
+  // for the sidebar and wrong for a row of tabs: a terminal that printed
+  // something jumped to the front, so the tab under the pointer moved. Worse,
+  // the automatic label is positional — "term 2" became "term 1" — so the tab
+  // was renamed as well as moved, and the one you had been using was neither
+  // where you left it nor called what you called it.
+  //
+  // Creation order never changes, which is the only property a tab strip
+  // needs. Ties by id so the result is total.
   const bottomTerminals = useMemo(
-    () => (current ? state.sessions.filter((s) => s.parentSessionId === current.id) : []),
+    () =>
+      (current ? state.sessions.filter((s) => s.parentSessionId === current.id) : []).sort(
+        (a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id),
+      ),
     [state.sessions, current],
   )
+
+  // A connection that stays down might mean the session ended.
+  //
+  // A browser cannot see the HTTP status of a failed WebSocket handshake, so a
+  // socket refused with 401 looks exactly like one refused by a flaky network.
+  // The panel therefore went on showing the session list and the last frame of
+  // a terminal, with only the connection dot to say otherwise, until some
+  // unrelated fetch happened to get a 401 — about twenty seconds, measured.
+  //
+  // So: after a few seconds down, ask. If the answer is that we are signed
+  // out, say so. Asking first matters — signing out on a dropped connection
+  // would turn a bad wifi moment into a logout.
+  useEffect(() => {
+    if (status !== 'closed') return
+    const timer = window.setTimeout(() => {
+      void api
+        .authState()
+        .then((state) => {
+          if (!state.authenticated) onSignOut()
+        })
+        .catch(() => {
+          // The panel is unreachable rather than refusing us. Leave it to the
+          // socket's own reconnection.
+        })
+    }, 4000)
+    return () => clearTimeout(timer)
+  }, [status, onSignOut])
 
   // On a phone the terminal is a display: input arrives from the compose box
   // and the key bar, so tapping it must not raise the software keyboard over
@@ -326,7 +368,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   }
 
   const killSession = (s: Session) => {
-    if (!window.confirm(`Kill ${sessionLabel(s)}? The process is terminated.`)) return
+    if (!window.confirm(`Kill ${labelOf(s)}? The process is terminated.`)) return
     void guard(() => api.deleteSession(s.id))
   }
 
@@ -359,6 +401,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         <Sidebar
           projects={state.projects}
           sessions={mainSessions}
+          labels={labels}
           live={state.live}
           selected={selected}
           expanded={narrow ? true : docked}
@@ -394,7 +437,9 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
       )}
 
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-11 shrink-0 items-center gap-2 border-b border-hairline px-3 vp-blur">
+        {/* vp-safe-top repeats h-11; the two have to move together. See the
+            class for why it is written that way rather than with box-sizing. */}
+        <header className="flex h-11 shrink-0 items-center gap-2 border-b border-hairline px-3 vp-blur vp-safe-top">
           {narrow && (
             <button
               type="button"
@@ -426,7 +471,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
                 onToggle={(st) => void guard(() => api.patchSession(current.id, { state: st }))}
               />
               <span data-testid="session-title" className="truncate text-[13px] font-medium">
-                {sessionLabel(current)}
+                {labelOf(current)}
               </span>
               {!narrow && (
                 <span className="truncate text-[12px] text-ink-2">{currentProject?.name}</span>
@@ -442,9 +487,11 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
                   onClick={() => restartSession(current)}
                   className="ml-1 flex shrink-0 items-center gap-1 rounded-full border border-hairline px-2 py-0.5 text-[11px] text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
                   title={
-                    current.exitStatus === 0
-                      ? 'The process exited. Run it again in this pane.'
-                      : `The process exited with status ${current.exitStatus}. Run it again in this pane.`
+                    current.exitStatus === EXIT_VANISHED
+                      ? 'The tmux session is gone. Start it again in a new one.'
+                      : current.exitStatus === 0
+                        ? 'The process exited. Run it again in this pane.'
+                        : `The process exited with status ${current.exitStatus}. Run it again in this pane.`
                   }
                 >
                   <RotateCcw size={11} />
@@ -606,7 +653,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         {current && narrow && (
           <>
             <SelectionCopy selection={selection} />
-            <ComposeInput onSend={sendToCurrent} />
+            <ComposeInput sessionId={current.id} onSend={sendToCurrent} />
             <MobileKeyBar onSend={sendToCurrent} />
           </>
         )}
@@ -648,8 +695,15 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
       </main>
 
       {/* Hidden on a narrow screen: a 280px column beside a terminal on a
-          phone leaves neither usable. The panels reach mobile in their own
-          layout rather than by being squeezed into this one. */}
+          phone leaves neither usable.
+          
+          This used to end "the panels reach mobile in their own layout rather
+          than by being squeezed into this one", which was not true of anything
+          that exists. There is no mobile route to the file tree, the monitor,
+          the notes or the todo list — the narrow layout is the terminal, the
+          compose box and the key bar, and that is what the plan scoped. Saying
+          otherwise made a gap read as a decision that had already been carried
+          out. */}
       {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
 
       {!narrow && rightWidth > 0 && (
