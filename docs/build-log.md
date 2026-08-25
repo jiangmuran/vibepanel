@@ -5279,3 +5279,16 @@ socket check as the second thing to look at.
 `KillMode=process` in a unit file is exactly what someone tidying or hardening
 it would delete. It rejects absent, `mixed` and `control-group` with the
 measurement in the message.
+
+### Why the restart harness never saw it
+
+`restart-check.mjs` restarts the panel and confirms the sessions come back, and
+it has always passed. It kills the process directly. The bug is not in what
+happens when the process dies — it is in what systemd does to everything
+sharing the process's cgroup, and there is no cgroup in the harness at all.
+
+The harness was answering "does the panel reattach", correctly and usefully.
+The question nobody was asking is "does the thing that stops the panel in
+production stop anything else", and no amount of care inside the harness's
+frame would have reached it. A check that runs the binary the way it is run in
+development can only ever tell you about development.
