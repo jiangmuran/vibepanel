@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,6 +44,34 @@ func TestFileTransfer(t *testing.T) {
 		}
 		return res
 	}
+
+	t.Run("names a non-ASCII file so a browser gets it right", func(t *testing.T) {
+		// filename is ISO-8859-1 by specification, so raw UTF-8 in it is left to
+		// the browser to guess — Firefox has read it as Latin-1, which turns
+		// 报告.pdf into mojibake on the way to the disk. filename* says the
+		// encoding out loud, and both are sent so old clients still get a name.
+		const cjk = "报告.txt"
+		if err := os.WriteFile(filepath.Join(root, cjk), []byte("hi"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		res := get(url.PathEscape(cjk))
+		defer res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("status %d", res.StatusCode)
+		}
+		cd := res.Header.Get("Content-Disposition")
+		if !strings.Contains(cd, "filename*=UTF-8''%E6%8A%A5%E5%91%8A.txt") {
+			t.Errorf("Content-Disposition = %q, want an RFC 5987 filename*", cd)
+		}
+		// The fallback has to be there, and has to be ASCII: a raw byte above
+		// 0x7f in a header is exactly what filename* exists to avoid.
+		for i := 0; i < len(cd); i++ {
+			if cd[i] < 0x20 || cd[i] >= 0x7f {
+				t.Errorf("Content-Disposition carries a raw byte %#x: %q", cd[i], cd)
+				break
+			}
+		}
+	})
 
 	t.Run("downloads a file", func(t *testing.T) {
 		res := get("sub/notes.txt")

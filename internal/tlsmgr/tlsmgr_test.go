@@ -199,3 +199,74 @@ func TestACMERefusesHTTPOnlyChallenge(t *testing.T) {
 		t.Errorf("err = %v, want it to ask for a DNS provider", err)
 	}
 }
+
+// A renewal that keeps the old timestamps still has to be noticed.
+//
+// This used to compare modification times, which is wrong for the one event it
+// exists to catch: `cp -p`, `install -p`, rsync with --times and anything else
+// that restores mtime after writing would leave the panel serving the previous
+// certificate until it expired — and then serving an expired one, silently,
+// because nothing would ever look again.
+func TestRenewalWithPreservedTimestampsIsNoticed(t *testing.T) {
+	dir := t.TempDir()
+	certPath, keyPath := writePair(t, dir, "first.example")
+
+	certInfo, err := os.Stat(certPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyInfo, err := os.Stat(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	src, err := NewFileSource(certPath, keyPath, nil)
+	if err != nil {
+		t.Fatalf("NewFileSource: %v", err)
+	}
+	defer src.Close()
+
+	newCert, newKey := writePair(t, dir, "second.example")
+	copyOver(t, newCert, certPath)
+	copyOver(t, newKey, keyPath)
+	// The part that matters: put the timestamps back exactly as they were, the
+	// way a preserving copy does.
+	if err := os.Chtimes(certPath, certInfo.ModTime(), certInfo.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(keyPath, keyInfo.ModTime(), keyInfo.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := src.reload(); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	cert, err := src.TLSConfig().GetCertificate(&tls.ClientHelloInfo{})
+	if err != nil {
+		t.Fatalf("GetCertificate: %v", err)
+	}
+	if got := commonNameOf(t, cert); got != "second.example" {
+		t.Errorf("common name after a timestamp-preserving renewal = %q, want second.example; "+
+			"the panel is still serving the certificate that was replaced", got)
+	}
+}
+
+// The expiry is readable, so something other than a log line can act on it.
+func TestExpiresAtReportsTheLeaf(t *testing.T) {
+	dir := t.TempDir()
+	certPath, keyPath := writePair(t, dir, "dated.example")
+	src, err := NewFileSource(certPath, keyPath, nil)
+	if err != nil {
+		t.Fatalf("NewFileSource: %v", err)
+	}
+	defer src.Close()
+
+	at := src.ExpiresAt()
+	if at.IsZero() {
+		t.Fatal("ExpiresAt is zero; the leaf was not parsed, so nothing can warn about expiry")
+	}
+	// writePair issues for a day.
+	if d := time.Until(at); d < 20*time.Hour || d > 26*time.Hour {
+		t.Errorf("expires in %v, want about 24h", d)
+	}
+}

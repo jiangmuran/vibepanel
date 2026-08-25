@@ -38,13 +38,16 @@ type settingsResponse struct {
 	Attached    int    `json:"attached"`
 	Viewers     int    `json:"viewers"`
 
-	DataDir  string `json:"dataDir"`
-	DBBytes  int64  `json:"dbBytes"`
-	Addr     string `json:"addr"`
-	URL      string `json:"url"`
-	TLSMode  string `json:"tlsMode"`
-	Domain   string `json:"domain"`
-	AllowAll bool   `json:"allowAll"`
+	DataDir string `json:"dataDir"`
+	DBBytes int64  `json:"dbBytes"`
+	Addr    string `json:"addr"`
+	URL     string `json:"url"`
+	TLSMode string `json:"tlsMode"`
+	// CertExpiry is unix seconds, absent when nothing is serving a certificate
+	// or the mode does not have one.
+	CertExpiry int64  `json:"certExpiry,omitempty"`
+	Domain     string `json:"domain"`
+	AllowAll   bool   `json:"allowAll"`
 
 	PasskeysUsable bool   `json:"passkeysUsable"`
 	PasskeyReason  string `json:"passkeyReason,omitempty"`
@@ -75,6 +78,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		TLSMode: string(s.Cfg.TLSMode), Domain: s.Cfg.Domain,
 
 		PasskeysUsable: s.Cfg.PasskeysUsable(),
+	}
+	if s.CertExpiry != nil {
+		if at := s.CertExpiry(); !at.IsZero() {
+			out.CertExpiry = at.Unix()
+		}
 	}
 	if s.Hub != nil {
 		out.Viewers = s.Hub.Connections()
@@ -133,6 +141,11 @@ func (s *Server) handleHooksInstall(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// The snapshot's "states are being guessed" notice reads a cached answer;
+	// without this it would keep telling the user to install hooks for up to a
+	// TTL after they just did.
+	s.forgetHookStatus()
+	s.notifyState()
 	if u, ok := currentUserFrom(r); ok {
 		s.audit(r.Context(), "hooks.installed", u.Username, s.clientIP(r), st.SettingsPath)
 	}
@@ -150,6 +163,8 @@ func (s *Server) handleHooksUninstall(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.forgetHookStatus()
+	s.notifyState()
 	if u, ok := currentUserFrom(r); ok {
 		s.audit(r.Context(), "hooks.removed", u.Username, s.clientIP(r), st.SettingsPath)
 	}

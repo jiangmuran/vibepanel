@@ -27,7 +27,15 @@ var dist embed.FS
 // embedded build would need a Go rebuild for every CSS change.
 func Handler(staticDir string) http.Handler {
 	if staticDir != "" {
-		return spaHandler{fsys: os.DirFS(staticDir), root: staticDir}
+		// Absolute, once, here: the containment check below compares against a
+		// path that filepath.Abs has already resolved, and a relative --static-dir
+		// (which is what anyone types — "--static-dir web/dist") would never
+		// match it. Every request answered 404 while the files sat right there.
+		root, err := filepath.Abs(staticDir)
+		if err != nil {
+			root = filepath.Clean(staticDir)
+		}
+		return spaHandler{fsys: os.DirFS(staticDir), root: root}
 	}
 	sub, err := fs.Sub(dist, "dist")
 	if err != nil {
@@ -54,7 +62,11 @@ func Built() bool {
 
 type spaHandler struct {
 	fsys fs.FS
-	root string // non-empty when serving from disk, for traversal checks
+	// root is the absolute, cleaned directory being served, and is empty when
+	// serving the embedded build. Absolute because the containment check
+	// compares it against a resolved path; anything else silently rejects
+	// everything.
+	root string
 }
 
 func (h spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -68,11 +80,9 @@ func (h spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// this handler is one URL away from reading the user's home directory.
 	if h.root != "" {
 		abs, err := filepath.Abs(filepath.Join(h.root, filepath.FromSlash(name)))
-		if err != nil || !strings.HasPrefix(abs, filepath.Clean(h.root)+string(os.PathSeparator)) {
-			if abs != filepath.Clean(h.root) {
-				http.NotFound(w, r)
-				return
-			}
+		if err != nil || (abs != h.root && !strings.HasPrefix(abs, h.root+string(os.PathSeparator))) {
+			http.NotFound(w, r)
+			return
 		}
 	}
 

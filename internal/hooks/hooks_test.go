@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestClaudeSettingsIsValidJSON(t *testing.T) {
@@ -334,5 +336,217 @@ func TestBackupsDoNotOverwriteEachOther(t *testing.T) {
 	}
 	if !sawOriginal {
 		t.Errorf("no backup holds the file as it was before any edit: %v", backups)
+	}
+}
+
+// Installing when the hooks are already exactly right must leave the user's
+// file alone: not rewritten, not reformatted, and no backup recording an edit
+// that did not happen. The settings page invites this press, so it is the
+// common case rather than an edge one.
+func TestInstallingTwiceDoesNotTouchTheFileAgain(t *testing.T) {
+	home := withFakeHome(t)
+	settings := filepath.Join(home, ".claude", "settings.json")
+	script, _ := InstallScript(t.TempDir())
+
+	if _, err := InstallClaude(script); err != nil {
+		t.Fatal(err)
+	}
+	countBackups := func() int {
+		t.Helper()
+		entries, rerr := os.ReadDir(filepath.Dir(settings))
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		n := 0
+		for _, e := range entries {
+			if strings.Contains(e.Name(), "vibepanel-backup") {
+				n++
+			}
+		}
+		return n
+	}
+	backupsAfterFirst := countBackups()
+
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(settings, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := InstallClaude(script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.Installed || len(st.Events) != 4 {
+		t.Errorf("second install reported %+v", st)
+	}
+	after, err := os.Stat(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ModTime().Equal(old) {
+		t.Error("the settings file was rewritten when nothing had changed")
+	}
+	if n := countBackups(); n != backupsAfterFirst {
+		t.Errorf("backups went from %d to %d for an edit that did not happen",
+			backupsAfterFirst, n)
+	}
+}
+
+// The file belongs to the user, including its permissions. Pressing a button
+// about hooks must not quietly change who can read it.
+func TestInstallKeepsTheFileMode(t *testing.T) {
+	home := withFakeHome(t)
+	settings := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settings, []byte(`{"model":"opus"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script, _ := InstallScript(t.TempDir())
+	if _, err := InstallClaude(script); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Errorf("mode = %v after installing, want the 0644 the user had", info.Mode().Perm())
+	}
+}
+
+// Callers treat InstallScript as "tell me where the script is" and ask on
+// paths that run several times a second, so a call that changes nothing must
+// touch nothing. It also matters that an unchanged install does not replace
+// the file: agents execute it at moments nobody controls, and a shell reads a
+// script incrementally.
+func TestInstallScriptDoesNotRewriteAnUnchangedFile(t *testing.T) {
+	dir := t.TempDir()
+	path, err := InstallScript(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A modification time far enough in the past that any rewrite is visible
+	// whatever the filesystem's timestamp resolution.
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := InstallScript(dir); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ModTime().Equal(old) {
+		t.Errorf("the script was rewritten when nothing had changed: %v → %v",
+			old, after.ModTime())
+	}
+	if after.Mode().Perm() != before.Mode().Perm() {
+		t.Errorf("mode changed: %v → %v", before.Mode().Perm(), after.Mode().Perm())
+	}
+}
+
+// The other half: when the content really is wrong, it has to be replaced —
+// and replaced whole, not truncated and refilled underneath a running hook.
+func TestInstallScriptReplacesWrongContent(t *testing.T) {
+	dir := t.TempDir()
+	path, err := InstallScript(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n# stale\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := InstallScript(dir); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, ReportScript) {
+		t.Error("a stale script was left in place")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The 0600 written above must not survive: the panel runs this file.
+	if info.Mode().Perm() != 0o700 {
+		t.Errorf("mode = %v after replacing, want 0700", info.Mode().Perm())
+	}
+	// Nothing left beside it. A temp file that outlives the rename is a file
+	// the next reader has to wonder about.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Errorf("temp file left behind: %s", e.Name())
+		}
+	}
+}
+
+// All four variables, or the hook is decorative.
+//
+// The admin CLI built its own list of two — session id and project id — so a
+// session created with `vibepanel session new` had nothing to authenticate
+// with and nowhere to post. The hook script suppresses its own errors by
+// design, so the only symptom was state that stayed guessed, in a panel whose
+// settings page said hooks were installed.
+func TestSessionEnvCarriesEverythingTheScriptReads(t *testing.T) {
+	env := SessionEnv("s-1", "p-1", "http://127.0.0.1:8443", "tok")
+	want := map[string]string{
+		"VIBEPANEL_SESSION_ID": "s-1",
+		"VIBEPANEL_PROJECT_ID": "p-1",
+		"VIBEPANEL_URL":        "http://127.0.0.1:8443",
+		"VIBEPANEL_TOKEN":      "tok",
+	}
+	got := map[string]string{}
+	for _, kv := range env {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok {
+			t.Fatalf("malformed entry %q", kv)
+		}
+		got[k] = v
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %q, want %q", k, got[k], v)
+		}
+	}
+
+	// The three the script actually reads. If a name changes on either side
+	// the hook silently stops working, and nothing else would notice — the
+	// script's whole design is to fail quietly outside the panel.
+	//
+	// VIBEPANEL_PROJECT_ID is deliberately not in this list: it is offered to
+	// whatever the person runs inside the session, and asserting that the
+	// script reads it is how this test first failed, against a comment that
+	// had invented a use for it.
+	for _, k := range []string{"VIBEPANEL_SESSION_ID", "VIBEPANEL_TOKEN", "VIBEPANEL_URL"} {
+		if !strings.Contains(string(ReportScript), k) {
+			t.Errorf("the embedded hook script never mentions %s", k)
+		}
+	}
+}
+
+// Without a token the session is still usable; it just falls back.
+func TestSessionEnvOmitsAnEmptyToken(t *testing.T) {
+	for _, kv := range SessionEnv("s", "p", "http://x", "") {
+		if strings.HasPrefix(kv, "VIBEPANEL_TOKEN=") {
+			t.Errorf("an empty token was injected as %q, which the script cannot tell from a real one", kv)
+		}
 	}
 }

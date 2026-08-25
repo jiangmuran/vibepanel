@@ -14,6 +14,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/jiangmuran/vibepanel/internal/id"
 )
 
 //go:embed schema.sql
@@ -265,4 +267,30 @@ func (d *DB) SetSetting(ctx context.Context, key, value string) error {
 		return fmt.Errorf("store: set setting %s: %w", key, err)
 	}
 	return nil
+}
+
+// HookToken returns the shared secret that authenticates state reports,
+// creating it on first use.
+//
+// Here rather than on the API server because the admin CLI needs the same
+// value when it creates a session: without it the hook inside that session has
+// nothing to authenticate with and every report is rejected, silently, because
+// the hook script suppresses its own errors by design.
+//
+// 32 hex characters from crypto/rand. It travels in an Authorization header on
+// loopback and is written into the user's agent config, so it wants to be
+// unguessable but does not need to be long.
+func (d *DB) HookToken(ctx context.Context) (string, error) {
+	existing, err := d.GetSetting(ctx, "hook_token", "")
+	if err != nil {
+		return "", err
+	}
+	if existing != "" {
+		return existing, nil
+	}
+	token := id.New() + id.New()
+	if err := d.SetSetting(ctx, "hook_token", token); err != nil {
+		return "", err
+	}
+	return token, nil
 }

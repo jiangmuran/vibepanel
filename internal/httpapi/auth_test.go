@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/cookiejar"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -379,4 +380,107 @@ func TestThrottleIsNotResetByAHeader(t *testing.T) {
 		t.Errorf("a second wrong password from a new X-Forwarded-For got %d, want 429; "+
 			"brute force is unthrottled", code)
 	}
+}
+
+// Changing the password, which used to be impossible from anywhere.
+func TestChangePassword(t *testing.T) {
+	const current = "a sufficiently long password"
+	const next = "an even longer password here"
+
+	post := func(t *testing.T, ts *httptest.Server, client *http.Client, body string) *http.Response {
+		t.Helper()
+		res, err := client.Post(ts.URL+"/api/auth/password", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatalf("POST: %v", err)
+		}
+		return res
+	}
+
+	t.Run("requires the current one", func(t *testing.T) {
+		// A stolen cookie must not be enough to lock the owner out of their
+		// own panel; that is the difference between an intruder who can read
+		// your terminals and one who owns them.
+		ts, _ := newTestServer(t)
+		res := post(t, ts, ts.Client(), `{"current":"wrong wrong wrong","next":"`+next+`"}`)
+		defer res.Body.Close()
+		if res.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401", res.StatusCode)
+		}
+	})
+
+	t.Run("refuses a short one", func(t *testing.T) {
+		ts, _ := newTestServer(t)
+		res := post(t, ts, ts.Client(), `{"current":"`+current+`","next":"short"}`)
+		defer res.Body.Close()
+		if res.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", res.StatusCode)
+		}
+	})
+
+	t.Run("changes it and signs other browsers out", func(t *testing.T) {
+		ts, srv := newTestServer(t)
+
+		// A second browser, signed in with the old password.
+		other := anonymousClient(t)
+		lres, err := other.Post(ts.URL+"/api/auth/login", "application/json",
+			strings.NewReader(`{"username":"tester","password":"`+current+`"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		lres.Body.Close()
+		if lres.StatusCode != http.StatusOK {
+			t.Fatalf("the second browser could not sign in: %d", lres.StatusCode)
+		}
+		check, err := other.Get(ts.URL + "/api/state")
+		if err != nil {
+			t.Fatal(err)
+		}
+		check.Body.Close()
+		if check.StatusCode != http.StatusOK {
+			t.Fatalf("the second browser was not authenticated to begin with: %d", check.StatusCode)
+		}
+
+		res := post(t, ts, ts.Client(), `{"current":"`+current+`","next":"`+next+`"}`)
+		defer res.Body.Close()
+		if res.StatusCode != http.StatusNoContent {
+			body, _ := io.ReadAll(res.Body)
+			t.Fatalf("status = %d, want 204: %s", res.StatusCode, body)
+		}
+
+		// The old password no longer works.
+		fail := anonymousClient(t)
+		fres, err := fail.Post(ts.URL+"/api/auth/login", "application/json",
+			strings.NewReader(`{"username":"tester","password":"`+current+`"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		fres.Body.Close()
+		if fres.StatusCode == http.StatusOK {
+			t.Error("the old password still signs in")
+		}
+
+		// The other browser is out. The point of changing a password is that
+		// whoever had the old one stops having access; leaving their session
+		// alive makes the change decorative.
+		after, err := other.Get(ts.URL + "/api/state")
+		if err != nil {
+			t.Fatal(err)
+		}
+		after.Body.Close()
+		if after.StatusCode != http.StatusUnauthorized {
+			t.Errorf("the other browser is still signed in (%d)", after.StatusCode)
+		}
+
+		// This browser is not, because being logged out of the page you just
+		// used to change your password reads as the change having failed.
+		mine, err := ts.Client().Get(ts.URL + "/api/state")
+		if err != nil {
+			t.Fatal(err)
+		}
+		mine.Body.Close()
+		if mine.StatusCode != http.StatusOK {
+			t.Errorf("the browser that changed the password was signed out (%d)", mine.StatusCode)
+		}
+		_ = srv
+	})
 }

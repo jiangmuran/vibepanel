@@ -1,9 +1,13 @@
 package browse
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -132,5 +136,172 @@ func TestListingAFileIsAnError(t *testing.T) {
 	root := setup(t)
 	if _, err := List(root, "README.md"); err == nil {
 		t.Error("listing a file should fail")
+	}
+}
+
+// An empty directory lists as an empty array, never as null.
+//
+// Go marshals a nil slice to `null`, and the frontend reads entries.length
+// directly — so this returning nil blanked the entire panel for anybody whose
+// project directory happened to have nothing in it yet, which is the normal
+// state of a project you have just created.
+func TestEmptyDirectoryListsAsAnEmptyArray(t *testing.T) {
+	root := t.TempDir()
+	listing, err := List(root, "")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if listing.Entries == nil {
+		t.Error("Entries is nil, which marshals to null")
+	}
+	encoded, err := json.Marshal(listing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"entries":[]`) {
+		t.Errorf("encoded as %s, want an empty array for entries", encoded)
+	}
+}
+
+// Fuzzing the one function that is a security boundary.
+//
+// Resolve decides whether a path the browser sent stays inside the project
+// directory. The existing tests cover the ways a person would try — "..",
+// absolute paths, a symlink pointing out — which is to say the ways somebody
+// thought of.
+//
+// Fuzzing the relative path alone would have been theatre. It is collapsed on
+// the third line of Resolve, by `Clean("/" + rel)`, so no string can climb out
+// of the root textually and twenty-three million executions of that input find
+// nothing because there is nothing there to find. The escape that matters
+// needs the *filesystem* to cooperate, so the fuzzer gets to build that too: it
+// controls where a symlink inside the root points.
+//
+// The property is simple enough to state exactly: whatever comes back either
+// is the root or lives under it. Anything else is a file the panel had no
+// business handing over.
+func FuzzResolveStaysInsideTheRoot(f *testing.F) {
+	root := f.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "sub", "deeper"), 0o755); err != nil {
+		f.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sub", "file.txt"), []byte("x"), 0o644); err != nil {
+		f.Fatal(err)
+	}
+	outside := f.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret"), []byte("s"), 0o600); err != nil {
+		f.Fatal(err)
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		f.Fatal(err)
+	}
+
+	for _, seed := range []struct{ rel, target string }{
+		{"", ""},
+		{"sub/file.txt", ""},
+		{"..", ".."},
+		{"link", outside},
+		{"link/secret", outside},
+		{"link", "/etc"},
+		{"link/../link", outside},
+		{"sub/../link", filepath.Join(outside, "secret")},
+		{"link", "sub"},
+		{strings.Repeat("../", 40), outside},
+	} {
+		f.Add(seed.rel, seed.target)
+	}
+
+	f.Fuzz(func(t *testing.T, rel, target string) {
+		link := filepath.Join(root, "link")
+		_ = os.Remove(link)
+		if target != "" {
+			// A target the fuzzer chose. Most will be nonsense; the ones that
+			// are not are the whole point.
+			if err := os.Symlink(target, link); err != nil {
+				return
+			}
+			defer os.Remove(link)
+		}
+
+		got, rerr := Resolve(realRoot, rel)
+		if rerr != nil {
+			return // refusing is always allowed
+		}
+		if got != realRoot && !strings.HasPrefix(got, realRoot+string(filepath.Separator)) {
+			t.Fatalf("Resolve(%q) with link -> %q returned %q, which is outside %q",
+				rel, target, got, realRoot)
+		}
+	})
+}
+
+// A big directory must not lose its subdirectories.
+//
+// The cap used to be applied to the ReadDir order, which is sorted by
+// filename, and the directories-first sort ran afterwards on what was left.
+// So 2500 files named a00000… plus one subdirectory named "zzz-important"
+// returned 2000 files, zero directories, and nothing to say the listing was
+// partial: the tree ended and the panel looked like it had told the truth.
+func TestLargeDirectoryKeepsItsSubdirectories(t *testing.T) {
+	root := t.TempDir()
+	const files = maxEntries + 500
+	for i := 0; i < files; i++ {
+		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("a%05d.txt", i)), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(root, "zzz-important"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	l, err := List(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(l.Entries) != maxEntries {
+		t.Errorf("entries = %d, want the cap %d", len(l.Entries), maxEntries)
+	}
+	if !l.Truncated {
+		t.Error("Truncated is false; the panel would present a partial listing as complete")
+	}
+	if l.Total != files+1 {
+		t.Errorf("Total = %d, want %d", l.Total, files+1)
+	}
+	var found bool
+	for _, e := range l.Entries {
+		if e.Name == "zzz-important" {
+			found = true
+			if !e.IsDir {
+				t.Error("zzz-important is not reported as a directory")
+			}
+		}
+	}
+	if !found {
+		t.Error("the subdirectory is missing, so it cannot be navigated into at all")
+	}
+}
+
+// Readable has to carry information, because a button is wired to it.
+func TestReadableDistinguishesRegularFiles(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "plain.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(root, "pipe"), 0o644); err != nil {
+		t.Skipf("mkfifo unavailable: %v", err)
+	}
+
+	l, err := List(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"plain.txt": true, "dir": false, "pipe": false}
+	for _, e := range l.Entries {
+		if w, ok := want[e.Name]; ok && e.Readable != w {
+			t.Errorf("%s: Readable = %v, want %v", e.Name, e.Readable, w)
+		}
 	}
 }

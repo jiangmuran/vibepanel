@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -76,9 +77,16 @@ func Inspect(scriptPath string) (Status, error) {
 
 // InstallClaude merges the panel's hooks into the user's settings.
 //
-// Merges rather than replaces, and backs the file up first. That file is the
-// user's, it usually contains other things, and a tool that rewrites it
-// wholesale is a tool people stop trusting — once, permanently.
+// Merges rather than replaces, and copies the file beside itself before any
+// edit. That file is the user's, it usually contains other things, and a tool
+// that rewrites it wholesale is a tool people stop trusting — once,
+// permanently.
+//
+// Writes nothing at all when the hooks are already exactly right, which is the
+// common case: the settings page calls this whenever somebody presses the
+// button, and re-encoding a file to make no change to it still reformats it,
+// still moves its mtime, and still leaves a backup recording an edit that never
+// happened.
 func InstallClaude(scriptPath string) (Status, error) {
 	settingsPath, err := ClaudeSettingsPath()
 	if err != nil {
@@ -95,9 +103,9 @@ func InstallClaude(scriptPath string) (Status, error) {
 	if doc == nil {
 		doc = map[string]any{}
 	}
-	if err := backup(settingsPath); err != nil {
-		return Status{}, err
-	}
+	// What the file already says, put through the same encoder we are about to
+	// write with, so the comparison below is about content and not indentation.
+	before := encode(doc)
 
 	hooks, _ := doc["hooks"].(map[string]any)
 	if hooks == nil {
@@ -108,6 +116,15 @@ func InstallClaude(scriptPath string) (Status, error) {
 	}
 	doc["hooks"] = hooks
 
+	if unchanged(before, doc) {
+		// Already exactly right. Writing anyway would reformat the user's file
+		// and leave a backup beside it recording a change that was not made,
+		// which is how a settings file ends up surrounded by copies of itself.
+		return Inspect(scriptPath)
+	}
+	if err := backup(settingsPath); err != nil {
+		return Status{}, err
+	}
 	if err := writeSettings(settingsPath, doc); err != nil {
 		return Status{}, err
 	}
@@ -127,10 +144,11 @@ func UninstallClaude(scriptPath string) (Status, error) {
 		}
 		return Status{}, err
 	}
-	if err := backup(settingsPath); err != nil {
-		return Status{}, err
-	}
+	before := encode(doc)
 
+	// A nil hooks map is fine to read from and to delete from; assigning would
+	// panic, but removeOurs only returns non-nil when it was given a list,
+	// which a nil map cannot produce.
 	hooks, _ := doc["hooks"].(map[string]any)
 	for event := range events {
 		cleaned := removeOurs(hooks[event], scriptPath)
@@ -144,6 +162,15 @@ func UninstallClaude(scriptPath string) (Status, error) {
 		delete(doc, "hooks")
 	} else {
 		doc["hooks"] = hooks
+	}
+
+	if unchanged(before, doc) {
+		// Nothing of ours was in there. Removing nothing should leave no trace,
+		// not a reformatted file and a backup of it.
+		return Inspect(scriptPath)
+	}
+	if err := backup(settingsPath); err != nil {
+		return Status{}, err
 	}
 	if err := writeSettings(settingsPath, doc); err != nil {
 		return Status{}, err
@@ -168,19 +195,59 @@ func readSettings(path string) (map[string]any, error) {
 	return doc, nil
 }
 
-func writeSettings(path string, doc map[string]any) error {
+// encode renders a settings document exactly as writeSettings would.
+//
+// Separate so that "would writing this change anything?" can be answered
+// without touching the disk. Map keys are sorted by encoding/json, so the
+// output is stable for the same content.
+func encode(doc map[string]any) []byte {
 	b, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
-		return fmt.Errorf("hooks: encode settings: %w", err)
+		return nil
 	}
-	b = append(b, '\n')
+	return append(b, '\n')
+}
+
+// unchanged reports whether writing doc would produce the bytes in before.
+//
+// A nil before means the earlier encode failed, which is not a licence to skip
+// the write: when in doubt, do the work rather than silently doing nothing.
+func unchanged(before []byte, doc map[string]any) bool {
+	if before == nil {
+		return false
+	}
+	after := encode(doc)
+	return after != nil && bytes.Equal(before, after)
+}
+
+func writeSettings(path string, doc map[string]any) error {
+	b := encode(doc)
+	if b == nil {
+		return fmt.Errorf("hooks: encode settings for %s", path)
+	}
+
+	// Keep the mode the user's file already had. Forcing 0600 would tighten it
+	// silently, and quietly changing the permissions on somebody's dotfile is
+	// the same kind of surprise as rewriting its contents. New files start
+	// private, because this one ends up holding paths and tokens.
+	mode := os.FileMode(0o600)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	}
 
 	// Write beside the target and rename: a crash halfway through must not
 	// leave the user with a truncated settings file and an agent that will not
 	// start.
 	tmp := path + ".vibepanel.tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	if err := os.WriteFile(tmp, b, mode); err != nil {
 		return fmt.Errorf("hooks: write %s: %w", tmp, err)
+	}
+	// WriteFile only applies the mode when it creates the file, so a leftover
+	// temp file from an earlier crash would keep its own — and get renamed over
+	// the real one, taking its permissions with it.
+	if err := os.Chmod(tmp, mode); err != nil {
+		os.Remove(tmp) //nolint:errcheck
+		return fmt.Errorf("hooks: set mode on %s: %w", tmp, err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		os.Remove(tmp) //nolint:errcheck

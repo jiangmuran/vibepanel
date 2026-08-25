@@ -22,12 +22,17 @@ type Entry struct {
 	// Path is relative to the root, with forward slashes. Relative because an
 	// absolute path is the server's business, and handing the browser one
 	// invites it to send back a different one.
-	Path     string `json:"path"`
-	IsDir    bool   `json:"isDir"`
-	Size     int64  `json:"size"`
-	ModTime  int64  `json:"modTime"`
-	Symlink  bool   `json:"symlink"`
-	Readable bool   `json:"readable"`
+	Path    string `json:"path"`
+	IsDir   bool   `json:"isDir"`
+	Size    int64  `json:"size"`
+	ModTime int64  `json:"modTime"`
+	Symlink bool   `json:"symlink"`
+	// Readable means "a regular file the panel can offer for download". Not a
+	// permission check: the point is to keep FIFOs, sockets and device nodes
+	// out of the download path, where opening one blocks forever. This field
+	// used to be set to true unconditionally, which made the button that reads
+	// it decorative.
+	Readable bool `json:"readable"`
 }
 
 // Listing is a directory and what is in it.
@@ -35,10 +40,24 @@ type Listing struct {
 	Path    string  `json:"path"`
 	Parent  *string `json:"parent"`
 	Entries []Entry `json:"entries"`
+	// Total is how many items the directory actually holds, which is not
+	// len(Entries) once the cap bites. Reported so the panel can say that it
+	// is showing part of a directory instead of quietly implying it is all of
+	// it.
+	Total     int  `json:"total"`
+	Truncated bool `json:"truncated"`
 }
 
 // maxEntries bounds a single listing. A directory with a hundred thousand
 // files should render slowly, not hang the browser and the server together.
+//
+// What matters as much as the number is *when* it is applied. Truncating the
+// ReadDir order — which is sorted by filename — and sorting afterwards means a
+// directory of 2500 files plus one subdirectory named "zzz" returns 2000
+// files, no directories at all, and no indication of either. Measured exactly
+// that. The tree simply ended, and nothing said why. So the sort comes first
+// and the cap comes second, which keeps directories reachable and makes the
+// truncation reportable.
 const maxEntries = 2000
 
 // Resolve turns a root and a relative request into an absolute path, refusing
@@ -107,7 +126,15 @@ func List(root, rel string) (Listing, error) {
 		relDir = ""
 	}
 
-	out := Listing{Path: filepath.ToSlash(relDir)}
+	// Entries starts as an empty slice, not nil.
+	//
+	// A nil slice marshals to `null`, and the frontend's very next move is
+	// listing.entries.length — so an empty project directory took the whole
+	// console down with "Cannot read properties of null", React unmounted the
+	// tree, and the page went blank with no error visible anywhere. The line
+	// that crashed was the one rendering the "nothing here" message: the code
+	// for the empty case was the code that could not survive it.
+	out := Listing{Path: filepath.ToSlash(relDir), Entries: []Entry{}}
 	if relDir != "" {
 		parent := filepath.ToSlash(filepath.Dir(relDir))
 		if parent == "." {
@@ -116,10 +143,29 @@ func List(root, rel string) (Listing, error) {
 		out.Parent = &parent
 	}
 
-	for _, item := range items {
-		if len(out.Entries) >= maxEntries {
-			break
+	out.Total = len(items)
+
+	// Directories first, then by name, case-insensitively. This is the order
+	// every file browser uses, and matching it means nobody has to think.
+	//
+	// Sorted here rather than after the entries are built, so that the cap
+	// below removes the tail of the directory rather than an arbitrary
+	// alphabetical slice of it. DirEntry.IsDir comes from the dirent the
+	// kernel already returned, so ordering a hundred thousand of them costs no
+	// syscalls; only the ones that survive the cap are stat'd.
+	sort.SliceStable(items, func(i, j int) bool {
+		a, b := items[i], items[j]
+		if a.IsDir() != b.IsDir() {
+			return a.IsDir()
 		}
+		return strings.ToLower(a.Name()) < strings.ToLower(b.Name())
+	})
+	if len(items) > maxEntries {
+		items = items[:maxEntries]
+		out.Truncated = true
+	}
+
+	for _, item := range items {
 		e := Entry{
 			Name:  item.Name(),
 			Path:  filepath.ToSlash(filepath.Join(relDir, item.Name())),
@@ -129,26 +175,21 @@ func List(root, rel string) (Listing, error) {
 			e.Size = fi.Size()
 			e.ModTime = fi.ModTime().Unix()
 			e.Symlink = fi.Mode()&os.ModeSymlink != 0
+			e.Readable = fi.Mode().IsRegular()
 			// A symlink's target decides whether it behaves as a directory,
-			// and ReadDir reports the link itself.
+			// and ReadDir reports the link itself. This runs after the sort,
+			// so a symlink pointing at a directory sorts among the files —
+			// the alternative is a stat for every entry in the directory
+			// before anything can be ordered, which is what the cap exists to
+			// avoid.
 			if e.Symlink {
 				if target, serr := os.Stat(filepath.Join(abs, item.Name())); serr == nil {
 					e.IsDir = target.IsDir()
+					e.Readable = target.Mode().IsRegular()
 				}
 			}
 		}
-		e.Readable = true
 		out.Entries = append(out.Entries, e)
 	}
-
-	// Directories first, then by name, case-insensitively. This is the order
-	// every file browser uses, and matching it means nobody has to think.
-	sort.SliceStable(out.Entries, func(i, j int) bool {
-		a, b := out.Entries[i], out.Entries[j]
-		if a.IsDir != b.IsDir {
-			return a.IsDir
-		}
-		return strings.ToLower(a.Name) < strings.ToLower(b.Name)
-	})
 	return out, nil
 }

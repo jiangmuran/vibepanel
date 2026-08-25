@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -89,6 +90,24 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "that is a directory")
 		return
 	}
+	// Regular files only, and this is not fussiness.
+	//
+	// Opening a FIFO for reading blocks until somebody opens the other end.
+	// There is no writer, so os.Open never returns: the request goroutine and
+	// its descriptor are gone for the lifetime of the process, and graceful
+	// shutdown — which waits for requests in flight — never completes either.
+	// Measured: one `mkfifo` in a project directory and a single click wedged
+	// the test server so hard that Close() hung for the full five-minute test
+	// timeout.
+	//
+	// `mkfifo` needs no privileges and shell scripts create them routinely, so
+	// this is a thing a project directory contains, not a thing an attacker
+	// must arrange. Device nodes and sockets have their own versions of the
+	// same problem, and none of the four is a file anyone meant to download.
+	if !info.Mode().IsRegular() {
+		writeErr(w, http.StatusBadRequest, "not a regular file")
+		return
+	}
 	f, err := os.Open(abs)
 	if err != nil {
 		writeErr(w, http.StatusForbidden, "cannot read that file")
@@ -96,11 +115,23 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer f.Close()
 
-	// Quoted and with the newlines and quotes stripped: a filename is
-	// attacker-controlled the moment an agent writes one, and a raw CR in a
-	// header is a response-splitting bug.
-	name := headerSafe(filepath.Base(abs))
-	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	// Both forms of the filename, per RFC 6266.
+	//
+	// `filename` is ISO-8859-1 by specification, so putting raw UTF-8 in it
+	// leaves the result to the browser: Chromium usually guesses UTF-8 and
+	// Firefox has historically read it as Latin-1, which turns 报告.pdf into
+	// æŠ¥å'Š.pdf on the way to the disk. `filename*` says the encoding out loud.
+	// Old clients that do not understand it fall back to the quoted one, which
+	// is why both are sent rather than only the correct one.
+	//
+	// A filename is attacker-controlled the moment an agent writes one, so the
+	// fallback drops everything outside printable ASCII — a raw CR in a header
+	// is a response-splitting bug — and the encoder escapes everything that is
+	// not an RFC 5987 attr-char. url.PathEscape is not a substitute: it leaves
+	// ';' and ',' alone, and ';' is the parameter separator.
+	name := filepath.Base(abs)
+	w.Header().Set("Content-Disposition",
+		`attachment; filename="`+asciiFilename(name)+`"; filename*=UTF-8''`+rfc5987(name))
 	// Never let a browser decide it knows better and render the thing inline;
 	// this endpoint serves whatever an agent happened to write, HTML included.
 	w.Header().Set("Content-Type", "application/octet-stream")
@@ -200,14 +231,47 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"paths": written})
 }
 
-// headerSafe strips what must never reach a response header.
-func headerSafe(name string) string {
-	return strings.Map(func(r rune) rune {
-		if r == '"' || r == '\\' || r < 0x20 || r == 0x7f {
-			return -1
+// asciiFilename is the legacy half of Content-Disposition: printable ASCII
+// only, with anything else replaced rather than dropped.
+//
+// Replaced so that a name which is entirely non-ASCII does not collapse to
+// nothing — a browser old enough to need this parameter still has to be given
+// something to call the file. Byte-wise, so one CJK character becomes three
+// underscores; that only ever reaches clients that cannot read filename*.
+func asciiFilename(name string) string {
+	out := make([]byte, 0, len(name))
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if c < 0x20 || c >= 0x7f || c == '"' || c == '\\' {
+			out = append(out, '_')
+			continue
 		}
-		return r
-	}, name)
+		out = append(out, c)
+	}
+	if len(out) == 0 {
+		return "download"
+	}
+	return string(out)
+}
+
+// rfc5987 percent-encodes a filename for the `filename*` parameter.
+//
+// Everything outside the specification's attr-char set is escaped, on the
+// UTF-8 bytes, which is what the encoding is defined over.
+func rfc5987(name string) string {
+	const attrChars = "!#$&+-.^_`|~"
+	var b strings.Builder
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9',
+			strings.IndexByte(attrChars, c) >= 0:
+			b.WriteByte(c)
+		default:
+			fmt.Fprintf(&b, "%%%02X", c)
+		}
+	}
+	return b.String()
 }
 
 func writeBrowseErr(w http.ResponseWriter, err error) {

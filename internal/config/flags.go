@@ -46,10 +46,24 @@ func Load(args []string, out io.Writer) (Config, error) {
 		return Config{}, err
 	}
 	c.TLSMode = TLSMode(tlsMode)
-	if *proxies != "" {
+
+	// Which flags were actually typed, rather than which have a non-empty
+	// value.
+	//
+	// Every other flag is registered with the environment-derived value as its
+	// default, so "not passed" and "passed the same value" are the same thing
+	// and precedence falls out. These two cannot be: they are joined strings
+	// that have to be split. Testing them for emptiness instead made
+	// `--allow-from=""` a no-op whenever the environment had set one — so an
+	// operator locked out by an allowlist could not turn it off from the
+	// command line, which is the exact scenario this function's ordering exists
+	// to support. It looked like the flag did nothing, because it did nothing.
+	typed := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { typed[f.Name] = true })
+	if typed["trusted-proxies"] {
 		c.TrustedProxies = splitAndTrim(*proxies)
 	}
-	if *allowFrom != "" {
+	if typed["allow-from"] {
 		c.AllowFrom = splitAndTrim(*allowFrom)
 	}
 	if err := c.Validate(); err != nil {
