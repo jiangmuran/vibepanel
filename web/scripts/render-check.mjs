@@ -1582,6 +1582,55 @@ try {
       }
     }
 
+    // The second row is allowed to scroll — "losing sight of ~ costs far less
+    // than losing sight of Escape" — but allowed to scroll and actually
+    // scrollable are different things, and the difference is what the row
+    // above already got wrong once: eight keys overflowed a 320px phone, the
+    // page did not scroll, and ctrl and alt were simply unreachable.
+    //
+    // So: the arrows must be there without scrolling, because they are what
+    // this row is mostly for, and the last key must be reachable with it.
+    const secondary = page.locator('[data-testid="key-row-secondary"]')
+    const secBox = await secondary.boundingBox()
+    if (!secBox) {
+      note('FAIL', 'mobile', 'no secondary key row')
+    } else {
+      for (const label of ['up', 'down', 'left', 'right']) {
+        const box = await page.locator(`[data-testid="key-${label}"]`).boundingBox()
+        if (!box) {
+          note('FAIL', 'mobile', `key ${label} is missing`)
+        } else if (box.x < secBox.x - 1 || box.x + box.width > secBox.x + secBox.width + 1) {
+          note('FAIL', 'mobile', `arrow key ${label} needs scrolling to reach`)
+        }
+      }
+
+      const overflow = await secondary.evaluate((el) => ({
+        scrollWidth: el.scrollWidth,
+        clientWidth: el.clientWidth,
+        overflowX: getComputedStyle(el).overflowX,
+      }))
+      if (overflow.scrollWidth > overflow.clientWidth + 1) {
+        if (overflow.overflowX !== 'auto' && overflow.overflowX !== 'scroll') {
+          note('FAIL', 'mobile',
+            `the secondary key row overflows by ${overflow.scrollWidth - overflow.clientWidth}px ` +
+            `with overflow-x: ${overflow.overflowX} — the keys past the edge cannot be reached`)
+        }
+        // Scroll it and check the last key really arrives.
+        await secondary.evaluate((el) => { el.scrollLeft = el.scrollWidth })
+        await sleep(250)
+        const last = await page.locator('[data-testid="key-~"]').boundingBox()
+        const after = await secondary.boundingBox()
+        if (!last || !after) {
+          note('FAIL', 'mobile', 'the last key of the secondary row disappeared when scrolled')
+        } else if (last.x + last.width > after.x + after.width + 1 || last.x < after.x - 1) {
+          note('FAIL', 'mobile',
+            'the secondary key row scrolled to its end and the last key is still not in it')
+        }
+        await secondary.evaluate((el) => { el.scrollLeft = 0 })
+        await sleep(250)
+      }
+    }
+
     // Sticky modifiers: tap, then tap what they apply to.
     await page.locator('[data-testid="key-ctrl"]').click()
     const ctrlOn = await page.locator('[data-testid="key-ctrl"]').getAttribute('data-active')

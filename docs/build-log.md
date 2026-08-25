@@ -8888,3 +8888,32 @@ for a trim that removed 10,000 rows. Once every five minutes.
 `TrimEvery` and `AuditKeep` are overridable on the server, following
 `RevalidateEvery` in the ws handler. A periodic job no test can drive is how
 this one came to run only at startup and stay that way.
+
+### The second row of the soft keyboard was never driven
+
+The primary row of the phone key bar is checked in a browser: every key on
+screen without scrolling, at a 320px viewport, because eight keys at a thumb's
+44px came to 380px and `ctrl` and `alt` were once simply unreachable.
+
+The second row has a `data-testid` that nothing referenced. It is *allowed* to
+scroll — "losing sight of `~` costs far less than losing sight of Escape" — but
+allowed to scroll and actually scrollable are different things, and the
+difference is precisely what the row above already got wrong once.
+
+Measured by breaking it: with `overflow-x-hidden` on that row, the check now
+reports
+
+	the secondary key row overflows by 237px with overflow-x: hidden —
+	the keys past the edge cannot be reached
+
+237px is `/`, `-`, `|`, `~` and the digits. So the `overflow-x-auto` is
+load-bearing rather than decorative, which is worth knowing before somebody
+tidies it away.
+
+What the check asserts: the four arrows are in the row without scrolling — they
+are what it is mostly for — and the last key really arrives when the row is
+scrolled to its end, rather than the row merely claiming to be scrollable.
+
+Tap-target height is not asserted here. `findSmallTargets` already scans every
+button on the page, which is how the whole key bar was found at 32px in the
+first place; a second check would be a second place to update.
