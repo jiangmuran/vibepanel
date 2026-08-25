@@ -764,6 +764,46 @@ try {
       note('FAIL', 'panel/monitor', `the monitor rendered a broken value: ${JSON.stringify(monitorText)}`)
     }
 
+    // A panel you resized and then closed has to come back the size you left
+    // it, and the size and the closed-ness have to be two stored things.
+    //
+    // They were one: zero width meant collapsed, so closing the panel wrote 0
+    // over the only record of the width, and reopening fell back to the
+    // built-in default. Drag the notes panel out to read something, glance at
+    // the terminal, open it again, and it is narrow — every time. The comment
+    // above the state said the opposite of what the encoding allowed.
+    const panelWidth = async () => {
+      const box = await rightPanel.boundingBox().catch(() => null)
+      return box ? Math.round(box.width) : 0
+    }
+    const startWidth = await panelWidth()
+    const divider = page.locator('[data-testid="panel-resize"]')
+    const grip = await divider.boundingBox()
+    if (!grip) {
+      note('FAIL', 'panel', 'the resize divider is not there to drag')
+    } else {
+      await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
+      await page.mouse.down()
+      await page.mouse.move(grip.x - 140, grip.y + grip.height / 2, { steps: 8 })
+      await page.mouse.up()
+      await sleep(700)
+      const chosen = await panelWidth()
+      if (chosen <= startWidth + 40) {
+        note('WARN', 'panel', `dragging the divider moved the panel from ${startWidth} to ${chosen}; ` +
+          'the restore check below cannot tell a remembered width from the default')
+      } else {
+        await page.locator('[data-testid="panel-collapse"]').click()
+        await sleep(700)
+        await page.locator('[data-testid="right-show"]').click()
+        await sleep(900)
+        const reopened = await panelWidth()
+        if (Math.abs(reopened - chosen) > 4) {
+          note('FAIL', 'panel',
+            `a panel dragged to ${chosen}px reopened at ${reopened}px; closing it threw the width away`)
+        }
+      }
+    }
+
     // Notes: typing must reach the server without a save button, and the
     // status has to say so — "did that save?" is otherwise unanswerable.
     await page.locator('[data-testid="panel-tab-notes"]').click()

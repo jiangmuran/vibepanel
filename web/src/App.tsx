@@ -43,8 +43,10 @@ const STATE_RESYNC_MS = 30_000
 const SELECTED_KEY = 'vibepanel.selected'
 const SIDEBAR_KEY = 'vibepanel.sidebar'
 const BOTTOM_KEY = 'vibepanel.bottom'
+const BOTTOM_OPEN_KEY = 'vibepanel.bottomOpen'
 const BOTTOM_DEFAULT_HEIGHT = 220
 const RIGHT_KEY = 'vibepanel.right'
+const RIGHT_OPEN_KEY = 'vibepanel.rightOpen'
 const RIGHT_TAB_KEY = 'vibepanel.rightTab'
 const RIGHT_SPLIT_KEY = 'vibepanel.rightSplit'
 const RIGHT_DEFAULT_WIDTH = 280
@@ -81,6 +83,29 @@ function storedSize(key: string, fallback: number): number {
   if (raw === null || raw.trim() === '') return fallback
   const n = Number(raw)
   return Number.isFinite(n) && n >= 0 ? n : fallback
+}
+
+/**
+ * A panel's remembered size and whether it is open, which have to be two
+ * things rather than one.
+ *
+ * They used to be one: zero meant collapsed, and the comment above the state
+ * said "reopening restores the size the user last chose rather than a
+ * default". It could not. Collapsing wrote 0 over the only copy of the chosen
+ * size, so reopening had nothing to restore and the code two hundred lines
+ * away reached for the default — which is exactly what a person dragging the
+ * notes panel out to read something, glancing at the terminal, and opening it
+ * again did not want.
+ *
+ * A stored size of 0 is the old encoding meaning collapsed. Honour that once,
+ * and hand back the default when it is reopened; 0 is never written again.
+ */
+function panelState(sizeKey: string, openKey: string, fallback: number) {
+  const stored = storedSize(sizeKey, fallback)
+  return {
+    size: stored > 0 ? stored : fallback,
+    open: readStored(openKey) !== 'closed' && stored !== 0,
+  }
 }
 
 function writeStored(key: string, value: string | null) {
@@ -126,15 +151,25 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   const [docked, setDocked] = useState(() => readStored(SIDEBAR_KEY) !== 'collapsed')
   const [drawerOpen, setDrawerOpen] = useState(false)
 
-  // Height doubles as the collapsed flag: 0 means hidden. One value to store,
-  // and reopening restores the size the user last chose rather than a default.
-  const [bottomHeight, setBottomHeight] = useState(() =>
-    storedSize(BOTTOM_KEY, BOTTOM_DEFAULT_HEIGHT),
+  // The chosen height and whether the strip is showing are stored apart, so
+  // that closing it does not erase the height. `bottomHeight` stays the single
+  // value the layout reads, with 0 still meaning hidden.
+  const [bottomSize, setBottomSize] = useState(
+    () => panelState(BOTTOM_KEY, BOTTOM_OPEN_KEY, BOTTOM_DEFAULT_HEIGHT).size,
   )
+  const [bottomOpen, setBottomOpen] = useState(
+    () => panelState(BOTTOM_KEY, BOTTOM_OPEN_KEY, BOTTOM_DEFAULT_HEIGHT).open,
+  )
+  const bottomHeight = bottomOpen ? bottomSize : 0
 
-  // Same convention as the bottom panel: width 0 means hidden, so reopening
-  // restores the size the user chose rather than a default.
-  const [rightWidth, setRightWidth] = useState(() => storedSize(RIGHT_KEY, RIGHT_DEFAULT_WIDTH))
+  // Same shape as the bottom strip, for the same reason.
+  const [rightSize, setRightSize] = useState(
+    () => panelState(RIGHT_KEY, RIGHT_OPEN_KEY, RIGHT_DEFAULT_WIDTH).size,
+  )
+  const [rightOpen, setRightOpen] = useState(
+    () => panelState(RIGHT_KEY, RIGHT_OPEN_KEY, RIGHT_DEFAULT_WIDTH).open,
+  )
+  const rightWidth = rightOpen ? rightSize : 0
   const [selection, setSelection] = useState('')
   const [rightTab, setRightTab] = useState<PanelTab>(() => {
     const raw = readStored(RIGHT_TAB_KEY)
@@ -221,8 +256,11 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
 
   useEffect(() => writeStored(SELECTED_KEY, selected), [selected])
   useEffect(() => writeStored(SIDEBAR_KEY, docked ? 'open' : 'collapsed'), [docked])
-  useEffect(() => writeStored(BOTTOM_KEY, String(bottomHeight)), [bottomHeight])
-  useEffect(() => writeStored(RIGHT_KEY, String(rightWidth)), [rightWidth])
+  // The size, never the collapsed state: that is the whole point of the split.
+  useEffect(() => writeStored(BOTTOM_KEY, String(bottomSize)), [bottomSize])
+  useEffect(() => writeStored(BOTTOM_OPEN_KEY, bottomOpen ? 'open' : 'closed'), [bottomOpen])
+  useEffect(() => writeStored(RIGHT_KEY, String(rightSize)), [rightSize])
+  useEffect(() => writeStored(RIGHT_OPEN_KEY, rightOpen ? 'open' : 'closed'), [rightOpen])
   useEffect(() => writeStored(RIGHT_TAB_KEY, rightTab), [rightTab])
   useEffect(() => writeStored(RIGHT_SPLIT_KEY, rightSplit ? 'on' : 'off'), [rightSplit])
 
@@ -363,7 +401,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
 
   const newBottomTerminal = () => {
     if (!current) return
-    if (bottomHeight === 0) setBottomHeight(BOTTOM_DEFAULT_HEIGHT)
+    if (!bottomOpen) setBottomOpen(true)
     void guard(() => api.createSession(current.projectId, [], { parentSessionId: current.id }))
   }
 
@@ -509,7 +547,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             <button
               type="button"
               data-testid="right-show"
-              onClick={() => setRightWidth(RIGHT_DEFAULT_WIDTH)}
+              onClick={() => setRightOpen(true)}
               title="Show side panel"
               className="ml-1 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
             >
@@ -669,8 +707,8 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             terminals={bottomTerminals}
             themeKey={themeKey}
             height={bottomHeight}
-            onHeightChange={setBottomHeight}
-            onCollapse={() => setBottomHeight(0)}
+            onHeightChange={setBottomSize}
+            onCollapse={() => setBottomOpen(false)}
             onNew={newBottomTerminal}
             onClose={(t) => void guard(() => api.deleteSession(t.id))}
             onRename={(t, title) => void guard(() => api.patchSession(t.id, { title }))}
@@ -681,7 +719,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           <button
             type="button"
             data-testid="bottom-show"
-            onClick={() => setBottomHeight(BOTTOM_DEFAULT_HEIGHT)}
+            onClick={() => setBottomOpen(true)}
             title="Show terminals"
             className="flex h-6 shrink-0 items-center justify-center gap-1 border-t border-hairline text-[11px] text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink vp-blur"
           >
@@ -713,8 +751,8 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           tab={rightTab}
           onTab={setRightTab}
           width={rightWidth}
-          onWidthChange={setRightWidth}
-          onCollapse={() => setRightWidth(0)}
+          onWidthChange={setRightSize}
+          onCollapse={() => setRightOpen(false)}
           split={rightSplit}
           onSplitChange={setRightSplit}
           splitRatio={splitRatio}

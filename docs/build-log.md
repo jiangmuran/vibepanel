@@ -5655,3 +5655,86 @@ must work on a grid frozen for somebody else. Guarding it with the same
 identity check that guards `Subscribe` would leave a viewer whose colleague
 shut their laptop stuck scaling a grid it cannot have, pressing a button that
 does nothing. That mutation fails the test.
+
+## A panel that forgot the size you gave it, behind a handle you could not grab
+
+Two bugs in the same twenty pixels, and the second one hid the first.
+
+### The size
+
+The right panel and the terminal strip each stored one number, with zero
+meaning collapsed. The comment above both said:
+
+> Height doubles as the collapsed flag: 0 means hidden. One value to store, and
+> reopening restores the size the user last chose rather than a default.
+
+The second sentence cannot be true given the first. Collapsing writes 0 over
+the only copy of the chosen size, so there is nothing left to restore, and the
+code two hundred lines away says so plainly:
+
+```jsx
+onClick={() => setRightWidth(RIGHT_DEFAULT_WIDTH)}
+```
+
+Drag the notes panel out to 480 to read something, glance at the terminal,
+open it again: 280. Every time. Both panels.
+
+Size and openness are now two stored things, and `bottomHeight` / `rightWidth`
+stay derived so nothing else changed. A stored 0 is the old encoding and is
+honoured once — the panel comes back collapsed for anyone who left it that way,
+and reopens at the default. Zero is never written again.
+
+Measured before and after, including the migration:
+
+```
+1. width the user chose              480
+3. reopened                          280  -> 480
+4. collapsed survives a reload       yes
+5. and reopens at                    480
+6. old stored "0" reads as collapsed yes
+7. and reopens at the default        280
+```
+
+### The handle
+
+Writing the harness check for that meant dragging the divider, and the drag did
+nothing. `elementFromPoint` across the eight-pixel grip:
+
+```
+offset  0 1 2 3 | 4 5 6 7
+        grip    | content
+```
+
+Half the target, and the wrong half. The grip has a negative right margin so it
+straddles the panel border rather than sitting beside it — which is the right
+idea — but the content is the later sibling and, with no stacking order, paints
+over the four pixels they share. Those four are the ones on the visible edge,
+which is where a person aims. What was left was a four-pixel strip in the empty
+space *outside* the panel.
+
+`relative z-10` on the grip, and all eight pixels hit it.
+
+This one had survived every run of every check, because no check had ever
+dragged that divider. It was found by writing a test for a different bug — the
+resize was a *step* in the check, not the thing being checked, and it failed as
+a step.
+
+### The WARN that was worth writing
+
+The check needs a non-default width before collapse, or it cannot tell a
+remembered width from a coincidence. So it verifies the drag actually moved the
+panel, and if it did not, says:
+
+```
+[WARN] panel: dragging the divider moved the panel from 280 to 280; the restore
+check below cannot tell a remembered width from the default
+```
+
+Which is what it printed with the grip covered again — the check declining to
+report on something it could not observe, rather than passing. Both mutations
+give distinct signals: covering the grip is the WARN, forgetting the width is
+
+```
+[FAIL] panel: a panel dragged to 424px reopened at 280px; closing it threw the
+width away
+```

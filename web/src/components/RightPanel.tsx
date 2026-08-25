@@ -7,6 +7,7 @@ import { FileTree } from './panels/FileTree'
 import { SystemMonitor } from './panels/SystemMonitor'
 import { Notes } from './panels/Notes'
 import { Todos } from './panels/Todos'
+import { ErrorBoundary } from './ErrorBoundary'
 
 export type PanelTab = 'files' | 'monitor' | 'notes' | 'todos'
 
@@ -138,13 +139,23 @@ export function RightPanel(props: Props) {
       style={{ width }}
     >
       <div
+        data-testid="panel-resize"
         onPointerDown={onWidthStart}
         onPointerMove={onWidthMove}
         onPointerUp={onWidthEnd}
         onPointerCancel={onWidthEnd}
         style={{ touchAction: 'none' }}
         title="Drag to resize"
-        className="-mr-1 w-2 shrink-0 cursor-col-resize"
+        // `relative z-10` is what makes the grip hittable, not decoration.
+        //
+        // The negative margin pulls the panel's content four pixels left so
+        // the eight-pixel grip straddles the border rather than sitting beside
+        // it. The content is the later sibling, so without a stacking order it
+        // paints over the half it overlaps — and that is the half on the
+        // visible edge, which is where anyone aims. Measured with
+        // elementFromPoint across the grip: offsets 0-3 hit it, 4-7 hit the
+        // content. Half the target, and the wrong half.
+        className="relative z-10 -mr-1 w-2 shrink-0 cursor-col-resize"
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -193,7 +204,15 @@ export function RightPanel(props: Props) {
           </button>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">{body()}</div>
+        {/* Per-tab, so the panel's own chrome — the tabs, the width, the
+            collapse control — survives whatever the tab does, and switching
+            away from a broken one is still possible. Keyed by tab so the
+            boundary resets when you move to another. */}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <ErrorBoundary key={tab} label={`The ${tab} panel`}>
+            {body()}
+          </ErrorBoundary>
+        </div>
       </div>
     </aside>
   )
