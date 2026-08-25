@@ -180,39 +180,40 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
   })
 }
 
-/**
- * Waits for the panel to answer its health probe.
- *
- * Restored after being deleted by accident: extracting the overflow scan into
- * a shared module cut from the scan to the next top-level const, and this sat
- * in between. The sweep caught it a minute later as
- * `ReferenceError: waitHealth is not defined` — which is the argument for
- * running everything after a refactor, not only the thing that was refactored.
- */
-async function waitHealth(base, timeoutMs = 20000) {
-  const end = Date.now() + timeoutMs
-  while (Date.now() < end) {
-    try {
-      if ((await fetch(base + '/api/health')).ok) return true
-    } catch {
-      /* not up yet */
-    }
-    await sleep(150)
-  }
-  return false
-}
-
-const USERNAME = 'render-check'
-const PASSWORD = 'a sufficiently long password'
-const NEW_PASSWORD = 'a different sufficiently long password'
-let cookie = ''
-
-/** Fetch carrying the session cookie, for seeding through the API. */
-const authed = (path, init = {}) =>
-  fetch(BASE + path, {
+// Fetch carrying the session cookie, for seeding through the API.
+//
+// A 404 throws rather than being returned, because a harness that asks for a
+// route the server does not have gets a perfectly ordinary Response and goes
+// on to draw conclusions from its body. That happened: a probe polled
+// `GET /api/sessions`, which exists only for POST, with `.catch(() => [])` on
+// the parse — so every refusal became an empty list, an empty list contained
+// no session, and "no session" was the success condition. It reported a
+// healthy result in three milliseconds and would have done so against a server
+// that was switched off.
+//
+// 405 as well as 404, and that is not a detail: chi answers a known path with
+// the wrong method with 405, so the first version of this guard checked only
+// for 404 and did not catch the exact bug it was written for. It was caught by
+// testing the guard rather than trusting it.
+//
+// Nothing here expects either. If something ever does, it can call fetch.
+const authed = async (path, init = {}) => {
+  const res = await fetch(BASE + path, {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}), ...(init.headers ?? {}) },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(cookie ? { Cookie: cookie } : {}),
+      ...(init.headers ?? {}),
+    },
   })
+  if (res.status === 404 || res.status === 405) {
+    throw new Error(
+      `${init.method ?? 'GET'} ${path} -> ${res.status}; this server has no such ` +
+      'route and method, so whatever this check concluded from the answer was meaningless',
+    )
+  }
+  return res
+}
 
 try {
   if (!(await waitHealth(BASE))) {

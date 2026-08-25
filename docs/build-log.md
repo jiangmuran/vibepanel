@@ -5353,14 +5353,14 @@ It reported three milliseconds, before and after.
 The first explanation written here was that `/api/sessions` reconciles against
 tmux on read, so the answer never came from the poller. That was wrong, and
 wrong in a way worth correcting rather than deleting: **there is no
-`GET /api/sessions`.** The route exists only for POST. Every one of those
-requests was a 404.
+`GET /api/sessions`.** The route exists only for POST, and chi answers a known
+path with the wrong method with 405.
 
 The probe polled until the session was absent from the returned list, with
-`.catch(() => [])` on the parse. So a 404 became an empty list, an empty list
-contained no session, and "no session" was the probe's success condition. It
-would have reported three milliseconds against a server that had been switched
-off.
+`.catch(() => [])` on the parse. So every 405 became an empty list, an empty
+list contained no session, and "no session" was the probe's success condition.
+It would have reported three milliseconds against a server that had been
+switched off.
 
 The lesson is not about fast paths. It is that a fallback whose value means
 *yes* converts every failure into a pass — the network being down, the endpoint
@@ -5470,3 +5470,50 @@ Three existing tests cover the bell and every one of them passes
 `Observation{}`, so none of them said anything about a shell. That is the
 shape of gap worth looking for: not an untested function, but a tested one
 whose tests all happen to agree about a field.
+
+### The guard for that had the same bug in it
+
+Every harness got a shared shape: `authed` throws instead of returning when the
+server says the route does not exist. A check that asks for a path the server
+does not have gets an ordinary `Response` object and goes on to draw
+conclusions from its body, and the more defensively it handles the parse, the
+quieter it is about having learned nothing.
+
+The first version tested `res.status === 404`. It was written specifically to
+catch `GET /api/sessions`, and it did not catch it, because chi answers a known
+path with an unregistered method with **405**. Injecting the exact bogus call
+into a harness produced a clean `0 FAIL`.
+
+Which is the whole argument for mutation-testing a guard rather than reading
+it. The reasoning behind the guard was right, the code did not implement the
+reasoning, and nothing about looking at it would have said so — the number 404
+is exactly what "route does not exist" looks like when you are writing it from
+memory.
+
+It now covers both, and injecting the bogus call fails the run:
+
+```
+[FAIL] harness: GET /api/sessions -> 405; this server has no such route and
+method, so whatever this check concluded from the answer was meaningless
+```
+
+Throwing aborts the rest of that harness run, which is the right trade: an
+answer from a route that does not exist poisons everything downstream of it,
+and a check that keeps going is a check reporting on nothing.
+
+### And a survey that came back clean
+
+Since the failure mode is "a fallback whose value means yes", the obvious
+question is where else the harnesses do that. Of roughly sixty
+`catch(() => …)` sites, nearly all are the safe direction: `catch(() => '')`
+feeding an assertion that the text *must contain* something, so an error
+becomes a FAIL rather than a pass.
+
+The dangerous shape — `if (await x.isVisible().catch(() => false)) FAIL` —
+appears a handful of times, and each one is paired with a positive check
+elsewhere that the same element does appear when it should. Delete the element
+and the positive check fails. Those pairs hold.
+
+Worth recording as a negative result. The sweep was motivated by a real bug and
+found nothing, which is information about the harnesses rather than about the
+sweep.

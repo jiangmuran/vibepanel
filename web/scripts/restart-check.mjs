@@ -19,6 +19,7 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { sweepStaleSockets } from './lib/stale.mjs'
 
 const BIN = process.argv[2] ?? new URL('../../vibepanel', import.meta.url).pathname
 const SHOTS = process.argv[3] ?? join(tmpdir(), 'vprestart-shots')
@@ -35,10 +36,24 @@ const PORT = await new Promise((resolve, reject) => {
   })
 })
 const SOCKET = `vprestart-${process.pid}`
+
+// Before anything else: a run killed with SIGKILL cannot clean up after
+// itself, and what it leaves behind is a tmux server holding live sessions.
+sweepStaleSockets((msg) => console.log(`==> ${msg}`))
 const DATA = mkdtempSync(join(tmpdir(), 'vprestart-'))
 const FAKE_HOME = mkdtempSync(join(tmpdir(), 'vprestart-home-'))
 
 const findings = []
+
+// Collected at module scope and reported in the finally below.
+//
+// These lived inside the try and were reported near the end of it, so any
+// earlier failure — a click that timed out because the page was blank — threw
+// past the one piece of evidence that explained the blank page. One of them
+// collected these and never reported them at all. An uncaught error in the
+// page is the most informative thing a run can produce; it has to survive the
+// run failing.
+const pageErrors = []
 const note = (sev, area, msg) => findings.push({ sev, area, msg })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -101,8 +116,25 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 
 const BASE = `http://localhost:${PORT}`
 let cookie = ''
-const authed = (path, init = {}) =>
-  fetch(BASE + path, {
+// Fetch carrying the session cookie, for seeding through the API.
+//
+// A 404 throws rather than being returned, because a harness that asks for a
+// route the server does not have gets a perfectly ordinary Response and goes
+// on to draw conclusions from its body. That happened: a probe polled
+// `GET /api/sessions`, which exists only for POST, with `.catch(() => [])` on
+// the parse — so every refusal became an empty list, an empty list contained
+// no session, and "no session" was the success condition. It reported a
+// healthy result in three milliseconds and would have done so against a server
+// that was switched off.
+//
+// 405 as well as 404, and that is not a detail: chi answers a known path with
+// the wrong method with 405, so the first version of this guard checked only
+// for 404 and did not catch the exact bug it was written for. It was caught by
+// testing the guard rather than trusting it.
+//
+// Nothing here expects either. If something ever does, it can call fetch.
+const authed = async (path, init = {}) => {
+  const res = await fetch(BASE + path, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
@@ -110,6 +142,14 @@ const authed = (path, init = {}) =>
       ...(init.headers ?? {}),
     },
   })
+  if (res.status === 404 || res.status === 405) {
+    throw new Error(
+      `${init.method ?? 'GET'} ${path} -> ${res.status}; this server has no such ` +
+      'route and method, so whatever this check concluded from the answer was meaningless',
+    )
+  }
+  return res
+}
 
 const rows = (page) =>
   page.$$eval('.xterm-rows > div', (els) => els.map((el) => el.textContent ?? ''))
@@ -158,7 +198,6 @@ try {
   browser = await chromium.launch({ headless: true })
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } })
   const page = await ctx.newPage()
-  const pageErrors = []
   page.on('pageerror', (e) => pageErrors.push(String(e)))
 
   await page.goto(BASE, { waitUntil: 'networkidle' })
@@ -219,6 +258,21 @@ try {
       `a page left open across a backend restart never recovered in 30s; ` +
       `screen is:\n${(await screen(page)).slice(0, 400)}`)
   } else {
+    // Healing must not mean showing everything twice.
+    //
+    // Recovering resubscribes, and the server answers with the whole buffer
+    // again. Written into a terminal that still holds what was there before,
+    // the session's history reads twice. This is the place to notice: five
+    // lines in the session, so both copies would sit in the viewport, where
+    // counting can see them. On a busy terminal the second copy is pushed into
+    // the scrollback and looks like nothing at all.
+    const copies = (await screen(page)).split(MARK).length - 1
+    if (copies > 1) {
+      note('FAIL', 'reconnect',
+        `after recovering, a line printed once appears ${copies} times; the replayed ` +
+        'snapshot was appended instead of replacing what the terminal already held')
+    }
+
     // Healing the display is not enough — it has to accept input again.
     const AFTER = 'AFTER' + '_THE_RESTART'
     await page.locator('.xterm-helper-textarea').click()
@@ -260,12 +314,15 @@ try {
       `expected exactly one "survivor" session after the restart, found ${still.length}`)
   }
 
-  if (pageErrors.length) {
-    note('FAIL', 'console', `the page threw across the restart: ${pageErrors.slice(0, 3).join(' | ')}`)
-  }
 } catch (err) {
   note('FAIL', 'harness', String(err?.stack ?? err))
 } finally {
+  // "Across the restart" is the point of this check: the page is open the
+  // whole time, and a throw while the backend goes away and comes back is the
+  // failure it exists to catch.
+  for (const e of [...new Set(pageErrors)]) {
+    note('FAIL', 'js', `the page threw across the restart: ${e}`)
+  }
   await cleanup()
 }
 
@@ -273,4 +330,18 @@ for (const f of findings) console.log(`[${f.sev}] ${f.area}: ${f.msg}`)
 const fails = findings.filter((f) => f.sev === 'FAIL').length
 console.log(`=== restart check: ${fails} FAIL, ${findings.length - fails} WARN ===`)
 console.log(`screenshots: ${SHOTS}`)
+// Flush before exiting, and then exit deliberately.
+//
+// Node's stdout is asynchronous when it is a pipe — which it is whenever this
+// runs under make, CI, or anything capturing the output — and process.exit()
+// abandons whatever has not been flushed. The findings and the verdict are the
+// last thing printed and therefore the first thing lost: three runs of the
+// scale check in a row produced a different amount of output each time, one of
+// them stopping mid-way with no verdict at all, and the missing lines were
+// read as the run having crashed.
+//
+// Setting only process.exitCode would flush, but it also waits for the event
+// loop to drain, and one stray handle from a browser or a child process would
+// hang the check instead of ending it. Flush, then exit.
+await new Promise((resolve) => process.stdout.write('', resolve))
 process.exit(fails ? 1 : 0)
