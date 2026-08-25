@@ -1,6 +1,7 @@
 package tlsmgr
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -10,6 +11,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"log/slog"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -248,6 +250,56 @@ func TestRenewalWithPreservedTimestampsIsNoticed(t *testing.T) {
 	if got := commonNameOf(t, cert); got != "second.example" {
 		t.Errorf("common name after a timestamp-preserving renewal = %q, want second.example; "+
 			"the panel is still serving the certificate that was replaced", got)
+	}
+}
+
+// An expiry warning must not silence the expiry itself.
+//
+// Seen to fail: collapsing the two flags back into one `warned bool` makes
+// this report that the certificate expired and the panel said nothing. A test
+// that has not been seen to fail is a decoration.
+//
+// The bug: one flag gated both messages and was reset only when a new pair
+// loaded. A certificate warned about at fourteen days and then never renewed —
+// which is exactly "a panel serving a certificate nobody renewed", the case
+// this function exists for — passed its expiry in silence.
+//
+// Nothing in this package covered warnIfExpiring at all: every other test
+// passes a nil logger, so the body returns on its first line.
+//
+// One thing to watch under -race, flagged because it could not be run here:
+// the line below writes cert.Leaf.NotAfter without holding f.mu, while
+// NewFileSource has already started the watcher. reloadInterval is a minute so
+// the tick should never land inside this test, but if the detector ever
+// complains about that field, this is why — take the lock, or stop the watcher
+// before touching it.
+func TestAnExpiryWarningDoesNotSilenceTheExpiry(t *testing.T) {
+	dir := t.TempDir()
+	certPath, keyPath := writePair(t, dir, "expiring.example")
+
+	var logged bytes.Buffer
+	src, err := NewFileSource(certPath, keyPath, slog.New(slog.NewTextHandler(&logged, nil)))
+	if err != nil {
+		t.Fatalf("NewFileSource: %v", err)
+	}
+	defer src.Close()
+
+	// writePair issues for a day, which is inside the fourteen-day window, so
+	// loading it should already have said so once.
+	if !strings.Contains(logged.String(), "about to expire") {
+		t.Fatalf("a certificate with a day left said nothing:\n%s", logged.String())
+	}
+	logged.Reset()
+
+	// Time passing, without a renewal — the file never changes, so nothing
+	// reloads and nothing resets the flags. TestExpiresAtReportsTheLeaf
+	// establishes that Leaf is populated.
+	src.cert.Leaf.NotAfter = time.Now().Add(-time.Hour)
+	src.warnIfExpiring()
+
+	if !strings.Contains(logged.String(), "has expired") {
+		t.Errorf("the certificate expired and the panel said nothing:\n%s\n"+
+			"every browser now refuses it and the log does not say why", logged.String())
 	}
 }
 

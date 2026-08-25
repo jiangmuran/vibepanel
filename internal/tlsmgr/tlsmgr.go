@@ -33,9 +33,13 @@ type FileSource struct {
 	cert *tls.Certificate
 	// digest is over the bytes of both files. See reload for why not mtime.
 	digest   [32]byte
-	warned   bool
 	stopOnce sync.Once
 	stop     chan struct{}
+
+	// Two flags rather than one, because "about to expire" and "has expired"
+	// are different things to be told once each. See warnIfExpiring.
+	warnedExpiring bool
+	warnedExpired  bool
 }
 
 // NewFileSource loads the pair once so that a bad path fails at startup rather
@@ -110,7 +114,7 @@ func (f *FileSource) reload() error {
 	// A new pair deserves a fresh judgement about whether it is about to run
 	// out; otherwise a renewal that fixed the problem would leave the warning
 	// suppressed and a renewal that did not would never repeat it.
-	f.warned = false
+	f.warnedExpiring, f.warnedExpired = false, false
 	f.mu.Unlock()
 	f.warnIfExpiring()
 	return nil
@@ -152,31 +156,48 @@ func (f *FileSource) ExpiresAt() time.Time {
 // still time to do something about it by hand.
 const expiryWarning = 14 * 24 * time.Hour
 
-// warnIfExpiring says so once, rather than every minute forever.
+// warnIfExpiring says so once per state, rather than every minute forever.
 //
 // The failure this guards is a panel that has been serving a certificate
 // nobody renewed. Detecting the file changing is only half of it: a file that
 // never changes is exactly what an abandoned renewal looks like, and the old
 // code could not have told anyone either way.
+//
+// Once *per state*, and that is the fix. One flag used to gate both messages,
+// so a certificate that was warned about at fourteen days and then never
+// renewed passed its expiry in silence: the flag was already set, and the
+// error that says the panel is now serving something no browser will accept
+// never fired. The one scenario this whole function exists for was the one it
+// went quiet for.
+//
+// Nothing covers this. Every test in the package passes a nil logger, so the
+// body below returns on its first line — which is most of the missing coverage
+// in this file, and why the flag could be wrong for as long as it liked.
 func (f *FileSource) warnIfExpiring() {
 	if f.Log == nil {
 		return
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.warned || f.cert == nil || f.cert.Leaf == nil {
+	if f.cert == nil || f.cert.Leaf == nil {
 		return
 	}
 	left := time.Until(f.cert.Leaf.NotAfter)
-	if left > expiryWarning {
-		return
-	}
-	f.warned = true
+
+	// Expired is its own state, not a louder version of expiring.
 	if left <= 0 {
+		if f.warnedExpired {
+			return
+		}
+		f.warnedExpired = true
 		f.Log.Error("the certificate being served has expired",
 			"expired", f.cert.Leaf.NotAfter, "cert", f.CertPath)
 		return
 	}
+	if left > expiryWarning || f.warnedExpiring {
+		return
+	}
+	f.warnedExpiring = true
 	f.Log.Warn("the certificate being served is about to expire",
 		"expires", f.cert.Leaf.NotAfter, "in", left.Round(time.Hour), "cert", f.CertPath)
 }
