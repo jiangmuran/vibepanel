@@ -24,6 +24,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sweepStaleSockets } from './lib/stale.mjs'
 import { findUnreachable } from './lib/overflow.mjs'
+import { findFadedControls } from './lib/faded.mjs'
 import { findSmallTargets } from './lib/tap.mjs'
 import { findInvisibleFocus } from './lib/focus.mjs'
 import { findUnnamedControls } from './lib/names.mjs'
@@ -81,6 +82,16 @@ async function scanFocus(target, where) {
     note('FAIL', 'a11y',
       `in ${where}, these look the same focused as unfocused, so keyboard navigation is ` +
       `invisible: ${invisible.join(', ')}`)
+  }
+}
+
+/** note()-reporting wrapper around the opacity scan. See lib/faded.mjs. */
+async function scanFaded(target, where) {
+  const faded = await findFadedControls(target)
+  if (faded.length > 0) {
+    note('FAIL', 'ui',
+      `in ${where}, controls are on screen as far as a script can tell and invisible to a ` +
+      `person: ${faded.join(', ')}`)
   }
 }
 
@@ -420,6 +431,7 @@ try {
   await scanUnreachable(page, 'the desktop layout')
   await scanFocus(page, 'the desktop layout')
   await scanNames(page, 'the desktop layout')
+  await scanFaded(page, 'the desktop layout')
 
   // ── websocket status ─────────────────────────────────────────────────────
   const status = await page
@@ -607,6 +619,11 @@ try {
     note('FAIL', 'arbitration',
       'the small second viewer shows no "take control" affordance; it may have silently taken the grid')
   }
+  // The affordance existing is not the same as somebody being able to see it,
+  // and the check above cannot tell those apart: an element at opacity 0 is
+  // visible to Playwright. This is the one screen where that distinction is
+  // the whole product — the pill is the only way out of a scaled grid.
+  await scanFaded(page2, 'the passive viewer')
 
   await page.bringToFront()
   await page.locator('.xterm-screen').click()
@@ -1818,6 +1835,7 @@ try {
 
     await scanUnreachable(touch, 'the phone drawer')
     await scanTapTargets(touch, 'the phone drawer')
+    await scanFaded(touch, 'the phone drawer')
     await scanNames(touch, 'the phone drawer')
     await touch.screenshot({ path: join(SHOTS, 'mobile-drawer.png') })
 
@@ -1891,6 +1909,7 @@ try {
       }
       await scanUnreachable(p2, `a ${shape.name} phone`)
       await scanTapTargets(p2, `a ${shape.name} phone`)
+      await scanFaded(p2, `a ${shape.name} phone`)
       await p2.screenshot({ path: join(SHOTS, `phone-${shape.w}x${shape.h}.png`) })
       await ctx2.close()
     }

@@ -6976,3 +6976,59 @@ excluded for the same asynchrony. Excluded rather than explained, and the
 comment says so: a new check whose first finding is a sub-row overhang nobody
 can see is a check people turn off, and the failure it exists for is caught
 regardless.
+
+## The second thing a script can see and a person cannot
+
+`overflow: hidden` was one. Here is the other, found by asking the same
+question of a different measurement.
+
+Playwright's `isVisible()` means: the element has a bounding box with a size,
+and `visibility` is not `hidden`. An element at `opacity: 0` satisfies both. So
+does one inside a container at `opacity: 0`.
+
+Adding `opacity-0` to the "take control" pill — the only way out of a passive
+viewer's scaled grid, and something the render check has a dedicated FAIL for
+when it is *missing* — left the entire run green.
+
+That check reads:
+
+> the small second viewer shows no "take control" affordance; it may have
+> silently taken the grid
+
+It cannot tell "the affordance is not there" from "the affordance is
+invisible", and on that screen those are the same outcome for the person
+looking at it.
+
+`findFadedControls` reports any element with a `data-testid` whose effective
+opacity — multiplied down the ancestor chain, because that is how it composes
+and because a faded container is the likelier accident — is under 5%, while
+being large enough and not `display: none`. It runs everywhere the other scans
+run: the desktop layout, the passive viewer, the phone drawer, two phone
+shapes, and the crowded and phone states of the scale check. The mutation fails
+four of them at once, naming the testid and the opacity.
+
+### One exclusion, and it names itself
+
+`.vp-reveal` — a row control that appears on hovering its row. That is a
+deliberate `opacity: 0`, and `styles.css` already explains why it is switched
+off below the hover media query:
+
+> `opacity-0` plus `group-hover` is invisible for the whole life of a touch
+> session: a phone fires no hover, so "pin to the top", "kill", "close this
+> tab" and "delete this todo" were controls you had to know the pixel position
+> of.
+
+One class, one reason, written down before this scan existed — which is what
+made a generic scan affordable. A separate check already asserts those controls
+are opaque on a touch screen, so the exclusion does not create a hole.
+
+### The general form
+
+Two blind spots, same shape: `overflow: hidden` is still scrollable by script,
+and `opacity: 0` is still visible to one. Both let a check assert something
+about a person's experience using a measurement that is not about people at
+all.
+
+The question worth carrying: *what would this measurement say about a build
+where the thing is technically present and practically absent?* It is cheap to
+ask — one mutation each — and both times the answer was "nothing".

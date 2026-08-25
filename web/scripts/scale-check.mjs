@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sweepStaleSockets } from './lib/stale.mjs'
 import { findUnreachable } from './lib/overflow.mjs'
+import { findFadedControls } from './lib/faded.mjs'
 
 const BIN = process.argv[2] ?? new URL('../../vibepanel', import.meta.url).pathname
 const SHOTS = process.argv[3] ?? join(tmpdir(), 'vpscale-shots')
@@ -504,6 +505,14 @@ try {
   // And the generic form of the same question, in the state where crowding
   // actually happens. The render check runs this too, but at 1440 with two
   // terminal tabs — where nothing has ever been close to overflowing.
+  // Crowding is when a control is most likely to be faded out by a layout rule
+  // that only meant to tidy something.
+  const fadedCrowded = await findFadedControls(page)
+  if (fadedCrowded.length > 0) {
+    note('FAIL', 'ui',
+      'with everything crowded, controls are on screen as far as a script can tell and ' +
+      `invisible to a person: ${fadedCrowded.join(', ')}`)
+  }
   const spilling = await findUnreachable(page, sleep)
   if (spilling.length > 0) {
     note('FAIL', 'ui',
@@ -545,6 +554,12 @@ try {
       note('FAIL', 'ui',
         `the last session in the drawer cannot be scrolled into view on a phone: ` +
         `${box ? `y=${Math.round(box.y)} h=${Math.round(box.height)}` : 'no box'}`)
+    }
+    const phoneFaded = await findFadedControls(page)
+    if (phoneFaded.length > 0) {
+      note('FAIL', 'ui',
+        'with the drawer open on a phone, controls are on screen as far as a script can tell ' +
+        `and invisible to a person: ${phoneFaded.join(', ')}`)
     }
     const phoneSpill = await findUnreachable(page, sleep)
     if (phoneSpill.length > 0) {
