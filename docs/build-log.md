@@ -8627,3 +8627,75 @@ finding — a second path that was never updated — was reproduced by the perso
 who had just spent the day finding it. That argues the next worthwhile thing is
 not another bug but a check that makes the class visible, and writing that check
 needs a machine that can run it.
+
+## The machine came back
+
+Everything above was written in a stretch where nothing could be executed.
+Three functional changes were left marked NOT RUN, on the grounds that a change
+nobody has run is a claim, not a fix.
+
+All three were judged first.
+
+`tlsmgr`'s split of `warned` into `warnedExpiring` / `warnedExpired` passed, and
+then was mutated back to the single flag to see the new test fail. It does, and
+says why in the sentence that matters: "the certificate expired and the panel
+said nothing: every browser now refuses it and the log does not say why."
+
+`hooks`' `sort.Strings` passed and **nothing was testing it**. Removing the sort
+changed no test result across five runs. The comment beside it had reasoned its
+way there and stopped one step short — "it cannot break an existing test: the
+order was already random, so nothing could have been asserting one" is true, and
+is also exactly why nothing would ever catch its removal. A test that asks
+twenty times now pins it; removing the sort makes it fail on the first call, and
+three consecutive runs printed three different orders, which is the randomness
+made visible rather than argued about.
+
+### The check that makes the class visible
+
+The previous entry ended by saying the next worthwhile thing was not another bug
+but a check for the class this session kept finding — a second path that was
+never updated — and that writing it needed a machine.
+
+`TestTypeScriptRowsMatchWhatIsSent` was that check, and it was covering six
+types out of thirteen. It lived in `internal/store`, which cannot import
+`internal/httpapi` without a cycle, so it pinned the rows and left unpinned the
+envelope that carries them: `stateResponse`, which is what the socket pushes on
+every change and the largest hand-written interface in `wire.ts`. Moved to
+`internal/httpapi`, which can see both, and moved rather than copied because a
+second copy of the comparison is what the file says it exists to prevent.
+
+Then the check itself turned out to have the defect it was written to find.
+`jsonKeys` marshalled a **zero value**, so every `omitempty` field was absent
+from what it believed the server sends. Demonstrated before touching it, by
+adding `omitempty` to `Session.CWD`: the test failed with
+
+```
+wire.ts declares [cwd] on Session, and the server does not send them.
+```
+
+which is wrong in the way that costs the most — the server does send `cwd`,
+whenever it is not empty, and the remedy the message names is to delete a
+correct line from `wire.ts`. Reading the struct tags instead fixes it and lifts
+what was blocking the other six interfaces, so `AuthState`, `SettingsInfo`,
+`HookStatus`, `FileListing`, `SystemSample` and `Passkey` are covered now.
+
+Thirteen subtests, all confirmed to run rather than assumed to. The shape was
+already consistent, which is the outcome worth stating plainly: the check found
+nothing and that is the result, not a disappointment.
+
+### The wire has three hops and now all three are pinned
+
+Worth writing down because the middle one is invisible and the third was doing
+work nobody had credited it with.
+
+```
+Go stateResponse ──(Go test)──▶ wire.ts PanelState ──(tsc)──▶ socket.ts, App.tsx
+```
+
+`socket.ts` re-lists every field by hand when it hands a snapshot to its
+listeners, which is a third place to forget. It is safe, and measured to be:
+adding a required field to `PanelState` fails the build in `socket.ts:298` and
+`App.tsx:130` both. The first hop was the one with nothing on it — a field added
+to `stateResponse` and forgotten in `wire.ts` used to be silent in all three
+places at once. Note the limit: an *optional* TS field is not caught by tsc, so
+the Go test is the only thing standing there.

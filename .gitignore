@@ -4,6 +4,11 @@
 /web/dist/
 /web/node_modules/
 
+# tsc's incremental cache. Swept in by the bulk commit that added the
+# frontend, and rewritten by every `tsc -b` — so the tree was dirty after
+# every build, which is how a `git status` stops being read.
+/web/*.tsbuildinfo
+
 # Runtime data — never commit a database with real session/credential data
 /data/
 *.db

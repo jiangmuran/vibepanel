@@ -19,7 +19,7 @@
 import { chromium } from 'playwright'
 import { spawn, execSync } from 'node:child_process'
 import { createServer } from 'node:net'
-import { mkdtempSync, rmSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, rmSync, mkdirSync, readFileSync, writeFileSync, existsSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sweepStaleSockets } from './lib/stale.mjs'
@@ -2578,6 +2578,65 @@ try {
       rmSync(join(projRoot, leftover), { force: true })
     }
   }
+
+  // ── a link out of the project is shown, and is not openable ──────────────
+  // Readable used to be decided from the file mode alone, so a symlink whose
+  // target sat outside the project root read as an ordinary file and clicking
+  // it served whatever it pointed at. An agent writes into this directory;
+  // creating such a link is one command.
+  //
+  // Listed rather than hidden, deliberately: the link is a fact about the
+  // directory, and a tree that omits it lies about what is there. So this
+  // asserts both halves — the row exists, and it offers nothing to click.
+  const outsideTarget = join(DATA, 'outside-the-project.txt')
+  writeFileSync(outsideTarget, 'SHOULD_NOT_BE_SERVED\n')
+  const escapeLink = join(projRoot, 'escape-link.txt')
+  rmSync(escapeLink, { force: true })
+  symlinkSync(outsideTarget, escapeLink)
+  await page.locator('[data-testid="panel-tab-files"]').click().catch(() => {})
+  await sleep(400)
+  await page.locator('[data-testid="file-refresh"]').click().catch(() => {})
+  await sleep(900)
+  const escRow = page.locator('[data-testid="file-entry"]', { hasText: 'escape-link.txt' }).first()
+  if ((await escRow.count()) === 0) {
+    note('FAIL', 'files/escape', 'a symlink leaving the project is missing from the tree entirely')
+  } else {
+    if ((await escRow.locator('[data-testid="file-escapes"]').count()) === 0) {
+      note('FAIL', 'files/escape',
+        'a symlink pointing outside the project is listed with no sign that it does')
+    }
+    if ((await escRow.locator('[data-testid="file-download"]').count()) > 0) {
+      note('FAIL', 'files/escape',
+        'the panel offers to download a symlink whose target is outside the project')
+    }
+    await page.screenshot({ path: join(SHOTS, 'file-escape.png') })
+  }
+  // The UI is one half. The endpoint answers on its own, and a URL typed by
+  // hand does not go through the tree at all.
+  //
+  // The control runs first and is not optional. A misremembered path makes
+  // every request 404, and a 404 is indistinguishable from a refusal — this
+  // check has already been written once against an endpoint that did not
+  // exist, and read as a clean pass.
+  const control = join(projRoot, 'control-file.txt')
+  writeFileSync(control, 'CONTROL_OK\n')
+  const ctlResp = await authed(`/api/projects/${proj.id}/download?path=control-file.txt`)
+  if (!ctlResp.ok) {
+    note('FAIL', 'files/escape',
+      `the download endpoint refused an ordinary file (${ctlResp.status}); ` +
+      'the escape check below cannot tell a refusal from a wrong URL')
+  } else {
+    const escResp = await authed(`/api/projects/${proj.id}/download?path=escape-link.txt`)
+    if (escResp.ok) {
+      const body = await escResp.text()
+      note('FAIL', 'files/escape',
+        `the download endpoint served a link out of the project (${escResp.status}), ` +
+        `returning ${JSON.stringify(body.slice(0, 40))}`)
+    }
+  }
+  rmSync(control, { force: true })
+  rmSync(escapeLink, { force: true })
+  rmSync(outsideTarget, { force: true })
 
   // ── a dead process does not look like a finished job ─────────────────────
   // tmux keeps a dead pane on screen, and the panel used to read that as
