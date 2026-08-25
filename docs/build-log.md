@@ -9004,3 +9004,41 @@ would have been the same mistake in miniature.
 `truncateForLog` and `Paste` all show 0.0% and all have live callers — the
 resize message, the trace path behind a debug flag, and the paste the compose
 box sends. Coverage says what the tests reach, not what the program runs.
+
+### Seven of thirty-seven
+
+`TestEverythingRequiresASession` listed seven paths by hand. The router has
+thirty-seven. Among the thirty it did not name: `DELETE /api/projects/{id}`,
+which kills every session in a project; `GET /api/settings/audit`, which is a
+list of usernames and addresses; the upload endpoint; and `/ws`, which is the
+terminal itself.
+
+All of them were behind `RequireAuth`. Nothing said so, and nothing would have
+noticed a route registered above the group rather than inside it — one line's
+difference, invisible in a diff of a file that size. Now it walks the router, so
+a new endpoint is covered the moment it exists rather than when somebody
+remembers to add it to a list.
+
+The interesting part was the allowlist. Written first as prefixes, and
+`/api/auth/` looked obviously right — those are the sign-in routes. It exempted
+four that are not: listing passkeys, deleting one, and both halves of
+registering one. They answer 401, because each handler asks `currentUser`
+itself; but a prefix exemption is a promise that they always will, made on their
+behalf by the one test that would otherwise notice. Exact paths now, one line of
+reason each, and the four are checked like everything else.
+
+So the first version of the guard reproduced, in its own allowlist, the class of
+defect it was written to find. That is twice in this session — the wire mirror
+test also had to be fixed before it could be trusted — and the pattern is worth
+naming: a guard is code, and nothing guards the guard except making it fail on
+purpose.
+
+Also measured, and refuted, on the way:
+
+**A client can set the authoritative grid to any size.** `Live.Resize` and
+`tmux.Resize` both check only `> 0`, and the grid is shared by every viewer, so
+a bad viewport measurement becomes everyone's problem. Measured against a real
+tmux: 5000x2000 is accepted with RSS unchanged at 5.1MB — the grid is sparse —
+and 60000x60000 is refused outright with "width too large". The panel's scaling
+already has a legibility floor that pans rather than shrinking text to a smear.
+Three layers, each with its own bound; nothing to fix.

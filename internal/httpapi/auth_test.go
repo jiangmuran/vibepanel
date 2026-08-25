@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/go-chi/chi/v5"
 
 	"github.com/jiangmuran/vibepanel/internal/auth"
 	"github.com/jiangmuran/vibepanel/internal/store"
@@ -29,38 +31,87 @@ func anonymousClient(t *testing.T) *http.Client {
 	return &http.Client{Jar: jar}
 }
 
+// openRoutes are the only routes a stranger may reach, each for a stated
+// reason. Adding to this list is the deliberate act; adding a route is not.
+// Exact paths, not prefixes. `/api/auth/` as a prefix looked right and exempted
+// four routes that do require a session — listing and deleting passkeys, and
+// both halves of registering one. They answer 401 today because each handler
+// asks currentUser itself; a prefix exemption is a promise that they always
+// will, made on their behalf by a test that would then never check.
+var openRoutes = map[string]string{
+	"/api/health":                    "a probe, and it says nothing sensitive",
+	"/api/hook/state":                "runs outside the browser as a child of an agent, and carries its own token",
+	"/api/auth/login":                "how you get in; the login throttle guards it instead",
+	"/api/auth/logout":               "ending a session you may not have is not an error worth a 401",
+	"/api/auth/setup":                "the one-time setup token is the credential, and it closes forever after",
+	"/api/auth/state":                "tells the sign-in page which doors exist; it is what a stranger needs",
+	"/api/auth/passkey/login/begin":  "signing in with a passkey, before there is a session to require",
+	"/api/auth/passkey/login/finish": "the other half of the same",
+}
+
+// TestEverythingRequiresASession walks the router rather than listing paths.
+//
+// This panel hands out a writable terminal. There is no such thing as a
+// harmless unauthenticated endpoint on it.
+//
+// It used to check seven paths written out by hand, out of thirty-seven. The
+// ones it did not name include DELETE /api/projects/{id}, which kills every
+// session in a project, GET /api/settings/audit, which is a list of usernames
+// and addresses, the upload endpoint, and /ws, which is the terminal itself.
+// They were all behind RequireAuth — but nothing said so, and nothing would
+// have noticed a new route registered above the group instead of inside it,
+// which is one line's difference and invisible in a diff of a file this size.
 func TestEverythingRequiresASession(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, srv := newTestServer(t)
 	anon := anonymousClient(t)
 
-	// This panel hands out a writable terminal. There is no such thing as a
-	// harmless unauthenticated endpoint on it.
-	for _, path := range []string{
-		"/api/state",
-		"/api/system",
-		"/api/projects/anything/files",
-		"/api/projects/anything/notes",
-		"/api/projects/anything/todos",
-	} {
-		res, err := anon.Get(ts.URL + path)
-		if err != nil {
-			t.Fatalf("GET %s: %v", path, err)
-		}
-		res.Body.Close()
-		if res.StatusCode != http.StatusUnauthorized {
-			t.Errorf("GET %s = %d, want 401", path, res.StatusCode)
-		}
+	routes, ok := srv.Routes().(chi.Routes)
+	if !ok {
+		t.Fatalf("Routes() is %T, which cannot be walked; this test is checking nothing", srv.Routes())
 	}
 
-	for _, path := range []string{"/api/projects", "/api/sessions"} {
-		res, err := anon.Post(ts.URL+path, "application/json", strings.NewReader(`{}`))
+	checked := 0
+	err := chi.Walk(routes, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		// The frontend is served to strangers on purpose: the login page is
+		// part of it.
+		if strings.HasPrefix(route, "/*") {
+			return nil
+		}
+		if _, open := openRoutes[route]; open {
+			return nil
+		}
+		// Chi's pattern, with a value in place of each parameter. What it
+		// names does not have to exist: the middleware answers before any
+		// handler looks it up, and if it does not, that is the finding.
+		path := regexp.MustCompile(`\{[^}]+\}`).ReplaceAllString(route, "anything")
+
+		req, err := http.NewRequest(method, ts.URL+path, strings.NewReader("{}"))
 		if err != nil {
-			t.Fatalf("POST %s: %v", path, err)
+			// CONNECT and friends are registered by Handle() for /ws; skip
+			// what the client cannot even build.
+			return nil
+		}
+		req.Header.Set("Content-Type", "application/json")
+		res, err := anon.Do(req)
+		if err != nil {
+			return nil
 		}
 		res.Body.Close()
+		checked++
 		if res.StatusCode != http.StatusUnauthorized {
-			t.Errorf("POST %s = %d, want 401", path, res.StatusCode)
+			t.Errorf("%s %s = %d without a session, want 401. Either it is registered "+
+				"above the RequireAuth group, or it belongs in openRoutes with a reason.",
+				method, path, res.StatusCode)
 		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A walk that finds nothing passes silently, which is the failure this
+	// whole test exists to avoid one layer down.
+	if checked < 20 {
+		t.Fatalf("only %d routes were checked; the walk is not seeing the router", checked)
 	}
 }
 
