@@ -159,6 +159,13 @@ export interface PanelState {
   /** 'auto' orders projects by recent activity; 'manual' by explicit position. */
   projectOrder: 'auto' | 'manual'
   /**
+   * True when an arrangement is stored, whichever ordering is showing.
+   *
+   * Which is what makes the way back offerable at all: switching to automatic
+   * keeps the positions now, so there is something to return to.
+   */
+  hasProjectOrder: boolean
+  /**
    * True when an agent is running and nothing is reporting its state.
    *
    * The inference does not work for the agent most people run here: Claude

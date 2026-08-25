@@ -3,6 +3,7 @@ import {
   ChevronLeft,
   Clock,
   GripVertical,
+  ListOrdered,
   Pin,
   PinOff,
   Plus,
@@ -13,12 +14,22 @@ import {
 
 import type { Project, Session, SessionState } from '../protocol/wire'
 import { useDragList } from '../hooks/useDragList'
+import { sessionLabel } from './label'
 import { StateDot } from './StateDot'
 import { InlineName } from './InlineName'
+import { EXIT_VANISHED } from '../protocol/wire'
 
 export interface SidebarProps {
   projects: Project[]
   sessions: Session[]
+  /**
+   * What to call each session, by id.
+   *
+   * Computed once by the caller rather than here, so the sidebar and the title
+   * bar cannot disagree about the name of the session you are looking at —
+   * which reads as a rendering glitch rather than as two functions.
+   */
+  labels: Map<string, string>
   live: string[]
   selected: string | null
   expanded: boolean
@@ -38,15 +49,14 @@ export interface SidebarProps {
   projectOrder: 'auto' | 'manual'
   onReorderProjects: (ids: string[]) => void
   onAutoOrderProjects: () => void
+  hasProjectOrder: boolean
+  onRestoreProjectOrder: () => void
 
   /** An agent is running and nothing is reporting its state. */
   stateGuessed: boolean
   onOpenSettings: () => void
 }
 
-function sessionLabel(s: Session): string {
-  return s.title || s.command || 'session'
-}
 
 /** The most urgent state among a project's sessions, for the collapsed rail. */
 /**
@@ -60,16 +70,33 @@ function sessionLabel(s: Session): string {
 function summarise(sessions: Session[]): SessionState | 'crashed' | null {
   if (sessions.some((s) => s.state === 'waiting')) return 'waiting'
   if (sessions.some((s) => s.state === 'working')) return 'working'
-  if (sessions.some((s) => s.exited && s.exitStatus !== 0)) return 'crashed'
+  // A session that vanished is not a session that crashed. Counting it as one
+  // put a crash marker on the project badge for a tmux session somebody had
+  // closed from a shell on purpose.
+  if (sessions.some((s) => s.exited && s.exitStatus !== 0 && s.exitStatus !== EXIT_VANISHED)) {
+    return 'crashed'
+  }
   return sessions.length > 0 ? 'done' : null
 }
 
-/** Up to two letters, for the collapsed rail's project badge. */
+/**
+ * Up to two letters, for the collapsed rail's project badge.
+ *
+ * Counted in code points, not code units. `str[0]` and `slice` work on UTF-16
+ * units, and an emoji is a surrogate pair — so taking the first unit of
+ * "📊 monitoring" yields half a character and the badge renders a replacement
+ * glyph. Not a hypothetical input: naming things with an emoji in front is
+ * ordinary, and the setup this panel was built to replace did exactly that.
+ *
+ * CJK is safe either way, being one unit per character, but this costs nothing
+ * and removes the distinction.
+ */
 function initials(name: string): string {
+  const chars = (s: string) => [...s]
   const words = name.split(/[\s_\-./]+/).filter(Boolean)
   if (words.length === 0) return '?'
-  if (words.length === 1) return words[0].slice(0, 2).toUpperCase()
-  return (words[0][0] + words[1][0]).toUpperCase()
+  if (words.length === 1) return chars(words[0]).slice(0, 2).join('').toUpperCase()
+  return (chars(words[0])[0] + chars(words[1])[0]).toUpperCase()
 }
 
 export function Sidebar(props: SidebarProps) {
@@ -93,12 +120,18 @@ export function Sidebar(props: SidebarProps) {
   // the user only consults when switching tasks.
   if (!expanded && !overlay) {
     return (
-      <aside data-testid="sidebar-rail" className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-hairline py-2 vp-blur">
+      // overflow-y-auto: fourteen projects reach the bottom of a 520px window,
+      // and the fifteenth would have been drawn past it with no way to scroll —
+      // the same defect as the tab strip below and the key bar on a phone.
+      <aside
+        data-testid="sidebar-rail"
+        className="flex w-12 shrink-0 flex-col items-center gap-1 overflow-y-auto border-r border-hairline py-2 vp-blur vp-safe-pad-top"
+      >
         <button
           type="button"
           onClick={props.onToggle}
           title="Show projects"
-          className="mb-1 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+          className="mb-1 shrink-0 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
         >
           <ChevronLeft size={15} className="rotate-180" />
         </button>
@@ -110,9 +143,17 @@ export function Sidebar(props: SidebarProps) {
             <button
               key={p.id}
               type="button"
+              data-testid="rail-project"
               onClick={props.onToggle}
               title={`${p.name} — ${list.length} session(s)`}
-              className={`relative flex h-9 w-9 items-center justify-center rounded-vp text-[11px] font-semibold transition-colors duration-200 ease-vp ${
+              // shrink-0, or the scroller above never gets a chance.
+              //
+              // Flex children compress before they overflow, so a rail with
+              // twenty projects did not scroll — it squeezed every badge from
+              // 36px down to 17, which is neither readable nor tappable, and
+              // the overflow rule added to fix "the rail spills" never fired
+              // because nothing ever spilled.
+              className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-vp text-[11px] font-semibold transition-colors duration-200 ease-vp ${
                 active ? 'bg-surface-2 text-ink' : 'text-ink-2 hover:bg-surface-2'
               }`}
             >
@@ -133,7 +174,7 @@ export function Sidebar(props: SidebarProps) {
           type="button"
           onClick={props.onAddProject}
           title="Add project"
-          className="mt-1 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+          className="mt-1 shrink-0 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
         >
           <Plus size={15} />
         </button>
@@ -149,7 +190,7 @@ export function Sidebar(props: SidebarProps) {
 
   return (
     <aside data-testid="sidebar" data-overlay={overlay} className={`flex flex-col ${shell}`}>
-      <header className="flex items-center gap-1 px-3 py-2">
+      <header className="flex items-center gap-1 px-3 py-2 vp-safe-pad-top">
         <button
           type="button"
           onClick={props.onToggle}
@@ -159,14 +200,30 @@ export function Sidebar(props: SidebarProps) {
           <ChevronLeft size={15} />
         </button>
         <span className="text-[13px] font-semibold tracking-tight">Projects</span>
+        {/* Two views of the same projects, and switching between them costs
+            nothing now. This used to be one button that erased the
+            arrangement and then removed itself, so there was no way back and
+            nothing left to click. */}
         {props.projectOrder === 'manual' && (
           <button
             type="button"
+            data-testid="order-auto"
             onClick={props.onAutoOrderProjects}
-            title="Sort by recent activity again"
+            title="Sort by recent activity instead — your arrangement is kept"
             className="ml-auto rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
           >
             <Clock size={14} />
+          </button>
+        )}
+        {props.projectOrder === 'auto' && props.hasProjectOrder && (
+          <button
+            type="button"
+            data-testid="order-manual"
+            onClick={props.onRestoreProjectOrder}
+            title="Back to the order you arranged"
+            className="ml-auto rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+          >
+            <ListOrdered size={14} />
           </button>
         )}
         <button
@@ -174,7 +231,7 @@ export function Sidebar(props: SidebarProps) {
           onClick={props.onAddProject}
           title="Add project"
           className={`rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink ${
-            props.projectOrder === 'manual' ? '' : 'ml-auto'
+            props.projectOrder === 'manual' || props.hasProjectOrder ? '' : 'ml-auto'
           }`}
         >
           <Plus size={15} />
@@ -207,7 +264,7 @@ export function Sidebar(props: SidebarProps) {
                 {...drag.handleProps(p.id)}
                 data-testid="project-grip"
                 title="Drag to reorder"
-                className="-ml-1 cursor-grab rounded p-0.5 text-ink-2 vp-reveal active:cursor-grabbing"
+                className="vp-tap -ml-1 cursor-grab rounded p-0.5 text-ink-2 vp-reveal active:cursor-grabbing"
               >
                 <GripVertical size={12} />
               </span>
@@ -220,8 +277,9 @@ export function Sidebar(props: SidebarProps) {
               <button
                 type="button"
                 onClick={() => props.onNewSession(p)}
+                data-testid="project-new-shell"
                 title="New shell in this project"
-                className="ml-auto rounded p-1 text-ink-2 vp-reveal hover:text-ink"
+                className="vp-tap ml-auto rounded p-1 text-ink-2 vp-reveal hover:text-ink"
               >
                 <TerminalIcon size={13} />
               </button>
@@ -246,7 +304,7 @@ export function Sidebar(props: SidebarProps) {
                     onToggle={(next) => props.onSetSessionState(s, next)}
                   />
                   <InlineName
-                    value={sessionLabel(s)}
+                    value={props.labels.get(s.id) ?? sessionLabel(s)}
                     onCommit={(next) => props.onRenameSession(s, next)}
                     className="flex-1 text-[12.5px]"
                   />
@@ -257,10 +315,16 @@ export function Sidebar(props: SidebarProps) {
                   {s.exited && (
                     <span
                       className={`shrink-0 text-[10px] tabular ${
-                        s.exitStatus === 0 ? 'text-ink-2' : 'text-state-crashed'
+                        s.exitStatus === 0 || s.exitStatus === EXIT_VANISHED
+                          ? 'text-ink-2'
+                          : 'text-state-crashed'
                       }`}
                     >
-                      {s.exitStatus === 0 ? 'exited' : `exit ${s.exitStatus}`}
+                      {s.exitStatus === EXIT_VANISHED
+                        ? 'gone'
+                        : s.exitStatus === 0
+                          ? 'exited'
+                          : `exit ${s.exitStatus}`}
                     </span>
                   )}
                   {!isLive && !s.exited && (
@@ -278,7 +342,7 @@ export function Sidebar(props: SidebarProps) {
                         props.onRestartSession(s)
                       }}
                       title="Restart this session's command in the same pane"
-                      className="shrink-0 rounded p-0.5 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+                      className="vp-tap shrink-0 rounded p-0.5 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
                     >
                       <RotateCcw size={12} />
                     </button>
@@ -291,7 +355,7 @@ export function Sidebar(props: SidebarProps) {
                     }}
                     data-testid="pin-session"
                     title={s.pinned ? 'Unpin' : 'Pin to the top of this project'}
-                    className="shrink-0 rounded p-0.5 text-ink-2 vp-reveal hover:text-ink"
+                    className="vp-tap shrink-0 rounded p-0.5 text-ink-2 vp-reveal hover:text-ink"
                   >
                     {s.pinned ? <PinOff size={12} /> : <Pin size={12} />}
                   </button>
@@ -303,7 +367,7 @@ export function Sidebar(props: SidebarProps) {
                     }}
                     data-testid="kill-session"
                     title="Kill session"
-                    className="shrink-0 rounded p-0.5 text-ink-2 vp-reveal hover:text-ink"
+                    className="vp-tap shrink-0 rounded p-0.5 text-ink-2 vp-reveal hover:text-ink"
                   >
                     <X size={12} />
                   </button>

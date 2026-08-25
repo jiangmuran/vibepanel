@@ -2,11 +2,17 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sort"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jiangmuran/vibepanel/internal/session"
 )
@@ -418,5 +424,294 @@ func TestNoteRevisionCatchesWritesInTheSameSecond(t *testing.T) {
 	}
 	if forced.Rev <= got.Rev+1 {
 		t.Errorf("rev after an unconditional write = %d, want more than %d", forced.Rev, got.Rev+1)
+	}
+}
+
+// A session changing state counts as its project being active.
+//
+// Projects are ordered by last_active_at, and that column was written in
+// exactly one place: creating a session. "Most active first" therefore meant
+// "most recently given a new session first", and a project with a session
+// waiting for a human stayed wherever it was — which is the one thing the
+// ordering exists to prevent.
+func TestSessionStateChangeMakesItsProjectRecent(t *testing.T) {
+	db := openTest(t)
+	ctx := context.Background()
+
+	first, err := db.CreateProject(ctx, "p-first", "first", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Distinct timestamps: now() has second resolution, and two projects made
+	// in the same second fall through to created_at, which is equally tied —
+	// leaving the order arbitrary and the precondition below meaningless.
+	time.Sleep(1100 * time.Millisecond)
+	second, err := db.CreateProject(ctx, "p-second", "second", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := db.CreateSession(ctx, Session{
+		ID: "s-quiet", ProjectID: first.ID, TmuxName: "vp_quiet",
+		State: session.StateWorking,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// `second` was created last, so it leads until something happens in `first`.
+	before, err := db.ListProjects(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before[0].ID != second.ID {
+		t.Fatalf("expected the newest project first to begin with, got %q", before[0].Name)
+	}
+
+	time.Sleep(1100 * time.Millisecond)
+	if err := db.SetSessionState(ctx, sess.ID, session.StateWaiting, session.SourceHook); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := db.ListProjects(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after[0].ID != first.ID {
+		t.Errorf("the project with a session now waiting is at position %d, not the top",
+			indexOfProject(after, first.ID))
+	}
+}
+
+func indexOfProject(list []Project, id string) int {
+	for i, p := range list {
+		if p.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// The first migration is frozen. Editing it is the bug this guards.
+//
+// The rule in AGENTS.md is "additive steps only, and never an edit to an
+// earlier one", and the reason is that a released binary has already run the
+// old version of that step on somebody's machine. Change schema.sql and new
+// installs get the change while every existing database silently does not —
+// the difference showing up later as a query failing somewhere you cannot see.
+//
+// A pinned hash is the whole check. It is not a value to update when the file
+// changes: if this fails, the change belongs in a new migration instead.
+//
+// (An earlier attempt at this compared the schema of a fresh database against
+// one upgraded from v1 and asserted they matched. They cannot differ: both
+// paths run migrations[0], which *is* schema.sql, so the comparison was of a
+// thing against itself. It passed with a column added to schema.sql, which is
+// exactly the change it was meant to catch.)
+func TestTheFirstMigrationIsFrozen(t *testing.T) {
+	sum := sha256.Sum256([]byte(schemaSQL))
+	const pinned = "6ba8e200b650f112b50981ee41bd4d0ea02757edd24d586b6b08d351f325c938"
+	if got := hex.EncodeToString(sum[:]); got != pinned {
+		t.Errorf("schema.sql has changed (%s).\n"+
+			"Every database in the world has already run the previous version of it, and none of "+
+			"them will run this one. Add a migration instead; if you are certain this file has "+
+			"never shipped, update the pin.", got)
+	}
+}
+
+// Concurrent writers must not fail, they must wait.
+//
+// SQLite takes one write lock for the whole database, so two writers collide
+// by design; busy_timeout is what turns the collision into a wait instead of
+// an error. The DSN sets it and a comment explains why, and nothing had ever
+// put enough writers against it to find out whether five seconds is enough.
+//
+// The panel does this constantly without anybody thinking about it: the poller
+// writes state for every session on a timer while a person renames a tab and a
+// hook reports from inside a session.
+func TestConcurrentWritersDoNotCollide(t *testing.T) {
+	db := openTest(t)
+	ctx := context.Background()
+
+	project, err := db.CreateProject(ctx, "p-busy", "busy", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for i := 0; i < 6; i++ {
+		s, cerr := db.CreateSession(ctx, Session{
+			ID: fmt.Sprintf("s-%d", i), ProjectID: project.ID,
+			TmuxName: fmt.Sprintf("vp_%d", i), State: session.StateWorking,
+		})
+		if cerr != nil {
+			t.Fatal(cerr)
+		}
+		ids = append(ids, s.ID)
+	}
+
+	var wg sync.WaitGroup
+	// Non-blocking, with a count kept separately.
+	//
+	// A plain buffered channel deadlocks the moment there are more failures
+	// than buffer: the workers block on the send, never see the stop signal,
+	// and the test hangs instead of reporting. Which is what happened the first
+	// time this was checked against a deliberately tiny busy_timeout — the
+	// mutation that was supposed to prove the test works proved it hangs.
+	var failures atomic.Int64
+	errs := make(chan error, 64)
+	record := func(e error) {
+		failures.Add(1)
+		select {
+		case errs <- e:
+		default:
+		}
+	}
+	// Closed, not sent to. time.After delivers its value to exactly one
+	// receiver, so a channel shared by twelve goroutines stops one of them
+	// and leaves eleven spinning — which is how the first version of this
+	// ran for four hundred seconds instead of two.
+	stop := make(chan struct{})
+	time.AfterFunc(2*time.Second, func() { close(stop) })
+
+	// Writers of every kind the panel actually runs at once.
+	for w := 0; w < 8; w++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			id := ids[n%len(ids)]
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				switch n % 4 {
+				case 0:
+					if e := db.SetSessionState(ctx, id, session.StateWaiting, session.SourceHook); e != nil {
+						record(fmt.Errorf("state: %w", e))
+					}
+				case 1:
+					if e := db.SetSessionTitle(ctx, id, fmt.Sprintf("t%d", n), TitleManual); e != nil {
+						record(fmt.Errorf("title: %w", e))
+					}
+				case 2:
+					if e := db.TouchProject(ctx, project.ID); e != nil {
+						record(fmt.Errorf("touch: %w", e))
+					}
+				case 3:
+					if _, e := db.SetNote(ctx, project.ID, fmt.Sprintf("note %d", n)); e != nil {
+						record(fmt.Errorf("note: %w", e))
+					}
+				}
+			}
+		}(w)
+	}
+	// And readers, which WAL is supposed to keep out of the way.
+	for r := 0; r < 4; r++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if _, e := db.ListSessions(ctx); e != nil {
+					record(fmt.Errorf("list: %w", e))
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errs)
+	var first error
+	for e := range errs {
+		if first == nil {
+			first = e
+		}
+	}
+	if n := failures.Load(); n > 0 {
+		t.Errorf("%d concurrent operations failed; the first was: %v", n, first)
+	}
+}
+
+func TestAutomaticOrderingKeepsTheArrangement(t *testing.T) {
+	// Switching the sidebar to most-active-first used to run
+	// `UPDATE projects SET sort_index = NULL`, so an arrangement somebody sat
+	// down and made was destroyed by a clock icon with no confirmation — and
+	// the icon then removed itself, because it only renders in manual mode, so
+	// there was nothing left to click and no way back.
+	//
+	// Measured through the UI before the fix: four projects arranged
+	// `delta bravo alpha charlie`, one click, `alpha bravo charlie delta`,
+	// unrecoverable.
+	//
+	// The ordering and the positions are two things now, the same way a
+	// panel's width and whether it is collapsed had to become two things.
+	ctx := context.Background()
+	db := openTest(t)
+
+	ids := []string{"proj-a", "proj-b", "proj-c"}
+	for i, pid := range ids {
+		if _, err := db.CreateProject(ctx, pid, string(rune('a'+i)), t.TempDir()); err != nil {
+			t.Fatalf("CreateProject %s: %v", pid, err)
+		}
+	}
+	arranged := []string{ids[2], ids[0], ids[1]}
+	if err := db.ReorderProjects(ctx, arranged); err != nil {
+		t.Fatalf("ReorderProjects: %v", err)
+	}
+	if manual, _ := db.ProjectOrderIsManual(ctx); !manual {
+		t.Fatal("arranging by hand did not select the manual ordering")
+	}
+
+	order := func() []string {
+		ps, err := db.ListProjects(ctx)
+		if err != nil {
+			t.Fatalf("ListProjects: %v", err)
+		}
+		out := make([]string, 0, len(ps))
+		for _, p := range ps {
+			out = append(out, p.ID)
+		}
+		return out
+	}
+	same := func(a, b []string) bool {
+		if len(a) != len(b) {
+			return false
+		}
+		for i := range a {
+			if a[i] != b[i] {
+				return false
+			}
+		}
+		return true
+	}
+	if got := order(); !same(got, arranged) {
+		t.Fatalf("after arranging, order = %v, want %v", got, arranged)
+	}
+
+	if err := db.SetProjectOrderManual(ctx, false); err != nil {
+		t.Fatalf("SetProjectOrderManual(false): %v", err)
+	}
+	if got := order(); same(got, arranged) {
+		t.Error("switching to automatic changed nothing, so this test cannot tell the " +
+			"two orderings apart and proves nothing about the one below")
+	}
+	has, err := db.HasProjectOrder(ctx)
+	if err != nil {
+		t.Fatalf("HasProjectOrder: %v", err)
+	}
+	if !has {
+		t.Fatal("switching ordering discarded the arrangement; there is nothing to go " +
+			"back to, and the control that did it is no longer in the sidebar")
+	}
+
+	if err := db.SetProjectOrderManual(ctx, true); err != nil {
+		t.Fatalf("SetProjectOrderManual(true): %v", err)
+	}
+	if got := order(); !same(got, arranged) {
+		t.Errorf("going back gave %v, want the arrangement %v", got, arranged)
 	}
 }

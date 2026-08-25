@@ -149,9 +149,19 @@ export const api = {
   reorderProjects: (ids: string[]) =>
     request<void>('/api/projects/reorder', { method: 'POST', body: JSON.stringify({ ids }) }),
 
-  /** Discards manual positions and returns to most-active-first ordering. */
+  /**
+   * Switches to most-active-first ordering, keeping the arrangement.
+   *
+   * It used to discard it — one click on a clock icon, no confirmation, and
+   * the arrangement was gone, with the button removing itself on the way out
+   * because it only renders in manual mode.
+   */
   autoOrderProjects: () =>
     request<void>('/api/projects/reorder', { method: 'POST', body: JSON.stringify({ auto: true }) }),
+
+  /** Goes back to the arrangement that is already stored. */
+  restoreProjectOrder: () =>
+    request<void>('/api/projects/reorder', { method: 'POST', body: JSON.stringify({}) }),
 
   createSession: (
     projectId: string,

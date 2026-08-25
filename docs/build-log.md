@@ -6121,3 +6121,62 @@ deployment entirely — every request silently unauthenticated, nothing on
 screen to say why. Checked while measuring this, and worth recording as a
 non-finding: the cookie is not carelessly insecure, it is deliberately
 conditional, and the missing piece was only ever the warning.
+
+## The clock icon that deleted your arrangement
+
+The sidebar lets you drag projects into an order. Once you have, a clock icon
+appears with the tooltip "Sort by recent activity again". It is an icon, in a
+header, with no confirmation — every signal says *view toggle*.
+
+It ran `UPDATE projects SET sort_index = NULL`.
+
+Four projects arranged `delta bravo alpha charlie`, one click:
+
+```
+4. after one click:           alpha bravo charlie delta
+5. the button is now:         gone
+6. order mode reported:       auto
+```
+
+The button removes itself, because it only renders in manual mode. So the
+arrangement is destroyed, there is no undo, and there is not even a control
+left to press. The way back is to drag every project again.
+
+### The same shape as the panel width
+
+The mode was *inferred* from the data: "manual" meant at least one project
+carried a `sort_index`. One value doing two jobs, so the only way to express
+"use automatic ordering" was to erase the positions — exactly the bug that made
+a collapsed panel forget its width a few entries ago, in a different file, with
+a different author's reasoning behind it.
+
+Two things now. `sort_index` holds the arrangement; a setting holds which
+ordering is in use; `ListProjects` picks. Switching costs nothing in either
+direction, and the sidebar offers the way back — a second button that appears
+when automatic ordering is showing and an arrangement is stored.
+
+A database from before this reads its mode the old way, from whether any
+project carries a position, so an existing manual arrangement stays manual on
+upgrade.
+
+### The check that admitted it could not tell
+
+The harness compares the two orderings around the round trip, and in its
+fixture they agree: the project it drags to the top is also the one it has been
+clicking into, so it is the most recently active as well. Comparing what is on
+screen proves nothing there.
+
+So the assertion that carries the check is against the server —
+`/api/state`'s `hasProjectOrder` must still be true after switching to
+automatic — and the on-screen comparison runs only when the two orderings
+actually differ, with an INFO line saying so when they do not. Making
+`hasProjectOrder` always false fails the run; the on-screen comparison alone
+would not have.
+
+### And a check I had been running that was not the check
+
+`npx tsc --noEmit` passed on a change that `npm run build` then rejected: a
+second construction of `PanelState`, in `socket.ts`, missing the new field.
+The build runs `tsc -b`, which follows the project references in
+`tsconfig.app.json`; the bare invocation does not, and had been quietly
+covering fewer files all session. Verify with `npm run build`.

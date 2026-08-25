@@ -1194,13 +1194,52 @@ try {
           `dragging the second project to the top did nothing: ${JSON.stringify(beforeDrag)} -> ${JSON.stringify(afterDrag)}`)
       }
       // And the panel should now offer a way back to activity ordering.
-      const backToAuto = await page
-        .locator('button[title="Sort by recent activity again"]')
-        .isVisible()
-        .catch(() => false)
-      if (!backToAuto) {
+      const toAuto = page.locator('[data-testid="order-auto"]')
+      if (!(await toAuto.isVisible().catch(() => false))) {
         note('FAIL', 'reorder',
           'after a manual reorder there is no control to return to automatic ordering')
+      } else {
+        // Switching ordering must not throw the arrangement away.
+        //
+        // It used to: the control ran `UPDATE projects SET sort_index = NULL`,
+        // so one click on a clock icon with no confirmation destroyed an
+        // arrangement somebody had sat down and made — and then removed
+        // itself, because it only renders in manual mode, leaving nothing to
+        // click and no way back. Measured before the fix: four projects
+        // arranged `delta bravo alpha charlie`, one click, `alpha bravo
+        // charlie delta`, unrecoverable.
+        const arranged = await projectNames()
+        await toAuto.click()
+        await sleep(1200)
+        const automatic = await projectNames()
+
+        // Asserted against the server, because whether the arrangement still
+        // exists does not depend on the two orderings looking different — and
+        // in this fixture they often do not, since the project that was
+        // dragged to the top is also the one being clicked into.
+        const st = await (await authed('/api/state')).json()
+        if (st.hasProjectOrder !== true) {
+          note('FAIL', 'reorder',
+            'switching to activity ordering discarded the arrangement; there is nothing ' +
+            'to go back to and the control that did it removes itself')
+        }
+        const toManual = page.locator('[data-testid="order-manual"]')
+        if (!(await toManual.isVisible().catch(() => false))) {
+          note('FAIL', 'reorder', 'no control is offered to return to the arrangement')
+        } else if (automatic.join(' ') === arranged.join(' ')) {
+          note('INFO', 'reorder',
+            'the two orderings agree in this fixture; the round trip is covered by the ' +
+            'stored-arrangement check above rather than by comparing what is on screen')
+        } else {
+          await toManual.click()
+          await sleep(1200)
+          const restored = await projectNames()
+          if (restored.join(' ') !== arranged.join(' ')) {
+            note('FAIL', 'reorder',
+              `going back gave ${JSON.stringify(restored)}, want the arrangement ` +
+              `${JSON.stringify(arranged)}; switching ordering discarded it`)
+          }
+        }
       }
     }
   }

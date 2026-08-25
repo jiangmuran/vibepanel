@@ -237,17 +237,23 @@ func (s *Server) snapshot(ctx context.Context) []byte {
 		s.Log.Warn("snapshot order mode", "err", err)
 		return nil
 	}
+	hasOrder, err := s.DB.HasProjectOrder(ctx)
+	if err != nil {
+		s.Log.Warn("snapshot stored order", "err", err)
+		return nil
+	}
 	payload, err := json.Marshal(struct {
 		Type string `json:"t"`
 		stateResponse
 	}{
 		Type: ws.MsgState,
 		stateResponse: stateResponse{
-			Projects:     emptyIfNil(projects),
-			Sessions:     emptyIfNil(sessions),
-			Live:         emptyIfNil(s.Manager.LiveIDs()),
-			ProjectOrder: orderMode(manual),
-			StateGuessed: s.stateIsGuessed(sessions),
+			Projects:        emptyIfNil(projects),
+			Sessions:        emptyIfNil(sessions),
+			Live:            emptyIfNil(s.Manager.LiveIDs()),
+			ProjectOrder:    orderMode(manual),
+			HasProjectOrder: hasOrder,
+			StateGuessed:    s.stateIsGuessed(sessions),
 		},
 	})
 	if err != nil {
@@ -429,6 +435,12 @@ type stateResponse struct {
 	// than showing a control that does nothing.
 	ProjectOrder string `json:"projectOrder"`
 
+	// HasProjectOrder is true when an arrangement is stored, whichever
+	// ordering is in use. Without it the sidebar has no way to offer the way
+	// back: switching to automatic used to erase the arrangement, so there was
+	// never anything to return to and the control that did it removed itself.
+	HasProjectOrder bool `json:"hasProjectOrder"`
+
 	// StateGuessed is true when an agent is running and nothing is reporting
 	// its state, so "waiting for you" is being inferred rather than known.
 	//
@@ -456,12 +468,18 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	hasOrder, err := s.DB.HasProjectOrder(ctx)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, stateResponse{
-		Projects:     emptyIfNil(projects),
-		Sessions:     emptyIfNil(sessions),
-		Live:         emptyIfNil(s.Manager.LiveIDs()),
-		ProjectOrder: orderMode(manual),
-		StateGuessed: s.stateIsGuessed(sessions),
+		Projects:        emptyIfNil(projects),
+		Sessions:        emptyIfNil(sessions),
+		Live:            emptyIfNil(s.Manager.LiveIDs()),
+		ProjectOrder:    orderMode(manual),
+		HasProjectOrder: hasOrder,
+		StateGuessed:    s.stateIsGuessed(sessions),
 	})
 }
 
@@ -551,13 +569,25 @@ func (s *Server) handleReorderProjects(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	if req.Auto {
-		if err := s.DB.ClearProjectOrder(ctx); err != nil {
+		// Switch the ordering, keep the arrangement. `auto` used to erase every
+		// position, which made a clock icon with no confirmation the most
+		// destructive control in the sidebar — and it removed itself on the way
+		// out, since it only renders in manual mode.
+		if err := s.DB.SetProjectOrderManual(ctx, false); err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 	} else {
+		// No ids: go back to the arrangement already stored. That is the way
+		// out of automatic ordering, and before the positions survived the
+		// switch there was no such thing to ask for.
 		if len(req.Ids) == 0 {
-			writeErr(w, http.StatusBadRequest, "ids must not be empty; send auto:true to clear the order")
+			if err := s.DB.SetProjectOrderManual(ctx, true); err != nil {
+				writeErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			s.notifyState()
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		if err := s.DB.ReorderProjects(ctx, req.Ids); err != nil {

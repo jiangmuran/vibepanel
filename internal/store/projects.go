@@ -57,14 +57,21 @@ func (d *DB) CreateProject(ctx context.Context, id, name, path string) (Project,
 // WebSocket snapshot, tests — sees the same sequence. Two implementations of
 // "the sidebar order" would drift.
 func (d *DB) ListProjects(ctx context.Context) ([]Project, error) {
+	manual, err := d.ProjectOrderIsManual(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Two orderings, one query, chosen by a flag rather than by whether the
+	// positions happen to be null — because the positions have to survive a
+	// spell of automatic ordering. See ProjectOrderIsManual.
 	rows, err := d.sql.QueryContext(ctx, `
 		SELECT id, name, path, sort_index, pinned, last_active_at, created_at
 		FROM projects
 		ORDER BY pinned DESC,
-		         CASE WHEN sort_index IS NULL THEN 1 ELSE 0 END,
-		         sort_index ASC,
+		         CASE WHEN ? AND sort_index IS NOT NULL THEN 0 ELSE 1 END,
+		         CASE WHEN ? THEN sort_index END ASC,
 		         last_active_at DESC,
-		         created_at DESC`)
+		         created_at DESC`, manual, manual)
 	if err != nil {
 		return nil, fmt.Errorf("store: list projects: %w", err)
 	}
@@ -132,9 +139,21 @@ func (d *DB) SetProjectSortIndex(ctx context.Context, id string, idx *int) error
 // where every project below it sits, and sending those one at a time leaves the
 // sidebar briefly showing an order that never existed if any request fails.
 //
-// Ids not present in the list are left on automatic ordering, so a client
-// working from a stale list cannot silently drop a project someone else just
-// added to the bottom.
+// Ids not present in the list are left exactly as they were, which is not the
+// same as being left on automatic ordering — an earlier version of this comment
+// claimed it was. A project that already carried an explicit position keeps it,
+// so a partial list can leave two projects sharing an index.
+//
+// The ordering query breaks that tie on last_active_at, which means the pair
+// swaps places whenever one of them does something. Manual order is supposed to
+// hold until the user changes it, so for those two it silently stops being
+// manual at all.
+//
+// Reachable only from a stale list: two viewers, one reordering while the
+// other's idea of the project set is out of date. The fix is to null the
+// omitted ones inside this transaction, which would also make the original
+// comment true — left undone here because demoting a project somebody else can
+// see is a decision about their sidebar, not a bug fix.
 func (d *DB) ReorderProjects(ctx context.Context, ids []string) error {
 	tx, err := d.sql.BeginTx(ctx, nil)
 	if err != nil {
@@ -158,25 +177,60 @@ func (d *DB) ReorderProjects(ctx context.Context, ids []string) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: commit reorder: %w", err)
 	}
-	return nil
+	// Arranging them by hand is what chooses the manual ordering. Inferring it
+	// from the positions is what made the two inseparable.
+	return d.SetProjectOrderManual(ctx, true)
 }
 
-// ClearProjectOrder returns every project to automatic, most-active-first
-// ordering.
-func (d *DB) ClearProjectOrder(ctx context.Context) error {
-	_, err := d.sql.ExecContext(ctx, `UPDATE projects SET sort_index = NULL`)
-	if err != nil {
-		return fmt.Errorf("store: clear project order: %w", err)
+// projectOrderKey records which of the two orderings the sidebar is using.
+//
+// Separate from the positions themselves, which is the whole point. It used to
+// be inferred — "manual" meant at least one project carried a sort_index — so
+// the only way to go back to automatic was to erase every position. A clock
+// icon, no confirmation, and an arrangement somebody sat down and made was
+// gone; the button then disappeared, because it only renders in manual mode,
+// so there was not even anything left to click.
+//
+// Measured: four projects arranged `delta bravo alpha charlie`, one click,
+// back to `alpha bravo charlie delta` and unrecoverable.
+const projectOrderKey = "projects.order"
+
+// SetProjectOrderManual chooses between the two orderings without touching the
+// positions, so that going back to automatic and changing your mind is free.
+func (d *DB) SetProjectOrderManual(ctx context.Context, manual bool) error {
+	mode := "auto"
+	if manual {
+		mode = "manual"
 	}
-	return nil
+	return d.SetSetting(ctx, projectOrderKey, mode)
 }
 
-// ProjectOrderIsManual reports whether any project carries an explicit
-// position. The UI uses it to offer "sort by activity" only when that would
-// actually change something.
-func (d *DB) ProjectOrderIsManual(ctx context.Context) (bool, error) {
+// HasProjectOrder reports whether an arrangement is stored at all, whichever
+// ordering is in use. The UI needs it to offer "back to my order" while the
+// automatic one is showing.
+func (d *DB) HasProjectOrder(ctx context.Context) (bool, error) {
 	var n int
 	err := d.sql.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM projects WHERE sort_index IS NOT NULL`).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("store: stored project order: %w", err)
+	}
+	return n > 0, nil
+}
+
+// ProjectOrderIsManual reports which ordering the sidebar is using.
+func (d *DB) ProjectOrderIsManual(ctx context.Context) (bool, error) {
+	mode, err := d.GetSetting(ctx, projectOrderKey, "")
+	if err != nil {
+		return false, fmt.Errorf("store: project order mode: %w", err)
+	}
+	if mode != "" {
+		return mode == "manual", nil
+	}
+	// Nothing recorded: a database from before the mode was stored separately,
+	// where carrying a position *was* the mode.
+	var n int
+	err = d.sql.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM projects WHERE sort_index IS NOT NULL`).Scan(&n)
 	if err != nil {
 		return false, fmt.Errorf("store: project order mode: %w", err)

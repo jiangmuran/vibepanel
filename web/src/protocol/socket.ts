@@ -300,6 +300,7 @@ export class PanelSocket {
             sessions: st.sessions,
             live: st.live,
             projectOrder: st.projectOrder,
+            hasProjectOrder: st.hasProjectOrder ?? false,
             stateGuessed: st.stateGuessed,
           })
         }
