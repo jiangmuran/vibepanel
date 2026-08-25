@@ -21,6 +21,14 @@ import (
 type Sample struct {
 	At int64 `json:"at"`
 
+	// CPUReadable says whether the counters exist at all here.
+	//
+	// A nil CPUPercent means two different things and the panel showed one of
+	// them: "no sample yet, one is coming" and "there is nothing to sample on
+	// this machine". /proc/stat is Linux's, and this ships a darwin/arm64
+	// build, so the second case renders "sampling…" forever on every Mac.
+	CPUReadable bool `json:"cpuReadable"`
+
 	// CPUPercent is usage across all cores since the previous sample, 0–100.
 	// Nil on the first sample, when there is nothing to compare against.
 	CPUPercent *float64 `json:"cpuPercent"`
@@ -52,8 +60,24 @@ type Sampler struct {
 	mu       sync.Mutex
 	prevIdle uint64
 	prevAll  uint64
+	prevAt   time.Time
+	lastPct  *float64
 	haveprev bool
 }
+
+// minCPUWindow is the shortest interval a CPU percentage may be computed over.
+//
+// The previous counters live here, on the server, shared by every caller — so
+// the window is not "since this viewer last asked" but "since anybody last
+// asked". Two browsers with the monitor open land a few milliseconds apart
+// often enough, and a percentage measured across five milliseconds is noise:
+// it reads 0 or 100 depending on where the sample fell. The panel is built to
+// be open in several places at once, so this is the ordinary case rather than
+// a corner of it.
+//
+// Below the threshold the previous answer is repeated and the counters are
+// left alone, so the next caller still gets a window worth measuring.
+const minCPUWindow = 500 * time.Millisecond
 
 // Sample takes a reading. Individual sources failing are tolerated: a missing
 // /proc/swaps on some container is not a reason to show nothing at all.
@@ -61,8 +85,20 @@ func (s *Sampler) Sample() Sample {
 	out := Sample{At: time.Now().Unix(), Cores: runtime.NumCPU(), DiskPath: s.DiskPath}
 
 	if idle, all, ok := readCPU(); ok {
+		out.CPUReadable = true
+		now := time.Now()
 		s.mu.Lock()
-		if s.haveprev && all > s.prevAll {
+		switch {
+		case s.haveprev && now.Sub(s.prevAt) < minCPUWindow:
+			// Too soon to measure anything. Repeat the last answer and leave the
+			// counters where they are, so whoever asks next still has a window.
+			// Copied rather than shared: two responses holding one pointer into
+			// this struct is a shape that invites trouble later for no gain.
+			if s.lastPct != nil {
+				v := *s.lastPct
+				out.CPUPercent = &v
+			}
+		case s.haveprev && all > s.prevAll:
 			totalDelta := float64(all - s.prevAll)
 			idleDelta := float64(idle - s.prevIdle)
 			pct := (1 - idleDelta/totalDelta) * 100
@@ -73,8 +109,13 @@ func (s *Sampler) Sample() Sample {
 				pct = 100
 			}
 			out.CPUPercent = &pct
+			s.lastPct = &pct
+			s.prevIdle, s.prevAll, s.prevAt, s.haveprev = idle, all, now, true
+		default:
+			// First sample, or the counters went backwards. Nothing to report
+			// yet; start the window here.
+			s.prevIdle, s.prevAll, s.prevAt, s.haveprev = idle, all, now, true
 		}
-		s.prevIdle, s.prevAll, s.haveprev = idle, all, true
 		s.mu.Unlock()
 	}
 

@@ -69,3 +69,26 @@ func TestFormatBytes(t *testing.T) {
 		}
 	}
 }
+
+func TestCPUReadableSaysWhetherThereIsAnythingToSample(t *testing.T) {
+	// A nil CPUPercent means two different things and the panel could only see
+	// one of them: "no sample yet, one is coming" and "there is nothing to
+	// sample on this machine". /proc/stat is Linux's, and build-release.sh
+	// ships a darwin/arm64 binary, so the second case rendered
+	// "8 cores · sampling…" on every Mac — a promise that renewed itself every
+	// two seconds and was never going to be kept.
+	//
+	// On this machine the counters exist, so what is pinned here is that the
+	// flag tracks them rather than being hardcoded: readCPU succeeding and
+	// CPUReadable being false would be the same silence as before.
+	s := &Sampler{DiskPath: t.TempDir()}
+	got := s.Sample()
+	if _, _, ok := readCPU(); ok != got.CPUReadable {
+		t.Errorf("CPUReadable = %v but readCPU reports %v; the panel cannot tell "+
+			"'no sample yet' from 'nothing to sample here'", got.CPUReadable, ok)
+	}
+	if got.Cores <= 0 {
+		t.Errorf("cores = %d; runtime.NumCPU works on every platform and is the one "+
+			"number the monitor can always show", got.Cores)
+	}
+}

@@ -199,6 +199,13 @@ export interface SystemSample {
   at: number
   /** Null on the very first sample: there is nothing to difference against. */
   cpuPercent: number | null
+  /**
+   * Whether the counters exist here at all.
+   *
+   * A null cpuPercent means "no sample yet" or "nothing to sample on this
+   * machine", and only one of those is worth saying "sampling…" about.
+   */
+  cpuReadable: boolean
   cores: number
   load1: number
   load5: number

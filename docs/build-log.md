@@ -6770,3 +6770,35 @@ that payload is to send it: the harness intercepts `/api/system` once and
 fulfils it with the zeroes, then unroutes. Restoring either fallback fails the
 check, and the failure message quotes the whole meter strip, so it says which
 one broke and what the other two were doing at the time.
+
+### And the other two zeroes in the same component
+
+Finishing the sweep found two more of the same thing in the same panel, and the
+release script decides whether they matter: `build-release.sh` builds
+`darwin/arm64`, so this is what every macOS release showed.
+
+`up {duration(sample.uptime)}` with an unread `/proc/uptime` renders **"up
+0m"** — a machine that just booted. Hidden now rather than shown as `—`,
+because a line of prose has nothing to draw.
+
+And `cpuPercent` being null meant two things the panel could not tell apart:
+"no sample yet, one is coming" and "there is nothing here to sample". The
+second rendered `8 cores · sampling…`, a promise that renewed itself every two
+seconds and was never going to be kept. `CPUReadable` now says which, and the
+detail reads `8 cores · unavailable`.
+
+A machine with no `/proc` at all, rendered:
+
+```
+CPU     —   8 cores · unavailable
+Memory  —   unavailable
+Disk    —   unavailable
+```
+
+`cores` is still a number, and correctly so: `runtime.NumCPU()` works
+everywhere and is the one thing the monitor can always say.
+
+Four fields, four different shapes of the same mistake, in one component whose
+own helper file already carried the rule in a comment. Which is the part worth
+remembering: the lesson was written down, and written down well, next to one of
+the five places it applied.

@@ -785,10 +785,10 @@ try {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          at: Date.now(), cpuPercent: 41.5, cores: 8,
+          at: Date.now(), cpuPercent: null, cpuReadable: false, cores: 8,
           load1: 1.2, load5: 0.9, load15: 0.7,
           memTotal: 0, memAvailable: 0, swapTotal: 0, swapFree: 0,
-          diskTotal: 0, diskFree: 0, uptime: 3600,
+          diskTotal: 0, diskFree: 0, uptime: 0,
         }),
       })
     })
@@ -800,6 +800,17 @@ try {
     if (/0 B of 0 B|\b0%/.test(unmeasured)) {
       note('FAIL', 'panel/monitor',
         `the monitor reports a machine it cannot measure as an idle one: ` +
+        `${JSON.stringify(unmeasured.replace(/\s+/g, ' ').trim())}`)
+    }
+    if (/\bup 0m\b/.test(unmeasured)) {
+      note('FAIL', 'panel/monitor',
+        `an unread /proc/uptime is shown as "up 0m", which reads as a machine that just ` +
+        `booted: ${JSON.stringify(unmeasured.replace(/\s+/g, ' ').trim())}`)
+    }
+    if (/sampling…/.test(unmeasured)) {
+      note('FAIL', 'panel/monitor',
+        `the CPU meter promises a sample on a machine that has no counters to sample; ` +
+        `"sampling…" renews itself every two seconds forever: ` +
         `${JSON.stringify(unmeasured.replace(/\s+/g, ' ').trim())}`)
     }
     if (!unmeasured.includes('—')) {

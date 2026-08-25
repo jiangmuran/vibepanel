@@ -111,9 +111,14 @@ export function SystemMonitor() {
         // rather than showing a zero that looks like an idle machine.
         value={sample.cpuPercent}
         detail={
-          sample.cpuPercent === null
-            ? `${sample.cores} cores · sampling…`
-            : `${sample.cores} cores · load ${sample.load1.toFixed(2)} ${sample.load5.toFixed(2)} ${sample.load15.toFixed(2)}`
+          !sample.cpuReadable
+            ? // "sampling…" promises an answer. On a machine with no
+              // /proc/stat — every darwin build this project releases — none
+              // is coming, and the promise renews itself every two seconds.
+              `${sample.cores} cores · unavailable`
+            : sample.cpuPercent === null
+              ? `${sample.cores} cores · sampling…`
+              : `${sample.cores} cores · load ${sample.load1.toFixed(2)} ${sample.load5.toFixed(2)} ${sample.load15.toFixed(2)}`
         }
       />
       {/* A total of zero means the reading failed, not that the machine has no
@@ -141,7 +146,13 @@ export function SystemMonitor() {
         value={sample.diskTotal ? (diskUsed / sample.diskTotal) * 100 : null}
         detail={sample.diskTotal ? `${bytes(sample.diskFree)} free` : 'unavailable'}
       />
-      <p className="tabular mt-4 text-[10.5px] text-ink-2">up {duration(sample.uptime)}</p>
+      {/* Hidden rather than shown as "up 0m", which is what an unread
+          /proc/uptime renders as and reads as "this machine just booted".
+          Same zero-means-unknown as the two meters above; hidden rather than
+          "—" because a single line of prose has nothing to draw. */}
+      {sample.uptime > 0 && (
+        <p className="tabular mt-4 text-[10.5px] text-ink-2">up {duration(sample.uptime)}</p>
+      )}
     </div>
   )
 }
