@@ -2086,3 +2086,30 @@ func TestDeletingAProjectDoesNotWaitTwoSecondsPerSession(t *testing.T) {
 			"per-session detach wait back again", n, took.Round(time.Millisecond))
 	}
 }
+
+func TestRestoreStateReadsWhatWasWrittenDown(t *testing.T) {
+	// The detector's evidence lives in memory and the database has the answer
+	// it produced. Nothing carried one into the other at startup, so a restart
+	// turned every waiting session into a working one — permanently, since
+	// nothing was going to ring a second time.
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"test"}`)
+	sess := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
+
+	if err := srv.DB.SetSessionState(ctx, sess.ID, session.StateWaiting, session.SourceHeuristic); err != nil {
+		t.Fatalf("SetSessionState: %v", err)
+	}
+	// A fresh detector is what a restart has.
+	srv.Detector = session.NewDetector()
+	if err := srv.RestoreState(ctx); err != nil {
+		t.Fatalf("RestoreState: %v", err)
+	}
+	st, src := srv.Detector.Evaluate(sess.ID, session.Observation{}, time.Now())
+	if st != session.StateWaiting {
+		t.Errorf("state after a restart = %q from %q, want %q; the agent is still "+
+			"sitting on its question", st, src, session.StateWaiting)
+	}
+}

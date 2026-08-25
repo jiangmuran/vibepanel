@@ -136,6 +136,50 @@ func (d *Detector) SetManual(id string, st State, now time.Time) {
 	t.manualState, t.manualAt = st, now
 }
 
+// Restore seeds a session from what was written down before the panel stopped.
+//
+// The detector keeps its evidence in memory: when a bell last rang, what a
+// hook last said, what the user last chose. A restart threw all of it away,
+// and the poller then re-derived every session from live facts alone — which
+// for anything that is not a shell means "working".
+//
+// Measured against the real binary: an agent sitting on "Do you want to
+// proceed? (y/n)" showed waiting, `systemctl restart vibepanel` was issued,
+// and it showed working from then on. The session was untouched, the question
+// was still on its screen, and the panel had stopped saying so. Restarting the
+// backend is the operation this whole architecture exists to make safe, and it
+// silently destroyed the one state the panel is for — for every waiting
+// session at once.
+//
+// Only what cannot be re-derived is restored. "Working" and "done" come from
+// the pane's foreground process, which is still true after a restart and is
+// better read fresh. A bell, a hook report and a manual choice are events that
+// happened, and nothing on the wire will say they did a second time.
+//
+// Stale evidence corrects itself: a session that really did go back to work
+// while the panel was down advances its screen within moments of being
+// re-attached, and that clears the bell exactly as it would have.
+func (d *Detector) Restore(id string, st State, src Source, at time.Time) {
+	if !st.Valid() || at.IsZero() {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	t := d.get(id)
+	switch src {
+	case SourceHook:
+		t.hookState, t.hookAt = st, at
+	case SourceManual:
+		t.manualState, t.manualAt = st, at
+	case SourceHeuristic:
+		// The only heuristic state that rests on an event rather than on what
+		// is running right now.
+		if st == StateWaiting {
+			t.lastBell = at
+		}
+	}
+}
+
 // Forget drops a session's history.
 func (d *Detector) Forget(id string) {
 	d.mu.Lock()

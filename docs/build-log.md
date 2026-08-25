@@ -7718,3 +7718,55 @@ the real pump into the real detector; both mutations fail against it now.
 
 A rule with a well-tested consequence and an untested premise is the same
 blind spot as a check that drives the previous build.
+
+## Restarting the backend forgot who was asking
+
+The detector keeps its evidence in memory: when a bell last rang, what a hook
+last said, what the user last chose by clicking the dot. A restart threw all of
+it away, and `Reconcile` then re-derived every session from live facts — which
+for anything that is not a shell means "working".
+
+Measured against the real binary, with a pane sitting on
+`Do you want to proceed? (y/n)`:
+
+```
+before the restart:  asking   waiting  (heuristic)
+(backend stopped)
+after the restart:   asking   working  (heuristic)
+six seconds later:   asking   working  (heuristic)
+```
+
+The session was untouched, the question was still on its screen, and the panel
+had stopped saying so — permanently, because nothing was ever going to ring a
+second time.
+
+`systemctl restart vibepanel` is the operation this entire architecture exists
+to make safe. It silently destroyed the one state the panel is for, for every
+waiting session at once.
+
+### Only what cannot be re-derived
+
+`Detector.Restore` seeds a session from the row that was written down. A bell,
+a hook report and a manual choice are events that happened and that nothing on
+the wire will repeat. "Working" and "done" are read off the pane's foreground
+process, which is still true after a restart and is better taken fresh —
+restoring those would pin a stale answer over a live one.
+
+Stale evidence corrects itself. A session answered at the tmux socket while the
+panel was down advances its screen within moments of being re-attached, and
+that clears the bell exactly as it would have:
+
+```
+after the restart:   asking   waiting   resumed  working   manual  done (manual)
+```
+
+### The harness reported a warning that did not exist
+
+Adding a `PASS` finding to `restart-check` turned its summary into
+`0 FAIL, 1 WARN`, with no warning printed anywhere. The count was
+`findings.length - fails`, which is right only while `FAIL` and `WARN` are the
+only severities a file uses. `scale-check` and `first-run-check` had the same
+line; `render-check` and `stress-check` did not. All three now count `WARN`.
+
+A summary that invents warnings is one people stop reading, which is the same
+failure as a check that never fails — just from the other side.

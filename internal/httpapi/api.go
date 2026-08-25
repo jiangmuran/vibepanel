@@ -221,6 +221,38 @@ func (r resolver) RecordSize(ctx context.Context, sessionID string, cols, rows i
 
 // snapshot builds the full state payload. Returns nil if it cannot be read,
 // in which case nothing is broadcast rather than something wrong.
+// RestoreState seeds the detector from the database, once, at startup.
+//
+// Must run before Reconcile, which re-derives every session from live facts
+// and writes the answer back. Without this the answer for anything that is not
+// a shell is "working", so a restart turned every session that was waiting for
+// a human into one that looked busy — permanently, because nothing was ever
+// going to ring a second time.
+func (s *Server) RestoreState(ctx context.Context) error {
+	if s.Detector == nil {
+		return nil
+	}
+	rows, err := s.DB.ListSessions(ctx)
+	if err != nil {
+		return fmt.Errorf("restore state: %w", err)
+	}
+	restored := 0
+	for _, row := range rows {
+		if row.StateChangedAt == 0 {
+			continue
+		}
+		before := row.State
+		s.Detector.Restore(row.ID, row.State, row.StateSource, time.Unix(row.StateChangedAt, 0))
+		if before == session.StateWaiting || row.StateSource != session.SourceHeuristic {
+			restored++
+		}
+	}
+	if restored > 0 {
+		s.Log.Info("restored session states", "sessions", restored)
+	}
+	return nil
+}
+
 func (s *Server) snapshot(ctx context.Context) []byte {
 	projects, err := s.DB.ListProjects(ctx)
 	if err != nil {

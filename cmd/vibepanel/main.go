@@ -190,6 +190,12 @@ func cmdServe(args []string) error {
 	// The pump reports output and bells straight into the server, which is how
 	// last_output_at stays honest and, from M4, how session state is decided.
 	mgr.OnSignals = srv.HandleSignals
+	// Before Reconcile, which re-derives every session from what is running
+	// right now. A bell that rang before the restart is not on the wire any
+	// more, and nothing else will say a session was asking for a human.
+	if err := srv.RestoreState(ctx); err != nil {
+		return err
+	}
 	if err := srv.Reconcile(ctx); err != nil {
 		return err
 	}

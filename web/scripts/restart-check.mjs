@@ -185,6 +185,24 @@ try {
       title: 'survivor', cols: 100, rows: 30 }),
   })
 
+  // An agent that rang and is waiting for an answer.
+  //
+  // The evidence for "waiting" is a bell, which the detector keeps in memory.
+  // A restart threw that away and the poller re-derived the session from what
+  // is running — which for anything that is not a shell is "working". Measured
+  // against the real binary before this was fixed: waiting before the restart,
+  // working after it, with the question still on the pane's screen. Every
+  // waiting session at once, on the operation this architecture exists to make
+  // safe.
+  const asking = await (await authed('/api/sessions', {
+    method: 'POST',
+    body: JSON.stringify({
+      projectId: proj.id, title: 'asking', cols: 100, rows: 30,
+      command: ['python3', '-u', '-c',
+        "import sys,time; sys.stdout.write('Do you want to proceed? (y/n)\\a'); sys.stdout.flush(); time.sleep(600)"],
+    }),
+  })).json()
+
   browser = await chromium.launch({ headless: true })
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } })
   const page = await ctx.newPage()
@@ -226,6 +244,21 @@ try {
   if (!await health()) throw new Error(`server did not come back:\n${serverLog}`)
   // The panel re-attaches on its own timer; give it room before judging.
   await sleep(6000)
+
+  {
+    const stateOf = async () => {
+      const rows = (await (await authed('/api/state')).json()).sessions ?? []
+      return rows.find((x) => x.id === asking.id) ?? {}
+    }
+    const now = await stateOf()
+    if (now.state !== 'waiting') {
+      note('FAIL', 'persistence',
+        `the session that rang the bell reads as ${JSON.stringify(now.state)} after the restart, ` +
+        'not waiting. Its question is still on screen and the panel has stopped saying so.')
+    } else {
+      note('PASS', 'persistence', `a waiting session is still waiting after the restart (from ${now.stateSource})`)
+    }
+  }
 
   const afterBoot = panes()
   if (afterBoot.length !== before.length) {
@@ -313,7 +346,12 @@ try {
 }
 
 for (const f of findings) console.log(`[${f.sev}] ${f.area}: ${f.msg}`)
+// Counting WARN rather than everything-that-is-not-FAIL. The
+// subtraction was right only while FAIL and WARN were the only
+// severities this file used: the first PASS recorded here was
+// reported as a warning, and a summary that invents warnings is one
+// people stop reading.
 const fails = findings.filter((f) => f.sev === 'FAIL').length
-console.log(`=== restart check: ${fails} FAIL, ${findings.length - fails} WARN ===`)
+console.log(`=== restart check: ${fails} FAIL, ${findings.filter((f) => f.sev === 'WARN').length} WARN ===`)
 console.log(`screenshots: ${SHOTS}`)
 process.exit(fails ? 1 : 0)

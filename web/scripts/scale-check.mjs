@@ -624,8 +624,13 @@ try {
 }
 
 for (const f of findings) console.log(`[${f.sev}] ${f.area}: ${f.msg}`)
+// Counting WARN rather than everything-that-is-not-FAIL. The
+// subtraction was right only while FAIL and WARN were the only
+// severities this file used: the first PASS recorded here was
+// reported as a warning, and a summary that invents warnings is one
+// people stop reading.
 const fails = findings.filter((f) => f.sev === 'FAIL').length
-console.log(`=== scale check: ${fails} FAIL, ${findings.length - fails} WARN ===`)
+console.log(`=== scale check: ${fails} FAIL, ${findings.filter((f) => f.sev === 'WARN').length} WARN ===`)
 console.log(`screenshots: ${SHOTS}`)
 // Flush before exiting, and then exit deliberately.
 //

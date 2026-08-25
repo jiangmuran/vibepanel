@@ -385,3 +385,77 @@ func TestABellStillMeansWaitingWhenSomethingIsRunning(t *testing.T) {
 		t.Errorf("state = %q, want %q", st, StateWaiting)
 	}
 }
+
+func TestRestoreBringsBackWhatCannotBeRederived(t *testing.T) {
+	// The detector keeps its evidence in memory. A restart threw it away and
+	// the poller re-derived every session from live facts, which for anything
+	// that is not a shell means "working". Measured against the real binary:
+	// an agent sitting on "Do you want to proceed? (y/n)" showed waiting,
+	// the backend was restarted, and it showed working from then on — with the
+	// question still on its screen.
+	for _, tc := range []struct {
+		name string
+		st   State
+		src  Source
+		want State
+		src2 Source
+	}{
+		{"a bell that rang before the restart", StateWaiting, SourceHeuristic, StateWaiting, SourceHeuristic},
+		{"what a hook last said", StateWaiting, SourceHook, StateWaiting, SourceHook},
+		{"what the user chose", StateDone, SourceManual, StateDone, SourceManual},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := NewDetector()
+			d.Restore("s", tc.st, tc.src, at(0))
+			st, src := d.Evaluate("s", Observation{}, at(time.Second))
+			if st != tc.want || src != tc.src2 {
+				t.Errorf("state = %q from %q, want %q from %q", st, src, tc.want, tc.src2)
+			}
+		})
+	}
+}
+
+func TestRestoreDoesNotResurrectWorking(t *testing.T) {
+	// Working and done come from the pane's foreground process, which is still
+	// true after a restart and is better read fresh. Restoring them would pin
+	// a stale answer over a live one.
+	d := NewDetector()
+	d.Restore("s", StateWorking, SourceHeuristic, at(0))
+	if st, _ := d.Evaluate("s", Observation{ShellOnly: true}, at(time.Second)); st != StateDone {
+		t.Errorf("state = %q, want the live reading %q", st, StateDone)
+	}
+}
+
+func TestRestoredWaitingStillClearsWhenWorkResumes(t *testing.T) {
+	// A session answered at the tmux socket while the panel was down must
+	// correct itself, not sit on a triangle forever.
+	d := NewDetector()
+	d.Restore("s", StateWaiting, SourceHeuristic, at(0))
+	d.Observe("s", Signals{Bytes: 200, Visible: true, Advanced: true}, at(10*time.Second))
+	if st, _ := d.Evaluate("s", Observation{}, at(11*time.Second)); st != StateWorking {
+		t.Errorf("state = %q, want %q once the screen advanced again", st, StateWorking)
+	}
+}
+
+func TestRestoreIgnoresNonsense(t *testing.T) {
+	// A row read back from the database is not necessarily one this build
+	// wrote. An older panel, a hand-edited database, a state that has since
+	// been removed from the enum — any of them reaches Restore, and a manual
+	// source pins whatever it is given until the session does something new.
+	//
+	// An unknown state renders as nothing at all: no dot, no shape, no colour.
+	// A session that is asking for a human, showing as blank, is the worst
+	// outcome available here.
+	d := NewDetector()
+	d.Restore("s", State("banana"), SourceManual, at(0))
+	st, _ := d.Evaluate("s", Observation{}, at(time.Second))
+	if !st.Valid() {
+		t.Errorf("state = %q, which is not one this panel can draw", st)
+	}
+	// And a row with no timestamp says nothing about when anything happened.
+	d2 := NewDetector()
+	d2.Restore("s", StateWaiting, SourceManual, time.Time{})
+	if st, src := d2.Evaluate("s", Observation{}, at(time.Second)); src == SourceManual {
+		t.Errorf("a row with no timestamp was treated as a choice the user made (%q)", st)
+	}
+}
