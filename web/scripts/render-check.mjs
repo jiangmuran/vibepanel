@@ -25,6 +25,7 @@ import { join } from 'node:path'
 import { sweepStaleSockets } from './lib/stale.mjs'
 import { findUnreachable } from './lib/overflow.mjs'
 import { findFadedControls } from './lib/faded.mjs'
+import { findCoveredControls } from './lib/covered.mjs'
 import { findSmallTargets } from './lib/tap.mjs'
 import { findInvisibleFocus } from './lib/focus.mjs'
 import { findUnnamedControls } from './lib/names.mjs'
@@ -92,6 +93,15 @@ async function scanFaded(target, where) {
     note('FAIL', 'ui',
       `in ${where}, controls are on screen as far as a script can tell and invisible to a ` +
       `person: ${faded.join(', ')}`)
+  }
+}
+
+/** note()-reporting wrapper around the occlusion scan. See lib/covered.mjs. */
+async function scanCovered(target, where) {
+  const covered = await findCoveredControls(target)
+  if (covered.length > 0) {
+    note('FAIL', 'ui',
+      `in ${where}, controls are on screen with something else on top of them: ${covered.join(', ')}`)
   }
 }
 
@@ -432,6 +442,7 @@ try {
   await scanFocus(page, 'the desktop layout')
   await scanNames(page, 'the desktop layout')
   await scanFaded(page, 'the desktop layout')
+  await scanCovered(page, 'the desktop layout')
 
   // ── websocket status ─────────────────────────────────────────────────────
   const status = await page
@@ -624,6 +635,7 @@ try {
   // visible to Playwright. This is the one screen where that distinction is
   // the whole product — the pill is the only way out of a scaled grid.
   await scanFaded(page2, 'the passive viewer')
+  await scanCovered(page2, 'the passive viewer')
 
   await page.bringToFront()
   await page.locator('.xterm-screen').click()

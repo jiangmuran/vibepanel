@@ -7032,3 +7032,57 @@ all.
 The question worth carrying: *what would this measurement say about a build
 where the thing is technically present and practically absent?* It is cheap to
 ask — one mutation each — and both times the answer was "nothing".
+
+## The third one, and what the three have in common
+
+A control can be present, opaque, correctly sized — and completely underneath
+something else.
+
+Playwright does notice, but only for controls a check actually clicks, and only
+by timing out. Lifting the terminal area over the header produced:
+
+```
+[FAIL] harness: TimeoutError: locator.click: Timeout 30000ms exceeded.
+```
+
+Thirty seconds, then the run aborts. The call log does name the culprit —
+`<div class="over"> intercepts pointer events` — so the information is there,
+but you get one covered control per run and nothing about the ones no check
+clicks.
+
+`findCoveredControls` takes each named control's centre point, asks
+`elementFromPoint` what is actually there, and reports anything that is neither
+the control, inside it, nor around it. Same mutation, before the timeout:
+
+```
+[FAIL] ui: in the desktop layout, controls are on screen with something else on
+top of them: [state-dot] is under div.xterm-screen, [session-title] is under
+div.xterm-screen
+```
+
+Two controls rather than one, named, with the thing covering them, in a
+millisecond.
+
+It runs only where nothing is deliberately covering the screen — the desktop
+layout and the passive viewer. A drawer covering what is behind it is the point
+of a drawer, and a scan that fires on every control behind an open dialog is a
+scan somebody deletes.
+
+### The three together
+
+| what a script measures | what it misses |
+|---|---|
+| `scrollIntoViewIfNeeded`, `scrollTop` | `overflow: hidden` is still scrollable by script |
+| `isVisible()` | `opacity: 0` is still visible to one |
+| `isVisible()` again | so is a control underneath something else |
+
+Each was found by asking one question of an existing check: *what would this
+say about a build where the thing is technically present and practically
+absent?* Each answer was "nothing", each cost one mutation to establish, and
+each fix is a scan that runs everywhere the other scans already run.
+
+The pattern is not about Playwright. It is that a check written in terms of the
+DOM is a check about the DOM, and the thing being defended is somebody looking
+at a screen. The gap between those two is where a check quietly stops meaning
+anything — and it does not announce itself, because a check with a blind spot
+looks exactly like a check that is passing.
