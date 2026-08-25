@@ -1,15 +1,17 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"os"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/jiangmuran/vibepanel/internal/browse"
+	"github.com/jiangmuran/vibepanel/internal/hooks"
 	"github.com/jiangmuran/vibepanel/internal/store"
+	"github.com/jiangmuran/vibepanel/internal/sysmon"
 )
 
 // TestTypeScriptRowsMatchWhatIsSent compares the fields the server sends with
@@ -48,6 +50,15 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		// home of this test could not import without a cycle — so the rows
 		// were pinned and the envelope carrying them was not.
 		{"PanelState", stateResponse{}},
+		// The rest of the hand-written surface. These went uncovered only
+		// because the test could not see this package from where it lived;
+		// none of them is less hand-written than the rows above.
+		{"AuthState", authState{}},
+		{"SettingsInfo", settingsResponse{}},
+		{"HookStatus", hooks.Status{}},
+		{"FileListing", browse.Listing{}},
+		{"SystemSample", sysmon.Sample{}},
+		{"Passkey", store.Credential{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sent := jsonKeys(t, tc.row)
@@ -67,21 +78,53 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 	}
 }
 
+// jsonKeys reports the field names a struct sends, read from its tags.
+//
+// Tags rather than json.Marshal of a zero value, which is what this did
+// first. Marshalling drops every `omitempty` field, so adding `omitempty`
+// anywhere — a normal thing to do — made this report that "the server does not
+// send them" about fields the server sends whenever they are not empty. The
+// remedy it named was to delete a correct line from wire.ts.
 func jsonKeys(t *testing.T, v any) []string {
 	t.Helper()
-	b, err := json.Marshal(v)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(b, &m); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
+	out := collectTags(t, reflect.TypeOf(v))
+	if len(out) == 0 {
+		t.Fatalf("no json fields found on %T; the reader is reading nothing", v)
 	}
 	sort.Strings(out)
+	return out
+}
+
+func collectTags(t *testing.T, rt reflect.Type) []string {
+	t.Helper()
+	for rt.Kind() == reflect.Pointer {
+		rt = rt.Elem()
+	}
+	if rt.Kind() != reflect.Struct {
+		t.Fatalf("not a struct: %s", rt)
+	}
+	var out []string
+	for i := range rt.NumField() {
+		f := rt.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		tag, tagged := f.Tag.Lookup("json")
+		name, _, _ := strings.Cut(tag, ",")
+		if name == "-" && !strings.Contains(tag, ",") {
+			continue
+		}
+		// An embedded struct with no name of its own promotes its fields into
+		// the object, which is how the socket's message envelope is built.
+		if f.Anonymous && name == "" {
+			out = append(out, collectTags(t, f.Type)...)
+			continue
+		}
+		if !tagged || name == "" {
+			name = f.Name
+		}
+		out = append(out, name)
+	}
 	return out
 }
 
