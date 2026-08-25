@@ -512,7 +512,60 @@ try {
   }
 
   await page.screenshot({ path: join(SHOTS, 'overflowing-rows.png') })
-  await page.locator('[data-testid="sidebar-rail"] button').first().click()
+
+  // ── the same crowd, on a phone ───────────────────────────────────────────
+  // This check visited 900 and 1440 and never a phone, so the intersection of
+  // the two things the panel is for — a lot of sessions, and reading them from
+  // a phone — had never been rendered.
+  //
+  // overflow.mjs says why that matters, about a different control: "Run once
+  // on the desktop page it says nothing about the key bar, which only exists
+  // on a phone — which is exactly how the first version of this passed while
+  // the key row was hiding two keys." The drawer is the same shape of thing:
+  // it does not exist above the breakpoint, so nothing above the breakpoint
+  // can check it.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await sleep(1200)
+  const drawerBtn = page.locator('header button').first()
+  if (!(await drawerBtn.isVisible().catch(() => false))) {
+    note('FAIL', 'ui', 'no way to open the project list at phone width')
+  } else {
+    await drawerBtn.click()
+    await sleep(1200)
+    const phoneRows = await page.locator('[data-testid="session-row"]').count()
+    if (phoneRows < COUNT) {
+      note('FAIL', 'ui',
+        `the drawer lists ${phoneRows} of ${COUNT} sessions; the rest cannot be chosen at all`)
+    }
+    // The last row is the one a scroll container gets wrong.
+    const last = page.locator('[data-testid="session-row"]').last()
+    const scrolled = await last.scrollIntoViewIfNeeded({ timeout: 5000 }).then(() => true).catch(() => false)
+    const box = scrolled ? await last.boundingBox() : null
+    if (!box || box.y < 0 || box.y + box.height > 844 + 1) {
+      note('FAIL', 'ui',
+        `the last session in the drawer cannot be scrolled into view on a phone: ` +
+        `${box ? `y=${Math.round(box.y)} h=${Math.round(box.height)}` : 'no box'}`)
+    }
+    const phoneSpill = await findUnreachable(page, sleep)
+    if (phoneSpill.length > 0) {
+      note('FAIL', 'ui',
+        'with the drawer open on a phone, content is painted outside its container with no ' +
+        `way to scroll to it: ${phoneSpill.join('; ')}`)
+    }
+    const wide = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth)
+    if (wide > 0) {
+      note('FAIL', 'ui', `the page scrolls sideways by ${wide}px with the drawer open on a phone`)
+    }
+    await page.screenshot({ path: join(SHOTS, 'phone-drawer-crowded.png') })
+    await page.keyboard.press('Escape')
+    await sleep(600)
+  }
+
+  await page.setViewportSize({ width: 900, height: 560 })
+  await sleep(800)
+  const rail = page.locator('[data-testid="sidebar-rail"] button').first()
+  if (await rail.isVisible().catch(() => false)) await rail.click()
   await page.setViewportSize({ width: 1440, height: 900 })
   await sleep(1500)
 

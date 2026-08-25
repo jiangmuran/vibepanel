@@ -6914,3 +6914,65 @@ through other selectors.
 An unreferenced testid is a hint, not a finding. Following all six cost one
 afternoon and produced one real gap, which is a fair rate for a lead that cheap
 to check.
+
+## A reachability scan that could not see the thing it was for
+
+The scale check visited 900px and 1440px and never a phone, so the
+intersection of the two things this panel is for — a lot of sessions, and
+reading them from a phone — had never been rendered. Twenty-four sessions in
+the phone drawer turned out fine: every row present, the last one scrollable
+into view, no overflow, no small tap targets.
+
+Then the check was mutated, and the interesting part started.
+
+### `overflow: hidden` does not stop a script
+
+Turning the session list's `overflow-y-auto` into `overflow-y-hidden` — a
+one-word diff that hides the tail of a list from a person — changed **nothing**
+that any of the measurements could see. The last row still scrolled into view,
+`findUnreachable` still reported clean.
+
+Because `overflow: hidden` stops *people* scrolling, not scripts. `scrollTop`
+still moves, `scrollIntoViewIfNeeded` still works, and every script-based
+reachability measurement therefore says the content is fine. The check was
+proving something a person cannot do.
+
+`findUnreachable` had the same blind spot from the other direction: it only
+examines boxes whose `overflow` is `visible`, so a box that clips is skipped
+entirely — and "a scroller changed into a clipper" is exactly how content
+becomes unreachable.
+
+It now flags a box whose `overflow-y` is `hidden` while holding more than it
+can show. Vertical only: `overflow: hidden` with wider content is how
+`text-overflow: ellipsis` works, and every truncated label in the panel would
+be a finding.
+
+### Three refinements, each forced by the thing failing
+
+The first version fired on the terminal wrapper: hundreds of pixels of layout
+overflow while every glyph was on screen, because a passive viewer scales the
+owner's grid with a CSS transform and **a transform is not layout**.
+
+So the rule started asking where children were actually *painted*, which fixed
+that — and immediately stopped catching the mutation it was written for,
+because by then the list had been scrolled to its end and its overflow was
+above the box rather than below. A list made unscrollable hides its head, not
+its tail.
+
+Looking both ways caught both. Each of those three states was found by running
+the mutation rather than by reading the rule, which is the entire argument for
+mutating a check before trusting it — the rule read correctly all three times.
+
+### The one thing excluded, and said plainly
+
+After the painted-geometry fix the wrapper still reported its host painting 8px
+past the bottom, in the harness's touch page, after the long-press tests:
+persistent enough to survive the double scan, invisible on the screenshot, and
+not reproducible in isolation across a dozen attempts at three device pixel
+ratios. Eight pixels is less than one row of a scaled grid.
+
+That box is excluded now, one level above the terminal host which was already
+excluded for the same asynchrony. Excluded rather than explained, and the
+comment says so: a new check whose first finding is a sub-row overhang nobody
+can see is a check people turn off, and the failure it exists for is caught
+regardless.
