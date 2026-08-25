@@ -5348,14 +5348,29 @@ The first probe killed a tmux session behind the panel's back and timed how
 long the panel took to notice, on the theory that noticing is the poll loop's
 job and the poll loop calls `Broadcast` synchronously.
 
-It reported three milliseconds, before and after. The number was right and the
-experiment was meaningless: `/api/sessions` reconciles against tmux on read, so
-the answer never came from the poller at all. A stalled poll loop would not
-have changed that measurement by a microsecond.
+It reported three milliseconds, before and after.
 
-Timing something that has more than one supplier tells you about the fastest
-one. The second probe measured what a person actually sees — a rename made in
-one window arriving in another — and that has exactly one path.
+The first explanation written here was that `/api/sessions` reconciles against
+tmux on read, so the answer never came from the poller. That was wrong, and
+wrong in a way worth correcting rather than deleting: **there is no
+`GET /api/sessions`.** The route exists only for POST. Every one of those
+requests was a 404.
+
+The probe polled until the session was absent from the returned list, with
+`.catch(() => [])` on the parse. So a 404 became an empty list, an empty list
+contained no session, and "no session" was the probe's success condition. It
+would have reported three milliseconds against a server that had been switched
+off.
+
+The lesson is not about fast paths. It is that a fallback whose value means
+*yes* converts every failure into a pass — the network being down, the endpoint
+not existing, the JSON being malformed — and the more defensively the probe is
+written, the more thoroughly it lies. The catch was added so a transient error
+would not crash a long run. It made the run meaningless instead.
+
+The second probe measured what a person actually sees: a rename made in one
+window arriving in another. One path, and it throws rather than shrugging when
+the request does not do what it should.
 
 ## A phone showing four-pixel text
 
