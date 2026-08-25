@@ -2047,3 +2047,42 @@ func TestAScratchTerminalFallsBackToTheProjectRoot(t *testing.T) {
 			"project root %q", child.CWD, root)
 	}
 }
+
+func TestDeletingAProjectDoesNotWaitTwoSecondsPerSession(t *testing.T) {
+	// Every session is attached from the moment it is created, so deleting a
+	// project tears down that many attachments. Detaching one costs the two
+	// seconds it takes for the timer to kill a tmux client that will not exit
+	// on its own; killing the tmux session first makes the client exit by
+	// itself and the detach returns in under a millisecond.
+	//
+	// Measured through the API: one session 2015ms → 14ms, a project with five
+	// 10029ms → 25ms. The order in tearDownSession is the whole difference, and
+	// nothing else would notice it being swapped back.
+	//
+	// The bound is loose on purpose. What is pinned is that this does not scale
+	// at seconds per session; a busy machine should not make it flake.
+	ts, _ := newTestServer(t)
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"test"}`)
+	const n = 4
+	for i := 0; i < n; i++ {
+		postJSON[store.Session](t, ts, "/api/sessions",
+			`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
+	}
+
+	req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/projects/"+project.ID, nil)
+	start := time.Now()
+	res, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("DELETE: %v", err)
+	}
+	res.Body.Close()
+	took := time.Since(start)
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", res.StatusCode)
+	}
+	if took > 3*time.Second {
+		t.Errorf("deleting a project with %d sessions took %v; that is the "+
+			"per-session detach wait back again", n, took.Round(time.Millisecond))
+	}
+}

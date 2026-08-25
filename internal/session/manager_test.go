@@ -1253,3 +1253,87 @@ func TestAFreshViewerIsFilledWithoutWaitingForOutput(t *testing.T) {
 			"show a blank terminal until the session happened to print something: %q", got)
 	}
 }
+
+func TestDetachAllDoesNotTakeTwoSecondsPerSession(t *testing.T) {
+	// A tmux client does not exit when its PTY closes, so close() falls
+	// through to the timer that kills it two seconds later. That timer is the
+	// normal path, not the exception, and closing serially made shutdown cost
+	// two seconds per attached session: measured 2025ms for one, 8030ms for
+	// four, 16033ms for eight.
+	//
+	// The unit sets TimeoutStopSec=20 and says stopping "must not wait on
+	// anything". Past ten sessions it waits longer than that and systemd
+	// SIGKILLs the panel — on the setup this panel exists for, which runs a
+	// couple of dozen agents.
+	//
+	// The bound is deliberately loose. What is being pinned is that the cost
+	// does not scale with the count, not the two seconds itself, and a loaded
+	// machine should not make this flake.
+	ctx := context.Background()
+	tm := newTestTmux(t)
+	m := NewManager(tm, 64<<10)
+	defer m.DetachAll()
+
+	const n = 6
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("vp_detach_%d", i)
+		if err := tm.Create(ctx, tmux.CreateOptions{
+			Name: name, Dir: t.TempDir(), Width: 80, Height: 24,
+			Command: []string{"sh", "-c", "sleep 60"},
+		}); err != nil {
+			t.Fatalf("Create %s: %v", name, err)
+		}
+		if _, err := m.Attach(ctx, fmt.Sprintf("s%d", i), name, 80, 24); err != nil {
+			t.Fatalf("Attach %s: %v", name, err)
+		}
+	}
+
+	start := time.Now()
+	m.DetachAll()
+	took := time.Since(start)
+	if took > 8*time.Second {
+		t.Errorf("detaching %d sessions took %v; serially that is two seconds each, and "+
+			"systemd stops waiting at twenty", n, took.Round(time.Millisecond))
+	}
+}
+
+func TestDetachOfAKilledSessionDoesNotWaitForItself(t *testing.T) {
+	// The pump's cleanup used to call close(), close() waited on the channel
+	// that same goroutine closes afterwards, and it was released only by the
+	// pumpDrain timeout. Two seconds on every teardown, and it looked exactly
+	// like the killer timer below it, which is also two seconds — so the
+	// arithmetic agreed with the wrong cause.
+	//
+	// Measured through the HTTP API before and after: deleting one session
+	// 2015ms → 14ms, deleting a project with five sessions 10029ms → 25ms.
+	//
+	// This kills the tmux session first, which is what the delete paths do:
+	// the client then exits on its own, so nothing here is waiting on the
+	// killer timer and the pump's self-wait is the only thing left to catch.
+	ctx := context.Background()
+	tm := newTestTmux(t)
+	m := NewManager(tm, 64<<10)
+	defer m.DetachAll()
+
+	const name = "vp_selfwait"
+	if err := tm.Create(ctx, tmux.CreateOptions{
+		Name: name, Dir: t.TempDir(), Width: 80, Height: 24,
+		Command: []string{"sh", "-c", "sleep 60"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := m.Attach(ctx, "s", name, 80, 24); err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	if err := tm.Kill(ctx, name); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	start := time.Now()
+	m.Detach("s")
+	if took := time.Since(start); took > pumpDrain/2 {
+		t.Errorf("detaching a session whose tmux session is already gone took %v; "+
+			"the pump is waiting for itself again", took.Round(time.Millisecond))
+	}
+}

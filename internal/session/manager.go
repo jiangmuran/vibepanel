@@ -351,7 +351,7 @@ func (m *Manager) pump(l *Live) {
 		}
 		m.mu.Unlock()
 
-		l.close()
+		l.closeFromPump()
 		_ = l.cmd.Wait()
 	}()
 
@@ -509,9 +509,34 @@ func (m *Manager) DetachAll() {
 		m.detachedWhileAttaching[id] = true
 	}
 	m.mu.Unlock()
+
+	// In parallel, because each close waits two seconds and they have nothing
+	// to do with each other.
+	//
+	// A tmux client does not exit when its PTY is closed, so close() falls
+	// through to the timer that kills it — "give the client a moment to exit on
+	// its own" is not the exception here, it is every time. Serially that is
+	// two seconds per session: measured 2025ms for one, 8030ms for four,
+	// 16033ms for eight.
+	//
+	// The unit file sets TimeoutStopSec=20 and says "stopping the panel must
+	// not wait on anything". At eleven sessions it waits longer than that and
+	// systemd SIGKILLs the panel — on a setup built for a couple of dozen
+	// agents, which is what this panel is for. The tmux sessions survive that
+	// (KillMode=process), but nothing else about a shutdown does: no final
+	// state written, and a unit that reports failed because 137 is not the
+	// SuccessExitStatus it was told to expect.
+	//
+	// In parallel it is two seconds whatever the count.
+	var wg sync.WaitGroup
 	for _, l := range all {
-		l.close()
+		wg.Add(1)
+		go func(l *Live) {
+			defer wg.Done()
+			l.close()
+		}(l)
 	}
+	wg.Wait()
 }
 
 // ─── Live ─────────────────────────────────────────────────────────────────
@@ -769,19 +794,42 @@ func (l *Live) Done() <-chan struct{} { return l.done }
 // close tears the attachment down exactly once.
 // pumpDrain bounds how long close() waits for the pump goroutine.
 //
-// Closing the PTY unblocks its pending read, so in practice the wait is
-// immediate. The bound is here because shutdown detaches every session in
-// turn: one PTY whose read somehow does not unblock would otherwise hang the
-// whole process instead of costing one session its final chunk.
+// Closing the PTY unblocks its pending read, so the wait should be short. It
+// was not: the pump's cleanup called close(), which waited on the channel that
+// same goroutine closes afterwards, so every teardown ran this bound to the
+// end. See closeFromPump.
+//
+// The bound stays, for what it was written for: shutdown detaches every
+// session, and one PTY whose read somehow does not unblock should cost that
+// session its final chunk rather than hang the process.
 const pumpDrain = 2 * time.Second
 
-func (l *Live) close() {
+func (l *Live) close() { l.closeInternal(true) }
+
+// closeFromPump is close() as called by the pump's own goroutine.
+//
+// It must not wait for the pump, because it is the pump. The pump's deferred
+// cleanup called close(), close() waited on l.pumped, and l.pumped is closed by
+// a later defer in that same goroutine — so it waited for itself and was
+// released only by the pumpDrain timeout.
+//
+// Two seconds, on every single attachment teardown. It looked like the killer
+// timer below, which is also two seconds, so the arithmetic came out right
+// against the wrong cause: detaching one session measured 2015ms, deleting a
+// project with five 10029ms, and shutting down with eight sessions 16033ms.
+// The comment on pumpDrain said the wait was "immediate in practice"; it was
+// never once immediate.
+func (l *Live) closeFromPump() { l.closeInternal(false) }
+
+func (l *Live) closeInternal(waitForPump bool) {
 	l.mu.Lock()
 	if l.closed {
 		l.mu.Unlock()
 		// Already closing elsewhere. Wait anyway: every caller is entitled to
 		// the same guarantee, not just whichever one got here first.
-		l.awaitPump()
+		if waitForPump {
+			l.awaitPump()
+		}
 		return
 	}
 	l.closed = true
@@ -804,7 +852,9 @@ func (l *Live) close() {
 	// process — and output is broadcast for a session nothing can reach any
 	// more. Callers are entitled to "no more callbacks after Detach returns";
 	// this is what makes that true.
-	l.awaitPump()
+	if waitForPump {
+		l.awaitPump()
+	}
 
 	// Give the tmux client a moment to exit on its own after its PTY closed.
 	// Killing it immediately is usually unnecessary and occasionally races with

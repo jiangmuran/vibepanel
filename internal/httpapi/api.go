@@ -712,6 +712,35 @@ func (s *Server) handlePatchProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, p)
 }
 
+// tearDownSession ends one session: its tmux session first, then the panel's
+// attachment to it.
+//
+// That order is the whole point. A tmux client does not exit when its PTY is
+// closed, so detaching first leaves close() waiting on the two-second timer
+// that kills the client — measured at 2015ms to delete one session, and 10029ms
+// for a project with five, because the loops that call this are serial.
+//
+// Killing the tmux session first takes that wait away rather than hiding it:
+// the client's session is gone, so the client exits on its own and the pump
+// sees EOF immediately.
+//
+// Kill failing before anything else has happened is also the better half of
+// the bargain. Detaching first and then failing to kill left the panel with no
+// attachment to a tmux session that was still running.
+func (s *Server) tearDownSession(ctx context.Context, id, tmuxName string) error {
+	if err := s.Tmux.Kill(ctx, tmuxName); err != nil {
+		return err
+	}
+	s.Manager.Detach(id)
+	// Without this the detector keeps a tracker per session for the life of the
+	// process — small, but it is the kind of asymmetry between two paths that
+	// doing the same thing eventually turns into a real bug.
+	if s.Detector != nil {
+		s.Detector.Forget(id)
+	}
+	return nil
+}
+
 func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	pid := chi.URLParam(r, "id")
@@ -724,15 +753,7 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, sess := range sessions {
-		s.Manager.Detach(sess.ID)
-		// Same cleanup deleting a single session does. Without it the detector
-		// keeps a tracker per session for the life of the process — small, but
-		// it is the kind of asymmetry between two paths that doing the same
-		// thing eventually turns into a real bug.
-		if s.Detector != nil {
-			s.Detector.Forget(sess.ID)
-		}
-		if err := s.Tmux.Kill(ctx, sess.TmuxName); err != nil {
+		if err := s.tearDownSession(ctx, sess.ID, sess.TmuxName); err != nil {
 			writeErr(w, http.StatusInternalServerError, "kill "+sess.TmuxName+": "+err.Error())
 			return
 		}
@@ -1058,11 +1079,7 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, child := range append(children, rec) {
-		s.Manager.Detach(child.ID)
-		if s.Detector != nil {
-			s.Detector.Forget(child.ID)
-		}
-		if err := s.Tmux.Kill(ctx, child.TmuxName); err != nil {
+		if err := s.tearDownSession(ctx, child.ID, child.TmuxName); err != nil {
 			writeErr(w, http.StatusInternalServerError, "kill "+child.TmuxName+": "+err.Error())
 			return
 		}

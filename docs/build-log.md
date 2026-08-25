@@ -7176,3 +7176,87 @@ running session in the deleted directory is untouched: still `working`, still
 in tmux, which is the whole point of the architecture. tmux holds the working
 directory open; the directory being unlinked does not disturb a process already
 inside it.
+
+## Two seconds per session, and the timer that took the blame
+
+`systemctl restart vibepanel` was slow in a way that scaled with how much of
+the panel was in use. Measured through the real binary:
+
+```
+sessions attached: 1    shutdown took  2025 ms
+sessions attached: 4    shutdown took  8030 ms
+sessions attached: 8    shutdown took 16033 ms
+```
+
+`deploy/vibepanel.service` sets `TimeoutStopSec=20` and says, in a comment,
+that stopping "must not wait on anything: it detaches from tmux and the
+sessions carry on regardless". Past ten sessions it waits longer than systemd
+is willing to, and the panel is SIGKILLed on every stop — on a setup built for
+a couple of dozen agents. `KillMode=process` means the tmux sessions live
+through that, so nothing is lost, but the unit still reports failed: 137 is not
+the `SuccessExitStatus` it was told to expect.
+
+The same cost sat on the delete paths, where it is in front of a person waiting
+for a request:
+
+```
+DELETE /api/sessions/{id}                 2015 ms
+DELETE /api/projects/{id}, 5 sessions    10029 ms
+tmux kill-session on its own                 6 ms
+```
+
+### The wrong two seconds
+
+`Live.close()` ends with a goroutine that gives the tmux client two seconds to
+exit on its own before killing it, under a comment saying that killing it
+immediately "is usually unnecessary". A tmux client does not exit when its PTY
+is closed, so that fallback is the normal path — and two seconds per session is
+exactly what the measurements say.
+
+It was the wrong two seconds. `awaitPump` is bounded by `pumpDrain`, which is
+*also* two seconds, so the arithmetic came out right against a cause that was
+not the cause. The first fix built on that reading — kill the tmux session
+before detaching, so the client exits by itself — changed nothing at all:
+
+```
+TIMING kill    3.19 ms
+TIMING detach  2.000515532 s
+```
+
+An isolated test had said that same reordering made detach instant. It had
+measured a session that was never properly attached, and 0 ms is what a
+measurement of nothing looks like. Four configurations, varying session count
+and settle time independently, all came back at 2.001 s.
+
+### The pump was waiting for itself
+
+`pump`'s deferred cleanup calls `l.close()`. `close()` calls `awaitPump()`,
+which waits on `l.pumped`. `l.pumped` is closed by a defer in that same
+goroutine — registered first, so it runs last, after the one that is waiting
+for it. The pump waited for itself on every teardown and was released only by
+the `pumpDrain` timeout.
+
+`closeFromPump` skips the wait, because it *is* the pump. With that gone the
+earlier reordering starts paying, and the two fixes turn out to be one each for
+two independent two-second costs that had been hiding behind one another:
+
+| | before | after |
+|---|---|---|
+| `DELETE` one session | 2015 ms | 14 ms |
+| `DELETE` a project with five sessions | 10029 ms | 25 ms |
+| shutdown, 16 sessions attached | ~32 s | 2027 ms |
+
+Shutdown keeps two seconds because a plain detach leaves the tmux session
+alive, so the client really does have to be killed on the timer. `DetachAll`
+now closes attachments concurrently, which is what makes it two seconds
+whatever the count instead of two seconds each.
+
+The comment on `pumpDrain` said the wait was "immediate in practice". It was
+never once immediate, in any code path, since the pump was written.
+
+### Three tests, each failing under its own mutation
+
+Serial `DetachAll` → 12.01 s for six sessions. `closeFromPump` back to
+`close()` → the detach test hangs on its own timeout. The kill/detach order
+swapped back → 8.016 s to delete a project with four sessions, which nothing
+had been watching before: reverting that ordering built and passed everything.
