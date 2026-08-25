@@ -20,7 +20,11 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { assertFreshBuild } from './lib/fresh.mjs'
 const BIN = process.argv[2] ?? new URL('../../vibepanel', import.meta.url).pathname
+// Measuring a build that does not contain the change is the one failure that
+// looks exactly like a pass. See lib/fresh.mjs.
+assertFreshBuild(BIN, new URL('../../', import.meta.url).pathname)
 const SHOTS = process.argv[3] ?? join(tmpdir(), 'vprestart-shots')
 mkdirSync(SHOTS, { recursive: true })
 

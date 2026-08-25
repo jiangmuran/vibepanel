@@ -21,8 +21,12 @@ import { join } from 'node:path'
 import { sweepStaleSockets } from './lib/stale.mjs'
 import { findUnreachable } from './lib/overflow.mjs'
 import { findFadedControls } from './lib/faded.mjs'
+import { assertFreshBuild } from './lib/fresh.mjs'
 
 const BIN = process.argv[2] ?? new URL('../../vibepanel', import.meta.url).pathname
+// Measuring a build that does not contain the change is the one failure that
+// looks exactly like a pass. See lib/fresh.mjs.
+assertFreshBuild(BIN, new URL('../../', import.meta.url).pathname)
 const SHOTS = process.argv[3] ?? join(tmpdir(), 'vpscale-shots')
 const COUNT = Number(process.argv[4] ?? 24)
 mkdirSync(SHOTS, { recursive: true })

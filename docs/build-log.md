@@ -7512,3 +7512,74 @@ and neither does the `pgup` key — it sends `ESC[5~`, which a shell ignores.
 Measured with scrollback present: wheel 269 → 268, touch drag 268 → 268, pgup
 268 → 268, `scrollLines(-60)` 268 → 208. The buffer is there and the phone has
 no gesture that reaches it. That is the next thing.
+
+## A finger that could not reach the scrollback
+
+With the alternate screen gone there are hundreds of lines behind the screen,
+and on a phone nothing could get to them. Measured with 269 lines of scrollback
+present:
+
+```
+wheel                269 -> 268
+touch drag           268 -> 268
+the panel's pgup key 268 -> 268
+term.scrollLines(-60) 268 -> 208
+```
+
+The buffer is there and xterm scrolls when asked; the phone has no gesture that
+asks. xterm's scrollable element listens for wheel events, which a touchscreen
+never sends, and `pgup` sends `ESC[5~`, which a shell ignores — it is a key for
+the application, not a way to look backwards.
+
+`touchSelect.ts` already saw every touch: it waits for a long press to start a
+selection, and on movement it cancelled the timer and returned. Now the same
+movement scrolls, once the gesture is clearly vertical and there is something
+behind the screen to show. Vertical-only, because a horizontal drag changes
+view; and only with scrollback present, because `preventDefault` on a terminal
+with nothing behind it stops the page moving for no reason.
+
+The pixels-to-rows arithmetic carries its remainder. A row is around eighteen
+pixels and a finger arrives in ones and twos, so truncating each event on its
+own throws most of the movement away and the terminal crawls behind the finger.
+
+### The mutation that passed because the build had failed
+
+The first attempt to prove the drag handler was load-bearing said it was not:
+with the handler disabled, the browser check still reported a finger scrolling
+back — and reported *the same line numbers*, 368 to 330, as the unmutated run.
+Identical numbers are the only reason this was caught.
+
+The mutation left `dragRows`, `carried` and `scrolling` unused and `startPoint`
+possibly null, so:
+
+```
+make build exit code: 2
+   src/components/mobile/touchSelect.ts(166,39): error TS18047: 'startPoint' is possibly 'null'.
+embedded frontend changed: False
+```
+
+`internal/webui/dist` was untouched, the binary kept the previous frontend, and
+the check measured a build that had never contained the mutation. The harness
+had captured the build output and never looked at the exit code.
+
+Redone with a mutation that compiles — `scrollLines(-step.rows)` to
+`scrollLines(0)` — the drag is load-bearing: 268 -> 268, nothing.
+
+### Refusing to measure yesterday
+
+`lib/fresh.mjs` compares the binary against the Go sources and the embedded
+frontend, and the embedded frontend against `web/src`, and throws before the
+browser starts:
+
+```
+/home/…/internal/session/manager.go is newer than /home/…/vibepanel.
+This check would measure the previous build. Run `make build`.
+
+/home/…/web/src/App.tsx is newer than the built frontend in internal/webui/dist.
+The binary embeds the previous one, so this check would measure a build that
+does not contain the change. Run `make build`.
+```
+
+Every browser harness calls it. `npm run check:*` rebuilds nothing, so "edit,
+forget to build, measure yesterday" was always one step away — and it is the
+one failure that looks exactly like a pass.
