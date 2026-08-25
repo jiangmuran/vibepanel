@@ -9042,3 +9042,33 @@ tmux: 5000x2000 is accepted with RSS unchanged at 5.1MB — the grid is sparse �
 and 60000x60000 is refused outright with "width too large". The panel's scaling
 already has a legibility floor that pans rather than shrinking text to a smear.
 Three layers, each with its own bound; nothing to fix.
+
+### Mutating the guards
+
+Following the pattern from the route sweep — a guard is code, and nothing
+guards the guard — each of the standing checks was made to fail on purpose.
+
+**Red line 5's stylesheet guard holds.** A component style inside
+`@media (prefers-color-scheme: dark)` written over three lines, the same thing
+written on one, and a declaration inside a real `[data-theme]` rule: all three
+caught, each naming the property.
+
+The third mutation passed at first, and it was the mutation that was wrong, not
+the guard: the first `[data-theme=` in the file is inside a comment block, and
+the test strips comments before parsing. A mutation that does not reach the code
+proves nothing about the check — the same trap as a probe pointed at an endpoint
+that does not exist, which this session has already fallen into once.
+
+**`CGO_ENABLED=0` was not in head-check.** `make build` and the release script
+both set it; `scripts/head-check.sh` — which exists to be what somebody cloning
+the repository gets — ran the default build. So a dependency needing cgo would
+pass the check whose whole purpose is to be honest about a clean checkout.
+
+Fixed, and then the fix's own justification turned out to be wrong. The first
+version of the comment said a cgo dependency "compiles here and fails at
+release". Measured: with `CGO_ENABLED=0` the toolchain does not reject cgo, it
+*excludes* the files that use it, so a cgo file nothing references is silently
+dropped and both builds pass. It is a cgo symbol that is **referenced** — which
+is what adding a real dependency looks like — that fails under `CGO_ENABLED=0`
+and builds fine under the default. Same conclusion, different mechanism, and the
+mechanism is the part somebody will rely on later.

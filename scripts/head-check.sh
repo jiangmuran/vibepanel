@@ -57,8 +57,21 @@ export GOFLAGS=-buildvcs=false
 
 cd "$WORK" || exit 1
 
-if go build ./... 2>"$WORK/.build.err"; then
-  ok "go build"
+# CGO_ENABLED=0, because that is what `make build` and the release script do,
+# and this check exists to be what somebody cloning the repository gets.
+#
+# What it catches, measured rather than assumed. With CGO_ENABLED=0 the toolchain
+# does not reject cgo, it *excludes* the files that use it — so a cgo file
+# nothing references is silently dropped and both builds pass. A cgo symbol that
+# is referenced, which is what adding a real dependency looks like, fails to
+# build here and compiles fine under the default. That is the case worth
+# catching: it otherwise surfaces at `make release-check`, or as a binary that
+# will not start on the machine it was copied to.
+#
+# The forbidden-dependency list in internal/config names four packages. This
+# tests the property those names stand for.
+if CGO_ENABLED=0 go build ./... 2>"$WORK/.build.err"; then
+  ok "go build (CGO_ENABLED=0)"
 else
   fail "$REF does not compile:"
   sed 's/^/       /' "$WORK/.build.err" | head -20
