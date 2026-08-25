@@ -1,6 +1,7 @@
 package session
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
@@ -11,11 +12,59 @@ var base = time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
 
 func at(d time.Duration) time.Time { return base.Add(d) }
 
-func TestQuietSessionIsDone(t *testing.T) {
+// Silence means done only when nothing is running.
+//
+// This test used to assert that ten seconds of silence made a session done
+// whatever was in it, which is what the code did and what made the panel
+// announce that a thinking agent had finished. "Done" is a claim about
+// completion; the only evidence for it is that the thing which was working has
+// exited and the pane is back at a shell.
+func TestQuietShellIsDone(t *testing.T) {
 	d := NewDetector()
 	d.Observe("s", Signals{Bytes: 10, Visible: true}, at(0))
-	if st, _ := d.Evaluate("s", Observation{}, at(10*time.Second)); st != StateDone {
-		t.Errorf("state after ten seconds of silence = %q, want %q", st, StateDone)
+	st, _ := d.Evaluate("s", Observation{ShellOnly: true}, at(10*time.Second))
+	if st != StateDone {
+		t.Errorf("state after ten seconds of silence at a shell = %q, want %q", st, StateDone)
+	}
+}
+
+// An agent that has gone quiet has not finished.
+//
+// Thinking, waiting on a slow tool call, or writing somewhere other than the
+// screen all look identical from here — and all three used to be reported as
+// done, with a green check, against a session in the middle of a task.
+func TestQuietAgentIsStillWorking(t *testing.T) {
+	d := NewDetector()
+	d.Observe("s", Signals{Bytes: 10, Visible: true}, at(0))
+	st, src := d.Evaluate("s", Observation{ShellOnly: false}, at(30*time.Second))
+	if st != StateWorking {
+		t.Errorf("an agent silent for thirty seconds reads as %q, want %q; the process is still "+
+			"there and nothing has finished", st, StateWorking)
+	}
+	if src != SourceHeuristic {
+		t.Errorf("source = %q, want %q", src, SourceHeuristic)
+	}
+}
+
+// And it must not flicker, which is what shipped: activityWindow and the
+// poller's interval were both two seconds, so a session printing every couple
+// of seconds landed on either side of the boundary at random.
+func TestAnAgentDoesNotFlickerBetweenPolls(t *testing.T) {
+	d := NewDetector()
+	obs := Observation{ShellOnly: false}
+	seen := map[State]bool{}
+	// Output every two seconds, sampled every two seconds, offset by a little
+	// each time — the pattern that produced the alternating dot.
+	for i := 0; i < 10; i++ {
+		tick := time.Duration(i) * 2 * time.Second
+		d.Observe("s", Signals{Bytes: 40, Visible: true}, at(tick))
+		st, _ := d.Evaluate("s", obs, at(tick+1900*time.Millisecond))
+		seen[st] = true
+		st2, _ := d.Evaluate("s", obs, at(tick+2100*time.Millisecond))
+		seen[st2] = true
+	}
+	if len(seen) != 1 {
+		t.Errorf("the state alternated across polls: %v", seen)
 	}
 }
 
@@ -167,8 +216,12 @@ func TestInvalidReportsAreIgnored(t *testing.T) {
 func TestUnknownSessionIsDone(t *testing.T) {
 	// A session nothing has been observed for should read as quiet, not as a
 	// crash or a blank.
+	// Observation{} would mean "something that is not a shell is running",
+	// which is not what "nothing has been observed" means. In the panel the
+	// poller derives this from #{pane_current_command}, and an empty command
+	// is a shell.
 	d := NewDetector()
-	st, _ := d.Evaluate("never-seen", Observation{}, at(0))
+	st, _ := d.Evaluate("never-seen", Observation{ShellOnly: true}, at(0))
 	if st != StateDone {
 		t.Errorf("state = %q, want %q", st, StateDone)
 	}
@@ -178,7 +231,7 @@ func TestForget(t *testing.T) {
 	d := NewDetector()
 	d.Observe("s", Signals{Bytes: 10, Visible: true, Bell: true}, at(0))
 	d.Forget("s")
-	if st, _ := d.Evaluate("s", Observation{}, at(100*time.Millisecond)); st != StateDone {
+	if st, _ := d.Evaluate("s", Observation{ShellOnly: true}, at(100*time.Millisecond)); st != StateDone {
 		t.Errorf("state after Forget = %q, want %q", st, StateDone)
 	}
 }
@@ -193,5 +246,101 @@ func TestIsShellCommand(t *testing.T) {
 		if IsShellCommand(c) {
 			t.Errorf("%q should not be a shell", c)
 		}
+	}
+}
+
+// Every entry point on the detector, at once.
+//
+// The poller evaluates every session on a timer, the pump reports signals from
+// its own goroutine, hooks arrive over HTTP, the user clicks a dot, and
+// sessions are forgotten and retained as they come and go — all against the
+// same maps. The mutex looks right; this is the cheap way to find out.
+func TestConcurrentUseOfTheDetector(t *testing.T) {
+	d := NewDetector()
+	ids := []string{"a", "b", "c", "d"}
+
+	stop := make(chan struct{})
+	time.AfterFunc(700*time.Millisecond, func() { close(stop) })
+	var wg sync.WaitGroup
+
+	work := func(f func(id string, n int)) {
+		for i := 0; i < 4; i++ {
+			wg.Add(1)
+			go func(n int) {
+				defer wg.Done()
+				for {
+					select {
+					case <-stop:
+						return
+					default:
+					}
+					f(ids[n%len(ids)], n)
+				}
+			}(i)
+		}
+	}
+
+	now := time.Now()
+	work(func(id string, n int) {
+		d.Observe(id, Signals{Bytes: 10, Visible: true, Bell: n%3 == 0}, now)
+	})
+	work(func(id string, _ int) { d.Evaluate(id, Observation{ShellOnly: false}, time.Now()) })
+	work(func(id string, n int) {
+		if n%2 == 0 {
+			d.Report(id, StateWaiting, time.Now())
+		} else {
+			d.SetManual(id, StateDone, time.Now())
+		}
+	})
+	work(func(id string, n int) {
+		if n%2 == 0 {
+			d.Forget(id)
+		} else {
+			d.Retain(ids[:1+n%len(ids)])
+		}
+		_ = d.Tracked()
+	})
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("detector callers did not finish; something is deadlocked")
+	}
+}
+
+func TestABellInAPlainShellIsNotAnAgentAskingForYou(t *testing.T) {
+	// Pressing TAB on an ambiguous completion is how readline says "I have
+	// nothing for you": it rings the bell and prints nothing at all. The bell
+	// character is not visible output, so it does not move lastOutput, and the
+	// only thing that clears a bell is visible output arriving more than
+	// bellGrace after it. Nothing was ever going to print.
+	//
+	// So a scratch shell where somebody hit TAB sat on an orange triangle
+	// indefinitely, claiming an agent needed a human — and waiting sorts to the
+	// top, so it sat there *above* the sessions that really did. This file
+	// already says why that is the expensive kind of wrong: "a panel that cries
+	// for attention it does not need is one people stop looking at."
+	d := NewDetector()
+	d.Observe("s", Signals{Bytes: 30, Visible: true}, at(0)) // the prompt
+	d.Observe("s", Signals{Bell: true}, at(time.Second))     // TAB, and a beep
+	st, _ := d.Evaluate("s", Observation{ShellOnly: true}, at(time.Minute))
+	if st == StateWaiting {
+		t.Errorf("a bare shell that beeped reports %q a minute later; "+
+			"nothing is waiting for anybody", st)
+	}
+}
+
+func TestABellStillMeansWaitingWhenSomethingIsRunning(t *testing.T) {
+	// The converse, so the fix above cannot be widened by accident. A pane
+	// whose foreground process is not a shell has an agent in it, and a bell
+	// there is the one unambiguous "a human is needed" signal the panel has
+	// without hooks.
+	d := NewDetector()
+	d.Observe("s", Signals{Bytes: 30, Visible: true}, at(0))
+	d.Observe("s", Signals{Bell: true}, at(time.Second))
+	if st, _ := d.Evaluate("s", Observation{}, at(time.Minute)); st != StateWaiting {
+		t.Errorf("state = %q, want %q", st, StateWaiting)
 	}
 }

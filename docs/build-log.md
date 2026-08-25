@@ -5422,3 +5422,51 @@ The harness check measures at phone width rather than at the second viewer's
 520px, because 520 lands at 7.73px — it would have caught the regression, by
 0.27 of a pixel. At 390 the same mutation reports 5.8px against a threshold of
 8, which is a check with an opinion rather than a coincidence.
+
+## A scratch shell that beeped, sitting above the agents that needed you
+
+The bell is the only unambiguous "a human is needed" signal available without
+hooks, so it outranks everything the heuristic can infer. That is right, and it
+was applied to panes with no agent in them.
+
+The rule cleared a bell when visible output arrived more than `bellGrace` after
+it. Two things about a plain shell make that unreachable:
+
+- The bell character is not visible output, so it does not move `lastOutput`.
+  After a beep, `lastOutput` is still whatever it was *before* the beep, which
+  is never later than the bell.
+- Nothing else is going to print. Pressing TAB on an ambiguous completion is
+  how readline says "I have nothing for you": it rings the bell and produces no
+  output at all.
+
+So a scratch terminal where somebody hit TAB showed an orange triangle
+indefinitely. And `waiting` sorts to the top — so it sat there *above* the
+sessions that really were asking for a human, which is the one thing the sort
+order exists to prevent.
+
+This file already contains the argument against it, twenty lines below the bug,
+in the comment explaining why silence is not reported as waiting:
+
+> a panel that cries for attention it does not need is one people stop looking
+> at.
+
+The fix is that the bell only outranks the heuristic when something other than
+a shell is in the foreground. A bare shell has no agent that could be waiting;
+if the agent rang and then exited, the pane is back at a shell and `done` is
+the honest answer.
+
+Verified end to end rather than only in the unit test, because the interesting
+question was whether the scenario is reachable at all — whether a bell from a
+shell really does arrive at the detector with `ShellOnly` set. It does:
+
+```
+scratch shell, before the beep: done
+scratch shell, six seconds after: waiting      <- before the fix
+scratch shell, six seconds after: done         <- after
+the sleeping agent meanwhile:    working       <- unchanged either way
+```
+
+Three existing tests cover the bell and every one of them passes
+`Observation{}`, so none of them said anything about a shell. That is the
+shape of gap worth looking for: not an untested function, but a tested one
+whose tests all happen to agree about a field.
