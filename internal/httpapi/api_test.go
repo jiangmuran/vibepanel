@@ -1973,3 +1973,77 @@ func TestEditingATodo(t *testing.T) {
 		t.Errorf("ticking an item rewrote its text to %q", got)
 	}
 }
+
+func TestASessionIsNotStartedInADirectoryThatIsGone(t *testing.T) {
+	// tmux falls back to $HOME when -c names a directory that is not there,
+	// and says nothing. So a project whose directory had been removed — a
+	// worktree pruned, a mount gone, a rename — produced a session running in
+	// the user's home directory, filed in the sidebar under the project it was
+	// not in.
+	//
+	// Measured before the fix: POST returned 201 and pane_current_path was
+	// /home/jmr. "Refactor this" starting in somebody's home directory is the
+	// wrong kind of surprise from a panel that runs coding agents.
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+dir+`","name":"worktree"}`)
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatalf("remove the project directory: %v", err)
+	}
+
+	res, err := ts.Client().Post(ts.URL+"/api/sessions", "application/json",
+		strings.NewReader(`{"projectId":"`+project.ID+`","command":["sleep","60"]}`))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("creating a session in a missing directory returned %d: %s", res.StatusCode, body)
+	}
+	if !strings.Contains(string(body), dir) {
+		t.Errorf("the refusal does not name the directory: %s", body)
+	}
+	rows, err := srv.DB.ListSessions(ctx)
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("%d session rows were written for a session that was refused", len(rows))
+	}
+}
+
+func TestAScratchTerminalFallsBackToTheProjectRoot(t *testing.T) {
+	// The other half, and the reason the check is not a blanket refusal. A
+	// scratch terminal opens in its parent's working directory, which the agent
+	// may have cd'd into and which may since have gone. The project root is
+	// still somewhere useful to be, and is not a lie about where you are.
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+
+	root := t.TempDir()
+	gone := filepath.Join(root, "build")
+	if err := os.MkdirAll(gone, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+root+`","name":"proj"}`)
+	parent := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
+	if err := srv.DB.UpdateSessionRuntime(ctx, parent.ID, gone, "bash"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(gone); err != nil {
+		t.Fatal(err)
+	}
+
+	child := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","parentSessionId":"`+parent.ID+`","command":["sleep","60"]}`)
+	if child.CWD != root {
+		t.Errorf("a scratch terminal whose parent's directory had gone opened in %q, want the "+
+			"project root %q", child.CWD, root)
+	}
+}

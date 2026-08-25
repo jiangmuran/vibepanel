@@ -7119,3 +7119,60 @@ no-op fails it; removing the *local* empty guard does not, and that is correct
 rather than a hole — the API still refuses, the row still keeps its text, and
 the check is about what the person ends up with rather than which of the two
 layers held.
+
+## An agent in your home directory, filed under a project it is not in
+
+Delete a project's directory — a git worktree pruned, a mount gone, a rename —
+while the panel is running, then open a session in that project.
+
+```
+the project directory has been removed: /tmp/…/worktree
+create returned:                        201
+the session is actually running in:     "/home/jmr"
+the project it is filed under is:       "/tmp/…/worktree"
+```
+
+tmux falls back to `$HOME` when `-c` names a directory that is not there, and
+says nothing about it. The panel passed the project's path straight through, so
+the session was created, started in the user's home directory, and listed in
+the sidebar under the project it was not in. The row even recorded the
+requested directory rather than the real one until the poller corrected it.
+
+Discovered by accident, in the sidebar of a screenshot taken for a different
+question: three sessions where there should have been two, and the third was
+titled **`jmr`** — the automatic title, taken from the directory the pane was
+actually in.
+
+For a panel whose whole purpose is running coding agents, "refactor this"
+starting in somebody's home directory is the wrong kind of surprise. The panel
+already refuses to *create a project* whose directory is missing; it just never
+asked again, and a directory checked once can be gone by the time a session is
+started in it.
+
+### Refused, except where there is somewhere sensible to stand
+
+A scratch terminal opens in its parent's working directory, which an agent may
+have `cd`'d into and which may since have gone. The project root is still a
+useful place to be and is not a lie about where you are, so that case falls
+back rather than refusing. Only when there is nowhere left to stand does the
+request fail:
+
+```
+400 {"error":"the project directory is not there any more: /tmp/…/worktree"}
+```
+
+and the panel shows it, because `guard()` puts an API error into the banner.
+
+Two tests, one per branch, each failing under its own mutation: removing the
+guard lets the session be created *and* drops the scratch terminal into a
+directory that no longer exists; turning the fallback into a refusal breaks
+only the second.
+
+### Two things that were already right
+
+The file panel says `no such directory` in the same situation — my probe looked
+for the wrong container and reported nothing, which was the probe. And the
+running session in the deleted directory is untouched: still `working`, still
+in tmux, which is the whole point of the architecture. tmux holds the working
+directory open; the directory being unlinked does not disturb a process already
+inside it.

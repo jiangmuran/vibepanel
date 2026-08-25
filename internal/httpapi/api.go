@@ -563,6 +563,15 @@ func (s *Server) forgetHookStatus() {
 	s.hookMu.Unlock()
 }
 
+// isDirectory reports whether a path is a directory that exists right now.
+//
+// "Right now" is the point: a project's directory is checked when the project
+// is created and can be gone by the time a session is started in it.
+func isDirectory(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
 func orderMode(manual bool) string {
 	if manual {
 		return "manual"
@@ -790,6 +799,31 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			dir = parentRec.CWD
 		}
 		parent = &req.ParentSessionID
+	}
+
+	// tmux falls back to $HOME when -c names a directory that is not there, and
+	// says nothing about it. So a project whose directory has been removed — a
+	// git worktree pruned, a mount gone, a rename — silently produced an agent
+	// running in the user's home directory, filed in the sidebar under the
+	// project it was not in.
+	//
+	// Measured: directory deleted, POST /api/sessions returns 201, and
+	// pane_current_path is /home/jmr. For a panel whose job is running coding
+	// agents, "refactor this" starting in somebody's home directory is the
+	// wrong kind of surprise.
+	//
+	// A scratch terminal inherits its parent's working directory, which can
+	// have gone while the project root is still there; the root is a useful
+	// place to be and not a lie about where you are. Only when there is
+	// nowhere left to stand does this refuse.
+	if !isDirectory(dir) {
+		if dir != p.Path && isDirectory(p.Path) {
+			dir = p.Path
+		} else {
+			writeErr(w, http.StatusBadRequest,
+				"the project directory is not there any more: "+p.Path)
+			return
+		}
 	}
 
 	sid := id.New()
