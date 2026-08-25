@@ -6030,3 +6030,46 @@ entries age out and sign-in works again without restarting anything. That is a
 separate property from the cap itself, and it has its own test: fill the store,
 backdate every entry, and the next ceremony must be accepted. Moving the check
 one line earlier passes the bound test and fails that one.
+
+## The throttle counted addresses, and addresses are free
+
+The login throttle keys on the client address, which is the obvious thing and
+is only correct for IPv4. The smallest IPv6 allocation anyone is given is a
+/64: eighteen quintillion addresses, all belonging to the same person, each a
+different key. Fifty failures from one /64, never throttled once.
+
+A password guessed at that rate is a password guessed, and the panel is
+deliberately on the public internet.
+
+Bucketing to a /64 is the fix, and the /64 is the right width precisely because
+it is the unit that gets handed out — narrower is evadable, wider throttles
+somebody's neighbours. Done inside the throttle rather than at the four call
+sites, because forgetting one call site is exactly this bug again.
+
+### The half the comment did not say
+
+`evict()` bounds the map at four thousand entries by dropping the oldest, and
+its comment already conceded the cost:
+
+> This does let a source that can present many addresses shorten its own
+> backoff.
+
+*Its own.* It also flushed everybody else's. An address with six failures
+recorded against it was forgotten because somebody else arrived from eight
+thousand addresses — so rotation was not merely evasion, it was a reset button
+for the whole throttle, including for an attacker being throttled on IPv4.
+
+Bucketing does not fix that. A /48 is sixty-five thousand /64s, still well past
+the bound. What fixes it is ranking: evict fewest failures first, then oldest.
+An entry with one failure against it is close to noise; an entry with six is
+the thing the structure exists to remember. Displacing it now costs an attacker
+six real failures per address instead of one request, and with /64 bucketing
+those are bounded per allocation.
+
+Two fixes for what looked like one bug, and the tests are orthogonal: removing
+the bucketing fails only the /64 test, removing the failure ranking fails only
+the eviction test. That was worth checking, because the first version of this
+entry assumed bucketing would fix both.
+
+`ClientIP` is untouched. The audit log and the CIDR allowlist still see the
+exact address, which is what they are for.

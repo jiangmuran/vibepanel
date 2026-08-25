@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -87,6 +88,37 @@ func TestQuietSourcesAreForgotten(t *testing.T) {
 	}
 }
 
+// A spray across many addresses must not choose how much the panel remembers.
+//
+// The first attempt at this bounded nothing: it dropped entries older than the
+// forget window, then older than half of it, but in a fast spray every entry is
+// newer than both — so the map grew anyway and every request paid to walk it.
+func TestThrottleBoundsWhatItRemembers(t *testing.T) {
+	th := NewThrottle()
+	now := t0
+	// Far more sources than a real panel sees, arriving far faster than any age
+	// cutoff could retire them.
+	for i := 0; i < maxEntries*3; i++ {
+		th.Fail(fmt.Sprintf("10.%d.%d.%d", i/65536, (i/256)%256, i%256), now)
+		now = now.Add(time.Millisecond)
+	}
+
+	th.mu.Lock()
+	held := len(th.entries)
+	th.mu.Unlock()
+	if held > maxEntries {
+		t.Errorf("remembered %d sources with a cap of %d; the map grows with the attack",
+			held, maxEntries)
+	}
+
+	// And the ones it kept are the recent ones, so a source still guessing right
+	// now is still being slowed down.
+	recent := fmt.Sprintf("10.%d.%d.%d", (maxEntries*3-1)/65536, ((maxEntries*3-1)/256)%256, (maxEntries*3-1)%256)
+	if n := th.Failures(recent); n == 0 {
+		t.Error("the most recent source was evicted; eviction is dropping the wrong end")
+	}
+}
+
 func TestThrottleIsConcurrencySafe(t *testing.T) {
 	// Run with -race. Every request touches this.
 	th := NewThrottle()
@@ -102,4 +134,54 @@ func TestThrottleIsConcurrencySafe(t *testing.T) {
 		th.Failures("shared")
 	}
 	<-done
+}
+
+func TestOneAttackerIsOneSourceOnIPv6(t *testing.T) {
+	// Keying on the exact address is keying on nothing when the address is
+	// IPv6. The smallest allocation anyone gets is a /64, so an attacker who
+	// changes the last four groups between attempts has 18 quintillion keys
+	// and never meets the same counter twice.
+	//
+	// A password guessed at that rate is a password guessed.
+	th := NewThrottle()
+	now := time.Now()
+	for i := 0; i < 50; i++ {
+		addr := fmt.Sprintf("2001:db8:1:2::%x", i+1)
+		if _, blocked := th.Delay(addr, now); blocked {
+			return // throttled: the addresses are being treated as one source
+		}
+		th.Fail(addr, now)
+		now = now.Add(10 * time.Millisecond)
+	}
+	t.Error("fifty failures from one /64 were never throttled; every address in it " +
+		"belongs to the same person and the counter never saw two of them")
+}
+
+func TestRotatingAddressesDoNotEraseTheHistoryOfOthers(t *testing.T) {
+	// The second-order problem, and the worse one. Entries are bounded, and
+	// past the bound the oldest are dropped — so an attacker rotating
+	// addresses does not merely evade its own counter, it flushes everybody
+	// else's. Rotation becomes a reset button for the whole throttle.
+	th := NewThrottle()
+	now := time.Now()
+
+	const victim = "203.0.113.7"
+	for i := 0; i < 6; i++ {
+		th.Fail(victim, now)
+		now = now.Add(time.Millisecond)
+	}
+	if th.Failures(victim) == 0 {
+		t.Fatal("the setup did not record any failures")
+	}
+
+	// Enough distinct sources to go well past the bound.
+	for i := 0; i < maxEntries*2; i++ {
+		th.Fail(fmt.Sprintf("2001:db8:%x:%x::1", i/65536, i%65536), now)
+		now = now.Add(time.Microsecond)
+	}
+
+	if th.Failures(victim) == 0 {
+		t.Error("an address with six failures against it was forgotten because somebody " +
+			"else arrived from a lot of addresses; rotation resets the throttle for everyone")
+	}
 }
