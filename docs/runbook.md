@@ -39,10 +39,12 @@ pane and whatever the agent was doing, until the machine restarts.
 The panel reports rather than adopts, deliberately: taking one over would mean
 guessing which project it belongs to.
 
-One known way to produce them is `vibepanel session kill --id <id>` on a
-session that has scratch terminals under it. The child rows go with the parent
-through the database cascade and their tmux sessions do not — the HTTP path
-kills them, the CLI does not. See the note at that call site.
+`vibepanel session kill` used to make them: it killed one tmux session, and
+the scratch terminals under it kept running while their rows cascaded away
+with the parent's. Fixed — both paths now kill the children first — so on a
+current binary this warning points at something else: a row deleted by hand, a
+database restored from a backup taken before those sessions existed, or a
+`--data-dir` pointed somewhere new while the tmux server kept running.
 
 ```sh
 tmux -L vibepanel ls          # everything on the panel's socket

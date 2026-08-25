@@ -605,31 +605,7 @@ func cmdSession(args []string) error {
 		if err != nil {
 			return err
 		}
-		// KNOWN GAP, not fixed here: this kills one tmux session and the HTTP
-		// path kills the scratch terminals under it as well.
-		//
-		// handleDeleteSession lists ListChildSessions first, and says why:
-		// "Children cascade away in the database, but their tmux sessions do
-		// not. Deleting the row first would leave processes nothing in the UI
-		// can reach." That is exactly what this does — the child rows go with
-		// the parent and their panes keep running on the panel's socket with
-		// nothing left pointing at them.
-		//
-		// Established by reading the two paths against each other rather than
-		// by running either, in a sitting where nothing could be run. Whoever
-		// fixes it should do what the handler does, and add the test that
-		// would have caught the two paths drifting apart in the first place —
-		// which is the shape that has cost this project repeatedly.
-		//
-		// It is one step to confirm, and the panel already reports the
-		// symptom. Kill a session that has scratch terminals under it with
-		// this command, then start the panel: Reconcile counts tmux sessions
-		// on our socket with no database row and logs
-		//
-		//   tmux sessions on our socket with no database row count=N
-		//
-		// If that warning does not appear, this comment is wrong and should go.
-		if err := a.tmux.Kill(ctx, s.TmuxName); err != nil {
+		if err := killSessionTree(ctx, a.db, a.tmux, s); err != nil {
 			return err
 		}
 		if err := a.db.DeleteSession(ctx, s.ID); err != nil {
@@ -913,4 +889,30 @@ func ago(unix int64) string {
 		return fmt.Sprintf("%dh", int(d.Hours()))
 	}
 	return fmt.Sprintf("%dd", int(d.Hours()/24))
+}
+
+// killSessionTree kills a session's tmux session and those of the scratch
+// terminals under it.
+//
+// The children first, then the parent: the caller deletes the row next and the
+// child rows cascade away with it, so a child whose tmux session outlived this
+// call is a process nothing in the panel can reach again. handleDeleteSession
+// has always done this; the CLI killed one session and left the rest running,
+// which the panel then reported at every startup as "tmux sessions on our
+// socket with no database row" without saying who made them.
+//
+// Kept as a function rather than four lines in the switch so that the test can
+// reach it. The two paths drifting apart is the shape that has cost this
+// project more than any single bug.
+func killSessionTree(ctx context.Context, db *store.DB, tm *tmux.Client, s store.Session) error {
+	children, err := db.ListChildSessions(ctx, s.ID)
+	if err != nil {
+		return err
+	}
+	for _, c := range append(children, s) {
+		if err := tm.Kill(ctx, c.TmuxName); err != nil {
+			return fmt.Errorf("kill %s: %w", c.TmuxName, err)
+		}
+	}
+	return nil
 }

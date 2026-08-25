@@ -1,11 +1,18 @@
 package main
 
 import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/jiangmuran/vibepanel/internal/config"
+	"github.com/jiangmuran/vibepanel/internal/store"
+	"github.com/jiangmuran/vibepanel/internal/tmux"
 )
 
 func TestEveryDocumentedCommandExists(t *testing.T) {
@@ -53,6 +60,83 @@ func TestTheHelpTextDescribesEachCommand(t *testing.T) {
 		}
 		if len(fields) < 3 {
 			t.Errorf("%q has a name and almost nothing else", strings.TrimSpace(line))
+		}
+	}
+}
+
+// A session's scratch terminals must die with it.
+//
+// The database cascades the child rows away, and tmux knows nothing about that
+// cascade. Kill only the parent's tmux session and the children keep running on
+// the panel's socket with no row left pointing at them: nothing in the UI can
+// reach them, and they hold a pane until the machine restarts. The panel says
+// so at startup — "tmux sessions on our socket with no database row" — which is
+// a report, not a repair.
+//
+// This is the shape that has cost this project repeatedly: two paths doing the
+// same thing, one of them updated. handleDeleteSession has listed the children
+// and killed them for as long as it has existed, and said why in a comment.
+func TestKillingASessionKillsItsScratchTerminals(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	ctx := context.Background()
+
+	socket := "vibepanel-test-" + strconv.Itoa(os.Getpid()) + "-killtree"
+	tm := tmux.New(socket, t.TempDir())
+	t.Cleanup(func() {
+		_ = tm.KillServer(ctx)
+		_ = os.Remove(tm.SocketPath())
+	})
+	if err := tm.EnsureServer(ctx); err != nil {
+		t.Fatalf("EnsureServer: %v", err)
+	}
+
+	db, err := store.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	proj, err := db.CreateProject(ctx, "p_test", "test", t.TempDir())
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	mk := func(id, name string, parent *string) store.Session {
+		t.Helper()
+		if err := tm.Create(ctx, tmux.CreateOptions{
+			Name: name, Dir: proj.Path,
+			Command: []string{"sleep", "300"},
+			Width:   80, Height: 24,
+		}); err != nil {
+			t.Fatalf("tmux create %s: %v", name, err)
+		}
+		row, err := db.CreateSession(ctx, store.Session{
+			ID: id, ProjectID: proj.ID, TmuxName: name, Title: id, ParentID: parent,
+		})
+		if err != nil {
+			t.Fatalf("create session row %s: %v", id, err)
+		}
+		return row
+	}
+
+	parent := mk("s_parent", "vp_parent", nil)
+	mk("s_child_a", "vp_child_a", &parent.ID)
+	mk("s_child_b", "vp_child_b", &parent.ID)
+
+	if err := killSessionTree(ctx, db, tm, parent); err != nil {
+		t.Fatalf("killSessionTree: %v", err)
+	}
+
+	for _, name := range []string{"vp_parent", "vp_child_a", "vp_child_b"} {
+		alive, err := tm.Has(ctx, name)
+		if err != nil {
+			t.Fatalf("Has(%s): %v", name, err)
+		}
+		if alive {
+			t.Errorf("%s is still running after its session was killed; "+
+				"its row is about to cascade away and nothing will be able to reach it", name)
 		}
 	}
 }
