@@ -402,7 +402,18 @@ type Info struct {
 	// DeadStatus is #{pane_dead_status}, the wait status of the exited
 	// process. Only meaningful while Dead; tmux leaves it empty otherwise, so
 	// it reads as 0 and a live pane must never be described by it.
+	//
+	// It is also empty for a pane that did not exit but was killed, which is a
+	// different thing that read identically. See DeadSignal.
 	DeadStatus int
+	// DeadSignal is #{pane_dead_signal}, set instead of DeadStatus when the
+	// process was killed rather than having exited.
+	//
+	// Measured: SIGKILL leaves dead_status empty and dead_signal 9. The panel
+	// read only the first, so a process killed by the OOM killer reported
+	// "exited with status 0" — the same as one that finished its work. On a
+	// machine running a couple of dozen agents that is not a rare distinction.
+	DeadSignal int
 	// Bell is #{window_bell_flag}, and it is load-bearing exactly once: at
 	// startup, before anything attaches.
 	//
@@ -464,9 +475,24 @@ var infoFields = []string{
 	"#{alternate_on}",
 	// Appended rather than inserted: parseInfo indexes this slice positionally.
 	"#{pane_dead_status}",
+	"#{pane_dead_signal}",
 }
 
 var infoFormat = strings.Join(infoFields, fieldSep)
+
+// ExitStatus is how the pane ended, in the one number the rest of the panel
+// carries.
+//
+// 128+signal for a kill, which is the convention every shell uses and makes
+// the common ones recognisable on sight: 137 is SIGKILL, 139 a segfault, 143 a
+// SIGTERM. Reading dead_status alone reported all of them as 0, which is the
+// number a task that finished cleanly has.
+func (i Info) ExitStatus() int {
+	if i.DeadSignal > 0 {
+		return 128 + i.DeadSignal
+	}
+	return i.DeadStatus
+}
 
 // List returns a snapshot of every session on our socket.
 //
@@ -521,6 +547,7 @@ func parseInfo(line string) (Info, error) {
 		PID:         atoi(f[4]),
 		Dead:        f[5] == "1",
 		DeadStatus:  atoi(f[11]),
+		DeadSignal:  atoi(f[12]),
 		Bell:        f[6] == "1",
 		Width:       atoi(f[7]),
 		Height:      atoi(f[8]),

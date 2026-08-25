@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -750,4 +751,93 @@ func TestTmuxSwallowsDesktopNotificationSequences(t *testing.T) {
 		t.Error("a real BEL did not register either, so this test proves nothing about " +
 			"the sequences above")
 	}
+}
+
+func TestAKilledPaneIsNotACleanExit(t *testing.T) {
+	// tmux reports the two differently: pane_dead_status is the wait status of
+	// a process that returned, and it is empty for one that was killed, where
+	// pane_dead_signal holds the signal. The panel read only the first, so a
+	// pane killed by the OOM killer described itself as "exited with status 0"
+	// — indistinguishable from one that finished its work. On a machine
+	// running a couple of dozen agents that is not a rare distinction.
+	ctx := context.Background()
+	c := newTestClient(t)
+	// EnsureServer, because remain-on-exit lives in the embedded config: a
+	// server started without it destroys the session the moment the process
+	// ends, and there is no dead pane left to ask about.
+	if err := c.EnsureServer(ctx); err != nil {
+		t.Fatalf("EnsureServer: %v", err)
+	}
+
+	const name = "vp_killed"
+	if err := c.Create(ctx, CreateOptions{
+		Name: name, Dir: t.TempDir(), Width: 80, Height: 24,
+		Command: []string{"sh", "-c", "echo starting; exec sleep 600"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	var info Info
+	for i := 0; i < 40; i++ {
+		time.Sleep(100 * time.Millisecond)
+		got, err := c.Get(ctx, name)
+		if err == nil && got.PID > 0 && got.Command == "sleep" {
+			info = got
+			break
+		}
+	}
+	if info.PID == 0 {
+		t.Fatal("the pane never started its command")
+	}
+	if err := syscall.Kill(info.PID, syscall.SIGKILL); err != nil {
+		t.Fatalf("kill: %v", err)
+	}
+
+	var dead Info
+	for i := 0; i < 40; i++ {
+		time.Sleep(100 * time.Millisecond)
+		got, err := c.Get(ctx, name)
+		if err == nil && got.Dead {
+			dead = got
+			break
+		}
+	}
+	if !dead.Dead {
+		t.Fatal("the pane never went dead")
+	}
+	if dead.DeadSignal != int(syscall.SIGKILL) {
+		t.Errorf("DeadSignal = %d, want %d", dead.DeadSignal, syscall.SIGKILL)
+	}
+	if got := dead.ExitStatus(); got != 128+int(syscall.SIGKILL) {
+		t.Errorf("ExitStatus() = %d, want %d; a killed process must not report "+
+			"the number a successful one has", got, 128+int(syscall.SIGKILL))
+	}
+}
+
+func TestAnOrdinaryExitKeepsItsStatus(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	if err := c.EnsureServer(ctx); err != nil {
+		t.Fatalf("EnsureServer: %v", err)
+	}
+	const name = "vp_exited"
+	if err := c.Create(ctx, CreateOptions{
+		Name: name, Dir: t.TempDir(), Width: 80, Height: 24,
+		Command: []string{"sh", "-c", "exit 3"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	for i := 0; i < 40; i++ {
+		time.Sleep(100 * time.Millisecond)
+		got, err := c.Get(ctx, name)
+		if err == nil && got.Dead {
+			if got.ExitStatus() != 3 {
+				t.Errorf("ExitStatus() = %d, want 3", got.ExitStatus())
+			}
+			if got.DeadSignal != 0 {
+				t.Errorf("DeadSignal = %d for a process that exited normally", got.DeadSignal)
+			}
+			return
+		}
+	}
+	t.Fatal("the pane never went dead")
 }

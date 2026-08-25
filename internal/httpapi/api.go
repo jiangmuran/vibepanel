@@ -1380,8 +1380,10 @@ func (s *Server) pollOnce(ctx context.Context) error {
 				return err
 			}
 		}
-		if info.Dead != row.Exited || (info.Dead && info.DeadStatus != row.ExitStatus) {
-			if err := s.DB.SetSessionExit(ctx, row.ID, info.Dead, info.DeadStatus); err != nil {
+		// ExitStatus rather than DeadStatus: a killed process leaves the latter
+		// empty, so an agent the OOM killer took read as "exited with 0".
+		if info.Dead != row.Exited || (info.Dead && info.ExitStatus() != row.ExitStatus) {
+			if err := s.DB.SetSessionExit(ctx, row.ID, info.Dead, info.ExitStatus()); err != nil {
 				return err
 			}
 		}

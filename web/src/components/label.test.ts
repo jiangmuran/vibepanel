@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { disambiguatedLabels, sessionLabel } from './label'
+import { disambiguatedLabels, sessionLabel, exitReason } from './label'
 import type { Session } from '../protocol/wire'
 
 /**
@@ -85,5 +85,28 @@ describe('disambiguatedLabels', () => {
     const s = session({ id: 'a', title: '', command: 'claude' })
     expect(sessionLabel(s)).toBe('claude')
     expect(disambiguatedLabels([s]).get('a')).toBe('claude')
+  })
+})
+
+describe('exitReason', () => {
+  it('names the signals worth recognising', () => {
+    // 137 is what a machine running a couple of dozen agents produces when it
+    // runs out of memory. It must not read like success.
+    expect(exitReason(137)).toBe('killed (SIGKILL)')
+    expect(exitReason(139)).toBe('killed (SIGSEGV)')
+    expect(exitReason(143)).toBe('killed (SIGTERM)')
+  })
+
+  it('falls back to the number for a signal it does not know', () => {
+    expect(exitReason(128 + 31)).toBe('killed by signal 31')
+  })
+
+  it('leaves ordinary exits alone', () => {
+    expect(exitReason(0)).toBe('exited')
+    expect(exitReason(1)).toBe('exited with status 1')
+    expect(exitReason(3)).toBe('exited with status 3')
+    // 128 itself is not a signal death, and neither is a status past the range.
+    expect(exitReason(128)).toBe('exited with status 128')
+    expect(exitReason(255)).toBe('exited with status 255')
   })
 })

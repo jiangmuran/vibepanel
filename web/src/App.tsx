@@ -25,7 +25,7 @@ import { MobileKeyBar } from './components/mobile/MobileKeyBar'
 import { ComposeInput } from './components/mobile/ComposeInput'
 import { SelectionCopy } from './components/mobile/SelectionCopy'
 import type { PanelTab } from './components/RightPanel'
-import { disambiguatedLabels, sessionLabel } from './components/label'
+import { disambiguatedLabels, sessionLabel, exitReason } from './components/label'
 import { applyTheme, loadTheme } from './components/theme'
 import type { ThemeChoice } from './components/theme'
 import { NARROW_QUERY, useMediaQuery } from './hooks/useMediaQuery'
@@ -553,9 +553,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
                   title={
                     current.exitStatus === EXIT_VANISHED
                       ? 'The tmux session is gone. Start it again in a new one.'
-                      : current.exitStatus === 0
-                        ? 'The process exited. Run it again in this pane.'
-                        : `The process exited with status ${current.exitStatus}. Run it again in this pane.`
+                      : `The process ${exitReason(current.exitStatus)}. Run it again in this pane.`
                   }
                 >
                   <RotateCcw size={11} />

@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -2115,5 +2116,58 @@ func TestRestoreStateReadsWhatWasWrittenDown(t *testing.T) {
 	if st != session.StateWaiting {
 		t.Errorf("state after a restart = %q from %q, want %q; the agent is still "+
 			"sitting on its question", st, src, session.StateWaiting)
+	}
+}
+
+func TestAKilledAgentIsNotRecordedAsACleanExit(t *testing.T) {
+	// The poller wrote #{pane_dead_status}, which tmux leaves empty for a
+	// process that was killed rather than one that returned. So an agent the
+	// OOM killer took was stored with status 0 — the number a task that
+	// finished its work has — and the sidebar's "something failed here"
+	// indicator, which tests exitStatus !== 0, never fired for it.
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"test"}`)
+	sess := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sh","-c","exec sleep 600"]}`)
+
+	var pid int
+	for i := 0; i < 40; i++ {
+		time.Sleep(100 * time.Millisecond)
+		info, err := srv.Tmux.Get(ctx, sess.TmuxName)
+		if err == nil && info.PID > 0 && info.Command == "sleep" {
+			pid = info.PID
+			break
+		}
+	}
+	if pid == 0 {
+		t.Fatal("the pane never started its command")
+	}
+	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
+		t.Fatalf("kill: %v", err)
+	}
+
+	var row store.Session
+	for i := 0; i < 40; i++ {
+		time.Sleep(100 * time.Millisecond)
+		if err := srv.pollOnce(ctx); err != nil {
+			t.Fatalf("pollOnce: %v", err)
+		}
+		got, err := srv.DB.GetSession(ctx, sess.ID)
+		if err != nil {
+			t.Fatalf("GetSession: %v", err)
+		}
+		if got.Exited {
+			row = got
+			break
+		}
+	}
+	if !row.Exited {
+		t.Fatal("the poller never noticed the pane had died")
+	}
+	if row.ExitStatus != 128+int(syscall.SIGKILL) {
+		t.Errorf("stored exit status = %d, want %d; a killed agent must not look "+
+			"like one that finished", row.ExitStatus, 128+int(syscall.SIGKILL))
 	}
 }

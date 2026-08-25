@@ -7785,3 +7785,66 @@ mutex-protected. It still fails when the restore is removed.
 
 Running one test on its own is not running the suite, and `-race` is not
 optional for a package whose subject is a server with goroutines in it.
+
+## An agent the OOM killer took looked like one that finished
+
+tmux reports the two ways a pane can end differently. `#{pane_dead_status}` is
+the wait status of a process that returned; for one that was *killed* it is
+empty, and `#{pane_dead_signal}` holds the signal instead. Measured:
+
+```
+after SIGKILL:  dead=1  dead_status=[]  dead_signal=[9]
+```
+
+The panel read only the first, so it stored 0 — the number a task that finished
+its work has. An agent killed by the OOM killer, a segfault, or a stray
+`kill` was recorded as a clean exit, and the sidebar's "something failed here"
+indicator, which tests `exitStatus !== 0`, never fired for any of them.
+
+On a machine running a couple of dozen agents, the OOM killer is not a rare
+visitor, and "your agent was killed" versus "your agent finished" is the whole
+question.
+
+`Info.ExitStatus()` now returns 128+signal for a kill, which is what every
+shell does and makes the common ones recognisable: 137 is SIGKILL, 139 a
+segfault, 143 a SIGTERM. The restart button's explanation reads them back out
+in words — "The process killed (SIGKILL). Run it again in this pane." — because
+137 on its own is not something anybody decodes at 2am.
+
+### The fixture had to load the real config
+
+The first version of the tmux test failed with "the pane never went dead".
+`newTestClient` does not call `EnsureServer`, so its server runs without the
+embedded config — and `remain-on-exit` lives there. Without it the session is
+destroyed the moment the process ends and there is no dead pane left to ask
+about. A fixture that does not load what production loads is testing a
+different program.
+
+### And a bug that was not one
+
+The same probe appeared to show the restart button doing nothing: `204` from
+the endpoint, and twelve seconds later the pane still `dead=1` with the same
+pid. Both halves were the probe.
+
+The fixture's command was `sh -c 'echo something broke; exit 3'`, so respawning
+it re-runs a command that exits immediately — correctly dead again, with the
+same status. And the pid was compared across three readings *after* the
+restart, never against the one before it. Driven directly against tmux, the pid
+goes 2407602 → 2407612 on respawn, and a pane whose command survives comes back
+`dead=0` with `sleep` running.
+
+Two wrong conclusions in one measurement, both pointing at working code.
+
+### The stale-build guard earned its keep
+
+Editing `App.tsx` and then running `make check` followed by the browser
+harnesses: `make check` does not rebuild the frontend into
+`internal/webui/dist`, so all three refused to start.
+
+```
+Error: web/src/App.tsx is newer than the built frontend in internal/webui/dist.
+The binary embeds the previous one, so this check would measure a build that
+does not contain the change. Run `make build`.```
+
+Without it they would have driven the previous UI and reported three clean
+runs, which is what I would have written down.

@@ -75,3 +75,37 @@ function parentName(path: string): string {
   const parts = path.split('/').filter(Boolean)
   return parts.length >= 2 ? parts[parts.length - 2] : ''
 }
+
+/**
+ * Why a pane stopped, in words rather than a number.
+ *
+ * tmux reports a kill and an exit differently: `pane_dead_status` is the wait
+ * status of a process that returned, and it is empty for one that was killed,
+ * where `pane_dead_signal` holds the signal instead. The panel read only the
+ * first, so an agent the OOM killer took reported "exited with status 0" — the
+ * same as one that finished its work.
+ *
+ * The server now carries 128+signal, which is what every shell does. Here that
+ * is turned back into something a person recognises at 2am: "killed (SIGKILL)"
+ * is the machine running out of memory, and it should not look like success.
+ */
+const SIGNAL_NAMES: Record<number, string> = {
+  1: 'SIGHUP',
+  2: 'SIGINT',
+  6: 'SIGABRT',
+  9: 'SIGKILL',
+  11: 'SIGSEGV',
+  13: 'SIGPIPE',
+  15: 'SIGTERM',
+}
+
+export function exitReason(status: number): string {
+  if (status === 0) return 'exited'
+  // 128 is the shell convention's base; nothing sends signal 0.
+  if (status > 128 && status < 128 + 64) {
+    const sig = status - 128
+    const name = SIGNAL_NAMES[sig]
+    return name ? `killed (${name})` : `killed by signal ${sig}`
+  }
+  return `exited with status ${status}`
+}
