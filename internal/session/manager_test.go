@@ -1402,3 +1402,50 @@ collect:
 			"instead of handing them to the terminal: terminal-overrides needs indn@", len(su))
 	}
 }
+
+func TestTheAdvanceSignalIsComputedFromWhatTmuxSends(t *testing.T) {
+	// The rule that an animation does not clear a bell is covered in
+	// detect_test with hand-made Signals. Nothing covered the other half —
+	// the pump deciding what Advanced means — so inverting that line passed
+	// every test in the package.
+	//
+	// This drives real panes through the real pump into the real detector.
+	ctx := context.Background()
+	tm := newTestTmux(t)
+	m := NewManager(tm, 1<<20)
+	defer m.DetachAll()
+
+	det := NewDetector()
+	m.OnSignals = func(sig Signals) { det.Observe(sig.SessionID, sig, time.Now()) }
+
+	// ShellOnly is passed as false throughout: what is under test is the
+	// signal, not the classification of the pane's command.
+	start := func(id, script string) {
+		if err := tm.Create(ctx, tmux.CreateOptions{
+			Name: id, Dir: t.TempDir(), Width: 80, Height: 24,
+			Command: []string{"sh", "-c", script},
+		}); err != nil {
+			t.Fatalf("Create %s: %v", id, err)
+		}
+		if _, err := m.Attach(ctx, id, id, 80, 24); err != nil {
+			t.Fatalf("Attach %s: %v", id, err)
+		}
+	}
+
+	// Rings, then redraws one line in place — an agent waiting with a live
+	// "esc to interrupt" under its question.
+	start("vp_sig_spin",
+		"printf 'proceed?\\a'; while :; do for c in '|' '/' '-'; do printf '\\r%s waiting' \"$c\"; sleep 0.2; done; done")
+	// Rings, then produces output — an agent that was answered and went on.
+	start("vp_sig_work",
+		"printf 'proceed?\\a'; sleep 1; i=0; while :; do i=$((i+1)); printf 'reading file %d\\n' \"$i\"; sleep 0.2; done")
+
+	time.Sleep(8 * time.Second)
+
+	if st, _ := det.Evaluate("vp_sig_spin", Observation{}, time.Now()); st != StateWaiting {
+		t.Errorf("an agent that rang and is animating reads as %q, want %q", st, StateWaiting)
+	}
+	if st, _ := det.Evaluate("vp_sig_work", Observation{}, time.Now()); st != StateWorking {
+		t.Errorf("an agent that rang and went back to work reads as %q, want %q", st, StateWorking)
+	}
+}

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -134,6 +135,16 @@ type Signals struct {
 	// after a capability query times out. Counting those as activity makes an
 	// idle session look busy and clears the "waiting" state that matters most.
 	Visible bool
+
+	// Advanced is true when the chunk moved the screen forward rather than
+	// redrawing it where it stood.
+	//
+	// A line feed, measured on this PTY over three seconds of steady state:
+	// a spinner sends 480 bytes and none of them, an agent producing output
+	// sends 430 bytes and twenty-two. It is what tells "went back to work"
+	// apart from "is redrawing while it waits", which no timer can. See the
+	// bell rule in Evaluate.
+	Advanced bool
 }
 
 // Manager owns every live attachment.
@@ -420,7 +431,9 @@ func (m *Manager) pump(l *Live) {
 				settled := since > settleWindow
 				m.OnSignals(Signals{
 					SessionID: l.ID, Bell: bell, Titles: titles,
-					Bytes: n, Visible: settled && hasPrintable(chunk),
+					Bytes:    n,
+					Visible:  settled && hasPrintable(chunk),
+					Advanced: settled && bytes.Contains(chunk, []byte("\n")),
 				})
 			}
 		}

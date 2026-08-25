@@ -7660,3 +7660,61 @@ bundling, so the output really was identical and there really was no drift.
 A probe that changes nothing observable proves nothing, and it reads exactly
 like a working check. Changing a string that has to reach the bundle —
 a `title` attribute — produced the failure above.
+
+## A spinner erased the one state the panel exists for
+
+Without hooks, a bell is the only unambiguous "an agent wants a human" signal
+there is. The rule was that a bell means waiting until output arrives more than
+`bellGrace` after it — two seconds, meant to cover the prompt redraw that
+follows the ring.
+
+An agent whose TUI keeps moving defeats any finite grace, because the test is
+"has anything printed since" and something always has. Measured against the
+real binary, with panes whose command is not a shell:
+
+| pane | 3s | 8s | 15s |
+|---|---|---|---|
+| rings, then silent | waiting | waiting | waiting |
+| rings, then cursor moves only | waiting | waiting | waiting |
+| rings, then animates a spinner | waiting | **working** | **working** |
+| rings, then ticks a seconds counter | waiting | **working** | **working** |
+
+An agent asking a question with a live "esc to interrupt" line under it reads
+as busy: a blue circle instead of an orange triangle, sorted below the sessions
+that are merely working. On a phone at 2am that session is invisible.
+
+### The line feed
+
+What separates "went back to work" from "is redrawing while it waits" is
+whether the screen moved forward. Read off the PTY the panel actually sees,
+three seconds of steady state each:
+
+```
+spinner  480 bytes  LF=0     \r| over the same line
+lines    430 bytes  LF=22    the agent producing output
+box      105 bytes  LF=0     a full-screen repaint, cursor-addressed
+```
+
+So `Signals.Advanced` — the chunk contains a line feed — and the bell is
+cleared by that rather than by any output at all. No timer has to guess.
+
+Both directions hold. The four cases above stay `waiting` for as long as they
+run, and an agent that rings and then prints goes to `working`, including a
+full-screen one that scrolls: tmux turns a scroll into line feeds on this
+socket, which is the `indn@` from the scrollback work, so a scrolling TUI
+advances.
+
+### The rule was tested and the signal was not
+
+`TestWorkResumingClearsTheBell` encoded the old contract and failed, correctly:
+its fixture said `Visible` where an agent resuming work also advances. Updated
+rather than deleted — the intent was always right.
+
+Then a mutation inverting the *computation* of `Advanced` in the pump passed
+every test in the package. The detector tests build `Signals` by hand, so none
+of them touched the line that decides what Advanced means.
+`TestTheAdvanceSignalIsComputedFromWhatTmuxSends` drives two real panes through
+the real pump into the real detector; both mutations fail against it now.
+
+A rule with a well-tested consequence and an untested premise is the same
+blind spot as a check that drives the previous build.

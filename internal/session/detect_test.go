@@ -120,11 +120,52 @@ func TestBellSurvivesThePromptItAnnounces(t *testing.T) {
 func TestWorkResumingClearsTheBell(t *testing.T) {
 	// But a bell must not latch forever: once the agent is clearly working
 	// again, the session is no longer asking for anything.
+	//
+	// Advanced, not merely Visible. An agent that resumed work prints, and
+	// printing moves the screen forward; that is what distinguishes it from
+	// one redrawing a spinner in place. This test used to pass with Visible
+	// alone, and so did a session that had rung and was animating.
 	d := NewDetector()
 	d.Observe("s", Signals{Bytes: 10, Visible: true, Bell: true}, at(0))
-	d.Observe("s", Signals{Bytes: 500, Visible: true}, at(5*time.Second))
+	d.Observe("s", Signals{Bytes: 500, Visible: true, Advanced: true}, at(5*time.Second))
 	if st, _ := d.Evaluate("s", Observation{}, at(5*time.Second+100*time.Millisecond)); st != StateWorking {
 		t.Errorf("state = %q, want %q once work resumed", st, StateWorking)
+	}
+}
+
+func TestAnAnimationDoesNotClearTheBell(t *testing.T) {
+	// The failure this was written for, measured against the real binary: a
+	// pane that rings and then animates showed waiting at three seconds and
+	// working from eight onwards, for as long as it kept animating. An agent
+	// asking a question with a live "esc to interrupt" line under it read as
+	// busy — on a phone, sorted below the sessions that were merely working,
+	// with a circle instead of a triangle.
+	//
+	// bellGrace cannot fix it. The test was "has anything printed since the
+	// ring", and something always has: 480 bytes over three seconds of steady
+	// state, none of them a line feed.
+	d := NewDetector()
+	d.Observe("s", Signals{Bytes: 10, Visible: true, Bell: true}, at(0))
+	for i := 1; i <= 100; i++ {
+		// '\r|' over the same line, once every 200ms, for twenty seconds.
+		d.Observe("s", Signals{Bytes: 30, Visible: true}, at(time.Duration(i)*200*time.Millisecond))
+	}
+	if st, _ := d.Evaluate("s", Observation{}, at(21*time.Second)); st != StateWaiting {
+		t.Errorf("state = %q after twenty seconds of animation, want %q; "+
+			"the one signal this panel exists for was erased by a spinner", st, StateWaiting)
+	}
+}
+
+func TestAFullScreenRepaintDoesNotClearTheBell(t *testing.T) {
+	// The other shape of the same thing: a TUI rewriting cells where they
+	// stand. 105 bytes over three seconds, no line feeds, no carriage returns.
+	d := NewDetector()
+	d.Observe("s", Signals{Bytes: 10, Visible: true, Bell: true}, at(0))
+	for i := 1; i <= 50; i++ {
+		d.Observe("s", Signals{Bytes: 12, Visible: true}, at(time.Duration(i)*200*time.Millisecond))
+	}
+	if st, _ := d.Evaluate("s", Observation{}, at(11*time.Second)); st != StateWaiting {
+		t.Errorf("state = %q while a waiting agent repainted its screen, want %q", st, StateWaiting)
 	}
 }
 

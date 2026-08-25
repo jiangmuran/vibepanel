@@ -68,7 +68,10 @@ type Detector struct {
 
 type tracker struct {
 	lastOutput time.Time
-	lastBell   time.Time
+	// lastAdvance — when the screen last moved forward, as opposed to being
+	// redrawn where it stood. See the bell rule in Evaluate.
+	lastAdvance time.Time
+	lastBell    time.Time
 
 	hookState State
 	hookAt    time.Time
@@ -98,6 +101,9 @@ func (d *Detector) Observe(id string, sig Signals, now time.Time) {
 	// reconfigured, not the session doing something.
 	if sig.Visible {
 		t.lastOutput = now
+	}
+	if sig.Advanced {
+		t.lastAdvance = now
 	}
 	if sig.Bell {
 		t.lastBell = now
@@ -215,7 +221,28 @@ func (d *Detector) Evaluate(id string, obs Observation, now time.Time) (State, S
 	// waiting sorts to the top, so it sat there above the sessions that really
 	// were asking for a human. See below for why that is the expensive
 	// direction to be wrong in.
-	if !obs.ShellOnly && !t.lastBell.IsZero() && !t.lastOutput.After(t.lastBell.Add(bellGrace)) {
+	// Cleared by output that moved the screen forward, not by any output at
+	// all. An agent that rang and is animating is still waiting.
+	//
+	// bellGrace was meant to cover the redraw that follows the ring, and it
+	// does — for two seconds. An agent whose TUI keeps moving defeats any
+	// finite grace, because the test was "has anything printed since", and
+	// something always has. Measured against the real binary, with a pane that
+	// rings and then animates: waiting at three seconds, working from eight
+	// onwards, and working for as long as it kept going. The one signal this
+	// panel exists to surface, erased by a spinner.
+	//
+	// A line feed is the difference, and it is clean on the wire. Three seconds
+	// of steady state, read off the PTY the panel actually sees:
+	//
+	//   spinner  480 bytes  LF=0     '\r|' over the same line
+	//   lines    430 bytes  LF=22    the agent producing output
+	//   box      105 bytes  LF=0     a full-screen repaint, cursor-addressed
+	//
+	// So "the screen advanced" separates an agent that went back to work from
+	// one that is redrawing while it waits, and neither case needs a timer to
+	// guess with.
+	if !obs.ShellOnly && !t.lastBell.IsZero() && !t.lastAdvance.After(t.lastBell.Add(bellGrace)) {
 		return StateWaiting, SourceHeuristic
 	}
 
