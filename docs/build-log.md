@@ -7629,3 +7629,34 @@ each time: a measurement that answers a question next to the one being asked.
 `.xterm-viewport` instead of xterm's own scroll element. A build that failed
 while its output was captured and its exit code ignored. And now a checkout
 that nobody was ever checking. All three reported success.
+
+## The bundle that does not match its own sources
+
+`internal/webui/dist` is committed, because the binary embeds it and `go build`
+has to work on a machine with no npm. That makes a second kind of drift
+possible, and a quieter one than the missing file: commit a frontend change
+without rebuilding, and everything passes. The Go build compiles, the tests
+run, `head-check` is satisfied — and the binary serves the previous UI. The
+browser checks cannot see it either, because they build first.
+
+`head-check` now rebuilds the frontend in its worktree and asks git whether
+anything moved:
+
+```
+[FAIL] the committed frontend bundle is not what these sources build:
+        D internal/webui/dist/assets/index-XgnNSXlN.js
+        M internal/webui/dist/index.html
+       ?? internal/webui/dist/assets/index-UC4TH9xD.js
+```
+
+HEAD was current when this was written, so this closes a hole rather than
+fixing a break.
+
+### The probe was too weak first
+
+The first attempt appended `// drift probe` to `main.tsx` and committed it
+without rebuilding. The check passed, correctly: comments do not survive
+bundling, so the output really was identical and there really was no drift.
+A probe that changes nothing observable proves nothing, and it reads exactly
+like a working check. Changing a string that has to reach the bundle —
+a `title` attribute — produced the failure above.

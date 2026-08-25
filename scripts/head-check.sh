@@ -109,6 +109,28 @@ else
   grep -E 'FAIL|✕|Tests ' "$WORK/.vitest.out" | head -20 | sed 's/^/       /'
 fi
 
+# internal/webui/dist is committed, because the binary embeds it and `go build`
+# has to work on a machine with no npm. That makes it possible to commit a
+# frontend change without rebuilding it: everything above passes, the binary
+# compiles, and it serves the previous UI. Nothing else looks at this — the
+# browser checks build first, so they never see it.
+#
+# Rebuilding here and asking git whether anything moved is the whole test.
+if npm run build >"$WORK/.webbuild.out" 2>&1; then
+  DRIFT="$(git -C "$WORK" status --porcelain -- internal/webui/dist)"
+  if [ -n "$DRIFT" ]; then
+    fail "the committed frontend bundle is not what these sources build:"
+    echo "$DRIFT" | head -10 | sed 's/^/       /'
+    echo "       The binary embeds internal/webui/dist, so $REF serves a UI that"
+    echo "       does not match its own web/src. Run \`make build\` and commit it."
+  else
+    ok "internal/webui/dist matches web/src"
+  fi
+else
+  fail "npm run build:"
+  tail -20 "$WORK/.webbuild.out" | sed 's/^/       /'
+fi
+
 echo
 if [ "$FAILS" -gt 0 ]; then
   echo "=== head check: $FAILS FAIL — the working tree is not what was committed ==="
