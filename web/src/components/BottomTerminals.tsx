@@ -5,6 +5,7 @@ import type { PanelSocket } from '../protocol/socket'
 import type { Session } from '../protocol/wire'
 import { TerminalView } from './Terminal'
 import { InlineName } from './InlineName'
+import { StateDot } from './StateDot'
 
 interface Props {
   socket: PanelSocket
@@ -99,16 +100,40 @@ export function BottomTerminals(props: Props) {
       />
 
       <div className="flex h-8 shrink-0 items-center gap-1 px-2 vp-blur">
+        {/* The tabs scroll; the controls after them do not.
+            
+            This row had no overflow handling at all. Eight terminals in an
+            820px window put four of them past the right edge — and `overflow:
+            visible` means they were not clipped but *drawn over the panel to
+            the right*, with no way to scroll to them. The same shape as the
+            key bar: a row that can outgrow its box and hides whatever does not
+            fit.
+            
+            New-terminal and collapse are outside the scroller deliberately. Put
+            them inside and they scroll away exactly when there are enough tabs
+            to need them. */}
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
         {terminals.map((t, i) => (
           <div
             key={t.id}
             data-testid="bottom-tab"
+            data-session-id={t.id}
             data-active={active?.id === t.id}
             onClick={() => setActiveId(t.id)}
-            className={`group flex max-w-44 cursor-pointer items-center gap-1 rounded-vp px-2 py-1 text-[12px] transition-colors duration-200 ease-vp ${
+            className={`group flex max-w-44 shrink-0 cursor-pointer items-center gap-1 rounded-vp px-2 py-1 text-[12px] transition-colors duration-200 ease-vp ${
               active?.id === t.id ? 'bg-surface-2 text-ink' : 'text-ink-2 hover:bg-surface-2'
             }`}
           >
+            {/* Only when it has exited.
+                A bottom terminal that is running needs no decoration — the
+                strip would be a row of identical dots — but one whose process
+                is gone gave no sign at all, so a build that died down here
+                looked exactly like a build still going. The glyph carries the
+                difference between a clean exit and a crash by shape, as
+                everywhere else. */}
+            {t.exited && (
+              <StateDot state={t.state} exited exitStatus={t.exitStatus} size={8} />
+            )}
             <InlineName
               value={label(t, i)}
               onCommit={(next) => props.onRename(t, next)}
@@ -121,12 +146,13 @@ export function BottomTerminals(props: Props) {
                 props.onClose(t)
               }}
               title="Close terminal"
-              className="rounded p-0.5 vp-reveal hover:text-ink"
+              className="vp-tap rounded p-0.5 vp-reveal hover:text-ink"
             >
               <X size={11} />
             </button>
           </div>
         ))}
+        </div>
         <button
           type="button"
           data-testid="bottom-new"
@@ -140,7 +166,7 @@ export function BottomTerminals(props: Props) {
           type="button"
           onClick={props.onCollapse}
           title="Hide terminals"
-          className="ml-auto rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+          className="rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
         >
           <ChevronDown size={14} />
         </button>

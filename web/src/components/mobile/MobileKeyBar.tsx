@@ -19,17 +19,24 @@ export function MobileKeyBar({ onSend }: { onSend: (bytes: string) => void }) {
   const [ctrl, setCtrl] = useState(false)
   const [alt, setAlt] = useState(false)
 
+  // Raw sequences do not consume the modifiers.
+  //
+  // They used to clear them, which meant arming ctrl and tapping y sent a
+  // plain "y" and quietly dropped the modifier — the user believing they had
+  // just sent Ctrl-C to a runaway agent, and the agent receiving a yes. A
+  // modifier that disappears without doing anything is worse than not having
+  // one. It stays armed until a key it can actually apply to is pressed.
   const sendRaw = (s: string) => {
     onSend(s)
-    setCtrl(false)
-    setAlt(false)
   }
 
   const sendChar = (ch: string) => {
     let out = ch
     if (ctrl) out = withCtrl(out)
     if (alt) out = withAlt(out)
-    sendRaw(out)
+    onSend(out)
+    setCtrl(false)
+    setAlt(false)
   }
 
   const key = (name: KeyName) => () => sendRaw(KEY_SEQUENCES[name])
@@ -37,13 +44,38 @@ export function MobileKeyBar({ onSend }: { onSend: (bytes: string) => void }) {
   return (
     <div
       data-testid="key-bar"
-      className="flex shrink-0 flex-col gap-1 border-t border-hairline px-1 py-1.5 vp-blur"
+      // vp-safe-bottom: this is the lowest thing on a phone, and the viewport
+      // is set to extend under the home indicator. See the class for why.
+      className="flex shrink-0 flex-col gap-1 border-t border-hairline px-1 py-1.5 vp-blur vp-safe-bottom"
     >
       {/* Two rows, because eighteen keys do not fit across a phone and a
           single scrolling row hides whichever ones are not in view — which,
           the first time this was tried, meant y, n and Escape. This row holds
-          what an agent conversation actually needs and never scrolls. */}
-      <div data-testid="key-row-primary" className="flex items-center justify-between gap-1">
+          what an agent conversation actually needs, and nothing in it is ever
+          hidden.
+          
+          It wraps rather than scrolls. Eight keys at the 44px a thumb needs
+          come to 380px, which does not fit a 320px phone — measured on one,
+          after the touch targets were widened: the row overflowed by 56px, the
+          page did not scroll, and `alt` and `ctrl` were simply unreachable. A
+          second line costs 44px of a screen that has room for it; a key you
+          cannot press costs the feature. */}
+      <div
+        data-testid="key-row-primary"
+        // Packed from the left, not spread. justify-between stretches the
+        // *last* line too, so a wrapped row put ctrl against one edge and alt
+        // against the other with a hand's width of nothing between them —
+        // two keys that look like they belong to different things.
+        className="flex flex-wrap items-center justify-start gap-1"
+      >
+        {/* The one key this panel exists for.
+            Ctrl is a sticky modifier and there is no letter row, so before
+            this existed the combination that stops a runaway agent could not
+            be typed from a phone at all — the modifier had nothing to apply
+            to. Two taps for the most urgent thing in the product was the
+            wrong trade even if it had worked. */}
+        <Key label="^C" onPress={() => sendRaw(withCtrl('c'))} wide
+          title="Interrupt (Ctrl-C)" />
         <Key label="y" onPress={() => sendRaw('y\r')} wide />
         <Key label="n" onPress={() => sendRaw('n\r')} wide />
         <Key label="enter" onPress={key('enter')} title="Enter">
@@ -71,6 +103,8 @@ export function MobileKeyBar({ onSend }: { onSend: (bytes: string) => void }) {
         <Divider />
         <Key label="home" onPress={key('home')} wide title="Home" />
         <Key label="end" onPress={key('end')} wide title="End" />
+        <Key label="pgup" onPress={key('pageUp')} wide title="Page up" />
+        <Key label="pgdn" onPress={key('pageDown')} wide title="Page down" />
         <Divider />
         {['1', '2', '3'].map((d) => (
           <Key key={d} label={d} onPress={() => sendChar(d)} />

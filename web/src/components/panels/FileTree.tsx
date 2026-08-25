@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ChevronLeft, Download, File, Folder, RefreshCw } from 'lucide-react'
+import { safeText } from '../text'
 
 import { api } from '../../protocol/api'
 import type { FileListing } from '../../protocol/wire'
@@ -93,6 +94,18 @@ export function FileTree({ projectId }: { projectId: string }) {
         <p className="px-3 py-3 text-[12px] text-ink-2">Empty</p>
       )}
 
+      {/* A partial listing has to say so. The server caps a directory at two
+          thousand entries, and without this line the panel shows the first two
+          thousand of a hundred thousand files as though that were the
+          directory — a file browser that quietly stops is worse than one that
+          admits its limit. */}
+      {listing.truncated && (
+        <p data-testid="file-truncated" className="px-3 py-2 text-[11px] text-ink-2">
+          Showing {listing.entries.length.toLocaleString()} of{' '}
+          {listing.total.toLocaleString()} items
+        </p>
+      )}
+
       {listing.entries.map((e) => (
         <div
           key={e.path}
@@ -101,7 +114,7 @@ export function FileTree({ projectId }: { projectId: string }) {
           className={`group flex items-center gap-1.5 px-2 py-1 text-[12px] ${
             e.isDir ? 'cursor-pointer hover:bg-surface-2' : ''
           }`}
-          title={e.path}
+          title={safeText(e.path)}
         >
           {e.isDir ? (
             <Folder size={12} className="shrink-0 text-ink-2" />
@@ -109,7 +122,10 @@ export function FileTree({ projectId }: { projectId: string }) {
             <File size={12} className="shrink-0 text-ink-2" />
           )}
           <span className={`min-w-0 flex-1 truncate ${e.isDir ? 'text-ink' : 'text-ink-2'}`}>
-            {e.name}
+            {/* A filename is whatever an agent wrote to disk, and a directional
+                override in it renders the extension backwards right next to the
+                download link. See safeText. */}
+            {safeText(e.name)}
             {e.symlink && <span className="text-ink-2"> ↗</span>}
           </span>
           {!e.isDir && <span className="tabular shrink-0 text-[10.5px] text-ink-2">{bytes(e.size)}</span>}
@@ -122,7 +138,7 @@ export function FileTree({ projectId }: { projectId: string }) {
               download={e.name}
               data-testid="file-download"
               onClick={(ev) => ev.stopPropagation()}
-              title={`Download ${e.name}`}
+              title={`Download ${safeText(e.name)}`}
               className="vp-reveal shrink-0 rounded p-0.5 text-ink-2 hover:text-ink"
             >
               <Download size={12} />

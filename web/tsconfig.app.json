@@ -15,8 +15,11 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "noUncheckedSideEffectImports": true
+    "noUncheckedSideEffectImports": true,
+    // "types" used to sit outside compilerOptions, where tsc ignores it — so
+    // vite/client was never actually applied. "node" is here for the tests
+    // that read source files off disk to check the rules in AGENTS.md.
+    "types": ["vite/client", "node"]
   },
-  "include": ["src"],
-  "types": ["vite/client"]
+  "include": ["src"]
 }

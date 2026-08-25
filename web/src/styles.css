@@ -307,6 +307,131 @@ body {
   background: var(--vp-surface);
 }
 
+/* Keeps the bottom-most row clear of the home indicator.
+ *
+ * index.html asks for viewport-fit=cover, which extends the layout viewport
+ * into the unsafe areas — and that setting is only half of a pair. Without the
+ * inset given back, the lowest thing on screen sits under the indicator, and
+ * on this panel the lowest thing is the second row of the key bar: arrows,
+ * home, end, digits. They are drawn where the system's swipe-up gesture lives,
+ * so they are unreliable to tap on every iPhone since the X.
+ *
+ * env() is 0 on hardware without an inset, so this costs those devices
+ * nothing. */
+.vp-safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* The same at the top, for the same reason and one more.
+ *
+ * index.html declares the panel installable to the home screen and asks for a
+ * translucent status bar, which means an installed copy starts its content at
+ * y=0 with the clock and battery drawn over it — in portrait, not only in
+ * landscape. The top-most row here is the header: the menu button that is the
+ * only way to reach the session list on a phone, the session name, and the
+ * connection dot.
+ *
+ * Height is left alone deliberately: padding grows the header rather than
+ * pushing its contents out of it. */
+.vp-safe-top {
+  /* The height is repeated from the header's own h-11 rather than switching to
+   * content-box, because border-box is what the rest of the sheet assumes and
+   * changing it would move this element by the width of its border on every
+   * device — including the ones with no inset at all, which have nothing wrong
+   * with them. Written this way, hardware without an inset renders identically
+   * to before, down to the pixel.
+   *
+   * If the header's height changes, this has to change with it. That is a real
+   * cost; it buys not touching box-sizing under a component that is already
+   * blurred, bordered and positioned. */
+  padding-top: env(safe-area-inset-top, 0px);
+  height: calc(2.75rem + env(safe-area-inset-top, 0px));
+}
+
+/* Padding only, for something that sizes itself from its contents.
+ *
+ * vp-safe-top carries the main header's fixed height and would impose it on
+ * anything else it was applied to. The 0.5rem is the element's own py-2 top
+ * padding, restated so that hardware with no inset renders exactly as before.
+ *
+ * The sidebar needs this because it starts at y=0 in all three of its forms —
+ * the docked column, the collapsed rail and the narrow-screen overlay — while
+ * only the main header was ever given an inset. On a phone with the status bar
+ * over the page, that put the control that closes the drawer underneath the
+ * clock. */
+.vp-safe-pad-top {
+  padding-top: calc(0.5rem + env(safe-area-inset-top, 0px));
+}
+
+/* Hit areas for a thumb.
+ *
+ * The pin and kill controls in a session row are a 12px icon with two pixels
+ * of padding: sixteen css pixels square, twenty-four apart, and one of them
+ * kills a running agent. A finger pad is around nine millimetres, which is
+ * where the 44px floor in every touch guideline comes from. Measured before
+ * this existed: 16x16.
+ *
+ * Only under (pointer: coarse), so the desktop rows keep their density — this
+ * is not a phone-versus-desktop guess, it is asking the device what kind of
+ * pointer it has, which is the one question that is actually answerable.
+ *
+ * The icon does not grow; only the box around it does. */
+/* The 44px floor, for everything a finger can press.
+ *
+ * `.vp-tap` below was applied to the five controls somebody had thought about.
+ * A scan of every tappable element on a phone found the rest: every key on the
+ * soft keyboard was 32px tall — the most-pressed surface in the product — the
+ * header controls were 27, the compose box's send and newline buttons 32, the
+ * settings dialog's close button 23.
+ *
+ * As a rule about buttons rather than a class on each, for the same reason the
+ * 16px font rule is: a class holds only until somebody adds the next button.
+ *
+ * min-width is left alone deliberately. 44x44 is the guideline, but a row of
+ * eighteen keys at 44 wide does not fit a phone, and a target that is 32 wide
+ * and 44 tall between two other targets is a different proposition from one
+ * that is 27 square in the corner of a dialog. Height is where the wins are.
+ *
+ * The consequences of things getting taller are covered: the check scans for
+ * content that no longer fits its container. */
+@media (pointer: coarse) {
+  button,
+  [role='button'] {
+    min-height: 2.75rem;
+  }
+}
+
+@media (pointer: coarse) {
+  .vp-tap {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+}
+
+/* Sixteen pixels in any field a finger will focus.
+ *
+ * iOS Safari zooms the page when a focused input's text is smaller than 16px.
+ * It has ignored `user-scalable=no` since iOS 10, so the meta tag in index.html
+ * does not prevent it — and nothing zooms back afterwards. Every field in this
+ * panel was 12 or 13px, including the compose box, which is the main way to
+ * type on a phone: tapping it magnified the terminal behind it and left it that
+ * way.
+ *
+ * Element selectors rather than a class, because the rule is about every field
+ * and adding a class to each is a rule that only holds until somebody adds the
+ * tenth input. Only under a coarse pointer, so the desktop density is
+ * unchanged. */
+@media (pointer: coarse) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

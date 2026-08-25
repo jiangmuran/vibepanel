@@ -23,6 +23,19 @@ export function useDragList(ids: string[], onCommit: (ordered: string[]) => void
   const startY = useRef(0)
   const armed = useRef(false)
 
+  // The same drag state, kept in a ref because the handlers cannot wait for a
+  // render to read it. A pointerup can arrive before React has flushed the
+  // update from the pointermove just before it, and a flick is exactly when
+  // those two land together — so reading `state` in the release handler
+  // commits the position from one move ago, or nothing at all if the drag was
+  // quick enough that no render had happened yet. State is for drawing; this
+  // is for deciding.
+  const live = useRef<DragState>({ draggingId: null, overIndex: null })
+  const setDrag = useCallback((next: DragState) => {
+    live.current = next
+    setState(next)
+  }, [])
+
   const register = useCallback((id: string, el: HTMLElement | null) => {
     if (el) rowsRef.current.set(id, el)
     else rowsRef.current.delete(id)
@@ -59,18 +72,19 @@ export function useDragList(ids: string[], onCommit: (ordered: string[]) => void
       e.currentTarget.setPointerCapture(e.pointerId)
       startY.current = e.clientY
       armed.current = true
-      setState({ draggingId: id, overIndex: null })
+      setDrag({ draggingId: id, overIndex: null })
     },
-    [],
+    [setDrag],
   )
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
-      if (!armed.current || !state.draggingId) return
-      if (Math.abs(e.clientY - startY.current) < THRESHOLD && state.overIndex === null) return
-      setState((s) => ({ ...s, overIndex: indexForY(e.clientY) }))
+      const { draggingId, overIndex } = live.current
+      if (!armed.current || !draggingId) return
+      if (Math.abs(e.clientY - startY.current) < THRESHOLD && overIndex === null) return
+      setDrag({ draggingId, overIndex: indexForY(e.clientY) })
     },
-    [state.draggingId, state.overIndex, indexForY],
+    [indexForY, setDrag],
   )
 
   const finish = useCallback(
@@ -78,13 +92,12 @@ export function useDragList(ids: string[], onCommit: (ordered: string[]) => void
       if (e.currentTarget.hasPointerCapture(e.pointerId)) {
         e.currentTarget.releasePointerCapture(e.pointerId)
       }
-      // pointerup and pointercancel can both arrive for one gesture, and the
-      // state read below comes from the render that started it — so without
-      // this the same reorder is committed twice.
+      // pointerup and pointercancel can both arrive for one gesture, so
+      // without this the same reorder is committed twice.
       if (!armed.current) return
       armed.current = false
-      const { draggingId, overIndex } = state
-      setState({ draggingId: null, overIndex: null })
+      const { draggingId, overIndex } = live.current
+      setDrag({ draggingId: null, overIndex: null })
       if (!draggingId || overIndex === null) return
 
       const from = ids.indexOf(draggingId)
@@ -99,7 +112,9 @@ export function useDragList(ids: string[], onCommit: (ordered: string[]) => void
       next.splice(to, 0, draggingId)
       onCommit(next)
     },
-    [ids, state, onCommit],
+    // No dependency on the rendered state any more, so this handler survives a
+    // whole gesture instead of being rebuilt on every pointermove.
+    [ids, onCommit, setDrag],
   )
 
   return {

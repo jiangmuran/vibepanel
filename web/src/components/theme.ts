@@ -38,7 +38,18 @@ export function terminalTheme(): ITheme {
 
 export type ThemeChoice = 'system' | 'light' | 'dark'
 
-const STORAGE_KEY = 'vibepanel.theme'
+/**
+ * Where the theme choice is remembered.
+ *
+ * Exported because index.html has to read the same key from an inline script
+ * before first paint, and there is otherwise nothing tying the two spellings
+ * together. Drifting apart does not merely bring back the flash of the wrong
+ * palette: the pre-paint script would find nothing, and nothing else applies
+ * the stored choice — `applyTheme` runs only when somebody uses the toggle —
+ * so the whole session would follow the system preference while the toggle
+ * showed the choice it was ignoring.
+ */
+export const STORAGE_KEY = 'vibepanel.theme'
 
 export function loadTheme(): ThemeChoice {
   try {

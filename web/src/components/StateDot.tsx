@@ -1,4 +1,5 @@
 import type { SessionState } from '../protocol/wire'
+import { EXIT_VANISHED } from '../protocol/wire'
 
 const LABEL: Record<SessionState, string> = {
   waiting: 'Waiting for you',
@@ -77,6 +78,30 @@ export function StateDot({
  * cannot carry the number and the number is what tells you whether to worry.
  */
 function renderExited(size: number, status: number) {
+  if (status === EXIT_VANISHED) {
+    // Same shape family as a clean exit — a square reads as "not running" —
+    // but dashed, so the two are told apart without relying on colour. The
+    // distinction is real: a clean exit was watched happening, this one was
+    // noticed afterwards, and the session may have been killed from a shell
+    // while doing something important.
+    const title = 'Gone — the tmux session no longer exists'
+    return (
+      <svg width={size} height={size} viewBox="0 0 10 10" role="img" aria-label={title}>
+        <title>{title}</title>
+        <rect
+          x="1.4"
+          y="1.4"
+          width="7.2"
+          height="7.2"
+          rx="1.2"
+          fill="none"
+          stroke="var(--vp-state-dead)"
+          strokeWidth="1.5"
+          strokeDasharray="2 1.6"
+        />
+      </svg>
+    )
+  }
   const title = status === 0 ? 'Exited' : `Exited with status ${status}`
   const colour = status === 0 ? 'var(--vp-state-dead)' : 'var(--vp-state-crashed)'
   if (status === 0) {
