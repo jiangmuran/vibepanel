@@ -47,11 +47,15 @@ func NewCooldown(window time.Duration) *Cooldown {
 // A source that keeps hammering does not refresh its own entry, so it gets one
 // record per window rather than none: an attack that goes on for an hour reads
 // as sixty rows, not as one row and then silence.
-func (c *Cooldown) Allow(key string, now time.Time) bool {
+//
+// Bucketed per event as well as per source. One address can produce more than
+// one kind of noise in the same minute, and a shared window would record
+// whichever arrived first and lose the existence of the other.
+func (c *Cooldown) Allow(bucket, key string, now time.Time) bool {
 	if c == nil {
 		return true
 	}
-	k := sourceKey(key)
+	k := bucket + "|" + sourceKey(key)
 
 	c.mu.Lock()
 	defer c.mu.Unlock()

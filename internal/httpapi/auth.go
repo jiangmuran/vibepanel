@@ -54,7 +54,7 @@ func (s *Server) clientIP(r *http.Request) string {
 // an address the allowlist rejects wrote 400 rows, at 237 rows/sec, and nothing
 // on that path is behind authentication or the login throttle.
 func (s *Server) auditFromOutside(ctx context.Context, event, username, ip, detail string) {
-	if s.Auth != nil && !s.Auth.BlockedAudit.Allow(ip, time.Now()) {
+	if s.Auth != nil && !s.Auth.BlockedAudit.Allow(event, ip, time.Now()) {
 		s.Log.Info("audit", "event", event, "user", username, "ip", ip, "detail", detail)
 		return
 	}
@@ -239,7 +239,10 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(req.Token), []byte(s.Auth.SetupToken)) != 1 {
-		s.audit(ctx, "setup.rejected", req.Username, ip, "bad setup token")
+		// Reachable only while no account exists, which is exactly when nobody
+		// is watching the panel yet. Unauthenticated and unthrottled, like the
+		// allowlist refusal, so it is recorded the same way.
+		s.auditFromOutside(ctx, "setup.rejected", req.Username, ip, "bad setup token")
 		writeErr(w, http.StatusUnauthorized, "bad setup token")
 		return
 	}

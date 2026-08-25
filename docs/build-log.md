@@ -7364,3 +7364,18 @@ reason.
 Five mutations, each caught by its own test: the gate removed, the window
 ignored, the `/64` bucketing dropped, the source map unbounded, and the trim
 taking the newest rows instead of the oldest.
+
+### The same shape, twice more
+
+Two other endpoints take a request from someone who has not authenticated. The
+hook endpoint answers a bad token with 401 and writes nothing, which is right.
+`/api/auth/setup` audited every rejected setup token, unthrottled — reachable
+only while no account exists, which is precisely when nobody is watching a
+freshly deployed panel. It is recorded through the same gate now.
+
+The token itself is 32 bytes of `crypto/rand`, so the guessing was never the
+problem; the rows were.
+
+The gate buckets per event as well as per source. One address can produce both
+kinds of noise in the same minute, and a shared window would have recorded
+whichever arrived first and lost the existence of the other.
