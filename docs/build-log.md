@@ -5517,3 +5517,34 @@ and the positive check fails. Those pairs hold.
 Worth recording as a negative result. The sweep was motivated by a real bug and
 found nothing, which is information about the harnesses rather than about the
 sweep.
+
+### `waitHealth is not defined`, for the second time
+
+Applying that guard to four files was done with a regex, whose optional
+leading group for "any doc comment immediately above" matched lazily from a
+`/**` much further up. It ate `waitHealth`, `USERNAME`, `PASSWORD`,
+`NEW_PASSWORD` and `cookie` on the way down to `const authed`.
+
+The deleted comment above `waitHealth` read, in full:
+
+> Restored after being deleted by accident: extracting the overflow scan into a
+> shared module cut from the scan to the next top-level const, and this sat in
+> between. The sweep caught it a minute later as
+> `ReferenceError: waitHealth is not defined` — which is the argument for
+> running everything after a refactor, not only the thing that was refactored.
+
+Same function, same kind of over-wide edit, same error message, and caught the
+same way — by running all four harnesses rather than only the one the change
+had been tested against. The note recording the first occurrence was deleted by
+the second.
+
+Two things follow, and only one of them is "be careful".
+
+The comment did its job: it made the repeat legible the moment the diff was
+read, and turned "why is waitHealth gone" into a known failure mode with a
+known cause. That is what it was for.
+
+The other is that a regex with an optional greedy-ish prefix is not an edit,
+it is a guess. Reapplying the change by exact literal match — the whole
+original block, asserted to occur exactly once — cannot do this, and takes the
+same amount of time to write.

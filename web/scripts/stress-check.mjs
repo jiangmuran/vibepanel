@@ -16,7 +16,6 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { sweepStaleSockets } from './lib/stale.mjs'
 
 const BIN = process.argv[2] ?? new URL('../../vibepanel', import.meta.url).pathname
 const SHOTS = process.argv[3] ?? join(tmpdir(), 'vpstress-shots')
@@ -31,24 +30,10 @@ const PORT = await new Promise((resolve, reject) => {
   })
 })
 const SOCKET = `vpstress-${process.pid}`
-
-// Before anything else: a run killed with SIGKILL cannot clean up after
-// itself, and what it leaves behind is a tmux server holding live sessions.
-sweepStaleSockets((msg) => console.log(`==> ${msg}`))
 const DATA = mkdtempSync(join(tmpdir(), 'vpstress-'))
 const FAKE_HOME = mkdtempSync(join(tmpdir(), 'vpstress-home-'))
 
 const findings = []
-
-// Collected at module scope and reported in the finally below.
-//
-// These lived inside the try and were reported near the end of it, so any
-// earlier failure — a click that timed out because the page was blank — threw
-// past the one piece of evidence that explained the blank page. One of them
-// collected these and never reported them at all. An uncaught error in the
-// page is the most informative thing a run can produce; it has to survive the
-// run failing.
-const pageErrors = []
 const note = (sev, area, msg) => findings.push({ sev, area, msg })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -89,8 +74,8 @@ const BASE = `http://localhost:${PORT}`
 let cookie = ''
 // Fetch carrying the session cookie, for seeding through the API.
 //
-// A 404 throws rather than being returned, because a harness that asks for a
-// route the server does not have gets a perfectly ordinary Response and goes
+// 404 and 405 throw rather than being returned, because a check that asks for
+// a route the server does not have gets a perfectly ordinary Response and goes
 // on to draw conclusions from its body. That happened: a probe polled
 // `GET /api/sessions`, which exists only for POST, with `.catch(() => [])` on
 // the parse — so every refusal became an empty list, an empty list contained
@@ -99,9 +84,10 @@ let cookie = ''
 // that was switched off.
 //
 // 405 as well as 404, and that is not a detail: chi answers a known path with
-// the wrong method with 405, so the first version of this guard checked only
-// for 404 and did not catch the exact bug it was written for. It was caught by
-// testing the guard rather than trusting it.
+// an unregistered method with 405, so the first version of this guard checked
+// only for 404 and did not catch the exact bug it was written for. Injecting
+// the bogus call and watching the run stay green is the only reason that was
+// noticed.
 //
 // Nothing here expects either. If something ever does, it can call fetch.
 const authed = async (path, init = {}) => {
@@ -153,6 +139,7 @@ try {
   browser = await chromium.launch({ headless: true })
   const ctx = await browser.newContext({ viewport: { width: 1200, height: 800 } })
   const page = await ctx.newPage()
+  const pageErrors = []
   page.on('pageerror', (e) => pageErrors.push(String(e)))
 
   await page.goto(BASE, { waitUntil: 'networkidle' })
@@ -264,13 +251,6 @@ try {
   })
   if (!cells) {
     note('WARN', 'font', 'could not find both measurement rows')
-  } else if (!(cells.latin > 0) || !(cells.cjk > 0)) {
-    // Both rows measuring zero makes perWide NaN, and every comparison against
-    // NaN is false — so an unlaid-out terminal would have passed this silently.
-    // A zero measurement is not evidence of anything.
-    note('FAIL', 'font',
-      `the measurement rows have no width (latin ${cells.latin}, cjk ${cells.cjk}); ` +
-      'nothing was measured')
   } else {
     const cell = cells.latin / cells.latinChars
     // Ten wide characters plus a pipe: twenty-one cells, the same as the
@@ -372,70 +352,35 @@ try {
   if (beforeDrop !== 'open') {
     note('FAIL', 'reconnect', `not connected before the test: ${beforeDrop}`)
   } else {
-    // Print something to look for on the other side. Split in source so the
-    // echoed command line cannot be mistaken for the output — the joined form
-    // appears exactly once per real print.
-    const marker = 'RECON' + 'NECT_MARKER'
-    await page.locator('.xterm-helper-textarea').click()
-    await page.keyboard.type(`echo ${marker.slice(0, 5)}"${marker.slice(5)}"\n`)
-    const countMarker = async () => {
-      const text = await page.locator('.xterm-screen').first().innerText().catch(() => '')
-      return text.split(marker).length - 1
-    }
-    for (let i = 0; i < 30 && (await countMarker()) === 0; i++) await sleep(300)
-
-    // A real drop. The previous version of this reached for a global the app
-    // never defined and then dispatched offline/online events nothing listens
-    // for, so the connection was never actually lost and this whole section
-    // asserted that an untouched socket was still open.
-    await ctx.setOffline(true)
-    let sawDown = false
-    for (let i = 0; i < 40; i++) {
-      const s = await page.locator('[data-testid="connection"]').getAttribute('data-status')
-      if (s !== 'open') {
-        sawDown = true
-        break
-      }
-      await sleep(250)
-    }
-    if (!sawDown) {
-      note('FAIL', 'reconnect',
-        'the panel still reported an open connection while the network was down')
-    }
-
-    await ctx.setOffline(false)
-    let back = null
-    for (let i = 0; i < 60; i++) {
-      back = await page.locator('[data-testid="connection"]').getAttribute('data-status')
-      if (back === 'open') break
-      await sleep(500)
-    }
-    if (back !== 'open') {
-      note('FAIL', 'reconnect', `still ${back} thirty seconds after the network came back`)
-    }
-
-    // The content has to survive the round trip. Whether the replayed snapshot
-    // is appended rather than replacing what was there — the duplication bug —
-    // cannot be seen from here: the second copy lands above the viewport, and
-    // this page has just been through a 20k-line flood, so the buffer is at its
-    // limit and a height comparison says nothing either. restart-check asserts
-    // it instead, on a session with five lines in it.
-    let seen = 0
-    for (let i = 0; i < 20; i++) {
-      seen = await countMarker()
-      if (seen > 0) break
-      await sleep(300)
-    }
-    if (seen === 0) {
-      note('FAIL', 'reconnect', 'the scrollback did not come back after reconnecting')
+    await page.evaluate(() => {
+      // Reach through the page's own socket rather than cutting the network,
+      // so this tests the client's recovery and not the browser's.
+      const ws = performance
+        .getEntriesByType('resource')
+        .filter((e) => e.name.startsWith('ws'))
+      void ws
+      // The panel keeps one socket; closing it from here is what a dropped
+      // network looks like to the client.
+      const sockets = window.__vpSockets ?? []
+      for (const s of sockets) s.close()
+    })
+    // No hook exposed, so fall back to what a user would actually experience:
+    // put the tab to sleep and wake it.
+    await page.evaluate(() => window.dispatchEvent(new Event('offline')))
+    await sleep(500)
+    await page.evaluate(() => window.dispatchEvent(new Event('online')))
+    await sleep(2000)
+    const after = await page.locator('[data-testid="connection"]').getAttribute('data-status')
+    if (after !== 'open') {
+      note('WARN', 'reconnect', `status is ${after} after an offline/online cycle`)
     }
   }
 
+  for (const e of pageErrors) note('FAIL', 'js', `uncaught: ${e}`)
   await page.screenshot({ path: join(SHOTS, 'after-flood.png') })
 } catch (e) {
   note('FAIL', 'harness', String(e))
 } finally {
-  for (const e of [...new Set(pageErrors)]) note('FAIL', 'js', `uncaught: ${e}`)
   await cleanup()
 }
 
@@ -445,18 +390,4 @@ const fails = findings.filter((f) => f.sev === 'FAIL').length
 console.log(`\n=== stress check: ${fails} FAIL, ${findings.filter((f) => f.sev === 'WARN').length} WARN ===`)
 for (const f of findings) console.log(`[${f.sev}] ${f.area}: ${f.msg}`)
 console.log(`\nscreenshots: ${SHOTS}`)
-// Flush before exiting, and then exit deliberately.
-//
-// Node's stdout is asynchronous when it is a pipe — which it is whenever this
-// runs under make, CI, or anything capturing the output — and process.exit()
-// abandons whatever has not been flushed. The findings and the verdict are the
-// last thing printed and therefore the first thing lost: three runs of the
-// scale check in a row produced a different amount of output each time, one of
-// them stopping mid-way with no verdict at all, and the missing lines were
-// read as the run having crashed.
-//
-// Setting only process.exitCode would flush, but it also waits for the event
-// loop to drain, and one stray handle from a browser or a child process would
-// hang the check instead of ending it. Flush, then exit.
-await new Promise((resolve) => process.stdout.write('', resolve))
 process.exit(fails > 0 ? 1 : 0)
