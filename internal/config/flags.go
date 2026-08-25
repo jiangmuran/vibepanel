@@ -14,6 +14,25 @@ import (
 //
 // A ParseError from the flag package (including -h) is returned as-is so the
 // caller can exit quietly rather than printing a stack of usage twice.
+// Commands is what `--help` says this binary can be asked to do.
+//
+// It said nothing. The usage line was "vibepanel [flags]" followed by a flag
+// list, so a person who installed the release archive and asked the binary
+// what it does was never told that `doctor`, `project` or `session` exist —
+// while the runbook opens by telling them to run `vibepanel doctor`.
+//
+// The list was already written, in the error for an unknown command. It was
+// simply never shown to anyone who asked politely.
+//
+// Here rather than in main because this is the only place that prints usage,
+// and a second copy of the list is how the two stop agreeing.
+const Commands = `  serve      run the panel (the default with no command)
+  project    add, list and remove projects
+  session    create, list and kill sessions
+  hook       install or remove the agent state reporter
+  doctor     check tmux, the database, disk and isolation
+  version    print the version`
+
 func Load(args []string, out io.Writer) (Config, error) {
 	c := Default()
 	c.envOverlay()
@@ -22,7 +41,8 @@ func Load(args []string, out io.Writer) (Config, error) {
 	fs.SetOutput(out)
 	fs.Usage = func() {
 		fmt.Fprintf(out, "vibepanel — a web console for many parallel coding sessions.\n\n")
-		fmt.Fprintf(out, "Usage:\n  vibepanel [flags]\n\nFlags:\n")
+		fmt.Fprintf(out, "Usage:\n  vibepanel [command] [flags]\n\nCommands:\n%s\n", Commands)
+		fmt.Fprintf(out, "Flags (for serve, which is what runs with no command):\n")
 		fs.PrintDefaults()
 		fmt.Fprintf(out, "\nEvery flag has a VIBEPANEL_<UPPER_SNAKE> environment equivalent.\n")
 	}

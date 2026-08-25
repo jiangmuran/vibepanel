@@ -46,29 +46,49 @@ func main() {
 	}
 }
 
+// commands is the dispatch, and the only list of what this binary can do.
+//
+// It was a switch, and the names appeared again in the error for an unknown
+// command, and `--help` listed neither. Adding the list to the usage text made
+// that three copies of the same six words — the shape that has already cost
+// this session twice, both times with the duplicate a few lines from the
+// original. TestEveryDocumentedCommandExists compares this against the text
+// `--help` prints.
+var commands map[string]func([]string) error
+
+// commandNames returns the dispatch keys in the order --help lists them.
+func commandNames() []string {
+	var out []string
+	for _, line := range strings.Split(config.Commands, "\n") {
+		if name := strings.Fields(line); len(name) > 0 {
+			out = append(out, name[0])
+		}
+	}
+	return out
+}
+
+func init() {
+	commands = map[string]func([]string) error{
+		"serve":   cmdServe,
+		"project": cmdProject,
+		"session": cmdSession,
+		"doctor":  cmdDoctor,
+		"hook":    cmdHook,
+		"version": func([]string) error { fmt.Println("vibepanel", version.String()); return nil },
+	}
+}
+
 func run(args []string) error {
 	// Subcommands are matched before flag parsing so that `vibepanel project
 	// add --name x` can have its own flag set rather than fighting the global
 	// one.
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		cmd, rest := args[0], args[1:]
-		switch cmd {
-		case "serve":
-			return cmdServe(rest)
-		case "project":
-			return cmdProject(rest)
-		case "session":
-			return cmdSession(rest)
-		case "doctor":
-			return cmdDoctor(rest)
-		case "hook":
-			return cmdHook(rest)
-		case "version":
-			fmt.Println("vibepanel", version.String())
-			return nil
-		default:
-			return fmt.Errorf("unknown command %q (try: serve, project, session, hook, doctor, version)", cmd)
+		run, ok := commands[cmd]
+		if !ok {
+			return fmt.Errorf("unknown command %q (try: %s)", cmd, strings.Join(commandNames(), ", "))
 		}
+		return run(rest)
 	}
 	if len(args) > 0 && (args[0] == "--version" || args[0] == "-version") {
 		fmt.Println("vibepanel", version.String())

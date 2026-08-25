@@ -8186,3 +8186,50 @@ been told to look for:
 ```
 the lock file says "2589214\n9012345678901234567890", want 2589214
 ```
+
+## The binary never mentioned what it could do
+
+```
+$ vibepanel --help
+vibepanel — a web console for many parallel coding sessions.
+
+Usage:
+  vibepanel [flags]
+
+Flags:
+  -acme-directory string
+  …
+```
+
+Six commands exist — `serve`, `project`, `session`, `hook`, `doctor`,
+`version` — and the help mentioned none of them. Somebody who unpacked the
+release archive and asked the binary what it does got a flag list, while the
+runbook opens by telling them to run `vibepanel doctor`.
+
+The list was already written, in the error for an unknown command. It was
+simply never shown to anyone who asked politely.
+
+### And then there were three
+
+Adding it to the usage made three copies of the same six words: the `switch`,
+the error text, and the help. That shape has cost this session twice already —
+`stale` reaching the socket and not `/api/state`, and before that the two
+builders of `stateResponse` — both times with the duplicate a few lines from
+the original.
+
+So the switch became a map, the error joins its keys, and the help text is the
+one place the names and descriptions are written. A test compares the two that
+remain: every name `--help` offers is dispatched, and every name dispatched is
+offered. Deleting `doctor` from either side fails it, and so does misspelling
+it in one:
+
+```
+--help offers [doctor hook project serve session vresion] and the binary
+answers to [doctor hook project serve session version]
+```
+
+A second test requires each line to say what the command is *for*. A list of
+six words is only marginally better than the error message it was copied from.
+
+`cmd/vibepanel` had no tests at all before this; it was the 0.0% at the top of
+the coverage list, next to the npm package.
