@@ -2102,8 +2102,12 @@ func TestRestoreStateReadsWhatWasWrittenDown(t *testing.T) {
 	if err := srv.DB.SetSessionState(ctx, sess.ID, session.StateWaiting, session.SourceHeuristic); err != nil {
 		t.Fatalf("SetSessionState: %v", err)
 	}
-	// A fresh detector is what a restart has.
-	srv.Detector = session.NewDetector()
+	// Forget, rather than swapping in a fresh detector: Server.Detector is set
+	// once at startup and read from the pump's goroutine without a lock, so
+	// reassigning it under a running server is a race — and -race said so,
+	// after the test passed on its own without it. What a restart leaves for
+	// this session is an empty tracker, which is what Forget produces.
+	srv.Detector.Forget(sess.ID)
 	if err := srv.RestoreState(ctx); err != nil {
 		t.Fatalf("RestoreState: %v", err)
 	}

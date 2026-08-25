@@ -7770,3 +7770,18 @@ line; `render-check` and `stress-check` did not. All three now count `WARN`.
 
 A summary that invents warnings is one people stop reading, which is the same
 failure as a check that never fails — just from the other side.
+
+### And the test that introduced a race
+
+`TestRestoreStateReadsWhatWasWrittenDown` replaced `srv.Detector` with a fresh
+one to stand in for a restart. `Server.Detector` is set once at startup and
+read from the pump's goroutine without a lock, so reassigning it under a
+running server is a data race — and the full `-race` run said so, after the
+test had passed on its own without `-race` and been committed.
+
+Production is unaffected: the field is never reassigned outside that test. The
+test now calls `Forget`, which is what a restart leaves for a session and is
+mutex-protected. It still fails when the restore is removed.
+
+Running one test on its own is not running the suite, and `-race` is not
+optional for a package whose subject is a server with goroutines in it.
