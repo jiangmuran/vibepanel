@@ -5292,3 +5292,67 @@ The question nobody was asking is "does the thing that stops the panel in
 production stop anything else", and no amount of care inside the harness's
 frame would have reached it. A check that runs the binary the way it is run in
 development can only ever tell you about development.
+
+## One viewer that stopped reading, and everybody waiting behind it
+
+`Hub.Broadcast` took a snapshot of the connection set and then wrote to each
+connection in turn, on the caller's goroutine. `sendRaw` takes the connection's
+`writeMu` and writes with a ten second timeout — but *acquiring* that mutex has
+no timeout at all, and the connection's own pump goroutine holds it for the
+duration of its writes.
+
+So a viewer whose TCP window had closed held up the state update to every other
+viewer for as long as its in-flight write took to give up.
+
+Measured against the real binary. A raw socket that completes the handshake,
+subscribes to a session printing base64 as fast as it can, and then simply
+stops reading. A second, healthy client times how long a rename takes to reach
+it:
+
+```
+healthy viewer sees a rename in: 103ms, 103ms, 53ms, 103ms
+one viewer has stopped reading...
+with one stalled viewer:       2210ms, 103ms, 103ms, 103ms, 102ms
+```
+
+One connection, one stall, 2.2 seconds of everybody else's panel frozen. That
+number is the *cheap* case: this connection tore itself down quickly. The loop
+is serial, so the cost is per stalled viewer, and a client that reads just
+slowly enough never to be closed pays it on every broadcast rather than once.
+
+The fix is a single pending payload per connection, written by a goroutine of
+that connection's own. A slot rather than a queue, because a state snapshot is
+absolute — it describes the whole world, so a newer one makes an older one
+worthless and dropping the superseded payload loses nothing.
+
+That is the part worth stating plainly: this can be lossy where the terminal
+streams cannot. Session output carries bytes that exist nowhere else, which is
+why the session package drops a slow subscriber explicitly and sends
+`dropped` so the viewer resubscribes and replays. State needed neither
+mechanism, and had been given the *blocking* one instead.
+
+After:
+
+```
+with one stalled viewer:       102ms, 103ms, 103ms, 103ms, 102ms
+```
+
+`TestAStalledViewerDoesNotHoldUpTheOthers` holds a connection's `writeMu`,
+which is exactly what a closed window looks like from the hub's side, and fails
+if `Broadcast` has not returned within three seconds. With the queue removed it
+fails; with it, it passes in four milliseconds.
+
+### What the first attempt at measuring this got wrong
+
+The first probe killed a tmux session behind the panel's back and timed how
+long the panel took to notice, on the theory that noticing is the poll loop's
+job and the poll loop calls `Broadcast` synchronously.
+
+It reported three milliseconds, before and after. The number was right and the
+experiment was meaningless: `/api/sessions` reconciles against tmux on read, so
+the answer never came from the poller at all. A stalled poll loop would not
+have changed that measurement by a microsecond.
+
+Timing something that has more than one supplier tells you about the fastest
+one. The second probe measured what a person actually sees — a rename made in
+one window arriving in another — and that has exactly one path.

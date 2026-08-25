@@ -60,8 +60,11 @@ func (h *Hub) Broadcast(payload []byte) {
 		conns = append(conns, c)
 	}
 	h.mu.RUnlock()
+	// queueState, not sendRaw: this loop is serial, and a viewer whose socket
+	// cannot take another byte must not be able to hold every other viewer's
+	// state update behind it. See queueState.
 	for _, c := range conns {
-		c.sendRaw(payload)
+		c.queueState(payload)
 	}
 }
 

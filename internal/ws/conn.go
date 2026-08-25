@@ -45,6 +45,18 @@ type Handler struct {
 
 	// Hub receives every connection so state changes can be pushed to it.
 	Hub *Hub
+
+	// Snapshot, if set, builds the state payload sent to a client the moment
+	// it connects. See where it is called for why that is not optional.
+	Snapshot func(context.Context) []byte
+
+	// StillAuthorized, if set, is asked periodically whether the request that
+	// opened this connection would still be allowed. See revalidate.
+	StillAuthorized func(*http.Request) bool
+
+	// RevalidateEvery overrides how often that question is asked. Zero means
+	// revalidateInterval. Tests set it short; nothing else should.
+	RevalidateEvery time.Duration
 }
 
 // stream is one subscribed session on one connection.
@@ -66,10 +78,65 @@ type Conn struct {
 	// time, and events arrive from one goroutine per subscribed session.
 	writeMu sync.Mutex
 
+	// One pending state snapshot, written by a goroutine of this connection's
+	// own. See queueState.
+	stateMu      sync.Mutex
+	statePending []byte
+	stateWake    chan struct{}
+
 	mu      sync.Mutex
 	streams map[uint32]*stream
 	byID    map[string]*stream
 	nextRef uint32
+}
+
+// queueState hands the connection the latest state snapshot to write, and
+// never blocks.
+//
+// The hub used to call sendRaw for every connection in turn, from the caller's
+// goroutine. sendRaw takes writeMu and then writes with a ten second timeout —
+// but *taking* writeMu has no timeout at all, so a viewer whose TCP window had
+// closed, with its own pump goroutine sitting inside a ten second write, held
+// up the broadcast to everybody else for as long as that took.
+//
+// Measured against the real binary: one viewer that stopped reading delayed
+// every other viewer's state update by 2.2 seconds. That was one connection
+// tearing itself down quickly; the loop is serial, so the cost is per stalled
+// viewer, and a client that reads just slowly enough never to be closed pays
+// it again on every broadcast.
+//
+// A single slot rather than a queue, because a state snapshot is absolute: it
+// describes the whole world, so a newer one makes an older one worthless.
+// Dropping the superseded payload loses nothing, which is why this can be
+// lossy where the terminal streams cannot — those carry bytes that exist
+// nowhere else, and the session package drops them explicitly and says so with
+// a `dropped` message.
+func (c *Conn) queueState(payload []byte) {
+	c.stateMu.Lock()
+	c.statePending = payload
+	c.stateMu.Unlock()
+	select {
+	case c.stateWake <- struct{}{}:
+	default: // already awake; it will pick up the newer payload
+	}
+}
+
+// stateWriter is the only goroutine that writes queued snapshots.
+func (c *Conn) stateWriter(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-c.stateWake:
+			c.stateMu.Lock()
+			payload := c.statePending
+			c.statePending = nil
+			c.stateMu.Unlock()
+			if payload != nil {
+				c.sendRaw(payload)
+			}
+		}
+	}
 }
 
 // ServeHTTP upgrades the request and serves the connection until it closes.
@@ -84,11 +151,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	conn := &Conn{
-		h:        h,
-		ws:       c,
-		clientID: id.New(),
-		streams:  map[uint32]*stream{},
-		byID:     map[string]*stream{},
+		h:         h,
+		ws:        c,
+		clientID:  id.New(),
+		stateWake: make(chan struct{}, 1),
+		streams:   map[uint32]*stream{},
+		byID:      map[string]*stream{},
 	}
 	defer conn.closeAll()
 
@@ -97,10 +165,32 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer h.Hub.remove(conn)
 	}
 
+	// Tell the new client what the world looks like, before anything happens
+	// in it.
+	//
+	// The state message was only ever sent when something changed, and the
+	// frontend has no other source for it — so a panel opened while everything
+	// was quiet rendered an empty page and stayed that way until some session
+	// happened to do something. Every check missed it because they all keep
+	// something moving: an htop, a bell, a flood. The one that did not, and
+	// that had never been run to completion, opened a browser onto two dozen
+	// sleeping sessions and saw thirty-one bytes of body.
+	//
+	// Which is the case the panel is *for*. Coming back in the morning to see
+	// which agents finished overnight is precisely the moment when nothing is
+	// changing.
+	if h.Snapshot != nil {
+		if payload := h.Snapshot(r.Context()); len(payload) > 0 {
+			conn.sendRaw(payload)
+		}
+	}
+
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
 	go conn.keepalive(ctx)
+	go conn.stateWriter(ctx)
+	go h.revalidate(ctx, cancel, r)
 
 	if err := conn.readLoop(ctx); err != nil &&
 		websocket.CloseStatus(err) == -1 &&
@@ -115,6 +205,51 @@ func (h *Handler) logger() *slog.Logger {
 		return h.Log
 	}
 	return slog.Default()
+}
+
+// revalidateInterval is how often a live connection re-checks its session.
+//
+// A socket is authorised once, at the handshake, and then lives for hours. So
+// signing out, a session expiring, an administrator revoking one, and changing
+// the password — which deletes every other browser's session precisely so that
+// whoever had the old password stops having access — all left the *terminals*
+// those browsers already had open streaming happily. Measured: after the
+// session row was deleted, typing still reached the shell.
+//
+// Five seconds bounds how long that lasts. The cost is two indexed reads per
+// open browser per interval — this panel has a handful of viewers, not a
+// handful of thousands — and what is being bounded is terminal access after
+// the access was revoked. Thirty seconds was the first number here and it is
+// too long for the case that matters: somebody changing their password
+// because it leaked, while whoever leaked it still has a socket open.
+const revalidateInterval = 5 * time.Second
+
+// revalidate closes the connection once its session stops being valid.
+//
+// The original request is what gets re-checked, which is the point: its cookie
+// does not change, the row behind it does.
+func (h *Handler) revalidate(ctx context.Context, cancel context.CancelFunc, r *http.Request) {
+	if h.StillAuthorized == nil {
+		return
+	}
+	every := h.RevalidateEvery
+	if every <= 0 {
+		every = revalidateInterval
+	}
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if !h.StillAuthorized(r) {
+				h.logger().Info("closing a websocket whose session is no longer valid")
+				cancel()
+				return
+			}
+		}
+	}
 }
 
 // keepalive pings until the connection goes away.
@@ -169,7 +304,8 @@ func (c *Conn) handleBinary(frame []byte) {
 	if s == nil {
 		return
 	}
-	// Writing marks this viewer as the controller; see session.Live.Write.
+	// Input does not claim the grid: see session.Live.Write for why. A viewer
+	// answering "y" from a phone must not reflow the desktop it is shared with.
 	if _, err := s.live.Write(c.clientID, payload); err != nil {
 		c.sendError(s.sessionID, "write failed: "+err.Error())
 	}
@@ -274,9 +410,24 @@ func (c *Conn) pumpStream(ctx context.Context, s *stream) {
 			return
 		case ev, ok := <-s.sub.Events:
 			if !ok {
+				// Deregister first, and only then tell the client.
+				//
+				// The client answers "dropped" by resubscribing, and subscribe
+				// short-circuits when this session is already registered on
+				// this connection. Leaving the entry in place meant that
+				// resubscribe was silently accepted and ignored: no snapshot,
+				// no new ref, no further output. The terminal stayed frozen
+				// until the page was reloaded — which is exactly the state the
+				// message exists to get out of.
+				//
+				// The order matters and is not incidental. Doing it here means
+				// deregistration has already happened before the client can
+				// possibly have heard about the drop, so no resubscribe can
+				// race ahead of it.
+				c.deregister(s)
 				if s.sub.Dropped() {
-					// Tell the client why it went quiet so it can resubscribe
-					// and replay, rather than sitting on a dead terminal.
+					// Say why it went quiet, so the viewer resubscribes and
+					// replays rather than sitting on a dead terminal.
 					c.sendJSON(ServerMessage{Type: MsgDropped, SessionID: s.sessionID, Ref: s.ref})
 				} else {
 					c.sendJSON(ServerMessage{Type: MsgExit, SessionID: s.sessionID, Ref: s.ref})
@@ -301,6 +452,30 @@ func (c *Conn) pumpStream(ctx context.Context, s *stream) {
 			}
 		}
 	}
+}
+
+// deregister forgets a stream whose subscriber has ended.
+//
+// Only if it is still the current one for that session: a resubscribe may
+// already have replaced it, and deleting by key would then unregister the live
+// stream and leave the connection unable to reach a session it is watching.
+func (c *Conn) deregister(s *stream) {
+	c.mu.Lock()
+	if c.byID[s.sessionID] == s {
+		delete(c.byID, s.sessionID)
+	}
+	if c.streams[s.ref] == s {
+		delete(c.streams, s.ref)
+	}
+	c.mu.Unlock()
+	// Releases this stream's entry in the connection context's child list;
+	// without it every dropped viewer leaves one behind for the life of the
+	// connection. Safe from inside the pump, which returns immediately after.
+	s.cancel()
+	// A no-op for a subscriber that was dropped by the broadcaster, which has
+	// already removed and closed it; needed for the ordinary end-of-session
+	// case so the attachment does not keep a reference to a dead viewer.
+	s.live.Unsubscribe(s.sub)
 }
 
 func (c *Conn) unsubscribe(sessionID string) {
