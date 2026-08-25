@@ -119,3 +119,32 @@ func TestLastOutputIsNotOnTheWire(t *testing.T) {
 		t.Errorf("last_output_at is on the wire: %s", ja)
 	}
 }
+
+func TestProjectNamesAreBoundedToo(t *testing.T) {
+	// A project name is in the state snapshot, which goes to every viewer.
+	// Session titles were bounded because an agent chooses them; this one is
+	// typed, so the way it goes wrong is a paste into the rename field — and
+	// the cost, on every phone watching, is the same.
+	ctx := context.Background()
+	db := openTest(t)
+	long := strings.Repeat("A", 200000)
+
+	p, err := db.CreateProject(ctx, "p", long, "/tmp")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if n := utf8.RuneCountInString(p.Name); n > session.MaxTitleRunes {
+		t.Errorf("created with a name of %d runes, cap is %d", n, session.MaxTitleRunes)
+	}
+
+	if err := db.RenameProject(ctx, "p", long); err != nil {
+		t.Fatalf("RenameProject: %v", err)
+	}
+	got, err := db.GetProject(ctx, "p")
+	if err != nil {
+		t.Fatalf("GetProject: %v", err)
+	}
+	if n := utf8.RuneCountInString(got.Name); n > session.MaxTitleRunes {
+		t.Errorf("renamed to %d runes, cap is %d", n, session.MaxTitleRunes)
+	}
+}

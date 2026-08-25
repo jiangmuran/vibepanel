@@ -8014,3 +8014,45 @@ a test that the socket and the REST answer carry the same keys.
 
 That is the second time this session that duplicated construction has cost
 something, and both times the duplicate was three lines away from the original.
+
+### Driven, and the worry was wrong
+
+The banner had to be seen, not reasoned about, so the capped-database setup was
+put in front of a real browser. It appears, six seconds in, and the connection
+stays open:
+
+```
++5s   stale-notice=null                                          connection="open"
++10s  stale-notice="The panel has stopped recording what the
+      sessions are doing. The terminals are unaffected."         connection="open"
+```
+
+The reasoning that led to running it was wrong, and worth writing down. The
+WebSocket revalidates every five seconds through `stillAuthorized`, which
+discards the error from `currentUser` — so a database failure looked like it
+would close every socket, which would mean the client never receives the
+snapshot carrying `stale` and the banner never appears. The fix would have been
+to weaken revalidation.
+
+It does not, because `currentUser` only reads, and a database that cannot be
+*written* reads perfectly well. `TouchAuthSession` is the one write and its
+error is already ignored as best-effort. Measuring saved an unnecessary and
+security-relevant change to the auth path.
+
+The server half is pinned by tests. The banner's rendering is not: it was
+verified by this probe and nothing guards it, which is worth knowing rather
+than implying otherwise.
+
+## A project name is in the snapshot too
+
+Session titles were bounded because they are whatever an agent printed. Project
+names were not bounded at all, on either create or rename — and they are in the
+same state snapshot, broadcast to every viewer.
+
+The way this one goes wrong is a paste into the rename field rather than an
+escape sequence, and it is self-inflicted, but the cost on every phone watching
+is identical. Same constant, applied in the store, which is the single point
+both paths go through.
+
+Notes and todos are fetched per project rather than pushed, so a large one
+costs only the person who opens it. Left alone.

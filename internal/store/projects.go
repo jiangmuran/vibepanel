@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"github.com/jiangmuran/vibepanel/internal/session"
 )
 
 // ErrNotFound is returned when a row does not exist.
@@ -23,6 +25,12 @@ type Project struct {
 
 // CreateProject inserts a project and its empty note row.
 func (d *DB) CreateProject(ctx context.Context, id, name, path string) (Project, error) {
+	// Bounded like a session title, and for the same reason: a project name is
+	// in the state snapshot, which is broadcast to every viewer. A session
+	// title is whatever an agent printed; this one is typed, so the way it goes
+	// wrong is a paste into the rename field rather than an escape sequence —
+	// and the cost, on every phone watching, is the same.
+	name = session.TruncateTitle(name)
 	p := Project{ID: id, Name: name, Path: path, CreatedAt: now(), LastActiveAt: now()}
 
 	tx, err := d.sql.BeginTx(ctx, nil)
@@ -116,7 +124,7 @@ func (d *DB) GetProject(ctx context.Context, id string) (Project, error) {
 
 // RenameProject changes a project's display name.
 func (d *DB) RenameProject(ctx context.Context, id, name string) error {
-	return d.exec1(ctx, `UPDATE projects SET name = ? WHERE id = ?`, name, id)
+	return d.exec1(ctx, `UPDATE projects SET name = ? WHERE id = ?`, session.TruncateTitle(name), id)
 }
 
 // SetProjectPinned pins or unpins a project.
