@@ -34,6 +34,31 @@ SuccessExitStatus=143
 # sessions carry on regardless.
 TimeoutStopSec=20
 
+# The single line that makes the previous sentence true.
+#
+# The panel deliberately never owns a PTY that a session's process is a child
+# of, so nothing in the code ties a session's life to the panel's. systemd ties
+# it right back. tmux's server is started by the panel, and although it
+# daemonises and re-parents, cgroup membership does not change on re-parenting
+# — so the tmux server sits in this unit's cgroup, and the default
+# KillMode=control-group SIGTERMs everything in it on stop.
+#
+# Measured on a throwaway unit and socket, two sessions, `systemctl --user
+# stop`:
+#
+#   KillMode default (control-group) -> 2 sessions before, 0 after
+#   KillMode=process                 -> 2 sessions before, 2 after
+#   KillMode=mixed                   -> 2 sessions before, 0 after
+#
+# So `systemctl restart vibepanel` was destroying every running agent, which is
+# the exact outcome the whole tmux architecture exists to prevent, arriving
+# through the deployment instead of through the code.
+#
+# `mixed` is the trap: it reads like the careful middle option and it kills
+# them too, because after the main process exits the SIGKILL phase still goes
+# to the whole cgroup. Only `process` leaves the tmux server alone.
+KillMode=process
+
 # Deliberately little filesystem sandboxing.
 #
 # The obvious hardening — ProtectSystem=strict, ProtectHome, a narrow

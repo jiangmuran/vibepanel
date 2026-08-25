@@ -27,10 +27,31 @@ which is a no-op against tmux and just clears the row.
 
 ## Sessions died when I restarted the panel
 
-They should not. If they did, something is running the processes as children of
-the Go process rather than of the tmux server. Check that the panel is not
-being started with a `--tmux-socket` that differs from the one the sessions were
-created on:
+Check the unit for `KillMode=process` first. Without it, this happens every
+time, to everyone, and none of the other explanations apply.
+
+```sh
+systemctl --user show vibepanel -p KillMode      # want: KillMode=process
+```
+
+tmux's server is started by the panel. It daemonises and re-parents, but cgroup
+membership does not change on re-parenting, so it stays in the panel's unit —
+and systemd's default `KillMode=control-group` SIGTERMs everything in that
+cgroup on stop. Nothing in the panel's code ties a session to the panel's
+lifetime; the unit file did it instead. Measured: two sessions before the stop,
+zero after, on the default; two after with `KillMode=process`.
+
+`KillMode=mixed` does not work either, which matters because it reads like the
+cautious choice. After the main process exits, the SIGKILL phase still goes to
+the whole cgroup.
+
+The unit shipped in `deploy/vibepanel.service` has the right line. If the panel
+was installed before that was fixed, copy it again and `systemctl --user
+daemon-reload`.
+
+If `KillMode` is already `process` and sessions still vanish, then look at the
+socket — a panel started with a different `--tmux-socket` is talking to an
+empty server rather than to a dead one:
 
 ```sh
 ls /tmp/tmux-$(id -u)/                  # every socket on the box
@@ -53,10 +74,36 @@ Password login always works; passkeys are an addition, never the only door.
 ## Certificate renewal failed
 
 With `--tls acme`, certificates and account keys live in `<data-dir>/acme`.
-HTTP-01 cannot be used because the panel listens on a non-standard port, so a
-DNS-01 provider credential must be present in the environment. Point
-`--acme-directory` at the CA's staging endpoint while debugging; the production
-endpoint has rate limits that a retry loop will exhaust.
+HTTP-01 cannot be used because the panel listens on a non-standard port, so the
+challenge is DNS-01 and the provider credential has to be in the environment.
+Cloudflare is the only provider wired up, and it reads:
+
+```sh
+CLOUDFLARE_API_TOKEN=...     # or CF_API_TOKEN, whichever is set first
+```
+
+Missing, and startup fails with `tlsmgr: no DNS API token; set
+CLOUDFLARE_API_TOKEN`. Anything other than `cloudflare` in `--acme-dns` fails
+with the list of what is supported, which is that one name.
+
+Point `--acme-directory` at the CA's staging endpoint while debugging; the
+production endpoint has rate limits that a retry loop will exhaust.
+
+## The certificate on disk changed and the panel did not notice
+
+`--tls files` polls once a minute and compares modification times. A renewal
+that preserves them — `cp -p`, a restore from backup, some sync tools — is
+invisible, and the panel keeps serving the old certificate until it expires and
+then keeps serving it expired, in silence. `touch` the pair to force the
+reload:
+
+```sh
+touch /path/to/cert.pem /path/to/key.pem
+```
+
+A corrupt or half-written pair is handled: the load fails, the previous
+certificate keeps being served, and the failure is logged. It is only the
+timestamps that can lie.
 
 ## The database will not open
 
@@ -71,9 +118,25 @@ that silently drops whatever the newer version wrote.
 
 ## Memory
 
-Every session's scrollback lives in the tmux server, not in the panel, so the
-panel's own memory stays roughly flat regardless of session count. If the box
-is under pressure, the tmux server is where the memory is:
+Look in both places, and know which is which.
+
+**tmux** holds the authoritative scrollback — 20,000 lines per session, by the
+`history-limit` in the embedded config. This is the larger number and it grows
+with what agents print.
+
+**The panel** is not flat with session count, whatever an earlier version of
+this page claimed. It attaches to *every* session, not only the one being
+watched, because state detection reads the byte stream — and each attachment
+costs a replay buffer of up to 2 MiB (`session.DefaultRingSize`), a PTY, and a
+goroutine. Twenty-four sessions is therefore tens of megabytes of panel before
+anything has gone wrong. Buffers fill as output arrives rather than being
+allocated up front, so an idle panel sits well below that ceiling.
+
+If the panel's own memory is far above roughly 2 MiB per live session,
+something is retaining more than it should; `scripts/scale-check.mjs` measures
+exactly this and fails past three.
+
+For the box as a whole:
 
 ```sh
 systemd-cgls --user-unit vibepanel.service

@@ -5198,3 +5198,84 @@ It failed on the first run, on its own doc comment, for exactly the same
 reason. Three accidents in one afternoon, every one of them while writing about
 the character. A rule that is this easy to break by hand is a rule that belongs
 in a test rather than in a paragraph.
+
+## The premise of the project, undone by the unit file
+
+Red line 2 says the panel must never own a PTY that a session's process is a
+child of, because "the moment a session's lifetime depends on the Go process,
+`systemctl restart vibepanel` becomes destructive and the entire premise of the
+project is gone."
+
+The code honours that exactly. The deployment did not, and arrived at the same
+outcome by a different route.
+
+tmux's server is started by the panel. It daemonises and re-parents, which is
+what makes it feel independent — but cgroup membership does not change on
+re-parenting. So the tmux server sits inside the panel's systemd unit, and the
+default `KillMode=control-group` SIGTERMs every process in that cgroup on stop.
+
+This had been on the suspect list for a while, marked unverified, which was the
+wrong place for it: verifying it costs one transient unit and a throwaway
+socket, and touches nothing else on the machine. `systemd-run --user
+--unit=… --collect` leaves no files behind and disappears when it stops.
+
+Two sessions, `systemctl --user stop`, three settings:
+
+```
+KillMode default (control-group)   2 sessions before -> 0 after
+KillMode=process                   2 sessions before -> 2 after
+KillMode=mixed                     2 sessions before -> 0 after
+```
+
+The tmux server's cgroup line during the run read
+`…/vp-killmode-probe-1391938.service`, which is the whole explanation in one
+string.
+
+So `systemctl restart vibepanel` was killing every running agent — the exact
+outcome the entire tmux architecture exists to prevent — for everyone using the
+unit as shipped.
+
+`mixed` is worth naming because it is the answer someone reaches for when told
+`control-group` is wrong. It reads like the careful middle setting and it kills
+the sessions too: after the main process exits, the SIGKILL phase still goes to
+the whole cgroup. Only `process` leaves the tmux server alone.
+
+### What the unit file already knew
+
+The same file, further down:
+
+```
+# When a session's process is killed for memory, only that process should die.
+# Without this systemd takes down the panel — and with it every other session.
+OOMPolicy=continue
+```
+
+That comment is correct, and it is about this exact cgroup. Twenty lines above
+it:
+
+```
+# Stopping the panel must not wait on anything: it detaches from tmux and the
+# sessions carry on regardless.
+TimeoutStopSec=20
+```
+
+Both sentences were in the file at once and only one of them could be true. The
+OOM line understood that everything shares a cgroup; the stop line assumed the
+sessions were independent. Neither was near enough to the other to look wrong.
+
+### And the runbook sent you the wrong way
+
+`## Sessions died when I restarted the panel` opened with "They should not",
+then offered two causes: something owning the processes as children of the Go
+process, or a mismatched `--tmux-socket`. Both are real failure modes. Neither
+was this one — and this one happened every time, to everyone, on the default
+configuration. The runbook page for the symptom was sending the only people who
+would ever read it to check two things that were fine.
+
+It now leads with `systemctl --user show vibepanel -p KillMode`, and keeps the
+socket check as the second thing to look at.
+
+`TestUnitLeavesTheSessionsAlone` pins the line, because a bare
+`KillMode=process` in a unit file is exactly what someone tidying or hardening
+it would delete. It rejects absent, `mixed` and `control-group` with the
+measurement in the message.
