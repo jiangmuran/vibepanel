@@ -770,6 +770,45 @@ try {
       note('FAIL', 'panel/monitor', `the monitor rendered a broken value: ${JSON.stringify(monitorText)}`)
     }
 
+    // A machine the panel cannot measure must not be described as an idle one.
+    //
+    // readMem returns zeroes when /proc/meminfo cannot be opened — every
+    // darwin build, and any container that masks /proc — and the disk read
+    // does the same when statfs fails. That rendered "Memory 0% · 0 B of 0 B"
+    // and "Disk 0% · 0 B free": a measurement nobody made, claiming nothing is
+    // in use. The CPU meter beside it already knew better.
+    //
+    // Served rather than provoked: this machine has a readable /proc, so the
+    // only honest way to see that payload is to send it.
+    await page.route('**/api/system', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          at: Date.now(), cpuPercent: 41.5, cores: 8,
+          load1: 1.2, load5: 0.9, load15: 0.7,
+          memTotal: 0, memAvailable: 0, swapTotal: 0, swapFree: 0,
+          diskTotal: 0, diskFree: 0, uptime: 3600,
+        }),
+      })
+    })
+    await page.locator('[data-testid="panel-tab-files"]').click()
+    await sleep(400)
+    await page.locator('[data-testid="panel-tab-monitor"]').click()
+    await sleep(3500)
+    const unmeasured = await page.locator('[data-testid="system-monitor"]').innerText().catch(() => '')
+    if (/0 B of 0 B|\b0%/.test(unmeasured)) {
+      note('FAIL', 'panel/monitor',
+        `the monitor reports a machine it cannot measure as an idle one: ` +
+        `${JSON.stringify(unmeasured.replace(/\s+/g, ' ').trim())}`)
+    }
+    if (!unmeasured.includes('—')) {
+      note('FAIL', 'panel/monitor',
+        `an unreadable meter should read "—" like the CPU one does before its first ` +
+        `sample: ${JSON.stringify(unmeasured.replace(/\s+/g, ' ').trim())}`)
+    }
+    await page.unroute('**/api/system')
+
     // A panel you resized and then closed has to come back the size you left
     // it, and the size and the closed-ness have to be two stored things.
     //

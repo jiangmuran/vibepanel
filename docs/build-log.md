@@ -6726,3 +6726,47 @@ it said: "vibepanel: a note could not be saved on the way out not found"
 
 The flake is still unexplained. It will explain itself next time, which is the
 most that could honestly be done today.
+
+## A machine with no memory, using none of it
+
+The system monitor, fed what a machine without a readable `/proc/meminfo`
+actually sends:
+
+```
+CPU     42%   8 cores · load 1.20 0.90 0.70
+Memory   0%   0 B of 0 B
+Disk     0%   0 B free
+```
+
+`readMem` returns zeroes when `/proc/meminfo` cannot be opened, and the disk
+read does the same when statfs fails. The frontend turned that into
+`memTotal ? … : 0` — a measurement nobody made, and the measurement it claimed
+was "nothing is using any memory". "0 B of 0 B" is nonsense on its own; the
+`0%` beside it is the part that lies convincingly.
+
+Reachable, not theoretical: every `darwin/arm64` build the release script
+produces has no `/proc`, and so does any container that masks it.
+
+The CPU meter one line above already knew. Its comment, and `meter.ts`'s, both
+say exactly this — a first sample has nothing to difference against, so it
+renders `—` rather than a zero that looks like an idle machine. The lesson was
+learned, written down twice, and applied to one of the three meters.
+
+Now:
+
+```
+Memory   —    unavailable
+Disk     —    unavailable
+```
+
+Swap was already right: `sample.swapTotal > 0 &&` hides the meter entirely
+rather than drawing a zero. Three meters, three different treatments of the
+same question, and only one of them wrong.
+
+### Served rather than provoked
+
+The machine running the check has a readable `/proc`, so the honest way to see
+that payload is to send it: the harness intercepts `/api/system` once and
+fulfils it with the zeroes, then unroutes. Restoring either fallback fails the
+check, and the failure message quotes the whole meter strip, so it says which
+one broke and what the other two were doing at the time.
