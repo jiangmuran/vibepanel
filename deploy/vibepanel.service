@@ -30,8 +30,15 @@ RestartSec=3
 # `systemctl --user list-units` spends ten minutes on a failure that never was.
 SuccessExitStatus=143
 
-# Stopping the panel must not wait on anything: it detaches from tmux and the
-# sessions carry on regardless.
+# Stopping detaches from tmux and the sessions carry on regardless, but it is
+# not instant: a tmux client does not exit when its PTY closes, so each one has
+# to be killed on a two-second timer. Those run concurrently, so a stop costs
+# about two seconds whether one session is attached or thirty.
+#
+# It used to be two seconds *each*, serially — 16s at eight sessions, past this
+# timeout at eleven. Every restart on a panel in real use was a SIGKILL, and
+# because 137 is not the SuccessExitStatus above, a unit reported as failed.
+# KillMode=process is why that cost nothing worse than a confusing status.
 TimeoutStopSec=20
 
 # The single line that makes the previous sentence true.
