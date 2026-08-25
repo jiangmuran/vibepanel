@@ -8100,3 +8100,45 @@ a `SELECT` — which is what the probe would become if somebody made it cheaper.
 The test now builds a handle that can read and not write (`mode=ro`), proves it
 can read, and requires the check to fail. Turning the INSERT into a SELECT now
 fails, and so does swallowing the error.
+
+## An npm package's Go code was part of this project
+
+`go test -cover ./...` listed a package nobody here wrote:
+
+```
+github.com/jiangmuran/vibepanel/web/node_modules/flatted/golang/pkg/flatted
+   coverage: 0.0% of statements
+```
+
+`flatted` ships `golang/pkg/flatted/flatted.go`, so `go build ./...`,
+`go vet ./...` and `go test ./...` were all compiling and checking a
+third-party file that arrives, changes and disappears with `npm ci`. Nothing
+imports it, so it never reached a binary — but it was inside every gate, and a
+vet finding in somebody else's file would have failed `make lint`.
+
+The Makefile already filtered it out of one command:
+
+```
+@out="$$(gofmt -l . | grep -v '^web/' || true)"
+```
+
+Which is the same symptom, noticed once and patched in one command out of four.
+
+Go has no exclude directive; a nested `go.mod` is the mechanism. `web/go.mod`
+makes everything below it another module, and the root's `./...` stops there.
+Fifteen packages instead of sixteen, and `npm ci` cannot put it back.
+
+### The guard was measuring its own directory
+
+The test that asserts nothing under `web/` is in the module ran
+`go list ./...` — which is relative to the working directory, and the test
+lives in `internal/webui`. It listed three packages that were never going to
+include anything from `web/`, and passed with `web/go.mod` deleted.
+
+It runs from the module root now, and asserts it can see `internal/session`
+before it concludes anything from what it did not see. Deleting `web/go.mod`
+fails it, naming the package.
+
+That is the fifth instrument in this session to answer a question next to the
+one being asked, and the second where the tell was a check that passed while
+the thing it checked was absent.

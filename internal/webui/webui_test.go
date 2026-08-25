@@ -4,7 +4,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -86,6 +88,44 @@ func TestStaticDirRefusesToLeaveItsRoot(t *testing.T) {
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		if body := rec.Body.String(); body == "not for serving" {
 			t.Errorf("%s served the file above the root", path)
+		}
+	}
+}
+
+func TestNothingUnderWebIsPartOfThisModule(t *testing.T) {
+	// npm packages ship whatever they like, and one of them ships Go: flatted
+	// carries golang/pkg/flatted/flatted.go. `go build ./...`, `go vet ./...`
+	// and `go test ./...` were all compiling and checking a third-party file
+	// that arrives and changes with `npm ci`, and `go test -cover ./...`
+	// listed it among this project's packages.
+	//
+	// web/go.mod is what stops it. Go has no exclude directive; a nested module
+	// is the mechanism, and it is one deletion away from coming back.
+	//
+	// Asking the toolchain rather than looking for the file, because the file
+	// existing is not the property that matters.
+	// From the module root. `./...` is relative to the working directory, and
+	// the first version of this test ran it here — where the answer is three
+	// packages under internal/webui and never anything from web/. It passed
+	// with web/go.mod deleted.
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatalf("abs: %v", err)
+	}
+	cmd := exec.Command("go", "list", "./...")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		t.Skipf("cannot run go list: %v", err)
+	}
+	if !strings.Contains(string(out), "/internal/session") {
+		t.Fatalf("go list did not return this project's packages, so nothing was "+
+			"compared:\n%s", out)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if strings.Contains(line, "/web/") {
+			t.Errorf("%s is part of this module. Something under web/ is being "+
+				"compiled, vetted and tested as though we wrote it.", line)
 		}
 	}
 }
