@@ -6658,3 +6658,71 @@ One attempt of mine reported all four event names as "not found", which was
 same shape as the instrument errors from earlier entries, caught the same way:
 absence is the answer a broken instrument gives, so it is the answer to check
 twice.
+
+## The notice that left at the worst moment
+
+`stateIsGuessed` ended with `return !s.hooksAreInstalled()`, so the sidebar's
+explanation cleared the instant the hook file was written.
+
+Which is the worst possible moment to stop explaining. An agent reads its hooks
+when it starts, so every session already open keeps guessing after the install
+— in a panel built for a dozen long-lived agents, all of them. The sequence a
+user actually gets:
+
+1. See "States are being guessed from output… Turn on state reporting →"
+2. Click it, install
+3. **The notice disappears**
+4. Every state stays guessed, with nothing on screen saying why
+
+The panel removed the one thing telling them what was wrong, on the click that
+was supposed to fix it.
+
+Guessed now means what it says: an agent is running and nothing has reported.
+Whether the hooks are installed decides *which way out the notice offers*, not
+whether it appears — so the payload carries `hooksInstalled` separately and the
+sidebar picks:
+
+> States are still being guessed. Sessions that were open before state
+> reporting was installed keep guessing until they reload — open `/hooks` in
+> each, or restart the agent.
+
+The other branch was corrected while it was open. It said "Claude Code does not
+ring the terminal bell", which frames the problem as one agent's quirk and
+invites the wrong conclusion — use a different agent. It now says the bell is
+the only signal that reaches the panel at all, because tmux swallows the
+notification sequences, which is what the earlier measurement actually showed.
+
+### A flake, and what to do with one you cannot reproduce
+
+The render check failed once on the notes flush and passed on the re-run. Eleven
+runs of the isolated probe, including one rewritten to match the harness's
+preamble exactly, would not reproduce it.
+
+At that point guessing at causes is worse than useless, because each guess
+costs a change to code that might be fine. What is cheap is making the next
+occurrence explain itself.
+
+The flush swallowed its own failure:
+
+```js
+.catch(() => { /* nothing on screen is left to tell */ })
+```
+
+The comment is true and the conclusion does not follow. There is no component
+left to show it in, which is not the same as there being nowhere to put it —
+and swallowing it made a failed flush indistinguishable from one that had
+nothing to send, which is the entire question when a note goes missing. That is
+the same shape as every instrument error recorded above: a fallback that erases
+the difference between "no signal" and "nothing to report".
+
+It now warns to the console, the harness collects warnings as well as errors,
+and the check quotes them. Verified by breaking the flush on purpose:
+
+```
+[FAIL] panel/notes: leaving the tab mid-edit threw the edit away; the server
+still has "remember: NOTE_PERSIST_OK", the panel last reported status "?", and
+it said: "vibepanel: a note could not be saved on the way out not found"
+```
+
+The flake is still unexplained. It will explain itself next time, which is the
+most that could honestly be done today.

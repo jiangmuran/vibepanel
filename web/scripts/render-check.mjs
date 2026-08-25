@@ -317,9 +317,15 @@ try {
   const page = await ctx.newPage()
 
   const consoleErrors = []
+  // Warnings are not failures and are not noise either: the panel uses them
+  // for things it cannot show on screen, such as a note flushed from a
+  // component that has already unmounted. Collected so a check that fails can
+  // quote the panel's own account of why.
+  const consoleWarnings = []
   const failedReqs = []
   page.on('console', (m) => {
     if (m.type() === 'error') consoleErrors.push(m.text())
+    if (m.type() === 'warning') consoleWarnings.push(m.text())
   })
   page.on('pageerror', (e) => pageErrors.push(String(e)))
   page.on('requestfailed', (r) => failedReqs.push(`${r.url()} — ${r.failure()?.errorText}`))
@@ -840,8 +846,17 @@ try {
       if (flushed.includes('NOTE_FLUSH_OK')) break
     }
     if (!flushed.includes('NOTE_FLUSH_OK')) {
+      // Report what the panel thought was happening, not only what the server
+      // ended up with. This failed once, intermittently, and the message said
+      // nothing about why — which is the difference between a bug and a
+      // rumour.
+      const status = await page.locator('[data-testid="notes-status"]').getAttribute('data-status')
+        .catch(() => '?')
+      const complaint = consoleWarnings.filter((w) => w.includes('note could not be saved')).slice(-1)
       note('FAIL', 'panel/notes',
-        `leaving the tab mid-edit threw the edit away; the server still has ${JSON.stringify(flushed)}`)
+        `leaving the tab mid-edit threw the edit away; the server still has ` +
+        `${JSON.stringify(flushed)}, the panel last reported status ${JSON.stringify(status)}` +
+        (complaint.length ? `, and it said: ${JSON.stringify(complaint[0])}` : ', and it said nothing'))
     }
     await page.locator('[data-testid="panel-tab-notes"]').click()
     await sleep(600)

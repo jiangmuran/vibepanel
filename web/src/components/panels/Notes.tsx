@@ -59,8 +59,13 @@ export function Notes({ projectId, socket }: { projectId: string; socket: PanelS
       queued.current = null
       window.clearTimeout(timer.current)
       if (text === null || text === saved.current) return
-      void api.saveNote(projectId, text, base.current, unloading).catch(() => {
-        /* nothing on screen is left to tell */
+      void api.saveNote(projectId, text, base.current, unloading).catch((e: unknown) => {
+        // There is no component left to show this in, which is not the same as
+        // there being nowhere to put it. Swallowing it entirely made a failed
+        // flush indistinguishable from one that never had anything to send —
+        // and that difference is the whole question when a note goes missing.
+        console.warn('vibepanel: a note could not be saved on the way out',
+          e instanceof Error ? e.message : e)
       })
     },
     [projectId],
