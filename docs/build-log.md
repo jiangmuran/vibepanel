@@ -7260,3 +7260,49 @@ Serial `DetachAll` → 12.01 s for six sessions. `closeFromPump` back to
 `close()` → the detach test hangs on its own timeout. The kill/detach order
 swapped back → 8.016 s to delete a project with four sessions, which nothing
 had been watching before: reverting that ordering built and passed everything.
+
+## A project you could add and not remove
+
+Adding a project is a prompt you type a path into, so the first mistake anybody
+makes is a path that is wrong and happens to exist. The panel had no way back
+out: `DELETE /api/projects/{id}`, the `project rm` CLI command and
+`api.deleteProject` were all there, and nothing in the sidebar called any of
+them.
+
+The control is on the project row, revealed on hover like the others. It
+confirms, because removing a project kills every session in it — which is not
+what "take this off the list" looks like — and the confirmation counts them and
+says what survives:
+
+```
+Remove zzz-second from the panel? Its 3 sessions will be killed.
+
+The directory itself is left alone.
+```
+
+### The count is the part worth checking
+
+Three, not two: the scratch terminal under one of those sessions dies with it,
+and a confirmation that leaves it out understates what the click destroys.
+Mutating the count to exclude child sessions is caught:
+
+```
+[FAIL] projects: the confirmation offered 2 sessions, the project had 3:
+       ["doomed-one","doomed-two","doomed-scratch"]
+```
+
+The render check drives the button rather than calling the endpoint, because a
+control that exists but cannot be reached is the shape of defect that harness
+is for. It also asserts the directory is still there afterwards. A panel that
+deleted somebody's working tree because they tidied their sidebar would be the
+worst bug in this project, and nothing else was watching for it.
+
+### The probe was wrong twice first
+
+`GET /api/projects` returned 405 — there is no such route, the list comes from
+`/api/state` — and the harness's own guard against 404/405 caught it before the
+check could conclude anything from the answer. Then the hover timed out,
+because earlier sections leave the page at whatever viewport they finished
+with and the sidebar only lists projects at desktop width. Both were the probe.
+The section now reports the rows it can see when it cannot find the one it
+wants, instead of spending thirty seconds hovering over nothing.

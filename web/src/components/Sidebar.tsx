@@ -40,6 +40,7 @@ export interface SidebarProps {
   onAddProject: () => void
   onNewSession: (project: Project) => void
   onRenameProject: (project: Project, name: string) => void
+  onRemoveProject: (project: Project) => void
   onRenameSession: (session: Session, title: string) => void
   onPinSession: (session: Session, pinned: boolean) => void
   onSetSessionState: (session: Session, state: SessionState) => void
@@ -283,6 +284,20 @@ export function Sidebar(props: SidebarProps) {
                 className="vp-tap ml-auto rounded p-1 text-ink-2 vp-reveal hover:text-ink"
               >
                 <TerminalIcon size={13} />
+              </button>
+              {/* You can add a project by typing a path into a prompt, and the
+                  first thing anybody does is type one. A path that is wrong but
+                  happens to exist gives you a project you could not remove from
+                  here at all — the endpoint, the CLI and even the client method
+                  were all there, and nothing in the panel called it. */}
+              <button
+                type="button"
+                onClick={() => props.onRemoveProject(p)}
+                data-testid="project-remove"
+                title="Remove this project from the panel"
+                className="vp-tap rounded p-1 text-ink-2 vp-reveal hover:text-ink"
+              >
+                <X size={13} />
               </button>
             </div>
 

@@ -19,7 +19,7 @@
 import { chromium } from 'playwright'
 import { spawn, execSync } from 'node:child_process'
 import { createServer } from 'node:net'
-import { mkdtempSync, rmSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sweepStaleSockets } from './lib/stale.mjs'
@@ -1765,6 +1765,123 @@ try {
         note('FAIL', 'mobile',
           `${control} is ${Math.round(box.width)}x${Math.round(box.height)} css px on a touch ` +
           'screen; a thumb needs 44')
+      }
+    }
+
+    // Removing a project from the panel.
+    //
+    // You add a project by typing a path into a prompt, and a path that is
+    // wrong but happens to exist gives you a project. The endpoint, the CLI
+    // and the client method were all there; nothing in the panel called any of
+    // them, so the sidebar had no way back out.
+    //
+    // Driven rather than asserted from the API, because the button only exists
+    // on hover — a control that is present but unreachable is the shape of
+    // defect this harness exists for.
+    {
+      const listState = async () => (await (await authed('/api/state')).json())
+      const listProjects = async () => (await listState()).projects ?? []
+      const doomedProject = (await listProjects()).find((x) => x.name === 'zzz-second')
+      if (!doomedProject) {
+        note('FAIL', 'projects', 'the second project is missing before the remove is tried')
+      } else {
+        // Give it sessions, including a scratch terminal under one of them.
+        // The confirmation counts what will be killed, and a count nobody has
+        // ever checked is a person agreeing to something other than what
+        // happens. Empty projects were all this had exercised.
+        const doomedMain = await (await authed('/api/sessions', {
+          method: 'POST',
+          body: JSON.stringify({ projectId: doomedProject.id, command: ['sleep', '300'], title: 'doomed-one' }),
+        })).json()
+        await authed('/api/sessions', {
+          method: 'POST',
+          body: JSON.stringify({ projectId: doomedProject.id, command: ['sleep', '300'], title: 'doomed-two' }),
+        })
+        await authed('/api/sessions', {
+          method: 'POST',
+          body: JSON.stringify({
+            projectId: doomedProject.id, parentSessionId: doomedMain.id,
+            command: ['sleep', '300'], title: 'doomed-scratch',
+          }),
+        })
+        await sleep(2000)
+        const doomedSessions = ((await listState()).sessions ?? [])
+          .filter((x) => x.projectId === doomedProject.id)
+
+        // Earlier sections leave the page wherever they finished; the sidebar
+        // only lists projects at a desktop width.
+        await page.setViewportSize({ width: 1440, height: 900 })
+        await sleep(600)
+        const onScreen = await page.$$eval('[data-testid="project-group"]', (els) =>
+          els.map((el) => el.textContent?.trim() ?? ''))
+        const group = page.locator('[data-testid="project-group"]', { hasText: 'zzz-second' }).first()
+        if ((await group.count()) === 0) {
+          note('FAIL', 'projects', `no sidebar row for the project to remove; saw ${JSON.stringify(onScreen)}`)
+          throw new Error('project row missing')
+        }
+        await group.hover()
+        const remove = group.locator('[data-testid="project-remove"]')
+        const reachable = await remove.isVisible().catch(() => false)
+        if (!reachable) {
+          note('FAIL', 'projects', 'no way to remove a project from the sidebar')
+        } else {
+          // The confirmation counts what goes and promises what stays. Read it
+          // rather than blindly accepting: a count that is wrong here is a
+          // person agreeing to something other than what happens.
+          let prompt = ''
+          page.once('dialog', (d) => {
+            prompt = d.message()
+            void d.accept()
+          })
+          await remove.click()
+          await sleep(1500)
+
+          const after = await listProjects()
+          if (after.some((x) => x.id === doomedProject.id)) {
+            note('FAIL', 'projects', 'the project survived being removed')
+          } else {
+            note('PASS', 'projects', `removed from the sidebar; confirmation said ${JSON.stringify(prompt.split('\n')[0])}`)
+          }
+
+          // The number in the confirmation against the number that actually
+          // died. Both are worth failing on: a low count understates what the
+          // click destroys, a high one is a panel crying wolf about work it is
+          // not going to do.
+          const claimed = Number((prompt.match(/Its (\d+) session/) ?? [])[1] ?? 0)
+          const gone = (await listState()).sessions ?? []
+          const survivors = gone.filter((x) => x.projectId === doomedProject.id)
+          if (claimed !== doomedSessions.length) {
+            note('FAIL', 'projects',
+              `the confirmation offered ${claimed} sessions, the project had ${doomedSessions.length}: ` +
+              JSON.stringify(doomedSessions.map((x) => x.title)))
+          } else {
+            note('PASS', 'projects', `the confirmation counted all ${claimed} sessions, scratch terminals included`)
+          }
+          if (survivors.length > 0) {
+            note('FAIL', 'projects',
+              `${survivors.length} sessions outlived the project they belonged to`)
+          }
+          const liveTmux = execSync(`tmux -L ${SOCKET} ls 2>/dev/null || true`, { encoding: 'utf8' })
+          for (const x of doomedSessions) {
+            if (liveTmux.includes(x.tmuxName)) {
+              note('FAIL', 'projects', `tmux session ${x.tmuxName} outlived the project`)
+            }
+          }
+          const stillListed = await page
+            .locator('[data-testid="project-group"]', { hasText: 'zzz-second' })
+            .count()
+          if (stillListed > 0) {
+            note('FAIL', 'projects', 'the sidebar still shows a project that is gone')
+          }
+          // The confirmation promises the directory is left alone. A panel that
+          // deleted somebody's working tree because they tidied their sidebar
+          // is the worst thing in this file.
+          if (!existsSync(DATA)) {
+            note('FAIL', 'projects', 'removing a project deleted the directory it pointed at')
+          } else {
+            note('PASS', 'projects', 'the directory it pointed at is untouched')
+          }
+        }
       }
     }
 

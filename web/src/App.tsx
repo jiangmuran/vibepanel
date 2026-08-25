@@ -413,6 +413,20 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     void guard(() => api.createSession(current.projectId, [], { parentSessionId: current.id }))
   }
 
+  // Removing a project kills every session in it, which is the part nobody
+  // expects from a control that looks like "take this off the list". So the
+  // confirmation counts them, and says what survives: the directory.
+  const removeProject = (p: Project) => {
+    const running = state.sessions.filter((s) => s.projectId === p.id).length
+    const what =
+      running === 0
+        ? `Remove ${p.name} from the panel?`
+        : `Remove ${p.name} from the panel? Its ${running} session${running === 1 ? '' : 's'} ` +
+          `will be killed.`
+    if (!window.confirm(`${what}\n\nThe directory itself is left alone.`)) return
+    void guard(() => api.deleteProject(p.id))
+  }
+
   const killSession = (s: Session) => {
     if (!window.confirm(`Kill ${labelOf(s)}? The process is terminated.`)) return
     void guard(() => api.deleteSession(s.id))
@@ -457,6 +471,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           onAddProject={addProject}
           onNewSession={newSession}
           onRenameProject={(p, name) => void guard(() => api.patchProject(p.id, { name }))}
+          onRemoveProject={removeProject}
           onRenameSession={(s, title) => void guard(() => api.patchSession(s.id, { title }))}
           onPinSession={(s, pinned) => void guard(() => api.patchSession(s.id, { pinned }))}
           onSetSessionState={(s, st) => void guard(() => api.patchSession(s.id, { state: st }))}
