@@ -7433,3 +7433,82 @@ where the shell took it as text to run rather than output to render, and
 `pane_title` came back as 13 characters. That reads as "tmux bounds titles",
 which is a reassuring answer and a wrong one. Delivering the sequence from
 inside the pane gave 200,001.
+
+## Twenty thousand lines of history nobody could see
+
+tmux keeps 20,000 lines per session. Not one of them could be reached from the
+panel, on any device. Measured out of xterm's own buffer, on a session that had
+printed 300 lines:
+
+```
+tmux history_size: 267
+xterm buffer length: 34   baseY: 0
+```
+
+34 rows: the visible screen and nothing behind it. Wheel, touch drag and the
+phone's `pgup` key all moved it by nothing.
+
+### Two lines of tmux config, both of them
+
+The first thing a tmux client writes to its terminal is the alternate screen:
+
+```
+"\x1b[?1049h\x1b[22;0;0t\x1b[?1h\x1b=\x1b[H\x1b[2J..."
+```
+
+That buffer has no scrollback by definition, so nothing the panel ever rendered
+could accumulate any. And tmux scrolls with `CSI Ps S`:
+
+```
+"\x1b[12S\x1b[HROW_12\r\nROW_13\r\n..."
+```
+
+which discards what goes off the top — only a line feed at the bottom margin
+hands a line to the terminal to keep.
+
+`smcup@:rmcup@` and `indn@` remove both, on the panel's own socket. After:
+`buffer length 303, baseY 269`. The alternate screen matters because this PTY
+is created for one tmux client and dies with it; there is nothing behind it to
+restore. Programs *inside* tmux are untouched — tmux emulates the alternate
+screen per pane and sends the composed result, so leaving vim still puts the
+shell back, which stress-check has always pinned and still does.
+
+This was the item recorded as a decision for the user. The measurement made it
+a defect: 20,000 lines of history unreachable in a tool whose purpose is
+reading what agents did.
+
+### The check that answered the same question three different ways
+
+The browser check flapped — one run in three, always all-or-nothing — and on
+one of those runs it reported that `indn@` was unnecessary. It nearly took a
+necessary line out of the config.
+
+The cause was the check, not the panel: it scrolled 1500ms after selecting the
+session, while the replay was still arriving and the terminal was still
+following output to the bottom. Both the before and the after were being read
+out of a moving picture. Waiting for the last line of the burst to appear turns
+it into a measurement, and it has passed fourteen consecutive runs since.
+
+The lesson is the one this project keeps relearning, in a new form: an
+instrument that is merely *usually* right will eventually be confidently wrong,
+and the answer it gives will be the one that costs the most to act on.
+
+### A second instrument, for seconds rather than minutes
+
+`TestTmuxDoesNotTakeTheAlternateScreenOrDiscardScrolledLines` asserts the same
+two facts against the bytes tmux writes to the PTY. It runs in eight seconds
+instead of twenty minutes, needs no browser, and names which of the two config
+lines broke:
+
+```
+tmux put this PTY on the alternate screen, which has no scrollback
+tmux scrolled with CSI Ps S 25 times, which throws the lines away
+```
+
+### Still missing on a phone
+
+Scrollback now exists and the desktop wheel reaches it. A touch drag does not,
+and neither does the `pgup` key — it sends `ESC[5~`, which a shell ignores.
+Measured with scrollback present: wheel 269 → 268, touch drag 268 → 268, pgup
+268 → 268, `scrollLines(-60)` 268 → 208. The buffer is there and the phone has
+no gesture that reaches it. That is the next thing.

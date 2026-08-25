@@ -297,6 +297,91 @@ try {
     if (stillVim) note('WARN', 'altscreen', 'the editor is still on screen after quitting')
   }
 
+  // ── scrollback ───────────────────────────────────────────────────────────
+  // tmux holds 20,000 lines per session and, until this was measured, not one
+  // of them could be reached from the panel on any device.
+  //
+  // Two things in the embedded tmux config are why. A tmux client's first
+  // write to its terminal is ESC[?1049h — the alternate screen, which has no
+  // scrollback at all — and tmux scrolls with CSI Ps S, which discards what
+  // goes off the top rather than feeding it to the terminal. Measured with
+  // xterm's own buffer: 0 lines of scrollback before, 269 after.
+  //
+  // This checks the property a person has, not the config: scroll up, and
+  // earlier output must come back.
+  // exec sleep, not exec sh: a shell prints a prompt after the burst, and output
+  // arriving while the view is scrolled up pulls it back to the bottom. That is
+  // correct behaviour and it made the first version of this check pass one run
+  // in three.
+  await mk(['sh', '-c', 'i=1; while [ $i -le 400 ]; do echo SCROLL_$i; i=$((i+1)); done; exec sleep 300'], 'scrollback')
+  await sleep(3000)
+  await select('scrollback')
+
+  const topRow = async () => (await rows(page)).find((r) => r.trim()) ?? ''
+  const lineNo = (r) => Number((/SCROLL_(\d+)/.exec(r) ?? [])[1] ?? NaN)
+
+  // Wait for the whole burst to have arrived before measuring anything.
+  //
+  // The first version scrolled 1500ms after selecting and flapped: one run in
+  // three with the configuration unchanged, and always all-or-nothing. A replay
+  // still in flight moves the top row by itself, and the terminal follows new
+  // output to the bottom, so both the before and the after were being read out
+  // of a moving picture.
+  //
+  // Waiting for the last line of the burst is the precondition that makes this
+  // a measurement rather than a race: until SCROLL_400 is on screen there is
+  // nothing to be scrolled back from.
+  const sawLast = await waitForRow((r) => r.includes('SCROLL_400'), 20000)
+  if (sawLast.index < 0) {
+    note('WARN', 'scrollback', 'the burst never finished arriving; not measuring a moving picture')
+  }
+  let settled = await topRow()
+  for (let i = 0; i < 20; i++) {
+    await sleep(500)
+    const now = await topRow()
+    if (now === settled && Number.isFinite(lineNo(now))) break
+    settled = now
+  }
+
+  const box = await page.locator('.xterm-screen').boundingBox()
+  if (!box || !Number.isFinite(lineNo(settled))) {
+    note('WARN', 'scrollback', `nothing to scroll: ${JSON.stringify(settled.slice(0, 40))}`)
+  } else {
+    // Scroll in batches and keep looking, the way a person keeps scrolling.
+    // Failure still means every one of them reached nothing.
+    let reached = settled
+    for (let batch = 0; batch < 12; batch++) {
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+      for (let i = 0; i < 10; i++) await page.mouse.wheel(0, -240)
+      await sleep(400)
+      reached = await topRow()
+      if (Number.isFinite(lineNo(reached)) && lineNo(reached) < lineNo(settled)) break
+    }
+    if (!Number.isFinite(lineNo(reached)) || lineNo(reached) >= lineNo(settled)) {
+      // What the wheel actually landed on. A check that fails has to say what
+      // it saw, or the next person re-derives it from nothing.
+      const under = await page.evaluate(({ x, y }) => {
+        const el = document.elementFromPoint(x, y)
+        const wrap = document.querySelector('.xterm')?.parentElement
+        return {
+          hit: el ? `${el.tagName.toLowerCase()}.${el.className}`.slice(0, 80) : null,
+          stack: document.elementsFromPoint(x, y).slice(0, 4)
+            .map((e) => `${e.tagName.toLowerCase()}.${String(e.className).slice(0, 30)}`),
+          wrapOverflow: wrap ? getComputedStyle(wrap).overflow : null,
+          wrapScrollTop: wrap?.scrollTop ?? null,
+          wrapScrollHeight: wrap?.scrollHeight ?? null,
+          wrapClientHeight: wrap?.clientHeight ?? null,
+        }
+      }, { x: box.x + box.width / 2, y: box.y + box.height / 2 })
+      note('FAIL', 'scrollback',
+        `120 wheel notches went nowhere: top line was SCROLL_${lineNo(settled)}, ` +
+        `now ${JSON.stringify(reached.slice(0, 40))}. Under the pointer: ${JSON.stringify(under)}`)
+    } else {
+      note('PASS', 'scrollback',
+        `scrolled back from SCROLL_${lineNo(settled)} to SCROLL_${lineNo(reached)}`)
+    }
+  }
+
   // ── a flood ──────────────────────────────────────────────────────────────
   // A build or a test run produces tens of thousands of lines in a few
   // seconds. The pump must not stall, the browser must not die, and the tail

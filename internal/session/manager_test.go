@@ -1,10 +1,12 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -1335,5 +1337,68 @@ func TestDetachOfAKilledSessionDoesNotWaitForItself(t *testing.T) {
 	if took := time.Since(start); took > pumpDrain/2 {
 		t.Errorf("detaching a session whose tmux session is already gone took %v; "+
 			"the pump is waiting for itself again", took.Round(time.Millisecond))
+	}
+}
+
+func TestTmuxDoesNotTakeTheAlternateScreenOrDiscardScrolledLines(t *testing.T) {
+	// Two lines in the embedded tmux config decide whether the panel has any
+	// scrollback at all, and neither is visible from anywhere else.
+	//
+	// A tmux client's first write to its terminal is ESC[?1049h. The alternate
+	// screen has no scrollback by definition, so everything the panel rendered
+	// was on a buffer that keeps nothing: 20,000 lines of tmux history per
+	// session, not one of them reachable, on any device. And tmux scrolls with
+	// CSI Ps S, which discards what goes off the top — only a line feed at the
+	// bottom margin hands a line to the terminal to keep.
+	//
+	// stress-check drives a browser and scrolls, which is the property a person
+	// has. This is the same two facts at the byte level, so a config change
+	// that breaks them fails in seconds rather than in a twenty-minute browser
+	// run — and says which of the two it was.
+	ctx := context.Background()
+	tm := newTestTmux(t)
+	m := NewManager(tm, 1<<20)
+	defer m.DetachAll()
+
+	const name = "vp_scrollbytes"
+	if err := tm.Create(ctx, tmux.CreateOptions{
+		Name: name, Dir: t.TempDir(), Width: 80, Height: 24,
+		Command: []string{"sh", "-c", "i=1; while [ $i -le 200 ]; do echo ROW_$i; i=$((i+1)); done; exec sleep 60"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	live, err := m.Attach(ctx, "s", name, 80, 24)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	sub, replay := live.Subscribe("probe")
+	var got bytes.Buffer
+	got.Write(replay)
+	deadline := time.After(6 * time.Second)
+collect:
+	for {
+		select {
+		case ev, ok := <-sub.Events:
+			if !ok {
+				break collect
+			}
+			if ev.Kind == EventOutput {
+				got.Write(ev.Data)
+			}
+		case <-deadline:
+			break collect
+		}
+	}
+
+	if got.Len() < 200 {
+		t.Fatalf("only %d bytes arrived; the session produced nothing to judge", got.Len())
+	}
+	if bytes.Contains(got.Bytes(), []byte("\x1b[?1049h")) {
+		t.Error("tmux put this PTY on the alternate screen, which has no scrollback: " +
+			"terminal-overrides needs smcup@ and rmcup@")
+	}
+	if su := regexp.MustCompile(`\x1b\[[0-9]*S`).FindAll(got.Bytes(), -1); len(su) > 0 {
+		t.Errorf("tmux scrolled with CSI Ps S %d times, which throws the lines away "+
+			"instead of handing them to the terminal: terminal-overrides needs indn@", len(su))
 	}
 }

@@ -72,7 +72,7 @@ Each of these exists because the alternative broke something real.
   |---|---|
   | `make first-run-check` | the setup wizard and the first project — every other check reaches past them |
   | `make render-check` | the largest: layout, states, arbitration, panels, mobile, clipboard, passkeys |
-  | `make stress-check` | wide characters, full-screen programs, floods, dropped sockets |
+  | `make stress-check` | wide characters, full-screen programs, scrollback, floods, dropped sockets |
   | `make restart-check` | kill the backend; the sessions and the login must outlive it |
   | `make scale-check` | two dozen sessions: snapshot size, sidebar reachability, poller |
   | `make tls-check` | its own TLS: wss, the Secure cookie, swapping a certificate |
