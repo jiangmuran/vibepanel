@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -78,6 +79,10 @@ type Live struct {
 	done    chan struct{}
 	closed  bool
 
+	// pumped is closed by the pump goroutine as it returns. close() waits on
+	// it so that "the attachment has ended" also means "no further callbacks".
+	pumped chan struct{}
+
 	// reconfiguredAt is when the terminal was last set up — attached or
 	// resized. See settleWindow.
 	reconfiguredAt time.Time
@@ -123,6 +128,14 @@ type Manager struct {
 	mu   sync.RWMutex
 	live map[string]*Live
 
+	// attaching records sessions an Attach is currently building, so a second
+	// caller waits for the first instead of starting its own. See Attach.
+	attaching map[string]chan struct{}
+
+	// detachedWhileAttaching names sessions a Detach asked for while an Attach
+	// was still building them. See Attach's install step.
+	detachedWhileAttaching map[string]bool
+
 	// OnSignals, if set, is called from the pump goroutine whenever a chunk
 	// produced something worth acting on. It must not block.
 	OnSignals func(Signals)
@@ -142,19 +155,56 @@ func NewManager(tm *tmux.Client, ringSize int) *Manager {
 	if ringSize <= 0 {
 		ringSize = DefaultRingSize
 	}
-	return &Manager{tmux: tm, ringSize: ringSize, live: map[string]*Live{}}
+	return &Manager{
+		tmux:                   tm,
+		ringSize:               ringSize,
+		live:                   map[string]*Live{},
+		attaching:              map[string]chan struct{}{},
+		detachedWhileAttaching: map[string]bool{},
+	}
 }
 
 // Attach starts a PTY running `tmux attach` for a session, if one is not
 // already running. Attaching twice is a no-op, which lets callers treat it as
 // "make sure this is live".
 func (m *Manager) Attach(ctx context.Context, sessionID, tmuxName string, cols, rows int) (*Live, error) {
-	m.mu.Lock()
-	if l, ok := m.live[sessionID]; ok {
+	// Claim the right to attach this session, or wait for whoever holds it.
+	//
+	// Checking the map and releasing the lock is not enough. What follows takes
+	// a hundred milliseconds or more — capture-pane, then starting a PTY — and
+	// two callers can walk through that window together, each starting a tmux
+	// client and only one of them ending up in the map. The other client stays
+	// attached with nothing owning it.
+	//
+	// That breaks the assumption the whole size arbitration rests on. With
+	// `window-size latest`, the grid follows whichever client resized most
+	// recently; a second client the panel has forgotten about turns every
+	// resize into a fight and reflows the pane under a running TUI. And the two
+	// callers are not hypothetical: the poller attaches every live session
+	// while a subscribe attaches on demand.
+	for {
+		m.mu.Lock()
+		if l, ok := m.live[sessionID]; ok {
+			m.mu.Unlock()
+			return l, nil
+		}
+		if wait, ok := m.attaching[sessionID]; ok {
+			m.mu.Unlock()
+			select {
+			case <-wait:
+				// Whoever held it is done, one way or the other. Round again:
+				// either the attachment is in the map now, or it failed and
+				// this caller takes its turn.
+				continue
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		m.attaching[sessionID] = make(chan struct{})
 		m.mu.Unlock()
-		return l, nil
+		break
 	}
-	m.mu.Unlock()
+	defer m.releaseAttach(sessionID)
 
 	if cols <= 0 {
 		cols = 120
@@ -215,10 +265,32 @@ func (m *Manager) Attach(ctx context.Context, sessionID, tmuxName string, cols, 
 		rows:           rows,
 		scanner:        newOSCScanner(),
 		done:           make(chan struct{}),
+		pumped:         make(chan struct{}),
 		reconfiguredAt: time.Now(),
 	}
 
+	// Install, unless somebody asked for this session to go while it was being
+	// built.
+	//
+	// The claim above stops two Attaches racing each other; it does nothing
+	// about a Detach arriving in the middle of one. That Detach found nothing
+	// in the map — the attachment did not exist yet — and returned, and then
+	// this line put a live attachment into a map the caller had just been told
+	// was empty. Nothing could close it afterwards, so it stayed attached to
+	// tmux for the life of the process: a second client on a session that is
+	// supposed to have exactly one, which is the assumption `window-size
+	// latest` rests on.
+	//
+	// Found by attaching and detaching the same names from eight goroutines and
+	// then asking tmux what was still connected after DetachAll. Whoever asked
+	// for the session to be gone wins.
 	m.mu.Lock()
+	if m.detachedWhileAttaching[sessionID] {
+		delete(m.detachedWhileAttaching, sessionID)
+		m.mu.Unlock()
+		l.close()
+		return nil, ErrNotAttached
+	}
 	m.live[sessionID] = l
 	m.mu.Unlock()
 
@@ -226,9 +298,24 @@ func (m *Manager) Attach(ctx context.Context, sessionID, tmuxName string, cols, 
 	return l, nil
 }
 
+// releaseAttach hands the claim back and wakes anyone waiting on it.
+func (m *Manager) releaseAttach(sessionID string) {
+	m.mu.Lock()
+	ch := m.attaching[sessionID]
+	delete(m.attaching, sessionID)
+	// The note only applies to the attempt that was running when it was left.
+	// Keeping it would make the *next* Attach throw away a good attachment.
+	delete(m.detachedWhileAttaching, sessionID)
+	m.mu.Unlock()
+	if ch != nil {
+		close(ch)
+	}
+}
+
 // pump reads the PTY until it ends, feeding the ring, the scanner and every
 // viewer.
 func (m *Manager) pump(l *Live) {
+	defer close(l.pumped)
 	defer func() {
 		l.broadcast(Event{Kind: EventExit})
 
@@ -252,22 +339,43 @@ func (m *Manager) pump(l *Live) {
 		if n > 0 {
 			chunk := buf[:n]
 
-			// The ring is written before the broadcast so that a viewer
-			// connecting at this instant either sees the chunk in its replay or
-			// receives it live — never neither.
-			l.mu.RLock()
-			ring, scanner := l.ring, l.scanner
-			l.mu.RUnlock()
-			ring.Write(chunk)
+			// Copy before handing to subscribers: buf is reused on the next
+			// read, and a viewer's queue may hold the slice past that point.
+			out := make([]byte, n)
+			copy(out, chunk)
 
+			// The ring and the broadcast happen under one lock, and Subscribe
+			// takes its snapshot under the same one.
+			//
+			// Writing the ring first and broadcasting after left a window: a
+			// viewer registering between the two got the chunk in its replay
+			// *and* then live, and printed it twice. The comment here used to
+			// say that was the deliberate choice, on the grounds that the other
+			// order would lose it instead — but the choice was between two
+			// kinds of visible corruption, and it was never necessary. Holding
+			// the lock across both makes a subscribe either entirely before
+			// (snapshot without the chunk, then the broadcast reaches it) or
+			// entirely after (snapshot with the chunk, and the broadcast has
+			// already been to everyone who was registered).
+			var bell bool
+			var clips, titles []string
+			var cols, rows int
 			l.mu.Lock()
-			scanner.feed(chunk)
-			bell, clips, titles := scanner.drain()
-			cols, rows := l.cols, l.rows
+			l.ring.Write(chunk)
+			l.scanner.feed(chunk)
+			bell, clips, titles = l.scanner.drain()
+			cols, rows = l.cols, l.rows
+			l.broadcastLocked(Event{Kind: EventOutput, Data: out})
+			for _, c := range clips {
+				l.broadcastLocked(Event{Kind: EventClipboard, Text: c})
+			}
+			for _, t := range titles {
+				l.broadcastLocked(Event{Kind: EventTitle, Text: t})
+			}
 			l.mu.Unlock()
 
-			// Answer tmux's terminal capability queries. Left unanswered, tmux
-			// waits five seconds and then re-initialises every session at once.
+			// Writing to the PTY stays outside the lock: it is I/O, and the
+			// only thing on the other end of it is tmux.
 			if reply := terminalQueryReplies(chunk, cols, rows); len(reply) > 0 {
 				if debugChunks {
 					fmt.Fprintf(os.Stderr, "[reply] %s %s %q\n",
@@ -277,22 +385,9 @@ func (m *Manager) pump(l *Live) {
 					m.logf("reply to terminal query on %s: %v", l.TmuxName, werr)
 				}
 			}
-
-			// Copy before handing to subscribers: buf is reused on the next
-			// read, and a viewer's queue may hold the slice past that point.
 			if debugChunks {
 				fmt.Fprintf(os.Stderr, "[chunk] %s %s n=%d %q\n",
 					time.Now().Format("15:04:05.000"), l.TmuxName, n, truncateForLog(chunk))
-			}
-			out := make([]byte, n)
-			copy(out, chunk)
-			l.broadcast(Event{Kind: EventOutput, Data: out})
-
-			for _, c := range clips {
-				l.broadcast(Event{Kind: EventClipboard, Text: c})
-			}
-			for _, t := range titles {
-				l.broadcast(Event{Kind: EventTitle, Text: t})
 			}
 			if m.OnSignals != nil {
 				// A bell is always reported: it is an event, not a redraw, and
@@ -323,7 +418,15 @@ func (m *Manager) Get(sessionID string) (*Live, bool) {
 	return l, ok
 }
 
-// LiveIDs lists the sessions currently attached.
+// LiveIDs lists the sessions currently attached, in a stable order.
+//
+// Sorted because a caller compares the result against the previous one. The
+// state snapshot embeds this list, and the poller broadcasts only when the
+// serialised snapshot differs from the last one it sent. Ranging over a map
+// gives a different order on every call, so that comparison found a difference
+// on every tick, and an idle panel with two or more attached sessions pushed a
+// full state snapshot to every viewer every two seconds. Nothing looked
+// broken — it just quietly stopped being a push and went back to being a poll.
 func (m *Manager) LiveIDs() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -331,6 +434,7 @@ func (m *Manager) LiveIDs() []string {
 	for id := range m.live {
 		ids = append(ids, id)
 	}
+	sort.Strings(ids)
 	return ids
 }
 
@@ -343,6 +447,10 @@ func (m *Manager) Detach(sessionID string) {
 	l, ok := m.live[sessionID]
 	if ok {
 		delete(m.live, sessionID)
+	} else if _, building := m.attaching[sessionID]; building {
+		// Nothing to close yet, but somebody is making one. Leave a note so it
+		// throws away what it built instead of installing it.
+		m.detachedWhileAttaching[sessionID] = true
 	}
 	m.mu.Unlock()
 	if ok {
@@ -358,6 +466,12 @@ func (m *Manager) DetachAll() {
 		all = append(all, l)
 	}
 	m.live = map[string]*Live{}
+	// Same as Detach, for every attachment currently being built. This is the
+	// shutdown path, so an Attach that installs itself after it has run leaves
+	// a tmux client behind with the process that owned it already gone.
+	for id := range m.attaching {
+		m.detachedWhileAttaching[id] = true
+	}
 	m.mu.Unlock()
 	for _, l := range all {
 		l.close()
@@ -436,6 +550,12 @@ func (l *Live) Unsubscribe(sub *Subscriber) {
 func (l *Live) broadcast(ev Event) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.broadcastLocked(ev)
+}
+
+// broadcastLocked is broadcast for callers already holding l.mu — the pump,
+// which has to write the ring and deliver in one critical section.
+func (l *Live) broadcastLocked(ev Event) {
 	for sub := range l.subs {
 		select {
 		case sub.Events <- ev:
@@ -524,15 +644,29 @@ func (l *Live) Resize(clientID string, cols, rows int) error {
 	// producing output, and treating it as such clears the very state the user
 	// opened the session to act on.
 	l.reconfiguredAt = time.Now()
-	ptmx := l.ptmx
-	l.mu.Unlock()
 
-	// Resizing our PTY is enough: tmux sizes the window to its most recently
-	// active client, and we are the only client it has.
-	if err := pty.Setsize(ptmx, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)}); err != nil {
+	// The ioctl happens with the lock still held, and close() closes the PTY
+	// with it held too.
+	//
+	// Every other user of l.ptmx copies the pointer, releases the lock and then
+	// does its I/O — right for Write, whose write can block and must not stall
+	// the pump or the other viewers, and safe there because os.File refcounts
+	// reads and writes against Close. It is not safe here: pty.Setsize needs
+	// the raw descriptor, and File.Fd() is valid only until Close is called.
+	// A resize arriving as a session detaches therefore raced the descriptor
+	// being destroyed, and a recycled fd would have taken the ioctl.
+	//
+	// Holding the lock across an ioctl costs microseconds and cannot block;
+	// holding it across a write could block forever, which is why that one is
+	// still outside.
+	err := pty.Setsize(l.ptmx, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
+	if err == nil {
+		l.broadcastLocked(Event{Kind: EventSize, Cols: cols, Rows: rows})
+	}
+	l.mu.Unlock()
+	if err != nil {
 		return fmt.Errorf("session: resize: %w", err)
 	}
-	l.broadcast(Event{Kind: EventSize, Cols: cols, Rows: rows})
 	return nil
 }
 
@@ -543,9 +677,27 @@ func (l *Live) TakeControl(clientID string, cols, rows int) error {
 		l.mu.Unlock()
 		return ErrNotAttached
 	}
+	moved := l.controller != clientID
 	l.controller = clientID
+	sameSize := l.cols == cols && l.rows == rows
 	l.mu.Unlock()
-	return l.Resize(clientID, cols, rows)
+
+	if err := l.Resize(clientID, cols, rows); err != nil {
+		return err
+	}
+
+	// Ownership can move without the grid moving — two windows the same size,
+	// or one that has been through a layout change and back. Resize has nothing
+	// to broadcast then, and EventSize is the only thing that tells a viewer
+	// whether it is the controller, so without this nobody learns anything:
+	// the new owner's interface still offers to take a grid it already holds,
+	// and the previous owner goes on believing its window drives the session
+	// while its resizes are silently ignored.
+	if moved && sameSize {
+		cols, rows = l.Size()
+		l.broadcast(Event{Kind: EventSize, Cols: cols, Rows: rows})
+	}
+	return nil
 }
 
 // Replay returns the current replay buffer without subscribing.
@@ -562,14 +714,32 @@ func (l *Live) Subscribers() int {
 	return len(l.subs)
 }
 
+func (l *Live) awaitPump() {
+	select {
+	case <-l.pumped:
+	case <-time.After(pumpDrain):
+	}
+}
+
 // Done is closed once the attachment has ended.
 func (l *Live) Done() <-chan struct{} { return l.done }
 
 // close tears the attachment down exactly once.
+// pumpDrain bounds how long close() waits for the pump goroutine.
+//
+// Closing the PTY unblocks its pending read, so in practice the wait is
+// immediate. The bound is here because shutdown detaches every session in
+// turn: one PTY whose read somehow does not unblock would otherwise hang the
+// whole process instead of costing one session its final chunk.
+const pumpDrain = 2 * time.Second
+
 func (l *Live) close() {
 	l.mu.Lock()
 	if l.closed {
 		l.mu.Unlock()
+		// Already closing elsewhere. Wait anyway: every caller is entitled to
+		// the same guarantee, not just whichever one got here first.
+		l.awaitPump()
 		return
 	}
 	l.closed = true
@@ -577,11 +747,22 @@ func (l *Live) close() {
 		delete(l.subs, sub)
 		close(sub.Events)
 	}
-	ptmx := l.ptmx
+	// Closed under the lock, so a resize cannot be part way through an ioctl
+	// on this descriptor. See Resize.
+	_ = l.ptmx.Close()
 	l.mu.Unlock()
 
-	_ = ptmx.Close()
 	close(l.done)
+
+	// Wait for the pump to return before reporting the attachment ended.
+	//
+	// Without this, a chunk read just before the close is still in flight and
+	// reaches OnSignals afterwards. The detector then rebuilds a tracker for a
+	// session the caller has already deleted, and holds it for the life of the
+	// process — and output is broadcast for a session nothing can reach any
+	// more. Callers are entitled to "no more callbacks after Detach returns";
+	// this is what makes that true.
+	l.awaitPump()
 
 	// Give the tmux client a moment to exit on its own after its PTY closed.
 	// Killing it immediately is usually unnecessary and occasionally races with
