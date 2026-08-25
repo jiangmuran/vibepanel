@@ -1,8 +1,13 @@
 package httpapi
 
 import (
+	"context"
+	"net"
 	"net/http"
 	"testing"
+	"time"
+
+	"github.com/jiangmuran/vibepanel/internal/auth"
 )
 
 // TestSecurityHeaders pins four headers on every response.
@@ -59,5 +64,52 @@ func TestSecurityHeaders(t *testing.T) {
 	}
 	if got := res.Header.Get("Referrer-Policy"); got != "no-referrer" {
 		t.Errorf("a refused request carried Referrer-Policy %q", got)
+	}
+}
+
+func TestAllowlistRejectionsDoNotWriteARowPerRequest(t *testing.T) {
+	// The allowlist check runs before authentication and is not behind the
+	// login throttle, so an outsider decides how often it happens. It wrote a
+	// database row every time: measured at 237 rows/sec against the real
+	// binary, 400 requests turning a 4 KiB database into 156 KiB, on the disk
+	// that holds the projects.
+	//
+	// The path exists only when the operator turns the allowlist on, so
+	// enabling the hardening was what opened it.
+	ts, srv := newTestServer(t)
+	_, block, err := net.ParseCIDR("10.0.0.0/8")
+	if err != nil {
+		t.Fatalf("ParseCIDR: %v", err)
+	}
+	srv.Auth.Allow = []*net.IPNet{block}
+	srv.Auth.BlockedAudit = auth.NewCooldown(time.Minute)
+
+	const requests = 50
+	for i := 0; i < requests; i++ {
+		res, err := ts.Client().Get(ts.URL + "/api/state")
+		if err != nil {
+			t.Fatalf("GET %d: %v", i, err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusForbidden {
+			t.Fatalf("request %d: status = %d, want 403", i, res.StatusCode)
+		}
+	}
+
+	entries, err := srv.DB.RecentAudit(context.Background(), 500)
+	if err != nil {
+		t.Fatalf("RecentAudit: %v", err)
+	}
+	blocked := 0
+	for _, e := range entries {
+		if e.Event == "blocked" {
+			blocked++
+		}
+	}
+	if blocked > 1 {
+		t.Errorf("%d requests wrote %d audit rows; one per window is the point", requests, blocked)
+	}
+	if blocked == 0 {
+		t.Error("nothing was recorded at all; the gate is not supposed to hide the attack")
 	}
 }

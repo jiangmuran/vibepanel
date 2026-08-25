@@ -200,3 +200,33 @@ func (d *DB) RecentAudit(ctx context.Context, limit int) ([]AuditEntry, error) {
 	}
 	return out, rows.Err()
 }
+
+// AuditKeep is how many audit rows are worth holding on to.
+//
+// The settings page shows fifty. This is three orders of magnitude more than
+// anybody reads, and about two megabytes — chosen so that trimming never
+// throws away something a person was going to look for, while the table still
+// has a ceiling.
+const AuditKeep = 50000
+
+// TrimAuditLog drops all but the newest keep rows.
+//
+// Nothing removed an audit row before this existed. Every refused sign-in on a
+// panel exposed to the internet added one, permanently, to the same disk the
+// projects live on.
+func (d *DB) TrimAuditLog(ctx context.Context, keep int) (int64, error) {
+	if keep <= 0 {
+		return 0, nil
+	}
+	// By rowid rather than by a subquery over the whole table: id is the
+	// primary key, so this reads one row to find the boundary and then deletes
+	// a contiguous range below it.
+	res, err := d.sql.ExecContext(ctx, `
+		DELETE FROM audit_log WHERE id <= (
+			SELECT id FROM audit_log ORDER BY id DESC LIMIT 1 OFFSET ?
+		)`, keep)
+	if err != nil {
+		return 0, fmt.Errorf("store: trim audit log: %w", err)
+	}
+	return res.RowsAffected()
+}

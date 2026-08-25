@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -30,6 +31,11 @@ type Auth struct {
 
 	TrustedProxies []*net.IPNet
 	Allow          []*net.IPNet
+
+	// BlockedAudit gates the database write for allowlist rejections, which an
+	// outsider can trigger as fast as it can make requests. Nil lets every one
+	// through, which is what the tests that do not care about it get.
+	BlockedAudit *auth.Cooldown
 }
 
 func (s *Server) clientIP(r *http.Request) string {
@@ -37,6 +43,22 @@ func (s *Server) clientIP(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return auth.ClientIP(r, s.Auth.TrustedProxies)
+}
+
+// auditFromOutside records an event that an unauthenticated caller can produce
+// at will.
+//
+// The journal line goes out every time — fail2ban reads it, and banning an
+// address needs to see the individual requests. The database write is gated to
+// one per source per minute, because it was not gated at all: 400 requests from
+// an address the allowlist rejects wrote 400 rows, at 237 rows/sec, and nothing
+// on that path is behind authentication or the login throttle.
+func (s *Server) auditFromOutside(ctx context.Context, event, username, ip, detail string) {
+	if s.Auth != nil && !s.Auth.BlockedAudit.Allow(ip, time.Now()) {
+		s.Log.Info("audit", "event", event, "user", username, "ip", ip, "detail", detail)
+		return
+	}
+	s.audit(ctx, event, username, ip, detail)
 }
 
 // audit records an event to the database and to the log.
@@ -67,7 +89,7 @@ func (s *Server) RequireAuth(next http.Handler) http.Handler {
 		ctx := r.Context()
 
 		if s.Auth != nil && !auth.Allowed(s.clientIP(r), s.Auth.Allow) {
-			s.audit(ctx, "blocked", "", s.clientIP(r), "address not in the allowlist")
+			s.auditFromOutside(ctx, "blocked", "", s.clientIP(r), "address not in the allowlist")
 			writeErr(w, http.StatusForbidden, "not allowed from this address")
 			return
 		}
@@ -88,6 +110,21 @@ func (s *Server) RequireAuth(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, userContextKey, user)))
 	})
+}
+
+// stillAuthorized re-runs the checks RequireAuth made, for a request whose
+// connection is still open.
+//
+// The same two questions in the same order, so that a connection cannot
+// outlive a rule an ordinary request would now fail: is this address still
+// allowed, and does this session still exist. Both can change while a
+// WebSocket is open, and a WebSocket is open for hours.
+func (s *Server) stillAuthorized(r *http.Request) bool {
+	if s.Auth != nil && !auth.Allowed(s.clientIP(r), s.Auth.Allow) {
+		return false
+	}
+	_, ok := s.currentUser(r)
+	return ok
 }
 
 // currentUserFrom reads the account the middleware attached to the request.
@@ -129,6 +166,9 @@ func (s *Server) registerAuthRoutes(r interface {
 	r.Post("/auth/setup", s.handleSetup)
 	r.Post("/auth/login", s.handleLogin)
 	r.Post("/auth/logout", s.handleLogout)
+	// Behind RequireAuth by its own check rather than by the router, because
+	// the auth routes are registered outside the authenticated group.
+	r.Post("/auth/password", s.handleChangePassword)
 }
 
 type authState struct {
@@ -333,4 +373,96 @@ func validateCredentials(username, password string) error {
 		return errors.New("password is too long")
 	}
 	return nil
+}
+
+type changePasswordRequest struct {
+	Current string `json:"current"`
+	Next    string `json:"next"`
+}
+
+// handleChangePassword replaces the account password.
+//
+// There was no way to change it, from anywhere. The setup wizard sets one once
+// and nothing could ever replace it, so the answer to "this leaked" or "I typed
+// it into the wrong window" was to stop the panel and edit SQLite by hand.
+//
+// Three things it does that a naive version would not:
+//
+//  1. Requires the current password. A stolen session cookie is then not enough
+//     to lock the owner out of their own panel — which is the difference
+//     between an intruder who can read your terminals and one who owns them.
+//  2. Throttles on failure, through the same limiter as sign-in. Otherwise this
+//     endpoint is an unthrottled oracle for guessing the password that the
+//     login page refuses to be.
+//  3. Signs every other browser out. The reason to change a password is that
+//     somebody else might have the old one; leaving their session alive makes
+//     the change decorative. This browser keeps its session, because being
+//     logged out of the page you just used to change your password reads as
+//     the change having failed.
+func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	ip := s.clientIP(r)
+
+	user, ok := s.currentUser(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "sign in required")
+		return
+	}
+	if s.Auth != nil {
+		if wait, blocked := s.Auth.Throttle.Delay(ip, time.Now()); blocked {
+			w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
+			writeErr(w, http.StatusTooManyRequests,
+				"too many attempts; try again in "+wait.Round(time.Second).String())
+			return
+		}
+	}
+
+	var req changePasswordRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+
+	okPass, err := auth.VerifyPassword(req.Current, user.PasswordHash)
+	if err != nil || !okPass {
+		if s.Auth != nil {
+			s.Auth.Throttle.Fail(ip, time.Now())
+		}
+		s.audit(ctx, "password_change_refused", user.Username, ip, "current password did not match")
+		writeErr(w, http.StatusUnauthorized, "the current password is wrong")
+		return
+	}
+	if err := validateCredentials(user.Username, req.Next); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.Next == req.Current {
+		writeErr(w, http.StatusBadRequest, "the new password is the same as the old one")
+		return
+	}
+
+	hash, err := auth.HashPassword(req.Next)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not hash the password")
+		return
+	}
+	if err := s.DB.SetPasswordHash(ctx, user.ID, hash); err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+
+	// Everywhere else, then this browser back in. Order matters: dropping all
+	// of them and re-issuing is simpler to reason about than trying to spare
+	// one row, and it means a failure half way through leaves nobody signed in
+	// rather than everybody.
+	if err := s.DB.DeleteUserAuthSessions(ctx, user.ID); err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	s.issueSession(w, r, user)
+	if s.Auth != nil {
+		s.Auth.Throttle.Succeed(ip)
+	}
+	s.audit(ctx, "password_changed", user.Username, ip, "other sessions signed out")
+	w.WriteHeader(http.StatusNoContent)
 }

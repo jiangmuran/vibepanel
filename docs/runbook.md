@@ -138,6 +138,33 @@ upgrade the binary or restore a copy of the database from before the upgrade.
 The panel refuses rather than opening it and ignoring unknown columns, because
 that silently drops whatever the newer version wrote.
 
+## The database is growing
+
+Almost always `audit_log`. Check before assuming:
+
+```
+sqlite3 ~/.local/share/vibepanel/vibepanel.db \
+  'SELECT event, COUNT(*) FROM audit_log GROUP BY event ORDER BY 2 DESC'
+```
+
+`login.failed` in the thousands is a panel on a public port doing its job —
+the login throttle bounds how fast those arrive, and the table is trimmed to
+the newest 50,000 rows at every startup.
+
+`blocked` in the thousands means somebody is hitting a panel with
+`--allow-from` set, from an address that is not on the list. That refusal
+happens before authentication and outside the throttle, so its database write
+is gated to one row per source per minute. Every one of them is still in the
+journal, which is where to look for the real rate and what a fail2ban rule
+should read:
+
+```
+journalctl --user -u vibepanel | grep event=blocked | tail -50
+```
+
+If the table is far past 50,000 rows, the panel has not been restarted since
+before trimming existed. Restarting it trims.
+
 ## Memory
 
 Look in both places, and know which is which.

@@ -7306,3 +7306,61 @@ because earlier sections leave the page at whatever viewport they finished
 with and the sidebar only lists projects at desktop width. Both were the probe.
 The section now reports the rows it can see when it cannot find the one it
 wants, instead of spending thirty seconds hovering over nothing.
+
+## Turning the hardening on opened a hole
+
+`--allow-from` is the option you set because the panel is on a public port. The
+allowlist check sits in `RequireAuth`, ahead of authentication and outside the
+login throttle, and it wrote an audit row every time it refused a request.
+Nobody had to be logged in, and nothing limited the rate. Measured against the
+real binary, one loopback client running `curl` in a loop:
+
+```
+400 requests from an address that is not allowed
+audit_log rows: 400
+db: 4096 bytes -> 159744 bytes     (237 rows/sec)
+```
+
+`curl` spawning 400 processes is the slow way to do this. The disk it fills is
+the one holding the projects.
+
+The login path was already safe: the throttle returns 429 before `failLogin`
+runs, and the allowlist rejection there does not audit at all. Only the
+middleware had it.
+
+### Gate the row, keep the line
+
+Every refusal still goes to the journal, because that is what a fail2ban rule
+reads and a ban decision needs the individual requests. Only the database write
+is gated, to one per source per minute:
+
+```
+journal lines saying blocked: 400
+audit_log rows: 1
+db: 4096 bytes -> 4096 bytes
+```
+
+What the settings page needs from fifty identical rows is that an address is
+hammering, and one row a minute says that just as well. A source that keeps
+going does not refresh its own entry, so an hour of it reads as sixty rows
+rather than one row and then silence.
+
+The source map is keyed by `/64` for IPv6, like the login throttle: keying on
+the full address would let anyone with a prefix write a row per request by
+counting up. It is capped at 4096 sources, because the map is otherwise the
+same unbounded growth moved into memory — and worse, since restarting the panel
+cannot sweep it when the panel is what dies. Past the cap it stops gating
+rather than stops recording: the row is the only evidence the request happened,
+and the trim below is what bounds the disk.
+
+### Nothing had ever removed an audit row
+
+Separately from any attack. The settings page reads fifty; the table only grew,
+one row per refused sign-in, for as long as the panel ran — and the real one
+has been up for over a week at a time. `TrimAuditLog` keeps the newest 50,000
+and runs at startup, next to the sign-in purge that was added for the same
+reason.
+
+Five mutations, each caught by its own test: the gate removed, the window
+ignored, the `/64` bucketing dropped, the source map unbounded, and the trim
+taking the newest rows instead of the oldest.

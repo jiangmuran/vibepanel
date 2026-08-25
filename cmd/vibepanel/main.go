@@ -136,6 +136,17 @@ func cmdServe(args []string) error {
 	} else if n > 0 {
 		logger.Info("purged expired sign-ins", "rows", n)
 	}
+
+	// The audit log has no reader past the fifty rows the settings page shows,
+	// and nothing ever removed one. A panel on a public port collects a row per
+	// refused sign-in for as long as it runs, so the table only ever grew — on
+	// the same disk as the projects. The cap is generous enough that this is
+	// housekeeping rather than a retention policy anybody has to think about.
+	if n, perr := a.db.TrimAuditLog(ctx, store.AuditKeep); perr != nil {
+		logger.Warn("trim audit log", "err", perr)
+	} else if n > 0 {
+		logger.Info("trimmed audit log", "rows", n)
+	}
 	mgr := sessionpkg.NewManager(a.tmux, sessionpkg.DefaultRingSize)
 
 	trusted, err := auth.ParseCIDRs(a.cfg.TrustedProxies)
@@ -155,6 +166,7 @@ func cmdServe(args []string) error {
 			Throttle:       auth.NewThrottle(),
 			TrustedProxies: trusted,
 			Allow:          allow,
+			BlockedAudit:   auth.NewCooldown(time.Minute),
 		},
 		Log: logger,
 	}
