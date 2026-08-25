@@ -614,6 +614,28 @@ func cmdDoctor(args []string) error {
 		}
 		return "FAIL"
 	}
+
+	// Every check that can run, runs.
+	//
+	// This used to return at the first failure, so a machine with three
+	// problems took three runs to find them: fix the data directory, run
+	// again, discover the database, run again, discover the isolation. A
+	// diagnostic that stops diagnosing is asking the operator to bisect their
+	// own environment.
+	//
+	// Returning the error also printed it twice — once as the [FAIL] line and
+	// once as `vibepanel: <the same thing>` from main — which reads like a
+	// crash rather than a report. The report is the output now; the returned
+	// error is only a count, so the exit code still means something to a
+	// script.
+	failed := 0
+	fail := func(label string, err error) {
+		fmt.Printf("[FAIL] %-18s %v\n", label, err)
+		failed++
+	}
+	skip := func(label, why string) {
+		fmt.Printf("[--  ] %-18s skipped: %s\n", label, why)
+	}
 	fmt.Printf("vibepanel %s\n\n", version.String())
 
 	tm := tmux.New(cfg.TmuxSocket, cfg.TmuxDir())
@@ -626,10 +648,11 @@ func cmdDoctor(args []string) error {
 	if tooOld {
 		tmuxMark = "--  "
 	}
-	fmt.Printf("[%s] tmux binary         %s\n", tmuxMark, tv)
 	if tErr != nil {
+		fail("tmux binary", tErr)
 		fmt.Printf("       tmux is required; install it with your package manager\n")
-		return tErr
+	} else {
+		fmt.Printf("[%s] tmux binary         %s\n", tmuxMark, tv)
 	}
 	if tooOld {
 		// Said here because every symptom of an unknown option in the config is
@@ -640,52 +663,71 @@ func cmdDoctor(args []string) error {
 		fmt.Printf("       sequences agent TUIs use for progress and notifications are lost\n")
 	}
 
+	dirsOK := true
 	if err := cfg.EnsureDirs(); err != nil {
-		fmt.Printf("[FAIL] data dir           %s: %v\n", cfg.DataDir, err)
-		return err
+		fail("data dir", fmt.Errorf("%s: %w", cfg.DataDir, err))
+		dirsOK = false
+	} else {
+		fmt.Printf("[ok  ] data dir           %s\n", cfg.DataDir)
 	}
-	fmt.Printf("[ok  ] data dir           %s\n", cfg.DataDir)
 
-	db, err := store.Open(ctx, cfg.DBPath())
-	if err != nil {
-		fmt.Printf("[FAIL] database           %v\n", err)
-		return err
+	if !dirsOK {
+		skip("database", "the data directory is not usable")
+	} else if db, err := store.Open(ctx, cfg.DBPath()); err != nil {
+		fail("database", err)
+	} else {
+		defer db.Close()
+		v, _ := db.Version(ctx)
+		fmt.Printf("[ok  ] database           schema v%d at %s\n", v, cfg.DBPath())
 	}
-	defer db.Close()
-	v, _ := db.Version(ctx)
-	fmt.Printf("[ok  ] database           schema v%d at %s\n", v, cfg.DBPath())
 
 	// Whether one was already running is worth saying, because starting one is
 	// a change and a diagnostic should not make changes silently. `doctor` on a
 	// machine with nothing set up leaves a tmux server behind — harmless, since
 	// the panel needs one anyway, but the operator should learn it from the
 	// output rather than from `ps` six hours later.
-	started := !tm.ServerRunning(ctx)
-	if err := tm.EnsureServer(ctx); err != nil {
-		fmt.Printf("[FAIL] tmux server        %v\n", err)
-		return err
+	var infos []tmux.Info
+	serverOK := false
+	switch {
+	case tErr != nil:
+		skip("tmux server", "there is no tmux binary to talk to")
+	case !dirsOK:
+		// The socket and the generated config both live under the data dir.
+		skip("tmux server", "the data directory is not usable")
+	default:
+		started := !tm.ServerRunning(ctx)
+		if err := tm.EnsureServer(ctx); err != nil {
+			fail("tmux server", err)
+		} else if infos, err = tm.List(ctx); err != nil {
+			fail("tmux server", err)
+		} else {
+			serverOK = true
+			note := ""
+			if started {
+				note = " (started by this check; it is the panel's own socket)"
+			}
+			fmt.Printf("[ok  ] tmux server        socket %q, %d session(s)%s\n",
+				cfg.TmuxSocket, len(infos), note)
+		}
 	}
-	infos, err := tm.List(ctx)
-	if err != nil {
-		fmt.Printf("[FAIL] tmux server        %v\n", err)
-		return err
-	}
-	note := ""
-	if started {
-		note = " (started by this check; it is the panel's own socket)"
-	}
-	fmt.Printf("[ok  ] tmux server        socket %q, %d session(s)%s\n",
-		cfg.TmuxSocket, len(infos), note)
 
 	// Isolation is the promise that lets this run next to an existing setup.
 	// Assert it rather than describe it: every session we can see must be ours.
-	foreign := 0
-	for _, i := range infos {
-		if !strings.HasPrefix(i.Name, "vp_") {
-			foreign++
+	if !serverOK {
+		skip("isolation", "there is no session list to check")
+	} else {
+		foreign := 0
+		for _, i := range infos {
+			if !strings.HasPrefix(i.Name, "vp_") {
+				foreign++
+			}
 		}
+		if foreign != 0 {
+			failed++
+		}
+		fmt.Printf("[%s] isolation          %d foreign session(s) visible on our socket\n",
+			ok(foreign == 0), foreign)
 	}
-	fmt.Printf("[%s] isolation          %d foreign session(s) visible on our socket\n", ok(foreign == 0), foreign)
 
 	// Not a failure: running without a domain is a legitimate local setup.
 	// Saying FAIL here would train the reader to ignore doctor output.
@@ -704,6 +746,11 @@ func cmdDoctor(args []string) error {
 	}
 
 	fmt.Printf("\nurl %s\n", cfg.PublicURL())
+	if failed > 0 {
+		// A count, not a repeat: the detail is above, and main prefixes
+		// whatever comes back with "vibepanel:".
+		return fmt.Errorf("%d check(s) failed", failed)
+	}
 	return nil
 }
 

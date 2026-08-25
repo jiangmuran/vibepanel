@@ -63,14 +63,48 @@ echo "$V" | grep -q "test-release" && ok "reports its version: $(echo "$V" | hea
 
 echo "==> doctor, on a machine with nothing set up"
 export HOME="$WORK/home"; mkdir -p "$HOME"
+# Every invocation below gets the throwaway socket, not just the server.
+#
+# SOCK used to be set further down, next to the one command that was given it,
+# so `vibepanel doctor` above ran against the *default* socket — and doctor
+# calls EnsureServer, so it started a tmux server named `vibepanel` on the
+# machine running the check and left it there. Six hours later it was still
+# running, holding a config file in a temp directory that no longer existed.
+# On a machine where the panel is actually deployed that is the user's socket.
+SOCK="vprelease-$$"
+export VIBEPANEL_TMUX_SOCKET="$SOCK"
 D="$("$DIR/vibepanel" doctor 2>&1)"; DRC=$?
 echo "$D" | sed 's/^/       /'
 [ $DRC -eq 0 ] && ok "doctor exits 0 on a healthy machine" || fail "doctor exited $DRC"
 echo "$D" | grep -qi "tmux" && ok "doctor mentions tmux" || fail "doctor says nothing about tmux"
 
+# A diagnostic has to keep diagnosing.
+#
+# It used to return at the first failure, so a machine with three problems took
+# three runs to find them: fix the data directory, run again, discover the
+# database, run again, discover the isolation. It also returned the error it
+# had just printed, so every failure appeared twice and the report read like a
+# crash.
+BAD="$WORK/unwritable"; mkdir -p "$BAD"; chmod 555 "$BAD"
+E="$(VIBEPANEL_DATA_DIR="$BAD" "$DIR/vibepanel" doctor 2>&1)"; ERC=$?
+chmod 755 "$BAD"
+[ $ERC -ne 0 ] && ok "doctor exits non-zero when a check fails" \
+  || fail "doctor exited 0 with an unusable data directory"
+echo "$E" | grep -q "FAIL.*data dir" && ok "doctor names the unusable data directory" \
+  || fail "doctor did not report the data directory: $E"
+echo "$E" | grep -q "skipped:" && ok "doctor says which checks it could not run" \
+  || fail "doctor stopped at the first failure instead of reporting the rest: $E"
+echo "$E" | grep -qc "environment" >/dev/null && \
+  echo "$E" | grep -q "environment" && ok "doctor still reaches the later checks" \
+  || fail "checks after the failure never ran: $E"
+if [ "$(echo "$E" | grep -c "permission denied")" -le 1 ]; then
+  ok "the failure is reported once, not echoed again by main"
+else
+  fail "the same error is printed more than once: $E"
+fi
+
 echo "==> the first-run wizard"
 PORT=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')
-SOCK="vprelease-$$"
 cd "$DIR"
 HOME="$WORK/home" VIBEPANEL_DATA_DIR="$WORK/data" VIBEPANEL_TMUX_SOCKET="$SOCK" \
   VIBEPANEL_ADDR="127.0.0.1:$PORT" VIBEPANEL_DOMAIN=localhost \
@@ -102,8 +136,41 @@ else
   fail "the served page references no built asset"
 fi
 
-echo "==> the documented install path"
+echo "==> a session created from the command line can report its state"
+# The admin CLI builds sessions too, and it used to inject two of the three
+# variables report.sh needs — no token and no address. The script suppresses
+# its own errors by design, so a session made this way installed cleanly and
+# reported nothing, forever, in a panel whose settings page said hooks were
+# installed. Nothing but looking inside the session would show it.
 kill "$SRV" 2>/dev/null; SRV=""
+sleep 0.5
+CLI_ENV_OK=1
+PROJ_DIR="$WORK/cliproj"; mkdir -p "$PROJ_DIR"
+HOME="$WORK/home" VIBEPANEL_DATA_DIR="$WORK/data" \
+  ./vibepanel project add --path "$PROJ_DIR" --name cliproj >"$WORK/cli.log" 2>&1 \
+  || { fail "project add failed: $(tail -2 "$WORK/cli.log")"; CLI_ENV_OK=0; }
+if [ "$CLI_ENV_OK" = 1 ]; then
+  # `project add` prints "created project <id> <name> <path>".
+  PROJ_ID=$(grep -o 'created project [0-9a-f]*' "$WORK/cli.log" | head -1 | awk '{print $3}')
+  [ -n "$PROJ_ID" ] || { fail "could not read a project id back: $(tail -2 "$WORK/cli.log")"; CLI_ENV_OK=0; }
+fi
+if [ "$CLI_ENV_OK" = 1 ]; then
+  HOME="$WORK/home" VIBEPANEL_DATA_DIR="$WORK/data" \
+    ./vibepanel session new --project "$PROJ_ID" --title clitest -- sleep 300 >>"$WORK/cli.log" 2>&1 \
+    || { fail "session new failed: $(tail -2 "$WORK/cli.log")"; CLI_ENV_OK=0; }
+fi
+if [ "$CLI_ENV_OK" = 1 ]; then
+  SESS=$(tmux -L "$SOCK" list-sessions -F '#{session_name}' 2>/dev/null | head -1)
+  ENV_OUT=$(tmux -L "$SOCK" show-environment -t "=$SESS:" 2>&1 || true)
+  MISSING=""
+  for V in VIBEPANEL_SESSION_ID VIBEPANEL_TOKEN VIBEPANEL_URL; do
+    printf '%s' "$ENV_OUT" | grep -q "^$V=" || MISSING="$MISSING $V"
+  done
+  [ -z "$MISSING" ] && ok "a CLI-created session carries every variable the hook reads" \
+    || fail "a CLI-created session is missing:$MISSING"
+fi
+
+echo "==> the documented install path"
 [ -x "$DIR/deploy/install.sh" ] && ok "the archive ships an executable install.sh" \
   || fail "the archive has no install script; the unit expects the binary at a path nothing puts it in"
 if [ -x "$DIR/deploy/install.sh" ]; then
@@ -132,7 +199,27 @@ if [ -x "$DIR/deploy/install.sh" ]; then
 
   if command -v systemd-analyze >/dev/null; then
     UNIT_OUT="$(HOME="$WORK/home" systemd-analyze verify "$WORK/home/.config/systemd/user/vibepanel.service" 2>&1 || true)"
-    if echo "$UNIT_OUT" | grep -q "vibepanel.service:"; then
+
+    # Prove the tool works here before trusting its silence.
+    #
+    # This check used to read "no complaint about our unit" as a pass, so if
+    # systemd-analyze could not run at all — no dbus, a sandbox it cannot
+    # enter, an early error — it printed "the installed unit verifies" about a
+    # file it had never opened. Absence of evidence is not evidence.
+    #
+    # The exit status is no good as a substitute: this machine has unrelated
+    # units with deprecated directives, so a non-zero exit says nothing about
+    # ours. A control does: a unit with an invented directive must be objected
+    # to, and if it is not, silence about the real unit means nothing either.
+    BROKEN="$WORK/broken.service"
+    printf '[Unit]\nDescription=control\n[Service]\nExecStart=/bin/true\nNoSuchDirective=yes\n' > "$BROKEN"
+    CONTROL_OUT="$(HOME="$WORK/home" systemd-analyze verify "$BROKEN" 2>&1 || true)"
+    if ! printf '%s' "$CONTROL_OUT" | grep -q "broken.service"; then
+      # Carry what it actually said. Without this the message asserts a
+      # conclusion about the tool and offers nothing to check it against, and
+      # the whole point of the control is that conclusions need evidence.
+      fail "systemd-analyze reports nothing wrong with a deliberately broken unit here, so its silence about ours proves nothing. It said: $(printf '%s' "$CONTROL_OUT" | head -3 | tr '\n' ' ')"
+    elif echo "$UNIT_OUT" | grep -q "vibepanel.service:"; then
       fail "systemd-analyze objected to the installed unit: $(echo "$UNIT_OUT" | grep 'vibepanel.service:' | head -2 | tr '\n' ' ')"
     else
       ok "the installed unit verifies"

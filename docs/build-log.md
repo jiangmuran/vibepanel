@@ -6252,3 +6252,73 @@ Killing a session was on the list as "one click, no confirmation". It is not:
 And `make lint` runs `npx tsc -b`, the one that follows the project references
 — so the gate never had the blind spot described in the previous entry. Only
 the bare `npx tsc --noEmit` standing in for it did.
+
+## A diagnostic that stopped diagnosing
+
+`doctor` runs nine checks and returned at the first failure. So a machine with
+three problems took three runs to find them: fix the data directory, run again,
+discover the database, run again, discover the isolation. A tool whose job is
+"tell me what is wrong here" was asking the operator to bisect their own
+environment.
+
+It also returned the error it had just printed, and `main` prefixes whatever
+comes back with `vibepanel:`, so every failure appeared twice:
+
+```
+[FAIL] data dir           /tmp/…/data: config: create …: permission denied
+vibepanel: config: create …: permission denied
+```
+
+Which reads like a crash rather than a report.
+
+Every check that can run now runs, the ones that cannot say why, and the
+returned error is a count so the exit code still means something to a script:
+
+```
+[ok  ] tmux binary         3.6
+[FAIL] data dir           /tmp/…/data: config: create …: permission denied
+[--  ] database           skipped: the data directory is not usable
+[--  ] tmux server        skipped: the data directory is not usable
+[--  ] isolation          skipped: there is no session list to check
+[--  ] passkeys           disabled; password login only
+[ok  ] environment        no unrecognised VIBEPANEL_* variables
+
+vibepanel: 1 check(s) failed
+```
+
+The dependencies are real and are stated rather than assumed: the socket and
+the generated tmux config both live under the data directory, so a data
+directory that cannot be created means there is no tmux server check to run
+either.
+
+`release-check.sh` covers it: an unwritable data directory must exit non-zero,
+name the directory, say which checks were skipped, still reach the later ones,
+and print the failure once.
+
+### Five instrument errors in one session
+
+This turn produced three of them, and they are all the same shape — a
+verification step that quietly did not verify:
+
+- A read-only-database probe that `chmod`-ed the files *after* the panel had
+  opened them. `chmod` governs `open()`, not descriptors already held, so
+  SQLite kept writing and the panel's cheerful "saved" was the truth. The probe
+  simulated nothing.
+- `go build ./...` before running the binary. That compiles and writes nothing;
+  the run used the previous `./vibepanel`. Worse, the old and new versions of
+  the line under test printed *identical text*, so the output looked like a
+  fix that had not taken.
+- A mutation that returned `fmt.Errorf("%s: %w", …, err)` where `err` was not
+  the error I meant — the real one was scoped to its `if` statement, so the
+  wrapped value was nil. It compiled, it ran, and the assertion it was supposed
+  to exercise never saw a duplicate.
+
+Added to `sed` that did not match and a build silenced with `>/dev/null`, from
+earlier entries, that is five. The common form is worth naming once:
+**every one of them made a check appear to pass.** None made anything fail.
+That asymmetry is not luck — a broken instrument reports the absence of a
+signal, and absence is what "pass" looks like.
+
+The habits that catch them are cheap and specific: print the line you changed,
+build with the command that writes the binary, and make the mutation fail the
+check *before* trusting the check.
