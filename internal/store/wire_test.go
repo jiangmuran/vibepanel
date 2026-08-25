@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/jiangmuran/vibepanel/internal/browse"
 )
 
 // TestTypeScriptRowsMatchWhatIsSent compares the fields the server sends with
@@ -39,6 +41,10 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		{"Note", Note{}},
 		{"Todo", Todo{}},
 		{"AuditEntry", AuditEntry{}},
+		// Not a store type. It is here because this is where the comparison
+		// lives, and a second copy of the parser is the thing this file exists
+		// to prevent one directory over.
+		{"FileEntry", browse.Entry{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sent := jsonKeys(t, tc.row)

@@ -128,6 +128,18 @@ export function FileTree({ projectId }: { projectId: string }) {
             {safeText(e.name)}
             {e.symlink && <span className="text-ink-2"> ↗</span>}
           </span>
+          {/* Say why this one has nothing to click. Without it a file with no
+              download among files that have one reads as the panel failing,
+              rather than as the file being out of bounds. */}
+          {e.escapes && (
+            <span
+              data-testid="file-escapes"
+              title="This link points outside the project. The panel will not open it."
+              className="shrink-0 text-[10.5px] text-ink-2"
+            >
+              outside
+            </span>
+          )}
           {!e.isDir && <span className="tabular shrink-0 text-[10.5px] text-ink-2">{bytes(e.size)}</span>}
           {!e.isDir && e.readable && (
             // A link, not a fetch-and-blob: the browser's own download machinery

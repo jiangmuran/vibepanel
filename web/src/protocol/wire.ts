@@ -231,6 +231,15 @@ export interface SystemSample {
 
 export interface FileEntry {
   name: string
+  /**
+   * The symlink points outside the project.
+   *
+   * Shown rather than hidden — pretending a file is not there is its own kind
+   * of lie — but nothing is offered for it. The download resolves symlinks and
+   * refuses anything that leaves the project, so a link to /etc/passwd in a
+   * project used to render a download button that answered 403.
+   */
+  escapes: boolean
   /** Relative to the project root, forward slashes. */
   path: string
   isDir: boolean

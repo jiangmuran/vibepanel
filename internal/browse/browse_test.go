@@ -305,3 +305,72 @@ func TestReadableDistinguishesRegularFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestASymlinkOutOfTheProjectIsNotOfferedForDownload(t *testing.T) {
+	// Readable is what makes the panel render a download link, and the
+	// download resolves symlinks and refuses anything that leaves the project.
+	// A link to /etc/passwd in a project — one `ln -s`, or anything under
+	// node_modules — was a regular file, so the button appeared and clicking
+	// it answered `403 outside the project`.
+	//
+	// A control that cannot do what it offers teaches people the panel is
+	// unreliable rather than that the file is out of bounds.
+	root := t.TempDir()
+	outside := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("no"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "ordinary.txt"), []byte("yes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "target.txt"), []byte("yes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(root, "escaping.txt")))
+	must(os.Symlink(outside, filepath.Join(root, "escaping-dir")))
+	must(os.Symlink(filepath.Join(root, "target.txt"), filepath.Join(root, "internal-link.txt")))
+
+	listing, err := List(root, "")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	got := map[string]Entry{}
+	for _, e := range listing.Entries {
+		got[e.Name] = e
+	}
+	if len(got) != 5 {
+		t.Fatalf("listed %d entries, want 5: %v", len(got), got)
+	}
+
+	for _, tc := range []struct {
+		name     string
+		readable bool
+		escapes  bool
+	}{
+		{"ordinary.txt", true, false},
+		{"target.txt", true, false},
+		// A symlink that stays inside is a perfectly good file to offer.
+		{"internal-link.txt", true, false},
+		{"escaping.txt", false, true},
+		{"escaping-dir", false, true},
+	} {
+		e, ok := got[tc.name]
+		if !ok {
+			t.Errorf("%s is not listed at all; hiding a file is its own kind of lie", tc.name)
+			continue
+		}
+		if e.Readable != tc.readable {
+			t.Errorf("%s: readable = %v, want %v", tc.name, e.Readable, tc.readable)
+		}
+		if e.Escapes != tc.escapes {
+			t.Errorf("%s: escapes = %v, want %v", tc.name, e.Escapes, tc.escapes)
+		}
+	}
+}

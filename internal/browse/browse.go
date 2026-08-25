@@ -33,6 +33,11 @@ type Entry struct {
 	// used to be set to true unconditionally, which made the button that reads
 	// it decorative.
 	Readable bool `json:"readable"`
+
+	// Escapes marks a symlink that points outside the project. The panel shows
+	// it, because pretending a file is not there is its own kind of lie, but
+	// it offers nothing to do with it.
+	Escapes bool `json:"escapes"`
 }
 
 // Listing is a directory and what is in it.
@@ -185,7 +190,22 @@ func List(root, rel string) (Listing, error) {
 			if e.Symlink {
 				if target, serr := os.Stat(filepath.Join(abs, item.Name())); serr == nil {
 					e.IsDir = target.IsDir()
-					e.Readable = target.Mode().IsRegular()
+					// Where it points, not only what it points at.
+					//
+					// Readable is what makes the panel offer a download, and
+					// the download resolves symlinks and refuses anything that
+					// leaves the project. A link to /etc/passwd sitting in a
+					// project — one `ln -s`, or anything under node_modules —
+					// was a regular file, so the button appeared, and clicking
+					// it answered `403 outside the project`.
+					//
+					// A control that cannot do what it offers teaches people
+					// the panel is unreliable rather than that the file is out
+					// of bounds.
+					resolved, rerr := filepath.EvalSymlinks(filepath.Join(abs, item.Name()))
+					inside := rerr == nil && (resolved == realRoot || within(realRoot, resolved))
+					e.Readable = target.Mode().IsRegular() && inside
+					e.Escapes = !inside
 				}
 			}
 		}
