@@ -58,6 +58,28 @@ ls /tmp/tmux-$(id -u)/                  # every socket on the box
 vibepanel doctor                        # which one this config uses
 ```
 
+## Codex sessions never report their state
+
+Claude and Codex are configured by different mechanisms and fail separately, so
+check which one is quiet before assuming the panel is at fault.
+
+Codex is wired through `notify` in `~/.codex/config.toml`, which is one command
+for one event, so a Codex session can only ever report `waiting` — never
+`working` or `done`. A Codex session that shows a guessed state most of the
+time is behaving as designed, not misconfigured.
+
+```sh
+codex doctor | grep -A2 'config.toml'   # does Codex still accept the setting?
+grep notify ~/.codex/config.toml        # is it still there?
+```
+
+`notify` lives in `hooks/src/legacy_notify.rs` inside codex-cli 0.147, which
+also ships a full hooks system. If a future version drops `notify`, Codex
+sessions go quiet with no error anywhere: the reporter script suppresses its
+own failures on purpose, because a hook that makes an agent wait is worse than
+a missed state update. `codex doctor` reporting a parse error or a deprecation
+on that line is the signal.
+
 ## Passkeys will not register
 
 WebAuthn needs a secure context and a Relying Party ID that is a registrable

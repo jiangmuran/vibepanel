@@ -6575,3 +6575,35 @@ runs inside somebody else's program:
 Pointing the script at a path that does not exist fails with
 `state is "working", want "waiting"` — which is the heuristic's answer when
 nothing reports, and exactly the failure this test is for.
+
+## A comment that told the next person not to bother
+
+`CodexNotify` writes `notify = ["<script>", "waiting"]` into
+`~/.codex/config.toml`, and its comment explained the design:
+
+> Codex has a single notify command rather than per-event hooks, so it can only
+> say "something happened that wants you".
+
+codex-cli 0.147, on this machine, carries `hooks/src/legacy_notify.rs`, a
+`Stop` hook event, `bypass_hook_trust`, and a `--dangerously-bypass-hook-trust`
+flag. `notify` living in a file named *legacy* is the whole story: Codex has
+per-event hooks, and `working` and `done` are reachable for Codex the same way
+they are for Claude.
+
+The setting itself is not broken. `codex doctor` with exactly that line reports
+`config.toml parse ok` and no deprecation, which is the cheap check — it reads
+configuration and contacts nothing, so it costs no quota.
+
+Nothing was changed beyond the comment. The hooks schema here is known only
+from strings scraped out of a binary, and confirming it means running a real
+Codex turn, which is the user's to spend. Implementing an integration against
+guessed schema and untestable without spending somebody's money is how you get
+code that looks finished and reports nothing — which is precisely the failure
+mode `SessionEnv`'s comment already records from the last time.
+
+The defect is the sentence. "Codex cannot do better" is the kind of claim that
+stops the next person looking, and it was wrong. It now says what is true, what
+was measured, and what is left undone — and the runbook gained a section for
+the symptom, because a Codex session showing a guessed state most of the time
+is behaving as designed rather than misconfigured, and that is not obvious from
+the panel.
