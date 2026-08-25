@@ -1899,3 +1899,77 @@ func TestInstallingHooksDoesNotSilenceTheNotice(t *testing.T) {
 		t.Error("the notice survived a hook report")
 	}
 }
+
+func TestEditingATodo(t *testing.T) {
+	// A todo list you cannot correct is a todo list you rewrite. Editing was
+	// reachable from the UI, handled by the API and stored by SetTodoText, and
+	// tested at none of those levels — the store function had no test at all
+	// and the harness only ever added and ticked.
+	ts, _ := newTestServer(t)
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"listy"}`)
+	todo := postJSON[store.Todo](t, ts, "/api/projects/"+project.ID+"/todos",
+		`{"text":"renew the certificate"}`)
+
+	textOf := func() string {
+		t.Helper()
+		res, err := ts.Client().Get(ts.URL + "/api/projects/" + project.ID + "/todos")
+		if err != nil {
+			t.Fatalf("GET todos: %v", err)
+		}
+		defer res.Body.Close()
+		var out []store.Todo
+		if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		for _, item := range out {
+			if item.ID == todo.ID {
+				return item.Text
+			}
+		}
+		t.Fatalf("todo %s is gone", todo.ID)
+		return ""
+	}
+
+	patch := func(body string) int {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPatch,
+			ts.URL+"/api/todos/"+todo.ID, strings.NewReader(body))
+		if err != nil {
+			t.Fatalf("request: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		res, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatalf("PATCH: %v", err)
+		}
+		defer res.Body.Close()
+		return res.StatusCode
+	}
+
+	if code := patch(`{"text":"renew the certificate before it expires"}`); code != http.StatusOK {
+		t.Fatalf("editing returned %d", code)
+	}
+	if got := textOf(); got != "renew the certificate before it expires" {
+		t.Errorf("text = %q after an edit", got)
+	}
+
+	// Whitespace is not a new name. Blanking a row leaves something nobody can
+	// identify or click back into, which is why the inline editor refuses it
+	// locally too — this is the second line of the same defence, for a client
+	// that does not.
+	if code := patch(`{"text":"   "}`); code != http.StatusBadRequest {
+		t.Errorf("emptying a todo returned %d, want 400", code)
+	}
+	if got := textOf(); got != "renew the certificate before it expires" {
+		t.Errorf("a refused edit changed the text to %q", got)
+	}
+
+	// Done and text travel on the same endpoint and must not interfere.
+	if code := patch(`{"done":true}`); code != http.StatusOK {
+		t.Fatalf("ticking returned %d", code)
+	}
+	if got := textOf(); got != "renew the certificate before it expires" {
+		t.Errorf("ticking an item rewrote its text to %q", got)
+	}
+}

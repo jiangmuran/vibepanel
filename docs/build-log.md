@@ -7086,3 +7086,36 @@ DOM is a check about the DOM, and the thing being defended is somebody looking
 at a screen. The gap between those two is where a check quietly stops meaning
 anything — and it does not announce itself, because a check with a blind spot
 looks exactly like a check that is passing.
+
+## Editing a todo, checked at three levels for the first time
+
+`SetTodoText` came out of the coverage sweep with one caller and no tests. The
+caller is the API's todo patch handler; the API is called by an inline editor on
+every todo row; nothing tested any of it. The render check only ever added an
+item and ticked it.
+
+Driven by hand, all of it works: double-click a todo, type, Enter, and the new
+text persists. Clearing it and pressing Enter leaves the old text — because
+`InlineName` refuses an empty commit locally, with a comment saying why:
+
+> An empty name is a mistake, not an instruction to clear it: committing it
+> would leave a row the user cannot identify or click back into.
+
+And the API refuses it too, with a message that suggests the right action —
+"text must not be empty; delete the item instead".
+
+So this entry is coverage rather than a fix. A todo list you cannot correct is
+a todo list you rewrite, and the path a person uses to correct one had no test
+at any level.
+
+`TestEditingATodo` pins the API: an edit sticks, whitespace is refused with a
+400 and changes nothing, and ticking an item does not rewrite its text — done
+and text share an endpoint and must not interfere. Removing the empty guard
+fails it three times over, including with `a refused edit changed the text to
+""`, which is what a blanked row looks like from the outside.
+
+The browser check pins the same outcome through the editor. Making the commit a
+no-op fails it; removing the *local* empty guard does not, and that is correct
+rather than a hole — the API still refuses, the row still keeps its text, and
+the check is about what the person ends up with rather than which of the two
+layers held.

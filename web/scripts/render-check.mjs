@@ -997,6 +997,48 @@ try {
       }
       const done = await page.locator('[data-testid="todo-item"][data-done="true"]').count()
       if (done !== 1) note('FAIL', 'panel/todos', 'the ticked item is not marked done')
+
+      // A list you cannot correct is a list you rewrite. Editing was reachable
+      // from here, handled by the API and stored by SetTodoText, and checked at
+      // none of those levels — this check only ever added an item and ticked
+      // it.
+      const todoName = page.locator('[data-testid="todo-item"] [data-testid="inline-name"]').first()
+      if (!(await todoName.isVisible().catch(() => false))) {
+        note('FAIL', 'panel/todos', 'a todo cannot be renamed; there is no editable name')
+      } else {
+        await todoName.dblclick()
+        await sleep(400)
+        const field = page.locator('[data-testid="todo-item"] input')
+        if ((await field.count()) === 0) {
+          note('FAIL', 'panel/todos', 'double-clicking a todo does not open it for editing')
+        } else {
+          await field.fill('ship the panel, then sleep')
+          await page.keyboard.press('Enter')
+          await sleep(1200)
+          const after = await page.locator('[data-testid="todo-item"]').first().innerText().catch(() => '')
+          if (!after.includes('ship the panel, then sleep')) {
+            note('FAIL', 'panel/todos', `editing a todo did not stick: ${JSON.stringify(after)}`)
+          }
+          // Clearing it is a mistake, not an instruction: a blank row is one
+          // nobody can identify or click back into.
+          //
+          // Defended twice, and this asserts the outcome rather than which
+          // layer held: the inline editor refuses an empty commit locally, and
+          // the API refuses it with a 400 if anything sends one. Removing
+          // either alone leaves the row intact, which is the right thing for a
+          // check about what the user ends up with.
+          await todoName.dblclick()
+          await sleep(400)
+          await page.locator('[data-testid="todo-item"] input').fill('   ')
+          await page.keyboard.press('Enter')
+          await sleep(1200)
+          const blanked = await page.locator('[data-testid="todo-item"]').first().innerText().catch(() => '')
+          if (!blanked.includes('ship the panel, then sleep')) {
+            note('FAIL', 'panel/todos',
+              `emptying a todo blanked it instead of leaving it alone: ${JSON.stringify(blanked)}`)
+          }
+        }
+      }
     }
 
     // Notes and todos side by side.
