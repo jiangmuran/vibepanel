@@ -10,7 +10,9 @@
     "test": "vitest run",
     "check:render": "node scripts/render-check.mjs",
     "check:stress": "node scripts/stress-check.mjs",
-    "check:restart": "node scripts/restart-check.mjs"
+    "check:restart": "node scripts/restart-check.mjs",
+    "check:scale": "node scripts/scale-check.mjs",
+    "check:first-run": "node scripts/first-run-check.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
@@ -25,6 +27,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "^6.1.0",
@@ -32,11 +35,11 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.4",
     "globals": "^17.11.0",
+    "playwright": "^1.57.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.67.0",
     "vite": "^8.2.2",
-    "vitest": "^4.1.11",
-    "playwright": "^1.57.0"
+    "vitest": "^4.1.11"
   }
 }

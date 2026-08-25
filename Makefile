@@ -26,6 +26,10 @@ lint:                 ## vet, gofmt and eslint
 .PHONY: check
 check: lint test      ## Everything a change should pass before it lands
 
+.PHONY: first-run-check
+first-run-check: build ## The setup wizard and the first project, in a browser
+	cd web && npm run check:first-run
+
 .PHONY: render-check
 render-check: build   ## Drive the real binary with a real browser
 	cd web && npm run check:render

@@ -6180,3 +6180,75 @@ second construction of `PanelState`, in `socket.ts`, missing the new field.
 The build runs `tsc -b`, which follows the project references in
 `tsconfig.app.json`; the bare invocation does not, and had been quietly
 covering fewer files all session. Verify with `npm run build`.
+
+`make lint` already runs `npx tsc -b`, so the gate was never the thing with the
+blind spot — only the ad-hoc check standing in for it was. Which is its own
+small lesson: a faster substitute for the real check is a different check.
+
+## The screen every check reached past
+
+Five harnesses, and all five begin the same way: complete the setup through
+`POST /api/auth/setup`, because they need a session cookie to seed with. Which
+means the one screen a new user cannot avoid — paste the one-time token, choose
+a password — had never been driven in a browser. Neither had adding the first
+project, which goes through a `window.prompt` and is the first thing anybody
+does after signing in.
+
+Driven by hand, it works, all of it: the setup form appears rather than the
+sign-in form, a short password is refused with "password must be at least 12
+characters" and leaves the token in place, completing it lands in the panel,
+the empty panel says "No projects yet. Add one to point the panel at a
+directory.", a directory that does not exist is refused with `cannot open
+directory: stat /definitely/not/here: no such file or directory`, and a real
+one appears in the sidebar.
+
+A negative result, and the reason to write the check anyway: this is the screen
+where a regression costs the most and would be noticed the latest. Every other
+harness would stay green through it.
+
+`first-run-check.mjs`, and `make first-run-check`.
+
+### The token has to survive a refusal
+
+One assertion in there is not obvious and is the one worth having. The setup
+token is printed once, at startup, and a failed attempt must not clear the
+field it was typed into — otherwise a mistyped password costs a restart of the
+panel to get a new token. It survives; now it has to keep surviving.
+
+### Three mutations, two of which did not mutate anything
+
+Checking the new harness meant breaking things on purpose, and two of the three
+attempts silently did nothing:
+
+- The build was run as `make build >/dev/null 2>&1`. Had it failed, the harness
+  would have exercised the *previous* binary and passed, which is precisely the
+  `.catch(() => [])` shape from a few entries above: a step whose failure is
+  indistinguishable from success.
+- A Python `replace(..., 1)` hit the first `setError(...)` in the file, which is
+  in a different handler, so `guard`'s error path was never touched. The
+  harness passed, correctly, and looked like a check with no teeth.
+
+Only when the mutation was aimed at the right line did it report what it
+should:
+
+```
+[FAIL] project: a directory that does not exist was refused with nothing on
+screen to explain it; the first thing a new user does is accept the suggested
+path
+```
+
+This log already carried the lesson once, about a `sed` whose pattern did not
+match. The general form is worth stating plainly: **print the line you changed,
+and never silence the build that carries the change.** A mutation that did not
+happen and a mutation that was survived look identical from the outside, and
+the wrong conclusion from that pair is "the check is useless", which is exactly
+the conclusion that deletes a working check.
+
+### And two claims of mine that were wrong
+
+Killing a session was on the list as "one click, no confirmation". It is not:
+`killSession` opens `window.confirm("Kill …? The process is terminated.")`.
+
+And `make lint` runs `npx tsc -b`, the one that follows the project references
+— so the gate never had the blind spot described in the previous entry. Only
+the bare `npx tsc --noEmit` standing in for it did.
