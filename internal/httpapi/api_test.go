@@ -2453,3 +2453,59 @@ func TestAnUnreadableDatabaseClosesOpenSockets(t *testing.T) {
 		}
 	}
 }
+
+// The audit log is cut back while the panel runs, not only when it starts.
+//
+// It was trimmed once, in main, and nowhere else. The panel is built to run for
+// months — the install instructions turn on lingering precisely so it survives
+// a logout — so the only bound on the table was "somebody restarts it".
+//
+// That matters beyond housekeeping. Cooldown's overflow case lets an event
+// through unrecorded-in-memory when a flood is too widely distributed to gate,
+// and names this trim as what limits the damage: "the trim on the table is what
+// bounds the damage from here." It was written believing this ran. Under a
+// sustained flood, restarting the panel is not a bound, and the flood is the
+// thing writing the rows.
+func TestTheAuditLogIsTrimmedWhileTheServerRuns(t *testing.T) {
+	_, srv := newTestServer(t)
+	ctx := context.Background()
+
+	const keep = 5
+	for i := 0; i < keep*4; i++ {
+		if err := srv.DB.Audit(ctx, store.AuditEntry{
+			Event: "blocked", IP: fmt.Sprintf("10.0.0.%d", i), At: time.Now().Unix(),
+		}); err != nil {
+			t.Fatalf("audit: %v", err)
+		}
+	}
+	before, err := srv.DB.RecentAudit(ctx, 1000)
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+	if len(before) <= keep {
+		t.Fatalf("only %d rows before trimming, so this test would pass on a no-op", len(before))
+	}
+
+	srv.TrimEvery = 20 * time.Millisecond
+	srv.AuditKeep = keep
+	pollCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	go srv.Poll(pollCtx)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		rows, err := srv.DB.RecentAudit(ctx, 1000)
+		if err != nil {
+			t.Fatalf("list audit: %v", err)
+		}
+		if len(rows) <= keep {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("audit log still holds %d rows with a cap of %d after three seconds "+
+				"of a 20ms trim ticker; nothing is trimming it while the panel runs",
+				len(rows), keep)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}

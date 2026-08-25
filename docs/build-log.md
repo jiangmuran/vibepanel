@@ -8859,3 +8859,32 @@ the purpose. The defect is "it scans on every call"; a stopwatch measures the
 machine as much as the code, and a flaky test in front of a security path is
 worse than none. Reverting the guard makes it read: swept 500 times for 500
 calls at the same instant.
+
+### A bound that only existed while nobody needed it
+
+`TrimAuditLog` was called once, from `main`, at startup. The panel is built to
+run for months — the install instructions turn on lingering precisely so it
+survives a logout — so the only thing cutting the table back was somebody
+restarting the process.
+
+That is worse than untidy. `Cooldown`'s overflow case deliberately lets an event
+through unrecorded when a flood is too widely distributed to gate, on this
+reasoning: "the row is the only record that it happened at all, and the trim on
+the table is what bounds the damage from here." Written believing the trim ran.
+Under a sustained flood, "restart the panel" is not a bound, and the flood is
+the thing writing the rows.
+
+Now on a five-minute ticker inside `Poll`, which is already the loop that keeps
+the database in step. An hour would have been the obvious interval and is too
+long: at the rate measured for the ungated path — 237 rows a second from one
+client — an hour of overshoot is most of a million rows.
+
+The tick was measured rather than assumed, because "one indexed delete, it costs
+nothing" is the kind of claim this session has been wrong about. Worst case for
+the no-op is a table sitting exactly at the cap, where the subquery still walks
+50,000 index entries to find there is no boundary row: **1.03ms**, against 6.6ms
+for a trim that removed 10,000 rows. Once every five minutes.
+
+`TrimEvery` and `AuditKeep` are overridable on the server, following
+`RevalidateEvery` in the ws handler. A periodic job no test can drive is how
+this one came to run only at startup and stay that way.

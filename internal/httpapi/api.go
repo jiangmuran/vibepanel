@@ -87,6 +87,13 @@ type Server struct {
 	outMu      sync.Mutex
 	outputSeen map[string]time.Time
 
+	// TrimEvery and AuditKeep override the audit trim's schedule and cap. Zero
+	// means the constants. Tests set them small; nothing else should. They
+	// exist because a periodic job nobody can drive from a test is how this
+	// one came to run only at startup for as long as it did.
+	TrimEvery time.Duration
+	AuditKeep int
+
 	// staleMu guards the record of a panel that has stopped keeping up.
 	//
 	// The poller writes on every tick — session runtime, derived titles, exit
@@ -1368,14 +1375,63 @@ func (s *Server) Reconcile(ctx context.Context) error {
 // the PTY the instant it is produced.
 const pollInterval = 2 * time.Second
 
+// trimInterval is how often the audit log is cut back to its cap while the
+// panel is running.
+//
+// It was trimmed at startup and nowhere else, and the panel is built to run for
+// months — `loginctl enable-linger` is in the install instructions because a
+// panel that dies when you log out only appears to work. So the bound existed
+// exactly when nobody needed it.
+//
+// Cooldown's overflow case names this trim as what limits the damage when a
+// flood is too widely distributed to gate: "the trim on the table is what
+// bounds the damage from here". That was written believing this ran. Under a
+// sustained flood, "restart the panel" is not a bound.
+//
+// Five minutes rather than an hour: at the rate measured for the unthrottled
+// path — 237 rows a second from one client — an hour of overshoot is most of a
+// million rows, and five minutes is a few megabytes.
+//
+// The tick costs nothing worth counting. Measured on a table sitting exactly at
+// the cap, which is the worst case for the no-op — the subquery still walks
+// 50,000 index entries to discover there is no boundary row: 1.03ms, against
+// 6.6ms for a trim that actually removed 10,000 rows.
+const trimInterval = 5 * time.Minute
+
 // Poll keeps the database in step with tmux until the context ends.
+//
+// The audit trim rides along here rather than in its own goroutine: it is
+// database housekeeping on a timer, which is what this loop already is, and a
+// second lifecycle to start, stop and get wrong buys nothing.
 func (s *Server) Poll(ctx context.Context) {
 	t := time.NewTicker(pollInterval)
 	defer t.Stop()
+	every := s.TrimEvery
+	if every <= 0 {
+		every = trimInterval
+	}
+	keep := s.AuditKeep
+	if keep <= 0 {
+		keep = store.AuditKeep
+	}
+	trim := time.NewTicker(every)
+	defer trim.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-trim.C:
+			// Not routed through noteStale: a failure here is housekeeping
+			// falling behind, not the panel losing track of the sessions, and
+			// saying "the panel has stopped recording what the sessions are
+			// doing" would be false.
+			if n, err := s.DB.TrimAuditLog(ctx, keep); err != nil {
+				if ctx.Err() == nil {
+					s.Log.Warn("trim audit log", "err", err)
+				}
+			} else if n > 0 {
+				s.Log.Info("trimmed audit log", "rows", n)
+			}
 		case <-t.C:
 			if err := s.pollOnce(ctx); err != nil && ctx.Err() == nil {
 				s.Log.Debug("poll", "err", err)

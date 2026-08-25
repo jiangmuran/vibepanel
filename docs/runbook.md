@@ -280,8 +280,11 @@ should read:
 journalctl --user -u vibepanel | grep event=blocked | tail -50
 ```
 
-If the table is far past 50,000 rows, the panel has not been restarted since
-before trimming existed. Restarting it trims.
+If the table is far past 50,000 rows on a current binary, something is writing
+faster than the trim runs, which is every five minutes while the panel is up.
+It used to trim only at startup, so on an older build the answer is to restart
+it once — and the reason that was wrong is that a panel is meant to run for
+months, so the bound arrived exactly when nobody needed it.
 
 ## Memory
 
