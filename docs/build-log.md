@@ -6322,3 +6322,89 @@ signal, and absence is what "pass" looks like.
 The habits that catch them are cheap and specific: print the line you changed,
 build with the command that writes the binary, and make the mutation fail the
 check *before* trusting the check.
+
+## Two comments that would have licensed deleting the recovery
+
+A coverage sweep with `-coverpkg=./internal/...` — the flag matters, per-package
+coverage counts none of what the httpapi tests exercise in `internal/auth` and
+made a dozen live functions look dead — turned up four functions with no
+callers and no tests: `GetSessionByTmuxName`, `SendKeys`, `ClearBell` and
+`PurgeExpiredAuthSessions`.
+
+`ClearBell` is the interesting one, because pulling on it found a contradiction
+between two comments about the signal this whole product exists to surface.
+
+`tmux.Info.Bell`:
+
+> Always false under the panel's configuration … The real signal is the \007 in
+> the PTY stream … but **do not build on it**.
+
+`vibepanel.conf`:
+
+> Nothing polls window_bell_flag — under bell-action "any" tmux forwards the
+> bell to its client instead.
+
+And `Reconcile`, at startup, building on it:
+
+> A bell that rang while the panel was down is still latched … Read it before
+> attaching, which clears it: otherwise restarting the panel loses every "this
+> needs you" raised while it was gone.
+
+They cannot all be true. Measured under the embedded config, session ringing
+with no client attached:
+
+```
+clients attached: 0
+window_bell_flag: 1
+… after a client attaches: 0
+```
+
+So `Reconcile` is right and the two comments are wrong. Both halves of its
+claim hold: the flag latches when there is nobody to forward to, and attaching
+spends it, so the recovery consumes each bell exactly once.
+
+The comments are the defect. Either one, read by someone tidying up, is
+permission to delete the only thing that recovers a "needs you" raised while
+the panel was restarting — which is precisely when nobody was watching.
+
+`TestTheBellFlagLatchesWhenNobodyIsAttached` pins both halves, because they are
+properties of tmux rather than of this code and a version bump could take them
+away silently.
+
+### The test that was measuring the wrong tmux
+
+It passed. It also passed with `monitor-bell off` pasted into the config, and
+with `bell-action none`.
+
+`newTestClient` builds a `Client` but never calls `EnsureServer`, and
+`EnsureServer` is what writes the embedded config to disk. The server was
+coming up on tmux's defaults, so the test was pinning tmux's behaviour and
+saying nothing about the panel's configuration — while its comment claimed to
+measure exactly that.
+
+With `EnsureServer` in the test, `monitor-bell off` fails it.
+
+`bell-action none` still does not, and that turned out to be correct rather
+than a hole: `bell-action` decides whether a bell is forwarded to an attached
+client, not whether the flag latches when there is none. What it breaks is the
+live signal, and the render check catches it —
+
+```
+[FAIL] state: a session that rang the bell never showed as waiting
+```
+
+— which is worth having established rather than assumed. Two options in the
+same file, two different checks, and neither covers the other.
+
+### The three that were simply dead
+
+`ClearBell` is gone. Its own comment claimed the panel depended on it —
+"without this the flag latches on … the waiting badge would never clear" —
+and that is false: attaching is what clears the flag, which is why nothing
+ever called it. `SendKeys` and `GetSessionByTmuxName` are gone too, uncalled
+and untested.
+
+`PurgeExpiredAuthSessions` stays for now and is worth naming as an open thread:
+nothing calls it, so expired rows accumulate forever. Not a security hole —
+`AuthSessionByToken` filters on `expires_at > ?`, so an expired session cannot
+authenticate — just a table that only grows, one row per sign-in.

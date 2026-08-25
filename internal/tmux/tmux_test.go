@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/creack/pty"
 )
 
 // newTestClient gives each test its own tmux server on a throwaway socket.
@@ -565,5 +567,85 @@ func TestPasteIsBracketedOnlyForPanesThatAskedForIt(t *testing.T) {
 		if !strings.Contains(got[name], "please refactor the auth flow") {
 			t.Errorf("%s never received the text at all:\n%s", name, got[name])
 		}
+	}
+}
+
+// TestTheBellFlagLatchesWhenNobodyIsAttached pins a property of tmux, not of
+// this code, and the panel's recovery at startup rests on it.
+//
+// While a client is attached, `bell-action any` makes tmux forward the bell to
+// that client and `window_bell_flag` stays 0 — which is why the raw \007 on
+// the PTY is the signal in normal running. With no client there is nobody to
+// forward to, so tmux latches the flag instead, and `Reconcile` reads it once
+// at startup to recover a bell that rang while the panel was down. That is the
+// one moment nobody was watching, and it is the moment the whole feature is
+// for.
+//
+// Two comments said this could not work: the field's own ("always false under
+// the panel's configuration … do not build on it") and the config's ("nothing
+// polls window_bell_flag"). Both were wrong, and either would have licensed
+// deleting the recovery. A measurement in a test is harder to be wrong about
+// than a sentence.
+//
+// Attaching clears the flag, so the recovery consumes it exactly once. That
+// half is asserted here too: without it a session that rang before startup
+// would be re-observed as waiting on every poll, and the state would never
+// clear.
+func TestTheBellFlagLatchesWhenNobodyIsAttached(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	// EnsureServer is what writes the embedded config, and this test is about
+	// what that config makes tmux do. Without it the server comes up on tmux's
+	// defaults and the assertions below say nothing about the panel — which is
+	// how the first version passed with `monitor-bell off` and with
+	// `bell-action none` pasted into vibepanel.conf.
+	if err := c.EnsureServer(ctx); err != nil {
+		t.Fatalf("EnsureServer: %v", err)
+	}
+	const name = "vp_bellflag"
+	if err := c.Create(ctx, CreateOptions{
+		Name: name, Dir: t.TempDir(), Width: 80, Height: 24,
+		Command: []string{"sh", "-c", "sleep 0.3; printf 'needs you\\a'; exec sleep 30"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	time.Sleep(1500 * time.Millisecond)
+
+	byName := func() Info {
+		t.Helper()
+		infos, err := c.List(ctx)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		for _, i := range infos {
+			if i.Name == name {
+				return i
+			}
+		}
+		t.Fatalf("session %s is not in the listing", name)
+		return Info{}
+	}
+
+	if !byName().Bell {
+		t.Fatal("a bell that rang with no client attached did not latch; a bell raised " +
+			"while the panel was down is lost, which is the one time nobody was watching")
+	}
+
+	// Attach the way the panel does — a real client on a PTY — and the flag
+	// must be spent.
+	cmd := exec.CommandContext(ctx, c.Bin, c.args(c.AttachArgs(name)...)...)
+	f, err := pty.Start(cmd)
+	if err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	time.Sleep(1500 * time.Millisecond)
+	_ = f.Close()
+	_ = cmd.Process.Kill()
+	_, _ = cmd.Process.Wait()
+	time.Sleep(500 * time.Millisecond)
+
+	if byName().Bell {
+		t.Error("the flag survived a client attaching, so the same bell would be " +
+			"re-observed on every poll and the session would never stop waiting")
 	}
 }

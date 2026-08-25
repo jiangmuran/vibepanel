@@ -357,15 +357,6 @@ func (c *Client) Resize(ctx context.Context, name string, width, height int) err
 	return err
 }
 
-// SendKeys writes literal bytes to a session's active pane.
-//
-// -l means literal: without it tmux parses the payload as key names, so a user
-// typing the word "Enter" would submit a newline instead of five characters.
-func (c *Client) SendKeys(ctx context.Context, name, literal string) error {
-	_, err := c.run(ctx, "send-keys", "-t", target(name), "-l", literal)
-	return err
-}
-
 // Capture returns the pane's scrollback including SGR escape sequences.
 //
 // This is the cold path used when the backend restarts and has lost its
@@ -412,13 +403,20 @@ type Info struct {
 	// process. Only meaningful while Dead; tmux leaves it empty otherwise, so
 	// it reads as 0 and a live pane must never be described by it.
 	DeadStatus int
-	// Bell is #{window_bell_flag}.
+	// Bell is #{window_bell_flag}, and it is load-bearing exactly once: at
+	// startup, before anything attaches.
 	//
-	// Always false under the panel's configuration: with bell-action "any"
-	// tmux forwards the bell to the client instead of latching the flag for a
-	// status line that is turned off. The real signal is the \007 in the PTY
-	// stream, which the OSC scanner picks up. Kept because the field is free
-	// and a future configuration might want it — but do not build on it.
+	// This said "always false under the panel's configuration … do not build
+	// on it". That is wrong, and the panel does build on it — Reconcile reads
+	// it to recover a bell that rang while the panel was down, which is the
+	// one moment nobody was watching. Measured under the embedded config, with
+	// no client attached: the flag reads 1, and attaching clears it to 0.
+	//
+	// While a client is attached it is indeed always false, because tmux
+	// forwards the bell to that client instead of latching it, and the \007 on
+	// the PTY is what the scanner picks up. Both halves are true; the comment
+	// only stated the second one and then told the next reader to delete the
+	// first.
 	Bell        bool
 	Width       int
 	Height      int
@@ -529,20 +527,6 @@ func parseInfo(line string) (Info, error) {
 		Activity:    int64(atoi(f[9])),
 		AlternateOn: f[10] == "1",
 	}, nil
-}
-
-// ClearBell acknowledges a window's bell flag so the next one is a fresh edge.
-//
-// Without this the flag latches on: a session that rang once would look like it
-// is asking for attention forever, and the "waiting" badge would never clear.
-func (c *Client) ClearBell(ctx context.Context, name string) error {
-	// Selecting the window is how tmux itself clears the flag; there is no
-	// dedicated command for it.
-	_, err := c.run(ctx, "select-window", "-t", target(name))
-	if errors.Is(err, ErrNoSession) {
-		return nil
-	}
-	return err
 }
 
 // KillServer tears down the whole socket. Only used by tests and by an explicit

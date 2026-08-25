@@ -42,6 +42,10 @@ type Session struct {
 	// or killed, and only the exit status hints at which.
 	Exited bool `json:"exited"`
 	// ExitStatus is the wait status, meaningful only while Exited.
+	//
+	// ExitStatusVanished is the one value that is not a wait status: it marks a
+	// session whose tmux session disappeared, where nothing was around to
+	// observe how it ended.
 	ExitStatus int `json:"exitStatus"`
 
 	CreatedAt  int64  `json:"createdAt"`
@@ -204,21 +208,6 @@ func (d *DB) GetSession(ctx context.Context, id string) (Session, error) {
 	return s, nil
 }
 
-// GetSessionByTmuxName looks a session up by its tmux identity. Used when
-// reconciling what the panel believes against what tmux actually has.
-func (d *DB) GetSessionByTmuxName(ctx context.Context, tmuxName string) (Session, error) {
-	row := d.sql.QueryRowContext(ctx,
-		fmt.Sprintf(`SELECT %s FROM sessions WHERE tmux_name = ?`, sessionColumns), tmuxName)
-	s, err := scanSession(row)
-	if err == sql.ErrNoRows {
-		return Session{}, ErrNotFound
-	}
-	if err != nil {
-		return Session{}, fmt.Errorf("store: get session by tmux name: %w", err)
-	}
-	return s, nil
-}
-
 // SetSessionState records a new state along with what decided it.
 //
 // A change is only written when the state actually differs, so that
@@ -236,6 +225,25 @@ func (d *DB) SetSessionState(ctx context.Context, id string, st session.State, s
 		WHERE id = ?`, st, src, st, now(), id)
 	if err != nil {
 		return fmt.Errorf("store: set session state: %w", err)
+	}
+
+	// A session changing state is the project being active.
+	//
+	// Projects are ordered by last_active_at and the column was written in
+	// exactly one place: creating a session. So "most active first" meant "most
+	// recently given a new session first" — a project whose agents had been
+	// working all day sat below one where a session was created in the morning
+	// and never touched again. The consequence that matters is the ordering
+	// nobody would think to question: a project that has a session waiting for
+	// a human does not come to the top, which is the one thing this list is for.
+	//
+	// State changes rather than output. Output would mean a write per chunk;
+	// state changes are already debounced by only being written when the state
+	// actually differs, and they are the events a person cares about.
+	if _, terr := d.sql.ExecContext(ctx, `
+		UPDATE projects SET last_active_at = ?
+		WHERE id = (SELECT project_id FROM sessions WHERE id = ?)`, now(), id); terr != nil {
+		return fmt.Errorf("store: touch project for session state: %w", terr)
 	}
 	return nil
 }
@@ -292,6 +300,13 @@ func (d *DB) UpdateSessionRuntime(ctx context.Context, id, cwd, command string) 
 	}
 	return nil
 }
+
+// ExitStatusVanished marks a session whose tmux session is simply gone.
+//
+// A real wait status is never negative, so this cannot collide with one. It is
+// distinct from exiting cleanly because it is not the same fact: a clean exit
+// was watched happening, this one was noticed afterwards.
+const ExitStatusVanished = -1
 
 // SetSessionExit records whether a session's process is still there.
 //
