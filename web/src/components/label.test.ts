@@ -118,6 +118,16 @@ describe('projectLabel', () => {
     expect(projectLabel({ name: 'billing\u202Egnp.hs' })).not.toContain('\u202E')
     expect(projectLabel({ name: 'billing' })).toBe('billing')
   })
+
+  it('never renders a project row with no text in it', () => {
+    // A row with no label cannot be identified, and cannot be clicked back
+    // into to fix the name that made it. InlineName and the CLI both guard
+    // their own entrance; `--name "   "` walks past both.
+    expect(projectLabel({ name: '   ', path: '/home/you/projects/billing' })).toBe('billing')
+    expect(projectLabel({ name: '', path: '/home/you/projects/billing/' })).toBe('billing')
+    expect(projectLabel({ name: '', path: '' })).toBe('project')
+    expect(projectLabel({ name: '\u200B', path: '' })).not.toBe('')
+  })
 })
 
 describe('terminalLabel', () => {

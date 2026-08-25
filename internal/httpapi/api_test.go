@@ -2509,3 +2509,72 @@ func TestTheAuditLogIsTrimmedWhileTheServerRuns(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// Renaming, pinning and re-ordering a project.
+//
+// PATCH /projects/{id} had no test and no browser check: measured at 0.0%
+// statement coverage with -coverpkg across the whole module. The checks rename
+// a todo and a session; nothing renamed a project. Naming things is the reason
+// this panel exists, and the one endpoint that does it for a project was
+// running unobserved.
+//
+// The last case is the one worth having. `clearSortIndex` and `sortIndex` can
+// arrive together, and the handler takes the clear — a null sortIndex is
+// indistinguishable from an absent one after decoding, which is why the flag
+// exists at all. Get that precedence backwards and "sort by activity" writes a
+// position instead of removing one, which is how the sidebar previously lost
+// the arrangement it was supposed to be able to return to.
+func TestPatchingAProject(t *testing.T) {
+	ts, _ := newTestServer(t)
+	patch := func(id, body string) store.Project {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPatch, ts.URL+"/api/projects/"+id,
+			strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		res, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("PATCH %s: %d", body, res.StatusCode)
+		}
+		var p store.Project
+		if err := json.NewDecoder(res.Body).Decode(&p); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"before"}`)
+
+	if got := patch(project.ID, `{"name":"after"}`); got.Name != "after" {
+		t.Errorf("name = %q after renaming, want %q", got.Name, "after")
+	}
+	if got := patch(project.ID, `{"pinned":true}`); !got.Pinned {
+		t.Error("pinned did not stick")
+	}
+	// A field the request leaves out must not be reset by the ones it carries.
+	if got := patch(project.ID, `{"sortIndex":3}`); got.Name != "after" || !got.Pinned {
+		t.Errorf("patching sortIndex disturbed the rest: %+v", got)
+	} else if got.SortIndex == nil || *got.SortIndex != 3 {
+		t.Errorf("sortIndex = %v, want 3", got.SortIndex)
+	}
+	if got := patch(project.ID, `{"clearSortIndex":true,"sortIndex":9}`); got.SortIndex != nil {
+		t.Errorf("sortIndex = %v with clearSortIndex set; the clear must win, or "+
+			"returning to automatic ordering writes a position instead of removing one",
+			*got.SortIndex)
+	}
+
+	// A name longer than the cap is truncated rather than stored whole: the
+	// field is one somebody eventually pastes a file into.
+	long := strings.Repeat("x", session.MaxTitleRunes*2)
+	if got := patch(project.ID, `{"name":"`+long+`"}`); len([]rune(got.Name)) > session.MaxTitleRunes {
+		t.Errorf("stored a %d-rune project name; the cap is %d",
+			len([]rune(got.Name)), session.MaxTitleRunes)
+	}
+}

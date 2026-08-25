@@ -8917,3 +8917,49 @@ scrolled to its end, rather than the row merely claiming to be scrollable.
 Tap-target height is not asserted here. `findSmallTargets` already scans every
 button on the page, which is how the whole key bar was found at 32px in the
 first place; a second check would be a second place to update.
+
+### Coverage, read twice
+
+`go test -coverprofile ./...` listed `auth.SetCookie`, `HashToken` and
+`TokenFromRequest` at 0.0%, which is false: they are exercised by every
+authenticated request in the httpapi tests. Without `-coverpkg`, the profile
+only records what a package's *own* tests reach, so anything called across a
+package boundary reads as dead. The first list was almost entirely that
+artefact, and acting on it would have meant writing tests for code that is
+already covered.
+
+With `-coverpkg=./...` the module is at 66.0%, and one entry survived that is
+neither passkeys (driven in a browser instead) nor `main`:
+
+**`handlePatchProject`, 0.0%.** Renaming a project, pinning it, and returning it
+to automatic ordering. The browser checks rename a todo and rename a session;
+nothing renamed a project. "Tabs cannot be named" is the first line of the
+problem statement this project was started from.
+
+The case worth having is the last one. `clearSortIndex` and `sortIndex` can
+arrive in the same request and the handler takes the clear — the flag exists
+because a null `sortIndex` is indistinguishable from an absent one after
+decoding. Invert that precedence and "sort by activity" writes a position
+instead of removing one, which is the failure the sidebar comment describes:
+switching to automatic used to erase the arrangement, so there was never
+anything to return to.
+
+### Three guards on one door, and a gap between them
+
+Following the empty-name question through the paths that can set one:
+
+- `InlineName` trims and refuses an empty result, and says why: "an empty name
+  is a mistake, not an instruction to clear it".
+- `project add` substitutes the directory's base name for an empty `--name`.
+- `RenameProject` truncates but does not reject, and neither does the session
+  equivalent — consistently, so not a drift.
+
+`--name "   "` walks past all of it, and the display had no floor:
+`sessionLabel` falls back to the command and then to the word "session", while
+`projectLabel` — added earlier this session — copied the sanitising and not the
+fallbacks. A blank name left a sidebar row with no text, which is a row nobody
+can identify or click back into to fix the name that made it.
+
+Fixed at the funnel rather than at the three entrances, for the reason the
+funnel exists: covering every entrance one at a time is how one of them stays
+open.

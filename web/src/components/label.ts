@@ -40,9 +40,22 @@ export function sessionLabel(s: Session): string {
  *
  * A funnel for the same reason as sessionLabel: sanitising at each call site is
  * how the next one gets forgotten.
+ *
+ * The fallbacks are the other half of what sessionLabel does, and were missing
+ * when the sanitising was added. A session with no title falls back to its
+ * command and then to the word "session"; a project fell back to nothing, so a
+ * blank name left a sidebar row with no text — one that cannot be identified or
+ * clicked back into to fix. InlineName trims before committing and refuses an
+ * empty result, and the CLI substitutes the directory's base name for an empty
+ * --name, so this is the third guard rather than the first; a name of nothing
+ * but spaces still reaches the database through `--name "   "`, and covering
+ * every entrance one at a time is how one of them stays open.
  */
-export function projectLabel(p: { name: string }): string {
-  return safeText(p.name)
+export function projectLabel(p: { name: string; path?: string }): string {
+  const name = safeText(p.name).trim()
+  if (name) return name
+  const base = (p.path ?? '').replace(/\/+$/, '').split('/').pop() ?? ''
+  return safeText(base).trim() || 'project'
 }
 
 /**
