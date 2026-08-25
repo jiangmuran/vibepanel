@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 )
 
@@ -71,6 +72,15 @@ func Inspect(scriptPath string) (Status, error) {
 			st.Events = append(st.Events, event)
 		}
 	}
+	// Sorted, because `events` is a map and Go randomises the order it walks
+	// one. This list goes to the settings page, so without this it arrives in a
+	// different order every time it is asked for — a list that reshuffles while
+	// somebody is reading it, which this project calls hostile where it happens
+	// to a tab strip.
+	//
+	// Pinned by TestTheEventListComesBackInTheSameOrderEveryTime, which asks
+	// twenty times: one call cannot tell a sort from a lucky shuffle.
+	sort.Strings(st.Events)
 	st.Installed = len(st.Events) > 0
 	return st, nil
 }

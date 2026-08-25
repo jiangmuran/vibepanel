@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -548,5 +549,42 @@ func TestSessionEnvOmitsAnEmptyToken(t *testing.T) {
 		if strings.HasPrefix(kv, "VIBEPANEL_TOKEN=") {
 			t.Errorf("an empty token was injected as %q, which the script cannot tell from a real one", kv)
 		}
+	}
+}
+
+func TestTheEventListComesBackInTheSameOrderEveryTime(t *testing.T) {
+	withFakeHome(t)
+	script, _ := InstallScript(t.TempDir())
+	if _, err := InstallClaude(script); err != nil {
+		t.Fatal(err)
+	}
+
+	// Twenty times, because the list is built by walking a map and Go
+	// randomises that. One call proves nothing: with four events there is a
+	// one-in-twenty-four chance of drawing sorted order by accident. Twenty
+	// consecutive draws is the assertion.
+	//
+	// What this protects is the settings page, which renders the list as it
+	// arrives. Unsorted, the events reshuffle on every poll under a reader's
+	// eyes — the same thing this project refuses to do to the session strip.
+	var first []string
+	for i := range 20 {
+		st, err := Inspect(script)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.IsSorted(st.Events) {
+			t.Fatalf("call %d returned the events unsorted: %v", i, st.Events)
+		}
+		if first == nil {
+			first = st.Events
+			continue
+		}
+		if !slices.Equal(first, st.Events) {
+			t.Fatalf("call %d returned a different order:\n first %v\n  then %v", i, first, st.Events)
+		}
+	}
+	if len(first) != 4 {
+		t.Fatalf("expected four installed events, got %v", first)
 	}
 }
