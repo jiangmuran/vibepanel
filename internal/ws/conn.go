@@ -139,6 +139,31 @@ func (c *Conn) stateWriter(ctx context.Context) {
 	}
 }
 
+// clientIDFrom reads the viewer's own identity, or mints one.
+//
+// The browser supplies this so that it survives a reconnect: grid ownership is
+// held by a client id, and a viewer that comes back with a new one is a
+// stranger to the arbitration. See the frontend for why it is per tab.
+//
+// Client-supplied and therefore not trusted for anything, which is fine
+// because it grants nothing: any authenticated viewer can already press "take
+// control". The validation is only to keep a hostile or broken value out of
+// logs and comparisons.
+func clientIDFrom(r *http.Request) string {
+	got := r.URL.Query().Get("client")
+	if len(got) < 8 || len(got) > 64 {
+		return id.New()
+	}
+	for _, c := range got {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '_':
+		default:
+			return id.New()
+		}
+	}
+	return got
+}
+
 // ServeHTTP upgrades the request and serves the connection until it closes.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
@@ -153,7 +178,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	conn := &Conn{
 		h:         h,
 		ws:        c,
-		clientID:  id.New(),
+		clientID:  clientIDFrom(r),
 		stateWake: make(chan struct{}, 1),
 		streams:   map[uint32]*stream{},
 		byID:      map[string]*stream{},

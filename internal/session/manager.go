@@ -72,8 +72,25 @@ type Live struct {
 	cols, rows int
 
 	// controller is the ClientID whose viewport currently defines the grid.
-	// Empty means the next viewer to interact takes it.
+	// Empty means nobody owns it right now.
 	controller string
+
+	// lastController is who owned it before they went away, and it is what
+	// makes "unowned" mean two different things.
+	//
+	// Empty: nobody has ever driven this session, so the first viewer to
+	// arrive should have it. Set: somebody was driving it and their connection
+	// ended, so the grid is frozen at their size and only they may pick it up
+	// again without asking.
+	//
+	// Without the distinction, any subscribe during the owner's absence took
+	// the grid. Measured: desktop owns 112x34, phone joins passive and
+	// correctly does not steal it, desktop's tab closes, and then the phone
+	// merely *reloads* — reflowing the agent to 46x34, which is the exact
+	// outcome the freeze on unsubscribe exists to prevent. The freeze only ever
+	// protected the instant of departure. The returning desktop then found a
+	// 46-column view it did not own.
+	lastController string
 
 	scanner *oscScanner
 	done    chan struct{}
@@ -497,13 +514,18 @@ func (l *Live) Subscribe(clientID string) (*Subscriber, []byte) {
 	replay := l.ring.Snapshot()
 	l.subs[sub] = struct{}{}
 
-	// An unowned session goes to whoever opened it. Without this the first
-	// viewer is told it is passive, renders at the stored grid and scales it
-	// into a corner of the window — the session never fits the screen it is
-	// being looked at on, and the only way out is a "take control" button the
-	// user has no reason to think they need.
-	if l.controller == "" {
+	// A session nobody has ever driven goes to whoever opened it. Without this
+	// the first viewer is told it is passive, renders at the stored grid and
+	// scales it into a corner of the window — the session never fits the screen
+	// it is being looked at on, and the only way out is a "take control" button
+	// the user has no reason to think they need.
+	//
+	// A session whose driver stepped away is different: it stays frozen at
+	// their grid until they come back, or until somebody else deliberately
+	// takes it. See lastController.
+	if l.controller == "" && (l.lastController == "" || l.lastController == sub.ClientID) {
 		l.controller = sub.ClientID
+		l.lastController = ""
 	}
 	cols, rows := l.cols, l.rows
 
@@ -542,6 +564,7 @@ func (l *Live) Unsubscribe(sub *Subscriber) {
 	// surprise.
 	if l.controller == sub.ClientID {
 		l.controller = ""
+		l.lastController = sub.ClientID
 	}
 }
 

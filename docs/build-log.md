@@ -5548,3 +5548,110 @@ The other is that a regex with an optional greedy-ish prefix is not an edit,
 it is a guess. Reapplying the change by exact literal match — the whole
 original block, asserted to occur exactly once — cannot do this, and takes the
 same amount of time to write.
+
+## The phone took the desktop's grid by reloading
+
+Grid arbitration is careful about the case it was designed for. A second viewer
+arriving does not take the grid; when the owner's connection ends the grid is
+*frozen* rather than handed over, and the comment explaining that says exactly
+why:
+
+> giving it to the phone glancing at the session from across the room …
+> immediately reflows a 147-column agent view down to 13 and leaves the
+> returning desktop stuck watching it.
+
+The freeze protects the instant of departure and nothing after it. The
+controller is cleared, and the next `Subscribe` — from anyone — takes the grid.
+So the phone does not need to arrive at the wrong moment. It only needs to
+reconnect, which on a phone is what happens when the browser feels like it.
+
+Measured against the real panel, tmux's own `#{window_width}`:
+
+```
+1. desktop alone                     112x34
+2. phone joins, passive              112x34   <- arriving does not steal
+3. desktop's tab closes              112x34   <- frozen
+4. phone merely reloads               46x34   <- taken
+5. desktop returns                    46x34, and is passive
+```
+
+Step 4 is a reload. Not a click, not a resize — a page load. The agent's view
+went from 112 columns to 46, and the desktop came back to find it that way with
+no idea why.
+
+### Why the rule could not have been written correctly
+
+`Subscribe` claims an unowned grid because of this, which is also right:
+
+> An unowned session goes to whoever opened it. Without this the first viewer
+> is told it is passive … the only way out is a "take control" button the user
+> has no reason to think they need.
+
+Both rules are correct and they contradict each other, because "unowned" was
+being asked to mean two different things: *nobody has ever driven this*, and
+*the person driving it stepped away*. The frozen grid is evidence of the
+second, and nothing in the code could tell them apart.
+
+Worse, nothing *could* tell them apart, because the server minted a client id
+per connection. A returning viewer was a stranger to the arbitration. The old
+test says so in its own variable name:
+
+```go
+// The desktop comes back and reclaims it by subscribing.
+back, _ := live.Subscribe("desktop-2")
+```
+
+`desktop-2` — the author knew the returning connection had a different
+identity, and the rule was written to accommodate that. The test asserted the
+mechanism that causes the bug, two comments below the comment describing the
+bug.
+
+### Identity that survives a reconnect
+
+The browser now supplies its own id, in `sessionStorage`, and the rules can say
+what they mean: `lastController` remembers who stepped away, a subscribe claims
+an unowned grid only if nobody has ever owned it or the subscriber is the one
+who left, and pressing "take control" always works regardless.
+
+`sessionStorage` rather than `localStorage` is the substance of it. It survives
+a reload and a dropped socket; it does not leak across tabs. Two tabs of the
+same browser are two viewers at possibly two sizes and must not claim each
+other's grid, and a closed tab is a viewer that is not coming back.
+
+The id is client-supplied and therefore not trusted, which costs nothing: it
+grants no capability that pressing the button does not already grant.
+
+Afterwards, same probe:
+
+```
+4. phone reloads                     112x34, still passive
+6. desktop resizes its window        offered "take control"
+7. after taking it                   tmux follows its window
+8. same tab reloads                  reclaimed without asking
+```
+
+Step 6 matters as much as step 4. A viewer returning in a *new* tab is a new
+identity and does not reclaim — and if its window happens to fit the frozen
+grid exactly, it is offered nothing, because there is nothing to change. The
+moment it resizes, the affordance appears. It is never stuck; it is asked once,
+which is the cost the freeze comment already accepted:
+
+> a lone remaining viewer keeps scaling until it taps "take control" once. That
+> is a deliberate, visible action rather than a surprise.
+
+### A dead line in the fix, found by mutating it
+
+The first version also cleared `lastController` inside `TakeControl`, with a
+comment about the previous owner having been overruled. Mutating that line away
+changed no test, and then changed no behaviour either: `Unsubscribe` sets
+`lastController` to whoever was controlling as they leave, so it is always
+overwritten before it could matter. Dead code with a comment claiming an
+effect it did not have.
+
+The test written to pin it passed with and without — a check that cannot fail,
+which is the thing two entries above this one were about. Both are gone. What
+replaced them pins the property that is actually load-bearing: `TakeControl`
+must work on a grid frozen for somebody else. Guarding it with the same
+identity check that guards `Subscribe` would leave a viewer whose colleague
+shut their laptop stuck scaling a grid it cannot have, pressing a button that
+does nothing. That mutation fails the test.
