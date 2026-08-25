@@ -5079,9 +5079,13 @@ is the question the download button actually asks.
 
 Session titles, pane titles and file names all come from outside — the
 filesystem, or whatever the agent printed — and go straight into the DOM. A
-right-to-left override reverses everything after it, so `report‮fdp.exe`
+right-to-left override reverses everything after it, so `report\u202Efdp.exe`
 is displayed by every browser as `reportexe.pdf`. In a file tree with a
 download button next to it, that is not a rendering curiosity.
+
+(Written as an escape on purpose. The first draft of this paragraph pasted the
+real character in, which reversed the rest of the line in every renderer that
+shows this file — the documentation for the fix demonstrating the bug.)
 
 `<bdi>` does not help, which was worth measuring rather than assuming: it
 isolates the run's directionality from its surroundings, and does nothing about
@@ -5153,3 +5157,27 @@ The draft map lives in state rather than a ref, because the swap happens during
 render — an effect would paint one frame with the previous session's command
 still in the box — and the lint rule against reading refs during render is
 right about why.
+
+### And a guard that failed on its own explanation
+
+The paragraph above went into this log with the real override character pasted
+in as an example, which reversed the rest of the line in every renderer that
+displays the file — the write-up of the fix demonstrating the bug, in the
+document whose job is to stop that being rediscovered.
+
+That is the Trojan Source class (CVE-2021-42574) arriving by accident rather
+than by attack, which is the more likely way it arrives. The panel already
+refused to *render* these characters; it had nothing to say about its own
+source, where the same reordering means a reviewer reads a different line than
+the compiler does.
+
+`internal/config/source_test.go` walks the repository and rejects the
+embedding, override and isolate characters in anything a person reviews. Not
+the plain marks — U+200E and U+200F do not reorder a run and do appear in real
+prose. The walk asserts it visited at least fifty files, because a guard whose
+matcher silently stops matching passes forever.
+
+It failed on the first run, on its own doc comment, for exactly the same
+reason. Three accidents in one afternoon, every one of them while writing about
+the character. A rule that is this easy to break by hand is a rule that belongs
+in a test rather than in a paragraph.
