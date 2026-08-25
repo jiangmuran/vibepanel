@@ -8785,3 +8785,19 @@ Both are load-bearing in text people put in filenames. Breaking a Persian name
 to defeat a lookalike is the worse trade, and the test that pins this fails with
 the broken emoji printed in it, so the next person sees the cost rather than
 reading about it.
+
+### The leak next to the one that was fixed
+
+`tearDownSession` calls `Detector.Forget(id)`, with a comment saying why: the
+detector would otherwise keep a tracker per session for the life of the
+process, "small, but it is the kind of asymmetry between two paths that doing
+the same thing eventually turns into a real bug."
+
+`outputSeen` is one field over in the same struct and holds one timestamp per
+session so `last_output_at` is not written on every chunk. Nothing ever removed
+an entry. Recorded as a prediction while nothing could be run; confirmed and
+closed in the same place as the tracker.
+
+The test asserts the entry exists before deleting the session. Without that it
+would pass against an implementation that never records anything — which is the
+shape of every probe this project has been fooled by.

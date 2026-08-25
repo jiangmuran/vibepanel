@@ -2336,3 +2336,53 @@ func TestAFailedRequestRecordsThatTheDatabaseIsNotWorking(t *testing.T) {
 		t.Error("recorded a failure with no reason to show")
 	}
 }
+
+// Killing a session forgets its output-debounce entry as well as its tracker.
+//
+// outputSeen holds one timestamp per session so that last_output_at is not
+// written on every chunk. Nothing removed an entry, so an id that will never
+// appear again kept a timestamp until the process exited — the same leak the
+// Detector.Forget call beside it was added to close, one field over, missed
+// because the two were written at different times.
+//
+// Small on its own. Pinned because "two paths doing almost the same thing, one
+// of them doing it incompletely" is the shape this project keeps paying for,
+// and a leak nobody measures is the version of it that never gets found.
+func TestKillingASessionForgetsItsOutputDebounce(t *testing.T) {
+	ts, srv := newTestServer(t)
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"debounced"}`)
+	sess := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
+
+	// Visible is what makes the debounce record anything; a chunk of cursor
+	// moves deliberately does not count as output.
+	srv.HandleSignals(session.Signals{SessionID: sess.ID, Visible: true, Bytes: 8})
+
+	srv.outMu.Lock()
+	_, recorded := srv.outputSeen[sess.ID]
+	srv.outMu.Unlock()
+	if !recorded {
+		t.Fatal("no debounce entry after visible output, so this test would pass on anything")
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, ts.URL+"/api/sessions/"+sess.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete session: %d", res.StatusCode)
+	}
+
+	srv.outMu.Lock()
+	_, left := srv.outputSeen[sess.ID]
+	srv.outMu.Unlock()
+	if left {
+		t.Error("the debounce entry outlived the session it belongs to")
+	}
+}

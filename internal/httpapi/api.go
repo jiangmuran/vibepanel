@@ -869,6 +869,13 @@ func (s *Server) tearDownSession(ctx context.Context, id, tmuxName string) error
 	if s.Detector != nil {
 		s.Detector.Forget(id)
 	}
+	// The same thing, one field over, and it was missed when the line above was
+	// written: outputSeen debounces the last_output_at write per session and
+	// nothing ever removed an entry. An id that will never appear again is a
+	// timestamp kept until the process exits.
+	s.outMu.Lock()
+	delete(s.outputSeen, id)
+	s.outMu.Unlock()
 	return nil
 }
 
