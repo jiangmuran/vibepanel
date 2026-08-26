@@ -2383,12 +2383,33 @@ try {
               await sleep(8)
             }
             await cdp2.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
-            await sleep(700)
-            const after = lineNo(await rowsOf())
+            // Poll rather than read once after a fixed sleep.
+            //
+            // This failed twice in nine runs on trees where the change under
+            // test was nowhere near it, both times reporting the top line as
+            // "unreadable" -- lineNo returning NaN because the row it read was
+            // mid-repaint, not because the scroll had not happened. A check
+            // that fails one run in five teaches people to run it again
+            // instead of looking, and the whole argument for these browser
+            // checks is that a FAIL here means something.
+            //
+            // Keeping the last readable value separately matters for the same
+            // reason: when this does fail for real, "now TOUCH_368" says the
+            // scroll did not move, and "never readable" says something else
+            // is wrong. The old message could not tell those apart.
+            let after = NaN
+            let lastReadable = NaN
+            for (let i = 0; i < 20; i++) {
+              after = lineNo(await rowsOf())
+              if (Number.isFinite(after)) lastReadable = after
+              if (Number.isFinite(after) && after < before) break
+              await sleep(250)
+            }
             if (!Number.isFinite(after) || after >= before) {
               note('FAIL', 'mobile',
-                `dragging down did not scroll back: top line was TOUCH_${before}, now ` +
-                `${Number.isFinite(after) ? `TOUCH_${after}` : 'unreadable'}. ` +
+                `dragging down did not scroll back within five seconds: top line was ` +
+                `TOUCH_${before}, ` +
+                `${Number.isFinite(lastReadable) ? `last readable TOUCH_${lastReadable}` : 'never readable'}. ` +
                 'tmux keeps the history and a phone cannot reach it.')
             } else {
               note('PASS', 'mobile', `a finger scrolled back from TOUCH_${before} to TOUCH_${after}`)

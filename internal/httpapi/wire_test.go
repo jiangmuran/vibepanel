@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -173,4 +174,43 @@ func difference(a, b []string) []string {
 		}
 	}
 	return out
+}
+
+// The fourth constant on the wire, which nothing pinned.
+//
+// TestBinaryFrameLayoutMatchesTheClient in internal/ws pins three of the four
+// constants wire.ts declares. EXIT_VANISHED is the one it does not, for a
+// mechanical reason: that test parses `0x..|\d+`, which cannot match `-1`, and
+// compares as uint64, while this value is a store constant. Here instead,
+// where store is already imported and wire.ts is already read.
+//
+// What drift there does is not subtle, and it already happened once. The
+// frontend treats any non-zero exit status that is not EXIT_VANISHED as a
+// crash -- Sidebar.tsx counts those for the project summary -- so a session
+// whose tmux session merely disappeared would be reported as having crashed,
+// with a badge reading a number no process could have returned. wire.ts's own
+// comment describes the first version doing exactly that: "a badge reading
+// 'exit -1', a tooltip promising 'the process exited with status -1', and a
+// project summary that counted it as a crash".
+func TestExitVanishedMatchesTheStore(t *testing.T) {
+	const path = "../../web/src/protocol/wire.ts"
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("cannot read %s: %v", path, err)
+	}
+	// The leading minus is the point: a pattern without it silently matches
+	// the `1` and reports agreement, which is worse than not testing at all.
+	m := regexp.MustCompile(`EXIT_VANISHED\s*=\s*(-?\d+)`).FindStringSubmatch(string(src))
+	if m == nil {
+		t.Fatalf("EXIT_VANISHED is not declared in %s", path)
+	}
+	got, perr := strconv.ParseInt(m[1], 10, 64)
+	if perr != nil {
+		t.Fatalf("EXIT_VANISHED = %q: %v", m[1], perr)
+	}
+	if got != store.ExitStatusVanished {
+		t.Errorf("EXIT_VANISHED is %d in %s and %d in store; a session whose tmux session "+
+			"vanished will be counted as a crash and shown a status no process could return",
+			got, path, store.ExitStatusVanished)
+	}
 }
