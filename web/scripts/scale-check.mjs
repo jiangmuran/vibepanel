@@ -566,7 +566,7 @@ try {
       'with everything crowded, controls are on screen as far as a script can tell and ' +
       `invisible to a person: ${fadedCrowded.join(', ')}`)
   }
-  const spilling = await findUnreachable(page, sleep)
+  const { found: spilling } = await findUnreachable(page, sleep)
   if (spilling.length > 0) {
     note('FAIL', 'ui',
       'with everything crowded, content is painted outside its container with no way to ' +
@@ -614,7 +614,7 @@ try {
         'with the drawer open on a phone, controls are on screen as far as a script can tell ' +
         `and invisible to a person: ${phoneFaded.join(', ')}`)
     }
-    const phoneSpill = await findUnreachable(page, sleep)
+    const { found: phoneSpill } = await findUnreachable(page, sleep)
     if (phoneSpill.length > 0) {
       note('FAIL', 'ui',
         'with the drawer open on a phone, content is painted outside its container with no ' +

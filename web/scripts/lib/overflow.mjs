@@ -29,11 +29,17 @@ export async function findUnreachable(target, sleep) {
   // a check that fires intermittently is worse than no check, because the
   // lesson people take from it is to run it again.
   const first = await scanOnce(target)
-  if (first.length === 0) return []
+  // `examined` is how many elements the scan actually measured, and it is
+  // returned so callers can assert the scan looked at something. Without it,
+  // a selector that stops matching -- or a page that has not finished
+  // rendering -- reports "nothing wrong" in the same words as a clean page.
+  if (first.found.length === 0) return { examined: first.examined, found: [] }
   await sleep(600)
   const second = await scanOnce(target)
-  const found = first.filter((f) => second.includes(f))
-  return found
+  return {
+    examined: first.examined,
+    found: first.found.filter((f) => second.found.includes(f)),
+  }
 }
 
 function scanOnce(target) {
@@ -75,6 +81,7 @@ function scanOnce(target) {
         ` by ${Math.round(worst.over)}px`
     }
     const out = []
+    let examined = 0
     for (const el of document.querySelectorAll('*')) {
       if (el.closest('.xterm')) continue // the terminal scrolls itself
       // And the element xterm is mounted into. It re-fits its grid
@@ -93,6 +100,7 @@ function scanOnce(target) {
       const name = testid
         ? `[${testid}]`
         : `${el.tagName.toLowerCase()}${cls ? '.' + cls : ''}`
+      examined++
       const wide = el.scrollWidth - el.clientWidth
       const tall = el.scrollHeight - el.clientHeight
       if (st.overflowX === 'visible' && wide > 2 && !scrolls(el, 'x')) {
@@ -140,7 +148,7 @@ function scanOnce(target) {
         out.push(`${name} clips ${tall}px vertically and cannot be scrolled: ${spilledChild}`)
       }
     }
-    return out.slice(0, 8)
+    return { examined, found: out.slice(0, 8) }
   })
 }
 

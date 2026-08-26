@@ -142,8 +142,23 @@ async function scanCovered(target, where) {
 // Established by reading, in a stretch where nothing could be run. Not written
 // as code for that reason: a browser check nobody can execute is a change that
 // fails closed on whoever runs it next.
-async function scanTapTargets(target, where) {
-  const small = await findSmallTargets(target)
+async function scanTapTargets(target, where, minExpected = 1) {
+  const { examined, small } = await findSmallTargets(target)
+  // A scan reports "nothing wrong" and a scan that matched nothing report the
+  // same thing, which is silence. findSmallTargets walks `button, a[href],
+  // [role="button"]`; a control refactored into a `<div onClick>` leaves it,
+  // and if enough of them did, this would go on passing while looking at an
+  // empty set. The floor cannot catch one control going missing -- that needs
+  // an expected count, which is brittle -- but it does catch the scan going
+  // blind, and printing the number makes a drop visible between runs.
+  if (examined < minExpected) {
+    note('FAIL', 'mobile',
+      `in ${where}, the tap-target scan looked at ${examined} controls, expected at least ` +
+      `${minExpected}. Either the page had not rendered or the selector no longer matches ` +
+      'what this panel builds controls out of; either way the check below saw nothing.')
+  } else {
+    note('PASS', 'mobile', `${examined} tap targets measured in ${where}`)
+  }
   if (small.length > 0) {
     note('FAIL', 'mobile',
       `in ${where}, controls are too small for a thumb: ${small.join('; ')}`)
@@ -151,8 +166,16 @@ async function scanTapTargets(target, where) {
 }
 
 /** note()-reporting wrapper around the shared scan. See lib/overflow.mjs. */
-async function scanUnreachable(target, where) {
-  const found = await findUnreachable(target, sleep)
+async function scanUnreachable(target, where, minExpected = 20) {
+  const { examined, found } = await findUnreachable(target, sleep)
+  // Same reasoning as scanTapTargets. This one walks every element, so a
+  // handful means the page was not there yet rather than that the layout is
+  // clean -- which is the reading a silent pass invites.
+  if (examined < minExpected) {
+    note('FAIL', 'ui',
+      `in ${where}, the overflow scan measured ${examined} elements, expected at least ` +
+      `${minExpected}; it was looking at a page that had not rendered`)
+  }
   if (found.length > 0) {
     note('FAIL', 'ui',
       `in ${where}, content is painted outside its container with no way to scroll to it: ` +
@@ -2210,7 +2233,7 @@ try {
     }
 
     await scanUnreachable(touch, 'the phone drawer')
-    await scanTapTargets(touch, 'the phone drawer')
+    await scanTapTargets(touch, 'the phone drawer', 8)
     await scanFaded(touch, 'the phone drawer')
     await scanNames(touch, 'the phone drawer')
     await touch.screenshot({ path: join(SHOTS, 'mobile-drawer.png') })

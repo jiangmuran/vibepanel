@@ -19,6 +19,11 @@
 export function findSmallTargets(target, minHeight = 40) {
   return target.evaluate((min) => {
     const out = []
+    // Counted so the caller can assert the scan looked at something: a button
+    // refactored into a <div onClick> stops matching the selector below, and a
+    // scan that matches nothing reports "no problems" in the same words as a
+    // page whose controls are all the right size.
+    let examined = 0
     for (const el of document.querySelectorAll('button, a[href], [role="button"]')) {
       if (el.closest('.xterm')) continue
       if (el.offsetParent === null) continue
@@ -26,11 +31,12 @@ export function findSmallTargets(target, minHeight = 40) {
       if (st.display === 'none' || st.visibility === 'hidden') continue
       const r = el.getBoundingClientRect()
       if (r.width < 1 || r.height < 1) continue
+      examined++
       if (r.height >= min) continue
       const id = el.getAttribute('data-testid') ??
         `${el.tagName.toLowerCase()}:${(el.textContent ?? '').trim().slice(0, 12) || el.getAttribute('title') || '?'}`
       out.push(`${id} is ${Math.round(r.height)}px tall`)
     }
-    return out.slice(0, 10)
+    return { examined, small: out.slice(0, 10) }
   }, minHeight)
 }
