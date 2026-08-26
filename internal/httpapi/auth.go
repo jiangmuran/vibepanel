@@ -249,38 +249,33 @@ func (s *Server) handleAuthState(w http.ResponseWriter, r *http.Request) {
 			state.PasskeyReason = "passkeys need HTTPS, or localhost"
 		}
 	}
-	// KNOWN GAP, not fixed here: the discarded error is the third outcome.
+	// currentUser has three outcomes, and the third one matters here more than
+	// anywhere else. This endpoint is what App.tsx asks after the socket has been
+	// down four seconds, precisely to tell "the session ended" from "the network
+	// went away", and its rule is `if (!state.authenticated) onSignOut()`. So
+	// collapsing "the database cannot say" into "not signed in" signs the user
+	// out of a panel that is only short of space — into a login form that reads
+	// the same database, which is how a full disk once walked people into the
+	// login throttle.
 	//
-	// currentUser answers "signed in", "not signed in", or "the database cannot
-	// say", and that distinction exists because collapsing the last two once
-	// told every viewer on a full disk to sign in — into the same broken
-	// database, again and again, until the login throttle locked them out of a
-	// panel that was only short of space. RequireAuth answers 503 for it now.
-	// This collapses it back to "not signed in".
+	// Reachable without the database being wholly gone: CountUsers above and the
+	// session lookup inside currentUser are two statements, and one can succeed
+	// while the other does not. An unreadable database also closes every open
+	// socket after one revalidation tick, so this endpoint is asked at exactly
+	// the moment it is most likely to fail.
 	//
-	// Which would be harmless if nothing acted on it, and something does. This
-	// endpoint is what App.tsx asks after the socket has been down four
-	// seconds, precisely to tell "the session ended" from "the network went
-	// away", and its rule is `if (!state.authenticated) onSignOut()`. So a read
-	// that fails here signs the user out.
-	//
-	// Reachable without the database being wholly gone: CountUsers above and
-	// the session lookup inside currentUser are two statements. One succeeding
-	// and the other not — a busy database under contention, or storage that
-	// went away between them — produces 200 with authenticated:false, which is
-	// the one answer the client treats as final. Measured earlier in this
-	// session: an unreadable database closes every open socket after one
-	// revalidation tick, so this endpoint is being asked at exactly the moment
-	// it is most likely to fail.
-	//
-	// The fix is to answer 503 when the error is non-nil, the way RequireAuth
-	// does. The client already handles that correctly — its catch treats a
-	// failed probe as "unreachable rather than refusing us" and leaves the
-	// socket to reconnect, which is the behaviour wanted here.
-	//
-	// Found by reading. Not changed, because nothing could be run to confirm
-	// that the sign-out path is the one that fires.
-	if u, ok, _ := s.currentUser(r); ok {
+	// 503, the way RequireAuth answers it. The client's catch treats that as
+	// "unreachable rather than refusing us" and leaves the socket to reconnect;
+	// AuthGate shows the message instead of a sign-in form nobody can satisfy.
+	u, ok, uerr := s.currentUser(r)
+	if uerr != nil {
+		s.noteStale(uerr)
+		s.Log.Warn("cannot check the session", "err", uerr)
+		writeErr(w, http.StatusServiceUnavailable,
+			"the panel cannot reach its own database; your sessions are unaffected")
+		return
+	}
+	if ok {
 		state.Authenticated = true
 		state.Username = u.Username
 	}
@@ -497,9 +492,16 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	// database. That is the loop the three-outcome design was introduced to
 	// break.
 	//
-	// Fix as above: 503 when the error is non-nil. Not applied, because nothing
-	// could be run in the sitting that found it.
-	user, ok, _ := s.currentUser(r)
+	// So: 503 when the error is non-nil, the way RequireAuth answers it. A third
+	// outcome only exists where the endpoints that ask for it actually use it.
+	user, ok, uerr := s.currentUser(r)
+	if uerr != nil {
+		s.noteStale(uerr)
+		s.Log.Warn("cannot check the session", "err", uerr)
+		writeErr(w, http.StatusServiceUnavailable,
+			"the panel cannot reach its own database; your sessions are unaffected")
+		return
+	}
 	if !ok {
 		writeErr(w, http.StatusUnauthorized, "sign in required")
 		return

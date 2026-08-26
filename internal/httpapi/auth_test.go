@@ -2,12 +2,14 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -534,4 +536,85 @@ func TestChangePassword(t *testing.T) {
 		}
 		_ = srv
 	})
+}
+
+// A storage fault must not sign anybody out.
+//
+// currentUser has three outcomes — signed in, not signed in, and "the database
+// cannot say" — and the third exists because collapsing it into the second once
+// told every viewer on a full disk to sign in, into the same broken database,
+// until the login throttle locked them out of a panel that was only short of
+// space. RequireAuth answers 503 for it. The two endpoints here are registered
+// outside the authenticated group and do their own check, so they had to be
+// fixed separately, and this is what pins them.
+//
+// The injection has to be precise, and the obvious one is wrong. Closing the
+// database makes `CountUsers` at the top of handleAuthState fail too, so the
+// endpoint answers 500 — which the client already treats as unreachable, so the
+// bug does not appear and a test built that way passes either way. The fault
+// that matters is the split one named in the finding: CountUsers succeeds and
+// the session lookup does not. Dropping `auth_sessions` from a second
+// connection produces exactly that, and leaves `users` intact.
+func TestAStorageFaultDoesNotSignAnybodyOut(t *testing.T) {
+	ts, srv := newTestServer(t)
+
+	// Positive control. Without this a broken sign-in would look like the
+	// behaviour under test, which is how a check ends up proving nothing.
+	var before authState
+	res, err := ts.Client().Get(ts.URL + "/api/auth/state")
+	if err != nil {
+		t.Fatalf("auth state: %v", err)
+	}
+	if err := json.NewDecoder(res.Body).Decode(&before); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || !before.Authenticated {
+		t.Fatalf("not signed in on a healthy panel, so this test proves nothing: %s %+v",
+			res.Status, before)
+	}
+
+	raw, err := sql.Open("sqlite", filepath.Join(srv.Cfg.DataDir, "test.db"))
+	if err != nil {
+		t.Fatalf("second connection: %v", err)
+	}
+	defer raw.Close()
+	if _, err := raw.Exec(`DROP TABLE auth_sessions`); err != nil {
+		t.Fatalf("drop auth_sessions: %v", err)
+	}
+
+	// The dangerous answer is not an error of any kind — it is a cheerful 200
+	// saying nobody is signed in, because that is the one reply App.tsx treats
+	// as final: `if (!state.authenticated) onSignOut()`.
+	res, err = ts.Client().Get(ts.URL + "/api/auth/state")
+	if err != nil {
+		t.Fatalf("auth state: %v", err)
+	}
+	var after authState
+	_ = json.NewDecoder(res.Body).Decode(&after)
+	res.Body.Close()
+	if res.StatusCode == http.StatusOK && !after.Authenticated {
+		t.Error("/api/auth/state answered 200 authenticated:false while the database " +
+			"could not say — the client signs the user out on that, into a login " +
+			"form that reads the same database")
+	}
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("/api/auth/state answered %s for a storage fault, want 503", res.Status)
+	}
+
+	// Same collapse, second endpoint: 401 here is turned into a return to the
+	// sign-in screen by the frontend's UnauthorizedError guard.
+	res, err = ts.Client().Post(ts.URL+"/api/auth/password", "application/json",
+		strings.NewReader(`{"current":"a sufficiently long password","next":"another sufficiently long one"}`))
+	if err != nil {
+		t.Fatalf("change password: %v", err)
+	}
+	res.Body.Close()
+	if res.StatusCode == http.StatusUnauthorized {
+		t.Error("/api/auth/password answered 401 for a storage fault; the frontend " +
+			"sends that to the sign-in screen, which reads the same database")
+	}
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("/api/auth/password answered %s for a storage fault, want 503", res.Status)
+	}
 }

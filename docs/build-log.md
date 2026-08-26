@@ -9242,7 +9242,7 @@ tracker does not renumber.
 There is a second site, and it is the more visible one. `summarise` in `Sidebar.tsx` is a priority chain — any `waiting`, then any `working`, then any crash — ending in `return sessions.length > 0 ? 'done' : null`. A project whose sessions are all in the new state matches none of the tests and comes out as *done*, so the badge in the collapsed 42px sidebar, which is the panel's whole at-a-glance surface, shows a green check. Its own docstring is about precisely that outcome: returning a crash as a crash "is what stops a project whose every session died from wearing a green check." Both sites are triggered by the same edit, so whoever adds a state wants both in front of them.
 
 Two is all of them. Swept by type rather than by literal — everything that takes a `SessionState` — which finds five uses in two files: `LABEL`, the two callback props that only pass a value along, and these two. Searching for `'waiting'` would have been the natural way and the wrong one, for the reason 17 records: a grep shaped by what you already imagined finds only that. This list being complete is the point, since the whole failure mode here is stopping at a list somebody wrote down. | `web/src/components/StateDot.tsx` | `if (state === 'working')` and a `never` check, so adding a state is a compile error |
-| 2 | Two of the four callers of `currentUser` silently discard its third outcome, "the database cannot say", and collapse it into "not signed in". `/api/auth/state` returns that to a client whose rule is `onSignOut()` — and an unreadable database is exactly what closes the socket that makes the client ask. `handleChangePassword` returns 401, which the frontend turns into a return to the sign-in screen, which reads the same database. `RequireAuth` was fixed to answer 503; `stillAuthorized` drops it deliberately and documents why. | `internal/httpapi/auth.go` | 503 when the error is non-nil, at both sites |
+| 2 | **Fixed, and measured — see the last section.** Two of the four callers of `currentUser` silently discard its third outcome, "the database cannot say", and collapse it into "not signed in". `/api/auth/state` returns that to a client whose rule is `onSignOut()` — and an unreadable database is exactly what closes the socket that makes the client ask. `handleChangePassword` returns 401, which the frontend turns into a return to the sign-in screen, which reads the same database. `RequireAuth` was fixed to answer 503; `stillAuthorized` drops it deliberately and documents why. | `internal/httpapi/auth.go` | 503 when the error is non-nil, at both sites |
 | 3 | The state strings `internal/hooks` writes into the reporter script, the Codex `notify` line and `~/.claude/settings.json` are bare literals; the package does not import `internal/session` at all (verified: the only such import is the new test itself). Partly covered by accident — `TestTheReporterScriptActuallyReportsState` posts a hard-coded `"waiting"` through the real script and waits for it, so renaming the enum's *value* makes that round trip fail. What nothing covers is the mapping: a typo in `events` (`"Notification": "wating"`), a state in the `ClaudeSettings` snippet that the map does not know, or a new enum member the hooks should report. Narrower than it first looked, twice over. `report.sh` carries a fourth copy in its `case working\|waiting\|done` guard, and that one self-heals: `hooksAreInstalled` calls `scriptPath` on the way to every state snapshot, which rewrites the script whenever its content differs, so an upgraded binary refreshes it as soon as anyone opens the panel. What does not self-heal is the Codex line — `CodexNotify` writes the literal `"waiting"` into `~/.codex/config.toml` and nothing repairs a TOML file. **Correcting what this row said earlier:** Claude does not recover by itself either. `ClaudeSettings` writes the state into the user's `settings.json` as an argument — `"command": "<script> waiting"` — and nothing rewrites that file on its own. `Inspect` asks only whether *an* entry points at our script, not what it passes, so a stale argument still counts as installed and `InstallClaude` runs only when somebody presses the button. So after a rename the self-healing script accepts only the new names while both agents keep sending the old one from files that do not self-heal, the `case` falls to `*) exit 0`, and every session goes quiet with the settings page reporting all four events installed. The script healing itself is what makes this worse rather than better: it is the half that changes, so the halves stop agreeing. | `internal/hooks/states_test.go` (new), `AGENTS.md` | run the test, then rename `StateWaiting`'s value and confirm it fails |
 | 4 | A manual state set by clicking the dot is cleared by a spinner, so the click reads as having done nothing in the case the feature exists for. | `internal/session/detect.go` | same as 1, and more of a judgement call |
 | 5 | The poller rewrites `cwd` and `command` for every live session on every tick whether they changed or not — about twenty-four writes a second at idle, at the scale this is built for. Two of the four writes in the same loop compare first. | `internal/httpapi/api.go` | `if info.Path != row.CWD \|\| info.Command != row.Command`; provably a no-op on content |
@@ -9651,3 +9651,50 @@ Recorded here so nobody investigates it twice.
 What the search did turn up is 20 above: no target, script or check ever builds
 that image, so the one shipped artifact outside the binary has exactly the
 property `head-check` exists to remove.
+
+
+## The third outcome, at the two endpoints that were still collapsing it
+
+2 in the table above, fixed. `currentUser` answers "signed in", "not signed in",
+or "the database cannot say", and the third exists because collapsing it into
+the second once told every viewer on a full disk to sign in — into the same
+broken database, again and again, until the login throttle locked them out of a
+panel that was only short of space. `RequireAuth` was taught to answer 503 for
+it at the time. `/api/auth/state` and `/api/auth/password` are registered
+outside the authenticated group and do their own check, so neither was covered,
+and both still wrote `_` where the error goes.
+
+`/api/auth/state` is the worse of the two. It is what `App.tsx` asks four
+seconds after the socket goes down, precisely to tell "the session ended" from
+"the network went away", and its rule is `if (!state.authenticated)
+onSignOut()`. An unreadable database also closes every open socket after one
+revalidation tick, so this endpoint is asked at exactly the moment it is most
+likely to fail. `/api/auth/password` answered 401, which the frontend's
+`UnauthorizedError` guard turns into a return to the sign-in screen.
+
+Both now answer 503 with the message `RequireAuth` uses, and both call
+`noteStale`, so the storage banner gets the same evidence an ordinary request
+would have given it. The client already does the right thing with that: its
+`catch` treats a failed probe as "unreachable rather than refusing us" and
+leaves the socket to reconnect, and `AuthGate` shows the message rather than a
+sign-in form nobody can satisfy.
+
+**The injection is the part worth keeping.** The obvious one is wrong. Closing
+the database makes `CountUsers` at the top of `handleAuthState` fail too, so the
+endpoint answers 500 — which the client already treats as unreachable, so the
+bug never appears and a test built that way passes with or without the fix. It
+would have been a decoration. The fault that matters is the split one the
+finding actually named: CountUsers succeeds and the session lookup does not.
+Dropping `auth_sessions` from a second connection to the same file produces
+exactly that and leaves `users` intact.
+
+Measured both ways, which is the only reason to believe any of it.
+`TestAStorageFaultDoesNotSignAnybodyOut` passes against the fix; against HEAD it
+fails four times, and the first line is the one that matters:
+
+    /api/auth/state answered 200 authenticated:false while the database could
+    not say — the client signs the user out on that, into a login form that
+    reads the same database
+
+A 200 is what makes it dangerous. Every other answer, including the 500 the
+naive injection produces, lands in the client's catch and does nothing.
