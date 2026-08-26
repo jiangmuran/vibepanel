@@ -10302,3 +10302,17 @@ before hooks were installed would have been reported as broken. The test caught
 it on its first run, which is the whole argument for AGENTS.md's rule that this
 wrapper is tested against a real tmux and not a mock: "the bugs worth catching
 there are tmux's, and a mock reproduces none of them."
+
+**A third thing fell out of the same afternoon.** The runbook opens with "Eleven
+lines" over a table of ten rows, and `doctor` prints thirteen -- `agents` was
+added earlier in the day without a row, and the two above would have made three.
+That table is the only place that says what each line *means*, so a line missing
+from it is a line people read once and guess at.
+
+The count and the rows are corrected, and pinned:
+`TestTheRunbookExplainsEveryDoctorLine` reads the labels out of `main.go` and
+looks for a row for each. Both directions were mutated -- deleting the `hook url`
+row and inventing a `new thing` line each fail it by name. It also refuses to
+run at all if it finds fewer than ten labels, because a regex that has stopped
+matching would otherwise report perfect agreement about nothing, which is the
+failure mode `jsonKeys` already had once in this project.

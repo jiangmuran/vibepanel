@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -138,5 +139,55 @@ func TestKillingASessionKillsItsScratchTerminals(t *testing.T) {
 			t.Errorf("%s is still running after its session was killed; "+
 				"its row is about to cascade away and nothing will be able to reach it", name)
 		}
+	}
+}
+
+// Every line doctor can print has a row in the runbook.
+//
+// The runbook's table is the only place that says what a failure *means*, and
+// it said "Eleven lines" over ten rows while doctor printed thirteen. Three
+// checks had been added without it -- one of them in the same sitting that
+// noticed the count was wrong. A diagnostic whose output is not explained
+// anywhere is a diagnostic people read once and guess at.
+//
+// The same shape as wire.ts and the state enum: a definition with a mirror
+// somewhere no compiler looks. Pinned the same way, by reading both.
+func TestTheRunbookExplainsEveryDoctorLine(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	book, err := os.ReadFile("../../docs/runbook.md")
+	if err != nil {
+		t.Fatalf("read runbook: %v", err)
+	}
+
+	labels := map[string]bool{}
+	// Printf'd lines: "[ok  ] hook url           ..." -- the label runs up to
+	// the run of spaces that pads the column.
+	for _, m := range regexp.MustCompile(`\[(?:ok {2}|FAIL|-- {2}|warn)\] ([a-z][a-z ]*?) {2,}`).
+		FindAllStringSubmatch(string(src), -1) {
+		labels[m[1]] = true
+	}
+	// And the two helpers, which pad the label themselves.
+	for _, m := range regexp.MustCompile(`(?:fail|skip)\("([a-z][a-z ]*)"`).
+		FindAllStringSubmatch(string(src), -1) {
+		labels[m[1]] = true
+	}
+	if len(labels) < 10 {
+		t.Fatalf("only found %d doctor labels in main.go (%v); the patterns above have "+
+			"stopped matching and this test is checking nothing", len(labels), labels)
+	}
+
+	var missing []string
+	for label := range labels {
+		if !strings.Contains(string(book), "| `"+label+"` |") {
+			missing = append(missing, label)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Errorf("doctor prints %v, and the runbook's table has no row for them. That table "+
+			"is the only place saying what each line means.", missing)
 	}
 }

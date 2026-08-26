@@ -8,7 +8,7 @@ What to check when a running deployment misbehaves.
 vibepanel doctor
 ```
 
-Eleven lines, and it prints all of them rather than stopping at the first
+Thirteen lines, and it prints all of them rather than stopping at the first
 failure — a machine with three problems used to take three runs to find them.
 
 | line | what a failure means |
@@ -16,11 +16,14 @@ failure — a machine with three problems used to take three runs to find them.
 | `tmux binary` | missing is fatal; older than 3.3 is `--`, and says which sequences are lost |
 | `data dir` | the directory cannot be created or written |
 | `running panel` | whether something already holds the data directory, and its pid |
+| `hook endpoint` | whether anything answers where this configuration says the panel is — the address every session's hooks post to. Skipped when no panel is running, because nothing answering is then the expected state |
 | `database` | the schema version, or a refusal to open one a newer binary wrote |
 | `database writes` | a real write, in a transaction it rolls back — opening a database says nothing about writing to one |
 | `disk` | under 512 MiB is `--`, under 64 MiB is a failure; a full disk is the panel's quietest one |
 | `tmux server` | it says so when the check started the server itself |
 | `isolation` | any session on our socket that is not ours, which is the promise that lets this run beside your existing tmux |
+| `agents` | what tmux reports each session is running, and whether any of it is recognised as an agent. Never a failure: a panel full of shells is not a problem |
+| `hook url` | sessions still posting to an address the panel no longer serves, because a session's environment is fixed when it is created |
 | `passkeys` | `--` and the reason when the configuration cannot support them; password login is unaffected |
 | `environment` | `VIBEPANEL_*` variables that are set and never read — a misspelled `VIBEPANEL_TLS` once meant plaintext on a public port |
 
