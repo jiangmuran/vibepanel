@@ -756,3 +756,57 @@ func TestPurgingExpiredSignInsKeepsTheLiveOnes(t *testing.T) {
 		t.Error("the expired sign-in is still there")
 	}
 }
+
+// Migration v7 renames the two audit events that did not share a prefix.
+//
+// Driven directly rather than by opening an old database, because what matters
+// is that the statement finds the rows: an UPDATE with a WHERE that matches
+// nothing succeeds, so a migration with the spelling wrong is indistinguishable
+// from one that worked.
+func TestMigrationRenamesTheOldAuditEvents(t *testing.T) {
+	ctx := context.Background()
+	db := openTest(t)
+
+	for _, e := range []AuditEntry{
+		{Event: "password_changed", Username: "u", IP: "1.2.3.4", Detail: "old spelling"},
+		{Event: "password_change_refused", Username: "u", IP: "1.2.3.4", Detail: "old spelling"},
+		{Event: "login.failed", Username: "u", IP: "1.2.3.4", Detail: "untouched"},
+	} {
+		if err := db.Audit(ctx, e); err != nil {
+			t.Fatalf("seed %s: %v", e.Event, err)
+		}
+	}
+
+	tx, err := db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The last migration in the list is the one under test; indexing by a
+	// literal would quietly start testing a different one.
+	if err := migrations[len(migrations)-1](tx); err != nil {
+		t.Fatalf("migration: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := db.RecentAudit(ctx, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]int{}
+	for _, r := range rows {
+		seen[r.Event]++
+	}
+	if seen["password_changed"] != 0 || seen["password_change_refused"] != 0 {
+		t.Errorf("the old spellings survived: %v. A history spelled two ways is worse than "+
+			"either, because the GROUP BY this rename exists to fix still returns two rows "+
+			"for one thing.", seen)
+	}
+	if seen["password.changed"] != 1 || seen["password.change_refused"] != 1 {
+		t.Errorf("the renamed rows are not there: %v", seen)
+	}
+	if seen["login.failed"] != 1 {
+		t.Errorf("the migration touched a row it should not have: %v", seen)
+	}
+}

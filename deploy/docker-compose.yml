@@ -1,3 +1,22 @@
+# Running the panel in a container, which is the awkward way to do it.
+#
+# READ THIS BEFORE `compose up -d`: IN A CONTAINER, RESTARTING THE PANEL KILLS
+# EVERY SESSION. Everywhere else the tmux server outlives the Go process, which
+# is what makes an upgrade or a `systemctl restart` harmless -- the whole
+# premise of the project. Here tmux is a child of the entrypoint and the
+# container is the boundary, so `docker restart`, `compose up -d` after a
+# rebuild, and anything that recreates the container take the agents with them.
+#
+# `restart: unless-stopped` below does not soften that. It brings the panel
+# back; it does not bring the sessions back.
+#
+# The full reasoning is at the top of ../Dockerfile. It is repeated here rather
+# than pointed at because this file is the one a compose user opens, and a
+# caveat in a file nobody in that workflow reads is a caveat nobody reads.
+#
+# The single binary plus a systemd user service is what this is built around:
+# see vibepanel.service beside this file.
+
 services:
   vibepanel:
     build: ..

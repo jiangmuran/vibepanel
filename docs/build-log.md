@@ -9265,8 +9265,8 @@ Two is all of them. Swept by type rather than by literal — everything that tak
 | 31 | **Half wrong, and the other half is now covered — see the last section.** `TruncateTitle`'s tests cannot tell runes from bytes. The constant's comment gives the reason for the whole design — "runes rather than bytes so that truncation cannot split a character and leave invalid UTF-8 in the database" — and both tests feed it `strings.Repeat("A", …)` and `strings.Repeat("x", …)`, pure ASCII, where a byte slice and a rune slice agree. Rewriting it as `s[:MaxTitleRunes]`, which is the obvious way to drop an O(n) `RuneCountInString`, passes both and cuts a CJK title mid-character. Implementation is correct today; the property is unasserted. Same shape as 30, different file and fix. | `internal/session/title_test.go` | one case with multi-byte runes |
 | 17 | **Fixed: `passkeyLabel`, the fourth funnel.** A passkey's name is rendered raw in two places in `Settings.tsx`, one of them the `window.confirm` that asks before deleting it — the same shape as the project-name fix made earlier in this session, one file over. Low severity: the name comes from a query parameter the user types, defaulting to "Passkey", with no external default like the directory basename that made project names dangerous. It is the fourth name-rendering site and the only one not funnelled. | `web/src/components/Settings.tsx` | `safeText` at both, or a `passkeyLabel` beside the other three |
 | 18 | **Fixed at the source, and the TypeScript that agreed with the bug is corrected too.** Two endpoints send `null` for a JSON array, bypassing `emptyIfNil` — whose own comment says it exists "so the frontend never has to guard a map over a missing list". `hooks.Status.Events` is nil until a hook is installed, which is every fresh panel; the upload's `paths` is nil if no part is named `file`. Neither crashes today, and the reason is the tell: `Settings.tsx` reads `(status.events ?? []).length`. That guard is the symptom patched at the reader, in the one place the helper was written to make unnecessary — so the next reader added without it throws. | `internal/httpapi/settings.go`, `internal/httpapi/panels.go` | `emptyIfNil` at both, and the `?? []` can then go |
-| 19 | Eleven of the thirteen audit events are dot-separated — `login.failed`, `setup.rejected`, `passkey.register.failed`, `hooks.installed`. Two are not: `password_changed` and `password_change_refused`. The field is grouped by the `GROUP BY event` the runbook hands the operator, listed on the settings page, and is what a fail2ban rule matches on, so one separator is worth having. Not free, though: rows already exist with the underscore spelling, so renaming the emitted value either leaves history mixed or wants a migration. Related and smaller: an entry in this log refers to "the fail2ban story the README advertises" and the README does not mention fail2ban — left alone, because a chronological record describes what was true when it was written. | `internal/httpapi/auth.go` | one separator, and decide what happens to the rows already written |
-| 20 | Nothing builds the container image. No Makefile target, no script, none of the seven checks — while `Dockerfile` pins `node:24-alpine`, `golang:1.26-alpine` and `alpine:3.21`, and `deploy/docker-compose.yml` builds from it. It is a shipped artifact with the property `head-check` was written to remove: nothing tells you whether what was committed works. Lower stakes than the binary, since the Dockerfile itself says the container "is the awkward way to run this and is offered second". Smaller half: the compose file, which is what a compose user opens, does not repeat or point at the caveat. | `Dockerfile`, `deploy/docker-compose.yml` | a `docker build` in release-check, or an honest note that the image is unverified |
+| 19 | **Fixed, with a migration for the rows already written.** Eleven of the thirteen audit events are dot-separated — `login.failed`, `setup.rejected`, `passkey.register.failed`, `hooks.installed`. Two are not: `password_changed` and `password_change_refused`. The field is grouped by the `GROUP BY event` the runbook hands the operator, listed on the settings page, and is what a fail2ban rule matches on, so one separator is worth having. Not free, though: rows already exist with the underscore spelling, so renaming the emitted value either leaves history mixed or wants a migration. Related and smaller: an entry in this log refers to "the fail2ban story the README advertises" and the README does not mention fail2ban — left alone, because a chronological record describes what was true when it was written. | `internal/httpapi/auth.go` | one separator, and decide what happens to the rows already written |
+| 20 | **Fixed: `release-check` builds it and runs it, and it turned out to work.** Nothing builds the container image. No Makefile target, no script, none of the seven checks — while `Dockerfile` pins `node:24-alpine`, `golang:1.26-alpine` and `alpine:3.21`, and `deploy/docker-compose.yml` builds from it. It is a shipped artifact with the property `head-check` was written to remove: nothing tells you whether what was committed works. Lower stakes than the binary, since the Dockerfile itself says the container "is the awkward way to run this and is offered second". Smaller half: the compose file, which is what a compose user opens, does not repeat or point at the caveat. | `Dockerfile`, `deploy/docker-compose.yml` | a `docker build` in release-check, or an honest note that the image is unverified |
 | 23 | **Fixed: `hook.rejected`, gated the same way its two siblings are, and seen to fail without it.** Three unauthenticated failure paths, two audited. The allowlist refusal and a bad setup token both write a row through `auditFromOutside`, cooldown-gated because they are unthrottled; a bad token on `/api/hook/state` writes nothing at all. The runbook's diagnosis for "somebody is hammering this panel" is `GROUP BY event` over `audit_log`, where a hook probe is invisible. The tell that it was not decided rather than chosen: the other two carry a comment explaining the audit choice, and this one explains only its constant-time compare. Low severity — the token has full entropy, so the value is noticing the attempt, not preventing it. | `internal/httpapi/api.go` | `auditFromOutside`, the same as its two siblings |
 | 24 | **Fixed at the three render points; the browser drive was attempted and abandoned — see the last section.** Server error strings are a name-carrying channel nobody funnels. `safeText` is applied to fields the frontend knows are names; an error message is not one, and several echo the same values — `base+" already exists"` on an upload conflict, `"writing "+base+": "`, `abs+" is not a directory"`, `"unknown state "+req.State`. The frontend renders them raw, as `{error}` in the banner and `setDropNote(err.message)`. So a file whose name carries a directional override produces a conflict message that reverses the text around it, at the moment you are deciding whether to rename and retry. Lower severity than 17 — you dropped the file — but the threat model in safeText's own docstring is "whatever an agent or a download wrote to disk". Sits with 17.
 | 46 | **Fixed: it polls now, after failing a second time. See the last section.** `render-check`'s mobile scrollback assertion is flaky. "dragging down did not scroll back: top line was TOUCH_368, now unreadable" fired once in six runs today, on a tree where the five runs around it were clean and the change under test was in the upload path. Re-running passed. That is the shape that trains people to re-run rather than investigate, and this project's whole argument for the browser checks is that a FAIL there means something. Worth pinning down before it is seen twice more and starts being ignored. | `web/scripts/render-check.mjs` | the gesture is dispatched and then read after a fixed sleep; make it poll for the line to move, and report what it saw if it never does |
@@ -10555,3 +10555,53 @@ standing WARN, and a permanent warning is how warnings stop being read -- the
 argument made two entries above about the palette. The fix stands on `safeText`'s
 own tests and on the three call sites being one line each. That is weaker than a
 browser check and it is what there is.
+
+
+## 19 and 20: a rename with history behind it, and an artifact nobody had built
+
+**19.** `password_changed` and `password_change_refused` were the two audit
+events that did not share a prefix with their pair, in a field that `GROUP BY
+event` groups on -- the query the runbook hands an operator asking whether
+somebody is hammering the panel -- and that a fail2ban rule matches. They are
+`password.changed` and `password.change_refused` now, and migration v7 renames
+the rows already written: a history spelled two ways is worse than either
+spelling, because the group-by the rename exists to fix would still return two
+rows for one thing.
+
+The convention is not "no underscores" -- `passkey.clone_warning` has one inside
+a segment and is fine. It is that a pair shares a prefix, the way login /
+login.failed and setup.completed / setup.rejected do.
+
+Pinned by an explicit list rather than a pattern, for the same reason
+`openRoutes` is a list: a pattern says the shape is plausible, and a list makes
+adding an event an edit somebody has to look at. The migration is driven
+directly rather than by opening an old database, because an `UPDATE` whose
+`WHERE` matches nothing succeeds -- a migration with the spelling wrong is
+indistinguishable from one that worked. Misspelling it fails the test.
+
+**20.** Nothing had ever built the container image. No target, no script, none
+of the seven checks, while the Dockerfile pins three base images and
+`deploy/docker-compose.yml` builds from it -- exactly the property `head-check`
+exists to remove.
+
+Built, and it works. Run, and that works too:
+
+    [ ok ] the container image builds
+    [ ok ] the container answers /api/health ({"ok":true,...,"tmuxVersion":"3.5a","version":"docker"})
+
+tmux 3.5a from `alpine:3.21` rather than the 3.6 on this host, which is past the
+3.3 `doctor` calls the floor. `release-check` does both now, and skips with `--`
+rather than failing on a machine with no docker, since building release archives
+does not require a container runtime.
+
+**The first version failed, and the failure is the useful part**: `docker build
+-q -t "$IMG" .` from a script that does not run in the repository root, so it
+reported "open Dockerfile: no such file or directory" about an image that built
+fine by hand a minute earlier. `$REPO` is right there at the top of the file.
+
+The smaller half is done too. The Dockerfile's caveat -- restarting the panel in
+a container kills every session, which is the opposite of the premise everywhere
+else -- is now repeated at the top of the compose file rather than pointed at,
+because that file is the one a compose user opens, and it says what
+`restart: unless-stopped` does and does not buy: the panel comes back, the
+sessions do not.

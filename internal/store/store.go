@@ -141,6 +141,32 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+
+	// v7: the two audit events that did not share a prefix with their pair.
+	//
+	// Eleven of the thirteen are dot-separated -- login / login.failed,
+	// setup.completed / setup.rejected, passkey.registered / passkey.removed --
+	// and `password_changed` / `password_change_refused` were not, so the one
+	// pair a reader most wants together did not group under `GROUP BY event`,
+	// which is the query the runbook hands the operator, and did not share a
+	// prefix for a fail2ban rule to match on.
+	//
+	// The rows already written are migrated rather than left, because a history
+	// spelled two ways is worse than either spelling: the group-by that the
+	// rename exists to fix would still return two rows for one thing. Anyone
+	// with a fail2ban rule on the old spelling has to update it, and the README
+	// does not advertise one.
+	func(tx *sql.Tx) error {
+		for from, to := range map[string]string{
+			"password_changed":        "password.changed",
+			"password_change_refused": "password.change_refused",
+		} {
+			if _, err := tx.Exec(`UPDATE audit_log SET event = ? WHERE event = ?`, to, from); err != nil {
+				return fmt.Errorf("rename audit event %s: %w", from, err)
+			}
+		}
+		return nil
+	},
 }
 
 // schemaVersion is the version this build writes.

@@ -526,7 +526,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		if s.Auth != nil {
 			s.Auth.Throttle.Fail(ip, time.Now())
 		}
-		s.audit(ctx, "password_change_refused", user.Username, ip, "current password did not match")
+		s.audit(ctx, "password.change_refused", user.Username, ip, "current password did not match")
 		writeErr(w, http.StatusUnauthorized, "the current password is wrong")
 		return
 	}
@@ -561,6 +561,6 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	if s.Auth != nil {
 		s.Auth.Throttle.Succeed(ip)
 	}
-	s.audit(ctx, "password_changed", user.Username, ip, "other sessions signed out")
+	s.audit(ctx, "password.changed", user.Username, ip, "other sessions signed out")
 	w.WriteHeader(http.StatusNoContent)
 }

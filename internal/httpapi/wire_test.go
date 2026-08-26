@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"sort"
@@ -212,5 +213,78 @@ func TestExitVanishedMatchesTheStore(t *testing.T) {
 		t.Errorf("EXIT_VANISHED is %d in %s and %d in store; a session whose tmux session "+
 			"vanished will be counted as a crash and shown a status no process could return",
 			got, path, store.ExitStatusVanished)
+	}
+}
+
+// Every audit event this server can write, spelled out.
+//
+// The field is what `GROUP BY event` groups on -- the query the runbook hands
+// an operator asking "is somebody hammering this panel" -- what the settings
+// page lists, and what a fail2ban rule matches. So the names are an interface,
+// and pairs that belong together have to share a prefix: login / login.failed,
+// setup.completed / setup.rejected, passkey.registered / passkey.removed.
+//
+// `password_changed` and `password_change_refused` did not, which is the one
+// pair a reader most wants together. They are `password.changed` and
+// `password.change_refused` now, and migration v7 renames the rows already
+// written -- a history spelled two ways is worse than either spelling, because
+// the group-by the rename exists to fix would still return two rows for one
+// thing.
+//
+// An explicit list rather than a pattern, for the same reason openRoutes is a
+// list: a pattern says the shape is plausible, and a list makes adding one an
+// edit somebody has to look at.
+func TestEveryAuditEventIsAccountedFor(t *testing.T) {
+	want := map[string]bool{
+		"blocked":                 true,
+		"hooks.installed":         true,
+		"hooks.removed":           true,
+		"hook.rejected":           true,
+		"login":                   true,
+		"login.failed":            true,
+		"passkey.clone_warning":   true,
+		"passkey.register.failed": true,
+		"passkey.registered":      true,
+		"passkey.removed":         true,
+		"password.change_refused": true,
+		"password.changed":        true,
+		"setup.completed":         true,
+		"setup.rejected":          true,
+	}
+
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]bool{}
+	re := regexp.MustCompile(`\.audit(?:FromOutside)?\([^,]+,\s*"([a-z][a-z._]*)"`)
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		src, rerr := os.ReadFile(f)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		for _, m := range re.FindAllStringSubmatch(string(src), -1) {
+			found[m[1]] = true
+		}
+	}
+	if len(found) < 10 {
+		t.Fatalf("only found %d audit events in the source (%v); the pattern has stopped "+
+			"matching and this test is checking nothing", len(found), found)
+	}
+
+	for e := range found {
+		if !want[e] {
+			t.Errorf("the server writes audit event %q and this list does not have it. If it is "+
+				"new, check it shares a prefix with its pair -- that prefix is what GROUP BY "+
+				"and a fail2ban rule work on.", e)
+		}
+	}
+	for e := range want {
+		if !found[e] {
+			t.Errorf("this list has %q and nothing writes it any more", e)
+		}
 	}
 }

@@ -227,6 +227,61 @@ if [ -x "$DIR/deploy/install.sh" ]; then
   fi
 fi
 
+# ── the container image ───────────────────────────────────────────────────
+#
+# Nothing built it. No target, no script, none of the seven checks -- while the
+# Dockerfile pins node:24-alpine, golang:1.26-alpine and alpine:3.21, and
+# deploy/docker-compose.yml builds from it. A shipped artifact with exactly the
+# property head-check was written to remove: nothing told you whether what was
+# committed works.
+#
+# Built *and* run, because building is not the question. The first time this
+# ran, both worked -- the image came up and /api/health answered ok, with tmux
+# 3.5a from alpine:3.21 rather than the 3.6 on the host, which is past the 3.3
+# that doctor calls the floor.
+#
+# Skipped rather than failed without docker: a machine that builds release
+# archives is not required to have a container runtime, and a FAIL there teaches
+# people to skip this output.
+echo
+if ! command -v docker >/dev/null 2>&1; then
+  echo "[--  ] container image: skipped, no docker on this machine"
+elif [ "${SKIP_DOCKER:-}" = "1" ]; then
+  echo "[--  ] container image: skipped, SKIP_DOCKER=1"
+else
+  IMG="vibepanel-release-check:$$"
+  # $REPO, not "." -- this script does not run from the repository root, and
+  # the first version of this failed with "open Dockerfile: no such file or
+  # directory" while the image it was meant to test built fine by hand.
+  if ! docker build -q -t "$IMG" "$REPO" >/dev/null 2>"$WORK/docker-build.log"; then
+    fail "docker build failed: $(tail -3 "$WORK/docker-build.log" | tr '\n' ' ')"
+  else
+    ok "the container image builds"
+    DATA="$WORK/container-data"
+    mkdir -p "$DATA" && chmod 777 "$DATA"
+    PORT=18499
+    CID="$(docker run -d --rm -p "$PORT:8443" \
+      -e VIBEPANEL_ADDR=0.0.0.0:8443 -e VIBEPANEL_DOMAIN=localhost \
+      -v "$DATA:/data" "$IMG" 2>"$WORK/docker-run.log" || true)"
+    if [ -z "$CID" ]; then
+      fail "the image would not start: $(tail -3 "$WORK/docker-run.log" | tr '\n' ' ')"
+    else
+      UP=""
+      for _ in $(seq 60); do
+        if curl -sf --max-time 3 "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then UP=1; break; fi
+        sleep 1
+      done
+      if [ -z "$UP" ]; then
+        fail "the container ran and never answered /api/health: $(docker logs "$CID" 2>&1 | tail -3 | tr '\n' ' ')"
+      else
+        ok "the container answers /api/health ($(curl -s --max-time 3 "http://127.0.0.1:$PORT/api/health"))"
+      fi
+      docker rm -f "$CID" >/dev/null 2>&1 || true
+    fi
+    docker image rm -f "$IMG" >/dev/null 2>&1 || true
+  fi
+fi
+
 echo
 if [ "$FAILS" -eq 0 ]; then echo "=== release check: 0 FAIL ==="; else echo "=== release check: $FAILS FAIL ==="; fi
 exit "$FAILS"
