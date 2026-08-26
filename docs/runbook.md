@@ -8,7 +8,7 @@ What to check when a running deployment misbehaves.
 vibepanel doctor
 ```
 
-Thirteen lines, and it prints all of them rather than stopping at the first
+Fourteen lines, and it prints all of them rather than stopping at the first
 failure — a machine with three problems used to take three runs to find them.
 
 | line | what a failure means |
@@ -24,6 +24,7 @@ failure — a machine with three problems used to take three runs to find them.
 | `isolation` | any session on our socket that is not ours, which is the promise that lets this run beside your existing tmux |
 | `agents` | what tmux reports each session is running, and whether any of it is recognised as an agent. Never a failure: a panel full of shells is not a problem |
 | `hook url` | sessions still posting to an address the panel no longer serves, because a session's environment is fixed when it is created |
+| `hook token` | sessions holding a token the panel no longer accepts. The token is created once and never rotated, so this means the row holding it went away — a restored database, or the setting cleared |
 | `passkeys` | `--` and the reason when the configuration cannot support them; password login is unaffected |
 | `environment` | `VIBEPANEL_*` variables that are set and never read — a misspelled `VIBEPANEL_TLS` once meant plaintext on a public port |
 
@@ -152,6 +153,13 @@ with the environment the service runs with -- in which case every other line of
 its output is describing a differently-configured panel than the one holding the
 lock, so check the unit's environment before anything else.
 
+**`hook token` failing** means the same thing about a different variable. The
+token is created once and never rotated, so it only changes when the row holding
+it goes away: a database restored from a backup taken before it existed — which
+the "database will not open" section below tells you to do — or the setting
+cleared. A new one is generated, the sessions keep presenting the old one, and
+every report from them is refused for as long as they live.
+
 **`hook url` failing** is the one that catches people, and it has nothing to do
 with the address being wrong *now*:
 
@@ -167,6 +175,22 @@ old address forever, while new ones work -- which is why the symptom is usually
 
 Restart those sessions from the panel. The processes in them do not survive that,
 which is the cost; nothing else gives a live session a new environment.
+
+**Three things change that URL**, and two of them are in the documented setup
+sequence. `LoopbackURL()` builds the scheme from the TLS mode and the port from
+the configured one, so:
+
+- turning TLS on — install ships with `--tls off`, and the README says to change
+  it before exposing the panel — moves every new session to `https://`, while
+  the sessions you already have keep posting plaintext at a listener that now
+  speaks only TLS;
+- changing the port does the same;
+- so does changing the bind address, though only to the extent that the new
+  address is not reachable.
+
+Restart the sessions after any of those. The processes in them do not survive
+that, which is the cost, and there is no other way to give a live session a new
+environment.
 
 A note on what this is *not*. Binding one interface -- `--addr 192.168.8.20:8443`
 -- does not break hooks on its own. `LoopbackURL()` follows the bound address, so

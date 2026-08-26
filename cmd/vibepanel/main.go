@@ -825,6 +825,11 @@ func cmdDoctor(args []string) error {
 		}
 	}
 
+	// Read out of the database below and compared against what the sessions
+	// hold, further down. Empty means either "no database to ask" or "no token
+	// has been created yet", and the check treats both as nothing to say.
+	var storedHookToken string
+
 	if !dirsOK {
 		skip("database", "the data directory is not usable")
 	} else if db, err := store.Open(ctx, cfg.DBPath()); err != nil {
@@ -843,6 +848,13 @@ func cmdDoctor(args []string) error {
 		} else {
 			fmt.Printf("[ok  ] database writes    accepted\n")
 		}
+
+		// GetSetting, deliberately, and not HookToken: that one creates the
+		// token when there is not one, so a diagnostic run on a fresh panel
+		// would generate a credential as a side effect. "A diagnostic that
+		// changes the thing it is diagnosing is one people stop trusting" --
+		// the same reason CheckWritable rolls its probe back.
+		storedHookToken, _ = db.GetSetting(ctx, "hook_token", "")
 	}
 
 	// Free space where the database lives.
@@ -987,7 +999,7 @@ func cmdDoctor(args []string) error {
 		skip("hook url", "there is no session list to check")
 	} else {
 		want := cfg.LoopbackURL()
-		var checked, unset, stale int
+		var checked, unset, stale, tokChecked, tokStale int
 		example := ""
 		for _, i := range infos {
 			if !strings.HasPrefix(i.Name, "vp_") {
@@ -1005,6 +1017,27 @@ func cmdDoctor(args []string) error {
 				stale++
 				if example == "" {
 					example = got
+				}
+			}
+			// The token travels the same way and goes stale for a different
+			// reason: it is created once and never rotated, so it only changes
+			// when the row holding it goes away -- a restore from a backup
+			// taken before it existed, which the runbook's "database will not
+			// open" section tells operators to do, or the setting being
+			// cleared. A new one is generated while the sessions, which outlive
+			// the database by design, keep presenting the old one. Every report
+			// is then rejected, permanently for those sessions, and silently,
+			// because report.sh suppresses its own failures.
+			//
+			// Compared, never printed: it is a credential, and doctor output
+			// ends up in bug reports.
+			if storedHookToken != "" {
+				tok, terr := tm.SessionEnvValue(ctx, i.Name, "VIBEPANEL_TOKEN")
+				if terr == nil && tok != "" {
+					tokChecked++
+					if tok != storedHookToken {
+						tokStale++
+					}
 				}
 			}
 		}
@@ -1025,6 +1058,25 @@ func cmdDoctor(args []string) error {
 		default:
 			fmt.Printf("[ok  ] hook url           %d of %d session(s) post to %s\n",
 				checked-unset, checked, want)
+		}
+
+		switch {
+		case storedHookToken == "":
+			fmt.Printf("[--  ] hook token         no token stored yet; nothing to compare against\n")
+		case tokChecked == 0:
+			fmt.Printf("[--  ] hook token         no session carries one\n")
+		case tokStale > 0:
+			failed++
+			fmt.Printf("[FAIL] hook token         %d of %d session(s) hold a token this panel no longer accepts\n",
+				tokStale, tokChecked)
+			fmt.Printf("       The token is created once and never rotated, so this means the\n")
+			fmt.Printf("       row holding it went away -- a database restored from a backup\n")
+			fmt.Printf("       taken before it existed, or the setting cleared. A session's\n")
+			fmt.Printf("       environment cannot be updated in place, so those sessions will\n")
+			fmt.Printf("       be refused for as long as they live. Restart them from the panel.\n")
+		default:
+			fmt.Printf("[ok  ] hook token         %d of %d session(s) hold the current token\n",
+				tokChecked, tokChecked)
 		}
 	}
 
