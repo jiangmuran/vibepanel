@@ -123,6 +123,7 @@ export class PanelSocket {
 
   private stateListeners = new Set<(s: PanelState) => void>()
   private panelListeners = new Set<(projectId: string, kind: string) => void>()
+  private errorListeners = new Set<(sessionId: string, message: string) => void>()
 
   constructor() {
     // The browser knows before we can: a phone leaving coverage, wifi
@@ -308,6 +309,47 @@ export class PanelSocket {
         }
         break
       }
+      case 'error': {
+        // The server reporting a failed request without closing the
+        // connection. There was no case here at all, so every one of them was
+        // dropped: you typed into a terminal, the write failed server-side,
+        // the server said so, and nothing reached the screen. Three of the six
+        // senders are `write failed` twice and `paste failed`, which is the
+        // hazard TestMessageTypesMatchTheClient was written about -- fixed for
+        // `dropped` and not for this.
+        for (const fn of this.errorListeners) {
+          fn(msg.sessionId ?? '', msg.message ?? 'the panel could not do that')
+        }
+        break
+      }
+      case 'pong':
+        // Nothing to do: any frame refreshes lastSeenAt, which is the whole
+        // purpose of the ping. A case rather than a silent fall-through to the
+        // default below, which is now a compile error.
+        break
+      default: {
+        // The third hop, pinned by the compiler. TestMessageTypesMatchTheClient
+        // compares what the server sends against the declared union, and
+        // `error` was in the union while having no case here, so it passed
+        // while every error frame was dropped. This makes the switch itself the
+        // thing that has to be exhaustive: adding a member to ServerMessage['t']
+        // without handling it stops the build.
+        const unhandled: never = msg.t
+        void unhandled
+        break
+      }
+    }
+  }
+
+  /**
+   * Called when the server reports a failed request.
+   *
+   * Returns the unsubscribe function, in the shape useEffect wants.
+   */
+  onError(fn: (sessionId: string, message: string) => void) {
+    this.errorListeners.add(fn)
+    return () => {
+      this.errorListeners.delete(fn)
     }
   }
 

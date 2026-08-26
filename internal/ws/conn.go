@@ -390,6 +390,24 @@ func (c *Conn) handleControl(ctx context.Context, msg ClientMessage) {
 		if rerr := c.h.Resolve.RecordSize(ctx, msg.SessionID, cols, rows); rerr != nil {
 			c.h.logger().Warn("persist size", "session", msg.SessionID, "err", rerr)
 		}
+
+	default:
+		// A type this server does not know.
+		//
+		// Ignoring it silently made a client sending a stale or misspelled type
+		// look like one whose messages were being handled, which is the same
+		// failure the error frame itself had: the client had no case for
+		// `error` and dropped all six senders on the floor. Answering here is
+		// only worth anything because that end now shows them.
+		//
+		// Truncated because msg.Type arrives from the client, is unbounded, and
+		// this sends it back to be rendered. React escapes it, so the hazard is
+		// length rather than markup -- a megabyte of JSON returning as a banner.
+		t := msg.Type
+		if len(t) > 40 {
+			t = t[:40] + "…"
+		}
+		c.sendError(msg.SessionID, "unknown message type: "+t)
 	}
 }
 

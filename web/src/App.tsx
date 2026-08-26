@@ -215,6 +215,33 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   // Pushed updates are the primary path.
   useEffect(() => socket.onState(applyState), [socket, applyState])
 
+  // What the server says went wrong, said to the person it happened to.
+  //
+  // Every one of these frames used to be dropped on the floor -- there was no
+  // case for them in the socket's switch at all -- and three of the six senders
+  // are `write failed` twice and `paste failed`. So a write that failed
+  // server-side looked exactly like a network problem: you type, nothing
+  // appears, and the panel is serene about it.
+  //
+  // Carries a sequence number rather than being keyed by the message, because
+  // the same failure twice in a row is the common case and setting identical
+  // state would not restart the timer below.
+  const [socketError, setSocketError] = useState<{ message: string; seq: number } | null>(null)
+  useEffect(
+    () =>
+      socket.onError((_sessionId, message) => {
+        setSocketError((prev) => ({ message, seq: (prev?.seq ?? 0) + 1 }))
+      }),
+    [socket],
+  )
+  useEffect(() => {
+    if (!socketError) return
+    // Transient: these describe one request that failed, not a condition. The
+    // stale banner below is the opposite and stays until the condition clears.
+    const timer = window.setTimeout(() => setSocketError(null), 8000)
+    return () => clearTimeout(timer)
+  }, [socketError])
+
   const refresh = useCallback(async () => {
     try {
       applyState(await api.state())
@@ -655,6 +682,16 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             the database's writes capped — /api/health still said ok, and the
             only person who found out was the one who happened to press a
             button. */}
+        {socketError && (
+          <div
+            data-testid="socket-error"
+            className="border-b border-hairline px-4 py-2 text-[12px]"
+            style={{ color: 'var(--vp-state-crashed)' }}
+          >
+            {socketError.message}
+          </div>
+        )}
+
         {state.stale && (
           <div
             data-testid="stale-notice"

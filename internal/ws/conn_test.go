@@ -2,6 +2,7 @@ package ws
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -246,5 +247,99 @@ func TestAStalledViewerDoesNotHoldUpTheOthers(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("Broadcast is still blocked on a viewer whose socket will not " +
 			"take a write; every other viewer is waiting behind it")
+	}
+}
+
+// A type this server does not know is answered, not ignored.
+//
+// The other half of a drift that ran three hops. The client's switch had no
+// case for `error` and no default, so all six senders of that frame were
+// dropped on the floor — you type into a terminal, the write fails
+// server-side, the server says so, and nothing reaches the screen. That end is
+// now pinned by the compiler: the switch has a case for every member of the
+// union and a `never` default, so adding a member without handling it stops
+// the build.
+//
+// This end had the mirror shape. Every ClientMessage type had a case and there
+// was no default, so a stale or misspelled type from a client looked exactly
+// like one being handled. Go offers no exhaustiveness check for that, and the
+// answer is only worth sending because the other end finally shows it.
+func TestAnUnknownMessageTypeIsAnsweredNotIgnored(t *testing.T) {
+	h := &Handler{
+		Manager:         session.NewManager(nil, 1<<10),
+		Resolve:         stubResolver{},
+		StillAuthorized: func(*http.Request) bool { return true },
+	}
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.CloseNow()
+
+	// Short per-read deadline, so that "nothing answered" fails as that
+	// sentence rather than as the test's own ten-second timeout. Expiring a
+	// read context closes the connection in coder/websocket -- the comment on
+	// the test above is about being bitten by exactly that -- which is fine
+	// only because every path out of here is a Fatalf.
+	read := func(what string) ServerMessage {
+		t.Helper()
+		rctx, rcancel := context.WithTimeout(ctx, 3*time.Second)
+		defer rcancel()
+		_, data, rerr := c.Read(rctx)
+		if rerr != nil {
+			if rctx.Err() != nil {
+				t.Fatalf("nothing answered %s within three seconds: the server "+
+					"ignored it silently, which is indistinguishable to a client "+
+					"from having handled it", what)
+			}
+			t.Fatalf("read after %s: %v", what, rerr)
+		}
+		var msg ServerMessage
+		if uerr := json.Unmarshal(data, &msg); uerr != nil {
+			t.Fatalf("unmarshal %q: %v", data, uerr)
+		}
+		return msg
+	}
+
+	// Positive control. Without it a connection that answers nothing at all
+	// would look like one correctly ignoring the unknown type below.
+	if err := c.Write(ctx, websocket.MessageText, []byte(`{"t":"ping"}`)); err != nil {
+		t.Fatalf("write ping: %v", err)
+	}
+	if msg := read("ping"); msg.Type != MsgPong {
+		t.Fatalf("a healthy connection did not answer ping with pong (%q), so this test proves nothing", msg.Type)
+	}
+
+	if err := c.Write(ctx, websocket.MessageText, []byte(`{"t":"nudge","sessionId":"s1"}`)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	msg := read("an unknown message type")
+	if msg.Type != MsgError {
+		t.Fatalf("an unknown message type was answered with %q, want %q; "+
+			"a client sending a type this server does not know cannot tell that "+
+			"from one it handles", msg.Type, MsgError)
+	}
+	if !strings.Contains(msg.Message, "nudge") {
+		t.Errorf("the error does not name the type that caused it: %q", msg.Message)
+	}
+	if msg.SessionID != "s1" {
+		t.Errorf("sessionId = %q, want it echoed so the viewer knows which terminal", msg.SessionID)
+	}
+
+	// The type arrives from the client, is unbounded, and comes back to be
+	// rendered. React escapes it, so the hazard is length: without the cap a
+	// megabyte of JSON returns as a banner.
+	long := strings.Repeat("x", 5000)
+	if err := c.Write(ctx, websocket.MessageText, []byte(`{"t":"`+long+`"}`)); err != nil {
+		t.Fatalf("write long: %v", err)
+	}
+	if msg := read("an overlong message type"); len(msg.Message) > 100 {
+		t.Errorf("a %d-byte message type came back in a %d-byte error; it is echoed into the UI",
+			len(long), len(msg.Message))
 	}
 }
