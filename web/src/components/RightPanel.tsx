@@ -8,14 +8,18 @@ import { SystemMonitor } from './panels/SystemMonitor'
 import { Notes } from './panels/Notes'
 import { Todos } from './panels/Todos'
 import { ErrorBoundary } from './ErrorBoundary'
+import { SystemStrip } from './panels/SystemStrip'
+import { t, useLang, type Key } from '../i18n'
 
 export type PanelTab = 'files' | 'monitor' | 'notes' | 'todos'
 
-const TABS: { id: PanelTab; icon: typeof Activity; label: string }[] = [
-  { id: 'files', icon: FolderTree, label: 'Files' },
-  { id: 'monitor', icon: Activity, label: 'System' },
-  { id: 'notes', icon: NotebookPen, label: 'Notes' },
-  { id: 'todos', icon: ListChecks, label: 'Todo' },
+// The label is a key, not a string: resolving it at render is what makes a
+// language switch repaint the tabs instead of needing a reload.
+const TABS: { id: PanelTab; icon: typeof Activity; key: Key }[] = [
+  { id: 'files', icon: FolderTree, key: 'panel.files' },
+  { id: 'monitor', icon: Activity, key: 'panel.monitor' },
+  { id: 'notes', icon: NotebookPen, key: 'panel.notes' },
+  { id: 'todos', icon: ListChecks, key: 'panel.todos' },
 ]
 
 interface Props {
@@ -45,7 +49,15 @@ export function RightPanel(props: Props) {
   // column and push the collapse button off the edge. Naming where you are —
   // and leaving tooltips for the rest — fits and answers the more useful
   // question.
+  //
+  // The four sit in a segmented control rather than in a row of loose buttons.
+  // A ragged row of one label and three icons, left-aligned with the panel
+  // controls floated off to the right, reads as parts that happened to land
+  // near each other. Equal widths in a track read as one thing you are choosing
+  // within — which is what it is — and the width the label needs is then taken
+  // from the group instead of from the buttons beside it.
   const showLabel = (id: PanelTab) => id === tab && width >= 230
+  useLang()
   const dragFrom = useRef<{ x: number; width: number } | null>(null)
   const splitRef = useRef<HTMLDivElement | null>(null)
   const [splitDragging, setSplitDragging] = useState(false)
@@ -161,30 +173,38 @@ export function RightPanel(props: Props) {
       <div className="flex min-w-0 flex-1 flex-col">
         <header
           data-testid="panel-header"
-          className="flex h-8 shrink-0 items-center gap-0.5 overflow-hidden border-b border-hairline px-1"
+          className="flex h-10 shrink-0 items-center gap-1 overflow-hidden border-b border-hairline px-2"
         >
-          {TABS.map(({ id, icon: Icon, label }) => (
-            <button
-              key={id}
-              type="button"
-              data-testid={`panel-tab-${id}`}
-              onClick={() => props.onTab(id)}
-              title={label}
-              className={`flex items-center gap-1 rounded-md px-1.5 py-1.5 text-[11px] transition-colors duration-200 ease-vp ${
-                tab === id ? 'bg-surface-2 text-ink' : 'text-ink-2 hover:bg-surface-2 hover:text-ink'
-              }`}
-            >
-              <Icon size={13} className="shrink-0" />
-              {showLabel(id) && <span>{label}</span>}
-            </button>
-          ))}
+          <div className="flex min-w-0 flex-1 items-center gap-0.5 rounded-lg bg-surface-2 p-0.5">
+            {TABS.map(({ id, icon: Icon, key }) => {
+              const label = t(key)
+              return (
+              <button
+                key={id}
+                type="button"
+                data-testid={`panel-tab-${id}`}
+                onClick={() => props.onTab(id)}
+                title={label}
+                aria-pressed={tab === id}
+                className={`flex min-w-0 flex-1 items-center justify-center gap-1 rounded-[7px] py-1 text-[11px] transition-colors duration-200 ease-vp ${
+                  tab === id
+                    ? 'bg-surface text-ink shadow-[0_1px_2px_rgb(0_0_0/0.12)]'
+                    : 'text-ink-2 hover:text-ink'
+                }`}
+              >
+                <Icon size={13} className="shrink-0" />
+                {showLabel(id) && <span className="truncate">{label}</span>}
+                </button>
+              )
+            })}
+          </div>
           {splittable && (
             <button
               type="button"
               data-testid="panel-split"
               onClick={() => props.onSplitChange(!split)}
-              title={split ? 'Show one at a time' : 'Show notes and todo together'}
-              className={`ml-auto rounded-md p-1.5 transition-colors duration-200 ease-vp ${
+              title={split ? t('panel.splitOff') : t('panel.splitOn')}
+              className={`shrink-0 rounded-md p-1.5 transition-colors duration-200 ease-vp ${
                 split ? 'text-accent' : 'text-ink-2 hover:bg-surface-2 hover:text-ink'
               }`}
             >
@@ -195,10 +215,8 @@ export function RightPanel(props: Props) {
             type="button"
             onClick={props.onCollapse}
             data-testid="panel-collapse"
-            title="Hide panel"
-            className={`shrink-0 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink ${
-              splittable ? '' : 'ml-auto'
-            }`}
+            title={t('app.hidePanel')}
+            className="shrink-0 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
           >
             <ChevronRight size={14} />
           </button>
@@ -213,6 +231,16 @@ export function RightPanel(props: Props) {
             {body()}
           </ErrorBoundary>
         </div>
+
+        {/* Always on, below whatever is chosen above. "Is the machine coping"
+            is not a question you navigate to -- it is a thing you want in the
+            corner of your eye while reading a terminal. As a tab it was three
+            figures given a whole column, and invisible from the other three. */}
+        {tab !== 'monitor' && (
+          <ErrorBoundary label="The monitor strip">
+            <SystemStrip />
+          </ErrorBoundary>
+        )}
       </div>
     </aside>
   )

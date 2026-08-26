@@ -18,6 +18,7 @@ import { projectLabel, sessionLabel } from './label'
 import { StateDot } from './StateDot'
 import { InlineName } from './InlineName'
 import { EXIT_VANISHED } from '../protocol/wire'
+import { t, useLang } from '../i18n'
 
 export interface SidebarProps {
   projects: Project[]
@@ -102,6 +103,7 @@ function initials(name: string): string {
 }
 
 export function Sidebar(props: SidebarProps) {
+  useLang()
   const { projects, sessions, expanded, overlay } = props
 
   const projectIds = useMemo(() => projects.map((p) => p.id), [projects])
@@ -132,7 +134,7 @@ export function Sidebar(props: SidebarProps) {
         <button
           type="button"
           onClick={props.onToggle}
-          title="Show projects"
+          title={t('app.projects')}
           className="mb-1 shrink-0 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
         >
           <ChevronLeft size={15} className="rotate-180" />
@@ -175,7 +177,7 @@ export function Sidebar(props: SidebarProps) {
         <button
           type="button"
           onClick={props.onAddProject}
-          title="Add project"
+          title={t('app.addProject')}
           className="mt-1 shrink-0 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
         >
           <Plus size={15} />
@@ -201,7 +203,7 @@ export function Sidebar(props: SidebarProps) {
         >
           <ChevronLeft size={15} />
         </button>
-        <span className="text-[13px] font-semibold tracking-tight">Projects</span>
+        <span className="text-[13px] font-semibold tracking-tight">{t('app.projects')}</span>
         {/* Two views of the same projects, and switching between them costs
             nothing now. This used to be one button that erased the
             arrangement and then removed itself, so there was no way back and
@@ -231,7 +233,7 @@ export function Sidebar(props: SidebarProps) {
         <button
           type="button"
           onClick={props.onAddProject}
-          title="Add project"
+          title={t('app.addProject')}
           className={`rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink ${
             props.projectOrder === 'manual' || props.hasProjectOrder ? '' : 'ml-auto'
           }`}
@@ -280,7 +282,7 @@ export function Sidebar(props: SidebarProps) {
                 type="button"
                 onClick={() => props.onNewSession(p)}
                 data-testid="project-new-shell"
-                title="New shell in this project"
+                title={t('session.new')}
                 className="vp-tap ml-auto rounded p-1 text-ink-2 vp-reveal hover:text-ink"
               >
                 <TerminalIcon size={13} />
@@ -382,7 +384,7 @@ export function Sidebar(props: SidebarProps) {
                       props.onKillSession(s)
                     }}
                     data-testid="kill-session"
-                    title="Kill session"
+                    title={t('session.kill')}
                     className="vp-tap shrink-0 rounded p-0.5 text-ink-2 vp-reveal hover:text-ink"
                   >
                     <X size={12} />
@@ -406,21 +408,7 @@ export function Sidebar(props: SidebarProps) {
           onClick={props.onOpenSettings}
           className="border-t border-hairline px-3 py-2 text-left text-[11px] leading-relaxed text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
         >
-          {props.hooksInstalled ? (
-            <>
-              States are still being guessed. Sessions that were open before state reporting was
-              installed keep guessing until they reload — open{' '}
-              <code className="font-mono">/hooks</code> in each, or restart the agent. →
-            </>
-          ) : (
-            <>
-              States are being guessed from output, and the terminal bell is the only signal that
-              reaches the panel — tmux swallows the notification sequences before it gets there.
-              The agent most people run here does not ring one, so{' '}
-              <span className="text-ink">waiting for you</span> will be missed. Turn on state
-              reporting →
-            </>
-          )}
+          {props.hooksInstalled ? t('guessed.installed') : t('guessed.notInstalled')}
         </button>
       )}
     </aside>

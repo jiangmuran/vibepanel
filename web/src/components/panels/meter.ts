@@ -25,3 +25,23 @@ export function meterWidth(value: number | null): number {
 function clamp(value: number): number {
   return Math.max(0, Math.min(100, value))
 }
+
+/**
+ * Bytes at full width: "1.5 GiB".
+ *
+ * FileTree keeps its own shorter form -- "1.5G" -- on purpose rather than by
+ * accident. A file list is a column of dozens of these and the unit repeats on
+ * every row, so the space it costs is paid over and over; a monitor shows three,
+ * where the same abbreviation reads as cramped. Two formats, two reasons.
+ */
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  const units = ['KiB', 'MiB', 'GiB', 'TiB']
+  let v = n / 1024
+  let i = 0
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${v.toFixed(1)} ${units[i]}`
+}

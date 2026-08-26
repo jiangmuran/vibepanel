@@ -1,0 +1,189 @@
+import { useSyncExternalStore } from 'react'
+
+/**
+ * Two languages, no library.
+ *
+ * The project rule is no state library and no component library, and an i18n
+ * package would be the third dependency doing what forty lines do. What is
+ * actually needed here is a lookup, a stored preference, and a way to make the
+ * tree re-render when that preference changes — which is `useSyncExternalStore`
+ * plus a Map.
+ *
+ * Both languages sit on the same line of the dictionary rather than in two
+ * files. A missing translation is then impossible to add by accident: there is
+ * no second file to forget. It also means a reviewer reading one string sees
+ * what it says in both, which is the thing that catches "确定" translating a
+ * button that says "Remove".
+ */
+export type Lang = 'zh' | 'en'
+
+const KEY = 'vibepanel.lang'
+
+/**
+ * What to show before anybody has chosen.
+ *
+ * `navigator.languages`, not `navigator.language`: a browser set to English
+ * with Chinese second is telling you both, and the first is the answer. Any
+ * `zh` variant counts — zh-CN, zh-TW, zh-Hans — because a Traditional reader
+ * given Simplified is inconvenienced, and one given English is stuck.
+ */
+function detect(): Lang {
+  const list = typeof navigator === 'undefined' ? [] : (navigator.languages ?? [navigator.language])
+  for (const l of list) {
+    if (!l) continue
+    if (l.toLowerCase().startsWith('zh')) return 'zh'
+    if (l.toLowerCase().startsWith('en')) return 'en'
+  }
+  return 'en'
+}
+
+function stored(): Lang | null {
+  try {
+    const v = localStorage.getItem(KEY)
+    return v === 'zh' || v === 'en' ? v : null
+  } catch {
+    // Private mode. Falling back to detection is right: a preference that
+    // cannot be saved is still a preference for this tab.
+    return null
+  }
+}
+
+let current: Lang = stored() ?? detect()
+const listeners = new Set<() => void>()
+
+export function getLang(): Lang {
+  return current
+}
+
+export function setLang(next: Lang) {
+  if (next === current) return
+  current = next
+  try {
+    localStorage.setItem(KEY, next)
+  } catch {
+    /* private mode: this tab still switches */
+  }
+  // The <html lang> matters to more than CSS: a screen reader picks its voice
+  // from it, and so does the browser's own "translate this page" offer.
+  try {
+    document.documentElement.lang = next === 'zh' ? 'zh-CN' : 'en'
+  } catch {
+    /* no document in a unit test */
+  }
+  for (const fn of listeners) fn()
+}
+
+/** Subscribe to language changes, in the shape useSyncExternalStore wants. */
+export function useLang(): Lang {
+  return useSyncExternalStore(
+    (fn) => {
+      listeners.add(fn)
+      return () => listeners.delete(fn)
+    },
+    getLang,
+    // The server snapshot. There is no SSR here, but getServerSnapshot is not
+    // optional in React 19 and returning the detected value is the honest one.
+    getLang,
+  )
+}
+
+type Entry = { zh: string; en: string }
+
+/**
+ * Every string the panel shows.
+ *
+ * Keyed by where it appears rather than by what it says, so that changing the
+ * English does not orphan the Chinese.
+ */
+const DICT = {
+  'app.projects': { zh: '项目', en: 'Projects' },
+  'app.addProject': { zh: '新建项目', en: 'Add a project' },
+  'app.noProjects': { zh: '先加一个项目', en: 'Add a project to get started' },
+  'app.noSession': { zh: '选一个会话，或者新建一个', en: 'Select or create a session' },
+  'app.settings': { zh: '设置', en: 'Settings' },
+  'app.signOut': { zh: '退出登录', en: 'Sign out' },
+  'app.theme': { zh: '切换主题', en: 'Switch theme' },
+  'app.gridSize': { zh: '所有观看端看到的网格', en: 'The grid every viewer of this session is seeing' },
+  'app.restart': { zh: '重启', en: 'restart' },
+  'app.hidePanel': { zh: '收起面板', en: 'Hide panel' },
+  'app.showPanel': { zh: '展开面板', en: 'Show panel' },
+
+  'session.new': { zh: '新建会话', en: 'New session' },
+  'session.kill': { zh: '结束会话', en: 'Kill session' },
+  'session.rename': { zh: '重命名', en: 'Rename' },
+  'session.pin': { zh: '置顶', en: 'Pin' },
+  'session.unpin': { zh: '取消置顶', en: 'Unpin' },
+  'session.exited': { zh: '已退出', en: 'Exited' },
+  'session.waiting': { zh: '等你处理', en: 'Waiting for you' },
+  'session.working': { zh: '工作中', en: 'Working' },
+  'session.done': { zh: '已完成', en: 'Done' },
+
+  'panel.files': { zh: '文件', en: 'Files' },
+  'panel.monitor': { zh: '监控', en: 'Monitor' },
+  'panel.notes': { zh: '笔记', en: 'Notes' },
+  'panel.todos': { zh: '待办', en: 'Todo' },
+  'panel.splitOn': { zh: '笔记和待办一起显示', en: 'Show notes and todo together' },
+  'panel.splitOff': { zh: '一次显示一个', en: 'Show one at a time' },
+
+  'files.refresh': { zh: '刷新', en: 'Refresh' },
+  'files.download': { zh: '下载', en: 'Download' },
+  'files.empty': { zh: '这个目录是空的', en: 'Nothing here' },
+  'files.escapes': { zh: '指向项目之外', en: 'points outside the project' },
+
+  'todos.add': { zh: '加一条待办', en: 'Add an item' },
+  'todos.leftOf': { zh: '{done} / {total} 已完成', en: '{left} of {total} left' },
+  'todos.empty': { zh: '还没有待办', en: 'Nothing to do' },
+
+  'notes.saved': { zh: '已保存', en: 'Saved' },
+  'notes.saving': { zh: '保存中…', en: 'Saving…' },
+  'notes.placeholder': { zh: '这个项目的笔记，Markdown', en: 'Notes for this project, in Markdown' },
+
+  'monitor.cpu': { zh: 'CPU', en: 'CPU' },
+  'monitor.memory': { zh: '内存', en: 'Memory' },
+  'monitor.disk': { zh: '磁盘', en: 'Disk' },
+  'monitor.swap': { zh: '交换', en: 'Swap' },
+  'monitor.cores': { zh: '{n} 核', en: '{n} cores' },
+  'monitor.free': { zh: '{size} 可用', en: '{size} free' },
+  'monitor.reading': { zh: '读取中…', en: 'Reading…' },
+  'monitor.strip': { zh: '点开监控标签看完整数据', en: 'Open the monitor tab for the rest' },
+
+  'dir.title': { zh: '选一个目录', en: 'Choose a directory' },
+  'dir.up': { zh: '上一层', en: 'Up one level' },
+  'dir.empty': { zh: '这里没有子目录 — 可以直接选它，或者新建一个', en: 'No subdirectories — use this one, or make one' },
+  'dir.truncated': { zh: '目录太多，只显示了 {shown} / {total} 个', en: 'Showing {shown} of {total}' },
+  'dir.newFolder': { zh: '在这里新建目录', en: 'New folder here' },
+  'dir.newName': { zh: '新目录的名字', en: 'Name' },
+  'dir.create': { zh: '创建', en: 'Create' },
+  'dir.manual': { zh: '或直接输入路径，支持 ~', en: 'Or type a path — ~ works' },
+  'dir.cancel': { zh: '取消', en: 'Cancel' },
+  'dir.use': { zh: '使用这个目录', en: 'Use this directory' },
+
+  'guessed.installed': {
+    zh: '状态还在靠猜：装 hook 之前就开着的会话要重开一次才会上报。在里面输入 /hooks，或者重启那个 agent。',
+    en: 'States are still guessed. Sessions open before reporting was installed keep guessing until they reload — run /hooks in each, or restart the agent.',
+  },
+  'guessed.notInstalled': {
+    zh: '状态是从输出猜的，只有终端响铃能传到面板，而大多数 agent 不响铃 —— 所以“等你处理”会被漏掉。点这里打开状态上报。',
+    en: 'States are guessed from output, and only the terminal bell reaches the panel. The agent most people run here does not ring one, so "waiting for you" will be missed. Turn on state reporting.',
+  },
+} satisfies Record<string, Entry>
+
+export type Key = keyof typeof DICT
+
+/**
+ * One string, in the current language.
+ *
+ * Substitution is `{name}` and deliberately not a template literal in the
+ * caller: "3 of 5 left" and "5 个里还剩 3 个" put the numbers in different
+ * places, and a caller that concatenates has already decided the order.
+ */
+export function t(key: Key, params?: Record<string, string | number>): string {
+  const entry = DICT[key]
+  let out = entry[current] ?? entry.en
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      out = out.replaceAll(`{${k}}`, String(v))
+    }
+  }
+  return out
+}

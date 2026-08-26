@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { api, ConflictError } from '../../protocol/api'
 import type { PanelSocket } from '../../protocol/socket'
+import { t, useLang } from '../../i18n'
 
 /** How long typing has to pause before a save goes out. */
 const SAVE_DEBOUNCE_MS = 800
@@ -15,6 +16,9 @@ const SAVE_DEBOUNCE_MS = 800
  * unanswerable.
  */
 export function Notes({ projectId, socket }: { projectId: string; socket: PanelSocket }) {
+  // Repaint when the language changes. Without this the strings are
+  // resolved once and a switch needs a reload to be believed.
+  useLang()
   const [content, setContent] = useState('')
   const [status, setStatus] = useState<
     'loading' | 'saved' | 'saving' | 'dirty' | 'error' | 'conflict'
@@ -193,7 +197,7 @@ export function Notes({ projectId, socket }: { projectId: string; socket: PanelS
           setStatus('dirty')
           scheduleSave(e.target.value)
         }}
-        placeholder="Notes for this project…"
+        placeholder={t('notes.placeholder')}
         spellCheck={false}
         className="min-h-0 flex-1 resize-none bg-transparent px-3 py-2 text-[12.5px] leading-relaxed text-ink outline-none placeholder:text-ink-2"
       />

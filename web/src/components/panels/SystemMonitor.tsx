@@ -2,22 +2,10 @@ import { useEffect, useState } from 'react'
 
 import { api } from '../../protocol/api'
 import type { SystemSample } from '../../protocol/wire'
-import { meterText, meterWidth } from './meter'
+import { meterText, meterWidth, formatBytes } from './meter'
 
 /** How often the monitor refreshes while it is on screen. */
 const SAMPLE_MS = 2000
-
-function bytes(n: number): string {
-  if (n < 1024) return `${n} B`
-  const units = ['KiB', 'MiB', 'GiB', 'TiB']
-  let v = n / 1024
-  let i = 0
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024
-    i++
-  }
-  return `${v.toFixed(1)} ${units[i]}`
-}
 
 function duration(seconds: number): string {
   const d = Math.floor(seconds / 86400)
@@ -132,19 +120,19 @@ export function SystemMonitor() {
       <Meter
         label="Memory"
         value={sample.memTotal ? (memUsed / sample.memTotal) * 100 : null}
-        detail={sample.memTotal ? `${bytes(memUsed)} of ${bytes(sample.memTotal)}` : 'unavailable'}
+        detail={sample.memTotal ? `${formatBytes(memUsed)} of ${formatBytes(sample.memTotal)}` : 'unavailable'}
       />
       {sample.swapTotal > 0 && (
         <Meter
           label="Swap"
           value={(swapUsed / sample.swapTotal) * 100}
-          detail={`${bytes(swapUsed)} of ${bytes(sample.swapTotal)}`}
+          detail={`${formatBytes(swapUsed)} of ${formatBytes(sample.swapTotal)}`}
         />
       )}
       <Meter
         label="Disk"
         value={sample.diskTotal ? (diskUsed / sample.diskTotal) * 100 : null}
-        detail={sample.diskTotal ? `${bytes(sample.diskFree)} free` : 'unavailable'}
+        detail={sample.diskTotal ? `${formatBytes(sample.diskFree)} free` : 'unavailable'}
       />
       {/* Hidden rather than shown as "up 0m", which is what an unread
           /proc/uptime renders as and reads as "this machine just booted".

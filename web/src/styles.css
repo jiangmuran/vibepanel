@@ -23,11 +23,18 @@
    ───────────────────────────────────────────────────────────────────────── */
 
 :root {
-  /* Surfaces, back to front. */
-  --vp-bg: #f5f5f7;
-  --vp-surface: #ffffff;
-  --vp-surface-2: #ffffff;
-  --vp-elevated: rgb(255 255 255 / 0.72);
+  /* Surfaces, back to front — and the terminal is the front.
+     
+     Every one of these used to be #ffffff, so a three-column layout painted
+     the sidebar, the terminal and the side panel in one colour and left the
+     hairlines to carry the whole structure. They cannot: a screenshot of it
+     reads as an unstyled page. The chrome recedes and the terminal is a well
+     cut into it, which is the arrangement every editor uses because it is the
+     one that tells you where to look. */
+  --vp-bg: #e8eaed;
+  --vp-surface: #f7f8fa;
+  --vp-surface-2: #eceef2;
+  --vp-elevated: rgb(247 248 250 / 0.80);
   --vp-terminal-bg: #ffffff;
 
   /* Hairlines. Apple's separators are translucent so they sit correctly on
@@ -89,11 +96,14 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --vp-bg: #000000;
-    --vp-surface: #1c1c1e;
-    --vp-surface-2: #2c2c2e;
-    --vp-elevated: rgb(28 28 30 / 0.72);
-    --vp-terminal-bg: #000000;
+    /* See the light block: the chrome recedes, the terminal is the well.
+       These were #000000 chrome over a #000000 terminal, which is the same
+       flatness one shade down. */
+    --vp-bg: #0d0d10;
+    --vp-surface: #17171b;
+    --vp-surface-2: #222228;
+    --vp-elevated: rgb(23 23 27 / 0.78);
+    --vp-terminal-bg: #0a0a0d;
 
     --vp-hairline: rgb(255 255 255 / 0.12);
     --vp-hairline-strong: rgb(255 255 255 / 0.20);
@@ -134,11 +144,11 @@
 }
 
 :root[data-theme='dark'] {
-  --vp-bg: #000000;
-  --vp-surface: #1c1c1e;
-  --vp-surface-2: #2c2c2e;
-  --vp-elevated: rgb(28 28 30 / 0.72);
-  --vp-terminal-bg: #000000;
+  --vp-bg: #0d0d10;
+  --vp-surface: #17171b;
+  --vp-surface-2: #222228;
+  --vp-elevated: rgb(23 23 27 / 0.78);
+  --vp-terminal-bg: #0a0a0d;
 
   --vp-hairline: rgb(255 255 255 / 0.12);
   --vp-hairline-strong: rgb(255 255 255 / 0.20);

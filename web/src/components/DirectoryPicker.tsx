@@ -4,6 +4,7 @@ import { ChevronRight, FolderPlus, Folder, Loader2 } from 'lucide-react'
 import { api } from '../protocol/api'
 import type { DirListing } from '../protocol/wire'
 import { safeText } from './text'
+import { t, useLang } from '../i18n'
 
 /**
  * Where a project should live.
@@ -27,6 +28,7 @@ export function DirectoryPicker({
   onPick: (absolutePath: string) => void
   onClose: () => void
 }) {
+  useLang()
   const [listing, setListing] = useState<DirListing | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(true)
@@ -150,7 +152,7 @@ export function DirectoryPicker({
           )}
           {listing?.truncated && (
             <div className="px-3 py-2 text-[11px] text-ink-2">
-              目录太多，只显示了 {listing.entries.length} / {listing.total} 个
+              {t('dir.truncated', { shown: listing.entries.length, total: listing.total })}
             </div>
           )}
         </div>
@@ -176,7 +178,7 @@ export function DirectoryPicker({
                   if (ev.key === 'Enter') void create()
                   if (ev.key === 'Escape') setCreating(false)
                 }}
-                placeholder="新目录的名字"
+                placeholder={t('dir.newName')}
                 data-testid="dir-new-name"
                 className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-[13px] text-ink outline-none focus:border-accent"
               />
@@ -212,7 +214,7 @@ export function DirectoryPicker({
             onKeyDown={(ev) => {
               if (ev.key === 'Enter' && manual.trim()) onPick(manual.trim())
             }}
-            placeholder="或直接输入路径，支持 ~"
+            placeholder={t('dir.manual')}
             data-testid="dir-manual"
             className="mb-3 w-full rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 font-mono text-[12.5px] text-ink outline-none focus:border-accent"
           />

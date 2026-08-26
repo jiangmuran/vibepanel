@@ -164,7 +164,13 @@ export function BottomTerminals(props: Props) {
         </button>
       </div>
 
-      <div className="min-h-0 flex-1" style={{ background: 'var(--vp-terminal-bg)' }}>
+      {/* Set into the chrome, like the main terminal above it. Two terminals
+          treated differently in one window is the detail that makes a layout
+          look assembled rather than designed. */}
+      <div
+        className="mx-2 mb-2 min-h-0 flex-1 overflow-hidden rounded-vp border border-hairline"
+        style={{ background: 'var(--vp-terminal-bg)' }}
+      >
         {active ? (
           <TerminalView
             key={active.id}

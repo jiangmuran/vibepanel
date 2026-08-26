@@ -33,6 +33,7 @@ import { EXIT_VANISHED } from './protocol/wire'
 import { shellQuote } from './shell'
 import { safeText } from './components/text'
 import { DirectoryPicker } from './components/DirectoryPicker'
+import { t, useLang } from './i18n'
 
 /**
  * Safety net only.
@@ -121,6 +122,7 @@ function writeStored(key: string, value: string | null) {
 }
 
 export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => void }) {
+  useLang()
   const socket = useMemo(() => new PanelSocket(), [])
   const narrow = useMediaQuery(NARROW_QUERY)
   // Width decides the layout; the pointer decides the gestures. A tablet in
@@ -601,8 +603,16 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
                   restart
                 </button>
               )}
-              <span data-testid="grid-size" className="ml-auto tabular text-[11px] text-ink-2">
-                {current.cols}x{current.rows}
+              {/* A chip, not loose text. Bare "130x46" floating between a
+                  session title and a row of icons reads as a debug print that
+                  nobody took out; the same characters in a token read as a
+                  readout, which is what it is. */}
+              <span
+                data-testid="grid-size"
+                title={t('app.gridSize')}
+                className="ml-auto shrink-0 rounded-md bg-surface-2 px-1.5 py-0.5 tabular text-[10.5px] text-ink-3"
+              >
+                {current.cols}×{current.rows}
               </span>
             </>
           ) : (
@@ -696,8 +706,13 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           </div>
         )}
 
+        {/* The terminal is a surface set into the chrome, not a hole cut out of
+            it. Flush against the sidebar and the panel it read as an absence --
+            the same colour arriving where a wall stopped. A radius, a hairline
+            and a few pixels of chrome showing around it are what say "this is
+            the thing, that was the frame". */}
         <div
-          className="relative min-h-0 flex-1"
+          className="relative m-2 min-h-0 flex-1 overflow-hidden rounded-vp border border-hairline"
           style={{ background: 'var(--vp-terminal-bg)' }}
           onDragOver={(e) => {
             // Both handlers, and both preventDefault: without dragover the
@@ -794,8 +809,8 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           ) : (
             <div className="flex h-full items-center justify-center px-6 text-center text-[13px] text-ink-2">
               {state.projects.length === 0
-                ? 'Add a project to get started'
-                : 'Select or create a session'}
+                ? t('app.noProjects')
+                : t('app.noSession')}
             </div>
           )}
         </div>

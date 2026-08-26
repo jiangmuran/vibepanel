@@ -5,6 +5,7 @@ import { api } from '../../protocol/api'
 import type { Todo } from '../../protocol/wire'
 import type { PanelSocket } from '../../protocol/socket'
 import { InlineName } from '../InlineName'
+import { t as tr, useLang } from '../../i18n'
 
 /**
  * A project's checklist.
@@ -14,6 +15,9 @@ import { InlineName } from '../InlineName'
  * itself gives no sense of having got anywhere.
  */
 export function Todos({ projectId, socket }: { projectId: string; socket: PanelSocket }) {
+  // Repaint when the language changes. Without this the strings are
+  // resolved once and a switch needs a reload to be believed.
+  useLang()
   const [todos, setTodos] = useState<Todo[]>([])
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -77,7 +81,7 @@ export function Todos({ projectId, socket }: { projectId: string; socket: PanelS
           onKeyDown={(e) => {
             if (e.key === 'Enter') add()
           }}
-          placeholder="Add an item"
+          placeholder={tr('todos.add')}
           data-testid="todo-input"
           className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface px-2 py-1 text-[12px] text-ink outline-none placeholder:text-ink-2 focus:border-accent"
         />
@@ -111,7 +115,7 @@ export function Todos({ projectId, socket }: { projectId: string; socket: PanelS
             <button
               type="button"
               onClick={() => void guard(() => api.patchTodo(t.id, { done: !t.done }))}
-              title={t.done ? 'Mark as not done' : 'Mark as done'}
+              title={t.done ? tr('session.done') : tr('session.done')}
               className="mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-colors duration-200 ease-vp"
               style={{
                 borderColor: t.done ? 'var(--vp-state-done)' : 'var(--vp-hairline-strong)',
@@ -142,7 +146,9 @@ export function Todos({ projectId, socket }: { projectId: string; socket: PanelS
 
       {todos.length > 0 && (
         <div className="tabular shrink-0 px-3 py-1 text-right text-[10.5px] text-ink-2">
-          {outstanding} of {todos.length} left
+          {/* The two languages put the numbers in different places, so the
+              call passes both facts and the dictionary decides the order. */}
+          {tr('todos.leftOf', { left: outstanding, done: todos.length - outstanding, total: todos.length })}
         </div>
       )}
     </div>

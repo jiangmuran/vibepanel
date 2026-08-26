@@ -31,7 +31,7 @@ import { join } from 'node:path'
 // clean up — thirteen of its sockets were sitting in /tmp when that was
 // noticed. Pinned by harness.test.ts, because a hand-kept mirror of a list
 // that lives somewhere else is the drift this project keeps paying for.
-const HARNESS_SOCKET = /^vp(firstrun|render|stress|restart|scale|tls|clip|probe|check|release)-(\d+)$/
+const HARNESS_SOCKET = /^vp(firstrun|render|stress|restart|scale|tls|clip|probe|check|release|shots)-(\d+)$/
 
 export function sweepStaleSockets(log = () => {}) {
   const dir = join(process.env.TMUX_TMPDIR || '/tmp', `tmux-${process.getuid()}`)

@@ -111,8 +111,8 @@ export function FileTree({ projectId }: { projectId: string }) {
           key={e.path}
           data-testid="file-entry"
           onClick={() => e.isDir && setPath(e.path)}
-          className={`group flex items-center gap-1.5 px-2 py-1 text-[12px] ${
-            e.isDir ? 'cursor-pointer hover:bg-surface-2' : ''
+          className={`group flex items-center gap-2 rounded-md px-2 py-1.5 text-[12px] ${
+            e.isDir ? 'cursor-pointer hover:bg-surface-2' : 'hover:bg-surface-2'
           }`}
           title={safeText(e.path)}
         >
