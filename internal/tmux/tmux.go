@@ -11,7 +11,9 @@ package tmux
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -184,7 +186,50 @@ func (c *Client) EnsureServer(ctx context.Context) error {
 	if _, err := c.run(ctx, "start-server"); err != nil {
 		return fmt.Errorf("tmux: start server: %w", err)
 	}
+	// Stamp what the server was started with.
+	//
+	// `-f` is read once, at start-server, and the panel never kills its server
+	// -- that is the premise of the project. So the file above is rewritten on
+	// every upgrade and the running server goes on using whatever it read at
+	// boot: a config change takes effect at the next reboot or not at all. That
+	// covers allow-passthrough, which is the reason tmux 3.3 is the floor, and
+	// the smcup@/rmcup@ and indn@ overrides.
+	//
+	// Nothing could see the difference, and an upgrade leaves a new binary that
+	// is not running and a new tmux config that is not loaded while both look
+	// installed. A hash in a server option is enough to tell, and it costs one
+	// command at a moment when the server has just started anyway.
+	//
+	// Best effort: a tmux too old to know the option is not a reason to refuse
+	// to start, and the version check has its own line in doctor.
+	if _, err := c.run(ctx, "set-option", "-s", configStampOption, ConfigStamp()); err != nil {
+		// Deliberately not returned. The stamp is a diagnostic, and failing a
+		// start over one would trade a working panel for a readable warning.
+		_ = err
+	}
 	return nil
+}
+
+// configStampOption is where the running server records the config it read.
+const configStampOption = "@vibepanel-conf"
+
+// ConfigStamp is a short hash of the embedded tmux config.
+func ConfigStamp() string {
+	sum := sha256.Sum256(Config)
+	return hex.EncodeToString(sum[:8])
+}
+
+// RunningConfigStamp reports the config the running server was started with.
+//
+// Empty means either no server, or one started before this option existed --
+// which is itself the interesting answer, because a server that predates the
+// stamp predates the config change that added it.
+func (c *Client) RunningConfigStamp(ctx context.Context) string {
+	out, err := c.run(ctx, "show-options", "-s", "-v", configStampOption)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
 }
 
 // ServerRunning reports whether our tmux server is up.

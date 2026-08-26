@@ -932,3 +932,61 @@ func TestSessionEnvValueReadsWhatTheSessionWasGiven(t *testing.T) {
 		t.Errorf("an unset variable gave (%q, %v), want (\"\", nil)", got, err)
 	}
 }
+
+// The running server records the config it was started with.
+//
+// `-f` is read once, at start-server, and the panel never kills its server --
+// that is the premise of the project. EnsureServer rewrites the config file on
+// every call, so the file is always current while the running server goes on
+// using whatever it read at boot. A config change therefore takes effect at the
+// next reboot or not at all, and nothing could see the difference: an upgrade
+// leaves a new binary that is not running and a new tmux config that is not
+// loaded, and both look installed.
+func TestTheServerRecordsTheConfigItStartedWith(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+
+	if got := c.RunningConfigStamp(ctx); got != "" {
+		t.Fatalf("a stamp came back before any server was started: %q", got)
+	}
+	if err := c.EnsureServer(ctx); err != nil {
+		t.Fatalf("EnsureServer: %v", err)
+	}
+	want := ConfigStamp()
+	if want == "" {
+		t.Fatal("the embedded config hashes to nothing")
+	}
+	if got := c.RunningConfigStamp(ctx); got != want {
+		t.Errorf("the server records %q, the embedded config hashes to %q", got, want)
+	}
+
+	// A second EnsureServer must not restamp a server it did not start. The
+	// whole value is that the stamp describes what the *running* server read,
+	// so a call that refreshes it would report agreement it cannot know about.
+	//
+	// The first version of this changed the config *file* and asserted the
+	// stamp was unchanged -- which it would have been either way, because
+	// ConfigStamp hashes the embedded bytes and not the file. It passed for a
+	// reason that had nothing to do with what it was testing. Setting a value
+	// that cannot be produced by hashing anything is decisive instead.
+	const bogus = "0000000000000000"
+	if _, err := c.run(ctx, "set-option", "-s", configStampOption, bogus); err != nil {
+		t.Fatalf("set the marker: %v", err)
+	}
+	if err := c.EnsureServer(ctx); err != nil {
+		t.Fatalf("second EnsureServer: %v", err)
+	}
+	if got := c.RunningConfigStamp(ctx); got != bogus {
+		t.Errorf("EnsureServer restamped a running server (%q -> %q); the stamp would then "+
+			"agree with the binary whatever the server actually read", bogus, got)
+	}
+
+	// And ServerRunning has to be true for a server with no sessions, or the
+	// line above is only true by luck. Measured: `list-sessions` fails on a
+	// session-less server under tmux's defaults, and succeeds under this
+	// project's config, which sets exit-empty off.
+	if !c.ServerRunning(ctx) {
+		t.Error("ServerRunning says no for a server with no sessions; EnsureServer would then " +
+			"restamp every server it is asked about")
+	}
+}

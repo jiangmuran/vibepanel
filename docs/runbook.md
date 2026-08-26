@@ -8,7 +8,7 @@ What to check when a running deployment misbehaves.
 vibepanel doctor
 ```
 
-Fourteen lines, and it prints all of them rather than stopping at the first
+Fifteen lines, and it prints all of them rather than stopping at the first
 failure — a machine with three problems used to take three runs to find them.
 
 | line | what a failure means |
@@ -21,6 +21,7 @@ failure — a machine with three problems used to take three runs to find them.
 | `database writes` | a real write, in a transaction it rolls back — opening a database says nothing about writing to one |
 | `disk` | under 512 MiB is `--`, under 64 MiB is a failure; a full disk is the panel's quietest one |
 | `tmux server` | it says so when the check started the server itself |
+| `tmux config` | the running server started with a different config than this binary carries. tmux reads `-f` once, at `start-server`, and the panel never restarts its server — so a changed config takes effect at the next reboot or not at all |
 | `isolation` | any session on our socket that is not ours, which is the promise that lets this run beside your existing tmux |
 | `agents` | what tmux reports each session is running, and whether any of it is recognised as an agent. Never a failure: a panel full of shells is not a problem |
 | `hook url` | sessions still posting to an address the panel no longer serves, because a session's environment is fixed when it is created |
@@ -420,3 +421,51 @@ else, the states are still inferred correctly from the output heuristic -- what
 is missing is only the panel saying so. Installing the hooks from the settings
 page removes the question entirely: with a hook reporting, the state is not a
 guess and the notice is not wanted.
+
+
+## An upgrade that did not take
+
+Two things survive an upgrade that look installed and are not, and they compound:
+the new binary may not be running, and the new tmux config is certainly not
+loaded.
+
+**The binary.** `install.sh` used to end in `systemctl --user enable --now
+vibepanel`, which is a no-op on a unit that is already enabled and active --
+exactly what an upgrade finds. The new binary went to disk and the old one kept
+serving, while the script printed "started. the one-time setup token is in:
+journalctl …", a start that did not happen and a token consumed at first
+install. It restarts when the unit is already active now, and says which of the
+two happened. Restarting is free here by design: the sessions belong to tmux, not
+to the panel process.
+
+If you upgraded with an older installer, the fix is the restart it did not do:
+
+```sh
+systemctl --user restart vibepanel
+vibepanel version                       # what is on disk
+systemctl --user show vibepanel -p ExecMainStartTimestamp
+```
+
+**The tmux config.** tmux reads `-f` once, at `start-server`. The panel rewrites
+the file on every start and never kills the server -- that is the premise of the
+project -- so a changed config takes effect at the next reboot or not at all.
+`doctor` says so:
+
+    [--  ] tmux config        the running server started with a different config
+
+It is a `--`, not a failure, because the remedy costs every session on the
+socket:
+
+```sh
+tmux -L vibepanel kill-server     # every session on it dies
+```
+
+Nothing is broken in the meantime; what is missing is whatever the config
+changed. That has included `allow-passthrough`, which is the reason tmux 3.3 is
+the floor, and the terminal overrides that keep the alternate screen out of the
+way. If your sessions are cheap to lose, restart the server; if they are not,
+the change lands at the next reboot.
+
+A server started before this check existed reports `the running server predates
+this check` — the stamp is written at `start-server`, so there is nothing to
+compare against until the next one.

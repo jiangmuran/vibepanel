@@ -909,6 +909,37 @@ func cmdDoctor(args []string) error {
 		}
 	}
 
+	// Is the running server using the config this binary carries?
+	//
+	// `-f` is read once, at start-server, and the panel never kills its server:
+	// that is the premise of the whole project. EnsureServer rewrites the file
+	// on every call, so the file is always current while the running server
+	// goes on using whatever it read at boot. A config change therefore takes
+	// effect at the next reboot or not at all -- and that covers
+	// allow-passthrough, which is why tmux 3.3 is the floor, and the
+	// smcup@/rmcup@ and indn@ overrides.
+	//
+	// It compounds with an upgrade: a new binary that is not running and a new
+	// tmux config that is not loaded, both looking installed. This is the half
+	// that can be seen from here.
+	//
+	// Not a failure. The remedy costs every session on the socket, and that is
+	// a decision for whoever reads it rather than something to be demanded.
+	if !serverOK {
+		skip("tmux config", "there is no server to ask")
+	} else if running := tm.RunningConfigStamp(ctx); running == "" {
+		fmt.Printf("[--  ] tmux config        the running server predates this check; restart it to know\n")
+	} else if running != tmux.ConfigStamp() {
+		fmt.Printf("[--  ] tmux config        the running server started with a different config\n")
+		fmt.Printf("       The file on disk is current; tmux only reads it at start-server, and\n")
+		fmt.Printf("       this server has not restarted since. Nothing is broken today, but\n")
+		fmt.Printf("       changes to it -- allow-passthrough, the terminal overrides -- are not\n")
+		fmt.Printf("       in effect. Applying them costs every session on this socket:\n")
+		fmt.Printf("         tmux -L %s kill-server\n", cfg.TmuxSocket)
+	} else {
+		fmt.Printf("[ok  ] tmux config        the running server has the config this binary carries\n")
+	}
+
 	// Isolation is the promise that lets this run next to an existing setup.
 	// Assert it rather than describe it: every session we can see must be ours.
 	if !serverOK {

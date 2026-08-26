@@ -70,10 +70,31 @@ fi
 
 if command -v systemctl >/dev/null && systemctl --user daemon-reload 2>/dev/null; then
   if [ "$ENABLE" = yes ]; then
-    systemctl --user enable --now vibepanel
-    echo
-    echo "started. the one-time setup token is in:"
-    echo "  journalctl --user -u vibepanel -n 30"
+    # `enable --now` is a no-op on a unit that is already enabled and active,
+    # which is exactly the state an upgrade finds. The new binary went to disk a
+    # few lines above and the old one kept serving, while this printed "started.
+    # the one-time setup token is in: journalctl ..." -- a start that did not
+    # happen, and a token consumed at first install.
+    #
+    # `restart` is the whole fix, and this is the one project where it is free:
+    # the tmux server outlives the Go process, so every session survives, which
+    # is what restart-check exists to prove.
+    #
+    # Which of the two happened is printed, because "started" and "restarted"
+    # are different facts and the setup token only exists for one of them.
+    if systemctl --user is-active --quiet vibepanel; then
+      systemctl --user restart vibepanel
+      echo
+      echo "restarted. your sessions are untouched -- they belong to tmux, not to"
+      echo "the panel process. the setup token was consumed at first install;"
+      echo "if you need to see the log:"
+      echo "  journalctl --user -u vibepanel -n 30"
+    else
+      systemctl --user enable --now vibepanel
+      echo
+      echo "started. the one-time setup token is in:"
+      echo "  journalctl --user -u vibepanel -n 30"
+    fi
   else
     echo
     echo "  systemctl --user enable --now vibepanel"
