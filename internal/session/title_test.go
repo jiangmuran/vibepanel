@@ -59,3 +59,44 @@ func TestScannerBoundsTitlesItReads(t *testing.T) {
 		t.Errorf("broadcast a title of %d runes, want %d", n, MaxTitleRunes)
 	}
 }
+
+// The three cases the tests above do not reach, all of them multi-byte.
+//
+// The finding this came from said both existing tests feed pure ASCII, where a
+// byte slice and a rune slice agree. That is wrong: TestTruncateTitleDoesNotSplitACharacter
+// has been there since the original commit and drives 中, é and 🙂, and it
+// catches a byte-sliced truncation.
+//
+// What it does not catch is a byte-counted *guard*. Changing only
+// `utf8.RuneCountInString(title) <= MaxTitleRunes` to `len(title) <= …` and
+// leaving the rune walk alone passes all three: the ASCII exact-limit case has
+// len == runes, and the multi-byte case feeds 2000 runes, which is over the
+// limit either way. A title of exactly MaxTitleRunes CJK characters is 768
+// bytes, so that version cuts a title it should not touch -- measured, and this
+// is the only test that says so.
+//
+// The marker on a multi-byte title and the content of what is kept are the
+// other two: one test asserts the marker on ASCII, and nothing asserts that the
+// text before it is the text that went in.
+func TestTruncateTitleCountsRunesNotBytes(t *testing.T) {
+	// Three bytes each, so byte arithmetic and rune arithmetic cannot agree.
+	const cjk = "工"
+
+	// A title exactly at the limit is not touched. 256 runes, 768 bytes.
+	exact := strings.Repeat(cjk, MaxTitleRunes)
+	if TruncateTitle(exact) != exact {
+		t.Errorf("a title of exactly %d runes was cut; only its byte length is over",
+			MaxTitleRunes)
+	}
+
+	got := TruncateTitle(strings.Repeat(cjk, MaxTitleRunes+50))
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("a multi-byte title that was cut does not say so: %q", got[len(got)-9:])
+	}
+	// Every rune before the marker is the character that went in. A cut that
+	// split one leaves U+FFFD here, which is valid UTF-8 and still wrong.
+	if body := strings.TrimSuffix(got, "…"); body != strings.Repeat(cjk, MaxTitleRunes-1) {
+		t.Errorf("the kept text is not %d copies of the input character; it ends %q",
+			MaxTitleRunes-1, body[max(0, len(body)-9):])
+	}
+}
