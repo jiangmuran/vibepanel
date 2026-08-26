@@ -24,11 +24,27 @@ Each of these exists because the alternative broke something real.
    entire premise of the project is gone.
 
 3. **`internal/session/state.go` is the only definition of the state enum.**
-   Two things mirror it and both are pinned by tests, so changing the enum tells
-   you what else to change: the TypeScript constants in
-   `web/src/protocol/wire.ts`, which are hand-written and compared against
-   `AllStates`, and the SQL ordering in `internal/store/sessions.go`, which
-   mirrors `State.SortWeight`.
+   Three things mirror it, so changing the enum tells you what else to change:
+   the TypeScript constants in `web/src/protocol/wire.ts`, which are
+   hand-written and compared against `AllStates`; the SQL ordering in
+   `internal/store/sessions.go`, which mirrors `State.SortWeight`; and the state
+   strings `internal/hooks` writes into the reporter script, the Codex `notify`
+   line and the block merged into `~/.claude/settings.json`.
+
+   This said "two things" until the third was looked for. The first two are
+   pinned by tests. The third was not, and it is the one with no type system on
+   either side: `internal/hooks` does not import `internal/session` at all, so
+   every state it emits is a bare literal, and the strings travel out of the
+   repository into files the panel does not own.
+
+   Drift there is silent in every direction at once. The server rejects an
+   unknown state (red line 6); the reporter script suppresses its own failures
+   on purpose, because a hook that makes an agent wait is worse than a missed
+   update; and the settings page reports hooks as installed because it reads the
+   agent's configuration file rather than whether anything ever arrived. The
+   result is no error anywhere, a settings page saying it is fine, and every
+   session quietly back on the heuristic — the same symptom the runbook records
+   for a panel bound to one interface, from an unrelated cause.
 
    This used to say the TypeScript was generated. It never was — there was no
    generator and no generated file — so the rule protected nothing while
