@@ -184,6 +184,31 @@ async function scanUnreachable(target, where, minExpected = 20) {
 }
 
 
+/**
+ * What the terminal is showing, with any non-breaking spaces normalised.
+ *
+ * xterm emits one <span> per run of styling, and the text between two spans can
+ * come back as U+00A0 rather than U+0020 -- so how a row reads back depends on
+ * how many escape sequences produced it, and every `includes(...)` against it
+ * stops matching without saying why.
+ *
+ * Measured in stress-check, which reads `textContent`: making a flood emit
+ * eight sequences a line instead of two broke an assertion on a passing tree,
+ * and it printed the very text that satisfies it. The codepoints read
+ * `6c 69 6e 65 a0 31 39 39 39 39` -- "line", U+00A0, "19999".
+ *
+ * This file reads `innerText`, and removing the replace below does *not* fail
+ * the styled-runs check further down -- also measured. So this is belt and
+ * braces here rather than a fix: what it buys is that the decision lives in one
+ * place instead of at ten call sites, one of which could reasonably be written
+ * with `textContent` tomorrow.
+ *
+ * Only the terminal. The other innerText reads in this file are React elements,
+ * which have no per-run spans.
+ */
+const screenText = async (target, sel = '.xterm-screen') =>
+  (await target.locator(sel).first().innerText().catch(() => '')).replace(/\u00a0/g, ' ')
+
 function parseColor(c) {
   const m = c.match(/rgba?\(([^)]+)\)/)
   if (!m) return null
@@ -515,7 +540,7 @@ try {
     note('FAIL', 'term', 'xterm never mounted'),
   )
   await sleep(1500)
-  const termText = await page.locator('.xterm-screen').innerText().catch(() => '')
+  const termText = await screenText(page)
   if (!termText.trim()) note('FAIL', 'term', 'terminal rendered but is empty')
 
   // ── typing round trip ────────────────────────────────────────────────────
@@ -535,9 +560,45 @@ try {
   await page.locator('.xterm-screen').click()
   await page.keyboard.type('echo BROWSER_TYPED_OK')
   await page.keyboard.press('Enter')
+  // A line built out of several styling runs, read back as text.
+  //
+  // Several assertions in this file grep terminal output for a phrase with
+  // spaces in it, and a line split into many styling runs is where that stops
+  // being obviously safe: stress-check reads rows with `textContent` and a
+  // heavily-coloured line came back with U+00A0 where its spaces were. This
+  // file reads `innerText` and does not have that problem -- measured, by
+  // removing the normalisation and watching this still pass -- so what this
+  // pins is the weaker and still useful thing: a line built from eight
+  // sequences reads back as its own text.
+  //
+  // Eight sequences, so the marker is split across runs on both sides of a
+  // space rather than sitting inside one.
+  //
+  // Normal intensity, not bold. `\033[1m` maps to the bright palette, and the
+  // light theme's bright row is 2.2:1 to 4.1:1 on white -- every one of it
+  // below AA -- so a bold-red fixture leaves a standing contrast WARN behind.
+  // A permanent warning is how warnings stop being read, which is the thing
+  // `make verify` was just changed to count. The palette itself is 49.
+  await page.keyboard.type(
+    "printf '\\033[31mSTYLED\\033[0m \\033[4m\\033[7mRUNS\\033[0m\\033[27m\\033[24m\\033[36m OK\\033[0m\\n'")
+  await page.keyboard.press('Enter')
+  let styled = false
+  for (let i = 0; i < 30; i++) {
+    if ((await screenText(page)).includes('STYLED RUNS OK')) { styled = true; break }
+    await sleep(300)
+  }
+  if (!styled) {
+    const raw = await page.locator('.xterm-screen').first().innerText().catch(() => '')
+    const near = raw.split('\n').find((r) => r.includes('STYLED')) ?? ''
+    note('FAIL', 'term',
+      'a line made of several styling runs does not read back as its own text. ' +
+      `The row is ${JSON.stringify(near)} and its codepoints are ` +
+      JSON.stringify([...near].map((ch) => ch.codePointAt(0).toString(16)).join(' ')))
+  }
+
   let typed = false
   for (let i = 0; i < 40; i++) {
-    const t = await page.locator('.xterm-screen').innerText().catch(() => '')
+    const t = await screenText(page)
     if ((t.match(/BROWSER_TYPED_OK/g) ?? []).length >= 2) { typed = true; break }
     await sleep(250)
   }
@@ -702,7 +763,7 @@ try {
   await page.keyboard.press('Enter')
   let synced = false
   for (let i = 0; i < 40; i++) {
-    const t = await page2.locator('.xterm-screen').innerText().catch(() => '')
+    const t = await screenText(page2)
     if (t.includes('SYNC_TO_SECOND_VIEWER')) { synced = true; break }
     await sleep(250)
   }
@@ -794,7 +855,7 @@ try {
     note('FAIL', 'selection',
       `a reload changed the selected session: ${JSON.stringify(titleBefore)} -> ${JSON.stringify(titleAfter)}`)
   }
-  const afterReload = await page.locator('.xterm-screen').innerText().catch(() => '')
+  const afterReload = await screenText(page)
   if (!afterReload.includes('BROWSER_TYPED_OK')) {
     note('FAIL', 'replay',
       `scrollback did not come back after a reload; terminal shows ${JSON.stringify(
@@ -1535,7 +1596,7 @@ try {
     await page.locator('[data-testid="compose-send"]').click()
     let sent = false
     for (let i = 0; i < 40; i++) {
-      const txt = await page.locator('.xterm-screen').innerText().catch(() => '')
+      const txt = await screenText(page)
       if ((txt.match(/MOBILE_COMPOSE_OK/g) ?? []).length >= 2) { sent = true; break }
       await sleep(300)
     }
@@ -1603,7 +1664,7 @@ try {
     await page.locator('[data-testid="key-enter"]').click()
     let keyed = false
     for (let i = 0; i < 40; i++) {
-      const txt = await page.locator('.xterm-screen').innerText().catch(() => '')
+      const txt = await screenText(page)
       if ((txt.match(/KEYBAR/g) ?? []).length >= 2) { keyed = true; break }
       await sleep(300)
     }
@@ -1651,7 +1712,7 @@ try {
     const filledHasNewline = (await compose.inputValue()).includes(String.fromCharCode(10))
     await page.locator('[data-testid="compose-send"]').click()
     await sleep(1800)
-    const pasteTxt = await page.locator('.xterm-screen').innerText().catch(() => '')
+    const pasteTxt = await screenText(page)
     const opened = pasteTxt.includes('^[[200~')
     const closed = pasteTxt.includes('^[[201~')
     if (!filledHasNewline) {
@@ -1808,7 +1869,7 @@ try {
     await page.locator('[data-testid="compose-send"]').click()
     let interrupted = false
     for (let i = 0; i < 30; i++) {
-      const txt = await page.locator('.xterm-screen').innerText().catch(() => '')
+      const txt = await screenText(page)
       // Once, not twice. The marker is split across a quote in the command so
       // that the shell's echo of the typed line cannot contain it — which is
       // the whole point of writing it that way, and asking for two occurrences
@@ -2750,7 +2811,7 @@ try {
     // The upload is only half of it: the path has to be waiting at the prompt.
     let typed = ''
     for (let i = 0; i < 25; i++) {
-      typed = await page.locator('.xterm-screen').first().innerText().catch(() => '')
+      typed = await screenText(page)
       if (typed.includes('dropped-note.txt')) break
       await sleep(400)
     }
@@ -2801,7 +2862,7 @@ try {
 
     let dropText = ''
     for (let i = 0; i < 25; i++) {
-      dropText = await page.locator('.xterm-screen').first().innerText().catch(() => '')
+      dropText = await screenText(page)
       if (dropText.includes('KILO.txt')) break
       await sleep(400)
     }

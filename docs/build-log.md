@@ -9271,7 +9271,8 @@ Two is all of them. Swept by type rather than by literal — everything that tak
 | 24 | Server error strings are a name-carrying channel nobody funnels. `safeText` is applied to fields the frontend knows are names; an error message is not one, and several echo the same values — `base+" already exists"` on an upload conflict, `"writing "+base+": "`, `abs+" is not a directory"`, `"unknown state "+req.State`. The frontend renders them raw, as `{error}` in the banner and `setDropNote(err.message)`. So a file whose name carries a directional override produces a conflict message that reverses the text around it, at the moment you are deciding whether to rename and retry. Lower severity than 17 — you dropped the file — but the threat model in safeText's own docstring is "whatever an agent or a download wrote to disk". Sits with 17.
 | 46 | **Fixed: it polls now, after failing a second time. See the last section.** `render-check`'s mobile scrollback assertion is flaky. "dragging down did not scroll back: top line was TOUCH_368, now unreadable" fired once in six runs today, on a tree where the five runs around it were clean and the change under test was in the upload path. Re-running passed. That is the shape that trains people to re-run rather than investigate, and this project's whole argument for the browser checks is that a FAIL there means something. Worth pinning down before it is seen twice more and starts being ignored. | `web/scripts/render-check.mjs` | the gesture is dispatched and then read after a fixed sleep; make it poll for the line to move, and report what it saw if it never does |
 | 47 | **Fixed in the same sitting that found it: the section is rewritten with the measured mechanism.** The runbook's "hooks say they are installed and no state ever arrives" section explained the wrong mechanism, and so did the comment the fix was written from: binding one interface does not strand the hooks, because `LoopbackURL()` follows `BindHost()` and the sessions are told the bound address too. Measured. Rewritten with what actually does it. | `docs/runbook.md` | done |
-| 48 | Terminal text read out of the DOM comes back with U+00A0 where the spaces are, depending on how many style runs the row has. xterm emits one `<span>` per run, and `textContent` joins them with a non-breaking space. A line printed with two escape sequences reads back with ordinary spaces; the same line with eight does not, and every `includes(...)` in the file silently stops matching. Normalised in `rows()` in stress-check; `render-check` reads terminal text in about thirty places and was not touched. | `web/scripts/render-check.mjs` | the same one-line normalisation where it reads rows |
+| 48 | **Fixed in stress-check, and narrower than it looked: `render-check` reads `innerText` and does not have it.** Terminal text read out of the DOM comes back with U+00A0 where the spaces are, depending on how many style runs the row has. xterm emits one `<span>` per run, and `textContent` joins them with a non-breaking space. A line printed with two escape sequences reads back with ordinary spaces; the same line with eight does not, and every `includes(...)` in the file silently stops matching. Normalised in `rows()` in stress-check; `render-check` reads terminal text in about thirty places and was not touched. | `web/scripts/render-check.mjs` | the same one-line normalisation where it reads rows |
+| 49 | Every colour in the light terminal palette's *bright* row is below WCAG AA on white, and the normal row is comfortably above it. Measured: normal red 5.38, green 5.39, yellow 5.31, blue 7.56, magenta 6.24, cyan 5.82; bright red 3.55, green **2.22**, yellow 3.46, blue 4.02, magenta 4.13, cyan 3.16. The palette's own comment says it is "tuned for contrast on white rather than lifted straight from a dark theme", and the normal row was; the bright row is the Apple system colours unchanged. Nothing had ever driven coloured terminal output through the contrast check, which is why it never said so — the same shape as 29. Not fixed here because it is a real design trade rather than a defect: bright cannot be both brighter than normal and above 4.5:1 on white when normal is already 5.4, so tuning it collapses the two rows into each other. The alternatives are inverting the relationship (bright = stronger, not lighter, which several light terminal themes do) or deciding terminal output is exempt, as most terminal palettes assume. | `web/src/styles.css` | a decision, then values |
 
 The same channel has a better instance, and it needs nothing from the owner. `handleLogin` does not call `validateCredentials` — that runs on setup and on a password change — and `Audit` does not truncate, so a failed login is recorded with whatever username was sent. The settings page renders it as `{e.username \|\| '—'}`, raw. So an unauthenticated stranger chooses text that appears, unsanitised, in the one view its owner opens to find out who has been attacking them. Half of it is contained: every audit cell has `truncate` and a fixed width, so a 10 KB username cannot break the layout. `truncate` does nothing to U+202E, and the override's reach is its own `<span>`, so the damage is confined to the username cell — limited, not absent. | `web/src/App.tsx`, `web/src/components/Settings.tsx` | `safeText` where server strings and audit fields are rendered, which covers the channel rather than each message |
 | 25 | The same destructive call is confirmed on one path and not the other. Killing a session asks `window.confirm("Kill …? The process is terminated.")`; closing a scratch terminal is `onClose={(t) => api.deleteSession(t.id)}` — the same endpoint, the same killed process, no prompt. The X sits inside the tab, next to the tab's own click target, which is a mis-tap on a phone. Arguable rather than wrong: scratch terminals are framed as cheap and numbered, and a tab strip that asks on every close is one people stop using. What is missing is the sentence saying which of those was chosen — the sibling path has a confirm and this one has neither a prompt nor a note. | `web/src/App.tsx`, `web/src/components/BottomTerminals.tsx` | decide, and write down which |
@@ -10468,3 +10469,49 @@ many escape sequences produced it. Two sequences a line gave ordinary spaces;
 eight gave NBSP, and `includes('line 19999')` stopped matching. Normalised once
 where `rows()` reads them, which is cheaper than remembering it at thirty call
 sites -- and render-check has about thirty of those and has not been touched.
+
+
+## 48 was narrower than it looked, and it uncovered 49
+
+The NBSP hazard is real and it is `textContent`-only. Removing the
+normalisation from `render-check`, which reads `innerText`, does not fail the
+styled-runs check that was added to catch exactly that -- measured, not assumed,
+after the comment had already been written claiming otherwise. The helper stays
+because the decision then lives in one place rather than at ten call sites, and
+the comment now says which of those two things it is.
+
+**The fixture that was supposed to demonstrate it found something else.** A line
+printed with `\033[31m\033[1m` -- bold red, which xterm maps to the *bright*
+palette -- left a standing contrast warning behind:
+
+    [WARN] contrast/light: 3.55:1 (need 4.5) — "STYLED" rgb(255, 59, 48) on white
+
+That is not the fixture's fault. Measuring the whole light palette against its
+white background:
+
+    colour     normal          bright
+    red        #d70015  5.38   #ff3b30  3.55
+    green      #0f7b32  5.39   #34c759  2.22
+    yellow     #a05a00  5.31   #c77700  3.46
+    blue       #0040dd  7.56   #007aff  4.02
+    magenta    #a316b8  6.24   #af52de  4.13
+    cyan       #00707c  5.82   #00a0b0  3.16
+
+Every normal colour clears AA comfortably and not one bright colour does. The
+pattern is unmistakable: the normal row was tuned -- those are darkened, not
+system colours -- and the bright row is Apple's palette unchanged, which is
+precisely what the comment four lines above it says was avoided. Bright green at
+2.22:1 is close to unreadable on white.
+
+**Not fixed, and the reason is the finding.** Bright cannot be both brighter
+than normal and above 4.5:1 on white when normal already sits at 5.4 -- tuning
+it to pass collapses the two rows into each other, which costs the six
+distinctions the palette exists to make. The real options are inverting the
+relationship on light backgrounds (bright means stronger, not lighter, which
+several light terminal themes do) or deciding that terminal output is exempt,
+which is what most terminal palettes assume. That is a design decision, and this
+loop does not get to make it. 49.
+
+The fixture uses normal-intensity colours instead, because a standing WARN is
+how warnings stop being read -- which is the thing `make verify` was changed to
+count two days of work ago.
