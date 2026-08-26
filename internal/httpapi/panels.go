@@ -467,6 +467,3 @@ func (s *Server) handleDeleteTodo(w http.ResponseWriter, r *http.Request) {
 	s.notifyPanel(todo.ProjectID, "todos")
 	w.WriteHeader(http.StatusNoContent)
 }
-
-// emptyTodos keeps the compiler honest about the generic helper's use here.
-var _ = func() []store.Todo { return emptyIfNil[store.Todo](nil) }

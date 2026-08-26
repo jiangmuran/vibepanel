@@ -60,9 +60,23 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	tv, _ := s.Tmux.Version(ctx)
 	infos, _ := s.Tmux.List(ctx)
 
+	// The whole database, not just the main file.
+	//
+	// The panel runs in journal_mode=WAL, so recent writes live in
+	// `vibepanel.db-wal` until a checkpoint, and a checkpoint can be held off by
+	// a long-lived read -- which this panel has, with four pooled connections
+	// and a poller reading every two seconds. So `os.Stat(DBPath())` alone can
+	// report well under what is on disk, at the moment somebody is reading it to
+	// answer "why is this growing", and it disagreed with the runbook's own
+	// `du -sh ~/.local/share/vibepanel` for a reason neither screen explained.
+	//
+	// -shm is small and included anyway: it is part of what `du` counts, and the
+	// point of this number is to agree with `du`.
 	var dbBytes int64
-	if st, err := os.Stat(s.Cfg.DBPath()); err == nil {
-		dbBytes = st.Size()
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if st, err := os.Stat(s.Cfg.DBPath() + suffix); err == nil {
+			dbBytes += st.Size()
+		}
 	}
 
 	out := settingsResponse{

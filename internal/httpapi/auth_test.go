@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -574,7 +573,7 @@ func TestAStorageFaultDoesNotSignAnybodyOut(t *testing.T) {
 			res.Status, before)
 	}
 
-	raw, err := sql.Open("sqlite", filepath.Join(srv.Cfg.DataDir, "test.db"))
+	raw, err := sql.Open("sqlite", srv.Cfg.DBPath())
 	if err != nil {
 		t.Fatalf("second connection: %v", err)
 	}

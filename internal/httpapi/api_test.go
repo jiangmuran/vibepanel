@@ -59,7 +59,11 @@ func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 		_ = os.Remove(tm.SocketPath())
 	})
 
-	db, err := store.Open(ctx, filepath.Join(dir, "test.db"))
+	// cfg.DBPath(), not a name of its own. The test server's Cfg has DataDir set
+	// to the same directory, and anything that reads the database *through the
+	// config* -- the settings page's size, for one -- was looking at a path with
+	// no file at it and reporting zero without complaining.
+	db, err := store.Open(ctx, config.Config{DataDir: dir}.DBPath())
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
@@ -2803,5 +2807,65 @@ func TestRestartingALiveSessionIsRefused(t *testing.T) {
 		t.Errorf("the process was replaced anyway: pid %d -> %d. A refusal that still kills is "+
 			"worse than no refusal, because the message says nothing happened.",
 			before.PID, after.PID)
+	}
+}
+
+// The reported database size is the whole database.
+//
+// The panel runs in journal_mode=WAL, so recent writes live in the -wal file
+// until a checkpoint, and a checkpoint can be held off by a long-lived read --
+// which this panel has, with four pooled connections and a poller reading every
+// two seconds. `os.Stat(DBPath())` alone therefore reports well under what is
+// on disk, at the moment somebody is reading it to answer "why is this
+// growing", and it disagreed with the runbook's own `du -sh` for a reason
+// neither screen explained.
+//
+// The finding this came from paired it with a claim that the poller's
+// unconditional row updates are what fill the WAL. That was measured and is
+// false -- SQLite elides an update that changes nothing -- so the growth has
+// other sources, and the reporting gap stands on its own.
+func TestTheReportedDatabaseSizeIncludesTheWAL(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+
+	// Something in the WAL, and no checkpoint: writes that change the row, so
+	// SQLite cannot elide them.
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"sized"}`)
+	if _, err := srv.DB.SQL().ExecContext(ctx, "PRAGMA wal_autocheckpoint=0"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 400; i++ {
+		if err := srv.DB.RenameProject(ctx, project.ID, fmt.Sprintf("sized-%d", i)); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+	}
+
+	main, err := os.Stat(srv.Cfg.DBPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wal, err := os.Stat(srv.Cfg.DBPath() + "-wal")
+	if err != nil {
+		t.Fatalf("no -wal file, so this test is not measuring what it means to: %v", err)
+	}
+	if wal.Size() == 0 {
+		t.Fatal("the -wal file is empty; nothing was left outside the main file to be missed")
+	}
+
+	var out map[string]any
+	res, err := ts.Client().Get(ts.URL + "/api/settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	reported, _ := out["dbBytes"].(float64)
+	if int64(reported) <= main.Size() {
+		t.Errorf("the settings page reports %d bytes and the main file alone is %d with %d more "+
+			"in the WAL; an operator comparing this against du finds numbers that disagree",
+			int64(reported), main.Size(), wal.Size())
 	}
 }
