@@ -1,0 +1,75 @@
+# The fast gate, on every push.
+#
+# tmux is installed explicitly and its version printed, because without it four
+# packages skip their entire suites and `go test` still prints ok for each --
+# a green run that checked almost none of the Go code. The Makefile warns about
+# this locally; here the install makes it impossible.
+#
+# The browser checks (`make verify`, ~20 minutes) are not run here. They boot
+# real tmux sessions and a real Chromium and are where most of this project's
+# bugs were found, but they are a deliberate local gate rather than something
+# to make every push wait on.
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: tmux
+        run: sudo apt-get update && sudo apt-get install -y tmux && tmux -V
+
+      - name: install frontend deps
+        run: npm ci
+        working-directory: web
+
+      - name: vet, gofmt, eslint, Go tests, frontend units
+        run: make check
+
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+        working-directory: web
+
+      # CGO_ENABLED=0 is not a preference: the release binary has to run on a
+      # machine that has tmux and nothing else, and a cgo dependency creeping
+      # in is invisible until somebody untars it there.
+      - name: build the single static binary
+        run: make build
+
+      - run: ./vibepanel version

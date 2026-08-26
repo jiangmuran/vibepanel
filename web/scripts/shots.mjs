@@ -13,7 +13,7 @@
 // visible.
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:net'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { chromium } from 'playwright'
@@ -98,7 +98,7 @@ try {
   })).json()
   const other = await (await authed('/api/projects', {
     method: 'POST',
-    body: JSON.stringify({ path: HOME, name: 'notes' }),
+    body: JSON.stringify({ path: HOME, name: 'dotfiles' }),
   })).json()
 
   const mk = (projectId, cmd, title) =>
@@ -109,24 +109,76 @@ try {
 
   // One that looks like an agent waiting on you, one working, one done, one
   // dead. The sidebar's whole job is telling these apart.
+  //
+  // The transcript below is long on purpose. A terminal photographed with four
+  // lines in it is a photograph of the background colour: the line gap, the
+  // wrapping, the dim-vs-bold contrast and the whole palette are invisible
+  // until something is actually on the screen. Every line-height and colour
+  // problem found so far was found in a full terminal, none in an empty one.
+  //
+  // It is written to a file and `cat`-ed rather than printf-ed, because the
+  // command crosses JS, JSON, Go's argv and sh on its way to the pane, and
+  // every quote in it would otherwise have to survive all four.
+  const e = String.fromCharCode(27)
+  const B = `${e}[1m`, D = `${e}[2m`, R = `${e}[0m`
+  const G = `${e}[32m`, Y = `${e}[33m`, C = `${e}[36m`
+  const transcript = [
+    `${B}> make a token and a cookie take the same path in${R}`,
+    `${B}  currentUser, and keep the token ahead of the cookie${R}`,
+    ``,
+    `  ${G}OK${R} read ${C}internal/httpapi/auth.go${R} ${D}214 lines${R}`,
+    `  ${G}OK${R} read ${C}internal/store/auth.go${R} ${D}331 lines${R}`,
+    `  ${G}OK${R} grep ${C}currentUser${R} ${D}11 matches across 4 files${R}`,
+    ``,
+    `  Both credentials answer one question, so they should meet before the`,
+    `  handler rather than inside each one. Token first: a request carrying`,
+    `  both is a program, and the program meant the token.`,
+    ``,
+    `  ${D}internal/httpapi/auth.go${R}`,
+    `  ${D}@@ -140,6 +140,10 @@ func (h *Handler) currentUser(${R}`,
+    `  ${G}+  if tok := bearerToken(r); tok != "" {${R}`,
+    `  ${G}+    return h.store.UserByAPIToken(r.Context(), tok)${R}`,
+    `  ${G}+  }${R}`,
+    `     c, err := r.Cookie(sessionCookie)`,
+    `     if err != nil {`,
+    `       return nil, false`,
+    ``,
+    `  ${G}OK${R} go build ./...              ${D}1.9s${R}`,
+    `  ${G}OK${R} go test ./internal/httpapi  ${D}ok  0.42s${R}`,
+    ``,
+    `  ${Y}?${R} Apply this change to ${C}internal/httpapi/auth.go${R}?`,
+    `    ${D}1${R} yes   ${D}2${R} yes, and stop asking   ${D}3${R} no, tell me why`,
+    ``,
+    `  ${Y}>${R} `,
+  ].join('\n')
+  const scriptDir = join(HOME, 'shots')
+  mkdirSync(scriptDir, { recursive: true })
+  const transcriptFile = join(scriptDir, 'transcript')
+  writeFileSync(transcriptFile, transcript)
+  const logFile = join(scriptDir, 'log')
+  writeFileSync(logFile, [
+    `${D}12:04:31${R} serve  listening on 127.0.0.1:8443 ${D}tls=off${R}`,
+    `${D}12:04:31${R} tmux   socket vibepanel ${D}3.6${R}  ${G}6 sessions adopted${R}`,
+    `${D}12:07:02${R} ws     client attached ${D}session=vp_a3f1 130x46${R}`,
+    `${D}12:07:19${R} hook   ${C}vp_a3f1${R} -> ${Y}waiting${R}`,
+    ``,
+  ].join('\n'))
+
   const waiting = await mk(proj.id, ['sh', '-c',
-    "printf '\\033[1m> refactor the auth flow\\033[0m\\n\\n'; " +
-    "printf '  \\033[32m✓\\033[0m read internal/httpapi/auth.go\\n'; " +
-    "printf '  \\033[32m✓\\033[0m read internal/store/auth.go\\n'; " +
-    "printf '  \\033[33m?\\033[0m Apply this change to auth.go? \\033[2m(y/n)\\033[0m \\a'; " +
-    'exec sleep 3000'], 'claude · auth')
+    // The bell is what makes this one `waiting` without a hook installed.
+    `cat ${transcriptFile}; printf '\\a'; exec sleep 3000`], 'claude \u00b7 auth')
   await mk(proj.id, ['sh', '-c',
-    "printf '\\033[1m> add the directory picker\\033[0m\\n\\n'; " +
-    "printf '  \\033[36m⠹\\033[0m writing web/src/components/DirectoryPicker.tsx\\n'; " +
-    'exec sleep 3000'], 'claude · picker')
-  await mk(proj.id, ['sh', '-c', "printf 'go test ./... \\n\\033[32mok\\033[0m  all packages\\n$ '; exec sh"], 'tests')
-  await mk(other.id, ['sh', '-c', "printf '$ '; exec sh"], 'shell')
+    `printf '${B}> add the directory picker${R}\\n\\n'; ` +
+    `printf '  ${C}...${R} writing web/src/components/DirectoryPicker.tsx\\n'; ` +
+    'exec sleep 3000'], 'claude \u00b7 picker')
+  await mk(proj.id, ['sh', '-c', `printf 'go test ./...\\n${G}ok${R}  all packages\\n'; exec sh`], 'tests')
+  await mk(other.id, ['sh', '-c', 'exec sh'], 'shell')
   await mk(proj.id, ['sh', '-c', "echo 'panic: nil map'; exit 2"], 'build')
   // A scratch terminal under the first session, so the bottom strip is real.
-  await mk(proj.id, ['sh', '-c', "printf '$ '; exec sh"], 'logs').then(() => {})
+  await mk(proj.id, ['sh', '-c', 'exec sh'], 'logs').then(() => {})
   await authed('/api/sessions', {
     method: 'POST',
-    body: JSON.stringify({ projectId: proj.id, parentSessionId: waiting.id, command: ['sh', '-c', "printf '$ '; exec sh"], title: 'logs' }),
+    body: JSON.stringify({ projectId: proj.id, parentSessionId: waiting.id, command: ['sh', '-c', `cat ${logFile}; exec sh`], title: 'logs' }),
   })
   await authed(`/api/projects/${proj.id}/notes`, {
     method: 'PUT',

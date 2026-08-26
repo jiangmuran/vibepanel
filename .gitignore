@@ -28,3 +28,7 @@
 
 # Release archives
 /dist/
+
+# Claude Code session state — a lock file with a pid in it, swept in by a
+# bulk commit. Nothing here belongs to the project.
+/.claude/

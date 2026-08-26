@@ -5919,7 +5919,7 @@ requests the third party saw: [{"url":"/docs","referer":"http://127.0.0.1:38475/
 ```
 
 The panel's exact origin. In the deployment this project is for, that is
-`https://direct.jmrhomecloud.com:8443/` — handed to an arbitrary host, on a
+`https://panel.example.com:8443/` — handed to an arbitrary host, on a
 click, by a panel whose entire exposure story is a non-standard port and a
 password.
 
@@ -10812,3 +10812,60 @@ Playwright's `dispatchEvent` does not carry a `DataTransfer` across the boundary
 as `clipboardData` — it has to be built and dispatched inside the page — and
 then because the terminal wrapped the uploaded path and `includes('pasted.png')`
 missed `pasted\n.png`. That second one is the NBSP lesson again, one file over.
+
+---
+
+## Publishing it
+
+**A README with no picture, for a program whose whole complaint was that it
+looked bad.** The old one was a good document and the wrong document: it opened
+with a status paragraph that had been wrong for weeks, explained the design
+before saying what the thing does, and never once showed the screen. Somebody
+arriving from a link decides in about four seconds, and there was nothing for
+them to look at.
+
+So `README.md` leads with the panel, then with what you get, and the design
+material — which is the best part of it — moved down to where a person who has
+already decided they are interested will find it. `README.zh-CN.md` is a real
+translation rather than the English with the words swapped; the two files say
+the same things but neither reads like the other's shadow.
+
+**The screenshots come out of `shots.mjs`, which meant fixing what it seeds.**
+The hero picture was 80% empty terminal: four lines of fake agent output at the
+top and a thousand pixels of background under them. That is not just a bad
+photograph, it is a bad *test* — the line gap, the wrapping, the dim-vs-bold
+contrast and the whole palette are invisible in an empty terminal, and every
+rendering problem this project has found was found in a full one.
+
+The seed now writes a ~28-line transcript to a file and `cat`s it, rather than
+building it out of `printf`. The command crosses JS, JSON, Go's argv and `sh` on
+its way to the pane, and every quote in it would otherwise have to survive all
+four. The bottom scratch terminal got real log lines for the same reason.
+
+Then, three times in a row, the tool refused the patch:
+
+    command contains control characters that would be hidden in the approval dialog
+
+Each time because I had typed a literal ESC byte into `const e = '…'` instead of
+writing an escape for it. Third attempt: `String.fromCharCode(27)`, which cannot
+be typed wrong. This is the same class of byte the product spends effort
+sanitising before it reaches a React node, and I could not stop emitting it into
+my own shell.
+
+**One personal hostname and one session lock file were about to become public.**
+`docs/build-log.md` carried `direct.<the operator's domain>` from the entry about
+a link click telling a third party where the panel lives, and
+`.claude/scheduled_tasks.lock` — a pid and a session id belonging to the editor,
+not the project — had been swept in by a bulk commit. Both are in the working
+tree's fix and both are still in history, which is worth saying plainly rather
+than quietly rewriting 106 commits under somebody's repository.
+
+**CI now exists, and it installs tmux on purpose.** `.github/workflows/check.yml`
+runs `make check` and a `CGO_ENABLED=0` build. The tmux install is not
+boilerplate: without it, four packages skip their entire suites and `go test`
+prints `ok` for each, so the run goes green having checked almost none of the Go
+code. The Makefile warns about that locally; the workflow makes it impossible.
+
+The browser checks stay out of CI. They boot real tmux servers and a real
+Chromium and take twenty minutes, and a gate that slow attached to every push
+becomes a gate people route around.
