@@ -9254,12 +9254,12 @@ Two is all of them. Swept by type rather than by literal — everything that tak
 | 29 | stress-check's escape-fragment check looks for the shape that is already trimmed. `trimPartialEscape` handles `31mhello` and, as pinned by `TestTrimPartialEscapeKnownFalseNegative`, does not handle `[31mhello` — the case where only the ESC was evicted. The check's regex is `^\d+;?\d*[a-zA-Z]\s*$` with `length < 8`, which matches the first and cannot match the second: `[` is not a digit and the string is nine characters. So the one browser check aimed at that defect is aimed past it. It is also a WARN, while the two assertions above it in the same block — nothing recognisable after a reload, the replay injecting terminal responses — are both FAIL. Checked the other suspicious WARNs in that file and they hold up: the alternate-screen one is a weaker observation beside a FAIL, and the rest are setup that did not happen. | `web/scripts/stress-check.mjs` | match the leading `[` too, and decide whether a literal fragment on screen is a failure |
 | 45 | **Fixed: `restart-check` squeezes a running panel and watches the banner. See the last section.** Nothing re-runs the one fault the stale banner exists for. A full disk is what that whole path is built around — `CheckWritable`, `noteStale`, the three-tick grace, `/api/health` answering `"ok": false`, and the banner itself — and no harness injects it, so `stale-notice` is driven by nothing. Both halves that are usually hard are already done and recorded above: the injection is `ulimit -f` applied to a restart after the database exists, since "Go turns SIGXFSZ into a write error, which is close enough to a full disk" (chmod proves nothing on an already-open file, and no tmpfs is available here), and the banner was watched appearing in a real browser six seconds in with the connection staying open. What is missing is only the wiring into a check. Sits with 9. | `web/scripts/render-check.mjs` | `ulimit -f`, restart, assert the banner appears and the socket stays open |
 | 9 | `scanTapTargets` and `scanUnreachable` report only when they find something and never assert they looked at anything. A button refactored into a `<div onClick>` makes them blind and silent. | `web/scripts/render-check.mjs` | a floor at zero candidates, which cannot false-positive |
-| 21 | Panel notifications and state snapshots share one coalescing slot. `notifyPanel` goes through `Hub.Broadcast` → `queueState`, which *replaces* `statePending` — correct for a snapshot, because the newest contains the older ones, and wrong for an event. A `panel` message saying "your notes changed, fetch them again" is dropped if anything else queues while `stateWriter` is inside `sendRaw`, which is a network write that can block. The other viewer's notes or todos then do not refresh until something else wakes them. Sits with 5 and 6. | `internal/httpapi/api.go`, `internal/ws/conn.go` | a second slot, or a small queue for messages that are not snapshots — not dropping the coalescing, which exists for a measured reason |
+| 21 | **Fixed: events have their own queue beside the snapshot slot.** Panel notifications and state snapshots share one coalescing slot. `notifyPanel` goes through `Hub.Broadcast` → `queueState`, which *replaces* `statePending` — correct for a snapshot, because the newest contains the older ones, and wrong for an event. A `panel` message saying "your notes changed, fetch them again" is dropped if anything else queues while `stateWriter` is inside `sendRaw`, which is a network write that can block. The other viewer's notes or todos then do not refresh until something else wakes them. Sits with 5 and 6. | `internal/httpapi/api.go`, `internal/ws/conn.go` | a second slot, or a small queue for messages that are not snapshots — not dropping the coalescing, which exists for a measured reason |
 | 16 | **Fixed, after the first version of the check proved nothing — see the last section.** The compose box's multi-line branch is exercised by nothing. `text.includes('\n')` routes to a paste — the fix for a measured failure, "three lines in, three separate submissions out" — and render-check fills the box only with `true` and an `echo`, both single-line. The chain behind it, `pasteText` → `MsgPaste` → `Manager.Paste`, is 0.0% under `-coverpkg` and named by no Go test. The branch that *had* the bug is driven five times; the one that fixes it, never. Sits with 9 and 15. | `web/src/components/mobile/ComposeInput.tsx` | one multi-line fill in render-check's mobile section; the assertion is already written in the comment above the branch |
 | 15 | **Fixed: `reorder` extracted and tested; the mutation is caught by two cases.** The drag-reorder adjustment in `useDragList` — `overIndex > from ? overIndex - 1 : overIndex` — is the downward-drag branch, and nothing takes it. render-check drags the second project *above* the first, which is upward; `web/src/hooks` has no test file, in a frontend where every other pure-logic module has one. Not a reported bug: the untested half of a classic off-by-one, in a gesture used constantly, failing silently — a project dropped one position from where it was aimed reads as having aimed badly. Sits with 9. The empty `hooks/` directory is not the finding, though — the other module there is `useMediaQuery`, whose logic is the string `(max-width: 767px), (max-height: 500px) and (pointer: coarse)`, and a unit test for that would only copy the string back. Its four cases were checked by reading and are right: a phone in portrait, a phone in landscape at 844×390 (the case that once produced a six-line terminal), a desktop window dragged narrow, and a touchscreen laptop with a mouse, which reports `pointer: fine`. So the gap is one function, not one directory. | `web/src/hooks/useDragList.ts` | a unit test (it is a pure function of ids, from, overIndex) and a downward drag in render-check |
 | 10 | `doctor` never asks whether the panel answers on the loopback URL its own hooks post to, which is the one check that would turn the bind-address trap into a line of output. | `cmd/vibepanel/main.go` | one GET, only while a panel holds the lock |
 | ~~11~~ | **Retracted.** Claimed that `passkey/login/finish` consults the login throttle and never feeds it, on the strength of `grep Throttle` in that file returning only `Delay` and `Succeed`. It does feed it: the refusal path calls `s.failLogin`, the shared helper that does `Throttle.Fail` *and* writes `login.failed` with the detail `"passkey: …"`. Prefixing the shared event is better than the separate `passkey.login.failed` the finding asked for, because one fail2ban rule then catches both. The grep was true and incomplete — the third interaction goes through an abstraction, which is what a grep for the concrete name cannot see. | — | — |
-| 14 | Both delete paths run on the request's context, which Go cancels when the client disconnects, and both loop over sessions. A tab closed just after pressing delete leaves some tmux sessions dead with their rows intact — a batch of GONE from doing nothing wrong. The comment on `tearDownSession` reasons about which half should fail first and not about the half being cancelled; `notifyState`'s writers already detach with a 5s background context for exactly this reason. Found after the ordering above was fixed; it belongs beside 5 and 6. | `internal/httpapi/api.go` | detach the teardown the way notifyState does |
+| 14 | **Fixed: both detach before destroying anything, both halves mutation-checked.** Both delete paths run on the request's context, which Go cancels when the client disconnects, and both loop over sessions. A tab closed just after pressing delete leaves some tmux sessions dead with their rows intact — a batch of GONE from doing nothing wrong. The comment on `tearDownSession` reasons about which half should fail first and not about the half being cancelled; `notifyState`'s writers already detach with a 5s background context for exactly this reason. Found after the ordering above was fixed; it belongs beside 5 and 6. | `internal/httpapi/api.go` | detach the teardown the way notifyState does |
 | 12 | Nothing stops the same directory being added twice, so the sidebar can show two entries that are the same pixels with separate notes behind them. `disambiguatedLabels` solves this for sessions and not for projects. Arguable rather than wrong. | `internal/httpapi/api.go` | if refused, name the project already there rather than a UNIQUE failure |
 | 30 | Removing `safeText` from `sessionLabel` would pass everything. Four places sanitise a name: the function itself is tested; `projectLabel` and `terminalLabel` assert `.not.toContain('\u202E')` — both added this session; `sessionLabel` is tested only for its fallback chain; and `FileTree`'s inline `safeText(e.name)` is asserted nowhere. The browser checks do exercise the rendering path — they locate rows by `hasText: 'scratchpad'` — but every name in them is plain ASCII, so nothing there touches the sanitising either. The unguarded one is the original funnel, the one safeText's docstring is written about: "session titles come from `pane_title`, which any program sets with a two-byte escape sequence." | `web/src/components/label.test.ts`, `web/scripts/render-check.mjs` | one assertion for sessionLabel; for FileTree, a file whose name carries an override — the transfer section already writes files |
 | 31 | `TruncateTitle`'s tests cannot tell runes from bytes. The constant's comment gives the reason for the whole design — "runes rather than bytes so that truncation cannot split a character and leave invalid UTF-8 in the database" — and both tests feed it `strings.Repeat("A", …)` and `strings.Repeat("x", …)`, pure ASCII, where a byte slice and a rune slice agree. Rewriting it as `s[:MaxTitleRunes]`, which is the obvious way to drop an O(n) `RuneCountInString`, passes both and cuts a CJK title mid-character. Implementation is correct today; the property is unasserted. Same shape as 30, different file and fix. | `internal/session/title_test.go` | one case with multi-byte runes |
@@ -10179,3 +10179,51 @@ illegal in strict mode. ESLint said so, node refused to parse the file, and the
 whole run exited without printing a single finding -- which is exactly the
 "green because nothing ran" shape that `check`'s new tmux notice was added for,
 one file over.
+
+
+## Two that were about a context and a slot
+
+**21: an event in a slot built for snapshots.** `queueState` holds one payload
+and replaces it, which is exactly right for a state snapshot -- it is absolute,
+so the newest contains every older one -- and the reason it exists is measured:
+sending from the caller's goroutine let "one viewer that stopped reading delay
+every other viewer's state update by 2.2 seconds".
+
+`notifyPanel` went through the same slot, and a panel notification is not a
+snapshot. It says "your notes for this project changed, fetch them again" and
+carries nothing else, so replacing it drops the only copy. The poller queues a
+snapshot every two seconds, so this is not a narrow race; the symptom is a note
+saved in one browser not appearing in another until something unrelated woke it,
+which reads as flaky sync rather than as a dropped message.
+
+Events now have their own queue beside the slot, deduplicated by payload rather
+than bounded by a count. That works because the message carries no content: two
+identical notifications are one notification, so the queue's length is the
+number of distinct (project, kind) pairs with something unsent -- small for the
+same reason the message is small, and it cannot grow however hard a writer
+stalls. The snapshot slot keeps coalescing, which is the half that must not be
+lost.
+
+Tested through `takePending` rather than a socket, because that is where the
+property lives. Routing events back through `queueState` fails it with "got 0
+events, want 2".
+
+**14: a delete that stopped when the tab closed.** Both delete paths ran on the
+request's context, and Go cancels that the moment the client disconnects. Both
+loop over sessions killing them one at a time, so a tab closed just after the
+click left some tmux sessions dead with their rows intact -- processes nothing
+in the panel can reach, produced by doing nothing wrong. `tearDownSession`'s
+comment reasoned carefully about which half should fail first and not at all
+about the half being cancelled, while `notifyState`'s writers already detached
+for this exact reason.
+
+Both now detach before they destroy anything, with a thirty-second bound. The
+user pressed delete; closing the tab is not a reason to do half of it.
+
+The test calls the handlers directly with an already-cancelled context, because
+a real disconnect mid-loop is a race and a race is not a test. It is a stricter
+version of the same fault: if anything in the path still reads the request's
+cancellation, nothing is deleted at all. Both paths are mutated separately --
+put the session path back and two sessions survive with their row; put the
+project path back and three of three survive. "Both" was what the finding said,
+and one of two passing is how half a fix ships.

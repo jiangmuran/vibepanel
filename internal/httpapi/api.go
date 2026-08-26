@@ -415,30 +415,12 @@ func (s *Server) notifyPanel(projectID, kind string) {
 	if err != nil {
 		return
 	}
-	// KNOWN GAP: Broadcast funnels this into queueState, whose single
-	// `statePending` slot is *replaced* rather than appended to. That is right
-	// for what it was built for — a state snapshot is idempotent, so the newest
-	// contains the older ones, and the comment on Broadcast explains the cost
-	// it is avoiding: "a viewer whose socket cannot take another byte must not
-	// be able to hold every other viewer's state update behind it."
-	//
-	// A panel notification is not a snapshot. It is an event that says "your
-	// notes for this project changed, fetch them again", and two of them are
-	// not interchangeable — losing the "note" one because a "todos" one or a
-	// state broadcast landed on top means the other viewer's notes panel simply
-	// does not refresh until something else wakes it.
-	//
-	// The window is real rather than theoretical: stateWriter takes the payload,
-	// clears the slot, and then calls sendRaw, which is a network write that
-	// can block. Everything queued during that write collapses to one message.
-	// In the common case notifyState is the one that loses, because it goes
-	// through Hub.Notify's coalescing timer while this goes out immediately —
-	// but which one survives is a race, and one of the two is an event.
-	//
-	// Found by reading. The fix is a second slot or a small queue for messages
-	// that are not snapshots; what it must not be is dropping the coalescing,
-	// which exists for a measured reason.
-	s.Hub.Broadcast(payload)
+	// BroadcastEvent, not Broadcast: this is not a snapshot. The snapshot slot
+	// replaces what is waiting, which is right for something absolute and
+	// silently wrong for an event -- and the poller queues a snapshot every two
+	// seconds, so a note saved in one browser could go unannounced in another
+	// until something unrelated woke it. See queueEvent.
+	s.Hub.BroadcastEvent(payload)
 }
 
 func (s *Server) notifyState() {
@@ -914,24 +896,14 @@ func (s *Server) handlePatchProject(w http.ResponseWriter, r *http.Request) {
 // the bargain. Detaching first and then failing to kill left the panel with no
 // attachment to a tmux session that was still running.
 //
-// KNOWN GAP: the ctx that reaches here is the request's, and Go cancels that
-// when the client disconnects. The comment above reasons about which half
-// should fail first; it does not reason about the half being cancelled.
+// The ctx that reaches here is deliberately not the request's.
 //
-// Both callers loop. handleDeleteSession kills the children and then the
-// parent; handleDeleteProject kills every session in the project. A tab closed
-// just after the click cancels the context somewhere in that loop, so some
-// tmux sessions are dead, the DeleteSession that follows never runs, and their
-// rows survive — which is the GONE state, for a batch, from doing nothing
-// wrong. Recoverable (the runbook has the section) and a narrow window, but
-// the window is "closed the tab right after pressing delete", which people do.
-//
-// The pattern for the fix is already in this file: notifyState's two writers
-// detach with `context.WithTimeout(context.Background(), 5*time.Second)`
-// because the work has to outlive the thing that triggered it. Destructive
-// work has the same property and did not get the same treatment.
-//
-// Found by reading, in a stretch where nothing could be run.
+// Go cancels a request context the moment the client disconnects, and both
+// callers loop over sessions killing them one at a time. A tab closed just
+// after the click cancelled the context somewhere in that loop, so some tmux
+// sessions were dead with their rows intact -- a batch of GONE produced by
+// doing nothing wrong. Both callers detach before they start destroying
+// anything, the way notifyState's writers already did.
 func (s *Server) tearDownSession(ctx context.Context, id, tmuxName string) error {
 	if err := s.Tmux.Kill(ctx, tmuxName); err != nil {
 		return err
@@ -957,20 +929,28 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	pid := chi.URLParam(r, "id")
 
+	// Detached, with a bound. Everything below this line destroys something,
+	// and half of it is worse than none of it: a killed tmux session whose row
+	// survived is a row the panel shows and can never reach again. The request
+	// context is cancelled by the client closing its tab, which is not a reason
+	// to stop halfway through a delete it already asked for.
+	opCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+
 	// Kill tmux first: the rows cascade away on delete, and a row that vanishes
 	// while its tmux session lives on leaves a process nothing can reach.
-	sessions, err := s.DB.ListProjectSessions(ctx, pid)
+	sessions, err := s.DB.ListProjectSessions(opCtx, pid)
 	if err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}
 	for _, sess := range sessions {
-		if err := s.tearDownSession(ctx, sess.ID, sess.TmuxName); err != nil {
+		if err := s.tearDownSession(opCtx, sess.ID, sess.TmuxName); err != nil {
 			writeErr(w, http.StatusInternalServerError, "kill "+sess.TmuxName+": "+err.Error())
 			return
 		}
 	}
-	if err := s.DB.DeleteProject(ctx, pid); err != nil {
+	if err := s.DB.DeleteProject(opCtx, pid); err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}
@@ -1276,27 +1256,30 @@ func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	// Detached, with a bound: see handleDeleteProject. A tab closed just after
+	// the click must not leave half a session tree killed.
+	opCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
+	defer cancel()
 	sid := chi.URLParam(r, "id")
-	rec, err := s.DB.GetSession(ctx, sid)
+	rec, err := s.DB.GetSession(opCtx, sid)
 	if err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}
 	// Children cascade away in the database, but their tmux sessions do not.
 	// Deleting the row first would leave processes nothing in the UI can reach.
-	children, err := s.DB.ListChildSessions(ctx, sid)
+	children, err := s.DB.ListChildSessions(opCtx, sid)
 	if err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}
 	for _, child := range append(children, rec) {
-		if err := s.tearDownSession(ctx, child.ID, child.TmuxName); err != nil {
+		if err := s.tearDownSession(opCtx, child.ID, child.TmuxName); err != nil {
 			writeErr(w, http.StatusInternalServerError, "kill "+child.TmuxName+": "+err.Error())
 			return
 		}
 	}
-	if err := s.DB.DeleteSession(ctx, sid); err != nil {
+	if err := s.DB.DeleteSession(opCtx, sid); err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}

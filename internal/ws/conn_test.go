@@ -343,3 +343,61 @@ func TestAnUnknownMessageTypeIsAnsweredNotIgnored(t *testing.T) {
 			len(long), len(msg.Message))
 	}
 }
+
+// An event queued before a snapshot must survive it.
+//
+// The connection had one slot, `statePending`, and Broadcast put everything in
+// it. That is right for a snapshot -- it is absolute, so the newest one
+// contains every older one and replacing is free -- and silently wrong for a
+// panel notification, which says "your notes for this project changed, fetch
+// them again" and carries nothing. Replacing it drops the only copy.
+//
+// Not a narrow race: the poller broadcasts a snapshot every two seconds, and
+// the window is however long the writer spends inside a network write. The
+// symptom is a note saved in one browser not appearing in another until
+// something unrelated woke it, which reads as the sync being flaky rather than
+// as a message being dropped.
+//
+// Tested through takePending rather than through a socket because that is where
+// the property lives. What a stalled writer does is already measured elsewhere.
+func TestAnEventIsNotDroppedByASnapshot(t *testing.T) {
+	c := &Conn{stateWake: make(chan struct{}, 1)}
+
+	notes := []byte(`{"t":"panel","projectId":"p1","kind":"notes"}`)
+	todos := []byte(`{"t":"panel","projectId":"p1","kind":"todos"}`)
+
+	c.queueEvent(notes)
+	c.queueState([]byte(`{"t":"state","n":1}`))
+	c.queueEvent(todos)
+	// The same notification twice is one notification: it carries no content,
+	// so a second copy tells the viewer nothing the first did not.
+	c.queueEvent(notes)
+	c.queueState([]byte(`{"t":"state","n":2}`))
+
+	events, snapshot := c.takePending()
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2 (deduplicated): %q", len(events), events)
+	}
+	if string(events[0]) != string(notes) || string(events[1]) != string(todos) {
+		t.Errorf("events came back as %q, want notes then todos", events)
+	}
+	// The snapshot slot must still coalesce. Turning it into a queue would give
+	// back the behaviour it exists to avoid: one viewer whose socket cannot
+	// take another byte held every other viewer's update behind it, measured at
+	// 2.2 seconds each.
+	if string(snapshot) != `{"t":"state","n":2}` {
+		t.Errorf("snapshot is %q, want only the newest", snapshot)
+	}
+
+	events, snapshot = c.takePending()
+	if len(events) != 0 || snapshot != nil {
+		t.Errorf("a second drain returned %q and %q; the first did not clear", events, snapshot)
+	}
+
+	// And the dedup must not outlive the drain, or a note edited, delivered,
+	// and edited again would announce itself once.
+	c.queueEvent(notes)
+	if events, _ = c.takePending(); len(events) != 1 {
+		t.Errorf("the same event after a drain came back %d times, want 1", len(events))
+	}
+}

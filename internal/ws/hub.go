@@ -53,6 +53,24 @@ func (h *Hub) Connections() int {
 }
 
 // Broadcast sends a raw JSON payload to every connection immediately.
+// BroadcastEvent sends a message that is not a snapshot to every connection.
+//
+// Separate from Broadcast because the two are queued differently: a snapshot
+// replaces the one waiting, an event joins a queue beside it. Sending an event
+// through Broadcast drops it whenever a snapshot arrives first, and the poller
+// produces one every two seconds.
+func (h *Hub) BroadcastEvent(payload []byte) {
+	h.mu.RLock()
+	conns := make([]*Conn, 0, len(h.conns))
+	for c := range h.conns {
+		conns = append(conns, c)
+	}
+	h.mu.RUnlock()
+	for _, c := range conns {
+		c.queueEvent(payload)
+	}
+}
+
 func (h *Hub) Broadcast(payload []byte) {
 	h.mu.RLock()
 	conns := make([]*Conn, 0, len(h.conns))

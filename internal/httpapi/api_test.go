@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/go-chi/chi/v5"
 	"io"
 	"log/slog"
 	"net/http"
@@ -2576,5 +2577,111 @@ func TestPatchingAProject(t *testing.T) {
 	if got := patch(project.ID, `{"name":"`+long+`"}`); len([]rune(got.Name)) > session.MaxTitleRunes {
 		t.Errorf("stored a %d-rune project name; the cap is %d",
 			len([]rune(got.Name)), session.MaxTitleRunes)
+	}
+}
+
+// A delete finishes even if the tab that asked for it is gone.
+//
+// Both delete paths ran on the request's context, and Go cancels that the
+// moment the client disconnects. Both loop over sessions killing them one at a
+// time, so a tab closed just after the click left some tmux sessions dead with
+// their rows intact -- a batch of GONE from doing nothing wrong. The comment on
+// tearDownSession reasoned carefully about which half should fail first and not
+// at all about the half being cancelled, while notifyState's writers already
+// detached with a background context for exactly this reason.
+//
+// The handler is called directly with a context that is already cancelled,
+// because a real disconnect mid-loop is a race and a race is not a test. That
+// is a stricter version of the same fault: if anything in the path still reads
+// the request's cancellation, nothing gets deleted at all.
+func TestADeleteFinishesEvenIfTheTabIsClosed(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"test"}`)
+	parent := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sleep","300"]}`)
+	// A scratch terminal under it, so the loop has more than one turn to be
+	// cancelled in the middle of.
+	child := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","parentSessionId":"`+parent.ID+`","command":["sleep","300"]}`)
+
+	// Positive control: both are really there before anything is deleted.
+	live, err := srv.Tmux.List(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	names := map[string]bool{}
+	for _, i := range live {
+		names[i.Name] = true
+	}
+	if !names[parent.TmuxName] || !names[child.TmuxName] {
+		t.Fatalf("the sessions were not running before the delete, so this proves nothing: %v", names)
+	}
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", parent.ID)
+	dead, cancel := context.WithCancel(context.WithValue(ctx, chi.RouteCtxKey, rctx))
+	cancel()
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/sessions/"+parent.ID, nil).WithContext(dead)
+	srv.handleDeleteSession(httptest.NewRecorder(), req)
+
+	live, err = srv.Tmux.List(ctx)
+	if err != nil {
+		t.Fatalf("list after: %v", err)
+	}
+	still := []string{}
+	for _, i := range live {
+		if i.Name == parent.TmuxName || i.Name == child.TmuxName {
+			still = append(still, i.Name)
+		}
+	}
+	if len(still) != 0 {
+		t.Errorf("%v survived a delete whose request context was cancelled; the panel has "+
+			"forgotten them and tmux has not, which is a process nothing can reach", still)
+	}
+	if _, err := srv.DB.GetSession(ctx, parent.ID); err == nil {
+		t.Error("the row survived the delete, so the panel will show a session whose tmux " +
+			"session is gone")
+	}
+
+	// The other delete path, which loops over every session in a project and so
+	// has more turns to be cancelled in. Same fix, and worth its own turn here
+	// because "both" was what the finding said and one of them passing is how
+	// half a fix ships.
+	proj2 := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"doomed"}`)
+	var doomed []store.Session
+	for i := 0; i < 3; i++ {
+		doomed = append(doomed, postJSON[store.Session](t, ts, "/api/sessions",
+			`{"projectId":"`+proj2.ID+`","command":["sleep","300"]}`))
+	}
+
+	prctx := chi.NewRouteContext()
+	prctx.URLParams.Add("id", proj2.ID)
+	pdead, pcancel := context.WithCancel(context.WithValue(ctx, chi.RouteCtxKey, prctx))
+	pcancel()
+	preq := httptest.NewRequest(http.MethodDelete, "/api/projects/"+proj2.ID, nil).WithContext(pdead)
+	srv.handleDeleteProject(httptest.NewRecorder(), preq)
+
+	live, err = srv.Tmux.List(ctx)
+	if err != nil {
+		t.Fatalf("list after project delete: %v", err)
+	}
+	running := map[string]bool{}
+	for _, i := range live {
+		running[i.Name] = true
+	}
+	var orphans []string
+	for _, d := range doomed {
+		if running[d.TmuxName] {
+			orphans = append(orphans, d.TmuxName)
+		}
+	}
+	if len(orphans) != 0 {
+		t.Errorf("%d of %d sessions survived a cancelled project delete: %v",
+			len(orphans), len(doomed), orphans)
 	}
 }

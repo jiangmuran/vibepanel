@@ -83,6 +83,10 @@ type Conn struct {
 	stateMu      sync.Mutex
 	statePending []byte
 	stateWake    chan struct{}
+	// Messages that are not snapshots, kept beside the snapshot slot rather
+	// than in it. See queueEvent.
+	eventPending [][]byte
+	eventSeen    map[string]bool
 
 	mu      sync.Mutex
 	streams map[uint32]*stream
@@ -121,6 +125,57 @@ func (c *Conn) queueState(payload []byte) {
 	}
 }
 
+// queueEvent hands the connection a message that is *not* a snapshot.
+//
+// The single slot above is right for a snapshot and wrong for an event, and
+// panel notifications went through it. A snapshot is absolute -- the newest one
+// contains every older one, so replacing is free -- while "your notes for this
+// project changed, fetch them again" is a fact about a moment. Replacing it
+// with anything drops it, and the poller broadcasts a snapshot every two
+// seconds, so the window is not theoretical: a note saved in one browser did
+// not appear in another until something unrelated woke it.
+//
+// A queue rather than a second single slot, and deduplicated by payload rather
+// than bounded by a number. These messages carry no content -- they say what
+// changed and the panel that cares fetches it -- so two identical ones are one,
+// and the queue's length is the number of distinct (project, kind) pairs with
+// an unsent notification. That is small for the same reason the message is
+// small, and it cannot grow without bound however hard a writer stalls.
+//
+// What this must not become is un-coalesced: the whole reason snapshots go
+// through a slot is that "a viewer whose socket cannot take another byte must
+// not be able to hold every other viewer's state update behind it", which was
+// measured at 2.2 seconds per stalled viewer.
+func (c *Conn) queueEvent(payload []byte) {
+	key := string(payload)
+	c.stateMu.Lock()
+	if c.eventSeen == nil {
+		c.eventSeen = map[string]bool{}
+	}
+	if !c.eventSeen[key] {
+		c.eventSeen[key] = true
+		c.eventPending = append(c.eventPending, payload)
+	}
+	c.stateMu.Unlock()
+	select {
+	case c.stateWake <- struct{}{}:
+	default: // already awake; it will pick these up too
+	}
+}
+
+// takePending removes everything waiting to be written.
+//
+// Split out so the queueing can be tested without a socket: what matters is
+// that an event queued before a snapshot survives it, and that is a property of
+// these three functions rather than of the network.
+func (c *Conn) takePending() (events [][]byte, snapshot []byte) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	events, snapshot = c.eventPending, c.statePending
+	c.eventPending, c.eventSeen, c.statePending = nil, nil, nil
+	return events, snapshot
+}
+
 // stateWriter is the only goroutine that writes queued snapshots.
 func (c *Conn) stateWriter(ctx context.Context) {
 	for {
@@ -128,10 +183,15 @@ func (c *Conn) stateWriter(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-c.stateWake:
-			c.stateMu.Lock()
-			payload := c.statePending
-			c.statePending = nil
-			c.stateMu.Unlock()
+			events, payload := c.takePending()
+			// Events first: a snapshot is the world as it is, and a
+			// notification is a reason to go and read something the snapshot
+			// does not carry. Either order is defensible; this one means a
+			// viewer never sees "everything is current" a beat before being
+			// told it is not.
+			for _, e := range events {
+				c.sendRaw(e)
+			}
 			if payload != nil {
 				c.sendRaw(payload)
 			}
