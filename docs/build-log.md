@@ -9235,7 +9235,7 @@ tracker does not renumber.
 
 | # | finding | where | fix |
 |---|---|---|---|
-| 1 | A hook that reported "waiting for you" is discarded after three seconds of a spinner, and the panel says *working* — its precise source overridden by its guess. The panel-wide "guessed" notice does not cover for it, in two independent ways: one other session holding a fresh hook report suppresses that notice everywhere, and — per 7 — the notice only fires at all when a session's polled `pane_current_command` is literally `claude` or `codex`, so on a machine where Claude Code reports `node` it never appears regardless. Fixing either does not restore the mitigation; both have to hold. | `internal/session/detect.go` | `lastAdvance` for `lastOutput`, after reproducing an agent that reports and then animates |
+| 1 | **Fixed, and measured — see the last section.** A hook that reported "waiting for you" is discarded after three seconds of a spinner, and the panel says *working* — its precise source overridden by its guess. The panel-wide "guessed" notice does not cover for it, in two independent ways: one other session holding a fresh hook report suppresses that notice everywhere, and — per 7 — the notice only fires at all when a session's polled `pane_current_command` is literally `claude` or `codex`, so on a machine where Claude Code reports `node` it never appears regardless. Fixing either does not restore the mitigation; both have to hold. | `internal/session/detect.go` | `lastAdvance` for `lastOutput`, after reproducing an agent that reports and then animates |
 | 37 | The client drops every `error` frame the server sends. `ServerMessage`'s union declares ten members and `handleControl`'s switch has eight cases; `pong` needs none, because any frame refreshes `lastSeenAt`, but `error` is simply absent — no case, no default, and `'error'`, `MsgError` and `msg.message` appear nowhere in `socket.ts`. Six server sites send one, and three of them are `write failed` twice and `paste failed`: you type into a terminal, the write fails server-side, the server says so, and nothing reaches the screen. This is the hazard `TestMessageTypesMatchTheClient` was written about — "the server says 'dropped', the client hears nothing, and the terminal sits frozen looking like a network problem" — fixed for `dropped` and not for `error`. That test compares the server's sends against the *declared union*, which `error` is in, so it passes; nothing pins the union against the switch. The mirror direction is sound today and unpinned in the same way: `ClientMessage` declares six types and the server's `switch msg.Type` has a case for all six, with no `default` and no exhaustiveness check Go could offer. Worth fixing together, and in that order — a `default` on the server would answer an unknown type with an error frame, which is the frame the client currently drops. | `web/src/protocol/socket.ts` | a case for `error`, and a `default` with a `never` check so the third hop is pinned by the compiler |
 | 38 | A fourth session state would render as *working*, silently. `renderGlyph` is an if-chain — `waiting` → triangle, `done` → check — ending in an unconditional return of the breathing circle. That is exhaustive today, because TypeScript narrows the union to `'working'` by then. Add a member to the enum and to `wire.ts`, which red line 3 already forces you to do together, and the type widens while the final `return` keeps catching everything: the new state gets working's shape and working's colour. Red line 3 names three mirrors of the enum; this is a fourth, and the only one whose failure is a wrong answer rather than a missing one — "a confident wrong answer to the only question it exists to answer", in the project's own words. Red line 4's premise is three shapes for three states, with no room for a fourth. Same structural class as 37. The right pattern is forty lines above it in the same file: `LABEL` is a `Record<SessionState, string>`, so adding a member to the union makes that object literal fail to compile. One function is pinned by the type system and the other is not, in the same component, for the same enum.
 
@@ -9698,3 +9698,65 @@ fails four times, and the first line is the one that matters:
 
 A 200 is what makes it dangerous. Every other answer, including the 500 the
 naive injection produces, lands in the client's catch and does nothing.
+
+
+## The spinner that outranked the agent
+
+1 in the table above, fixed, and it was the most expensive thing in it: the
+panel's precise source being overridden by its guess, in exactly the case the
+precise source exists for.
+
+`Advanced` was introduced to separate a screen that moved forward from one
+redrawn where it stood — the measurement is a spinner sending 480 bytes in three
+seconds with no line feed among them, against an agent producing output sending
+430 bytes with twenty-two. Only the bell rule was changed to read it. The manual
+rule and the hook rule both still asked `lastOutput`, and `lastAdvance`'s own
+field comment named the bell rule as its only reader, which is the shape of the
+omission: the field knew who used it.
+
+So `hookGrace` was three seconds and a spinner emits 480 bytes in three. A hook
+that said "waiting for you" was discarded, the fall-through read the foreground
+process, and the dot said working — with a circle instead of a triangle, sorted
+below the sessions that were merely busy, on a phone, at 2am. The manual rule
+failed the same way and worse in feel: somebody clicks precisely when the
+automatic state is wrong, the automatic state is most often wrong while a TUI is
+animating, so the next chunk arrived in milliseconds and the click read as
+having done nothing.
+
+Both now read `lastAdvance`. Reproduced first, in the detector's own units
+rather than by running an agent — twenty seconds of `\r|` at 200ms intervals
+after a report, and after an override:
+
+    state = "working" from "heuristic" after twenty seconds of animation,
+    want "waiting" from "hook"; the agent said it was waiting and a spinner
+    overruled it
+
+**Why this is not a trade of one wrong state for another.** `Advanced` is
+`chunk contains "\n"`, so an agent that resumed work inside a full-screen TUI
+would never advance and its report would stand forever. It cannot get stuck,
+because `hookState` is non-empty only when the hooks are installed, and an agent
+with hooks installed reports its other transitions too — UserPromptSubmit and
+PreToolUse arrive the moment it starts again. The grace stops being a timer and
+becomes "until the agent says otherwise, or the screen actually moves", which is
+what `hookGrace`'s own comment always said it was for: "the prompt itself, not
+the agent resuming work". The manual rule has no such backstop, so stickiness is
+a real cost there and only a phrasing here, and the comment now says so.
+
+**Two existing tests had to be amended, which is the move that hides
+regressions, so it is worth being explicit.** `TestOutputWellAfterAHookWins` and
+`TestManualOverrideSticksUntilActivity` both drove non-advancing output, so
+under the new rule they asserted the opposite of the new tests. Setting
+`Advanced: true` in both fixtures preserves what each was written to say — an
+agent that was told to carry on is working again — and the pair now expresses
+the rule rather than one half of it.
+
+Amending them was checked rather than asserted. With the grace turned into a
+permanent lock, and with the manual rule turned into one that never clears, each
+amended test still fails:
+
+    detect_test.go:207: state = "done" from "hook", want "working" from "heuristic"
+    detect_test.go:228: manual override survived new output: "done" from "manual"
+
+So the amendment narrowed them to the advancing case; it did not remove their
+teeth. A test changed to accommodate a change, and then not mutated, is how a
+suite quietly stops testing anything.

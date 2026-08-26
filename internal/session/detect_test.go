@@ -193,9 +193,15 @@ func TestHookHoldsThroughTheOutputItPredicts(t *testing.T) {
 func TestOutputWellAfterAHookWins(t *testing.T) {
 	// The hook's lead is a grace period, not a lock. An agent that was told to
 	// carry on is working again, whatever it last announced.
+	//
+	// Advanced, and that is the whole content of the rule rather than a detail
+	// of the fixture: the grace is measured against a screen that moved forward,
+	// so that a spinner cannot end it. Without the flag this fixture is a
+	// redrawing TUI, which is TestAnAnimationDoesNotDiscardAHookReport and wants
+	// the opposite answer. The two together are the rule.
 	d := NewDetector()
 	d.Report("s", StateDone, at(0))
-	d.Observe("s", Signals{Bytes: 400, Visible: true}, at(hookGrace+time.Second))
+	d.Observe("s", Signals{Bytes: 400, Visible: true, Advanced: true}, at(hookGrace+time.Second))
 	st, src := d.Evaluate("s", Observation{}, at(hookGrace+time.Second+100*time.Millisecond))
 	if st != StateWorking || src != SourceHeuristic {
 		t.Errorf("state = %q from %q, want %q from %q", st, src, StateWorking, SourceHeuristic)
@@ -215,8 +221,9 @@ func TestManualOverrideSticksUntilActivity(t *testing.T) {
 	}
 
 	// New output means the situation changed, so the override no longer
-	// describes it.
-	d.Observe("s", Signals{Bytes: 300, Visible: true}, at(3*time.Second))
+	// describes it — output that moved the screen forward, which is what
+	// separates this from TestAnAnimationDoesNotClearAManualOverride below.
+	d.Observe("s", Signals{Bytes: 300, Visible: true, Advanced: true}, at(3*time.Second))
 	if st, src = d.Evaluate("s", Observation{}, at(3*time.Second+100*time.Millisecond)); src == SourceManual {
 		t.Errorf("manual override survived new output: %q from %q", st, src)
 	}
@@ -457,5 +464,46 @@ func TestRestoreIgnoresNonsense(t *testing.T) {
 	d2.Restore("s", StateWaiting, SourceManual, time.Time{})
 	if st, src := d2.Evaluate("s", Observation{}, at(time.Second)); src == SourceManual {
 		t.Errorf("a row with no timestamp was treated as a choice the user made (%q)", st)
+	}
+}
+
+func TestAnAnimationDoesNotDiscardAHookReport(t *testing.T) {
+	// The same failure TestAnAnimationDoesNotClearTheBell was written for, one
+	// rule up. hookGrace is three seconds and the measurement in that test is
+	// 480 bytes of spinner in three seconds with no line feed in any of them,
+	// so "has anything printed since the report" is always yes and the report
+	// is discarded — leaving the fall-through to read the foreground process
+	// and answer working.
+	//
+	// That is the panel's precise source being overridden by its guess, in
+	// exactly the case the precise source exists for: an agent that asked a
+	// question and is now animating an "esc to interrupt" line under it.
+	d := NewDetector()
+	d.Report("s", StateWaiting, at(0))
+	for i := 1; i <= 100; i++ {
+		// '\r|' over the same line, once every 200ms, for twenty seconds.
+		d.Observe("s", Signals{Bytes: 30, Visible: true}, at(time.Duration(i)*200*time.Millisecond))
+	}
+	st, src := d.Evaluate("s", Observation{}, at(21*time.Second))
+	if st != StateWaiting || src != SourceHook {
+		t.Errorf("state = %q from %q after twenty seconds of animation, want %q from %q; "+
+			"the agent said it was waiting and a spinner overruled it", st, src, StateWaiting, SourceHook)
+	}
+}
+
+func TestAnAnimationDoesNotClearAManualOverride(t *testing.T) {
+	// Somebody overrides the state precisely when the automatic one is wrong,
+	// and the automatic one is most often wrong while a TUI is animating. So
+	// the next chunk arrives in milliseconds, the override is dropped, and the
+	// click reads as having done nothing.
+	d := NewDetector()
+	d.SetManual("s", StateWaiting, at(0))
+	for i := 1; i <= 100; i++ {
+		d.Observe("s", Signals{Bytes: 30, Visible: true}, at(time.Duration(i)*200*time.Millisecond))
+	}
+	st, src := d.Evaluate("s", Observation{}, at(21*time.Second))
+	if st != StateWaiting || src != SourceManual {
+		t.Errorf("state = %q from %q, want %q from %q; a redrawing screen is not "+
+			"the session doing something new", st, src, StateWaiting, SourceManual)
 	}
 }

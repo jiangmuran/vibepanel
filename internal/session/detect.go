@@ -69,7 +69,9 @@ type Detector struct {
 type tracker struct {
 	lastOutput time.Time
 	// lastAdvance — when the screen last moved forward, as opposed to being
-	// redrawn where it stood. See the bell rule in Evaluate.
+	// redrawn where it stood. Read by the manual, hook and bell rules in
+	// Evaluate: all three ask "has this session done something since", and a
+	// spinner is output without being an answer.
 	lastAdvance time.Time
 	lastBell    time.Time
 
@@ -242,73 +244,53 @@ func (d *Detector) Evaluate(id string, obs Observation, now time.Time) (State, S
 
 	// The user's own answer stands until the session does something new.
 	//
-	// KNOWN GAP, one of two: "something new" is lastOutput, and a spinner is
-	// output. `Advanced` was introduced to separate a screen that moved
-	// forward from one redrawn where it stood — the measurement is three
-	// paragraphs down, a redrawing TUI at 480 bytes and zero line feeds in
-	// three seconds — and only the bell rule was changed to use it. This rule
-	// and the hook rule directly below both still read lastOutput.
-	// lastAdvance's own field comment names the bell rule as its only reader,
-	// which is the shape of the omission.
+	// "Something new" is lastAdvance, not lastOutput, and the difference is a
+	// spinner. `Advanced` separates a screen that moved forward from one redrawn
+	// where it stood — measured three paragraphs down at 480 bytes and zero line
+	// feeds in three seconds — and reading lastOutput here failed in the case the
+	// feature exists for. Somebody overrides the state precisely when the
+	// automatic one is wrong, and the automatic one is most often wrong while a
+	// TUI is animating; so the next chunk arrived in milliseconds, the override
+	// was dropped, and the click read as having done nothing. Pinned by
+	// TestAnAnimationDoesNotClearAManualOverride.
 	//
-	// It fails in the case the feature exists for. Somebody overrides the state
-	// precisely when the automatic one is wrong, and the automatic one is most
-	// often wrong while a TUI is animating; so the next chunk arrives in
-	// milliseconds, lastOutput passes manualAt, and the dot snaps back. The
-	// click reads as having done nothing.
-	//
-	// The fix is `t.lastAdvance` in place of `t.lastOutput` here. It is a
-	// judgement rather than an obvious correction — it makes a manual state
-	// stickier, and a stale manual state is its own hazard — but the argument
-	// the bell rule makes applies unchanged: a screen being redrawn where it
-	// stands is not the session doing something.
-	//
-	// Found by reading, in a stretch where nothing could be run. Whoever
-	// changes it should drive a pane that rings and then animates, the way the
-	// measurement below was taken, rather than trusting this paragraph.
-	if t.manualState != "" && !t.lastOutput.After(t.manualAt) {
+	// It does make a manual state stickier, which is its own hazard: a screen
+	// redrawn where it stands never clears it. That is the trade the bell rule
+	// below already makes, on the same argument — a redraw is not the session
+	// doing something.
+	if t.manualState != "" && !t.lastAdvance.After(t.manualAt) {
 		return t.manualState, SourceManual
 	}
 
 	// A hook report stands until output arrives well after it. "Well after"
 	// because the notification and the prompt it announces are simultaneous.
 	//
-	// KNOWN GAP, the second of two, and the worse one. See the manual rule
-	// above: `Advanced` was introduced to separate a screen that moved forward
-	// from one being redrawn where it stood, and only the bell rule below was
-	// changed to use it.
-	//
-	// The paragraph in the bell rule applies here word for word — "an agent
-	// whose TUI keeps moving defeats any finite grace, because the test was
-	// 'has anything printed since', and something always has". hookGrace is
-	// three seconds and the same measurement says a spinner emits 480 bytes in
-	// three. So a hook that reported "waiting for you" is discarded, and the
-	// fall-through reads the foreground process and says working.
-	//
-	// That is the panel's precise source being overridden by its guess, in the
-	// case the precise source exists for. The README's claim is that the bell
-	// and a hook report "are separate and outrank it"; this rule makes that
+	// Same reading as the manual rule above, and less of a judgement call here.
+	// hookGrace is three seconds; the measurement below is 480 bytes of spinner
+	// in three, none of them a line feed. Against lastOutput the test was "has
+	// anything printed since", something always had, and a hook that reported
+	// "waiting for you" was discarded — leaving the fall-through to read the
+	// foreground process and answer working. That is the panel's precise source
+	// being overridden by its guess, in the case the precise source exists for,
+	// and it made the README's claim that a hook report outranks the heuristic
 	// true for three seconds.
 	//
-	// Same fix as above — `t.lastAdvance` in place of `t.lastOutput` — and it
-	// is less of a judgement call here than there: hookGrace's own comment
-	// says the grace exists to cover "the prompt itself, not the agent
-	// resuming work", and a line feed is exactly the difference between those
-	// two, measured on the wire rather than timed.
+	// hookGrace's own comment says the grace covers "the prompt itself, not the
+	// agent resuming work", and a line feed is exactly the difference between
+	// those two — measured on the wire rather than timed. Pinned by
+	// TestAnAnimationDoesNotDiscardAHookReport.
 	//
-	// The "state is guessed" notice does not cover for this, which is worth
-	// knowing before deciding the severity. stateIsGuessed returns false as
-	// soon as *any* session's state came from a hook — deliberately, because
-	// the script is installed globally or not at all. So on a panel with more
-	// than one session, one of them holding a fresh hook report suppresses the
-	// notice panel-wide while this one is being misreported. Running many
-	// sessions at once is the entire premise, so the mitigation is absent
-	// exactly where it would be needed.
-	//
-	// Not fixed, and not to be trusted from this paragraph: it needs a real
-	// agent that reports through a hook and then animates while it waits,
-	// which is the thing to reproduce before changing anything.
-	if t.hookState != "" && t.lastOutput.Sub(t.hookAt) < hookGrace {
+	// What makes this safe rather than a trade of one wrong state for another:
+	// Advanced is `chunk contains "\n"`, so an agent that resumed work inside a
+	// full-screen TUI would never advance and this report would stand forever.
+	// It cannot get stuck, because hookState is non-empty only when the hooks
+	// are installed, and an agent with hooks installed reports its other
+	// transitions too — UserPromptSubmit and PreToolUse arrive the moment it
+	// starts again. The grace therefore stops being a timer and becomes "until
+	// the agent says otherwise, or the screen actually moves", which is what it
+	// was trying to express. The manual rule above has no such backstop, which
+	// is why stickiness is a real cost there and only a phrasing here.
+	if t.hookState != "" && t.lastAdvance.Sub(t.hookAt) < hookGrace {
 		return t.hookState, SourceHook
 	}
 
