@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -98,5 +99,55 @@ func TestEveryStateAHookReportsIsARealState(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("the Codex notify line reports no state the server accepts: %s", codex)
+	}
+}
+
+// The other direction: a snippet entry the events map does not know.
+//
+// There are two producers of one mapping. `ClaudeSettings` composes four
+// hardcoded `entry(...)` calls for the settings page to show, and
+// `InstallClaude` ignores it entirely and iterates the `events` map through
+// `mergeEvent`. Nothing compared them -- `TestInstallIsIdempotent` asserts four
+// events, but reads `events` on both sides, so it agrees with itself.
+//
+// A disagreement means the page shows one thing and the button writes another,
+// against the one promise the install flow makes: you see the exact JSON that
+// will be merged before you agree to it. The forward direction is covered above;
+// this is the reverse, which is the one that lets the page advertise a hook
+// nothing installs.
+func TestTheSnippetPromisesNothingTheInstallerWillNotWrite(t *testing.T) {
+	const script = "/tmp/report.sh"
+	snippet := ClaudeSettings(script)
+
+	// Every `"Event": [` in the snippet, which is the shape entry() produces.
+	re := regexp.MustCompile(`"([A-Za-z]+)": \[`)
+	found := map[string]bool{}
+	for _, m := range re.FindAllStringSubmatch(snippet, -1) {
+		if m[1] == "hooks" {
+			continue
+		}
+		found[m[1]] = true
+	}
+	if len(found) == 0 {
+		t.Fatalf("no events parsed out of the snippet; the pattern has stopped matching and "+
+			"this test is checking nothing:\n%s", snippet)
+	}
+
+	for event := range found {
+		state, ok := events[event]
+		if !ok {
+			t.Errorf("the settings page advertises a %q hook and the events map has no such "+
+				"event, so pressing install writes nothing for it", event)
+			continue
+		}
+		// And the state it shows has to be the state that would be written.
+		want := script + " " + state
+		if !strings.Contains(snippet, `"command": "`+want+`"`) {
+			t.Errorf("the snippet's %q entry does not carry %q; the page would show one state "+
+				"and the installer write another", event, want)
+		}
+	}
+	if len(found) != len(events) {
+		t.Errorf("the snippet shows %d events and the map has %d", len(found), len(events))
 	}
 }

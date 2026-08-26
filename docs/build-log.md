@@ -9276,7 +9276,7 @@ Two is all of them. Swept by type rather than by literal — everything that tak
 
 The same channel has a better instance, and it needs nothing from the owner. `handleLogin` does not call `validateCredentials` — that runs on setup and on a password change — and `Audit` does not truncate, so a failed login is recorded with whatever username was sent. The settings page renders it as `{e.username \|\| '—'}`, raw. So an unauthenticated stranger chooses text that appears, unsanitised, in the one view its owner opens to find out who has been attacking them. Half of it is contained: every audit cell has `truncate` and a fixed width, so a 10 KB username cannot break the layout. `truncate` does nothing to U+202E, and the override's reach is its own `<span>`, so the damage is confined to the username cell — limited, not absent. | `web/src/App.tsx`, `web/src/components/Settings.tsx` | `safeText` where server strings and audit fields are rendered, which covers the channel rather than each message |
 | 25 | The same destructive call is confirmed on one path and not the other. Killing a session asks `window.confirm("Kill …? The process is terminated.")`; closing a scratch terminal is `onClose={(t) => api.deleteSession(t.id)}` — the same endpoint, the same killed process, no prompt. The X sits inside the tab, next to the tab's own click target, which is a mis-tap on a phone. Arguable rather than wrong: scratch terminals are framed as cheap and numbered, and a tab strip that asks on every close is one people stop using. What is missing is the sentence saying which of those was chosen — the sibling path has a confirm and this one has neither a prompt nor a note. | `web/src/App.tsx`, `web/src/components/BottomTerminals.tsx` | decide, and write down which |
-| 26 | `POST /sessions/{id}/restart` kills whatever is running. `Respawn` is `respawn-pane -k`, and nothing on the server asks whether the session has exited — the comment there reasons carefully about the tmux session being *gone* and not about it still running. The only guard is the frontend, which renders the button only when `current.exited`. The reachable case is the one the panel is built for: two viewers, A restarts an exited session, B's tab still shows the old snapshot and offers the button, and B's click kills the agent A just started. One round trip wide, since `notifyState` follows the restart. Possibly the capability is wanted — restarting a stuck agent is a real need — in which case the gap is the opposite one, that the UI never offers it deliberately. | `internal/httpapi/api.go` | refuse a live session, or offer it on purpose with the confirm that implies |
+| 26 | **Fixed: a live session is refused, and the pid is asserted.** `POST /sessions/{id}/restart` kills whatever is running. `Respawn` is `respawn-pane -k`, and nothing on the server asks whether the session has exited — the comment there reasons carefully about the tmux session being *gone* and not about it still running. The only guard is the frontend, which renders the button only when `current.exited`. The reachable case is the one the panel is built for: two viewers, A restarts an exited session, B's tab still shows the old snapshot and offers the button, and B's click kills the agent A just started. One round trip wide, since `notifyState` follows the restart. Possibly the capability is wanted — restarting a stuck agent is a real need — in which case the gap is the opposite one, that the UI never offers it deliberately. | `internal/httpapi/api.go` | refuse a live session, or offer it on purpose with the confirm that implies |
 | 27 | A refused clipboard write is recoverable on one path and silent on the other. `App.tsx` keeps `blockedClip` for the OSC 52 case — the text a pane copied that the browser would not take, held so it can be offered behind a click, "which is the activation the write needs". `SelectionCopy` answers the same rejection with `.catch(() => setCopiedText(''))`, so the button goes from "Copy" back to "Copy" and nobody can tell a refusal from a missed tap. It is the touch path, where browsers are stricter about the clipboard and a missed tap is likelier, so the ambiguity lands where it costs most. Predates this phase — described in an entry above, never carried into this table, which is why the index was swept for what it might be missing. | `web/src/components/mobile/SelectionCopy.tsx` | the `blockedClip` treatment, or any message that separates the two outcomes |
 | 32 | Every build prints a warning nobody has decided about. Vite reports "some chunks are larger than 500 kB" for the 644 KB bundle, on `make build` and again inside each of the seven checks that build first. There is no `chunkSizeWarningLimit` in the vite config and no note anywhere about it. The answer is almost certainly to raise the limit — the bundle is xterm and React, embedded in the binary, served locally, loaded once — but the reason is the part worth having, because this project argues elsewhere that output people learn to ignore is worse than no output: `doctor` reports `--` rather than FAIL precisely so it does not "train the reader to ignore doctor output". Housekeeping, not a defect. | `web/vite.config.ts` | raise the limit with the sentence saying why, or split the bundle |
 | 33 | The dev server proxies to a port nothing documents. `vite.config.ts` sends `/api` and `/ws` to `127.0.0.1:7788`, and 7788 appears nowhere else in the tree — not in AGENTS.md, the README or `docs/`. So `npm run dev` requires the panel to have been started with `--addr :7788`, which a contributor has to learn by reading the vite config; without it every request 502s and nothing on screen points at a port. AGENTS.md is the file whose job this is — it carries the red lines, the conventions, the layout and the table of checks — and has no dev-server section at all. | `AGENTS.md`, `web/vite.config.ts` | a line saying how to run the two halves together |
@@ -9290,7 +9290,7 @@ The same file stops early at the other end too: it never mentions that a runbook
 | 42 | **Fixed: `doctor` detects it and the runbook names all three causes.** Turning TLS on kills hooks in every session that already exists, and the README tells you to do it. `LoopbackURL()` builds the scheme from `TLSMode` and the port from `Port()`, and that string is baked into each session's environment at creation, where it cannot be changed. The documented sequence is: install with the shipped default of `--tls off`, work, then "edit it before exposing the panel" and restart — at which point the sessions survive by design, still holding `http://127.0.0.1:8443`, and post plaintext at a listener that now speaks only TLS. Changing the port does the same. The symptom is the one already documented twice, and it is silent because the reporter suppresses its own errors. The comment directly above `LoopbackURL` describes that symptom for a different cause — binding to one interface — so the failure mode was known and this second route into it sits in the value that function returns. Same class as 41, far likelier: it is the setup flow. Detectable, too — `tmux show-environment` can be compared against the current config. | `docs/runbook.md`, `internal/httpapi/api.go` | name it in the runbook; a startup check comparing each session's injected URL against the live one would turn it into a line of output |
 | 43 | **Fixed: the server records what it started with, and `doctor` compares. All three branches driven.** A changed `vibepanel.conf` never reaches a running tmux server. `EnsureServer` writes the embedded config to disk every time, so the file is always current, and then returns early if the server is up — `-f` is only read at `start-server`. The panel never kills that server, which is the premise of the project, so a config change takes effect at the next reboot or not at all. That covers `allow-passthrough`, the reason tmux 3.3 is required, and the `smcup@:rmcup@` and `indn@` overrides added during this session. It compounds with 36: an upgrade leaves a new binary that is not running and a new tmux config that is not loaded, and both look installed. Detectable — stamp a hash of the config into a tmux user option at `start-server` and compare it on the next start. | `internal/tmux/tmux.go`, `docs/runbook.md` | say it in the runbook beside the kill-server command that is already there, and consider the stamp |
 | 41 | **Fixed: `doctor` compares each session's token against the stored one, both branches driven.** A restored database silently kills hooks in every session that survived it. `hook_token` is created on first use and never rotated, which is right; it is injected into each tmux session's environment at creation, and a running session's environment cannot be changed. So if the stored value ever goes away — a restore from a backup taken before it was created, which the runbook's "database will not open" section tells operators to do, or the settings row being cleared — a new token is generated while the sessions, which outlive the database by design, keep presenting the old one. Every report is then rejected, permanently for those sessions, and silently, because the reporter script suppresses its own failures. It is a third cause for the symptom the runbook already documents twice, and that section does not name it. | `docs/runbook.md` | add it beside the bind-address cause, with `vibepanel session ls` and "recreate them" as the remedy |
-| 44 | The settings page shows a snippet built separately from what installing writes. `ClaudeSettings` composes four hardcoded `entry(…)` calls for display; `InstallClaude` ignores it and iterates the `events` map through `mergeEvent`. Two producers of one mapping, and nothing compares them — `TestInstallIsIdempotent` asserts four events, but from `events` on both sides. A disagreement means the page shows one thing and the button writes another, against the promise that you see what will be merged before agreeing to it. Half-covered already by the uncommitted `states_test.go` (see 3), which asserts every event and state in `events` appears in the snippet; the reverse — a snippet entry the map does not know — is still unpinned. | `internal/hooks/hooks.go` | run 3's test, then add the other direction |
+| 44 | **Fixed: the reverse direction is pinned, both ways mutated.** The settings page shows a snippet built separately from what installing writes. `ClaudeSettings` composes four hardcoded `entry(…)` calls for display; `InstallClaude` ignores it and iterates the `events` map through `mergeEvent`. Two producers of one mapping, and nothing compares them — `TestInstallIsIdempotent` asserts four events, but from `events` on both sides. A disagreement means the page shows one thing and the button writes another, against the promise that you see what will be merged before agreeing to it. Half-covered already by the uncommitted `states_test.go` (see 3), which asserts every event and state in `events` appears in the snippet; the reverse — a snippet entry the map does not know — is still unpinned. | `internal/hooks/hooks.go` | run 3's test, then add the other direction |
 | 13 | `panels.go` ends with `var _ = func() []store.Todo { return emptyIfNil[store.Todo](nil) }` under a comment that calls it `emptyTodos` and says it "keeps the compiler honest". It is neither: the variable is `_`, and `emptyIfNil` has four real call sites in this package. Two dead lines under a comment that misnames its own variable and misstates its purpose. | `internal/httpapi/panels.go` | delete both lines |
 | — | red line 3's third mirror, `doctor`'s eleven lines as a table, the wire inventory, this handoff | `AGENTS.md`, `docs/*` | reading is the whole of it |
 
@@ -10693,3 +10693,55 @@ restamp" case changed the config *file* and asserted the stamp was unchanged --
 which it would have been either way, because `ConfigStamp` hashes the embedded
 bytes and not the file. It passed for a reason with nothing to do with what it
 was testing. It sets a value no hash can produce now, which is decisive.
+
+
+## 26: the button that killed what somebody else had just started
+
+`Respawn` is `respawn-pane -k`, which kills whatever is in the pane, and the
+handler never asked whether there was anything to kill. Its comment reasons
+carefully about the tmux session being *gone* -- killed from a shell, lost with
+the server, gone in a reboot -- and not at all about it still working. The only
+guard was the frontend, which renders the button only when the session has
+exited.
+
+The reachable case is the one this panel is built for. Two viewers: A restarts a
+dead session, B's tab still holds the snapshot from before and still offers the
+button, and B's click kills the agent A just started. The window is one round
+trip wide, because `notifyState` follows the restart -- and "one round trip" is a
+description of a race, not of a safe interval.
+
+409 now, with the reason. Not 400: nothing about the request is malformed, the
+state it assumed has changed underneath it.
+
+**The pid is the assertion, and it is why the test is worth having.** Removing
+the guard produces this:
+
+    restarting a running session answered 204 No Content, want 409
+    the process was replaced anyway: pid 3814339 -> 3814346
+
+A 409 with the process replaced anyway would be a worse bug than no 409 at all,
+because the message would say nothing happened.
+
+Restarting a *live* session is a real need -- an agent wedged rather than exited
+-- and if it is ever wanted it is a different affordance with a confirm on it,
+not this one silently doing more than its name.
+
+## 44: two producers of one mapping
+
+`ClaudeSettings` composes four hardcoded `entry(...)` calls for the settings page
+to show; `InstallClaude` ignores it and iterates the `events` map through
+`mergeEvent`. Nothing compared them. `TestInstallIsIdempotent` asserts four
+events and reads `events` on both sides, so it agrees with itself.
+
+A disagreement means the page shows one thing and the button writes another,
+against the one promise the install flow makes: you see the exact JSON that will
+be merged before agreeing to it. The forward direction -- every event in the map
+appears in the snippet -- was already covered. This is the reverse, which is the
+half that lets the page advertise a hook nothing installs.
+
+Both mutations caught, and the messages are the point:
+
+    the settings page advertises a "SubagentStop" hook and the events map has no
+      such event, so pressing install writes nothing for it
+    the snippet's "Stop" entry does not carry "/tmp/report.sh done"; the page
+      would show one state and the installer write another

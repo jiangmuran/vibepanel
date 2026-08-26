@@ -1228,6 +1228,34 @@ func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if exists {
+		// Refuse a session whose process is still running.
+		//
+		// Respawn is `respawn-pane -k`, which kills whatever is there. Nothing
+		// here asked whether there was anything to kill -- the comment above
+		// reasons carefully about the tmux session being *gone* and not about
+		// it still working. The only guard was the frontend, which renders the
+		// button only when the session has exited.
+		//
+		// The reachable case is the one this panel is built for. Two viewers: A
+		// restarts a dead session, B's tab still holds the snapshot from before
+		// and still offers the button, and B's click kills the agent A just
+		// started. The window is one round trip wide, because notifyState
+		// follows the restart -- and "one round trip" is a description of a
+		// race, not of a safe interval.
+		//
+		// 409 rather than 400: nothing about the request is malformed, the
+		// state it assumed has changed underneath it, which is exactly what
+		// Conflict means. The client already returns to the sign-in screen on
+		// 401 and shows the message otherwise, so this arrives as text.
+		//
+		// If restarting a *live* session is ever wanted -- an agent wedged
+		// rather than exited is a real need -- it is a different affordance
+		// with a confirm on it, not this one silently doing more than its name.
+		if info, ierr := s.Tmux.Get(ctx, rec.TmuxName); ierr == nil && !info.Dead {
+			writeErr(w, http.StatusConflict,
+				"that session is running again; reload before restarting it")
+			return
+		}
 		if err := s.Tmux.Respawn(ctx, rec.TmuxName); err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return

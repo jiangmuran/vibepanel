@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -2736,5 +2737,71 @@ func TestARejectedHookTokenIsAudited(t *testing.T) {
 		t.Errorf("a rejected hook token wrote no audit row (%d before, %d after); a probe of "+
 			"this endpoint is invisible to the query the runbook sends people to",
 			len(before), len(after))
+	}
+}
+
+// Restarting a session that is already running must be refused.
+//
+// Respawn is `respawn-pane -k`, which kills whatever is there, and nothing on
+// the server asked whether there was anything to kill: the comment on the
+// handler reasons about the tmux session being *gone* and not about it still
+// working. The only guard was the frontend, which renders the button only when
+// the session has exited.
+//
+// The reachable case is the one this panel exists for. Two viewers: A restarts
+// a dead session, B's tab still holds the snapshot from before and still offers
+// the button, and B's click kills the agent A just started. The window is one
+// round trip wide, because notifyState follows the restart -- which describes a
+// race rather than a safe interval.
+//
+// The pid is the assertion. A 409 with the process replaced anyway would be a
+// worse bug than no 409 at all.
+func TestRestartingALiveSessionIsRefused(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"test"}`)
+	sess := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sleep","300"]}`)
+
+	var before tmux.Info
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		info, err := srv.Tmux.Get(ctx, sess.TmuxName)
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		if info.PID != 0 && info.Command == "sleep" {
+			before = info
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the session never started running (%+v), so this test is not looking at "+
+				"a live session", info)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	res, err := ts.Client().Post(ts.URL+"/api/sessions/"+sess.ID+"/restart", "application/json", nil)
+	if err != nil {
+		t.Fatalf("restart: %v", err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+
+	if res.StatusCode != http.StatusConflict {
+		t.Errorf("restarting a running session answered %s (%s), want 409; a second viewer with "+
+			"a stale snapshot kills the agent the first one just started",
+			res.Status, bytes.TrimSpace(body))
+	}
+	after, err := srv.Tmux.Get(ctx, sess.TmuxName)
+	if err != nil {
+		t.Fatalf("get after: %v", err)
+	}
+	if after.PID != before.PID {
+		t.Errorf("the process was replaced anyway: pid %d -> %d. A refusal that still kills is "+
+			"worse than no refusal, because the message says nothing happened.",
+			before.PID, after.PID)
 	}
 }
