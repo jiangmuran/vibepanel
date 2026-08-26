@@ -8,9 +8,24 @@ What to check when a running deployment misbehaves.
 vibepanel doctor
 ```
 
-It verifies the tmux binary, the data directory, the database schema, the tmux
-server, isolation (no foreign sessions on our socket) and whether passkeys can
-work with the current configuration.
+Eleven lines, and it prints all of them rather than stopping at the first
+failure — a machine with three problems used to take three runs to find them.
+
+| line | what a failure means |
+|---|---|
+| `tmux binary` | missing is fatal; older than 3.3 is `--`, and says which sequences are lost |
+| `data dir` | the directory cannot be created or written |
+| `running panel` | whether something already holds the data directory, and its pid |
+| `database` | the schema version, or a refusal to open one a newer binary wrote |
+| `database writes` | a real write, in a transaction it rolls back — opening a database says nothing about writing to one |
+| `disk` | under 512 MiB is `--`, under 64 MiB is a failure; a full disk is the panel's quietest one |
+| `tmux server` | it says so when the check started the server itself |
+| `isolation` | any session on our socket that is not ours, which is the promise that lets this run beside your existing tmux |
+| `passkeys` | `--` and the reason when the configuration cannot support them; password login is unaffected |
+| `environment` | `VIBEPANEL_*` variables that are set and never read — a misspelled `VIBEPANEL_TLS` once meant plaintext on a public port |
+
+`--` is "works, but not here", never a failure. It is used where saying FAIL
+would train you to skip the output.
 
 ## The panel is up but a session shows GONE
 
@@ -304,7 +319,12 @@ allocated up front, so an idle panel sits well below that ceiling.
 
 If the panel's own memory is far above roughly 2 MiB per live session,
 something is retaining more than it should; `scripts/scale-check.mjs` measures
-exactly this and fails past three.
+exactly this and fails past 3 MiB per session.
+
+It also refuses to pass when it cannot measure. `rssMiB` returns NaN where
+there is no `/proc`, and every comparison against NaN is false, so the check
+tests for that before comparing rather than letting a run it could not measure
+count as a good one.
 
 For the box as a whole:
 

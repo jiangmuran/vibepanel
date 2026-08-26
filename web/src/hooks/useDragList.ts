@@ -104,6 +104,22 @@ export function useDragList(ids: string[], onCommit: (ordered: string[]) => void
       if (from < 0) return
       // The insertion index counts positions in the original list, so removing
       // the dragged row first shifts everything below it up by one.
+      //
+      // KNOWN GAP: nothing exercises this branch. `overIndex > from` is a
+      // downward drag; render-check drags the *second* project above the
+      // first, which is upward and takes the `else`. And web/src/hooks has no
+      // test file at all — every other pure-logic module here has one
+      // (touchSelect, keys, label, meter, text, theme, styles, deps, harness),
+      // which makes this the only piece of arithmetic in the frontend that
+      // needed a comment to explain it and has nothing checking it.
+      //
+      // The line looks right and is not a reported bug. What it is, is the
+      // untested half of a classic off-by-one, in a gesture people use
+      // constantly, whose failure is silent: a project dropped one position
+      // from where it was aimed reads as having aimed badly.
+      //
+      // A unit test is the cheap half — this is a pure function of
+      // (ids, from, overIndex). A downward drag in render-check is the other.
       const to = overIndex > from ? overIndex - 1 : overIndex
       if (to === from) return
 

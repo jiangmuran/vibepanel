@@ -110,6 +110,38 @@ async function scanCovered(target, where) {
 }
 
 /** note()-reporting wrapper around the tap scan. See lib/tap.mjs. */
+//
+// KNOWN GAP, not fixed here: both of these report only when they find
+// something, and neither asserts that it looked at anything.
+//
+// findSmallTargets walks `button, a[href], [role="button"]`. Replace a button
+// with a `<div onClick>` — an ordinary refactor — and it returns [] and the
+// check passes. An empty result and a clean page are the same value.
+// findUnreachable has the same shape.
+//
+// The other way to go blind, calling this before the view has rendered, is
+// covered by accident: this file clicks dozens of specific testids, and a page
+// that had not rendered would fail those first and loudly. It is the refactor
+// case that has nothing standing in front of it — Playwright clicks a div as
+// happily as a button, so every other assertion keeps passing while the rule
+// stops being measured.
+//
+// This is the failure this project has already been bitten by twice: a CSS
+// import that resolved to an empty stub so every theme assertion passed against
+// nothing, and a `go list` run from the wrong directory so the module guard
+// measured itself. Both were found by accident. The two checks added most
+// recently — the harness socket sweep and the route walk — assert a floor on
+// what they saw for exactly this reason; these two predate that and never got
+// it.
+//
+// The fix is a floor, not a threshold: have the scans report how many
+// candidates they examined and fail at zero. Zero is unambiguous — a rendered
+// panel has buttons — so it cannot false-positive, which matters for a check
+// that takes six minutes and gates a release.
+//
+// Established by reading, in a stretch where nothing could be run. Not written
+// as code for that reason: a browser check nobody can execute is a change that
+// fails closed on whoever runs it next.
 async function scanTapTargets(target, where) {
   const small = await findSmallTargets(target)
   if (small.length > 0) {

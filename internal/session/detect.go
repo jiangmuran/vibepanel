@@ -241,12 +241,73 @@ func (d *Detector) Evaluate(id string, obs Observation, now time.Time) (State, S
 	}
 
 	// The user's own answer stands until the session does something new.
+	//
+	// KNOWN GAP, one of two: "something new" is lastOutput, and a spinner is
+	// output. `Advanced` was introduced to separate a screen that moved
+	// forward from one redrawn where it stood — the measurement is three
+	// paragraphs down, a redrawing TUI at 480 bytes and zero line feeds in
+	// three seconds — and only the bell rule was changed to use it. This rule
+	// and the hook rule directly below both still read lastOutput.
+	// lastAdvance's own field comment names the bell rule as its only reader,
+	// which is the shape of the omission.
+	//
+	// It fails in the case the feature exists for. Somebody overrides the state
+	// precisely when the automatic one is wrong, and the automatic one is most
+	// often wrong while a TUI is animating; so the next chunk arrives in
+	// milliseconds, lastOutput passes manualAt, and the dot snaps back. The
+	// click reads as having done nothing.
+	//
+	// The fix is `t.lastAdvance` in place of `t.lastOutput` here. It is a
+	// judgement rather than an obvious correction — it makes a manual state
+	// stickier, and a stale manual state is its own hazard — but the argument
+	// the bell rule makes applies unchanged: a screen being redrawn where it
+	// stands is not the session doing something.
+	//
+	// Found by reading, in a stretch where nothing could be run. Whoever
+	// changes it should drive a pane that rings and then animates, the way the
+	// measurement below was taken, rather than trusting this paragraph.
 	if t.manualState != "" && !t.lastOutput.After(t.manualAt) {
 		return t.manualState, SourceManual
 	}
 
 	// A hook report stands until output arrives well after it. "Well after"
 	// because the notification and the prompt it announces are simultaneous.
+	//
+	// KNOWN GAP, the second of two, and the worse one. See the manual rule
+	// above: `Advanced` was introduced to separate a screen that moved forward
+	// from one being redrawn where it stood, and only the bell rule below was
+	// changed to use it.
+	//
+	// The paragraph in the bell rule applies here word for word — "an agent
+	// whose TUI keeps moving defeats any finite grace, because the test was
+	// 'has anything printed since', and something always has". hookGrace is
+	// three seconds and the same measurement says a spinner emits 480 bytes in
+	// three. So a hook that reported "waiting for you" is discarded, and the
+	// fall-through reads the foreground process and says working.
+	//
+	// That is the panel's precise source being overridden by its guess, in the
+	// case the precise source exists for. The README's claim is that the bell
+	// and a hook report "are separate and outrank it"; this rule makes that
+	// true for three seconds.
+	//
+	// Same fix as above — `t.lastAdvance` in place of `t.lastOutput` — and it
+	// is less of a judgement call here than there: hookGrace's own comment
+	// says the grace exists to cover "the prompt itself, not the agent
+	// resuming work", and a line feed is exactly the difference between those
+	// two, measured on the wire rather than timed.
+	//
+	// The "state is guessed" notice does not cover for this, which is worth
+	// knowing before deciding the severity. stateIsGuessed returns false as
+	// soon as *any* session's state came from a hook — deliberately, because
+	// the script is installed globally or not at all. So on a panel with more
+	// than one session, one of them holding a fresh hook report suppresses the
+	// notice panel-wide while this one is being misreported. Running many
+	// sessions at once is the entire premise, so the mitigation is absent
+	// exactly where it would be needed.
+	//
+	// Not fixed, and not to be trusted from this paragraph: it needs a real
+	// agent that reports through a hook and then animates while it waits,
+	// which is the thing to reproduce before changing anything.
 	if t.hookState != "" && t.lastOutput.Sub(t.hookAt) < hookGrace {
 		return t.hookState, SourceHook
 	}

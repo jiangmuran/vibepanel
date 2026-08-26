@@ -153,6 +153,24 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Content-Security-Policy", "frame-ancestors 'none'")
 		h.Set("Cross-Origin-Opener-Policy", "same-origin")
+		// Strict-Transport-Security is deliberately not here, and this is the
+		// note that stops it being added as the obvious fifth.
+		//
+		// HSTS is scoped to a host and ignores the port it arrived on (RFC 6797
+		// §8.1). This panel's whole deployment story is a non-standard port on
+		// a machine that runs other things, so a policy sent from :8443 would
+		// pin *every* port of that hostname to HTTPS in every visitor's
+		// browser — including whatever the operator serves on plain HTTP at
+		// :80 — for the whole max-age. Undoing it means serving max-age=0 over
+		// HTTPS on that same host, which is a repair job, not a config change.
+		//
+		// It also buys little here. A downgrade needs something to downgrade
+		// *to*, and there is no HTTP listener: with --tls the port speaks TLS
+		// only, and with --tls off the header would be sent in the clear and
+		// browsers ignore it there.
+		//
+		// The four above cost nothing, which is the line this set was chosen
+		// on. This one does not.
 		next.ServeHTTP(w, r)
 	})
 }
@@ -397,6 +415,29 @@ func (s *Server) notifyPanel(projectID, kind string) {
 	if err != nil {
 		return
 	}
+	// KNOWN GAP: Broadcast funnels this into queueState, whose single
+	// `statePending` slot is *replaced* rather than appended to. That is right
+	// for what it was built for — a state snapshot is idempotent, so the newest
+	// contains the older ones, and the comment on Broadcast explains the cost
+	// it is avoiding: "a viewer whose socket cannot take another byte must not
+	// be able to hold every other viewer's state update behind it."
+	//
+	// A panel notification is not a snapshot. It is an event that says "your
+	// notes for this project changed, fetch them again", and two of them are
+	// not interchangeable — losing the "note" one because a "todos" one or a
+	// state broadcast landed on top means the other viewer's notes panel simply
+	// does not refresh until something else wakes it.
+	//
+	// The window is real rather than theoretical: stateWriter takes the payload,
+	// clears the slot, and then calls sendRaw, which is a network write that
+	// can block. Everything queued during that write collapses to one message.
+	// In the common case notifyState is the one that loses, because it goes
+	// through Hub.Notify's coalescing timer while this goes out immediately —
+	// but which one survives is a race, and one of the two is an event.
+	//
+	// Found by reading. The fix is a second slot or a small queue for messages
+	// that are not snapshots; what it must not be is dropping the coalescing,
+	// which exists for a measured reason.
 	s.Hub.Broadcast(payload)
 }
 
@@ -631,6 +672,29 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 //
 // Not a general "is this an agent" test — just the ones known to stop and wait
 // without ringing the bell, which is the case the notice is about.
+//
+// Matched against a live process name, not against what the session was asked
+// to run: the poller overwrites the row's Command with #{pane_current_command}
+// on every tick (UpdateSessionRuntime). So these two strings have to be what
+// tmux reports for a running agent, which is a fact about somebody else's
+// packaging rather than about this repository.
+//
+// Codex is a single binary and reports "codex". Claude Code depends on how it
+// was installed — a native binary reports "claude", a node entry point reports
+// "node" — and nothing here pins either. When it does not match, what is lost
+// is silent and is the panel's own honesty: stateIsGuessed returns false, so
+// the notice that says the states are inferred never appears, on precisely the
+// sessions it is about.
+//
+// One command settles it on any given machine:
+//
+//	tmux -L vibepanel list-panes -a -F '#{pane_current_command}'
+//
+// Left as a list rather than widened to "any non-shell process", because the
+// comment above is right that this is not a general "is this an agent" test:
+// htop and a build are not agents, and a notice that fires on them is one
+// people stop reading. Recorded so that a mismatch is diagnosed rather than
+// discovered.
 var agentCommands = map[string]bool{"claude": true, "codex": true}
 
 // stateIsGuessed reports whether an agent is running with nothing reporting
@@ -792,6 +856,19 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	if req.Name == "" {
 		req.Name = filepath.Base(abs)
 	}
+	// KNOWN GAP, minor and possibly deliberate: nothing stops the same
+	// directory being added twice. `projects.path` has no unique constraint,
+	// this does not look, and the dialog does not either. Both rows then take
+	// their name from the same basename, so the sidebar shows two entries that
+	// are the same pixels with separate notes and todos behind them.
+	//
+	// The panel has machinery for exactly this problem — disambiguatedLabels —
+	// and it works on sessions, not projects.
+	//
+	// Left alone rather than guarded, because two projects on one directory is
+	// arguable rather than obviously wrong; somebody may want the same tree
+	// grouped two ways. If it is to be refused, the useful answer names the
+	// project already there rather than a UNIQUE constraint failure.
 	p, err := s.DB.CreateProject(r.Context(), id.New(), req.Name, abs)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -865,6 +942,25 @@ func (s *Server) handlePatchProject(w http.ResponseWriter, r *http.Request) {
 // Kill failing before anything else has happened is also the better half of
 // the bargain. Detaching first and then failing to kill left the panel with no
 // attachment to a tmux session that was still running.
+//
+// KNOWN GAP: the ctx that reaches here is the request's, and Go cancels that
+// when the client disconnects. The comment above reasons about which half
+// should fail first; it does not reason about the half being cancelled.
+//
+// Both callers loop. handleDeleteSession kills the children and then the
+// parent; handleDeleteProject kills every session in the project. A tab closed
+// just after the click cancels the context somewhere in that loop, so some
+// tmux sessions are dead, the DeleteSession that follows never runs, and their
+// rows survive — which is the GONE state, for a batch, from doing nothing
+// wrong. Recoverable (the runbook has the section) and a narrow window, but
+// the window is "closed the tab right after pressing delete", which people do.
+//
+// The pattern for the fix is already in this file: notifyState's two writers
+// detach with `context.WithTimeout(context.Background(), 5*time.Second)`
+// because the work has to outlive the thing that triggered it. Destructive
+// work has the same property and did not get the same treatment.
+//
+// Found by reading, in a stretch where nothing could be run.
 func (s *Server) tearDownSession(ctx context.Context, id, tmuxName string) error {
 	if err := s.Tmux.Kill(ctx, tmuxName); err != nil {
 		return err
@@ -1543,6 +1639,32 @@ func (s *Server) pollOnce(ctx context.Context) error {
 				s.Log.Debug("attach for monitoring", "session", row.ID, "err", aerr)
 			}
 		}
+		// KNOWN GAP, not fixed here: this writes on every tick whether anything
+		// changed or not, and so does the title update below.
+		//
+		// `UPDATE sessions SET cwd = ?, command = ?` has no value comparison,
+		// and SQLite does not skip a write because the values match — the row
+		// is rewritten and appended to the WAL either way. At the two dozen
+		// sessions this is built for and a two-second tick, that is about
+		// twenty-four writes a second at complete idle, forever, to the disk
+		// the projects live on.
+		//
+		// The inconsistency is the tell, and it is a convention rather than one
+		// stray line: of the four writes in this loop, SetSessionExit and
+		// SetSessionState both compare against the row first, and these two do
+		// not. `row` — which holds the previous cwd and command — is already in
+		// hand here. `if info.Path != row.CWD || info.Command != row.Command`
+		// is the whole fix, and it cannot change behaviour, because the write
+		// it skips is one that would have stored the values already there.
+		//
+		// This project debounces TouchSessionOutput to once a second per
+		// session, gates the audit log to one row per source per minute, and
+		// took lastOutputAt off the wire over 85 KiB a minute. This is the
+		// same concern, unguarded, in the loop that runs most often.
+		//
+		// Recorded rather than applied only because nothing could be run to
+		// measure it. It is the readiest of the gaps written down in this
+		// stretch: the change is four tokens and provably a no-op on content.
 		if err := s.DB.UpdateSessionRuntime(ctx, row.ID, info.Path, info.Command); err != nil {
 			return err
 		}

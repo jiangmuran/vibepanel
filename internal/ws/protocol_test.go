@@ -117,6 +117,23 @@ func TestBinaryFrameLayoutMatchesTheClient(t *testing.T) {
 		{"FRAME_DATA", uint64(FrameData)},
 		{"FRAME_REPLAY", uint64(FrameReplay)},
 		{"BINARY_HEADER_LEN", uint64(binaryHeaderLen)},
+		// KNOWN GAP: wire.ts declares four constants and this pins three.
+		// EXIT_VANISHED is the fourth, and its own comment says it "Mirrors
+		// store.ExitStatusVanished".
+		//
+		// Drift there reproduces a bug that already happened: the frontend
+		// treats any non-zero status that is not EXIT_VANISHED as a crash —
+		// Sidebar.tsx counts them for the project summary — so a session whose
+		// tmux session merely disappeared would be reported as having crashed,
+		// with a badge reading a number no process could have returned. That is
+		// what wire.ts's comment describes the first version doing.
+		//
+		// Not added here because it needs two changes and neither could be
+		// compiled in the sitting that found it: `declared` parses
+		// `0x..|\d+` and would not match `-1`, and the value is a store
+		// constant, so this comparison wants int64 rather than uint64. The
+		// natural home may be internal/httpapi/wire_test.go instead, which
+		// already imports store and reads this same file.
 	} {
 		if got := declared(tc.ts); got != tc.want {
 			t.Errorf("%s is %d in %s and %d here", tc.ts, got, path, tc.want)

@@ -69,6 +69,35 @@ tls-check: build      ## Serve over its own TLS: wss, Secure cookie, cert swap
 .PHONY: verify
 verify: check head-check first-run-check render-check stress-check restart-check scale-check tls-check release-check  ## Every check there is (~20 min)
 	@echo "all checks passed"
+# KNOWN GAP: that line is printed over any number of warnings.
+#
+# A WARN does not change a check's exit code, deliberately — it separates "the
+# thing under test failed" from "the setup for it did not happen", and making
+# setup flakiness fail the gate is how a gate stops being run. But several
+# warnings mean a whole section was skipped: no second project to drag, no
+# uploaded file in the tree, no dead session for the header check. render-check
+# alone has twenty-four of them.
+#
+# So `make verify` can skip six sections and end with "all checks passed",
+# twenty minutes after the warnings scrolled past in the middle of eight
+# checks' output. That is the shape head-check was written to remove — "HEAD
+# had not compiled for some time, while every check passed."
+#
+# Cheap to fix: every check already ends with a line of the same form,
+# `=== render check: 0 FAIL, 0 WARN ===`. Collect them and print them under the
+# verdict, so "passed" arrives next to what was not looked at. Making WARN fail
+# the build is the wrong half of the trade.
+#
+# The same shape sits one target down, in `check` itself. Four test helpers call
+# `t.Skip("tmux not installed")`, and each guards a whole suite — internal/tmux,
+# internal/session, internal/httpapi and cmd/vibepanel, which is most of the Go
+# tests. `go test` without -v does not summarise skips, so on a machine with no
+# tmux every one of those packages prints `ok` and the fast gate goes green
+# having run almost nothing. Nothing here mentions tmux as a prerequisite.
+#
+# That matters more than the verify case, because `check` is the gate people
+# actually run before committing. A line in this target that looks for tmux and
+# says loudly what will not be tested without it is the whole fix.
 
 .PHONY: release
 release:              ## Cross-compiled archives in dist/

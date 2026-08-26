@@ -743,6 +743,27 @@ func cmdDoctor(args []string) error {
 	// of the checks below look different when something else is holding the
 	// data directory, and `doctor` is often run precisely because somebody is
 	// not sure whether the service is up.
+	//
+	// MISSING CHECK, and this is the branch that knows when it would be valid:
+	// nothing here asks whether the panel answers on the URL its own hooks
+	// post to. cfg.LoopbackURL() is only reachable when the panel is listening
+	// on loopback, and `--addr 192.168.8.20:8443` — an ordinary way to narrow
+	// exposure — binds one interface and leaves nothing on 127.0.0.1.
+	//
+	// Every symptom of that is a silence. The reporter script suppresses its
+	// own failures on purpose, because a hook that makes an agent wait is worse
+	// than a missed state update; the settings page reports hooks as installed
+	// because it reads the agent's configuration file, not whether anything
+	// arrived; and every session falls back to the guessed state, which is
+	// right often enough that nobody investigates. The runbook has the section
+	// and the three commands, and reaching it requires already suspecting the
+	// bind address.
+	//
+	// One GET to cfg.LoopbackURL()+"/api/health" while a panel holds the lock
+	// would turn that into a line of doctor output. Only while one holds it:
+	// with no panel running, loopback not answering is the expected state and a
+	// FAIL there would teach people to skip the output — the same reason
+	// passkeys report "--" rather than failing.
 	if dirsOK {
 		if holder := config.DataDirLockedBy(cfg.DataDir); holder != "" {
 			fmt.Printf("[ok  ] running panel      %s holds %s\n", holder, cfg.DataDir)

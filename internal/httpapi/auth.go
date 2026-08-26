@@ -249,6 +249,37 @@ func (s *Server) handleAuthState(w http.ResponseWriter, r *http.Request) {
 			state.PasskeyReason = "passkeys need HTTPS, or localhost"
 		}
 	}
+	// KNOWN GAP, not fixed here: the discarded error is the third outcome.
+	//
+	// currentUser answers "signed in", "not signed in", or "the database cannot
+	// say", and that distinction exists because collapsing the last two once
+	// told every viewer on a full disk to sign in — into the same broken
+	// database, again and again, until the login throttle locked them out of a
+	// panel that was only short of space. RequireAuth answers 503 for it now.
+	// This collapses it back to "not signed in".
+	//
+	// Which would be harmless if nothing acted on it, and something does. This
+	// endpoint is what App.tsx asks after the socket has been down four
+	// seconds, precisely to tell "the session ended" from "the network went
+	// away", and its rule is `if (!state.authenticated) onSignOut()`. So a read
+	// that fails here signs the user out.
+	//
+	// Reachable without the database being wholly gone: CountUsers above and
+	// the session lookup inside currentUser are two statements. One succeeding
+	// and the other not — a busy database under contention, or storage that
+	// went away between them — produces 200 with authenticated:false, which is
+	// the one answer the client treats as final. Measured earlier in this
+	// session: an unreadable database closes every open socket after one
+	// revalidation tick, so this endpoint is being asked at exactly the moment
+	// it is most likely to fail.
+	//
+	// The fix is to answer 503 when the error is non-nil, the way RequireAuth
+	// does. The client already handles that correctly — its catch treats a
+	// failed probe as "unreachable rather than refusing us" and leaves the
+	// socket to reconnect, which is the behaviour wanted here.
+	//
+	// Found by reading. Not changed, because nothing could be run to confirm
+	// that the sign-out path is the one that fires.
 	if u, ok, _ := s.currentUser(r); ok {
 		state.Authenticated = true
 		state.Username = u.Username
@@ -454,6 +485,20 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	ip := s.clientIP(r)
 
+	// KNOWN GAP, the same discarded error as handleAuthState above, and the
+	// fourth of four callers of currentUser. RequireAuth captures it and
+	// answers 503; stillAuthorized drops it deliberately and says so at
+	// length; these two drop it silently.
+	//
+	// Here it answers 401 "sign in required" for a database that cannot be
+	// read, and the frontend's guard turns an UnauthorizedError into a return
+	// to the sign-in screen. So pressing "change password" during a storage
+	// fault logs the user out, and the sign-in they are sent to reads the same
+	// database. That is the loop the three-outcome design was introduced to
+	// break.
+	//
+	// Fix as above: 503 when the error is non-nil. Not applied, because nothing
+	// could be run in the sitting that found it.
 	user, ok, _ := s.currentUser(r)
 	if !ok {
 		writeErr(w, http.StatusUnauthorized, "sign in required")

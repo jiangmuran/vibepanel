@@ -58,6 +58,16 @@ export function ComposeInput({
     // a time — three lines in, three separate submissions out — on the one
     // control whose stated premise is "composing first and sending once is
     // the only way this works".
+    // KNOWN GAP: nothing exercises this branch. render-check fills the box
+    // with 'true' and an echo, both single-line, so onPaste never fires — and
+    // the chain behind it, pasteText → MsgPaste → Manager.Paste, is 0.0% in a
+    // -coverpkg run and named by no Go test either. So the fix for a measured
+    // failure has neither a unit test nor a browser check standing over it,
+    // while the branch that had the bug is driven five times.
+    //
+    // A multi-line fill in the mobile section of render-check is the whole of
+    // it, and the assertion is already written down above: three lines in, one
+    // submission out.
     if (text.includes('\n')) {
       onPaste(text, newline)
     } else {
