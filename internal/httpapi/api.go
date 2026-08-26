@@ -1639,32 +1639,25 @@ func (s *Server) pollOnce(ctx context.Context) error {
 				s.Log.Debug("attach for monitoring", "session", row.ID, "err", aerr)
 			}
 		}
-		// KNOWN GAP, not fixed here: this writes on every tick whether anything
-		// changed or not, and so does the title update below.
+		// This writes on every tick whether anything changed or not, and so does
+		// the title update below. It was written down as a finding -- `UPDATE
+		// sessions SET cwd = ?, command = ?` has no value comparison, so at the
+		// two dozen sessions this is built for and a two-second tick, twenty-four
+		// writes a second at complete idle, forever, to the disk the projects live
+		// on -- and the premise was wrong. SQLite elides an update that changes
+		// nothing.
 		//
-		// `UPDATE sessions SET cwd = ?, command = ?` has no value comparison,
-		// and SQLite does not skip a write because the values match — the row
-		// is rewritten and appended to the WAL either way. At the two dozen
-		// sessions this is built for and a two-second tick, that is about
-		// twenty-four writes a second at complete idle, forever, to the disk
-		// the projects live on.
+		// Measured with two instruments that agree, in
+		// TestAnUpdateThatChangesNothingDoesNotWrite: a thousand identical calls
+		// move `PRAGMA data_version` by zero and grow the WAL by zero bytes, while
+		// a thousand that change the row grow it by 4,120,032 -- one page each.
+		// The remaining cost is the statement itself, 10µs, which at twenty-four a
+		// second is a quarter of a millisecond per second.
 		//
-		// The inconsistency is the tell, and it is a convention rather than one
-		// stray line: of the four writes in this loop, SetSessionExit and
-		// SetSessionState both compare against the row first, and these two do
-		// not. `row` — which holds the previous cwd and command — is already in
-		// hand here. `if info.Path != row.CWD || info.Command != row.Command`
-		// is the whole fix, and it cannot change behaviour, because the write
-		// it skips is one that would have stored the values already there.
-		//
-		// This project debounces TouchSessionOutput to once a second per
-		// session, gates the audit log to one row per source per minute, and
-		// took lastOutputAt off the wire over 85 KiB a minute. This is the
-		// same concern, unguarded, in the loop that runs most often.
-		//
-		// Recorded rather than applied only because nothing could be run to
-		// measure it. It is the readiest of the gaps written down in this
-		// stretch: the change is four tokens and provably a no-op on content.
+		// So the comparison SetSessionExit and SetSessionState make is not a
+		// convention these two lines break; it is those two needing it for their
+		// own reasons. The guard is left off deliberately. If SQLite ever stops
+		// eliding these the test above fails, and then it is worth adding.
 		if err := s.DB.UpdateSessionRuntime(ctx, row.ID, info.Path, info.Command); err != nil {
 			return err
 		}

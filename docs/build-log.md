@@ -9243,9 +9243,9 @@ There is a second site, and it is the more visible one. `summarise` in `Sidebar.
 
 Two is all of them. Swept by type rather than by literal — everything that takes a `SessionState` — which finds five uses in two files: `LABEL`, the two callback props that only pass a value along, and these two. Searching for `'waiting'` would have been the natural way and the wrong one, for the reason 17 records: a grep shaped by what you already imagined finds only that. This list being complete is the point, since the whole failure mode here is stopping at a list somebody wrote down. | `web/src/components/StateDot.tsx` | `if (state === 'working')` and a `never` check, so adding a state is a compile error |
 | 2 | **Fixed, and measured — see the last section.** Two of the four callers of `currentUser` silently discard its third outcome, "the database cannot say", and collapse it into "not signed in". `/api/auth/state` returns that to a client whose rule is `onSignOut()` — and an unreadable database is exactly what closes the socket that makes the client ask. `handleChangePassword` returns 401, which the frontend turns into a return to the sign-in screen, which reads the same database. `RequireAuth` was fixed to answer 503; `stillAuthorized` drops it deliberately and documents why. | `internal/httpapi/auth.go` | 503 when the error is non-nil, at both sites |
-| 3 | The state strings `internal/hooks` writes into the reporter script, the Codex `notify` line and `~/.claude/settings.json` are bare literals; the package does not import `internal/session` at all (verified: the only such import is the new test itself). Partly covered by accident — `TestTheReporterScriptActuallyReportsState` posts a hard-coded `"waiting"` through the real script and waits for it, so renaming the enum's *value* makes that round trip fail. What nothing covers is the mapping: a typo in `events` (`"Notification": "wating"`), a state in the `ClaudeSettings` snippet that the map does not know, or a new enum member the hooks should report. Narrower than it first looked, twice over. `report.sh` carries a fourth copy in its `case working\|waiting\|done` guard, and that one self-heals: `hooksAreInstalled` calls `scriptPath` on the way to every state snapshot, which rewrites the script whenever its content differs, so an upgraded binary refreshes it as soon as anyone opens the panel. What does not self-heal is the Codex line — `CodexNotify` writes the literal `"waiting"` into `~/.codex/config.toml` and nothing repairs a TOML file. **Correcting what this row said earlier:** Claude does not recover by itself either. `ClaudeSettings` writes the state into the user's `settings.json` as an argument — `"command": "<script> waiting"` — and nothing rewrites that file on its own. `Inspect` asks only whether *an* entry points at our script, not what it passes, so a stale argument still counts as installed and `InstallClaude` runs only when somebody presses the button. So after a rename the self-healing script accepts only the new names while both agents keep sending the old one from files that do not self-heal, the `case` falls to `*) exit 0`, and every session goes quiet with the settings page reporting all four events installed. The script healing itself is what makes this worse rather than better: it is the half that changes, so the halves stop agreeing. | `internal/hooks/states_test.go` (new), `AGENTS.md` | run the test, then rename `StateWaiting`'s value and confirm it fails |
-| 4 | A manual state set by clicking the dot is cleared by a spinner, so the click reads as having done nothing in the case the feature exists for. | `internal/session/detect.go` | same as 1, and more of a judgement call |
-| 5 | The poller rewrites `cwd` and `command` for every live session on every tick whether they changed or not — about twenty-four writes a second at idle, at the scale this is built for. Two of the four writes in the same loop compare first. | `internal/httpapi/api.go` | `if info.Path != row.CWD \|\| info.Command != row.Command`; provably a no-op on content |
+| 3 | **Fixed: the test exists, was seen to fail, and is committed.** The state strings `internal/hooks` writes into the reporter script, the Codex `notify` line and `~/.claude/settings.json` are bare literals; the package does not import `internal/session` at all (verified: the only such import is the new test itself). Partly covered by accident — `TestTheReporterScriptActuallyReportsState` posts a hard-coded `"waiting"` through the real script and waits for it, so renaming the enum's *value* makes that round trip fail. What nothing covers is the mapping: a typo in `events` (`"Notification": "wating"`), a state in the `ClaudeSettings` snippet that the map does not know, or a new enum member the hooks should report. Narrower than it first looked, twice over. `report.sh` carries a fourth copy in its `case working\|waiting\|done` guard, and that one self-heals: `hooksAreInstalled` calls `scriptPath` on the way to every state snapshot, which rewrites the script whenever its content differs, so an upgraded binary refreshes it as soon as anyone opens the panel. What does not self-heal is the Codex line — `CodexNotify` writes the literal `"waiting"` into `~/.codex/config.toml` and nothing repairs a TOML file. **Correcting what this row said earlier:** Claude does not recover by itself either. `ClaudeSettings` writes the state into the user's `settings.json` as an argument — `"command": "<script> waiting"` — and nothing rewrites that file on its own. `Inspect` asks only whether *an* entry points at our script, not what it passes, so a stale argument still counts as installed and `InstallClaude` runs only when somebody presses the button. So after a rename the self-healing script accepts only the new names while both agents keep sending the old one from files that do not self-heal, the `case` falls to `*) exit 0`, and every session goes quiet with the settings page reporting all four events installed. The script healing itself is what makes this worse rather than better: it is the half that changes, so the halves stop agreeing. | `internal/hooks/states_test.go` (new), `AGENTS.md` | run the test, then rename `StateWaiting`'s value and confirm it fails |
+| 4 | **Fixed with 1 — the manual rule reads `lastAdvance` now.** A manual state set by clicking the dot is cleared by a spinner, so the click reads as having done nothing in the case the feature exists for. | `internal/session/detect.go` | same as 1, and more of a judgement call |
+| 5 | **Retracted — the premise was measured and is false. See the last section.** The poller rewrites `cwd` and `command` for every live session on every tick whether they changed or not — about twenty-four writes a second at idle, at the scale this is built for. Two of the four writes in the same loop compare first. | `internal/httpapi/api.go` | `if info.Path != row.CWD \|\| info.Command != row.Command`; provably a no-op on content |
 | 6 | An uploaded filename containing a newline is **typed** into the shell, so the line editor reads it as Enter and leaves the user at a `>` they cannot explain. This is the same bug `pasteText` was introduced for — its docstring records a three-line instruction typed at an agent arriving "as three separate GOT<> lines. An agent acts on the first sentence before it has read the third." The compose box was moved to a paste; the upload path still types. A filename reaching the *screen* goes through `safeText`; this is the one place its bytes reach a shell. | `web/src/App.tsx` | `pasteText` instead of `writeText`, with the caveat from its own docstring — the server brackets a paste only if the pane asked for bracketed paste |
 | 7 | `agentCommands` is matched against `#{pane_current_command}`, which is somebody else's packaging. If Claude Code reports `node` on a machine, the "states are guessed" notice never appears there. | `internal/httpapi/api.go` | `tmux -L vibepanel list-panes -a -F '#{pane_current_command}'` settles it |
 | 8 | `EXIT_VANISHED` is the one constant of four on the wire that nothing pins. Drift reproduces a bug that already happened: a session whose tmux session merely vanished counted as a crash. | `internal/ws/protocol_test.go` | needs a leading `-` in the regex and int64; `internal/httpapi/wire_test.go` is the better home |
@@ -9869,3 +9869,51 @@ its own cannot see a constraint declared four lines above it. Both findings that
 turned out to be wrong this session were wrong that way, and both were caught by
 running the experiment rather than by reading more carefully — which is the
 argument for running things, not for reading harder.
+
+## 5 was a plausible finding about a database that does not behave that way
+
+The row says the poller rewrites `cwd` and `command` for every live session on
+every tick whether they changed or not, "about twenty-four writes a second at
+idle", and that the fix is four tokens and provably a no-op. The reasoning was:
+`UPDATE sessions SET cwd = ?, command = ?` has no value comparison, and "SQLite
+does not skip a write because the values match — the row is rewritten and
+appended to the WAL either way".
+
+That last sentence is the whole finding, and it is false.
+
+    1000 identical UpdateSessionRuntime calls: data_version 4 -> 4 (+0 commits),
+      10.147ms total, 10.147µs each
+    WAL: 1000 identical writes 0 -> 0 (+0), then 1000 changing writes
+      0 -> 4120032 (+4120032)
+
+Two instruments, chosen because the first one was useless. Measuring the WAL
+naively read `0 -> 0` after a thousand writes and looked like a result; it was
+auto-checkpointing truncating the file underneath the comparison, and it would
+have read `0 -> 0` for a thousand *changing* writes too. The fix was a positive
+control — one write that really changes the values, asserted to move the
+instrument before anything is concluded from it not moving. `data_version` moved
+2 → 3 for that one and not at all for the thousand. With auto-checkpointing
+switched off the WAL agrees, and the changing writes cost a page each.
+
+So SQLite elides an update that changes nothing, and what is left is the
+statement: 10µs, twenty-four times a second, a quarter of a millisecond per
+second of one core. The guard is deliberately not added, and the comment in
+`api.go` now says so with the numbers, because a future reader will otherwise
+find the same four tokens and the same argument.
+
+The inconsistency that made the finding look strong — two of the four writes in
+that loop compare first and two do not — reads the other way round once the
+measurement is in: those two need the comparison for their own reasons, and it
+is not a convention these lines break.
+
+`TestAnUpdateThatChangesNothingDoesNotWrite` keeps the premise honest. It pins a
+property of SQLite rather than of this project, which is normally not worth a
+test, and is worth one here for exactly one reason: a comment in another package
+now reasons from it. If it ever stops being true, the guard is worth adding, and
+that test is the only thing that would say so.
+
+**Second finding this session that was wrong in the same direction.** 38 read a
+function without the four lines above it; this one reasoned about a dependency
+without running it. Both were caught by executing rather than by reading more
+carefully. Two of forty-five, which is a rate worth knowing when reading the
+rest of that table: it was written in a stretch where nothing could be run.
