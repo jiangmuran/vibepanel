@@ -9237,7 +9237,7 @@ tracker does not renumber.
 |---|---|---|---|
 | 1 | **Fixed, and measured — see the last section.** A hook that reported "waiting for you" is discarded after three seconds of a spinner, and the panel says *working* — its precise source overridden by its guess. The panel-wide "guessed" notice does not cover for it, in two independent ways: one other session holding a fresh hook report suppresses that notice everywhere, and — per 7 — the notice only fires at all when a session's polled `pane_current_command` is literally `claude` or `codex`, so on a machine where Claude Code reports `node` it never appears regardless. Fixing either does not restore the mitigation; both have to hold. | `internal/session/detect.go` | `lastAdvance` for `lastOutput`, after reproducing an agent that reports and then animates |
 | 37 | **Fixed, and measured — see the last section.** The client drops every `error` frame the server sends. `ServerMessage`'s union declares ten members and `handleControl`'s switch has eight cases; `pong` needs none, because any frame refreshes `lastSeenAt`, but `error` is simply absent — no case, no default, and `'error'`, `MsgError` and `msg.message` appear nowhere in `socket.ts`. Six server sites send one, and three of them are `write failed` twice and `paste failed`: you type into a terminal, the write fails server-side, the server says so, and nothing reaches the screen. This is the hazard `TestMessageTypesMatchTheClient` was written about — "the server says 'dropped', the client hears nothing, and the terminal sits frozen looking like a network problem" — fixed for `dropped` and not for `error`. That test compares the server's sends against the *declared union*, which `error` is in, so it passes; nothing pins the union against the switch. The mirror direction is sound today and unpinned in the same way: `ClientMessage` declares six types and the server's `switch msg.Type` has a case for all six, with no `default` and no exhaustiveness check Go could offer. Worth fixing together, and in that order — a `default` on the server would answer an unknown type with an error frame, which is the frame the client currently drops. | `web/src/protocol/socket.ts` | a case for `error`, and a `default` with a `never` check so the third hop is pinned by the compiler |
-| 38 | A fourth session state would render as *working*, silently. `renderGlyph` is an if-chain — `waiting` → triangle, `done` → check — ending in an unconditional return of the breathing circle. That is exhaustive today, because TypeScript narrows the union to `'working'` by then. Add a member to the enum and to `wire.ts`, which red line 3 already forces you to do together, and the type widens while the final `return` keeps catching everything: the new state gets working's shape and working's colour. Red line 3 names three mirrors of the enum; this is a fourth, and the only one whose failure is a wrong answer rather than a missing one — "a confident wrong answer to the only question it exists to answer", in the project's own words. Red line 4's premise is three shapes for three states, with no room for a fourth. Same structural class as 37. The right pattern is forty lines above it in the same file: `LABEL` is a `Record<SessionState, string>`, so adding a member to the union makes that object literal fail to compile. One function is pinned by the type system and the other is not, in the same component, for the same enum.
+| 38 | **Fixed, and the finding as written was wrong — see the last section.** A fourth session state would render as *working*, silently. `renderGlyph` is an if-chain — `waiting` → triangle, `done` → check — ending in an unconditional return of the breathing circle. That is exhaustive today, because TypeScript narrows the union to `'working'` by then. Add a member to the enum and to `wire.ts`, which red line 3 already forces you to do together, and the type widens while the final `return` keeps catching everything: the new state gets working's shape and working's colour. Red line 3 names three mirrors of the enum; this is a fourth, and the only one whose failure is a wrong answer rather than a missing one — "a confident wrong answer to the only question it exists to answer", in the project's own words. Red line 4's premise is three shapes for three states, with no room for a fourth. Same structural class as 37. The right pattern is forty lines above it in the same file: `LABEL` is a `Record<SessionState, string>`, so adding a member to the union makes that object literal fail to compile. One function is pinned by the type system and the other is not, in the same component, for the same enum.
 
 There is a second site, and it is the more visible one. `summarise` in `Sidebar.tsx` is a priority chain — any `waiting`, then any `working`, then any crash — ending in `return sessions.length > 0 ? 'done' : null`. A project whose sessions are all in the new state matches none of the tests and comes out as *done*, so the badge in the collapsed 42px sidebar, which is the panel's whole at-a-glance surface, shows a green check. Its own docstring is about precisely that outcome: returning a crash as a crash "is what stops a project whose every session died from wearing a green check." Both sites are triggered by the same edit, so whoever adds a state wants both in front of them.
 
@@ -9818,3 +9818,54 @@ the tmux session behind the panel's back and typing before the poller notices.
 Every other sender is reached the same racy way. A flaky FAIL in `render-check`
 would be worse than this paragraph. What is covered is that the frame reaches
 the listeners; what is not is that App draws it.
+
+
+## 38 was right about the bug and wrong about why, which the measurement caught
+
+The row says a fourth session state "would render as *working*, silently",
+because `renderGlyph` was an if-chain ending in an unconditional return of the
+breathing circle, exhaustive only because TypeScript had narrowed the union to
+`'working'` by then.
+
+The first half of that is true and the word *silently* is not. Adding a member
+to `SessionState` stops the build today, four lines above the chain:
+
+    src/components/StateDot.tsx(4,7): error TS2741: Property 'blocked' is
+    missing in type '{ waiting: string; working: string; done: string; }' but
+    required in type 'Record<SessionState, string>'
+
+`LABEL` is a `Record<SessionState, string>`, and it has been there all along.
+Reading the function without reading the file above it produced a finding about
+an unguarded fall-through that was in fact guarded — by something else, several
+lines away, that the reading never reached.
+
+**What survives is worse than a wrong finding and better than the one written.**
+The guard exists, but it asks for the wrong thing. It says a *label* is
+missing, adding the label is the obvious way to satisfy it, and then — measured,
+with both the union member and the label added to the tree as it stood —
+the build is clean and the new state renders as the breathing working circle.
+So the compiler stops you one step away from the thing that actually breaks and
+tells you the wrong thing is missing. A developer who does exactly what the
+error asks ships a state wearing another state's shape, which is precisely what
+red line 4 exists to prevent, not a smaller version of it.
+
+`renderGlyph` now ends in a call whose parameter is `never`, so the same
+experiment fails where it should:
+
+    src/components/StateDot.tsx(162,23): error TS2345: Argument of type
+    '"blocked"' is not assignable to parameter of type 'never'
+
+and it cannot be satisfied by adding a label.
+
+The fall-through draws a hollow dashed ring rather than nothing, because these
+values can also arrive at runtime — a row written by a newer build, or an older
+one — and a missing glyph is a hole in the sidebar that reads as nothing at all.
+It is deliberately in the vocabulary of none of the three.
+
+**The lesson is the one this log keeps relearning.** The earlier version of it
+was "a grep for a concrete name cannot see an interaction that goes through an
+abstraction". This is the same shape with a smaller radius: a function read on
+its own cannot see a constraint declared four lines above it. Both findings that
+turned out to be wrong this session were wrong that way, and both were caught by
+running the experiment rather than by reading more carefully — which is the
+argument for running things, not for reading harder.

@@ -150,10 +150,49 @@ function renderGlyph(state: SessionState, size: number, title: string) {
       </svg>
     )
   }
+  if (state === 'working') {
+    return (
+      <svg width={size} height={size} viewBox="0 0 10 10" role="img" aria-label={title} className="vp-breathe">
+        <title>{title}</title>
+        <circle cx="5" cy="5" r="4" fill="var(--vp-state-working)" />
+      </svg>
+    )
+  }
+  return unknownGlyph(state, size, title)
+}
+
+/**
+ * A state this build does not know how to draw.
+ *
+ * The parameter is `never`, so the call above is the exhaustiveness check:
+ * adding a member to SessionState without a branch for it stops the build.
+ * This used to be an unconditional return of the breathing circle, which
+ * type-checked forever — TypeScript had narrowed the union to 'working' by
+ * then — and would have drawn a fourth state as the third one, silently.
+ *
+ * Deliberately not that circle. Red line 4 is that colour is never the only
+ * carrier of meaning, so each state has a shape of its own; falling through to
+ * working was one state wearing another's shape, which is the failure that
+ * rule exists to prevent rather than a smaller version of it.
+ *
+ * It still draws something rather than returning null, because the value can
+ * also arrive at runtime — a row written by a newer build, or an older one —
+ * and a missing glyph is a hole in the sidebar that reads as nothing at all. A
+ * hollow dashed ring is in the vocabulary of neither of the three.
+ */
+function unknownGlyph(state: never, size: number, title: string) {
   return (
-    <svg width={size} height={size} viewBox="0 0 10 10" role="img" aria-label={title} className="vp-breathe">
-      <title>{title}</title>
-      <circle cx="5" cy="5" r="4" fill="var(--vp-state-working)" />
+    <svg width={size} height={size} viewBox="0 0 10 10" role="img" aria-label={title}>
+      <title>{`${title} (unknown state: ${String(state)})`}</title>
+      <circle
+        cx="5"
+        cy="5"
+        r="4"
+        fill="none"
+        stroke="var(--vp-state-dead)"
+        strokeWidth="1.5"
+        strokeDasharray="2 1.5"
+      />
     </svg>
   )
 }
