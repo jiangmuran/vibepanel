@@ -9247,7 +9247,7 @@ Two is all of them. Swept by type rather than by literal — everything that tak
 | 4 | **Fixed with 1 — the manual rule reads `lastAdvance` now.** A manual state set by clicking the dot is cleared by a spinner, so the click reads as having done nothing in the case the feature exists for. | `internal/session/detect.go` | same as 1, and more of a judgement call |
 | 5 | **Retracted — the premise was measured and is false. See the last section.** The poller rewrites `cwd` and `command` for every live session on every tick whether they changed or not — about twenty-four writes a second at idle, at the scale this is built for. Two of the four writes in the same loop compare first. | `internal/httpapi/api.go` | `if info.Path != row.CWD \|\| info.Command != row.Command`; provably a no-op on content |
 | 6 | **Fixed, and the finding named the wrong character — see the last section.** An uploaded filename containing a newline is **typed** into the shell, so the line editor reads it as Enter and leaves the user at a `>` they cannot explain. This is the same bug `pasteText` was introduced for — its docstring records a three-line instruction typed at an agent arriving "as three separate GOT<> lines. An agent acts on the first sentence before it has read the third." The compose box was moved to a paste; the upload path still types. A filename reaching the *screen* goes through `safeText`; this is the one place its bytes reach a shell. | `web/src/App.tsx` | `pasteText` instead of `writeText`, with the caveat from its own docstring — the server brackets a paste only if the pane asked for bracketed paste |
-| 7 | `agentCommands` is matched against `#{pane_current_command}`, which is somebody else's packaging. If Claude Code reports `node` on a machine, the "states are guessed" notice never appears there. | `internal/httpapi/api.go` | `tmux -L vibepanel list-panes -a -F '#{pane_current_command}'` settles it |
+| 7 | **Confirmed by measurement, and made diagnosable — see the last section.** `agentCommands` is matched against `#{pane_current_command}`, which is somebody else's packaging. If Claude Code reports `node` on a machine, the "states are guessed" notice never appears there. | `internal/httpapi/api.go` | `tmux -L vibepanel list-panes -a -F '#{pane_current_command}'` settles it |
 | 8 | `EXIT_VANISHED` is the one constant of four on the wire that nothing pins. Drift reproduces a bug that already happened: a session whose tmux session merely vanished counted as a crash. | `internal/ws/protocol_test.go` | needs a leading `-` in the regex and int64; `internal/httpapi/wire_test.go` is the better home |
 | 22 | `make verify` prints "all checks passed" over any number of warnings. A WARN does not change a check's exit code — deliberately, since it separates "the thing under test failed" from "its setup did not happen" — but several of them mean a section was skipped: no second project to drag, no uploaded file in the tree, no dead session for the header check. render-check has twenty-four WARN sites. So six sections can be skipped and the run still ends with the word "passed", twenty minutes after the warnings scrolled past. Sits with 9, and is the same shape head-check was written to remove. | `Makefile` | every check already ends with `=== name: N FAIL, N WARN ===`; collect those and print them under the verdict |
 | 28 | `make check` passes on a machine with no tmux, having run almost nothing. Four test helpers call `t.Skip("tmux not installed")` and each guards a whole suite — `internal/tmux`, `internal/session`, `internal/httpapi`, `cmd/vibepanel`. `go test` without `-v` does not summarise skips, so every one of those packages prints `ok`. The Makefile never names tmux as a prerequisite. Worse than 22 in one way: `check` is the gate people run before committing, and AGENTS.md's warning that "a change that only passes `check` has not been looked at" is about the browser checks, not about `check` itself being hollow. | `Makefile` | look for tmux in the target and say loudly what will not be tested without it |
@@ -9973,3 +9973,54 @@ looks for, because a raw tab is whitespace too and an unquoted name collapses
 to `ZULUKILO.txt`. And the first two attempts at writing all of this were
 refused outright for containing literal control characters in the command —
 the same class of byte, in the tooling, while fixing it in the product.
+
+
+## 7 is real, and the fix it wanted does not exist
+
+The row says the agent match is somebody else's packaging, and that if Claude
+Code reports `node` the "states are guessed" notice never appears. The fix
+column says one command settles it. It does, and the answer is yes:
+
+    probe1: node      (a script with a #!/usr/bin/env node line)
+    probe2: sleep     (a /bin/sh wrapper that execs)
+
+Measured on a throwaway socket rather than by running an agent. Both agents on
+this machine are native ELF binaries, so they report `claude` and `codex` here
+and the bug is invisible from this desk -- which is why it was worth measuring
+the mechanism instead of the machine.
+
+**The structural fix turns out not to be available, and finding that out is the
+useful part.** The obvious repair is to match what the session was *asked* to
+run rather than what it happens to be running, since the launch command is not
+somebody else's packaging. But the panel never launches an agent. Both places
+the frontend creates a session pass an empty command:
+
+    api.createSession(project.id, [])
+    api.createSession(current.projectId, [], { parentSessionId: current.id })
+
+Every session starts as a shell and the user types `claude` into it. There is no
+launch command to store, and the poller overwrites the row's `Command` with
+`#{pane_current_command}` on every tick regardless. The live process name is all
+there is.
+
+Widening the list is not the answer either, and the existing comment already
+says why: `node` would fire on every node process, and "any non-shell process"
+fires on htop and on a build, which makes it a notice people stop reading.
+
+So what was actually wrong was not the match but that a mismatch was
+undiagnosable. `doctor` now prints what tmux reports for every live pane, with
+both branches driven:
+
+    [--  ] agents             none recognised; tmux reports: node
+           1 session(s) running something that is not a shell...
+    [ok  ] agents             1 recognised; tmux reports: claude node
+
+`agentCommands` moved to `session.IsAgentCommand` so that doctor and the state
+snapshot cannot disagree about what an agent is -- the third place a definition
+would have been copied.
+
+`TestAScriptIsReportedByItsInterpreterNotItsOwnName` pins the premise against a
+real tmux, portably: a `#!/bin/sh` script reports `sh`, not its own name. It
+uses a shell builtin on purpose, because a script that runs `sleep` puts sleep
+in the foreground process group and tmux reports that instead -- the same lesson
+by a route that would have made a confusing fixture.

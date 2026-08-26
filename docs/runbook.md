@@ -336,3 +336,37 @@ systemctl --user show vibepanel -p MemoryCurrent
 Note that this only accounts for what is inside the unit's cgroup. A tmux
 server started outside the unit keeps running there, with none of the unit's
 memory limits applying to it.
+
+
+## The states look right but nothing says they are guesses
+
+The panel shows a notice when an agent is running and no hook has reported
+anything, so that a state which is only inferred is not read as a fact. If your
+agents run without hooks and the notice never appears, the panel has not
+recognised them as agents.
+
+It matches `#{pane_current_command}` against `claude` and `codex`, and that
+string is a fact about how the program was packaged rather than about this
+project. A native binary reports its own name. Anything shipped as a script
+with a `#!` line reports the interpreter, because that is what the kernel
+executed -- Claude Code installed through npm reports `node`.
+
+`doctor` prints what tmux actually reports, which is the whole diagnosis:
+
+    $ vibepanel doctor
+    [--  ] agents             none recognised; tmux reports: node
+           1 session(s) running something that is not a shell. If one of
+           those is an agent, the panel cannot tell, and the notice saying
+           its states are guessed will not appear.
+
+The same list read directly, if the panel is not to hand:
+
+    tmux -L vibepanel list-panes -a -F '#{pane_current_command}'
+
+There is nothing to configure. The list is deliberately two names rather than
+"any non-shell process", because htop and a build are not agents and a notice
+that fires on them is one people stop reading. If your agent reports something
+else, the states are still inferred correctly from the output heuristic -- what
+is missing is only the panel saying so. Installing the hooks from the settings
+page removes the question entirely: with a hook reporting, the state is not a
+guess and the notice is not wanted.

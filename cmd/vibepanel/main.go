@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -860,6 +861,60 @@ func cmdDoctor(args []string) error {
 		}
 		fmt.Printf("[%s] isolation          %d foreign session(s) visible on our socket\n",
 			ok(foreign == 0), foreign)
+	}
+
+	// What tmux reports for each live pane, because the agent match is a fact
+	// about somebody else's packaging and gets it wrong silently.
+	//
+	// stateIsGuessed only fires when a session's foreground process is named
+	// `claude` or `codex`. A script with a `#!/usr/bin/env node` line reports
+	// `node` instead -- measured -- so on a machine where Claude Code was
+	// installed through npm the notice saying the states are inferred never
+	// appears, on exactly the sessions it is about. Nothing else would ever say
+	// so: the states still look plausible, because a guess usually is.
+	//
+	// Printed rather than judged. A panel full of shells is not a problem, and
+	// failing here would train the reader to skip doctor's output.
+	if !serverOK {
+		skip("agents", "there is no session list to check")
+	} else {
+		byCmd := map[string]int{}
+		agents, nonShell := 0, 0
+		for _, i := range infos {
+			if !strings.HasPrefix(i.Name, "vp_") {
+				continue
+			}
+			byCmd[i.Command]++
+			if sessionpkg.IsAgentCommand(i.Command) {
+				agents++
+			} else if !sessionpkg.IsShellCommand(i.Command) {
+				nonShell++
+			}
+		}
+		names := make([]string, 0, len(byCmd))
+		for c := range byCmd {
+			if c == "" {
+				c = "(none)"
+			}
+			names = append(names, c)
+		}
+		sort.Strings(names)
+		switch {
+		case len(byCmd) == 0:
+			fmt.Printf("[ok  ] agents             no sessions to look at\n")
+		case agents > 0:
+			fmt.Printf("[ok  ] agents             %d recognised; tmux reports: %s\n",
+				agents, strings.Join(names, " "))
+		case nonShell > 0:
+			fmt.Printf("[--  ] agents             none recognised; tmux reports: %s\n",
+				strings.Join(names, " "))
+			fmt.Printf("       %d session(s) running something that is not a shell. If one of\n", nonShell)
+			fmt.Printf("       those is an agent, the panel cannot tell, and the notice saying\n")
+			fmt.Printf("       its states are guessed will not appear. Claude Code installed\n")
+			fmt.Printf("       through npm reports \"node\" here rather than \"claude\".\n")
+		default:
+			fmt.Printf("[ok  ] agents             none running; every session is a shell\n")
+		}
 	}
 
 	// Not a failure: running without a domain is a legitimate local setup.

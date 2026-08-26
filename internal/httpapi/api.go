@@ -668,41 +668,12 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, state)
 }
 
-// agentCommands are the programs whose state the heuristic cannot read well.
-//
-// Not a general "is this an agent" test — just the ones known to stop and wait
-// without ringing the bell, which is the case the notice is about.
-//
-// Matched against a live process name, not against what the session was asked
-// to run: the poller overwrites the row's Command with #{pane_current_command}
-// on every tick (UpdateSessionRuntime). So these two strings have to be what
-// tmux reports for a running agent, which is a fact about somebody else's
-// packaging rather than about this repository.
-//
-// Codex is a single binary and reports "codex". Claude Code depends on how it
-// was installed — a native binary reports "claude", a node entry point reports
-// "node" — and nothing here pins either. When it does not match, what is lost
-// is silent and is the panel's own honesty: stateIsGuessed returns false, so
-// the notice that says the states are inferred never appears, on precisely the
-// sessions it is about.
-//
-// One command settles it on any given machine:
-//
-//	tmux -L vibepanel list-panes -a -F '#{pane_current_command}'
-//
-// Left as a list rather than widened to "any non-shell process", because the
-// comment above is right that this is not a general "is this an agent" test:
-// htop and a build are not agents, and a notice that fires on them is one
-// people stop reading. Recorded so that a mismatch is diagnosed rather than
-// discovered.
-var agentCommands = map[string]bool{"claude": true, "codex": true}
-
 // stateIsGuessed reports whether an agent is running with nothing reporting
 // its state.
 func (s *Server) stateIsGuessed(sessions []store.Session) bool {
 	var agent bool
 	for _, sess := range sessions {
-		if agentCommands[sess.Command] {
+		if session.IsAgentCommand(sess.Command) {
 			agent = true
 			break
 		}

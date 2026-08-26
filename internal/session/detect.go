@@ -372,3 +372,40 @@ func IsShellCommand(cmd string) bool {
 	}
 	return false
 }
+
+// IsAgentCommand reports whether a pane's foreground process is one of the
+// agents whose state the heuristic cannot read well.
+//
+// Not a general "is this an agent" test -- just the ones known to stop and wait
+// without ringing the bell, which is the case the "states are guessed" notice
+// is about.
+//
+// Matched against a live process name, because that is all there is. The panel
+// never launches an agent itself: both places the frontend creates a session
+// pass an empty command, so every session starts as a shell and the user types
+// `claude` into it. There is no launch command to remember, and the poller
+// overwrites the row's Command with #{pane_current_command} on every tick.
+//
+// So these strings are a fact about somebody else's packaging rather than
+// about this repository, and the packaging varies. Measured on a throwaway
+// socket: a script with a `#!/usr/bin/env node` line reports `node`, not its
+// own name, and a `/bin/sh` wrapper that execs reports whatever it execed. A
+// native binary reports its own name, which is what both agents happen to be
+// on the machine this was written on -- Codex always, and Claude Code when
+// installed as a binary rather than through npm.
+//
+// When it does not match, what is lost is silent and is the panel's own
+// honesty: stateIsGuessed returns false, so the notice saying the states are
+// inferred never appears, on precisely the sessions it is about. That is why
+// `doctor` prints what tmux actually reports for every live pane -- a mismatch
+// should be read off a diagnostic, not deduced from a notice that never came.
+//
+// Deliberately not widened to "any non-shell process": htop and a build are not
+// agents, and a notice that fires on them is one people stop reading.
+func IsAgentCommand(cmd string) bool {
+	switch cmd {
+	case "claude", "codex":
+		return true
+	}
+	return false
+}

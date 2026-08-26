@@ -841,3 +841,54 @@ func TestAnOrdinaryExitKeepsItsStatus(t *testing.T) {
 	}
 	t.Fatal("the pane never went dead")
 }
+
+// What tmux reports for a script is its interpreter's name, not the script's.
+//
+// This pins the fact the panel's agent detection rests on. `IsAgentCommand`
+// matches `#{pane_current_command}` against "claude" and "codex", and there is
+// nothing else to match: the frontend creates every session with an empty
+// command, so the panel never launches an agent itself and has no launch
+// command to remember. The string is therefore a fact about how somebody else
+// packaged their program.
+//
+// A native binary reports its own name. A program shipped as a script with a
+// `#!` line -- which is how Claude Code arrives when installed through npm --
+// reports the interpreter, because that is what the kernel actually executed.
+// So the panel sees "node", `IsAgentCommand` says no, `stateIsGuessed` returns
+// false, and the notice saying the states are inferred never appears on
+// exactly the sessions it is about. Nothing else would say so, because a guess
+// usually looks plausible. `doctor` prints this list for that reason.
+//
+// Written with /bin/sh rather than node so it runs anywhere, and with a
+// builtin rather than a child process: a script that runs `sleep` puts sleep
+// in the foreground process group and tmux reports *that*, which is the same
+// lesson by a different route and a worse fixture for it.
+func TestAScriptIsReportedByItsInterpreterNotItsOwnName(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	if err := c.EnsureServer(ctx); err != nil {
+		t.Fatalf("EnsureServer: %v", err)
+	}
+
+	dir := t.TempDir()
+	script := filepath.Join(dir, "agentish")
+	// `read` is a shell builtin, so nothing is forked and the interpreter
+	// itself stays in the foreground.
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nread line\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	const name = "vp_shebang"
+	if err := c.Create(ctx, CreateOptions{Name: name, Dir: dir, Command: []string{script}}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got := waitForCommand(t, c, name, "sh")
+	if got == "agentish" {
+		t.Fatalf("tmux reported the script's own name %q; if that is now true, the agent "+
+			"match is sound for npm installs and doctor's advice about \"node\" is wrong", got)
+	}
+	if got != "sh" {
+		t.Fatalf("tmux reports %q for a #!/bin/sh script, want \"sh\"; the premise that a "+
+			"packaged agent is reported by its interpreter needs re-measuring", got)
+	}
+}
