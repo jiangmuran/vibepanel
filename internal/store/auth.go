@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -229,4 +230,78 @@ func (d *DB) TrimAuditLog(ctx context.Context, keep int) (int64, error) {
 		return 0, fmt.Errorf("store: trim audit log: %w", err)
 	}
 	return res.RowsAffected()
+}
+
+// APIToken is a credential a program uses instead of a session cookie.
+type APIToken struct {
+	ID string `json:"id"`
+	// Prefix is the first few characters of the token, kept in the clear so the
+	// settings page can name the one you are about to revoke. Short enough that
+	// it is not a meaningful head start on guessing the rest.
+	Prefix     string `json:"prefix"`
+	Name       string `json:"name"`
+	CreatedAt  int64  `json:"createdAt"`
+	LastUsedAt int64  `json:"lastUsedAt"`
+}
+
+func (d *DB) CreateAPIToken(ctx context.Context, id string, tokenHash []byte, prefix, name, userID string) (APIToken, error) {
+	n := now()
+	_, err := d.sql.ExecContext(ctx,
+		`INSERT INTO api_tokens (id, token_hash, prefix, name, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		id, tokenHash, prefix, name, userID, n)
+	if err != nil {
+		return APIToken{}, fmt.Errorf("store: create api token: %w", err)
+	}
+	return APIToken{ID: id, Prefix: prefix, Name: name, CreatedAt: n}, nil
+}
+
+func (d *DB) ListAPITokens(ctx context.Context) ([]APIToken, error) {
+	rows, err := d.sql.QueryContext(ctx,
+		`SELECT id, prefix, name, created_at, last_used_at FROM api_tokens ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("store: list api tokens: %w", err)
+	}
+	defer rows.Close()
+	out := []APIToken{}
+	for rows.Next() {
+		var t APIToken
+		if err := rows.Scan(&t.ID, &t.Prefix, &t.Name, &t.CreatedAt, &t.LastUsedAt); err != nil {
+			return nil, fmt.Errorf("store: scan api token: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// UserByAPIToken answers who a token belongs to, and stamps it as used.
+//
+// The stamp is best effort for the same reason TouchAuthSession's is: a failure
+// to record that a token was used must not fail the request it was used for.
+func (d *DB) UserByAPIToken(ctx context.Context, tokenHash []byte) (User, error) {
+	var userID string
+	err := d.sql.QueryRowContext(ctx,
+		`SELECT user_id FROM api_tokens WHERE token_hash = ?`, tokenHash).Scan(&userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return User{}, ErrNotFound
+		}
+		return User{}, fmt.Errorf("store: api token lookup: %w", err)
+	}
+	if _, err := d.sql.ExecContext(ctx,
+		`UPDATE api_tokens SET last_used_at = ? WHERE token_hash = ?`, now(), tokenHash); err != nil {
+		// Deliberately swallowed. See above.
+		_ = err
+	}
+	return d.UserByID(ctx, userID)
+}
+
+func (d *DB) DeleteAPIToken(ctx context.Context, id string) error {
+	res, err := d.sql.ExecContext(ctx, `DELETE FROM api_tokens WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("store: delete api token: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

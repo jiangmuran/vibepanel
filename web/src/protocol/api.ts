@@ -1,4 +1,5 @@
 import type {
+  ApiToken,
   AuditEntry,
   DirListing,
   AuthState,
@@ -141,6 +142,15 @@ export const api = {
       live: number
       passkeys: boolean
     }>('/api/health'),
+
+  listTokens: () => request<ApiToken[]>('/api/settings/tokens'),
+  createToken: (name: string) =>
+    request<ApiToken & { token: string }>('/api/settings/tokens', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }),
+  deleteToken: (id: string) =>
+    request<void>(`/api/settings/tokens/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   browse: (path = '') =>
     request<DirListing>(`/api/browse?path=${encodeURIComponent(path)}`),

@@ -2869,3 +2869,82 @@ func TestTheReportedDatabaseSizeIncludesTheWAL(t *testing.T) {
 			int64(reported), main.Size(), wal.Size())
 	}
 }
+
+// An API token is a credential in its own right, and only that.
+//
+// The session cookie is a browser's: it expires, it is SameSite=Strict, and
+// getting one means posting a password and keeping a jar. An agent told to
+// "open a session in the billing project and tell me when it stops" should not
+// have to do any of that, and should not be handed the password either -- a
+// token can be revoked without changing what you type.
+func TestAnAPITokenIsACredential(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+
+	made := postJSON[map[string]any](t, ts, "/api/settings/tokens", `{"name":"an agent"}`)
+	token, _ := made["token"].(string)
+	tokenID, _ := made["id"].(string)
+	if token == "" || tokenID == "" {
+		t.Fatalf("no token came back: %+v", made)
+	}
+
+	// The token, and nothing else, gets in.
+	bare := anonymousClient(t)
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/state", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	res, err := bare.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("a token answered %s on /api/state, want 200", res.Status)
+	}
+
+	// A wrong one does not, and the failure is the same one a stranger gets --
+	// not a different code that would say "that token exists but".
+	req, _ = http.NewRequest(http.MethodGet, ts.URL+"/api/state", nil)
+	req.Header.Set("Authorization", "Bearer "+token+"x")
+	res, err = bare.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("a wrong token answered %s, want 401", res.Status)
+	}
+
+	// Stored as a hash. A database that leaks must not hand over live
+	// credentials, which is the same rule the session cookie follows.
+	var raw int
+	if err := srv.DB.SQL().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM api_tokens WHERE CAST(token_hash AS TEXT) = ?`, token).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if raw != 0 {
+		t.Error("the token itself is in the database; only its hash should be")
+	}
+
+	// Revoking one takes effect at once, which is the reason to have them.
+	del, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/settings/tokens/"+tokenID, nil)
+	del.Header.Set("Authorization", "Bearer "+token)
+	res, err = bare.Do(del)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("revoking answered %s, want 204", res.Status)
+	}
+	req, _ = http.NewRequest(http.MethodGet, ts.URL+"/api/state", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	res, err = bare.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("a revoked token still answered %s; revocation that takes effect later is "+
+			"not revocation", res.Status)
+	}
+}

@@ -167,6 +167,38 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+
+	// v8: API tokens, so a program can drive the panel.
+	//
+	// The session cookie is a browser's credential: it expires, it is bound to
+	// SameSite=Strict, and getting one means posting a password to a login
+	// endpoint and keeping a jar. An agent asked to "open a session in the
+	// billing project and tell me when it stops" should not have to do any of
+	// that, and should not have to be given the password either -- a token can
+	// be revoked without changing what you type.
+	//
+	// Same storage shape as an auth session: the hash, never the token. The
+	// prefix is stored in the clear so the settings page can show you which one
+	// you are about to revoke without being able to reconstruct it.
+	func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`CREATE TABLE IF NOT EXISTS api_tokens (
+			     id          TEXT PRIMARY KEY,
+			     token_hash  BLOB NOT NULL UNIQUE,
+			     prefix      TEXT NOT NULL,
+			     name        TEXT NOT NULL,
+			     user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			     created_at  INTEGER NOT NULL,
+			     last_used_at INTEGER NOT NULL DEFAULT 0
+			 )`,
+			`CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id)`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	},
 }
 
 // schemaVersion is the version this build writes.

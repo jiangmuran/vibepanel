@@ -5,11 +5,14 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/jiangmuran/vibepanel/internal/auth"
 	"github.com/jiangmuran/vibepanel/internal/hooks"
+	"github.com/jiangmuran/vibepanel/internal/id"
 	"github.com/jiangmuran/vibepanel/internal/version"
 )
 
@@ -20,6 +23,9 @@ func (s *Server) registerSettingsRoutes(r chi.Router) {
 	r.Get("/settings", s.handleSettings)
 	r.Get("/settings/audit", s.handleAudit)
 	r.Get("/settings/hooks", s.handleHooksStatus)
+	r.Get("/settings/tokens", s.handleListTokens)
+	r.Post("/settings/tokens", s.handleCreateToken)
+	r.Delete("/settings/tokens/{tokenID}", s.handleDeleteToken)
 	r.Post("/settings/hooks", s.handleHooksInstall)
 	r.Delete("/settings/hooks", s.handleHooksUninstall)
 }
@@ -183,4 +189,80 @@ func (s *Server) handleHooksUninstall(w http.ResponseWriter, r *http.Request) {
 		s.audit(r.Context(), "hooks.removed", u.Username, s.clientIP(r), st.SettingsPath)
 	}
 	writeJSON(w, http.StatusOK, st)
+}
+
+// ─── API tokens ───────────────────────────────────────────────────────────
+
+func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
+	tokens, err := s.DB.ListAPITokens(r.Context())
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, emptyIfNil(tokens))
+}
+
+type createTokenRequest struct {
+	Name string `json:"name"`
+}
+
+// handleCreateToken mints one, and is the only time the token is ever readable.
+//
+// Stored as a hash, exactly like a session: a database that leaks must not hand
+// over live credentials. Which means there is no "show it again" — the response
+// to this request is the only copy, and the settings page says so before you
+// press the button rather than after.
+func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
+	var req createTokenRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = "api"
+	}
+	if len(name) > 64 {
+		name = name[:64]
+	}
+	u, ok := currentUserFrom(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "sign in required")
+		return
+	}
+	token, err := auth.NewToken()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// A prefix that names the token without being a head start on guessing it:
+	// 8 characters of a 43-character random string.
+	prefix := token
+	if len(prefix) > 8 {
+		prefix = prefix[:8]
+	}
+	rec, err := s.DB.CreateAPIToken(r.Context(), id.New(), auth.HashToken(token), prefix, name, u.ID)
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	s.audit(r.Context(), "token.created", u.Username, s.clientIP(r), name)
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"token":     token,
+		"id":        rec.ID,
+		"name":      rec.Name,
+		"prefix":    rec.Prefix,
+		"createdAt": rec.CreatedAt,
+	})
+}
+
+func (s *Server) handleDeleteToken(w http.ResponseWriter, r *http.Request) {
+	tokenID := chi.URLParam(r, "tokenID")
+	if err := s.DB.DeleteAPIToken(r.Context(), tokenID); err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	if u, ok := currentUserFrom(r); ok {
+		s.audit(r.Context(), "token.revoked", u.Username, s.clientIP(r), tokenID)
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

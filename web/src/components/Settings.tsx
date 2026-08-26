@@ -11,6 +11,7 @@ import type { AuditEntry, HookStatus, Passkey, SettingsInfo } from '../protocol/
 import { passkeyLabel } from './label'
 import { setLang, t, useLang } from '../i18n'
 import { notifyEnabled, notifySupported, requestNotifyPermission, setNotifyEnabled } from '../notify'
+import { ApiTokens } from './ApiTokens'
 
 function bytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -153,6 +154,10 @@ export function Settings({ onClose }: { onClose: () => void }) {
               {t('notify.enable')}
             </button>
           )}
+        </Section>
+
+        <Section title={t('tok.title')}>
+          <ApiTokens />
         </Section>
 
         <Section title={t('settings.language')}>

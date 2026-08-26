@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"github.com/go-chi/chi/v5"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -249,6 +251,8 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"password.change_refused": true,
 		"password.changed":        true,
 		"setup.completed":         true,
+		"token.created":           true,
+		"token.revoked":           true,
 		"setup.rejected":          true,
 	}
 
@@ -286,5 +290,90 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		if !found[e] {
 			t.Errorf("this list has %q and nothing writes it any more", e)
 		}
+	}
+}
+
+// Every route the panel serves is written down in docs/api.md.
+//
+// The API is offered as something to build against, which makes the document a
+// promise rather than a description. Two ways it rots: an endpoint is added and
+// the page is not, so the thing an agent needs is undiscoverable; or an endpoint
+// is removed and the page still describes it, which is worse, because somebody
+// writes code against a paragraph.
+//
+// The same shape as the runbook and doctor, the state enum and its three
+// mirrors, and wire.ts: a definition with a copy somewhere no compiler looks.
+func TestTheAPIDocCoversEveryRoute(t *testing.T) {
+	ts, srv := newTestServer(t)
+	_ = ts
+
+	doc, err := os.ReadFile("../../docs/api.md")
+	if err != nil {
+		t.Fatalf("read the API doc: %v", err)
+	}
+	text := string(doc)
+
+	routes := map[string]bool{}
+	err = chi.Walk(srv.Routes().(chi.Routes),
+		func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+			// The static frontend and the method-fanout chi generates for the
+			// WebSocket are not API surface. `/ws` itself is, and is listed.
+			if !strings.HasPrefix(route, "/api/") && route != "/ws" {
+				return nil
+			}
+			if route == "/ws" && method != http.MethodGet {
+				return nil
+			}
+			// chi reports a trailing slash on some groups; the doc writes the
+			// path the way a caller types it.
+			route = strings.TrimSuffix(route, "/")
+			routes[method+" "+route] = true
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if len(routes) < 20 {
+		t.Fatalf("only found %d API routes (%v); the walk has stopped matching and this test "+
+			"is checking nothing", len(routes), routes)
+	}
+
+	// The doc's headings, parsed once. A query string is how a caller uses the
+	// endpoint and is not part of the route, so it comes off here rather than
+	// being special-cased at each comparison -- which is what the first version
+	// did, and it reported four documented endpoints as missing.
+	documented := map[string]bool{}
+	for _, line := range strings.Split(text, "\n") {
+		if !strings.HasPrefix(line, "### `") {
+			continue
+		}
+		entry := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(line), "### `"), "`")
+		if i := strings.Index(entry, "?"); i >= 0 {
+			entry = strings.TrimSpace(entry[:i])
+		}
+		if entry != "" {
+			documented[entry] = true
+		}
+	}
+
+	var missing []string
+	for r := range routes {
+		if !documented[r] {
+			missing = append(missing, r)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Errorf("docs/api.md does not mention %v. The API is offered as something to build "+
+			"against, so an endpoint missing from it is one nobody can find.", missing)
+	}
+
+	// And the other direction: a heading for a route that no longer exists.
+	for entry := range documented {
+		if routes[entry] {
+			continue
+		}
+		t.Errorf("docs/api.md documents %q and the router has no such route; somebody will "+
+			"write code against that paragraph", entry)
 	}
 }

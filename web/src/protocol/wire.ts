@@ -346,6 +346,17 @@ export interface HookStatus {
   codexSnippet: string
 }
 
+/** A credential a program uses instead of the session cookie. */
+export interface ApiToken {
+  id: string
+  /** The first characters of the token, kept so a row can be named. The rest is
+   *  only ever readable in the response that created it. */
+  prefix: string
+  name: string
+  createdAt: number
+  lastUsedAt: number
+}
+
 export interface AuditEntry {
   at: number
   event: string

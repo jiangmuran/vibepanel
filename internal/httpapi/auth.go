@@ -176,12 +176,48 @@ func currentUserFrom(r *http.Request) (store.User, bool) {
 //
 // Refusing either way is right and stays. What changes is that the panel says
 // which of the two it is.
+// bearerToken pulls an API token out of the Authorization header.
+//
+// Separate from the hook endpoint's own bearer check, which compares against a
+// single shared secret rather than looking anybody up. Two different things
+// wearing the same header.
+func bearerToken(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	const prefix = "Bearer "
+	if len(h) <= len(prefix) || !strings.EqualFold(h[:len(prefix)], prefix) {
+		return ""
+	}
+	return strings.TrimSpace(h[len(prefix):])
+}
+
 func (s *Server) currentUser(r *http.Request) (store.User, bool, error) {
+	ctx := r.Context()
+
+	// An API token, if one was presented.
+	//
+	// Checked before the cookie because a program that sends both means the
+	// token: a browser tab and a script sharing a machine is ordinary, and the
+	// header is the more deliberate of the two.
+	//
+	// Tokens do not expire. That is the point of them -- an agent left running
+	// for a fortnight should not stop working because a session TTL passed --
+	// and it is why they can be revoked one at a time from the settings page,
+	// which a password change cannot do.
+	if bearer := bearerToken(r); bearer != "" {
+		user, err := s.DB.UserByAPIToken(ctx, auth.HashToken(bearer))
+		if errors.Is(err, store.ErrNotFound) {
+			return store.User{}, false, nil
+		}
+		if err != nil {
+			return store.User{}, false, err
+		}
+		return user, true, nil
+	}
+
 	token := auth.TokenFromRequest(r)
 	if token == "" {
 		return store.User{}, false, nil
 	}
-	ctx := r.Context()
 	hash := auth.HashToken(token)
 	sess, err := s.DB.AuthSessionByToken(ctx, hash)
 	if errors.Is(err, store.ErrNotFound) {

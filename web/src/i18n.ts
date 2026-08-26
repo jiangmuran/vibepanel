@@ -180,6 +180,24 @@ const DICT = {
   'settings.languageZh': { zh: '简体中文', en: '简体中文' },
   'settings.languageEn': { zh: 'English', en: 'English' },
 
+  'tok.title': { zh: 'API 令牌', en: 'API tokens' },
+  'tok.why': {
+    zh: '给 agent 或脚本用来管理这个面板。它不会过期，可以单独吊销 —— 改密码不影响它，吊销它也不影响密码。接口文档在 docs/api.md。',
+    en: 'For an agent or a script to drive this panel. They do not expire and are revoked one at a time — changing your password leaves them alone, and revoking one leaves your password alone. The API is documented in docs/api.md.',
+  },
+  'tok.name': { zh: '给它起个名字', en: 'What is it for' },
+  'tok.create': { zh: '新建令牌', en: 'New token' },
+  'tok.once': {
+    zh: '只显示这一次。数据库里存的是它的哈希，关掉就找不回来了。',
+    en: 'Shown once. The database keeps only a hash of it, so closing this is losing it.',
+  },
+  'tok.copy': { zh: '复制', en: 'Copy' },
+  'tok.copied': { zh: '已复制', en: 'Copied' },
+  'tok.done': { zh: '我存好了', en: 'I have saved it' },
+  'tok.none': { zh: '还没有令牌', en: 'None yet' },
+  'tok.neverUsed': { zh: '从未使用', en: 'never used' },
+  'tok.revoke': { zh: '吊销', en: 'Revoke' },
+
   'set.passkeysWhy': {
     zh: '用这台设备代替密码登录。密码依然有效 —— passkey 是多一条路，永远不是唯一的路。',
     en: 'Sign in with this device instead of a password. The password keeps working — a passkey is an addition, never the only way in.',

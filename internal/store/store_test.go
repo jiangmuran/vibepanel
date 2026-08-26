@@ -781,9 +781,18 @@ func TestMigrationRenamesTheOldAuditEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The last migration in the list is the one under test; indexing by a
-	// literal would quietly start testing a different one.
-	if err := migrations[len(migrations)-1](tx); err != nil {
+	// v7, by number, and the number is asserted rather than assumed.
+	//
+	// This said "the last migration in the list is the one under test; indexing
+	// by a literal would quietly start testing a different one" -- and had it
+	// exactly backwards. Migrations are append-only, so `len-1` is the one that
+	// moves: adding v8 pointed this test at a table creation and it failed
+	// claiming the rename had not happened. A literal is the stable end.
+	const auditRename = 7
+	if len(migrations) < auditRename {
+		t.Fatalf("there are %d migrations and this test wants v%d", len(migrations), auditRename)
+	}
+	if err := migrations[auditRename-1](tx); err != nil {
 		t.Fatalf("migration: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
