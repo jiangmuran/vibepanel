@@ -119,7 +119,14 @@ export function TerminalView({
       cursorStyle: 'bar',
       fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim(),
       fontSize: 13,
-      lineHeight: 1.2,
+      // 1.0, not 1.2.
+      //
+      // xterm paints the background per cell, so any leading shows up as a
+      // horizontal gap through coloured output -- and the box-drawing an agent
+      // uses for its panels stops joining up, which reads as the terminal being
+      // chopped into strips. A terminal is a grid; the leading belongs inside
+      // the glyph, not between the rows.
+      lineHeight: 1.0,
       scrollback: 10_000,
       theme: terminalTheme(),
       // The panel owns the scroll position on mobile, where the browser would
@@ -235,10 +242,37 @@ export function TerminalView({
     const selSub = term.onSelectionChange(() => {
       onSelectionRef.current?.(term.getSelection())
     })
+    // Copy on select, the way a terminal does.
+    //
+    // Selecting text and then having to press something for it to be on the
+    // clipboard is the step nobody expects: every terminal emulator worth using
+    // copies on selection, and a web one that does not feels broken rather than
+    // careful. The browser allows the write because finishing a drag *is* the
+    // user gesture it asks for -- which is exactly what the OSC 52 path does not
+    // have, and why that one still has to offer a button.
+    //
+    // On pointerup rather than on xterm's selection event: that fires
+    // continuously while the pointer moves, so copying there would write to the
+    // clipboard dozens of times per drag and leave whatever the last frame
+    // happened to cover.
+    const copyOnSelect = () => {
+      if (!term.hasSelection()) return
+      const text = term.getSelection()
+      if (!text) return
+      navigator.clipboard?.writeText(text).catch(() => {
+        // Refused anyway -- a non-secure context, or a browser that wants more
+        // than a gesture. Fall through to the offer that predates this, rather
+        // than losing the text silently.
+        onClipboardRef.current?.(text, false)
+      })
+    }
+    host.addEventListener('pointerup', copyOnSelect)
+
     const detachTouch = touchSelect ? attachTouchSelection(host, term) : undefined
 
     return () => {
       detachTouch?.()
+      host.removeEventListener('pointerup', copyOnSelect)
       selSub.dispose()
       dataSub.dispose()
       binarySub.dispose()
