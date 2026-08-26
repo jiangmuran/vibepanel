@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { disambiguatedLabels, projectLabel, sessionLabel, terminalLabel, exitReason } from './label'
+import { disambiguatedLabels, passkeyLabel, projectLabel, sessionLabel, terminalLabel, exitReason } from './label'
 import type { Session } from '../protocol/wire'
 
 /**
@@ -143,5 +143,39 @@ describe('terminalLabel', () => {
     // judgement, not a gap to fill.
     expect(terminalLabel(term(''), 0)).toBe('term 1')
     expect(terminalLabel(term(''), 2)).toBe('term 3')
+  })
+})
+
+describe('passkeyLabel', () => {
+  it('sanitises a name before it reaches the confirm that deletes the key', () => {
+    // The fourth name-rendering site and the only one that was not funnelled.
+    // Lower stakes than the others -- this name is typed rather than taken from
+    // a directory or a pane title -- but the dialog is the last thing between a
+    // credential and being deleted, and a name carrying an override can make it
+    // ask about a different key than the one it removes.
+    expect(passkeyLabel({ name: 'phone\u202Epotpal' })).not.toContain('\u202E')
+  })
+
+  it('falls back rather than rendering an empty row', () => {
+    expect(passkeyLabel({ name: '' })).toBe('Passkey')
+    expect(passkeyLabel({ name: '   ' })).toBe('Passkey')
+    expect(passkeyLabel({})).toBe('Passkey')
+  })
+
+  it('shows a name made only of control characters rather than hiding it', () => {
+    // This was written the other way round first, expecting the fallback, and
+    // the test was wrong rather than the code: safeText *replaces* with U+FFFD
+    // rather than stripping, deliberately, so that a name which contained
+    // something deceptive looks wrong instead of looking short. Falling back to
+    // "Passkey" here would hide exactly the thing the sanitising exists to
+    // show, and in the dialog that deletes the credential.
+    const label = passkeyLabel({ name: '\u202E\u200B' })
+    expect(label).not.toBe('Passkey')
+    expect(label).not.toContain('\u202E')
+    expect(label).toBe('\uFFFD\uFFFD')
+  })
+
+  it('keeps an ordinary name intact', () => {
+    expect(passkeyLabel({ name: 'work laptop' })).toBe('work laptop')
   })
 })

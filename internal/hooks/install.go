@@ -81,6 +81,15 @@ func Inspect(scriptPath string) (Status, error) {
 	// Pinned by TestTheEventListComesBackInTheSameOrderEveryTime, which asks
 	// twenty times: one call cannot tell a sort from a lucky shuffle.
 	sort.Strings(st.Events)
+	if st.Events == nil {
+		// A JSON array, not null. Nothing is installed on a fresh panel, which
+		// is when the settings page first reads this, and `[]string(nil)`
+		// marshals to `null` -- so the one caller guards with
+		// `(status.events ?? []).length`. That guard is the symptom patched at
+		// the reader, in exactly the place a helper exists to make unnecessary,
+		// and the next reader written without it throws.
+		st.Events = []string{}
+	}
 	st.Installed = len(st.Events) > 0
 	return st, nil
 }

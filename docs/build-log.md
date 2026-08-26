@@ -9263,8 +9263,8 @@ Two is all of them. Swept by type rather than by literal — everything that tak
 | 12 | Nothing stops the same directory being added twice, so the sidebar can show two entries that are the same pixels with separate notes behind them. `disambiguatedLabels` solves this for sessions and not for projects. Arguable rather than wrong. | `internal/httpapi/api.go` | if refused, name the project already there rather than a UNIQUE failure |
 | 30 | Removing `safeText` from `sessionLabel` would pass everything. Four places sanitise a name: the function itself is tested; `projectLabel` and `terminalLabel` assert `.not.toContain('\u202E')` — both added this session; `sessionLabel` is tested only for its fallback chain; and `FileTree`'s inline `safeText(e.name)` is asserted nowhere. The browser checks do exercise the rendering path — they locate rows by `hasText: 'scratchpad'` — but every name in them is plain ASCII, so nothing there touches the sanitising either. The unguarded one is the original funnel, the one safeText's docstring is written about: "session titles come from `pane_title`, which any program sets with a two-byte escape sequence." | `web/src/components/label.test.ts`, `web/scripts/render-check.mjs` | one assertion for sessionLabel; for FileTree, a file whose name carries an override — the transfer section already writes files |
 | 31 | `TruncateTitle`'s tests cannot tell runes from bytes. The constant's comment gives the reason for the whole design — "runes rather than bytes so that truncation cannot split a character and leave invalid UTF-8 in the database" — and both tests feed it `strings.Repeat("A", …)` and `strings.Repeat("x", …)`, pure ASCII, where a byte slice and a rune slice agree. Rewriting it as `s[:MaxTitleRunes]`, which is the obvious way to drop an O(n) `RuneCountInString`, passes both and cuts a CJK title mid-character. Implementation is correct today; the property is unasserted. Same shape as 30, different file and fix. | `internal/session/title_test.go` | one case with multi-byte runes |
-| 17 | A passkey's name is rendered raw in two places in `Settings.tsx`, one of them the `window.confirm` that asks before deleting it — the same shape as the project-name fix made earlier in this session, one file over. Low severity: the name comes from a query parameter the user types, defaulting to "Passkey", with no external default like the directory basename that made project names dangerous. It is the fourth name-rendering site and the only one not funnelled. | `web/src/components/Settings.tsx` | `safeText` at both, or a `passkeyLabel` beside the other three |
-| 18 | Two endpoints send `null` for a JSON array, bypassing `emptyIfNil` — whose own comment says it exists "so the frontend never has to guard a map over a missing list". `hooks.Status.Events` is nil until a hook is installed, which is every fresh panel; the upload's `paths` is nil if no part is named `file`. Neither crashes today, and the reason is the tell: `Settings.tsx` reads `(status.events ?? []).length`. That guard is the symptom patched at the reader, in the one place the helper was written to make unnecessary — so the next reader added without it throws. | `internal/httpapi/settings.go`, `internal/httpapi/panels.go` | `emptyIfNil` at both, and the `?? []` can then go |
+| 17 | **Fixed: `passkeyLabel`, the fourth funnel.** A passkey's name is rendered raw in two places in `Settings.tsx`, one of them the `window.confirm` that asks before deleting it — the same shape as the project-name fix made earlier in this session, one file over. Low severity: the name comes from a query parameter the user types, defaulting to "Passkey", with no external default like the directory basename that made project names dangerous. It is the fourth name-rendering site and the only one not funnelled. | `web/src/components/Settings.tsx` | `safeText` at both, or a `passkeyLabel` beside the other three |
+| 18 | **Fixed at the source, and the TypeScript that agreed with the bug is corrected too.** Two endpoints send `null` for a JSON array, bypassing `emptyIfNil` — whose own comment says it exists "so the frontend never has to guard a map over a missing list". `hooks.Status.Events` is nil until a hook is installed, which is every fresh panel; the upload's `paths` is nil if no part is named `file`. Neither crashes today, and the reason is the tell: `Settings.tsx` reads `(status.events ?? []).length`. That guard is the symptom patched at the reader, in the one place the helper was written to make unnecessary — so the next reader added without it throws. | `internal/httpapi/settings.go`, `internal/httpapi/panels.go` | `emptyIfNil` at both, and the `?? []` can then go |
 | 19 | Eleven of the thirteen audit events are dot-separated — `login.failed`, `setup.rejected`, `passkey.register.failed`, `hooks.installed`. Two are not: `password_changed` and `password_change_refused`. The field is grouped by the `GROUP BY event` the runbook hands the operator, listed on the settings page, and is what a fail2ban rule matches on, so one separator is worth having. Not free, though: rows already exist with the underscore spelling, so renaming the emitted value either leaves history mixed or wants a migration. Related and smaller: an entry in this log refers to "the fail2ban story the README advertises" and the README does not mention fail2ban — left alone, because a chronological record describes what was true when it was written. | `internal/httpapi/auth.go` | one separator, and decide what happens to the rows already written |
 | 20 | Nothing builds the container image. No Makefile target, no script, none of the seven checks — while `Dockerfile` pins `node:24-alpine`, `golang:1.26-alpine` and `alpine:3.21`, and `deploy/docker-compose.yml` builds from it. It is a shipped artifact with the property `head-check` was written to remove: nothing tells you whether what was committed works. Lower stakes than the binary, since the Dockerfile itself says the container "is the awkward way to run this and is offered second". Smaller half: the compose file, which is what a compose user opens, does not repeat or point at the caveat. | `Dockerfile`, `deploy/docker-compose.yml` | a `docker build` in release-check, or an honest note that the image is unverified |
 | 23 | Three unauthenticated failure paths, two audited. The allowlist refusal and a bad setup token both write a row through `auditFromOutside`, cooldown-gated because they are unthrottled; a bad token on `/api/hook/state` writes nothing at all. The runbook's diagnosis for "somebody is hammering this panel" is `GROUP BY event` over `audit_log`, where a hook probe is invisible. The tell that it was not decided rather than chosen: the other two carry a comment explaining the audit choice, and this one explains only its constant-time compare. Low severity — the token has full entropy, so the value is noticing the attempt, not preventing it. | `internal/httpapi/api.go` | `auditFromOutside`, the same as its two siblings |
@@ -10316,3 +10316,39 @@ row and inventing a `new thing` line each fail it by name. It also refuses to
 run at all if it finds fewer than ten labels, because a regex that has stopped
 matching would otherwise report perfect agreement about nothing, which is the
 failure mode `jsonKeys` already had once in this project.
+
+
+## 17 and 18: the fourth funnel, and a type that agreed with the bug
+
+**17.** A passkey's name was rendered raw twice in `Settings.tsx`, one of them
+the `window.confirm` that asks before deleting the credential. `passkeyLabel`
+now sits beside `sessionLabel`, `projectLabel` and `terminalLabel`, so all four
+name-rendering funnels are in one file and the sweep that finds three finds four.
+
+Lower stakes than the others -- this name is typed rather than taken from a
+directory basename or a `pane_title` an agent set -- but a dialog is the last
+thing between a credential and being deleted, and a name carrying an override
+can make it ask about a different key than the one it removes.
+
+**The test was wrong first, and the code was right.** It expected a name made
+only of control characters to fall back to "Passkey". It does not:
+`safeText` *replaces* with U+FFFD rather than stripping, deliberately, so that a
+name which contained something deceptive looks wrong instead of looking short.
+Falling back there would hide exactly what the sanitising exists to show, in the
+dialog where it matters most. The test now pins that behaviour with the reason.
+
+**18.** `[]string(nil)` marshals to `null`, and `hooks.Status.Events` is nil
+until something is installed -- which is every fresh panel, and the state the
+settings page reads first. The upload's `paths` had the same shape when no part
+of the body was named "file".
+
+The tell was the guard: `Settings.tsx` read `(status.events ?? []).length`. That
+is the symptom patched at the reader, in the one place `emptyIfNil`'s own comment
+says it exists to make unnecessary -- "so the frontend never has to guard a map
+over a missing list". And the type had been changed to agree: `wire.ts` declared
+`events: string[] | null`, so the frontend was *told* to expect the bug.
+
+All three are corrected: the server sends `[]`, the type says `string[]`, the
+guard is gone. `TestTheEventListIsAnArrayEvenWhenNothingIsInstalled` marshals
+the struct and looks for `"events":[]`; removing the normalisation fails it with
+the whole payload printed, which is the form that makes it obvious.

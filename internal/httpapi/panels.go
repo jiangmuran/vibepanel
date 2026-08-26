@@ -228,7 +228,11 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "no files in the upload")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"paths": written})
+	// emptyIfNil: `written` is nil when no part of the multipart body was
+	// named "file", so the response was `{"paths": null}` and the frontend
+	// would map over it. Nothing sends such a request today, which is the only
+	// reason this has not been seen.
+	writeJSON(w, http.StatusOK, map[string]any{"paths": emptyIfNil(written)})
 }
 
 // asciiFilename is the legacy half of Content-Disposition: printable ASCII

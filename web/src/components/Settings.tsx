@@ -8,6 +8,7 @@ import {
   passkeysSupported,
 } from '../protocol/webauthn'
 import type { AuditEntry, HookStatus, Passkey, SettingsInfo } from '../protocol/wire'
+import { passkeyLabel } from './label'
 
 function bytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -342,7 +343,7 @@ function HooksSection() {
             // running — see the notice below.
             value={
               status.installed
-                ? `installed for ${(status.events ?? []).length} events`
+                ? `installed for ${status.events.length} events`
                 : 'not installed'
             }
           />
@@ -511,14 +512,14 @@ function PasskeysSection() {
           className="group flex items-center gap-2 rounded-vp px-2 py-1.5 hover:bg-surface-2"
         >
           <Fingerprint size={12} className="shrink-0 text-ink-2" />
-          <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink">{k.name}</span>
+          <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink">{passkeyLabel(k)}</span>
           <span className="shrink-0 text-[10.5px] text-ink-2">
             {k.lastUsedAt ? `used ${new Date(k.lastUsedAt * 1000).toLocaleDateString()}` : 'never used'}
           </span>
           <button
             type="button"
             onClick={() => {
-              if (!window.confirm(`Remove ${k.name}?`)) return
+              if (!window.confirm(`Remove ${passkeyLabel(k)}?`)) return
               void api.deletePasskey(k.id).then(load).catch(() => setError('could not remove it'))
             }}
             title="Remove"

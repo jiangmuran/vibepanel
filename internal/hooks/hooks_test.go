@@ -588,3 +588,36 @@ func TestTheEventListComesBackInTheSameOrderEveryTime(t *testing.T) {
 		t.Fatalf("expected four installed events, got %v", first)
 	}
 }
+
+// The event list is a JSON array, never null.
+//
+// `[]string(nil)` marshals to `null`, and Events is nil until a hook is
+// installed -- which is every fresh panel, and the state the settings page
+// first reads. The one caller guarded with `(status.events ?? []).length`, and
+// wire.ts declared the field `string[] | null` to match: the symptom patched at
+// the reader, and the type changed to agree with the bug. The next reader
+// written without the guard throws on a page that has never had hooks.
+func TestTheEventListIsAnArrayEvenWhenNothingIsInstalled(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "report.sh")
+
+	st, err := Inspect(script)
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
+	}
+	if st.Installed {
+		t.Fatalf("a directory with no settings file reports hooks installed; this test is "+
+			"not looking at the state it means to: %+v", st)
+	}
+	if st.Events == nil {
+		t.Error("Events is nil, which marshals to null")
+	}
+
+	blob, err := json.Marshal(st)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !bytes.Contains(blob, []byte(`"events":[]`)) {
+		t.Errorf("the settings page is sent %s; it maps over that field", blob)
+	}
+}

@@ -75,6 +75,24 @@ export function terminalLabel(s: Session, index: number): string {
 }
 
 /**
+ * What to call a passkey.
+ *
+ * The fourth name-rendering site and the only one that was not funnelled: a
+ * passkey's name was rendered raw in the list and again inside the
+ * `window.confirm` that asks before deleting it. Lower stakes than the others,
+ * because the name comes from something the user typed rather than from a
+ * directory basename or a `pane_title` an agent set -- but "lower stakes"
+ * described the project-name site too, one file over, until it did not.
+ *
+ * The confirm is the one that matters. A dialog is the last thing between a
+ * credential and being deleted, and a name carrying a bidi override can make it
+ * ask about a different key than the one it will remove.
+ */
+export function passkeyLabel(k: { name?: string }): string {
+  return safeText(k.name ?? '').trim() || 'Passkey'
+}
+
+/**
  * Labels that can tell sessions apart.
  *
  * A shell is named after the directory it sits in, so a project containing

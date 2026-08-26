@@ -326,7 +326,11 @@ export interface HookStatus {
   settingsPath: string
   scriptPath: string
   installed: boolean
-  events: string[] | null
+  // Never null. The server sends [] for "nothing installed", which is every
+  // fresh panel; this said `string[] | null` and the one reader guarded with
+  // `?? []`, which is the symptom patched at the reader rather than the
+  // contract fixed at the source.
+  events: string[]
   snippet: string
   codexSnippet: string
 }
