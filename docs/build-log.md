@@ -9252,11 +9252,11 @@ Two is all of them. Swept by type rather than by literal — everything that tak
 | 22 | **Fixed: `scripts/verify.sh` collects the summary lines under the verdict.** `make verify` prints "all checks passed" over any number of warnings. A WARN does not change a check's exit code — deliberately, since it separates "the thing under test failed" from "its setup did not happen" — but several of them mean a section was skipped: no second project to drag, no uploaded file in the tree, no dead session for the header check. render-check has twenty-four WARN sites. So six sections can be skipped and the run still ends with the word "passed", twenty minutes after the warnings scrolled past. Sits with 9, and is the same shape head-check was written to remove. | `Makefile` | every check already ends with `=== name: N FAIL, N WARN ===`; collect those and print them under the verdict |
 | 28 | **Fixed: `check` ends with a notice when tmux is missing, both branches driven.** `make check` passes on a machine with no tmux, having run almost nothing. Four test helpers call `t.Skip("tmux not installed")` and each guards a whole suite — `internal/tmux`, `internal/session`, `internal/httpapi`, `cmd/vibepanel`. `go test` without `-v` does not summarise skips, so every one of those packages prints `ok`. The Makefile never names tmux as a prerequisite. Worse than 22 in one way: `check` is the gate people run before committing, and AGENTS.md's warning that "a change that only passes `check` has not been looked at" is about the browser checks, not about `check` itself being hollow. | `Makefile` | look for tmux in the target and say loudly what will not be tested without it |
 | 29 | stress-check's escape-fragment check looks for the shape that is already trimmed. `trimPartialEscape` handles `31mhello` and, as pinned by `TestTrimPartialEscapeKnownFalseNegative`, does not handle `[31mhello` — the case where only the ESC was evicted. The check's regex is `^\d+;?\d*[a-zA-Z]\s*$` with `length < 8`, which matches the first and cannot match the second: `[` is not a digit and the string is nine characters. So the one browser check aimed at that defect is aimed past it. It is also a WARN, while the two assertions above it in the same block — nothing recognisable after a reload, the replay injecting terminal responses — are both FAIL. Checked the other suspicious WARNs in that file and they hold up: the alternate-screen one is a weaker observation beside a FAIL, and the rest are setup that did not happen. | `web/scripts/stress-check.mjs` | match the leading `[` too, and decide whether a literal fragment on screen is a failure |
-| 45 | Nothing re-runs the one fault the stale banner exists for. A full disk is what that whole path is built around — `CheckWritable`, `noteStale`, the three-tick grace, `/api/health` answering `"ok": false`, and the banner itself — and no harness injects it, so `stale-notice` is driven by nothing. Both halves that are usually hard are already done and recorded above: the injection is `ulimit -f` applied to a restart after the database exists, since "Go turns SIGXFSZ into a write error, which is close enough to a full disk" (chmod proves nothing on an already-open file, and no tmpfs is available here), and the banner was watched appearing in a real browser six seconds in with the connection staying open. What is missing is only the wiring into a check. Sits with 9. | `web/scripts/render-check.mjs` | `ulimit -f`, restart, assert the banner appears and the socket stays open |
+| 45 | **Fixed: `restart-check` squeezes a running panel and watches the banner. See the last section.** Nothing re-runs the one fault the stale banner exists for. A full disk is what that whole path is built around — `CheckWritable`, `noteStale`, the three-tick grace, `/api/health` answering `"ok": false`, and the banner itself — and no harness injects it, so `stale-notice` is driven by nothing. Both halves that are usually hard are already done and recorded above: the injection is `ulimit -f` applied to a restart after the database exists, since "Go turns SIGXFSZ into a write error, which is close enough to a full disk" (chmod proves nothing on an already-open file, and no tmpfs is available here), and the banner was watched appearing in a real browser six seconds in with the connection staying open. What is missing is only the wiring into a check. Sits with 9. | `web/scripts/render-check.mjs` | `ulimit -f`, restart, assert the banner appears and the socket stays open |
 | 9 | `scanTapTargets` and `scanUnreachable` report only when they find something and never assert they looked at anything. A button refactored into a `<div onClick>` makes them blind and silent. | `web/scripts/render-check.mjs` | a floor at zero candidates, which cannot false-positive |
 | 21 | Panel notifications and state snapshots share one coalescing slot. `notifyPanel` goes through `Hub.Broadcast` → `queueState`, which *replaces* `statePending` — correct for a snapshot, because the newest contains the older ones, and wrong for an event. A `panel` message saying "your notes changed, fetch them again" is dropped if anything else queues while `stateWriter` is inside `sendRaw`, which is a network write that can block. The other viewer's notes or todos then do not refresh until something else wakes them. Sits with 5 and 6. | `internal/httpapi/api.go`, `internal/ws/conn.go` | a second slot, or a small queue for messages that are not snapshots — not dropping the coalescing, which exists for a measured reason |
-| 16 | The compose box's multi-line branch is exercised by nothing. `text.includes('\n')` routes to a paste — the fix for a measured failure, "three lines in, three separate submissions out" — and render-check fills the box only with `true` and an `echo`, both single-line. The chain behind it, `pasteText` → `MsgPaste` → `Manager.Paste`, is 0.0% under `-coverpkg` and named by no Go test. The branch that *had* the bug is driven five times; the one that fixes it, never. Sits with 9 and 15. | `web/src/components/mobile/ComposeInput.tsx` | one multi-line fill in render-check's mobile section; the assertion is already written in the comment above the branch |
-| 15 | The drag-reorder adjustment in `useDragList` — `overIndex > from ? overIndex - 1 : overIndex` — is the downward-drag branch, and nothing takes it. render-check drags the second project *above* the first, which is upward; `web/src/hooks` has no test file, in a frontend where every other pure-logic module has one. Not a reported bug: the untested half of a classic off-by-one, in a gesture used constantly, failing silently — a project dropped one position from where it was aimed reads as having aimed badly. Sits with 9. The empty `hooks/` directory is not the finding, though — the other module there is `useMediaQuery`, whose logic is the string `(max-width: 767px), (max-height: 500px) and (pointer: coarse)`, and a unit test for that would only copy the string back. Its four cases were checked by reading and are right: a phone in portrait, a phone in landscape at 844×390 (the case that once produced a six-line terminal), a desktop window dragged narrow, and a touchscreen laptop with a mouse, which reports `pointer: fine`. So the gap is one function, not one directory. | `web/src/hooks/useDragList.ts` | a unit test (it is a pure function of ids, from, overIndex) and a downward drag in render-check |
+| 16 | **Fixed, after the first version of the check proved nothing — see the last section.** The compose box's multi-line branch is exercised by nothing. `text.includes('\n')` routes to a paste — the fix for a measured failure, "three lines in, three separate submissions out" — and render-check fills the box only with `true` and an `echo`, both single-line. The chain behind it, `pasteText` → `MsgPaste` → `Manager.Paste`, is 0.0% under `-coverpkg` and named by no Go test. The branch that *had* the bug is driven five times; the one that fixes it, never. Sits with 9 and 15. | `web/src/components/mobile/ComposeInput.tsx` | one multi-line fill in render-check's mobile section; the assertion is already written in the comment above the branch |
+| 15 | **Fixed: `reorder` extracted and tested; the mutation is caught by two cases.** The drag-reorder adjustment in `useDragList` — `overIndex > from ? overIndex - 1 : overIndex` — is the downward-drag branch, and nothing takes it. render-check drags the second project *above* the first, which is upward; `web/src/hooks` has no test file, in a frontend where every other pure-logic module has one. Not a reported bug: the untested half of a classic off-by-one, in a gesture used constantly, failing silently — a project dropped one position from where it was aimed reads as having aimed badly. Sits with 9. The empty `hooks/` directory is not the finding, though — the other module there is `useMediaQuery`, whose logic is the string `(max-width: 767px), (max-height: 500px) and (pointer: coarse)`, and a unit test for that would only copy the string back. Its four cases were checked by reading and are right: a phone in portrait, a phone in landscape at 844×390 (the case that once produced a six-line terminal), a desktop window dragged narrow, and a touchscreen laptop with a mouse, which reports `pointer: fine`. So the gap is one function, not one directory. | `web/src/hooks/useDragList.ts` | a unit test (it is a pure function of ids, from, overIndex) and a downward drag in render-check |
 | 10 | `doctor` never asks whether the panel answers on the loopback URL its own hooks post to, which is the one check that would turn the bind-address trap into a line of output. | `cmd/vibepanel/main.go` | one GET, only while a panel holds the lock |
 | ~~11~~ | **Retracted.** Claimed that `passkey/login/finish` consults the login throttle and never feeds it, on the strength of `grep Throttle` in that file returning only `Delay` and `Succeed`. It does feed it: the refusal path calls `s.failLogin`, the shared helper that does `Throttle.Fail` *and* writes `login.failed` with the detail `"passkey: …"`. Prefixing the shared event is better than the separate `passkey.login.failed` the finding asked for, because one fail2ban rule then catches both. The grep was true and incomplete — the third interaction goes through an abstraction, which is what a grep for the concrete name cannot see. | — | — |
 | 14 | Both delete paths run on the request's context, which Go cancels when the client disconnects, and both loop over sessions. A tab closed just after pressing delete leaves some tmux sessions dead with their rows intact — a batch of GONE from doing nothing wrong. The comment on `tearDownSession` reasons about which half should fail first and not about the half being cancelled; `notifyState`'s writers already detach with a 5s background context for exactly this reason. Found after the ordering above was fixed; it belongs beside 5 and 6. | `internal/httpapi/api.go` | detach the teardown the way notifyState does |
@@ -10073,3 +10073,109 @@ rather than fixed.
 A check that fails one run in five teaches people to run it again instead of
 looking, and the entire argument for these browser checks is that a FAIL there
 means something.
+
+
+## The fault the stale banner exists for, finally run
+
+45, fixed. A full disk is what that whole path is built around -- `CheckWritable`,
+`noteStale`, the three-tick grace, `/api/health` answering `"ok": false`, and the
+banner -- and nothing had ever re-run it. The harness injects an unwritable data
+directory, a killed backend, a dead session, a wrong password, an offline cycle,
+floods and a certificate swap. Not this. It had been driven by hand once, and a
+thing driven by hand once is a thing that worked on the day it was written.
+
+It lives in `restart-check`, because the injection is a restart and restarting
+the backend under a browser is what that file already does.
+
+**Two attempts, and the first one answered a different question.** Applying
+`ulimit -f 1` at exec, which is what the finding proposed, does not produce a
+panel with a full disk. It produces no panel at all:
+
+    vibepanel: store: ping .../vibepanel.db: disk I/O error (4874)
+
+It exits inside `store.Open`. Worth knowing, and not what the banner is for: the
+banner is for a disk that fills under a panel that is already up. So the check
+boots normally and squeezes the running process with `prlimit`.
+
+**Then nothing happened, for a good reason.** Under the limit, an idle panel sat
+at `"ok": true` for twenty-four seconds. Nothing probes writability on a timer,
+and that is defensible -- a panel with nothing to record has lost nothing, and
+you find out when a write actually fails. But a check that only waits would have
+passed against a panel that never noticed. So it makes the most ordinary write
+there is, and asserts the write fails first, so that a failed injection cannot
+read as a pass.
+
+    [PASS] stale: the banner appeared: "The panel has stopped recording what the
+    sessions are doing. The terminals are unaffected."
+
+with `/api/health` answering `"ok": false` and the connection still `open` --
+which is the half that is easy to lose. The banner travels *in* the state
+snapshot, so a socket that closes cannot deliver the explanation. That is the
+difference from a database that cannot be *read*, where the socket closes one
+revalidation tick later and every viewer is told nothing at all.
+
+One measurement from the teardown, because it cost a run: `prlimit --fsize=1024`
+sets the soft *and* hard limit, and raising a hard limit back needs
+CAP_SYS_RESOURCE. `--fsize=1024:unlimited` lowers only the soft one. The run
+whose assertions had all passed still ended in a FAIL, from the cleanup.
+
+## 15, and the branch nothing took
+
+`reorder` is now a pure function of `(ids, draggingId, overIndex)`, out of the
+release handler and tested. `web/src/hooks` had no test file at all, while every
+other pure-logic module in the frontend has one.
+
+The correction it carries -- `overIndex > from ? overIndex - 1 : overIndex` --
+is the downward-drag arm, and render-check only ever drags the second project
+*above* the first, which takes the other one. Removing the `- 1` fails exactly
+two of the eight cases: the downward drag, and the drop-just-below-itself that
+must be a no-op. The drop-at-the-end case passes either way, which is worth
+knowing about a fixture that looks like it covers the same ground.
+
+## 16, and a check that had to be wrong twice before it was right
+
+The compose box routes a block containing a newline down the paste road rather
+than typing it, because typed newlines are Enters -- "three lines in, three
+separate submissions out", measured, fixed, and then exercised by nothing. The
+chain behind it, `pasteText` to `MsgPaste` to `Manager.Paste`, was 0.0% in a
+`-coverpkg` run and named by no Go test either. The branch that had the bug was
+driven five times over.
+
+**The obvious check failed, and the failure was mine.** Fill the box with three
+lines, send, assert they did not run. It failed: two of the three had run. The
+evidence pointed at the client, then at tmux, and both were innocent. A pane
+driven directly with `paste-buffer -p` brackets correctly -- with my shell, with
+an empty HOME, and with the panel's own tmux config, all measured. The compose
+box really was holding the newlines, measured too, by reading the textarea back
+before concluding anything from what the terminal did.
+
+What was wrong was the pane. `render-check` creates its scratchpad session as
+
+    mkSession(['sh', '-c', 'echo RENDER_CHECK_MARKER; exec sh'], 'scratchpad')
+
+and dash never asks for bracketed paste, so tmux correctly does not bracket, and
+the newlines are Enters no matter which road the block travelled. The product
+did exactly what `ComposeInput`'s own comment promises -- "better rather than
+airtight" -- and the check was asserting a guarantee that does not exist for
+that shell. The prompt was in the screen tail the whole time: a bare `$ `, not
+this machine's bash prompt.
+
+Along the way the first version of the message was also useless: it collapsed
+whitespace, so "the three lines sit unrun on the input line" and "each was
+submitted in turn" produced the same string -- the two outcomes the check exists
+to tell apart.
+
+So the check now makes its own session, `cat -v` after `printf` of `ESC[?2004h`,
+which is the fixture `internal/tmux` uses and for the same reason: the markers
+have to be text, because a terminal swallows them as sequences. It asserts what
+the client is responsible for -- that the block went down the paste road -- and
+leaves what the receiving program does with it to the receiving program. Removing
+the branch fails it with `open=false close=false`, and the screen tail shows
+three bare lines.
+
+**A third thing, from my own tooling again.** The session command contained
+`printf '\033[?2004h'`, and in a JavaScript string `\0` is an octal escape,
+illegal in strict mode. ESLint said so, node refused to parse the file, and the
+whole run exited without printing a single finding -- which is exactly the
+"green because nothing ran" shape that `check`'s new tmux notice was added for,
+one file over.

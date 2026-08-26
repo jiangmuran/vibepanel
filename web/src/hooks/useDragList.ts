@@ -100,33 +100,8 @@ export function useDragList(ids: string[], onCommit: (ordered: string[]) => void
       setDrag({ draggingId: null, overIndex: null })
       if (!draggingId || overIndex === null) return
 
-      const from = ids.indexOf(draggingId)
-      if (from < 0) return
-      // The insertion index counts positions in the original list, so removing
-      // the dragged row first shifts everything below it up by one.
-      //
-      // KNOWN GAP: nothing exercises this branch. `overIndex > from` is a
-      // downward drag; render-check drags the *second* project above the
-      // first, which is upward and takes the `else`. And web/src/hooks has no
-      // test file at all — every other pure-logic module here has one
-      // (touchSelect, keys, label, meter, text, theme, styles, deps, harness),
-      // which makes this the only piece of arithmetic in the frontend that
-      // needed a comment to explain it and has nothing checking it.
-      //
-      // The line looks right and is not a reported bug. What it is, is the
-      // untested half of a classic off-by-one, in a gesture people use
-      // constantly, whose failure is silent: a project dropped one position
-      // from where it was aimed reads as having aimed badly.
-      //
-      // A unit test is the cheap half — this is a pure function of
-      // (ids, from, overIndex). A downward drag in render-check is the other.
-      const to = overIndex > from ? overIndex - 1 : overIndex
-      if (to === from) return
-
-      const next = ids.slice()
-      next.splice(from, 1)
-      next.splice(to, 0, draggingId)
-      onCommit(next)
+      const next = reorder(ids, draggingId, overIndex)
+      if (next) onCommit(next)
     },
     // No dependency on the rendered state any more, so this handler survives a
     // whole gesture instead of being rebuilt on every pointermove.
@@ -146,4 +121,36 @@ export function useDragList(ids: string[], onCommit: (ordered: string[]) => void
       style: { touchAction: 'none' as const },
     }),
   }
+}
+
+/**
+ * Where the list ends up when `draggingId` is released over `overIndex`.
+ *
+ * Split out of the release handler because it is the only piece of arithmetic
+ * in the frontend that needed a comment to explain it and had nothing checking
+ * it. `web/src/hooks` had no test file at all, while every other pure-logic
+ * module here has one -- touchSelect, keys, label, meter, text, theme, styles,
+ * deps, harness.
+ *
+ * Returns null when the drop is a no-op, so the caller does not commit an
+ * identical order and make every viewer redraw for nothing.
+ */
+export function reorder(ids: string[], draggingId: string, overIndex: number): string[] | null {
+  const from = ids.indexOf(draggingId)
+  if (from < 0) return null
+  // The insertion index counts positions in the original list, so removing the
+  // dragged row first shifts everything below it up by one.
+  //
+  // `overIndex > from` is a downward drag, and render-check only ever drags the
+  // *second* project above the first, which takes the other arm. So the branch
+  // that carries the correction was the untested half of a classic off-by-one,
+  // in a gesture people use constantly, whose failure is silent: a project
+  // dropped one position from where it was aimed reads as having aimed badly.
+  const to = overIndex > from ? overIndex - 1 : overIndex
+  if (to === from) return null
+
+  const next = ids.slice()
+  next.splice(from, 1)
+  next.splice(to, 0, draggingId)
+  return next
 }

@@ -58,16 +58,17 @@ export function ComposeInput({
     // a time — three lines in, three separate submissions out — on the one
     // control whose stated premise is "composing first and sending once is
     // the only way this works".
-    // KNOWN GAP: nothing exercises this branch. render-check fills the box
-    // with 'true' and an echo, both single-line, so onPaste never fires — and
-    // the chain behind it, pasteText → MsgPaste → Manager.Paste, is 0.0% in a
-    // -coverpkg run and named by no Go test either. So the fix for a measured
-    // failure has neither a unit test nor a browser check standing over it,
-    // while the branch that had the bug is driven five times.
+    // Driven by render-check's mobile section now, against a pane that asks
+    // for bracketed paste and renders the markers with `cat -v`. Removing this
+    // branch fails it with "open=false close=false".
     //
-    // A multi-line fill in the mobile section of render-check is the whole of
-    // it, and the assertion is already written down above: three lines in, one
-    // submission out.
+    // It needed its own session, and the first attempt at that check is why:
+    // pasting into the scratchpad pane, which runs `sh`, proved nothing.
+    // dash never asks for bracketed paste, tmux correctly does not bracket for
+    // a pane that never asked, and the promise below is "better rather than
+    // airtight" for exactly that reason. What the check pins is the half this
+    // file is responsible for -- routing a block with newlines down the paste
+    // road instead of typing it.
     if (text.includes('\n')) {
       onPaste(text, newline)
     } else {

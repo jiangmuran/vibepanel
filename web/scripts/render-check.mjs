@@ -1586,6 +1586,71 @@ try {
     }
     if (!keyed) note('FAIL', 'mobile', 'the Enter key from the bar did not reach the terminal')
 
+    // A block with line breaks in it is a paste, not typing.
+    //
+    // Written into the PTY byte by byte it is indistinguishable from somebody
+    // pressing Enter after every line: a shell runs each one, and an agent acts
+    // on the first sentence of a three-line instruction before it has read the
+    // third. That was measured, and fixed, and then nothing exercised the fix:
+    // this section filled the box with single-line commands, so onPaste never
+    // fired, and the chain behind it -- pasteText, MsgPaste, Manager.Paste --
+    // was 0.0% in a -coverpkg run and named by no Go test either.
+    //
+    // It needs its own session, and the first attempt at this check is why.
+    // Pasting into the scratchpad pane and asserting the lines did not run
+    // failed, and the failure was the fixture: that pane runs `sh`, dash never
+    // asks for bracketed paste, and tmux's `paste-buffer -p` correctly does not
+    // bracket for a pane that never asked. The product did exactly what its own
+    // comment promises -- "better rather than airtight" -- and the check was
+    // asserting a guarantee that does not exist for that shell.
+    //
+    // So: a pane that does ask, and `cat -v` so the markers are text rather
+    // than sequences the terminal swallows. Same fixture internal/tmux uses,
+    // for the same reason. This asserts what the client is actually
+    // responsible for -- routing a multi-line block down the paste road
+    // instead of typing it -- and leaves what the receiving program does about
+    // it to the receiving program.
+    const pasteSess = await mkSession(
+      ['sh', '-c', "stty -echo -icanon min 1 time 0; printf '\\033[?2004h'; exec cat -v"],
+      'paste-target',
+    )
+    await sleep(1200)
+    await openPhoneMenu()
+    await page.locator('[data-testid="session-row"]', { hasText: 'paste-target' }).first().click()
+    await sleep(1600)
+
+    const pasted = ['ONE', 'TWO', 'THREE'].map((n) => `echo ${n}`).join('\n')
+    await compose.fill(pasted)
+    // What the box is holding, before anything is concluded from what arrived.
+    // The routing turns on this value containing a newline, so a fill that did
+    // not deliver them would make the terminal's behaviour correct and the
+    // fixture wrong -- which is the mistake this check already made once.
+    const filledHasNewline = (await compose.inputValue()).includes(String.fromCharCode(10))
+    await page.locator('[data-testid="compose-send"]').click()
+    await sleep(1800)
+    const pasteTxt = await page.locator('.xterm-screen').innerText().catch(() => '')
+    const opened = pasteTxt.includes('^[[200~')
+    const closed = pasteTxt.includes('^[[201~')
+    if (!filledHasNewline) {
+      note('WARN', 'mobile', 'the compose box did not hold the newlines; nothing was measured')
+    } else if (!pasteTxt.includes('echo ONE')) {
+      note('WARN', 'mobile', 'the block never reached the pane; nothing was measured')
+    } else if (!opened || !closed) {
+      note('FAIL', 'mobile',
+        `a three-line block from the compose box arrived without bracketing ` +
+        `(open=${opened} close=${closed}), so it was typed rather than pasted: every ` +
+        'newline in it is an Enter, and an agent acts on the first line before it has read ' +
+        `the third. Screen tail: ${JSON.stringify(pasteTxt.slice(-200))}`)
+    } else {
+      note('PASS', 'mobile', 'a multi-line block went down the paste road, bracketed')
+    }
+
+    await authed(`/api/sessions/${pasteSess.id}`, { method: 'DELETE' }).catch(() => {})
+    await sleep(600)
+    await openPhoneMenu()
+    await page.locator('[data-testid="session-row"]', { hasText: 'scratchpad' }).first().click()
+    await sleep(1200)
+
     // Put the toggle back. It is sticky, not a one-shot, and leaving it off
     // meant every send after this point in the run arrived without an Enter —
     // so commands piled up unexecuted on the input line while the checks that

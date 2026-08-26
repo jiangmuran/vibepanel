@@ -48,18 +48,40 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 let server = null
 let serverLog = ''
-function boot() {
-  const p = spawn(BIN, ['serve'], {
-    env: {
-      ...process.env,
-      HOME: FAKE_HOME,
-      VIBEPANEL_DATA_DIR: DATA,
-      VIBEPANEL_TMUX_SOCKET: SOCKET,
-      VIBEPANEL_ADDR: `127.0.0.1:${PORT}`,
-      VIBEPANEL_DOMAIN: 'localhost',
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
+// fileBlocks, when set, is an RLIMIT_FSIZE in 512-byte blocks, applied by a
+// shell that then execs the binary.
+//
+// This is the only fault injection that reaches the path the stale banner
+// exists for. chmod proves nothing -- permissions are checked at open and the
+// database file is already open -- and user namespaces are not available here,
+// so no tmpfs. A write that would extend a file past the limit fails, reads do
+// not, and Go turns the resulting SIGXFSZ into a write error: close enough to a
+// full disk to answer the question, applied to a restart so the database
+// already exists.
+function boot(fileBlocks = 0) {
+  const p = fileBlocks
+    ? spawn('/bin/sh', ['-c', `ulimit -f ${fileBlocks}; exec "$0" serve`, BIN], {
+      env: {
+        ...process.env,
+        HOME: FAKE_HOME,
+        VIBEPANEL_DATA_DIR: DATA,
+        VIBEPANEL_TMUX_SOCKET: SOCKET,
+        VIBEPANEL_ADDR: `127.0.0.1:${PORT}`,
+        VIBEPANEL_DOMAIN: 'localhost',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    : spawn(BIN, ['serve'], {
+      env: {
+        ...process.env,
+        HOME: FAKE_HOME,
+        VIBEPANEL_DATA_DIR: DATA,
+        VIBEPANEL_TMUX_SOCKET: SOCKET,
+        VIBEPANEL_ADDR: `127.0.0.1:${PORT}`,
+        VIBEPANEL_DOMAIN: 'localhost',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
   p.stdout.on('data', (d) => (serverLog += d))
   p.stderr.on('data', (d) => (serverLog += d))
   server = p
@@ -334,6 +356,104 @@ try {
   if (still.length !== 1) {
     note('FAIL', 'persistence',
       `expected exactly one "survivor" session after the restart, found ${still.length}`)
+  }
+
+  // ── the fault the stale banner exists for ────────────────────────────────
+  //
+  // A full disk is what that whole path is built around: CheckWritable, the
+  // poller's noteStale, the three-tick grace before it is believed,
+  // /api/health answering "ok": false, and the banner itself. Nothing ran it.
+  // The harness injects an unwritable data directory, a killed backend, a dead
+  // session, a wrong password, an offline/online cycle, floods and a
+  // certificate swap -- and never the one fault the banner is for. It was
+  // driven by hand once, and a thing driven by hand once is a thing that
+  // works on the day it was written.
+  //
+  // Here rather than in render-check because the injection is a restart, and
+  // restarting the backend under a browser is what this file already does.
+  //
+  // The two halves matter separately. The banner must appear, or a panel that
+  // has stopped recording anything looks exactly like one that is idle. And
+  // the socket must stay open, because the storage banner travels *in* the
+  // state snapshot -- a panel that disconnects cannot deliver the message
+  // saying why. That is the difference from a database that cannot be read,
+  // where the socket closes one revalidation tick later and every viewer is
+  // told nothing.
+  // Restarted normally, then squeezed while running. The first attempt applied
+  // the limit at exec and answered a different question: the panel does not
+  // start at all, it exits during store.Open with
+  //
+  //     vibepanel: store: ping .../vibepanel.db: disk I/O error (4874)
+  //
+  // which is a real thing to know and is not what the banner is for. The banner
+  // is for a disk that fills under a panel that is already up.
+  await stop()
+  boot()
+  if (!await health(25000)) {
+    note('FAIL', 'stale', `the panel did not come back up at all:\n${serverLog.slice(-400)}`)
+  } else {
+    // Soft limit only. Setting `--fsize=1024` sets both, and raising a hard
+    // limit back needs CAP_SYS_RESOURCE -- measured, as a teardown that failed
+    // with "Command failed: prlimit --fsize=unlimited" on a run whose actual
+    // assertions had all passed.
+    execSync(`prlimit --pid ${server.pid} --fsize=1024:unlimited`)
+
+    const full = await ctx.newPage()
+    await full.goto(BASE, { waitUntil: 'networkidle' })
+    if (await full.locator('[data-testid="auth-submit"]').isVisible().catch(() => false)) {
+      note('FAIL', 'stale',
+        'a panel whose disk is full showed the sign-in screen; the sign-in it offers needs a write')
+    }
+    await full.waitForSelector('[data-testid="sidebar"]', { timeout: 15000 }).catch(() => {})
+
+    // Nothing probes writability on a timer, and that is defensible: a panel
+    // with nothing to record has lost nothing. You find out when a write
+    // actually fails. So this does the most ordinary write there is rather
+    // than waiting for one -- measured first, with an idle panel sitting at
+    // "ok": true for twenty-four seconds under the same limit, which is
+    // correct and would have made a check that only waits pass on a panel
+    // that never noticed.
+    const wrote = await authed('/api/projects', {
+      method: 'POST',
+      body: JSON.stringify({ path: DATA, name: 'after-the-disk-filled' }),
+    })
+    if (wrote.ok) {
+      note('FAIL', 'stale',
+        'a write succeeded with the file-size limit at 1 KiB, so the injection did not take ' +
+        'and nothing below this line means anything')
+    }
+
+    let banner = ''
+    for (let i = 0; i < 40; i++) {
+      banner = await full.locator('[data-testid="stale-notice"]').innerText().catch(() => '')
+      if (banner) break
+      await sleep(500)
+    }
+    const conn = await full.locator('[data-testid="connection"]').getAttribute('data-status').catch(() => null)
+    const healthBody = await (await fetch(BASE + '/api/health')).json().catch(() => ({}))
+    await full.screenshot({ path: join(SHOTS, 'storage-full.png') })
+
+    if (!banner) {
+      note('FAIL', 'stale',
+        'a write failed and twenty seconds later the panel still says nothing. The states on ' +
+        'screen are frozen at whatever was last recorded, and nothing distinguishes that from ' +
+        `a quiet afternoon. /api/health said ${JSON.stringify(healthBody)}`)
+    } else {
+      note('PASS', 'stale', `the banner appeared: ${JSON.stringify(banner.slice(0, 90))}`)
+    }
+    if (healthBody.ok !== false) {
+      note('FAIL', 'stale',
+        `/api/health answered ${JSON.stringify(healthBody)} with writes failing; this is the ` +
+        'endpoint a monitor watches and it is the one that has to be honest')
+    }
+    if (conn !== 'open') {
+      note('FAIL', 'stale',
+        `the connection went to ${JSON.stringify(conn)} on a full disk. The banner travels in ` +
+        'the state snapshot, so a socket that closes cannot deliver the explanation.')
+    }
+    await full.close()
+    // Give it back, or the SIGTERM below has to be a SIGKILL.
+    execSync(`prlimit --pid ${server.pid} --fsize=unlimited`)
   }
 
   if (pageErrors.length) {
