@@ -745,31 +745,83 @@ func cmdDoctor(args []string) error {
 	// data directory, and `doctor` is often run precisely because somebody is
 	// not sure whether the service is up.
 	//
-	// MISSING CHECK, and this is the branch that knows when it would be valid:
-	// nothing here asks whether the panel answers on the URL its own hooks
-	// post to. cfg.LoopbackURL() is only reachable when the panel is listening
-	// on loopback, and `--addr 192.168.8.20:8443` — an ordinary way to narrow
-	// exposure — binds one interface and leaves nothing on 127.0.0.1.
-	//
-	// Every symptom of that is a silence. The reporter script suppresses its
-	// own failures on purpose, because a hook that makes an agent wait is worse
-	// than a missed state update; the settings page reports hooks as installed
-	// because it reads the agent's configuration file, not whether anything
-	// arrived; and every session falls back to the guessed state, which is
-	// right often enough that nobody investigates. The runbook has the section
-	// and the three commands, and reaching it requires already suspecting the
-	// bind address.
-	//
-	// One GET to cfg.LoopbackURL()+"/api/health" while a panel holds the lock
-	// would turn that into a line of doctor output. Only while one holds it:
-	// with no panel running, loopback not answering is the expected state and a
-	// FAIL there would teach people to skip the output — the same reason
-	// passkeys report "--" rather than failing.
+	// The loopback check below belongs to this branch, because this is what
+	// knows whether asking is meaningful.
 	if dirsOK {
 		if holder := config.DataDirLockedBy(cfg.DataDir); holder != "" {
 			fmt.Printf("[ok  ] running panel      %s holds %s\n", holder, cfg.DataDir)
+
+			// Does the panel answer where its own hooks post?
+			//
+			// cfg.LoopbackURL() is what every session is given as
+			// VIBEPANEL_URL, so this asks the one question that matters about
+			// it: does anything answer there.
+			//
+			// Not the question the finding this came from asked. That said
+			// `--addr 192.168.8.20:8443` "binds one interface and leaves
+			// nothing on 127.0.0.1", and it does -- but LoopbackURL follows
+			// BindHost, so the sessions are told 192.168.8.20 too and reach it
+			// perfectly well. Measured. The mechanism is not the bind address
+			// on its own.
+			//
+			// What this does catch is worth more: an address that stopped being
+			// local (a VPN dropped, DHCP moved), a firewall in the way, and --
+			// the likeliest of the three -- a `doctor` run without the
+			// environment the service runs with, which means every other line
+			// above is describing a differently-configured panel than the one
+			// holding the lock.
+			//
+			// Every symptom of that is a silence. report.sh suppresses its own
+			// failures on purpose, because a hook that makes an agent wait is
+			// worse than a missed state update; the settings page reports hooks
+			// as installed because it reads the agent's configuration file, not
+			// whether anything arrived; and every session falls back to the
+			// guessed state, which is right often enough that nobody
+			// investigates. The runbook has the section and the three commands,
+			// and reaching it requires already suspecting the bind address.
+			//
+			// Only while a panel holds the lock. With none running, loopback
+			// not answering is the expected state, and a FAIL there would teach
+			// people to skip this output -- the same reason passkeys report
+			// "--" rather than failing.
+			//
+			// InsecureSkipVerify, like report.sh's --insecure, and for the
+			// reason its own comment gives: "the destination is 127.0.0.1, and
+			// when the panel is serving TLS its certificate is issued for the
+			// public hostname, which a loopback address will never match." The
+			// question is whether anything answers there, not whether the
+			// certificate is right -- and probing more strictly than the hook
+			// does would report a problem the hook does not have.
+			probeURL := cfg.LoopbackURL() + "/api/health"
+			probe := &http.Client{
+				Timeout: 3 * time.Second,
+				Transport: &http.Transport{
+					TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+				},
+			}
+			res, perr := probe.Get(probeURL)
+			if res != nil {
+				res.Body.Close()
+			}
+			switch {
+			case perr != nil:
+				fail("hook endpoint", fmt.Errorf("%s does not answer: %w", probeURL, perr))
+				fmt.Printf("       This is where sessions started with THIS configuration\n")
+				fmt.Printf("       post their hook reports. Either the panel is not listening\n")
+				fmt.Printf("       there, or this is not the configuration it was started\n")
+				fmt.Printf("       with -- check the unit's environment, since every line\n")
+				fmt.Printf("       above then describes a different panel than the running one.\n")
+				fmt.Printf("       Nothing else would say so: report.sh swallows its own\n")
+				fmt.Printf("       failures on purpose, and the settings page reads the\n")
+				fmt.Printf("       agent's config rather than whether anything arrived.\n")
+			case res.StatusCode >= 400:
+				fail("hook endpoint", fmt.Errorf("%s answered %s", probeURL, res.Status))
+			default:
+				fmt.Printf("[ok  ] hook endpoint      %s answers\n", probeURL)
+			}
 		} else {
 			fmt.Printf("[ok  ] running panel      none; nothing holds %s\n", cfg.DataDir)
+			fmt.Printf("[--  ] hook endpoint      skipped: no panel is running to answer\n")
 		}
 	}
 
@@ -914,6 +966,65 @@ func cmdDoctor(args []string) error {
 			fmt.Printf("       through npm reports \"node\" here rather than \"claude\".\n")
 		default:
 			fmt.Printf("[ok  ] agents             none running; every session is a shell\n")
+		}
+	}
+
+	// What the sessions were actually given, which is not what the config says.
+	//
+	// VIBEPANEL_URL is injected with -e when a session is created, and
+	// `set-environment` on a live session reaches only panes started after it.
+	// So a panel restarted with a different --addr leaves every session made
+	// before the change posting its hook reports to the old address. The check
+	// above cannot see this: it probes the URL the *current* configuration
+	// produces, and that one answers perfectly well.
+	//
+	// This is the shape the runbook's "hooks say they are installed and no
+	// state ever arrives" section is really about. Its previous explanation --
+	// that binding one interface leaves nothing on 127.0.0.1 -- does not hold,
+	// because LoopbackURL follows BindHost and the sessions are told the bound
+	// address too. Measured.
+	if !serverOK {
+		skip("hook url", "there is no session list to check")
+	} else {
+		want := cfg.LoopbackURL()
+		var checked, unset, stale int
+		example := ""
+		for _, i := range infos {
+			if !strings.HasPrefix(i.Name, "vp_") {
+				continue
+			}
+			checked++
+			got, gerr := tm.SessionEnvValue(ctx, i.Name, "VIBEPANEL_URL")
+			if gerr != nil {
+				continue
+			}
+			switch {
+			case got == "":
+				unset++
+			case got != want:
+				stale++
+				if example == "" {
+					example = got
+				}
+			}
+		}
+		switch {
+		case checked == 0:
+			fmt.Printf("[ok  ] hook url           no sessions to check\n")
+		case stale > 0:
+			failed++
+			fmt.Printf("[FAIL] hook url           %d of %d session(s) still post to %s, not %s\n",
+				stale, checked, example, want)
+			fmt.Printf("       They were created before the address changed, and a session's\n")
+			fmt.Printf("       environment cannot be updated in place -- set-environment\n")
+			fmt.Printf("       reaches only panes started after it. Their hook reports go\n")
+			fmt.Printf("       nowhere and nothing says so. Restart those sessions from the\n")
+			fmt.Printf("       panel to give them the current address.\n")
+		case unset == checked:
+			fmt.Printf("[--  ] hook url           no session carries one; hooks are not in use\n")
+		default:
+			fmt.Printf("[ok  ] hook url           %d of %d session(s) post to %s\n",
+				checked-unset, checked, want)
 		}
 	}
 

@@ -892,3 +892,43 @@ func TestAScriptIsReportedByItsInterpreterNotItsOwnName(t *testing.T) {
 			"packaged agent is reported by its interpreter needs re-measuring", got)
 	}
 }
+
+// What a session was given, read back from tmux.
+//
+// The hooks post to VIBEPANEL_URL, injected with -e when the session is made.
+// `set-environment` on a live session reaches only panes started after it, so a
+// panel restarted with a different --addr leaves every existing session posting
+// to the old address -- silently, because report.sh suppresses its own failures
+// and the settings page reads the agent's config rather than what arrived.
+// Nothing could ask what a session actually holds until this existed.
+func TestSessionEnvValueReadsWhatTheSessionWasGiven(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	if err := c.EnsureServer(ctx); err != nil {
+		t.Fatalf("EnsureServer: %v", err)
+	}
+
+	const name = "vp_envread"
+	const url = "http://127.0.0.2:8443"
+	if err := c.Create(ctx, CreateOptions{
+		Name: name, Dir: t.TempDir(), Width: 80, Height: 24,
+		Command: []string{"sleep", "60"},
+		Env:     []string{"VIBEPANEL_URL=" + url},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := c.SessionEnvValue(ctx, name, "VIBEPANEL_URL")
+	if err != nil {
+		t.Fatalf("SessionEnvValue: %v", err)
+	}
+	if got != url {
+		t.Errorf("VIBEPANEL_URL reads back as %q, want %q", got, url)
+	}
+
+	// A variable that was never set is not an error: sessions made before the
+	// hooks were installed, or by hand, simply do not have one.
+	if got, err := c.SessionEnvValue(ctx, name, "VIBEPANEL_NOT_SET"); err != nil || got != "" {
+		t.Errorf("an unset variable gave (%q, %v), want (\"\", nil)", got, err)
+	}
+}

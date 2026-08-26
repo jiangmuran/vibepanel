@@ -137,26 +137,49 @@ Not Codex-specific: this takes Claude down with it, and the settings page still
 reports the hooks as installed because it reads the agent's configuration file,
 not whether anything ever reached the panel.
 
-The reporter script posts to `VIBEPANEL_URL`, which is always loopback — the
-hook runs beside the panel, and sending a token out to the internet and back
-would be worse for nothing. That is only true while the panel is *listening* on
-loopback. `--addr 192.168.8.20:8443`, an ordinary way to narrow exposure, binds
-one interface and nothing answers on 127.0.0.1. The script suppresses its own
-failures on purpose — a hook that makes an agent wait is worse than a missed
-state update — so every report is silently dropped and every session falls back
-to the guessed state.
+Ask `doctor` first. Two of its lines are about exactly this, and between them
+they cover both ways it happens:
+
+    [ok  ] hook endpoint      http://127.0.0.1:8443/api/health answers
+    [ok  ] hook url           4 of 4 session(s) post to http://127.0.0.1:8443
+
+**`hook endpoint` failing** means nothing is listening where this configuration
+says the panel is. Either it is not running there, or `doctor` is not being run
+with the environment the service runs with -- in which case every other line of
+its output is describing a differently-configured panel than the one holding the
+lock, so check the unit's environment before anything else.
+
+**`hook url` failing** is the one that catches people, and it has nothing to do
+with the address being wrong *now*:
+
+    [FAIL] hook url           3 of 5 session(s) still post to http://10.0.0.4:8443,
+                              not http://127.0.0.1:8443
+
+`VIBEPANEL_URL` is injected into a session's environment when the session is
+created, and tmux's `set-environment` reaches only panes started after it. A
+session's environment cannot be updated in place. So changing `--addr` and
+restarting the panel leaves every session made before the change posting to the
+old address forever, while new ones work -- which is why the symptom is usually
+"some sessions report their state and some do not" rather than none of them.
+
+Restart those sessions from the panel. The processes in them do not survive that,
+which is the cost; nothing else gives a live session a new environment.
+
+A note on what this is *not*. Binding one interface -- `--addr 192.168.8.20:8443`
+-- does not break hooks on its own. `LoopbackURL()` follows the bound address, so
+the sessions are told `192.168.8.20` too and reach it perfectly well. This
+runbook said otherwise until it was measured.
+
+If both lines are green and states are still guessed, the reports are arriving
+and being rejected. Check the state names: `internal/hooks` writes them as bare
+literals, and the server refuses anything that is not `waiting`, `working` or
+`done`.
 
 ```sh
-grep VIBEPANEL_ADDR ~/.config/vibepanel.env   # a specific address, or a wildcard?
-ss -tlnp | grep vibepanel                     # what it is actually bound to
-curl -sk https://127.0.0.1:8443/api/health    # loopback answers, or it does not
+ss -tlnp | grep vibepanel                       # what it is actually bound to
+tmux -L vibepanel show-environment -t =vp_x: VIBEPANEL_URL   # what one session holds
+curl -sk "$(tmux -L vibepanel show-environment -t =vp_x: VIBEPANEL_URL | cut -d= -f2-)/api/health"
 ```
-
-A wildcard — `:8443`, `0.0.0.0:8443`, `[::]:8443` — includes loopback and is
-fine. If you need to bind one interface, the panel has to be reachable on
-loopback too for hooks to work at all; the alternative is to accept guessed
-states, which are correct more often than not but cannot tell *waiting* from
-*working* without the bell.
 
 ## Passkeys will not register
 

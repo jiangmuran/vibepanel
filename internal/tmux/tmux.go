@@ -559,6 +559,39 @@ func parseInfo(line string) (Info, error) {
 // KillServer tears down the whole socket. Only used by tests and by an explicit
 // "shut everything down" action — never on normal shutdown, since the entire
 // point is that sessions outlive us.
+// SessionEnvValue reads one variable out of a session's environment.
+//
+// Sessions are given VIBEPANEL_URL and VIBEPANEL_TOKEN with -e at creation, and
+// `set-environment` on a live session reaches only panes started after it. So
+// what a session was handed when it was made is what its hooks will keep
+// posting to for as long as it lives, whatever the panel is configured with
+// now. Asking tmux is the only way to find out what that was.
+//
+// Returns "" with no error when the variable is not set, which is an ordinary
+// state -- a session created before hooks were installed, or by hand.
+func (c *Client) SessionEnvValue(ctx context.Context, name, key string) (string, error) {
+	out, err := c.run(ctx, "show-environment", "-t", target(name), key)
+	if err != nil {
+		// Measured against a real tmux rather than assumed: a variable that was
+		// never set is an *error*, "unknown variable: X", not the "-KEY" line
+		// the manual's output format suggests. The first version of this looked
+		// for the dash and reported a missing variable as a broken session.
+		if strings.Contains(err.Error(), "unknown variable") {
+			return "", nil
+		}
+		return "", err
+	}
+	// "KEY=value", or "-KEY" for one explicitly removed from the environment.
+	if strings.HasPrefix(out, "-") {
+		return "", nil
+	}
+	_, v, ok := strings.Cut(out, "=")
+	if !ok {
+		return "", nil
+	}
+	return v, nil
+}
+
 func (c *Client) KillServer(ctx context.Context) error {
 	_, err := c.run(ctx, "kill-server")
 	if errors.Is(err, ErrNoServer) {

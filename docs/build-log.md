@@ -9257,7 +9257,7 @@ Two is all of them. Swept by type rather than by literal — everything that tak
 | 21 | **Fixed: events have their own queue beside the snapshot slot.** Panel notifications and state snapshots share one coalescing slot. `notifyPanel` goes through `Hub.Broadcast` → `queueState`, which *replaces* `statePending` — correct for a snapshot, because the newest contains the older ones, and wrong for an event. A `panel` message saying "your notes changed, fetch them again" is dropped if anything else queues while `stateWriter` is inside `sendRaw`, which is a network write that can block. The other viewer's notes or todos then do not refresh until something else wakes them. Sits with 5 and 6. | `internal/httpapi/api.go`, `internal/ws/conn.go` | a second slot, or a small queue for messages that are not snapshots — not dropping the coalescing, which exists for a measured reason |
 | 16 | **Fixed, after the first version of the check proved nothing — see the last section.** The compose box's multi-line branch is exercised by nothing. `text.includes('\n')` routes to a paste — the fix for a measured failure, "three lines in, three separate submissions out" — and render-check fills the box only with `true` and an `echo`, both single-line. The chain behind it, `pasteText` → `MsgPaste` → `Manager.Paste`, is 0.0% under `-coverpkg` and named by no Go test. The branch that *had* the bug is driven five times; the one that fixes it, never. Sits with 9 and 15. | `web/src/components/mobile/ComposeInput.tsx` | one multi-line fill in render-check's mobile section; the assertion is already written in the comment above the branch |
 | 15 | **Fixed: `reorder` extracted and tested; the mutation is caught by two cases.** The drag-reorder adjustment in `useDragList` — `overIndex > from ? overIndex - 1 : overIndex` — is the downward-drag branch, and nothing takes it. render-check drags the second project *above* the first, which is upward; `web/src/hooks` has no test file, in a frontend where every other pure-logic module has one. Not a reported bug: the untested half of a classic off-by-one, in a gesture used constantly, failing silently — a project dropped one position from where it was aimed reads as having aimed badly. Sits with 9. The empty `hooks/` directory is not the finding, though — the other module there is `useMediaQuery`, whose logic is the string `(max-width: 767px), (max-height: 500px) and (pointer: coarse)`, and a unit test for that would only copy the string back. Its four cases were checked by reading and are right: a phone in portrait, a phone in landscape at 844×390 (the case that once produced a six-line terminal), a desktop window dragged narrow, and a touchscreen laptop with a mouse, which reports `pointer: fine`. So the gap is one function, not one directory. | `web/src/hooks/useDragList.ts` | a unit test (it is a pure function of ids, from, overIndex) and a downward drag in render-check |
-| 10 | `doctor` never asks whether the panel answers on the loopback URL its own hooks post to, which is the one check that would turn the bind-address trap into a line of output. | `cmd/vibepanel/main.go` | one GET, only while a panel holds the lock |
+| 10 | **Fixed, and it found a second check worth more than the one asked for — see the last section.** `doctor` never asks whether the panel answers on the loopback URL its own hooks post to, which is the one check that would turn the bind-address trap into a line of output. | `cmd/vibepanel/main.go` | one GET, only while a panel holds the lock |
 | ~~11~~ | **Retracted.** Claimed that `passkey/login/finish` consults the login throttle and never feeds it, on the strength of `grep Throttle` in that file returning only `Delay` and `Succeed`. It does feed it: the refusal path calls `s.failLogin`, the shared helper that does `Throttle.Fail` *and* writes `login.failed` with the detail `"passkey: …"`. Prefixing the shared event is better than the separate `passkey.login.failed` the finding asked for, because one fail2ban rule then catches both. The grep was true and incomplete — the third interaction goes through an abstraction, which is what a grep for the concrete name cannot see. | — | — |
 | 14 | **Fixed: both detach before destroying anything, both halves mutation-checked.** Both delete paths run on the request's context, which Go cancels when the client disconnects, and both loop over sessions. A tab closed just after pressing delete leaves some tmux sessions dead with their rows intact — a batch of GONE from doing nothing wrong. The comment on `tearDownSession` reasons about which half should fail first and not about the half being cancelled; `notifyState`'s writers already detach with a 5s background context for exactly this reason. Found after the ordering above was fixed; it belongs beside 5 and 6. | `internal/httpapi/api.go` | detach the teardown the way notifyState does |
 | 12 | Nothing stops the same directory being added twice, so the sidebar can show two entries that are the same pixels with separate notes behind them. `disambiguatedLabels` solves this for sessions and not for projects. Arguable rather than wrong. | `internal/httpapi/api.go` | if refused, name the project already there rather than a UNIQUE failure |
@@ -9270,6 +9270,7 @@ Two is all of them. Swept by type rather than by literal — everything that tak
 | 23 | Three unauthenticated failure paths, two audited. The allowlist refusal and a bad setup token both write a row through `auditFromOutside`, cooldown-gated because they are unthrottled; a bad token on `/api/hook/state` writes nothing at all. The runbook's diagnosis for "somebody is hammering this panel" is `GROUP BY event` over `audit_log`, where a hook probe is invisible. The tell that it was not decided rather than chosen: the other two carry a comment explaining the audit choice, and this one explains only its constant-time compare. Low severity — the token has full entropy, so the value is noticing the attempt, not preventing it. | `internal/httpapi/api.go` | `auditFromOutside`, the same as its two siblings |
 | 24 | Server error strings are a name-carrying channel nobody funnels. `safeText` is applied to fields the frontend knows are names; an error message is not one, and several echo the same values — `base+" already exists"` on an upload conflict, `"writing "+base+": "`, `abs+" is not a directory"`, `"unknown state "+req.State`. The frontend renders them raw, as `{error}` in the banner and `setDropNote(err.message)`. So a file whose name carries a directional override produces a conflict message that reverses the text around it, at the moment you are deciding whether to rename and retry. Lower severity than 17 — you dropped the file — but the threat model in safeText's own docstring is "whatever an agent or a download wrote to disk". Sits with 17.
 | 46 | **Fixed: it polls now, after failing a second time. See the last section.** `render-check`'s mobile scrollback assertion is flaky. "dragging down did not scroll back: top line was TOUCH_368, now unreadable" fired once in six runs today, on a tree where the five runs around it were clean and the change under test was in the upload path. Re-running passed. That is the shape that trains people to re-run rather than investigate, and this project's whole argument for the browser checks is that a FAIL there means something. Worth pinning down before it is seen twice more and starts being ignored. | `web/scripts/render-check.mjs` | the gesture is dispatched and then read after a fixed sleep; make it poll for the line to move, and report what it saw if it never does |
+| 47 | The runbook's "hooks say they are installed and no state ever arrives" section explained the wrong mechanism, and so did the comment the fix was written from: binding one interface does not strand the hooks, because `LoopbackURL()` follows `BindHost()` and the sessions are told the bound address too. Measured. Rewritten with what actually does it. | `docs/runbook.md` | done |
 
 The same channel has a better instance, and it needs nothing from the owner. `handleLogin` does not call `validateCredentials` — that runs on setup and on a password change — and `Audit` does not truncate, so a failed login is recorded with whatever username was sent. The settings page renders it as `{e.username \|\| '—'}`, raw. So an unauthenticated stranger chooses text that appears, unsanitised, in the one view its owner opens to find out who has been attacking them. Half of it is contained: every audit cell has `truncate` and a fixed width, so a 10 KB username cannot break the layout. `truncate` does nothing to U+202E, and the override's reach is its own `<span>`, so the damage is confined to the username cell — limited, not absent. | `web/src/App.tsx`, `web/src/components/Settings.tsx` | `safeText` where server strings and audit fields are rendered, which covers the channel rather than each message |
 | 25 | The same destructive call is confirmed on one path and not the other. Killing a session asks `window.confirm("Kill …? The process is terminated.")`; closing a scratch terminal is `onClose={(t) => api.deleteSession(t.id)}` — the same endpoint, the same killed process, no prompt. The X sits inside the tab, next to the tab's own click target, which is a mis-tap on a phone. Arguable rather than wrong: scratch terminals are framed as cheap and numbered, and a tab strip that asks on every close is one people stop using. What is missing is the sentence saying which of those was chosen — the sibling path has a confirm and this one has neither a prompt nor a note. | `web/src/App.tsx`, `web/src/components/BottomTerminals.tsx` | decide, and write down which |
@@ -10253,3 +10254,51 @@ A floor cannot catch one control going missing -- that needs an expected count,
 which is brittle -- but a number in the output makes a drop from 47 visible to
 anyone comparing two runs, and the floor catches the scan going blind. Pointing
 the selector at `marquee` fails all three call sites with "looked at 0 controls".
+
+
+## 10, and the check it turned up on the way
+
+The finding asked for one GET: does the panel answer on the URL its own hooks
+post to, while a panel holds the lock. `doctor` does that now, with
+`InsecureSkipVerify` because `report.sh` uses `--insecure` and for the reason
+its comment gives -- "the destination is 127.0.0.1, and when the panel is
+serving TLS its certificate is issued for the public hostname". Probing more
+strictly than the hook does would report a problem the hook does not have.
+
+**The mechanism the finding gave for it is wrong.** It says `--addr
+192.168.8.20:8443` "binds one interface and leaves nothing on 127.0.0.1", and
+that much is true -- but `LoopbackURL()` returns `BindHost()` when one is set, so
+the sessions are handed `192.168.8.20` as well and reach it perfectly well.
+Measured, by starting a panel on `127.0.0.2` and asking `doctor`:
+
+    [ok  ] hook endpoint      http://127.0.0.2:18470/api/health answers
+
+The runbook carried the same wrong explanation, and its `curl` line checked
+127.0.0.1 regardless of what the panel was bound to. That is 47.
+
+**What does do it is worth more than what was asked for.** `VIBEPANEL_URL` is
+injected with `-e` when a session is created, and tmux's `set-environment`
+reaches only panes started after it -- a live session's environment cannot be
+updated. So changing `--addr` and restarting the panel leaves every session made
+before the change posting to the old address forever, while new ones work. The
+symptom is "some sessions report their state and some do not", which reads as
+flakiness rather than as a configuration change, and the loopback probe cannot
+see it: it asks about the URL the *current* configuration produces, and that one
+answers.
+
+`doctor` now reads what each session actually holds and compares:
+
+    [FAIL] hook url           1 of 3 session(s) still post to http://127.0.0.9:9999,
+                              not http://127.0.0.1:8443
+    [ok  ] hook url           2 of 2 session(s) post to http://127.0.0.1:8443
+    [--  ] hook url           no session carries one; hooks are not in use
+
+All four branches driven by hand against a real tmux server.
+
+**And tmux corrected me on the way.** `SessionEnvValue` first treated a variable
+that was never set as the `-KEY` line the manual's output format suggests. A
+real tmux answers `unknown variable: X` as an *error*, so a session created
+before hooks were installed would have been reported as broken. The test caught
+it on its first run, which is the whole argument for AGENTS.md's rule that this
+wrapper is tested against a real tmux and not a mock: "the bugs worth catching
+there are tmux's, and a mock reproduces none of them."
