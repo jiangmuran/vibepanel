@@ -9261,7 +9261,7 @@ Two is all of them. Swept by type rather than by literal — everything that tak
 | ~~11~~ | **Retracted.** Claimed that `passkey/login/finish` consults the login throttle and never feeds it, on the strength of `grep Throttle` in that file returning only `Delay` and `Succeed`. It does feed it: the refusal path calls `s.failLogin`, the shared helper that does `Throttle.Fail` *and* writes `login.failed` with the detail `"passkey: …"`. Prefixing the shared event is better than the separate `passkey.login.failed` the finding asked for, because one fail2ban rule then catches both. The grep was true and incomplete — the third interaction goes through an abstraction, which is what a grep for the concrete name cannot see. | — | — |
 | 14 | **Fixed: both detach before destroying anything, both halves mutation-checked.** Both delete paths run on the request's context, which Go cancels when the client disconnects, and both loop over sessions. A tab closed just after pressing delete leaves some tmux sessions dead with their rows intact — a batch of GONE from doing nothing wrong. The comment on `tearDownSession` reasons about which half should fail first and not about the half being cancelled; `notifyState`'s writers already detach with a 5s background context for exactly this reason. Found after the ordering above was fixed; it belongs beside 5 and 6. | `internal/httpapi/api.go` | detach the teardown the way notifyState does |
 | 12 | Nothing stops the same directory being added twice, so the sidebar can show two entries that are the same pixels with separate notes behind them. `disambiguatedLabels` solves this for sessions and not for projects. Arguable rather than wrong. | `internal/httpapi/api.go` | if refused, name the project already there rather than a UNIQUE failure |
-| 30 | Removing `safeText` from `sessionLabel` would pass everything. Four places sanitise a name: the function itself is tested; `projectLabel` and `terminalLabel` assert `.not.toContain('\u202E')` — both added this session; `sessionLabel` is tested only for its fallback chain; and `FileTree`'s inline `safeText(e.name)` is asserted nowhere. The browser checks do exercise the rendering path — they locate rows by `hasText: 'scratchpad'` — but every name in them is plain ASCII, so nothing there touches the sanitising either. The unguarded one is the original funnel, the one safeText's docstring is written about: "session titles come from `pane_title`, which any program sets with a two-byte escape sequence." | `web/src/components/label.test.ts`, `web/scripts/render-check.mjs` | one assertion for sessionLabel; for FileTree, a file whose name carries an override — the transfer section already writes files |
+| 30 | **Fixed: both halves, and both seen to fail.** Removing `safeText` from `sessionLabel` would pass everything. Four places sanitise a name: the function itself is tested; `projectLabel` and `terminalLabel` assert `.not.toContain('\u202E')` — both added this session; `sessionLabel` is tested only for its fallback chain; and `FileTree`'s inline `safeText(e.name)` is asserted nowhere. The browser checks do exercise the rendering path — they locate rows by `hasText: 'scratchpad'` — but every name in them is plain ASCII, so nothing there touches the sanitising either. The unguarded one is the original funnel, the one safeText's docstring is written about: "session titles come from `pane_title`, which any program sets with a two-byte escape sequence." | `web/src/components/label.test.ts`, `web/scripts/render-check.mjs` | one assertion for sessionLabel; for FileTree, a file whose name carries an override — the transfer section already writes files |
 | 31 | `TruncateTitle`'s tests cannot tell runes from bytes. The constant's comment gives the reason for the whole design — "runes rather than bytes so that truncation cannot split a character and leave invalid UTF-8 in the database" — and both tests feed it `strings.Repeat("A", …)` and `strings.Repeat("x", …)`, pure ASCII, where a byte slice and a rune slice agree. Rewriting it as `s[:MaxTitleRunes]`, which is the obvious way to drop an O(n) `RuneCountInString`, passes both and cuts a CJK title mid-character. Implementation is correct today; the property is unasserted. Same shape as 30, different file and fix. | `internal/session/title_test.go` | one case with multi-byte runes |
 | 17 | **Fixed: `passkeyLabel`, the fourth funnel.** A passkey's name is rendered raw in two places in `Settings.tsx`, one of them the `window.confirm` that asks before deleting it — the same shape as the project-name fix made earlier in this session, one file over. Low severity: the name comes from a query parameter the user types, defaulting to "Passkey", with no external default like the directory basename that made project names dangerous. It is the fourth name-rendering site and the only one not funnelled. | `web/src/components/Settings.tsx` | `safeText` at both, or a `passkeyLabel` beside the other three |
 | 18 | **Fixed at the source, and the TypeScript that agreed with the bug is corrected too.** Two endpoints send `null` for a JSON array, bypassing `emptyIfNil` — whose own comment says it exists "so the frontend never has to guard a map over a missing list". `hooks.Status.Events` is nil until a hook is installed, which is every fresh panel; the upload's `paths` is nil if no part is named `file`. Neither crashes today, and the reason is the tell: `Settings.tsx` reads `(status.events ?? []).length`. That guard is the symptom patched at the reader, in the one place the helper was written to make unnecessary — so the next reader added without it throws. | `internal/httpapi/settings.go`, `internal/httpapi/panels.go` | `emptyIfNil` at both, and the `?? []` can then go |
@@ -10352,3 +10352,34 @@ All three are corrected: the server sends `[]`, the type says `string[]`, the
 guard is gone. `TestTheEventListIsAnArrayEvenWhenNothingIsInstalled` marshals
 the struct and looks for `"events":[]`; removing the normalisation fails it with
 the whole payload printed, which is the form that makes it obvious.
+
+## 30: the funnel nothing pointed at, and the one place outside it
+
+Removing `safeText` from `sessionLabel` passed every test in the project. Its
+own tests were all about the fallback chain -- title, then command, then the
+word "session" -- which is the other half of what it does. Three cases now
+assert the half it is named for: an override in a title, a zero-width space
+between two rows that would otherwise be the same pixels, and an override in the
+`command` it falls back to, which is no safer than the title because
+`#{pane_current_command}` is a process name and a process can be called anything
+a filesystem allows. Taking the sanitising out fails all three.
+
+`FileTree` was the one site outside the funnel, sanitising inline with
+`safeText(e.name)` and asserted nowhere. The browser checks do drive that
+rendering path -- they find rows by `hasText` -- but every name in them was
+plain ASCII, so nothing there touched the sanitising either.
+
+`render-check` now writes a file called `invoice\u202Egnp.pdf`, which any list
+honouring the override displays as `invoicefdp.png`, and reads the row back:
+
+    [PASS] files: a bidi filename is neutralised in the tree: "invoice<U+FFFD>gnp.pdf"
+
+Dropping the `safeText` fails it with the raw name in the message -- where it
+reverses its own suffix, in the failure text, which is as good a demonstration
+as the check could ask for.
+
+**A note about writing this down.** That failure message contains a literal
+U+202E, and pasting it here would have been caught by
+`TestNoBidirectionalOverridesInSource` -- the guard that already caught this
+author once today, in the entry describing the sanitising work. It is escaped
+above.

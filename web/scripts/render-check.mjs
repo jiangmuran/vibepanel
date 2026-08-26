@@ -2829,6 +2829,33 @@ try {
         JSON.stringify(dropText.replace(/\s+/g, ' ').trim().slice(-160)))
     }
 
+    // A filename that renders its own suffix backwards.
+    //
+    // FileTree sanitises with an inline safeText(e.name), and nothing asserted
+    // it -- the browser checks do exercise the rendering path, they locate rows
+    // by hasText, but every name in them is plain ASCII, so nothing there
+    // touched the sanitising either.
+    //
+    // A file called "invoice\u202Egnp.pdf" displays as "invoicefdp.png" in any
+    // terminal or file list that honours the override. This is the panel's own
+    // list, showing whatever an agent last wrote to disk.
+    const bidiName = 'invoice\u202Egnp.pdf'
+    writeFileSync(join(projRoot, bidiName), 'BIDI_NAME_BODY')
+    await page.locator('[data-testid="file-refresh"]').click().catch(() => {})
+    await sleep(900)
+    const rows = await page.locator('[data-testid="file-entry"]').allInnerTexts().catch(() => [])
+    const shown = rows.find((r) => r.includes('gnp.pdf') || r.includes('invoice'))
+    if (!shown) {
+      note('WARN', 'files', 'the bidi-named file never appeared in the tree; nothing was measured')
+    } else if (shown.includes('\u202E')) {
+      note('FAIL', 'files',
+        `the file tree renders a name containing an override raw: ${JSON.stringify(shown)}. ` +
+        'It displays its own suffix backwards, which is how a .pdf reads as a .png.')
+    } else {
+      note('PASS', 'files', `a bidi filename is neutralised in the tree: ${JSON.stringify(shown.trim())}`)
+    }
+    rmSync(join(projRoot, bidiName), { force: true })
+
     await page.screenshot({ path: join(SHOTS, 'file-transfer.png') })
     for (const leftover of ['download-me.txt', 'dropped-note.txt', oddName]) {
       rmSync(join(projRoot, leftover), { force: true })

@@ -179,3 +179,36 @@ describe('passkeyLabel', () => {
     expect(passkeyLabel({ name: 'work laptop' })).toBe('work laptop')
   })
 })
+
+describe('sessionLabel sanitising', () => {
+  it('strips an override out of a title a pane set', () => {
+    // Removing safeText from sessionLabel used to pass every test in the
+    // project. The function is the funnel three call sites go through, and
+    // nothing asserted the one thing the funnel exists for -- its own tests
+    // were all about the fallback chain, which is the other half.
+    //
+    // `title` is whatever `pane_title` held, and any program running in a pane
+    // sets that with a two-byte escape sequence, so this is the least
+    // trustworthy name in the panel rather than the most.
+    const s = session({ id: 'a', title: 'deploy\u202Egnp.sh', command: 'bash' })
+    expect(sessionLabel(s)).not.toContain('\u202E')
+  })
+
+  it('strips the invisibles that make two rows the same pixels', () => {
+    // Not a bidi override: a zero-width space between two rows that otherwise
+    // read identically. The sidebar exists to answer "which of these needs
+    // me", and two rows that cannot be told apart is the failure it was built
+    // to prevent -- you click one to find out, which is typing into an agent
+    // you did not choose.
+    const s = session({ id: 'a', title: 'dep\u200Bloy', command: 'bash' })
+    expect(sessionLabel(s)).not.toContain('\u200B')
+  })
+
+  it('sanitises the command it falls back to', () => {
+    // The fallback is not safer than the title. `command` is
+    // #{pane_current_command}, which is a process name, and a process can be
+    // named anything a filesystem allows.
+    const s = session({ id: 'a', title: '', command: 'node\u202Ehs.yolp' })
+    expect(sessionLabel(s)).not.toContain('\u202E')
+  })
+})
