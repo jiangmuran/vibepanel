@@ -479,6 +479,22 @@ func (s *Server) handleHookState(w http.ResponseWriter, r *http.Request) {
 	// Constant time: this endpoint is unauthenticated apart from the token, so
 	// a timing oracle on it is a timing oracle on the whole thing.
 	if subtle.ConstantTimeCompare([]byte(presented), []byte(token)) != 1 {
+		// Audited, like the other two paths an unauthenticated caller can
+		// reach. The allowlist refusal and a bad setup token both write a row
+		// through auditFromOutside; this one wrote nothing at all, so the
+		// runbook's diagnosis for "somebody is hammering this panel" -- a
+		// GROUP BY over audit_log -- could not see a hook probe.
+		//
+		// auditFromOutside rather than audit, for the reason its own comment
+		// gives: this endpoint is not behind the login throttle, and an
+		// ungated write let 400 requests become 400 rows at 237 rows a second.
+		// The journal line still goes out every time, which is what fail2ban
+		// reads.
+		//
+		// The value here is noticing, not preventing: the token has full
+		// entropy, so nobody is guessing it. What this answers is "has anyone
+		// been trying", which was previously unanswerable.
+		s.auditFromOutside(r.Context(), "hook.rejected", "", s.clientIP(r), "bad hook token")
 		writeErr(w, http.StatusUnauthorized, "bad token")
 		return
 	}

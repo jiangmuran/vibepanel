@@ -9267,8 +9267,8 @@ Two is all of them. Swept by type rather than by literal — everything that tak
 | 18 | **Fixed at the source, and the TypeScript that agreed with the bug is corrected too.** Two endpoints send `null` for a JSON array, bypassing `emptyIfNil` — whose own comment says it exists "so the frontend never has to guard a map over a missing list". `hooks.Status.Events` is nil until a hook is installed, which is every fresh panel; the upload's `paths` is nil if no part is named `file`. Neither crashes today, and the reason is the tell: `Settings.tsx` reads `(status.events ?? []).length`. That guard is the symptom patched at the reader, in the one place the helper was written to make unnecessary — so the next reader added without it throws. | `internal/httpapi/settings.go`, `internal/httpapi/panels.go` | `emptyIfNil` at both, and the `?? []` can then go |
 | 19 | Eleven of the thirteen audit events are dot-separated — `login.failed`, `setup.rejected`, `passkey.register.failed`, `hooks.installed`. Two are not: `password_changed` and `password_change_refused`. The field is grouped by the `GROUP BY event` the runbook hands the operator, listed on the settings page, and is what a fail2ban rule matches on, so one separator is worth having. Not free, though: rows already exist with the underscore spelling, so renaming the emitted value either leaves history mixed or wants a migration. Related and smaller: an entry in this log refers to "the fail2ban story the README advertises" and the README does not mention fail2ban — left alone, because a chronological record describes what was true when it was written. | `internal/httpapi/auth.go` | one separator, and decide what happens to the rows already written |
 | 20 | Nothing builds the container image. No Makefile target, no script, none of the seven checks — while `Dockerfile` pins `node:24-alpine`, `golang:1.26-alpine` and `alpine:3.21`, and `deploy/docker-compose.yml` builds from it. It is a shipped artifact with the property `head-check` was written to remove: nothing tells you whether what was committed works. Lower stakes than the binary, since the Dockerfile itself says the container "is the awkward way to run this and is offered second". Smaller half: the compose file, which is what a compose user opens, does not repeat or point at the caveat. | `Dockerfile`, `deploy/docker-compose.yml` | a `docker build` in release-check, or an honest note that the image is unverified |
-| 23 | Three unauthenticated failure paths, two audited. The allowlist refusal and a bad setup token both write a row through `auditFromOutside`, cooldown-gated because they are unthrottled; a bad token on `/api/hook/state` writes nothing at all. The runbook's diagnosis for "somebody is hammering this panel" is `GROUP BY event` over `audit_log`, where a hook probe is invisible. The tell that it was not decided rather than chosen: the other two carry a comment explaining the audit choice, and this one explains only its constant-time compare. Low severity — the token has full entropy, so the value is noticing the attempt, not preventing it. | `internal/httpapi/api.go` | `auditFromOutside`, the same as its two siblings |
-| 24 | Server error strings are a name-carrying channel nobody funnels. `safeText` is applied to fields the frontend knows are names; an error message is not one, and several echo the same values — `base+" already exists"` on an upload conflict, `"writing "+base+": "`, `abs+" is not a directory"`, `"unknown state "+req.State`. The frontend renders them raw, as `{error}` in the banner and `setDropNote(err.message)`. So a file whose name carries a directional override produces a conflict message that reverses the text around it, at the moment you are deciding whether to rename and retry. Lower severity than 17 — you dropped the file — but the threat model in safeText's own docstring is "whatever an agent or a download wrote to disk". Sits with 17.
+| 23 | **Fixed: `hook.rejected`, gated the same way its two siblings are, and seen to fail without it.** Three unauthenticated failure paths, two audited. The allowlist refusal and a bad setup token both write a row through `auditFromOutside`, cooldown-gated because they are unthrottled; a bad token on `/api/hook/state` writes nothing at all. The runbook's diagnosis for "somebody is hammering this panel" is `GROUP BY event` over `audit_log`, where a hook probe is invisible. The tell that it was not decided rather than chosen: the other two carry a comment explaining the audit choice, and this one explains only its constant-time compare. Low severity — the token has full entropy, so the value is noticing the attempt, not preventing it. | `internal/httpapi/api.go` | `auditFromOutside`, the same as its two siblings |
+| 24 | **Fixed at the three render points; the browser drive was attempted and abandoned — see the last section.** Server error strings are a name-carrying channel nobody funnels. `safeText` is applied to fields the frontend knows are names; an error message is not one, and several echo the same values — `base+" already exists"` on an upload conflict, `"writing "+base+": "`, `abs+" is not a directory"`, `"unknown state "+req.State`. The frontend renders them raw, as `{error}` in the banner and `setDropNote(err.message)`. So a file whose name carries a directional override produces a conflict message that reverses the text around it, at the moment you are deciding whether to rename and retry. Lower severity than 17 — you dropped the file — but the threat model in safeText's own docstring is "whatever an agent or a download wrote to disk". Sits with 17.
 | 46 | **Fixed: it polls now, after failing a second time. See the last section.** `render-check`'s mobile scrollback assertion is flaky. "dragging down did not scroll back: top line was TOUCH_368, now unreadable" fired once in six runs today, on a tree where the five runs around it were clean and the change under test was in the upload path. Re-running passed. That is the shape that trains people to re-run rather than investigate, and this project's whole argument for the browser checks is that a FAIL there means something. Worth pinning down before it is seen twice more and starts being ignored. | `web/scripts/render-check.mjs` | the gesture is dispatched and then read after a fixed sleep; make it poll for the line to move, and report what it saw if it never does |
 | 47 | **Fixed in the same sitting that found it: the section is rewritten with the measured mechanism.** The runbook's "hooks say they are installed and no state ever arrives" section explained the wrong mechanism, and so did the comment the fix was written from: binding one interface does not strand the hooks, because `LoopbackURL()` follows `BindHost()` and the sessions are told the bound address too. Measured. Rewritten with what actually does it. | `docs/runbook.md` | done |
 | 48 | **Fixed in stress-check, and narrower than it looked: `render-check` reads `innerText` and does not have it.** Terminal text read out of the DOM comes back with U+00A0 where the spaces are, depending on how many style runs the row has. xterm emits one `<span>` per run, and `textContent` joins them with a non-breaking space. A line printed with two escape sequences reads back with ordinary spaces; the same line with eight does not, and every `includes(...)` in the file silently stops matching. Normalised in `rows()` in stress-check; `render-check` reads terminal text in about thirty places and was not touched. | `web/scripts/render-check.mjs` | the same one-line normalisation where it reads rows |
@@ -10515,3 +10515,43 @@ loop does not get to make it. 49.
 The fixture uses normal-intensity colours instead, because a standing WARN is
 how warnings stop being read -- which is the thing `make verify` was changed to
 count two days of work ago.
+
+
+## 23 and 24, and a check that would not converge
+
+**23.** Three failure paths an unauthenticated caller can reach are worth
+recording, and two of them wrote a row. A bad token on `/api/hook/state` wrote
+nothing, so the runbook's diagnosis for "somebody is hammering this panel" --
+`GROUP BY event` over `audit_log` -- could not see a hook probe at all. It goes
+through `auditFromOutside` now, like its siblings, for the reason that helper's
+own comment gives: the endpoint is not behind the login throttle, and an ungated
+write turned 400 requests into 400 rows at 237 a second. The journal line still
+goes out every time, which is what fail2ban reads. Removing the call fails the
+new test.
+
+The value is noticing, not preventing: the token has full entropy, so nobody is
+guessing it. What was previously unanswerable is "has anyone been trying".
+
+**24.** Server error strings echo names back -- `base + " already exists"` on an
+upload conflict, `"writing " + base + ": "`, `abs + " is not a directory"` --
+and the frontend rendered them raw in three places: the error banner, the drop
+note, and the socket-error banner added earlier in this session. `safeText` is
+applied to fields the frontend knows are names, and an error message is not one,
+so a file whose name carries a directional override reversed the text around it
+at the moment you were deciding whether to rename and retry. All three render
+points now go through the same funnel.
+
+**The end-to-end drive did not converge, and that is worth writing down.** The
+plan was to upload a bidi-named file twice, force the 409, and read the note.
+Four runs, roughly ten minutes each, and the note was empty every time. What was
+learned: the drop overlay was not visible when measured -- after the drop, which
+makes that datum useless -- and the directory listing I printed to check whether
+the file was there was cut with `.slice(0, 8)`, so the name I was looking for
+sorted past the end of my own evidence. That is the `head -10` mistake this log
+already records once, made again by the person who wrote it down.
+
+Abandoned rather than left half-driven, because each failed attempt leaves a
+standing WARN, and a permanent warning is how warnings stop being read -- the
+argument made two entries above about the palette. The fix stands on `safeText`'s
+own tests and on the three call sites being one line each. That is weaker than a
+browser check and it is what there is.

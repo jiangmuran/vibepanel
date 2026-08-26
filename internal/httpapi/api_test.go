@@ -2685,3 +2685,56 @@ func TestADeleteFinishesEvenIfTheTabIsClosed(t *testing.T) {
 			len(orphans), len(doomed), orphans)
 	}
 }
+
+// A rejected hook token leaves a trace.
+//
+// Three paths an unauthenticated caller can reach fail in a way worth
+// recording: the allowlist refusal, a bad setup token, and a bad token on
+// /api/hook/state. The first two wrote a row through auditFromOutside; the
+// third wrote nothing, so the runbook's diagnosis for "somebody is hammering
+// this panel" -- GROUP BY event over audit_log -- could not see a hook probe at
+// all. The tell that it was not decided rather than chosen: the other two carry
+// a comment explaining the audit choice, and this one explained only its
+// constant-time compare.
+//
+// The token has full entropy, so this is about noticing an attempt rather than
+// preventing one.
+func TestARejectedHookTokenIsAudited(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+
+	before, err := srv.DB.RecentAudit(ctx, 200)
+	if err != nil {
+		t.Fatalf("audit: %v", err)
+	}
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/hook/state",
+		strings.NewReader(`{"sessionId":"whatever","state":"waiting"}`))
+	req.Header.Set("Authorization", "Bearer not-the-token")
+	req.Header.Set("Content-Type", "application/json")
+	res, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("a bad hook token answered %s, want 401; this test is not exercising the "+
+			"refusal it means to", res.Status)
+	}
+
+	after, err := srv.DB.RecentAudit(ctx, 200)
+	if err != nil {
+		t.Fatalf("audit: %v", err)
+	}
+	var found bool
+	for _, e := range after {
+		if e.Event == "hook.rejected" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a rejected hook token wrote no audit row (%d before, %d after); a probe of "+
+			"this endpoint is invisible to the query the runbook sends people to",
+			len(before), len(after))
+	}
+}

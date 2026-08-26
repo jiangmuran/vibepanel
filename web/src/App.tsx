@@ -31,6 +31,7 @@ import type { ThemeChoice } from './components/theme'
 import { NARROW_QUERY, useMediaQuery } from './hooks/useMediaQuery'
 import { EXIT_VANISHED } from './protocol/wire'
 import { shellQuote } from './shell'
+import { safeText } from './components/text'
 
 /**
  * Safety net only.
@@ -639,12 +640,19 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           <ConnectionDot status={status} />
         </header>
 
+        {/* safeText, because a server error message is a name-carrying channel
+            nobody funnels. Several of them echo a filename back: `base + " already
+            exists"` on an upload conflict, `"writing " + base + ": "`, `abs + " is
+            not a directory"`. safeText is applied to fields the frontend knows are
+            names, and an error is not one -- so a file whose name carries a
+            directional override reverses the text around it, in the banner, at the
+            moment you are deciding whether to rename and retry. */}
         {error && (
           <div
             className="border-b border-hairline px-4 py-2 text-[12px]"
             style={{ color: 'var(--vp-state-waiting)' }}
           >
-            {error}
+            {safeText(error)}
           </div>
         )}
 
@@ -660,7 +668,9 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             className="border-b border-hairline px-4 py-2 text-[12px]"
             style={{ color: 'var(--vp-state-crashed)' }}
           >
-            {socketError.message}
+            {/* And this one holds whatever the server put in an error frame,
+                including a message type echoed back from another client. */}
+            {safeText(socketError.message)}
           </div>
         )}
 
@@ -751,7 +761,8 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               data-testid="drop-note"
               className="absolute top-2 right-2 z-10 rounded-vp border border-hairline px-2 py-1 text-[11px] vp-solid"
             >
-              {dropNote}
+              {/* Same channel: this one holds err.message from an upload. */}
+              {safeText(dropNote)}
             </div>
           )}
           {current ? (
