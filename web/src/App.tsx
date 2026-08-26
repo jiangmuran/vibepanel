@@ -30,6 +30,7 @@ import { applyTheme, loadTheme } from './components/theme'
 import type { ThemeChoice } from './components/theme'
 import { NARROW_QUERY, useMediaQuery } from './hooks/useMediaQuery'
 import { EXIT_VANISHED } from './protocol/wire'
+import { shellQuote } from './shell'
 
 /**
  * Safety net only.
@@ -404,42 +405,13 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         // non-Latin filename gets quoted rather than passed through. Injection
         // is covered.
         //
-        // KNOWN GAP: quoting cannot cover a newline. A filename may contain
-        // one on Linux, the upload handler rejects only ".", ".." and a path
-        // separator, and this writes the result to the PTY as raw bytes — so
-        // the 0x0A inside the quotes is what the line editor reads as Enter.
-        // Bash takes the fragment, finds an unterminated quote, prints PS2, and
-        // waits; the rest of the path arrives as a continuation. No command
-        // runs, and the feature's whole promise — a path already there, ready
-        // to press enter on — is replaced by a prompt the user cannot explain.
-        //
-        // The asymmetry is the finding. A filename that reaches the *screen*
-        // goes through safeText, which strips C0, C1 and the bidi family
-        // because a name is whatever an agent or a download wrote to disk.
-        // This is the one place a filename's bytes reach a shell, and nothing
-        // looks at them.
-        //
-        // And the fix is almost certainly already in this file. sendToCurrent
-        // is writeText — typing. pasteText exists three functions away and its
-        // docstring is this same bug, found and fixed for the compose box: a
-        // three-line instruction typed at a reader that echoes line by line
-        // "came out as three separate GOT<> lines. An agent acts on the first
-        // sentence before it has read the third." A newline in typed text is
-        // Enter; in a bracketed paste it is content.
-        //
-        // So this is one site of a fix rather than a design question. The
-        // caveat is in that same docstring — the server brackets a paste only
-        // if the pane's application asked for bracketed paste — so it is
-        // better rather than airtight, and a control-character refusal may
-        // still be wanted underneath it.
-        //
-        // Recorded rather than applied: nothing could be run in the stretch
-        // that found it, and swapping the write for a paste changes what
-        // arrives at the prompt in every case, not only the one with a
-        // newline in it.
-        const typed = paths
-          .map((x) => (/[^\w@%+=:,./-]/.test(x) ? `'${x.replace(/'/g, `'\\''`)}'` : x))
-          .join(' ')
+        // Quoting is in shell.ts, with the measurements. The short version:
+        // a tab in a filename survives the browser, the MIME parser and the
+        // upload, and readline reads it as completion rather than as part of
+        // the path -- so half the name never reaches the prompt. A name that
+        // reaches the *screen* goes through safeText for the same reason; this
+        // was the one place a filename's bytes reached a shell unexamined.
+        const typed = paths.map(shellQuote).join(' ')
         sendToCurrent(typed + ' ')
         setDropNote(`${paths.length} file${paths.length === 1 ? '' : 's'} uploaded`)
       } catch (err) {

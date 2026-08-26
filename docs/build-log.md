@@ -9246,7 +9246,7 @@ Two is all of them. Swept by type rather than by literal — everything that tak
 | 3 | **Fixed: the test exists, was seen to fail, and is committed.** The state strings `internal/hooks` writes into the reporter script, the Codex `notify` line and `~/.claude/settings.json` are bare literals; the package does not import `internal/session` at all (verified: the only such import is the new test itself). Partly covered by accident — `TestTheReporterScriptActuallyReportsState` posts a hard-coded `"waiting"` through the real script and waits for it, so renaming the enum's *value* makes that round trip fail. What nothing covers is the mapping: a typo in `events` (`"Notification": "wating"`), a state in the `ClaudeSettings` snippet that the map does not know, or a new enum member the hooks should report. Narrower than it first looked, twice over. `report.sh` carries a fourth copy in its `case working\|waiting\|done` guard, and that one self-heals: `hooksAreInstalled` calls `scriptPath` on the way to every state snapshot, which rewrites the script whenever its content differs, so an upgraded binary refreshes it as soon as anyone opens the panel. What does not self-heal is the Codex line — `CodexNotify` writes the literal `"waiting"` into `~/.codex/config.toml` and nothing repairs a TOML file. **Correcting what this row said earlier:** Claude does not recover by itself either. `ClaudeSettings` writes the state into the user's `settings.json` as an argument — `"command": "<script> waiting"` — and nothing rewrites that file on its own. `Inspect` asks only whether *an* entry points at our script, not what it passes, so a stale argument still counts as installed and `InstallClaude` runs only when somebody presses the button. So after a rename the self-healing script accepts only the new names while both agents keep sending the old one from files that do not self-heal, the `case` falls to `*) exit 0`, and every session goes quiet with the settings page reporting all four events installed. The script healing itself is what makes this worse rather than better: it is the half that changes, so the halves stop agreeing. | `internal/hooks/states_test.go` (new), `AGENTS.md` | run the test, then rename `StateWaiting`'s value and confirm it fails |
 | 4 | **Fixed with 1 — the manual rule reads `lastAdvance` now.** A manual state set by clicking the dot is cleared by a spinner, so the click reads as having done nothing in the case the feature exists for. | `internal/session/detect.go` | same as 1, and more of a judgement call |
 | 5 | **Retracted — the premise was measured and is false. See the last section.** The poller rewrites `cwd` and `command` for every live session on every tick whether they changed or not — about twenty-four writes a second at idle, at the scale this is built for. Two of the four writes in the same loop compare first. | `internal/httpapi/api.go` | `if info.Path != row.CWD \|\| info.Command != row.Command`; provably a no-op on content |
-| 6 | An uploaded filename containing a newline is **typed** into the shell, so the line editor reads it as Enter and leaves the user at a `>` they cannot explain. This is the same bug `pasteText` was introduced for — its docstring records a three-line instruction typed at an agent arriving "as three separate GOT<> lines. An agent acts on the first sentence before it has read the third." The compose box was moved to a paste; the upload path still types. A filename reaching the *screen* goes through `safeText`; this is the one place its bytes reach a shell. | `web/src/App.tsx` | `pasteText` instead of `writeText`, with the caveat from its own docstring — the server brackets a paste only if the pane asked for bracketed paste |
+| 6 | **Fixed, and the finding named the wrong character — see the last section.** An uploaded filename containing a newline is **typed** into the shell, so the line editor reads it as Enter and leaves the user at a `>` they cannot explain. This is the same bug `pasteText` was introduced for — its docstring records a three-line instruction typed at an agent arriving "as three separate GOT<> lines. An agent acts on the first sentence before it has read the third." The compose box was moved to a paste; the upload path still types. A filename reaching the *screen* goes through `safeText`; this is the one place its bytes reach a shell. | `web/src/App.tsx` | `pasteText` instead of `writeText`, with the caveat from its own docstring — the server brackets a paste only if the pane asked for bracketed paste |
 | 7 | `agentCommands` is matched against `#{pane_current_command}`, which is somebody else's packaging. If Claude Code reports `node` on a machine, the "states are guessed" notice never appears there. | `internal/httpapi/api.go` | `tmux -L vibepanel list-panes -a -F '#{pane_current_command}'` settles it |
 | 8 | `EXIT_VANISHED` is the one constant of four on the wire that nothing pins. Drift reproduces a bug that already happened: a session whose tmux session merely vanished counted as a crash. | `internal/ws/protocol_test.go` | needs a leading `-` in the regex and int64; `internal/httpapi/wire_test.go` is the better home |
 | 22 | `make verify` prints "all checks passed" over any number of warnings. A WARN does not change a check's exit code — deliberately, since it separates "the thing under test failed" from "its setup did not happen" — but several of them mean a section was skipped: no second project to drag, no uploaded file in the tree, no dead session for the header check. render-check has twenty-four WARN sites. So six sections can be skipped and the run still ends with the word "passed", twenty minutes after the warnings scrolled past. Sits with 9, and is the same shape head-check was written to remove. | `Makefile` | every check already ends with `=== name: N FAIL, N WARN ===`; collect those and print them under the verdict |
@@ -9269,6 +9269,7 @@ Two is all of them. Swept by type rather than by literal — everything that tak
 | 20 | Nothing builds the container image. No Makefile target, no script, none of the seven checks — while `Dockerfile` pins `node:24-alpine`, `golang:1.26-alpine` and `alpine:3.21`, and `deploy/docker-compose.yml` builds from it. It is a shipped artifact with the property `head-check` was written to remove: nothing tells you whether what was committed works. Lower stakes than the binary, since the Dockerfile itself says the container "is the awkward way to run this and is offered second". Smaller half: the compose file, which is what a compose user opens, does not repeat or point at the caveat. | `Dockerfile`, `deploy/docker-compose.yml` | a `docker build` in release-check, or an honest note that the image is unverified |
 | 23 | Three unauthenticated failure paths, two audited. The allowlist refusal and a bad setup token both write a row through `auditFromOutside`, cooldown-gated because they are unthrottled; a bad token on `/api/hook/state` writes nothing at all. The runbook's diagnosis for "somebody is hammering this panel" is `GROUP BY event` over `audit_log`, where a hook probe is invisible. The tell that it was not decided rather than chosen: the other two carry a comment explaining the audit choice, and this one explains only its constant-time compare. Low severity — the token has full entropy, so the value is noticing the attempt, not preventing it. | `internal/httpapi/api.go` | `auditFromOutside`, the same as its two siblings |
 | 24 | Server error strings are a name-carrying channel nobody funnels. `safeText` is applied to fields the frontend knows are names; an error message is not one, and several echo the same values — `base+" already exists"` on an upload conflict, `"writing "+base+": "`, `abs+" is not a directory"`, `"unknown state "+req.State`. The frontend renders them raw, as `{error}` in the banner and `setDropNote(err.message)`. So a file whose name carries a directional override produces a conflict message that reverses the text around it, at the moment you are deciding whether to rename and retry. Lower severity than 17 — you dropped the file — but the threat model in safeText's own docstring is "whatever an agent or a download wrote to disk". Sits with 17.
+| 46 | `render-check`'s mobile scrollback assertion is flaky. "dragging down did not scroll back: top line was TOUCH_368, now unreadable" fired once in six runs today, on a tree where the five runs around it were clean and the change under test was in the upload path. Re-running passed. That is the shape that trains people to re-run rather than investigate, and this project's whole argument for the browser checks is that a FAIL there means something. Worth pinning down before it is seen twice more and starts being ignored. | `web/scripts/render-check.mjs` | the gesture is dispatched and then read after a fixed sleep; make it poll for the line to move, and report what it saw if it never does |
 
 The same channel has a better instance, and it needs nothing from the owner. `handleLogin` does not call `validateCredentials` — that runs on setup and on a password change — and `Audit` does not truncate, so a failed login is recorded with whatever username was sent. The settings page renders it as `{e.username \|\| '—'}`, raw. So an unauthenticated stranger chooses text that appears, unsanitised, in the one view its owner opens to find out who has been attacking them. Half of it is contained: every audit cell has `truncate` and a fixed width, so a 10 KB username cannot break the layout. `truncate` does nothing to U+202E, and the override's reach is its own `<span>`, so the damage is confined to the username cell — limited, not absent. | `web/src/App.tsx`, `web/src/components/Settings.tsx` | `safeText` where server strings and audit fields are rendered, which covers the channel rather than each message |
 | 25 | The same destructive call is confirmed on one path and not the other. Killing a session asks `window.confirm("Kill …? The process is terminated.")`; closing a scratch terminal is `onClose={(t) => api.deleteSession(t.id)}` — the same endpoint, the same killed process, no prompt. The X sits inside the tab, next to the tab's own click target, which is a mis-tap on a phone. Arguable rather than wrong: scratch terminals are framed as cheap and numbered, and a tab strip that asks on every close is one people stop using. What is missing is the sentence saying which of those was chosen — the sibling path has a confirm and this one has neither a prompt nor a note. | `web/src/App.tsx`, `web/src/components/BottomTerminals.tsx` | decide, and write down which |
@@ -9917,3 +9918,58 @@ function without the four lines above it; this one reasoned about a dependency
 without running it. Both were caught by executing rather than by reading more
 carefully. Two of forty-five, which is a rate worth knowing when reading the
 rest of that table: it was written in a stretch where nothing could be run.
+
+
+## 6 was a real bug wearing the wrong character's name
+
+The row says an uploaded filename containing a newline is typed into the shell,
+that the line editor reads the 0x0A as Enter, and that the user is left at a
+`>` they cannot explain. The mechanism is right and the character is wrong, and
+the character is the whole of whether it can happen.
+
+Three measurements, in the order they were taken.
+
+A browser check was written to drive it: drop a file named `two\nlines.txt`,
+then assert the shell still runs the command after it. It failed, and the
+failure text was the finding's obituary — the path at the prompt read
+`two%0Alines.txt`, and the file on disk is literally named that. The HTML spec
+has multipart percent-encode LF, CR and the double quote in a filename, so a
+newline never leaves the page.
+
+Then the other control characters, asked of the server directly:
+
+    sent "ZULU\x15KILO.txt" -> 400 malformed MIME header line
+    sent "esc\x1bx.txt"     -> 400 malformed MIME header line
+    sent "tab\tx.txt"       -> 200 OK, landed as "tab\tx.txt"
+
+Go's `textproto` refuses a Content-Disposition line carrying a control
+character, and makes an exception for tab, which is ordinary header whitespace.
+
+So exactly one character travels the whole way, and at a prompt readline reads
+it as "complete this". The browser check now drops `ZULU\tKILO.txt`, and with
+the quoting removed it fails — not with a tab visible in the path, but with
+`KILO.txt` never appearing at the prompt at all. Completion ate the second half
+of the name. The user is invited to press enter on a path that is missing its
+end, which is worse than the `>` the finding described, because a `>` at least
+looks wrong.
+
+`shellQuote` escapes the whole control class rather than tab, because the set
+that can arrive is decided by two parsers this project does not own, and both
+have already surprised it once.
+
+**Three findings in this table were now wrong in the same direction** — 38
+reasoned about a function without the four lines above it, 5 about SQLite
+without running it, and this one about a browser and a MIME parser without
+asking either. All three were real problems; all three named the wrong cause,
+and the fix that follows from a wrong cause is a different fix. They were
+written in a stretch where nothing could be run, which is the common factor and
+the thing to weigh when reading the rest of the table.
+
+**Two smaller notes from the same afternoon.** The first attempt at the browser
+assertion compared against `ZULU\x09KILO.txt` and failed on a passing tree: the
+terminal wraps, and `innerText` reports a space at the wrap, which split `\x09`
+down the middle. It strips whitespace now, which cannot hide the failure it
+looks for, because a raw tab is whitespace too and an unquoted name collapses
+to `ZULUKILO.txt`. And the first two attempts at writing all of this were
+refused outright for containing literal control characters in the command —
+the same class of byte, in the tooling, while fixing it in the product.

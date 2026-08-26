@@ -2654,8 +2654,74 @@ try {
     if (!(landed.entries ?? []).some((e) => e.name === 'dropped-note.txt')) {
       note('FAIL', 'files', 'the dropped file is not in the project directory')
     }
+    // A filename carrying a tab, which is the one control character that can
+    // travel the whole way.
+    //
+    // The finding this comes from said a newline, and a newline cannot get
+    // here: the browser escapes LF, CR and the double quote in a multipart
+    // filename before the request leaves the page, so a file dropped as
+    // "two\nlines.txt" lands on disk as "two%0Alines.txt" -- measured, by an
+    // earlier version of this very check finding the encoded name at the
+    // prompt. Nor can the rest of them: Go's MIME header parser refuses the
+    // Content-Disposition line outright, 400 "malformed MIME header line", for
+    // 0x15 and for ESC.
+    //
+    // Tab is the exception, because textproto treats it as ordinary header
+    // whitespace. It arrives, it lands on disk with a raw 0x09 in the name, and
+    // at a prompt readline reads it as "complete this", not as a character. So
+    // the path the user is invited to press enter on is whatever completion did
+    // to it.
+    //
+    // The assertion is on the bytes rather than on the behaviour, deliberately:
+    // what completion does depends on what else is in the directory, and a
+    // check whose expected value moves with the fixture is worse than no check.
+    // What must hold is that no control byte reached the prompt at all.
+    const oddName = 'ZULU\tKILO.txt'
+    rmSync(join(projRoot, oddName), { force: true })
+    await page.keyboard.press('Control+c')
+    await sleep(500)
+    const dropped2 = await page.evaluateHandle(() => {
+      const dt = new DataTransfer()
+      dt.items.add(new File(['TAB_NAME_BODY'], 'ZULU\tKILO.txt', { type: 'text/plain' }))
+      return dt
+    })
+    await zone.dispatchEvent('dragover', { dataTransfer: dropped2 })
+    await sleep(200)
+    await zone.dispatchEvent('drop', { dataTransfer: dropped2 })
+    await sleep(2500)
+
+    let dropText = ''
+    for (let i = 0; i < 25; i++) {
+      dropText = await page.locator('.xterm-screen').first().innerText().catch(() => '')
+      if (dropText.includes('KILO.txt')) break
+      await sleep(400)
+    }
+    const landed2 = await (await authed(`/api/projects/${proj.id}/files?path=`)).json()
+    if (!(landed2.entries ?? []).some((e) => e.name === oddName)) {
+      note('WARN', 'files',
+        'the tab-named file did not land on disk, so the prompt check below proves nothing')
+    } else if (!dropText.replace(/\s/g, '').includes('ZULU\\x09KILO.txt')) {
+      // One branch for both failure modes, because they are one failure. With
+      // the tab sent raw, readline reads it as "complete this" and what lands
+      // at the prompt is whatever completion made of a half-typed path -- which
+      // measured as the second half of the name never appearing at all, not as
+      // a tab sitting visibly in it. Reporting that as "never reached the
+      // prompt" would send the next reader looking at the upload.
+      //
+      // Whitespace is stripped first: the terminal wraps and innerText reports
+      // a space at the wrap, which split "\x09" down the middle and failed this
+      // the first time it ran. Stripping cannot hide what it looks for -- a raw
+      // tab is whitespace too, so an unquoted name collapses to ZULUKILO.txt
+      // and still does not match.
+      note('FAIL', 'files',
+        'the path at the prompt is not the name of the file that was uploaded. A tab in a ' +
+        'filename survives the whole way -- the browser escapes only LF, CR and the quote, ' +
+        'and Go accepts a tab in the header -- and readline reads it as completion: ' +
+        JSON.stringify(dropText.replace(/\s+/g, ' ').trim().slice(-160)))
+    }
+
     await page.screenshot({ path: join(SHOTS, 'file-transfer.png') })
-    for (const leftover of ['download-me.txt', 'dropped-note.txt']) {
+    for (const leftover of ['download-me.txt', 'dropped-note.txt', oddName]) {
       rmSync(join(projRoot, leftover), { force: true })
     }
   }
