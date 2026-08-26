@@ -20,6 +20,8 @@ import (
 // browser, notes and todos.
 func (s *Server) registerPanelRoutes(r chi.Router) {
 	r.Get("/system", s.handleSystem)
+	r.Get("/browse", s.handleBrowse)
+	r.Post("/browse/mkdir", s.handleBrowseMkdir)
 	r.Get("/projects/{id}/files", s.handleFiles)
 	r.Get("/projects/{id}/download", s.handleDownload)
 	r.Post("/projects/{id}/upload", s.handleUpload)
@@ -466,4 +468,67 @@ func (s *Server) handleDeleteTodo(w http.ResponseWriter, r *http.Request) {
 	}
 	s.notifyPanel(todo.ProjectID, "todos")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// browseRoot is where the directory picker starts.
+//
+// The home directory, not "/". Everything the panel is for lives under it, a
+// picker rooted at the filesystem makes the first screen a list of /boot and
+// /proc, and Resolve's containment then means something a reader can hold in
+// their head: nothing this endpoint returns is outside your own home.
+//
+// It is not a security boundary and is not offered as one -- this endpoint is
+// behind the same session as a writable terminal, and anyone through that door
+// can read the disk anyway. It is a boundary on *noise*. Paths outside it are
+// reached with the text field beside the picker.
+func browseRoot() (string, error) { return os.UserHomeDir() }
+
+func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
+	root, err := browseRoot()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "no home directory to browse")
+		return
+	}
+	listing, err := browse.Dirs(root, r.URL.Query().Get("path"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"root":      root,
+		"path":      listing.Path,
+		"parent":    listing.Parent,
+		"entries":   emptyIfNil(listing.Entries),
+		"total":     listing.Total,
+		"truncated": listing.Truncated,
+	})
+}
+
+type mkdirRequest struct {
+	Path string `json:"path"`
+	Name string `json:"name"`
+}
+
+func (s *Server) handleBrowseMkdir(w http.ResponseWriter, r *http.Request) {
+	var req mkdirRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	root, err := browseRoot()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "no home directory to write in")
+		return
+	}
+	created, err := browse.Mkdir(root, req.Path, strings.TrimSpace(req.Name))
+	if err != nil {
+		// The two that a person can act on, told apart. "already exists" is a
+		// different instruction from "that is not a name".
+		if os.IsExist(err) {
+			writeErr(w, http.StatusConflict, req.Name+" already exists")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"path": created, "abs": filepath.Join(root, created)})
 }

@@ -259,6 +259,17 @@ export interface FileListing {
   truncated: boolean
 }
 
+/** A directory listing for the "where should this project live" picker. */
+export interface DirListing {
+  /** The absolute path the picker is rooted at, shown so "~" means something. */
+  root: string
+  path: string
+  parent: string | null
+  entries: FileEntry[]
+  total: number
+  truncated: boolean
+}
+
 export interface Note {
   projectId: string
   content: string

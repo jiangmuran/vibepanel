@@ -213,3 +213,107 @@ func List(root, rel string) (Listing, error) {
 	}
 	return out, nil
 }
+
+// Dirs lists only the directories under rel, for choosing a place rather than
+// looking at one.
+//
+// A separate function from List because the two answer different questions and
+// share only their containment. A picker that shows files is a picker you have
+// to read past: what is being chosen is a directory, so a file in the list is
+// noise at best and a thing to be clicked fruitlessly at worst.
+//
+// Dot-directories are left out. A home directory holds dozens of them --
+// .cache, .config, .local, every tool's state -- and a project is essentially
+// never one. The panel offers a text field beside this for anything the browser
+// will not reach, which is the honest answer to "essentially never" rather than
+// a claim that it cannot happen.
+func Dirs(root, rel string) (Listing, error) {
+	abs, err := Resolve(root, rel)
+	if err != nil {
+		return Listing{}, err
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return Listing{}, err
+	}
+	if !info.IsDir() {
+		return Listing{}, fmt.Errorf("browse: %s is not a directory", rel)
+	}
+	items, err := os.ReadDir(abs)
+	if err != nil {
+		return Listing{}, err
+	}
+
+	realRoot, _ := filepath.EvalSymlinks(root)
+	relDir, _ := filepath.Rel(realRoot, abs)
+	if relDir == "." {
+		relDir = ""
+	}
+	out := Listing{Path: filepath.ToSlash(relDir), Entries: []Entry{}}
+	if relDir != "" {
+		parent := filepath.ToSlash(filepath.Dir(relDir))
+		if parent == "." {
+			parent = ""
+		}
+		out.Parent = &parent
+	}
+
+	var dirs []os.DirEntry
+	for _, item := range items {
+		if strings.HasPrefix(item.Name(), ".") {
+			continue
+		}
+		if item.IsDir() {
+			dirs = append(dirs, item)
+			continue
+		}
+		// A symlink to a directory is a directory here, which costs one stat
+		// per link rather than per entry.
+		if fi, serr := item.Info(); serr == nil && fi.Mode()&os.ModeSymlink != 0 {
+			if target, terr := os.Stat(filepath.Join(abs, item.Name())); terr == nil && target.IsDir() {
+				dirs = append(dirs, item)
+			}
+		}
+	}
+	out.Total = len(dirs)
+	sort.SliceStable(dirs, func(i, j int) bool {
+		return strings.ToLower(dirs[i].Name()) < strings.ToLower(dirs[j].Name())
+	})
+	if len(dirs) > maxEntries {
+		dirs = dirs[:maxEntries]
+		out.Truncated = true
+	}
+	for _, item := range dirs {
+		out.Entries = append(out.Entries, Entry{
+			Name:  item.Name(),
+			Path:  filepath.ToSlash(filepath.Join(relDir, item.Name())),
+			IsDir: true,
+		})
+	}
+	return out, nil
+}
+
+// Mkdir creates one directory under rel.
+//
+// One element, not a path: the name comes from a text field, and accepting a
+// separator there turns "new folder" into "write anywhere under the root",
+// which is a different feature with different consequences. Resolve still
+// guards the parent.
+func Mkdir(root, rel, name string) (string, error) {
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		return "", fmt.Errorf("browse: %q is not a directory name", name)
+	}
+	parent, err := Resolve(root, rel)
+	if err != nil {
+		return "", err
+	}
+	target := filepath.Join(parent, name)
+	// O_EXCL semantics: Mkdir fails when the name is taken, which is what the
+	// caller wants to hear rather than silently adopting somebody's directory.
+	if err := os.Mkdir(target, 0o755); err != nil {
+		return "", err
+	}
+	realRoot, _ := filepath.EvalSymlinks(root)
+	out, _ := filepath.Rel(realRoot, target)
+	return filepath.ToSlash(out), nil
+}

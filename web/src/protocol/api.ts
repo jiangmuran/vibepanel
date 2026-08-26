@@ -1,5 +1,6 @@
 import type {
   AuditEntry,
+  DirListing,
   AuthState,
   FileListing,
   HookStatus,
@@ -133,6 +134,15 @@ export const api = {
     request<{ ok: boolean; version: string; tmuxVersion: string; live: number; passkeys: boolean }>(
       '/api/health',
     ),
+
+  browse: (path = '') =>
+    request<DirListing>(`/api/browse?path=${encodeURIComponent(path)}`),
+
+  mkdir: (path: string, name: string) =>
+    request<{ path: string; abs: string }>('/api/browse/mkdir', {
+      method: 'POST',
+      body: JSON.stringify({ path, name }),
+    }),
 
   createProject: (path: string, name?: string) =>
     request<Project>('/api/projects', {

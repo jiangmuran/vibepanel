@@ -374,3 +374,83 @@ func TestASymlinkOutOfTheProjectIsNotOfferedForDownload(t *testing.T) {
 		}
 	}
 }
+
+// The picker lists directories and nothing else.
+//
+// A picker that shows files is a picker you have to read past: what is being
+// chosen is a directory, so a file in the list is noise at best and something
+// to click fruitlessly at worst.
+func TestDirsListsOnlyDirectories(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{"projects", "notes", ".cache"} {
+		if err := os.Mkdir(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range []string{"README.md", "go.mod"} {
+		if err := os.WriteFile(filepath.Join(root, f), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A symlink to a directory is a directory here: it behaves like one when
+	// you click it, and a picker that hides it hides a real place.
+	if err := os.Symlink(filepath.Join(root, "projects"), filepath.Join(root, "shortcut")); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Dirs(root, "")
+	if err != nil {
+		t.Fatalf("Dirs: %v", err)
+	}
+	var names []string
+	for _, e := range got.Entries {
+		if !e.IsDir {
+			t.Errorf("a non-directory came back in the picker: %+v", e)
+		}
+		names = append(names, e.Name)
+	}
+	want := []string{"notes", "projects", "shortcut"}
+	if strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Errorf("listed %v, want %v -- files and dot-directories are both meant to be out",
+			names, want)
+	}
+}
+
+// Mkdir takes a name, not a path.
+//
+// The name comes from a text field. Accepting a separator there turns "new
+// folder" into "write anywhere under the root", which is a different feature
+// with different consequences.
+func TestMkdirRefusesAnythingButAName(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "here"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	rel, err := Mkdir(root, "here", "new-project")
+	if err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+	if rel != "here/new-project" {
+		t.Errorf("created %q, want here/new-project", rel)
+	}
+	if fi, serr := os.Stat(filepath.Join(root, "here", "new-project")); serr != nil || !fi.IsDir() {
+		t.Errorf("the directory is not there: %v", serr)
+	}
+
+	// The same name again has to say so rather than adopting what is there.
+	if _, err := Mkdir(root, "here", "new-project"); !os.IsExist(err) {
+		t.Errorf("a second Mkdir gave %v, want an exists error", err)
+	}
+
+	for _, bad := range []string{"", ".", "..", "a/b", `a\b`, "../escape", "/abs"} {
+		if _, err := Mkdir(root, "", bad); err == nil {
+			t.Errorf("Mkdir accepted %q as a directory name", bad)
+			os.RemoveAll(filepath.Join(root, bad))
+		}
+	}
+	// And nothing landed outside.
+	if _, err := os.Stat(filepath.Join(filepath.Dir(root), "escape")); err == nil {
+		t.Error("a name containing .. created a directory outside the root")
+	}
+}

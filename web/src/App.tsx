@@ -32,6 +32,7 @@ import { NARROW_QUERY, useMediaQuery } from './hooks/useMediaQuery'
 import { EXIT_VANISHED } from './protocol/wire'
 import { shellQuote } from './shell'
 import { safeText } from './components/text'
+import { DirectoryPicker } from './components/DirectoryPicker'
 
 /**
  * Safety net only.
@@ -439,11 +440,11 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     }
   }
 
-  const addProject = () => {
-    const path = window.prompt('Project directory', '~/projects/')
-    if (!path) return
-    void guard(() => api.createProject(path))
-  }
+  // A picker, not a prompt. window.prompt asks you to know the answer already,
+  // spells nothing, and cannot tell you the path is missing until the server
+  // says so afterwards.
+  const [picking, setPicking] = useState(false)
+  const addProject = () => setPicking(true)
 
   const newSession = (project: Project) => void guard(() => api.createSession(project.id, []))
 
@@ -647,6 +648,16 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             names, and an error is not one -- so a file whose name carries a
             directional override reverses the text around it, in the banner, at the
             moment you are deciding whether to rename and retry. */}
+        {picking && (
+          <DirectoryPicker
+            onClose={() => setPicking(false)}
+            onPick={(path) => {
+              setPicking(false)
+              void guard(() => api.createProject(path))
+            }}
+          />
+        )}
+
         {error && (
           <div
             className="border-b border-hairline px-4 py-2 text-[12px]"
