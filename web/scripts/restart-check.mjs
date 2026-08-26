@@ -58,9 +58,11 @@ let serverLog = ''
 // not, and Go turns the resulting SIGXFSZ into a write error: close enough to a
 // full disk to answer the question, applied to a restart so the database
 // already exists.
-function boot(fileBlocks = 0) {
+// `bin` so the upgrade check can boot a different build against the same data
+// directory and tmux socket, which is exactly what an upgrade is.
+function boot(fileBlocks = 0, bin = BIN) {
   const p = fileBlocks
-    ? spawn('/bin/sh', ['-c', `ulimit -f ${fileBlocks}; exec "$0" serve`, BIN], {
+    ? spawn('/bin/sh', ['-c', `ulimit -f ${fileBlocks}; exec "$0" serve`, bin], {
       env: {
         ...process.env,
         HOME: FAKE_HOME,
@@ -71,7 +73,7 @@ function boot(fileBlocks = 0) {
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
-    : spawn(BIN, ['serve'], {
+    : spawn(bin, ['serve'], {
       env: {
         ...process.env,
         HOME: FAKE_HOME,
@@ -356,6 +358,58 @@ try {
   if (still.length !== 1) {
     note('FAIL', 'persistence',
       `expected exactly one "survivor" session after the restart, found ${still.length}`)
+  }
+
+  // ── a tab that outlived the binary it was talking to ─────────────────────
+  //
+  // Restarting the panel is safe by design and install.sh restarts on upgrade,
+  // so this is the ordinary path rather than an edge: the browser reconnects,
+  // the terminals come back, and the page is still running the frontend it
+  // downloaded from the *previous* build. A wire change then shows up as
+  // something subtle and hard to place instead of as an upgrade.
+  //
+  // Driven with a second binary built to report a different version, because
+  // that is the only thing the running one can tell apart.
+  await stop()
+  const UPGRADED = join(DATA, 'vibepanel-upgraded')
+  let built = false
+  try {
+    execSync(
+      `CGO_ENABLED=0 go build -ldflags "-X github.com/jiangmuran/vibepanel/internal/version.Version=v0.0.0-upgrade-check" -o ${UPGRADED} ./cmd/vibepanel`,
+      { cwd: new URL('../../', import.meta.url).pathname, stdio: 'pipe' },
+    )
+    built = true
+  } catch (e) {
+    note('WARN', 'upgrade', `could not build a second binary to upgrade to: ${String(e).slice(0, 160)}`)
+  }
+  if (built) {
+    boot(0, UPGRADED)
+    if (!await health(25000)) {
+      note('FAIL', 'upgrade', `the upgraded binary never came up:\n${serverLog.slice(-400)}`)
+    } else {
+      let noticed = false
+      for (let i = 0; i < 40; i++) {
+        if (await page.locator('[data-testid="upgrade-notice"]').count()) { noticed = true; break }
+        await sleep(500)
+      }
+      if (!noticed) {
+        note('FAIL', 'upgrade',
+          'the panel was replaced under an open tab and the tab said nothing. It is still ' +
+          'running the frontend from the previous build, and a wire change between them ' +
+          'would present as a subtle malfunction rather than as an upgrade.')
+      } else {
+        note('PASS', 'upgrade', 'an open tab noticed that the panel underneath it was replaced')
+      }
+      // And the sessions have to have survived it, which is the premise the
+      // whole upgrade story rests on.
+      const stillThere = panes()
+      if (stillThere.join() !== before.join()) {
+        note('FAIL', 'upgrade',
+          `the upgrade took the sessions with it: before=${JSON.stringify(before)} ` +
+          `after=${JSON.stringify(stillThere)}`)
+      }
+    }
+    await stop()
   }
 
   // ── the fault the stale banner exists for ────────────────────────────────

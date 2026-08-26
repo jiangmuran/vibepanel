@@ -7,6 +7,7 @@ import { terminalLabel } from './label'
 import { TerminalView } from './Terminal'
 import { InlineName } from './InlineName'
 import { StateDot } from './StateDot'
+import { t as tr, useLang } from '../i18n'
 
 interface Props {
   socket: PanelSocket
@@ -35,6 +36,7 @@ const MIN_MAIN_HEIGHT = 120
  * in whatever directory the session above is currently in.
  */
 export function BottomTerminals(props: Props) {
+  useLang()
   const { socket, parent, terminals, themeKey, height } = props
   const [activeId, setActiveId] = useState<string | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
@@ -84,7 +86,7 @@ export function BottomTerminals(props: Props) {
         onPointerMove={onResizeMove}
         onPointerUp={onResizeEnd}
         onPointerCancel={onResizeEnd}
-        title="Drag to resize"
+        title={tr('bottom.resize')}
         // Without touch-action the browser scrolls instead of reporting the
         // drag, and on touch the gesture never arrives at all.
         style={{ touchAction: 'none' }}
@@ -137,7 +139,7 @@ export function BottomTerminals(props: Props) {
                 e.stopPropagation()
                 props.onClose(t)
               }}
-              title="Close terminal"
+              title={tr('bottom.close')}
               className="vp-tap rounded p-0.5 vp-reveal hover:text-ink"
             >
               <X size={11} />
@@ -157,7 +159,7 @@ export function BottomTerminals(props: Props) {
         <button
           type="button"
           onClick={props.onCollapse}
-          title="Hide terminals"
+          title={tr('bottom.hide')}
           className="rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
         >
           <ChevronDown size={14} />

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronUp,
   LogOut,
@@ -332,6 +332,49 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
       ),
     [state.sessions, current],
   )
+
+  // Has the panel underneath this tab been replaced?
+  //
+  // Restarting the panel is safe by design -- the tmux server outlives the Go
+  // process, which is the whole premise -- and `install.sh` restarts on
+  // upgrade. What survives that restart on *this* side is a tab still running
+  // the frontend it downloaded before, talking to a binary that may have
+  // changed the wire underneath it. Nothing said so: the socket reconnects,
+  // the terminals come back, and a protocol difference then shows up as
+  // something subtler and much harder to place.
+  //
+  // Checked on reconnect rather than on a timer, because a reconnect is
+  // exactly when a restart has happened, and a panel that polls its own
+  // version every minute is spending a request on a question whose answer
+  // almost never changes.
+  //
+  // Offered, not forced. Reloading out from under somebody mid-command is a
+  // worse failure than showing an old interface for another minute.
+  const bootBuild = useRef<string | null>(null)
+  const [upgraded, setUpgraded] = useState(false)
+  useEffect(() => {
+    if (status !== 'open') return
+    let cancelled = false
+    void api
+      .health()
+      .then((h) => {
+        if (cancelled) return
+        const build = `${h.version}@${h.commit}`
+        if (bootBuild.current === null) {
+          bootBuild.current = build
+          return
+        }
+        if (build !== bootBuild.current) setUpgraded(true)
+      })
+      .catch(() => {
+        // Unreachable is not upgraded. The socket's own reconnection is what
+        // handles that, and guessing here would show the banner every time the
+        // wifi hiccupped.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [status])
 
   // A connection that stays down might mean the session ended.
   //
@@ -683,6 +726,33 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             the database's writes capped — /api/health still said ok, and the
             only person who found out was the one who happened to press a
             button. */}
+        {upgraded && (
+          <div
+            data-testid="upgrade-notice"
+            className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-hairline px-4 py-2 text-[12px]"
+            style={{ background: 'var(--vp-surface-2)' }}
+          >
+            <span className="font-semibold text-ink">{t('upgrade.title')}</span>
+            <span className="min-w-0 flex-1 text-ink-2">{t('upgrade.body')}</span>
+            <button
+              type="button"
+              data-testid="upgrade-reload"
+              onClick={() => window.location.reload()}
+              className="shrink-0 rounded-vp px-2.5 py-1 text-[12px]"
+              style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+            >
+              {t('upgrade.reload')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setUpgraded(false)}
+              className="shrink-0 rounded-vp px-2 py-1 text-[12px] text-ink-2 transition-colors duration-150 ease-vp hover:text-ink"
+            >
+              {t('upgrade.later')}
+            </button>
+          </div>
+        )}
+
         {socketError && (
           <div
             data-testid="socket-error"

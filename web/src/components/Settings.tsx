@@ -9,6 +9,7 @@ import {
 } from '../protocol/webauthn'
 import type { AuditEntry, HookStatus, Passkey, SettingsInfo } from '../protocol/wire'
 import { passkeyLabel } from './label'
+import { setLang, t, useLang } from '../i18n'
 
 function bytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -41,6 +42,7 @@ function duration(seconds: number): string {
  * passkeys, and whether agents report their own state.
  */
 export function Settings({ onClose }: { onClose: () => void }) {
+  const lang = useLang()
   const [info, setInfo] = useState<SettingsInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -81,11 +83,11 @@ export function Settings({ onClose }: { onClose: () => void }) {
         className="w-full max-w-2xl rounded-vp-lg border border-hairline bg-surface p-6"
       >
         <div className="mb-5 flex items-center gap-2">
-          <h2 className="flex-1 text-[15px] font-semibold tracking-tight text-ink">Settings</h2>
+          <h2 className="flex-1 text-[15px] font-semibold tracking-tight text-ink">{t('settings.title')}</h2>
           <button
             type="button"
             onClick={onClose}
-            title="Close"
+            title={t('settings.close')}
             data-testid="settings-close"
             className="rounded p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
           >
@@ -98,6 +100,35 @@ export function Settings({ onClose }: { onClose: () => void }) {
             {error}
           </p>
         )}
+
+        {/* First, because it decides whether anything below it can be read.
+            A segmented pair rather than a dropdown: there are two, both fit,
+            and a select for two options is a click that buys nothing. Each
+            option is written in its own language, so you can find yours
+            without being able to read the other. */}
+        <Section title={t('settings.language')}>
+          <div
+            data-testid="settings-language"
+            className="inline-flex items-center gap-0.5 rounded-lg bg-surface-2 p-0.5"
+          >
+            {(['zh', 'en'] as const).map((code) => (
+              <button
+                key={code}
+                type="button"
+                data-testid={`lang-${code}`}
+                onClick={() => setLang(code)}
+                aria-pressed={lang === code}
+                className={`rounded-[7px] px-3 py-1 text-[12.5px] transition-colors duration-200 ease-vp ${
+                  lang === code
+                    ? 'bg-surface text-ink shadow-[0_1px_2px_rgb(0_0_0/0.12)]'
+                    : 'text-ink-2 hover:text-ink'
+                }`}
+              >
+                {code === 'zh' ? t('settings.languageZh') : t('settings.languageEn')}
+              </button>
+            ))}
+          </div>
+        </Section>
 
         {info && <StatusSection info={info} />}
         <HooksSection />

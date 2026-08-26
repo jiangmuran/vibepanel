@@ -103,7 +103,7 @@ export function Todos({ projectId, socket }: { projectId: string; socket: PanelS
 
       <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-2">
         {todos.length === 0 && (
-          <p className="px-2 py-3 text-[12px] text-ink-2">Nothing on the list.</p>
+          <p className="px-2 py-3 text-[12px] text-ink-2">{tr('todos.empty')}</p>
         )}
         {todos.map((t) => (
           <div
@@ -130,12 +130,12 @@ export function Todos({ projectId, socket }: { projectId: string; socket: PanelS
               className={`flex-1 text-[12.5px] leading-snug !whitespace-normal ${
                 t.done ? 'text-ink-2 line-through' : 'text-ink'
               }`}
-              title="Double click to edit"
+              title={tr('todos.edit')}
             />
             <button
               type="button"
               onClick={() => void guard(() => api.deleteTodo(t.id))}
-              title="Delete"
+              title={tr('todos.delete')}
               className="mt-0.5 shrink-0 rounded p-0.5 text-ink-2 vp-reveal hover:text-ink"
             >
               <X size={11} />

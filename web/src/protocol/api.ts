@@ -131,9 +131,16 @@ export const api = {
   state: () => request<PanelState>('/api/state'),
 
   health: () =>
-    request<{ ok: boolean; version: string; tmuxVersion: string; live: number; passkeys: boolean }>(
-      '/api/health',
-    ),
+    request<{
+      ok: boolean
+      version: string
+      /** The build this binary was made from. Together with version it is what
+       *  tells an open tab that the panel underneath it has been replaced. */
+      commit: string
+      tmuxVersion: string
+      live: number
+      passkeys: boolean
+    }>('/api/health'),
 
   browse: (path = '') =>
     request<DirListing>(`/api/browse?path=${encodeURIComponent(path)}`),

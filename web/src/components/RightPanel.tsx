@@ -105,7 +105,7 @@ export function RightPanel(props: Props) {
 
   const body = () => {
     if (!project) {
-      return <p className="px-3 py-4 text-[12px] text-ink-2">No project selected.</p>
+      return <p className="px-3 py-4 text-[12px] text-ink-2">{t('panel.noProject')}</p>
     }
     if (tab === 'files') return <FileTree key={project.id} projectId={project.id} />
     if (tab === 'monitor') return <SystemMonitor />
@@ -129,7 +129,7 @@ export function RightPanel(props: Props) {
               setSplitDragging(false)
             }}
             style={{ touchAction: 'none' }}
-            title="Drag to resize"
+            title={t('panel.resize')}
             className="h-1.5 shrink-0 cursor-row-resize border-y border-hairline transition-colors duration-200 ease-vp hover:bg-accent"
           />
           <div className="min-h-0 flex-1 overflow-hidden">
@@ -157,7 +157,7 @@ export function RightPanel(props: Props) {
         onPointerUp={onWidthEnd}
         onPointerCancel={onWidthEnd}
         style={{ touchAction: 'none' }}
-        title="Drag to resize"
+        title={t('panel.resize')}
         // `relative z-10` is what makes the grip hittable, not decoration.
         //
         // The negative margin pulls the panel's content four pixels left so

@@ -4,6 +4,7 @@ import { safeText } from '../text'
 
 import { api } from '../../protocol/api'
 import type { FileListing } from '../../protocol/wire'
+import { t, useLang } from '../../i18n'
 
 function bytes(n: number): string {
   if (n < 1024) return `${n}`
@@ -25,6 +26,7 @@ function bytes(n: number): string {
  * repository at once".
  */
 export function FileTree({ projectId }: { projectId: string }) {
+  useLang()
   // The caller keys this component by project, so switching projects gives a
   // fresh instance starting at the root. Resetting state from an effect
   // instead would render one frame against the wrong project's path.
@@ -70,7 +72,7 @@ export function FileTree({ projectId }: { projectId: string }) {
           <button
             type="button"
             onClick={() => setPath(listing.parent ?? '')}
-            title="Up one level"
+            title={t('files.up')}
             className="rounded p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
           >
             <ChevronLeft size={13} />
@@ -83,7 +85,7 @@ export function FileTree({ projectId }: { projectId: string }) {
           type="button"
           data-testid="file-refresh"
           onClick={() => setReloads((n) => n + 1)}
-          title="Read this directory again"
+          title={t('files.reread')}
           className="shrink-0 rounded p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
         >
           <RefreshCw size={12} />
@@ -91,7 +93,7 @@ export function FileTree({ projectId }: { projectId: string }) {
       </div>
 
       {listing.entries.length === 0 && (
-        <p className="px-3 py-3 text-[12px] text-ink-2">Empty</p>
+        <p className="px-3 py-3 text-[12px] text-ink-2">{t('files.empty')}</p>
       )}
 
       {/* A partial listing has to say so. The server caps a directory at two

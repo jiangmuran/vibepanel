@@ -224,7 +224,7 @@ export function Sidebar(props: SidebarProps) {
             type="button"
             data-testid="order-manual"
             onClick={props.onRestoreProjectOrder}
-            title="Back to the order you arranged"
+            title={t('project.orderManual')}
             className="ml-auto rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
           >
             <ListOrdered size={14} />
@@ -267,7 +267,7 @@ export function Sidebar(props: SidebarProps) {
               <span
                 {...drag.handleProps(p.id)}
                 data-testid="project-grip"
-                title="Drag to reorder"
+                title={t('project.reorder')}
                 className="vp-tap -ml-1 cursor-grab rounded p-0.5 text-ink-2 vp-reveal active:cursor-grabbing"
               >
                 <GripVertical size={12} />
@@ -296,7 +296,7 @@ export function Sidebar(props: SidebarProps) {
                 type="button"
                 onClick={() => props.onRemoveProject(p)}
                 data-testid="project-remove"
-                title="Remove this project from the panel"
+                title={t('project.remove')}
                 className="vp-tap rounded p-1 text-ink-2 vp-reveal hover:text-ink"
               >
                 <X size={13} />

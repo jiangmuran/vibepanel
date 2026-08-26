@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { CornerDownLeft, Send } from 'lucide-react'
+import { t, useLang } from '../../i18n'
 
 /**
  * A box you type into, that sends when you are done.
@@ -18,6 +19,7 @@ export function ComposeInput({
   onSend: (text: string) => void
   onPaste: (text: string, submit: boolean) => void
 }) {
+  useLang()
   const [text, setText] = useState('')
   const [newline, setNewline] = useState(true)
 
@@ -106,7 +108,7 @@ export function ComposeInput({
           }
         }}
         rows={1}
-        placeholder="Type a command…"
+        placeholder={t('compose.placeholder')}
         data-testid="compose-input"
         // The terminal is a monospace grid; what you are about to send should
         // look like what will arrive.
@@ -128,7 +130,7 @@ export function ComposeInput({
         type="button"
         onClick={send}
         disabled={!text}
-        title="Send"
+        title={t('compose.send')}
         data-testid="compose-send"
         className="flex h-8 w-9 shrink-0 items-center justify-center rounded-vp transition-opacity duration-150 ease-vp disabled:opacity-40"
         style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
