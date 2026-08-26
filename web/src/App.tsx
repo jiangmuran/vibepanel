@@ -604,7 +604,12 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               {waiting > 0 && (
                 <span
                   data-testid="waiting-badge"
-                  className="tabular absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-1 text-[9px] font-semibold"
+                  // Inside the button, not hanging off it. At -top-0.5 on a
+                  // phone the badge sat above the header's first pixel and was
+                  // sliced in half by the edge of the viewport -- the count of
+                  // things waiting for you, unreadable, in the corner the whole
+                  // product is about.
+                  className="tabular absolute top-0 right-0 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-1 text-[9px] font-semibold"
                   style={{ background: 'var(--vp-state-waiting)', color: '#fff' }}
                 >
                   {waiting}

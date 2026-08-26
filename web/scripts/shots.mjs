@@ -152,8 +152,12 @@ try {
       await page.locator('[data-testid="auth-password"]').fill(PASSWORD)
       await page.locator('[data-testid="auth-submit"]').click()
     }
-    await page.waitForSelector('[data-testid="sidebar"]', { timeout: 15000 })
-    await sleep(2000)
+    // The sidebar is a drawer on a phone, so waiting for it there waits
+    // forever. The terminal is on every layout.
+    await page.waitForSelector('[data-testid="sidebar"], .xterm-screen, [data-testid="compose"]', {
+      timeout: 15000,
+    })
+    await sleep(2500)
   }
 
   for (const [theme, locale] of [['dark', 'zh-CN'], ['light', 'zh-CN'], ['dark', 'en-US']]) {
@@ -205,6 +209,8 @@ try {
       deviceScaleFactor: 3,
       isMobile: true,
       hasTouch: true,
+      locale: 'zh-CN',
+      colorScheme: 'dark',
     })
     const page = await ctx.newPage()
     await login(page)

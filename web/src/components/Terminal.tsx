@@ -8,6 +8,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 
 import type { PanelSocket } from '../protocol/socket'
 import { terminalTheme } from './theme'
+import { t, useLang } from '../i18n'
 
 /**
  * The smallest a passive viewer is allowed to shrink the text to.
@@ -84,6 +85,7 @@ export function TerminalView({
   onSelectionChange,
   onClipboard,
 }: Props) {
+  useLang()
   const hostRef = useRef<HTMLDivElement | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const termRef = useRef<Xterm | null>(null)
@@ -406,16 +408,16 @@ export function TerminalView({
           data-testid="take-control"
           onClick={takeControl}
           className="absolute right-3 bottom-3 rounded-full border border-hairline bg-elevated px-3 py-1.5 text-xs text-ink-2 backdrop-blur transition-colors duration-200 ease-vp hover:text-ink"
-          title={
-            `Another viewer owns this grid (${grid.cols}x${grid.rows}); this window fits ` +
-            `${ownFit.cols}x${ownFit.rows}. You can still type. Taking over reflows it for ` +
-            `everyone, which a running TUI will notice.`
-          }
+          title={t('term.takeControlWhy', {
+            cols: grid.cols,
+            rows: grid.rows,
+            mine: `${ownFit.cols}×${ownFit.rows}`,
+          })}
         >
           <span className="tabular">
-            {grid.cols}x{grid.rows}
+            {grid.cols}×{grid.rows}
           </span>{' '}
-          · take control
+          · {t('term.takeControl')}
         </button>
       )}
     </div>

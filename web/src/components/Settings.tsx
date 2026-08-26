@@ -10,6 +10,7 @@ import {
 import type { AuditEntry, HookStatus, Passkey, SettingsInfo } from '../protocol/wire'
 import { passkeyLabel } from './label'
 import { setLang, t, useLang } from '../i18n'
+import { notifyEnabled, notifySupported, requestNotifyPermission, setNotifyEnabled } from '../notify'
 
 function bytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -43,6 +44,10 @@ function duration(seconds: number): string {
  */
 export function Settings({ onClose }: { onClose: () => void }) {
   const lang = useLang()
+  const [notifyState, setNotifyState] = useState<NotificationPermission>(
+    typeof Notification === 'undefined' ? 'denied' : Notification.permission,
+  )
+  const [notifyOn, setNotifyOn] = useState(notifyEnabled())
   const [info, setInfo] = useState<SettingsInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -106,6 +111,50 @@ export function Settings({ onClose }: { onClose: () => void }) {
             and a select for two options is a click that buys nothing. Each
             option is written in its own language, so you can find yours
             without being able to read the other. */}
+        {/* Asked for from a click, never on load: a permission prompt fired on
+            arrival is why browsers stopped showing them, and Safari refuses one
+            outside a gesture at all. */}
+        <Section title={t('notify.title')}>
+          <p className="mb-2 text-[12px] leading-relaxed text-ink-2">{t('notify.explain')}</p>
+          {!notifySupported() ? (
+            <p className="text-[12px] text-ink-3">{t('notify.insecure')}</p>
+          ) : notifyState === 'denied' ? (
+            <p className="text-[12px]" style={{ color: 'var(--vp-state-waiting)' }}>
+              {t('notify.denied')}
+            </p>
+          ) : notifyState === 'granted' && notifyOn ? (
+            <div className="flex items-center gap-2">
+              <span className="text-[12.5px] text-ink">{t('notify.on')}</span>
+              <button
+                type="button"
+                data-testid="notify-off"
+                onClick={() => {
+                  setNotifyEnabled(false)
+                  setNotifyOn(false)
+                }}
+                className="rounded-vp border border-hairline px-2 py-1 text-[12px] text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+              >
+                {t('dir.cancel')}
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              data-testid="notify-enable"
+              onClick={() => {
+                void requestNotifyPermission().then((p) => {
+                  setNotifyState(p)
+                  setNotifyOn(p === 'granted')
+                })
+              }}
+              className="rounded-vp px-3 py-1.5 text-[12.5px]"
+              style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+            >
+              {t('notify.enable')}
+            </button>
+          )}
+        </Section>
+
         <Section title={t('settings.language')}>
           <div
             data-testid="settings-language"
@@ -175,9 +224,9 @@ function PasswordSection() {
   }
 
   return (
-    <Section title="Password">
+    <Section title={t('set.password')}>
       <p className="mb-2 text-[12px] text-ink-2">
-        Changing it signs every other browser out. This one stays signed in.
+        {t('set.passwordWhy')}
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <input
@@ -185,7 +234,7 @@ function PasswordSection() {
           data-testid="password-current"
           value={current}
           onChange={(e) => setCurrent(e.target.value)}
-          placeholder="Current password"
+          placeholder={t('set.currentPassword')}
           autoComplete="current-password"
           className="min-w-48 flex-1 rounded-vp border border-hairline bg-surface px-2 py-1.5 text-[12.5px] text-ink outline-none focus:border-accent"
         />
@@ -194,7 +243,7 @@ function PasswordSection() {
           data-testid="password-next"
           value={next}
           onChange={(e) => setNext(e.target.value)}
-          placeholder="New password"
+          placeholder={t('set.newPassword')}
           autoComplete="new-password"
           className="min-w-48 flex-1 rounded-vp border border-hairline bg-surface px-2 py-1.5 text-[12.5px] text-ink outline-none focus:border-accent"
         />
@@ -205,7 +254,7 @@ function PasswordSection() {
           onClick={() => void submit()}
           className="rounded-vp bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white transition-opacity duration-200 ease-vp disabled:opacity-40"
         >
-          {busy ? 'Changing…' : 'Change'}
+          {busy ? t('set.working') : t('set.change')}
         </button>
       </div>
       {error && (
@@ -274,20 +323,20 @@ function Row({
 
 function StatusSection({ info }: { info: SettingsInfo }) {
   return (
-    <Section title="Status">
+    <Section title={t('set.status')}>
       <div data-testid="settings-status">
-        <Row label="Version" value={`${info.version} (${info.commit})`} />
-        <Row label="Uptime" value={duration(info.uptime)} />
+        <Row label={t('set.version')} value={`${info.version} (${info.commit})`} />
+        <Row label={t('set.uptime')} value={duration(info.uptime)} />
         <Row
-          label="Sessions"
+          label={t('set.sessions')}
           value={`${info.sessions} on tmux ${info.tmuxVersion} · ${info.attached} attached`}
         />
-        <Row label="Viewers" value={String(info.viewers)} />
-        <Row label="tmux socket" value={info.tmuxSocket} />
-        <Row label="Data" value={`${info.dataDir} · ${bytes(info.dbBytes)}`} />
-        <Row label="Listening" value={`${info.addr} → ${info.url}`} />
+        <Row label={t('set.viewers')} value={String(info.viewers)} />
+        <Row label={t('set.socket')} value={info.tmuxSocket} />
+        <Row label={t('set.data')} value={`${info.dataDir} · ${bytes(info.dbBytes)}`} />
+        <Row label={t('set.listening')} value={`${info.addr} → ${info.url}`} />
         <Row
-          label="TLS"
+          label={t('set.tls')}
           value={info.tlsMode === 'off' ? 'off' : `${info.tlsMode} · ${info.domain}`}
         />
         {/* A certificate nobody renewed does not announce itself; it simply
@@ -296,16 +345,16 @@ function StatusSection({ info }: { info: SettingsInfo }) {
             should first be noticed. */}
         {info.certExpiry !== undefined && (
           <Row
-            label="Certificate"
+            label={t('set.cert')}
             value={certLabel(info.certExpiry)}
             tone={certTone(info.certExpiry)}
           />
         )}
         <Row
-          label="Access"
+          label={t('set.access')}
           value={info.allowAll ? 'any address' : 'restricted by --allow-from'}
         />
-        <Row label="Signed in as" value={info.username} />
+        <Row label={t('set.signedIn')} value={info.username} />
       </div>
     </Section>
   )
@@ -350,11 +399,9 @@ function HooksSection() {
   }
 
   return (
-    <Section title="State reporting">
+    <Section title={t('set.reporting')}>
       <p className="mb-3 text-[12px] leading-relaxed text-ink-2">
-        Without this the panel infers what a session is doing from its output, which can tell
-        working from quiet and sees the terminal bell, but cannot tell <em>finished</em> from{' '}
-        <em>waiting for you</em>. With it, the agent says which.
+        {t('set.reportingWhy')}
       </p>
 
       {error && (
@@ -366,7 +413,7 @@ function HooksSection() {
       {status && (
         <div data-testid="hooks-status">
           <Row
-            label="Claude Code"
+            label={t('set.claudeCode')}
             // "installed", not "reporting". The panel has read a file; it has
             // not heard from anything. Saying "reporting 4 events" the instant
             // the file is written is a claim about behaviour that nothing has
@@ -375,10 +422,10 @@ function HooksSection() {
             value={
               status.installed
                 ? `installed for ${status.events.length} events`
-                : 'not installed'
+                : t('set.notInstalled')
             }
           />
-          <Row label="Settings file" value={status.settingsPath} />
+          <Row label={t('set.settingsFile')} value={status.settingsPath} />
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {status.installed ? (
@@ -400,7 +447,7 @@ function HooksSection() {
                 className="rounded-vp px-3 py-1.5 text-[12px] font-medium disabled:opacity-50"
                 style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
               >
-                {busy ? 'Working…' : 'Install for Claude Code'}
+                {busy ? t('set.working') : t('set.install')}
               </button>
             )}
             <button
@@ -409,7 +456,7 @@ function HooksSection() {
               data-testid="hooks-preview"
               className="rounded-vp border border-hairline px-3 py-1.5 text-[12px] text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
             >
-              {showSnippet ? 'Hide' : 'Show what it writes'}
+              {showSnippet ? t('set.hide') : t('set.showWrites')}
             </button>
           </div>
 
@@ -437,8 +484,8 @@ function HooksSection() {
               anyone else's with it, and a backup is written first. */}
           {showSnippet && (
             <div className="mt-3">
-              <Snippet label="Claude Code" text={status.snippet} />
-              <Snippet label="Codex (paste yourself)" text={status.codexSnippet} />
+              <Snippet label={t('set.claudeCode')} text={status.snippet} />
+              <Snippet label={t('set.codexPaste')} text={status.codexSnippet} />
             </div>
           )}
         </div>
@@ -525,17 +572,16 @@ function PasskeysSection() {
   }
 
   return (
-    <Section title="Passkeys">
+    <Section title={t('set.passkeys')}>
       <p className="mb-3 text-[12px] leading-relaxed text-ink-2">
-        Sign in with this device instead of a password. The password keeps working — a passkey is
-        an addition, never the only way in.
+        {t('set.passkeysWhy')}
       </p>
       {error && (
         <p className="mb-2 text-[12px]" style={{ color: 'var(--vp-state-waiting)' }}>
           {error}
         </p>
       )}
-      {keys.length === 0 && <p className="mb-2 text-[12px] text-ink-2">None registered.</p>}
+      {keys.length === 0 && <p className="mb-2 text-[12px] text-ink-2">{t('set.noPasskeys')}</p>}
       {keys.map((k) => (
         <div
           key={k.id}
@@ -553,7 +599,7 @@ function PasskeysSection() {
               if (!window.confirm(`Remove ${passkeyLabel(k)}?`)) return
               void api.deletePasskey(k.id).then(load).catch(() => setError('could not remove it'))
             }}
-            title="Remove"
+            title={t('set.remove')}
             className="shrink-0 rounded p-0.5 text-ink-2 vp-reveal hover:text-ink"
           >
             <X size={12} />
@@ -596,7 +642,7 @@ function AuditSection() {
   if (entries.length === 0) return null
 
   return (
-    <Section title="Recent activity">
+    <Section title={t('set.activity')}>
       {/* overflow-y-auto is enough, and that is not obvious.
           
           These rows are 408px of fixed columns in a dialog about 256 wide on a
