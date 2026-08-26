@@ -79,7 +79,7 @@ export function SystemStrip() {
         <div key={key} className="flex items-center gap-2 py-[3px]">
           {/* Wide enough for "Memory", which is the longest of the three in
               either language. At w-8 the English label ran into its own bar. */}
-          <span className="w-12 shrink-0 truncate text-[10.5px] text-ink-3">{label}</span>
+          <span className="w-12 shrink-0 truncate text-[10.5px] text-ink-2">{label}</span>
           <span className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-surface-2">
             <span
               className="block h-full rounded-full transition-[width] duration-500 ease-vp"
@@ -105,7 +105,7 @@ export function SystemStrip() {
           {/* Fixed width and no truncation: these three are the same kind of
               fact and a column that sometimes ends in an ellipsis reads as a
               layout that ran out of room rather than as a number. */}
-          <span className="w-[76px] shrink-0 text-right tabular text-[10px] text-ink-3">{detail}</span>
+          <span className="w-[76px] shrink-0 text-right tabular text-[10px] text-ink-2">{detail}</span>
         </div>
       ))}
     </div>

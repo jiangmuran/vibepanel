@@ -89,6 +89,24 @@ UMask=0077
 # Memory accounting so a runaway session is visible and bounded, rather than
 # taking the machine into swap and dragging everything down with it. Tune to
 # the box: these suit a 32 GB machine running a dozen agents.
+# Priority, in the two forms a *user* service can actually have.
+#
+# Not OOMScoreAdjust. Measured, because it verifies clean and does nothing:
+#
+#   a user unit with OOMScoreAdjust=-500  ->  the process reads 100
+#   a system unit with User= and the same ->  the process reads -500
+#
+# Lowering oom_score_adj needs CAP_SYS_RESOURCE, which a user manager does not
+# have, and `systemd-analyze verify` accepts the directive either way. If the
+# machine runs close to its memory, use deploy/vibepanel-system.service, which
+# sets it before dropping to User= and therefore can.
+#
+# CPUWeight and IOWeight are cgroup v2 knobs and need no privileges. Negative
+# Nice= would; positive is allowed and is the wrong direction.
+CPUWeight=200
+IOWeight=200
+ManagedOOMPreference=avoid
+
 MemoryAccounting=yes
 MemoryHigh=20G
 MemoryMax=26G

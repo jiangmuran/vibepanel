@@ -658,7 +658,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               <span
                 data-testid="grid-size"
                 title={t('app.gridSize')}
-                className="ml-auto shrink-0 rounded-md bg-surface-2 px-1.5 py-0.5 tabular text-[10.5px] text-ink-3"
+                className="ml-auto shrink-0 rounded-md bg-surface-2 px-1.5 py-0.5 tabular text-[10.5px] text-ink-2"
               >
                 {current.cols}×{current.rows}
               </span>
@@ -879,6 +879,10 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               touchSelect={narrow || coarsePointer}
               onSelectionChange={setSelection}
               onClipboard={(text, ok) => setBlockedClip(ok ? '' : text)}
+              // The same road a dropped file takes: upload into the project,
+              // then put the path on the command line. A screenshot is the
+              // most common thing anyone pastes at an agent.
+              onPasteFiles={(files) => void uploadInto(files)}
               className="h-full w-full p-2"
             />
           ) : (

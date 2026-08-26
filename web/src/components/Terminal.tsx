@@ -41,6 +41,17 @@ interface Props {
   touchSelect?: boolean
   /** Fires with the selected text, or '' when the selection is dropped. */
   onSelectionChange?: (text: string) => void
+  /**
+   * Files pasted into the terminal, which for a coding agent means a
+   * screenshot.
+   *
+   * xterm's own paste handling is for text, so an image landed nowhere at all:
+   * ctrl-V did nothing and there was no way to tell whether the panel had
+   * ignored it or the clipboard was empty. Dropping a file already worked --
+   * this is the same journey for people who took a screenshot rather than saved
+   * one, which on every desktop is the faster half.
+   */
+  onPasteFiles?: (files: File[]) => void
   className?: string
   /**
    * Stops xterm capturing keystrokes.
@@ -84,6 +95,7 @@ export function TerminalView({
   touchSelect = false,
   onSelectionChange,
   onClipboard,
+  onPasteFiles,
 }: Props) {
   useLang()
   const hostRef = useRef<HTMLDivElement | null>(null)
@@ -101,9 +113,11 @@ export function TerminalView({
   // deps: a new callback identity must not rebuild the terminal.
   const onSelectionRef = useRef(onSelectionChange)
   const onClipboardRef = useRef(onClipboard)
+  const onPasteFilesRef = useRef(onPasteFiles)
   useEffect(() => {
     onSelectionRef.current = onSelectionChange
     onClipboardRef.current = onClipboard
+    onPasteFilesRef.current = onPasteFiles
   })
 
   // Terminal lifetime is tied to the session, never to the theme or to
@@ -270,11 +284,35 @@ export function TerminalView({
     }
     host.addEventListener('pointerup', copyOnSelect)
 
+    // A screenshot pasted into the terminal.
+    //
+    // Capture phase, because xterm's own handler is on the hidden textarea and
+    // would otherwise get there first. Only files are taken: text paste is
+    // xterm's job and it does it correctly, including asking the pane whether
+    // it wants bracketing.
+    const onPaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items
+      if (!items) return
+      const files: File[] = []
+      for (const item of items) {
+        if (item.kind !== 'file') continue
+        const f = item.getAsFile()
+        if (f) files.push(f)
+      }
+      if (files.length === 0) return
+      // Only now: preventing the default for a text paste would break the
+      // ordinary case in order to serve the rare one.
+      e.preventDefault()
+      onPasteFilesRef.current?.(files)
+    }
+    host.addEventListener('paste', onPaste, true)
+
     const detachTouch = touchSelect ? attachTouchSelection(host, term) : undefined
 
     return () => {
       detachTouch?.()
       host.removeEventListener('pointerup', copyOnSelect)
+      host.removeEventListener('paste', onPaste, true)
       selSub.dispose()
       dataSub.dispose()
       binarySub.dispose()

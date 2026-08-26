@@ -1,0 +1,89 @@
+# The system unit: for when the panel has to survive a memory squeeze.
+#
+#   sudo cp vibepanel-system.service /etc/systemd/system/vibepanel.service
+#   sudo sed -i "s/__USER__/$USER/g; s#__HOME__#$HOME#g" /etc/systemd/system/vibepanel.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now vibepanel
+#
+# Why this exists alongside the user unit, measured rather than assumed:
+#
+#   a user unit with OOMScoreAdjust=-500  ->  the process reads 100
+#   a system unit with User= and the same ->  the process reads -500
+#
+# Lowering oom_score_adj needs CAP_SYS_RESOURCE. A user manager runs as you and
+# does not have it, so the kernel refuses -- and `systemd-analyze verify` accepts
+# the directive either way, which is the worst combination: a setting that looks
+# applied, passes its own check, and does nothing. A system unit sets it before
+# dropping to User=, which is why it works there and only there.
+#
+# What it buys, and what it does not. The panel is small and must stay up; the
+# tmux server it starts inherits this score and holds every session, which is
+# the thing actually worth protecting. So do the agents, and that is the cost:
+# an agent that eats the machine is protected too. MemoryMax below is what
+# bounds that -- the cgroup's own OOM killer picks the largest process inside,
+# which is the runaway agent rather than tmux or the panel.
+#
+# The user unit remains the right default. Use this one if the machine runs
+# close to its memory, or if you want the panel up before anyone logs in
+# without setting up lingering.
+
+[Unit]
+Description=vibepanel — a web console for parallel coding sessions
+Documentation=https://github.com/jiangmuran/vibepanel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=__USER__
+# systemd sets $HOME from the passwd entry for User=, but the panel is also
+# started by hand and by the installer, and an explicit value is one fewer thing
+# that differs between those paths.
+Environment=HOME=__HOME__
+ExecStart=__HOME__/.local/bin/vibepanel serve
+EnvironmentFile=-__HOME__/.config/vibepanel.env
+WorkingDirectory=__HOME__
+
+Restart=always
+RestartSec=3
+# The panel exits 0 on SIGTERM; 143 is what systemd sees when it does not get
+# the chance to.
+SuccessExitStatus=143
+TimeoutStopSec=20
+
+# KillMode=process is the whole architecture in one line. On stop, systemd kills
+# the panel and leaves everything else in the cgroup alone -- which is the tmux
+# server and every agent under it. Change this to the default (control-group)
+# and `systemctl restart` becomes destructive: the sessions the panel exists to
+# outlive would die with it.
+KillMode=process
+
+# The reason this file exists. Measured: -500 here, 100 in a user unit.
+OOMScoreAdjust=-500
+# A hint to systemd-oomd, which is a different mechanism from the kernel's own
+# killer and not running on every distribution. Harmless where it is absent.
+ManagedOOMPreference=avoid
+# Above the default 100, so the panel and the agents get scheduled ahead of
+# background work when the machine is contended. Weights, not nice levels:
+# negative nice needs privileges the service does not keep after User=.
+CPUWeight=200
+IOWeight=200
+
+NoNewPrivileges=yes
+ProtectClock=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+UMask=0077
+
+MemoryAccounting=yes
+MemoryHigh=20G
+MemoryMax=26G
+# Do not stop the unit because something inside it was OOM-killed. The panel
+# and the tmux server are usually not the victim -- an agent is -- and taking
+# the whole thing down over that would turn one dead agent into all of them.
+OOMPolicy=continue
+
+[Install]
+WantedBy=multi-user.target

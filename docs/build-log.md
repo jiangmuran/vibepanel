@@ -10774,3 +10774,41 @@ Anything reading the database *through the config* was therefore looking at
 nothing and saying so without complaining: the settings page's size has been
 reporting zero in every test that ever touched it. It opens at `cfg.DBPath()`
 now, which is what a real server does.
+
+
+## A service worker turned every stub in the harness into a no-op
+
+Adding a service worker for installability and notifications broke every
+`page.route` interception in `render-check`, silently, in the same commit that
+added it.
+
+The worker passes requests through with `respondWith(fetch(event.request))`.
+Playwright's `page.route` does not see requests a service worker makes — so the
+one stubbed endpoint in that file, the fake `/api/system` used to render a
+machine the panel cannot measure, stopped being requested at all. The
+assertions under it went on running against the real machine, where every meter
+reads fine, and the check failed with a message about the *product* being wrong.
+
+Found by putting a counter on the route handler rather than by reasoning about
+it. It read zero:
+
+    [FAIL] panel/monitor: the fake /api/system was never requested, so every
+      assertion below it is about the real machine rather than the payload
+      under test
+
+That line is the fix as much as the counter is. A stub that stops being reached
+looks exactly like a product that stopped working, and the difference is one
+number nobody was printing.
+
+Every context in `render-check` blocks service workers now. Which leaves the
+worker driven by nothing, so there is one context that allows it and checks the
+two things that decide whether a browser will offer to install at all: the
+manifest's `name`, `start_url`, `display`, `icons`, a 512px icon, and that
+`navigator.serviceWorker.ready` actually resolves.
+
+**Two fixture failures wearing product failures' clothes, in one afternoon.**
+The pasted-screenshot check reported the feature broken twice: first because
+Playwright's `dispatchEvent` does not carry a `DataTransfer` across the boundary
+as `clipboardData` — it has to be built and dispatched inside the page — and
+then because the terminal wrapped the uploaded path and `includes('pasted.png')`
+missed `pasted\n.png`. That second one is the NBSP lesson again, one file over.

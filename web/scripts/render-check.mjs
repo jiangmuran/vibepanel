@@ -416,6 +416,18 @@ try {
   // clipboard-write so the OSC 52 path can be checked on its happy path; the
   // refused case gets its own context below, without it.
   const ctx = await browser.newContext({
+    // Service workers blocked, and this is load-bearing rather than tidy.
+    //
+    // The panel registers one for installability and notifications, and it
+    // passes every request through with respondWith(fetch(...)). Playwright's
+    // page.route does not see requests a service worker makes -- so the moment
+    // that worker shipped, every stubbed endpoint in this file silently started
+    // testing the real machine instead of the payload under test. Found by a
+    // counter on the route handler reading zero while the assertion under it
+    // failed against real numbers.
+    //
+    // The worker itself is covered separately, below.
+    serviceWorkers: 'block',
     viewport: { width: 1440, height: 900 },
     permissions: ['clipboard-read', 'clipboard-write'],
   })
@@ -929,7 +941,9 @@ try {
     //
     // Served rather than provoked: this machine has a readable /proc, so the
     // only honest way to see that payload is to send it.
+    let systemRouteHits = 0
     await page.route('**/api/system', async (route) => {
+      systemRouteHits++
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -946,6 +960,11 @@ try {
     await page.locator('[data-testid="panel-tab-monitor"]').click()
     await sleep(3500)
     const unmeasured = await page.locator('[data-testid="system-monitor"]').innerText().catch(() => '')
+    if (systemRouteHits === 0) {
+      note('FAIL', 'panel/monitor',
+        'the fake /api/system was never requested, so every assertion below it is about the ' +
+        'real machine rather than the payload under test')
+    }
     if (/0 B of 0 B|\b0%/.test(unmeasured)) {
       note('FAIL', 'panel/monitor',
         `the monitor reports a machine it cannot measure as an idle one: ` +
@@ -1924,6 +1943,7 @@ try {
     // hover not existing is invisible to a viewport resize. This is a separate
     // context because touch emulation is a property of the context.
     const touchCtx = await browser.newContext({
+      serviceWorkers: 'block',
       viewport: { width: 390, height: 844 },
       hasTouch: true,
       isMobile: true,
@@ -2185,7 +2205,7 @@ try {
     // of it.
     //
     // Its own context, so the rest of this run keeps its session.
-    const doomedCtx = await browser.newContext({ viewport: { width: 1024, height: 768 } })
+    const doomedCtx = await browser.newContext({ serviceWorkers: 'block', viewport: { width: 1024, height: 768 } })
     const doomed = await doomedCtx.newPage()
     await doomed.goto(BASE, { waitUntil: 'domcontentloaded' })
     await doomed.locator('[data-testid="auth-username"]').fill(USERNAME)
@@ -2318,6 +2338,7 @@ try {
       { name: 'landscape', w: 844, h: 390 },
     ]) {
       const ctx2 = await browser.newContext({
+      serviceWorkers: 'block',
         viewport: { width: shape.w, height: shape.h },
         hasTouch: true,
         isMobile: true,
@@ -2576,7 +2597,7 @@ try {
   // Everything above runs in a context that has been clicking panels open for
   // several minutes. A new browser has no localStorage, and that is the state
   // every real user starts in — the one state the harness had never measured.
-  const freshCtx = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+  const freshCtx = await browser.newContext({ serviceWorkers: 'block', viewport: { width: 1440, height: 900 } })
   const first = await freshCtx.newPage()
   await first.goto(BASE, { waitUntil: 'networkidle' })
   await first.locator('[data-testid="auth-username"]').fill(USERNAME)
@@ -2636,7 +2657,7 @@ try {
     // And a context in the state a real browser starts in: no clipboard
     // permission, so the write is refused. Silently doing nothing here is the
     // bug this checks for.
-    const plainCtx = await browser.newContext({ viewport: { width: 1200, height: 800 } })
+    const plainCtx = await browser.newContext({ serviceWorkers: 'block', viewport: { width: 1200, height: 800 } })
     const plain = await plainCtx.newPage()
     await plain.goto(BASE, { waitUntil: 'networkidle' })
     await plain.locator('[data-testid="auth-username"]').fill(USERNAME)
@@ -2681,7 +2702,67 @@ try {
   // is not rendered at all.
   await page.setViewportSize({ width: 1440, height: 900 })
   await sleep(600)
-  const bCtx = await browser.newContext({ viewport: { width: 1200, height: 900 } })
+  // ── the PWA, in the one context that allows a worker ─────────────────────
+  //
+  // Every other context in this file blocks service workers so that page.route
+  // keeps working, which leaves the worker itself driven by nothing. This is
+  // the counterweight: registration, and the manifest that decides whether a
+  // browser offers to install at all.
+  {
+    const pwaCtx = await browser.newContext({ viewport: { width: 1200, height: 800 } })
+    const pwa = await pwaCtx.newPage()
+    await pwa.goto(BASE, { waitUntil: 'networkidle' })
+    if (await pwa.locator('[data-testid="auth-submit"]').isVisible().catch(() => false)) {
+      await pwa.locator('[data-testid="auth-username"]').fill(USERNAME)
+      await pwa.locator('[data-testid="auth-password"]').fill(PASSWORD)
+      await pwa.locator('[data-testid="auth-submit"]').click()
+    }
+    await pwa.waitForSelector('[data-testid="sidebar"]', { timeout: 15000 }).catch(() => {})
+
+    const manifestRes = await pwa.request.get(`${BASE}/manifest.webmanifest`)
+    if (!manifestRes.ok()) {
+      note('FAIL', 'pwa', `the manifest is not served: ${manifestRes.status()}`)
+    } else {
+      const m = await manifestRes.json().catch(() => null)
+      // The four a browser actually reads before offering to install. A
+      // manifest that parses and is missing one of these is a manifest that
+      // does nothing, silently.
+      const missing = ['name', 'start_url', 'display', 'icons'].filter((k) => !m?.[k])
+      if (missing.length) {
+        note('FAIL', 'pwa', `the manifest is missing ${missing.join(', ')}, so nothing will offer to install it`)
+      }
+      const sizes = (m?.icons ?? []).map((i) => i.sizes)
+      if (!sizes.some((z) => String(z).includes('512'))) {
+        note('FAIL', 'pwa', `no 512px icon in the manifest (${JSON.stringify(sizes)}); Android will not install without one`)
+      }
+      if (!(m?.icons ?? []).some((i) => String(i.purpose ?? '').includes('maskable'))) {
+        note('WARN', 'pwa', 'no maskable icon, so Android will letterbox the app icon')
+      }
+    }
+
+    const swReady = await pwa.evaluate(async () => {
+      if (!('serviceWorker' in navigator)) return 'unsupported'
+      try {
+        const reg = await Promise.race([
+          navigator.serviceWorker.ready,
+          new Promise((r) => setTimeout(() => r(null), 8000)),
+        ])
+        return reg ? 'ready' : 'timeout'
+      } catch (e) {
+        return `error: ${String(e)}`
+      }
+    })
+    if (swReady !== 'ready') {
+      note('FAIL', 'pwa',
+        `the service worker never became ready (${swReady}); without one there is no install ` +
+        'offer and no notification on Android, where the Notification constructor is refused')
+    } else {
+      note('PASS', 'pwa', 'the manifest is complete and the service worker registers')
+    }
+    await pwaCtx.close()
+  }
+
+  const bCtx = await browser.newContext({ serviceWorkers: 'block', viewport: { width: 1200, height: 900 } })
   const b = await bCtx.newPage()
   await b.goto(BASE, { waitUntil: 'networkidle' })
   await b.locator('[data-testid="auth-username"]').fill(USERNAME)
@@ -2824,6 +2905,55 @@ try {
     if (!(landed.entries ?? []).some((e) => e.name === 'dropped-note.txt')) {
       note('FAIL', 'files', 'the dropped file is not in the project directory')
     }
+    // A screenshot pasted into the terminal.
+    //
+    // xterm's paste handling is for text, so an image landed nowhere: ctrl-V
+    // did nothing and there was no way to tell whether the panel had ignored it
+    // or the clipboard was empty. Dropping a file already worked; this is the
+    // same journey for people who took a screenshot rather than saved one,
+    // which on every desktop is the faster half.
+    rmSync(join(projRoot, 'pasted.png'), { force: true })
+    await page.locator('.xterm-screen').first().click()
+    // Built and dispatched inside the page rather than through Playwright's
+    // dispatchEvent, which does not carry a DataTransfer across the boundary as
+    // `clipboardData`. The first version of this check did, and reported the
+    // feature broken while it worked -- a fixture failure wearing a product
+    // failure's clothes.
+    await page.evaluate(() => {
+      const bytes = Uint8Array.from(atob(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      ), (c) => c.charCodeAt(0))
+      const dt = new DataTransfer()
+      dt.items.add(new File([bytes], 'pasted.png', { type: 'image/png' }))
+      const target = document.querySelector('.xterm-screen') ?? document.body
+      target.dispatchEvent(new ClipboardEvent('paste', {
+        clipboardData: dt,
+        bubbles: true,
+        cancelable: true,
+      }))
+    })
+    let pastedPath = ''
+    for (let i = 0; i < 25; i++) {
+      pastedPath = await screenText(page)
+      // Whitespace stripped: the terminal wraps, so the path arrives split as
+      // ".../pasted\n.png". The first version of this check missed it and
+      // reported a working feature broken.
+      if (pastedPath.replace(/\s/g, '').includes('pasted.png')) break
+      await sleep(400)
+    }
+    const pastedLanded = await (await authed(`/api/projects/${proj.id}/files?path=`)).json()
+    if (!(pastedLanded.entries ?? []).some((e) => e.name === 'pasted.png')) {
+      note('FAIL', 'files',
+        'an image pasted into the terminal did not reach the project directory')
+    } else if (!pastedPath.replace(/\s/g, '').includes('pasted.png')) {
+      note('FAIL', 'files',
+        'a pasted image was uploaded and its path never reached the prompt, so the one thing ' +
+        `the feature is for -- handing the agent a screenshot -- did not happen: ${JSON.stringify(pastedPath.slice(-160))}`)
+    } else {
+      note('PASS', 'files', 'a pasted screenshot is uploaded and its path put at the prompt')
+    }
+    rmSync(join(projRoot, 'pasted.png'), { force: true })
+
     // A filename carrying a tab, which is the one control character that can
     // travel the whole way.
     //

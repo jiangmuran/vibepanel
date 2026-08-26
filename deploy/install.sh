@@ -59,12 +59,22 @@ fi
 # Without lingering a user service stops when the last session for that user
 # ends. For a panel whose entire purpose is outliving your terminal, that is
 # the difference between working and appearing to work until you log out.
+#
+# Done rather than suggested. "Start at boot" is the thing people install a
+# service for, and a printed command is a step that gets skipped -- after which
+# the panel works perfectly until the first reboot, which is the worst moment
+# to find out. It needs no root for your own account (measured), and the line
+# below says what happened so it is not a change made behind your back.
 if command -v loginctl >/dev/null; then
   if [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null || echo no)" = yes ]; then
-    echo "lingering already enabled"
+    echo "lingering already on — the panel starts at boot and survives logout"
+  elif loginctl enable-linger "$USER" 2>/dev/null; then
+    echo "enabled lingering — the panel now starts at boot and survives logout"
+    echo "  (undo with: loginctl disable-linger $USER)"
   else
     echo
-    echo "  loginctl enable-linger $USER    # so the panel survives logout"
+    echo "could not enable lingering; without it the panel stops when you log out:"
+    echo "  loginctl enable-linger $USER"
   fi
 fi
 
@@ -105,3 +115,17 @@ else
   echo "no user systemd session here; from a login shell on that machine:"
   echo "  systemctl --user daemon-reload && systemctl --user enable --now vibepanel"
 fi
+
+# The other unit, and why it is not the default.
+#
+# A user service cannot lower its own oom_score_adj -- the kernel refuses
+# without CAP_SYS_RESOURCE, and `systemd-analyze verify` accepts the directive
+# anyway, so it is a setting that looks applied and does nothing. Measured: a
+# user unit asking for -500 gets 100; a system unit with User= gets -500.
+#
+# Most people do not need it. Say so once, here, rather than in a README nobody
+# opens while installing.
+echo
+echo "if this machine runs close to its memory and you want the kernel to look"
+echo "elsewhere first, there is a system unit that can actually say so:"
+echo "  deploy/vibepanel-system.service   (needs root; the user unit cannot)"
