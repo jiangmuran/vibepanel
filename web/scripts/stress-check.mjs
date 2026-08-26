@@ -113,8 +113,27 @@ const authed = async (path, init = {}) => {
 }
 
 /** Reads the visible rows straight out of the DOM renderer. */
+// Non-breaking spaces are normalised, and it is not cosmetic.
+//
+// xterm splits a row into one <span> per run of styling, and the text between
+// two spans comes back as U+00A0 rather than U+0020. How many runs a row has
+// depends on how many escape sequences produced it -- so a line printed with
+// one colour on and one off reads back with ordinary spaces, and the same line
+// printed with eight sequences reads back with NBSP, and every `includes(...)`
+// in this file silently stops matching.
+//
+// Measured, on a passing tree, after making the flood emit more sequences:
+//
+//   the tail is missing the last line: ["line 19999 of noise", ...]
+//   codepoints: ["6c 69 6e 65 a0 31 39 39 39 39 a0 6f 66 a0 ..."]
+//
+// An assertion printing the very text that satisfies it, because the space in
+// the middle was not the space it was looking for. Any check that greps
+// rendered terminal text has this hazard; normalising once here is cheaper than
+// remembering it at thirty call sites.
 const rows = (page) =>
-  page.$$eval('.xterm-rows > div', (els) => els.map((el) => el.textContent ?? ''))
+  page.$$eval('.xterm-rows > div', (els) =>
+    els.map((el) => (el.textContent ?? '').replace(/\u00a0/g, ' ')))
 
 try {
   for (let i = 0; i < 120; i++) {
@@ -395,7 +414,27 @@ try {
   await select('flood')
   await page.locator('.xterm-screen').click()
   const floodStart = Date.now()
-  await page.keyboard.type('i=0; while [ $i -lt 20000 ]; do echo "line $i of noise"; i=$((i+1)); done; echo FLOOD_DONE')
+  // Coloured, which it was not.
+  //
+  // The escape-fragment check below exists for the truncated-start path -- the
+  // one that used to print the tail of an escape sequence as literal text --
+  // and this loop emitted `echo "line $i of noise"`, pure text with no escape
+  // sequence anywhere in it. So the ring buffer had nothing that could be cut
+  // in half, and that check could not fire whatever its regex said. It was
+  // aimed past the defect *and* pointed at a fixture that cannot produce one.
+  //
+  // printf rather than echo, because echo's handling of backslash escapes is
+  // not portable across shells and this pane runs whatever tmux started.
+  //
+  // Eight sequences per line rather than two, which is not decoration. Where
+  // the ring buffer's start lands is arbitrary, so what matters is the odds
+  // that it lands *inside* a sequence: with one colour on and one off, escape
+  // bytes are about a third of the line and a run with trimming entirely
+  // disabled still passed. Measured. At eight they are most of it.
+  await page.keyboard.type(
+    'i=0; while [ $i -lt 20000 ]; do printf ' +
+    '"\\033[31m\\033[1m\\033[4m\\033[7mline %d of noise\\033[0m\\033[27m\\033[24m\\033[22m\\n" $i; ' +
+    'i=$((i+1)); done; echo FLOOD_DONE')
   await page.keyboard.press('Enter')
   const flood = await waitForRow((r) => r.includes('FLOOD_DONE'), 90000)
   const floodMs = Date.now() - floodStart
@@ -427,9 +466,58 @@ try {
     note('FAIL', 'replay', 'the replay injected terminal responses into the session')
   }
   // A stray escape fragment at the top would show as literal parameter bytes.
+  //
+  // The old pattern was `^\d+;?\d*[a-zA-Z]\s*$` with `length < 8`, anchored at
+  // both ends: it matched a row that is *only* "31m", and a regression in
+  // trimPartialEscape produces "31mline 4021 of noise" -- parameter bytes with
+  // the rest of the line behind them. So it could not match the shape it was
+  // written for. Anchored at the start only now.
+  //
+  // Deliberately not matching a leading "[". The buffer can cut between the ESC
+  // and the "[", and trimPartialEscape leaves that case alone on purpose:
+  // skipping a leading bracket also eats bash's job-control prefix, so
+  // "[1]+  Done  sleep 5" becomes "+  Done  sleep 5". That trade is measured in
+  // TestTrimPartialEscapeKnownFalseNegative and a visible "[31m" is the
+  // accepted side of it. Flagging it here would report a decision as a defect.
+  //
+  // DO NOT read this as covering trimPartialEscape. It does not, and that was
+  // measured four ways rather than assumed. With the function replaced by
+  // `return b`, every one of these passed 0 FAIL:
+  //
+  //   the original flood, `echo "line $i of noise"` -- no escape sequence
+  //     anywhere in it, so the buffer had nothing that could be cut in half
+  //   two sequences a line, escape bytes about a third of it
+  //   eight sequences a line, escape bytes most of it
+  //   the same, after scrolling to the top of the scrollback
+  //
+  // Something between the ring buffer and the rendered page is not carrying
+  // the fragment through, and what it is has not been identified. The
+  // deterministic coverage is TestTrimPartialEscape* in internal/session, which
+  // fails immediately for the same mutation.
+  //
+  // Kept because a literal escape tail at the top of a replay is a real defect
+  // whatever produces it, and a FAIL here would be true. Not kept as evidence
+  // that the trimming works.
+  // Scrolled to the top first, which is the whole reason this check never
+  // fired. `rows()` reads the visible grid, and after a reload the viewport
+  // sits at the *bottom* -- on line 19999 -- while the truncated start of the
+  // replay is thousands of rows up in the scrollback. The check has been
+  // looking at the opposite end of the screen from the thing it is named for.
+  //
+  // Measured before this line existed: with trimPartialEscape replaced by
+  // `return b`, three different floods -- plain text, two sequences a line,
+  // eight sequences a line -- all passed. A check that cannot fail when the
+  // function it guards is deleted is a decoration.
+  const termBox = await page.locator('.xterm-screen').first().boundingBox()
+  if (termBox) {
+    await page.mouse.move(termBox.x + termBox.width / 2, termBox.y + termBox.height / 2)
+    await page.mouse.wheel(0, -400000)
+    await sleep(1200)
+  }
   const firstRow = (await rows(page)).find((r) => r.trim()) ?? ''
-  if (/^\d+;?\d*[a-zA-Z]\s*$/.test(firstRow.trim()) && firstRow.trim().length < 8) {
-    note('WARN', 'replay', `the first restored row looks like an escape fragment: ${JSON.stringify(firstRow)}`)
+  if (/^\d{1,4}(?:;\d{1,4})*[a-zA-Z]/.test(firstRow.trim())) {
+    note('FAIL', 'replay',
+      `the first restored row opens with the tail of an escape sequence: ${JSON.stringify(firstRow)}`)
   }
 
   // ── losing the connection ────────────────────────────────────────────────
