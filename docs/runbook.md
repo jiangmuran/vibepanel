@@ -469,3 +469,26 @@ the change lands at the next reboot.
 A server started before this check existed reports `the running server predates
 this check` — the stamp is written at `start-server`, so there is nothing to
 compare against until the next one.
+
+## A killed agent shows as "exited 0" (tmux 3.4 and older)
+
+**Symptom.** A session whose process was killed — by you, by the OOM killer,
+by anything — appears in the panel as a clean exit rather than as `exit 137`.
+
+**Why.** tmux marks a pane dead the moment its pty closes, which can be before
+the server has reaped the child and collected its wait status. When that
+happens, `pane_dead_status` and `pane_dead_signal` are both `0` and they stay
+that way: the number never existed to be read later. Measured on tmux 3.4,
+roughly one kill in ten; not observed on 3.6.
+
+The killed process is still visible as a zombie in `/proc` at that moment,
+which is how this was pinned down.
+
+**What the panel does.** It stores what tmux reports and nothing else. There is
+no wait status to recover, and inventing one — treating "dead with status 0"
+as a kill — would misreport every agent that genuinely finished cleanly, which
+is the far more common case.
+
+**What to do.** Upgrade tmux if the distinction matters to you. Otherwise read
+the session's last screen: a killed agent leaves its output where it stopped,
+and a finished one usually says so.

@@ -11020,3 +11020,37 @@ version, and three of the bugs above are things a *different* version does. CI
 was worth its keep on the first run, and the reproduction is worth more than
 the CI: the loop went from "push and wait five minutes for a line that names
 the wrong thing" to "run it locally against the tmux that fails".
+
+## The last two CI failures were not the same kind of thing
+
+**One was a test that did not attach the way the panel does.**
+`TestTheBellFlagLatchesWhenNobodyIsAttached` starts a real tmux client on a PTY
+and asserts the bell flag is spent. The panel sets `TERM` on its own client;
+the test did not, and a non-interactive CI step has no `TERM` to inherit.
+Without one, tmux attaches to a terminal it cannot drive and the flag survives.
+Reproduced locally with `env -u TERM` in one run, which is the whole argument
+for having a way to run the suite the way CI does.
+
+**The other is tmux losing a wait status, and nothing can be done about it.**
+`TestAKilledAgentIsNotRecordedAsACleanExit` failed about one run in ten on
+tmux 3.4. The diagnostic that settled it printed three things the assertion had
+been throwing away: what tmux says *now*, the pid that was killed, and whether
+it is still in `/proc`.
+
+    stored exit status = 0, want 137 … killed pid 390132 (still present: true);
+    tmux now says dead=true status=0 signal=0 pid=390132 cmd="sh"
+
+Still present, and a zombie: the process was killed and tmux had not reaped it
+yet, but tmux had already marked the pane dead because its pty closed. Both
+`pane_dead_status` and `pane_dead_signal` read 0, permanently — the number
+never existed to be collected later.
+
+So there are two claims in that test and only one of them is the panel's. The
+panel's claim is faithfulness: the row says whatever tmux says. That is now
+asserted on every run. The other claim — that a SIGKILL reads as 137 — belongs
+to tmux, and when tmux loses it the test skips and says so, naming the version.
+
+Treating "dead with status 0" as a kill would be the wrong repair: it would
+misreport every agent that genuinely finished cleanly, which is the common
+case. `docs/runbook.md` records the symptom for anyone on an older tmux who
+notices a killed agent shown as a clean exit.
