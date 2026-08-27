@@ -10958,3 +10958,65 @@ checked claim about the local tmux rather than about the author's.
 
 A per-option assertion would not have caught this. The assertion for
 `allow-set-title` was passing on the machine it was written on.
+
+## Three bugs behind one CI failure, and a tmux 3.4 to reproduce them on
+
+The `allow-set-title` guard was not the end of it. CI on Ubuntu 24.04 kept
+failing, with `expected 13 fields, got 1` everywhere and no clue in it, so the
+first move was to stop guessing: `dpkg-deb -x` the noble tmux and its three
+libraries into a directory, and add `TEST_TMUX_BIN` to the four test helpers
+that build a tmux client. `TEST_TMUX_BIN=… go test ./...` then runs the whole
+suite against 3.4 in a minute instead of five minutes per CI round.
+
+It is not `VIBEPANEL_`-prefixed, which the first attempt was. The panel reports
+every unrecognised variable under that prefix at startup, on purpose, and
+`internal/config` has a test that says so — which promptly failed. Correctly.
+
+**1. The field separator.** Measured, same format, same session:
+
+    3.6:  "vp_p\x1f/some/path\x1fEND"
+    3.4:  "vp_p\\037/some/path\\037END"
+
+tmux before 3.5 escapes non-printable bytes in its own output as octal, so the
+0x1F separator arrived as four characters and every record parsed as one field.
+Unescaping is not available as a repair, because the escaping is not
+reversible: 3.4 leaves backslash alone, so a directory genuinely named
+`lit\037here` and an escaped separator are the same eight characters. `mkdir`
+is all it takes to make a running session vanish — which is the exact failure
+the separator was chosen to avoid in the first place.
+
+The separator is U+241F SYMBOL FOR UNIT SEPARATOR now: the printable picture of
+the character rather than the character. Multi-byte UTF-8 passes through both
+versions untouched, verified on both. Being printable, a directory can be named
+with it — so it joins the control characters in `scrubbed()`, and a session
+whose path contains it is now a case in the paths test.
+
+**2. A repaint is not progress.** `Advanced` was `chunk contains "\n"`. On 3.4,
+a pane running a spinner produces this several times a second:
+
+    "\x1b[H- waiting\x1b[K\r\n\x1b[K\r\n\x1b[K\r\n\x1b[K\r\n…"
+
+Every line feed there is tmux stepping down the screen erasing as it goes, and
+counting them as progress clears the bell on an agent that is still waiting for
+an answer — the one state this panel exists to report. A line feed now counts
+only when the line it ends was not erased first. Measured on 3.4: eighteen
+chunks of spinner produce no advance, eighteen chunks of real output produce
+seventeen. The unit test uses the captured bytes.
+
+**3. A race the faster tmux kept winning.** `TestTheAdvanceSignalIsComputedFrom
+WhatTmuxSends` rang its bell in the same millisecond the pane started, which is
+a race against the panel's own attach. tmux latches a bell that rang with
+nobody watching, and this test has no poller to read the latch back — that
+backstop belongs to reconciliation, not to the Manager. 3.6 won the race often
+enough for it to be invisible; 3.4 lost it every time, and the failure read as
+"the advance signal is wrong", which was the one thing that was not broken. The
+scripts wait a second before ringing now.
+
+The whole Go suite passes on 3.4 and on 3.6.
+
+**What this says about the checks.** Every browser check in this project builds
+from the working tree and runs against the tmux on this machine. That is one
+version, and three of the bugs above are things a *different* version does. CI
+was worth its keep on the first run, and the reproduction is worth more than
+the CI: the loop went from "push and wait five minutes for a line that names
+the wrong thing" to "run it locally against the tmux that fails".

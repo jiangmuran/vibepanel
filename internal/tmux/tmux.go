@@ -31,10 +31,34 @@ var Config []byte
 
 // fieldSep separates fields inside a single -F format line.
 //
-// ASCII Unit Separator: a pane title or a working directory can legally
-// contain spaces, tabs, colons and pipes, so every "obvious" separator is a
-// parsing bug waiting for the first path with a space in it.
-const fieldSep = "\x1f"
+// U+241F SYMBOL FOR UNIT SEPARATOR -- the printable picture of the character,
+// not the character. A pane title or a working directory can legally contain
+// spaces, tabs, colons and pipes, so every "obvious" separator is a parsing bug
+// waiting for the first path with a space in it. Any value that could contain
+// this one is scrubbed of it by scrubbed() below, so it cannot appear except
+// where this puts it.
+//
+// It was the real ASCII Unit Separator, 0x1F, and that broke every tmux before
+// 3.5. Measured against tmux 3.4, which is what Ubuntu 24.04 LTS ships:
+//
+//	3.6:  "vp_p\x1f/some/path\x1fEND"
+//	3.4:  "vp_p\\037/some/path\\037END"
+//
+// Old tmux escapes non-printable bytes in its own output as octal, so the
+// separator arrived as the four characters \, 0, 3, 7 and Split found one
+// field where thirteen were expected. Every symptom named something else:
+// sessions missing from the listing, panes that never started their command,
+// "expected 13 fields, got 1".
+//
+// Unescaping it back is not an option, because the escaping is not reversible:
+// 3.4 does not escape backslash, so a directory genuinely named `lit\037here`
+// and an escaped separator are the same eight characters. `mkdir` is all it
+// takes to make a running session vanish, which is the exact failure the
+// separator was chosen to avoid in the first place.
+//
+// So the separator has to be something tmux never escapes. Multi-byte UTF-8
+// passes through both versions untouched, and this codepoint says what it is.
+const fieldSep = "\u241f"
 
 // ErrNoServer means no tmux server is listening on our socket. It is a normal
 // startup condition (nothing created yet), not a failure — callers should treat
@@ -483,12 +507,16 @@ type Info struct {
 // scrubbed wraps a format variable so tmux replaces control characters before
 // we ever see them.
 //
-// The field separator is 0x1f and list-sessions puts one session per line, so a
-// value containing either one takes the whole record apart. Measured, on a real
+// list-sessions puts one session per line, so a value containing a newline --
+// or the field separator -- takes the whole record apart. Measured, on a real
 // tmux: a session whose working directory was named with a newline in it, and
 // another with a 0x1f, both *disappeared from the listing* — parseInfo counted
 // the wrong number of fields and List drops the line rather than blind the
 // sidebar to everything else.
+//
+// The separator is in the class too, not only the control characters. It is a
+// printable codepoint now (see fieldSep), which means a directory can be named
+// with it, and a separator that a value may contain is not a separator.
 //
 // Disappearing is bad enough. What made it a real defect is what happens next:
 // the poller treats a session it cannot see as gone, and now writes that to the
@@ -502,7 +530,7 @@ type Info struct {
 // splits in the wrong place and the whole field comes back empty. That failure
 // is silent, which is why this comment names the shape that works.
 func scrubbed(variable string) string {
-	return "#{s/[\x01-\x1f]/?/:" + variable + "}"
+	return "#{s/[\x01-\x1f]|" + fieldSep + "/?/:" + variable + "}"
 }
 
 // infoFields must stay in the same order as parseInfo reads them.

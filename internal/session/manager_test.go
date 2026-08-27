@@ -24,6 +24,11 @@ func newTestTmux(t *testing.T) *tmux.Client {
 	socket := "vibepanel-mgr-" + strconv.Itoa(os.Getpid()) + "-" +
 		strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
 	c := tmux.New(socket, t.TempDir())
+	// Point the suite at another tmux without editing anything:
+	//	TEST_TMUX_BIN=/path/to/tmux go test ./...
+	if bin := os.Getenv("TEST_TMUX_BIN"); bin != "" {
+		c.Bin = bin
+	}
 	if err := c.EnsureServer(context.Background()); err != nil {
 		t.Fatalf("EnsureServer: %v", err)
 	}
@@ -1432,20 +1437,66 @@ func TestTheAdvanceSignalIsComputedFromWhatTmuxSends(t *testing.T) {
 		}
 	}
 
+	// Each script waits before it rings.
+	//
+	// Without that the bell fires in the same millisecond the pane starts,
+	// which is a race against the panel's own attach: tmux latches a bell that
+	// rang with nobody watching, and this test has no poller to read the latch
+	// back -- that backstop belongs to reconciliation, not to the Manager. On
+	// tmux 3.6 the attach won often enough that the race was invisible; on 3.4
+	// it lost every time and the failure read as "the advance signal is wrong",
+	// which is the thing this test is actually about and was not what broke.
+
 	// Rings, then redraws one line in place — an agent waiting with a live
 	// "esc to interrupt" under its question.
 	start("vp_sig_spin",
-		"printf 'proceed?\\a'; while :; do for c in '|' '/' '-'; do printf '\\r%s waiting' \"$c\"; sleep 0.2; done; done")
+		"sleep 1; printf 'proceed?\\a'; while :; do for c in '|' '/' '-'; do printf '\\r%s waiting' \"$c\"; sleep 0.2; done; done")
 	// Rings, then produces output — an agent that was answered and went on.
 	start("vp_sig_work",
-		"printf 'proceed?\\a'; sleep 1; i=0; while :; do i=$((i+1)); printf 'reading file %d\\n' \"$i\"; sleep 0.2; done")
+		"sleep 1; printf 'proceed?\\a'; sleep 1; i=0; while :; do i=$((i+1)); printf 'reading file %d\\n' \"$i\"; sleep 0.2; done")
 
-	time.Sleep(8 * time.Second)
+	time.Sleep(9 * time.Second)
 
 	if st, _ := det.Evaluate("vp_sig_spin", Observation{}, time.Now()); st != StateWaiting {
 		t.Errorf("an agent that rang and is animating reads as %q, want %q", st, StateWaiting)
 	}
 	if st, _ := det.Evaluate("vp_sig_work", Observation{}, time.Now()); st != StateWorking {
 		t.Errorf("an agent that rang and went back to work reads as %q, want %q", st, StateWorking)
+	}
+}
+
+// A repaint is not progress, and an older tmux repaints constantly.
+//
+// The bytes below are real: captured from a PTY attached to tmux 3.4 -- what
+// Ubuntu 24.04 LTS ships -- watching a pane run an agent's spinner and, in the
+// second case, an agent printing lines. On 3.4 the spinner arrives as a
+// whole-screen repaint several times a second, and the old rule (`the chunk
+// contains a line feed`) called every one of them progress. That cleared the
+// bell on an agent that was still waiting for an answer, which is the one state
+// this panel exists to report. tmux 3.6 repaints far less eagerly, so every
+// test here passed on the machine the rule was written on.
+func TestARepaintIsNotProgress(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		chunk string
+		want  bool
+	}{
+		{
+			"tmux 3.4 repainting a spinner where it stands",
+			"\x1b[1;1H\x1b[1;24r\x1b[1;10H\x1b[?25l\x1b[H- waiting\x1b[K\r\n\x1b[K\r\n\x1b[K\r\n\x1b[K\r\n",
+			false,
+		},
+		{"the ESC[0K spelling of the same erase", "x\x1b[0K\r\ny\x1b[0K\r\n", false},
+		{"an agent printing a line", "reading file 12\r\n", true},
+		{"a repaint that then prints something new", "\x1b[K\r\n\x1b[K\r\nreading file 13\r\n", true},
+		{"a bare line feed", "done\n", true},
+		{"a spinner with no line feed at all", "\r| waiting", false},
+		{"nothing", "", false},
+		// A line feed at the very start cannot have been erased first.
+		{"a leading line feed", "\nhello", true},
+	} {
+		if got := advanced([]byte(tc.chunk)); got != tc.want {
+			t.Errorf("%s: advanced = %v, want %v (%q)", tc.name, got, tc.want, tc.chunk)
+		}
 	}
 }

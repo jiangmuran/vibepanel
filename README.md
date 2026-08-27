@@ -76,6 +76,11 @@ two apart: **tmux does process persistence, the web UI does organisation.**
   arrived in 3.3. An older tmux does not refuse to start: it reports an unknown
   option, carries on with defaults, and the sequences agent TUIs use for progress
   and notifications are quietly swallowed from then on.
+
+  The test suite is run against **3.4** — what Ubuntu 24.04 LTS ships — as well
+  as 3.6, because the two differ in ways that reach the product: how tmux
+  escapes its own `-F` output, and how eagerly it repaints an attached client.
+  Point it at any tmux with `TEST_TMUX_BIN=/path/to/tmux go test ./...`.
 - **Nothing else.** The release binary is static and self-contained — the frontend,
   the database driver and the TLS client are all inside it.
 

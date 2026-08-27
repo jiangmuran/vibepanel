@@ -31,6 +31,10 @@ func TestSessionsSurviveControlCharactersInTheirPath(t *testing.T) {
 		"vp_plain":   base,
 		"vp_newline": filepath.Join(base, "c\nd"),
 		"vp_unit":    filepath.Join(base, "a\x1fb"),
+		// The separator itself. It is a printable codepoint (see fieldSep), so
+		// unlike a control character a directory really can be named with it,
+		// and a separator a value may contain is not a separator.
+		"vp_sep": filepath.Join(base, "a"+fieldSep+"b"),
 	}
 	for name, dir := range dirs {
 		if dir != base {
@@ -66,6 +70,9 @@ func TestSessionsSurviveControlCharactersInTheirPath(t *testing.T) {
 		// value that can still take a record apart has only moved the problem.
 		if strings.ContainsAny(info.Path, "\x00\x01\x1f\n\t") {
 			t.Errorf("%s kept a control character in its path: %q", name, info.Path)
+		}
+		if strings.Contains(info.Path, fieldSep) {
+			t.Errorf("%s kept the field separator in its path: %q", name, info.Path)
 		}
 		if _, gerr := c.Get(ctx, name); gerr != nil {
 			t.Errorf("Get(%s): %v", name, gerr)

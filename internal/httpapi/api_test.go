@@ -50,6 +50,11 @@ func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 	socket := "vibepanel-api-" + strconv.Itoa(os.Getpid()) + "-" +
 		strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
 	tm := tmux.New(socket, dir)
+	// Point the suite at another tmux without editing anything:
+	//	TEST_TMUX_BIN=/path/to/tmux go test ./...
+	if bin := os.Getenv("TEST_TMUX_BIN"); bin != "" {
+		tm.Bin = bin
+	}
 	if err := tm.EnsureServer(ctx); err != nil {
 		t.Fatalf("EnsureServer: %v", err)
 	}

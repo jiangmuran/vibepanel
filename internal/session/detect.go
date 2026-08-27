@@ -281,8 +281,9 @@ func (d *Detector) Evaluate(id string, obs Observation, now time.Time) (State, S
 	// TestAnAnimationDoesNotDiscardAHookReport.
 	//
 	// What makes this safe rather than a trade of one wrong state for another:
-	// Advanced is `chunk contains "\n"`, so an agent that resumed work inside a
-	// full-screen TUI would never advance and this report would stand forever.
+	// Advanced is a line feed that did not come from a repaint (see advanced()
+	// in manager.go), so an agent that resumed work inside a full-screen TUI
+	// would never advance and this report would stand forever.
 	// It cannot get stuck, because hookState is non-empty only when the hooks
 	// are installed, and an agent with hooks installed reports its other
 	// transitions too — UserPromptSubmit and PreToolUse arrive the moment it

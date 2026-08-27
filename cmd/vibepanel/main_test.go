@@ -85,6 +85,11 @@ func TestKillingASessionKillsItsScratchTerminals(t *testing.T) {
 
 	socket := "vibepanel-test-" + strconv.Itoa(os.Getpid()) + "-killtree"
 	tm := tmux.New(socket, t.TempDir())
+	// Point the suite at another tmux without editing anything:
+	//	TEST_TMUX_BIN=/path/to/tmux go test ./...
+	if bin := os.Getenv("TEST_TMUX_BIN"); bin != "" {
+		tm.Bin = bin
+	}
 	t.Cleanup(func() {
 		_ = tm.KillServer(ctx)
 		_ = os.Remove(tm.SocketPath())

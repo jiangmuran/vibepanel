@@ -27,6 +27,21 @@ func newTestClient(t *testing.T) *Client {
 	socket := "vibepanel-test-" + strconv.Itoa(os.Getpid()) + "-" + t.Name()
 	socket = strings.NewReplacer("/", "_", " ", "_").Replace(socket)
 	c := New(socket, t.TempDir())
+	// So the suite can be pointed at another tmux without editing anything.
+	//
+	// Added when CI on tmux 3.4 failed fourteen tests here and this machine had
+	// only 3.6: the bug was in what an older tmux does to its own output, and
+	// there was no way to reproduce it except by pushing and reading the log.
+	//
+	//	TEST_TMUX_BIN=/path/to/tmux go test ./internal/tmux/
+	//
+	// Not VIBEPANEL_-prefixed: the panel reports every unrecognised variable
+	// under that prefix at startup, on purpose, and internal/config has a test
+	// that says so. Setting one for the whole `go test ./...` run failed that
+	// test -- correctly.
+	if bin := os.Getenv("TEST_TMUX_BIN"); bin != "" {
+		c.Bin = bin
+	}
 	t.Cleanup(func() {
 		_ = c.KillServer(context.Background())
 		// kill-server leaves the socket file behind.
@@ -1045,4 +1060,40 @@ func versionOf(t *testing.T, c *Client) string {
 		return "an unknown tmux"
 	}
 	return "tmux " + v
+}
+
+// The field separator has to be a character tmux never escapes.
+//
+// tmux before 3.5 escapes non-printable bytes in its own output as octal, so
+// the old separator -- a real 0x1F -- arrived as the four characters \, 0, 3,
+// 7 and every record came back as one field. Measured on tmux 3.4, which is
+// what Ubuntu 24.04 LTS ships:
+//
+//	3.6:  "vp_p\x1f/some/path\x1fEND"
+//	3.4:  "vp_p\\037/some/path\\037END"
+//
+// Unescaping is not available as a repair: 3.4 leaves backslash alone, so a
+// directory named `lit\037here` and an escaped separator are the same eight
+// characters, and telling them apart is guessing.
+//
+// This test cannot run an old tmux, so it pins the property that makes the
+// difference instead. Anything in ASCII's control range fails here, which is
+// the whole class the escaping applies to.
+func TestTheFieldSeparatorIsNotSomethingOldTmuxWouldEscape(t *testing.T) {
+	if fieldSep == "" {
+		t.Fatal("empty field separator")
+	}
+	for _, r := range fieldSep {
+		if r < 0x20 || r == 0x7f {
+			t.Fatalf("the field separator contains %U, which tmux 3.4 emits as an octal escape; "+
+				"every record then parses as one field and every session disappears from the listing",
+				r)
+		}
+	}
+	// And it has to be scrubbed out of the values, because a printable
+	// separator is one a directory can legally be named with.
+	if !strings.Contains(scrubbed("pane_current_path"), fieldSep) {
+		t.Errorf("scrubbed() does not remove the separator from values: %q",
+			scrubbed("pane_current_path"))
+	}
 }

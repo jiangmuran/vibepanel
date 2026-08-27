@@ -1,7 +1,6 @@
 package session
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -145,6 +144,48 @@ type Signals struct {
 	// apart from "is redrawing while it waits", which no timer can. See the
 	// bell rule in Evaluate.
 	Advanced bool
+}
+
+// advanced reports whether a chunk moved the screen forward rather than
+// repainting it where it stood.
+//
+// It used to be `bytes.Contains(chunk, "\n")`, and that is true of a repaint.
+// Measured against tmux 3.4 -- what Ubuntu 24.04 LTS ships -- attached to a
+// pane running an agent's spinner, the client stream carries a whole-screen
+// repaint several times a second:
+//
+//	"\x1b[H- waiting\x1b[K\r\n\x1b[K\r\n\x1b[K\r\n\x1b[K\r\n..."
+//
+// Every one of those line feeds is tmux stepping down the screen erasing as it
+// goes, and counting them as progress cleared the bell on an agent that was
+// still waiting for an answer -- the one state this panel exists to report.
+// tmux 3.6 repaints far less eagerly, which is why this was invisible here and
+// arrived from CI.
+//
+// So a line feed only counts when the line it ends was not erased first. A
+// line ending "\x1b[K\r\n" is a repainted line; anything else -- an agent
+// printing "reading file 12\r\n" -- is the screen actually moving. Measured on
+// the same tmux 3.4: eighteen chunks of spinner produce no advance, and
+// eighteen chunks of real output produce seventeen.
+func advanced(chunk []byte) bool {
+	for i, b := range chunk {
+		if b != '\n' {
+			continue
+		}
+		j := i
+		if j > 0 && chunk[j-1] == '\r' {
+			j--
+		}
+		// ESC [ K, and the ESC [ 0 K spelling of the same thing.
+		if j >= 3 && chunk[j-1] == 'K' && chunk[j-2] == '[' && chunk[j-3] == 0x1b {
+			continue
+		}
+		if j >= 4 && chunk[j-1] == 'K' && chunk[j-2] == '0' && chunk[j-3] == '[' && chunk[j-4] == 0x1b {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // Manager owns every live attachment.
@@ -433,7 +474,7 @@ func (m *Manager) pump(l *Live) {
 					SessionID: l.ID, Bell: bell, Titles: titles,
 					Bytes:    n,
 					Visible:  settled && hasPrintable(chunk),
-					Advanced: settled && bytes.Contains(chunk, []byte("\n")),
+					Advanced: settled && advanced(chunk),
 				})
 			}
 		}
