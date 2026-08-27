@@ -12,6 +12,8 @@ import { passkeyLabel } from './label'
 import { setLang, t, useLang } from '../i18n'
 import { notifyEnabled, notifySupported, requestNotifyPermission, setNotifyEnabled } from '../notify'
 import { ApiTokens } from './ApiTokens'
+import { askConfirm, askText } from './ask'
+import { showToast } from './toasts'
 import { safeText } from './text'
 
 function bytes(n: number): string {
@@ -87,6 +89,7 @@ export function Settings({ onClose }: { onClose: () => void }) {
     <div className="vp-backdrop absolute inset-0 z-30 flex items-start justify-center overflow-y-auto bg-black/40 px-4 py-8">
       <div
         data-testid="settings"
+        data-vp-modal="settings"
         className="vp-panel-in w-full max-w-2xl rounded-vp-lg border border-hairline bg-surface p-6 shadow-xl"
       >
         <div className="mb-5 flex items-center gap-2">
@@ -628,7 +631,17 @@ function PasskeysSection() {
   }, [])
 
   const add = async () => {
-    const name = window.prompt('Name this passkey', 'This device')
+    // A question with a field, not window.prompt. The prompt could not say why
+    // the name matters -- it is the only thing telling two credentials apart in
+    // the list below -- and on a phone it arrived as a system sheet with the
+    // hostname above it, which is the shape a phishing prompt has.
+    const name = await askText({
+      title: t('ask.passkeyNameTitle'),
+      body: t('ask.passkeyNameBody'),
+      field: { label: t('ask.passkeyNameField'), value: t('ask.passkeyNameDefault') },
+      confirm: t('ask.add'),
+      cancel: t('ask.cancel'),
+    })
     if (name === null) return
     setBusy(true)
     setError(null)
@@ -676,8 +689,24 @@ function PasskeysSection() {
           <button
             type="button"
             onClick={() => {
-              if (!window.confirm(`Remove ${passkeyLabel(k)}?`)) return
-              void api.deletePasskey(k.id).then(load).catch(() => setError('could not remove it'))
+              void (async () => {
+                const yes = await askConfirm({
+                  title: t('ask.removePasskeyTitle', { name: passkeyLabel(k) }),
+                  body: t('ask.removePasskeyBody'),
+                  confirm: t('ask.remove'),
+                  cancel: t('ask.cancel'),
+                  destructive: true,
+                })
+                if (!yes) return
+                // A toast rather than the section's error line: the row this
+                // failure is about is three lines further down the dialog, and
+                // the line at the top of a section is somewhere nobody looks
+                // after pressing something at the bottom of it.
+                await api
+                  .deletePasskey(k.id)
+                  .then(load)
+                  .catch(() => showToast({ kind: 'error', key: 'toast.passkeyGone' }))
+              })()
             }}
             title={t('set.remove')}
             className="vp-press shrink-0 rounded-md p-0.5 text-ink-2 vp-reveal hover:text-ink"

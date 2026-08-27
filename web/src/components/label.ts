@@ -34,7 +34,7 @@ export function sessionLabel(s: Session): string {
  * (`filepath.Base` in handleCreateProject), so it is no more trustworthy than a
  * filename: an agent creates directories, and a directory name is arbitrary
  * bytes. It went to the sidebar, to a tooltip, and into the text of the
- * `window.confirm` that asks before killing every session in it — none of them
+ * confirmation that asks before killing every session in it — none of them
  * sanitised, while the equivalent question about a *session* used
  * sessionLabel and was. Two paths, one of them updated.
  *
@@ -79,7 +79,7 @@ export function terminalLabel(s: Session, index: number): string {
  *
  * The fourth name-rendering site and the only one that was not funnelled: a
  * passkey's name was rendered raw in the list and again inside the
- * `window.confirm` that asks before deleting it. Lower stakes than the others,
+ * confirmation that asks before deleting it. Lower stakes than the others,
  * because the name comes from something the user typed rather than from a
  * directory basename or a `pane_title` an agent set -- but "lower stakes"
  * described the project-name site too, one file over, until it did not.
