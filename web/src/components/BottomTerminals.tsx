@@ -8,6 +8,8 @@ import { TerminalView } from './Terminal'
 import { focusTerminal } from './focus'
 import { InlineName } from './InlineName'
 import { StateDot } from './StateDot'
+import { bottomControls, clampBottomHeight, resizeStep } from './chrome'
+import { safeText } from './text'
 import { t as tr, useLang } from '../i18n'
 
 interface Props {
@@ -24,10 +26,6 @@ interface Props {
   onRename: (s: Session, title: string) => void
 }
 
-const MIN_HEIGHT = 80
-/** Leave at least this much of the main terminal visible. */
-const MIN_MAIN_HEIGHT = 120
-
 /**
  * Scratch terminals belonging to the session above them.
  *
@@ -42,16 +40,21 @@ export function BottomTerminals(props: Props) {
   const [activeId, setActiveId] = useState<string | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const dragFrom = useRef<{ y: number; height: number } | null>(null)
+  const [dragging, setDragging] = useState(false)
 
   // The active tab is derived rather than stored, so a terminal closing or the
   // parent changing cannot leave a selection pointing at nothing.
   const active = terminals.find((t) => t.id === activeId) ?? terminals[0] ?? null
+
+  /** The height the strip and the main terminal are dividing between them. */
+  const available = () => wrapRef.current?.parentElement?.clientHeight ?? 600
 
   const onResizeStart = useCallback(
     (e: React.PointerEvent) => {
       e.preventDefault()
       e.currentTarget.setPointerCapture(e.pointerId)
       dragFrom.current = { y: e.clientY, height }
+      setDragging(true)
     },
     [height],
   )
@@ -60,10 +63,8 @@ export function BottomTerminals(props: Props) {
     (e: React.PointerEvent) => {
       const from = dragFrom.current
       if (!from) return
-      const available = wrapRef.current?.parentElement?.clientHeight ?? 600
       // Dragging up makes the panel taller, so the delta is inverted.
-      const next = from.height + (from.y - e.clientY)
-      props.onHeightChange(Math.max(MIN_HEIGHT, Math.min(next, available - MIN_MAIN_HEIGHT)))
+      props.onHeightChange(clampBottomHeight(from.height + (from.y - e.clientY), available()))
     },
     [props],
   )
@@ -73,105 +74,159 @@ export function BottomTerminals(props: Props) {
       e.currentTarget.releasePointerCapture(e.pointerId)
     }
     dragFrom.current = null
+    setDragging(false)
   }, [])
 
   return (
     <div
       ref={wrapRef}
       data-testid="bottom-terminals"
-      className="flex shrink-0 flex-col border-t border-hairline"
+      // From the edge it lives on, like the side panel from its own. The two
+      // strips are the same object seen twice; they open the same way.
+      className="vp-edge-in-bottom flex shrink-0 flex-col border-t border-hairline"
       style={{ height }}
     >
       <div
+        role="separator"
+        aria-orientation="horizontal"
+        aria-valuenow={Math.round(height)}
+        tabIndex={0}
+        data-dragging={dragging}
         onPointerDown={onResizeStart}
         onPointerMove={onResizeMove}
         onPointerUp={onResizeEnd}
         onPointerCancel={onResizeEnd}
+        onKeyDown={(e) => {
+          const step = resizeStep(e.key, e.shiftKey)
+          if (step === null) return
+          e.preventDefault()
+          props.onHeightChange(clampBottomHeight(height + step, available()))
+        }}
         title={tr('bottom.resize')}
-        // Without touch-action the browser scrolls instead of reporting the
-        // drag, and on touch the gesture never arrives at all.
-        style={{ touchAction: 'none' }}
-        className="-mt-1 h-2 shrink-0 cursor-row-resize transition-colors duration-200 ease-vp hover:bg-accent"
+        // The same grip as the side panel's and the notes/todo split's: an
+        // eight-pixel hit area with a small pill in the middle of it. It was
+        // three different affordances in three places, which is most of why
+        // this strip read as assembled rather than designed. touch-action
+        // comes with .vp-grip — without it the browser scrolls instead of
+        // reporting the drag, and on touch the gesture never arrives at all.
+        className="vp-grip -mt-1 h-2 cursor-row-resize"
       />
 
-      <div className="flex h-8 shrink-0 items-center gap-1 px-2 vp-blur">
+      <div className="vp-chrome gap-1 px-2 vp-blur">
         {/* The tabs scroll; the controls after them do not.
-            
+
             This row had no overflow handling at all. Eight terminals in an
             820px window put four of them past the right edge — and `overflow:
             visible` means they were not clipped but *drawn over the panel to
             the right*, with no way to scroll to them. The same shape as the
             key bar: a row that can outgrow its box and hides whatever does not
             fit.
-            
-            New-terminal and collapse are outside the scroller deliberately. Put
-            them inside and they scroll away exactly when there are enough tabs
-            to need them. */}
-        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-        {terminals.map((t, i) => (
-          <div
-            key={t.id}
-            data-testid="bottom-tab"
-            data-session-id={t.id}
-            data-active={active?.id === t.id}
-            onClick={() => {
-              setActiveId(t.id)
+
+            New-terminal and collapse are outside the scroller deliberately.
+            Put them inside and they scroll away exactly when there are enough
+            tabs to need them. */}
+        <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
+          {terminals.map((term, i) => {
+            const choose = () => {
+              setActiveId(term.id)
               // The tab you just chose is the one you want to type into. The
-              // main terminal above usually has the keyboard at this point, and
-              // its hidden textarea is why focusTerminal has to know an xterm
-              // from a text field.
-              focusTerminal(t.id)
-            }}
-            className={`group flex max-w-44 shrink-0 cursor-pointer items-center gap-1 rounded-vp px-2 py-1 text-vp-base transition-colors duration-200 ease-vp ${
-              active?.id === t.id ? 'bg-surface-2 text-ink' : 'text-ink-2 hover:bg-surface-2'
-            }`}
-          >
-            {/* Only when it has exited.
-                A bottom terminal that is running needs no decoration — the
-                strip would be a row of identical dots — but one whose process
-                is gone gave no sign at all, so a build that died down here
-                looked exactly like a build still going. The glyph carries the
-                difference between a clean exit and a crash by shape, as
-                everywhere else. */}
-            {t.exited && (
-              <StateDot state={t.state} exited exitStatus={t.exitStatus} size={8} />
-            )}
-            <InlineName
-              value={terminalLabel(t, i)}
-              onCommit={(next) => props.onRename(t, next)}
-              className="max-w-32"
-            />
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                props.onClose(t)
+              // main terminal above usually has the keyboard at this point,
+              // and its hidden textarea is why focusTerminal has to know an
+              // xterm from a text field.
+              focusTerminal(term.id)
+            }
+            return (
+            <div
+              key={term.id}
+              data-testid="bottom-tab"
+              data-session-id={term.id}
+              data-active={active?.id === term.id}
+              // role and tabIndex, because the strip was unreachable from the
+              // keyboard: tab past the terminal and there was nothing there at
+              // all — no way to choose a tab, rename one or close one.
+              //
+              // A div carrying the role rather than a real <button>, because
+              // renaming replaces the label with an <input>, and interactive
+              // content inside a <button> is not something the parser will
+              // build: it closes the button first and the tab stops being one.
+              role="button"
+              tabIndex={0}
+              onClick={choose}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter' && e.key !== ' ') return
+                e.preventDefault()
+                choose()
               }}
-              title={tr('bottom.close')}
-              className="vp-press vp-tap rounded-md p-0.5 vp-reveal hover:text-ink"
+              className="vp-tab group max-w-44 shrink-0 cursor-pointer text-vp-base"
             >
-              <X size={11} />
-            </button>
-          </div>
-        ))}
+              {/* Only when it has exited.
+                  A bottom terminal that is running needs no decoration — the
+                  strip would be a row of identical dots — but one whose process
+                  is gone gave no sign at all, so a build that died down here
+                  looked exactly like a build still going. The glyph carries the
+                  difference between a clean exit and a crash by shape, as
+                  everywhere else. */}
+              {term.exited && (
+                <StateDot state={term.state} exited exitStatus={term.exitStatus} size={8} />
+              )}
+              <InlineName
+                value={terminalLabel(term, i)}
+                onCommit={(next) => props.onRename(term, next)}
+                className="max-w-32"
+              />
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  props.onClose(term)
+                }}
+                title={tr('bottom.close')}
+                className="vp-press vp-tap rounded-md p-0.5 vp-reveal hover:text-ink"
+              >
+                <X size={11} />
+              </button>
+            </div>
+            )
+          })}
         </div>
-        <button
-          type="button"
-          data-testid="bottom-new"
-          onClick={props.onNew}
-          title={`New terminal in ${parent.cwd || 'this project'}`}
-          className="vp-press rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
-        >
-          <Plus size={14} />
-        </button>
-        <button
-          type="button"
-          onClick={props.onCollapse}
-          title={tr('bottom.hide')}
-          className="vp-press rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
-        >
-          <ChevronDown size={14} />
-        </button>
+
+        <span className="vp-divider" aria-hidden="true" />
+
+        {/* From the list, not written out: the two of them are here at every
+            tab count, including none. Hiding "close the strip" when the strip
+            is empty is exactly the moment somebody wants it gone. */}
+        {bottomControls(terminals.length).map((control) =>
+          control.id === 'new' ? (
+            <button
+              key={control.id}
+              type="button"
+              data-testid={control.testid}
+              onClick={props.onNew}
+              // safeText, because cwd is whatever directory the session is
+              // sitting in and a directory name is arbitrary bytes — one
+              // carrying U+202E reverses the tooltip around it. This was a
+              // template literal in English with the raw cwd in the middle,
+              // so it was both untranslated and unsanitised.
+              title={
+                parent.cwd ? tr('bottom.newIn', { dir: safeText(parent.cwd) }) : tr('bottom.new')
+              }
+              className="vp-control"
+            >
+              <Plus size={14} />
+            </button>
+          ) : (
+            <button
+              key={control.id}
+              type="button"
+              data-testid={control.testid}
+              onClick={props.onCollapse}
+              title={tr('bottom.hide')}
+              className="vp-control"
+            >
+              <ChevronDown size={14} />
+            </button>
+          ),
+        )}
       </div>
 
       {/* Set into the chrome, like the main terminal above it. Two terminals

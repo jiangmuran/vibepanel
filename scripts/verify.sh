@@ -27,7 +27,7 @@ cd "$(dirname "$0")/.."
 # first, then head-check, because everything below it builds from the working
 # tree and is therefore silent about the difference between "my tree works" and
 # "what I committed works".
-TARGETS=${VERIFY_TARGETS:-"check install-check head-check first-run-check render-check stress-check restart-check scale-check tls-check release-check"}
+TARGETS=${VERIFY_TARGETS:-"check panes-check install-check head-check first-run-check render-check stress-check restart-check scale-check tls-check release-check"}
 
 LOG=$(mktemp -t vibepanel-verify.XXXXXX)
 trap 'rm -f "$LOG"' EXIT

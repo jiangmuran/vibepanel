@@ -92,6 +92,21 @@
   --vp-ease: cubic-bezier(0.32, 0.72, 0, 1);
   --vp-radius: 12px;
   --vp-radius-lg: 16px;
+
+  /* The chrome's rhythm: one control height, one control radius, one strip
+     height, in one place.
+
+     8px rather than the 6px of `rounded-md`, because a control sits inside a
+     12px track with 2px of padding around it and 12 − 2 is 8. Concentric
+     radii are the difference between a pill in a groove and two rounded
+     rectangles that happen to overlap; at this size it is not subtle.
+
+     28 and 40 are chosen together: the strip is the control plus six pixels of
+     air top and bottom, which is the same air the terminal below it gets from
+     its own inset. */
+  --vp-control-h: 1.75rem;
+  --vp-radius-control: 8px;
+  --vp-chrome-h: 2.5rem;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -696,6 +711,399 @@ body {
   );
   background-size: 200% 100%;
   animation: vp-shimmer 1.3s linear infinite;
+}
+
+/* ── chrome ─────────────────────────────────────────────────────────────────
+ *
+ * One control, one tab, one grip, one strip height.
+ *
+ * The class list `vp-press rounded-md p-1.5 text-ink-2 transition-colors
+ * duration-200 ease-vp hover:bg-surface-2 hover:text-ink` was written out by
+ * hand in twenty places, and had already drifted three ways: p-0.5, p-1 and
+ * p-1.5 — 20, 24 and 27 pixels tall — sitting in the same rows as each other.
+ * Nothing is wrong with any one of them and no two of them are the same
+ * object, which is the whole of "底下每一个控件都像是拼起来的": the parts
+ * arrived separately and it shows.
+ *
+ * So the definition moves here, where there is one of it.
+ *
+ * The height is deliberately a `height` and not padding. Padding makes a
+ * control's size a consequence of whichever icon happens to be inside it,
+ * which is how a 16px icon and a 13px icon became two different buttons in the
+ * same strip. The coarse-pointer floor further down is a `min-height`, so a
+ * finger still gets its 44px.
+ */
+
+.vp-control {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  height: var(--vp-control-h);
+  min-width: var(--vp-control-h);
+  padding-inline: 0.25rem;
+  border-radius: var(--vp-radius-control);
+  color: var(--vp-ink-2);
+  background: transparent;
+  transition: transform 120ms var(--vp-ease), background-color 200ms var(--vp-ease),
+    color 200ms var(--vp-ease), opacity 200ms var(--vp-ease);
+}
+
+.vp-control:hover:not(:disabled) {
+  background: var(--vp-surface-2);
+  color: var(--vp-ink);
+}
+
+.vp-control:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+/* On, as opposed to merely hovered. Colour is not carrying this alone (red
+   line 4): the only control that uses it is the split toggle, and what says
+   the split is on is that there are two panes below instead of one. */
+.vp-control[aria-pressed='true'] {
+  color: var(--vp-accent);
+}
+
+/* A row of chrome: the side panel's header, the terminal strip's tab row, the
+   rail either of them collapses to.
+ *
+ * `min-height` rather than `height`, so the 44px touch floor grows the row
+ * instead of pushing its controls out through the bottom — which is what a
+ * fixed 40px row does on a tablet, where the pointer is coarse and the layout
+ * is still the wide one. */
+.vp-chrome {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  min-height: var(--vp-chrome-h);
+}
+
+/* A hairline between the things you are choosing among and the controls that
+   act on whatever you chose. Two groups a few pixels apart read as one ragged
+   row; the rule is what says which half is content. */
+.vp-divider {
+  flex-shrink: 0;
+  align-self: center;
+  width: 1px;
+  height: 1rem;
+  background: var(--vp-hairline);
+}
+
+/* One item in a set you choose from — a panel tab, a terminal tab.
+ *
+ * Same height and same radius as `.vp-control`, because a thing you select and
+ * a thing you press are both controls and there was never a reason for them to
+ * be different sizes. What differs is what "chosen" looks like. */
+.vp-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  height: var(--vp-control-h);
+  padding-inline: 0.375rem;
+  border-radius: var(--vp-radius-control);
+  color: var(--vp-ink-2);
+  /* A tab is draggable, and a press that drags across two labels selects the
+     text of both. There is nothing in a tab worth selecting. */
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform 120ms var(--vp-ease), background-color 200ms var(--vp-ease),
+    color 200ms var(--vp-ease), flex-grow 260ms var(--vp-ease);
+}
+
+/* Only where a tab can be dragged into a pane. Without it a touch screen
+   scrolls instead of reporting the gesture and the drag never arrives — and
+   *with* it on the terminal strip, whose tabs scroll sideways, the strip stops
+   scrolling. Two strips, two answers. */
+.vp-tab-drag {
+  touch-action: none;
+}
+
+.vp-tab:hover {
+  color: var(--vp-ink);
+}
+
+.vp-tab:active {
+  transform: scale(0.97);
+}
+
+/* Lifted out of the strip rather than tinted inside it, and lifted the same
+   way in both strips — which is most of what makes them read as one interface
+   rather than two that happen to be in the same window. */
+.vp-tab[aria-selected='true'],
+.vp-tab[data-active='true'] {
+  color: var(--vp-ink);
+  background: var(--vp-surface);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
+}
+
+/* The segmented track, and the marker that slides inside it.
+ *
+ * The marker is why switching tabs is a *move* and not two repaints on the
+ * same frame. Five destinations swapping their backgrounds at once give the
+ * eye nothing to follow, so it has to find the selection again from scratch —
+ * which is the complaint. One marker travelling from the old tab to the new is
+ * the same fact delivered as a movement.
+ *
+ * It carries nothing by itself. The selected tab is the darker one, it is the
+ * one named in words while the rest are icons, and it reports aria-selected;
+ * under prefers-reduced-motion the marker simply arrives. */
+.vp-segmented {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  border-radius: var(--vp-radius);
+  background: var(--vp-surface-2);
+  padding: 0.125rem;
+}
+
+.vp-segmented > .vp-tab {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 0;
+  min-width: 0;
+  justify-content: center;
+}
+
+/* Wider, but only when it has a name to show. See panelChrome() for the width
+   that decision is made at and why it is made there rather than here. */
+.vp-segmented[data-labelled='true'] > .vp-tab[aria-selected='true'] {
+  flex-grow: 2.4;
+}
+
+/* Until the marker has been measured the selected tab wears the lift itself —
+   the first paint, and any environment where layout reports nothing at all: a
+   display:none ancestor, a headless probe. It looks identical, which is the
+   point. Which tab you are on must not be a thing that only a working
+   ResizeObserver can tell you. */
+.vp-segmented[data-marker='on'] > .vp-tab[aria-selected='true'] {
+  background: transparent;
+  box-shadow: none;
+}
+
+/* The name folds; it does not blink out.
+ *
+ * A label that is simply absent below 250px is a strip that restructures
+ * itself while the pointer is inside it — the same complaint as a button that
+ * appears, one size down. Folded, the same fact arrives as a movement you can
+ * follow, and under prefers-reduced-motion it is still just present or absent,
+ * which is where it started. */
+.vp-tab-label {
+  overflow: hidden;
+  white-space: nowrap;
+  max-width: 0;
+  opacity: 0;
+  transition: max-width 260ms var(--vp-ease), opacity 200ms var(--vp-ease);
+}
+
+.vp-segmented[data-labelled='true'] > .vp-tab[aria-selected='true'] .vp-tab-label {
+  max-width: 6rem;
+  opacity: 1;
+}
+
+.vp-marker {
+  position: absolute;
+  top: 0.125rem;
+  bottom: 0.125rem;
+  left: 0;
+  border-radius: var(--vp-radius-control);
+  background: var(--vp-surface);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
+  transition: transform 260ms var(--vp-ease), width 260ms var(--vp-ease);
+}
+
+/* Where a dragged tab would land, drawn for every pane at once.
+ *
+ * A drop target that lights up only under the pointer is a guessing game: the
+ * way to find out where a tab would have gone is to put it there and look. So
+ * while something is in the air every band is outlined, and the one under the
+ * pointer fills. Nothing here appears or disappears *during* a drag — only the
+ * emphasis moves.
+ *
+ * The dragged tab itself dims rather than vanishing, so the strip does not
+ * reflow under the gesture that is reading it. */
+.vp-drop {
+  border: 1px dashed transparent;
+  border-radius: var(--vp-radius);
+  margin: 2px;
+  transition: background-color 160ms var(--vp-ease), border-color 160ms var(--vp-ease);
+}
+
+[data-dragging] .vp-drop {
+  border-color: var(--vp-hairline-strong);
+}
+
+.vp-drop[data-over='true'] {
+  border-color: var(--vp-accent);
+  border-style: solid;
+  background: var(--vp-selection);
+}
+
+.vp-tab[data-drag-source='true'] {
+  opacity: 0.45;
+}
+
+/* One resize affordance, in the three places this layout has one.
+ *
+ * They were three: an 8px transparent strip that showed nothing whatsoever, a
+ * 6px one that turned entirely accent-coloured on hover, and a 2px one that
+ * did the same a third as thick. A grip is a small pill in the middle of the
+ * edge — visible enough to aim at, quiet enough to ignore — and the hit area
+ * around it stays exactly as wide as it was, because the hit area is what a
+ * hand needs and what the render check measures. */
+.vp-grip {
+  position: relative;
+  flex-shrink: 0;
+  touch-action: none;
+}
+
+.vp-grip::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  border-radius: 999px;
+  background: var(--vp-hairline-strong);
+  opacity: 0;
+  transition: opacity 200ms var(--vp-ease), background-color 200ms var(--vp-ease);
+}
+
+.vp-grip[aria-orientation='vertical']::after {
+  width: 3px;
+  height: 1.75rem;
+  transform: translate(-50%, -50%);
+}
+
+.vp-grip[aria-orientation='horizontal']::after {
+  width: 1.75rem;
+  height: 3px;
+  transform: translate(-50%, -50%);
+}
+
+.vp-grip:hover::after,
+.vp-grip[data-dragging='true']::after {
+  opacity: 1;
+}
+
+/* Focus is not hover. The keyboard has no other way to know it is holding the
+   divider, and the divider resizes from the keyboard.
+ *
+ * On top of the focus ring the rule below draws, not instead of it: the ring
+ * is what the focus scan reads off the element itself, and a grip that says
+ * "focused" only through a pseudo-element is a tab stop that check calls
+ * invisible — correctly, because it is measuring what a person can see, not
+ * what the stylesheet intended. */
+.vp-grip:focus-visible::after {
+  opacity: 1;
+  background: var(--vp-accent);
+}
+
+.vp-grip[aria-orientation='vertical']:focus-visible::after {
+  width: 5px;
+}
+
+.vp-grip[aria-orientation='horizontal']:focus-visible::after {
+  height: 5px;
+}
+
+/* Focus you can see, and one of it.
+ *
+ * The browser default is a ring drawn to the platform's taste, which on the
+ * dark theme is very nearly invisible — and it was what every control in this
+ * panel had. `:where()` holds the specificity at zero, so a component that
+ * genuinely needs its own treatment still wins without !important. */
+:where(
+  button,
+  [role='button'],
+  [role='tab'],
+  [role='separator'],
+  a[href],
+  input,
+  textarea,
+  select,
+  [tabindex]
+):focus-visible {
+  outline: 2px solid var(--vp-accent);
+  outline-offset: 2px;
+}
+
+/* ── motion that means something ────────────────────────────────────────────
+ *
+ * Two movements, two meanings, neither decorative:
+ *
+ *   lateral  switching tabs is a move between siblings, so the incoming body
+ *            enters from the side the outgoing one left towards
+ *   reveal   a panel opening comes from the edge it lives on, so when it
+ *            closes the eye already knows where it went
+ *
+ * The prefers-reduced-motion block below collapses both to nothing, so neither
+ * may *carry* anything. The tab you are on is named in words and reports
+ * aria-selected; the panel that opened is simply there.
+ *
+ * `backwards`, not `both`. `both` leaves the final transform applied forever,
+ * and an element with a transform is a containing block for `position: fixed`
+ * — which is how the file preview stops covering the window and starts
+ * covering the 280px panel instead. FilePreview's own comment says so. */
+@keyframes vp-swap-forward {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes vp-swap-back {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.vp-swap[data-dir='forward'] {
+  animation: vp-swap-forward 200ms var(--vp-ease) backwards;
+}
+
+.vp-swap[data-dir='back'] {
+  animation: vp-swap-back 200ms var(--vp-ease) backwards;
+}
+
+@keyframes vp-edge-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes vp-edge-in-bottom {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.vp-edge-in-right {
+  animation: vp-edge-in-right 220ms var(--vp-ease) backwards;
+}
+
+.vp-edge-in-bottom {
+  animation: vp-edge-in-bottom 220ms var(--vp-ease) backwards;
 }
 
 @media (prefers-reduced-motion: reduce) {

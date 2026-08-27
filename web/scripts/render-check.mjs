@@ -905,16 +905,25 @@ try {
   await page.setViewportSize({ width: 1440, height: 900 })
   await sleep(500)
   const showRight = page.locator('[data-testid="right-show"]')
-  if (await showRight.isVisible().catch(() => false)) {
-    await showRight.click()
+  const rightPanel = page.locator('[data-testid="right-panel"]')
+  // Guarded on the panel, not on the button. `right-show` used to exist only
+  // while the panel was hidden, so its visibility answered "is the panel
+  // closed" and clicking it was safe. It is a toggle now — always in the
+  // header, reporting aria-pressed — which means clicking it while the panel
+  // is open closes it, and everything below this line then fails for a reason
+  // that has nothing to do with what it is checking.
+  if (!(await rightPanel.isVisible().catch(() => false))) {
+    await showRight.click().catch(() => {})
     await sleep(600)
   }
-  const rightPanel = page.locator('[data-testid="right-panel"]')
   if (!(await rightPanel.isVisible().catch(() => false))) {
     note('FAIL', 'panel', 'the side panel never appeared')
   } else {
     // Every control in the header has to stay reachable. Labelling all four
-    // tabs once pushed the collapse button off the edge of a 280px column.
+    // tabs once pushed the collapse button off the edge of a 280px column —
+    // and the split toggle, which is now in the header on all five tabs
+    // rather than arriving when you reach notes, is 28 more pixels of the
+    // same risk.
     for (const id of ['files', 'monitor', 'notes', 'todos']) {
       await page.locator(`[data-testid="panel-tab-${id}"]`).click()
       await sleep(300)
@@ -1170,9 +1179,12 @@ try {
     await leaving.setViewportSize({ width: 1440, height: 900 })
     await leaving.goto(BASE, { waitUntil: 'networkidle' })
     await sleep(2000)
-    const leavingShow = leaving.locator('[data-testid="right-show"]')
-    if (await leavingShow.isVisible().catch(() => false)) {
-      await leavingShow.click()
+    // On the panel, not on the button — see the guard at the top of this
+    // section. `right-show` is a toggle, so asking whether it is visible
+    // answers "am I on a wide screen", and clicking it here would close the
+    // panel this page was opened to type into.
+    if (!(await leaving.locator('[data-testid="right-panel"]').isVisible().catch(() => false))) {
+      await leaving.locator('[data-testid="right-show"]').click().catch(() => {})
       await sleep(600)
     }
     await leaving.locator('[data-testid="panel-tab-notes"]').click().catch(() => {})

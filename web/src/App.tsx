@@ -25,8 +25,16 @@ import { TokenUsageView } from './components/TokenUsageView'
 import { MobileKeyBar } from './components/mobile/MobileKeyBar'
 import { ComposeInput } from './components/mobile/ComposeInput'
 import { SelectionCopy } from './components/mobile/SelectionCopy'
-import type { PanelTab } from './components/RightPanel'
-import { disambiguatedLabels, projectLabel, sessionLabel, exitReason } from './components/label'
+import {
+  defaultLayout,
+  layoutStorageKey,
+  parseLayout,
+  readLayout,
+  serialiseLayout,
+  toggleNotesTodos,
+  type PaneLayout,
+} from './components/panes'
+import { disambiguatedLabels, projectLabel, sessionLabel } from './components/label'
 import { applyTheme, loadTheme } from './components/theme'
 import type { ThemeChoice } from './components/theme'
 import { NARROW_QUERY, useMediaQuery } from './hooks/useMediaQuery'
@@ -59,6 +67,9 @@ const BOTTOM_OPEN_KEY = 'vibepanel.bottomOpen'
 const BOTTOM_DEFAULT_HEIGHT = 220
 const RIGHT_KEY = 'vibepanel.right'
 const RIGHT_OPEN_KEY = 'vibepanel.rightOpen'
+// The two keys the pane layout replaced. Still read once, so somebody who had
+// chosen a tab or turned the old split on opens on the arrangement they left
+// rather than on the default; never written again.
 const RIGHT_TAB_KEY = 'vibepanel.rightTab'
 const RIGHT_SPLIT_KEY = 'vibepanel.rightSplit'
 const RIGHT_DEFAULT_WIDTH = 280
@@ -118,6 +129,31 @@ function panelState(sizeKey: string, openKey: string, fallback: number) {
     size: stored > 0 ? stored : fallback,
     open: readStored(openKey) !== 'closed' && stored !== 0,
   }
+}
+
+/**
+ * The pane layout for this screen, or the nearest thing to one.
+ *
+ * A screen that has never been arranged does not get the flat default: it gets
+ * whatever the two keys this feature replaced were holding — the tab you were
+ * last on, and whether you had the old notes/todo split turned on. Otherwise
+ * the day this shipped, everybody's panel forgot where they were.
+ *
+ * Everything goes out through parseLayout even when it was built here, because
+ * `RIGHT_TAB_KEY` is a string out of localStorage like any other and "we wrote
+ * it ourselves" was true of the value in that key too.
+ */
+function seedLayout(key: string): PaneLayout {
+  const stored = readStored(key)
+  if (stored !== null) return readLayout(stored)
+  const base = readStored(RIGHT_SPLIT_KEY) === 'on'
+    ? toggleNotesTodos(defaultLayout())
+    : defaultLayout()
+  const want = readStored(RIGHT_TAB_KEY)
+  return parseLayout({
+    version: base.version,
+    groups: base.groups.map((g) => ({ ...g, active: want ?? g.active })),
+  })
 }
 
 function writeStored(key: string, value: string | null) {
@@ -188,18 +224,17 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   )
   const rightWidth = rightOpen ? rightSize : 0
   const [selection, setSelection] = useState('')
-  const [rightTab, setRightTab] = useState<PanelTab>(() => {
-    const raw = readStored(RIGHT_TAB_KEY)
-    return raw === 'files' ||
-      raw === 'monitor' ||
-      raw === 'notes' ||
-      raw === 'todos' ||
-      raw === 'tokens'
-      ? raw
-      : 'files'
-  })
-  const [rightSplit, setRightSplit] = useState(() => readStored(RIGHT_SPLIT_KEY) === 'on')
-  const [splitRatio, setSplitRatio] = useState(0.5)
+
+  // How the side panel is divided, and which screen that arrangement belongs
+  // to. Both live in localStorage and neither is ever sent anywhere: a layout
+  // that followed you from a 4K monitor to a laptop, or from a laptop to a
+  // phone, is the failure this is keyed to avoid. See panes.ts.
+  const [layoutKey, setLayoutKey] = useState(() =>
+    layoutStorageKey(window.innerWidth, window.innerHeight),
+  )
+  const [paneLayout, setPaneLayout] = useState<PaneLayout>(() =>
+    seedLayout(layoutStorageKey(window.innerWidth, window.innerHeight)),
+  )
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [tokensOpen, setTokensOpen] = useState(false)
   const [restoreOpen, setRestoreOpen] = useState(false)
@@ -318,8 +353,26 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   useEffect(() => writeStored(BOTTOM_OPEN_KEY, bottomOpen ? 'open' : 'closed'), [bottomOpen])
   useEffect(() => writeStored(RIGHT_KEY, String(rightSize)), [rightSize])
   useEffect(() => writeStored(RIGHT_OPEN_KEY, rightOpen ? 'open' : 'closed'), [rightOpen])
-  useEffect(() => writeStored(RIGHT_TAB_KEY, rightTab), [rightTab])
-  useEffect(() => writeStored(RIGHT_SPLIT_KEY, rightSplit ? 'on' : 'off'), [rightSplit])
+  useEffect(() => writeStored(layoutKey, serialiseLayout(paneLayout)), [layoutKey, paneLayout])
+
+  // A window moved to another display, or resized across a band, gets that
+  // screen's own arrangement rather than carrying this one over — which is the
+  // whole point of the key including the band. Both pieces of state are set
+  // from the same event so React applies them together; the write effect above
+  // would otherwise fire once with the new key and the old layout and stamp
+  // one screen's arrangement onto another's key.
+  const layoutKeyRef = useRef(layoutKey)
+  useEffect(() => {
+    const onResize = () => {
+      const key = layoutStorageKey(window.innerWidth, window.innerHeight)
+      if (key === layoutKeyRef.current) return
+      layoutKeyRef.current = key
+      setLayoutKey(key)
+      setPaneLayout(seedLayout(key))
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
 
   // The xterm palette is rebuilt when this changes. It has to react to the
   // system preference as well as the toggle, or a laptop switching to dark at
@@ -714,7 +767,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
                   : t('app.projects')
               }
               data-testid="menu-button"
-              className="vp-press relative rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+              className="vp-control relative"
             >
               <Menu size={16} />
               {/* The count belongs where the list is, because on a phone the
@@ -766,13 +819,18 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
                     // in place; a session whose tmux session went with the
                     // machine is rebuilt from the row, with its recorded
                     // command and its archived scrollback.
+                    //
+                    // The same two strings the sidebar's restart control uses.
+                    // This one had an English sentence built from exitReason()
+                    // instead, so the panel's most prominent restart button was
+                    // the one that did not speak the user's language.
                     current.exitStatus === EXIT_VANISHED
                       ? t('restore.gone')
-                      : `The process ${exitReason(current.exitStatus)}. Run it again in this pane.`
+                      : t('app.restartHint')
                   }
                 >
                   <RotateCcw size={11} />
-                  restart
+                  {t('app.restart')}
                 </button>
               )}
               {/* The banner in the pane says the same thing and scrolls away.
@@ -806,37 +864,55 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           ) : (
             <span className="text-vp-md text-ink-2">{t('app.noSessionShort')}</span>
           )}
-          {!narrow && rightWidth === 0 && (
+          {/* One cluster with a rule in front of it, not four icons each
+              nudged along by ml-1. The rule is what says the left of this row
+              is which session you are looking at and the right of it is the
+              panel itself; without it the grid-size chip, the restart pill and
+              four buttons are one ragged line of unrelated things. */}
+          <span className="vp-divider ml-2" aria-hidden="true" />
+          <div className="ml-1 flex shrink-0 items-center gap-0.5">
+            {/* Always here, on and off, rather than appearing when the panel
+                closes.
+
+                It used to exist only while the panel was hidden, which is the
+                same defect as the split toggle that arrived on the notes tab:
+                the row rearranges itself under a pointer already moving, and
+                the button you were aiming at is now the one next to it. A
+                toggle that reports aria-pressed says more, in less space, and
+                stays still. */}
+            {!narrow && (
+              <button
+                type="button"
+                data-testid="right-show"
+                onClick={() => setRightOpen(rightWidth === 0)}
+                aria-pressed={rightWidth > 0}
+                title={rightWidth === 0 ? t('app.showPanelShort') : t('app.hidePanel')}
+                className="vp-control"
+              >
+                <PanelRight size={15} />
+              </button>
+            )}
             <button
               type="button"
-              data-testid="right-show"
-              onClick={() => setRightOpen(true)}
-              title={t('app.showPanelShort')}
-              className="vp-press ml-1 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+              data-testid="settings-open"
+              onClick={() => setSettingsOpen(true)}
+              title={t('app.settings')}
+              className="vp-control"
             >
-              <PanelRight size={15} />
+              <SettingsIcon size={15} />
             </button>
-          )}
-          <button
-            type="button"
-            data-testid="settings-open"
-            onClick={() => setSettingsOpen(true)}
-            title={t('app.settings')}
-            className="vp-press ml-1 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
-          >
-            <SettingsIcon size={15} />
-          </button>
-          <ThemeToggle theme={theme} onChange={setTheme} />
-          <button
-            type="button"
-            data-testid="sign-out"
-            onClick={onSignOut}
-            title={`Signed in as ${auth.username ?? 'unknown'} — sign out`}
-            className="vp-press ml-1 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
-          >
-            <LogOut size={15} />
-          </button>
-          <ConnectionDot status={status} />
+            <ThemeToggle theme={theme} onChange={setTheme} />
+            <button
+              type="button"
+              data-testid="sign-out"
+              onClick={onSignOut}
+              title={t('app.signedInAs', { user: safeText(auth.username ?? '?') })}
+              className="vp-control"
+            >
+              <LogOut size={15} />
+            </button>
+            <ConnectionDot status={status} />
+          </div>
         </header>
 
         {/* safeText, because a server error message is a name-carrying channel
@@ -1109,17 +1185,21 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         )}
 
         {current && !narrow && bottomHeight === 0 && (
+          // What the strip collapses to, in the place the strip was, on the
+          // same height grid as everything else in the frame. It was a 24px
+          // bar with a lowercase English word in the middle of it — the one
+          // thing in the window that belonged to no scale at all.
           <button
             type="button"
             data-testid="bottom-show"
             onClick={() => setBottomOpen(true)}
             title={t('app.showTerminals')}
-            className="vp-press flex h-6 shrink-0 items-center justify-center gap-1 border-t border-hairline text-vp-sm text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink vp-blur"
+            className="vp-edge-in-bottom vp-press flex h-7 shrink-0 items-center justify-center gap-1.5 border-t border-hairline text-vp-sm text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink vp-blur"
           >
             <ChevronUp size={12} />
-            terminals
+            {t('bottom.label')}
             {bottomTerminals.length > 0 && (
-              <span className="tabular">({bottomTerminals.length})</span>
+              <span className="tabular text-ink-3">{bottomTerminals.length}</span>
             )}
           </button>
         )}
@@ -1166,19 +1246,15 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           project={currentProject}
           sessions={state.sessions}
           socket={socket}
-          tab={rightTab}
-          onTab={(next) => {
-            setRightTab(next)
+          layout={paneLayout}
+          onLayout={setPaneLayout}
+          onRefocus={() => {
             if (current) focusTerminal(current.id)
           }}
           width={rightWidth}
           onWidthChange={setRightSize}
           onCollapse={() => setRightOpen(false)}
           onOpenTokens={() => setTokensOpen(true)}
-          split={rightSplit}
-          onSplitChange={setRightSplit}
-          splitRatio={splitRatio}
-          onSplitRatioChange={setSplitRatio}
         />
       )}
 
@@ -1196,13 +1272,18 @@ function ConnectionDot({ status }: { status: SocketStatus }) {
       : status === 'connecting'
         ? 'var(--vp-state-waiting)'
         : 'var(--vp-state-dead)'
+  // Shape as well as hue (red line 4): open is a filled dot, connecting is a
+  // ring being closed, closed is a hollow one. Three colours a millimetre
+  // across is not something anybody reads in a dark room.
   return (
     <span
       data-testid="connection"
       data-status={status}
-      title={`Connection: ${status}`}
-      className="ml-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full"
-      style={{ background: colour }}
+      title={t('app.connection', { status: t(`conn.${status}`) })}
+      className={`ml-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full ${
+        status === 'connecting' ? 'vp-breathe' : ''
+      }`}
+      style={status === 'open' ? { background: colour } : { border: `1.5px solid ${colour}` }}
     />
   )
 }
@@ -1221,8 +1302,8 @@ function ThemeToggle({
       type="button"
       data-testid="theme-toggle"
       onClick={() => onChange(next[theme])}
-      title={`Theme: ${theme}`}
-      className="vp-press ml-1 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+      title={t('app.themeIs', { mode: t(`theme.${theme}`) })}
+      className="vp-control"
     >
       <Icon size={15} />
     </button>

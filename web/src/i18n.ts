@@ -105,6 +105,19 @@ const DICT = {
   'app.settings': { zh: '设置', en: 'Settings' },
   'app.signOut': { zh: '退出登录', en: 'Sign out' },
   'app.theme': { zh: '切换主题', en: 'Switch theme' },
+  // The header's four controls all said their piece in English on a Chinese
+  // page: `Theme: dark`, `Signed in as ... — sign out`, `Connection: open`.
+  // None of them tripped the untranslated check, because all three were
+  // template literals and it looks for quoted attributes and lines of prose.
+  'app.themeIs': { zh: '主题：{mode} —— 点一下换下一个', en: 'Theme: {mode} — click for the next one' },
+  'theme.system': { zh: '跟随系统', en: 'System' },
+  'theme.light': { zh: '浅色', en: 'Light' },
+  'theme.dark': { zh: '深色', en: 'Dark' },
+  'app.signedInAs': { zh: '当前登录 {user} —— 点一下退出', en: 'Signed in as {user} — click to sign out' },
+  'app.connection': { zh: '连接：{status}', en: 'Connection: {status}' },
+  'conn.open': { zh: '已连接', en: 'open' },
+  'conn.connecting': { zh: '连接中', en: 'connecting' },
+  'conn.closed': { zh: '已断开', en: 'closed' },
   'app.gridSize': { zh: '所有观看端看到的网格', en: 'The grid every viewer of this session is seeing' },
   'app.restart': { zh: '重启', en: 'restart' },
   'app.hidePanel': { zh: '收起面板', en: 'Hide panel' },
@@ -196,6 +209,20 @@ const DICT = {
   'panel.tokens': { zh: '用量', en: 'Tokens' },
   'panel.splitOn': { zh: '笔记和待办一起显示', en: 'Show notes and todo together' },
   'panel.splitOff': { zh: '一次显示一个', en: 'Show one at a time' },
+  'panel.tablist': { zh: '侧栏面板', en: 'Side panel sections' },
+
+  // The pane layout. Every one of these is also reachable by dragging a tab;
+  // they are here because dragging is a mouse gesture and the panel has to be
+  // rearrangeable without one.
+  'pane.menu': { zh: '这一格的布局', en: 'Pane layout' },
+  'pane.moveUp': { zh: '移到上一格', en: 'Move to the pane above' },
+  'pane.moveDown': { zh: '移到下一格', en: 'Move to the pane below' },
+  'pane.mergeUp': { zh: '并入上一格', en: 'Merge into the pane above' },
+  'pane.mergeDown': { zh: '并入下一格', en: 'Merge into the pane below' },
+  'pane.reset': { zh: '恢复默认布局', en: 'Restore the default layout' },
+  'pane.dropBefore': { zh: '放到这一格上面', en: 'New pane above' },
+  'pane.dropJoin': { zh: '和这一格并排', en: 'Add to these tabs' },
+  'pane.dropAfter': { zh: '放到这一格下面', en: 'New pane below' },
 
   'files.refresh': { zh: '刷新', en: 'Refresh' },
   'files.download': { zh: '下载', en: 'Download' },
@@ -309,6 +336,8 @@ const DICT = {
   'bottom.close': { zh: '关闭终端', en: 'Close terminal' },
   'bottom.hide': { zh: '收起终端', en: 'Hide terminals' },
   'bottom.new': { zh: '新建终端', en: 'New terminal' },
+  'bottom.newIn': { zh: '在 {dir} 里新建终端', en: 'New terminal in {dir}' },
+  'bottom.label': { zh: '终端', en: 'Terminals' },
   'bottom.empty': { zh: '这里还没有终端', en: 'No terminals here yet' },
   'bottom.resize': { zh: '拖动调整高度', en: 'Drag to resize' },
   'panel.resize': { zh: '拖动调整宽度', en: 'Drag to resize' },

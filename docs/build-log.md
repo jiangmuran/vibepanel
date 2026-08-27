@@ -13295,3 +13295,323 @@ away from them. The assertion is now a number rather than a flag.
   `### ` lines, and a conflict marker is not a `### ` line. That gap is now
   `TestNoConflictMarkersAreCommitted`, which walks the tree rather than one file
   — the marker had already survived two merges by the time anybody looked.
+## The chrome around the terminal, as one object
+
+The report was three symptoms and one disease: *"右边 tab 的切换 没有动画 到右边两
+个的时候会非常僵硬的多一个按钮"* and *"底下每一个控件都像是拼起来的"*. Switching
+tabs was an instant swap; reaching the notes tab grew the header a button; and
+the terminal strip's tabs, its add button, its collapse control and its resize
+handle looked like four decisions taken on four days. They were.
+
+### What was actually inconsistent
+
+The class list
+
+```
+vp-press rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink
+```
+
+was written out by hand in twenty places, and had already drifted three ways —
+`p-0.5`, `p-1`, `p-1.5`, which is 20, 24 and 27 pixels tall — with several of
+those sitting in the same row as each other. Nothing is wrong with any one of
+them and no two of them are the same object. That is the whole of "拼起来的": the
+parts arrived separately and it shows.
+
+Three strip heights (44, 40, 32, 24), three resize affordances (an invisible
+8px strip, a 6px one that turned entirely accent-coloured on hover, and a 2px
+one that did the same), and two ideas of a corner.
+
+So there is now one definition of each, in `styles.css` where there is one of
+it: `.vp-control`, `.vp-tab`, `.vp-chrome`, `.vp-divider`, `.vp-grip`,
+`.vp-segmented`. `--vp-control-h` is 28, `--vp-chrome-h` is 40, and
+`--vp-radius-control` is 8 — 8 rather than `rounded-md`'s 6, because a control
+sits inside a 12px track with 2px of padding and 12 − 2 is 8. Concentric radii
+are the difference between a pill in a groove and two rounded rectangles that
+happen to overlap.
+
+The height is a `height` and not padding, deliberately. Padding makes a
+control's size a consequence of whichever icon happens to be inside it, which is
+exactly how a 16px icon and a 13px icon became two different buttons in the same
+strip. The 44px coarse-pointer floor is a `min-height`, so a finger still gets
+its 44.
+
+### Motion, and what each movement means
+
+- **Lateral.** Switching tabs is a move between siblings, so a marker slides
+  from the old tab to the new one and the incoming body enters from the side the
+  strip moved towards. Five destinations swapping their backgrounds on the same
+  frame give the eye nothing to follow — it has to find the selection again from
+  scratch, which is the complaint.
+- **Reveal.** The side panel and the terminal strip arrive from the edge they
+  live on, so when one closes the eye already knows where it went.
+
+Neither carries anything. The global `prefers-reduced-motion` block collapses
+both to nothing, and under it the selected tab is still the darker one, still
+the only one named in words, and still the one reporting `aria-selected`.
+
+Two details cost a debugging session each and are worth writing down.
+
+**The marker is measured in a plain `useEffect`, not `useLayoutEffect`.** A
+layout effect moves the marker in the same commit that selects the new tab, and
+a property that changes without an intervening paint does not transition — the
+marker teleports, which is the thing the mechanism exists to stop. The one frame
+where the marker is still under the old tab is what makes the slide readable.
+
+**The swap direction is state, not a computed value.** `data-dir` changing on a
+live element restarts its animation, so with the direction recomputed each
+render, every unrelated re-render after a backwards switch replayed the slide — a
+socket message, a note saving. And the keyframes use `backwards`, not `both`:
+`both` leaves the final transform applied forever, and an element with a
+transform is a containing block for `position: fixed`, which is how the file
+preview stops covering the window and starts covering the 280px panel instead.
+`FilePreview` already had a comment about that hazard from the other direction.
+
+### Controls that appeared and disappeared
+
+`web/src/components/chrome.ts` now holds the decisions, and the rule it exists
+for is narrow: **presentation may change with size; the set of controls may
+not.** A control present at one size and absent at another is a layout that
+rearranges itself while somebody is aiming at it.
+
+Two of them were doing that:
+
+- **The split toggle** was rendered on the notes and todo tabs and nowhere
+  else, so arriving at either grew the header a button and slid the collapse
+  control 28 pixels left — under a pointer already travelling towards where it
+  used to be. It is on all five tabs now, because `splitTarget()` gives it a
+  meaning on all five: it does what its label has always said, "show notes and
+  todo together", and going there from the files tab is the sentence rather than
+  a surprise.
+- **`right-show`** existed only while the side panel was hidden. It is a toggle
+  now, always in the header, reporting `aria-pressed`. That one change needed
+  `render-check` edited in two places: it guarded on the *button's* visibility to
+  decide whether the panel was closed, which was true of the old control and is
+  a way to close the panel with the new one.
+
+The tab label is the third case and the interesting one, because a label is not
+a control and is allowed to depend on width. Below 250px the selected tab's name
+does not fit — the track has under 170 pixels to divide five ways — so it folds
+shut on a `max-width` transition rather than blinking out. Same fact, delivered
+as a movement.
+
+`chrome.test.ts` sweeps every width from 200 to 640 and every tab and asserts
+the control set is one value. Ten mutations, all red: the split control made
+conditional again, a second label threshold, arrows that stop instead of
+wrapping, the swap direction pinned to one side, the resize keys reversed, the
+main terminal's 120px floor removed, the strip's collapse control hidden while
+empty, the split control made inert on three tabs, the ratio clamp removed, and
+the focus order reversed.
+
+### What else came out of it
+
+- **The terminal strip was unreachable from the keyboard.** Its tabs were
+  `<div onClick>` with no role and no `tabIndex`: tab past the terminal and
+  there was nothing there at all — no way to choose a tab, rename one or close
+  one. They carry `role="button"` and a tab stop now. Not a real `<button>`,
+  because renaming replaces the label with an `<input>` and interactive content
+  inside a button is not something the parser will build: it closes the button
+  first and the tab stops being one.
+- **Both dividers resize from the keyboard**, as `role="separator"` with arrow
+  keys and a four-times step on shift. They were mouse-only.
+- **One focus ring, and a visible one.** Every control had the browser's
+  default, which on the dark theme is very nearly invisible. `:where(...)` holds
+  the specificity at zero so a component that needs its own treatment still wins
+  without `!important`. The grip keeps the ring *and* tints its pill: the focus
+  scan reads computed style off the element itself, and a tab stop that says
+  "focused" only through a pseudo-element is one that check correctly calls
+  invisible.
+- **Four header strings were English on a Chinese page** — `Theme: dark`,
+  `Signed in as … — sign out`, `Connection: open`, and a bare lowercase
+  `restart`. None of them tripped `i18n.untranslated.test.ts`, because all of
+  them were template literals and it looks for quoted attributes and lines of
+  prose. The restart button now uses the same two strings the sidebar's restart
+  control has used all along.
+- **The new-terminal tooltip interpolated a raw `cwd`.** Untranslated *and*
+  unsanitised: a directory name is arbitrary bytes, and one carrying U+202E
+  reverses the tooltip around it. Through `safeText` and the dictionary now.
+- **The connection dot was colour alone** (red line 4). Filled for open, a ring
+  for the rest, and the ring breathes while connecting.
+
+## Tabs that become panes, in the browser's layer
+
+The follow-up to the chrome work: *"我可以自由的拖拽 tab 组成 pane（不是在 tmux 层，
+在你的层）也可以拖回去或者快速复原 … 这个是保存在 client 层面的 我换了显示器或者设备
+或者多个设备访问 或者手机 不应当自动同步"*, and, before all of it, "能够在美观优雅的
+同时信息满一点".
+
+The side panel showed one tab at a time. It shows a vertical stack of panes now,
+each with its own tab strip, each holding one or more of the five tabs; a tab is
+dragged from one strip into another, or onto the top or bottom third of a pane
+to become a pane of its own. Density comes from seeing three of them at once
+rather than from packing any one of them tighter.
+
+`web/src/components/panes.ts` is the whole model and `panes.test.ts` is 57 tests
+over it, with one invariant asserted after every operation.
+
+### The invariant is the design
+
+**Every tab lives in exactly one pane, and every tab lives somewhere.** The
+union of the panes is always the five tabs — no more, no fewer.
+
+Nearly everything else falls out of that. A tab cannot be dragged into oblivion.
+A stored layout that has lost one cannot hide it, because the validator puts it
+back. "Which pane holds the file tree" always has an answer. And the question
+that would otherwise need a much larger model — what a pane's *state* is, and
+how two panes of the same tab differ — does not arise: a tab is in one place, so
+each pane has its own scroll position, its own directory and its own filter by
+being a different tab rather than a second copy of one.
+
+The cost is stated rather than hidden: **there is no way to have two file
+trees.** That is a real limit, and it is the price of a model small enough to
+verify.
+
+Sizes are shares of the column that sum to one. Dragging a divider moves that
+one boundary and redistributes only between the pair on either side of it;
+renormalising the whole set instead makes one drag shuffle panes three rows
+away, which is a mutation and a test.
+
+### Where it is stored, and why it is keyed the way it is
+
+`localStorage`, under `vibepanel.panes.<width band>x<height band>`. Nothing about
+a layout reaches the server, so two devices signed into the same panel keep
+their own arrangements. The bands are coarse — a laptop stays a laptop while its
+window is nudged, and moving the window to a 4K display crosses one — because
+exact pixels as a key make every layout single-use. Height as well as width:
+panes stack vertically, so height is the dimension this feature spends.
+
+The brief for this work said the panel width and the split ratio were already
+stored per viewport band and to follow that precedent. **They were not.** Both
+were plain unbucketed keys and the split ratio was not persisted at all. The
+bucketing starts here.
+
+A stored layout is not a promise about the screen it comes back on, so `fitTo`
+merges panes from the bottom until the rest have room — from the bottom, because
+the top of the column is where the panel opens. Its one subtlety is that
+`available <= 0` means *nothing has been laid out yet*, not *no room*: treating
+the frame before the first paint as a short window collapses everybody's layout
+on load.
+
+### A stored layout is data
+
+It comes back from a key a person can edit, that a build from six months ago can
+have written, and that a different build can have written under the same name.
+`parseLayout` is total — every path returns a usable layout and none of them
+throws — and each repair is a real failure mode: not an object, an unknown
+version, a tab name this build does not have, the same tab in two panes, an
+empty pane, an `active` the pane does not hold, more panes than there are tabs,
+a missing tab, sizes that are not shares of anything.
+
+The missing-tab repair is the one that matters most and shows least. A tab in no
+pane has no strip anywhere, so the file tree is simply not in the panel, and
+nothing says why.
+
+### Drag, and the two things that made it wrong
+
+Pointer Events, like the sidebar's reorder: the HTML5 drag API does not fire on
+touch at all. A five-pixel threshold, so a press is still a press. Escape
+cancels from anywhere — a drag you can only leave by finding a neutral place to
+release is a drag people abandon by dropping the tab somewhere they did not want
+it. Every pane draws all three of its landing places for the whole gesture and
+the one under the pointer fills; a target that lights up only where you already
+are is a guessing game, because the way to find out where a tab would have gone
+is to put it there and look.
+
+Both defects in this feature were in the wiring, and both were found by driving
+it rather than by reading it.
+
+**The tab strip was inside the "new pane above" band.** The bands were measured
+over the whole pane, and a pane's strip is at the top of it — so a fourteen-pixel
+sideways wiggle on a tab, which is a clumsy click, split the panel in two. They
+are measured against the pane's *body* now, and an offset at or above zero is
+the strip, which reads as "join these tabs".
+
+**The click a released drag still fires re-selected the tab that had just
+moved.** It runs after the drop, with the layout as it was before it, and put
+the tab straight back. It is swallowed once, and the flag is cleared on the next
+press rather than only on use — a drag released over something that is not a tab
+produces no click to eat it, and a flag left standing swallows the next real one.
+
+### Without a mouse
+
+Dragging is a mouse gesture, so every move is also in a per-pane menu: move up,
+move down, merge up, merge down, restore. Alt with an arrow does the same from a
+focused tab. An operation that would change nothing is offered and refused
+rather than hidden — a menu whose items come and go is the strip-that-grows-a-
+button complaint, one layer in.
+
+On a phone the feature is **absent**, not emulated: the side panel is not
+rendered at all below the narrow breakpoint, and never was.
+
+### A browser check that needs nothing
+
+`make panes-check`, about twenty seconds, no Go binary and no tmux. The panel is
+rendered on its own through `panes-harness.html`, which is not one of the build's
+inputs, so it ships nowhere. That is possible here and not for the other
+harnesses because the layout engine is pure and the panel is the only thing
+under test.
+
+It exists because the reducer being right is not the same as the panel being
+right, and both defects above were in the gap. One of its assertions is worth
+describing: "the marker is mid-flight a frame later" runs on a *narrow* panel,
+where the tabs are icons and no label folds open. On a labelled strip the tab
+under the marker grows over 260ms and the marker follows it, so the marker
+appears to travel with no transition of its own — a check that passes for a
+reason other than the one it names, which is the failure this project keeps
+finding in its own checks.
+
+### The mutations
+
+Sixteen against the reducer, all red: a tab in two panes, a layout that loses
+one, a pane showing a tab it does not hold, an emptied pane kept, both halves of
+the index correction after the source pane vanishes, a pane left pointing at the
+tab that left, an unmeasured panel treated as one with no room, a divider that
+renormalises everything, a sub-floor pane kept instead of the set equalised, a
+key that ignores height, a key of exact pixels, a merge that loses the room, a
+pair reported as "together" while hidden behind other tabs, a drop zone with no
+pane index reading as pane zero, and the tab strip back inside the wrong band.
+
+Two are worth singling out, because the first version of the test did not catch
+them:
+
+- **The insertion-point correction needed four panes.** With three, the insertion
+  index is clamped to the end of the list anyway, so the wrong answer and the
+  right one agree.
+- **`dropTargetFrom(kind, null)` returned pane zero.** `Number(null)` is 0, and
+  so is `Number('')`, so a missing attribute arrived as a confident instruction
+  to drop into the first pane. Found by the test, not by reading the code.
+
+Ten more against the panel itself, nine red: the split control made conditional
+again, Escape no longer cancelling a drag, only the near pane drawing its
+landing places, the drag's click not swallowed, `fitTo` removed, the swap
+direction pinned to one side, Alt-and-arrow removed, the restore item removed,
+and the marker's transition removed.
+
+The survivor was **`useLayoutEffect` instead of `useEffect` for the marker
+measurement**, and it survived because the comment above it was wrong. It
+claimed a layout effect would move the marker in the same commit that selected
+the new tab, so the property would change with no intervening paint and would
+not transition. Measured both ways: they animate identically, because the
+marker's previous position was painted several frames ago and that is what the
+transition starts from. The comment says so now — a comment nobody can reproduce
+is worse than none.
+
+### Left undone
+
+- **`render-check` does not drive any of this.** It keeps working: `panel-tab-*`,
+  `panel-split`, `panel-collapse`, `panel-header` and the width persistence are
+  all where it left them, and `data-split` still means what it meant. But the
+  panes are covered only by `panes-check`, which runs against the panel in
+  isolation rather than against the real product. The testids are there for it:
+  `pane-{i}`, `pane-header-{i}`, `pane-menu-{i}`, `pane-menu-open-{i}`,
+  `pane-resize-{i}`, `pane-drops-{i}`, and `data-panes` on the panel with
+  `data-pane-tabs` on each pane.
+- **Panes stack vertically only.** Side by side in a 280-pixel column is not a
+  layout, and the panel's width is what the terminal is competing with.
+- **Reordering tabs within a strip is not a gesture.** Dragging inside a strip
+  joins rather than reorders, which is the safe reading of an ambiguous drag and
+  not the complete one.
+- **The pane body's scroll container is `overflow-x: clip`**, so the 200ms swap
+  does not grow a horizontal scrollbar for the length of the animation. If any
+  panel's content is genuinely wider than the column, `render-check`'s
+  unreachable-content scan will now report it where the coerced `overflow-x:
+  auto` used to hide it — correct, and a finding nobody has seen either way.
