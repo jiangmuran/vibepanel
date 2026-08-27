@@ -183,8 +183,10 @@ func hookAgent(w http.ResponseWriter, r *http.Request) (string, bool) {
 		return "claude", true
 	case "codex":
 		return "codex", true
+	case "opencode":
+		return "opencode", true
 	default:
-		writeErr(w, http.StatusBadRequest, "unknown agent "+agent+"; want claude or codex")
+		writeErr(w, http.StatusBadRequest, "unknown agent "+agent+"; want claude, codex or opencode")
 		return "", false
 	}
 }
@@ -202,10 +204,18 @@ func (s *Server) handleHooksInstall(w http.ResponseWriter, r *http.Request) {
 	// The user's own configuration file, either way. It is backed up first,
 	// merged rather than replaced, and what the panel wrote stays recognisable
 	// so that removing it later cannot take anybody else's hook with it.
+	// opencode is the exception and the easy one: it auto-discovers every file
+	// in its plugin directory, so installing writes a file that did not exist
+	// rather than editing a document full of somebody's own settings.
 	var st hooks.Status
-	if agent == "codex" {
+	switch agent {
+	case "codex":
 		st, err = hooks.InstallCodex(script)
-	} else {
+	case "opencode":
+		if err = hooks.InstallOpencode(); err == nil {
+			st, err = hooks.Inspect(script)
+		}
+	default:
 		st, err = hooks.InstallClaude(script)
 	}
 	if err != nil {
@@ -234,9 +244,14 @@ func (s *Server) handleHooksUninstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var st hooks.Status
-	if agent == "codex" {
+	switch agent {
+	case "codex":
 		st, err = hooks.UninstallCodex(script)
-	} else {
+	case "opencode":
+		if err = hooks.UninstallOpencode(); err == nil {
+			st, err = hooks.Inspect(script)
+		}
+	default:
 		st, err = hooks.UninstallClaude(script)
 	}
 	if err != nil {
@@ -333,8 +348,12 @@ func (s *Server) handleDeleteToken(w http.ResponseWriter, r *http.Request) {
 // changed on their machine. Recording ~/.claude/settings.json for an edit to
 // ~/.codex/config.toml sends them to the wrong file.
 func hookTarget(agent string, st hooks.Status) string {
-	if agent == "codex" {
+	switch agent {
+	case "codex":
 		return st.CodexPath
+	case "opencode":
+		return st.OpencodePath
+	default:
+		return st.SettingsPath
 	}
-	return st.SettingsPath
 }

@@ -47,6 +47,16 @@ type Status struct {
 	// section for exactly that -- and one flag would make a page that can only
 	// say "hooks are installed" about a machine where half of them are.
 	CodexInstalled bool `json:"codexInstalled"`
+
+	// OpencodePath is the plugin file, and OpencodeInstalled says whether the
+	// one in place is *this build's*.
+	//
+	// Byte equality, not "a file exists": an older reporter left by an older
+	// build is installed and wrong, and a page that says installed about it is
+	// the failure this project keeps finding -- reading a configuration file
+	// rather than whether anything ever arrived.
+	OpencodePath      string `json:"opencodePath"`
+	OpencodeInstalled bool   `json:"opencodeInstalled"`
 }
 
 // events maps a hook event to the state it reports.
@@ -106,6 +116,10 @@ func Inspect(scriptPath string) (Status, error) {
 	// twenty times: one call cannot tell a sort from a lucky shuffle.
 	sort.Strings(st.Events)
 	st.Installed = len(st.Events) > 0
+	if p, perr := OpencodePluginPath(); perr == nil {
+		st.OpencodePath = p
+	}
+	st.OpencodeInstalled = OpencodeInstalled()
 	return st, nil
 }
 

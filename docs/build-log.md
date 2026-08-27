@@ -12442,3 +12442,55 @@ mount, which is what "switching took N ms" means.
 build. `internal/webui/dist` is tracked and embedded, so `go build` from a fresh
 clone was shipping an older frontend than the repository's own source. Rebuilt
 and committed.
+
+## opencode, and the installer that has to edit nothing
+
+The request named three agents — "自动注入 cc/cx/**opencode** 的 hook" — and two were
+built. The third was never written down anywhere, which is how it survived a
+context compaction and a completed checklist.
+
+It turned out to be the easiest of the three, for a reason worth measuring
+rather than assuming. opencode **auto-discovers** every `*.js` and `*.ts` in
+`~/.config/opencode/plugin/`: no config entry, no edit to a document somebody
+else owns. Confirmed on this machine by dropping a file there and reading
+`opencode debug config`, which reported it as
+`plugin_origins: [{ scope: "global" }]`. So installing writes a file that did
+not exist and uninstalling deletes it — against Claude Code's JSON merge and
+Codex's line inserted above the first TOML table.
+
+The plugin maps opencode's hooks onto the same three states: `chat.message` and
+`tool.execute.before` are *working*, `permission.ask` is *waiting* (it is the
+one event that means a person is needed), and `session.idle` is *done*. Every
+other event is ignored rather than mapped to something plausible — a wrong
+state is worse than a guessed one. Without the three environment variables it
+returns **no hooks at all**, so an opencode started from an ordinary terminal is
+not running a disabled reporter, it is running none.
+
+Two guards, each seen to fail when removed:
+
+- **Byte equality, not "a file exists".** A reporter left by an older build is
+  installed and wrong, and a page that says "installed" about it is the failure
+  this project keeps finding — reading a configuration file rather than whether
+  anything ever arrived.
+- **No backup on write.** The other two installers back a file up before editing
+  it. Doing that here leaves `vibepanel.js.bak` in a directory where opencode
+  loads *every* `.js`, so being careful would install a second copy of the
+  reporter and report every state twice.
+
+## The product stopped explaining itself
+
+The owner, about a line under the token panel: *"把他妈类似这种描述从产品里删掉
+这些话是说给我听的 没必要写进产品"*.
+
+He is right, and it was a pattern rather than one string. Eleven of the longest
+entries in the dictionary were arguments: why a token does not expire and what
+it does not affect, why the panel cannot tell finished from waiting without a
+hook, what tmux does with its config file at start-server and why the panel
+never kills its server, what `KillMode=process` means for the sessions during an
+update. Every one of those is true, is the best writing about that feature, and
+belongs in the build log and the commit message — which is where it already is.
+On screen it is a paragraph between somebody and the button they came for.
+
+They now say the thing and stop. "Counted from the agents' own records,
+including runs this panel did not start." "Downloads, verifies and replaces the
+binary, then restarts the panel. Your sessions are unaffected."

@@ -244,8 +244,17 @@
 没有记进任何清单的消息——一份十点功能列表，当时被当成「现状确认」读过去了，而它其实是
 需求。这就是这份文件存在的理由：**没有写进来的东西，压缩一次就没了。**
 
-- [ ] **U1 opencode 的 hook 自动注入。** 原话是「自动注入 cc/cx/**opencode** 的 hook 实时获取
-      状态」。`internal/hooks` 只有 claude 和 codex 两条路，opencode 一行都没有。
+- [x] **U1 opencode 的 hook 自动注入** —— 三个 agent 里最干净的一个：opencode
+      **自动发现** `~/.config/opencode/plugin/` 下的每个 `*.js`/`*.ts`，不需要改任何配置文件。
+      这是实测出来的，不是猜的——往那个目录丢一个文件，`opencode debug config` 会把它报成
+      `plugin_origins: [{ scope: "global" }]`。所以安装就是写一个本来不存在的文件，卸载就是删掉它，
+      而不像 claude 要合并 JSON、codex 要往 TOML 第一个 table 之前插一行。
+      插件映射：`chat.message` / `tool.execute.before` → working，`permission.ask` → waiting，
+      `session.idle` → done。没有那三个环境变量时**返回空 hooks**，所以从普通终端起的 opencode
+      跑的不是「我们的东西不生效」，而是根本没有我们的东西。
+      两条守卫都挪掉验证过会红：**按字节比对**（旧版本留下的插件是「装了但是错的」，
+      而「文件存在」正是这个项目一再发现会骗人的检查）；以及**安装时不留备份**——那个目录里
+      opencode 会加载每一个 `.js`，`vibepanel.js.bak` 等于装了第二份、每个状态报两次。
 - [ ] **U2 GitHub 预览。** 原话是「文件和 **github 预览**」。文件预览做了（文本/图片/PDF），
       GitHub 那半没有。
 - [ ] **U3 内置 VNC。** 一行都没有。

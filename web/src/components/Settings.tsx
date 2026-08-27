@@ -495,6 +495,19 @@ function HooksSection() {
             onInstall={() => void act(() => api.installHooks('codex'))}
             onRemove={() => void act(() => api.removeHooks('codex'))}
           />
+          {/* opencode is the one that needs no edit to anybody's config: it
+              auto-discovers every file in its plugin directory, so installing
+              writes a file that did not exist and removing deletes it. */}
+          <AgentHooks
+            label={t('set.opencode')}
+            value={status.opencodeInstalled ? t('set.installedPlugin') : t('set.notInstalled')}
+            file={status.opencodePath}
+            installed={status.opencodeInstalled}
+            busy={busy}
+            testid="opencode-hooks"
+            onInstall={() => void act(() => api.installHooks('opencode'))}
+            onRemove={() => void act(() => api.removeHooks('opencode'))}
+          />
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button

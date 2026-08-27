@@ -111,8 +111,8 @@ const DICT = {
   'app.showPanel': { zh: '展开面板', en: 'Show panel' },
 
   'set.tmuxConfigStale': {
-    zh: '正在跑的 tmux server 用的是旧配置。tmux 只在启动时读一次配置文件，而面板从不杀自己的 server —— 所以升级之后，新配置在磁盘上、旧配置在内存里。今天不会坏任何东西，但配置里的改动没有生效。要应用它，代价是这个 socket 上的**全部会话**：',
-    en: 'The running tmux server started with an older config. tmux reads its config once, at start-server, and the panel never kills its server — so after an upgrade the new file is on disk and the old settings are in memory. Nothing is broken today, but changes in it are not in effect. Applying them costs every session on this socket:',
+    zh: '正在跑的 tmux server 用的是旧配置。要应用新配置，得结束这个 socket 上的全部会话：',
+    en: 'The running tmux server started with an older config. Applying the new one ends every session on this socket:',
   },
   'set.tmuxConfigUnknown': {
     zh: '正在跑的 tmux server 早于这项检查，问不出来。重启它之后才能知道。',
@@ -314,8 +314,8 @@ const DICT = {
 
   'tok.title': { zh: 'API 令牌', en: 'API tokens' },
   'tok.why': {
-    zh: '给 agent 或脚本用来管理这个面板。它不会过期，可以单独吊销 —— 改密码不影响它，吊销它也不影响密码。接口文档在 docs/api.md。',
-    en: 'For an agent or a script to drive this panel. They do not expire and are revoked one at a time — changing your password leaves them alone, and revoking one leaves your password alone. The API is documented in docs/api.md.',
+    zh: '给 agent 或脚本用。不会过期，可以单独吊销。',
+    en: 'For an agent or a script. They do not expire and are revoked one at a time.',
   },
   'tok.name': { zh: '给它起个名字', en: 'What is it for' },
   'tok.create': { zh: '新建令牌', en: 'New token' },
@@ -354,8 +354,8 @@ const DICT = {
   'upd.applying': { zh: '正在下载并校验…', en: 'Downloading and checking…' },
   'upd.confirmTitle': { zh: '更新到 {v}？', en: 'Update to {v}?' },
   'upd.confirmBody': {
-    zh: '面板会下载这个版本、用发布页上的 SHA256 校验、把当前二进制挪到 .old、然后请 systemd 重启。**你的会话不会跟着重启**——它们在 tmux 手里，而两份 unit 都写了 KillMode=process。',
-    en: 'The panel downloads this release, checks it against the SHA256 published with it, moves the running binary aside to .old, and asks systemd to restart. **Your sessions do not restart with it** — they belong to tmux, and both units set KillMode=process.',
+    zh: '下载、校验、替换二进制，然后重启面板。**会话不受影响。**',
+    en: 'Downloads, verifies and replaces the binary, then restarts the panel. **Your sessions are unaffected.**',
   },
   'upd.done': { zh: '已装上 {v}，正在重启面板…', en: 'Installed {v}; the panel is restarting…' },
   'upd.doneNoRestart': {
@@ -377,10 +377,12 @@ const DICT = {
   'set.signedIn': { zh: '当前登录', en: 'Signed in as' },
   'set.reporting': { zh: '状态上报', en: 'State reporting' },
   'set.reportingWhy': {
-    zh: '没有它，面板只能从输出推测会话在干什么 —— 分得出“在动”和“安静”，也收得到终端响铃，但分不出“已完成”和“等你处理”。装上之后，是 agent 自己说。',
-    en: 'Without this the panel infers what a session is doing from its output, which can tell working from quiet and sees the terminal bell, but cannot tell finished from waiting for you. With it, the agent says which.',
+    zh: '装上之后由 agent 自己上报状态，不再靠输出去猜。',
+    en: 'The agent reports its own state instead of the panel guessing from output.',
   },
   'set.claudeCode': { zh: 'Claude Code', en: 'Claude Code' },
+  'set.opencode': { zh: 'opencode', en: 'opencode' },
+  'set.installedPlugin': { zh: '已装插件', en: 'Plugin installed' },
   'set.codex': { zh: 'Codex', en: 'Codex' },
   'set.settingsFile': { zh: '配置文件', en: 'Settings file' },
   'set.notInstalled': { zh: '未安装', en: 'not installed' },
@@ -412,8 +414,8 @@ const DICT = {
 
   'term.takeControl': { zh: '接管', en: 'take control' },
   'term.takeControlWhy': {
-    zh: '另一个观看端拥有这个网格（{cols}×{rows}），你这边能放下 {mine}。你仍然可以打字。接管会让所有人重排，正在跑的 TUI 会有反应。',
-    en: 'Another viewer owns this grid ({cols}x{rows}); this window fits {mine}. You can still type. Taking over reflows it for everyone, which a running TUI will notice.',
+    zh: '另一个观看端拥有这个网格（{cols}×{rows}），你这边能放下 {mine}。接管会让所有人重排。',
+    en: 'Another viewer owns this grid ({cols}x{rows}); this window fits {mine}. Taking over reflows it for everyone.',
   },
 
   'notify.waitingTitle': { zh: '有 agent 在等你', en: 'An agent is waiting' },
@@ -506,8 +508,8 @@ const DICT = {
   // at all, because somebody believes it.
   'restore.title': { zh: '有会话没能活过这次重启', en: 'Sessions did not survive the restart' },
   'restore.body': {
-    zh: '{n} 个会话的 tmux 会话已经不在了 —— 重启会带走整个 tmux server。面板可以按原来的命令、原来的目录重建它们，并把重启前的回滚记录放回去。',
-    en: '{n} sessions have lost their tmux session — a restart takes the whole tmux server with it. The panel can rebuild them with the command and directory they had, and put the scrollback from before back on screen.',
+    zh: '{n} 个会话没能活过重启。可以按原来的命令和目录重建，并放回重启前的回滚记录。',
+    en: '{n} sessions did not survive the restart. They can be rebuilt with the command and directory they had, with the scrollback from before.',
   },
   'restore.warning': {
     zh: '进程本身回不来。agent 的上下文随进程一起没了，重跑命令启动的是一个全新的、什么都不记得的 agent。',
@@ -531,8 +533,8 @@ const DICT = {
   'restore.noScrollback': { zh: '没有存下回滚记录', en: 'no scrollback was archived' },
   'restore.onBoot': { zh: '以后开机自动恢复', en: 'Restore this one automatically next time' },
   'restore.onBootWhy': {
-    zh: '勾上之后，下次面板启动发现它不在了就直接重建，不再问你。默认不勾：一次开机同时拉起二十几个 agent 比现在这个问题更糟。',
-    en: 'Checked, the panel rebuilds it at startup without asking. Off by default: two dozen agents all starting at once on boot is a worse morning than a list of dead rows.',
+    zh: '下次启动直接重建，不再问。',
+    en: 'Rebuild it at startup without asking.',
   },
   'restore.go': { zh: '恢复选中的 {n} 个', en: 'Restore {n}' },
   'restore.working': { zh: '恢复中…', en: 'Restoring…' },
@@ -546,8 +548,8 @@ const DICT = {
   },
   'share.title': { zh: '只读分享链接', en: 'Read-only share links' },
   'share.why': {
-    zh: '一个可以放在另一块屏幕上的地址：机器负载、每个会话在花多少 CPU 和内存、谁在等你。它只能看这一个页面 —— 打不开终端，写不了任何东西，也看不到文件、笔记和设置。链接本身就是凭证，所以它谁拿到谁就能看，可以单独吊销。',
-    en: 'One address to leave open on a second screen: machine load, what each session is costing, who is waiting for you. It reaches that page and nothing else — no terminal, no writes, no files, notes or settings. The link is the credential, so anyone holding it can look, and each one is revoked on its own.',
+    zh: '放在另一块屏幕上的只读地址。只能看这一个页面，随时可以吊销。',
+    en: 'A read-only address for a second screen. It reaches that page and nothing else, and can be revoked.',
   },
   'share.name': { zh: '给它起个名字', en: 'What is it for' },
   'share.create': { zh: '新建链接', en: 'New link' },
@@ -555,8 +557,8 @@ const DICT = {
   'share.detailCounts': { zh: '只有数量和状态', en: 'Counts and states' },
   'share.detailNames': { zh: '加上名字', en: 'Names as well' },
   'share.detailWhy': {
-    zh: '会话名是 agent 自己写的，项目名是你起的，两个都可能带上客户或者仓库的名字。放在身后那块屏幕上的，默认不显示它们。路径和命令行则任何模式都不会发出去。',
-    en: 'A session title is written by the agent and a project name by you, and either can carry a customer or a repository. The default for a screen behind your desk leaves both out. Paths and command lines are never sent, in either mode.',
+    zh: '会话名和项目名可能带上客户或仓库名，默认不显示。路径和命令行永远不发出去。',
+    en: 'Titles and project names can carry a customer or a repository, so they are off by default. Paths and command lines are never sent.',
   },
   'share.expiry': { zh: '有效期', en: 'Expires' },
   'share.expiryNever': { zh: '永不过期', en: 'Never' },
@@ -620,8 +622,8 @@ const DICT = {
     en: 'States are still guessed. Sessions open before reporting was installed keep guessing until they reload — run /hooks in each, or restart the agent.',
   },
   'guessed.notInstalled': {
-    zh: '状态是从输出猜的，只有终端响铃能传到面板，而大多数 agent 不响铃 —— 所以“等你处理”会被漏掉。点这里打开状态上报。',
-    en: 'States are guessed from output, and only the terminal bell reaches the panel. The agent most people run here does not ring one, so "waiting for you" will be missed. Turn on state reporting.',
+    zh: '状态是猜的，“等你处理”可能被漏掉。点这里打开状态上报。',
+    en: 'States are being guessed, so "waiting for you" can be missed. Turn on state reporting.',
   },
   // Token spend. Prefixed `spend.` and not `tok.`: `tok.` is already
   // API credentials above, and two unrelated meanings of "token" sharing a
@@ -679,8 +681,8 @@ const DICT = {
   },
   'spend.scannedAgo': { zh: '{ago}前读的', en: 'read {ago} ago' },
   'spend.whose': {
-    zh: '这些数字是 agent 自己记的账，不是面板记的：不经过面板跑的 claude 也会算进来，而面板开的、没有记录文件的会话不会。',
-    en: "These are the agents' own numbers, not the panel's: a run this panel never started is counted, and a session it did start that wrote no transcript is not.",
+    zh: 'agent 自己记的账，包括不经过面板跑的。',
+    en: "Counted from the agents' own records, including runs this panel did not start.",
   },
   'spend.agentSessionNote': {
     zh: '这里的“会话”是 agent 自己的会话，不是面板里的会话 —— 两边没有可靠的对应关系。',

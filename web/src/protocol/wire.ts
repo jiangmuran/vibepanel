@@ -537,7 +537,7 @@ export interface SettingsInfo {
 /** Which agent an install request is about. The server accepts these two and
  *  refuses anything else; it is not a free-text field because it chooses a file
  *  in the user's home directory to edit. */
-export type HookAgent = 'claude' | 'codex'
+export type HookAgent = 'claude' | 'codex' | 'opencode'
 
 export interface HookStatus {
   settingsPath: string
@@ -557,6 +557,10 @@ export interface HookStatus {
    *  and fail separately, so one flag would describe a machine where half of
    *  them are wired as if it were all of them. */
   codexInstalled: boolean
+  /** The plugin file opencode auto-discovers. */
+  opencodePath: string
+  /** Whether the plugin in place is this build's, not merely that one exists. */
+  opencodeInstalled: boolean
 }
 
 /** A credential a program uses instead of the session cookie. */
