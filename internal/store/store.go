@@ -199,6 +199,45 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+
+	// v9: read-only share links, for a dashboard on a second screen.
+	//
+	// A separate table from api_tokens rather than a `scope` column on it, and
+	// that is the whole security design in one decision. A scope column is a
+	// flag a handler reads, which means every handler that forgets to read it
+	// is a hole, and the handler that forgets is the one added next year. Two
+	// tables means the question "can this credential reach the terminal" is
+	// answered by which table the lookup went to, and the lookup is written
+	// once, in the middleware for one route.
+	//
+	// Same storage as api_tokens otherwise: the hash, never the token, plus a
+	// prefix in the clear so a row can be named on the way to being revoked.
+	//
+	// expires_at is 0 for "never", not NULL. Every caller handles the
+	// never-expires case anyway, and a NULL that means the same thing as 0 is
+	// one more way to write the comparison wrong.
+	func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`CREATE TABLE IF NOT EXISTS share_links (
+			     id          TEXT PRIMARY KEY,
+			     token_hash  BLOB NOT NULL UNIQUE,
+			     prefix      TEXT NOT NULL,
+			     name        TEXT NOT NULL,
+			     -- 'counts' or 'names'; see store.ShareDetail.
+			     detail      TEXT NOT NULL DEFAULT 'counts',
+			     user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			     created_at  INTEGER NOT NULL,
+			     expires_at  INTEGER NOT NULL DEFAULT 0,
+			     last_used_at INTEGER NOT NULL DEFAULT 0
+			 )`,
+			`CREATE INDEX IF NOT EXISTS idx_share_links_user ON share_links(user_id)`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	},
 }
 
 // schemaVersion is the version this build writes.

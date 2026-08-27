@@ -256,6 +256,39 @@
   --text-vp-lg: 15px;
   --text-vp-lg--line-height: 1.4;
 
+  /* Three more steps, and they exist for exactly one thing: the read-only
+     dashboard at /share/<token>, which is read from across a room rather than
+     from arm's length.
+
+     The five above are a scale for a dense working interface and they top out
+     at 15px, which is the size of a caption on a monitor three metres away.
+     The alternative — an arbitrary text-[42px] in the dashboard — is the tenth
+     font size arriving by the exact route the scale test exists to close, so
+     these are here, named, where one decision applies everywhere.
+
+     Roughly 1.5x apart, which is far enough that the three read as different
+     ranks at a distance. Deliberately not used anywhere else: a heading in the
+     panel reaching for text-vp-2xl is a heading that has misunderstood which
+     product it is in.
+
+       xl   the dashboard's rows and its labels
+       2xl  the per-group tallies and the machine's figures
+       3xl  the headline counts and the connection state
+
+     Viewport-relative between two fixed bounds, unlike the five above, and
+     that is the difference between "legible at 1080p" and "legible at 1080p
+     and at 4K". A 4K panel at 100% reports 3840 CSS pixels, so a fixed 56px
+     headline is a third of the angular size it has on a 1920 screen at the
+     same distance — which is the size a wall display is chosen for. The lower
+     bound keeps a narrow window readable; the upper stops a very wide one
+     turning three numbers into a poster. */
+  --text-vp-xl: clamp(18px, 1.15vw, 30px);
+  --text-vp-xl--line-height: 1.35;
+  --text-vp-2xl: clamp(28px, 1.8vw, 48px);
+  --text-vp-2xl--line-height: 1.2;
+  --text-vp-3xl: clamp(44px, 3vw, 84px);
+  --text-vp-3xl--line-height: 1.1;
+
   --radius-vp: var(--vp-radius);
   --radius-vp-lg: var(--vp-radius-lg);
   --ease-vp: var(--vp-ease);

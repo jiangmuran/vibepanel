@@ -225,6 +225,100 @@ code. Claude's four events are merged into `~/.claude/settings.json`; Codex's on
 top-level key appended to the end of that file would belong to the last table in
 it and Codex would never read it.
 
+## Read-only share links
+
+A share link is a capability: a long random token in a URL that opens the
+dashboard at `/share/<token>` on a second screen — machine load, per-session CPU
+and memory, every session with its state, grouped by project — and reaches
+nothing else at all.
+
+### `GET /api/settings/shares`
+### `POST /api/settings/shares`
+### `DELETE /api/settings/shares/{shareID}`
+
+Making one needs the ordinary session; a share token cannot mint another, which
+is what stops one leaked link becoming a supply of them.
+
+```sh
+curl -sX POST https://panel.example:8443/api/settings/shares \
+  -b cookies.txt -H 'Content-Type: application/json' \
+  -d '{"name":"wall display","detail":"counts","expiresIn":604800}'
+# {"token":"Jq4…","id":"…","prefix":"Jq4x9m2v","detail":"counts","expiresAt":1735689600}
+```
+
+The response is the only time the token is readable — the database keeps a
+SHA-256 of it, exactly as it does for an API token — so the URL to paste is
+`https://<panel>/share/<token>` and there is no way to ask for it again.
+
+`detail` is `counts` (the default) or `names`; anything else is a `400`, because
+the value decides what the link discloses for as long as it exists and a default
+could only fall towards saying more or towards saying less. `expiresIn` is
+seconds from now, `0` for a link that does not expire, and at most a year.
+
+Creation and revocation are audited as `share.created` and `share.revoked`.
+Revocation takes effect on the link's next poll; there is nothing else to
+invalidate, because a share link has no session, no cookie and no socket.
+
+### `GET /api/share/{token}/dashboard`
+
+The entire surface a share token can reach. No credential beyond the token in
+the path, and no other route accepts that token at all: presenting it as a
+`Bearer` header or as the session cookie answers `401` everywhere, including on
+`/ws`. That is enforced by where the route is registered rather than by a flag a
+handler reads.
+
+```json
+{"at": 1735689600, "name": "wall display", "detail": "counts", "expiresAt": 0,
+ "usageReadable": true, "stale": false,
+ "machine": {"cpuReadable": true, "cpuPercent": 31.4, "cores": 16,
+             "load1": 2.1, "load5": 1.8, "load15": 1.4,
+             "memTotal": 33654304768, "memAvailable": 20401324032,
+             "swapTotal": 0, "swapFree": 0,
+             "diskTotal": 981472473088, "diskFree": 402653184000,
+             "uptime": 918273},
+ "counts": {"projects": 2, "sessions": 5, "waiting": 1, "working": 2,
+            "done": 2, "exited": 0, "crashed": 0},
+ "projects": [{"id": "3f9c1a…", "name": "", "waiting": 1, "working": 1,
+               "done": 0, "total": 2}],
+ "sessions": [{"id": "b7e20d…", "projectId": "3f9c1a…", "name": "",
+               "state": "waiting", "kind": "agent", "stateChangedAt": 1735689000,
+               "exited": false, "exitStatus": 0,
+               "measured": true, "cpuPercent": 24.1, "rss": 831258624, "procs": 7}]}
+```
+
+What it deliberately does **not** carry, in either `detail` mode: the project's
+path on disk, a session's `cwd`, the command line, the tmux session name, the
+hostname, the sampler's disk path, and the panel's own session and project ids.
+A path names a customer and a home directory; a command line carries whatever an
+agent was invoked with. Neither has a use on a screen behind somebody's desk.
+
+`id` and `projectId` are pseudonyms: an HMAC of the real id under the link's own
+stored hash. They are stable for the life of one link, so a list does not re-key
+itself on every poll, and different for every other link, so two dashboards on
+two walls cannot be joined into one picture of the panel.
+
+Under `detail: "counts"` the `name` fields are empty strings and the page
+numbers the groups and rows instead. Under `detail: "names"` they carry the
+session title and the project name — still no paths.
+
+`kind` is `agent`, `shell` or `other`, which is what makes a wall readable
+without quoting the command. `measured` is `false` when the sampler found no
+process tree for that row; `cpuPercent` there is not a reading of zero, and zero
+is a real reading. Scratch terminals opened under a session are left out
+entirely: they are session rows with a parent, and listing them reports two rows
+for one job.
+
+`at` is when the server took the reading, and the dashboard counts up from it.
+That is the field to use if you build your own display — a page that has
+silently frozen looks exactly like a quiet system, and the numbers themselves
+cannot tell you which you are looking at.
+
+Answers are `Cache-Control: no-store`. `401` means the link was revoked, has
+expired, or never existed — one answer for all three, and rejected attempts are
+audited as `share.rejected`, gated to one row per source per minute. `403` is
+the `--allow-from` allowlist, which applies here exactly as it does to the
+panel: a share link must not be a way around it.
+
 ## Authentication
 
 ### `POST /api/auth/setup`

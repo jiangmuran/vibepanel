@@ -50,6 +50,21 @@ var openRoutes = map[string]string{
 	"/api/auth/passkey/login/finish": "the other half of the same",
 }
 
+// `/api/share/{token}/dashboard` is deliberately NOT in the list above, and the
+// reason is worth a paragraph because it looks like an omission.
+//
+// A stranger holding a share link can reach it, so by the letter of the comment
+// on openRoutes it belongs there. But the walk below substitutes "anything" for
+// each path parameter, and "anything" is not a link — so the route answers 401
+// and is checked like everything else. Listing it would exempt from the walk the
+// one route in this panel that answers without a session, which is exactly the
+// route that most needs a test standing over it.
+//
+// What that check proves is narrow: without a valid capability, this is not a
+// way in. That a valid capability reaches the dashboard and nothing else is
+// share_test.go's job, and it presents the token as a cookie and as a Bearer
+// header against nine routes and the socket to prove it.
+
 // TestEverythingRequiresASession walks the router rather than listing paths.
 //
 // This panel hands out a writable terminal. There is no such thing as a

@@ -74,6 +74,24 @@ Each of these exists because the alternative broke something real.
    prefix by default, so `-t vp_ab` also matches `vp_abcd`. Use the helpers in
    `internal/tmux`, never hand-built target strings.
 
+8. **A read-only share token is narrowed by its route, never by a flag.**
+   `registerShareRoutes` mounts exactly one `GET` below `requireShareToken`,
+   and `share_links` is a table `currentUser` does not consult — which is what
+   makes a share token presented as a cookie or a `Bearer` header an unknown
+   string that every authenticated route already answers 401 to.
+
+   Two ways to undo that, and both look like ordinary edits. Adding a second
+   route under `/api/share/{token}` widens the capability by one line. Teaching
+   `currentUser` about `share_links` — to "reuse the auth path" — turns every
+   handler in the panel into one that has to check a `readOnly` flag, and the
+   handler that forgets is the one written next.
+
+   The redaction is the same shape: `internal/httpapi/share.go` restates the
+   fields it discloses rather than embedding `sysmon.Sample` or `store.Session`,
+   so a field added to either is *not* disclosed by default. Paths, `cwd`,
+   command lines, tmux names, the hostname and the panel's real ids are never
+   sent, in any mode.
+
 ## Conventions
 
 - **Comments explain why, and what breaks otherwise.** Not what the line does.
