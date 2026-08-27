@@ -6,6 +6,7 @@ import type {
   FileListing,
   HookAgent,
   HookStatus,
+  LaunchProfile,
   SettingsInfo,
   Note,
   PanelState,
@@ -335,15 +336,19 @@ export const api = {
   createSession: (
     projectId: string,
     command: string[],
-    opts: { title?: string; parentSessionId?: string } = {},
+    opts: { title?: string; parentSessionId?: string; launchProfileId?: string } = {},
   ) =>
     request<Session>('/api/sessions', {
       method: 'POST',
       body: JSON.stringify({
         projectId,
+        // Left empty by the picker: the server resolves the profile's argv, so
+        // that a session created with curl and a profile id gets exactly what
+        // the picker would have given it.
         command,
         title: opts.title ?? '',
         parentSessionId: opts.parentSessionId ?? '',
+        launchProfileId: opts.launchProfileId ?? '',
       }),
     }),
 
@@ -380,6 +385,16 @@ export const api = {
   system: () => request<SystemSample>('/api/system'),
 
   usage: () => request<UsageSample>('/api/usage'),
+
+  // Not under /api/settings, because the picker fetches this on every page
+  // load. See registerLaunchProfileRoutes.
+  launchProfiles: () => request<LaunchProfile[]>('/api/launch-profiles'),
+  createLaunchProfile: (p: Pick<LaunchProfile, 'name' | 'command' | 'env'>) =>
+    request<LaunchProfile>('/api/launch-profiles', { method: 'POST', body: JSON.stringify(p) }),
+  updateLaunchProfile: (id: string, p: Pick<LaunchProfile, 'name' | 'command' | 'env'>) =>
+    request<void>(`/api/launch-profiles/${id}`, { method: 'PATCH', body: JSON.stringify(p) }),
+  deleteLaunchProfile: (id: string) =>
+    request<void>(`/api/launch-profiles/${id}`, { method: 'DELETE' }),
 
   webhooks: () => request<Webhook[]>('/api/settings/webhooks'),
   saveWebhooks: (list: Webhook[]) =>

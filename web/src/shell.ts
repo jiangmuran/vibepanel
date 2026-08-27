@@ -59,3 +59,72 @@ export function shellQuote(path: string): string {
 
   return "'" + path.replace(/'/g, "'\\''") + "'"
 }
+
+/**
+ * Read a typed command line as an argv.
+ *
+ * Whitespace separates words; single and double quotes hold a word together;
+ * a backslash escapes the next character. That is the whole rule, and the
+ * things it deliberately does not do are the point:
+ *
+ *   - no `$VAR`, no `~`, no `*`. The argv is handed to tmux as separate words
+ *     and exec'd directly, not run through a shell -- measured against tmux
+ *     3.6, where `new-session ... /bin/echo 'a; touch x'` printed the semicolon
+ *     and created nothing. So expanding anything here would be this function
+ *     inventing a shell that is not there, and every disagreement between the
+ *     invention and a real one is a command that does something else.
+ *   - no operators. `&&`, `|` and `>` are ordinary characters in a word,
+ *     because there is nothing downstream that could act on them.
+ *
+ * The inverse of shellQuote closely enough to round-trip what people type, and
+ * joinArgv is what puts a stored argv back in the field.
+ */
+export function splitArgv(line: string): string[] {
+  const out: string[] = []
+  let word = ''
+  let started = false
+  let quote: '"' | "'" | null = null
+
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i]
+    if (c === '\\' && i + 1 < line.length && quote !== "'") {
+      word += line[++i]
+      started = true
+      continue
+    }
+    if (quote) {
+      if (c === quote) quote = null
+      else word += c
+      continue
+    }
+    if (c === '"' || c === "'") {
+      quote = c
+      // An empty pair of quotes is a real, empty argument, and losing it turns
+      // `foo "" bar` into a two-word command.
+      started = true
+      continue
+    }
+    if (/\s/.test(c)) {
+      if (started) out.push(word)
+      word = ''
+      started = false
+      continue
+    }
+    word += c
+    started = true
+  }
+  if (started) out.push(word)
+  return out
+}
+
+/**
+ * Render an argv the way it would be typed.
+ *
+ * The empty word is spelled out rather than left to shellQuote, which returns
+ * it unchanged -- correct for a path, which is never empty, and a word that
+ * vanishes here. `['a', '', 'b']` would come back as a two-word command, so an
+ * edit that only opened the field and saved it would change what runs.
+ */
+export function joinArgv(argv: string[]): string {
+  return argv.map((a) => (a === '' ? "''" : shellQuote(a))).join(' ')
+}

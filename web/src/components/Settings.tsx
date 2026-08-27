@@ -18,6 +18,7 @@ import { ShareLinks } from './ShareLinks'
 import { safeText } from './text'
 import { UpdateSection } from './UpdateSection'
 import { Webhooks } from './Webhooks'
+import { LaunchProfiles } from './LaunchProfiles'
 
 function bytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -201,6 +202,14 @@ export function Settings({ onClose }: { onClose: () => void }) {
 
         <Section title={t('wh.title')}>
           <Webhooks />
+        </Section>
+
+        {/* Below the notification destinations rather than beside the tokens,
+            because this one is not a credential you hand out — it is what a
+            session is started with, and the thing next to it should be the
+            other place the panel reaches out of itself. */}
+        <Section title={t('profile.title')}>
+          <LaunchProfiles />
         </Section>
         <UpdateBlock />
         {info && <StatusSection info={info} />}

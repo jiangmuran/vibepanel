@@ -275,16 +275,23 @@
 - [ ] **U4 HTML 预览。** 现在的预览把 HTML/SVG **当作文本**显示——那是故意的（SVG 是能跑脚本
       的文档，用 `<iframe>` 会在面板自己的源上执行它）。但「预览一个 html 页面」这件事没做，
       要做就得想清楚怎么隔离。
-- [ ] **U5 按启动参数 / apihost 的快速配置。** 原话是「可以针对不同启动参数 不同 apihost
-      快速自定义不同的配置」。现在只有「新建会话时给一个 argv」，没有具名 profile、没有
-      每个 profile 自己的环境变量和 API host。
+- [x] **U5 按启动参数 / apihost 的快速配置。** 具名启动配置：名字 + argv + 环境变量，
+      迁移 v13。**没有做 apiHost 字段**——哪个变量装 endpoint 是各家 agent 自己定的
+      （claude 是 `ANTHROPIC_BASE_URL`，codex 是 `OPENAI_BASE_URL`，opencode 一个都没有，
+      它按 provider 在自己的配置里选），面板去猜这个映射，猜错的那天就是「设了一个没人读的
+      变量」，而会话看起来是配好的。所以配置里装的是变量，内置目录里预填变量名。
+      密钥可以存：不存的话人就会去 argv 里写 `env KEY=... claude`，那才是最糟的——落进
+      `launch_command`（恢复对话框会打印在屏幕上）、落进 `ps -eo args`（同机器任何用户可读，
+      实测），还每次恢复都重跑一遍。存了之后 `secret` 的值**再也不会发回浏览器**、只走
+      tmux 的 `-e`、不进审计日志；但它在 SQLite 里是明文，设置页面用一行字说明白了。
+      顺序是安全边界：实测 tmux 3.6 两个 `-e` 同名取**最后一个**，所以面板自己的
+      `VIBEPANEL_*` 排在配置的后面，加上保存时拒绝该前缀，两道。
 - [x] **U6 webhook 通知（微信 / 安卓 / iOS）+ 群猫娘。** 一套机制，不是一串服务名：
       `{method,url,headers,body}` 加上 `{state}{session}{project}{url}{time}` 替换，就是 Bark、
       ntfy、Gotify、Server酱、PushPlus、Slack、Discord 和反代后面的一个 shell 脚本。
       **两种转义**，按占位符在哪里选：URL 里走百分号编码（`fix a&b` 不这么做会在 `&` 处
       断成另一个查询参数），body 里走 JSON 转义（agent 标题里全是引号）。触发的是**状态
-      转换**而不是状态，所以一个一直等着的会话不会每两秒发一条。
-- [ ] **U7 插件系统。** 原话是「正在设计的插件和 api 系统 可以让一个 harness 接入管理所有
+      转换**而不是状态，所以一个一直等着的会话不会每两秒发一条。- [ ] **U7 插件系统。** 原话是「正在设计的插件和 api 系统 可以让一个 harness 接入管理所有
       session」。**API 和 apidoc 已经有了**（`docs/api.md` + API 令牌），harness 接管所有
       session 这一半是通的；插件系统这一半没做。
 

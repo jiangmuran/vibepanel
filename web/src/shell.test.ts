@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { shellQuote } from './shell'
+import { joinArgv, shellQuote, splitArgv } from './shell'
 
 // eslint-disable-next-line no-control-regex
 const ANY_CONTROL = /[\u0000-\u001F\u007F]/
@@ -55,5 +55,63 @@ describe('shellQuote', () => {
       const quoted = shellQuote('/tmp/x' + String.fromCharCode(code) + 'y')
       expect(quoted).not.toMatch(ANY_CONTROL)
     }
+  })
+})
+
+describe('splitArgv', () => {
+  it('splits on whitespace', () => {
+    expect(splitArgv('claude --model opus')).toEqual(['claude', '--model', 'opus'])
+  })
+
+  it('holds a quoted word together', () => {
+    expect(splitArgv('claude -p "two words" x')).toEqual(['claude', '-p', 'two words', 'x'])
+    expect(splitArgv("claude -p 'two words'")).toEqual(['claude', '-p', 'two words'])
+  })
+
+  it('keeps an empty quoted argument, which is a real one', () => {
+    expect(splitArgv('foo "" bar')).toEqual(['foo', '', 'bar'])
+  })
+
+  it('collapses runs of whitespace and ignores the edges', () => {
+    expect(splitArgv('  a \t b  ')).toEqual(['a', 'b'])
+    expect(splitArgv('')).toEqual([])
+    expect(splitArgv('   ')).toEqual([])
+  })
+
+  it('takes a backslash as an escape outside single quotes', () => {
+    expect(splitArgv('a\\ b')).toEqual(['a b'])
+    expect(splitArgv("'a\\ b'")).toEqual(['a\\ b'])
+  })
+
+  // The argv is exec'd directly by tmux, not run through a shell -- measured
+  // against tmux 3.6, where a semicolon in an argument was printed rather than
+  // acted on. Expanding anything here would be this function inventing a shell
+  // that is not there, and every disagreement is a command that does something
+  // other than it reads as.
+  it('expands nothing', () => {
+    expect(splitArgv('echo $HOME ~ *.go')).toEqual(['echo', '$HOME', '~', '*.go'])
+    expect(splitArgv('a && b | c > d')).toEqual(['a', '&&', 'b', '|', 'c', '>', 'd'])
+  })
+})
+
+describe('joinArgv', () => {
+  it('round-trips what people type', () => {
+    for (const argv of [
+      ['claude'],
+      ['claude', '--model', 'opus'],
+      ['sh', '-c', 'echo two words'],
+      ['a', '', 'b'],
+      ['it', "isn't"],
+      [],
+    ]) {
+      expect(splitArgv(joinArgv(argv)), joinArgv(argv)).toEqual(argv)
+    }
+  })
+
+  // shellQuote returns the empty string unchanged, which is right for a path
+  // and a word that vanishes here: opening the field and saving it would
+  // otherwise change what runs.
+  it('spells out the empty word', () => {
+    expect(joinArgv(['a', '', 'b'])).toBe("a '' b")
   })
 })

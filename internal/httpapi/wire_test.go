@@ -67,6 +67,12 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		// this struct is the definition of what a read-only link discloses,
 		// and a field the server sends that wire.ts does not declare is a
 		// field nobody reviewing the TypeScript would know had been added.
+		// Launch profiles. The one row in the panel that can hold somebody
+		// else's credential, so a field this side sends and wire.ts does not
+		// declare is a field nobody reviewing the TypeScript would know had
+		// started leaving the machine.
+		{"LaunchProfile", store.LaunchProfile{}},
+		{"LaunchEnvVar", store.LaunchEnvVar{}},
 		{"ShareLink", store.ShareLink{}},
 		{"ShareDashboard", shareDashboard{}},
 		{"ShareMachine", shareMachine{}},
@@ -282,6 +288,9 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"passkey.removed":         true,
 		"password.change_refused": true,
 		"password.changed":        true,
+		"profile.created":         true,
+		"profile.deleted":         true,
+		"profile.updated":         true,
 		"setup.completed":         true,
 		"share.created":           true,
 		"share.rejected":          true,

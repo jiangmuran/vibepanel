@@ -410,6 +410,57 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+
+	// v13: launch profiles -- a name, an argv and an environment.
+	//
+	// The panel could be told what to run and nothing about what to run it
+	// with, which is the half that matters when the same agent is pointed at
+	// three different endpoints. See internal/store/profiles.go for why this is
+	// environment variables rather than an "API host" column, and for what the
+	// panel does about the fact that a base URL usually arrives with a key.
+	//
+	// command and env are each one TEXT column holding JSON, for the same
+	// reason a share link's board is: a profile is written whole, read whole,
+	// and never queried across. Nothing asks which profiles set
+	// ANTHROPIC_BASE_URL; every read is "give me this profile". A pair of child
+	// tables would buy joins nobody performs and cost an ordering column, two
+	// cascades and a transaction on every edit.
+	//
+	// No rows are seeded. The built-in profiles are Go constants, because a
+	// seeded name is a string in whichever language the installer was using,
+	// frozen at install time, in a panel where every other string has both --
+	// and because a built-in that turned out to be wrong can then be corrected
+	// by a release instead of surviving in everybody's database.
+	//
+	// launch_profile_id on sessions is how a restore rebuilds the environment
+	// as well as the argv. Storing the resolved variables on the session row
+	// instead would have copied every key into a second table, once per
+	// session, where nothing redacts them. Deliberately no foreign key: a
+	// profile deleted out from under a session must leave the session able to
+	// say the profile is gone -- a cascade to NULL would make it
+	// indistinguishable from a session started before profiles existed, which
+	// is exactly the distinction launch_command already had to add a second
+	// column for.
+	func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`CREATE TABLE IF NOT EXISTS launch_profiles (
+			     id         TEXT PRIMARY KEY,
+			     name       TEXT NOT NULL,
+			     -- JSON arrays. '' is a row written by something that did not
+			     -- know better; both decoders read it as empty.
+			     command    TEXT NOT NULL DEFAULT '',
+			     env        TEXT NOT NULL DEFAULT '',
+			     created_at INTEGER NOT NULL,
+			     updated_at INTEGER NOT NULL
+			 )`,
+			`ALTER TABLE sessions ADD COLUMN launch_profile_id TEXT NOT NULL DEFAULT ''`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	},
 }
 
 // schemaVersion is the version this build writes.

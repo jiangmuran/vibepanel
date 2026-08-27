@@ -39,6 +39,12 @@ export interface SidebarProps {
   onToggle: () => void
   onSelect: (id: string) => void
   onAddProject: () => void
+  /**
+   * Opens the launch picker for this project rather than creating a session.
+   *
+   * It used to create one in a single click, which was the right default for
+   * whoever wanted a login shell and a click-then-type for everybody else.
+   */
   onNewSession: (project: Project) => void
   onRenameProject: (project: Project, name: string) => void
   onRemoveProject: (project: Project) => void

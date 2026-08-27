@@ -57,6 +57,17 @@ type Session struct {
 	// than quietly starting a shell under an agent's name.
 	LaunchRecorded bool `json:"launchRecorded"`
 
+	// LaunchProfileID is the profile this session was started with, empty for
+	// one started without a profile.
+	//
+	// The id rather than the resolved variables, because a restore needs the
+	// environment as well as the argv and copying the variables here would put
+	// every key in a second table, once per session, where nothing redacts
+	// them. The cost is that a profile deleted afterwards leaves this pointing
+	// at nothing -- which is a fact the restore dialog can state, and a copy
+	// would have hidden by restoring an endpoint the user has since removed.
+	LaunchProfileID string `json:"launchProfileId"`
+
 	// RestoreOnBoot means: when the tmux session is found missing at startup,
 	// bring this one back without asking.
 	//
@@ -154,11 +165,11 @@ func (d *DB) CreateSession(ctx context.Context, s Session) (Session, error) {
 		INSERT INTO sessions
 			(id, project_id, tmux_name, title, title_source, state, state_source,
 			 state_changed_at, cwd, command, cols, rows, created_at, parent_session_id,
-			 launch_command)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 launch_command, launch_profile_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		s.ID, s.ProjectID, s.TmuxName, s.Title, s.TitleSource, s.State, s.StateSource,
 		s.StateChangedAt, s.CWD, s.Command, s.Cols, s.Rows, s.CreatedAt, parent,
-		string(launch))
+		string(launch), s.LaunchProfileID)
 	if err != nil {
 		return Session{}, fmt.Errorf("store: insert session: %w", err)
 	}
@@ -185,7 +196,7 @@ func emptyIfNil(v []string) []string {
 const sessionColumns = `s.id, s.project_id, s.tmux_name, s.title, s.title_source, s.state,
 	s.state_source, s.state_changed_at, s.pinned, s.sort_index, s.cwd, s.command, s.cols,
 	s.rows, s.last_output_at, s.created_at, s.archived_at, s.parent_session_id, s.exited,
-	s.exit_status, s.launch_command, s.restore_on_boot, s.restored_at,
+	s.exit_status, s.launch_command, s.launch_profile_id, s.restore_on_boot, s.restored_at,
 	COALESCE(sb.captured_at, 0)`
 
 // sessionFrom is the FROM clause every session read shares.
@@ -200,8 +211,8 @@ func scanSession(sc interface{ Scan(...any) error }) (Session, error) {
 	err := sc.Scan(&s.ID, &s.ProjectID, &s.TmuxName, &s.Title, &s.TitleSource,
 		&s.State, &s.StateSource, &s.StateChangedAt, &s.Pinned, &sortIdx,
 		&s.CWD, &s.Command, &s.Cols, &s.Rows, &s.LastOutputAt, &s.CreatedAt, &archived,
-		&parent, &s.Exited, &s.ExitStatus, &launch, &s.RestoreOnBoot, &s.RestoredAt,
-		&s.ScrollbackAt)
+		&parent, &s.Exited, &s.ExitStatus, &launch, &s.LaunchProfileID, &s.RestoreOnBoot,
+		&s.RestoredAt, &s.ScrollbackAt)
 	if err != nil {
 		return Session{}, err
 	}

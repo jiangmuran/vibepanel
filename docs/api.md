@@ -269,9 +269,16 @@ curl -sX POST .../api/sessions -H "Authorization: Bearer $TOKEN" \
   -d '{"projectId":"…","title":"billing","command":["claude"]}'
 ```
 
-`command` is an argv. Omit it for a shell in the project directory, which is
-what the panel's own UI does — it never launches an agent for you.
+`command` is an argv. Omit it for a shell in the project directory.
 `parentSessionId` makes the new session a scratch terminal under another one.
+
+`launchProfileId` names a launch profile, and is what the panel's own picker
+sends: the profile supplies both the argv and the environment. An explicit
+`command` still wins over the profile's, so a caller that knows exactly what it
+wants is not made to create a profile for it; the environment always comes from
+the profile. An id that names nothing is a `400`, because a session created
+against the default endpoint when a gateway profile was asked for is a
+substitution nobody notices until the bill.
 
 The argv is kept, on the row, as `launchCommand`. Do not confuse it with
 `command`, which is `#{pane_current_command}` — the name of whatever is in the
@@ -324,6 +331,87 @@ power cut loses at most half a minute. `scrollbackAt` on a session row is when
 its archive was taken, or `0` when there is none.
 
 `DELETE` kills the tmux session and its scratch terminals, then removes the row.
+
+## Launch profiles
+
+A launch profile is a name, an argv, and the environment to start it in. It
+exists because the panel could be told what to run and nothing about what to run
+it *with*, and the same agent pointed at Anthropic, at a company proxy and at a
+self-hosted gateway is three configurations differing only in a base URL.
+
+There is no "API host" field. Which variable carries the endpoint is the agent's
+decision — `ANTHROPIC_BASE_URL` for claude, `OPENAI_BASE_URL` for codex, and for
+opencode nothing at all, because its endpoint is chosen per provider in its own
+configuration. A field would need that mapping to stay right for every release
+of somebody else's tool, and the day it was wrong the panel would set a variable
+nothing reads.
+
+### `GET /api/launch-profiles`
+### `POST /api/launch-profiles`
+### `PATCH /api/launch-profiles/{profileID}`
+### `DELETE /api/launch-profiles/{profileID}`
+
+```sh
+curl -sX POST .../api/launch-profiles -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{
+    "name": "claude via gateway",
+    "command": ["claude"],
+    "env": [
+      {"name": "ANTHROPIC_BASE_URL", "value": "https://gw.example/v1"},
+      {"name": "ANTHROPIC_AUTH_TOKEN", "value": "sk-…", "secret": true}
+    ]}'
+# {"id":"…","name":"claude via gateway","builtin":false,"command":["claude"],
+#  "env":[{"name":"ANTHROPIC_BASE_URL","value":"https://gw.example/v1","secret":false,"hasValue":true},
+#         {"name":"ANTHROPIC_AUTH_TOKEN","value":"","secret":true,"hasValue":true}],
+#  "createdAt":1735689600,"updatedAt":1735689600}
+```
+
+`GET` returns the built-in catalogue followed by your own profiles, and the
+order is stable: built-ins in catalogue order, rows by name. The picker is the
+most-used control in the panel and a list that reorders itself under somebody's
+finger is worse than one that is slightly wrong.
+
+**A `builtin` profile is a Go constant, not a row.** Its id starts `builtin:`,
+its name is translated by the frontend, and `PATCH` or `DELETE` on it is a
+`400`; duplicate it and edit the copy. Built-ins carry variable *names* with
+empty values — the names each agent documents — so a duplicate arrives with the
+form already filled in, and using a built-in directly sets nothing, because **an
+empty value is not passed to the process**. That last rule is deliberate: `FOO=`
+and "FOO unset" are different to a program, and the common mistake is a
+half-filled form rather than somebody wanting an empty variable.
+
+`PATCH` replaces the whole profile — name, command and variables together.
+There is no partial edit, because the field somebody would omit is `env`, and
+"leave it alone" is how a rename keeps a key the user thought they had removed.
+
+**Secrets.** A variable with `"secret": true` is never sent back: every read
+gives `"value": ""` and `"hasValue": true`. Sending a secret back with an empty
+value keeps the stored one, which is what stops a rename wiping every key; any
+other value replaces it. Matching is by name, so renaming a secret variable in
+the same request that saves it clears the value. Nothing about this encrypts
+anything — the value is plaintext in the panel's SQLite file, and the settings
+page says so. It is not in the argv, so it is not in `ps`, and it is not in the
+audit log, which records profile names only.
+
+**What is refused, and what is not.** A variable name must match
+`[A-Za-z_][A-Za-z0-9_]*` — tmux accepts an empty name, a name with no `=` and a
+name containing a newline, and all three produce a session that looks configured
+and is not. A value may not contain a line break. A name starting `VIBEPANEL_`
+is refused outright: those are how a session's hooks find the panel and
+authenticate to it, and a profile that could set them could point every state
+report a session makes at an address of its own choosing. `LD_PRELOAD`, `PATH`
+and everything like them are **accepted**, because refusing them would stop
+nothing — anyone who can reach this endpoint can already start a session running
+an arbitrary command — while implying a boundary that is not there.
+
+A session records which profile it was started with, as `launchProfileId`. A
+restore reads the profile again for the environment, so a session comes back
+pointed at the same gateway; if the profile has been deleted since, the session
+still restores, without those variables, and the id it keeps is what lets a
+client say the profile is gone rather than imply the session still has it.
+
+Creating, editing and removing are audited as `profile.created`,
+`profile.updated` and `profile.deleted`.
 
 ## Notes and todos
 

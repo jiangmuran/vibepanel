@@ -149,6 +149,16 @@ export interface Session {
    * a shell under an agent's name.
    */
   launchRecorded: boolean
+  /**
+   * The launch profile this session was started with, empty for one started
+   * without one.
+   *
+   * The id rather than a copy of the variables, so a restore rebuilds the
+   * environment from whatever the profile says now. A profile deleted since
+   * leaves this pointing at nothing, which the restore dialog says out loud
+   * rather than implying the session still has it.
+   */
+  launchProfileId: string
   /** Rebuild this session at startup without asking, if its tmux session is gone. */
   restoreOnBoot: boolean
   /**
@@ -913,6 +923,42 @@ export interface ShareTodosProject {
   open: number
   done: number
   closedToday: number
+}
+
+/**
+ * One variable a launch profile sets.
+ *
+ * `value` is always empty for a secret, whatever is stored — the server never
+ * sends one back, so the settings page, a screenshot of it and an unlocked
+ * phone disclose the name and nothing else. `hasValue` is the only thing this
+ * side can learn about a secret, and sending a secret back with an empty
+ * `value` means "keep the one that is already there".
+ */
+export interface LaunchEnvVar {
+  name: string
+  value: string
+  secret: boolean
+  hasValue: boolean
+}
+
+/**
+ * A named way to start a session: an argv, and the environment to start it in.
+ *
+ * `builtin` profiles are Go constants rather than rows, so their names live in
+ * the dictionary in both languages and a release can correct one. They cannot
+ * be edited or removed; the settings page duplicates them into a row instead.
+ * Their variables carry names and no values, which is what makes duplicating
+ * one a form with the right variable names already spelled correctly — an
+ * empty value is not passed to the process at all.
+ */
+export interface LaunchProfile {
+  id: string
+  name: string
+  builtin: boolean
+  command: string[]
+  env: LaunchEnvVar[]
+  createdAt: number
+  updatedAt: number
 }
 
 /** One outbound notification destination. */

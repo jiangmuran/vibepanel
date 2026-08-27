@@ -312,6 +312,7 @@ func (s *Server) Routes() http.Handler {
 			// dozen requests that each shell out to tmux.
 			r.Post("/sessions/restore", s.handleRestoreSessions)
 
+			s.registerLaunchProfileRoutes(r)
 			s.registerPanelRoutes(r)
 			s.registerUpdateRoutes(r)
 			s.registerWebhookRoutes(r)
@@ -1107,6 +1108,16 @@ type createSessionRequest struct {
 	// ParentSessionID makes this a scratch terminal under a main session,
 	// starting in whatever directory that session is currently in.
 	ParentSessionID string `json:"parentSessionId"`
+
+	// LaunchProfileID names the profile to start with: its argv, and its
+	// environment.
+	//
+	// Command above still wins when it is not empty, so a caller that knows
+	// exactly what it wants is not made to invent a profile for it. The picker
+	// sends only this, and the server resolves it, so the same session can be
+	// created with curl and a profile name -- which is the property that keeps
+	// the CLI's `session new --profile` from having to reimplement any of it.
+	LaunchProfileID string `json:"launchProfileId"`
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -1178,20 +1189,34 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	profile, err := s.launchProfileFor(ctx, req.LaunchProfileID)
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+
+	argv := req.Command
+	if len(argv) == 0 && profile != nil {
+		argv = profile.Command
+	}
+
 	sid := id.New()
 	tmuxName := id.TmuxName(sid)
-
-	env := s.hookEnv(ctx, sid, p.ID)
 
 	err = s.Tmux.Create(ctx, tmux.CreateOptions{
 		Name:    tmuxName,
 		Dir:     dir,
-		Command: req.Command,
+		Command: argv,
 		// Hooks identify their session and reach the panel through these. A
 		// session created without them simply falls back to the output
 		// heuristic, which is why the hook script is safe to install globally:
 		// outside the panel the variables are absent and it does nothing.
-		Env:    env,
+		//
+		// The panel's own go last. tmux takes the last -e when two name the
+		// same variable, so ordering is what stops a profile pointing a
+		// session's state reports at somebody else's address with the panel's
+		// hook token attached. store.LaunchEnv is the one place that knows it.
+		Env:    store.LaunchEnv(profile, s.hookEnv(ctx, sid, p.ID)),
 		Width:  req.Cols,
 		Height: req.Rows,
 	})
@@ -1207,7 +1232,14 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		// The argv as asked for, which is the only version of it that can be
 		// run again. Everything the poller writes into `command` after this is
 		// a name for what happens to be in the pane right now.
-		LaunchCommand: req.Command,
+		//
+		// Resolved, not the request's: a profile's argv is what actually ran,
+		// and a restore that went back to the profile for it would run whatever
+		// the profile says today rather than what this session was started as.
+		// The environment is the opposite case and is looked up again on
+		// restore -- see LaunchProfileID.
+		LaunchCommand:   argv,
+		LaunchProfileID: req.LaunchProfileID,
 	})
 	if err != nil {
 		// Untracked tmux session: remove it rather than orphan a process the
