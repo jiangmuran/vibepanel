@@ -209,6 +209,7 @@ counts and timestamps out of those files and nothing else leaves the machine.
 ### `GET /api/projects/{id}/files?path=`
 ### `GET /api/projects/{id}/download?path=`
 ### `GET /api/projects/{id}/preview?path=`
+### `GET /api/projects/{id}/preview/render?path=&scripts=`
 ### `POST /api/projects/{id}/upload?path=`
 ### `POST /api/projects`
 ### `PATCH /api/projects/{id}`
@@ -254,6 +255,41 @@ Three limits, and each answers differently:
 A directory is `400`, and so is a FIFO, a socket or a device node: opening a
 FIFO with no writer never returns, and it would take the request goroutine and
 graceful shutdown with it.
+
+A text response also carries `X-Preview-Markup: html` or `svg` when a *second*
+endpoint would draw the file as a page. The bytes in that response are
+unchanged by it — still an attachment, still `application/octet-stream`.
+
+`preview/render` is that second endpoint, and it is a separate route rather than
+a flag for the same reason a share token is narrowed by its route: exactly one
+handler in the panel can produce an inline `text/html` response out of a project
+directory, and it is this one. It serves `.html`, `.htm`, `.xhtml` and `.svg`
+and answers `415` to everything else; the content type comes from a two-entry
+whitelist and never from the file. Over 8 MiB is `413`.
+
+What it sends with the bytes is the feature:
+
+- `Content-Security-Policy: default-src 'none'; img-src data: blob:; media-src
+  data: blob:; font-src data:; style-src 'unsafe-inline'; base-uri 'none';
+  form-action 'none'; frame-ancestors 'self'; sandbox`. `default-src 'none'` is
+  what keeps a preview from making an outbound request — a remote `<img>`, a
+  webfont, a nested `<iframe>` — the moment somebody clicks a file. The
+  `sandbox` directive gives the document an opaque origin, so it holds even when
+  this URL is opened in a tab, where an `<iframe sandbox>` attribute would not
+  apply.
+- `Content-Type` from the whitelist, `X-Content-Type-Options: nosniff`,
+  `Content-Disposition: inline`, `Cache-Control: no-store`.
+
+`scripts=1` — and only exactly `1` — adds `script-src 'unsafe-inline'` and makes
+the sandbox `sandbox allow-scripts`. `allow-same-origin` is never emitted, in
+either the header or the attribute the panel sets: with it the document would be
+on the origin holding the session cookie. The effective sandbox is the
+intersection of the two, so the decision is the server's and editing the
+attribute in a browser does not move it.
+
+The residual is written out in `internal/httpapi/preview_render.go`: a preview
+can still draw anything it likes, and a click on a link inside it can navigate
+the frame to a remote page.
 
 ## Sessions
 
@@ -324,6 +360,71 @@ power cut loses at most half a minute. `scrollbackAt` on a session row is when
 its archive was taken, or `0` when there is none.
 
 `DELETE` kills the tmux session and its scratch terminals, then removes the row.
+
+## The repository
+
+### `GET /api/projects/{id}/git`
+### `POST /api/projects/{id}/git/github`
+
+`GET .../git` reads the project's working tree. No network, no credential, no
+configuration — it is the half that always works, and it is what the panel polls
+while the tab is open:
+
+```json
+{"status": {"repo": true, "branch": "main", "detached": false, "head": "1234567",
+            "upstream": "origin/main", "ahead": 3, "behind": 0,
+            "staged": 1, "unstaged": 2, "untracked": 4, "conflicted": 0,
+            "changes": [{"path": "src/a.go", "kind": "unstaged", "renamed": ""}],
+            "changesTruncated": false},
+ "commits": [{"sha": "...", "subject": "...", "author": "...", "when": 1756000000}],
+ "remote": {"url": "...", "host": "github.com", "owner": "o", "name": "r"},
+ "github": true, "tokenSet": false,
+ "sessions": [], "sessionsTruncated": false}
+```
+
+`repo: false` is an answer, not a failure: a project directory that is not a
+repository gets `200` and a panel that says so in a line.
+
+The answer may be up to three seconds old. Reads of one working tree are cached
+for that long and requests arriving during a read wait for it rather than
+starting another, so several tabs on one project are one `git status` and not
+several — see `internal/git/cache.go`. The window is shorter than the tab's own
+five-second poll, so a single viewer never sees the same numbers twice.
+
+`changes` is capped at 100 entries; the four counts above it are always exact.
+`commits` is the last 15. `sessions` lists only the project's sessions sitting on
+a *different* commit than the project root — worktrees, in practice — because
+six sessions in one directory are six identical rows. A session's `cwd` is
+resolved through the project root like every other path, so one that has `cd`'d
+outside the project simply has no row.
+
+`tokenSet` says the panel was started with `GITHUB_TOKEN` or `GH_TOKEN` in its
+environment. The token itself is never sent, and there is nowhere to store one:
+it is read from the environment at the moment of the request.
+
+`POST .../git/github` is the only outbound request in the panel besides the
+update check, and it is a `POST` for that reason rather than because it changes
+anything — a `GET` is something a browser re-issues on its own. One press, one
+GraphQL query to `api.github.com`, twenty open pull requests newest first:
+
+```json
+{"total": 3, "checkedAt": 1756000000,
+ "prs": [{"number": 7, "title": "...", "branch": "feat/auth", "base": "main",
+          "draft": false, "author": "someone", "url": "https://github.com/...",
+          "updatedAt": 1756000000, "review": "changes_requested",
+          "checks": "failure"}]}
+```
+
+`branch` is the head branch, and it is the field the panel joins to a session's
+local branch — "is the branch this agent is on green" is the question the whole
+network half exists for. `review` and `checks` are GitHub's own rollups,
+lowercased; either can be empty, which means no review is required and no checks
+ran, not that something failed.
+
+`400` with no request made: no token, or a remote that is not on `github.com`.
+`502` when GitHub answered and the answer was not usable — including a `200`
+carrying a GraphQL `errors` array, which is what a repository the token cannot
+see looks like.
 
 ## Notes and todos
 

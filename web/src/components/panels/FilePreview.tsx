@@ -1,18 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Download, FileQuestion, Loader2, X } from 'lucide-react'
+import { Code2, Download, Eye, FileQuestion, Loader2, X, Zap } from 'lucide-react'
 
 import { api } from '../../protocol/api'
+import type { Markup } from '../../protocol/api'
 import type { FileEntry } from '../../protocol/wire'
 import { safeText } from '../text'
 import { t, useLang } from '../../i18n'
 import { countLines, formatBytes, tooBigToPreview, PREVIEW_MAX_BYTES } from './preview'
+import { canRender, sandboxFor } from './render'
 
 /** What is on screen: a preview, the reason there is not one, or the wait. */
 type View =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
-  | { kind: 'text'; text: string; truncated: boolean }
+  | { kind: 'text'; text: string; truncated: boolean; markup: Markup | null }
   | { kind: 'image'; url: string }
   | { kind: 'pdf'; url: string }
   | { kind: 'tooBig' }
@@ -58,6 +60,23 @@ export function FilePreview({
     tooBigToPreview(entry.size) ? { kind: 'tooBig' } : { kind: 'loading' },
   )
   const boxRef = useRef<HTMLDivElement | null>(null)
+
+  // Two pieces of state for a page, and both start in the safer position on
+  // every file.
+  //
+  // `source` is the always-available way back to the bytes: a rendered document
+  // is a drawing of what the file says, and the only honest view of a file an
+  // agent wrote is the file. The control for it sits in the header at all
+  // times, not behind a menu.
+  //
+  // `scripts` resets to false here and never persists — not to localStorage,
+  // not across files, not across reopening the same file. A remembered "yes"
+  // is a decision made about one document being applied to the next one, and
+  // the next one is the one that was cloned this morning. The component is
+  // keyed by path where it is used, so a different file remounts and both of
+  // these start over.
+  const [source, setSource] = useState(false)
+  const [scripts, setScripts] = useState(false)
 
   useEffect(() => {
     if (tooBigToPreview(entry.size)) return
@@ -175,6 +194,59 @@ export function FilePreview({
           </object>
         )
       case 'text': {
+        if (canRender(view.markup) && !source) {
+          return (
+            <div className="flex min-h-0 flex-1 flex-col">
+              <iframe
+                // Keyed by the sandbox, not only pointed at a different URL.
+                //
+                // `sandbox` is read when the document is created. React
+                // updating the attribute on a frame that has already loaded
+                // changes the attribute and not the document, so turning
+                // scripts back off would leave the running one running. A new
+                // key is a new element, which is a new document.
+                key={scripts ? 'scripts' : 'static'}
+                src={api.renderURL(projectId, entry.path, scripts)}
+                sandbox={sandboxFor(scripts)}
+                referrerPolicy="no-referrer"
+                data-testid="preview-frame"
+                data-scripts={scripts ? 'on' : 'off'}
+                title={t('preview.rendered', { name: safeText(entry.name) })}
+                // White, not a surface token. What is inside the frame is
+                // somebody else's document and assumes a page background; a
+                // dark panel token behind unstyled black text is unreadable.
+                className="min-h-0 flex-1 border-0 bg-white"
+              />
+              {/* The switch, and nothing beside it.
+                *
+                * There was a sentence here — "drawn in a sandbox, with no
+                * network" — and a tooltip explaining that the switch resets
+                * per file. Both were the panel defending itself to a reader
+                * who had not objected, which is the thing that has now been
+                * asked for three times. The button says which state it is in;
+                * the isolation is written down in
+                * internal/httpapi/preview_render.go, where somebody who wants
+                * to know can read all of it. */}
+              <div className="flex shrink-0 items-center justify-end border-t border-hairline px-3 py-1.5">
+                <button
+                  type="button"
+                  onClick={() => setScripts(!scripts)}
+                  data-testid="preview-scripts"
+                  aria-pressed={scripts}
+                  // `.vp-control`, which already draws `aria-pressed` as on.
+                  // The bordered button this replaced was a fourth kind of
+                  // button in a window that has three.
+                  className="vp-control text-vp-xs"
+                >
+                  {/* Colour is not the carrier: the icon fills in and the word
+                      changes with it. Red line 4. */}
+                  <Zap size={11} fill={scripts ? 'currentColor' : 'none'} />
+                  {scripts ? t('preview.scriptsOn') : t('preview.scriptsOff')}
+                </button>
+              </div>
+            </div>
+          )
+        }
         const lines = countLines(view.text)
         return (
           <div className="flex min-h-0 flex-1 flex-col">
@@ -235,6 +307,44 @@ export function FilePreview({
             {safeText(entry.name)}
           </span>
           <span className="tabular shrink-0 text-vp-xs text-ink-2">{formatBytes(entry.size)}</span>
+          {/* The way back to the bytes, in the header rather than under the
+              document. A rendered page can draw anything, a header it does not
+              control included, so the control that says "show me the file
+              instead" has to sit outside the frame and be visible without
+              scrolling or hovering. */}
+          {view.kind === 'text' && canRender(view.markup) && (
+            // `.vp-segmented` and `.vp-tab`, the same track the side panel's
+            // tabs sit in. This is a choice between two views of one thing,
+            // which is what that vocabulary is for, and a hand-written copy of
+            // it here is the drift the vocabulary was extracted to stop.
+            //
+            // `role="tablist"` without a `tabpanel`: the two buttons control
+            // what fills the dialog body, and the body is not a sibling with
+            // an id to point at. The pressed state carries the meaning either
+            // way, and both are named in words at every width — there are two
+            // of them, so nothing is competing for the room.
+            <div data-testid="preview-mode" role="tablist" className="vp-segmented shrink-0">
+              {([false, true] as const).map((wantSource) => {
+                const label = wantSource ? t('preview.source') : t('preview.rendered.short')
+                const Icon = wantSource ? Code2 : Eye
+                return (
+                  <button
+                    key={String(wantSource)}
+                    type="button"
+                    role="tab"
+                    onClick={() => setSource(wantSource)}
+                    data-testid={wantSource ? 'preview-as-source' : 'preview-as-page'}
+                    aria-selected={source === wantSource}
+                    title={label}
+                    className="vp-tab text-vp-xs"
+                  >
+                    <Icon size={11} className="shrink-0" />
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
+          )}
           {download}
           <button
             type="button"

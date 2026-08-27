@@ -225,7 +225,7 @@ background tab or in the installed app. A closed browser gets nothing.
 
 ### The side panel
 
-Five tabs per project, over a strip of machine CPU, memory and disk that stays
+Six tabs per project, over a strip of machine CPU, memory and disk that stays
 visible on all of them.
 
 - **Files** — browse and download. Drag onto the tree or onto the terminal to
@@ -233,7 +233,20 @@ visible on all of them.
   the prompt, ready to press enter on. Pasting a screenshot into the terminal
   does the same. Preview reads the file's magic bytes rather than its name and
   handles text, PNG, JPEG, GIF, WebP, AVIF and PDF, up to 8 MiB. Long text is
-  truncated at 256 KiB or 4,000 lines. SVG is shown as text.
+  truncated at 256 KiB or 4,000 lines.
+
+  An `.html` or `.svg` file is *drawn*, in a frame with an opaque origin, no
+  scripts and a policy that permits it no network at all — so a page in a
+  project cannot reach the panel's cookie and cannot fetch anything while you
+  look at it. **Source** is beside it in the header at all times, and scripts
+  are a per-file switch that starts off every time.
+- **Repo** — what the working tree is doing: the branch, how far it is from its
+  upstream, what is uncommitted and the last fifteen commits, all read off the
+  disk with no credential. Sessions sitting in a different worktree get a row of
+  their own with their branch on it. One button asks GitHub about open pull
+  requests and joins them to those branches by name; it needs `GITHUB_TOKEN` or
+  `GH_TOKEN` in the panel's environment, it runs only when pressed, and without
+  a token the rest of the tab is unchanged.
 - **Monitor** — the machine, plus CPU and memory per session, summed over each
   session's whole process tree. The percentage is a share of the machine, not of
   one core.

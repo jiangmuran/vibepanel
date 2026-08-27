@@ -7,6 +7,7 @@ import {
   Coins,
   EllipsisVertical,
   FolderTree,
+  GitBranch,
   ListChecks,
   Merge,
   NotebookPen,
@@ -18,6 +19,7 @@ import {
 import type { Project, Session } from '../protocol/wire'
 import type { PanelSocket } from '../protocol/socket'
 import { FileTree } from './panels/FileTree'
+import { GitPanel } from './panels/GitPanel'
 import { SystemMonitor } from './panels/SystemMonitor'
 import { Notes } from './panels/Notes'
 import { Todos } from './panels/Todos'
@@ -68,6 +70,7 @@ export type { PanelTab }
 // right.
 const TABS: Record<PanelTab, { icon: typeof Activity; key: Key }> = {
   files: { icon: FolderTree, key: 'panel.files' },
+  git: { icon: GitBranch, key: 'panel.git' },
   monitor: { icon: Activity, key: 'panel.monitor' },
   notes: { icon: NotebookPen, key: 'panel.notes' },
   todos: { icon: ListChecks, key: 'panel.todos' },
@@ -294,7 +297,7 @@ export function RightPanel(props: Props) {
   }
 
   const bodyFor = (tab: PanelTab) => {
-    // Before the no-project guard, and the only tab that is. The other four
+    // Before the no-project guard, and the only tab that is. The others
     // are all *about* a project — its files, its notes, its sessions' load —
     // and have nothing to say without one. Token spend is a fact about the
     // machine: an agent that ran in a directory the panel has never been told
@@ -307,6 +310,9 @@ export function RightPanel(props: Props) {
       return <p className="px-3 py-4 text-vp-base text-ink-2">{t('panel.noProject')}</p>
     }
     if (tab === 'files') return <FileTree key={project.id} projectId={project.id} />
+    if (tab === 'git') {
+      return <GitPanel key={project.id} projectId={project.id} sessions={props.sessions} />
+    }
     if (tab === 'monitor') return <SystemMonitor sessions={props.sessions} />
     if (tab === 'notes') return <Notes key={project.id} projectId={project.id} socket={props.socket} />
     return <Todos key={project.id} projectId={project.id} socket={props.socket} />

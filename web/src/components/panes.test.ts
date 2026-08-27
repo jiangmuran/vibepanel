@@ -78,7 +78,7 @@ function three(): PaneLayout {
   return l
 }
 
-/** Four panes: files+monitor, then notes, todos and tokens each on their own. */
+/** Four panes: files+git+monitor, then notes, todos and tokens each on their own. */
 function four(): PaneLayout {
   let l = defaultLayout()
   l = moveTab(l, 'notes', { kind: 'new', at: 1 })
@@ -323,11 +323,11 @@ describe('moving a tab', () => {
     // insertion index is clamped to the end of the list anyway, so the wrong
     // answer and the right one agree — this test passed against the arithmetic
     // removed until it was written this way.
-    const l = four() // [files+monitor, notes, todos, tokens]
+    const l = four() // [files+git+monitor, notes, todos, tokens]
     const moved = moveTab(l, 'notes', { kind: 'new', at: 3 })
     expectSound(moved, 'moved past the pane it left')
     expect(moved.groups.map((g) => g.tabs.join('+'))).toEqual([
-      'files+monitor',
+      'files+git+monitor',
       'todos',
       'notes',
       'tokens',
@@ -337,11 +337,11 @@ describe('moving a tab', () => {
   it('joins the pane it was aimed at when the source pane vanishes under it', () => {
     // The same correction on the other arm. Without it the index runs off the
     // end of the shortened list and the drop is silently dropped.
-    const l = three() // [files+monitor+tokens, notes, todos]
+    const l = three() // [files+git+monitor+tokens, notes, todos]
     const joined = moveTab(l, 'notes', { kind: 'join', group: 2 })
     expectSound(joined, 'joined past the pane it left')
     expect(joined.groups.map((g) => g.tabs.join('+'))).toEqual([
-      'files+monitor+tokens',
+      'files+git+monitor+tokens',
       'todos+notes',
     ])
   })
@@ -487,7 +487,7 @@ describe('a layout that does not fit the window it opens in', () => {
     expect(fitted.groups).toHaveLength(2)
     // From the bottom, because the top of the column is where the panel opens
     // and what you were looking at is up there.
-    expect(fitted.groups[0].tabs).toEqual(['files', 'monitor', 'tokens'])
+    expect(fitted.groups[0].tabs).toEqual(['files', 'git', 'monitor', 'tokens'])
   })
 
   it('leaves a layout that fits alone', () => {
