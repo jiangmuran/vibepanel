@@ -45,6 +45,85 @@ vibepanel session ls                    # what the panel believes
 Sessions marked GONE can be removed with `vibepanel session kill --id <id>`,
 which is a no-op against tmux and just clears the row.
 
+They can also be brought back: the panel shows a notice offering to rebuild
+them, with the command and directory each one will use. See the next section
+for what that does and does not recover.
+
+## Everything shows GONE after a reboot
+
+Expected. tmux outlives the *panel*, which is what `KillMode=process` above is
+about; it does not outlive the *machine*. The tmux server is an ordinary process
+and its scrollback is in that process's memory.
+
+The panel offers to rebuild them. What comes back:
+
+- the session, under the same id, in the same project, with the same name,
+  working directory, pinned/sorted position, notes and todos;
+- the command it was created with, re-executed;
+- the last 2,000 lines of scrollback, printed into the new pane's history above
+  a banner saying when it was captured.
+
+What does not come back, at all: **the process**. An agent that was mid-task is
+gone, and re-running its command starts a new one that remembers none of it. The
+banner in the pane and the `restored` chip in the header both say so; do not
+read the output above the banner as current.
+
+The scrollback is captured every 30 seconds for sessions that have printed
+something, and once more for every session when the panel shuts down. An orderly
+`reboot` or `systemctl stop` therefore loses nothing. A power cut or a hard
+reset loses up to half a minute of output, because there was no shutdown for the
+archive to ride along with.
+
+Two things to check when a restore does *not* offer what you expect:
+
+```sh
+# Was the command ever recorded? Rows created before this version have none, and
+# the dialog says "will start a login shell" for those.
+sqlite3 ~/.local/share/vibepanel/vibepanel.db \
+  "SELECT id, title, launch_command FROM sessions"
+
+# Is there an archive, and how big is it?
+sqlite3 ~/.local/share/vibepanel/vibepanel.db \
+  "SELECT session_id, captured_at, LENGTH(content) FROM session_scrollback"
+```
+
+An empty `launch_command` string means the row predates the column; `[]` means
+the session really was created as a login shell. They are different answers and
+the dialog words them differently.
+
+To have particular sessions come back on their own, tick "restore automatically"
+on them in the restore dialog, or:
+
+```sh
+curl -sX PATCH .../api/sessions/<id> -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"restoreOnBoot":true}'
+```
+
+It is off by default on purpose: a boot that starts two dozen agents at once,
+each of them beginning to work, is worse than a list of dead rows.
+
+## A restored session replayed its scrollback twice, or the banner is wrong
+
+The archive is handed to the pane as a file under `<data-dir>/restore/`, and the
+pane's first command deletes it as it reads it. A file left there is a restore
+whose pane never started — the tmux session could not be created, or the panel
+died between writing the file and creating it.
+
+```sh
+ls -la ~/.local/share/vibepanel/restore/
+```
+
+Nothing reads a leftover except the next restore of that same session, which is
+usually what you want. They are 0600 in a 0700 directory and hold a verbatim
+copy of a terminal, so treat them as you would the database. Deleting one costs
+that session's archived scrollback and nothing else.
+
+If a *restart* (not a restore) replays scrollback, the delete did not happen:
+`respawn-pane` reuses the pane's original command, which after a restore is the
+wrapper script, and the guard against a second replay is that the file is gone.
+Check the file above and check the pane's command with
+`tmux -L vibepanel display-message -p -t '=<name>' '#{pane_start_command}'`.
+
 ## The log says there are tmux sessions with no database row
 
 ```
@@ -363,7 +442,22 @@ entry below are the two places it accumulates.
 
 ## The database is growing
 
-Almost always `audit_log`. Check before assuming:
+Two candidates now. `session_scrollback` is the larger per row and the smaller
+in total, because it is bounded by how many sessions exist rather than by how
+long the panel has been up: one row per session, at most 256 KiB each, replaced
+in place rather than accumulated. Two dozen sessions all at the cap is about
+6 MB, and the row goes when the session does.
+
+```
+sqlite3 ~/.local/share/vibepanel/vibepanel.db \
+  'SELECT COUNT(*), SUM(LENGTH(content)) FROM session_scrollback'
+```
+
+More than one row per session there, or a total far past `sessions × 256 KiB`,
+means something is keeping a history of captures instead of one; that is a bug,
+not a configuration.
+
+Otherwise it is `audit_log`. Check before assuming:
 
 ```
 sqlite3 ~/.local/share/vibepanel/vibepanel.db \

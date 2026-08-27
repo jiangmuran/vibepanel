@@ -131,6 +131,44 @@ export interface Session {
   archivedAt: number | null
 
   /**
+   * The argv this session was created with — the only version of it that can be
+   * run again.
+   *
+   * `command` above is whatever is in the pane right now, rewritten by the
+   * poller every couple of seconds: "node" for an agent, "bash" for a shell
+   * somebody used. It is a label. This is what a restore executes, and what the
+   * restore dialog shows before anything is pressed.
+   */
+  launchCommand: string[]
+  /**
+   * False for a row written before the panel recorded commands.
+   *
+   * Not the same as an empty `launchCommand`, which is a session deliberately
+   * created with no command — a login shell, exactly reproducible. This one
+   * means nobody knows, and the UI has to say so rather than quietly offering
+   * a shell under an agent's name.
+   */
+  launchRecorded: boolean
+  /** Rebuild this session at startup without asking, if its tmux session is gone. */
+  restoreOnBoot: boolean
+  /**
+   * When this session was last rebuilt from its row, 0 if never.
+   *
+   * The process behind a restored session is new: the agent's context did not
+   * survive the reboot and nothing can bring it back. The pane carries a banner
+   * saying so, and banners scroll; this is what keeps the header able to say it.
+   */
+  restoredAt: number
+  /**
+   * When the archived scrollback was captured, 0 if there is none.
+   *
+   * What makes the restore dialog able to promise the right thing. A session
+   * created since the last archive pass has nothing stored, and saying "your
+   * scrollback comes back" about it would be a lie.
+   */
+  scrollbackAt: number
+
+  /**
    * The pane's process is gone; tmux is showing its last screen.
    *
    * Orthogonal to `state`, which describes the task. A crashed agent and an

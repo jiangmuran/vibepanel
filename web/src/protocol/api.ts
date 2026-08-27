@@ -214,13 +214,33 @@ export const api = {
 
   patchSession: (
     id: string,
-    patch: Partial<{ title: string; pinned: boolean; state: SessionState }>,
+    patch: Partial<{
+      title: string
+      pinned: boolean
+      state: SessionState
+      restoreOnBoot: boolean
+    }>,
   ) => request<Session>(`/api/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
 
   deleteSession: (id: string) => request<void>(`/api/sessions/${id}`, { method: 'DELETE' }),
 
   restartSession: (id: string) =>
     request<void>(`/api/sessions/${id}/restart`, { method: 'POST' }),
+
+  /**
+   * Rebuild sessions whose tmux session went with the machine.
+   *
+   * A batch, and the ids are always explicit. Answers 200 with one result per
+   * id even when some of them failed: after a reboot the ordinary failure is a
+   * single project directory that was pruned while the machine was off, and
+   * refusing the whole batch over it would leave twenty-three sessions dead to
+   * report one.
+   */
+  restoreSessions: (ids: string[]) =>
+    request<{ results: { id: string; ok: boolean; error?: string }[] }>(
+      '/api/sessions/restore',
+      { method: 'POST', body: JSON.stringify({ ids }) },
+    ),
 
   system: () => request<SystemSample>('/api/system'),
 

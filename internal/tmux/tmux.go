@@ -445,6 +445,33 @@ func (c *Client) CaptureHistory(ctx context.Context, name string) (string, error
 	return c.run(ctx, "capture-pane", "-p", "-e", "-J", "-S", "-", "-E", "-1", "-t", target(name))
 }
 
+// CaptureLines is Capture with a bound: at most lines of history above the
+// visible screen, plus the screen itself.
+//
+// The bound is applied by tmux rather than by trimming afterwards, and that is
+// the whole reason this exists. Measured on tmux 3.6 against a pane holding a
+// full 20,000-line history of coloured 130-column output, three runs each:
+//
+//	-S -      2,971,621 bytes    69 ms
+//	-S -8000  1,195,852 bytes    31 ms
+//	-S -4000    601,591 bytes    19 ms
+//	-S -2000    304,423 bytes    13 ms
+//	-S -1000    155,836 bytes     8 ms
+//
+// Cost is linear in the lines asked for, so the choice of bound is the choice
+// of cost. At the two dozen sessions this panel is built for, the unbounded
+// capture is 71 MB and 1.7 seconds of tmux per pass — which is not something to
+// do on a timer next to a poller that runs every two seconds.
+//
+// A non-positive count means the whole history, i.e. Capture.
+func (c *Client) CaptureLines(ctx context.Context, name string, lines int) (string, error) {
+	if lines <= 0 {
+		return c.Capture(ctx, name)
+	}
+	return c.run(ctx, "capture-pane", "-p", "-e", "-J",
+		"-S", "-"+strconv.Itoa(lines), "-t", target(name))
+}
+
 // Respawn restarts the process in a session's pane, reusing the command it was
 // created with.
 //

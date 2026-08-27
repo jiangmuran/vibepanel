@@ -38,6 +38,7 @@ import { ConfirmDialog } from './components/ConfirmDialog'
 import { askConfirm } from './components/ask'
 import { dismissToast, showToast } from './components/toasts'
 import { focusTerminal } from './components/focus'
+import { RestoreDialog } from './components/RestoreDialog'
 import { t, useLang } from './i18n'
 
 /**
@@ -194,6 +195,14 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   const [rightSplit, setRightSplit] = useState(() => readStored(RIGHT_SPLIT_KEY) === 'on')
   const [splitRatio, setSplitRatio] = useState(0.5)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [restoreOpen, setRestoreOpen] = useState(false)
+  // Dismissing the offer is per visit, not remembered.
+  //
+  // A remembered dismissal is how somebody loses a day's sessions for good: the
+  // notice never comes back, the rows keep saying "gone", and the archived
+  // scrollback sits in the database until the row is deleted. Reloading brings
+  // the offer back, which is the behaviour a person expects from "later".
+  const [restoreDismissed, setRestoreDismissed] = useState(false)
 
   // The attribute is written synchronously here rather than from an effect.
   //
@@ -319,6 +328,21 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   )
   const current = mainSessions.find((s) => s.id === selected) ?? null
   const labels = useMemo(() => disambiguatedLabels(mainSessions), [mainSessions])
+
+  // Sessions whose tmux session is gone, which after a reboot is all of them.
+  //
+  // Derived from the snapshot rather than fetched: the state push already
+  // carries every fact the restore dialog needs — the argv, the directory, the
+  // project, whether there is archived scrollback — so a second endpoint would
+  // be a second answer that can disagree with the list on screen.
+  //
+  // Scratch terminals are left out. They are tabs under a session, they hold a
+  // shell somebody opened for a minute, and offering to rebuild two dozen of
+  // them alongside the agents would bury the choice that matters.
+  const restorable = useMemo(
+    () => mainSessions.filter((s) => s.exited && s.exitStatus === EXIT_VANISHED),
+    [mainSessions],
+  )
   const labelOf = (s: Session) => labels.get(s.id) ?? sessionLabel(s)
   // Sorted by age, not by the order they arrive in.
   //
@@ -697,14 +721,35 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
                   onClick={() => restartSession(current)}
                   className="vp-press ml-1 flex shrink-0 items-center gap-1 rounded-full border border-hairline px-2 py-0.5 text-vp-sm text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
                   title={
+                    // Two different actions behind one button, and the tooltip
+                    // is where the difference is said. A dead pane is respawned
+                    // in place; a session whose tmux session went with the
+                    // machine is rebuilt from the row, with its recorded
+                    // command and its archived scrollback.
                     current.exitStatus === EXIT_VANISHED
-                      ? 'The tmux session is gone. Start it again in a new one.'
+                      ? t('restore.gone')
                       : `The process ${exitReason(current.exitStatus)}. Run it again in this pane.`
                   }
                 >
                   <RotateCcw size={11} />
                   restart
                 </button>
+              )}
+              {/* The banner in the pane says the same thing and scrolls away.
+                  This does not: somebody who joins the session an hour later,
+                  or scrolls up past the separator, still has to be able to find
+                  out that everything above it belongs to a process that no
+                  longer exists. */}
+              {current.restoredAt > 0 && !current.exited && (
+                <span
+                  data-testid="restored-badge"
+                  title={t('restore.badgeWhy', {
+                    when: new Date(current.restoredAt * 1000).toLocaleString(),
+                  })}
+                  className="shrink-0 rounded-full border border-hairline px-2 py-0.5 text-vp-xs text-ink-2"
+                >
+                  {t('restore.badge')}
+                </span>
               )}
               {/* A chip, not loose text. Bare "130x46" floating between a
                   session title and a row of icons reads as a debug print that
@@ -847,6 +892,39 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             style={{ color: 'var(--vp-state-waiting)' }}
           >
             {t('app.stale')} {safeText(state.stale)}
+          </div>
+        )}
+
+        {/* The one thing the panel had nothing to say about after a reboot.
+            Every row read "gone", the restart button on each of them started a
+            login shell, and there was no way to find out that was what it did
+            until you typed at it. */}
+        {restorable.length > 0 && !restoreDismissed && (
+          <div
+            data-testid="restore-notice"
+            className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-hairline px-4 py-2 text-vp-base"
+            style={{ background: 'var(--vp-surface-2)' }}
+          >
+            <span className="font-semibold text-ink">{t('restore.title')}</span>
+            <span className="min-w-0 flex-1 text-ink-2">
+              {t('restore.body', { n: String(restorable.length) })}
+            </span>
+            <button
+              type="button"
+              data-testid="restore-open"
+              onClick={() => setRestoreOpen(true)}
+              className="shrink-0 rounded-vp px-2.5 py-1 text-vp-base"
+              style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+            >
+              {t('restore.open')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setRestoreDismissed(true)}
+              className="vp-press shrink-0 rounded-vp px-2 py-1 text-vp-base text-ink-2 transition-colors duration-150 ease-vp hover:text-ink"
+            >
+              {t('restore.later')}
+            </button>
           </div>
         )}
 
@@ -1018,6 +1096,19 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           otherwise made a gap read as a decision that had already been carried
           out. */}
       {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
+
+      {restoreOpen && restorable.length > 0 && (
+        <RestoreDialog
+          sessions={restorable}
+          projects={state.projects}
+          labels={labels}
+          onClose={() => setRestoreOpen(false)}
+          onDone={() => {
+            setRestoreOpen(false)
+            setRestoreDismissed(false)
+          }}
+        />
+      )}
 
       {!narrow && rightWidth > 0 && (
         <RightPanel

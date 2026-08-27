@@ -211,6 +211,31 @@ tmux -L vibepanel ls                 # every session still there, still running
 The browser notices the new build on reconnect and offers to reload, so an upgrade
 mid-session is a banner rather than a puzzle.
 
+### What a reboot takes, and what comes back
+
+tmux outlives the panel. It does not outlive the machine: the tmux server is an
+ordinary process and its scrollback is in that process's memory, so `reboot`
+takes both.
+
+The panel records what it needs to rebuild a session — the argv it was created
+with, its directory, its name and place, and a bounded copy of its scrollback
+captured every thirty seconds and once more on the way down. After a reboot it
+offers to bring them back, one or all, showing the exact command each one will
+run and where. There is a per-session switch for the ones you want back
+automatically; it is off by default, because a boot that starts two dozen agents
+at once is worse than a list to click through.
+
+**The processes do not come back.** An agent's context lived in its process and
+in a conversation with a provider, and neither survived the power going off.
+Re-running the command starts a new agent that remembers none of it. The restored
+pane says so in a banner between the old scrollback and the new process, and the
+session keeps a `restored` mark afterwards, because that banner scrolls away and
+the fact does not.
+
+An orderly `reboot` or `systemctl stop` loses no output. A power cut loses up to
+half a minute of it — there was no shutdown for the last capture to ride along
+with.
+
 ### Upgrading
 
 ```sh

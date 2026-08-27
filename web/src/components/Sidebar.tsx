@@ -361,7 +361,9 @@ export function Sidebar(props: SidebarProps) {
                         e.stopPropagation()
                         props.onRestartSession(s)
                       }}
-                      title={t('app.restartHint')}
+                      title={
+                        s.exitStatus === EXIT_VANISHED ? t('restore.gone') : t('app.restartHint')
+                      }
                       className="vp-press vp-tap shrink-0 rounded-md p-0.5 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
                     >
                       <RotateCcw size={12} />

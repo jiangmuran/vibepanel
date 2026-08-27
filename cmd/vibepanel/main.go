@@ -356,6 +356,20 @@ func cmdServe(args []string) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = httpServer.Shutdown(shutdownCtx)
+
+	// One last capture of every session, before detaching.
+	//
+	// This is what makes an orderly reboot lossless. systemd stops the unit
+	// first and only then goes on to kill the tmux server, so the panel is the
+	// last thing running that can still read those panes — and the thirty
+	// seconds the archive ticker might otherwise be behind by are precisely the
+	// seconds somebody will want tomorrow, being the last thing on screen.
+	//
+	// After Shutdown so no request is still writing, before DetachAll because
+	// capture-pane talks to tmux and not to our PTY, so the order only matters
+	// for tidiness. Bounded by the same context: a machine going down is not a
+	// place to block forever.
+	srv.ArchiveAll(shutdownCtx)
 	mgr.DetachAll()
 	fmt.Println("\nstopped; tmux sessions keep running")
 	return nil
@@ -531,6 +545,10 @@ func cmdSession(args []string) error {
 			ID: sid, ProjectID: p.ID, TmuxName: tmuxName,
 			Title: *title, CWD: p.Path, Cols: *cols, Rows: *rows,
 			State: sessionpkg.StateWorking,
+			// The same argv that was just handed to tmux. Without it a session
+			// made from the CLI is one the panel cannot rebuild after a reboot
+			// — the same asymmetry that made this path miss the hook token.
+			LaunchCommand: fs.Args(),
 		})
 		if err != nil {
 			// The tmux session exists but we cannot track it. Removing it is
