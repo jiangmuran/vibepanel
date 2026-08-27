@@ -730,6 +730,31 @@ The handshake takes the same credential as everything else. `Origin` must match
 `Host`, which is what stops another page opening this socket with your cookies
 attached.
 
+## Attaching a harness
+
+The supported way to have a program manage every session is three things you
+already have, and it is written down here because they were three unrelated
+features until somebody asked for a plugin system.
+
+1. **An API token** — Settings → API tokens — as `Authorization: Bearer …`.
+   Everything the panel's own frontend does is available with it.
+2. **`GET /ws`**, with the same credential, for the push. A `state` message
+   carries the whole panel within 60 ms of anything changing: a session
+   becoming *waiting*, a process exiting, a title moving. That is a coalesce
+   window, not a poll interval, so there is nothing to tune and nothing to
+   miss between polls.
+3. **A webhook**, if the harness would rather be woken than stay connected.
+   `PUT /api/settings/webhooks` points a state transition at any URL, method,
+   headers and body of yours. It is fire-and-forget by design — it runs in a
+   goroutine the poller never waits for — so a harness that wants to *act*
+   holds a token from (1) and calls back.
+
+That composition is the plugin system. There is no in-process one, and
+[docs/plugins.md](plugins.md) is the argument for why: every capability such a
+runtime would grant is one this token already has, and the parts it could add
+that the token cannot — code on the panel's own origin, a synchronous veto in
+the poller's path — are the two that must not exist.
+
 ## What is not here
 
 There is no way to attach to a session's terminal over plain HTTP — that is the

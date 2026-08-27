@@ -13542,6 +13542,47 @@ comparison to prove the test still stands over something.
 | `--vnc-allow` accepts something that is not a CIDR | a narrower policy than was written |
 | `--vnc-allow` cannot be cleared from the command line | a policy that cannot be narrowed by hand |
 
+### U7: what a plugin is, when the API already exists
+
+Written down rather than built, and `docs/plugins.md` is the argument.
+
+Taken apart, "plugin" is four features sharing a word. **Reacting to what
+sessions do** is done: a harness with an API token opens `/ws` and is pushed the
+whole panel within 60 ms of any change — a coalesce window, not a poll interval.
+**Sending an event somewhere** is done, by webhooks, which were built for phone
+notifications and were never introduced to this question. **Adding to the
+interface** is the one to refuse hardest: the panel's origin holds a session
+cookie, a writable terminal and a file browser rooted at the user's projects, so
+third-party JavaScript there is not an extension point, it is the same access
+the signed-in person has, granted to a file — and the only alternative shape, an
+iframe on another origin, has nothing until it is given an API token, which is
+the first case again with a rectangle.
+
+The fourth is the real gap and it is not about capability: **shipping a harness
+as a file rather than as a daemon somebody has to supervise.** That is a
+supervisor and a scoped token, both ordinary, neither a plugin system — and it
+is blocked on API tokens being scoped at all, which they are not today.
+
+The rule every shape was tested against is the one the panel already has a scar
+from: **nothing a plugin does may make a session's state stop updating.**
+`fireWebhooks` runs in a goroutine and is never waited for, because a
+destination taking eight seconds to answer would stall the panel's own idea of
+what is happening. That is why the subprocess shape is the right one — there is
+no call to wait on — and it is why the thing people ask for next, a *veto*, is
+refused: every safe answer to "what if it never returns" is a deadline after
+which the panel does it anyway, and a veto that is ignored when the plugin is
+slow is a suggestion.
+
+Go's `plugin` package is out on `CGO_ENABLED=0` alone. WASM through wazero would
+work and is cgo-free; its cost is a host-function ABI that the panel would then
+have to document and version forever, and the first function anybody wants is
+"make an HTTP request" — at which point the sandbox holds a program that calls
+the API, with several megabytes of runtime in between.
+
+The only code that changed is a section in `docs/api.md` called *Attaching a
+harness*, which puts the token, the socket and the webhook on one page. That is
+the plugin system; it was only ever missing a name.
+
 ### Left undone
 
 - **No browser check covers the VNC tab.** The Go and vitest suites pin the
