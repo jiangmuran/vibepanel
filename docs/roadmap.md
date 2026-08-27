@@ -107,25 +107,50 @@
       像素时它们不严丝合缝，缝隙透出背景 = 裂缝。加上 `customGlyphs`（方框字符按几何画）和
       `rescaleOverlappingGlyphs`。**截图已确认**：圆角框、实心进度条、渐变块全部无缝。
       顺带加了 `设置 → 渲染器` 的 DOM 回退开关，给 WebGL 有问题的机器留一条路。
-- [ ] **T2 上下滚不动。** 面板里滚不动历史。
-- [ ] **T3 全屏（alt-screen）模式要兼容。** 触摸板上下滑正常，但右边滚动条一拖就跳到跑
-      claude 之前的记录——alt-screen 下不该有 scrollback，滚动条不该动主 buffer。
-- [ ] **T15 右边的滚动条会挡住字。**
+- [x] **T2 上下滚不动** —— attach 时用 `capture-pane -S - -E -1` 给回放环预热。这段代码
+      曾经有过、又被正确地删掉了（当时 tmux attach 以 `ESC[?1049h` 开头，之后一切都画在
+      xterm 的 alternate screen 上，那里按定义没有 scrollback）；而删除时留下的注释点名了
+      能改变这一点的设置，`terminal-overrides ',*:smcup@:rmcup@'`，那条设置后来正是为此加上了。
+      挪掉预热，回放里就只剩 200 行历史里的 HIST_178..200——正是你看到的现象。
+      `restart-check` 端到端钉住：重启后仍能滚回重启前一百行的第一行。
+- [x] **T3 全屏（alt-screen）模式** —— 浏览器看不出 TUI 在跑：tmux 按 pane 模拟 alternate
+      screen 并把它合成掉，而面板又故意让 tmux 自己的 client 不进 alternate screen（否则根本
+      没有 scrollback）。所以改由 poller 告诉它——`#{alternate_on}`，`internal/tmux` 一直在读、
+      从来没人用过。全屏程序在画的时候不提供滚动条，视图贴底。用「贴回去」而不是「冻住」：
+      一个什么都不做的滚轮事件读起来像页面卡死，而且应用自己想要滚轮（这就是触摸板在 TUI
+      里本来就正常的原因）。
+- [x] **T15 滚动条挡字** —— **有两条滚动条**。xterm 6 把滚动挪到了
+      `.xterm-scrollable-element`（div 做的覆盖式滚动条），而 `.xterm-viewport` 变成了一个
+      没有子节点的背景层（实测 830×602、`kids: []`），xterm.css 却仍然给它
+      `overflow-y: scroll`——于是画出第二条永久存在、完全无用的轨道。它占多少宽度是**平台
+      决定**的：经典滚动条的机器上占 8–15px 且 fit addon 会减掉；覆盖式滚动条的机器上占 0，
+      fit addon 于是多排几列，真正那条 14px 的滚动条就压在最后一列字上——这就是它在有的机器
+      上挡字、有的不挡的原因。现在把死的那条藏掉，用 padding 确定性地留出宽度。
+      另外两条给 `.xterm-viewport::-webkit-scrollbar` 的样式自 xterm 6 升级起就没作用过。
 - [ ] **T4 粘贴图片粘不进去（原生）。**
-- [ ] **T14 切换 tab 之后焦点自动回到终端。**
+- [x] **T14 切 tab 后焦点回终端** —— 规则写在 `focus.ts` 里：**只有当人主动选了一个终端
+      （侧栏会话、底部 tab、右栏 tab），并且在那个终端真正准备好接收焦点的那一刻没有别的东西
+      占着键盘时**，焦点才移动。从点击处理器调用而不是从 effect：会话死掉时 `applyState` 会
+      改选第一个会话，用 effect 会因为「别处一个构建结束了」把焦点从笔记框里抢走。
 
 ### 会话与恢复
 
 - [ ] **T5 关机/重启后 100% 恢复进度。** tmux 活不过重启，需要记录并在开机后重建。
-- [ ] **T10 Codex 自动安装**；以及 **codex 不会自动设标题**，进程内手动设也不行——这条链路
-      没打通。*（已交给子任务，进行中）*
+- [x] **T10 Codex** —— 一键安装 `notify`（按行改 TOML，插在第一个 table 之前；追加到末尾会
+      变成 `[某表].notify`，能解析、能过 `codex doctor`、读回来也对，但 Codex 永远不读）。
+      标题链路的断点：程序发现自己在 tmux 里时用 passthrough 发 OSC，passthrough 的定义就是
+      tmux 不看，所以 `pane_title` 永不改变；而面板**本来就在解析那个标题**、送到浏览器、
+      然后没人接。现在 `Live` 记住 PTY 上看到的标题，`deriveTitle` 把它作为第二来源。
 
 ### 界面质感
 
 - [ ] **T6 弹窗没质感、没动画、操作不顺手。** 已做：入场动效（背景淡入+模糊、面板
       0.97→1）、按压反馈 `vp-press`、目录选择器全键盘导航（↑↓ Home End 移动、Enter/→ 进入、
       Backspace/← 上一层）。**还没验收。**
-- [ ] **T11 所有提示不能用 raw toast**（`alert`/`confirm`/浏览器原生），要自己做一个好看的。
+- [x] **T11 不用 raw toast** —— 五处 `window.confirm` / `window.prompt` 全部换掉：自制
+      toast 栈（形状+颜色双重编码、自动消失、可手动关、手机上锚在软键盘上方的输入条之上）
+      和确认对话框（Escape 取消、Enter 确认、焦点默认落在安全那一侧、危险按钮是窄的那个）。
+      `no-raw-dialogs.test.ts` 同时防住 `window.confirm(` 和裸的 `confirm(`。
 - [ ] **T12 目录选择要能搜索**，也要能手动打路径（手动输入已有，搜索没有）。
 - [ ] **T13 右边文件 tab 要能直接粘贴/上传文件，要能预览文件。**
 
@@ -137,8 +162,9 @@
 
 ### 部署与运维
 
-- [ ] **T7 交互式安装脚本**，有 root 时可以完全安装（注册系统服务、开机自启）。
-      *（已交给子任务，进行中）*
+- [x] **T7 交互式安装脚本** —— 有 TTY 就问、`--yes` 保持无人值守；检测到 root 就提供系统
+      服务安装（systemd + 开机自启），没有就说明原因退回 user unit；**绝不同时装两份**。
+      新增 `make install-check`（72 条断言、几秒、不用 sudo），每条守卫都挪掉验证过会红。
 - [ ] **T16 给不同人一个简单清晰的安装方式，并在不同层面做清晰的对比**（谁该用哪种装法）。
 - [ ] **T8 面板内更新。**
 - [ ] **T9 只读分享链接**——系统状态/宏观数据/大屏/全部 session 列表，在别的显示器上打开，
@@ -146,8 +172,9 @@
 
 ### 路上产生的欠账
 
-- [ ] **T17 浏览器检查还在读 DOM 取终端文本。** 装上 GPU renderer 之后 `.xterm-rows` 是空的，
-      十三条断言同时红。已加 `window.vibepanelScreen`（读 xterm buffer）和
-      `scripts/lib/screen.mjs`，改了一部分调用点，**还没改完**。
+- [x] **T17 浏览器检查改读 buffer** —— `window.vibepanelScreen` + `scripts/lib/screen.mjs`，
+      四个检查脚本的九个调用点全部改完；需要 DOM 几何的两处（CJK 进格宽度、触摸拖动的行位置）
+      钉在 DOM renderer 上，这也正是设置里那个渲染器开关的另一个用处。render / stress /
+      restart 三项全绿。
 
 ---
