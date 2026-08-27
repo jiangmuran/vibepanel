@@ -40,7 +40,8 @@ echo "==> unpacking somewhere that knows nothing"
 mkdir -p "$WORK/clean"
 tar -xzf "$ARCH" -C "$WORK/clean" || fail "the archive does not extract"
 DIR="$WORK/clean/vibepanel_test-release_linux_amd64"
-for f in vibepanel LICENSE README.md deploy/vibepanel.service deploy/vibepanel.env; do
+for f in vibepanel LICENSE README.md deploy/vibepanel.service \
+         deploy/vibepanel-system.service deploy/vibepanel.env; do
   [ -e "$DIR/$f" ] && ok "ships $f" || fail "the archive is missing $f"
 done
 [ -x "$DIR/vibepanel" ] && ok "the binary is executable" || fail "the binary is not executable"
@@ -174,7 +175,17 @@ echo "==> the documented install path"
 [ -x "$DIR/deploy/install.sh" ] && ok "the archive ships an executable install.sh" \
   || fail "the archive has no install script; the unit expects the binary at a path nothing puts it in"
 if [ -x "$DIR/deploy/install.sh" ]; then
-  ( cd "$DIR" && HOME="$WORK/home" ./deploy/install.sh >"$WORK/install.log" 2>&1 )
+  # --yes explicitly, even though a redirected stdout already turns the prompts
+  # off. This runs under `make`, which may hand the script a terminal on stdin,
+  # and a check that hangs waiting for an answer nobody sees is worse than one
+  # that fails. scripts/install-check.sh is where the interactive path is
+  # driven; here the question is only whether the shipped archive installs.
+  #
+  # --no-enable for a sharper reason: `systemctl --user` reaches the manager for
+  # the logged-in user, which does not care what HOME this check sets. On a
+  # machine where the developer runs the panel, a run that decides to start or
+  # restart "vibepanel" would be starting or restarting theirs.
+  ( cd "$DIR" && HOME="$WORK/home" ./deploy/install.sh --yes --no-enable >"$WORK/install.log" 2>&1 )
   RC=$?
   sed 's/^/       /' "$WORK/install.log"
   [ $RC -eq 0 ] && ok "install.sh exits 0" || fail "install.sh exited $RC"
@@ -188,11 +199,19 @@ if [ -x "$DIR/deploy/install.sh" ]; then
     || fail "no env file was installed"
   grep -qi "linger" "$WORK/install.log" && ok "it mentions lingering" \
     || fail "nothing said about lingering; the service would die at logout"
+  # The last thing it prints is the only summary anybody reads, and it has been
+  # wrong before: "started" printed over an `enable --now` that was a no-op.
+  grep -q "installed: the systemd user service" "$WORK/install.log" \
+    && ok "it says which unit it installed" \
+    || fail "the installer did not name the unit it installed: $(tail -3 "$WORK/install.log" | tr '\n' ' ')"
+  grep -q "installed: the systemd system service" "$WORK/install.log" \
+    && fail "the unattended default chose the system unit, which needs root" \
+    || ok "the unattended default is the user unit, which needs none"
 
   # An edited env file must survive a reinstall — it holds the domain and any
   # ACME credentials.
   echo "VIBEPANEL_DOMAIN=edited.example" > "$WORK/home/.config/vibepanel.env"
-  ( cd "$DIR" && HOME="$WORK/home" ./deploy/install.sh >/dev/null 2>&1 ) || true
+  ( cd "$DIR" && HOME="$WORK/home" ./deploy/install.sh --yes --no-enable >/dev/null 2>&1 ) || true
   grep -q "edited.example" "$WORK/home/.config/vibepanel.env" \
     && ok "reinstalling keeps an edited env file" \
     || fail "reinstalling overwrote the env file the user had edited"

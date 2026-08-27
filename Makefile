@@ -99,6 +99,13 @@ release:              ## Cross-compiled archives in dist/
 release-check:        ## Build the archives and run one from a throwaway HOME
 	scripts/release-check.sh
 
+# Seconds, and no build: it installs a stub binary, because the installer never
+# runs what it installs. Kept out of `check` only because `check` is the Go and
+# frontend gate; run it whenever deploy/ changes.
+.PHONY: install-check
+install-check:        ## Drive deploy/install.sh down every branch it has
+	scripts/install-check.sh
+
 .PHONY: head-check
 head-check:           ## Build and test a clean worktree at HEAD, not this tree
 	scripts/head-check.sh

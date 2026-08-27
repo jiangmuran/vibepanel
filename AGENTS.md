@@ -101,6 +101,7 @@ Each of these exists because the alternative broke something real.
   | `make scale-check` | two dozen sessions: snapshot size, sidebar reachability, poller |
   | `make tls-check` | its own TLS: wss, the Secure cookie, swapping a certificate |
   | `make release-check` | build the archives and run one from a throwaway HOME |
+  | `make install-check` | `deploy/install.sh` down every branch: interactive and not, user unit and system unit, root and no root, and the refusal to install both |
 
   Run the one that covers what you touched, and `verify` before anything
   structural. A change that only passes `check` has not been looked at.

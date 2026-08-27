@@ -11258,3 +11258,108 @@ to the list, and stays visible when the list is long enough to scroll.
 **The checkbox tooltip said the same thing in both branches.**
 `title={t.done ? tr('session.done') : tr('session.done')}` — copy-paste, and it
 told you the item was "done" whether it was or not. Mark done / mark not done.
+
+## The installer asks now, and the one path that needed root was the one path nobody shipped
+
+`install.sh` did one thing: copy the binary, drop a user unit under `$HOME`,
+enable lingering, print what to run next. Everything else was a comment at the
+bottom pointing at `deploy/vibepanel-system.service` — the unit that exists
+because a *user* unit asking for `OOMScoreAdjust=-500` measurably gets `100`.
+
+Two things were wrong with that pointer. The README told people to `sudo cp
+deploy/vibepanel-system.service /etc/...`, and **`build-release.sh` never copied
+that file into the archive**. So the instruction worked from a git clone and
+from nowhere else — for anyone who had done what the README's own Install
+section says, `deploy/` held two files and neither was the one being named. It
+ships now, and `release-check` asserts the archive contains it, which is the
+assertion that would have caught it.
+
+The other thing is that installing a service is a decision with consequences and
+the script made none of them out loud. It now asks, when there is somebody to
+ask: which unit, whether to start it, and then it prints the whole plan and
+waits for a yes. At the end it reports what it *did* — which unit, started or
+restarted, where the token is, what URL to open — rather than what the script
+generally does.
+
+**Interactive by default, and the definition of "by default" is the whole
+trick.** Both stdin and stdout have to be terminals. stdin alone is not enough:
+`make release-check` runs the installer with its output redirected to a log
+file, from a make invocation that may well still have a terminal on stdin, and a
+prompt written into a log file is a script that waits forever for an answer
+nobody can see it asking for. `curl | bash` falls out of the same rule for free,
+because there stdin is the script.
+
+`--yes`/`--non-interactive` says it explicitly, `--interactive` forces prompts
+on without a terminal, and every flag that existed before still means what it
+did.
+
+**Never both units.** A user unit and a system unit are two panels on one tmux
+socket and one database. They do not corrupt anything and they do not collide
+loudly — SQLite serialises them — they take turns, and the symptom is a panel
+that forgets things: a project added in the morning gone by the afternoon,
+`doctor` clean, because from inside either panel everything is as it should be.
+The installer detects the other kind and refuses to create the second one;
+`--migrate` is how you say you meant it, and it stops and removes the old one
+*before* installing the new, so an interruption leaves nothing running rather
+than two things running. `docs/runbook.md` has the symptom, because machines
+where both were installed by hand already exist.
+
+A bare re-run keeps the kind you already have and does not ask again. An upgrade
+that offers to change the unit kind is an upgrade that changes it for whoever
+pressed return.
+
+**No root is a sentence, not a failure.** Root is available if you are root, if
+`sudo -n true` works, or if sudo exists and there is a terminal to type a
+password at. Sudo that *would* work but needs a password nobody is watching
+counts as no root, because an installer that hangs in CI is worse than one that
+installs the user unit. When it cannot, it says why and installs the user unit —
+which is the right default anyway; the only thing given up is the OOM score.
+
+### Testing shell without sudo, and the two bugs that came out of it
+
+The bar is that a fix must be seen to fail when removed, and there is no test
+framework here — so `scripts/install-check.sh` runs the real script down every
+branch with three overrides that exist for no other reason, and say so in a
+comment where they are defined: `VIBEPANEL_DESTDIR` (a DESTDIR-style prefix, so
+"the system unit" lands in a temp directory instead of `/etc`),
+`VIBEPANEL_SYSTEMCTL` (a recorder), and `VIBEPANEL_ROOT_CMD` (`none` produces
+the no-root path, which cannot otherwise be produced on a machine where sudo
+works). Seventy-odd assertions, no sudo, seconds to run.
+
+`VIBEPANEL_SYSTEMCTL` is not only for assertions. **`systemctl --user` talks to
+the manager for the logged-in user, which read its own `$HOME` at login and does
+not care what `HOME=` the script was handed.** The migration path runs
+`systemctl --user disable --now vibepanel`; a check driving it with a throwaway
+HOME would have stopped the panel of whoever ran the check.
+
+The same fact was a bug in the installer, not just the check. "Is it already
+running?" decides restart-versus-start, and asking it on a *first* install into
+a different HOME can get "yes" about somebody else's panel — which the new
+restart-without-being-asked behaviour would then have restarted. It only asks
+once a unit of that kind exists in the HOME it was pointed at. `release-check`
+passes `--no-enable` on top of that, for the same reason stated at the call.
+
+**Mutating the script proved each guard.** Removing the TTY test, the conflict
+refusal, the plan confirmation, the no-root fallback, the restart-on-upgrade
+branch and the `__USER__`/`__HOME__` substitution each failed the check, between
+two and eight assertions apiece.
+
+And it found a bug in the check itself. `has "$log" -- "--user restart …"` —
+the `--` was meant for `grep`, but `has()` takes the pattern as `$2`, so it was
+grepping for `--`, which every log contains. Four assertions were passing on a
+string nobody had written on purpose; one of them was still green under a
+mutation that removed the behaviour it named. Found because the mutation run
+reported three failures where four were expected, which is the only reason to
+count them.
+
+**One real defect in the first draft, found the same way:** `read -p` prints its
+prompt *only when stdin is a terminal*. Driven from a here-doc, the installer
+consumed the answers and asked nothing — the questions, which are the thing
+under test, were invisible in the transcript. Prompts are printed with `printf`
+and the answer comes back in a variable now, and the answer is echoed back when
+stdin is not a terminal so a piped run reads as a conversation rather than a
+monologue.
+
+The pty case is checked separately: every other case forces the mode with a
+flag, so none of them can say whether a person at a terminal is actually asked
+anything. `script -qec` gives it a real pty, with no flag at all.

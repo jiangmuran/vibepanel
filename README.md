@@ -91,30 +91,56 @@ From a release archive, on any machine with tmux:
 ```sh
 tar -xzf vibepanel_<version>_linux_amd64.tar.gz
 cd vibepanel_<version>_linux_amd64
-./deploy/install.sh --enable          # everything it touches is under $HOME
-journalctl --user -u vibepanel -n 30  # the one-time setup token
+./deploy/install.sh
 ```
 
-Nothing needs root: it is a systemd *user* service, because the panel runs your
-agents as you, with your keys and your dotfiles. The installer also enables
-lingering for you, which is not optional — a user service stops when your last
-login session ends, and a panel that dies when you log out is a panel that only
-appears to work.
+It asks. Which service to install, whether to start it now, and then it prints
+the plan and waits for you to agree before it touches anything. At the end it
+says which unit it installed, whether it started or restarted it, where the
+one-time setup token is, and the URL to open.
+
+The default is a systemd *user* service, because the panel runs your agents as
+you, with your keys and your dotfiles, and nothing about it needs root. The
+installer also enables lingering for you, which is not optional — a user service
+stops when your last login session ends, and a panel that dies when you log out
+is a panel that only appears to work.
+
+If root is available — you are root, or `sudo` works — it offers the system
+service as well, and says what the difference is at the point of asking. If root
+is *not* available it says so and installs the user service instead; it never
+fails over something you cannot fix from where you are standing.
 
 Open `http://<host>:8443`, paste the setup token, choose a password. That is the
 whole first run.
 
 <details>
-<summary><b>Running it as a system service instead</b></summary>
+<summary><b>Unattended, for CI and <code>curl | bash</code></b></summary>
 
-Use `deploy/vibepanel-system.service` if the machine runs close to its memory, or
-if you want the panel up before anyone logs in:
+The prompts appear only when stdin *and* stdout are terminals, so a pipeline
+gets the old behaviour without asking for it. To be explicit:
 
 ```sh
-sudo cp deploy/vibepanel-system.service /etc/systemd/system/vibepanel.service
-sudo sed -i "s/__USER__/$USER/g; s#__HOME__#$HOME#g" /etc/systemd/system/vibepanel.service
-sudo systemctl daemon-reload && sudo systemctl enable --now vibepanel
+./deploy/install.sh --yes --enable    # no questions, user service, start it
+./deploy/install.sh --yes --system    # no questions, system service (needs root)
+./deploy/install.sh --help
 ```
+
+`--yes` takes every default; `--enable` starts the service; `--user` and
+`--system` pick the unit; `--migrate` allows replacing one kind with the other.
+
+</details>
+
+<details>
+<summary><b>Running it as a system service instead</b></summary>
+
+```sh
+./deploy/install.sh --system          # add --migrate if the user unit is there
+```
+
+Choose this if the machine runs close to its memory, or if you want the panel up
+before anyone logs in. It writes `/etc/systemd/system/vibepanel.service` with
+your username and home directory substituted in, and the service still drops to
+`User=<you>` — same account, same environment, same agents.
 
 The difference is measured, not theoretical: a *user* unit asking for
 `OOMScoreAdjust=-500` gets `100`, because lowering it needs `CAP_SYS_RESOURCE` and
@@ -122,6 +148,12 @@ a user manager does not have it. `systemd-analyze verify` accepts the directive
 either way. A system unit with `User=` sets it before dropping privileges and the
 process really reads `-500` — the panel and the tmux server holding every session
 are then the last things the kernel reaches for.
+
+**Only ever one of the two.** A user unit and a system unit are two panels on one
+tmux socket and one database; they do not collide loudly, they take turns, and
+the symptom is a panel that forgets things. The installer detects the other kind
+and refuses rather than create the second one — `--migrate` is how you say you
+meant it, and it stops and removes the old one before installing the new.
 
 </details>
 
@@ -186,6 +218,11 @@ tar -xzf vibepanel_<new>_linux_amd64.tar.gz
 cd vibepanel_<new>_linux_amd64
 ./deploy/install.sh              # replaces the binary and restarts the service
 ```
+
+It keeps the unit kind you already have and does not ask about it again, and a
+service that is already running is restarted whether or not you passed
+`--enable` — leaving the new binary on disk with the old one still serving is
+the failure below, and it looks like nothing.
 
 Your sessions do not restart with it. Any browser with the panel open reconnects,
 notices the build changed and offers to reload — the page is a view, so reloading
