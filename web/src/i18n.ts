@@ -717,17 +717,11 @@ const DICT = {
     zh: 'agent 自己记的账，包括不经过面板跑的。',
     en: "Counted from the agents' own records, including runs this panel did not start.",
   },
-  'spend.agentSessionNote': {
-    zh: '这里的“会话”是 agent 自己的会话，不是面板里的会话 —— 两边没有可靠的对应关系。',
-    en: "A session here is the agent's own, not one of the panel's: there is no reliable mapping between them.",
-  },
-  'spend.sourceMissing': {
-    zh: '找不到 {tool} 的记录（{why}），所以它这里是“不知道”，不是 0。',
-    en: 'No {tool} records could be read ({why}), so its figure is unknown rather than zero.',
-  },
+    'spend.agentSessionNote': { zh: '按 agent 自己的会话统计。', en: "Counted by the agent's own sessions." },
+  'spend.sourceMissing': { zh: '{tool}：不知道（{why}）', en: '{tool}: unknown ({why})' },
   'spend.sourceRead': { zh: '{tool}：读了 {files} 个文件', en: '{tool}: {files} files read' },
   'spend.lowerBound': {
-    zh: '有 {n} 条记录读不出来，所以下面的数字是下限。',
+    zh: '{n} 条记录读不出来，下面是下限。',
     en: '{n} records could not be read, so the figures below are a lower bound.',
   },
   'spend.passError': { zh: '上一次读取出错：{why}', en: 'The last pass failed: {why}' },

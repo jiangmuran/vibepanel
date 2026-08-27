@@ -12726,3 +12726,19 @@ sentences and not of the document. The Chinese one now opens by clearing up what
 the thing is not, keeps the share links with the rest of the public-facing
 material instead of in the feature tour, and says where the English-only
 documentation is. Same facts, both directions.
+
+## A dialog that was the same height whatever was in it
+
+The rebuilt picker opened at a fixed `h-[min(30rem,82vh)]`, so a directory with
+one entry in it showed the row and then four hundred pixels of nothing —
+which reads as a list that failed to load rather than a directory with one thing
+in it. `max-h`, and the list inside carries its own ceiling, so a large
+directory still stops somewhere sensible.
+
+Found by looking at the screenshot, which is the only way this kind of thing is
+ever found.
+
+And three more strings that were still arguing: the token panel's "找不到 claude
+的记录（not found），所以它这里是"不知道"，不是 0。" became "claude：不知道
+（not found）". The distinction it was defending is real and is in `docs/`; on
+screen it is a paragraph explaining a dash.

@@ -322,7 +322,11 @@ export function DirectoryPicker({
       data-testid="dir-picker-backdrop"
     >
       <div
-        className="vp-panel-in flex h-[min(30rem,82vh)] w-full max-w-xl flex-col overflow-hidden rounded-vp-lg border border-hairline bg-surface shadow-xl"
+        // max-h, not h. A fixed height makes a directory with one thing in
+        // it look like a list that failed to load: the row, and then four
+        // hundred pixels of nothing under it. The list inside has its own
+        // ceiling, so a large directory still stops at a sensible size.
+        className="vp-panel-in flex max-h-[min(30rem,82vh)] w-full max-w-xl flex-col overflow-hidden rounded-vp-lg border border-hairline bg-surface shadow-xl"
         onClick={(e) => e.stopPropagation()}
         // Read by focusTerminal: while this is up the keyboard is the picker's,
         // and a terminal must not take it back mid-choice.
@@ -455,7 +459,13 @@ export function DirectoryPicker({
           role="listbox"
           aria-label={t('dir.title')}
           aria-busy={busy}
-          className="min-h-0 flex-1 overflow-y-auto py-1"
+          // Sized to what is in it, up to a ceiling.
+          //
+          // `flex-1` in an 80vh column made every directory the same height:
+          // one entry and then four hundred pixels of nothing under it, which
+          // reads as a list that failed to load rather than a directory with
+          // one thing in it.
+          className="max-h-[min(60vh,26rem)] min-h-0 overflow-y-auto py-1"
         >
           <div
             key={nav.n}
