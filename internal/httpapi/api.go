@@ -22,6 +22,7 @@ import (
 
 	"github.com/jiangmuran/vibepanel/internal/auth"
 	"github.com/jiangmuran/vibepanel/internal/config"
+	"github.com/jiangmuran/vibepanel/internal/git"
 	"github.com/jiangmuran/vibepanel/internal/hooks"
 	"github.com/jiangmuran/vibepanel/internal/id"
 	"github.com/jiangmuran/vibepanel/internal/selfupdate"
@@ -64,6 +65,20 @@ type Server struct {
 	// VNCEnabled gates whether the VNC routes are registered at all. False is
 	// the default, and false means they are absent rather than guarded.
 	VNCEnabled bool
+	// GitHub queries pull requests, when somebody presses the button that asks
+	// it to. A value with a zero Endpoint, which means api.github.com; tests
+	// point it at an httptest server, and nothing else sets it.
+	//
+	// The token is deliberately not on it: it is read from the environment at
+	// the moment of the request, so a panel restarted without one stops being
+	// able to ask rather than carrying a copy from startup.
+	GitHub git.Client
+
+	// Git holds recent reads of the working trees the git tab polls, so that
+	// several viewers on one project are one `git status` rather than several.
+	// The zero value works and is the one every caller uses; see
+	// internal/git/cache.go for why the endpoint may not read the disk direct.
+	Git git.Cache
 
 	// fullscreen holds the session ids whose pane has a full-screen program
 	// drawing in it, as the poller last saw them.
@@ -342,6 +357,7 @@ func (s *Server) Routes() http.Handler {
 			if s.VNCEnabled {
 				s.registerVncRoutes(r)
 			}
+			s.registerGitRoutes(r)
 			s.registerUpdateRoutes(r)
 			s.registerWebhookRoutes(r)
 			s.registerTokenRoutes(r)

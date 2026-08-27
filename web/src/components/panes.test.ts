@@ -334,7 +334,7 @@ describe('moving a tab', () => {
     // insertion index is clamped to the end of the list anyway, so the wrong
     // answer and the right one agree — this test passed against the arithmetic
     // removed until it was written this way.
-    const l = four() // [files+monitor, notes, todos, tokens]
+    const l = four() // [files+git+monitor, notes, todos, tokens]
     const moved = moveTab(l, 'notes', { kind: 'new', at: 3 })
     expectSound(moved, 'moved past the pane it left')
     expect(moved.groups.map((g) => g.tabs.join('+'))).toEqual([

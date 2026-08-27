@@ -16,7 +16,10 @@
  * Presentation may change with size; the set of controls may not.
  */
 
-export const PANEL_TABS = ['files', 'monitor', 'notes', 'todos', 'tokens'] as const
+// `git` sits beside `files` rather than at the end. It is the second thing
+// anybody asks about a directory, the two are read together, and appending it
+// would have put the newest tab furthest from the one it belongs with.
+export const PANEL_TABS = ['files', 'git', 'monitor', 'notes', 'todos', 'tokens'] as const
 
 export type PanelTab = (typeof PANEL_TABS)[number]
 
@@ -30,15 +33,21 @@ export const PANEL_MAX_WIDTH = 640
  * The width at which the selected tab is named in words rather than drawn as
  * an icon alone.
  *
- * Below it the segmented track has under 170 pixels to divide five ways, and a
- * name in the selected fifth of that is two letters and an ellipsis — which
- * tells you less than the icon it displaced. The label does not blink out at
- * this width; it folds shut. See the `max-width` transition in RightPanel.
+ * Below it the segmented track has under 170 pixels to divide between every
+ * tab, and a name in the selected share of that is two letters and an ellipsis
+ * — which tells you less than the icon it displaced. The label does not blink
+ * out at this width; it folds shut. See the `max-width` transition in
+ * RightPanel.
+ *
+ * It was 250 while there were five tabs and is one unlabelled tab wider now
+ * that there are six, because the thing being divided did not grow with them.
+ * A number that stays put while the row it describes gets longer is a label
+ * that clips instead of folding.
  *
  * A label is not a control, which is why this is allowed to depend on width at
  * all. paneControls() below does not.
  */
-export const PANEL_LABEL_WIDTH = 250
+export const PANEL_LABEL_WIDTH = 276
 
 export interface PanelChrome {
   /** The selected tab shows its name; the others are icons either way. */
@@ -54,8 +63,8 @@ export function panelChrome(width: number): PanelChrome {
  * it is sharing the strip with.
  *
  * A pane holding one tab has the whole strip for one name and is always
- * labelled, at any width the panel can be. The width threshold is about five
- * names competing for 170 pixels, and one name is not competing with anything.
+ * labelled, at any width the panel can be. The width threshold is about every
+ * name competing for 170 pixels, and one name is not competing with anything.
  */
 export function paneLabelled(width: number, tabCount: number): boolean {
   return tabCount <= 1 || panelChrome(width).labelled
@@ -113,7 +122,7 @@ export function panelFocusOrder(_width: number, tab: PanelTab): string[] {
 /**
  * Arrow-key navigation within the tab strip.
  *
- * Wrapping, because five tabs in a row with a stop at each end is a control
+ * Wrapping, because a row of tabs with a stop at each end is a control
  * that punishes you for holding a key down. Home and End are in the ARIA
  * tablist pattern and cost one line each.
  *

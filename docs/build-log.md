@@ -14449,3 +14449,261 @@ Everything else was clean: 47 tap targets in the phone drawer, 31 at 320 wide,
 31 in landscape, no overflow, no unreachable content. The one remaining FAIL —
 `bottom: typing into a bottom terminal produced no output` — reproduces on a
 stashed tree at HEAD and is not from this change.
+## The side panel learns to read a repository, and to draw a page
+
+Two halves of one request: 「文件和 github 预览」 and, separately, HTML preview.
+The file half already existed. What was missing was the repository, and the
+ability to render a page at all.
+
+This landed twice. The first pass wrote everything below and then lost the
+ability to run anything, so it was committed as `wip(preview,git): …,
+UNVERIFIED` on a branch based two merges behind `main` — nothing compiled, no
+test ran, no mutation was applied. This entry is the second pass: the merge onto
+`main`, the rework onto the chrome vocabulary and the pane system that landed in
+between, and the mutation table actually being run.
+
+### What the first pass got wrong, and how it was found
+
+Three defects, all of which would have shipped, and none of which had a visible
+symptom:
+
+- **`GIT_DIR=` is not "unset GIT_DIR".** The environment builder listed the three
+  `GIT_*` path variables alongside `GIT_OPTIONAL_LOCKS=0` and set all of them to
+  the empty string. To git, `GIT_DIR=` names a git directory whose path is the
+  empty string, and every invocation under it dies with `fatal: not a git
+  repository`. That is the message `notARepo()` matches, so **every** working
+  tree in the panel reported itself as "not a repository" — which is an ordinary
+  answer for a project directory, so nothing logged, nothing errored, and the tab
+  simply said the wrong thing everywhere. The variables to set and the variables
+  to remove are two lists now, and the comment on the second says why they are
+  not one.
+- **A leading dot is an extension.** `SniffMarkup` used `LastIndexByte(name, '.')
+  < 0`, so a dotfile called `.html` was a page. It is `<= 0` now. Its own test
+  said so and had never been run.
+- **`Date.now()` during render.** ESLint's `react-hooks/purity` rule refuses it
+  outright, and the fix is better than the workaround: one clock, ticked by the
+  poller and passed down — so fifteen commit rows cannot disagree about what time
+  it is, and "3 minutes ago" stops being frozen at whatever it said when the
+  panel mounted.
+
+### The mutation table
+
+67 mutations, 6 survivors, every survivor fixed and re-run red. The interesting
+half is the survivors; the other 61 only say the tests were written by somebody
+who meant them.
+
+- **`nosniff` on the rendered response was decoration.** The handler set it and
+  the test asserted it, and removing the handler's line changed nothing —
+  `securityHeaders` sets it on every response already. The line looked like the
+  guard and was not. It is gone; the test now holds the middleware, and removing
+  it *there* is red.
+- **The path-containment test accepted a 404.** It asked for `../../etc/passwd`
+  and passed on "forbidden or not found" — but replacing `browse.Resolve` with
+  `filepath.Join` also produces a 404, because the escaped path leads somewhere
+  with nothing in it. The test now writes a real page *outside* the project and
+  fails if its contents come back, which is the only way to tell "refused" from
+  "not there".
+- **The 8 MiB ceiling on a rendered preview had no test at all.** `/preview` had
+  one; `/preview/render` was a copy of the check with nothing behind it.
+- **The empty lists.** `gitResponse` starts every slice as `[]` so a nil does not
+  marshal to `null` and take `.length` down with it — and the test decoded the
+  body into a struct, which cannot tell `[]` from `null`. It reads the bytes now.
+- **`prForBranch('')`** returned null with the guard removed, because the
+  fixture's pull request had a branch name. With a `branch: ''` in the list it
+  does not, and `branch` arrives from `JSON.parse` cast to an interface, so
+  "GitHub would never send that" is not a property this side gets to rely on.
+- **The cache's TTL was never checked.** One test kept its entry inside the
+  window and the other switched caching off before reaching it, so replacing the
+  comparison with `true` passed both. An entry that actually expires is the only
+  shape that says the number means anything.
+
+### U2 — what the repository tab shows, and what it deliberately does not
+
+`internal/git` is `os/exec` and the git CLI. No dependency, `CGO_ENABLED=0`
+unaffected, and every argument is an argument — a branch name is
+attacker-controlled the moment somebody clones a repository, and
+`--upload-pack=…` is a legal branch name.
+
+Four questions, because they are the four somebody watching six agents edit one
+repository actually asks: what branch and how far from the upstream; what is
+uncommitted; what just landed; what is open upstream. The first three come off
+the disk with no credential and no network. The fourth needs a token and a button
+press, and its absence costs one line on screen.
+
+The subcommand allowlist is the guard that keeps the product's "does not phone
+home" promise true, and it is deny-by-default with three entries: `status`,
+`log`, `remote`. The two that will be argued for are `fetch` (to make
+ahead/behind current) and `ls-remote`, and both would put an outbound request on
+whatever schedule the panel polls at. `GIT_OPTIONAL_LOCKS=0` is the one
+environment variable with a visible cost if it goes missing: `status` refreshes
+the index and takes `.git/index.lock` to do it, and the agent in that directory
+is running `git commit` at the same time.
+
+`--porcelain=v2 --branch -z` in one invocation rather than four, and the `-z` is
+what makes a path with a newline in it parseable. The rename entry is the trap:
+with `-z` the original path is its *own* record rather than a tab-separated
+suffix, so a parser that treats every record as an entry reports the old path of
+a renamed file as an untracked file. Nothing errors; there is a wrong line on
+screen.
+
+The GitHub half is one GraphQL query, not one REST call per pull request, which
+is the difference between "a button" and "a button that fires thirty requests at
+somebody's rate limit". The token is read from `GITHUB_TOKEN` or `GH_TOKEN` at
+the moment of the request and there is nowhere to store one — a settings page
+that did would be a long-lived third-party credential at rest, an audit surface,
+a rotation story and a screen explaining scopes, for a feature whose whole point
+is that it is optional. `Endpoint` is a constant: resolving an API host out of a
+git remote is one clone away from being told where to send a token.
+
+The join between the two halves is a branch name, matched exactly and never by
+prefix. `feat/auth` and `feat/auth-2` are different branches with different pull
+requests, and a green tick on work that was never tested is worse than no tick.
+
+### The polling cost, which the first pass named and did not fix
+
+The tab polls every five seconds, and one tick is three processes — `status`,
+`log`, `remote` — plus one `status` per worktree a session sits in. The first
+pass wrote that down under "left undone". Six viewers on one project was eighteen
+processes every five seconds walking one `.git`, against agents contending for
+the same inodes.
+
+`internal/git/cache.go` is the fix, and it needs both halves:
+
+- **A three-second TTL**, deliberately shorter than the five-second poll, so a
+  lone viewer still gets a fresh read every tick and cannot tell the cache is
+  there. It bites only when readers overlap.
+- **Single flight.** A TTL alone does not give this: a cold entry and six
+  simultaneous requests is still six processes, and "everybody reloaded when the
+  deploy went out" is the shape that happens.
+
+The subtle half is `context.WithoutCancel` on the shared read. Tying it to the
+first caller's request context means one viewer closing a tab cancels the read
+five others are waiting on, and they get `context.Canceled` for a repository that
+is fine. git's own five-second `runTimeout` still bounds it. Waiters use their
+*own* context, so nobody is held by somebody else's read.
+
+The browser end pays its share: the poller skips while `document.hidden` — a
+background tab has no reader and the timer runs anyway — and refuses to overlap,
+because a tree where `status` takes longer than the poll interval is exactly the
+tree where a timer that fires regardless queues reads faster than the server can
+answer them.
+
+It is not a watcher. An inotify watch on `.git` would be a goroutine per project,
+a descriptor budget and a story about network filesystems, for an answer that is
+allowed to be three seconds old.
+
+### U4 — drawing a page, and the four layers that make that acceptable
+
+The thing being defended: the panel's origin holds a session cookie that is a
+writable terminal. A page from a project directory getting script access to that
+origin is not "an XSS", it is a shell.
+
+1. **A separate route.** Same shape as red line 8 — the capability is narrowed by
+   which handler answers, not by a query parameter on the handler that already
+   exists. `GET /preview` stays exactly as it was, attachment and octet-stream,
+   so nothing that reaches it can be talked into rendering. This buys
+   reviewability rather than protection: it makes "which code path can produce an
+   inline `text/html` response" a question with one answer.
+2. **An iframe sandbox with no `allow-same-origin`.** The actual boundary.
+3. **`default-src 'none'`** on the response, which is what keeps "does not phone
+   home" true: a preview with `<img src=https://someone/?leak>` would otherwise be
+   an outbound request nobody asked for, made by the panel's own tab, the moment
+   a file was clicked. The policy carries the `sandbox` *directive* as well as the
+   attribute, because the attribute applies only when the panel is doing the
+   framing and this URL can be typed into a tab.
+4. **Scripts off unless asked, decided server-side.** The effective sandbox is the
+   intersection of attribute and header, so editing the attribute in devtools
+   gets you nothing.
+
+#### On `blob:` and a one-shot token
+
+The first pass claimed a `blob:` URL inherits the panel's origin, and that a
+one-shot token on the preview path would buy nothing. Both were re-checked rather
+than taken on trust, and both hold — for reasons worth stating, because the first
+is the kind of thing that is *nearly* wrong.
+
+A `blob:` URL's origin is the origin of the document that called
+`URL.createObjectURL`, which is the panel. That is the whole design of blob URLs
+and it is why "fetch the bytes and frame a blob" is the obvious implementation and
+the wrong one. But the reason it is refused here is stronger and does not depend
+on that: **a blob has no response headers.** The CSP is the layer doing the work —
+the one that forbids the network and carries the `sandbox` directive — and
+fetching the bytes into a Blob throws every header away. The same argument
+disposes of `srcdoc`. Framing the real URL is not a convenience; it is the
+isolation.
+
+The original claim does overstate its case slightly, and the correction is worth
+having: the blob's inherited origin would be *neutralised* by `sandbox` on the
+iframe, which gives the document an opaque origin regardless of where its bytes
+came from. So the origin is not what makes blobs unusable here. The missing
+headers are, and they are missing unconditionally.
+
+The one-shot token: what it would defend against is somebody who can already make
+requests as the signed-in user, and such a person can ask for the token too. It
+does not narrow what the framed document can do, because the document does not
+have the cookie — that is what the sandbox is for — and it does not narrow what a
+person with the session can read, because `/preview` already serves the same bytes
+to them. It would be server state, an expiry, a cleanup and a race on reload,
+defending nothing the sandbox does not already hold. It stays dropped.
+
+### The rework onto what landed in between
+
+The branch was cut before the chrome vocabulary and the pane system, so its
+frontend was the old idiom. `RightPanel` and `App` were taken from `main`
+wholesale and the tab re-added on top:
+
+- `git` joins `PANEL_TABS` in `chrome.ts` — *beside* `files`, not appended,
+  because it is the second thing anybody asks about a directory. `MAX_PANES` is
+  `PANEL_TABS.length`, so the tab is draggable into a pane of its own for free,
+  and `parseLayout`'s "a tab this build has and the layout does not" repair
+  appends it to every stored layout rather than leaving it unreachable.
+- `PANEL_LABEL_WIDTH` moves from 250 to 276, one unlabelled tab, because the
+  track being divided did not grow with the tabs in it. A threshold that stays put
+  while its row gets longer is a label that clips instead of folding.
+- The git tab's one button is `.vp-control`; the preview's Source/Page pair is
+  `.vp-segmented` + `.vp-tab`; the scripts toggle is `.vp-control` with
+  `aria-pressed`, which that class already draws as on. Three hand-written class
+  lists, which is exactly the drift the vocabulary was extracted to stop.
+- `panes-check` drives all six tabs and its `ArrowRight` assertion moved from
+  `monitor` to `git`, which is the only thing in the browser checks that a new tab
+  in the middle of the list breaks.
+
+### The panel is a product, said for the third time
+
+Three strings went before anybody had to say it again:
+
+- 「只有按了这个按钮才会联网。」 — true, and an argument: it defends the design to a
+  reader who had not objected. The button says "Check"; that is the product.
+- 「在沙箱里渲染，不联网。」 — the same shape, under every rendered preview. The
+  toggle beside it already says whether scripts are on.
+- 「只对这个文件生效，关掉预览就重置」 — a tooltip explaining a reset policy.
+
+All three now live in comments next to the code that implements them. The two
+lines that stayed — "this repository's origin is not on github.com" and "the
+panel was started without `GITHUB_TOKEN` or `GH_TOKEN`" — are a different thing:
+each names something that is missing and what would fix it.
+
+None of the three was over `i18n.prose.test.ts`'s budget, which is the point of
+writing this down. Length is the shape every previous offender had, not the
+definition.
+
+### Left undone
+
+- **`render-check` does not drive either feature.** The testids are there —
+  `panel-tab-git`, `git-branch`, `git-clean`, `git-change`, `git-commit`,
+  `git-ask`, `git-no-token`, `git-not-github`, `preview-frame`,
+  `preview-as-source`, `preview-as-page`, `preview-scripts` — and `panes-check`
+  drives the tab's existence and its place in the strip, but nothing drives a real
+  repository or a real page in a browser. The two worth driving are the frame's
+  `sandbox` attribute as the DOM actually reports it, and the scripts toggle
+  remounting the frame rather than mutating an attribute on a loaded one.
+- **`allow-scripts` has no allowlist and no memory.** Somebody iterating on a
+  generated report turns it on again on every reload. That is the intended cost of
+  not remembering it.
+- **The GitHub half has no cache of its own.** It does not need one — it runs on a
+  press — but two people pressing it thirty seconds apart are two queries against
+  the same rate limit.
+- **`sessionBranches` still forks per distinct worktree** on a cache miss, up to
+  twelve. The cache collapses viewers, not directories, and twelve `git status` in
+  one request is the ceiling somebody with twelve worktrees pays every three
+  seconds.

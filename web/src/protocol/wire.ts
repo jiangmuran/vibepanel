@@ -1008,3 +1008,110 @@ export interface VncTarget {
   hasPassword: boolean
   createdAt: number
 }
+
+/** One path the working tree has something to say about. */
+export interface GitChange {
+  path: string
+  /** staged, unstaged, untracked or conflict. */
+  kind: string
+  /** Where the file came from, empty when it did not move. */
+  renamed: string
+}
+
+/**
+ * One working tree, right now.
+ *
+ * `repo` false is an ordinary answer: plenty of project directories are not
+ * repositories, and the tab says so in a line rather than showing an error.
+ */
+export interface GitStatus {
+  repo: boolean
+  branch: string
+  detached: boolean
+  head: string
+  upstream: string
+  ahead: number
+  behind: number
+  staged: number
+  unstaged: number
+  untracked: number
+  conflicted: number
+  changes: GitChange[]
+  /** The list above is a prefix; the counts are still exact. */
+  changesTruncated: boolean
+}
+
+export interface GitCommit {
+  sha: string
+  subject: string
+  author: string
+  /** Unix seconds. */
+  when: number
+}
+
+/** Where origin points, once it has been recognised. */
+export interface GitRemote {
+  url: string
+  host: string
+  owner: string
+  name: string
+}
+
+/**
+ * A session sitting on a different commit than the project root.
+ *
+ * Only those are listed. Six agents in one directory are six identical rows;
+ * six agents in six worktrees are the thing the tab exists for.
+ */
+export interface GitSession {
+  sessionId: string
+  branch: string
+  detached: boolean
+  head: string
+  ahead: number
+  behind: number
+  staged: number
+  unstaged: number
+  untracked: number
+  conflicted: number
+}
+
+/** Everything the local half of the git tab knows. Nothing here is a request
+ *  to another machine. */
+export interface GitInfo {
+  status: GitStatus
+  commits: GitCommit[]
+  remote: GitRemote | null
+  /** The remote is one the network half could query. */
+  github: boolean
+  /** The panel was started with a token, so the button can do something. */
+  tokenSet: boolean
+  sessions: GitSession[]
+  sessionsTruncated: boolean
+}
+
+/** One open pull request, reduced to what a person watching agents needs. */
+export interface GitPR {
+  number: number
+  title: string
+  /** The head branch, which is what joins this to a session's branch. */
+  branch: string
+  base: string
+  draft: boolean
+  author: string
+  url: string
+  updatedAt: number
+  /** approved, changes_requested, review_required, or empty. */
+  review: string
+  /** success, failure, pending, error, expected, or empty. */
+  checks: string
+}
+
+/** One press of the button that asks GitHub. */
+export interface GitHubResult {
+  total: number
+  prs: GitPR[]
+  /** When this answer was fetched. There is no poller behind it, so the age
+   *  is part of the answer. */
+  checkedAt: number
+}

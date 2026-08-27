@@ -120,8 +120,8 @@ const last = PANEL_TABS[PANEL_TABS.length - 1]
 
 describe('arrow keys inside the tab strip', () => {
   it('moves one tab at a time, in the direction of the arrow', () => {
-    expect(tabFromKey('ArrowRight', 'files')).toBe('monitor')
-    expect(tabFromKey('ArrowLeft', 'monitor')).toBe('files')
+    expect(tabFromKey('ArrowRight', 'files')).toBe('git')
+    expect(tabFromKey('ArrowLeft', 'git')).toBe('files')
   })
 
   it('wraps rather than stopping', () => {
@@ -214,11 +214,15 @@ describe('the tab list', () => {
     // RightPanel maps over this rather than keeping its own array. Two lists
     // in two files that have to agree is how a left arrow ends up moving
     // right.
-    expect([...PANEL_TABS]).toEqual(['files', 'monitor', 'notes', 'todos', 'tokens'])
+    expect([...PANEL_TABS]).toEqual(['files', 'git', 'monitor', 'notes', 'todos', 'tokens'])
   })
 
-  it('names every tab the render check drives', () => {
-    const driven: PanelTab[] = ['files', 'monitor', 'notes', 'todos', 'tokens']
+  it('names every tab a browser check drives', () => {
+    // render-check drives the first five by testid; panes-check drives all
+    // six. A tab renamed here and not there is a selector that matches
+    // nothing, which those scripts report as a missing element rather than as
+    // the rename it is.
+    const driven: PanelTab[] = ['files', 'git', 'monitor', 'notes', 'todos', 'tokens']
     for (const tab of driven) expect(PANEL_TABS).toContain(tab)
   })
 })

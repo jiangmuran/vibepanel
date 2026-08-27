@@ -2,6 +2,7 @@ package browse
 
 import (
 	"bytes"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -149,4 +150,61 @@ func indexNthByte(b []byte, c byte, n int) int {
 		n--
 	}
 	return off - 1
+}
+
+// Markup is a file the panel can offer to *draw* as a document rather than
+// show as text.
+//
+// Deliberately the only place in this package that reads a filename, and the
+// exception is worth arguing rather than hiding. Everywhere above, the name
+// lies: a log called output.dat is text and notes.txt holding a tarball is not,
+// so the bytes decide. Here the question is different. "Is this file meant to
+// be a page" is a statement of *intent*, and intent is what an extension
+// records -- an HTML fragment with no <html> in it is still an HTML file, and
+// a .txt full of angle brackets is not one however much it parses.
+//
+// What makes reading the name acceptable is that nothing rests on it. The
+// bytes are served into an iframe with an opaque origin, no scripts unless
+// somebody asked for them, and a Content-Security-Policy that permits no
+// network of any kind -- so guessing wrong renders something odd inside a box,
+// not something dangerous next to the session cookie. See handleRenderPreview
+// for the whole design.
+type Markup string
+
+// The three states. Empty means "show it as text", which is what everything
+// that is not one of the two below stays.
+const (
+	MarkupNone Markup = ""
+	MarkupHTML Markup = "html"
+	MarkupSVG  Markup = "svg"
+)
+
+// SniffMarkup decides whether a file can be drawn, and as what.
+//
+// The media type comes back from here rather than from the file, and it is one
+// of exactly two strings. That is the property worth keeping: whatever else
+// changes, the panel can only ever be persuaded to serve a project's bytes as
+// text/html or as image/svg+xml, both of which the isolation covers.
+func SniffMarkup(name string, head []byte) (Markup, string) {
+	if !IsText(head) {
+		return MarkupNone, ""
+	}
+	dot := strings.LastIndexByte(name, '.')
+	// `<= 0`, not `< 0`: a leading dot is not an extension. A file called
+	// `.html` is a dotfile somebody's tooling wrote, not a page, and treating
+	// it as one is the panel deciding to render a config file as a document.
+	if dot <= 0 {
+		return MarkupNone, ""
+	}
+	switch strings.ToLower(name[dot:]) {
+	case ".html", ".htm", ".xhtml":
+		// XHTML as text/html on purpose. Served as application/xhtml+xml a
+		// single unclosed tag anywhere in the file is a yellow XML parse error
+		// instead of a preview, and a preview that refuses malformed documents
+		// is useless against files an agent is halfway through writing.
+		return MarkupHTML, "text/html; charset=utf-8"
+	case ".svg":
+		return MarkupSVG, "image/svg+xml"
+	}
+	return MarkupNone, ""
 }

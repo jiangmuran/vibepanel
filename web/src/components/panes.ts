@@ -6,12 +6,12 @@ import { PANEL_TABS, type PanelTab } from './chrome'
  * The panel used to be one tab at a time plus a single boolean called `split`
  * that meant "notes and todo, stacked". This is that idea taken seriously: a
  * vertical stack of groups, each with its own tab strip, each holding one or
- * more of the five tabs.
+ * more of them.
  *
  * Three decisions are load-bearing and worth stating before the code.
  *
  * **Every tab lives in exactly one group, and every tab lives somewhere.** The
- * union of the groups is always the five tabs — no more, no fewer. That single
+ * union of the groups is always PANEL_TABS — no more, no fewer. That single
  * invariant is what makes the whole thing safe: a tab cannot be dragged into
  * oblivion, a stored layout missing one cannot hide it, and "which pane holds
  * the file tree" always has an answer. It also settles a question that would

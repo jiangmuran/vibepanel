@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/jiangmuran/vibepanel/internal/browse"
+	"github.com/jiangmuran/vibepanel/internal/git"
 	"github.com/jiangmuran/vibepanel/internal/hooks"
 	"github.com/jiangmuran/vibepanel/internal/store"
 	"github.com/jiangmuran/vibepanel/internal/sysmon"
@@ -100,6 +101,18 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		// Token usage. Pinned from the first commit rather than after the
 		// first drift, because this surface has more fields than anything
 		// above it and every one of them is a number somebody will believe.
+		// The git tab. Its rows come off a disk rather than out of the
+		// database, which does not make them less hand-written on the other
+		// side -- a field the server stops sending is a branch name that is
+		// `undefined` at runtime and renders as nothing.
+		{"GitInfo", gitResponse{}},
+		{"GitStatus", git.Status{}},
+		{"GitChange", git.Change{}},
+		{"GitCommit", git.Commit{}},
+		{"GitRemote", git.Remote{}},
+		{"GitSession", gitSession{}},
+		{"GitHubResult", githubResponse{}},
+		{"GitPR", git.PR{}},
 		{"TokenUsage", tokenUsageResponse{}},
 		{"TokenUsageSource", tokenUsageSource{}},
 		{"TokenUsageSession", tokenUsageSession{}},

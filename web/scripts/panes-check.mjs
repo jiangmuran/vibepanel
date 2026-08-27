@@ -88,7 +88,7 @@ await sleep(800)
 const panel = page.locator('[data-testid="right-panel"]')
 note(await panel.isVisible(), 'the panel renders')
 note((await page.locator('[data-testid="panel-header"]').count()) === 1, 'one panel header')
-for (const id of ['files', 'monitor', 'notes', 'todos', 'tokens']) {
+for (const id of ['files', 'git', 'monitor', 'notes', 'todos', 'tokens']) {
   note((await page.locator(`[data-testid="panel-tab-${id}"]`).count()) === 1, `one ${id} tab`)
 }
 note((await page.locator('[data-testid="panel-split"]').count()) === 1, 'the split control is there')
@@ -96,7 +96,7 @@ note((await page.locator('[data-testid="panel-collapse"]').count()) === 1, 'the 
 note((await page.locator('[data-testid="pane-menu-0"]').count()) === 1, 'the pane menu is there')
 
 // The control set does not change with the tab.
-for (const id of ['files', 'monitor', 'notes', 'todos', 'tokens']) {
+for (const id of ['files', 'git', 'monitor', 'notes', 'todos', 'tokens']) {
   await page.locator(`[data-testid="panel-tab-${id}"]`).click()
   await sleep(250)
   const n = await page.locator('[data-testid="panel-split"], [data-testid="panel-collapse"], [data-testid="pane-menu-0"]').count()
@@ -299,7 +299,7 @@ await sleep(200)
 await page.locator('[data-testid="panel-tab-files"]').focus()
 await page.keyboard.press('ArrowRight')
 await sleep(300)
-note((await panel.getAttribute('data-tab')) === 'monitor', 'ArrowRight moves to the next tab')
+note((await panel.getAttribute('data-tab')) === 'git', 'ArrowRight moves to the next tab')
 await page.keyboard.press('Alt+ArrowDown')
 await sleep(400)
 note(Number(await panel.getAttribute('data-panes')) === 2, 'Alt+ArrowDown moves the tab into a pane of its own')

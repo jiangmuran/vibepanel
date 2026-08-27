@@ -4,6 +4,8 @@ import type {
   DirListing,
   AuthState,
   FileListing,
+  GitHubResult,
+  GitInfo,
   HookAgent,
   HookStatus,
   LaunchProfile,
@@ -99,11 +101,26 @@ async function failure(res: Response): Promise<Error> {
  * it -- so they come back as values while a 403 or a 500 throws.
  */
 export type FilePreview =
-  | { kind: 'text'; text: string; truncated: boolean }
+  | { kind: 'text'; text: string; truncated: boolean; markup: Markup | null }
   | { kind: 'image'; blob: Blob }
   | { kind: 'pdf'; blob: Blob }
   | { kind: 'tooBig' }
   | { kind: 'none' }
+
+/**
+ * Whether a second endpoint would draw this file as a document.
+ *
+ * The text response is unchanged by it — still an attachment, still
+ * octet-stream, still nothing a browser renders. This only says the choice
+ * exists, so the panel can offer it.
+ */
+export type Markup = 'html' | 'svg'
+
+/** A value this build understands, or nothing. An older tab against a newer
+ *  server must not offer to render a kind it has no isolation story for. */
+function markupOf(header: string | null): Markup | null {
+  return header === 'html' || header === 'svg' ? header : null
+}
 
 /**
  * The type a Blob is built with, from the kind the server named.
@@ -457,6 +474,37 @@ export const api = {
   downloadURL: (projectId: string, path: string) =>
     `/api/projects/${projectId}/download?path=${encodeURIComponent(path)}`,
 
+  /**
+   * Where an <iframe> points to draw a page out of a project.
+   *
+   * A URL rather than a fetch, and that is the isolation working rather than a
+   * convenience. The bytes must arrive carrying the server's
+   * Content-Security-Policy — which is what forbids the page a network of any
+   * kind, and what makes its sandbox hold even if this URL is opened in a tab.
+   * Fetching them into a Blob or a srcdoc throws every one of those headers
+   * away and leaves the document's origin inherited from the panel.
+   *
+   * `scripts` is passed to the *server*, which is the point: the effective
+   * sandbox is the intersection of the iframe attribute and the response
+   * header, so editing the attribute in devtools cannot enable execution.
+   */
+  renderURL: (projectId: string, path: string, scripts: boolean) =>
+    `/api/projects/${projectId}/preview/render?path=${encodeURIComponent(path)}` +
+    (scripts ? '&scripts=1' : ''),
+
+  /** What the working tree says. Reads the disk; never the network. */
+  git: (projectId: string) => request<GitInfo>(`/api/projects/${projectId}/git`),
+
+  /**
+   * Asks GitHub, once.
+   *
+   * POST because a GET is something a browser re-issues on its own — a reload,
+   * a back button, a prefetch — and this is the one request in the panel that
+   * leaves the machine on a person's say-so.
+   */
+  github: (projectId: string) =>
+    request<GitHubResult>(`/api/projects/${projectId}/git/github`, { method: 'POST' }),
+
   /** Returns the absolute paths the files landed at, ready to type. */
   upload: async (projectId: string, path: string, files: File[]) => {
     const form = new FormData()
@@ -503,6 +551,7 @@ export const api = {
         kind: 'text',
         text: await res.text(),
         truncated: res.headers.get('X-Preview-Truncated') === 'true',
+        markup: markupOf(res.headers.get('X-Preview-Markup')),
       }
     }
     // A kind this build does not know is the shape of an older tab against a
