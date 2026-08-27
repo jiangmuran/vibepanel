@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -308,28 +309,40 @@ func (m *Manager) Attach(ctx context.Context, sessionID, tmuxName string, cols, 
 		return nil, fmt.Errorf("session: tmux session %s does not exist", tmuxName)
 	}
 
-	// The ring starts empty, and that is fine: attaching makes tmux repaint the
-	// visible screen, and the repaint goes through the pump into the ring like
-	// any other output. A viewer subscribing at any point afterwards is filled
-	// from it.
+	// Prime the ring with the pane's history, so that scrolling back reaches
+	// what happened before anybody was watching.
 	//
-	// This used to be primed with `capture-pane -S - -E -1`, the history above
-	// the visible screen, on the reasoning that a panel restart empties the
-	// ring and the first person to open a session would otherwise see a blank
-	// terminal. Both halves were wrong. The repaint already covers the blank
-	// terminal. And the history could never be seen: tmux's attach begins with
-	// `ESC[?1049h`, so everything after it is drawn on the alternate screen,
-	// which by definition has no scrollback. The primed lines went into the
-	// normal buffer and were covered a millisecond later.
+	// This was here once and was deleted, correctly at the time: tmux's attach
+	// began with `ESC[?1049h`, so everything after it drew on xterm's alternate
+	// screen, which has no scrollback by definition. The primed lines went into
+	// the normal buffer and were covered a millisecond later.
 	//
-	// Deleting the priming changed nothing measurable — same rendered screen,
-	// same absent scrollback, same green restart check. Scrolling back through
-	// a session is tmux's copy-mode, not the browser's scrollbar. Anyone who
-	// wants it to be the browser's scrollbar wants
-	// `terminal-overrides ',*:smcup@:rmcup@'` in vibepanel.conf, which keeps
-	// tmux out of the alternate screen — and inherits its known cost, every
-	// full redraw landing in the scrollback as another copy of the screen.
+	// That reason is gone. `terminal-overrides ',*:smcup@:rmcup@'` in
+	// vibepanel.conf keeps tmux out of the alternate screen -- the deleted
+	// comment predicted exactly this and named the setting -- so the normal
+	// buffer is now the one being drawn on and the history lands where it can
+	// be reached. Without this, scrollback exists only for output that arrived
+	// while a browser happened to be attached: open a panel on an agent that
+	// has been working for an hour and there is one screenful and nothing above
+	// it, on every device. That is the reported "无法滚动向上/向下".
+	//
+	// The ring bounds the cost. tmux holds 20,000 lines per pane and the ring
+	// keeps the tail of whatever it is given, which is the half a person
+	// scrolls to first.
+	//
+	// Failure is not fatal: a session whose history cannot be read is still a
+	// session worth attaching to, and the repaint below fills the screen either
+	// way.
 	ring := NewRingBuffer(m.ringSize)
+	if history, cerr := m.tmux.CaptureHistory(ctx, tmuxName); cerr != nil {
+		m.logf("capture history for %s: %v", tmuxName, cerr)
+	} else if history != "" {
+		// capture-pane separates lines with \n. A terminal needs \r\n: with
+		// convertEol off -- and it is off, because an agent's own \n must not
+		// be rewritten -- every line would start where the previous one ended
+		// and the history would arrive as a diagonal.
+		ring.Write([]byte(strings.ReplaceAll(history, "\n", "\r\n") + "\r\n"))
+	}
 
 	// A plain `attach`, not `attach -d`: detaching other clients would be
 	// pointless (we are the only one) and actively harmful if a human is

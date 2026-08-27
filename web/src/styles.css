@@ -569,9 +569,32 @@ body {
    about macOS scrollbar opacity. The rows are transparent and sit on top, so in
    a light theme every pixel the rows do not cover shows through black: the
    sub-row remainder at the bottom of the pane, and the scrollbar track.
-   The host owns this surface, so the host sets it. */
+   The host owns this surface, so the host sets it.
+
+   `overflow: hidden` because in xterm 6 this element is a background layer with
+   no children at all -- measured: `.xterm-viewport` 830x602, `kids: []`, while
+   the scrolling happens in a sibling `.xterm-scrollable-element` with its own
+   overlay scrollbar. xterm.css still gives it `overflow-y: scroll`, so it draws
+   a second, permanent, entirely dead scrollbar track over the terminal.
+
+   Worse than noise: how much width that dead track takes is a platform
+   decision. Where scrollbars are classic it reserves 8-15px and the fit addon
+   subtracts it; where they are overlay-style it reserves nothing, the fit addon
+   proposes that many more columns, and the *real* scrollbar -- 14px, drawn on
+   top -- lands over the last column of text. That is the reported "右边的滚动条
+   会挡住字", and it appears on some machines and not others for a reason that
+   is nowhere in this codebase. */
 .xterm .xterm-viewport {
   background-color: var(--vp-terminal-bg);
+  overflow: hidden;
+}
+
+/* And then reserve the width deterministically.
+   The fit addon subtracts the terminal element's horizontal padding when it
+   proposes columns, so this is the one measurement that does not depend on how
+   the platform draws scrollbars. 14px is what xterm's overlay slider is. */
+.xterm {
+  padding-right: 14px;
 }
 
 /* On a touch screen the browser's own long-press selection is the gesture
@@ -585,11 +608,25 @@ body {
   }
 }
 
-.xterm-viewport::-webkit-scrollbar {
-  width: 8px;
+/* No scrollbar while a full-screen program is drawing.
+   There is nothing above the screen worth offering: everything the reader would
+   reach belongs to whatever was running before the TUI opened, and the TUI is
+   repainting the screen underneath them the whole time they are looking at it. */
+[data-fullscreen='true'] .xterm .xterm-scrollable-element > .scrollbar {
+  display: none;
 }
 
-.xterm-viewport::-webkit-scrollbar-thumb {
+/* The real scrollbar, which is a div rather than a native one.
+   The two rules that used to be here styled `.xterm-viewport::-webkit-scrollbar`
+   and had not applied to anything since the xterm 6 upgrade: that element is a
+   background layer now and the scrolling moved to `.xterm-scrollable-element`,
+   whose scrollbar is built out of divs the way Monaco's is. Dead CSS that reads
+   as live is worse than none -- it answers "is the scrollbar styled?" with yes. */
+.xterm .xterm-scrollable-element > .scrollbar > .slider {
   background: var(--vp-ink-3);
   border-radius: 4px;
+}
+
+.xterm .xterm-scrollable-element > .scrollbar > .slider:hover {
+  background: var(--vp-ink-2);
 }

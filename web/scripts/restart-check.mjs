@@ -166,8 +166,7 @@ const authed = async (path, init = {}) => {
   return res
 }
 
-const rows = (page) => screenRows(page)
-const screen = async (page) => (await rows(page)).join('\n')
+const screen = async (page, opts) => (await screenRows(page, opts)).join('\n')
 /** Every pane the panel's tmux server is running, as "session:pid". */
 const panes = () => {
   try {
@@ -245,11 +244,27 @@ try {
   // to be the same one on the other side. Split so the echoed command line
   // cannot be mistaken for the output — a mistake this harness made once.
   const MARK = 'BEFORE' + '_THE_RESTART'
+  const DEEP = 'DEEP' + '_HISTORY'
   await page.locator('.xterm-helper-textarea').fill('')
+
+  // A hundred numbered lines first, so that after the restart there is
+  // something *above* the visible screen to reach. The marker alone proves the
+  // screen came back and can say nothing about scrollback, because it is on the
+  // screen either way.
+  //
+  // Order matters, and getting it wrong looked like a product failure: with the
+  // burst printed after the marker, the marker scrolled off the visible screen
+  // and two checks that look for it reported that a restarted panel shows an
+  // empty terminal.
+  await page.keyboard.type(`i=1; while [ $i -le 100 ]; do echo ${DEEP.slice(0, 4)}"${DEEP.slice(4)}"_$i; i=$((i+1)); done\n`)
+  if (!await waitFor(page, `${DEEP}_100`)) {
+    throw new Error(`the history burst never finished before the restart:\n${await screen(page)}`)
+  }
   await page.keyboard.type(`echo ${MARK.slice(0, 6)}"${MARK.slice(6)}"\n`)
   if (!await waitFor(page, MARK)) {
     throw new Error(`the marker never appeared before the restart:\n${await screen(page)}`)
   }
+
   const before = panes()
   if (before.length === 0) throw new Error('no panes running before the restart')
 
@@ -331,8 +346,16 @@ try {
   //
   // What this check is worth is unchanged and real: a page opened after a
   // restart must show the session's screen without waiting for the session to
-  // print something. What it does not show, and cannot, is scrollback; that
-  // lives in tmux and is reached with copy-mode.
+  // print something.
+  //
+  // And now the scrollback too. That paragraph used to end "what it does not
+  // show, and cannot, is scrollback; that lives in tmux and is reached with
+  // copy-mode" -- true when it was written, because tmux's attach began with
+  // ESC[?1049h and everything after it drew on a buffer that has no scrollback.
+  // `terminal-overrides ',*:smcup@:rmcup@'` removed that, and Attach primes the
+  // ring from `capture-pane -S - -E -1`. Without the priming a person opening a
+  // panel on an agent that has been working for an hour gets one screenful and
+  // nothing above it, on every device.
   const fresh = await ctx.newPage()
   await fresh.goto(BASE, { waitUntil: 'networkidle' })
   if (await fresh.locator('[data-testid="auth-submit"]').isVisible().catch(() => false)) {
@@ -350,6 +373,15 @@ try {
     note('FAIL', 'replay',
       `a page opened after the backend restarted shows an empty terminal — the cold ` +
       `capture-pane path did not restore the scrollback:\n${(await screen(fresh)).slice(0, 400)}`)
+  }
+
+  // The first line of the burst is a hundred lines above a thirty-row screen,
+  // so reaching it means the history came back and not merely the screen.
+  const deepBack = (await screen(fresh, { all: true })).includes(`${DEEP}_1`)
+  if (!deepBack) {
+    note('FAIL', 'replay',
+      'the scrollback did not survive the restart: the top of the history is unreachable, ' +
+      'so a session that has been running for an hour opens with one screenful and nothing above it')
   }
 
   // The session must still be the one it was, not a stranger with the same name.

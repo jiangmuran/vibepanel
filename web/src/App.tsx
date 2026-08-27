@@ -136,6 +136,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     projects: [],
     sessions: [],
     live: [],
+    fullscreen: [],
     projectOrder: 'auto',
     stale: '',
     hasProjectOrder: false,
@@ -896,6 +897,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               themeKey={themeKey}
               readOnly={narrow}
               touchSelect={narrow || coarsePointer}
+              fullscreen={state.fullscreen.includes(current.id)}
               onSelectionChange={setSelection}
               onClipboard={(text, ok) => setBlockedClip(ok ? '' : text)}
               // The same road a dropped file takes: upload into the project,

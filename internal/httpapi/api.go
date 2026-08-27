@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -40,6 +41,14 @@ type Server struct {
 	Hub      *ws.Hub
 	Detector *session.Detector
 	Sampler  *sysmon.Sampler
+
+	// fullscreen holds the session ids whose pane has a full-screen program
+	// drawing in it, as the poller last saw them.
+	//
+	// A pointer swap rather than a lock: it is written by one goroutine every
+	// two seconds and read by every state build, and the readers only ever want
+	// the most recent whole answer.
+	fullscreen atomic.Pointer[[]string]
 	// TreeSampler holds the previous per-process CPU counters, so it has to be
 	// the same one across requests: a fresh sampler per request has nothing to
 	// difference against and reports every session at zero forever.
@@ -598,6 +607,17 @@ type stateResponse struct {
 	Sessions []store.Session `json:"sessions"`
 	Live     []string        `json:"live"`
 
+	// Fullscreen is the sessions with a full-screen program drawing in them.
+	//
+	// The browser cannot tell: tmux emulates the alternate screen per pane and
+	// composes the result, and this panel deliberately keeps tmux's own client
+	// out of the alternate screen so that scrollback exists at all. So the byte
+	// stream a viewer sees is indistinguishable from ordinary output, and a
+	// terminal that offers to scroll back through it lands the reader in
+	// whatever was on screen before the agent started -- which is what was
+	// reported: "滚动条一滑就滑到在执行 claude 之前的记录了".
+	Fullscreen []string `json:"fullscreen"`
+
 	// ProjectOrder is "auto" (most recently active first) or "manual". The UI
 	// offers "sort by activity" only when that would change something, rather
 	// than showing a control that does nothing.
@@ -658,6 +678,7 @@ func (s *Server) buildState(ctx context.Context) (stateResponse, error) {
 		Projects:        emptyIfNil(projects),
 		Sessions:        emptyIfNil(sessions),
 		Live:            emptyIfNil(s.Manager.LiveIDs()),
+		Fullscreen:      emptyIfNil(fullscreenNow(&s.fullscreen)),
 		ProjectOrder:    orderMode(manual),
 		HasProjectOrder: hasOrder,
 		StateGuessed:    s.stateIsGuessed(sessions),
@@ -1624,9 +1645,22 @@ func (s *Server) pollOnce(ctx context.Context) error {
 		}
 		s.Detector.Retain(ids)
 	}
+	// Which panes have a full-screen program drawing in them.
+	//
+	// Not persisted and not part of the session row: it changes when an agent
+	// opens or closes its TUI and has no meaning once the pane is gone. It is
+	// collected here because this is the only place that holds tmux's answer,
+	// and it is broadcast because the browser cannot work it out. tmux's
+	// alternate-screen emulation is per pane, and the panel deliberately keeps
+	// tmux's *client* out of the alternate screen -- see the smcup@/rmcup@ line
+	// in vibepanel.conf -- so nothing in the byte stream says a TUI is running.
+	fullscreen := make([]string, 0, len(rows))
 	now := time.Now()
 	for _, row := range rows {
 		info, alive := byName[row.TmuxName]
+		if alive && info.AlternateOn {
+			fullscreen = append(fullscreen, row.ID)
+		}
 		if !alive {
 			if err := s.markVanished(ctx, row); err != nil {
 				return err
@@ -1708,6 +1742,7 @@ func (s *Server) pollOnce(ctx context.Context) error {
 			}
 		}
 	}
+	s.fullscreen.Store(&fullscreen)
 	return nil
 }
 
@@ -1784,3 +1819,11 @@ var cachedHostname = func() string {
 }()
 
 func hostname() string { return cachedHostname }
+
+// fullscreenNow reads the poller's last answer, or nothing before it has run.
+func fullscreenNow(p *atomic.Pointer[[]string]) []string {
+	if v := p.Load(); v != nil {
+		return *v
+	}
+	return nil
+}

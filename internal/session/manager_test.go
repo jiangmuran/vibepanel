@@ -1516,3 +1516,51 @@ func TestARepaintIsNotProgress(t *testing.T) {
 		}
 	}
 }
+
+// Scrolling back must reach what happened before anybody was watching.
+//
+// Without priming, the ring holds only what arrived while a browser was
+// attached, and attaching makes tmux repaint one screenful. Open a panel on an
+// agent that has been working for an hour and there is that screenful and
+// nothing above it -- on every device, with tmux holding twenty thousand lines
+// the whole time. That is the reported "无法滚动向上/向下".
+func TestAttachBringsThePanesHistoryWithIt(t *testing.T) {
+	ctx := context.Background()
+	tm := newTestTmux(t)
+	const name = "vp_history"
+	// Enough lines to be certainly above the visible screen, and numbered so
+	// the assertion can say which one it wanted.
+	if err := tm.Create(ctx, tmux.CreateOptions{
+		Name: name, Dir: t.TempDir(), Width: 80, Height: 24,
+		Command: []string{"sh", "-c", "i=1; while [ $i -le 200 ]; do echo HIST_$i; i=$((i+1)); done; exec sleep 60"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	// Let the burst finish before attaching: the point is that this output
+	// happened with nobody watching.
+	time.Sleep(2500 * time.Millisecond)
+
+	m := NewManager(tm, 1<<20)
+	defer m.DetachAll()
+	live, err := m.Attach(ctx, "s1", name, 80, 24)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	// The repaint arrives asynchronously; the history does not have to wait for
+	// it, but give both a moment so a failure cannot be about timing.
+	time.Sleep(1500 * time.Millisecond)
+
+	_, replay := live.Subscribe("viewer")
+	text := string(replay)
+	// HIST_1 is far above the last screenful of a 24-row pane.
+	if !strings.Contains(text, "HIST_1\r") {
+		last := text
+		if len(last) > 400 {
+			last = last[len(last)-400:]
+		}
+		t.Errorf("the replay does not reach the start of the history; its last 400 bytes are %q", last)
+	}
+	if !strings.Contains(text, "HIST_200") {
+		t.Errorf("the replay is missing the end of the history")
+	}
+}

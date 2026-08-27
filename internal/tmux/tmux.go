@@ -435,6 +435,16 @@ func (c *Client) Capture(ctx context.Context, name string) (string, error) {
 	return c.run(ctx, "capture-pane", "-p", "-e", "-J", "-S", "-", "-t", target(name))
 }
 
+// CaptureHistory returns everything above the visible screen.
+//
+// `-E -1` stops one line short of the pane's top row, which is the difference
+// that matters: whoever attaches gets a repaint of the visible screen from tmux
+// a moment later, and capturing it here too would put the same screenful in
+// twice, once as scrollback and once live.
+func (c *Client) CaptureHistory(ctx context.Context, name string) (string, error) {
+	return c.run(ctx, "capture-pane", "-p", "-e", "-J", "-S", "-", "-E", "-1", "-t", target(name))
+}
+
 // Respawn restarts the process in a session's pane, reusing the command it was
 // created with.
 //

@@ -41,6 +41,17 @@ interface Props {
    * attaching it on a desktop would fight xterm's own mouse selection.
    */
   touchSelect?: boolean
+  /**
+   * A full-screen program is drawing in this pane, so scrollback is not offered.
+   *
+   * Dragging the scrollbar during a TUI lands the reader in whatever was on
+   * screen before the agent started, and the live repaints go on happening
+   * somewhere they cannot see until new output snaps the view back. Every
+   * terminal that can see the alternate screen behaves this way; this one has
+   * to be told, because tmux composes the alternate screen away before the
+   * bytes get here.
+   */
+  fullscreen?: boolean
   /** Fires with the selected text, or '' when the selection is dropped. */
   onSelectionChange?: (text: string) => void
   /**
@@ -143,6 +154,7 @@ export function TerminalView({
   className,
   readOnly = false,
   touchSelect = false,
+  fullscreen = false,
   onSelectionChange,
   onClipboard,
   onPasteFiles,
@@ -425,6 +437,29 @@ export function TerminalView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [socket, sessionId, readOnly, touchSelect])
 
+  // While a full-screen program is drawing, do not offer the scrollback.
+  //
+  // The reader was landing in whatever was on screen before the agent started,
+  // and the live repaints went on happening off-screen until new output snapped
+  // the view back -- "滚动条一滑就滑到在执行 claude 之前的记录了". Every terminal
+  // that can see the alternate screen behaves this way already; this one cannot
+  // see it, because tmux composes the alternate screen away before the bytes
+  // arrive, so the panel is told instead.
+  //
+  // Snapping back rather than freezing the scroll: a wheel event that does
+  // nothing at all reads as a hung page, and the app itself usually wants the
+  // wheel anyway -- it has mouse reporting on, which is why the touchpad
+  // already behaves correctly inside the TUI.
+  useEffect(() => {
+    const term = termRef.current
+    if (!term || !fullscreen) return
+    term.scrollToBottom()
+    const sub = term.onScroll(() => {
+      if (term.buffer.active.viewportY !== term.buffer.active.baseY) term.scrollToBottom()
+    })
+    return () => sub.dispose()
+  }, [fullscreen])
+
   // Repaint the palette in place when the theme changes.
   useEffect(() => {
     if (termRef.current) termRef.current.options.theme = terminalTheme()
@@ -537,7 +572,11 @@ export function TerminalView({
   }
 
   return (
-    <div ref={wrapRef} className={`relative overflow-hidden ${className ?? ''}`}>
+    <div
+      ref={wrapRef}
+      data-fullscreen={fullscreen ? 'true' : undefined}
+      className={`relative overflow-hidden ${className ?? ''}`}
+    >
       <div ref={hostRef} className="h-full w-full" />
       {offerControl && (
         <button

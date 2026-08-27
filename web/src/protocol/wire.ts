@@ -155,6 +155,15 @@ export interface PanelState {
   projects: Project[]
   sessions: Session[]
   live: string[]
+  /**
+   * Sessions with a full-screen program drawing in them.
+   *
+   * The browser cannot work this out. tmux emulates the alternate screen per
+   * pane and composes the result, and the panel keeps tmux's own client out of
+   * the alternate screen so that scrollback exists at all — so a TUI's output
+   * looks like any other output on the wire.
+   */
+  fullscreen: string[]
   /** 'auto' orders projects by recent activity; 'manual' by explicit position. */
   projectOrder: 'auto' | 'manual'
   /**
