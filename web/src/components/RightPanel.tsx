@@ -1,5 +1,5 @@
-import { useCallback, useRef, useState } from 'react'
-import { Activity, ChevronRight, Coins, Columns2, FolderTree, ListChecks, NotebookPen } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Activity, ChevronRight, Coins, FolderTree, ListChecks, NotebookPen, Rows2, Square } from 'lucide-react'
 
 import type { Project, Session } from '../protocol/wire'
 import type { PanelSocket } from '../protocol/socket'
@@ -10,19 +10,40 @@ import { Todos } from './panels/Todos'
 import { ErrorBoundary } from './ErrorBoundary'
 import { SystemStrip } from './panels/SystemStrip'
 import { TokenUsage } from './panels/TokenUsage'
+import {
+  PANEL_MAX_WIDTH,
+  PANEL_MIN_WIDTH,
+  PANEL_TABS,
+  clampPanelWidth,
+  clampSplitRatio,
+  panelChrome,
+  panelControls,
+  resizeStep,
+  splitTarget,
+  splitTitleKey,
+  splittable,
+  swapDirection,
+  tabFromKey,
+  type PanelTab,
+} from './chrome'
 import { t, useLang, type Key } from '../i18n'
 
-export type PanelTab = 'files' | 'monitor' | 'notes' | 'todos' | 'tokens'
+export type { PanelTab }
 
 // The label is a key, not a string: resolving it at render is what makes a
 // language switch repaint the tabs instead of needing a reload.
-const TABS: { id: PanelTab; icon: typeof Activity; key: Key }[] = [
-  { id: 'files', icon: FolderTree, key: 'panel.files' },
-  { id: 'monitor', icon: Activity, key: 'panel.monitor' },
-  { id: 'notes', icon: NotebookPen, key: 'panel.notes' },
-  { id: 'todos', icon: ListChecks, key: 'panel.todos' },
-  { id: 'tokens', icon: Coins, key: 'panel.tokens' },
-]
+//
+// Keyed by tab and mapped over PANEL_TABS rather than being its own array, so
+// the order on screen is the order chrome.ts navigates and animates in. Two
+// lists in two files that have to agree is how a left arrow ends up moving
+// right.
+const TABS: Record<PanelTab, { icon: typeof Activity; key: Key }> = {
+  files: { icon: FolderTree, key: 'panel.files' },
+  monitor: { icon: Activity, key: 'panel.monitor' },
+  notes: { icon: NotebookPen, key: 'panel.notes' },
+  todos: { icon: ListChecks, key: 'panel.todos' },
+  tokens: { icon: Coins, key: 'panel.tokens' },
+}
 
 interface Props {
   project: Project | null
@@ -44,35 +65,71 @@ interface Props {
   onSplitRatioChange: (ratio: number) => void
 }
 
-const MIN_WIDTH = 200
-const MAX_WIDTH = 640
-
 export function RightPanel(props: Props) {
   const { project, tab, width, split } = props
 
-  // Only the selected tab is labelled. Four unlabelled icons are a guessing
-  // game, but four labelled ones plus the two panel controls overflow a 280px
-  // column and push the collapse button off the edge. Naming where you are —
-  // and leaving tooltips for the rest — fits and answers the more useful
-  // question.
-  //
-  // The four sit in a segmented control rather than in a row of loose buttons.
-  // A ragged row of one label and three icons, left-aligned with the panel
-  // controls floated off to the right, reads as parts that happened to land
-  // near each other. Equal widths in a track read as one thing you are choosing
-  // within — which is what it is — and the width the label needs is then taken
-  // from the group instead of from the buttons beside it.
-  const showLabel = (id: PanelTab) => id === tab && width >= 230
-  useLang()
+  const lang = useLang()
+  const { labelled } = panelChrome(width)
   const dragFrom = useRef<{ x: number; width: number } | null>(null)
+  const [widthDragging, setWidthDragging] = useState(false)
   const splitRef = useRef<HTMLDivElement | null>(null)
   const [splitDragging, setSplitDragging] = useState(false)
+
+  // Where the marker sits, measured rather than computed.
+  //
+  // The tabs are not equal widths — the selected one grows to hold its name —
+  // so there is no arithmetic that gets this right, and a marker that is a few
+  // pixels out is worse than none. offsetLeft is relative to the track, which
+  // is the marker's containing block.
+  //
+  // Deliberately a plain effect and not useLayoutEffect. A layout effect would
+  // move the marker in the same commit that selected the new tab, and a
+  // property that changes without an intervening paint does not transition —
+  // the marker would teleport, which is the thing this whole mechanism exists
+  // to stop.
+  const trackRef = useRef<HTMLDivElement | null>(null)
+  const [marker, setMarker] = useState<{ left: number; width: number } | null>(null)
+  useEffect(() => {
+    const track = trackRef.current
+    const el = track?.querySelector<HTMLElement>('[aria-selected="true"]')
+    if (!track || !el) return
+    const measure = () => {
+      // A zero-width box is a panel nothing has laid out yet — an ancestor
+      // still display:none, a headless probe. Leaving the marker unset is what
+      // hands the selection back to the tab's own background.
+      if (el.offsetWidth <= 0) return
+      setMarker({ left: el.offsetLeft, width: el.offsetWidth })
+    }
+    measure()
+    // The label folds open over 260ms and the tab grows with it, so the final
+    // geometry is not available at the moment the tab changes. Observing both
+    // boxes is what makes the marker travel with the tab instead of to where
+    // the tab used to be going.
+    const ro = new ResizeObserver(measure)
+    ro.observe(track)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [tab, width, lang])
+
+  // Which way the body enters. Remembered rather than recomputed each render,
+  // because `data-dir` changing on a live element restarts its animation: with
+  // the direction derived on the fly, every unrelated re-render after a
+  // backwards switch replayed the slide — a socket message, a note saving.
+  //
+  // Adjusted during render, which is React's own answer to "state that depends
+  // on a prop that changed"; the discarded pass never reaches the DOM.
+  const [swap, setSwap] = useState<{ tab: PanelTab; dir: 'forward' | 'back' }>({
+    tab,
+    dir: 'forward',
+  })
+  if (swap.tab !== tab) setSwap({ tab, dir: swapDirection(swap.tab, tab) })
 
   const onWidthStart = useCallback(
     (e: React.PointerEvent) => {
       e.preventDefault()
       e.currentTarget.setPointerCapture(e.pointerId)
       dragFrom.current = { x: e.clientX, width }
+      setWidthDragging(true)
     },
     [width],
   )
@@ -81,8 +138,7 @@ export function RightPanel(props: Props) {
       const from = dragFrom.current
       if (!from) return
       // Dragging left widens the panel, so the delta is inverted.
-      const next = from.width + (from.x - e.clientX)
-      props.onWidthChange(Math.max(MIN_WIDTH, Math.min(next, MAX_WIDTH)))
+      props.onWidthChange(clampPanelWidth(from.width + (from.x - e.clientX)))
     },
     [props],
   )
@@ -91,6 +147,7 @@ export function RightPanel(props: Props) {
       e.currentTarget.releasePointerCapture(e.pointerId)
     }
     dragFrom.current = null
+    setWidthDragging(false)
   }, [])
 
   const onSplitMove = useCallback(
@@ -98,16 +155,12 @@ export function RightPanel(props: Props) {
       if (!splitDragging) return
       const box = splitRef.current?.getBoundingClientRect()
       if (!box || box.height === 0) return
-      const ratio = (e.clientY - box.top) / box.height
-      props.onSplitRatioChange(Math.max(0.15, Math.min(0.85, ratio)))
+      props.onSplitRatioChange(clampSplitRatio((e.clientY - box.top) / box.height))
     },
     [splitDragging, props],
   )
 
-  // Notes and todos are the pair worth seeing together — what you are thinking
-  // and what you have left. Files and the monitor are lookups, not companions.
-  const splittable = tab === 'notes' || tab === 'todos'
-  const showSplit = split && splittable
+  const showSplit = split && splittable(tab)
 
   const body = () => {
     // Before the no-project guard, and the only tab that is. The other four
@@ -131,6 +184,10 @@ export function RightPanel(props: Props) {
             <Notes key={project.id} projectId={project.id} socket={props.socket} />
           </div>
           <div
+            role="separator"
+            aria-orientation="horizontal"
+            tabIndex={0}
+            data-dragging={splitDragging}
             onPointerDown={(e) => {
               e.preventDefault()
               e.currentTarget.setPointerCapture(e.pointerId)
@@ -143,9 +200,16 @@ export function RightPanel(props: Props) {
               }
               setSplitDragging(false)
             }}
-            style={{ touchAction: 'none' }}
+            onKeyDown={(e) => {
+              const step = resizeStep(e.key, e.shiftKey)
+              if (step === null) return
+              const box = splitRef.current?.getBoundingClientRect()
+              if (!box || box.height === 0) return
+              e.preventDefault()
+              props.onSplitRatioChange(clampSplitRatio(props.splitRatio - step / box.height))
+            }}
             title={t('panel.resize')}
-            className="h-1.5 shrink-0 cursor-row-resize border-y border-hairline transition-colors duration-200 ease-vp hover:bg-accent"
+            className="vp-grip h-2 cursor-row-resize border-y border-hairline"
           />
           <div className="min-h-0 flex-1 overflow-hidden">
             <Todos key={project.id} projectId={project.id} socket={props.socket} />
@@ -162,16 +226,34 @@ export function RightPanel(props: Props) {
       data-testid="right-panel"
       data-tab={tab}
       data-split={showSplit}
-      className="flex shrink-0 border-l border-hairline vp-blur"
+      // It arrives from the edge it lives on. Opening a panel is a reveal, and
+      // the reveal is what makes the collapse control's chevron read as a
+      // direction rather than a decoration — you saw where it came from, so
+      // you know where it goes.
+      className="vp-edge-in-right flex shrink-0 border-l border-hairline vp-blur"
       style={{ width }}
     >
       <div
         data-testid="panel-resize"
+        role="separator"
+        aria-orientation="vertical"
+        aria-valuenow={width}
+        aria-valuemin={PANEL_MIN_WIDTH}
+        aria-valuemax={PANEL_MAX_WIDTH}
+        tabIndex={0}
+        data-dragging={widthDragging}
         onPointerDown={onWidthStart}
         onPointerMove={onWidthMove}
         onPointerUp={onWidthEnd}
         onPointerCancel={onWidthEnd}
-        style={{ touchAction: 'none' }}
+        onKeyDown={(e) => {
+          const step = resizeStep(e.key, e.shiftKey)
+          if (step === null) return
+          // Without this the arrow scrolls the panel behind the divider, and
+          // the divider is inside a scroll container.
+          e.preventDefault()
+          props.onWidthChange(clampPanelWidth(width + step))
+        }}
         title={t('panel.resize')}
         // `relative z-10` is what makes the grip hittable, not decoration.
         //
@@ -182,69 +264,131 @@ export function RightPanel(props: Props) {
         // visible edge, which is where anyone aims. Measured with
         // elementFromPoint across the grip: offsets 0-3 hit it, 4-7 hit the
         // content. Half the target, and the wrong half.
-        className="relative z-10 -mr-1 w-2 shrink-0 cursor-col-resize"
+        className="vp-grip z-10 -mr-1 w-2 cursor-col-resize"
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header
           data-testid="panel-header"
-          className="flex h-10 shrink-0 items-center gap-1 overflow-hidden border-b border-hairline px-2"
+          className="vp-chrome gap-1 overflow-hidden border-b border-hairline px-2"
         >
-          <div className="flex min-w-0 flex-1 items-center gap-0.5 rounded-vp bg-surface-2 p-0.5">
-            {TABS.map(({ id, icon: Icon, key }) => {
+          {/* Five destinations in a track, not five loose buttons. A ragged
+              row of one label and four icons with the panel controls floated
+              off to the right reads as parts that happened to land near each
+              other; a track reads as one thing you are choosing within, which
+              is what it is. */}
+          <div
+            ref={trackRef}
+            role="tablist"
+            aria-label={t('panel.tablist')}
+            aria-orientation="horizontal"
+            data-labelled={labelled}
+            data-marker={marker ? 'on' : 'off'}
+            className="vp-segmented flex-1"
+          >
+            {marker && (
+              <span
+                aria-hidden="true"
+                className="vp-marker"
+                style={{ width: marker.width, transform: `translateX(${marker.left}px)` }}
+              />
+            )}
+            {PANEL_TABS.map((id) => {
+              const { icon: Icon, key } = TABS[id]
               const label = t(key)
               return (
-              <button
-                key={id}
-                type="button"
-                data-testid={`panel-tab-${id}`}
-                onClick={() => props.onTab(id)}
-                title={label}
-                aria-pressed={tab === id}
-                className={`flex min-w-0 flex-1 items-center justify-center gap-1 rounded-md py-1 text-vp-sm transition-colors duration-200 ease-vp ${
-                  tab === id
-                    ? 'bg-surface text-ink shadow-[0_1px_2px_rgb(0_0_0/0.12)]'
-                    : 'text-ink-2 hover:text-ink'
-                }`}
-              >
-                <Icon size={13} className="shrink-0" />
-                {showLabel(id) && <span className="truncate">{label}</span>}
+                <button
+                  key={id}
+                  type="button"
+                  role="tab"
+                  id={`panel-tab-${id}`}
+                  data-testid={`panel-tab-${id}`}
+                  aria-selected={tab === id}
+                  aria-controls="panel-body"
+                  // Roving: the strip is one stop in the page's tab order and
+                  // the arrows move inside it, which is what a tablist is.
+                  // Five stops on the way to the terminal is not navigation.
+                  tabIndex={tab === id ? 0 : -1}
+                  onClick={() => props.onTab(id)}
+                  onKeyDown={(e) => {
+                    const next = tabFromKey(e.key, tab)
+                    if (!next) return
+                    e.preventDefault()
+                    props.onTab(next)
+                    document.getElementById(`panel-tab-${next}`)?.focus()
+                  }}
+                  title={label}
+                  className="vp-tab text-vp-sm"
+                >
+                  <Icon size={13} className="shrink-0" />
+                  <span className="vp-tab-label">{label}</span>
                 </button>
               )
             })}
           </div>
-          {splittable && (
-            <button
-              type="button"
-              data-testid="panel-split"
-              onClick={() => props.onSplitChange(!split)}
-              title={split ? t('panel.splitOff') : t('panel.splitOn')}
-              className={`shrink-0 rounded-md p-1.5 transition-colors duration-200 ease-vp ${
-                split ? 'text-accent' : 'text-ink-2 hover:bg-surface-2 hover:text-ink'
-              }`}
-            >
-              <Columns2 size={14} className="rotate-90" />
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={props.onCollapse}
-            data-testid="panel-collapse"
-            title={t('app.hidePanel')}
-            className="vp-press shrink-0 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
-          >
-            <ChevronRight size={14} />
-          </button>
+
+          <span className="vp-divider" aria-hidden="true" />
+
+          {/* Rendered from the list rather than written out, so "which
+              controls are in this header" is one answer in one place that a
+              test can sweep. Both of these are here at every width and on
+              every tab — see panelControls(). */}
+          {panelControls(tab).map((control) => {
+            if (control.id === 'split') {
+              const target = splitTarget(tab, split)
+              return (
+                <button
+                  key={control.id}
+                  type="button"
+                  data-testid={control.testid}
+                  onClick={() => {
+                    if (target.tab !== tab) props.onTab(target.tab)
+                    props.onSplitChange(target.split)
+                  }}
+                  aria-pressed={showSplit}
+                  title={t(splitTitleKey(tab, split))}
+                  className="vp-control"
+                >
+                  {/* The current layout, by shape: one pane or two rows. The
+                      accent tint says the same thing a second way, which is
+                      the point — pressed state carried by hue alone is
+                      unreadable in a dark room at 2am. */}
+                  {showSplit ? <Rows2 size={14} /> : <Square size={14} />}
+                </button>
+              )
+            }
+            return (
+              <button
+                key={control.id}
+                type="button"
+                data-testid={control.testid}
+                onClick={props.onCollapse}
+                title={t('app.hidePanel')}
+                className="vp-control"
+              >
+                <ChevronRight size={14} />
+              </button>
+            )
+          })}
         </header>
 
         {/* Per-tab, so the panel's own chrome — the tabs, the width, the
             collapse control — survives whatever the tab does, and switching
             away from a broken one is still possible. Keyed by tab so the
-            boundary resets when you move to another. */}
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <ErrorBoundary key={tab} label={`The ${tab} panel`}>
-            {body()}
-          </ErrorBoundary>
+            boundary resets when you move to another.
+
+            overflow-x-clip because the swap slides ten pixels sideways as it
+            arrives, and a scroll container whose child briefly overflows grows
+            a horizontal scrollbar for the length of the animation. */}
+        <div
+          id="panel-body"
+          role="tabpanel"
+          aria-labelledby={`panel-tab-${tab}`}
+          className="min-h-0 flex-1 overflow-x-clip overflow-y-auto"
+        >
+          <div key={tab} data-dir={swap.dir} className="vp-swap min-h-full">
+            <ErrorBoundary label={`The ${tab} panel`}>{body()}</ErrorBoundary>
+          </div>
         </div>
 
         {/* Always on, below whatever is chosen above. "Is the machine coping"

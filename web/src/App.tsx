@@ -26,7 +26,7 @@ import { MobileKeyBar } from './components/mobile/MobileKeyBar'
 import { ComposeInput } from './components/mobile/ComposeInput'
 import { SelectionCopy } from './components/mobile/SelectionCopy'
 import type { PanelTab } from './components/RightPanel'
-import { disambiguatedLabels, projectLabel, sessionLabel, exitReason } from './components/label'
+import { disambiguatedLabels, projectLabel, sessionLabel } from './components/label'
 import { applyTheme, loadTheme } from './components/theme'
 import type { ThemeChoice } from './components/theme'
 import { NARROW_QUERY, useMediaQuery } from './hooks/useMediaQuery'
@@ -714,7 +714,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
                   : t('app.projects')
               }
               data-testid="menu-button"
-              className="vp-press relative rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+              className="vp-control relative"
             >
               <Menu size={16} />
               {/* The count belongs where the list is, because on a phone the
@@ -766,13 +766,18 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
                     // in place; a session whose tmux session went with the
                     // machine is rebuilt from the row, with its recorded
                     // command and its archived scrollback.
+                    //
+                    // The same two strings the sidebar's restart control uses.
+                    // This one had an English sentence built from exitReason()
+                    // instead, so the panel's most prominent restart button was
+                    // the one that did not speak the user's language.
                     current.exitStatus === EXIT_VANISHED
                       ? t('restore.gone')
-                      : `The process ${exitReason(current.exitStatus)}. Run it again in this pane.`
+                      : t('app.restartHint')
                   }
                 >
                   <RotateCcw size={11} />
-                  restart
+                  {t('app.restart')}
                 </button>
               )}
               {/* The banner in the pane says the same thing and scrolls away.
@@ -806,37 +811,55 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           ) : (
             <span className="text-vp-md text-ink-2">{t('app.noSessionShort')}</span>
           )}
-          {!narrow && rightWidth === 0 && (
+          {/* One cluster with a rule in front of it, not four icons each
+              nudged along by ml-1. The rule is what says the left of this row
+              is which session you are looking at and the right of it is the
+              panel itself; without it the grid-size chip, the restart pill and
+              four buttons are one ragged line of unrelated things. */}
+          <span className="vp-divider ml-2" aria-hidden="true" />
+          <div className="ml-1 flex shrink-0 items-center gap-0.5">
+            {/* Always here, on and off, rather than appearing when the panel
+                closes.
+
+                It used to exist only while the panel was hidden, which is the
+                same defect as the split toggle that arrived on the notes tab:
+                the row rearranges itself under a pointer already moving, and
+                the button you were aiming at is now the one next to it. A
+                toggle that reports aria-pressed says more, in less space, and
+                stays still. */}
+            {!narrow && (
+              <button
+                type="button"
+                data-testid="right-show"
+                onClick={() => setRightOpen(rightWidth === 0)}
+                aria-pressed={rightWidth > 0}
+                title={rightWidth === 0 ? t('app.showPanelShort') : t('app.hidePanel')}
+                className="vp-control"
+              >
+                <PanelRight size={15} />
+              </button>
+            )}
             <button
               type="button"
-              data-testid="right-show"
-              onClick={() => setRightOpen(true)}
-              title={t('app.showPanelShort')}
-              className="vp-press ml-1 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+              data-testid="settings-open"
+              onClick={() => setSettingsOpen(true)}
+              title={t('app.settings')}
+              className="vp-control"
             >
-              <PanelRight size={15} />
+              <SettingsIcon size={15} />
             </button>
-          )}
-          <button
-            type="button"
-            data-testid="settings-open"
-            onClick={() => setSettingsOpen(true)}
-            title={t('app.settings')}
-            className="vp-press ml-1 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
-          >
-            <SettingsIcon size={15} />
-          </button>
-          <ThemeToggle theme={theme} onChange={setTheme} />
-          <button
-            type="button"
-            data-testid="sign-out"
-            onClick={onSignOut}
-            title={`Signed in as ${auth.username ?? 'unknown'} — sign out`}
-            className="vp-press ml-1 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
-          >
-            <LogOut size={15} />
-          </button>
-          <ConnectionDot status={status} />
+            <ThemeToggle theme={theme} onChange={setTheme} />
+            <button
+              type="button"
+              data-testid="sign-out"
+              onClick={onSignOut}
+              title={t('app.signedInAs', { user: safeText(auth.username ?? '?') })}
+              className="vp-control"
+            >
+              <LogOut size={15} />
+            </button>
+            <ConnectionDot status={status} />
+          </div>
         </header>
 
         {/* safeText, because a server error message is a name-carrying channel
@@ -1109,17 +1132,21 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         )}
 
         {current && !narrow && bottomHeight === 0 && (
+          // What the strip collapses to, in the place the strip was, on the
+          // same height grid as everything else in the frame. It was a 24px
+          // bar with a lowercase English word in the middle of it — the one
+          // thing in the window that belonged to no scale at all.
           <button
             type="button"
             data-testid="bottom-show"
             onClick={() => setBottomOpen(true)}
             title={t('app.showTerminals')}
-            className="vp-press flex h-6 shrink-0 items-center justify-center gap-1 border-t border-hairline text-vp-sm text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink vp-blur"
+            className="vp-edge-in-bottom vp-press flex h-7 shrink-0 items-center justify-center gap-1.5 border-t border-hairline text-vp-sm text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink vp-blur"
           >
             <ChevronUp size={12} />
-            terminals
+            {t('bottom.label')}
             {bottomTerminals.length > 0 && (
-              <span className="tabular">({bottomTerminals.length})</span>
+              <span className="tabular text-ink-3">{bottomTerminals.length}</span>
             )}
           </button>
         )}
@@ -1196,13 +1223,18 @@ function ConnectionDot({ status }: { status: SocketStatus }) {
       : status === 'connecting'
         ? 'var(--vp-state-waiting)'
         : 'var(--vp-state-dead)'
+  // Shape as well as hue (red line 4): open is a filled dot, connecting is a
+  // ring being closed, closed is a hollow one. Three colours a millimetre
+  // across is not something anybody reads in a dark room.
   return (
     <span
       data-testid="connection"
       data-status={status}
-      title={`Connection: ${status}`}
-      className="ml-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full"
-      style={{ background: colour }}
+      title={t('app.connection', { status: t(`conn.${status}`) })}
+      className={`ml-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full ${
+        status === 'connecting' ? 'vp-breathe' : ''
+      }`}
+      style={status === 'open' ? { background: colour } : { border: `1.5px solid ${colour}` }}
     />
   )
 }
@@ -1221,8 +1253,8 @@ function ThemeToggle({
       type="button"
       data-testid="theme-toggle"
       onClick={() => onChange(next[theme])}
-      title={`Theme: ${theme}`}
-      className="vp-press ml-1 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+      title={t('app.themeIs', { mode: t(`theme.${theme}`) })}
+      className="vp-control"
     >
       <Icon size={15} />
     </button>

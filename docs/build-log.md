@@ -12442,3 +12442,140 @@ mount, which is what "switching took N ms" means.
 build. `internal/webui/dist` is tracked and embedded, so `go build` from a fresh
 clone was shipping an older frontend than the repository's own source. Rebuilt
 and committed.
+
+## The chrome around the terminal, as one object
+
+The report was three symptoms and one disease: *"右边 tab 的切换 没有动画 到右边两
+个的时候会非常僵硬的多一个按钮"* and *"底下每一个控件都像是拼起来的"*. Switching
+tabs was an instant swap; reaching the notes tab grew the header a button; and
+the terminal strip's tabs, its add button, its collapse control and its resize
+handle looked like four decisions taken on four days. They were.
+
+### What was actually inconsistent
+
+The class list
+
+```
+vp-press rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink
+```
+
+was written out by hand in twenty places, and had already drifted three ways —
+`p-0.5`, `p-1`, `p-1.5`, which is 20, 24 and 27 pixels tall — with several of
+those sitting in the same row as each other. Nothing is wrong with any one of
+them and no two of them are the same object. That is the whole of "拼起来的": the
+parts arrived separately and it shows.
+
+Three strip heights (44, 40, 32, 24), three resize affordances (an invisible
+8px strip, a 6px one that turned entirely accent-coloured on hover, and a 2px
+one that did the same), and two ideas of a corner.
+
+So there is now one definition of each, in `styles.css` where there is one of
+it: `.vp-control`, `.vp-tab`, `.vp-chrome`, `.vp-divider`, `.vp-grip`,
+`.vp-segmented`. `--vp-control-h` is 28, `--vp-chrome-h` is 40, and
+`--vp-radius-control` is 8 — 8 rather than `rounded-md`'s 6, because a control
+sits inside a 12px track with 2px of padding and 12 − 2 is 8. Concentric radii
+are the difference between a pill in a groove and two rounded rectangles that
+happen to overlap.
+
+The height is a `height` and not padding, deliberately. Padding makes a
+control's size a consequence of whichever icon happens to be inside it, which is
+exactly how a 16px icon and a 13px icon became two different buttons in the same
+strip. The 44px coarse-pointer floor is a `min-height`, so a finger still gets
+its 44.
+
+### Motion, and what each movement means
+
+- **Lateral.** Switching tabs is a move between siblings, so a marker slides
+  from the old tab to the new one and the incoming body enters from the side the
+  strip moved towards. Five destinations swapping their backgrounds on the same
+  frame give the eye nothing to follow — it has to find the selection again from
+  scratch, which is the complaint.
+- **Reveal.** The side panel and the terminal strip arrive from the edge they
+  live on, so when one closes the eye already knows where it went.
+
+Neither carries anything. The global `prefers-reduced-motion` block collapses
+both to nothing, and under it the selected tab is still the darker one, still
+the only one named in words, and still the one reporting `aria-selected`.
+
+Two details cost a debugging session each and are worth writing down.
+
+**The marker is measured in a plain `useEffect`, not `useLayoutEffect`.** A
+layout effect moves the marker in the same commit that selects the new tab, and
+a property that changes without an intervening paint does not transition — the
+marker teleports, which is the thing the mechanism exists to stop. The one frame
+where the marker is still under the old tab is what makes the slide readable.
+
+**The swap direction is state, not a computed value.** `data-dir` changing on a
+live element restarts its animation, so with the direction recomputed each
+render, every unrelated re-render after a backwards switch replayed the slide — a
+socket message, a note saving. And the keyframes use `backwards`, not `both`:
+`both` leaves the final transform applied forever, and an element with a
+transform is a containing block for `position: fixed`, which is how the file
+preview stops covering the window and starts covering the 280px panel instead.
+`FilePreview` already had a comment about that hazard from the other direction.
+
+### Controls that appeared and disappeared
+
+`web/src/components/chrome.ts` now holds the decisions, and the rule it exists
+for is narrow: **presentation may change with size; the set of controls may
+not.** A control present at one size and absent at another is a layout that
+rearranges itself while somebody is aiming at it.
+
+Two of them were doing that:
+
+- **The split toggle** was rendered on the notes and todo tabs and nowhere
+  else, so arriving at either grew the header a button and slid the collapse
+  control 28 pixels left — under a pointer already travelling towards where it
+  used to be. It is on all five tabs now, because `splitTarget()` gives it a
+  meaning on all five: it does what its label has always said, "show notes and
+  todo together", and going there from the files tab is the sentence rather than
+  a surprise.
+- **`right-show`** existed only while the side panel was hidden. It is a toggle
+  now, always in the header, reporting `aria-pressed`. That one change needed
+  `render-check` edited in two places: it guarded on the *button's* visibility to
+  decide whether the panel was closed, which was true of the old control and is
+  a way to close the panel with the new one.
+
+The tab label is the third case and the interesting one, because a label is not
+a control and is allowed to depend on width. Below 250px the selected tab's name
+does not fit — the track has under 170 pixels to divide five ways — so it folds
+shut on a `max-width` transition rather than blinking out. Same fact, delivered
+as a movement.
+
+`chrome.test.ts` sweeps every width from 200 to 640 and every tab and asserts
+the control set is one value. Ten mutations, all red: the split control made
+conditional again, a second label threshold, arrows that stop instead of
+wrapping, the swap direction pinned to one side, the resize keys reversed, the
+main terminal's 120px floor removed, the strip's collapse control hidden while
+empty, the split control made inert on three tabs, the ratio clamp removed, and
+the focus order reversed.
+
+### What else came out of it
+
+- **The terminal strip was unreachable from the keyboard.** Its tabs were
+  `<div onClick>` with no role and no `tabIndex`: tab past the terminal and
+  there was nothing there at all — no way to choose a tab, rename one or close
+  one. They carry `role="button"` and a tab stop now. Not a real `<button>`,
+  because renaming replaces the label with an `<input>` and interactive content
+  inside a button is not something the parser will build: it closes the button
+  first and the tab stops being one.
+- **Both dividers resize from the keyboard**, as `role="separator"` with arrow
+  keys and a four-times step on shift. They were mouse-only.
+- **One focus ring, and a visible one.** Every control had the browser's
+  default, which on the dark theme is very nearly invisible. `:where(...)` holds
+  the specificity at zero so a component that needs its own treatment still wins
+  without `!important`. The grip keeps the ring *and* tints its pill: the focus
+  scan reads computed style off the element itself, and a tab stop that says
+  "focused" only through a pseudo-element is one that check correctly calls
+  invisible.
+- **Four header strings were English on a Chinese page** — `Theme: dark`,
+  `Signed in as … — sign out`, `Connection: open`, and a bare lowercase
+  `restart`. None of them tripped `i18n.untranslated.test.ts`, because all of
+  them were template literals and it looks for quoted attributes and lines of
+  prose. The restart button now uses the same two strings the sidebar's restart
+  control has used all along.
+- **The new-terminal tooltip interpolated a raw `cwd`.** Untranslated *and*
+  unsanitised: a directory name is arbitrary bytes, and one carrying U+202E
+  reverses the tooltip around it. Through `safeText` and the dictionary now.
+- **The connection dot was colour alone** (red line 4). Filled for open, a ring
+  for the rest, and the ring breathes while connecting.

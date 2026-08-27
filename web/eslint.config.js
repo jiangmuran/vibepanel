@@ -20,6 +20,12 @@ export default tseslint.config(
     rules: {
       ...reactHooks.configs.recommended.rules,
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
+      // A leading underscore means "taken and deliberately not used". The
+      // chrome descriptors are the reason it exists: panelControls(tab) and
+      // bottomControls(count) answer the same thing whatever they are handed,
+      // and that is the property under test — a constant array instead would
+      // move the conditional to the call site, where nothing is watching.
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
   },
 )
