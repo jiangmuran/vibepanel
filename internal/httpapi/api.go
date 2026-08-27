@@ -137,6 +137,21 @@ type Server struct {
 	shareTouchOnce sync.Once
 	shareTouch     *auth.Cooldown
 
+	// spendSnap is the token-spend rollup a share board draws from, shared by
+	// every link and recomputed when it ages out.
+	//
+	// A wall polls every two seconds forever, and the rollups behind one spend
+	// board are five GROUP BYs over a table holding a year of history. Without
+	// this they run forty thousand times a day to answer a question whose
+	// answer moves when an agent finishes a request. Shared rather than kept
+	// per link on purpose: the snapshot holds the panel's real project ids and
+	// each link renames them under its own secret afterwards, so a cache on the
+	// far side of that would be a cache keyed by a credential.
+	// Keyed by the scope's directory, "" for a whole-panel link, so a link
+	// scoped to one project never draws from the panel's own rollup.
+	spendMu    sync.Mutex
+	spendCache map[string]cachedSpend
+
 	// TrimEvery and AuditKeep override the audit trim's schedule and cap. Zero
 	// means the constants. Tests set them small; nothing else should. They
 	// exist because a periodic job nobody can drive from a test is how this

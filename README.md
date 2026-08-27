@@ -58,11 +58,15 @@ two apart: **tmux does process persistence, the web UI does organisation.**
   settings.
 - **Install as an app.** A PWA with notifications, so a session that starts waiting
   reaches your phone with the panel in the background.
-- **A read-only dashboard on a second screen.** Make a share link in settings and
-  open it on the monitor beside you: machine load, what every session is costing,
-  who is waiting for you, in type you can read across a room — and a connection
-  state you cannot mistake for a quiet system. The link reaches that one page and
-  nothing else, and by default it shows no names at all.
+- **A dashboard generator for a second screen.** A share link opens a *board* you
+  chose when you made it: nineteen starting points organised by who is reading —
+  "does anything need me" at three metres, every session laid out on a
+  television, only the machine, what today cost, the year as a grid of days, one
+  number filling the screen, three pages that cycle. Every one of them is then
+  yours to rearrange, widget by widget. A link can be about the whole panel, one
+  project, or one session — the one you send to somebody you are working with.
+  It reaches that one page and nothing else, and by default it shows no names at
+  all.
 - **An HTTP API for agents**, with tokens that are separate from your password —
   see [docs/api.md](docs/api.md).
 - **Passkeys, passwords, TLS of its own**, including automatic certificates over
@@ -363,9 +367,37 @@ rename the caller turns both controls off.
 ### Read-only share links
 
 **Settings → Read-only share links** makes a URL you can leave open on another
-monitor: `https://<panel>/share/<token>`. It opens a dashboard — machine load,
-per-session CPU and memory, every session with its state, grouped by project —
-and it opens nothing else.
+monitor: `https://<panel>/share/<token>`. It opens a dashboard and nothing else.
+
+What that dashboard *shows* is a **board** you choose when you make the link.
+Nineteen starting points, organised by who is standing in front of the screen
+rather than by which table the numbers came from:
+
+| | |
+|---|---|
+| while you are working | the panel's summary · does anything need me · the waiting queue · every session as a tile · only the ones that need an answer · everything at once |
+| a screen on a wall | four numbers and a clock · one number filling the screen · how busy it is right now · three pages that cycle |
+| whoever runs the machine | only the machine · what has gone wrong |
+| a manager | what it cost next to what came out · where the money went · the calm high-level one · the year as a grid of days |
+| one thing, closely | per project · which model is doing the work · what today cost |
+
+A preset is a starting point, not a mode. Every widget on it can be moved,
+resized, pointed at a different number, split by a different dimension — by
+agent, by project, by model, by day, by month — or thrown away, and you can add
+more from a palette of twenty-one kinds. The board is stored with the link, so
+opening the URL on another machine shows the same board; the widths collapse as
+the screen narrows, so the same stored board is a summary on a phone and a wall
+of forty tiles on a television. You can rearrange a board after the fact without
+the URL changing.
+
+The numbers behind it are what the panel already knows: session states and how
+long each has been in one, per-session CPU and memory, the machine, checklist
+progress per project, and what the agents recorded spending — today against
+yesterday, this month against last, per hour so far today, split by agent, by
+project or by model, and a fifty-three week grid. Tokens, never money: prices
+differ per model, per tier and over time, and a currency figure from a stale
+table is a confident wrong number on a wall. Nothing counts lines of code
+either, because the panel never reads a repository.
 
 The link is a capability, so treat it as one. Anyone holding it can watch, and
 the panel stores only a SHA-256 of the token, which means the moment it is
@@ -380,10 +412,23 @@ make a second link from the first.
 
 Two levels of detail, chosen when you make it. **Counts** — the default — shows
 shapes and numbers and no text at all; **names** adds session titles and project
-names. Neither ever sends a path, a command line, a hostname or the panel's own
-ids, because a project path names a customer and a home directory and a command
-line carries whatever an agent was invoked with. If the screen is behind you in
-a room other people walk through, the default is the one to leave alone.
+names. Neither ever sends a path, a command line, a hostname, a checklist item
+or the panel's own ids, because a project path names a customer and a home
+directory and a command line carries whatever an agent was invoked with. If the
+screen is behind you in a room other people walk through, the default is the one
+to leave alone.
+
+A link can also be **scoped**: the whole panel, one project, or one session. A
+project-scoped link is the one you send to somebody you are working with on that
+project — it sees that project's sessions, that project's spend and that
+project's checklist counts, and nothing else. Scope is enforced by the server
+from the link's own row, and if the project is later deleted the link shows
+nothing rather than falling back to everything.
+
+The board can be changed later; the detail mode and the scope cannot. By the
+time you are editing a link its URL is already in an email or typed into a
+television, and widening what that address discloses is a change the people
+holding it would never see. A different mode means a different link.
 
 The dashboard says out loud when it has stopped hearing from the panel: *live*,
 *reconnecting* and *disconnected* are distinguished by shape and by word as well

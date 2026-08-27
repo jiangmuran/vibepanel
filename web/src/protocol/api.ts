@@ -13,6 +13,8 @@ import type {
   Project,
   Session,
   SessionState,
+  ShareBoard,
+  ShareCatalogue,
   ShareDashboard,
   ShareDetail,
   ShareLink,
@@ -235,19 +237,46 @@ export const api = {
   // no `lastUsedAt`, because a link made half a second ago has never been used.
   // Declaring a field the server does not send is the drift red line 3 is
   // about — it type-checks and is `undefined` at runtime.
-  createShare: (name: string, detail: ShareDetail, expiresIn: number) =>
+  createShare: (req: {
+    name: string
+    detail: ShareDetail
+    expiresIn: number
+    board: ShareBoard
+    scope: string
+    scopeId: string
+  }) =>
     request<{
       token: string
       id: string
       name: string
       prefix: string
       detail: string
+      board: ShareBoard
+      scope: string
       expiresAt: number
       createdAt: number
     }>('/api/settings/shares', {
       method: 'POST',
-      body: JSON.stringify({ name, detail, expiresIn }),
+      body: JSON.stringify(req),
     }),
+
+  /**
+   * Renames a link and rearranges its board.
+   *
+   * Deliberately no `detail` and no `scope`. By the time anybody edits a link
+   * its URL is already in an email or typed into a television, and widening
+   * what that address discloses is a change the people holding it would never
+   * see. The server refuses them too; this signature is the same refusal said
+   * where the caller reads it.
+   */
+  updateShare: (id: string, name: string, board: ShareBoard) =>
+    request<void>(`/api/settings/shares/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name, board }),
+    }),
+
+  /** The vocabulary a board is built from: presets, widget kinds, bounds. */
+  shareCatalogue: () => request<ShareCatalogue>('/api/settings/shares/catalogue'),
 
   deleteShare: (id: string) =>
     request<void>(`/api/settings/shares/${encodeURIComponent(id)}`, { method: 'DELETE' }),

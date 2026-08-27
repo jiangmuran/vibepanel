@@ -382,7 +382,6 @@ code. Claude's four events are merged into `~/.claude/settings.json`; Codex's on
 top-level key appended to the end of that file would belong to the last table in
 it and Codex would never read it.
 
-<<<<<<< HEAD
 ## Updating
 
 ### `GET /api/update`
@@ -414,16 +413,36 @@ than configurable, so an update cannot be aimed somewhere else by a setting.
 
 Your sessions are not restarted with the panel. `KillMode=process` in both units
 is what makes the button safe to press at all.
-=======
+
 ## Read-only share links
 
-A share link is a capability: a long random token in a URL that opens the
-dashboard at `/share/<token>` on a second screen — machine load, per-session CPU
-and memory, every session with its state, grouped by project — and reaches
-nothing else at all.
+A share link is a capability: a long random token in a URL that opens a
+dashboard at `/share/<token>` on a second screen, and reaches nothing else at
+all.
+
+What that dashboard *shows* is a **board** — an arrangement chosen when the link
+is made, stored with it, and sent back with every reading. A board is data, not
+code: an ordered list of widgets, each naming a kind from a fixed registry with
+options that are enums or bounded numbers. There is no widget that names a
+table, a field, a directory, a URL or a template, which is what keeps a stored
+row from being able to make the panel do anything.
+
+Three decisions are made when a link is created, and two of them are permanent:
+
+| | | |
+|---|---|---|
+| `board` | what it shows | changeable afterwards |
+| `detail` | whether it may use words | fixed at creation |
+| `scope` | which rows it is about | fixed at creation |
+
+The board can be rearranged later because rearranging it cannot disclose
+anything the link did not already carry. The other two can, and by then the URL
+is in an email or typed into a television — so a different mode or a different
+scope means a different link, which somebody has to hand out on purpose.
 
 ### `GET /api/settings/shares`
 ### `POST /api/settings/shares`
+### `PATCH /api/settings/shares/{shareID}`
 ### `DELETE /api/settings/shares/{shareID}`
 
 Making one needs the ordinary session; a share token cannot mint another, which
@@ -432,8 +451,9 @@ is what stops one leaked link becoming a supply of them.
 ```sh
 curl -sX POST https://panel.example:8443/api/settings/shares \
   -b cookies.txt -H 'Content-Type: application/json' \
-  -d '{"name":"wall display","detail":"counts","expiresIn":604800}'
-# {"token":"Jq4…","id":"…","prefix":"Jq4x9m2v","detail":"counts","expiresAt":1735689600}
+  -d '{"name":"wall display","detail":"counts","expiresIn":604800,"preset":"attention"}'
+# {"token":"Jq4…","id":"…","prefix":"Jq4x9m2v","detail":"counts","scope":"",
+#  "board":{"preset":"attention","rotate":0,"widgets":[…]},"expiresAt":1735689600}
 ```
 
 The response is the only time the token is readable — the database keeps a
@@ -445,9 +465,54 @@ the value decides what the link discloses for as long as it exists and a default
 could only fall towards saying more or towards saying less. `expiresIn` is
 seconds from now, `0` for a link that does not expire, and at most a year.
 
-Creation and revocation are audited as `share.created` and `share.revoked`.
-Revocation takes effect on the link's next poll; there is nothing else to
-invalidate, because a share link has no session, no cookie and no socket.
+`preset` names a starting arrangement and `board` is an explicit one; `board`
+wins, and a request with neither gets the default board. An unknown preset or an
+unknown widget kind is a `400` rather than a fallback — see the catalogue below.
+
+`scope` is `""` (the whole panel, the default), `project` or `session`, with
+`scopeId` naming which. It is checked against the rows that exist: a scope
+naming a project nobody has heard of is a `400` rather than a link that shows an
+empty screen forever with no way to tell a typo from a deletion. A scoped link
+sees only its own project's or session's rows, only that scope's token spend and
+only that scope's checklists — enforced by the handler from the stored row, not
+from anything in the request. If the project or session is later deleted, the
+link shows **nothing**; it does not fall back to the whole panel.
+
+`PATCH` takes `{"name": "...", "board": {...}}` and nothing else. Sending
+`detail` or `scope` is a `400`, because unknown fields are refused: an edit that
+quietly did less than it asked for is worse than one that says no.
+
+Creation, editing and revocation are audited as `share.created`,
+`share.updated` and `share.revoked`. Revocation takes effect on the link's next
+poll; there is nothing else to invalidate, because a share link has no session,
+no cookie and no socket.
+
+### `GET /api/settings/shares/catalogue`
+
+The vocabulary a board can be built from: every preset with the widgets it
+expands to, every widget kind with the options it accepts, and the bounds.
+Served rather than mirrored in the frontend, so that every option an editor
+offers is an option the validator accepts.
+
+```json
+{"presets": [{"id": "attention", "audience": "working", "rotate": 0,
+              "widgets": [{"kind": "attention", "span": 4}, …]}, …],
+ "widgets": [{"kind": "spendsplit", "span": 2, "metrics": null, "filters": null,
+              "orders": null, "groups": null, "bys": ["tool", "project", "model"],
+              "days": false, "text": false, "rotate": false}, …],
+ "maxWidgets": 24, "maxSpan": 4, "maxCaption": 64, "maxDays": 371}
+```
+
+A widget is `{"kind", "span", "metric"?, "filter"?, "order"?, "group"?, "by"?,
+"days"?, "page"?, "rotate"?, "text"?}`. `span` is 1–4 columns in a grid that
+collapses to two and then to one as the screen narrows, so one stored board is a
+summary on a phone and a wall of tiles on a television. `page` puts a widget on
+one page of a rotating board and the board's own `rotate` is how many seconds
+each page stays; a widget's `rotate` pages through a list longer than its tile.
+A field a kind does not accept is a `400` rather than an ignored value.
+
+This is a settings route: a share token answers `401` to it, like everything
+else that is not the one dashboard `GET`.
 
 ### `GET /api/share/{token}/dashboard`
 
@@ -459,7 +524,9 @@ handler reads.
 
 ```json
 {"at": 1735689600, "name": "wall display", "detail": "counts", "expiresAt": 0,
- "usageReadable": true, "stale": false,
+ "usageReadable": true, "stale": false, "scope": "", "scopeName": "",
+ "board": {"preset": "attention", "rotate": 0,
+           "widgets": [{"kind": "attention", "span": 4}]},
  "machine": {"cpuReadable": true, "cpuPercent": 31.4, "cores": 16,
              "load1": 2.1, "load5": 1.8, "load15": 1.4,
              "memTotal": 33654304768, "memAvailable": 20401324032,
@@ -467,14 +534,43 @@ handler reads.
              "diskTotal": 981472473088, "diskFree": 402653184000,
              "uptime": 918273},
  "counts": {"projects": 2, "sessions": 5, "waiting": 1, "working": 2,
-            "done": 2, "exited": 0, "crashed": 0},
+            "done": 2, "exited": 0, "crashed": 0, "doneToday": 3,
+            "longestWaitAt": 1735689000},
  "projects": [{"id": "3f9c1a…", "name": "", "waiting": 1, "working": 1,
                "done": 0, "total": 2}],
  "sessions": [{"id": "b7e20d…", "projectId": "3f9c1a…", "name": "",
                "state": "waiting", "kind": "agent", "stateChangedAt": 1735689000,
                "exited": false, "exitStatus": 0,
-               "measured": true, "cpuPercent": 24.1, "rss": 831258624, "procs": 7}]}
+               "measured": true, "cpuPercent": 24.1, "rss": 831258624, "procs": 7}],
+ "spend": null, "todos": null}
 ```
+
+`sessions` is empty, and `spend` and `todos` are `null`, unless a widget on the
+board asks for them. A board can only ever subtract: the sections a dashboard
+may carry are a fixed set, a widget chooses among them, and no arrangement of
+widgets produces a field that is not in the list. `null` and a zeroed object are
+different facts — the first is "this board does not show it", and the second has
+a `readable` flag of its own to tell "nothing was spent" from "nothing has been
+counted yet".
+
+`spend` is tokens, never money: prices differ per model, per tier and over time,
+and a currency figure from a stale table is a confident wrong number on a wall.
+It carries `today`, `yesterday`, `month`, `lastMonth` and `window` totals (each
+split into input, output, cache read, cache write, requests and a summed
+`total`), `hoursToday` so a per-hour rate is "so far today" on the *server's*
+clock, and the arrays a board asked for: `days`, `months`, `heatmap`, `tools`,
+`models`, `projects`. Its `date` is the server's local day, because the buckets
+are local days and a phone abroad must not decide which square is today.
+
+`todos` is counts only — `open`, `done`, `closedToday`, and the same per project.
+The items themselves are never sent, at either `detail`. A todo line says what
+somebody is about to do about a customer, a bug or a date; it is closer to a
+note than to a session title.
+
+`counts.doneToday` is how many sessions reached `done` since the server's local
+midnight. It is the closest thing to *output* this panel honestly has: nothing
+here counts lines of code, because the panel never reads a repository and a
+number invented for a wall is worse than a missing one.
 
 What it deliberately does **not** carry, in either `detail` mode: the project's
 path on disk, a session's `cwd`, the command line, the tmux session name, the
@@ -508,7 +604,6 @@ expired, or never existed — one answer for all three, and rejected attempts ar
 audited as `share.rejected`, gated to one row per source per minute. `403` is
 the `--allow-from` allowlist, which applies here exactly as it does to the
 panel: a share link must not be a way around it.
->>>>>>> worktree-agent-a300b55d058841cd8
 
 ## Authentication
 

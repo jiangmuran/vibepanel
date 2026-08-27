@@ -614,6 +614,258 @@ const DICT = {
     en: 'The panel has stopped recording session states, so what is below may be old. The terminals are unaffected.',
   },
   'dash.expiresIn': { zh: '{when} 后过期', en: 'expires in {when}' },
+  'dash.longestWait': { zh: '最久的等了 {d}', en: 'longest {d}' },
+  'dash.nothingWaiting': { zh: '没有在等你的', en: 'Nothing is waiting' },
+  'dash.allClear': { zh: '都不用管', en: 'All clear' },
+  'dash.unknown': { zh: '未知', en: 'unknown' },
+  'dash.noSpendYet': { zh: '还没数过', en: 'Not counted yet' },
+  'dash.spendAt': { zh: '统计于 {time}', en: 'counted {time}' },
+  'dash.lastDays': { zh: '近 {n} 天', en: 'last {n} days' },
+  'dash.today': { zh: '今天', en: 'Today' },
+  'dash.thisMonth': { zh: '本月', en: 'This month' },
+  'dash.input': { zh: '输入', en: 'Input' },
+  'dash.output': { zh: '输出', en: 'Output' },
+  'dash.cacheRead': { zh: '缓存读', en: 'Cache read' },
+  'dash.cacheWrite': { zh: '缓存写', en: 'Cache write' },
+  'dash.requests': { zh: '请求', en: 'Requests' },
+  'dash.tokens': { zh: 'token', en: 'tokens' },
+  'dash.outsideProjects': { zh: '项目之外', en: 'Outside every project' },
+  'dash.noExits': { zh: '没有退出的会话', en: 'Nothing has exited' },
+  'dash.exited': { zh: '已退出', en: 'Exited' },
+  'dash.exitStatus': { zh: '退出码 {n}', en: 'exit {n}' },
+  'dash.vanished': { zh: '会话消失了', en: 'vanished' },
+  'dash.noMeasurements': { zh: '读不到进程数据', en: 'No process readings' },
+  'dash.emptyWidget': { zh: '没有数据', en: 'Nothing to show' },
+  'dash.heatmapLess': { zh: '少', en: 'less' },
+  'dash.heatmapMore': { zh: '多', en: 'more' },
+  'dash.heatmapDay': { zh: '{date}：{n} token', en: '{date}: {n} tokens' },
+  'dash.uptimeLabel': { zh: '已运行', en: 'Uptime' },
+  'dash.noSwap': { zh: '没有交换区', en: 'No swap' },
+  'dash.closedToday': { zh: '今天完成 {n} 条', en: '{n} closed today' },
+  'dash.finishedToday': { zh: '今天做完的', en: 'Finished today' },
+  'dash.todosClosedToday': { zh: '今天勾掉的', en: 'Ticked off today' },
+  'dash.perHourToday': { zh: '今天平均每小时', en: 'per hour today' },
+  'dash.perHourAverage': { zh: '近 {days} 天平均每小时 {n}', en: '{n}/hour over {days} days' },
+  'dash.requestsPerHour': { zh: '每小时 {n} 个请求', en: '{n} requests/hour' },
+  'dash.noComparison': { zh: '没得比', en: 'nothing to compare' },
+  'dash.upBy': { zh: '多 {n}%', en: '{n}% more' },
+  'dash.downBy': { zh: '少 {n}%', en: '{n}% less' },
+  'dash.versusYesterday': { zh: '昨天 {n}', en: 'yesterday {n}' },
+  'dash.versusLastMonth': { zh: '上月 {n}', en: 'last month {n}' },
+  'dash.oneProject': { zh: '一个项目', en: 'One project' },
+  'dash.oneSession': { zh: '一个会话', en: 'One session' },
+
+  // The board vocabulary. Every id here is a string the server owns, and a Go
+  // test walks the widget registry to fail if one of them has no entry.
+  'board.kind.attention': { zh: '需要我吗', en: 'Needs me?' },
+  'board.kind.states': { zh: '状态计数', en: 'State tallies' },
+  'board.kind.bignumber': { zh: '一个大数字', en: 'One big number' },
+  'board.kind.clock': { zh: '时钟', en: 'Clock' },
+  'board.kind.caption': { zh: '一行说明', en: 'Caption' },
+  'board.kind.sessiongrid': { zh: '会话方阵', en: 'Session tiles' },
+  'board.kind.sessionlist': { zh: '会话列表', en: 'Session list' },
+  'board.kind.projects': { zh: '按项目', en: 'By project' },
+  'board.kind.machine': { zh: '机器', en: 'Machine' },
+  'board.kind.gauge': { zh: '仪表盘', en: 'Gauge' },
+  'board.kind.uptime': { zh: '运行时长与负载', en: 'Uptime and load' },
+  'board.kind.cputop': { zh: '最耗资源的会话', en: 'Heaviest sessions' },
+  'board.kind.exits': { zh: '退出情况', en: 'Exits' },
+  'board.kind.todos': { zh: '清单进度', en: 'Checklists' },
+  'board.kind.output': { zh: '今天的产出', en: 'What came out' },
+  'board.kind.spendtotals': { zh: 'token 合计', en: 'Token totals' },
+  'board.kind.spendrate': { zh: '烧得多快', en: 'How fast' },
+  'board.kind.spendcompare': { zh: '跟上次比', en: 'Against last time' },
+  'board.kind.spendbars': { zh: 'token 走势', en: 'Tokens over time' },
+  'board.kind.spendsplit': { zh: 'token 去向', en: 'Where it went' },
+  'board.kind.spendheatmap': { zh: '一年的格子', en: 'The year, day by day' },
+
+  'board.audience.working': { zh: '给正在干活的自己', en: 'While you are working' },
+  'board.audience.wall': { zh: '给墙上的屏', en: 'For a screen on a wall' },
+  'board.audience.ops': { zh: '给管机器的人', en: 'For whoever runs the machine' },
+  'board.audience.manager': { zh: '给老板和领导', en: 'For a manager' },
+  'board.audience.detail': { zh: '盯着一件事看', en: 'A closer look at one thing' },
+
+  'board.metric.todosOpen': { zh: '还没做的', en: 'Open' },
+  'board.metric.todosDone': { zh: '已做完的', en: 'Done' },
+  'board.metric.todosClosedToday': { zh: '今天勾掉的', en: 'Ticked off today' },
+  'board.metric.todoPercent': { zh: '清单完成度', en: 'Checklist' },
+  'board.metric.doneToday': { zh: '今天做完的', en: 'Finished today' },
+  'board.metric.tokensPerHour': { zh: '每小时 token', en: 'Tokens per hour' },
+
+  'board.group.project': { zh: '按项目分组', en: 'By project' },
+  'board.group.state': { zh: '按状态分组', en: 'By state' },
+  'board.group.none': { zh: '不分组', en: 'One list' },
+
+  'board.by.day': { zh: '按天', en: 'By day' },
+  'board.by.month': { zh: '按月', en: 'By month' },
+  'board.by.tool': { zh: '按 agent', en: 'By agent' },
+  'board.by.project': { zh: '按项目', en: 'By project' },
+  'board.by.model': { zh: '按模型', en: 'By model' },
+
+  'board.preset.overview': { zh: '总览', en: 'Overview' },
+  'board.presetWhy.overview': {
+    zh: '状态、机器、所有会话。看板本来的样子。',
+    en: 'States, the machine, every session. What the dashboard was before boards.',
+  },
+  'board.preset.attention': { zh: '需要我吗', en: 'Does anything need me' },
+  'board.presetWhy.attention': {
+    zh: '一个大数字加在等的会话，隔着房间就能看清。',
+    en: 'One large number and the sessions behind it, readable across a room.',
+  },
+  'board.preset.wall': { zh: '会话墙', en: 'Session wall' },
+  'board.presetWhy.wall': {
+    zh: '每个会话一块，几十个一眼扫完。',
+    en: 'One tile per session, for taking in dozens at once.',
+  },
+  'board.preset.queue': { zh: '等待队列', en: 'Queue' },
+  'board.presetWhy.queue': {
+    zh: '按等了多久排，最久的在最上面。',
+    en: 'Sorted by how long each has waited, longest first.',
+  },
+  'board.preset.machine': { zh: '只看机器', en: 'The machine' },
+  'board.presetWhy.machine': {
+    zh: 'CPU、内存、磁盘、交换区，加上最耗资源的会话。',
+    en: 'CPU, memory, disk and swap, plus what is costing the most.',
+  },
+  'board.preset.health': { zh: '有没有出事', en: 'Anything broken' },
+  'board.presetWhy.health': {
+    zh: '退出、异常退出、压力，和出问题的那几个会话。',
+    en: 'Exits, crashes, pressure, and the sessions in trouble.',
+  },
+  'board.preset.projects': { zh: '按项目看', en: 'By project' },
+  'board.presetWhy.projects': {
+    zh: '每个项目的进度和花费，而不是每个会话。',
+    en: 'Progress and spend per project rather than per session.',
+  },
+  'board.preset.glance': { zh: '路过一眼', en: 'At a glance' },
+  'board.presetWhy.glance': {
+    zh: '四个数字和一个钟。给每天路过的那块屏。',
+    en: 'Four numbers and a clock, for a screen somebody walks past.',
+  },
+  'board.preset.single': { zh: '就一个数', en: 'A single number' },
+  'board.presetWhy.single': {
+    zh: '一块屏，一个数字，占满。',
+    en: 'One screen, one figure, filling it.',
+  },
+  'board.preset.spendToday': { zh: '今天花了多少', en: "Today's spend" },
+  'board.presetWhy.spendToday': {
+    zh: '今天的 token 和请求数，按 agent 分。',
+    en: "Today's tokens and requests, split by agent.",
+  },
+  'board.preset.spendMonth': { zh: '这个月花了多少', en: "This month's spend" },
+  'board.presetWhy.spendMonth': {
+    zh: '本月合计、每天的柱子、每个项目的份额。',
+    en: 'The month, day by day, and which project it went to.',
+  },
+  'board.preset.cost': { zh: '钱去哪了', en: 'Where it went' },
+  'board.presetWhy.cost': {
+    zh: '按 agent、按项目、按月，四张表。',
+    en: 'By agent, by project, by month. Four tables and no charts.',
+  },
+  'board.preset.year': { zh: '这一年', en: 'The year' },
+  'board.presetWhy.year': {
+    zh: '53 周的格子图，加上每个月的合计。',
+    en: 'Fifty-three weeks as a grid, with the monthly totals under it.',
+  },
+  'board.preset.dense': { zh: '全都要', en: 'Everything' },
+  'board.presetWhy.dense': {
+    zh: '给真的凑近了在看的人。',
+    en: 'For somebody who is actually looking.',
+  },
+  'board.preset.answer': { zh: '等着回话的', en: 'Needs an answer' },
+  'board.presetWhy.answer': {
+    zh: '只排在等你的那些，别的一概不显示。屏幕越大排得越开。',
+    en: 'Only the ones waiting on you, laid out as wide as the screen allows.',
+  },
+  'board.preset.pulse': { zh: '现在多忙', en: 'How busy right now' },
+  'board.presetWhy.pulse': {
+    zh: '每小时烧多少、在跑几个、这两周的走势。',
+    en: 'Tokens per hour, what is running, and the last fortnight.',
+  },
+  'board.preset.rotating': { zh: '三页轮播', en: 'Three pages, cycling' },
+  'board.presetWhy.rotating': {
+    zh: '要回话的、在跑的、花了多少，每 20 秒换一页。',
+    en: 'What needs answering, what is running, what it costs — twenty seconds each.',
+  },
+  'board.preset.boss': { zh: '给老板看', en: 'For your boss' },
+  'board.presetWhy.boss': {
+    zh: '花了多少，和做出来了什么，并排放。',
+    en: 'What it cost and what came out of it, side by side.',
+  },
+  'board.preset.leadership': { zh: '给领导看', en: 'For leadership' },
+  'board.presetWhy.leadership': {
+    zh: '进度、本月、这一年。数字少，字大。',
+    en: 'Progress, the month, the year. Few numbers, large ones.',
+  },
+  'board.preset.models': { zh: '哪个模型在干活', en: 'Which model is working' },
+  'board.presetWhy.models': {
+    zh: '按模型和 agent 拆开，加上烧的速度。',
+    en: 'Split by model and by agent, with the rate beside it.',
+  },
+
+  'board.metric.waiting': { zh: '在等你', en: 'Waiting' },
+  'board.metric.working': { zh: '在工作', en: 'Working' },
+  'board.metric.done': { zh: '已完成', en: 'Done' },
+  'board.metric.sessions': { zh: '会话数', en: 'Sessions' },
+  'board.metric.projects': { zh: '项目数', en: 'Projects' },
+  'board.metric.crashed': { zh: '异常退出', en: 'Crashed' },
+  'board.metric.exited': { zh: '已退出', en: 'Exited' },
+  'board.metric.longestWait': { zh: '等最久的', en: 'Longest wait' },
+  'board.metric.cpu': { zh: 'CPU', en: 'CPU' },
+  'board.metric.memory': { zh: '内存', en: 'Memory' },
+  'board.metric.disk': { zh: '磁盘', en: 'Disk' },
+  'board.metric.swap': { zh: '交换区', en: 'Swap' },
+  'board.metric.load': { zh: '负载', en: 'Load' },
+  'board.metric.uptime': { zh: '运行时长', en: 'Uptime' },
+  'board.metric.tokensToday': { zh: '今天的 token', en: 'Tokens today' },
+  'board.metric.tokensMonth': { zh: '本月的 token', en: 'Tokens this month' },
+  'board.metric.tokensWindow': { zh: '近 30 天的 token', en: 'Tokens, 30 days' },
+  'board.metric.requestsToday': { zh: '今天的请求', en: 'Requests today' },
+
+  'board.filter.all': { zh: '全部', en: 'Everything' },
+  'board.filter.active': { zh: '还在跑的', en: 'Still running' },
+  'board.filter.waiting': { zh: '在等你的', en: 'Waiting for you' },
+  'board.filter.trouble': { zh: '出问题的', en: 'In trouble' },
+
+  'board.order.state': { zh: '按状态', en: 'By state' },
+  'board.order.waited': { zh: '按等待时长', en: 'By how long it waited' },
+  'board.order.cpu': { zh: '按 CPU', en: 'By CPU' },
+
+  'board.edit': { zh: '编辑看板', en: 'Edit the board' },
+  'board.editing': { zh: '正在编辑：{name}', en: 'Editing {name}' },
+  'board.preset': { zh: '从哪个开始', en: 'Start from' },
+  'board.widgets': { zh: '{n} 个组件', en: '{n} widgets' },
+  'board.add': { zh: '加一个', en: 'Add' },
+  'board.remove': { zh: '删掉', en: 'Remove' },
+  'board.up': { zh: '往前', en: 'Move up' },
+  'board.down': { zh: '往后', en: 'Move down' },
+  'board.width': { zh: '宽度', en: 'Width' },
+  'board.widthOf': { zh: '{n}/4', en: '{n}/4' },
+  'board.days': { zh: '天数', en: 'Days' },
+  'board.caption': { zh: '写点什么', en: 'What it says' },
+  'board.metric': { zh: '看哪个数', en: 'Metric' },
+  'board.filter': { zh: '显示哪些', en: 'Show' },
+  'board.order': { zh: '排序', en: 'Order' },
+  'board.save': { zh: '保存', en: 'Save' },
+  'board.cancel': { zh: '不改了', en: 'Cancel' },
+  'board.full': { zh: '最多 {n} 个组件', en: 'At most {n} widgets' },
+  'board.empty': { zh: '至少留一个组件', en: 'Keep at least one widget' },
+  'board.saved': { zh: '已保存', en: 'Saved' },
+  'board.by': { zh: '怎么拆', en: 'Split by' },
+  'board.group': { zh: '怎么分组', en: 'Group' },
+  'board.rotate': { zh: '轮播', en: 'Rotate pages' },
+  'board.rotateList': { zh: '列表翻页', en: 'Page the list' },
+  'board.rotateNever': { zh: '不轮播', en: 'Never' },
+  'board.rotateEvery': { zh: '每 {n} 秒', en: 'every {n}s' },
+  'board.page': { zh: '第几页', en: 'Page' },
+  'board.pageOf': { zh: '第 {n} 页', en: 'Page {n}' },
+
+  'share.scope': { zh: '这个链接给谁看什么', en: 'What this link is about' },
+  'share.scopeWhole': { zh: '整个面板', en: 'The whole panel' },
+  'share.scopeProject': { zh: '项目：{name}', en: 'Project: {name}' },
+  'share.scopeSession': { zh: '会话：{name}', en: 'Session: {name}' },
+  'share.scopeGone': { zh: '指向的东西没了', en: 'what it pointed at is gone' },
+  'share.untitled': { zh: '未命名', en: 'untitled' },
 
   'guessed.installed': {
     zh: '状态还在靠猜：装 hook 之前就开着的会话要重开一次才会上报。在里面输入 /hooks，或者重启那个 agent。',
@@ -715,6 +967,32 @@ export type Key = keyof typeof DICT
  * caller: "3 of 5 left" and "5 个里还剩 3 个" put the numbers in different
  * places, and a caller that concatenates has already decided the order.
  */
+/**
+ * One string by a key that is only known at runtime, or null.
+ *
+ * The dashboard's widget kinds, presets and metrics are strings the *server*
+ * owns: a board written by a newer build can name a widget this one has never
+ * heard of, and `t` cannot be given a key it cannot type-check. Returning null
+ * rather than the key itself is the point — a wall showing "board.kind.foo" has
+ * put an internal identifier on a screen behind somebody's desk, and the
+ * caller's own fallback is always better than that.
+ *
+ * A Go test walks the widget registry and fails if any kind, preset, metric,
+ * filter or order here has no entry, so the null branch is for a *future*
+ * server rather than for a translation somebody forgot.
+ */
+export function tKey(key: string, params?: Record<string, string | number>): string | null {
+  const entry = (DICT as Record<string, Entry | undefined>)[key]
+  if (!entry) return null
+  let out = entry[current] ?? entry.en
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      out = out.replaceAll(`{${k}}`, String(v))
+    }
+  }
+  return out
+}
+
 export function t(key: Key, params?: Record<string, string | number>): string {
   const entry = DICT[key]
   let out = entry[current] ?? entry.en

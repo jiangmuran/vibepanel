@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { api, UnauthorizedError } from '../protocol/api'
-import type { ShareDashboard, ShareSession } from '../protocol/wire'
+import type { ShareDashboard } from '../protocol/wire'
 import { t, useLang } from '../i18n'
-import { StateDot } from './StateDot'
-import { formatBytes, meterText, meterWidth } from './panels/meter'
+import { Widget } from './board/render'
+import { agoText, clockText, duration } from './board/format'
 import { safeText } from './text'
 
 /**
@@ -17,9 +17,15 @@ import { safeText } from './text'
  * off. This component knows one endpoint and has no way to reach another.
  *
  * It is also a different product. This is read from across a room — three
- * metres, at an angle, by somebody who is doing something else — so the type
- * is four times the panel's, there is nothing to click, and the only thing
- * that moves is a number changing.
+ * metres, at an angle, by somebody who is doing something else — so the type is
+ * four times the panel's, there is nothing to click, and the only thing that
+ * moves is a number changing.
+ *
+ * What it draws is a *board*: an arrangement stored with the link and sent back
+ * with every reading. There is no layout in this file — only the chrome around
+ * one, the page rotation, and the grid the widgets are placed into. A board
+ * that named a widget this build has never heard of renders an empty tile; see
+ * board/render.tsx for why that is the only acceptable answer.
  */
 
 /** How often the dashboard asks. The same cadence the monitor panel uses. */
@@ -31,8 +37,8 @@ const POLL_MS = 2000
  *
  * Ten seconds is five missed polls. Shorter and a wifi hiccup puts a red band
  * across a wall; longer and a display that has genuinely lost the panel goes on
- * looking merely slow. Neither reading is silent either way — the "as of"
- * clock counts up from the first failure, which is the honest signal.
+ * looking merely slow. Neither reading is silent either way — the "as of" clock
+ * counts up from the first failure, which is the honest signal.
  */
 const RECONNECTING_MS = 10_000
 
@@ -49,34 +55,6 @@ const RECONNECTING_MS = 10_000
  * forever is a lie that somebody eventually acts on.
  */
 type Connection = 'connecting' | 'live' | 'reconnecting' | 'disconnected' | 'gone'
-
-function duration(seconds: number): string {
-  if (seconds < 60) return `${Math.max(0, Math.floor(seconds))}s`
-  const d = Math.floor(seconds / 86400)
-  const h = Math.floor((seconds % 86400) / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  if (d > 0) return `${d}d ${h}h`
-  if (h > 0) return `${h}h ${m}m`
-  return `${m}m`
-}
-
-/** How long ago, in words, for the line that says when the numbers were true. */
-function agoText(seconds: number): string {
-  if (seconds < 2) return t('dash.agoNow')
-  if (seconds < 60) return t('dash.agoSeconds', { n: Math.floor(seconds) })
-  if (seconds < 3600) return t('dash.agoMinutes', { n: Math.floor(seconds / 60) })
-  return t('dash.agoHours', { n: Math.floor(seconds / 3600) })
-}
-
-function clockText(unixSeconds: number): string {
-  return new Date(unixSeconds * 1000).toLocaleTimeString()
-}
-
-function kindLabel(kind: string): string {
-  if (kind === 'agent') return t('dash.kindAgent')
-  if (kind === 'shell') return t('dash.kindShell')
-  return t('dash.kindOther')
-}
 
 function connectionTone(state: Connection): string {
   if (state === 'live') return 'var(--vp-state-done)'
@@ -164,117 +142,27 @@ function connectionLabel(state: Connection): string {
   return t('dash.gone')
 }
 
-/** One headline number, with the state's own shape beside it. */
-function Tally({
-  value,
-  label,
-  glyph,
-  tone,
-}: {
-  value: number
-  label: string
-  glyph: React.ReactNode
-  tone: string
-}) {
-  return (
-    <div className="flex min-w-0 flex-col items-start gap-1" data-testid="dash-tally">
-      <div className="flex items-center gap-3">
-        {glyph}
-        <span className="tabular text-vp-3xl font-semibold" style={{ color: tone }}>
-          {value}
-        </span>
-      </div>
-      <span className="truncate text-vp-xl text-ink-2">{label}</span>
-    </div>
-  )
-}
-
-/** A machine meter, at the size a wall needs. */
-function BigMeter({
-  label,
-  value,
-  detail,
-}: {
-  label: string
-  value: number | null
-  detail: string
-}) {
-  const pct = meterWidth(value)
-  const tone =
-    pct >= 90
-      ? 'var(--vp-state-crashed)'
-      : pct >= 75
-        ? 'var(--vp-state-waiting)'
-        : 'var(--vp-accent)'
-  return (
-    <div className="min-w-0" data-testid="dash-meter">
-      <div className="mb-2 flex items-baseline justify-between gap-3">
-        <span className="truncate text-vp-xl text-ink-2">{label}</span>
-        <span className="tabular shrink-0 text-vp-2xl font-semibold text-ink">
-          {meterText(value)}
-        </span>
-      </div>
-      <div
-        className="h-3 overflow-hidden rounded-full"
-        style={{ background: 'var(--vp-surface-2)' }}
-      >
-        <div
-          className="h-full rounded-full transition-[width] duration-500 ease-vp"
-          style={{ width: `${pct}%`, background: tone }}
-        />
-      </div>
-      <div className="tabular mt-2 truncate text-vp-xl text-ink-2">{detail}</div>
-    </div>
-  )
-}
-
-/** One session, as a row on a wall. */
-function Row({
-  row,
-  index,
-  now,
-}: {
-  row: ShareSession
-  index: number
-  now: number
-}) {
-  // The name is empty under a counts-only link, and an ordinal is what makes
-  // the rows tellable apart without naming anything.
-  const name = row.name ? safeText(row.name) : t('dash.row', { n: index + 1 })
-  const since = row.stateChangedAt > 0 ? now - row.stateChangedAt : 0
-  const pct = Math.max(0, Math.min(100, row.cpuPercent))
-  return (
-    <div
-      className="flex items-center gap-4 border-t border-hairline py-3 first:border-t-0"
-      data-testid="dash-session"
-      data-state={row.exited ? 'exited' : row.state}
-    >
-      <StateDot state={row.state} size={22} exited={row.exited} exitStatus={row.exitStatus} />
-      <span className="min-w-0 flex-1 truncate text-vp-xl text-ink">{name}</span>
-      <span className="shrink-0 text-vp-xl text-ink-3">{kindLabel(row.kind)}</span>
-      {since > 0 && (
-        <span className="tabular shrink-0 text-vp-xl text-ink-2">
-          {t('dash.forTime', { d: duration(since) })}
-        </span>
-      )}
-      {/* Widths in `ch` rather than on the spacing scale, because the type on
-          this page is viewport-relative: a column fixed at 6rem holds "24%" at
-          1080p and clips "1024.0 MiB" on a 4K panel where the same text is half
-          again as wide. With tabular figures, `ch` is the column. */}
-      <span
-        className="tabular shrink-0 text-right text-vp-xl text-ink"
-        style={{ minWidth: '5ch' }}
-      >
-        {row.measured ? `${pct.toFixed(pct < 10 ? 1 : 0)}%` : '—'}
-      </span>
-      <span
-        className="tabular shrink-0 text-right text-vp-xl text-ink-2"
-        style={{ minWidth: '10ch' }}
-      >
-        {row.measured ? formatBytes(row.rss) : '—'}
-      </span>
-    </div>
-  )
+/**
+ * Which page of a rotating board is on screen.
+ *
+ * A wall that shows one thing forever wastes the wall, and a wall that changes
+ * while somebody is reading it wastes their time — so the interval is the
+ * board's own, and it restarts whenever the board changes rather than drifting
+ * across a redeploy.
+ */
+function usePages(pages: number, seconds: number): number {
+  const [page, setPage] = useState(0)
+  useEffect(() => {
+    if (pages <= 1 || seconds <= 0) return
+    const timer = window.setInterval(() => setPage((p) => (p + 1) % pages), seconds * 1000)
+    return () => clearInterval(timer)
+  }, [pages, seconds])
+  // Derived rather than reset inside the effect: a board that stops rotating,
+  // or loses a page, must land on page one on the next render rather than one
+  // render later — and a setState in an effect body is a cascading render the
+  // lint refuses for exactly that reason.
+  if (pages <= 1 || seconds <= 0) return 0
+  return Math.min(page, pages - 1)
 }
 
 export function Dashboard({ token }: { token: string }) {
@@ -340,25 +228,19 @@ export function Dashboard({ token }: { token: string }) {
     if (linkName) document.title = safeText(linkName)
   }, [linkName])
 
-  const groups = useMemo(() => {
-    if (!data) return []
-    return data.projects.map((project, i) => ({
-      project,
-      index: i,
-      rows: data.sessions.filter((s) => s.projectId === project.id),
-    }))
-  }, [data])
+  const widgets = useMemo(() => data?.board.widgets ?? [], [data])
+  const pages = useMemo(
+    () => widgets.reduce((most, w) => Math.max(most, (w.page ?? 0) + 1), 1),
+    [widgets],
+  )
+  const page = usePages(pages, data?.board.rotate ?? 0)
 
   if (connection === 'gone') return <LinkGone />
   if (!data) return <FirstLoad state={connection} />
 
   const age = Math.max(0, now - data.at)
   const frozen = connection !== 'live'
-  const machine = data.machine
-  const memUsed = machine.memTotal - machine.memAvailable
-  const memPct = machine.memTotal > 0 ? (memUsed / machine.memTotal) * 100 : null
-  const diskUsed = machine.diskTotal - machine.diskFree
-  const diskPct = machine.diskTotal > 0 ? (diskUsed / machine.diskTotal) * 100 : null
+  const onThisPage = widgets.filter((w) => (w.page ?? 0) === page)
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-bg text-ink" data-testid="dashboard">
@@ -366,8 +248,24 @@ export function Dashboard({ token }: { token: string }) {
         <h1 className="min-w-0 flex-1 truncate text-vp-2xl font-semibold text-ink">
           {safeText(data.name)}
         </h1>
+        {/* What this link is about, when it is about one thing. A scoped board
+            showing nothing means "nothing in the thing you were sent", which is
+            a different sentence from "nothing is running". */}
+        {data.scope !== '' && (
+          <span className="shrink-0 truncate text-vp-xl text-ink-2" data-testid="dash-scope">
+            {data.scopeName
+              ? safeText(data.scopeName)
+              : data.scope === 'session'
+                ? t('dash.oneSession')
+                : t('dash.oneProject')}
+          </span>
+        )}
         <span className="shrink-0 text-vp-xl text-ink-3">{t('dash.readOnly')}</span>
-        <div className="flex shrink-0 items-center gap-3" data-testid="dash-connection" data-connection={connection}>
+        <div
+          className="flex shrink-0 items-center gap-3"
+          data-testid="dash-connection"
+          data-connection={connection}
+        >
           <ConnectionGlyph state={connection} size={40} />
           <span className="text-vp-2xl font-semibold" style={{ color: connectionTone(connection) }}>
             {connectionLabel(connection)}
@@ -415,106 +313,48 @@ export function Dashboard({ token }: { token: string }) {
         className="min-h-0 flex-1 overflow-y-auto px-8 py-6"
         style={{ opacity: frozen ? 0.55 : 1, transition: 'opacity 400ms var(--vp-ease)' }}
       >
-        <section className="mb-8 flex flex-wrap items-start gap-x-12 gap-y-6" data-testid="dash-counts">
-          <Tally
-            value={data.counts.waiting}
-            label={t('dash.waiting')}
-            tone="var(--vp-state-waiting)"
-            glyph={<StateDot state="waiting" size={30} />}
-          />
-          <Tally
-            value={data.counts.working}
-            label={t('dash.working')}
-            tone="var(--vp-state-working)"
-            glyph={<StateDot state="working" size={30} />}
-          />
-          <Tally
-            value={data.counts.done}
-            label={t('dash.done')}
-            tone="var(--vp-state-done)"
-            glyph={<StateDot state="done" size={30} />}
-          />
-          {data.counts.crashed > 0 && (
-            <Tally
-              value={data.counts.crashed}
-              label={t('dash.crashed')}
-              tone="var(--vp-state-crashed)"
-              glyph={<StateDot state="done" size={30} exited exitStatus={1} />}
-            />
-          )}
-          <div className="flex min-w-0 flex-col items-start gap-1">
-            <span className="tabular text-vp-3xl font-semibold text-ink-2">
-              {data.counts.sessions}
-            </span>
-            <span className="truncate text-vp-xl text-ink-2">
-              {t('dash.sessions')} · {data.counts.projects} {t('dash.projects')}
-            </span>
-          </div>
-        </section>
-
-        <section
-          className="mb-8 grid gap-x-10 gap-y-6"
-          style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}
-          data-testid="dash-machine"
-        >
-          <BigMeter
-            label={t('monitor.cpu')}
-            value={machine.cpuReadable ? machine.cpuPercent : null}
-            detail={t('monitor.cores', { n: machine.cores })}
-          />
-          <BigMeter
-            label={t('monitor.memory')}
-            value={memPct}
-            detail={t('monitor.of', {
-              used: formatBytes(memUsed),
-              total: formatBytes(machine.memTotal),
-            })}
-          />
-          <BigMeter
-            label={t('monitor.disk')}
-            value={diskPct}
-            detail={t('monitor.free', { size: formatBytes(machine.diskFree) })}
-          />
-          <div className="min-w-0" data-testid="dash-load">
-            <div className="mb-2 text-vp-xl text-ink-2">{t('dash.load')}</div>
-            <div className="tabular text-vp-2xl font-semibold text-ink">
-              {machine.load1.toFixed(2)} · {machine.load5.toFixed(2)} ·{' '}
-              {machine.load15.toFixed(2)}
-            </div>
-            <div className="tabular mt-2 text-vp-xl text-ink-2">
-              {t('monitor.up', { d: duration(machine.uptime) })}
-            </div>
-          </div>
-        </section>
-
-        {groups.length === 0 ? (
+        {onThisPage.length === 0 ? (
           <p className="text-vp-2xl text-ink-3" data-testid="dash-empty">
             {t('dash.nothing')}
           </p>
         ) : (
-          groups.map(({ project, index, rows }) => (
-            <section key={project.id} className="mb-8" data-testid="dash-group">
-              <div className="mb-2 flex items-baseline gap-4">
-                <h2 className="min-w-0 flex-1 truncate text-vp-2xl font-semibold text-ink">
-                  {project.name ? safeText(project.name) : t('dash.group', { n: index + 1 })}
-                </h2>
-                <span className="tabular shrink-0 text-vp-xl text-ink-2">
-                  {project.waiting} / {project.working} / {project.done}
-                </span>
-              </div>
-              {rows.map((row, i) => (
-                <Row key={row.id} row={row} index={i} now={now} />
-              ))}
-            </section>
-          ))
+          <div className="vp-board" data-testid="dash-board" data-page={page}>
+            {onThisPage.map((w, i) => (
+              <Widget key={`${w.kind}-${i}`} w={w} data={data} now={now} />
+            ))}
+          </div>
         )}
 
         {data.detail === 'counts' && (
-          <p className="text-vp-xl text-ink-3" data-testid="dash-anonymous">
+          <p className="mt-6 text-vp-xl text-ink-3" data-testid="dash-anonymous">
             {t('dash.anonymous')}
           </p>
         )}
       </div>
+
+      {/* Which page of a rotating board this is. Dots rather than "2 / 3": at
+          three metres a row of shapes reads instantly and a fraction does not,
+          and the filled one says where in the cycle the wall has got to. */}
+      {pages > 1 && (
+        <div
+          className="flex shrink-0 justify-center gap-2 border-t border-hairline py-3"
+          data-testid="dash-pages"
+          data-pages={pages}
+        >
+          {Array.from({ length: pages }, (_, i) => (
+            <span
+              key={i}
+              aria-hidden="true"
+              className="inline-block rounded-full"
+              style={{
+                width: '0.7em',
+                height: '0.7em',
+                background: i === page ? 'var(--vp-accent)' : 'var(--vp-surface-2)',
+              }}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
 }

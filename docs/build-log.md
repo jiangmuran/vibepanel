@@ -12442,3 +12442,279 @@ mount, which is what "switching took N ms" means.
 build. `internal/webui/dist` is tracked and embedded, so `go build` from a fresh
 clone was shipping an older frontend than the repository's own source. Rebuilt
 and committed.
+
+## The share link stops being one page and becomes a dashboard generator
+
+The complaint that started this: a read-only link is not only for watching
+agents, and the one layout it had was plain. "能想显示的数据很多 但是你要做不同的
+模板 再开动脑筋" — with a warning attached, and the warning was the useful half:
+do not let a list of examples become the ceiling.
+
+### The axis is who is reading, not which table it came from
+
+The first list drawn up was organised by data source — sessions, machine, spend,
+year — and it produced fourteen arrangements of the same grid. The list that
+shipped is organised by who is standing in front of the screen, because the same
+figures answer different questions depending on that: "is anything on fire",
+"are we shipping", "what is this costing", "what should I do next".
+
+Nineteen presets, in five groups. While you are working: the panel's own
+summary, does anything need me, the waiting queue, every session as a tile, only
+the ones that need an answer, everything at once. On a wall: four numbers and a
+clock, one number filling the screen, how busy it is right now, three pages that
+cycle. Ops: only the machine, what has gone wrong. A manager: what it cost next
+to what came out, where the money went, the calm high-level one, the year as a
+grid. One thing closely: per project, which model is doing the work, what today
+cost.
+
+The shape of the list matters more than its length. There is one for three
+metres and one for thirty centimetres, one that is only the machine, one that is
+only spend, one that is a single number, and one that moves. Nineteen variations
+on the same grid would have been the same failure as fourteen.
+
+### Presets are a starting point, not a mode
+
+Creating a link from a preset stores the widgets it expands to, and from that
+moment the board is the board — nothing re-reads the preset. So changing this
+catalogue in a future build cannot change a wall somebody already pasted into a
+television, and every widget on a preset is immediately editable: move, resize,
+point at a different number, split by a different dimension, delete, add another
+from the palette.
+
+**"Split it by X" is a setting, not a widget.** The first cut had
+`spendbytool`, `spendbyproject` and `spendbymonth` as separate kinds, which
+meant the vocabulary would grow by one every time a column became interesting.
+It is two kinds now — a time series with `by: day|month`, and a ranked breakdown
+with `by: tool|project|model` — and the section each pulls follows the *setting*
+rather than the kind, so a board split by model does not carry the by-project
+table it is not drawing.
+
+Twenty-one widget kinds, and the forms are deliberately varied: a headline
+number, tallies with shapes, a tile grid, a row list, progress bars, arc gauges,
+bars over time, ranked bars, a 53-week grid, a four-segment bar for the
+input/output/cache split, a comparison with an arrow, a clock, a caption.
+
+### Rate and output, which a board of totals alone leaves off
+
+Two things were missing and both were asked for.
+
+**Rate.** "每秒消耗多少 Token" cannot be answered honestly: the transcripts are
+rolled up to a calendar day, so a per-second figure would be a day's total
+divided by 86,400 wearing a live rate's clothes. What is honest is tokens per
+hour *so far today*, and the server sends `hoursToday` for it — the browser does
+not know the server's timezone and would compute the rate of a different day for
+a reader in another one. Alongside it: today against yesterday, this month
+against last, drawn as a delta with an arrow and a word rather than a hue.
+
+**Output.** A board that shows only what was consumed reads as an expense
+report. The panel's honest output numbers are sessions that *reached* done since
+local midnight, checklist items ticked off today, and requests made. Lines of
+code is not among them and will not be: the panel never reads a repository, and
+a number invented for a wall is worse than a missing one. That decision is here
+rather than on screen.
+
+Checklists arrived with it. Counts only — `open`, `done`, `closedToday`, per
+project — and the items themselves are on the wire at neither detail setting. A
+todo line says what somebody is about to do about a customer, a bug or a date;
+it is closer to a note than to a session title, and no board needed the words.
+
+### A board is data, and three things keep it that way
+
+1. **A closed vocabulary.** Every field on a widget is an enum from the registry
+   in `internal/store/board.go` or a bounded number. There is no field that is a
+   URL, a path, a query, a template or a colour. The only free text is a caption
+   the owner typed, cut to 64 *runes* — bytes would slice a multi-byte character
+   into U+FFFD on somebody's wall — and rendered through `safeText`.
+2. **Refused going in, dropped coming out.** `ValidateBoard` refuses an unknown
+   kind by name rather than resolving it to a neighbour; `SanitiseBoard` drops
+   it. The asymmetry is deliberate: on the way in there is a person at a
+   keyboard to tell, and on the way out there is a wall with nobody at it, so a
+   board written by a newer build must still leave a working screen. A column
+   that is not JSON at all becomes the default board rather than a 500.
+3. **The renderer's default branch.** `board/render.tsx` is a switch, and an
+   unknown kind renders an empty tile. Not a map indexed by the string, not a
+   component name built from it, not a dynamic import. Third place the same rule
+   is applied, and the one that runs on somebody else's machine.
+
+**A board can only ever subtract.** The sections a dashboard may carry are the
+structs in `internal/httpapi/share.go` and nothing else; a widget chooses among
+them and has no vocabulary for describing one. So "which arrangement discloses
+more" has no answer — the widest board and the narrowest differ only in how much
+of the same fixed set is written. Whether a section is *computed* does follow
+from the board, and that is a cost decision rather than a permission one: the
+spend rollups are six GROUP BYs over a year of history and a wall polls every
+two seconds. It stays a cost decision only while every section is a fixed
+struct. A widget that carried a *parameter* into a query, rather than a choice
+among precomputed answers, would turn it into a permission one.
+
+The rollups are cached fifteen seconds, keyed by scope, and cached *before* the
+per-link renaming — a cache on the far side of that would be a cache keyed by a
+credential.
+
+The dashboard now calls `Ensure(false)` on the ingester, and that is a real
+cost: a panel with a spend board on a wall walks the transcripts every thirty
+seconds forever, where an unwatched panel walks nothing. The alternative is a
+spend board showing whatever was true when the panel last started while saying
+it is live — the failure the connection indicator exists to prevent, arriving
+through the numbers instead. Bounded by the ingester's own `MinInterval` and
+single-flight, so it is the same cost as a panel tab left open, which is what a
+wall display is.
+
+### Scope: a link about one project, or one session
+
+A link was the whole panel. It can now be `project` or `session`, which is what
+makes it something you send to somebody you are working with rather than
+something you put on your own wall.
+
+Enforced by the handler from the link's own row, never from the request. The
+scope lives in `share_links`, and it is the one real id a share row holds —
+because it is the *input* to the per-link renaming rather than anything a client
+ever sees. A scoped link's spend is filtered by the scoped project's directory
+and its checklists by the scoped project.
+
+**The failure worth naming: a scope that resolves to nothing must not fall back
+to everything.** An empty scope id, an empty path, an empty filter — and an
+empty filter means "everything". A link sent to one collaborator about one
+project would have become a view of every project on the machine on the day
+somebody deleted that project. `scopeOf` carries the `kind` alongside the
+resolved ids for exactly that reason, and every consumer checks the kind before
+treating an empty value as "no filter".
+
+A scope is also checked when the link is made: one naming a project nobody has
+heard of is a 400 rather than a link that shows an empty screen forever, with no
+way to tell a typo from a deletion.
+
+### What can be changed afterwards, and what cannot
+
+`PATCH /api/settings/shares/{id}` takes a name and a board. Not `detail`, not
+`scope` — and `decode()` disallows unknown fields, so sending them is a 400
+rather than a 204 that quietly did less than it asked for.
+
+The reason is the asymmetry between the two. Rearranging a board cannot disclose
+anything the link did not already carry. Changing the mode or the scope can, and
+by then the URL is in an email or typed into a television — the people holding
+that address would never see it happen. A different mode means a different link,
+which somebody has to hand out on purpose.
+
+### Rotation, and scaling with the screen
+
+Two ideas, kept separate. A board's own `rotate` is how many seconds each *page*
+stays and a widget's `page` puts it on one; a list widget's own `rotate` pages
+through rows that do not fit its tile. A wall showing one thing forever wastes
+the wall; a grid of forty sessions on a screen that fits twelve shows the same
+twelve forever.
+
+"If the screen is big enough, lay all the sessions out" is not a second board.
+It is `.vp-board` collapsing four columns to two and then to one, plus the tile
+grid's `repeat(auto-fill, minmax(clamp(150px, 11vw, 260px), 1fr))`. One stored
+board is a summary on a phone and a wall of forty tiles on a television, and
+nobody keeps one board per screen size in step. A span wider than the track
+count is clamped by the grid itself, which is what makes one `span` field work
+at every width.
+
+### Writable links: designed, not built
+
+"可以设置 read only 也可以设置允许对方编辑" collides with red line 8. The share
+link's whole argument is that it is narrowed *by route*, and "allow them to
+edit" is a bearer token in a URL that reaches a write path.
+
+`docs/writable-links.md` is the proposal: what edit would mean at five
+increasing levels, which two are refusals at any setting (creating a session,
+terminal input), why it has to be a second table with its own prefix rather than
+a `writable` column on `share_links`, and what would have to be proved before it
+ships. Nothing is implemented. The column is one line, it would look obviously
+correct in review, and it ends the property that makes every other 401 in the
+panel free.
+
+### The mutation run, and the two it caught
+
+Twenty-one mutations, each applied to the working tree, run against its own
+test, and restored. Nineteen went red immediately. Two did not, and both were
+the same hole in the same place — the one this entry names as the failure worth
+naming.
+
+**`covers()` guarding against an empty scope id was untested.** Inverting it —
+`s.projectID == "" || row.ProjectID == s.projectID` — changed nothing under any
+existing test, because every scoped link the suite built had a real id in it.
+The guard defends a row that is only reachable by hand: `scope = 'project'` with
+`scope_id = ''`, from a restored backup or a migration written by somebody who
+defaulted the column. `TestAScopedLinkWithNoTargetShowsNothing` writes exactly
+that row and asserts the dashboard is empty.
+
+**The spend assertion was passing vacuously.** `got.Spend != nil &&
+got.Spend.Readable` is false on a test server whose ingester has read no
+transcripts, so removing the scope guard in `shareSpendFor` — which makes a
+scoped link fall through to the whole panel's rollups — left the test green.
+The fix is `seedUsage`, which runs a real pass and then writes real rows, so
+`readable` is true and the totals are non-zero for a link that is not scoped
+away from them. The assertion is now a number rather than a flag.
+
+| mutation | test |
+|---|---|
+| an unknown widget kind falls back to a known one | a stored string chooses a code path |
+| metrics are not checked | a one-number widget pointed at anything |
+| the span bound goes | a widget wider than the grid |
+| the day bound goes | a GROUP BY with no ceiling, from a table row |
+| the caption is cut by bytes | U+FFFD at the end of a wall |
+| the widget cap goes | one row builds an unbounded number of tiles |
+| `SanitiseBoard` repairs instead of dropping | a newer build's widget renders as a neighbour |
+| an unparseable board becomes an empty one | a corrupt column takes a wall dark |
+| a preset name inside a board is not validated | an unchecked string is echoed to the dashboard |
+| `Needs` ignores which metric a figure shows | a board of one count carries the whole spend section |
+| `Needs` ignores which dimension a chart splits by | a board split by model carries every other breakdown |
+| the session-rows gate goes | a board that is one number carries every session |
+| the scope filter goes | a project link shows every project |
+| an empty scope id means no filter | a hand-edited row shows the whole panel |
+| a scoped link with no directory keeps the panel's rollups | a deleted project's link reports everyone's spend |
+| the scope is not checked when the link is made | a typo is a link that is empty forever |
+| an edit can change what a link may say | a link somebody is holding starts using names |
+| `share.updated` leaves the audit list | a door onto the panel changes unrecorded |
+| a preset is not a valid board | the editor offers what the server refuses |
+| a board word loses its dictionary entry | an internal identifier renders on a wall |
+| a row's id is the panel's own | two walls join into one picture of the panel |
+
+### Left undone
+
+- **No browser check covers any of it.** The Go and vitest suites pin the
+  validation, the boundaries, the scope, the filters and the API; nothing drives
+  a real board in a real browser, and this project's own notes say that is where
+  most of the defects have been. `render-check` would want `dash-board` (which
+  carries `data-page`), `dash-pages`, `dash-scope`, `dash-tile`,
+  `dash-bignumber`, `attention-count`, `gauge-value`, `spend-delta`,
+  `spend-bars`, `spend-split-row`, `spend-figure`, `spend-split`,
+  `heatmap-day` (carrying `data-level`), `dash-todo-row`, `dash-exit-row`,
+  `dash-cputop-row`, `dash-project`, `dash-caption`, `dash-clock`,
+  `widget-empty`, `tile-label`, and one `widget-<kind>` per kind —
+  `widget-attention`, `widget-states`, `widget-bignumber`, `widget-clock`,
+  `widget-caption`, `widget-sessiongrid`, `widget-sessionlist`,
+  `widget-projects`, `widget-todos`, `widget-output`, `widget-machine`,
+  `widget-gauge`, `widget-uptime`, `widget-cputop`, `widget-exits`,
+  `widget-spendtotals`, `widget-spendrate`, `widget-spendcompare`,
+  `widget-spendbars`, `widget-spendsplit`, `widget-spendheatmap`,
+  `widget-unknown`, `widget-spend-unknown`. For the editor: `board-editor`,
+  `board-preset`, `board-preset-why`, `board-rotate`, `board-add`,
+  `board-widget` (carrying `data-kind`), `widget-metric`, `widget-by`,
+  `widget-filter`, `widget-order`, `widget-group`, `widget-days`,
+  `widget-span`, `widget-page`, `widget-rotate`, `widget-text`, `widget-up`,
+  `widget-down`, `widget-remove`, `share-scope`, `share-row-scope`,
+  `share-row-board`, `share-edit`, `share-edit-panel`, `share-edit-name`,
+  `share-edit-save`, `share-edit-cancel`. The two worth driving first are the
+  rotation actually rotating and the grid collapsing at 640px, because both are
+  CSS and timers that no unit test sees.
+- **The heatmap has no "outside the range" shape.** The token panel draws a day
+  the range never covered as a dashed outline, distinct from a covered empty
+  day. The share heatmap always covers 53 weeks, so every square is covered —
+  but the days before the panel's first transcript are not, and they render as
+  empty days.
+- **The spend cache is dropped whole at 32 scopes** rather than evicted. On a
+  panel with two hundred projects each carrying a wall board that is a
+  recomputation per poll. Nobody has that, and an LRU here would be more
+  machinery than the thing it manages.
+- **Rotation does not pause.** A wall has nobody touching it, but a phone opened
+  on a rotating link will change page under a finger.
+- **`docs/api.md` had a merge conflict committed into it** — `<<<<<<< HEAD`
+  through `>>>>>>> worktree-agent-a300b55d058841cd8`, swallowing the boundary
+  between the update section and the share-link one. Resolved here by keeping
+  both sides, which is what the two halves were. Worth knowing that
+  `TestTheAPIDocCoversEveryRoute` passed the whole time: it reads `### ` lines,
+  and a conflict marker is not a `### ` line.

@@ -360,6 +360,42 @@ func (d *DB) UsageByDirectory(ctx context.Context, f UsageFilter) ([]UsageDirect
 	return out, rows.Err()
 }
 
+// UsageModel is one model's spend.
+type UsageModel struct {
+	Model string `json:"model"`
+	UsageTotals
+}
+
+// UsageByModel returns a row per model, biggest first.
+//
+// The column has been there since the rows were first written and nothing read
+// it across the whole table until a board asked "which model is doing the
+// work". A model name is the vendor's — claude-opus-4, gpt-5-codex — so unlike
+// a cwd it names nothing of the user's, which is why a share link may carry it.
+func (d *DB) UsageByModel(ctx context.Context, f UsageFilter) ([]UsageModel, error) {
+	where, args := f.where()
+	rows, err := d.sql.QueryContext(ctx, `
+		SELECT model, SUM(input), SUM(output), SUM(cache_read), SUM(cache_write), SUM(requests)
+		FROM usage_daily`+where+`
+		GROUP BY model
+		ORDER BY SUM(input) + SUM(output) + SUM(cache_read) + SUM(cache_write) DESC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: usage by model: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // read-only
+
+	out := []UsageModel{}
+	for rows.Next() {
+		var m UsageModel
+		if err := rows.Scan(&m.Model, &m.Input, &m.Output, &m.CacheRead, &m.CacheWrite,
+			&m.Requests); err != nil {
+			return nil, fmt.Errorf("store: scan usage model: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // UsageToolTotals is what one agent contributed, and what could not be read
 // while working it out.
 type UsageToolTotals struct {

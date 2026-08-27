@@ -37,6 +37,30 @@ func ValidShareDetail(d ShareDetail) bool {
 	return d == ShareCounts || d == ShareNames
 }
 
+// ShareScope is how much of the panel a link is about.
+//
+// A second axis from ShareDetail, and they answer different questions.
+// ShareDetail is "may this link use words"; ShareScope is "which rows is it
+// about at all". A link scoped to one project is the one you send to somebody
+// you are working with on that project, and it must not become a view of
+// everything the moment somebody asks it differently — so the scope lives on
+// the row and is applied by the handler, never read from a request.
+type ShareScope string
+
+const (
+	// ShareWhole is every project, which is what a link was before scopes.
+	ShareWhole ShareScope = ""
+	// ShareProject is one project and the sessions in it.
+	ShareProject ShareScope = "project"
+	// ShareSession is one session.
+	ShareSession ShareScope = "session"
+)
+
+// ValidShareScope reports whether s came from this enum.
+func ValidShareScope(s ShareScope) bool {
+	return s == ShareWhole || s == ShareProject || s == ShareSession
+}
+
 // ShareLink is a capability: a URL that opens the read-only dashboard.
 //
 // Same storage shape as APIToken, deliberately -- the hash, never the token,
@@ -60,6 +84,26 @@ type ShareLink struct {
 	ExpiresAt  int64 `json:"expiresAt"`
 	CreatedAt  int64 `json:"createdAt"`
 	LastUsedAt int64 `json:"lastUsedAt"`
+	// Board is what this link opens: which widgets, in which order, at which
+	// widths. Decoded here rather than handed on as a string, so nothing above
+	// this layer ever holds the raw column — see DecodeBoard for why the read
+	// path drops what it does not recognise instead of failing.
+	Board Board `json:"board"`
+	// Scope is "", "project" or "session"; ScopeID is the panel's real id of
+	// the one it is about.
+	//
+	// The real id, deliberately, and it is the one place a share row holds one.
+	// It is never sent: the dashboard renames every id it discloses under the
+	// link's own secret, and this is the input to that renaming rather than
+	// something a client ever sees. A pseudonym here would have to be resolved
+	// back to a row on every poll, which is a reverse lookup the whole scheme
+	// exists to avoid needing.
+	Scope   string `json:"scope"`
+	ScopeID string `json:"-"`
+	// ScopeName is what the scoped project or session is called, filled in by
+	// the settings page's own query rather than stored. Empty on the dashboard
+	// side, which never reads it.
+	ScopeName string `json:"scopeName"`
 }
 
 // Deliberately no `func (s ShareLink) Expired(now int64) bool` here.
@@ -72,26 +116,60 @@ type ShareLink struct {
 
 // CreateShareLink records a link. The token itself is never stored.
 func (d *DB) CreateShareLink(ctx context.Context, id string, tokenHash []byte, prefix, name string,
-	detail ShareDetail, userID string, expiresAt int64) (ShareLink, error) {
+	detail ShareDetail, board Board, scope ShareScope, scopeID, userID string,
+	expiresAt int64) (ShareLink, error) {
+	encoded, err := EncodeBoard(board)
+	if err != nil {
+		return ShareLink{}, err
+	}
 	n := now()
-	_, err := d.sql.ExecContext(ctx, `
-		INSERT INTO share_links (id, token_hash, prefix, name, detail, user_id, created_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, tokenHash, prefix, name, string(detail), userID, n, expiresAt)
+	_, err = d.sql.ExecContext(ctx, `
+		INSERT INTO share_links
+			(id, token_hash, prefix, name, detail, board, scope, scope_id,
+			 user_id, created_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, tokenHash, prefix, name, string(detail), encoded, string(scope), scopeID,
+		userID, n, expiresAt)
 	if err != nil {
 		return ShareLink{}, fmt.Errorf("store: create share link: %w", err)
 	}
 	return ShareLink{
-		ID: id, Prefix: prefix, Name: name, Detail: string(detail),
-		ExpiresAt: expiresAt, CreatedAt: n,
+		ID: id, Prefix: prefix, Name: name, Detail: string(detail), Board: board,
+		Scope: string(scope), ScopeID: scopeID, ExpiresAt: expiresAt, CreatedAt: n,
 	}, nil
+}
+
+// UpdateShareLink changes what an existing link is called and what it shows.
+//
+// Deliberately not the detail mode, and that is the interesting omission. The
+// URL is already pasted into a television or an email by the time anybody edits
+// it, so turning a counts link into a names link would widen what an address
+// somebody else is holding discloses, without that person's knowledge and
+// without a new link being handed out. Rearranging a board cannot disclose
+// anything the link did not already carry; changing the mode can. So the mode
+// is fixed at creation and a different one means a different link.
+func (d *DB) UpdateShareLink(ctx context.Context, id, name string, board Board) error {
+	encoded, err := EncodeBoard(board)
+	if err != nil {
+		return err
+	}
+	res, err := d.sql.ExecContext(ctx,
+		`UPDATE share_links SET name = ?, board = ? WHERE id = ?`, name, encoded, id)
+	if err != nil {
+		return fmt.Errorf("store: update share link: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // ListShareLinks returns every link, newest first. token_hash is not among the
 // columns read, so there is no path from this call to a live credential.
 func (d *DB) ListShareLinks(ctx context.Context) ([]ShareLink, error) {
 	rows, err := d.sql.QueryContext(ctx, `
-		SELECT id, prefix, name, detail, expires_at, created_at, last_used_at
+		SELECT id, prefix, name, detail, board, scope, scope_id,
+		       expires_at, created_at, last_used_at
 		FROM share_links ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("store: list share links: %w", err)
@@ -100,10 +178,12 @@ func (d *DB) ListShareLinks(ctx context.Context) ([]ShareLink, error) {
 	out := []ShareLink{}
 	for rows.Next() {
 		var s ShareLink
-		if err := rows.Scan(&s.ID, &s.Prefix, &s.Name, &s.Detail,
+		var board string
+		if err := rows.Scan(&s.ID, &s.Prefix, &s.Name, &s.Detail, &board, &s.Scope, &s.ScopeID,
 			&s.ExpiresAt, &s.CreatedAt, &s.LastUsedAt); err != nil {
 			return nil, fmt.Errorf("store: scan share link: %w", err)
 		}
+		s.Board = DecodeBoard(board)
 		out = append(out, s)
 	}
 	return out, rows.Err()
@@ -118,17 +198,21 @@ func (d *DB) ListShareLinks(ctx context.Context) ([]ShareLink, error) {
 // set it does not have to come back and revoke it.
 func (d *DB) ShareLinkByToken(ctx context.Context, tokenHash []byte) (ShareLink, error) {
 	var s ShareLink
+	var board string
 	err := d.sql.QueryRowContext(ctx, `
-		SELECT id, prefix, name, detail, expires_at, created_at, last_used_at
+		SELECT id, prefix, name, detail, board, scope, scope_id,
+		       expires_at, created_at, last_used_at
 		FROM share_links
 		WHERE token_hash = ? AND (expires_at = 0 OR expires_at > ?)`, tokenHash, now()).
-		Scan(&s.ID, &s.Prefix, &s.Name, &s.Detail, &s.ExpiresAt, &s.CreatedAt, &s.LastUsedAt)
+		Scan(&s.ID, &s.Prefix, &s.Name, &s.Detail, &board, &s.Scope, &s.ScopeID,
+			&s.ExpiresAt, &s.CreatedAt, &s.LastUsedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ShareLink{}, ErrNotFound
 	}
 	if err != nil {
 		return ShareLink{}, fmt.Errorf("store: share link lookup: %w", err)
 	}
+	s.Board = DecodeBoard(board)
 	return s, nil
 }
 

@@ -616,6 +616,35 @@ body {
   animation: vp-breathe 2s var(--vp-ease) infinite;
 }
 
+/* The dashboard's board grid.
+   Four columns, and a widget's stored span is applied as `grid-column: span N`
+   inline. The collapse is here rather than in the component because it is the
+   whole of "a board scales with the screen": the same stored board is a summary
+   on a phone and a wall of tiles on a television, and nobody has to keep one
+   board per screen size in step.
+   A span wider than the track count is clamped by the grid itself, which is why
+   a `span 4` widget does not overflow a two-column layout — that behaviour is
+   what makes one span field work at every width. */
+.vp-board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1.5rem;
+  align-items: stretch;
+}
+
+@media (max-width: 1100px) {
+  .vp-board {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .vp-board {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
+  }
+}
+
 /* xterm sizes itself against the element it is given; without an explicit
    height it collapses and renders a single row. */
 .xterm,

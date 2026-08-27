@@ -6,8 +6,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,13 +20,14 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/session"
 	"github.com/jiangmuran/vibepanel/internal/store"
 	"github.com/jiangmuran/vibepanel/internal/sysmon"
+	"github.com/jiangmuran/vibepanel/internal/usage"
 )
 
 // A read-only share link is a second door onto a panel whose first door is one
 // password in front of a writable terminal. Everything in this file exists to
 // make that door narrow enough to be worth having.
 //
-// Three properties, and each is enforced by structure rather than by care:
+// Four properties, and each is enforced by structure rather than by care:
 //
 //  1. It is a capability. The credential is 32 bytes of crypto/rand in the URL
 //     and the database keeps only its SHA-256, exactly as store.APIToken does.
@@ -51,6 +54,30 @@ import (
 // the person makes per link: store.ShareCounts shows shapes and numbers and no
 // text, store.ShareNames adds the names. Counts is the default, because the
 // default has to be the one that is safe to point a camera at.
+//
+// The fourth arrived with boards, and it is the one an edit here is most
+// likely to lose:
+//
+//	4. A board can only ever subtract. The sections a dashboard may carry are
+//	   the structs below and nothing else; a board chooses among them and has
+//	   no vocabulary for anything that is not one of them. There is no widget
+//	   that names a table, a range, a directory or a field -- every option on
+//	   one is an enum or a bounded number, checked against store's registry
+//	   when it is stored and again when it is read back.
+//
+//	   So the question "which arrangement of widgets discloses more" has no
+//	   answer: the widest board and the narrowest board differ only in how much
+//	   of the same fixed set is written. What a link may say is still decided
+//	   once, at creation, by `detail`, by somebody signed in -- and store's
+//	   UpdateShareLink deliberately cannot change it afterwards.
+//
+//	   Whether a section is computed at all does follow from whether the board
+//	   asked for it, and that is a cost decision rather than a permission one:
+//	   the spend rollups are five GROUP BYs over a year of history and a wall
+//	   polls every two seconds. It stays a cost decision only while every
+//	   section remains a fixed struct in this file. A widget that carried a
+//	   *parameter* into a query rather than a choice among precomputed answers
+//	   would turn it into a permission one, which is the edit to refuse.
 
 // shareTouchWindow is how often a link's "last seen" may be written.
 //
@@ -270,6 +297,123 @@ type shareCounts struct {
 	Done     int `json:"done"`
 	Exited   int `json:"exited"`
 	Crashed  int `json:"crashed"`
+	// DoneToday is how many sessions reached "done" since local midnight.
+	DoneToday int `json:"doneToday"`
+	// LongestWaitAt is when the session that has been waiting longest entered
+	// that state, in unix seconds, or 0 when nothing is waiting.
+	//
+	// Here rather than derived on the client from the row list, because the row
+	// list is what a board omits when nothing on it shows rows -- and "how long
+	// has the oldest one been waiting" is the number the single-figure boards
+	// exist for. A count with no rows behind it still has to answer it.
+	LongestWaitAt int64 `json:"longestWaitAt"`
+}
+
+// shareSpendTotals is one bucket of token spend.
+//
+// Tokens, never money. Prices differ per model, per tier and over time, and a
+// currency figure derived from a stale table is a confident-looking wrong
+// number on a wall -- the same decision the token panel already made.
+type shareSpendTotals struct {
+	Input      int64 `json:"input"`
+	Output     int64 `json:"output"`
+	CacheRead  int64 `json:"cacheRead"`
+	CacheWrite int64 `json:"cacheWrite"`
+	Requests   int64 `json:"requests"`
+	// Total is the four token columns added up. Sent rather than summed on the
+	// client so that every board showing "what did it cost" is showing the same
+	// arithmetic.
+	Total int64 `json:"total"`
+}
+
+// shareSpendBucket is one labelled column of a chart: a day or a month.
+//
+// Label is a date, "2026-08-23" or "2026-08". Not a formatted string: the
+// browser knows the reader's language and the server does not.
+type shareSpendBucket struct {
+	Label    string `json:"label"`
+	Total    int64  `json:"total"`
+	Requests int64  `json:"requests"`
+}
+
+// shareSpendGroup is one bar of a by-tool or by-project breakdown.
+//
+// ID for a project is the same pseudonym the session rows carry, so a spend bar
+// and a session group with the same id are the same project without either of
+// them being the panel's real id. For a tool it is the agent's name, which is
+// one of a fixed set this panel can read and names nothing of the user's. Name
+// is empty under store.ShareCounts, exactly like every other name here.
+type shareSpendGroup struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Total    int64  `json:"total"`
+	Requests int64  `json:"requests"`
+}
+
+// shareSpend is what the agents recorded spending, redacted.
+//
+// What is not here is the point, again: no transcript text, no agent session
+// ids, no working directories. The token panel discloses all three to a
+// signed-in owner and none of them has a use on a wall.
+type shareSpend struct {
+	// Readable is false until a pass over the transcripts has finished. That
+	// is a different fact from "nothing was spent", and a zero rendered for the
+	// first is the whole failure this flag exists to prevent.
+	Readable  bool  `json:"readable"`
+	ScannedAt int64 `json:"scannedAt"`
+	// Date is the server's local day. The buckets are local days, so a phone in
+	// another timezone must not decide for itself which square is today.
+	Date string `json:"date"`
+	// HoursToday is how far into the server's local day it is.
+	//
+	// Here so a rate can be "so far today" rather than a guess. The browser
+	// does not know the server's timezone, and one computed there would be the
+	// rate of a different day for a reader in another one.
+	HoursToday float64 `json:"hoursToday"`
+	// WindowDays is the range the grouped figures below cover.
+	WindowDays int `json:"windowDays"`
+
+	Today shareSpendTotals `json:"today"`
+	// Yesterday and LastMonth are what makes Today and Month mean anything. A
+	// total says what; a comparison says whether that is a lot.
+	Yesterday shareSpendTotals `json:"yesterday"`
+	Month     shareSpendTotals `json:"month"`
+	LastMonth shareSpendTotals `json:"lastMonth"`
+	Window    shareSpendTotals `json:"window"`
+
+	// The arrays are empty unless a widget on this board asks for them. Empty
+	// rather than absent so the client renders one shape either way.
+	Days     []shareSpendBucket `json:"days"`
+	Months   []shareSpendBucket `json:"months"`
+	Heatmap  []shareSpendBucket `json:"heatmap"`
+	Tools    []shareSpendGroup  `json:"tools"`
+	Models   []shareSpendGroup  `json:"models"`
+	Projects []shareSpendGroup  `json:"projects"`
+}
+
+// shareTodos is how much of each project's checklist is finished.
+//
+// Counts, and only counts. A todo line says what somebody is about to do about
+// a customer, a bug or a deadline; it is closer to a note than to a session
+// title, and neither detail mode offers it. What a wall wants from a checklist
+// is the fraction, and the fraction is here.
+type shareTodos struct {
+	Open int `json:"open"`
+	Done int `json:"done"`
+	// ClosedToday is what came out today, which is the half a board of costs
+	// alone leaves off.
+	ClosedToday int                 `json:"closedToday"`
+	Projects    []shareTodosProject `json:"projects"`
+}
+
+type shareTodosProject struct {
+	// ID is the same pseudonym the session groups carry, so a checklist and a
+	// group of sessions can be lined up without either being a real id.
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Open        int    `json:"open"`
+	Done        int    `json:"done"`
+	ClosedToday int    `json:"closedToday"`
 }
 
 // shareDashboard is the whole response, and the whole of what a share link
@@ -298,10 +442,39 @@ type shareDashboard struct {
 	// machine's storage and a wall display can do nothing with it.
 	Stale bool `json:"stale"`
 
+	// Board is the arrangement this link opens, as it was stored and after the
+	// read path has dropped anything it does not recognise. Sent back rather
+	// than kept on the server so the page draws what the link says and nothing
+	// else -- there is no second copy of the layout in the frontend to drift
+	// from this one.
+	Board store.Board `json:"board"`
+
 	Machine  shareMachine   `json:"machine"`
 	Counts   shareCounts    `json:"counts"`
 	Projects []shareProject `json:"projects"`
+	// Sessions is empty unless a widget on this board shows rows. A board that
+	// is one number does not carry a list of every session to draw it.
 	Sessions []shareSession `json:"sessions"`
+	// Spend is null unless a widget on this board shows token spend.
+	//
+	// Null rather than a zeroed object: "this board does not show spend" and
+	// "this panel spent nothing" are different facts, and the second one has a
+	// Readable flag of its own to tell it from "nothing has been counted yet".
+	Spend *shareSpend `json:"spend"`
+	// Todos is null unless a widget on this board shows checklist progress.
+	Todos *shareTodos `json:"todos"`
+
+	// Scope is "", "project" or "session": what this link is about.
+	//
+	// Echoed so the page can say it is one project's board rather than the
+	// panel's, which is the difference between "nothing is running" and
+	// "nothing is running in the thing you were sent".
+	Scope string `json:"scope"`
+	// ScopeName is the scoped project's or session's name under `names`, and
+	// empty under `counts` like every other name here. Also empty when the
+	// scoped row no longer exists, which is the same thing the empty board
+	// below is already saying.
+	ScopeName string `json:"scopeName"`
 }
 
 // handleShareDashboard is everything a share token can ask for.
@@ -336,12 +509,28 @@ func (s *Server) handleShareDashboard(w http.ResponseWriter, r *http.Request) {
 	named := store.ShareDetail(sc.link.Detail) == store.ShareNames
 	sample := s.Sampler.Sample()
 
+	// What the board asks for, as a set of section names. It can only ever
+	// subtract: every section is a fixed struct in this file, and a widget
+	// chooses among them rather than describing one. See property 4 at the top.
+	board := sc.link.Board
+	needs := board.Needs()
+
+	// What this link is about, resolved from its own row. Never from the
+	// request: a scope a caller could name is a scope a caller could change.
+	scope := resolveScope(sc.link, projects, sessions)
+
 	out := shareDashboard{
 		At: time.Now().Unix(), Name: sc.link.Name, Detail: sc.link.Detail,
 		ExpiresAt: sc.link.ExpiresAt, UsageReadable: sysmon.ProcReadable(),
-		Stale: s.stale() != "", Machine: shareMachineFrom(sample),
-		Projects: []shareProject{}, Sessions: []shareSession{},
+		Stale: s.stale() != "", Machine: shareMachineFrom(sample), Board: board,
+		Scope: string(scope.kind), Projects: []shareProject{}, Sessions: []shareSession{},
 	}
+	if named {
+		out.ScopeName = scope.name
+	}
+	// Today, on the server's clock. The browser's would put "closed today" and
+	// "finished today" on a different day for a reader in another timezone.
+	dayStart := startOfLocalDay(time.Now())
 
 	usage := s.shareUsage(ctx, sessions, out.UsageReadable)
 
@@ -356,6 +545,9 @@ func (s *Server) handleShareDashboard(w http.ResponseWriter, r *http.Request) {
 		if row.ParentID != nil {
 			continue
 		}
+		if !scope.covers(row) {
+			continue
+		}
 		pid := shareID(sc.secret, row.ProjectID)
 		grp, seen := byProject[pid]
 		if !seen {
@@ -368,12 +560,27 @@ func (s *Server) handleShareDashboard(w http.ResponseWriter, r *http.Request) {
 		case session.StateWaiting:
 			grp.Waiting++
 			out.Counts.Waiting++
+			// The oldest wait, kept whether or not the rows themselves are
+			// sent. A board that is one number still has to be able to say how
+			// long that number has been true.
+			if !row.Exited && row.StateChangedAt > 0 &&
+				(out.Counts.LongestWaitAt == 0 || row.StateChangedAt < out.Counts.LongestWaitAt) {
+				out.Counts.LongestWaitAt = row.StateChangedAt
+			}
 		case session.StateWorking:
 			grp.Working++
 			out.Counts.Working++
 		default:
 			grp.Done++
 			out.Counts.Done++
+			// What finished today, as opposed to what is finished. A board of
+			// costs alone reads as an expense report; this is the other half,
+			// and it is the closest thing the panel honestly has to output.
+			// It counts sessions that *reached* done today -- a session that
+			// finished last week and has sat there since is not today's work.
+			if row.StateChangedAt >= dayStart {
+				out.Counts.DoneToday++
+			}
 		}
 		if row.Exited {
 			out.Counts.Exited++
@@ -400,7 +607,9 @@ func (s *Server) handleShareDashboard(w http.ResponseWriter, r *http.Request) {
 			item.RSS = u.RSS
 			item.Procs = u.Procs
 		}
-		out.Sessions = append(out.Sessions, item)
+		if needs[store.NeedSessions] {
+			out.Sessions = append(out.Sessions, item)
+		}
 		out.Counts.Sessions++
 	}
 
@@ -418,6 +627,15 @@ func (s *Server) handleShareDashboard(w http.ResponseWriter, r *http.Request) {
 		out.Projects = append(out.Projects, *byProject[pid])
 	}
 	out.Counts.Projects = len(out.Projects)
+
+	if needs[store.NeedSpend] {
+		spend := s.shareSpendFor(ctx, projects, sc.secret, named, needs, board, scope)
+		out.Spend = &spend
+	}
+	if needs[store.NeedTodos] {
+		todos := s.shareTodosFor(ctx, projects, sc.secret, named, scope, dayStart)
+		out.Todos = &todos
+	}
 
 	// No caching, anywhere between here and the screen. This is a live
 	// reading, and a dashboard served from a proxy's cache is the exact failure
@@ -451,6 +669,506 @@ func (s *Server) shareUsage(ctx context.Context, sessions []store.Session, reada
 		}
 	}
 	return s.TreeSampler.Sample(panes)
+}
+
+// ─── scope: which rows this link is about ─────────────────────────────────
+
+// scopeOf is a link's scope, resolved against the rows that exist right now.
+//
+// Resolved on every request rather than at creation, because the project or
+// session it names can be deleted, and what happens then is the whole reason
+// this is a type rather than two strings passed around. A scope that resolves
+// to nothing must show nothing. The failure it exists to prevent has one shape
+// everywhere: an empty id, an empty path, an empty filter -- and an empty
+// filter means "everything". A link sent to one collaborator about one project
+// would quietly become a view of every project on the machine on the day
+// somebody deleted that project.
+type scopeOf struct {
+	kind store.ShareScope
+	// projectID and sessionID are the panel's real ids, used only to compare
+	// against rows here. Neither is ever written to the response.
+	projectID string
+	sessionID string
+	// sessionProjectID is the project a session-scoped link's session sits in,
+	// which is what its checklist and its spend are attributed to.
+	sessionProjectID string
+	// cwd is the scoped project's directory, which is what narrows the spend
+	// rollups. Empty for a whole-panel link -- and also empty for a scoped link
+	// whose target is gone, which is why every caller has to check `kind`
+	// before treating an empty cwd as "no filter".
+	cwd string
+	// name is the scoped row's own name, disclosed only under `names`.
+	name string
+	// missing says the scope names a row that is not there any more.
+	missing bool
+}
+
+// covers reports whether one session row is inside this scope.
+func (s scopeOf) covers(row store.Session) bool {
+	switch s.kind {
+	case store.ShareProject:
+		return s.projectID != "" && row.ProjectID == s.projectID
+	case store.ShareSession:
+		return s.sessionID != "" && row.ID == s.sessionID
+	default:
+		return true
+	}
+}
+
+// coversProject reports whether one project is inside this scope.
+//
+// A session-scoped link covers the project that session is in, because the
+// checklist of the project somebody is collaborating on is the context for the
+// one piece of work they were sent. It does not cover any other project.
+func (s scopeOf) coversProject(id string) bool {
+	switch s.kind {
+	case store.ShareProject:
+		return s.projectID != "" && id == s.projectID
+	case store.ShareSession:
+		return s.sessionProjectID != "" && id == s.sessionProjectID
+	default:
+		return true
+	}
+}
+
+// resolveScope turns a link's stored scope into something the handler can use.
+func resolveScope(link store.ShareLink, projects []store.Project,
+	sessions []store.Session) scopeOf {
+	out := scopeOf{kind: store.ShareScope(link.Scope)}
+	switch out.kind {
+	case store.ShareProject:
+		out.projectID = link.ScopeID
+		for _, p := range projects {
+			if p.ID == link.ScopeID {
+				out.cwd, out.name = p.Path, p.Name
+				return out
+			}
+		}
+		out.missing = true
+	case store.ShareSession:
+		out.sessionID = link.ScopeID
+		for _, row := range sessions {
+			if row.ID != link.ScopeID {
+				continue
+			}
+			out.name, out.sessionProjectID = row.Title, row.ProjectID
+			for _, p := range projects {
+				if p.ID == row.ProjectID {
+					out.cwd = p.Path
+				}
+			}
+			return out
+		}
+		out.missing = true
+	}
+	return out
+}
+
+// startOfLocalDay is midnight this morning, on the server's clock, in unix
+// seconds.
+func startOfLocalDay(now time.Time) int64 {
+	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Unix()
+}
+
+// ─── checklists, counted ──────────────────────────────────────────────────
+
+// shareTodosFor counts every scoped project's checklist.
+//
+// Never the items themselves. A todo line is prose about work -- a customer, a
+// bug, a date -- and it is the one piece of user text that neither detail mode
+// offers, because a wall wants the fraction and the fraction gives nothing
+// away.
+func (s *Server) shareTodosFor(ctx context.Context, projects []store.Project, secret []byte,
+	named bool, scope scopeOf, dayStart int64) shareTodos {
+	out := shareTodos{Projects: []shareTodosProject{}}
+	if scope.kind != store.ShareWhole && scope.projectID == "" && scope.sessionID == "" {
+		return out
+	}
+	rows, err := s.DB.TodoProgressByProject(ctx, dayStart)
+	if err != nil {
+		// Empty rather than fatal: a checklist that cannot be counted leaves a
+		// gap, and the rest of the screen is still true.
+		s.Log.Debug("share todo progress", "err", err)
+		return out
+	}
+	for _, p := range projects {
+		if !scope.coversProject(p.ID) {
+			continue
+		}
+		row, have := rows[p.ID]
+		if !have {
+			// A project with no checklist at all is left out rather than shown
+			// as 0/0, which renders as a finished list.
+			continue
+		}
+		item := shareTodosProject{
+			ID: shareID(secret, p.ID), Open: row.Open, Done: row.Done,
+			ClosedToday: row.ClosedSince,
+		}
+		if named {
+			item.Name = p.Name
+		}
+		out.Open += item.Open
+		out.Done += item.Done
+		out.ClosedToday += item.ClosedToday
+		out.Projects = append(out.Projects, item)
+	}
+	return out
+}
+
+// ─── token spend, redacted ────────────────────────────────────────────────
+
+// shareSpendCacheFor is how long one reading of the spend rollups is reused.
+//
+// A wall polls every two seconds and never stops. The rollups behind a spend
+// board are six GROUP BYs over a table that holds a year of history, and
+// running them forty thousand times a day to answer a question whose answer
+// changes when an agent finishes a request is work for nothing. Fifteen seconds
+// is invisible on a chart of days and is the difference between six queries a
+// poll and six queries a quarter of a minute.
+//
+// Cached before the per-link renaming, never after: the snapshot holds the
+// panel's own figures with real project ids still on them, and each link
+// renames them under its own secret afterwards. A cache on the far side of that
+// would be a cache keyed by a credential.
+const shareSpendCacheFor = 15 * time.Second
+
+// shareSpendWindowDays is the range the grouped figures cover.
+//
+// One window for every breakdown and for the "window" total, rather than a
+// range control per widget. A dashboard has nobody standing at it to adjust
+// anything, and three widgets side by side each covering a different span, with
+// no controls to explain why, is a screen that adds up to nothing.
+const shareSpendWindowDays = 30
+
+// shareSpendHistoryDays is how far back the day series reaches: 53 whole weeks,
+// so the year grid's first column is complete and its leftmost month label is
+// true. The same 371 the token panel uses, for the same reason.
+const shareSpendHistoryDays = 371
+
+// shareSpendCacheMax bounds the number of scopes held at once.
+//
+// One entry per scope a link is pointed at, and scopes are created by an
+// authenticated owner rather than by whoever holds a link -- so this is not a
+// bound against an attacker, it is a bound against a panel with two hundred
+// projects quietly keeping two hundred rollups alive. Over the cap the map is
+// dropped whole rather than evicted cleverly: the cost of being wrong is one
+// recomputation, and an LRU here would be more machinery than the thing it
+// manages.
+const shareSpendCacheMax = 32
+
+// spendProjectRow is one project's spend before it has been renamed for a link.
+//
+// The real id, kept only inside the cache and never marshalled. Nothing in this
+// struct has a json tag, which is the mechanical half of that promise.
+type spendProjectRow struct {
+	id, name        string
+	total, requests int64
+}
+
+// spendSnapshot is what the panel knows about spend within one scope, computed
+// once and shared by every link looking at that scope.
+type spendSnapshot struct {
+	readable  bool
+	scannedAt int64
+	date      string
+	// hoursToday is how far into the local day the server is, so a rate can be
+	// "so far today" rather than a guess. Sent rather than derived in the
+	// browser, which does not know the server's timezone and would compute the
+	// rate of a different day for a reader in another one.
+	hoursToday float64
+	// days keeps the store's own rows rather than the wire's buckets, because
+	// the totals derived from them -- today, yesterday, this month, the window
+	// -- want the input/output/cache split that a bucket has thrown away.
+	days     []store.UsageDay
+	months   []store.UsageDay
+	tools    []shareSpendGroup
+	models   []shareSpendGroup
+	projects []spendProjectRow
+}
+
+func emptySpend() spendSnapshot {
+	return spendSnapshot{
+		days: []store.UsageDay{}, months: []store.UsageDay{},
+		tools: []shareSpendGroup{}, models: []shareSpendGroup{},
+	}
+}
+
+type cachedSpend struct {
+	at   time.Time
+	snap spendSnapshot
+}
+
+// spendNow returns the shared snapshot for one scope, recomputing it when it
+// has aged out.
+//
+// cwdPrefix is empty for a whole-panel link and is the scoped project's own
+// directory otherwise. It arrives from the link's row and never from a request:
+// a caller that could name a directory here could ask whether an agent had ever
+// run in one, and learn the answer from whether the numbers moved.
+//
+// Failure is an empty snapshot rather than an error, the same way the CPU
+// sampler's is: a chart that cannot be drawn leaves a gap, and everything else
+// on the screen is still true.
+func (s *Server) spendNow(ctx context.Context, projects []store.Project,
+	cwdPrefix string) spendSnapshot {
+	s.spendMu.Lock()
+	defer s.spendMu.Unlock()
+	if hit, ok := s.spendCache[cwdPrefix]; ok && time.Since(hit.at) < shareSpendCacheFor {
+		return hit.snap
+	}
+
+	snap := emptySpend()
+	in := s.tokens()
+	if in == nil {
+		// No ingester: nothing has ever been counted and nothing ever will be.
+		// Reported as "not readable" rather than as zero, which is the
+		// distinction the whole flag exists for.
+		s.putSpend(cwdPrefix, snap)
+		return snap
+	}
+
+	// A wall display is a watcher, and the ingester's whole design is that an
+	// unwatched panel walks nothing. Without this a spend board shows whatever
+	// the transcripts said when the panel last started, forever, while saying
+	// it is live -- the failure the connection indicator exists to make
+	// impossible, arriving through the numbers instead.
+	//
+	// Bounded by the ingester's own MinInterval and single-flight, so a link
+	// polled every two seconds costs one pass every thirty seconds: the same as
+	// a panel tab left open, which is what this is.
+	in.Ensure(false)
+
+	pass, _ := in.Status()
+	if pass.At.IsZero() {
+		// A pass has been asked for and none has finished. Everything below
+		// would be a confident zero.
+		s.putSpend(cwdPrefix, snap)
+		return snap
+	}
+	snap.readable, snap.scannedAt = true, pass.At.Unix()
+
+	now := time.Now()
+	snap.date = now.Format("2006-01-02")
+	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	snap.hoursToday = now.Sub(midnight).Hours()
+	from := now.AddDate(0, 0, -(shareSpendHistoryDays - 1)).Format("2006-01-02")
+
+	history := store.UsageFilter{From: from, To: snap.date, CWDPrefix: cwdPrefix}
+	days, err := s.DB.UsageByDay(ctx, history)
+	if err != nil {
+		s.Log.Debug("share spend by day", "err", err)
+		empty := emptySpend()
+		s.putSpend(cwdPrefix, empty)
+		return empty
+	}
+	snap.days = days
+
+	// Months are every month there has ever been, not the months the day series
+	// happens to reach: "what has each month cost" is the question, and
+	// answering it with the last fifty-three weeks of months answers a
+	// different one.
+	if months, merr := s.DB.UsageByMonth(ctx,
+		store.UsageFilter{CWDPrefix: cwdPrefix}); merr == nil {
+		snap.months = months
+	} else {
+		s.Log.Debug("share spend by month", "err", merr)
+	}
+
+	window := store.UsageFilter{
+		From:      now.AddDate(0, 0, -(shareSpendWindowDays - 1)).Format("2006-01-02"),
+		To:        snap.date,
+		CWDPrefix: cwdPrefix,
+	}
+	if byTool, terr := s.DB.UsageByTool(ctx, window); terr == nil {
+		// Every agent this panel can read appears, spend or none, so that one
+		// contributing nothing is a bar at zero rather than a row that is
+		// simply not there.
+		for _, tool := range usage.Tools {
+			row := byTool[string(tool)]
+			snap.tools = append(snap.tools, shareSpendGroup{
+				ID: string(tool), Name: string(tool),
+				Total: row.Total(), Requests: row.Requests})
+		}
+	} else {
+		s.Log.Debug("share spend by tool", "err", terr)
+	}
+
+	if models, merr := s.DB.UsageByModel(ctx, window); merr == nil {
+		for _, m := range models {
+			// A model name is the vendor's -- claude-opus-4, gpt-5-codex -- so
+			// unlike a working directory it names nothing of the user's. It is
+			// carried as both id and name because there is nothing to redact:
+			// under `counts` the client shows the id, and it is the same word.
+			snap.models = append(snap.models, shareSpendGroup{
+				ID: m.Model, Name: m.Model, Total: m.Total(), Requests: m.Requests})
+		}
+	} else {
+		s.Log.Debug("share spend by model", "err", merr)
+	}
+
+	if dirs, derr := s.DB.UsageByDirectory(ctx, window); derr == nil {
+		// groupByProject, and then the fields are restated one at a time. Its
+		// own row type carries the project's path, which is the first thing on
+		// the list of what a share link never sends.
+		for _, p := range groupByProject(dirs, projects) {
+			snap.projects = append(snap.projects, spendProjectRow{
+				id: p.ID, name: p.Name, total: p.Total(), requests: p.Requests})
+		}
+	} else {
+		s.Log.Debug("share spend by directory", "err", derr)
+	}
+
+	s.putSpend(cwdPrefix, snap)
+	return snap
+}
+
+// putSpend records a snapshot. Called with spendMu held.
+func (s *Server) putSpend(key string, snap spendSnapshot) {
+	if s.spendCache == nil || len(s.spendCache) >= shareSpendCacheMax {
+		s.spendCache = map[string]cachedSpend{}
+	}
+	s.spendCache[key] = cachedSpend{at: time.Now(), snap: snap}
+}
+
+// shareSpendFor projects the shared snapshot onto one link and one board.
+//
+// Two things happen here and nowhere else: the real project ids become this
+// link's pseudonyms, and the arrays the board did not ask for are left empty.
+func (s *Server) shareSpendFor(ctx context.Context, projects []store.Project, secret []byte,
+	named bool, needs map[string]bool, board store.Board, scope scopeOf) shareSpend {
+	out := shareSpend{
+		WindowDays: shareSpendWindowDays,
+		Days:       []shareSpendBucket{}, Months: []shareSpendBucket{},
+		Heatmap: []shareSpendBucket{}, Tools: []shareSpendGroup{},
+		Models: []shareSpendGroup{}, Projects: []shareSpendGroup{},
+	}
+	if scope.kind != store.ShareWhole && scope.cwd == "" {
+		// A scoped link whose project no longer exists, or was never resolvable.
+		// Falling through to the unscoped rollups here is the whole failure this
+		// branch exists to stop: an empty prefix means "no filter", so a link
+		// scoped to a deleted project would start reporting the spend of every
+		// project on the machine. Nothing, and it says so as "not counted".
+		return out
+	}
+
+	snap := s.spendNow(ctx, projects, scope.cwd)
+	out.Readable, out.ScannedAt, out.Date = snap.readable, snap.scannedAt, snap.date
+	out.HoursToday = snap.hoursToday
+
+	month, lastMonth := "", ""
+	yesterday := ""
+	if d, err := time.Parse("2006-01-02", snap.date); err == nil {
+		month = snap.date[:7]
+		lastMonth = d.AddDate(0, -1, 0).Format("2006-01")
+		yesterday = d.AddDate(0, 0, -1).Format("2006-01-02")
+	}
+	windowFrom := spendDaysFrom(snap.date, shareSpendWindowDays)
+
+	daysCut := ""
+	if needs[store.NeedSpendDays] {
+		// Cut to the widest range any bar widget on this board asked for. A
+		// board showing a fortnight does not carry a year of days to draw it.
+		daysCut = spendDaysFrom(snap.date, boardSpendDays(board))
+	}
+	for _, d := range snap.days {
+		switch {
+		case d.Day == snap.date:
+			addDay(&out.Today, d)
+		case yesterday != "" && d.Day == yesterday:
+			addDay(&out.Yesterday, d)
+		}
+		if month != "" && strings.HasPrefix(d.Day, month) {
+			addDay(&out.Month, d)
+		}
+		if windowFrom != "" && d.Day >= windowFrom {
+			addDay(&out.Window, d)
+		}
+		bucket := shareSpendBucket{Label: d.Day, Total: d.Total(), Requests: d.Requests}
+		if daysCut != "" && d.Day >= daysCut {
+			out.Days = append(out.Days, bucket)
+		}
+		if needs[store.NeedSpendHeatmap] {
+			out.Heatmap = append(out.Heatmap, bucket)
+		}
+	}
+	for _, m := range snap.months {
+		if m.Day == lastMonth {
+			addDay(&out.LastMonth, m)
+		}
+		if needs[store.NeedSpendMonths] {
+			out.Months = append(out.Months, shareSpendBucket{
+				Label: m.Day, Total: m.Total(), Requests: m.Requests})
+		}
+	}
+
+	if needs[store.NeedSpendTools] {
+		out.Tools = snap.tools
+	}
+	if needs[store.NeedSpendModels] {
+		out.Models = snap.models
+	}
+	if needs[store.NeedSpendProjects] {
+		for _, p := range snap.projects {
+			row := shareSpendGroup{Total: p.total, Requests: p.requests}
+			// The catch-all row for work done outside every project keeps an
+			// empty id: it is a residue rather than a project, and giving it a
+			// pseudonym would make it look like one the session groups had
+			// simply not mentioned.
+			if p.id != "" {
+				row.ID = shareID(secret, p.id)
+				if named {
+					row.Name = p.name
+				}
+			}
+			out.Projects = append(out.Projects, row)
+		}
+	}
+	return out
+}
+
+// addDay folds one day's row into a running total, column by column.
+//
+// Restated rather than embedding store.UsageTotals, for the reason the rest of
+// this file restates everything: a column added to the store's rollup is not
+// disclosed by a share link until somebody writes the line that discloses it.
+func addDay(into *shareSpendTotals, d store.UsageDay) {
+	into.Input += d.Input
+	into.Output += d.Output
+	into.CacheRead += d.CacheRead
+	into.CacheWrite += d.CacheWrite
+	into.Requests += d.Requests
+	into.Total += d.Total()
+}
+
+// boardSpendDays is the widest day range any bar widget on a board asked for.
+func boardSpendDays(board store.Board) int {
+	widest := 0
+	for _, w := range board.Widgets {
+		if w.Kind != "spendbars" || (w.By != "" && w.By != "day") {
+			continue
+		}
+		days := w.Days
+		if days <= 0 {
+			days = shareSpendWindowDays
+		}
+		if days > widest {
+			widest = days
+		}
+	}
+	return widest
+}
+
+// spendDaysFrom is the oldest day a range of n days reaches back to.
+func spendDaysFrom(today string, n int) string {
+	if today == "" || n <= 0 {
+		return ""
+	}
+	d, err := time.Parse("2006-01-02", today)
+	if err != nil {
+		return ""
+	}
+	return d.AddDate(0, 0, -(n - 1)).Format("2006-01-02")
 }
 
 // shareKind summarises what is running in a pane without quoting it.
@@ -488,14 +1206,67 @@ const maxShareSeconds = 365 * 24 * 60 * 60
 func (s *Server) registerShareAdminRoutes(r chi.Router) {
 	r.Get("/settings/shares", s.handleListShares)
 	r.Post("/settings/shares", s.handleCreateShare)
+	r.Get("/settings/shares/catalogue", s.handleShareCatalogue)
+	r.Patch("/settings/shares/{shareID}", s.handleUpdateShare)
 	r.Delete("/settings/shares/{shareID}", s.handleDeleteShare)
 }
 
+// shareCatalogue is the vocabulary a board is built from.
+//
+// Served rather than mirrored in the frontend, so that every option the editor
+// offers is an option the validator accepts. Two copies of this table is how a
+// settings page comes to offer a widget the server refuses, and the person who
+// finds out is the one who pressed the button.
+type shareCatalogue struct {
+	Presets []store.Preset     `json:"presets"`
+	Widgets []store.WidgetSpec `json:"widgets"`
+	// The bounds, so the editor can stop somebody rather than watch the server
+	// stop them.
+	MaxWidgets int `json:"maxWidgets"`
+	MaxSpan    int `json:"maxSpan"`
+	MaxCaption int `json:"maxCaption"`
+	MaxDays    int `json:"maxDays"`
+}
+
+func (s *Server) handleShareCatalogue(w http.ResponseWriter, r *http.Request) {
+	out := shareCatalogue{
+		Presets: store.Presets(), MaxWidgets: store.MaxWidgets, MaxSpan: store.MaxSpan,
+		MaxCaption: store.MaxCaption, MaxDays: store.MaxSpendDays,
+	}
+	for _, kind := range store.KnownWidgetKinds() {
+		if spec, ok := store.WidgetOptions(kind); ok {
+			out.Widgets = append(out.Widgets, spec)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleListShares lists the links, with each scope resolved to a name.
+//
+// Resolved here rather than joined in SQL, and resolved every time rather than
+// stored: the project a link is scoped to can be renamed or deleted, and a name
+// copied into share_links at creation would go on naming a project that no
+// longer exists. A scope whose row is gone comes back with an empty name, which
+// is what the settings page renders as "the thing this was about is gone".
 func (s *Server) handleListShares(w http.ResponseWriter, r *http.Request) {
-	links, err := s.DB.ListShareLinks(r.Context())
+	ctx := r.Context()
+	links, err := s.DB.ListShareLinks(ctx)
 	if err != nil {
 		s.writeStoreErr(w, err)
 		return
+	}
+	projects, perr := s.DB.ListProjects(ctx)
+	if perr != nil {
+		s.writeStoreErr(w, perr)
+		return
+	}
+	sessions, serr := s.DB.ListSessions(ctx)
+	if serr != nil {
+		s.writeStoreErr(w, serr)
+		return
+	}
+	for i := range links {
+		links[i].ScopeName = resolveScope(links[i], projects, sessions).name
 	}
 	writeJSON(w, http.StatusOK, emptyIfNil(links))
 }
@@ -507,6 +1278,89 @@ type createShareRequest struct {
 	// duration rather than an instant because the client has no reason to be
 	// trusted about what time it is, and "two weeks" is what a person means.
 	ExpiresIn int64 `json:"expiresIn"`
+	// Preset names a starting arrangement; Board is an explicit one and wins.
+	//
+	// Both are offered because both are how this gets used: the settings page
+	// sends a board it has just let somebody edit, and a person wiring up a
+	// television with `curl` sends "preset": "attention" and is finished.
+	// Neither is required, and a request with neither gets the default board.
+	Preset string       `json:"preset"`
+	Board  *store.Board `json:"board"`
+	// Scope is "", "project" or "session"; ScopeID is the panel's own id of the
+	// one it is about.
+	//
+	// A real id, and the only real id this API takes for a share link. It is
+	// checked here against the rows that exist: a scope naming a project the
+	// caller invented would otherwise be stored, resolve to nothing on every
+	// poll, and look exactly like a project that had been deleted.
+	Scope   string `json:"scope"`
+	ScopeID string `json:"scopeId"`
+}
+
+// scopeFor validates a requested scope against the rows that exist.
+//
+// Refused rather than stored optimistically. A scope naming a project nobody
+// has heard of resolves to nothing on every poll from then on, which renders as
+// an empty dashboard -- indistinguishable from a project that was deleted, and
+// impossible to tell from a typo without reading the database.
+func (s *Server) scopeFor(ctx context.Context, kind, id string) (store.ShareScope, string, error) {
+	scope := store.ShareScope(strings.TrimSpace(kind))
+	id = strings.TrimSpace(id)
+	if !store.ValidShareScope(scope) {
+		return "", "", fmt.Errorf("scope must be project, session, or left out")
+	}
+	if scope == store.ShareWhole {
+		if id != "" {
+			return "", "", fmt.Errorf("a scopeId needs a scope")
+		}
+		return scope, "", nil
+	}
+	if id == "" {
+		return "", "", fmt.Errorf("a %s scope needs a scopeId", scope)
+	}
+	switch scope {
+	case store.ShareProject:
+		if _, err := s.DB.GetProject(ctx, id); err != nil {
+			return "", "", fmt.Errorf("no such project")
+		}
+	case store.ShareSession:
+		if _, err := s.DB.GetSession(ctx, id); err != nil {
+			return "", "", fmt.Errorf("no such session")
+		}
+	}
+	return scope, id, nil
+}
+
+// boardFrom resolves the two ways a request can name a board.
+//
+// A pointer for Board so that "no board field" and "an empty board" are
+// different requests: the first means "use the preset, or the default", and
+// the second is a mistake worth an error rather than a silent substitution.
+func boardFrom(preset string, board *store.Board) (store.Board, error) {
+	// Checked here rather than left to ValidateBoard, which only ever sees the
+	// preset written inside the board. An unknown name arriving in the
+	// top-level field would otherwise be copied onto a valid board below and
+	// stored, which is the one string on a board nothing else validates.
+	if preset != "" && !store.KnownPreset(preset) {
+		return store.Board{}, fmt.Errorf("unknown preset %q", preset)
+	}
+	if board != nil {
+		out, err := store.ValidateBoard(*board)
+		if err != nil {
+			return store.Board{}, err
+		}
+		// A board the editor built from a preset carries the provenance in the
+		// board itself; one sent by hand can name it alongside instead.
+		if out.Preset == "" {
+			out.Preset = preset
+		}
+		return out, nil
+	}
+	if preset == "" {
+		return store.DefaultBoard(), nil
+	}
+	expanded, _ := store.PresetBoard(preset)
+	return expanded, nil
 }
 
 // handleCreateShare mints a link, and is the only time its token is readable.
@@ -543,6 +1397,16 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "expiresIn must be between 0 and a year, in seconds")
 		return
 	}
+	board, err := boardFrom(strings.TrimSpace(req.Preset), req.Board)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	scope, scopeID, err := s.scopeFor(r.Context(), req.Scope, req.ScopeID)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	var expiresAt int64
 	if req.ExpiresIn > 0 {
 		expiresAt = time.Now().Add(time.Duration(req.ExpiresIn) * time.Second).Unix()
@@ -563,21 +1427,90 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 		prefix = prefix[:8]
 	}
 	rec, err := s.DB.CreateShareLink(r.Context(), id.New(), auth.HashToken(token), prefix, name,
-		detail, u.ID, expiresAt)
+		detail, board, scope, scopeID, u.ID, expiresAt)
 	if err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}
-	s.audit(r.Context(), "share.created", u.Username, s.clientIP(r), name+" ("+string(detail)+")")
+	// The board's shape goes in the audit line, not its contents. "which
+	// widgets" is a layout decision; "counts or names" is the disclosure
+	// decision, and that is the one an operator reading this row is looking for.
+	s.audit(r.Context(), "share.created", u.Username, s.clientIP(r),
+		name+" ("+string(detail)+", "+boardLabel(board)+scopeLabel(scope, scopeID)+")")
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"token":     token,
 		"id":        rec.ID,
 		"name":      rec.Name,
 		"prefix":    rec.Prefix,
 		"detail":    rec.Detail,
+		"board":     rec.Board,
+		"scope":     rec.Scope,
 		"expiresAt": rec.ExpiresAt,
 		"createdAt": rec.CreatedAt,
 	})
+}
+
+// scopeLabel names a link's scope for the audit trail.
+//
+// The real id goes in, deliberately. This row is read by the panel's owner
+// looking at their own audit trail, so "which project did I open up" is the
+// question, and a pseudonym would make it unanswerable to the one person
+// entitled to the answer.
+func scopeLabel(scope store.ShareScope, id string) string {
+	if scope == store.ShareWhole {
+		return ""
+	}
+	return ", " + string(scope) + " " + id
+}
+
+// boardLabel names a board for the audit trail: its preset, or its size.
+func boardLabel(b store.Board) string {
+	if b.Preset != "" {
+		return b.Preset
+	}
+	return strconv.Itoa(len(b.Widgets)) + " widgets"
+}
+
+type updateShareRequest struct {
+	Name  string       `json:"name"`
+	Board *store.Board `json:"board"`
+}
+
+// handleUpdateShare renames a link and rearranges its board.
+//
+// Not its detail mode, and not its expiry. By the time anybody edits a link its
+// URL is already in an email or typed into a television, so widening what that
+// address discloses is a change the people holding it would never see. A board
+// can only rearrange what the mode already allows; the mode itself means a new
+// link, which is a thing somebody has to hand out on purpose.
+func (s *Server) handleUpdateShare(w http.ResponseWriter, r *http.Request) {
+	linkID := chi.URLParam(r, "shareID")
+	var req updateShareRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	if req.Board == nil {
+		writeErr(w, http.StatusBadRequest, "a board is required")
+		return
+	}
+	board, err := store.ValidateBoard(*req.Board)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	name := session.TruncateTitle(strings.TrimSpace(req.Name))
+	if name == "" {
+		name = "dashboard"
+	}
+	if err := s.DB.UpdateShareLink(r.Context(), linkID, name, board); err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	if u, ok := currentUserFrom(r); ok {
+		s.audit(r.Context(), "share.updated", u.Username, s.clientIP(r),
+			name+" ("+boardLabel(board)+")")
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleDeleteShare(w http.ResponseWriter, r *http.Request) {
