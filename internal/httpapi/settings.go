@@ -13,6 +13,7 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/auth"
 	"github.com/jiangmuran/vibepanel/internal/hooks"
 	"github.com/jiangmuran/vibepanel/internal/id"
+	"github.com/jiangmuran/vibepanel/internal/tmux"
 	"github.com/jiangmuran/vibepanel/internal/version"
 )
 
@@ -40,9 +41,26 @@ type settingsResponse struct {
 
 	TmuxVersion string `json:"tmuxVersion"`
 	TmuxSocket  string `json:"tmuxSocket"`
-	Sessions    int    `json:"sessions"`
-	Attached    int    `json:"attached"`
-	Viewers     int    `json:"viewers"`
+	// TmuxConfigStale means the running tmux server was started with a
+	// different config from the one this binary carries.
+	//
+	// This is the half of an upgrade that nothing else can see. tmux reads its
+	// `-f` file once, at start-server, and the panel never kills its server --
+	// that is the premise of the project. So a new binary writes a new config
+	// and the running server goes on using the old one, and both look
+	// installed. `vibepanel doctor` says so, but nobody runs doctor after a
+	// `systemctl restart`; the settings page is where a person looks.
+	//
+	// Not an error, and deliberately not phrased as one: applying it costs
+	// every session on the socket, which is a decision for whoever reads it.
+	TmuxConfigStale bool `json:"tmuxConfigStale"`
+	// TmuxConfigUnknown means the running server predates the stamp, so the
+	// question cannot be answered either way. Different from "it is current",
+	// and a page that shows the two the same way is guessing.
+	TmuxConfigUnknown bool `json:"tmuxConfigUnknown"`
+	Sessions          int  `json:"sessions"`
+	Attached          int  `json:"attached"`
+	Viewers           int  `json:"viewers"`
 
 	DataDir string `json:"dataDir"`
 	DBBytes int64  `json:"dbBytes"`
@@ -65,6 +83,10 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 	tv, _ := s.Tmux.Version(ctx)
 	infos, _ := s.Tmux.List(ctx)
+
+	stamp := s.Tmux.RunningConfigStamp(ctx)
+	configUnknown := stamp == ""
+	configStale := !configUnknown && stamp != tmux.ConfigStamp()
 
 	// The whole database, not just the main file.
 	//
@@ -91,6 +113,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		Uptime: int64(time.Since(started).Seconds()),
 
 		TmuxVersion: tv, TmuxSocket: s.Cfg.TmuxSocket,
+		TmuxConfigStale: configStale, TmuxConfigUnknown: configUnknown,
 		Sessions: len(infos), Attached: len(s.Manager.LiveIDs()),
 
 		DataDir: s.Cfg.DataDir, DBBytes: dbBytes,

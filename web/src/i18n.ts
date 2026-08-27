@@ -110,6 +110,16 @@ const DICT = {
   'app.hidePanel': { zh: '收起面板', en: 'Hide panel' },
   'app.showPanel': { zh: '展开面板', en: 'Show panel' },
 
+  'set.tmuxConfigStale': {
+    zh: '正在跑的 tmux server 用的是旧配置。tmux 只在启动时读一次配置文件，而面板从不杀自己的 server —— 所以升级之后，新配置在磁盘上、旧配置在内存里。今天不会坏任何东西，但配置里的改动没有生效。要应用它，代价是这个 socket 上的**全部会话**：',
+    en: 'The running tmux server started with an older config. tmux reads its config once, at start-server, and the panel never kills its server — so after an upgrade the new file is on disk and the old settings are in memory. Nothing is broken today, but changes in it are not in effect. Applying them costs every session on this socket:',
+  },
+  'set.tmuxConfigUnknown': {
+    zh: '正在跑的 tmux server 早于这项检查，问不出来。重启它之后才能知道。',
+    en: 'The running tmux server predates this check, so the question has no answer until it is restarted.',
+  },
+  'set.tmuxConfigLabel': { zh: 'tmux 配置', en: 'tmux config' },
+
   'auth.setupTitle': { zh: '初始化 vibepanel', en: 'Set up vibepanel' },
   'auth.setupHint': {
     zh: '把服务端打印的一次性 token 粘进来，然后设一个账号。',

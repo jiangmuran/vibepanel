@@ -179,6 +179,34 @@ tmux -L vibepanel ls                 # every session still there, still running
 The browser notices the new build on reconnect and offers to reload, so an upgrade
 mid-session is a banner rather than a puzzle.
 
+### Upgrading
+
+```sh
+tar -xzf vibepanel_<new>_linux_amd64.tar.gz
+cd vibepanel_<new>_linux_amd64
+./deploy/install.sh              # replaces the binary and restarts the service
+```
+
+Your sessions do not restart with it. Any browser with the panel open reconnects,
+notices the build changed and offers to reload — the page is a view, so reloading
+it costs nothing.
+
+Three things are worth knowing, because each of them looks like nothing:
+
+- **The tmux config only takes effect at the next `start-server`.** tmux reads
+  its `-f` file once, and the panel never kills its server. So an upgrade that
+  changes the config leaves the new file on disk and the old settings in memory.
+  The settings page and `vibepanel doctor` both say so when that has happened.
+  Applying it means `tmux -L vibepanel kill-server`, which ends every session —
+  which is why the panel tells you rather than doing it.
+- **Rolling back is safe but not silent.** An older binary refuses a database a
+  newer one has migrated, and says both version numbers. It does not open it and
+  quietly drop the columns it does not know.
+- **An older installer did not restart the service.** `install.sh` does now, and
+  says which it did. If you upgraded with one that did not, the new binary is on
+  disk and the old one is still running: `systemctl --user restart vibepanel` is
+  the whole fix, and `docs/runbook.md` has the symptom to recognise it by.
+
 ## Telling the panel what an agent is doing
 
 Without help, the panel reads the output stream: bytes recently means *working*,

@@ -11165,3 +11165,42 @@ Also dropped `uppercase` from the project name in the sidebar. It is an
 editable field: you type `my-app`, it shows `MY-APP`, and clicking to rename
 shows something different again from what you typed. Case is information, and
 the section already reads as a section from its size and colour.
+
+## Hot upgrade: the parts that were assertions and the parts that were tests
+
+Three things were true about upgrading and only one of them was checked.
+
+**The panel now says when the tmux config is stale, where a person looks.**
+tmux reads its `-f` file once at start-server, and the panel never kills its
+server -- the premise of the project. So an upgrade that changes the config
+leaves the new file on disk and the old settings in memory, and both look
+installed. `doctor` reported it and nobody runs doctor after a `systemctl
+restart`. It is on the settings page now, with the remedy *and its cost* in the
+same sentence, because the remedy is `kill-server` and that ends every session.
+
+Three states, not two: current, stale, and *unknown* -- a server that predates
+the stamp cannot answer, and a page that renders "unknown" the same as "current"
+is guessing on the reader's behalf. The test drives all three by writing the
+stamp option from outside, which is exactly the shape an upgraded binary meets.
+Set from outside rather than through a method added for the purpose: production
+API that exists only for a test is API somebody will later find and use.
+
+**The rollback refusal had a careful comment and no test.** `migrate` refuses a
+database whose `user_version` is above what the binary knows, and that is the
+one place where being permissive loses data silently -- an old binary would read
+the tables it knows, ignore the columns it does not, and write rows back without
+them. Nothing looks wrong until the next upgrade finds the values gone. The test
+also asserts the message names both numbers and says what to do, because whoever
+reads it is mid-rollback with the panel down. Removing the guard opens a
+database from the future.
+
+**And there was no upgrade procedure written down at all.** The README said the
+browser notices a new build; it did not say how to install one. Both READMEs now
+carry the three-line procedure and the three things that look like nothing: the
+config that only applies at the next start-server, the rollback that is safe but
+loud, and the older installer that did not restart the service.
+
+One thing removed on the way: a claim that installers "older than v0.4" did not
+restart. There is no v0.4 -- the binary reports `dev` -- and inventing a version
+number in a public README is the kind of detail somebody later builds a support
+answer on.

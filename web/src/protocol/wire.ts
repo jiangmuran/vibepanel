@@ -339,6 +339,13 @@ export interface SettingsInfo {
   uptime: number
   tmuxVersion: string
   tmuxSocket: string
+  /**
+   * The running tmux server was started with a different config from the one
+   * this binary carries — the half of an upgrade nothing else can see.
+   */
+  tmuxConfigStale: boolean
+  /** The running server predates the stamp, so the question has no answer. */
+  tmuxConfigUnknown: boolean
   sessions: number
   attached: number
   viewers: number

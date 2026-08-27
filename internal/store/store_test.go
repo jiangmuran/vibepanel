@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -817,5 +818,56 @@ func TestMigrationRenamesTheOldAuditEvents(t *testing.T) {
 	}
 	if seen["login.failed"] != 1 {
 		t.Errorf("the migration touched a row it should not have: %v", seen)
+	}
+}
+
+// An older binary must refuse a newer database rather than open it.
+//
+// This is the rollback path, and it is the one place where being permissive
+// destroys data silently: an old binary that opened a v9 database would read
+// the tables it knows, ignore the columns it does not, and write rows back
+// without them. Nothing would look wrong until somebody upgraded again and
+// found the values gone.
+//
+// The check has a careful comment and had no test. Removing the guard lets this
+// open a database from the future.
+func TestAnOlderBinaryRefusesANewerDatabase(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(dir, "vibepanel.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	have, err := db.Version(ctx)
+	if err != nil {
+		t.Fatalf("Version: %v", err)
+	}
+	if have != schemaVersion {
+		t.Fatalf("a fresh database is at version %d, want %d", have, schemaVersion)
+	}
+
+	// A version from the future, the way a newer build would leave it.
+	if _, err := db.SQL().ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", schemaVersion+1)); err != nil {
+		t.Fatalf("bump user_version: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	_, err = Open(ctx, filepath.Join(dir, "vibepanel.db"))
+	if err == nil {
+		t.Fatal("a database from a newer build opened without complaint; an older binary " +
+			"reads the columns it knows and writes rows back without the rest")
+	}
+	// The message has to name both numbers and say what to do. An operator
+	// reading it is mid-rollback and the panel is down.
+	for _, want := range []string{
+		fmt.Sprintf("%d", schemaVersion+1),
+		fmt.Sprintf("%d", schemaVersion),
+		"upgrade vibepanel",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not mention %q: %v", want, err)
+		}
 	}
 }

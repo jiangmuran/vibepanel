@@ -12,6 +12,7 @@ import { passkeyLabel } from './label'
 import { setLang, t, useLang } from '../i18n'
 import { notifyEnabled, notifySupported, requestNotifyPermission, setNotifyEnabled } from '../notify'
 import { ApiTokens } from './ApiTokens'
+import { safeText } from './text'
 
 function bytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -338,6 +339,26 @@ function StatusSection({ info }: { info: SettingsInfo }) {
         />
         <Row label={t('set.viewers')} value={String(info.viewers)} />
         <Row label={t('set.socket')} value={info.tmuxSocket} />
+        {/* The half of an upgrade nothing else can see.
+            `vibepanel doctor` reports this too, and nobody runs doctor after a
+            `systemctl restart`. This is where a person looks instead, and the
+            cost of the remedy is stated with it rather than after they have
+            typed it: kill-server ends every session on the socket. */}
+        {(info.tmuxConfigStale || info.tmuxConfigUnknown) && (
+          <div
+            data-testid="tmux-config-stale"
+            className="border-t border-hairline py-2 text-[12px] leading-relaxed"
+            style={{ color: 'var(--vp-state-waiting)' }}
+          >
+            <span className="mr-1 text-ink-2">{t('set.tmuxConfigLabel')}</span>
+            {info.tmuxConfigStale ? t('set.tmuxConfigStale') : t('set.tmuxConfigUnknown')}
+            {info.tmuxConfigStale && (
+              <code className="mt-1 block font-mono text-[11.5px] text-ink">
+                tmux -L {safeText(info.tmuxSocket)} kill-server
+              </code>
+            )}
+          </div>
+        )}
         <Row label={t('set.data')} value={`${info.dataDir} · ${bytes(info.dbBytes)}`} />
         <Row label={t('set.listening')} value={`${info.addr} → ${info.url}`} />
         <Row
