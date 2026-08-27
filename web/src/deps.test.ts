@@ -58,7 +58,10 @@ describe('dependencies', () => {
   it('keeps the pieces the terminal is built on', () => {
     // A dependency quietly swapped out is the same problem as one added, and
     // only the second is obvious.
-    for (const name of ['@xterm/xterm', '@xterm/addon-fit', 'react', 'lucide-react']) {
+    // @novnc/novnc is the one dependency here that is not MIT — MPL-2.0, used
+    // unmodified — and it is the one whose removal would look like a cleanup:
+    // it is imported from exactly one dynamic import in one tab.
+    for (const name of ['@xterm/xterm', '@xterm/addon-fit', 'react', 'lucide-react', '@novnc/novnc']) {
       expect(all, `${name} is what the terminal and the interface are built on`).toHaveProperty(
         name,
       )

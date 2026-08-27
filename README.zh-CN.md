@@ -198,7 +198,7 @@ docker compose -f deploy/docker-compose.yml up -d
 
 ### 右栏
 
-每个项目五个 tab，底下常驻一条机器 CPU / 内存 / 磁盘，切到哪个 tab 都看得见。
+每个项目六个 tab，底下常驻一条机器 CPU / 内存 / 磁盘，切到哪个 tab 都看得见。
 
 - **文件**：浏览、点一下下载。拖到文件树上或者直接拖到终端上就是上传，文件落在会话旁边，
   绝对路径直接替你敲进命令行，回车就能用；截图粘贴进终端也是同一条路。预览按内容嗅探
@@ -207,6 +207,11 @@ docker compose -f deploy/docker-compose.yml up -d
 - **监控**：机器整体，外加每个会话的 CPU 和内存，按会话的整棵进程树汇总。百分比用整机做
   分母，不是「100% = 一核」。
 - **笔记** / **待办**：每个项目一份 markdown 和一张清单，停手就自动保存。
+- **屏幕**：终端旁边放一块 VNC 画面，给那些在跑浏览器或者桌面程序的 agent 用。面板是**代理**
+  不是客户端：它自己拿存下来的密码去跟 display 认证，密码不出服务器，浏览器拿到的是一条
+  普通 RFB 流。屏幕在**设置 → VNC 屏幕**里配；面板能往哪连由 `--vnc-allow` 决定，默认只允许
+  回环地址。可以把一块屏幕标成**只看**，这条在代理上落实，不是在客户端上。屏幕不再应答时
+  显示「没反应」——和「画面没动」是不同的形状、不同的字。
 - **Token**：agent 自己记下来花了多少 token，今天的和最近三十天的。数字只来自 Claude Code
   和 Codex 自己写的 transcript，不估算，也不换算成钱；找不到 transcript 时显示破折号，
   不显示 0。
@@ -375,6 +380,7 @@ CLOUDFLARE_API_TOKEN=… vibepanel --domain panel.example.com \
 | `--acme-email` | — | 给 CA 的联系邮箱 |
 | `--acme-directory` | Let's Encrypt | 测试时指向 staging |
 | `--allow-from` | — | 允许访问面板的 CIDR，逗号分隔；空表示不限 |
+| `--vnc-allow` | — | VNC 查看器可以外连的 CIDR；空表示**只允许回环地址** |
 | `--trusted-proxies` | — | 其 `X-Forwarded-For` 可信的 CIDR |
 | `--tmux-socket` | `vibepanel` | 保持专用，才谈得上隔离 |
 | `--static-dir` | — | 从磁盘而不是内嵌产物提供前端 |
@@ -438,4 +444,8 @@ tmux 封装是拿真的 tmux 在一个一次性 socket 上测的，不是 mock�
 
 ## 许可证
 
-[MIT](LICENSE)
+[MIT](LICENSE)。
+
+前端为「屏幕」标签页打包了 [noVNC](https://github.com/novnc/noVNC)，未作修改，
+遵循 [MPL-2.0](https://github.com/novnc/noVNC/blob/master/LICENSE.txt)。该许可证按文件生效，
+只覆盖 noVNC 自己的文件；源码见上面的链接。

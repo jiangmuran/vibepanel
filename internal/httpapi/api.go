@@ -31,6 +31,7 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/tmux"
 	"github.com/jiangmuran/vibepanel/internal/usage"
 	"github.com/jiangmuran/vibepanel/internal/version"
+	"github.com/jiangmuran/vibepanel/internal/vnc"
 	"github.com/jiangmuran/vibepanel/internal/webui"
 	"github.com/jiangmuran/vibepanel/internal/ws"
 )
@@ -48,6 +49,17 @@ type Server struct {
 	// Updater fetches releases. A value rather than a pointer so the zero
 	// Server has a working one; see TreeSampler below for the same reasoning.
 	Updater selfupdate.Client
+
+	// VNC decides which addresses the panel may open a TCP connection to on a
+	// browser's behalf.
+	//
+	// A value, and the zero value is loopback-only. Same reasoning as
+	// TreeSampler, with a sharper edge: a pointer would make "nobody set it"
+	// a nil dereference or, worse, a nil check that falls through to no
+	// policy at all. The zero value here is the strictest setting, so a Server
+	// assembled by hand -- in a test, or by a caller that has not been updated
+	// -- fails closed rather than open.
+	VNC vnc.Policy
 
 	// fullscreen holds the session ids whose pane has a full-screen program
 	// drawing in it, as the poller last saw them.
@@ -313,6 +325,11 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/sessions/restore", s.handleRestoreSessions)
 
 			s.registerPanelRoutes(r)
+			// Inside the group, and it has to stay there. This is the one
+			// place the panel opens an outbound TCP connection on a browser's
+			// say-so; a route that reached it without a session would be a
+			// port scanner anybody could point at this machine's networks.
+			s.registerVncRoutes(r)
 			s.registerUpdateRoutes(r)
 			s.registerWebhookRoutes(r)
 			s.registerTokenRoutes(r)

@@ -67,6 +67,12 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		// this struct is the definition of what a read-only link discloses,
 		// and a field the server sends that wire.ts does not declare is a
 		// field nobody reviewing the TypeScript would know had been added.
+		// A VNC display. The field that matters here is the one that is NOT
+		// on the wire: store.VncTarget carries the password as `json:"-"` and
+		// a separate hasPassword beside it, so a declared `password` in
+		// wire.ts would be a field the frontend believes it can read and a
+		// hole somebody would then try to fill.
+		{"VncTarget", store.VncTarget{}},
 		{"ShareLink", store.ShareLink{}},
 		{"ShareDashboard", shareDashboard{}},
 		{"ShareMachine", shareMachine{}},
@@ -290,6 +296,9 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"token.created":           true,
 		"token.revoked":           true,
 		"update.installed":        true,
+		"vnc.added":               true,
+		"vnc.changed":             true,
+		"vnc.removed":             true,
 		"webhooks.changed":        true,
 		"setup.rejected":          true,
 	}

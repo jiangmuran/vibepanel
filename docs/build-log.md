@@ -13295,3 +13295,281 @@ away from them. The assertion is now a number rather than a flag.
   `### ` lines, and a conflict marker is not a `### ` line. That gap is now
   `TestNoConflictMarkersAreCommitted`, which walks the tree rather than one file
   — the marker had already survived two merges by the time anybody looked.
+
+---
+
+## The VNC tab, and the plugin system that turned out to be four things
+
+Two items from the third batch: U3, 内置VNC (the HTML-preview half is somebody
+else's), and U7, the plugin system.
+
+### The panel is a proxy, not a VNC client
+
+The browser speaks RFB over a WebSocket; a VNC server speaks RFB over TCP. The
+bytes cross in exactly one place — `handleVncSocket` — and after `ClientInit`
+they cross unmodified. The panel decodes no pixels, which means Tight, ZRLE and
+JPEG are negotiated between the two ends and a new encoding shipped in a VNC
+server works here the day it ships.
+
+**What the panel holds onto is one row per display.** A name, a host, a port, a
+view-only flag and a password. That row is the only place the address of an
+outbound connection ever comes from; the browser supplies an opaque id and
+nothing else. There is deliberately no endpoint that takes a host, a port or a
+URL and connects to it — a "test this connection before saving it" button is
+what that would be called while it was written, and it is the same shape as the
+webhook test button, which is safe only because it makes an HTTP request rather
+than opening a socket to an arbitrary port.
+
+### The handshake is terminated on both sides, and that is why a password can be stored
+
+The obvious implementation is a byte pipe from the first byte. It is also the
+one where the browser performs the authentication, which means the browser is
+sent the password, which means eight bytes of DES are in a JavaScript heap and
+in whatever the developer tools recorded.
+
+So `internal/vnc.Handshake` speaks the client side upstream — version
+negotiation, security type, the DES challenge — and the server side to the
+browser: RFB 3.8, security type `None`, always, whatever the display speaks.
+The substitution is free because from `ClientInit` onwards 3.3, 3.7 and 3.8 are
+the same protocol, which is also why everything after that function is a copy
+and not a parser.
+
+Two things in there are exactly the kind of line that looks wrong and is not:
+
+- **The DES key is the password with the bits of every byte reversed.** That is
+  VNC's quirk, not DES's, and removing it makes every password-protected display
+  refuse the panel with an error about the password being wrong.
+- **ECB over both halves**, deliberately. There is no version of that function
+  that is stronger and still works, because the far end will verify against
+  exactly this. It is also why the settings page says, in one sentence, that a
+  VNC password is stored in the clear and was never a way to keep a secret. The
+  database is not the weakest thing about eight bytes of single-DES.
+
+The third is the one that had no failing test until the mutation run: **RFB 3.3
+with security type `None` sends no `SecurityResult`.** Reading one anyway eats
+the first four bytes of `ServerInit` and every frame afterwards is nonsense,
+with no error anywhere. The tests now assert a recognisable marker arrives
+unshifted rather than that the handshake "succeeded".
+
+### Reachability: two layers, both server-side, and one of them is inverted
+
+A route that opens a TCP connection to an address a browser chose is SSRF with a
+nice interface. The row answers *which display*; `internal/vnc.Policy` answers
+*may this process reach that address at all*, and it comes from `--vnc-allow` on
+the process, so nothing reachable from a browser can widen it.
+
+**An empty `--vnc-allow` means loopback only.** That is the opposite of
+`--allow-from`, which sits next to it in the flag table and where empty means
+everything. The inversion is the point: `--allow-from` narrows who may reach a
+panel that is useful without it, while this decides where the process will send
+bytes on somebody else's behalf, and "nobody configured it" must not be the
+setting under which a signed-in browser can walk the network the panel is on.
+The list *replaces* the default rather than adding to it, so an operator can say
+"not even itself" and be believed — and a refusal names the flag, because
+"refused" alone leaves somebody guessing at a flag they have never heard of.
+
+The rule that took the most thought: **every address a name resolves to has to
+pass, not the first one that does.** A name with one record inside the policy
+and one outside would otherwise be a coin flip per connection, and a name the
+panel does not control can grow a second record at any time. `Dial` then
+connects to the address literal `Resolve` returned, never to the hostname —
+there is no second lookup between the check and the connect for a rebind to land
+in, and the test counts lookups because that is the only way to see it from
+outside.
+
+Checked twice: when the row is written, and again on every connect. The first is
+so a target that could never work is a `400` at the moment somebody types it
+rather than a socket that fails forever — the same reasoning as refusing a share
+link scoped to a project that does not exist. A name that merely does not
+resolve right now is *not* refused, because a laptop that is asleep is not a
+policy decision.
+
+**What none of it stops, plainly.** An operator who writes `--vnc-allow
+0.0.0.0/0` has asked for an authenticated SSRF primitive and has one. Even at
+the default, a signed-in user can point a display at any port on localhost and
+speak arbitrary bytes to it after the handshake, because RFB after `ClientInit`
+is a byte pipe and this is a proxy. Neither is an escalation *for that user*,
+who already has a writable terminal on this machine as the account that runs the
+panel. The bound exists so that a future bug elsewhere — a route registered above
+`RequireAuth`, a share link that grew a second route — is a leak rather than a
+leak and a port scanner.
+
+### View-only is enforced at the proxy
+
+noVNC has a `viewOnly` property. Setting it is a promise made by the thing being
+restrained, and a line of JavaScript anyone with devtools open can unset. The
+stored row says view-only, the server reads the row, and the keystroke never
+reaches the display.
+
+The cost is that the browser-to-server direction has to be framed, so
+`clientMessageSpan` knows the length of every client message. "Input" is wider
+than key and pointer events on purpose: a clipboard paste types into the remote
+machine as surely as a keystroke, a resize rearranges somebody else's screen,
+and xvp is a power button. A fence is *forwarded*, because swallowing a
+synchronisation reply leaves a server waiting for an answer that never comes —
+which looks exactly like the frozen display this feature has a separate
+indicator for. A message the proxy cannot measure ends the connection rather
+than being skipped: once the length is unknown the parser has lost its place.
+
+### noVNC, and the licence
+
+MPL-2.0, used unmodified, so the obligation is to keep its notices with it and
+to say where the source is; the licence is per-file and does not reach the MIT
+code around it. README says so in both languages.
+
+Writing one instead was considered properly rather than dismissed. The easy 20%
+of an RFB client is a canvas and the `Raw` encoding — and a 1920×1080 desktop is
+8 MB per frame in `Raw`, which over the phone connection this panel is designed
+to be read on is not a feature. The parts that decide whether this is usable are
+Tight, ZRLE and JPEG, and the keyboard: keysyms, dead keys, IMEs and modifier
+tracking, which fail quietly and per-layout when they are wrong. Both are the
+parts a from-scratch client gets wrong on a machine that happens to work.
+
+It is a dynamic `import()`, so it is a 187 kB chunk of its own (56 kB gzipped)
+that only the person who opens the tab pays for.
+
+### Frozen and quiet look identical, so the client makes a keepalive
+
+RFB has none. A desktop where nothing is happening sends nothing, and a desktop
+whose server has wedged with the TCP connection still open also sends nothing —
+for minutes, and the second is the one somebody needs to know about.
+
+After five quiet seconds the browser sends a **non-incremental**
+`FramebufferUpdateRequest` for one pixel, which a server *must* answer. Five
+more seconds of silence is *not responding*, with its own shape (pause bars in a
+ring) and its own word. Non-incremental is the load-bearing byte: an incremental
+request may legitimately be answered with nothing at all, which is the silence
+this is trying to break. One pixel, because a full-screen non-incremental
+request would repaint the whole desktop every five quiet seconds.
+
+It works by adding a second `message` listener to the very WebSocket noVNC is
+given — noVNC assigns `onmessage`, so `addEventListener` sits alongside it and
+both run. The first design wrapped the socket in a duck-typed object, which
+would have put a fake in the path of every byte.
+
+A close carries the reason as text and the code as the distinction that matters:
+`1008` is an address the policy refuses and is terminal — it is not going to
+start working, and saying "reconnecting" about it forever is a lie somebody acts
+on — while `1014` is a machine to switch on, and is retried with backoff.
+
+### The mutation run
+
+Fifty-six mutations, each applied to the working tree, run against its own test,
+and restored. Fifty-two went red immediately. Four did not.
+
+**Two of the four were tests that were passing for the wrong reason.**
+
+`readReason` clamping a server-chosen `u32` length: removing the clamp changed
+nothing, because a server claiming four gigabytes and then hanging up produces a
+short string either way — `io.ReadFull` fails *after* the four gigabytes have
+been reserved. The assertion was on the string. It is now on the size of the
+buffer the reader is asked to fill, through a `Read` that records it.
+
+The greeting parser being strict about shape: the end-to-end test pointed a
+target at an HTTP server, and `HTTP/1.1 200` fails the digit parse as well, so a
+parser that only counts twelve bytes still refused it and still said the right
+thing. What a lenient parser lets through is `RFB 003.008X` or `RFB 004.008\n` —
+twelve bytes that parse — and then the proxy negotiates a version with something
+that is not speaking RFB. There is a table now.
+
+**One was a guard that existed only for its message.** The empty-host check in
+the handler is redundant: `Resolve("")` is already `ErrRefused`. Removing it
+still produced a 400, so nothing failed — but the person who left the field
+blank was told their address is outside a network policy they have never heard
+of. The guard stays and the test asserts the wording, because that is what it is
+for.
+
+**One was dead code that read as the thing doing the work.** Normalising
+`::ffff:127.0.0.1` to its v4 form before the CIDR check: `net.IPNet.Contains`
+and `net.IP.IsLoopback` both call `To4()` themselves, so it changed nothing under
+any test. It is gone, and the comment in its place says what actually keeps the
+mapped spelling from being a way around the list — using those two functions
+rather than comparing bytes by hand — with a mutation that hand-rolls the
+comparison to prove the test still stands over something.
+
+| mutation | test |
+|---|---|
+| an empty allowlist means everything | an unconfigured panel is a port scanner |
+| loopback is an invisible exception on top of the list | a flag that cannot say "not even itself" |
+| the CIDR match is hand-rolled instead of `Contains` | `::ffff:10.0.0.1` past a loopback-only list |
+| one resolved address passing is enough | two A records, one outside |
+| an IP literal is not checked | a stored address the policy refuses is dialled |
+| a name resolving to nothing is not an error | an empty list dialled zero times, reported as success |
+| port 0 is a valid port | the kernel picks, the user left it blank |
+| `Dial` does not check the port | the same, past the handler |
+| `Dial` hands the hostname back to the resolver | the rebinding window, counted |
+| a refusal does not name the policy | guessing at a flag you have not heard of |
+| the VNC key bit reversal is dropped | every password display refuses the panel |
+| the second half is chained instead of ECB | a response no VNC server verifies |
+| `SecurityResult` is read from every version | four bytes of `ServerInit` eaten, silently |
+| `SecurityResult` is never read | the stream one message behind, silently |
+| the greeting is parsed leniently | negotiating RFB with something that is not RFB |
+| the browser may answer with any version | a desynchronised stream and a blank rectangle |
+| the server's security types are forwarded to the browser | the challenge crosses to the browser |
+| a stored password loses to `None` | connecting unauthenticated to a display you protected |
+| an unspeakable security type is not named | "it does not work" about VeNCrypt |
+| a missing password is not a distinct error | a network error for a configuration problem |
+| the refusal reason is unbounded | a length a dialled host chose, allocated |
+| control bytes reach the log and the close frame | an escape sequence from a socket, rendered |
+| view-only is ignored by the proxy | the flag is stored and does nothing |
+| a keystroke / pointer / paste / resize / power button is not input | five ways into a display you are watching |
+| a fence is dropped as input | a server waiting forever for a reply |
+| `SetEncodings` is a fixed length | the client stream out of step from message two |
+| an unmeasurable message is skipped | a proxy forwarding bytes it cannot classify |
+| an unknown QEMU sub-message is accepted | the same, by another door |
+| the clipboard length is read unsigned | the extended clipboard as a 4 GB allocation |
+| the message size bound goes | a paste the browser sizes |
+| a target is not checked when it is saved | a display that fails forever, indistinguishable from one that is off |
+| an empty host is accepted | a network-policy error for a blank field |
+| the port is not checked by the handler | as above, at the API |
+| the socket dials without asking the policy | a row written when the policy was wider |
+| the password is on the wire | the settings page holds it |
+| an omitted password clears the stored one | a rename that silently breaks the display |
+| the display list is unbounded | a multiplier on what a panel can be made to dial |
+| adding a display is not recorded | a door onto another machine, opened unrecorded |
+| a refused address closes like an unreachable one | "reconnecting" forever about a configuration |
+| the zero `Server` has no policy at all | a hand-built server fails open |
+| the probe is incremental | a probe a server may answer with nothing |
+| a probe goes out on every tick | a request every second, forever |
+| quiet is called stalled without waiting | every idle desktop reported frozen |
+| an inbound byte does not clear the probe | live traffic reported as stalled |
+| a refused address is a dropped connection | retried forever |
+| a refused address is retried forever | the same, from the other side |
+| the retry backoff is flat | a machine that is off, hammered |
+| a wire field the server stopped sending stays declared | `undefined` at runtime, type-checked |
+| a route is added and the API doc is not | an endpoint nobody can find |
+| the socket route moves above `RequireAuth` | the outbound primitive, unauthenticated |
+| `--vnc-allow` accepts something that is not a CIDR | a narrower policy than was written |
+| `--vnc-allow` cannot be cleared from the command line | a policy that cannot be narrowed by hand |
+
+### Left undone
+
+- **No browser check covers the VNC tab.** The Go and vitest suites pin the
+  proxy, the policy, the handshake, the filter and the liveness arithmetic;
+  nothing drives a real display in a real browser, and this project's own notes
+  say that is where most of its defects have been. `render-check` would want
+  `vnc-panel`, `vnc-pick`, `vnc-status` (carrying `data-state`), `vnc-screen`,
+  `vnc-retry`, `vnc-viewonly`, and in settings `vnc-displays`, `vnc-row`,
+  `vnc-name`, `vnc-host`, `vnc-port`, `vnc-password`, `vnc-save`, `vnc-remove`,
+  `vnc-add`, `vnc-draft`, `vnc-draft-save`. Driving it needs a VNC server on the
+  check machine; `x11vnc -localhost` against `Xvfb` is the smallest one that is
+  real, and a fake that speaks the handshake and sends one `Raw` rectangle is
+  the smallest one that runs anywhere.
+- **`Handshake` clearing its deadline afterwards is not pinned.** Leaving one on
+  would sever a display nobody is touching after fifteen seconds. The test would
+  have to wait out a real deadline, which is the reason it is not there, and
+  that is the same reason `TrimEvery` and `ArchiveEvery` exist as overrides.
+- **No reconnect on a display that was merely paused.** Closing the tab tears
+  the socket down and reopening it reconnects from scratch, which for a `Raw`
+  display is a full framebuffer. noVNC's own continuous-updates path would help
+  and is not wired.
+- **`vncReadLimit` is 4 MiB and `maxClientMessage` is 4 MiB, and they are not
+  the same constant.** They bound the same thing at two layers and drift is
+  silent; a paste between the two sizes would be closed by the WebSocket layer
+  with a different error from the proxy's.
+- **The tab shows one display at a time.** Two side by side is what somebody
+  with a browser under test and an Electron app will want, and the pane system
+  the side panel is growing is where that belongs rather than in this component.
+- **`--vnc-allow` is not in `vibepanel doctor`.** Every other thing that decides
+  what the panel can reach is, and a policy that silently refuses is exactly the
+  kind of thing doctor exists to say out loud.

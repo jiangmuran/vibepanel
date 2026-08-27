@@ -1,5 +1,14 @@
 import { useCallback, useRef, useState } from 'react'
-import { Activity, ChevronRight, Coins, Columns2, FolderTree, ListChecks, NotebookPen } from 'lucide-react'
+import {
+  Activity,
+  ChevronRight,
+  Coins,
+  Columns2,
+  FolderTree,
+  ListChecks,
+  MonitorPlay,
+  NotebookPen,
+} from 'lucide-react'
 
 import type { Project, Session } from '../protocol/wire'
 import type { PanelSocket } from '../protocol/socket'
@@ -10,9 +19,10 @@ import { Todos } from './panels/Todos'
 import { ErrorBoundary } from './ErrorBoundary'
 import { SystemStrip } from './panels/SystemStrip'
 import { TokenUsage } from './panels/TokenUsage'
+import { VncView } from './panels/VncView'
 import { t, useLang, type Key } from '../i18n'
 
-export type PanelTab = 'files' | 'monitor' | 'notes' | 'todos' | 'tokens'
+export type PanelTab = 'files' | 'monitor' | 'notes' | 'todos' | 'tokens' | 'vnc'
 
 // The label is a key, not a string: resolving it at render is what makes a
 // language switch repaint the tabs instead of needing a reload.
@@ -22,6 +32,7 @@ const TABS: { id: PanelTab; icon: typeof Activity; key: Key }[] = [
   { id: 'notes', icon: NotebookPen, key: 'panel.notes' },
   { id: 'todos', icon: ListChecks, key: 'panel.todos' },
   { id: 'tokens', icon: Coins, key: 'panel.tokens' },
+  { id: 'vnc', icon: MonitorPlay, key: 'panel.vnc' },
 ]
 
 interface Props {
@@ -119,6 +130,12 @@ export function RightPanel(props: Props) {
     if (tab === 'tokens') {
       return <TokenUsage projectId={project?.id ?? null} onOpen={props.onOpenTokens} />
     }
+    // Also before the no-project guard, and for the same reason: a VNC display
+    // is a fact about a machine, not about a repository. The browser under
+    // test in one project and the Electron app in another draw on the same X
+    // server, and hiding the tab until somebody adds a project would hide the
+    // one thing here that has nothing to do with projects.
+    if (tab === 'vnc') return <VncView />
     if (!project) {
       return <p className="px-3 py-4 text-vp-base text-ink-2">{t('panel.noProject')}</p>
     }

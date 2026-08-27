@@ -63,6 +63,7 @@ func Load(args []string, out io.Writer) (Config, error) {
 	fs.StringVar(&c.StaticDir, "static-dir", c.StaticDir, "serve the frontend from this directory instead of the embedded build")
 	proxies := fs.String("trusted-proxies", "", "comma-separated CIDRs whose X-Forwarded-For is trusted")
 	allowFrom := fs.String("allow-from", "", "comma-separated CIDRs allowed to reach the panel; empty allows all")
+	vncAllow := fs.String("vnc-allow", "", "comma-separated CIDRs the VNC viewer may connect out to; empty means loopback only")
 
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
@@ -87,6 +88,12 @@ func Load(args []string, out io.Writer) (Config, error) {
 	}
 	if typed["allow-from"] {
 		c.AllowFrom = splitAndTrim(*allowFrom)
+	}
+	// Same treatment, and it matters more here: clearing this one narrows the
+	// policy rather than widening it, so `--vnc-allow=""` has to be able to
+	// take a unit's Environment= line back to loopback-only.
+	if typed["vnc-allow"] {
+		c.VNCAllow = splitAndTrim(*vncAllow)
 	}
 	if err := c.Validate(); err != nil {
 		return Config{}, err

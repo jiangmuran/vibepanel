@@ -15,6 +15,7 @@
     "check:first-run": "node scripts/first-run-check.mjs"
   },
   "dependencies": {
+    "@novnc/novnc": "^1.7.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-unicode11": "^0.9.0",
     "@xterm/addon-web-links": "^0.12.0",

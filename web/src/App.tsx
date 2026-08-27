@@ -194,7 +194,8 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
       raw === 'monitor' ||
       raw === 'notes' ||
       raw === 'todos' ||
-      raw === 'tokens'
+      raw === 'tokens' ||
+      raw === 'vnc'
       ? raw
       : 'files'
   })

@@ -410,6 +410,38 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+	// v13: the VNC displays the panel is allowed to reach.
+	//
+	// A table rather than a row in `settings`, which is where the webhook list
+	// lives. The difference is that a webhook is only ever read as a whole
+	// list by the code that fires all of them, while a display is fetched by
+	// id on every socket open -- and that id is the only thing the browser
+	// ever supplies about where a TCP connection goes. A row keyed by id is
+	// what makes "the address is not in the request" a property of the schema
+	// instead of a habit of the handler.
+	//
+	// `password` is a column in the clear. There is no key on this machine
+	// that is not in the same 0600 directory as the database, and the protocol
+	// verifies it with single-DES over eight bytes, so encrypting the column
+	// would protect nothing and imply otherwise. See store.VncTarget.
+	func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`CREATE TABLE IF NOT EXISTS vnc_targets (
+			     id         TEXT PRIMARY KEY,
+			     name       TEXT NOT NULL DEFAULT '',
+			     host       TEXT NOT NULL,
+			     port       INTEGER NOT NULL,
+			     view_only  INTEGER NOT NULL DEFAULT 0,
+			     password   TEXT NOT NULL DEFAULT '',
+			     created_at INTEGER NOT NULL
+			 )`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	},
 }
 
 // schemaVersion is the version this build writes.

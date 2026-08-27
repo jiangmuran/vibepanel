@@ -225,7 +225,7 @@ background tab or in the installed app. A closed browser gets nothing.
 
 ### The side panel
 
-Five tabs per project, over a strip of machine CPU, memory and disk that stays
+Six tabs per project, over a strip of machine CPU, memory and disk that stays
 visible on all of them.
 
 - **Files** — browse and download. Drag onto the tree or onto the terminal to
@@ -239,6 +239,15 @@ visible on all of them.
   one core.
 - **Notes** and **Todos** — markdown and a list per project, saved as you stop
   typing.
+- **Screen** — a VNC display beside the terminal, for the agent that is driving
+  a browser under test or a desktop app. The panel is a proxy, not a client: it
+  authenticates to the display itself, so the password stays on the server and
+  the browser is handed a plain RFB stream. Displays are configured in
+  **Settings → VNC displays**, and where the panel may connect out to is
+  `--vnc-allow`, which defaults to loopback only. A display can be marked
+  *view only*, and that is enforced at the proxy rather than in the client.
+  When one stops answering it says *not responding*, which is a different
+  shape and a different word from a desktop where nothing is happening.
 - **Tokens** — what the agents recorded spending, today and over thirty days.
   The numbers come from the transcripts Claude Code and Codex write for
   themselves. Nothing is estimated and nothing is priced; where there is no
@@ -429,6 +438,7 @@ instead of being ignored.
 | `--acme-email` | — | contact address for the CA |
 | `--acme-directory` | Let's Encrypt | point at a staging endpoint while testing |
 | `--allow-from` | — | CIDRs allowed to reach the panel; empty means all |
+| `--vnc-allow` | — | CIDRs the VNC viewer may connect out to; empty means **loopback only** |
 | `--trusted-proxies` | — | CIDRs whose `X-Forwarded-For` may be believed |
 | `--tmux-socket` | `vibepanel` | keep it dedicated to stay isolated |
 | `--static-dir` | — | serve the frontend from disk instead of the embedded build |
@@ -497,4 +507,9 @@ real binary and photographing it.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE).
+
+The frontend bundles [noVNC](https://github.com/novnc/noVNC) for the Screen tab,
+unmodified, under the [MPL-2.0](https://github.com/novnc/noVNC/blob/master/LICENSE.txt).
+That licence is per-file, so it covers noVNC's own files and nothing around
+them; its source is at the link above.

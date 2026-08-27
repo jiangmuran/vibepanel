@@ -412,6 +412,45 @@ stored. `test` sends one immediately using the webhook **in the request body**
 rather than a stored one — the moment to test is before saving — and answers
 `{"ok", "said", "error"}` where `said` is what the destination replied.
 
+## VNC displays
+
+### `GET /api/vnc/targets`
+### `POST /api/vnc/targets`
+### `PATCH /api/vnc/targets/{targetID}`
+### `DELETE /api/vnc/targets/{targetID}`
+### `GET /api/vnc/targets/{targetID}/socket`
+
+A display is `{"id","name","host","port","viewOnly","hasPassword","createdAt"}`.
+`POST` and `PATCH` take `{"name","host","port","viewOnly","password"}`; the
+password is write-only and never comes back, so `hasPassword` is how you tell
+whether there is one. On `PATCH`, omitting `password` leaves it alone and
+sending `""` clears it — a plain string could not say the first, and every
+rename would have wiped it.
+
+**The row is the only place an address comes from.** There is no endpoint that
+takes a host and connects to it: the socket route takes an id, reads the row and
+dials what the row says. On top of that a process-level policy — `--vnc-allow`,
+defaulting to loopback only — decides which addresses this panel may reach at
+all. It is checked when a row is written (so a target that could never work is a
+`400` at the moment you type it, not a socket that fails forever) and again on
+every connect, against **every** address the host resolves to.
+
+`socket` is a WebSocket carrying RFB as binary frames. The panel performs the
+RFB handshake on both sides: it authenticates to the display with the stored
+password and then presents RFB 3.8 with security type `None` to the browser, so
+the password never leaves the server and the browser never sees a challenge.
+Everything after `ClientInit` is copied unmodified — the encodings are
+negotiated between the two ends and the panel decodes nothing.
+
+A `viewOnly` display is enforced here rather than in the client: key, pointer,
+clipboard, resize and power messages are dropped at the proxy. A client message
+whose length the proxy cannot work out closes the connection rather than being
+skipped past.
+
+Close codes carry the reason as text: `1008` for an address the policy refuses,
+`1014` for a display that could not be reached or would not negotiate, `1000`
+for an ordinary end.
+
 ## Updating
 
 ### `GET /api/update`
