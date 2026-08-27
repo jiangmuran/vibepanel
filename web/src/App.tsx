@@ -33,6 +33,7 @@ import { EXIT_VANISHED } from './protocol/wire'
 import { shellQuote } from './shell'
 import { safeText } from './components/text'
 import { DirectoryPicker } from './components/DirectoryPicker'
+import { filesFrom, uploadFiles } from './components/upload'
 import { t, useLang } from './i18n'
 
 /**
@@ -440,9 +441,11 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
       const root = currentProject.path.replace(/\/+$/, '')
       const cwd = current.cwd || root
       const rel = cwd === root ? '' : cwd.startsWith(root + '/') ? cwd.slice(root.length + 1) : ''
-      setDropNote(`Uploading ${files.length} file${files.length === 1 ? '' : 's'}…`)
-      try {
-        const { paths } = await api.upload(currentProject.id, rel, files)
+      // The upload, its three lines of narration and the timer that clears
+      // them are the file panel's too, and live in components/upload.ts. What
+      // is different here is only what happens to the paths afterwards.
+      const paths = await uploadFiles(currentProject.id, rel, files, setDropNote)
+      if (paths.length > 0) {
         // Quoted only when it needs to be: a shell-quoted path that did not
         // need quoting is noise at the prompt, and an unquoted one with a
         // space in it is a bug the user finds after pressing enter.
@@ -460,11 +463,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         // was the one place a filename's bytes reached a shell unexamined.
         const typed = paths.map(shellQuote).join(' ')
         sendToCurrent(typed + ' ')
-        setDropNote(`${paths.length} file${paths.length === 1 ? '' : 's'} uploaded`)
-      } catch (err) {
-        setDropNote(err instanceof Error ? err.message : 'upload failed')
       }
-      window.setTimeout(() => setDropNote(''), 4000)
     },
     [current, currentProject, sendToCurrent],
   )
@@ -826,7 +825,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             if (!current) return
             e.preventDefault()
             setDropping(false)
-            void uploadInto([...e.dataTransfer.files])
+            void uploadInto(filesFrom(e.dataTransfer))
           }}
         >
           {dropping && (
@@ -835,7 +834,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-vp border-2 border-dashed text-vp-md"
               style={{ borderColor: 'var(--vp-accent)', color: 'var(--vp-accent)' }}
             >
-              Drop to upload into {current?.cwd || currentProject?.path}
+              {t('upload.dropHere', { dir: safeText(current?.cwd || currentProject?.path || '') })}
             </div>
           )}
           {blockedClip && (

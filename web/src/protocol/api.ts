@@ -53,6 +53,61 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 /**
+ * Turns a failed response into the error to throw.
+ *
+ * The calls below that cannot go through `request` -- an upload is multipart, a
+ * note save needs `keepalive`, a preview needs the response headers -- each
+ * grew their own copy of this, and the copies had already started to differ:
+ * `request` reads `setupRequired` and the copies did not, so the same expired
+ * session sent you to the sign-in screen or left a permission error inside a
+ * panel you could no longer use, depending on which button you had pressed.
+ */
+async function failure(res: Response): Promise<Error> {
+  // The server always sends {"error": "..."} on failure, but a proxy or a
+  // crash can produce something else; fall back to the status rather than
+  // throwing a parse error that hides what actually happened.
+  let message = `${res.status} ${res.statusText}`
+  let setupRequired = false
+  try {
+    const body = (await res.json()) as { error?: string; setupRequired?: boolean }
+    if (body.error) message = body.error
+    setupRequired = body.setupRequired === true
+  } catch {
+    /* non-JSON error body */
+  }
+  if (res.status === 401) return new UnauthorizedError(message, setupRequired)
+  return new Error(message)
+}
+
+/**
+ * A preview of one file, or the reason there is not one.
+ *
+ * `tooBig` and `none` are answers rather than failures -- there is a file, the
+ * panel can still hand it to you, and it is saying it will not pretend to show
+ * it -- so they come back as values while a 403 or a 500 throws.
+ */
+export type FilePreview =
+  | { kind: 'text'; text: string; truncated: boolean }
+  | { kind: 'image'; blob: Blob }
+  | { kind: 'pdf'; blob: Blob }
+  | { kind: 'tooBig' }
+  | { kind: 'none' }
+
+/**
+ * The type a Blob is built with, from the kind the server named.
+ *
+ * A Blob's type is not a label, it is the instruction the browser follows when
+ * the bytes reach an <img> or an <object>. So it is derived from the kind
+ * rather than echoed from the response: this is the one place where something
+ * out of a project directory could be handed to the browser as something to
+ * run, and the answer is that it never gets to name its own type.
+ */
+export function blobTypeFor(kind: 'image' | 'pdf', header: string | null): string {
+  if (kind === 'pdf') return 'application/pdf'
+  return header !== null && header.startsWith('image/') ? header : 'application/octet-stream'
+}
+
+/**
  * Thrown when a write would have landed on top of somebody else's.
  *
  * Carries what the server currently holds so the caller can show both without
@@ -242,18 +297,55 @@ export const api = {
       `/api/projects/${projectId}/upload?path=${encodeURIComponent(path)}`,
       { method: 'POST', body: form },
     )
-    if (!res.ok) {
-      let message = `${res.status} ${res.statusText}`
-      try {
-        const body = (await res.json()) as { error?: string }
-        if (body.error) message = body.error
-      } catch {
-        /* non-JSON error body */
-      }
-      if (res.status === 401) throw new UnauthorizedError(message, false)
-      throw new Error(message)
-    }
+    if (!res.ok) throw await failure(res)
     return (await res.json()) as { paths: string[] }
+  },
+
+  /**
+   * One request, not two.
+   *
+   * The server decides what a file is from its leading bytes, so it already
+   * knows by the time it has anything to send -- it says so in a header and
+   * sends what it read. Asking "what is this" and then "give me it" would read
+   * the head of the file twice and let the two answers disagree about a file an
+   * agent is writing into.
+   *
+   * The bytes never become a URL the browser navigates to. They arrive through
+   * fetch and become a Blob whose type this side chose, so nothing out of a
+   * project directory is ever handed to the browser as something to render on
+   * the panel's own origin.
+   */
+  preview: async (projectId: string, path: string): Promise<FilePreview> => {
+    const res = await fetch(`/api/projects/${projectId}/preview?path=${encodeURIComponent(path)}`)
+    // Drained rather than ignored, for the reason the 204 branch above is:
+    // a body nobody reads is reported by Chromium as an aborted request, which
+    // turns every honest refusal into a network error in the devtools log.
+    if (res.status === 413) {
+      await res.arrayBuffer()
+      return { kind: 'tooBig' }
+    }
+    if (res.status === 415) {
+      await res.arrayBuffer()
+      return { kind: 'none' }
+    }
+    if (!res.ok) throw await failure(res)
+    const kind = res.headers.get('X-Preview-Kind')
+    if (kind === 'text') {
+      return {
+        kind: 'text',
+        text: await res.text(),
+        truncated: res.headers.get('X-Preview-Truncated') === 'true',
+      }
+    }
+    // A kind this build does not know is the shape of an older tab against a
+    // newer server. "No preview, here is the download" is true in that case
+    // too, and is better than a blank frame.
+    if (kind !== 'image' && kind !== 'pdf') {
+      await res.arrayBuffer()
+      return { kind: 'none' }
+    }
+    const type = blobTypeFor(kind, res.headers.get('X-Preview-Type'))
+    return { kind, blob: new Blob([await res.arrayBuffer()], { type }) }
   },
 
   files: (projectId: string, path = '') =>
@@ -280,17 +372,7 @@ export const api = {
       const body = (await res.json()) as { error?: string; current: Note }
       throw new ConflictError(body.error ?? 'the note changed elsewhere', body.current)
     }
-    if (!res.ok) {
-      let message = `${res.status} ${res.statusText}`
-      try {
-        const body = (await res.json()) as { error?: string }
-        if (body.error) message = body.error
-      } catch {
-        /* non-JSON error body */
-      }
-      if (res.status === 401) throw new UnauthorizedError(message, false)
-      throw new Error(message)
-    }
+    if (!res.ok) throw await failure(res)
     return (await res.json()) as Note
   },
 
