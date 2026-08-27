@@ -155,7 +155,13 @@ try {
   } else {
     // A path that does not exist, typed into the manual field, which is the
     // way out of HOME and the only way to reach a bad path at all now.
-    const manual = page.locator('[data-testid="dir-manual"]')
+    // One box now, at the top, and what you type decides what it does: a
+    // leading / or ~ is a path to go to, anything else filters what is on
+    // screen. The field it replaced was at the bottom, under a list and a
+    // create-folder row -- a good answer to a question nobody could see was
+    // answered, which is why "能不能搜索，或者我手动打目录行不行" was asked about a
+    // picker that already did the second half.
+    const manual = page.locator('[data-testid="dir-search"]')
     await manual.fill(join(DATA, 'not-created-yet'))
     await manual.press('Enter')
     await sleep(1500)

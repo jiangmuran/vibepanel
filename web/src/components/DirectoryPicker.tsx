@@ -43,7 +43,7 @@ export function DirectoryPicker({
   const [busy, setBusy] = useState(true)
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
-  const [manual, setManual] = useState('')
+  const [query, setQuery] = useState('')
 
   // Which row the keyboard is on. -1 is the "up one level" row, which is only
   // there when there is a parent.
@@ -144,8 +144,21 @@ export function DirectoryPicker({
     }
   }
 
-  const entries = listing?.entries ?? []
-  const hasUp = listing !== null && listing.parent !== null
+  // One box, two jobs, decided by what you type.
+  //
+  // The request was "选择目录 比如说 就可以搜索啊 或者我手动打目录行不行" -- and the
+  // manual path field was already there, at the bottom, below a list and a
+  // create-folder row, which is a good answer to a question nobody could see
+  // was answered. So the box moved to the top where a search box belongs, and
+  // it filters what is on screen until what you have typed looks like a path:
+  // a leading `/` or `~` is not a filename anybody is filtering for, and it is
+  // exactly how a path starts.
+  const looksLikePath = query.startsWith('/') || query.startsWith('~')
+  const all = listing?.entries ?? []
+  const entries = looksLikePath || !query.trim()
+    ? all
+    : all.filter((e) => e.name.toLowerCase().includes(query.trim().toLowerCase()))
+  const hasUp = listing !== null && listing.parent !== null && !query.trim()
   const lowest = hasUp ? -1 : 0
 
   // Arrow keys move, Enter descends, Backspace or ArrowLeft goes up.
@@ -202,14 +215,62 @@ export function DirectoryPicker({
           {busy && <Loader2 size={13} className="shrink-0 animate-spin text-ink-2" />}
         </div>
 
-        {/* autoFocus so the keys work without a click first, and tabIndex so it
-            can hold focus at all. The outline is suppressed because the active
+        {/* The search box, which is also the way out of the root.
+            A project under /srv or /opt is ordinary, and a picker that cannot
+            reach one sends people back to typing paths blind -- so a leading
+            `/` or `~` switches this from filtering to navigating, and the
+            button below says which of the two Enter will do. */}
+        <div className="shrink-0 border-b border-hairline px-3 py-2">
+          <input
+            value={query}
+            onChange={(ev) => {
+              setQuery(ev.target.value)
+              setActive(0)
+            }}
+            onKeyDown={(ev) => {
+              if (ev.key === 'Escape') {
+                if (query) {
+                  // Clear the box first, close on the second press: an Escape
+                  // that throws away both the filter and the dialog makes the
+                  // filter feel like something you can be trapped by.
+                  ev.stopPropagation()
+                  setQuery('')
+                }
+                return
+              }
+              if (ev.key === 'Enter') {
+                ev.preventDefault()
+                if (looksLikePath && query.trim()) void pick(query.trim())
+                else if (entries[active]) void load(entries[active].path)
+                return
+              }
+              // Arrows reach the list without leaving the box, so typing and
+              // choosing are one gesture.
+              if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp'
+                || ev.key === 'Home' || ev.key === 'End') {
+                onListKeys(ev)
+              }
+            }}
+            placeholder={t('dir.search')}
+            data-testid="dir-search"
+            autoFocus
+            className="w-full rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 font-mono text-vp-base text-ink outline-none focus:border-accent"
+          />
+          {query.trim() !== '' && (
+            <p className="mt-1 text-vp-xs text-ink-2" data-testid="dir-search-hint">
+              {looksLikePath
+                ? t('dir.jumpHint')
+                : t('dir.filterHint', { n: entries.length })}
+            </p>
+          )}
+        </div>
+
+        {/* tabIndex so the list can hold focus at all. The outline is suppressed because the active
             row draws the focus itself -- a ring around the whole scroller says
             nothing about which directory Enter would open. */}
         <div
           ref={listRef}
           tabIndex={0}
-          autoFocus
           onKeyDown={onListKeys}
           data-testid="dir-list"
           className="min-h-0 flex-1 overflow-y-auto outline-none"
@@ -302,20 +363,6 @@ export function DirectoryPicker({
             </button>
           )}
 
-          {/* The way out of the root. Not a fallback nobody finds: a project
-              under /srv or /opt is ordinary, and a picker that cannot reach one
-              would send people back to typing paths blind. */}
-          <input
-            value={manual}
-            onChange={(ev) => setManual(ev.target.value)}
-            onKeyDown={(ev) => {
-              if (ev.key === 'Enter' && manual.trim()) void pick(manual.trim())
-            }}
-            placeholder={t('dir.manual')}
-            data-testid="dir-manual"
-            className="mb-3 w-full rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 font-mono text-vp-base text-ink outline-none focus:border-accent"
-          />
-
           <div className="flex gap-2">
             <button
               type="button"
@@ -327,8 +374,8 @@ export function DirectoryPicker({
             </button>
             <button
               type="button"
-              onClick={() => void pick(manual.trim() || absHere)}
-              disabled={!listing && !manual.trim()}
+              onClick={() => void pick(looksLikePath ? query.trim() : absHere)}
+              disabled={!listing && !query.trim()}
               data-testid="dir-confirm"
               className="flex-[2] rounded-vp px-3 py-2 text-vp-md disabled:opacity-40"
               style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}

@@ -520,6 +520,42 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     [current, currentProject, sendToCurrent],
   )
 
+  // Pasting a file anywhere in the panel uploads it into the current session.
+  //
+  // The terminal already listened for this, on its own host element, and that
+  // is only half the story: a paste event is delivered to whatever holds the
+  // keyboard, and the moment focus is on a sidebar row, a panel tab or nothing
+  // at all -- which is where it is after almost every click -- the event never
+  // reaches the terminal and the image goes nowhere. Reported as "无法原生粘贴
+  // 图片", and it was not the extraction that was broken.
+  //
+  // On `document`, in the capture phase, and only for pastes that carry files:
+  // a text paste is somebody's clipboard going into a text field and must be
+  // left entirely alone. The terminal's own listener stays, because when the
+  // terminal does have focus it should be the one to answer.
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items
+      if (!items) return
+      const files: File[] = []
+      for (const item of items) {
+        if (item.kind !== 'file') continue
+        const f = item.getAsFile()
+        if (f) files.push(f)
+      }
+      if (files.length === 0) return
+      // A field that can take a file itself gets to keep it: pasting into the
+      // file panel's own drop target should not be intercepted from here.
+      const target = e.target as HTMLElement | null
+      if (target?.closest('[data-vp-paste-own]')) return
+      e.preventDefault()
+      void uploadInto(files)
+    }
+    document.addEventListener('paste', onPaste, true)
+    return () => document.removeEventListener('paste', onPaste, true)
+  }, [uploadInto])
+
+
   const guard = async (fn: () => Promise<unknown>) => {
     try {
       await fn()

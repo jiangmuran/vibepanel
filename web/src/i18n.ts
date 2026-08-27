@@ -243,7 +243,9 @@ const DICT = {
   'dir.newFolder': { zh: '在这里新建目录', en: 'New folder here' },
   'dir.newName': { zh: '新目录的名字', en: 'Name' },
   'dir.create': { zh: '创建', en: 'Create' },
-  'dir.manual': { zh: '或直接输入路径，支持 ~', en: 'Or type a path — ~ works' },
+  'dir.search': { zh: '筛选，或输入以 / 或 ~ 开头的路径', en: 'Filter, or type a path starting with / or ~' },
+  'dir.jumpHint': { zh: '回车跳到这个路径', en: 'Enter goes to this path' },
+  'dir.filterHint': { zh: '{n} 个匹配 —— 回车进入选中的那个', en: '{n} match — Enter opens the highlighted one' },
   'dir.cancel': { zh: '取消', en: 'Cancel' },
   'dir.use': { zh: '使用这个目录', en: 'Use this directory' },
 

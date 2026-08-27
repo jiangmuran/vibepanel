@@ -19,7 +19,7 @@ test:                 ## Go tests with the race detector, plus frontend units
 .PHONY: lint
 lint:                 ## vet, gofmt and eslint
 	go vet ./...
-	@out="$$(gofmt -l . | grep -v '^web/' || true)"; \
+	@out="$$(gofmt -l . | grep -v '^web/' | grep -v '^\.claude/' || true)"; \
 	  if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
 	cd web && npx tsc -b && npx eslint .
 

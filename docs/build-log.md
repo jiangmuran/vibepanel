@@ -11849,3 +11849,29 @@ Ten, each restored afterwards. Every one made its test red:
   suite against a real tmux; the notice, the dialog and the chip are not driven
   by `render-check`. That is the gap, and it is the kind of gap this project's
   own notes say is where most of the defects have been.
+
+## One box, and a paste that was listening in the wrong place
+
+**"选择目录 比如说 就可以搜索啊 或者我手动打目录行不行"** — and the picker already
+did the second half. The field was at the bottom, under the list and the
+create-folder row, which is a good answer to a question nobody could see had
+been answered. It is one box at the top now, autofocused, and what you type
+decides what it does: a leading `/` or `~` is a path to go to, anything else
+filters what is on screen. Arrow keys reach the list without leaving the box,
+so typing and choosing are one gesture.
+
+Escape clears the filter before it closes the dialog. An Escape that throws
+away both makes a filter feel like something you can be trapped by.
+
+**"无法原生粘贴图片"**, and the extraction was never the problem. The terminal
+listened for `paste` on its own host element, and a paste event goes to
+whatever holds the keyboard — so with focus on a sidebar row, a panel tab, or
+nothing at all, which is where it is after almost every click, the event never
+reached the terminal and the image went nowhere. It is on `document` now, in
+the capture phase, and only for pastes that carry files: a text paste is
+somebody's clipboard going into a text field and is left entirely alone.
+
+**And `make check` started failing on a file this checkout does not contain.**
+`gofmt -l .` descends into `.claude/worktrees/`, where the agent worktrees live,
+so an unformatted file in one of them failed the gate here. Excluded alongside
+`web/`.
