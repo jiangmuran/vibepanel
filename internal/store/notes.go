@@ -120,6 +120,49 @@ type Todo struct {
 	DoneAt    *int64 `json:"doneAt"`
 }
 
+// TodoProgress is one project's checklist, counted rather than read.
+//
+// Counted is the whole point. A dashboard shows how much of a list is finished;
+// what the items *say* is the part that names a customer, a bug and a deadline,
+// and it never leaves the panel. See internal/httpapi/share.go: a session title
+// is a per-link choice, and a todo line is not offered at either setting.
+type TodoProgress struct {
+	ProjectID string `json:"projectId"`
+	Open      int    `json:"open"`
+	Done      int    `json:"done"`
+	// ClosedSince is how many were ticked off after a given instant, which is
+	// what makes "what got done today" a number rather than an impression.
+	ClosedSince int `json:"closedSince"`
+}
+
+// TodoProgressByProject counts every project's checklist in one pass.
+//
+// One query rather than a ListTodos per project: the dashboard asks this every
+// couple of seconds forever, and a query per project is a loop whose cost grows
+// with a number the user chooses.
+func (d *DB) TodoProgressByProject(ctx context.Context, since int64) (map[string]TodoProgress, error) {
+	rows, err := d.sql.QueryContext(ctx, `
+		SELECT project_id,
+		       SUM(CASE WHEN done = 0 THEN 1 ELSE 0 END),
+		       SUM(CASE WHEN done = 1 THEN 1 ELSE 0 END),
+		       SUM(CASE WHEN done = 1 AND done_at IS NOT NULL AND done_at >= ? THEN 1 ELSE 0 END)
+		FROM todos GROUP BY project_id`, since)
+	if err != nil {
+		return nil, fmt.Errorf("store: todo progress: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // read-only
+
+	out := map[string]TodoProgress{}
+	for rows.Next() {
+		var p TodoProgress
+		if err := rows.Scan(&p.ProjectID, &p.Open, &p.Done, &p.ClosedSince); err != nil {
+			return nil, fmt.Errorf("store: scan todo progress: %w", err)
+		}
+		out[p.ProjectID] = p
+	}
+	return out, rows.Err()
+}
+
 // ListTodos returns a project's items: outstanding first, then completed.
 //
 // Completed items stay visible rather than disappearing. Seeing what you just

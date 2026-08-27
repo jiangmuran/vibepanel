@@ -365,6 +365,51 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+
+	// v12: a share link carries the board it opens.
+	//
+	// One TEXT column holding JSON rather than a widgets table, and the reason
+	// is what a board is: a document that is written whole, read whole, and
+	// never queried across. Nothing asks "which links show a heatmap"; every
+	// read is "give me this link's board". A table would buy joins nobody
+	// performs and cost an ordering column, a cascade and a transaction on
+	// every edit.
+	//
+	// Defaulted to the empty string rather than to a JSON literal, so that
+	// every link written before this migration is "no board recorded" — which
+	// store.DecodeBoard turns into the default board, the arrangement the
+	// dashboard had before boards existed. Baking a literal in here would fix
+	// today's default into rows written years ago.
+	//
+	// Nothing in the column is trusted on the way out. It is validated field by
+	// field against the widget registry on every read, because the row is the
+	// one part of a board that a future build, a hand-edited database or a
+	// half-finished write can change without anyone looking.
+	//
+	// scope and scope_id arrive in the same step because they are the same
+	// idea: a link is about the whole panel, one project, or one session.
+	// scope_id holds the panel's real id and is the only real id a share row
+	// keeps -- it is the input to the per-link renaming rather than anything a
+	// client ever sees. Empty scope means the whole panel, which is what every
+	// link written before this migration was.
+	//
+	// Deliberately no foreign key. A project deleted out from under a scoped
+	// link must leave the link resolving to nothing -- an empty dashboard --
+	// rather than either cascading the row away or, far worse, leaving a scope
+	// that matches no project and falling back to showing everything. The
+	// handler decides that, and a test pins it.
+	func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`ALTER TABLE share_links ADD COLUMN board TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE share_links ADD COLUMN scope TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE share_links ADD COLUMN scope_id TEXT NOT NULL DEFAULT ''`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	},
 }
 
 // schemaVersion is the version this build writes.

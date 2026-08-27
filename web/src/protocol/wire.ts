@@ -631,6 +631,15 @@ export interface ShareLink {
   expiresAt: number
   createdAt: number
   lastUsedAt: number
+  /** '', 'project' or 'session'. The real id it points at is never sent. */
+  scope: string
+  /** What the scoped project or session is called, resolved on every listing
+   *  rather than stored: it can be renamed, and it can be deleted. */
+  scopeName: string
+  /** What this link opens. Decoded and re-validated by the server on every
+   *  read, so what arrives here is always a board this build's vocabulary
+   *  covers. */
+  board: ShareBoard
 }
 
 /**
@@ -664,6 +673,13 @@ export interface ShareCounts {
   done: number
   exited: number
   crashed: number
+  /** How many sessions reached "done" since the server's local midnight. What
+   *  came out today, as opposed to what is finished. */
+  doneToday: number
+  /** When the session that has waited longest entered that state, or 0.
+   *  Sent as a count rather than derived from the rows, because a board that
+   *  is one number carries no rows to derive it from. */
+  longestWaitAt: number
 }
 
 export interface ShareProject {
@@ -712,10 +728,191 @@ export interface ShareDashboard {
    *  sent: it is a message about this machine's storage, and a wall display can
    *  do nothing with it. */
   stale: boolean
+  /** What this link opens. The page draws this and nothing else — there is no
+   *  second copy of the layout here to drift from the stored one. */
+  board: ShareBoard
   machine: ShareMachine
   counts: ShareCounts
   projects: ShareProject[]
+  /** Empty unless a widget on the board shows rows. */
   sessions: ShareSession[]
+  /** Null unless a widget on the board shows spend. Null and a zeroed object
+   *  are different facts, and `readable` tells the second from "nothing has
+   *  been counted yet". */
+  spend: ShareSpend | null
+  /** Null unless a widget on the board shows checklist progress. */
+  todos: ShareTodos | null
+  /** '', 'project' or 'session': what this link is about. A scoped board
+   *  showing nothing means "nothing in the thing you were sent", which is a
+   *  different sentence from "nothing is running". */
+  scope: string
+  /** The scoped project's or session's name under 'names'; empty under
+   *  'counts', and empty when the scoped row no longer exists. */
+  scopeName: string
+}
+
+// ── boards ─────────────────────────────────────────────────────────────────
+
+/**
+ * One thing on a board. Mirrors store.Widget.
+ *
+ * `kind` is widened to string rather than a union of the kinds this build
+ * knows, and that is the whole client-side half of the safety story: a stored
+ * board may name a widget from a newer server, and the renderer's switch has to
+ * fall through to nothing rather than fail to compile or throw. Nothing here is
+ * a URL, a path or a template — every option is an enum or a bounded number,
+ * validated by the server on the way in and again on the way out.
+ */
+export interface ShareWidget {
+  kind: string
+  span: number
+  metric?: string
+  filter?: string
+  order?: string
+  /** What a session list is broken into: project, state, or nothing. */
+  group?: string
+  /** The dimension a chart is cut along — day/month for a series, agent,
+   *  project or model for a breakdown. A setting rather than four widget
+   *  kinds, so "split it by X" is one control. */
+  by?: string
+  days?: number
+  /** Which page of a rotating board this widget is on, 0-based. */
+  page?: number
+  /** Seconds one page of a long list stays on screen, or absent for none. */
+  rotate?: number
+  /** A caption the owner typed. The only free text on a board, so the only
+   *  thing here that goes through safeText. */
+  text?: string
+}
+
+/** An arrangement. Mirrors store.Board. */
+export interface ShareBoard {
+  /** Which preset it started from, kept as provenance for the editor. Nothing
+   *  renders from it. */
+  preset: string
+  /** Seconds each page stays on screen, or 0 for a board that does not move. */
+  rotate: number
+  widgets: ShareWidget[]
+}
+
+/** What one widget kind accepts. Mirrors store.WidgetSpec. */
+export interface ShareWidgetSpec {
+  kind: string
+  span: number
+  metrics: string[] | null
+  filters: string[] | null
+  orders: string[] | null
+  groups: string[] | null
+  bys: string[] | null
+  days: boolean
+  text: boolean
+  /** This kind draws a list, so it can page through one that does not fit. */
+  rotate: boolean
+}
+
+/** A starting arrangement offered by the settings page. Mirrors store.Preset. */
+export interface SharePreset {
+  id: string
+  /** Who the board is for: the axis the catalogue is organised on. A label,
+   *  nothing renders from it except the grouping in the editor. */
+  audience: string
+  rotate: number
+  widgets: ShareWidget[]
+}
+
+/**
+ * The vocabulary a board is built from, served rather than mirrored.
+ *
+ * The editor offers exactly what the validator accepts because both read this.
+ * A second copy of the table in this file is how a settings page comes to offer
+ * a widget the server refuses.
+ */
+export interface ShareCatalogue {
+  presets: SharePreset[]
+  widgets: ShareWidgetSpec[]
+  maxWidgets: number
+  maxSpan: number
+  maxCaption: number
+  maxDays: number
+}
+
+// ── token spend on a board ─────────────────────────────────────────────────
+
+/** Tokens, never money: prices differ per model, per tier and over time. */
+export interface ShareSpendTotals {
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+  requests: number
+  total: number
+}
+
+/** One labelled column: `label` is "2026-08-23" or "2026-08", never formatted
+ *  text — the browser knows the reader's language and the server does not. */
+export interface ShareSpendBucket {
+  label: string
+  total: number
+  requests: number
+}
+
+/** One bar of a by-tool or by-project breakdown. `id` is empty for the row that
+ *  collects work done outside every project. */
+export interface ShareSpendGroup {
+  id: string
+  name: string
+  total: number
+  requests: number
+}
+
+export interface ShareSpend {
+  /** False until a pass over the transcripts has finished. Different from
+   *  "nothing was spent", and a zero rendered for the first is the failure this
+   *  flag exists to prevent. */
+  readable: boolean
+  scannedAt: number
+  /** How far into the server's local day it is, so a rate can be "so far
+   *  today". The browser does not know the server's timezone. */
+  hoursToday: number
+  /** The server's local day. The buckets are local days, so a phone in another
+   *  timezone must not decide for itself which square is today. */
+  date: string
+  windowDays: number
+  today: ShareSpendTotals
+  /** What makes `today` and `month` mean anything: a total says what, a
+   *  comparison says whether that is a lot. */
+  yesterday: ShareSpendTotals
+  month: ShareSpendTotals
+  lastMonth: ShareSpendTotals
+  window: ShareSpendTotals
+  /** Empty unless a widget on the board asks for them. */
+  days: ShareSpendBucket[]
+  months: ShareSpendBucket[]
+  heatmap: ShareSpendBucket[]
+  tools: ShareSpendGroup[]
+  models: ShareSpendGroup[]
+  projects: ShareSpendGroup[]
+}
+
+/**
+ * How much of each project's checklist is finished.
+ *
+ * Counts, and only counts. A todo line says what somebody is about to do about
+ * a customer, a bug or a deadline; neither detail mode offers it.
+ */
+export interface ShareTodos {
+  open: number
+  done: number
+  closedToday: number
+  projects: ShareTodosProject[]
+}
+
+export interface ShareTodosProject {
+  id: string
+  name: string
+  open: number
+  done: number
+  closedToday: number
 }
 
 /** One outbound notification destination. */

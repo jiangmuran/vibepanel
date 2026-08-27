@@ -73,6 +73,18 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		{"ShareCounts", shareCounts{}},
 		{"ShareProject", shareProject{}},
 		{"ShareSession", shareSession{}},
+		// Boards. The dashboard draws these and nothing else, so a field the
+		// server stopped sending is a widget that renders blank on a wall with
+		// nobody in front of it to notice.
+		{"ShareBoard", store.Board{}},
+		{"ShareWidget", store.Widget{}},
+		{"ShareWidgetSpec", store.WidgetSpec{}},
+		{"SharePreset", store.Preset{}},
+		{"ShareCatalogue", shareCatalogue{}},
+		{"ShareSpend", shareSpend{}},
+		{"ShareSpendTotals", shareSpendTotals{}},
+		{"ShareSpendBucket", shareSpendBucket{}},
+		{"ShareSpendGroup", shareSpendGroup{}},
 		// Token usage. Pinned from the first commit rather than after the
 		// first drift, because this surface has more fields than anything
 		// above it and every one of them is a number somebody will believe.
@@ -274,6 +286,7 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"share.created":           true,
 		"share.rejected":          true,
 		"share.revoked":           true,
+		"share.updated":           true,
 		"token.created":           true,
 		"token.revoked":           true,
 		"update.installed":        true,

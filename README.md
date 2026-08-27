@@ -247,15 +247,43 @@ visible on all of them.
 ### Share links
 
 **Settings → Read-only share links** makes a URL for the monitor beside you:
-`https://<panel>/share/<token>`. It opens a dashboard: machine load, CPU and
-memory per session, and every session with its state, grouped by project, in type
-you can read across a room. It opens nothing else. There is no terminal, no write
-path, no file browser and no way to make a second link from the first.
+`https://<panel>/share/<token>`. It opens a dashboard and nothing else — no
+terminal, no write path, no file browser, no way to make a second link from the
+first.
+
+What the dashboard shows is a **board** you pick when you make the link.
+Nineteen starting points, grouped by who is looking at the screen:
+
+| | |
+|---|---|
+| while you work | overview · does anything need me · the waiting queue · every session as a tile · everything at once |
+| a screen on a wall | four numbers and a clock · one number filling the screen · how busy it is · three pages that cycle |
+| whoever runs the machine | only the machine · what has gone wrong |
+| a manager | cost against output · where it went · the calm one · the year as a grid of days |
+| one thing, closely | per project · which model is working · what today cost |
+
+A preset is a starting point, not a mode. Every widget moves, resizes, points at
+a different number or splits by a different dimension — agent, project, model,
+day, month — and there are twenty-one kinds to add. The board is stored with the
+link and collapses with the viewport, so one stored board is a summary on a
+phone and forty tiles on a television.
+
+The numbers are what the panel already knows: states and how long each has held,
+CPU and memory per session, the machine, checklist progress, and what the agents
+recorded spending. Tokens, never money — prices differ by model and tier and
+change, and a figure from a stale table is a confident wrong number on a wall.
+
+Scope it to the whole panel, one project or one session. The project-scoped link
+is the one you send to somebody working on that project. Scope is enforced by
+the server from the link's own row; delete the project and the link shows
+nothing rather than falling back to everything.
 
 Pick the detail level when you make it. **Counts** shows shapes and numbers and
 no text at all. **Names** adds session titles and project names. Neither ever
 sends a path, a working directory, a command line, a hostname or the panel's own
-ids.
+ids. The board can be changed later; the detail level and the scope cannot — by
+then the URL is in somebody's email, and widening what it discloses is a change
+they would never see.
 
 Treat the link as a credential: anyone holding it can watch. The panel stores
 only a hash, so the moment you create it is the only time it can be read. Links
