@@ -838,12 +838,28 @@ func TestSubscribingDuringOutputDoesNotDuplicate(t *testing.T) {
 }
 
 // markers pulls whole "LINE-<n>\r\n" tokens out of a slice of terminal output.
+//
+// A token with an escape sequence inside it is not one. tmux repaints the
+// screen when it falls behind, and a repainted line arrives as
+// "LINE-1\x1b[K\r\n" -- the same text the pane already printed, redrawn. That
+// is the terminal doing its job, not the same bytes delivered twice, and
+// counting it as a duplicate made this test fail on a two-core CI runner while
+// passing on anything wider. Reproduced here under `taskset -c 0,1`, which is
+// the only reason it was identifiable as a repaint rather than as the race
+// this test is named for.
+//
+// Plain lines are still compared, and a genuine double-delivery would double
+// those: the window this test exists to notice is between the ring write and
+// the broadcast, and what is in flight there is ordinary output.
 func markers(s string) []string {
 	var out []string
 	for _, part := range strings.Split(s, "LINE-")[1:] {
 		end := strings.Index(part, "\r\n")
 		if end <= 0 {
 			continue // truncated at the edge of this slice; not a whole line
+		}
+		if strings.ContainsRune(part[:end], 0x1b) {
+			continue // a repaint of a line, not a second delivery of it
 		}
 		out = append(out, "LINE-"+part[:end]+"\r\n")
 	}

@@ -11054,3 +11054,27 @@ Treating "dead with status 0" as a kill would be the wrong repair: it would
 misreport every agent that genuinely finished cleanly, which is the common
 case. `docs/runbook.md` records the symptom for anyone on an older tmux who
 notices a killed agent shown as a clean exit.
+
+## A repaint is not a duplicate either
+
+`TestSubscribingDuringOutputDoesNotDuplicate` failed on CI and nowhere else:
+
+    attempt 13: "LINE-1\x1b[K\r\n" was in the replay and sent again live
+
+The `\x1b[K` is the tell. tmux repaints the screen when it falls behind, and a
+repainted line arrives carrying the same text the pane printed earlier — which
+is the terminal doing its job, not the same bytes delivered twice. A two-core
+runner falls behind far more than a sixteen-core desktop, so the repaints were
+constant there and absent here.
+
+Reproduced locally with `taskset -c 0,1` on the fourth attempt, which is the
+only reason it could be identified as a repaint rather than as the race the
+test is named for. `markers()` now ignores any token with an escape sequence
+inside it, and the plain-line comparison that catches the real thing is intact:
+reintroducing the gap between the ring write and the broadcast still fails on
+attempt 2, with a plain `LINE-304\r\n`.
+
+That is three findings in a row where an older or slower machine did something
+this one does not, and the loop that made each of them tractable was the same:
+reproduce it locally first — an extracted tmux 3.4, `env -u TERM`, two pinned
+cores — and only then read the code.
