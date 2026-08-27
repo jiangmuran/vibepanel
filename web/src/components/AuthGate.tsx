@@ -208,7 +208,7 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
               disabled={busy}
               onClick={() => void signInWithPasskey()}
               data-testid="passkey-signin"
-              className="flex w-full items-center justify-center gap-1.5 rounded-vp border border-hairline px-3 py-2 text-vp-md text-ink transition-colors duration-200 ease-vp hover:bg-surface-2 disabled:opacity-50"
+              className="vp-press flex w-full items-center justify-center gap-1.5 rounded-vp border border-hairline px-3 py-2 text-vp-md text-ink transition-colors duration-200 ease-vp hover:bg-surface-2 disabled:opacity-50"
             >
               <Fingerprint size={14} />
               {t('auth.usePasskey')}

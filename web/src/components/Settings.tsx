@@ -84,10 +84,10 @@ export function Settings({ onClose }: { onClose: () => void }) {
   }, [])
 
   return (
-    <div className="absolute inset-0 z-30 flex items-start justify-center overflow-y-auto bg-black/40 px-4 py-8">
+    <div className="vp-backdrop absolute inset-0 z-30 flex items-start justify-center overflow-y-auto bg-black/40 px-4 py-8">
       <div
         data-testid="settings"
-        className="w-full max-w-2xl rounded-vp-lg border border-hairline bg-surface p-6"
+        className="vp-panel-in w-full max-w-2xl rounded-vp-lg border border-hairline bg-surface p-6 shadow-xl"
       >
         <div className="mb-5 flex items-center gap-2">
           <h2 className="flex-1 text-vp-lg font-semibold tracking-tight text-ink">{t('settings.title')}</h2>
@@ -96,7 +96,7 @@ export function Settings({ onClose }: { onClose: () => void }) {
             onClick={onClose}
             title={t('settings.close')}
             data-testid="settings-close"
-            className="rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+            className="vp-press rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
           >
             <X size={15} />
           </button>
@@ -134,7 +134,7 @@ export function Settings({ onClose }: { onClose: () => void }) {
                   setNotifyEnabled(false)
                   setNotifyOn(false)
                 }}
-                className="rounded-vp border border-hairline px-2 py-1 text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+                className="vp-press rounded-vp border border-hairline px-2 py-1 text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
               >
                 {t('dir.cancel')}
               </button>
@@ -460,7 +460,7 @@ function HooksSection() {
                 disabled={busy}
                 data-testid="hooks-remove"
                 onClick={() => void act(() => api.removeHooks())}
-                className="rounded-vp border border-hairline px-3 py-1.5 text-vp-base text-ink transition-colors duration-200 ease-vp hover:bg-surface-2 disabled:opacity-50"
+                className="vp-press rounded-vp border border-hairline px-3 py-1.5 text-vp-base text-ink transition-colors duration-200 ease-vp hover:bg-surface-2 disabled:opacity-50"
               >
                 Remove
               </button>
@@ -480,7 +480,7 @@ function HooksSection() {
               type="button"
               onClick={() => setShowSnippet((v) => !v)}
               data-testid="hooks-preview"
-              className="rounded-vp border border-hairline px-3 py-1.5 text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+              className="vp-press rounded-vp border border-hairline px-3 py-1.5 text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
             >
               {showSnippet ? t('set.hide') : t('set.showWrites')}
             </button>
@@ -534,7 +534,7 @@ function Snippet({ label, text }: { label: string; text: string }) {
               .then(() => setCopied(true))
               .catch(() => setCopied(false))
           }}
-          className="flex items-center gap-1 rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+          className="vp-press flex items-center gap-1 rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
         >
           {copied ? <Check size={11} /> : <Copy size={11} />}
           <span className="text-vp-xs">{copied ? 'Copied' : 'Copy'}</span>
@@ -612,7 +612,7 @@ function PasskeysSection() {
         <div
           key={k.id}
           data-testid="passkey-row"
-          className="group flex items-center gap-2 rounded-vp px-2 py-1.5 hover:bg-surface-2"
+          className="vp-press group flex items-center gap-2 rounded-vp px-2 py-1.5 hover:bg-surface-2"
         >
           <Fingerprint size={12} className="shrink-0 text-ink-2" />
           <span className="min-w-0 flex-1 truncate text-vp-base text-ink">{passkeyLabel(k)}</span>
@@ -626,7 +626,7 @@ function PasskeysSection() {
               void api.deletePasskey(k.id).then(load).catch(() => setError('could not remove it'))
             }}
             title={t('set.remove')}
-            className="shrink-0 rounded-md p-0.5 text-ink-2 vp-reveal hover:text-ink"
+            className="vp-press shrink-0 rounded-md p-0.5 text-ink-2 vp-reveal hover:text-ink"
           >
             <X size={12} />
           </button>

@@ -600,7 +600,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
                   : t('app.projects')
               }
               data-testid="menu-button"
-              className="relative rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+              className="vp-press relative rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
             >
               <Menu size={16} />
               {/* The count belongs where the list is, because on a phone the
@@ -645,7 +645,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
                   type="button"
                   data-testid="restart-current"
                   onClick={() => restartSession(current)}
-                  className="ml-1 flex shrink-0 items-center gap-1 rounded-full border border-hairline px-2 py-0.5 text-vp-sm text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+                  className="vp-press ml-1 flex shrink-0 items-center gap-1 rounded-full border border-hairline px-2 py-0.5 text-vp-sm text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
                   title={
                     current.exitStatus === EXIT_VANISHED
                       ? 'The tmux session is gone. Start it again in a new one.'
@@ -677,7 +677,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               data-testid="right-show"
               onClick={() => setRightOpen(true)}
               title={t('app.showPanelShort')}
-              className="ml-1 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+              className="vp-press ml-1 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
             >
               <PanelRight size={15} />
             </button>
@@ -687,7 +687,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             data-testid="settings-open"
             onClick={() => setSettingsOpen(true)}
             title={t('app.settings')}
-            className="ml-1 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+            className="vp-press ml-1 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
           >
             <SettingsIcon size={15} />
           </button>
@@ -697,7 +697,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             data-testid="sign-out"
             onClick={onSignOut}
             title={`Signed in as ${auth.username ?? 'unknown'} — sign out`}
-            className="ml-1 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+            className="vp-press ml-1 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
           >
             <LogOut size={15} />
           </button>
@@ -771,7 +771,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             <button
               type="button"
               onClick={() => setUpgraded(false)}
-              className="shrink-0 rounded-vp px-2 py-1 text-vp-base text-ink-2 transition-colors duration-150 ease-vp hover:text-ink"
+              className="vp-press shrink-0 rounded-vp px-2 py-1 text-vp-base text-ink-2 transition-colors duration-150 ease-vp hover:text-ink"
             >
               {t('upgrade.later')}
             </button>
@@ -946,7 +946,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             data-testid="bottom-show"
             onClick={() => setBottomOpen(true)}
             title={t('app.showTerminals')}
-            className="flex h-6 shrink-0 items-center justify-center gap-1 border-t border-hairline text-vp-sm text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink vp-blur"
+            className="vp-press flex h-6 shrink-0 items-center justify-center gap-1 border-t border-hairline text-vp-sm text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink vp-blur"
           >
             <ChevronUp size={12} />
             terminals
@@ -1022,7 +1022,7 @@ function ThemeToggle({
       data-testid="theme-toggle"
       onClick={() => onChange(next[theme])}
       title={`Theme: ${theme}`}
-      className="ml-1 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+      className="vp-press ml-1 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
     >
       <Icon size={15} />
     </button>

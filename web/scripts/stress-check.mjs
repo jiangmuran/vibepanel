@@ -11,6 +11,7 @@
 //   npm run build && (cd .. && go build -o vibepanel ./cmd/vibepanel)
 //   npm run check:stress
 import { chromium } from 'playwright'
+import { rows as screenRows } from './lib/screen.mjs'
 import { spawn, execSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { createServer } from 'node:net'
@@ -131,9 +132,8 @@ const authed = async (path, init = {}) => {
 // the middle was not the space it was looking for. Any check that greps
 // rendered terminal text has this hazard; normalising once here is cheaper than
 // remembering it at thirty call sites.
-const rows = (page) =>
-  page.$$eval('.xterm-rows > div', (els) =>
-    els.map((el) => (el.textContent ?? '').replace(/\u00a0/g, ' ')))
+const rows = async (page) =>
+  (await screenRows(page)).map((r) => r.replace(/\u00a0/g, ' '))
 
 try {
   for (let i = 0; i < 120; i++) {
@@ -160,7 +160,19 @@ try {
     }).then((r) => r.json())
 
   browser = await chromium.launch({ headless: true })
+  // Pinned to xterm's DOM renderer.
+  //
+  // These checks measure cell geometry -- that a CJK character advances exactly
+  // two Latin cells -- and geometry only exists in the DOM renderer's output.
+  // The GPU renderer draws to a canvas and `.xterm-rows` is empty under it, so
+  // the measurement has nothing to measure.
+  //
+  // Acceptable here because what this file is about is tmux and the byte
+  // stream, not the renderer: wide characters, full-screen programs, floods and
+  // dropped sockets behave the same either way. render-check covers the shipped
+  // renderer separately.
   const ctx = await browser.newContext({ viewport: { width: 1200, height: 800 } })
+  await ctx.addInitScript(() => localStorage.setItem('vibepanel.renderer', 'dom'))
   const page = await ctx.newPage()
   const pageErrors = []
   page.on('pageerror', (e) => pageErrors.push(String(e)))

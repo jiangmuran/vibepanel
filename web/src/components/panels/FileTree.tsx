@@ -73,7 +73,7 @@ export function FileTree({ projectId }: { projectId: string }) {
             type="button"
             onClick={() => setPath(listing.parent ?? '')}
             title={t('files.up')}
-            className="rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+            className="vp-press rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
           >
             <ChevronLeft size={13} />
           </button>
@@ -86,7 +86,7 @@ export function FileTree({ projectId }: { projectId: string }) {
           data-testid="file-refresh"
           onClick={() => setReloads((n) => n + 1)}
           title={t('files.reread')}
-          className="shrink-0 rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+          className="vp-press shrink-0 rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
         >
           <RefreshCw size={12} />
         </button>
@@ -153,7 +153,7 @@ export function FileTree({ projectId }: { projectId: string }) {
               data-testid="file-download"
               onClick={(ev) => ev.stopPropagation()}
               title={`Download ${safeText(e.name)}`}
-              className="vp-reveal shrink-0 rounded-md p-0.5 text-ink-2 hover:text-ink"
+              className="vp-press vp-reveal shrink-0 rounded-md p-0.5 text-ink-2 hover:text-ink"
             >
               <Download size={12} />
             </a>

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { attachTouchSelection } from './mobile/touchSelect'
+import { rendererPreference } from './renderer'
 import { Terminal as Xterm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
+import { WebglAddon } from '@xterm/addon-webgl'
 // xterm.css is imported from styles.css so our overrides come after it.
 
 import type { PanelSocket } from '../protocol/socket'
@@ -84,6 +86,54 @@ interface Props {
  * device-attribute queries and focus reports through the same channel, so
  * "sent bytes" would mean "claimed the grid on page load".
  */
+/**
+ * Every live terminal, by session id, so that what is on screen can be read
+ * back from outside the component.
+ *
+ * The WebGL renderer draws to a canvas. `.xterm-rows` is empty under it, and
+ * every browser check that read the screen through the DOM went blind the
+ * moment the renderer was loaded -- thirteen of them at once, each reporting an
+ * empty terminal about a terminal that was full. The screen had not changed;
+ * the only readable copy of it had.
+ *
+ * So the buffer is the source, which is the more truthful one anyway: the DOM
+ * spans were a rendering of the buffer, and a check that reads the rendering
+ * can be fooled by the renderer. `vibepanelScreen` reads and cannot write, and
+ * it is the same text xterm's own accessibility layer would expose without
+ * turning screen-reader mode on for everybody.
+ */
+const liveTerminals = new Map<string, Xterm>()
+
+declare global {
+  interface Window {
+    vibepanelScreen?: (arg?: string | { id?: string; all?: boolean }) => string[] | null
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.vibepanelScreen = (arg) => {
+    const opts = typeof arg === 'string' ? { id: arg } : (arg ?? {})
+    const all = [...liveTerminals.values()]
+    // The focused one when nothing is named. A check that has just typed into a
+    // terminal means *that* terminal, and the panel has several: a main one and
+    // a row of scratch ones underneath. Picking the first in the map read the
+    // wrong screen and reported that typing had produced no output.
+    const term = opts.id
+      ? liveTerminals.get(opts.id)
+      : (all.find((t) => t.textarea === document.activeElement) ?? all[0])
+    if (!term) return null
+    const buf = term.buffer.active
+    // The viewport by default, which is what "what is on screen" means and what
+    // the DOM used to return. `all` reaches the scrollback, for the checks that
+    // ask whether something from a minute ago survived.
+    const from = opts.all ? 0 : buf.viewportY
+    const to = opts.all ? buf.length : Math.min(buf.length, buf.viewportY + term.rows)
+    const rows: string[] = []
+    for (let i = from; i < to; i++) rows.push(buf.getLine(i)?.translateToString(true) ?? '')
+    return rows
+  }
+}
+
 export function TerminalView({
   socket,
   sessionId,
@@ -143,6 +193,21 @@ export function TerminalView({
       // chopped into strips. A terminal is a grid; the leading belongs inside
       // the glyph, not between the rows.
       lineHeight: 1.0,
+      // Draw box-drawing and block characters geometrically instead of taking
+      // them from the font.
+      //
+      // This is the other half of the cracks. A font's ─ and │ are glyphs sized
+      // for their own metrics, and at a fractional cell width two of them side
+      // by side do not meet: the join shows a hairline of background through
+      // it, and an agent's panel border reads as dashed. Drawn as geometry they
+      // are computed from the cell box and always meet. Only the canvas and
+      // WebGL renderers honour this, which is the other reason one has to be
+      // loaded.
+      customGlyphs: true,
+      // A glyph wider than its cell is squeezed to fit rather than allowed to
+      // spill over its neighbour. CJK and emoji in a Latin-metric font do this
+      // constantly, and the spill is what makes a column of them look ragged.
+      rescaleOverlappingGlyphs: true,
       scrollback: 10_000,
       theme: terminalTheme(),
       // The panel owns the scroll position on mobile, where the browser would
@@ -161,6 +226,39 @@ export function TerminalView({
     term.unicode.activeVersion = '11'
 
     term.open(host)
+    liveTerminals.set(sessionId, term)
+
+    // The renderer, which was never loaded.
+    //
+    // @xterm/addon-webgl has been a dependency since the beginning and nothing
+    // called loadAddon, so every session has been drawing on xterm's DOM
+    // renderer: one span per cell, each with its own background, positioned in
+    // CSS pixels. At any cell size that is not a whole number those spans do
+    // not quite touch, and the gaps are visible as fine cracks through
+    // anything solid -- block-character art, a filled progress bar, an agent's
+    // panel border. It is the defect that reads as "the terminal looks broken"
+    // without pointing at anything in particular, and the fix was one line of
+    // an addon already in package.json.
+    //
+    // Loaded after open(), which is required: the addon needs the element.
+    //
+    // A GPU context can be refused or lost -- a laptop switching graphics, a
+    // driver reset, too many contexts across tabs -- and a WebGL renderer that
+    // loses its context draws nothing at all. Disposing on loss puts xterm back
+    // on the DOM renderer, which is worse-looking and still works, and that is
+    // the right trade for a terminal somebody is reading.
+    if (rendererPreference() !== 'dom') {
+      try {
+        const webgl = new WebglAddon()
+        webgl.onContextLoss(() => {
+          webgl.dispose()
+        })
+        term.loadAddon(webgl)
+      } catch {
+        // No WebGL here at all: a headless browser without a GPU, or a policy
+        // that blocks it. The DOM renderer is already in place.
+      }
+    }
     termRef.current = term
     fitRef.current = fit
 
@@ -310,6 +408,7 @@ export function TerminalView({
     const detachTouch = touchSelect ? attachTouchSelection(host, term) : undefined
 
     return () => {
+      liveTerminals.delete(sessionId)
       detachTouch?.()
       host.removeEventListener('pointerup', copyOnSelect)
       host.removeEventListener('paste', onPaste, true)
@@ -445,7 +544,7 @@ export function TerminalView({
           type="button"
           data-testid="take-control"
           onClick={takeControl}
-          className="absolute right-3 bottom-3 rounded-full border border-hairline bg-elevated px-3 py-1.5 text-xs text-ink-2 backdrop-blur transition-colors duration-200 ease-vp hover:text-ink"
+          className="vp-press absolute right-3 bottom-3 rounded-full border border-hairline bg-elevated px-3 py-1.5 text-vp-xs text-ink-2 backdrop-blur transition-colors duration-200 ease-vp hover:text-ink"
           title={t('term.takeControlWhy', {
             cols: grid.cols,
             rows: grid.rows,

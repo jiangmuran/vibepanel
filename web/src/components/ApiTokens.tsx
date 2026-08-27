@@ -95,7 +95,7 @@ export function ApiTokens() {
                   () => setCopied(false),
                 )
               }}
-              className="shrink-0 rounded-vp border border-hairline px-2 py-1.5 text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+              className="vp-press shrink-0 rounded-vp border border-hairline px-2 py-1.5 text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
             >
               {copied ? t('tok.copied') : t('tok.copy')}
             </button>
@@ -156,7 +156,7 @@ export function ApiTokens() {
               onClick={() => void revoke(tok)}
               title={t('tok.revoke')}
               data-testid="token-revoke"
-              className="shrink-0 rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+              className="vp-press shrink-0 rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
             >
               <Trash2 size={13} />
             </button>

@@ -644,8 +644,11 @@ try {
     const row = page.locator('[data-testid="session-row"]').nth(i)
     const t = Date.now()
     await row.click()
+    // Through the buffer, not the DOM: under the GPU renderer `.xterm-rows` is
+    // empty however full the terminal is, so this waited fifteen seconds and
+    // gave up on every switch.
     await page.waitForFunction(
-      () => (document.querySelector('.xterm-rows')?.children.length ?? 0) > 0,
+      () => (window.vibepanelScreen?.()?.some((r) => r.trim()) ?? false),
       null,
       { timeout: 15000 },
     ).catch(() => {})

@@ -14,6 +14,7 @@
 //   npm run build && (cd .. && go build -o vibepanel ./cmd/vibepanel)
 //   npm run check:restart
 import { chromium } from 'playwright'
+import { rows as screenRows } from './lib/screen.mjs'
 import { spawn, execSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { createServer } from 'node:net'
@@ -165,8 +166,7 @@ const authed = async (path, init = {}) => {
   return res
 }
 
-const rows = (page) =>
-  page.$$eval('.xterm-rows > div', (els) => els.map((el) => el.textContent ?? ''))
+const rows = (page) => screenRows(page)
 const screen = async (page) => (await rows(page)).join('\n')
 /** Every pane the panel's tmux server is running, as "session:pid". */
 const panes = () => {

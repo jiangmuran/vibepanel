@@ -17,6 +17,7 @@
 // Exits non-zero on any FAIL. Screenshots land in the directory given as the
 // second argument.
 import { chromium } from 'playwright'
+import { rows as screenRows } from './lib/screen.mjs'
 import { spawn, execSync } from 'node:child_process'
 import { createServer } from 'node:net'
 import { mkdtempSync, rmSync, mkdirSync, readFileSync, writeFileSync, existsSync, symlinkSync } from 'node:fs'
@@ -206,8 +207,23 @@ async function scanUnreachable(target, where, minExpected = 20) {
  * Only the terminal. The other innerText reads in this file are React elements,
  * which have no per-run spans.
  */
-const screenText = async (target, sel = '.xterm-screen') =>
-  (await target.locator(sel).first().innerText().catch(() => '')).replace(/\u00a0/g, ' ')
+const screenText = async (target, sel = '.xterm-screen') => {
+  // The buffer first, the DOM second.
+  //
+  // `.xterm-screen` has text only under xterm's DOM renderer. The GPU renderer
+  // draws to a canvas and leaves it empty however full the terminal is, so this
+  // returned "" for every terminal in the panel the moment the renderer was
+  // loaded -- thirteen assertions red at once, each of them describing an empty
+  // terminal that was not empty.
+  //
+  // `sel` is still honoured for the callers that read something other than the
+  // terminal; only the default path goes through the buffer.
+  if (sel === '.xterm-screen' && typeof target.evaluate === 'function') {
+    const rows = await screenRows(target).catch(() => null)
+    if (rows && rows.length) return rows.join('\n').replace(/\u00a0/g, ' ')
+  }
+  return (await target.locator(sel).first().innerText().catch(() => '')).replace(/\u00a0/g, ' ')
+}
 
 function parseColor(c) {
   const m = c.match(/rgba?\(([^)]+)\)/)
@@ -1298,9 +1314,13 @@ try {
       await bottomScreen.click()
       await page.keyboard.type('echo BOTTOM_TERMINAL_OK')
       await page.keyboard.press('Enter')
+      // Through the buffer of whichever terminal has focus -- which is this
+      // one, because the click above put it there. `bottomScreen.innerText()`
+      // reads the DOM, and the DOM is empty under the GPU renderer however full
+      // the terminal is.
       let echoed = false
       for (let i = 0; i < 40; i++) {
-        const txt = await bottomScreen.innerText().catch(() => '')
+        const txt = await screenText(page)
         if ((txt.match(/BOTTOM_TERMINAL_OK/g) ?? []).length >= 2) { echoed = true; break }
         await sleep(300)
       }
@@ -1969,12 +1989,7 @@ try {
       await sleep(400)
     }
     if (!interrupted) {
-      const shown = await page.evaluate(() =>
-        [...document.querySelectorAll('.xterm-rows > div')]
-          .map((d) => d.textContent ?? '')
-          .filter((t) => t.trim())
-          .slice(-6),
-      )
+      const shown = (await screenRows(page)).filter((t) => t.trim()).slice(-6)
       note('FAIL', 'mobile',
         'the ^C key did not interrupt a running command; the shell never came back. ' +
         `The terminal's last lines are ${JSON.stringify(shown)}`)
@@ -2022,6 +2037,11 @@ try {
       deviceScaleFactor: 3,
       permissions: ['clipboard-read', 'clipboard-write'],
     })
+    // The DOM renderer for this one context: the touch-scroll check finds a
+    // row by its text and then asks where it is on screen, and a row only has a
+    // position when it is an element. Under the GPU renderer it is pixels on a
+    // canvas.
+    await touchCtx.addInitScript(() => localStorage.setItem('vibepanel.renderer', 'dom'))
     const touch = await touchCtx.newPage()
     await touch.goto(BASE, { waitUntil: 'networkidle' })
     await touch.locator('[data-testid="auth-username"]').fill(USERNAME)
@@ -2512,12 +2532,7 @@ try {
       await sleep(400)
     }
     if (!markerBox) {
-      const shown = await touch.evaluate(() =>
-        [...document.querySelectorAll('.xterm-rows > div')]
-          .map((d) => d.textContent ?? '')
-          .filter((t) => t.trim())
-          .slice(-6),
-      )
+      const shown = (await screenRows(touch)).filter((t) => t.trim()).slice(-6)
       note('FAIL', 'mobile',
         `the phone could not send a command through the compose box; the terminal's last ` +
         `lines are ${JSON.stringify(shown)}`)
@@ -2591,8 +2606,7 @@ try {
         execSync(
           `tmux -L ${SOCKET} send-keys -t '=${sess.tmuxName}:' ` +
           `'i=1; while [ $i -le 400 ]; do echo TOUCH_$i; i=$((i+1)); done' Enter`)
-        const rowsOf = () => touch.evaluate(() =>
-          [...document.querySelectorAll('.xterm-rows > div')].map((d) => (d.textContent ?? '').trim()))
+        const rowsOf = async () => (await screenRows(touch)).map((r) => r.trim())
         // Wait for the burst to have arrived. Measuring a picture that is still
         // moving is what made the first version of the desktop check pass one
         // run in three.

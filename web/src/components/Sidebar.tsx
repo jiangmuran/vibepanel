@@ -135,7 +135,7 @@ export function Sidebar(props: SidebarProps) {
           type="button"
           onClick={props.onToggle}
           title={t('app.projects')}
-          className="mb-1 shrink-0 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+          className="vp-press mb-1 shrink-0 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
         >
           <ChevronLeft size={15} className="rotate-180" />
         </button>
@@ -179,7 +179,7 @@ export function Sidebar(props: SidebarProps) {
           onClick={props.onAddProject}
           title={t('app.addProject')}
           data-testid="add-project"
-          className="mt-1 shrink-0 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+          className="vp-press mt-1 shrink-0 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
         >
           <Plus size={15} />
         </button>
@@ -200,7 +200,7 @@ export function Sidebar(props: SidebarProps) {
           type="button"
           onClick={props.onToggle}
           title={overlay ? 'Close' : 'Collapse'}
-          className="rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+          className="vp-press rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
         >
           <ChevronLeft size={15} />
         </button>
@@ -215,7 +215,7 @@ export function Sidebar(props: SidebarProps) {
             data-testid="order-auto"
             onClick={props.onAutoOrderProjects}
             title={t('app.sortByActivity')}
-            className="ml-auto rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+            className="vp-press ml-auto rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
           >
             <Clock size={14} />
           </button>
@@ -226,7 +226,7 @@ export function Sidebar(props: SidebarProps) {
             data-testid="order-manual"
             onClick={props.onRestoreProjectOrder}
             title={t('project.orderManual')}
-            className="ml-auto rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+            className="vp-press ml-auto rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
           >
             <ListOrdered size={14} />
           </button>
@@ -285,7 +285,7 @@ export function Sidebar(props: SidebarProps) {
                 onClick={() => props.onNewSession(p)}
                 data-testid="project-new-shell"
                 title={t('session.new')}
-                className="vp-tap ml-auto rounded-md p-1 text-ink-2 vp-reveal hover:text-ink"
+                className="vp-press vp-tap ml-auto rounded-md p-1 text-ink-2 vp-reveal hover:text-ink"
               >
                 <TerminalIcon size={13} />
               </button>
@@ -299,7 +299,7 @@ export function Sidebar(props: SidebarProps) {
                 onClick={() => props.onRemoveProject(p)}
                 data-testid="project-remove"
                 title={t('project.remove')}
-                className="vp-tap rounded-md p-1 text-ink-2 vp-reveal hover:text-ink"
+                className="vp-press vp-tap rounded-md p-1 text-ink-2 vp-reveal hover:text-ink"
               >
                 <X size={13} />
               </button>
@@ -362,7 +362,7 @@ export function Sidebar(props: SidebarProps) {
                         props.onRestartSession(s)
                       }}
                       title={t('app.restartHint')}
-                      className="vp-tap shrink-0 rounded-md p-0.5 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+                      className="vp-press vp-tap shrink-0 rounded-md p-0.5 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
                     >
                       <RotateCcw size={12} />
                     </button>
@@ -375,7 +375,7 @@ export function Sidebar(props: SidebarProps) {
                     }}
                     data-testid="pin-session"
                     title={s.pinned ? 'Unpin' : 'Pin to the top of this project'}
-                    className="vp-tap shrink-0 rounded-md p-0.5 text-ink-2 vp-reveal hover:text-ink"
+                    className="vp-press vp-tap shrink-0 rounded-md p-0.5 text-ink-2 vp-reveal hover:text-ink"
                   >
                     {s.pinned ? <PinOff size={12} /> : <Pin size={12} />}
                   </button>
@@ -387,7 +387,7 @@ export function Sidebar(props: SidebarProps) {
                     }}
                     data-testid="kill-session"
                     title={t('session.kill')}
-                    className="vp-tap shrink-0 rounded-md p-0.5 text-ink-2 vp-reveal hover:text-ink"
+                    className="vp-press vp-tap shrink-0 rounded-md p-0.5 text-ink-2 vp-reveal hover:text-ink"
                   >
                     <X size={12} />
                   </button>
@@ -408,7 +408,7 @@ export function Sidebar(props: SidebarProps) {
           type="button"
           data-testid="state-guessed-notice"
           onClick={props.onOpenSettings}
-          className="border-t border-hairline px-3 py-2 text-left text-vp-sm leading-relaxed text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+          className="vp-press border-t border-hairline px-3 py-2 text-left text-vp-sm leading-relaxed text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
         >
           {props.hooksInstalled ? t('guessed.installed') : t('guessed.notInstalled')}
         </button>

@@ -140,7 +140,7 @@ export function BottomTerminals(props: Props) {
                 props.onClose(t)
               }}
               title={tr('bottom.close')}
-              className="vp-tap rounded-md p-0.5 vp-reveal hover:text-ink"
+              className="vp-press vp-tap rounded-md p-0.5 vp-reveal hover:text-ink"
             >
               <X size={11} />
             </button>
@@ -152,7 +152,7 @@ export function BottomTerminals(props: Props) {
           data-testid="bottom-new"
           onClick={props.onNew}
           title={`New terminal in ${parent.cwd || 'this project'}`}
-          className="rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+          className="vp-press rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
         >
           <Plus size={14} />
         </button>
@@ -160,7 +160,7 @@ export function BottomTerminals(props: Props) {
           type="button"
           onClick={props.onCollapse}
           title={tr('bottom.hide')}
-          className="rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+          className="vp-press rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
         >
           <ChevronDown size={14} />
         </button>

@@ -472,6 +472,69 @@ body {
   }
 }
 
+/* ── modals ─────────────────────────────────────────────────────────────── */
+
+/* A dialog that appears between two frames reads as a page replacement.
+ *
+ * The panel had none of this: the directory picker was simply *there* on the
+ * next paint, at full size, over an unchanged background, and the feedback was
+ * that the windows had no substance and the whole thing felt clumsy. What makes
+ * a dialog feel like an object is that you see it arrive: it comes from
+ * slightly behind and slightly below, the ground dims and goes soft, and both
+ * happen on the same curve as everything else here.
+ *
+ * The scale is 0.97, not 0.9. A big pop draws attention to the animation; this
+ * one is only meant to say "a thing moved in front of the other thing".
+ *
+ * The global prefers-reduced-motion rule below collapses both to nothing, which
+ * is why neither carries state that only the animation delivers.
+ */
+@keyframes vp-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes vp-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.vp-backdrop {
+  animation: vp-backdrop-in 160ms var(--vp-ease) both;
+  backdrop-filter: blur(6px) saturate(120%);
+  -webkit-backdrop-filter: blur(6px) saturate(120%);
+}
+
+.vp-panel-in {
+  animation: vp-panel-in 220ms var(--vp-ease) both;
+}
+
+/* Press feedback.
+ *
+ * A control that only changes colour on hover gives a touch device nothing at
+ * all: there is no hover on a finger, so the button and the label beside it
+ * behave identically until something happens somewhere else on screen. A small
+ * scale on :active is the one affordance that works for both.
+ */
+.vp-press {
+  transition: transform 120ms var(--vp-ease), background-color 200ms var(--vp-ease),
+    color 200ms var(--vp-ease), opacity 200ms var(--vp-ease);
+}
+
+.vp-press:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

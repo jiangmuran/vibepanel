@@ -75,7 +75,7 @@ export function StateDot({
       }}
       // A generous hit area around a 10px glyph; the visual size is the point,
       // not the target size, and on a phone a 10px target is unusable.
-      className="-m-1 flex shrink-0 items-center justify-center rounded-md p-1 transition-colors duration-200 ease-vp hover:bg-surface-2"
+      className="vp-press -m-1 flex shrink-0 items-center justify-center rounded-md p-1 transition-colors duration-200 ease-vp hover:bg-surface-2"
     >
       {glyph}
     </button>

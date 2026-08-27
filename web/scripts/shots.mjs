@@ -160,6 +160,16 @@ try {
     `  ${G}OK${R} go build ./...              ${D}1.9s${R}`,
     `  ${G}OK${R} go test ./internal/httpapi  ${D}ok  0.42s${R}`,
     ``,
+    // Box drawing and block characters, because they are where a renderer
+    // shows its seams. On xterm's DOM renderer these join up only when the
+    // cell size lands on whole pixels, and the hairlines of background that
+    // show through the rest of the time are the "cracks" that made the panel
+    // look broken.
+    `  ${D}╭────────────────────────────────────────────╮${R}`,
+    `  ${D}│${R}  ${G}████████████████████${R}${D}░░░░░░░░░░${R}  73%   ${D}│${R}`,
+    `  ${D}│${R}  ▁▂▃▄▅▆▇█▇▆▅▄▃▂▁  ▛▀▜ ▙▄▟ ▚▞ ▐▌ ▄▀       ${D}│${R}`,
+    `  ${D}╰────────────────────────────────────────────╯${R}`,
+    ``,
     `  ${Y}?${R} Apply this change to ${C}internal/httpapi/auth.go${R}?`,
     `    ${D}1${R} yes   ${D}2${R} yes, and stop asking   ${D}3${R} no, tell me why`,
     ``,

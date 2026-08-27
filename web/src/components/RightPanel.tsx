@@ -218,7 +218,7 @@ export function RightPanel(props: Props) {
             onClick={props.onCollapse}
             data-testid="panel-collapse"
             title={t('app.hidePanel')}
-            className="shrink-0 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+            className="vp-press shrink-0 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
           >
             <ChevronRight size={14} />
           </button>

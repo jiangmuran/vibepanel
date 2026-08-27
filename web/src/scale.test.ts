@@ -49,6 +49,21 @@ describe('the design scale lives in the tokens', () => {
       .toEqual([])
   })
 
+  // Tailwind's own text-xs/text-sm/... are a second scale sitting beside this
+  // one, in the same class attribute, named so similarly that nobody notices.
+  // One arrived within an hour of the scale being introduced.
+  it("uses no Tailwind default text size", () => {
+    const bad: string[] = []
+    for (const file of files) {
+      const text = readFileSync(file, 'utf8')
+      for (const m of text.matchAll(/\btext-(?:xs|sm|base|lg|xl|[2-9]xl)\b/g)) {
+        bad.push(`${file.slice(SRC.length)}: ${m[0]}`)
+      }
+    }
+    expect(bad, `use text-vp-xs|sm|base|md|lg -- Tailwind's steps are a different ` +
+      `scale wearing similar names:\n${bad.join('\n')}`).toEqual([])
+  })
+
   it('has no arbitrary corner radius in a component', () => {
     const bad: string[] = []
     for (const file of files) {

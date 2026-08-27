@@ -89,7 +89,7 @@ export function Todos({ projectId, socket }: { projectId: string; socket: PanelS
           type="button"
           onClick={add}
           title={tr('todos.addShort')}
-          className="rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+          className="vp-press rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
         >
           <Plus size={14} />
         </button>
@@ -124,7 +124,7 @@ export function Todos({ projectId, socket }: { projectId: string; socket: PanelS
             key={t.id}
             data-testid="todo-item"
             data-done={t.done}
-            className="group flex items-start gap-2 rounded-vp px-2 py-1.5 hover:bg-surface-2"
+            className="vp-press group flex items-start gap-2 rounded-vp px-2 py-1.5 hover:bg-surface-2"
           >
             <button
               type="button"
@@ -150,7 +150,7 @@ export function Todos({ projectId, socket }: { projectId: string; socket: PanelS
               type="button"
               onClick={() => void guard(() => api.deleteTodo(t.id))}
               title={tr('todos.delete')}
-              className="mt-0.5 shrink-0 rounded-md p-0.5 text-ink-2 vp-reveal hover:text-ink"
+              className="vp-press mt-0.5 shrink-0 rounded-md p-0.5 text-ink-2 vp-reveal hover:text-ink"
             >
               <X size={11} />
             </button>
