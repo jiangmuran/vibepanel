@@ -312,6 +312,11 @@ export function Sidebar(props: SidebarProps) {
                 <div
                   key={s.id}
                   data-testid="session-row"
+                  // The id, so a check can ask about *this* session's terminal
+                  // rather than about whichever one it happens to find. The
+                  // scale check waited on "any terminal has content", which is
+                  // true of the one that was already on screen.
+                  data-session-id={s.id}
                   className={`group flex cursor-pointer items-center gap-2 rounded-vp px-2 py-1.5 transition-colors duration-200 ease-vp ${
                     isSelected ? 'bg-surface-2' : 'hover:bg-surface-2'
                   }`}

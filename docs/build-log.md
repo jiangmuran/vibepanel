@@ -12414,3 +12414,31 @@ looked up on an element, so that context runs the shipped renderer too.
 Restoring the `.xterm-rows` read fails two assertions — "pressing and holding
 selected nothing; there is no way to copy from a phone" and the drag — which is
 the pair that should have failed the first time.
+
+## Three checks that read the terminal through the DOM, found one at a time
+
+The renderer change kept surfacing, and each time in a check that had not been
+looked at yet.
+
+**tls-check** read `.xterm-screen`'s `innerText` and got `""` for a terminal
+that was working perfectly, then reported it as *"nothing typed over TLS reached
+the session; the WebSocket did not work"* and *"an open session stopped working
+when the certificate was replaced"* — two alarming sentences about a feature
+that was fine. It goes through the buffer reader now, like the other four.
+
+**scale-check** waited for "any terminal has content", which is answered by the
+terminal that was already on screen, so the wait either returned instantly or
+sat out its full fifteen-second timeout — and reported *that* as the session
+switch taking fifteen seconds. Now it asks about the session it clicked, by id,
+which meant giving a session row its id in the DOM.
+
+And then it still failed, for a second reason worth separating: **"has content"
+is the wrong question**. A seeded session that has printed nothing never
+satisfies it. The reader answers `null` for a session with no terminal and an
+array — possibly of empty rows — for one that has it, so the probe waits for the
+mount, which is what "switching took N ms" means.
+
+**head-check** found the committed frontend bundle is not what the sources
+build. `internal/webui/dist` is tracked and embedded, so `go build` from a fresh
+clone was shipping an older frontend than the repository's own source. Rebuilt
+and committed.

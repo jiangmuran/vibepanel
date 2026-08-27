@@ -9,6 +9,7 @@
 // upgrades to wss, the session cookie carries Secure, and a certificate gets
 // replaced under a running server.
 import { chromium } from 'playwright'
+import { rows as screenRows } from '../web/scripts/lib/screen.mjs'
 import { spawn, execSync } from 'node:child_process'
 import { mkdtempSync, rmSync, mkdirSync, copyFileSync, renameSync } from 'node:fs'
 import { createServer } from 'node:net'
@@ -227,7 +228,11 @@ try {
   await page.keyboard.type(`echo ${marker.slice(0, 4)}"${marker.slice(4)}"\n`)
   let sawMarker = false
   for (let i = 0; i < 30; i++) {
-    const text = await page.locator('.xterm-screen').first().innerText().catch(() => '')
+    // Through the buffer: `.xterm-screen` has text only under xterm's DOM
+    // renderer, and the GPU renderer that ships draws to a canvas. This read ""
+    // for a terminal that was working perfectly and reported it as TLS being
+    // broken.
+    const text = (await screenRows(page)).join('\n')
     if (text.includes(marker)) { sawMarker = true; break }
     await sleep(400)
   }
@@ -289,7 +294,11 @@ try {
   await page.keyboard.type(`echo ${stillMarker.slice(0, 5)}"${stillMarker.slice(5)}"\n`)
   let stillWorks = false
   for (let i = 0; i < 30; i++) {
-    const text = await page.locator('.xterm-screen').first().innerText().catch(() => '')
+    // Through the buffer: `.xterm-screen` has text only under xterm's DOM
+    // renderer, and the GPU renderer that ships draws to a canvas. This read ""
+    // for a terminal that was working perfectly and reported it as TLS being
+    // broken.
+    const text = (await screenRows(page)).join('\n')
     if (text.includes(stillMarker)) { stillWorks = true; break }
     await sleep(400)
   }

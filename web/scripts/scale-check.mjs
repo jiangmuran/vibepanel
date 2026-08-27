@@ -642,14 +642,25 @@ try {
   const switchTimes = []
   for (let i = 0; i < 5; i++) {
     const row = page.locator('[data-testid="session-row"]').nth(i)
+    const sessionId = await row.getAttribute('data-session-id')
     const t = Date.now()
     await row.click()
     // Through the buffer, not the DOM: under the GPU renderer `.xterm-rows` is
-    // empty however full the terminal is, so this waited fifteen seconds and
-    // gave up on every switch.
+    // empty however full the terminal is.
+    //
+    // And about *this* session, by id. Asking whether any terminal has content
+    // is answered by the one that was already on screen, so the wait either
+    // returned instantly or -- when the reader picked a different terminal --
+    // sat out the full fifteen seconds and reported it as the switch taking
+    // fifteen seconds.
+    // Mounted, not "has printed something". A seeded session that has produced
+    // no output never satisfies "has content", so waiting for content measured
+    // the timeout rather than the switch and reported it as fifteen seconds.
+    // The reader answers null for a session with no terminal and an array --
+    // possibly of empty rows -- for one that has it.
     await page.waitForFunction(
-      () => (window.vibepanelScreen?.()?.some((r) => r.trim()) ?? false),
-      null,
+      (id) => Array.isArray(window.vibepanelScreen?.({ id })),
+      sessionId,
       { timeout: 15000 },
     ).catch(() => {})
     switchTimes.push(Date.now() - t)
