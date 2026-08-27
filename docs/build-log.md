@@ -14707,3 +14707,27 @@ definition.
   twelve. The cache collapses viewers, not directories, and twelve `git status` in
   one request is the ceiling somebody with twelve worktrees pays every three
   seconds.
+
+### `null` where an array was promised took the whole settings dialog down
+
+`render-check` came back with two failures that had nothing to say about what
+was wrong: *settings: no settings control* and *honesty: the notice does not
+open the place that fixes it*. Both were the same crash, and neither named it.
+
+The Shell launch profile has no command and no environment.
+`append([]string(nil), p.Command...)` of an empty source is still `nil`, and
+`nil` marshals to `null` — so the browser got `{"command": null, "env": null}`
+and the settings page threw on `p.env.map(...)`. A throw in a child unmounts
+the tree above it, so the dialog never appeared, and the header control that
+opens it was measured as not visible because the crash had taken the header
+too.
+
+`docs/api.md`'s first convention is that an endpoint with nothing to return
+sends `[]` and never `null`. This was the one place that broke it, and it broke
+in the one profile a new install sees first.
+
+The test asserts on the **raw bytes**, not through a decoder. A JSON decoder
+cannot tell `[]` from `null` — both become a nil slice in Go, and in TypeScript
+the difference only exists at runtime, which is exactly where it bit. A test
+that decodes would have passed against the bug. The same trap survived a
+mutation on another branch this week for the same reason.

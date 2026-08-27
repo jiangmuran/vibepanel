@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -429,5 +430,46 @@ func TestEveryBuiltinProfileHasBothLanguages(t *testing.T) {
 		if !strings.Contains(dict, "'"+key+"'") {
 			t.Errorf("%s has no entry for %q", path, key)
 		}
+	}
+}
+
+// Every list a profile carries is a list on the wire, including an empty one.
+//
+// The Shell built-in has neither a command nor an environment, and
+// `append([]string(nil), nil...)` is still nil, which marshals as `null`. The
+// settings page then died on `p.env.map(...)` before drawing anything -- the
+// whole dialog, not the profiles section, because a throw in a child unmounts
+// the tree above it. Two render-check assertions went red and neither of them
+// mentioned profiles.
+//
+// Asserted on the raw bytes. A JSON decoder cannot tell `[]` from `null`:
+// both decode to a nil slice in Go and to a value that fails `.map` in
+// TypeScript only at runtime, so a test that decodes proves nothing here.
+func TestAProfileWithNothingInItStillSendsArrays(t *testing.T) {
+	ts, _ := newTestServer(t)
+
+	res, err := ts.Client().Get(ts.URL + "/api/launch-profiles")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status %d: %s", res.StatusCode, body)
+	}
+	for _, bad := range []string{`"command":null`, `"env":null`} {
+		if bytes.Contains(body, []byte(bad)) {
+			t.Errorf("the profile list contains %s. docs/api.md's first "+
+				"convention is that an endpoint with nothing to return sends "+
+				"[], never null -- and the browser maps over both of these.",
+				bad)
+		}
+	}
+	if !bytes.Contains(body, []byte(`"command":[]`)) {
+		t.Error("no profile came back with an empty command, so the check " +
+			"above ran against nothing")
 	}
 }

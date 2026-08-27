@@ -146,8 +146,15 @@ func BuiltinLaunchProfiles() []LaunchProfile {
 	out := make([]LaunchProfile, 0, len(builtinProfiles))
 	for _, p := range builtinProfiles {
 		p.Builtin = true
-		p.Command = append([]string(nil), p.Command...)
-		p.Env = append([]LaunchEnvVar(nil), p.Env...)
+		// make, not append-to-nil. `append([]string(nil))` of an empty source
+		// is still nil, and nil marshals as `null` -- so the Shell profile,
+		// which has neither a command nor an environment, arrived in the
+		// browser as {"command": null, "env": null} and the settings page died
+		// on `p.env.map(...)` before it drew anything. docs/api.md's first
+		// convention is that arrays are always arrays; this was the one place
+		// that broke it, and it took the whole dialog with it.
+		p.Command = append(make([]string, 0, len(p.Command)), p.Command...)
+		p.Env = append(make([]LaunchEnvVar, 0, len(p.Env)), p.Env...)
 		out = append(out, p)
 	}
 	return out
