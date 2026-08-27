@@ -160,7 +160,7 @@ const DICT = {
   },
   'app.showTerminals': { zh: '展开底部终端', en: 'Show terminals' },
   'app.sortByActivity': { zh: '改回按活跃度排序 —— 你的排列会留着', en: 'Sort by recent activity instead — your arrangement is kept' },
-  'app.restartHint': { zh: '在同一个 pane 里重跑这个会话的命令', en: "Restart this session's command in the same pane" },
+  'app.restartHintStatus': { zh: '命令以 status {n} 退出。在同一个 pane 里重跑它', en: 'The command exited with status {n}. Restart it in the same pane' },
   'app.showPanelShort': { zh: '展开侧栏', en: 'Show side panel' },
   'app.clipboardRefused': {
     zh: '浏览器拒绝了一次不是由点击触发的剪贴板写入',

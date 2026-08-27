@@ -13615,3 +13615,17 @@ is worse than none.
   panel's content is genuinely wider than the column, `render-check`'s
   unreachable-content scan will now report it where the coerced `overflow-x:
   auto` used to hide it — correct, and a finding nobody has seen either way.
+
+### The restart tooltip did not say what it was recovering from
+
+`render-check` warns when the header's restart button's tooltip does not name
+the exit status, and it had been warning since the tooltip was translated: the
+English sentence it replaced was built from `exitReason()` and carried the
+status, and the two dictionary strings that replaced it did not. The fix that
+made the panel speak the user's language on its most prominent restart button
+quietly dropped the only fact in the tooltip that says whether pressing it is
+likely to help.
+
+`app.restartHint` is gone rather than kept beside its replacement, because a
+dictionary key nobody reads is how `dir.cancel` sat unused while the picker was
+hardcoded Chinese.

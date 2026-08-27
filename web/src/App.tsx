@@ -824,9 +824,12 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
                     // This one had an English sentence built from exitReason()
                     // instead, so the panel's most prominent restart button was
                     // the one that did not speak the user's language.
+                    // The status is in the tooltip because it is the one
+                    // fact that says whether restarting is likely to help. A
+                    // pane that vanished has none, so it gets the other string.
                     current.exitStatus === EXIT_VANISHED
                       ? t('restore.gone')
-                      : t('app.restartHint')
+                      : t('app.restartHintStatus', { n: current.exitStatus })
                   }
                 >
                   <RotateCcw size={11} />
