@@ -177,9 +177,19 @@ the button must not kill the agent somebody else just started.
 ### `PATCH /api/todos/{todoID}`
 ### `DELETE /api/todos/{todoID}`
 
-`PUT` on notes takes `{"content": "...", "rev": N}` and answers `409` with the
-current note if `rev` is not the one on disk. Two people editing one note in the
-same second is why it is a counter and not a timestamp.
+`PUT` on notes takes `{"content": "...", "baseRev": N}` and answers `409` with
+the current note if `baseRev` is not the revision on disk. Omit `baseRev`
+entirely for an unconditional write, which is what a script that is not merging
+anything wants.
+
+Note the asymmetry, because it is the thing to get wrong: you **read** `rev` and
+you **send it back as** `baseRev`. They are different names for the same number
+because they are different claims — one is "this is the revision", the other is
+"this is the revision I was looking at". The server rejects an unknown field, so
+sending `rev` gets a `400` naming it rather than an unconditional write.
+
+Two people editing one note in the same second is why it is a counter and not a
+timestamp.
 
 ## Browsing the filesystem
 

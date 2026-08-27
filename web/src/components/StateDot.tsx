@@ -1,10 +1,20 @@
 import type { SessionState } from '../protocol/wire'
 import { EXIT_VANISHED } from '../protocol/wire'
+import { t } from '../i18n'
 
-const LABEL: Record<SessionState, string> = {
-  waiting: 'Waiting for you',
-  working: 'Working',
-  done: 'Done',
+/**
+ * The state, in words, for the tooltip and for a screen reader.
+ *
+ * A function rather than a constant: a constant is evaluated once at module
+ * load, so it would keep whichever language was active when the tab opened and
+ * a switch would not reach it.
+ */
+function label(state: SessionState): string {
+  return state === 'waiting'
+    ? t('session.waiting')
+    : state === 'working'
+      ? t('session.working')
+      : t('session.done')
 }
 
 /**
@@ -46,8 +56,11 @@ export function StateDot({
     return renderExited(size, exitStatus)
   }
   const title = onToggle
-    ? `${LABEL[state]} — click to mark as ${state === 'done' ? 'waiting' : 'done'}`
-    : LABEL[state]
+    ? t('session.markAs', {
+        state: label(state),
+        other: state === 'done' ? t('session.markWaiting') : t('session.markDone'),
+      })
+    : label(state)
   const glyph = renderGlyph(state, size, title)
   if (!onToggle) return glyph
   return (

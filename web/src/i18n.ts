@@ -181,6 +181,9 @@ const DICT = {
   'session.rename': { zh: '重命名', en: 'Rename' },
   'session.pin': { zh: '置顶', en: 'Pin' },
   'session.unpin': { zh: '取消置顶', en: 'Unpin' },
+  'session.markAs': { zh: '{state} —— 点一下改成{other}', en: '{state} — click to mark as {other}' },
+  'session.markWaiting': { zh: '等你处理', en: 'waiting' },
+  'session.markDone': { zh: '已完成', en: 'done' },
   'session.exited': { zh: '已退出', en: 'Exited' },
   'session.waiting': { zh: '等你处理', en: 'Waiting for you' },
   'session.working': { zh: '工作中', en: 'Working' },
@@ -200,10 +203,16 @@ const DICT = {
 
   'todos.add': { zh: '加一条待办', en: 'Add an item' },
   'todos.leftOf': { zh: '{done} / {total} 已完成', en: '{left} of {total} left' },
+  'todos.markDone': { zh: '标记为完成', en: 'Mark done' },
+  'todos.markNotDone': { zh: '标记为未完成', en: 'Mark not done' },
   'todos.empty': { zh: '还没有待办', en: 'Nothing to do' },
 
   'notes.saved': { zh: '已保存', en: 'Saved' },
   'notes.saving': { zh: '保存中…', en: 'Saving…' },
+  'notes.loading': { zh: '读取中…', en: 'Loading…' },
+  'notes.unsaved': { zh: '未保存', en: 'Unsaved' },
+  'notes.error': { zh: '保存失败', en: 'Could not save' },
+  'notes.conflict': { zh: '别处改过了', en: 'Changed elsewhere' },
   'notes.placeholder': { zh: '这个项目的笔记，Markdown', en: 'Notes for this project, in Markdown' },
 
   'monitor.cpu': { zh: 'CPU', en: 'CPU' },

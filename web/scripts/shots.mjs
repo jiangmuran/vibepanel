@@ -55,8 +55,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 let browser
 let cookie = ''
 
-const authed = (path, init = {}) =>
-  fetch(BASE + path, {
+// Every seeding call goes through here, and a non-2xx is fatal.
+//
+// It used to return the response and nobody looked. The note this seeds stopped
+// arriving at some point -- the panel was photographed with an empty notes tab
+// and its placeholder showing -- and the screenshots looked like a feature that
+// did not work rather than a fixture that had not run. A seed that fails
+// silently produces pictures of an empty application, which is the same failure
+// as a check that stops checking.
+const authed = async (path, init = {}) => {
+  const res = await fetch(BASE + path, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
@@ -64,6 +72,12 @@ const authed = (path, init = {}) =>
       ...(init.headers ?? {}),
     },
   })
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    throw new Error(`seeding ${init.method ?? 'GET'} ${path}: ${res.status} ${body.slice(0, 200)}`)
+  }
+  return res
+}
 
 async function cleanup() {
   try { await browser?.close() } catch { /* gone */ }
@@ -182,7 +196,10 @@ try {
   })
   await authed(`/api/projects/${proj.id}/notes`, {
     method: 'PUT',
-    body: JSON.stringify({ content: '# 今天\n\n- 目录选择器做完了\n- 终端行距 1.2 → 1.0\n- 还差 PWA 通知', rev: 0 }),
+    // No baseRev: an unconditional write is what a seeder wants. It sent
+    // `rev: 0`, which is the *response* field name, and the server rejected the
+    // unknown field -- so every screenshot since had an empty notes tab.
+    body: JSON.stringify({ content: '# 今天\n\n- 目录选择器做完了\n- 终端行距 1.2 → 1.0\n- 还差 PWA 通知' }),
   })
   for (const t of ['把右栏排版重做', '简体中文', 'PWA 通知']) {
     await authed(`/api/projects/${proj.id}/todos`, { method: 'POST', body: JSON.stringify({ text: t }) })

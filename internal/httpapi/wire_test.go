@@ -377,3 +377,45 @@ func TestTheAPIDocCoversEveryRoute(t *testing.T) {
 			"write code against that paragraph", entry)
 	}
 }
+
+// The API doc named a request field that does not exist.
+//
+// `PUT /api/projects/{id}/notes` takes `baseRev`; the doc said `rev`, which is
+// what the *response* calls the same number. Anyone building against the page
+// got a 400. TestTheAPIDocCoversEveryRoute did not see it, and could not: it
+// compares routes, and this was a field name inside one.
+//
+// Pinned narrowly rather than by a scheme for checking every documented field
+// against every struct tag. The asymmetry is the thing that goes wrong here --
+// read `rev`, send `baseRev` -- and a test that says so by name is worth more
+// than a general one that would have passed anyway, since `rev` is a real tag
+// on the response.
+func TestTheNotesRequestFieldIsDocumentedByItsRealName(t *testing.T) {
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "api.md"))
+	if err != nil {
+		t.Fatalf("read docs/api.md: %v", err)
+	}
+	text := string(doc)
+
+	// The name the handler actually decodes, taken from the struct rather than
+	// written out here, so renaming the field fails this instead of drifting.
+	field := jsonTagOf(t, putNoteRequest{}, "BaseRev")
+	if !strings.Contains(text, "`"+field+"`") {
+		t.Errorf("docs/api.md never mentions %q, which is the field PUT notes decodes", field)
+	}
+	if strings.Contains(text, `"content": "...", "rev"`) {
+		t.Error(`docs/api.md describes the notes request as taking "rev"; that is the ` +
+			`response field name, and the server rejects it as unknown`)
+	}
+}
+
+// jsonTagOf reads the json name of one field, so a test can assert about the
+// wire name without repeating it.
+func jsonTagOf(t *testing.T, v any, field string) string {
+	t.Helper()
+	f, ok := reflect.TypeOf(v).FieldByName(field)
+	if !ok {
+		t.Fatalf("%T has no field %s", v, field)
+	}
+	return strings.Split(f.Tag.Get("json"), ",")[0]
+}

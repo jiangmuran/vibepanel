@@ -95,6 +95,20 @@ export function Todos({ projectId, socket }: { projectId: string; socket: PanelS
         </button>
       </div>
 
+      {/* Under the input rather than at the foot of the panel.
+          It was a sibling of the scroller, so with three items in a tall column
+          it floated nine hundred pixels below the last one, alone against the
+          background -- a summary of something that was no longer on the same
+          part of the screen. Here it is adjacent to the list and stays visible
+          when the list is long enough to scroll. */}
+      {todos.length > 0 && (
+        <div className="tabular shrink-0 px-3 pb-1 text-right text-[10.5px] text-ink-2">
+          {/* The two languages put the numbers in different places, so the
+              call passes both facts and the dictionary decides the order. */}
+          {tr('todos.leftOf', { left: outstanding, done: todos.length - outstanding, total: todos.length })}
+        </div>
+      )}
+
       {error && (
         <p className="px-3 pb-2 text-[11px]" style={{ color: 'var(--vp-state-waiting)' }}>
           {error}
@@ -115,7 +129,7 @@ export function Todos({ projectId, socket }: { projectId: string; socket: PanelS
             <button
               type="button"
               onClick={() => void guard(() => api.patchTodo(t.id, { done: !t.done }))}
-              title={t.done ? tr('session.done') : tr('session.done')}
+              title={t.done ? tr('todos.markNotDone') : tr('todos.markDone')}
               className="mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-colors duration-200 ease-vp"
               style={{
                 borderColor: t.done ? 'var(--vp-state-done)' : 'var(--vp-hairline-strong)',
@@ -144,13 +158,6 @@ export function Todos({ projectId, socket }: { projectId: string; socket: PanelS
         ))}
       </div>
 
-      {todos.length > 0 && (
-        <div className="tabular shrink-0 px-3 py-1 text-right text-[10.5px] text-ink-2">
-          {/* The two languages put the numbers in different places, so the
-              call passes both facts and the dictionary decides the order. */}
-          {tr('todos.leftOf', { left: outstanding, done: todos.length - outstanding, total: todos.length })}
-        </div>
-      )}
     </div>
   )
 }

@@ -11204,3 +11204,57 @@ One thing removed on the way: a claim that installers "older than v0.4" did not
 restart. There is no v0.4 -- the binary reports `dev` -- and inventing a version
 number in a public README is the kind of detail somebody later builds a support
 answer on.
+
+## A screenshot of an empty panel is a screenshot of a broken fixture
+
+The notes tab was photographed empty, with its placeholder showing, in every
+round of screenshots for as long as there have been screenshots. It looked like
+a feature that did not work.
+
+`shots.mjs` seeds a note with `PUT /api/projects/{id}/notes`, and the server had
+been answering `400 unknown field "rev"` the whole time. Nobody looked: `authed`
+returned the response and every caller ignored it. It throws on a non-2xx now,
+and the very first run named the failure in one line.
+
+The 400 was correct and the *documentation* was wrong. `PUT` notes decodes
+`baseRev`; `docs/api.md` said `rev`, which is what the response calls the same
+number. Anyone building against that page got a 400. `TestTheAPIDocCoversEveryRoute`
+could not see it — it compares routes, and this was a field name inside one.
+
+The asymmetry is worth stating rather than smoothing over, because it is what
+went wrong: you **read** `rev` and **send it back as** `baseRev`. Different names
+for one number because they are different claims — "this is the revision" versus
+"this is the revision I was looking at". The doc says so now, and a test asserts
+the documented name against the struct tag rather than against a string written
+twice.
+
+## Two more places the language never reached, and the rule that finds them
+
+The untranslated-string test had two rules — attributes, and prose between tags.
+Neither can see a *lookup table of labels*, and there were two:
+
+- `Notes` kept six: `saved`, `unsaved`, `changed elsewhere`. The panel said them
+  in English under a Chinese heading for as long as the translation existed.
+- `StateDot` kept three, which are what a screen reader announces for the state
+  indicator, and what the tooltip says.
+
+The third rule is narrow on purpose: an object value that is a *phrase* — it
+contains a space or trails an ellipsis. `method: 'POST'` and `kind: 'output'`
+are not phrases. On this codebase it fires on exactly the two real cases and
+nothing else, and mutating a label back to English fails it.
+
+`StateDot`'s table also had to stop being a constant. A module-level map is
+evaluated once at load, so it keeps whichever language was active when the tab
+opened and a switch never reaches it.
+
+## Two more UI things, both visible only in a photograph
+
+**The todo counter was at the foot of the panel.** It was a sibling of the
+scroller, so with three items in a tall column it floated nine hundred pixels
+below the last one, alone against the background — a summary of something that
+was no longer on the same part of the screen. It sits under the input now, next
+to the list, and stays visible when the list is long enough to scroll.
+
+**The checkbox tooltip said the same thing in both branches.**
+`title={t.done ? tr('session.done') : tr('session.done')}` — copy-paste, and it
+told you the item was "done" whether it was or not. Mark done / mark not done.

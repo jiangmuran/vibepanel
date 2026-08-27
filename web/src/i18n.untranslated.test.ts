@@ -62,6 +62,28 @@ describe('every user-visible string comes from the dictionary', () => {
       .toEqual([])
   })
 
+  // The third shape, and the one the first two rules cannot see: a lookup table
+  // of labels. Notes kept six of them -- 'saved', 'unsaved', 'changed
+  // elsewhere' -- and the panel said them in English under a Chinese heading
+  // for as long as the translation had existed. StateDot kept three more, which
+  // are what a screen reader announces for the state indicator.
+  //
+  // Narrow on purpose: an object value that is a *phrase* -- it contains a
+  // space or trails an ellipsis. `method: 'POST'` and `kind: 'output'` are not
+  // phrases and do not trip it.
+  it('has no English phrase as an object-literal value', () => {
+    const bad: string[] = []
+    for (const file of files) {
+      if (file.endsWith('i18n.ts')) continue
+      const text = stripComments(readFileSync(file, 'utf8'))
+      for (const m of text.matchAll(/^\s*[A-Za-z_][A-Za-z0-9_]*:\s*'([A-Za-z][^']*(?: |…)[^']*)'/gm)) {
+        bad.push(`${file.slice(SRC.length)}: ${JSON.stringify(m[1])}`)
+      }
+    }
+    expect(bad, `use t('...') and add both languages to the dictionary:\n${bad.join('\n')}`)
+      .toEqual([])
+  })
+
   it('has no line of English prose sitting between tags', () => {
     const bad: string[] = []
     for (const file of files) {

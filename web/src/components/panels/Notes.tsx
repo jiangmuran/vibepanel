@@ -178,13 +178,21 @@ export function Notes({ projectId, socket }: { projectId: string; socket: PanelS
     [projectId],
   )
 
+  // Through the dictionary like everything else. These were six English
+  // literals in an object, which is a shape neither of the untranslated-string
+  // rules can see: not an attribute, and not a line of prose between tags. The
+  // panel said "saved" in English under a Chinese heading for as long as the
+  // translation had existed.
+  //
+  // A server error keeps its own text -- it is the only thing that says which
+  // failure it was -- with the translated label in front of it.
   const label: Record<typeof status, string> = {
-    loading: 'loading…',
-    saving: 'saving…',
-    saved: 'saved',
-    dirty: 'unsaved',
-    error: error ?? 'error',
-    conflict: error ?? 'changed elsewhere',
+    loading: t('notes.loading'),
+    saving: t('notes.saving'),
+    saved: t('notes.saved'),
+    dirty: t('notes.unsaved'),
+    error: error ?? t('notes.error'),
+    conflict: error ?? t('notes.conflict'),
   }
 
   return (
