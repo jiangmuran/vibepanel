@@ -299,6 +299,7 @@ func (s *Server) Routes() http.Handler {
 
 			s.registerPanelRoutes(r)
 			s.registerUpdateRoutes(r)
+			s.registerWebhookRoutes(r)
 			s.registerTokenRoutes(r)
 			s.registerSettingsRoutes(r)
 			// Making and revoking share links is an ordinary settings action
@@ -778,15 +779,26 @@ func (s *Server) stateIsGuessed(sessions []store.Session) bool {
 			return false
 		}
 	}
-	// Installing the hooks used to be enough to clear this, and that was the
-	// worst possible moment to stop explaining. An agent reads its hooks when
-	// it starts, so every session already open keeps guessing after the
-	// install — and the notice that said so vanished on the click that was
-	// meant to fix it.
+	// Installed is enough to stop asking, and the previous rule -- keep the
+	// notice up until a report actually arrives -- was right about the facts
+	// and wrong about who they were for.
 	//
-	// Guessed now means what it says: an agent is running and nothing has
-	// reported. Whether the hooks are installed decides which way out the
-	// notice offers, not whether it appears.
+	// Measured on the owner's own panel, which is where the complaint came
+	// from ("现在不知道为啥一直提示着什么状态靠猜"): the reporter is installed,
+	// `notify` is on line 8 of ~/.codex/config.toml above the first table, and
+	// running the script by hand moved the session to waiting/hook in one
+	// second. Nothing is broken. Codex's `notify` fires on turn completion and
+	// nothing else, so three sessions that are mid-turn have simply never had
+	// anything to report -- and the panel was telling their owner, on every
+	// screen, to go and do the thing he had already done.
+	//
+	// So the banner asks only when there is something to press: an agent is
+	// running and no agent's hooks are installed at all. "This particular
+	// session has never reported" is a fact about one row and belongs on that
+	// row, not across the top of the panel.
+	if s.hooksAreInstalled() {
+		return false
+	}
 	return true
 }
 
@@ -1832,6 +1844,14 @@ func (s *Server) pollOnce(ctx context.Context) error {
 			if st != row.State || src != row.StateSource {
 				if err := s.DB.SetSessionState(ctx, row.ID, st, src); err != nil {
 					return err
+				}
+				// On the transition, not on the state. This runs every two
+				// seconds against every session; firing on "is waiting" rather
+				// than "has just started waiting" would send one notification
+				// per tick for as long as somebody is away from their desk,
+				// which is the whole time the feature exists to cover.
+				if st != row.State {
+					s.fireWebhooks(ctx, row, string(st))
 				}
 			}
 		}

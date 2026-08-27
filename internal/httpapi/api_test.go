@@ -1850,19 +1850,23 @@ func TestConcurrentAPITraffic(t *testing.T) {
 	}
 }
 
-func TestInstallingHooksDoesNotSilenceTheNotice(t *testing.T) {
-	// The notice used to clear as soon as the hook file existed, which is the
-	// worst possible moment to stop explaining.
+func TestTheNoticeOnlyAsksForSomethingThatCanBeDone(t *testing.T) {
+	// This test has been both ways round, and the second one was wrong for a
+	// reason the first could not have known.
 	//
-	// An agent reads its hooks when it starts, so every session already open
-	// keeps guessing after the install — and in a panel built for a dozen
-	// long-lived agents that is all of them. The sequence was: see "states are
-	// being guessed", click it, install, watch the notice disappear, and watch
-	// every state stay guessed with nothing on screen saying why.
+	// It once cleared as soon as the hook file existed, which stopped
+	// explaining at the worst moment: an agent reads its hooks when it starts,
+	// so sessions already open keep guessing, and the notice saying so vanished
+	// on the click meant to fix it. So it was changed to require an actual
+	// report -- true, and it turned the notice into a panel that nags its owner
+	// about work he has already done. Measured on his machine: reporter
+	// installed, `notify` on line 8 of config.toml above the first table,
+	// running the script by hand moved a session to waiting/hook in a second.
+	// Codex's notify fires on turn completion and nothing else, so sessions
+	// mid-turn had never had anything to send.
 	//
-	// Guessed now means what it says: an agent is running and nothing has
-	// reported. Whether the hooks are installed decides which way out the
-	// notice offers, and the payload carries that separately.
+	// A banner exists to offer something to press. "This one session has never
+	// reported" is a fact about one row, and belongs on that row.
 	ts, srv := newTestServer(t)
 	ctx := context.Background()
 	t.Setenv("HOME", t.TempDir()) // never touch the real ~/.claude
@@ -1909,14 +1913,26 @@ func TestInstallingHooksDoesNotSilenceTheNotice(t *testing.T) {
 		t.Error("the payload does not say the hooks are installed, so the notice cannot " +
 			"offer the right way out")
 	}
-	if !guessed {
-		t.Error("installing the hooks silenced the notice, but every session that was " +
-			"already open keeps guessing until it reloads — and the explanation just left " +
-			"the screen")
+	// Installed is enough to stop asking.
+	//
+	// This used to require an actual report, on the reasoning that a session
+	// opened before the install keeps guessing until it restarts. True, and it
+	// made the panel nag its owner about work he had already done: measured on
+	// his own machine, the reporter was installed, `notify` was on line 8 of
+	// config.toml above the first table, and running the script by hand moved a
+	// session to waiting/hook in one second. Codex's notify fires on turn
+	// completion and nothing else, so three sessions mid-turn had never had
+	// anything to send -- and every screen told him to go and install hooks.
+	//
+	// A banner exists to offer something to press. "This one session has never
+	// reported" is a fact about one row.
+	if guessed {
+		t.Error("the notice is still up after the hooks were installed, so it is asking " +
+			"for something that has already been done")
 	}
 
-	// And an actual report is what clears it, because that is the only
-	// evidence that anything is reporting.
+	// A report keeps it quiet too, which is the case where the hooks were
+	// installed outside the panel.
 	if err := srv.DB.SetSessionState(ctx, sess.ID, session.StateWaiting, session.SourceHook); err != nil {
 		t.Fatal(err)
 	}

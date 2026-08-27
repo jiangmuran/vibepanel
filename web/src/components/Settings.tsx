@@ -17,6 +17,7 @@ import { showToast } from './toasts'
 import { ShareLinks } from './ShareLinks'
 import { safeText } from './text'
 import { UpdateSection } from './UpdateSection'
+import { Webhooks } from './Webhooks'
 
 function bytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -198,6 +199,9 @@ export function Settings({ onClose }: { onClose: () => void }) {
           </div>
         </Section>
 
+        <Section title={t('wh.title')}>
+          <Webhooks />
+        </Section>
         <UpdateBlock />
         {info && <StatusSection info={info} />}
         <HooksSection />

@@ -717,3 +717,24 @@ export interface ShareDashboard {
   projects: ShareProject[]
   sessions: ShareSession[]
 }
+
+/** One outbound notification destination. */
+export interface Webhook {
+  id: string
+  name: string
+  method: string
+  url: string
+  headers?: Record<string, string>
+  body?: string
+  /** Which transitions fire it. Empty means waiting only. */
+  states?: string[]
+  enabled: boolean
+}
+
+/** What a test send answers with. */
+export interface WebhookTest {
+  ok: boolean
+  /** What the destination replied, bounded. */
+  said: string
+  error?: string
+}

@@ -12494,3 +12494,64 @@ On screen it is a paragraph between somebody and the button they came for.
 They now say the thing and stop. "Counted from the agents' own records,
 including runs this panel did not start." "Downloads, verifies and replaces the
 binary, then restarts the panel. Your sessions are unaffected."
+
+## The notice was asking for work that was already done
+
+*"现在不知道为啥一直提示着什么状态靠猜啊什么之类的"* — and the panel was right about
+the facts and wrong about who they were for.
+
+Measured on the owner's own panel rather than reasoned about. The reporter is
+installed. `notify` is on line 8 of `~/.codex/config.toml`, above the first
+table, which is exactly where it has to be. Running the script by hand with that
+session's own environment moved it to `waiting` with source `hook` in one
+second — the chain works end to end.
+
+What was actually happening: Codex's `notify` fires on **turn completion and
+nothing else**. Three sessions that had been mid-turn since the hook was
+installed had never had anything to send, so no row carried `SourceHook`, so
+`stateIsGuessed` was true, so every screen told him to go and install hooks he
+had installed.
+
+That rule has now been both ways round and both were defensible. It used to
+clear the moment the hook file existed, which stopped explaining at the worst
+moment — an agent reads its hooks at startup, so every already-open session
+keeps guessing and the notice saying so vanished on the click meant to fix it.
+So it was changed to require an actual report. True, and it turns the product
+into something that nags.
+
+The resolution is neither: **a banner exists to offer something to press.** When
+no agent's hooks are installed there is a button and the notice earns its place.
+Once they are installed there is nothing left to press, and "this particular
+session has never reported" is a fact about one row that belongs on that row.
+
+## Notifications that reach a phone
+
+The browser notification needs the panel open in a tab or installed as an app,
+which leaves out the case it exists for: the laptop is shut and the person is
+somewhere else.
+
+One mechanism, not a list of providers. `{method, url, headers, body}` with
+`{state}`, `{session}`, `{project}`, `{url}` and `{time}` substituted — which is
+Bark, ntfy, Gotify, ServerChan, PushPlus, Slack, Discord and a shell script
+behind a reverse proxy. A package with a case per service is a package that is
+missing whichever one somebody uses; the presets in the settings page fill the
+same three fields in and are values, not code paths.
+
+Two escapes, and using one for the other is the bug this exists to avoid. In a
+URL a session called `fix a&b` must arrive percent-encoded or everything after
+the ampersand becomes a different query parameter. In a JSON body it must arrive
+JSON-escaped or a title with a quote in it produces a body the destination
+rejects — and agent titles contain quotes constantly.
+
+The mutation that swapped the escapes **passed at first**, and the test was
+wrong rather than the code: percent-encoding a title inside a JSON body is still
+*valid JSON*, so "the body parses" is satisfied while the notification arrives
+reading `fix+a%26b+%22now%22`. The assertion is now that the title round-trips
+exactly.
+
+Firing is on the transition, not on the state: this runs every two seconds
+against every session, and "is waiting" would send one notification per tick for
+as long as somebody is away from their desk — which is the whole time the
+feature exists to cover. Sends are goroutines the poller never waits for, and a
+failure goes to the log: somebody else's outage must not become a poll tick that
+fails.

@@ -277,6 +277,7 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"token.created":           true,
 		"token.revoked":           true,
 		"update.installed":        true,
+		"webhooks.changed":        true,
 		"setup.rejected":          true,
 	}
 

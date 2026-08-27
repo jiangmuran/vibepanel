@@ -20,6 +20,8 @@ import type {
   TokenUsage,
   UsageSample,
   UpdateCheck,
+  Webhook,
+  WebhookTest,
   UpdateResult,
   Todo,
 } from './wire'
@@ -349,6 +351,12 @@ export const api = {
   system: () => request<SystemSample>('/api/system'),
 
   usage: () => request<UsageSample>('/api/usage'),
+
+  webhooks: () => request<Webhook[]>('/api/settings/webhooks'),
+  saveWebhooks: (list: Webhook[]) =>
+    request<Webhook[]>('/api/settings/webhooks', { method: 'PUT', body: JSON.stringify(list) }),
+  testWebhook: (w: Webhook) =>
+    request<WebhookTest>('/api/settings/webhooks/test', { method: 'POST', body: JSON.stringify(w) }),
 
   checkUpdate: () => request<UpdateCheck>('/api/update'),
   applyUpdate: () => request<UpdateResult>('/api/update', { method: 'POST' }),

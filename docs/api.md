@@ -383,6 +383,36 @@ top-level key appended to the end of that file would belong to the last table in
 it and Codex would never read it.
 
 <<<<<<< HEAD
+## Notifications to somewhere else
+
+### `GET /api/settings/webhooks`
+### `PUT /api/settings/webhooks`
+### `POST /api/settings/webhooks/test`
+
+The browser notification needs the panel open in a tab or installed as an app,
+which leaves out the case that matters: the laptop is shut. A webhook is an
+outbound HTTP request the panel makes when a session changes state.
+
+One mechanism, not a list of providers. `{"method","url","headers","body"}`
+with `{state}`, `{session}`, `{project}`, `{url}` and `{time}` substituted —
+which is Bark, ntfy, Gotify, ServerChan, PushPlus, Slack, Discord and a shell
+script behind a reverse proxy, without a case per service.
+
+Two escapes, chosen by where the placeholder is. In a URL a session called
+`fix a&b` arrives percent-encoded, or everything after the ampersand becomes a
+different query parameter. In a body it arrives JSON-escaped, or a title with a
+quote in it produces a body the destination rejects — and agent titles contain
+quotes constantly.
+
+`states` is which transitions fire it; empty means `waiting` only, which is the
+one worth waking somebody for. Firing is on the *transition*, so a session that
+sits waiting does not send one every two seconds.
+
+`PUT` replaces the whole list, assigns ids to new rows and answers with what was
+stored. `test` sends one immediately using the webhook **in the request body**
+rather than a stored one — the moment to test is before saving — and answers
+`{"ok", "said", "error"}` where `said` is what the destination replied.
+
 ## Updating
 
 ### `GET /api/update`
