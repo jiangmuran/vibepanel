@@ -128,7 +128,7 @@ const DICT = {
     en: 'The running tmux server started with an older config. Applying the new one ends every session on this socket:',
   },
   'set.tmuxConfigUnknown': {
-    zh: '正在跑的 tmux server 早于这项检查，问不出来。重启它之后才能知道。',
+    zh: 'tmux server 早于这项检查，问不出来。重启之后才知道。',
     en: 'The running tmux server predates this check, so the question has no answer until it is restarted.',
   },
   'set.tmuxConfigLabel': { zh: 'tmux 配置', en: 'tmux config' },
@@ -319,8 +319,8 @@ const DICT = {
     en: 'Too long to show here; these are the first {n} lines. Download it for the rest.',
   },
   'preview.tooBig': {
-    zh: '{size} 超过了 {limit} 的预览上限。预览是点一下就发生的事，所以它有上限；下载没有。',
-    en: 'At {size} this is past the {limit} preview limit. A preview happens on one click, so it has a ceiling; the download does not.',
+    zh: '{size} 超过 {limit} 的预览上限。下载可以看全部。',
+    en: 'At {size} this is past the {limit} preview limit. Download it to see all of it.',
   },
   'preview.none': {
     zh: '这个文件不是文本、图片或 PDF（{size}），没法在这里显示。',
@@ -374,8 +374,8 @@ const DICT = {
   'tok.revoke': { zh: '吊销', en: 'Revoke' },
 
   'set.passkeysWhy': {
-    zh: '用这台设备代替密码登录。密码依然有效 —— passkey 是多一条路，永远不是唯一的路。',
-    en: 'Sign in with this device instead of a password. The password keeps working — a passkey is an addition, never the only way in.',
+    zh: '用这台设备代替密码登录。密码依然有效。',
+    en: 'Sign in with this device instead of a password. The password keeps working.',
   },
   'set.working': { zh: '处理中…', en: 'Working…' },
   'set.hide': { zh: '收起', en: 'Hide' },
@@ -383,8 +383,8 @@ const DICT = {
   'set.status': { zh: '状态', en: 'Status' },
   'wh.title': { zh: '推送通知', en: 'Push notifications' },
   'wh.why': {
-    zh: '会话变成「等你处理」时，往你的手机发一条。浏览器通知要面板开着，这个不用。',
-    en: 'Send one to your phone when a session starts waiting. A browser notification needs the panel open; this does not.',
+    zh: '会话变成「等你处理」时往手机发一条，面板关着也行。',
+    en: 'One to your phone when a session starts waiting, with the panel closed.',
   },
   'wh.name': { zh: '名字', en: 'Name' },
   'wh.enabled': { zh: '启用', en: 'On' },
@@ -409,8 +409,8 @@ const DICT = {
   'upd.noAsset': { zh: '{v} 没有给这个平台的包', en: '{v} has no archive for this platform' },
   'upd.unreachable': { zh: '连不上 GitHub：{why}', en: 'Could not reach GitHub: {why}' },
   'upd.devBuild': {
-    zh: '这是一个开发版构建，没法和发布版比较——面板不会用一个它读不懂的版本号说服自己去覆盖自己。',
-    en: 'This is a development build, so there is nothing to compare against — the panel will not talk itself into overwriting itself over a version string it cannot read.',
+    zh: '开发版构建，没法和发布版比较。',
+    en: 'A development build. There is nothing to compare against.',
   },
   'upd.apply': { zh: '更新并重启', en: 'Update and restart' },
   'upd.applying': { zh: '正在下载并校验…', en: 'Downloading and checking…' },
@@ -421,8 +421,8 @@ const DICT = {
   },
   'upd.done': { zh: '已装上 {v}，正在重启面板…', en: 'Installed {v}; the panel is restarting…' },
   'upd.doneNoRestart': {
-    zh: '已装上 {v}。这个面板不是 systemd 起的，所以要你自己重启它才会生效：{why}',
-    en: 'Installed {v}. This panel was not started by systemd, so it takes effect the next time you start it yourself: {why}',
+    zh: '已装上 {v}。这个面板不是 systemd 起的，要你自己重启：{why}',
+    en: 'Installed {v}. This panel was not started by systemd, so start it yourself: {why}',
   },
   'upd.failed': { zh: '更新失败：{why}', en: 'Update failed: {why}' },
   'upd.notes': { zh: '这个版本的说明', en: 'What changed' },
@@ -457,8 +457,8 @@ const DICT = {
   // "waiting" and nothing else. Saying so on the page is cheaper than the
   // runbook section that exists because nobody knew.
   'set.codexOneEvent': {
-    zh: 'Codex 只有一个 notify，一条命令对一个事件，所以只能上报“等你处理”。',
-    en: 'Codex has one notify command for one event, so it can only ever report waiting.',
+    zh: 'Codex 只有一个 notify，只能上报“等你处理”。',
+    en: 'Codex has one notify command, so it only reports waiting.',
   },
   'set.showWrites': { zh: '看看会写什么', en: 'Show what it writes' },
   'set.remove': { zh: '移除', en: 'Remove' },
@@ -484,8 +484,8 @@ const DICT = {
   'notify.waitingBody': { zh: '{name} 停下来等你处理了', en: '{name} has stopped and needs you' },
   'notify.title': { zh: '通知', en: 'Notifications' },
   'notify.explain': {
-    zh: '当有会话变成“等你处理”而你没在看面板时，推一条通知。需要页面开着 —— 后台标签页或装成 App 都算。',
-    en: 'A notification when a session starts waiting and you are looking somewhere else. Needs the page to be alive — a background tab or an installed app both count.',
+    zh: '会话变成“等你处理”时推一条。后台标签页或装成 App 都算开着。',
+    en: 'One when a session starts waiting. A background tab or an installed app both count as open.',
   },
   'notify.enable': { zh: '打开通知', en: 'Turn on notifications' },
   'notify.on': { zh: '已打开', en: 'On' },
@@ -497,8 +497,8 @@ const DICT = {
 
   'upgrade.title': { zh: '面板已经升级', en: 'The panel has been upgraded' },
   'upgrade.body': {
-    zh: '这个标签页还在跑旧版界面。你的会话没有受到影响 —— 它们属于 tmux，不属于面板进程。',
-    en: 'This tab is still running the old interface. Your sessions are unaffected — they belong to tmux, not to the panel process.',
+    zh: '这个标签页还在跑旧版界面。会话不受影响。',
+    en: 'This tab is still running the old interface. Your sessions are unaffected.',
   },
   'upgrade.reload': { zh: '刷新载入新版', en: 'Reload' },
   'upgrade.later': { zh: '待会儿', en: 'Later' },
@@ -542,13 +542,13 @@ const DICT = {
   },
   'ask.killTitle': { zh: '结束 {name}？', en: 'Kill {name}?' },
   'ask.killBody': {
-    zh: '里面的进程会被终止。pane 和滚动历史会留着，所以还能回去看它最后说了什么。',
-    en: 'The process is terminated. The pane and its scrollback stay, so what it said last is still there to read.',
+    zh: '里面的进程会被终止。pane 和滚动历史留着。',
+    en: 'The process is terminated. The pane and its scrollback stay.',
   },
   'ask.revokeTitle': { zh: '吊销 {name}？', en: 'Revoke {name}?' },
   'ask.revokeBody': {
-    zh: '拿着 {prefix}… 的程序会立刻失效，而且没法撤销 —— 令牌只在创建时显示过一次。',
-    en: 'Anything holding {prefix}… stops working immediately, and it cannot be undone: the token was shown once, when it was made.',
+    zh: '拿着 {prefix}… 的程序会立刻失效，而且没法撤销。',
+    en: 'Anything holding {prefix}… stops working immediately, and it cannot be undone.',
   },
   'ask.passkeyNameTitle': { zh: '给这个 passkey 起个名字', en: 'Name this passkey' },
   'ask.passkeyNameBody': {
@@ -574,8 +574,8 @@ const DICT = {
     en: '{n} sessions did not survive the restart. They can be rebuilt with the command and directory they had, with the scrollback from before.',
   },
   'restore.warning': {
-    zh: '进程本身回不来。agent 的上下文随进程一起没了，重跑命令启动的是一个全新的、什么都不记得的 agent。',
-    en: 'The processes cannot come back. An agent’s context went with its process, and re-running the command starts a new one that remembers none of it.',
+    zh: '进程回不来。重跑命令启动的是一个全新的 agent，不记得之前的任何东西。',
+    en: 'The processes cannot come back. Re-running the command starts a new agent that remembers none of it.',
   },
   'restore.open': { zh: '看看要恢复哪些', en: 'Choose what to restore' },
   'restore.later': { zh: '待会儿', en: 'Later' },
@@ -584,8 +584,8 @@ const DICT = {
   'restore.selectNone': { zh: '全不选', en: 'Select none' },
   'restore.willRun': { zh: '将运行', en: 'will run' },
   'restore.willRunShell': {
-    zh: '将启动一个登录 shell —— 这个会话是在面板开始记录命令之前建的，原来跑的是什么已经无从得知',
-    en: 'will start a login shell — this session predates the panel recording commands, so what it was running is not known',
+    zh: '将启动一个登录 shell —— 原来跑的是什么没有记录',
+    en: 'will start a login shell — what it was running was never recorded',
   },
   'restore.willRunShellKnown': {
     zh: '将启动一个登录 shell —— 它当初就是这么建的',
@@ -605,8 +605,8 @@ const DICT = {
   'restore.gone': { zh: '这个会话的 tmux 会话没了，可以重建', en: 'The tmux session is gone; rebuild it' },
   'restore.badge': { zh: '已恢复', en: 'restored' },
   'restore.badgeWhy': {
-    zh: '这个会话在 {when} 被重建过。屏幕上分隔线以上的内容属于一个已经不存在的进程。',
-    en: 'This session was rebuilt at {when}. Everything above the banner on screen belongs to a process that no longer exists.',
+    zh: '在 {when} 重建过。分隔线以上的内容属于一个已经不存在的进程。',
+    en: 'Rebuilt at {when}. Everything above the banner belongs to a process that no longer exists.',
   },
   'share.title': { zh: '只读分享链接', en: 'Read-only share links' },
   'share.why': {
@@ -619,8 +619,8 @@ const DICT = {
   'share.detailCounts': { zh: '只有数量和状态', en: 'Counts and states' },
   'share.detailNames': { zh: '加上名字', en: 'Names as well' },
   'share.detailWhy': {
-    zh: '会话名和项目名可能带上客户或仓库名，默认不显示。路径和命令行永远不发出去。',
-    en: 'Titles and project names can carry a customer or a repository, so they are off by default. Paths and command lines are never sent.',
+    zh: '会话名和项目名可能带客户或仓库名。路径和命令行永远不发。',
+    en: 'Titles and project names can carry a customer or a repository. Paths and command lines are never sent.',
   },
   'share.expiry': { zh: '有效期', en: 'Expires' },
   'share.expiryNever': { zh: '永不过期', en: 'Never' },
@@ -674,8 +674,8 @@ const DICT = {
   'dash.forTime': { zh: '已 {d}', en: 'for {d}' },
   'dash.anonymous': { zh: '这个链接不显示名字', en: 'This link shows no names' },
   'dash.stale': {
-    zh: '面板已经停止记录会话状态，下面的状态可能是旧的。终端本身不受影响。',
-    en: 'The panel has stopped recording session states, so what is below may be old. The terminals are unaffected.',
+    zh: '面板已停止记录会话状态，下面可能是旧的。终端不受影响。',
+    en: 'The panel has stopped recording session states. What is below may be old; the terminals are unaffected.',
   },
   'dash.expiresIn': { zh: '{when} 后过期', en: 'expires in {when}' },
   'dash.longestWait': { zh: '最久的等了 {d}', en: 'longest {d}' },
@@ -932,8 +932,8 @@ const DICT = {
   'share.untitled': { zh: '未命名', en: 'untitled' },
 
   'guessed.installed': {
-    zh: '状态还在靠猜：装 hook 之前就开着的会话要重开一次才会上报。在里面输入 /hooks，或者重启那个 agent。',
-    en: 'States are still guessed. Sessions open before reporting was installed keep guessing until they reload — run /hooks in each, or restart the agent.',
+    zh: '装 hook 前开着的会话还在靠猜。在里面输入 /hooks 或重启它。',
+    en: 'Sessions open before reporting was installed are still guessed. Run /hooks in each, or restart the agent.',
   },
   'guessed.notInstalled': {
     zh: '状态是猜的，“等你处理”可能被漏掉。点这里打开状态上报。',
@@ -990,8 +990,8 @@ const DICT = {
     en: 'Reading what the agents recorded. The numbers appear when it finishes.',
   },
   'spend.neverScanned': {
-    zh: '还没读过任何记录，所以这里是空的 —— 不是 0。',
-    en: 'Nothing has been read yet, so this is empty rather than zero.',
+    zh: '还没读过任何记录。这里是空的，不是 0。',
+    en: 'Nothing has been read yet. This is empty, not zero.',
   },
   'spend.scannedAgo': { zh: '{ago}前读的', en: 'read {ago} ago' },
   'spend.whose': {

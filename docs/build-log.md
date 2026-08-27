@@ -13629,3 +13629,49 @@ likely to help.
 `app.restartHint` is gone rather than kept beside its replacement, because a
 dictionary key nobody reads is how `dir.cancel` sat unused while the picker was
 hardcoded Chinese.
+
+### The panel is a product, not a report to whoever built it
+
+Said twice, in the same words both times: 「把他妈类似这种描述从产品里删掉 这些话
+是说给我听的 没必要写进产品」 and then 「你要明白面板 他他妈的是产品 他不是给
+我说的话」. Eleven strings went the first time and three more after; this is the
+third round, and this time it is pinned rather than promised.
+
+The strings were not wrong. They were *arguments* — each one defending a design
+against an objection nobody standing in front of the screen had raised:
+
+- "预览是点一下就发生的事，所以它有上限；下载没有"
+- "面板不会用一个它读不懂的版本号说服自己去覆盖自己"
+- "passkey 是多一条路，永远不是唯一的路"
+- "你的会话没有受到影响 —— 它们属于 tmux，不属于面板进程"
+- "pane 和滚动历史会留着，所以还能回去看它最后说了什么"
+- "agent 的上下文随进程一起没了"
+
+Every one of them says something true and belongs in a comment or in this file.
+On screen the reader wanted the first clause and stopped.
+
+`i18n.prose.test.ts` is the guard, and it measures **length**, because there is
+no way to test for "this is an argument" and length is the shape every offender
+had. Two things make it work rather than merely exist:
+
+**Placeholders do not count.** `wh.body` lists the five substitutions a webhook
+body may use. Measured as prose it is the longest string in the dictionary; it
+is data, and a budget that punishes the one string obliged to be exhaustive is
+a budget people learn to ignore.
+
+**The budget had to be tightened to 38 Chinese characters before the mutation
+went red.** At 46 — the first number tried, chosen by looking at what currently
+existed — putting the devBuild argument back verbatim *passed*. Chinese is dense
+enough that 46 characters is a full paragraph of reasoning. That is the whole
+argument for mutation testing in one line: the number that looked right from the
+data was useless, and only writing the offending string back proved it.
+
+Rather than excuse the eight strings that then exceeded 38/105, they were
+shortened — none of them was an argument, all of them were merely wordy, and
+the exception list is down to two.
+
+The exception list is the mechanism, not a hole in it. Going over costs a line
+and a stated reason, which is the moment to notice a paragraph is being written;
+and a third test fails when an excused string has since shrunk, so the list
+cannot quietly accumulate. That test found four stale entries the moment
+placeholders stopped counting.
