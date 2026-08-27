@@ -267,9 +267,11 @@ try {
       await shoot(page, 'settings')
       await page.locator('[data-testid="settings-close"]').click().catch(() => {})
       await sleep(400)
-      // The picker, which is new.
-      await page.locator('[data-testid="rail-add-project"], [title*="project" i], button:has-text("Add")').first()
-        .click().catch(() => {})
+      // The picker. By testid, because the three guesses this used to make were
+      // a testid that does not exist, a title that is translated, and English
+      // button text -- so it silently photographed nothing and printed a line
+      // nobody read.
+      await page.locator('[data-testid="add-project"]').first().click().catch(() => {})
       await sleep(700)
       if (await page.locator('[data-testid="dir-picker"]').isVisible().catch(() => false)) {
         await shoot(page, 'dir-picker')

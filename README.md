@@ -86,6 +86,28 @@ two apart: **tmux does process persistence, the web UI does organisation.**
 
 ## Install
 
+### Which way is yours
+
+Four ways in, and the difference between them is not "how advanced are you" —
+it is who the machine belongs to and what has to survive.
+
+| | Use it when | Sessions survive | Needs root | Starts at boot |
+|---|---|---|---|---|
+| **User service** (the default) | It is your machine or your account on a shared one. This is the right answer for almost everyone. | a panel restart, a panel crash, a logout | no | yes, via lingering (the installer enables it) |
+| **System service** | The box runs close to its memory, or the panel must be up before anyone logs in. | the same, and the kernel reaches for it last under memory pressure | yes, once, to install | yes |
+| **Just run it** (`./vibepanel serve`) | Trying it out, or you already have a supervisor you like. | a panel restart — tmux is still the one holding them | no | no |
+| **Docker** | You want it contained and can afford to lose sessions. | **nothing**: in a container tmux is a child of the entrypoint, so `docker restart` takes every agent with it | no | container policy |
+
+The first two are the same panel and the same data; the only real difference is
+`OOMScoreAdjust`, and it is a measured one — a *user* unit asking for `-500`
+gets `100`, because lowering it needs `CAP_SYS_RESOURCE` and a user manager does
+not have it, while `systemd-analyze verify` accepts the directive either way.
+The installer offers the second only when root is actually available and says
+what it buys at the point of asking.
+
+Do not install both. They are two panels on one tmux socket; the installer
+detects the other kind and refuses rather than quietly making the second one.
+
 From a release archive, on any machine with tmux:
 
 ```sh
