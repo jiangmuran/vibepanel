@@ -52,8 +52,8 @@
 
 ## 环境要求
 
-tmux 3.3 或更新（`apt install tmux`），除此之外什么都不用。发布版是静态单二进制，
-前端、数据库驱动和 TLS 客户端都在里面。
+tmux 3.3 或更新——`apt install tmux`，或者让安装脚本替你装。除此之外什么都不用：
+发布版是静态单二进制，前端、数据库驱动和 TLS 客户端都在里面。
 
 3.3 这条线来自 `allow-passthrough`。更老的 tmux 照样能把面板跑起来，只是 agent TUI 用来画
 进度条和发通知的转义序列会被吞掉。`vibepanel doctor` 会报出来。
@@ -65,21 +65,36 @@ CI 跑在 tmux 3.4 上，开发机上是 3.6。想指定别的：
 
 | | 什么时候用 | 会话能活过 | 需要 root | 开机自启 |
 |---|---|---|---|---|
-| **user service**（默认） | 自己的机器，或共享机器上自己的账号 | 面板重启、面板崩溃、你登出 | 不需要 | 是 |
-| **系统服务** | 机器内存吃得紧，或者要求没人登录时面板也起着 | 同上，并且内存紧张时内核最后才动它 | 装的时候一次 | 是 |
+| **系统服务**（拿得到 root 时的默认） | 拿得到 root。机器内存吃得紧，或者要求没人登录时面板也起着 | 面板重启、面板崩溃、你登出——并且内存紧张时内核最后才动它 | 装的时候一次 | 是 |
+| **user service** | 这里拿不到 root，或者是共享机器上你自己的账号 | 面板重启、面板崩溃、你登出 | 不需要 | 是，靠 lingering |
 | **直接跑** | 只是试一下，或者已有顺手的进程管理 | 面板重启 | 不需要 | 否 |
 | **Docker** | 想要隔离，丢会话无所谓 | **什么都活不下来**——容器里 tmux 是 entrypoint 的子进程，`docker restart` 会带走所有 agent | 不需要 | 看容器策略 |
 
+只装一种，绝不要两种都装：两个 unit 就是一个 tmux socket 上两个面板，安装脚本会拒绝，
+而不是悄悄再装一个。macOS 上只有一种，LaunchAgent。
+
+一行命令，Linux 和 macOS 都行，机器上什么都没有也行：
+
 ```sh
-tar -xzf vibepanel_<version>_linux_amd64.tar.gz
-cd vibepanel_<version>_linux_amd64
-./deploy/install.sh
+curl -fsSL https://raw.githubusercontent.com/jiangmuran/vibepanel/main/install.sh | sh
 ```
 
-脚本会问你装哪一种服务、要不要现在启动，把接下来要做的事列出来，等你点头才动手。
-只有 stdin 和 stdout 都是终端时才会提问，管道里跑就是无人值守那条路。
+它会认出平台、下载对应的发布包、拿发布的 `SHA256SUMS` 校验，对不上就拒绝解包；tmux 缺失
+或太旧时会问你要不要装；然后装服务——Linux 上是 systemd unit，macOS 上是 launchd
+LaunchAgent。已经解开发布包的话，`./deploy/install.sh` 就是同一个安装脚本，只是不用下载。
 
-然后打开 `http://<主机>:8443`，粘贴它打印出来的 setup token，设一个密码。
+它会问你装哪一种，把接下来要做的事列出来，等你点头才动手。只有 stdin 和 stdout 都是终端
+时才提问，管道里跑就是无人值守那条路。全部选项在 `... | sh -s -- --help`。
+
+然后打开 `http://<主机>:8443`，粘贴它打印出来的 setup token，设一个密码——或者直接在安装
+脚本里建账号：`--username you --password-file /path/to/pw`。**故意没有** `--password <值>`：
+那是把密码写进 shell history 和 `ps`。
+
+装完之后，不管用哪种方式跑的，都是同一条命令：
+
+```sh
+vibepanel service status | start | stop | restart | logs | token | upgrade | uninstall
+```
 
 <details>
 <summary><b>系统级服务</b></summary>

@@ -470,22 +470,10 @@ func (s *Server) issueSession(w http.ResponseWriter, r *http.Request, user store
 	auth.SetCookie(w, token, s.cookieSecure())
 }
 
+// validateCredentials delegates to internal/auth, which is where the rules
+// live now that `vibepanel account create` applies the same ones.
 func validateCredentials(username, password string) error {
-	username = strings.TrimSpace(username)
-	if username == "" {
-		return errors.New("username is required")
-	}
-	if len(username) > 64 {
-		return errors.New("username is too long")
-	}
-	if len(password) < auth.MinPasswordLength {
-		return errors.New("password must be at least " +
-			strconv.Itoa(auth.MinPasswordLength) + " characters")
-	}
-	if len(password) > 1024 {
-		return errors.New("password is too long")
-	}
-	return nil
+	return auth.ValidateCredentials(username, password)
 }
 
 type changePasswordRequest struct {

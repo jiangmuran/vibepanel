@@ -58,8 +58,9 @@ Three things to know before you install:
 
 ## Requirements
 
-tmux 3.3 or newer (`apt install tmux`). Nothing else: the release binary is
-static, with the frontend, the database driver and the TLS client inside it.
+tmux 3.3 or newer — `apt install tmux`, or let the installer do it. Nothing
+else: the release binary is static, with the frontend, the database driver and
+the TLS client inside it.
 
 The 3.3 floor is `allow-passthrough`. An older tmux still starts the panel, and
 agent TUIs lose the escape sequences they use for progress bars and
@@ -72,23 +73,41 @@ with `TEST_TMUX_BIN=/path/to/tmux go test ./...`.
 
 | | Use it when | Sessions survive | Needs root | Starts at boot |
 |---|---|---|---|---|
-| **User service** (default) | It is your machine, or your account on a shared one | a panel restart, a crash, a logout | no | yes |
-| **System service** | The box runs close to its memory, or the panel must be up before anyone logs in | the same, and the kernel reaches for it last under memory pressure | once, to install | yes |
+| **System service** (default where root is available) | Root is there. Also if the box runs close to its memory, or the panel must be up before anyone logs in | a panel restart, a crash, a logout — and the kernel reaches for it last under memory pressure | once, to install | yes |
+| **User service** | No root here, or it is your account on a shared box | a panel restart, a crash, a logout | no | yes, via lingering |
 | **Just run it** | Trying it out, or you have a supervisor you like | a panel restart | no | no |
 | **Docker** | You want it contained and can afford to lose sessions | **nothing** — in a container tmux is a child of the entrypoint, and `docker restart` takes every agent with it | no | container policy |
 
+Install one, never both: two units are two panels on one tmux socket, and the
+installer refuses rather than quietly making the second. On macOS there is one
+kind, a LaunchAgent.
+
+One line, on Linux or macOS, on a machine with nothing on it:
+
 ```sh
-tar -xzf vibepanel_<version>_linux_amd64.tar.gz
-cd vibepanel_<version>_linux_amd64
-./deploy/install.sh
+curl -fsSL https://raw.githubusercontent.com/jiangmuran/vibepanel/main/install.sh | sh
 ```
 
-The installer asks which unit to use and whether to start it now, prints the
-plan, and waits for you to agree. It prompts only when stdin and stdout are both
-terminals, so a pipeline gets the unattended path.
+It works out the platform, fetches the matching release, checks it against the
+published `SHA256SUMS`, offers to install tmux if it is missing or too old, and
+installs the service — a systemd unit on Linux, a launchd LaunchAgent on macOS.
+From an unpacked archive, `./deploy/install.sh` is the same installer without
+the download.
+
+It asks which service, prints the plan, and waits for you to agree. It prompts
+only when stdin and stdout are both terminals, so a pipeline gets the unattended
+path. `... | sh -s -- --help` lists everything it can do.
 
 Then open `http://<host>:8443`, paste the setup token it printed, and choose a
-password.
+password — or create the account from the installer with `--username you
+--password-file /path/to/pw`. There is deliberately no `--password <value>`:
+that is a password in your shell history and in `ps`.
+
+Afterwards, one command whichever way it runs:
+
+```sh
+vibepanel service status | start | stop | restart | logs | token | upgrade | uninstall
+```
 
 <details>
 <summary><b>The system service</b></summary>

@@ -12742,3 +12742,280 @@ And three more strings that were still arguing: the token panel's "找不到 cla
 的记录（not found），所以它这里是"不知道"，不是 0。" became "claude：不知道
 （not found）". The distinction it was defending is real and is in `docs/`; on
 screen it is a paragraph explaining a dash.
+
+## One line, from nothing, on two operating systems
+
+The installer worked and could not be reached. `deploy/install.sh` installs
+files that are sitting next to it, so the only way to it was "download a
+release archive, unpack it, cd into it" — three steps before the step that was
+supposed to be the easy one. It was also Linux-and-systemd only, said nothing
+useful when tmux was missing, defaulted to the unit that can do less, and
+ended by telling people to remember whether their machine wanted
+`systemctl --user` or `sudo systemctl`.
+
+### `install.sh` at the repository root
+
+```
+curl -fsSL https://raw.githubusercontent.com/jiangmuran/vibepanel/main/install.sh | sh
+```
+
+POSIX `sh`, because that line pipes it into whatever `/bin/sh` is — dash on
+Debian, busybox ash on Alpine. No arrays, no `[[ ]]`, no `local`. Both
+`release-check` and `install-check` parse it under dash to keep it that way; a
+bashism in it is invisible on a machine whose `/bin/sh` is bash and fatal on
+most of the others.
+
+In order: curl or wget; `tar`; `uname -s`/`uname -m` mapped onto the three
+archives `build-release.sh` actually produces; the latest tag from the GitHub
+API unless `--version` says otherwise; the archive and `SHA256SUMS`; **the
+comparison**; unpack; hand over to `deploy/install.sh` inside the archive.
+
+The comparison is the reason the download is a separate step from the unpack.
+`curl | tar xz` runs whatever arrives. What it buys is bounded and worth saying
+out loud: `SHA256SUMS` comes from the same host over the same TLS as the
+archive, so it catches a truncated download, a corrupted mirror and a proxy
+that rewrote the bytes. It is not a signature. A mismatched archive is deleted
+rather than left on disk for somebody to unpack by hand later.
+
+Two things about it are not obvious:
+
+**Under `curl | sh` the script is stdin.** The shell is still reading itself
+from the pipe, so a child that reads stdin eats the rest of the file — the
+installer's prompts would be answered with fragments of its own source. The
+installer therefore never inherits that pipe. Where there is a person (stdout
+is a terminal and `/dev/tty` opens) it gets `/dev/tty` and can ask its
+questions, which is the only way a one-liner is ever interactive. Where there
+is not, it gets `/dev/null` and the existing rule applies: stdin is not a
+terminal, so nothing is asked.
+
+**`/tmp` is mounted `noexec` more often than people think** — hardened
+machines, several CI images, some container runtimes. Download-unpack-execute
+is exactly the pattern that breaks there, and the symptom is `Permission
+denied` on a file that is right there and is mode 0755, which sends people to
+`chmod` instead of to the mount table. So the working directory is probed by
+running a two-line script in it, and falls back to `~/.cache/vibepanel`.
+
+### macOS: a LaunchAgent, and no LaunchDaemon
+
+`launchd`, not systemd, so `~/Library/LaunchAgents/io.github.jiangmuran.vibepanel.plist`
+and `launchctl bootstrap gui/<uid>`.
+
+There is deliberately no LaunchDaemon counterpart. A daemon runs as root at
+boot and would have to drop back to your account to be any use, and the one
+thing the Linux *system* unit buys — `OOMScoreAdjust` — has no macOS
+equivalent at all: there is no `oom_score_adj`, and jetsam cannot be biased
+from a plist. It would be the same panel with more privilege and nothing to
+show for it. `--system` on a Mac says all of that and installs the agent;
+answering the flag matters more than honouring it, because somebody who typed
+it is expecting something this cannot give them.
+
+Three things in the plist are load-bearing and none is guessable from the key
+names:
+
+- **`AbandonProcessGroup`** is the launchd half of `KillMode=process`, and the
+  same red line. launchd SIGKILLs whatever is left in a job's process group;
+  the tmux server holding every session is what would be left.
+- **`KeepAlive` is conditional** (`SuccessfulExit: false`). The panel exits 0
+  on SIGTERM, so an unconditional `KeepAlive` makes `vibepanel service stop`
+  a no-op that launchd immediately undoes — a service that cannot be stopped
+  except by deleting its file.
+- **`ProgramArguments` is a shell**, because launchd has no `EnvironmentFile`.
+  The env file is bare `KEY=value` lines with no `export`, so it has to be
+  sourced under `set -a`. Putting the values into `EnvironmentVariables`
+  instead would freeze them at install time: editing the env file would then
+  change nothing until somebody reinstalled.
+
+And the honest gap: a LaunchAgent runs in your login session. It starts when
+you log in and stops when you log out, and macOS has no `loginctl
+enable-linger`. The installer says so at the moment it installs, not in a
+document.
+
+### tmux: missing, or too old
+
+3.3 is the floor, for the reason `internal/tmux` gives — `allow-passthrough`,
+whose absence is silent in every direction.
+
+- **Missing** is fatal, and the installer offers to fix it with whichever of
+  `apt-get`/`dnf`/`pacman`/`zypper`/`apk`/`brew` is present. Interactively it
+  asks. Unattended it installs, because that is what makes the one-liner true
+  on a machine with nothing on it; `--skip-tmux` opts out.
+- **Too old** is not fatal, for the same reason `vibepanel doctor` marks it
+  `--` rather than `FAIL`: the panel works, one thing about it is worse.
+  Interactively it offers the upgrade. Unattended it does not, and says why —
+  the distribution's package *is* the old version, so `apt-get install -y
+  tmux` would be a no-op that reported success.
+- After any install attempt the version is re-read. "The package manager
+  succeeded" and "there is now a new-enough tmux" are two facts, and they come
+  apart every time somebody on Debian oldstable accepts the offer. Both
+  outcomes have their own sentence.
+- **brew is never run through the root command.** Homebrew refuses to run as
+  root, and running it under sudo anyway leaves a prefix the user's own
+  account cannot write to — which breaks every later brew command, not just
+  this one.
+- Where root is not available and the manager needs it, nothing is attempted
+  and the exact line to type is printed.
+
+### The default is now the system service, where root is available
+
+The owner's ask, and the reasoning is the same measured one that has been in
+the repository since the unit was written: a *user* unit asking for
+`OOMScoreAdjust=-500` gets `100`. The system unit is also up before anyone logs
+in without lingering. Same account, same environment, `User=` all the way.
+
+Where root is not available it is still the user unit, and the installer says
+why rather than falling back silently. The interactive menu now offers the
+system service as option 1 and the user service as option 2 — and does not
+offer the menu at all when root is unavailable, because a choice one of whose
+answers cannot be carried out is not a choice.
+
+This changed what `release-check` was asserting, and the fix was not to weaken
+it. `release-check` now passes `VIBEPANEL_ROOT_CMD=none` — which it needed
+anyway: without it, on any machine with passwordless sudo (every CI runner),
+that check would have written `/etc/systemd/system/vibepanel.service` for real
+and enabled it.
+
+### `vibepanel service`, in the binary
+
+`status`, `start`, `stop`, `restart`, `logs`, `token`, `upgrade`, `uninstall`
+— across systemd system units, systemd user units and launchd agents.
+
+In the binary rather than in a script beside it because a script would have to
+be installed, found on `PATH`, upgraded in step with the binary, and kept
+honest about which service kind is present: four things that can drift, for a
+program whose distribution story is "one static file". The binary is already
+the admin CLI and is already on `PATH` after an install. And `upgrade`
+replacing the binary that is running it is safe — GNU and BSD `install` both
+unlink the destination before writing, so there is no `ETXTBSY`.
+
+The whole mapping is one pure function of a `svcTarget`, so the interesting
+failures are visible in an argv without a service manager, a Mac or root
+anywhere near the test: the user command run against a system unit, `sudo`
+asked for to read your own log, `bootout` where `kickstart -k` belongs,
+`uninstall` reaching the data directory.
+
+Two decisions inside it:
+
+- `start` is `enable --now`, not `start`. "Run it" and "and after a reboot"
+  are the same request from anybody typing this.
+- `token` runs the log command and scrapes it, taking the **last** token. A
+  panel restarted twice before anybody claimed it has printed several and only
+  the newest is live; handing over the first fails as "bad setup token" and
+  looks like a broken wizard. The scrape needed a three-line window rather
+  than "the next line", because the blank line the panel prints before the
+  token is not blank under `journalctl` — it still carries the timestamp, the
+  host and `vibepanel[1234]:`.
+
+### The first account, without the browser
+
+`vibepanel account create --username me` plus one of `--password-stdin`,
+`--password-file`, `--password-env`, or a prompt with echo off. The installer
+takes the same four and runs the subcommand for you, **before** the service
+starts — so with an account in place the panel never prints a setup token at
+all, and there is never a live token sitting in a journal.
+
+There is no `--password <value>`, in either place. That is a password in the
+shell history and, for as long as the process runs, in `ps` output for every
+other user on the machine. Typing it is caught before the flag package can see
+it, because "flag provided but not defined: -password" would leave the person
+to discover the reason on their own and the reason is the point.
+
+It only ever creates the *first* account. `CountUsers() > 0` is a refusal, not
+an update: a subcommand that could also replace a password is a password reset
+available to anybody who can run the binary, which under the system unit is a
+wider set than it looks. Changing a password is a thing you do logged in.
+
+Both doors go through one lock. `validateCredentials` moved out of
+`internal/httpapi` into `auth.ValidateCredentials`, so the length rules, the
+argon2id hash and `store.CreateUser` are the same three calls whichever door
+was used. A second copy would have meant a panel that accepts a password over
+one door and rejects it over the other, with nothing on either side to notice.
+
+Echo is turned off through `stty` rather than `golang.org/x/term`, which would
+be a new direct dependency for one call. Where `stty` is not there the password
+is read anyway and the person is told it will be visible: refusing to create an
+account because the echo could not be suppressed would be worse than the
+exposure, and saying nothing would be worse than both.
+
+### The machine, and the ways it is not the one this was written on
+
+Every one of these is a real outcome, and every one of them is silent — the
+install succeeds and the thing you wanted does not happen.
+
+| what | what it does now |
+|---|---|
+| `$HOME` or `~/.local/bin` unwritable | one line, before anything has changed |
+| `~/.local/bin` not on `PATH` | the exact line to add, for the shell in `$SHELL` |
+| the binary will not execute (noexec, SELinux, wrong arch) | runs it once after installing; three causes named, no service installed |
+| no systemd (container, WSL1, another init) | binary and env file only, and how to start it yourself |
+| `XDG_RUNTIME_DIR` unset | the unit is installed and the limitation is stated |
+| port 8443 already taken | said in the plan, with what the restart loop would look like |
+| a unit file at our path we did not write | refuses; `--interactive` asks; the marker is the `Documentation=` line, and the plist carries it as a comment |
+| the same version reinstalled | says "the same build" rather than looking like nothing happened |
+| a newer or older one | says `v1.0.0 -> v2.0.0` |
+| no `curl`, no `wget`, no `tar`, no `sha256sum` | each named, with the package to install |
+
+The exec probe is checked by *running* the binary, not by reading the mount
+table: `findmnt` is not everywhere, mount options say nothing about SELinux,
+and neither says anything about the architecture.
+
+### Two bugs found while writing this
+
+**`exec 3>&- 2>/dev/null` closed the installer's stderr for the rest of its
+life.** Redirections on a bare `exec` apply to the shell itself, so a line
+meant to tidy up a file descriptor after the port probe silently sent every
+later error message — including the one about a binary that will not run — to
+`/dev/null`. It presented as the exec probe exiting 1 and printing nothing at
+all. The connect happens in a subshell, and the subshell exiting is what closes
+the descriptor; there was nothing to tidy up.
+
+**`[ "$X" = yes ] && COUNT=$((COUNT + 1))`** ends a `set -e` script when the
+test is false. Three of those were counting the password sources, so
+`--username me --password-file f` exited silently with status 1 before printing
+anything. They are `if` statements now.
+
+### The mutation run
+
+Twenty-eight, each restored afterwards, against `install-check` or the Go
+tests. The table is in the commit; the ones worth naming here:
+
+| mutation | what went red |
+|---|---|
+| the checksum is not compared | a tampered archive installs |
+| the working directory is not checked or replaced | a read-only or noexec /tmp is fatal |
+| `SHA256SUMS` need not mention the archive | an unvouched-for archive unpacks |
+| the tmux 3.3 gate always passes | tmux 3.2 installs with no warning anywhere |
+| a missing tmux is not fatal | a panel that cannot create a session |
+| brew is run through the root command | `sudo brew install tmux` |
+| the both-services refusal goes | two panels, one socket, one database |
+| the no-root fallback goes | `/etc` written without root |
+| the system service is not the default with root | the recommended default is not the default |
+| macOS gets a systemd unit | a unit file on a Mac and no LaunchAgent |
+| the installed binary is not run once | a service that restarts every three seconds |
+| a unit we did not write is overwritten | somebody's hand-rolled unit, gone |
+| `--password` is accepted | a password in `ps` |
+| a second account may be created | `account create` becomes a password reset |
+| `uninstall` takes the data directory | the database goes with the service |
+| the token scraper takes the first one | a token the server has already forgotten |
+
+### Left undone
+
+- **No browser check covers any of it.** The installer is shell and its check
+  is shell; nothing here goes near `render-check`.
+- **The one-liner is never fetched from GitHub by any check.** By design —
+  `install-check` serves the archives from `python3 -m http.server` on
+  127.0.0.1 — which means the thing that is never tested is whether
+  `raw.githubusercontent.com` serves this file at the path the README prints.
+  A release that renames it breaks the one-liner silently.
+- **`SHA256SUMS` is not signed.** The checksum defends against a corrupted
+  transfer, not against whoever can publish releases. Signing is a key-management
+  decision that is not this change's to make.
+- **`--version` on the bootstrap trusts the tag it is given.** A tag with a
+  slash in it would go into a URL unescaped.
+- **The `noexec` half of the working-directory guard is not exercised
+  directly.** `install-check` produces the read-only half, which goes through
+  the same `make_workdir` and the same fallback; making `/tmp` `noexec` needs
+  root, and this project does not run root against the developer's machine.
+  One guard, two ways in, and only one of them is under test.
+- **No Intel Mac archive.** `build-release.sh` cross-compiles `darwin/arm64`
+  only, and the bootstrap says so plainly rather than 404ing. Adding
+  `darwin/amd64` is one line there whenever somebody wants it.

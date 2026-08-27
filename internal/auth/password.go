@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"golang.org/x/crypto/argon2"
@@ -111,4 +112,30 @@ func DummyVerify(password string) {
 		"AAAAAAAAAAAAAAAAAAAAAA$" +
 		"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 	_, _ = VerifyPassword(password, reference)
+}
+
+// ValidateCredentials is the one place the rules for a username and a password
+// live.
+//
+// It was in internal/httpapi, unexported, next to the only caller. Then the
+// installer grew a way to create the first account from the command line, and
+// a second copy of these four rules would have meant a panel that accepts a
+// password over one door and rejects the same password over the other -- with
+// nothing on either side to notice.
+func ValidateCredentials(username, password string) error {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return errors.New("username is required")
+	}
+	if len(username) > 64 {
+		return errors.New("username is too long")
+	}
+	if len(password) < MinPasswordLength {
+		return errors.New("password must be at least " +
+			strconv.Itoa(MinPasswordLength) + " characters")
+	}
+	if len(password) > 1024 {
+		return errors.New("password is too long")
+	}
+	return nil
 }
