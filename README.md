@@ -251,9 +251,9 @@ a terminal bell means *waiting*, and a pane back at a shell prompt means *done*.
 That is honest but coarse.
 
 Settings → **state reporting** installs a small hook into Claude Code's or Codex's
-own configuration, showing you the exact JSON first and backing up the file it
-merges into. The hook reads two environment variables the panel injects into each
-session and posts the state directly:
+own configuration, a button each, showing you exactly what it will write first and
+backing up the file it merges into. The hook reads two environment variables the
+panel injects into each session and posts the state directly:
 
 ```json
 {"sessionId": "…", "state": "waiting"}
@@ -262,6 +262,13 @@ session and posts the state directly:
 Sessions started outside the panel do not have those variables, so the same global
 hook config is a no-op for them. Removing it takes only the entries vibepanel
 tagged.
+
+Claude Code gets four events and can report *working*, *waiting* and *done*. Codex
+has one `notify` command for one event, so a Codex session reports *waiting* and
+guesses the rest — that is the setting doing its job, not a misconfiguration. Its
+line goes into `~/.codex/config.toml` above the first table, because a top-level
+key appended to the end of that file would belong to whichever table came last
+and Codex would never read it.
 
 ## Configuration
 

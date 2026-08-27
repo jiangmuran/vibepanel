@@ -1113,3 +1113,93 @@ func TestTheFieldSeparatorIsNotSomethingOldTmuxWouldEscape(t *testing.T) {
 			scrubbed("pane_current_path"))
 	}
 }
+
+// TestWhereAPaneTitleEndsUp records which of the two ways a program can send a
+// title reaches which of the two places the panel reads one.
+//
+// The panel has always had two channels and only ever read the first:
+// #{pane_title}, which the poller asks tmux for, and the bytes tmux forwards to
+// its client, which is the panel's own PTY. A program that has noticed $TMUX
+// sends its OSC through the passthrough DCS on purpose — the title is meant for
+// the terminal a human is looking at, not for tmux — and that is exactly the
+// route tmux is defined not to look at. Codex does this for its OSC 9 and OSC
+// 52; the wrapped forms are literals in the binary.
+//
+// Measured here rather than assumed, because both halves matter and each fails
+// silently on its own: a plain OSC that stopped updating pane_title would take
+// automatic naming away from every agent, and a passthrough that stopped
+// reaching the client would take it away from the tmux-aware ones.
+func TestWhereAPaneTitleEndsUp(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	if err := c.EnsureServer(ctx); err != nil {
+		t.Fatalf("EnsureServer: %v", err)
+	}
+
+	// What a client sees while a pane emits one sequence, and what pane_title
+	// says afterwards.
+	run := func(name, emit string) (paneTitle, onClient string) {
+		t.Helper()
+		if err := c.Create(ctx, CreateOptions{
+			Name: name, Dir: t.TempDir(), Width: 80, Height: 24,
+			Command: []string{"sh", "-c", "sleep 1.2; " + emit + "; exec sleep 20"},
+		}); err != nil {
+			t.Fatalf("Create %s: %v", name, err)
+		}
+		cmd := exec.CommandContext(ctx, c.Bin, c.args(c.AttachArgs(name)...)...)
+		// The panel sets TERM on its own client; without it tmux attaches to a
+		// terminal it cannot drive, which is the state of any CI step.
+		cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+		f, err := pty.Start(cmd)
+		if err != nil {
+			t.Fatalf("attach %s: %v", name, err)
+		}
+		buf := make([]byte, 64<<10)
+		var got []byte
+		deadline := time.Now().Add(4 * time.Second)
+		for time.Now().Before(deadline) {
+			_ = f.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+			n, _ := f.Read(buf)
+			got = append(got, buf[:n]...)
+		}
+		_ = f.Close()
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+
+		info, err := c.Get(ctx, name)
+		if err != nil {
+			t.Fatalf("Get %s: %v", name, err)
+		}
+		return info.Title, string(got)
+	}
+
+	// A plain OSC 2 belongs to tmux, which records it and tells the client
+	// nothing (set-titles is off, and the browser draws the chrome anyway).
+	title, client := run("vp_plain", `printf '\033]2;PLAIN TITLE\007'`)
+	if title != "PLAIN TITLE" {
+		t.Errorf("a plain OSC 2 left pane_title as %q; automatic naming is gone for "+
+			"every agent that sets a title the ordinary way", title)
+	}
+	if strings.Contains(client, "PLAIN TITLE") {
+		t.Log("tmux now forwards pane titles to its client as well; harmless, but " +
+			"the panel would see this title twice")
+	}
+
+	// The passthrough form is the mirror image: tmux hands the bytes to the
+	// client untouched and never looks inside, so pane_title does not move.
+	// The panel's OSC scanner is the only thing that can see this title, which
+	// is why deriveTitle takes one from the PTY at all.
+	title, client = run("vp_pass",
+		`printf '\033Ptmux;\033\033]2;PASSTHROUGH TITLE\007\033\\'`)
+	if title == "PASSTHROUGH TITLE" {
+		t.Error("tmux now updates pane_title from a passthrough sequence. That is " +
+			"good news and it means the poller alone would have found this title; " +
+			"the PTY route in deriveTitle is then belt and braces rather than the " +
+			"only way.")
+	}
+	if !strings.Contains(client, "\x1b]2;PASSTHROUGH TITLE\x07") {
+		t.Errorf("the passthrough title did not reach the client either, so nothing "+
+			"in the panel can ever see it. allow-passthrough is the line to check.\n"+
+			"client saw: %q", client)
+	}
+}

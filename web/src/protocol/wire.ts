@@ -363,6 +363,11 @@ export interface SettingsInfo {
   username: string
 }
 
+/** Which agent an install request is about. The server accepts these two and
+ *  refuses anything else; it is not a free-text field because it chooses a file
+ *  in the user's home directory to edit. */
+export type HookAgent = 'claude' | 'codex'
+
 export interface HookStatus {
   settingsPath: string
   scriptPath: string
@@ -374,6 +379,13 @@ export interface HookStatus {
   events: string[]
   snippet: string
   codexSnippet: string
+  /** Where the Codex notify line goes: ~/.codex/config.toml. */
+  codexPath: string
+  /** Whether that file's `notify` is this panel's. Separate from `installed`,
+   *  which is Claude's: the two agents are configured by different mechanisms
+   *  and fail separately, so one flag would describe a machine where half of
+   *  them are wired as if it were all of them. */
+  codexInstalled: boolean
 }
 
 /** A credential a program uses instead of the session cookie. */

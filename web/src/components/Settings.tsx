@@ -438,7 +438,12 @@ function HooksSection() {
 
       {status && (
         <div data-testid="hooks-status">
-          <Row
+          {/* Two agents, two rows, two buttons. They are configured by
+              different mechanisms in different files and fail separately — the
+              runbook has a section for exactly that — so a single "hooks are
+              installed" line would describe a machine where one of them is
+              wired as though both were. */}
+          <AgentHooks
             label={t('set.claudeCode')}
             // "installed", not "reporting". The panel has read a file; it has
             // not heard from anything. Saying "reporting 4 events" the instant
@@ -447,35 +452,29 @@ function HooksSection() {
             // running — see the notice below.
             value={
               status.installed
-                ? `installed for ${status.events.length} events`
+                ? t('set.installedEvents', { n: status.events.length })
                 : t('set.notInstalled')
             }
+            file={status.settingsPath}
+            installed={status.installed}
+            busy={busy}
+            testid="hooks"
+            onInstall={() => void act(() => api.installHooks('claude'))}
+            onRemove={() => void act(() => api.removeHooks('claude'))}
           />
-          <Row label={t('set.settingsFile')} value={status.settingsPath} />
+          <AgentHooks
+            label={t('set.codex')}
+            value={status.codexInstalled ? t('set.installedNotify') : t('set.notInstalled')}
+            file={status.codexPath}
+            installed={status.codexInstalled}
+            busy={busy}
+            testid="codex-hooks"
+            note={t('set.codexOneEvent')}
+            onInstall={() => void act(() => api.installHooks('codex'))}
+            onRemove={() => void act(() => api.removeHooks('codex'))}
+          />
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            {status.installed ? (
-              <button
-                type="button"
-                disabled={busy}
-                data-testid="hooks-remove"
-                onClick={() => void act(() => api.removeHooks())}
-                className="vp-press rounded-vp border border-hairline px-3 py-1.5 text-vp-base text-ink transition-colors duration-200 ease-vp hover:bg-surface-2 disabled:opacity-50"
-              >
-                Remove
-              </button>
-            ) : (
-              <button
-                type="button"
-                disabled={busy}
-                data-testid="hooks-install"
-                onClick={() => void act(() => api.installHooks())}
-                className="rounded-vp px-3 py-1.5 text-vp-base font-medium disabled:opacity-50"
-                style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
-              >
-                {busy ? t('set.working') : t('set.install')}
-              </button>
-            )}
             <button
               type="button"
               onClick={() => setShowSnippet((v) => !v)}
@@ -511,12 +510,67 @@ function HooksSection() {
           {showSnippet && (
             <div className="mt-3">
               <Snippet label={t('set.claudeCode')} text={status.snippet} />
-              <Snippet label={t('set.codexPaste')} text={status.codexSnippet} />
+              <Snippet label={t('set.codex')} text={status.codexSnippet} />
             </div>
           )}
         </div>
       )}
     </Section>
+  )
+}
+
+/** One agent's row: what is installed, which file, and the button for it. */
+function AgentHooks({
+  label,
+  value,
+  file,
+  installed,
+  busy,
+  testid,
+  note,
+  onInstall,
+  onRemove,
+}: {
+  label: string
+  value: string
+  file: string
+  installed: boolean
+  busy: boolean
+  testid: string
+  note?: string
+  onInstall: () => void
+  onRemove: () => void
+}) {
+  return (
+    <div className="mb-3" data-testid={`${testid}-block`}>
+      <Row label={label} value={value} />
+      <Row label={t('set.settingsFile')} value={file} />
+      {note && <p className="mt-1 text-vp-sm leading-relaxed text-ink-2">{note}</p>}
+      <div className="mt-2">
+        {installed ? (
+          <button
+            type="button"
+            disabled={busy}
+            data-testid={`${testid}-remove`}
+            onClick={onRemove}
+            className="rounded-vp border border-hairline px-3 py-1.5 text-vp-base text-ink transition-colors duration-200 ease-vp hover:bg-surface-2 disabled:opacity-50"
+          >
+            {t('set.remove')}
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={busy}
+            data-testid={`${testid}-install`}
+            onClick={onInstall}
+            className="rounded-vp px-3 py-1.5 text-vp-base font-medium disabled:opacity-50"
+            style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+          >
+            {busy ? t('set.working') : t('set.install')}
+          </button>
+        )}
+      </div>
+    </div>
   )
 }
 

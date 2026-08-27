@@ -312,10 +312,21 @@ const DICT = {
     en: 'Without this the panel infers what a session is doing from its output, which can tell working from quiet and sees the terminal bell, but cannot tell finished from waiting for you. With it, the agent says which.',
   },
   'set.claudeCode': { zh: 'Claude Code', en: 'Claude Code' },
-  'set.codexPaste': { zh: 'Codex（要你自己粘贴）', en: 'Codex (paste yourself)' },
+  'set.codex': { zh: 'Codex', en: 'Codex' },
   'set.settingsFile': { zh: '配置文件', en: 'Settings file' },
   'set.notInstalled': { zh: '未安装', en: 'not installed' },
-  'set.install': { zh: '为 Claude Code 安装', en: 'Install for Claude Code' },
+  // "installed" is a claim about a file, not about behaviour: the panel has
+  // read a config, it has not heard from an agent.
+  'set.installedEvents': { zh: '已安装，{n} 个事件', en: 'installed for {n} events' },
+  'set.installedNotify': { zh: '已安装（notify）', en: 'installed as notify' },
+  'set.install': { zh: '安装', en: 'Install' },
+  // Codex has one notify slot for one event, so a Codex session can report
+  // "waiting" and nothing else. Saying so on the page is cheaper than the
+  // runbook section that exists because nobody knew.
+  'set.codexOneEvent': {
+    zh: 'Codex 只有一个 notify，一条命令对一个事件，所以只能上报“等你处理”。',
+    en: 'Codex has one notify command for one event, so it can only ever report waiting.',
+  },
   'set.showWrites': { zh: '看看会写什么', en: 'Show what it writes' },
   'set.remove': { zh: '移除', en: 'Remove' },
   'set.password': { zh: '密码', en: 'Password' },

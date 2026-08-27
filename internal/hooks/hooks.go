@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // ReportScript is the shell script installed into the data directory.
@@ -123,7 +124,19 @@ func ClaudeSettings(script string) string {
 // Codex could not do better, which is the kind of sentence that stops someone
 // looking.
 func CodexNotify(script string) string {
-	return fmt.Sprintf(`notify = ["%s", "waiting"]`, script)
+	return fmt.Sprintf(`notify = [%s, "waiting"]`, tomlString(script))
+}
+
+// tomlString quotes a value for a TOML basic string.
+//
+// The script path is built from the data directory, which is a flag: it can
+// contain a backslash or a quote, and either one written raw produces a
+// config.toml that does not parse. Codex refuses to start on that, so the
+// panel would have broken the agent it was trying to wire up -- and this
+// string is not only shown, it is what InstallCodex writes.
+func tomlString(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	return `"` + r.Replace(s) + `"`
 }
 
 // SessionEnv is what a session needs in its environment for its agent's hooks
