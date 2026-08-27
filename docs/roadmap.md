@@ -61,8 +61,12 @@
 - [x] **E1 专业易懂的 README** — `README.md`（英文）+ `README.zh-CN.md`（简体中文），带真实截图，
       截图由 `web/scripts/shots.mjs` 从真的面板拍出来，不是画的。
 - [x] **E2 推到 GitHub public** — https://github.com/jiangmuran/vibepanel ，CI 在
-      `.github/workflows/check.yml`。CI 第一次跑就抓到一个真 bug：Ubuntu 24.04 的 tmux 3.4
-      不认 `allow-set-title`，而 README 写着最低 3.3。
+      `.github/workflows/check.yml`，已经绿了。CI 从第一次跑开始一共抓到六个真问题，
+      全都是「在我这台机器上看不见」的那一类：tmux 3.4 不认 `allow-set-title`；tmux 3.5
+      以下会把 `-F` 输出里的 0x1F 分隔符转义成 `\037`（而且不转义反斜杠，所以没法还原）；
+      旧 tmux 的整屏重绘里全是换行，被当成了「屏幕前进」从而清掉了等待中的铃；
+      `Inspect` 的提前返回把 `events` 发成了 `null`；一个测试的铃和 attach 在抢跑；
+      还有一个测试没有像面板那样设 `TERM`。
 
 ## F — 热升级
 
