@@ -130,13 +130,13 @@ export function SystemMonitor({ sessions }: { sessions: Session[] }) {
     )
   }
   if (!sample) {
-    return <p className="px-3 py-4 text-[12px] text-ink-2">{t('mon.reading')}</p>
+    return <p className="px-3 py-4 text-[12px] text-ink-2">{t('monitor.reading')}</p>
   }
 
   const memUsed = sample.memTotal - sample.memAvailable
   const swapUsed = sample.swapTotal - sample.swapFree
   const diskUsed = sample.diskTotal - sample.diskFree
-  const cores = t('mon.cores', { n: String(sample.cores) })
+  const cores = t('monitor.cores', { n: String(sample.cores) })
 
   // Absent from the payload means the pane has gone, which is not the same as
   // idle — those sessions are left out rather than drawn at zero.
@@ -148,7 +148,7 @@ export function SystemMonitor({ sessions }: { sessions: Session[] }) {
   return (
     <div className="px-3 py-3" data-testid="system-monitor">
       <Meter
-        label={t('mon.cpu')}
+        label={t('monitor.cpu')}
         // The first sample has nothing to difference against, so it says so
         // rather than showing a zero that looks like an idle machine.
         value={sample.cpuPercent}
@@ -157,9 +157,9 @@ export function SystemMonitor({ sessions }: { sessions: Session[] }) {
             ? // "sampling…" promises an answer. On a machine with no
               // /proc/stat — every darwin build this project releases — none
               // is coming, and the promise renews itself every two seconds.
-              `${cores} · ${t('mon.unavailable')}`
+              `${cores} · ${t('monitor.unavailable')}`
             : sample.cpuPercent === null
-              ? `${cores} · ${t('mon.sampling')}`
+              ? `${cores} · ${t('monitor.sampling')}`
               : `${cores} · load ${sample.load1.toFixed(2)} ${sample.load5.toFixed(2)} ${sample.load15.toFixed(2)}`
         }
       />
@@ -172,26 +172,26 @@ export function SystemMonitor({ sessions }: { sessions: Session[] }) {
           The CPU meter one line above already knows not to do this, and says
           why in its own comment. */}
       <Meter
-        label={t('mon.memory')}
+        label={t('monitor.memory')}
         value={sample.memTotal ? (memUsed / sample.memTotal) * 100 : null}
         detail={
           sample.memTotal
-            ? t('mon.of', { used: formatBytes(memUsed), total: formatBytes(sample.memTotal) })
-            : t('mon.unavailable')
+            ? t('monitor.of', { used: formatBytes(memUsed), total: formatBytes(sample.memTotal) })
+            : t('monitor.unavailable')
         }
       />
       {sample.swapTotal > 0 && (
         <Meter
-          label={t('mon.swap')}
+          label={t('monitor.swap')}
           value={(swapUsed / sample.swapTotal) * 100}
-          detail={t('mon.of', { used: formatBytes(swapUsed), total: formatBytes(sample.swapTotal) })}
+          detail={t('monitor.of', { used: formatBytes(swapUsed), total: formatBytes(sample.swapTotal) })}
         />
       )}
       <Meter
-        label={t('mon.disk')}
+        label={t('monitor.disk')}
         value={sample.diskTotal ? (diskUsed / sample.diskTotal) * 100 : null}
         detail={
-          sample.diskTotal ? t('mon.free', { n: formatBytes(sample.diskFree) }) : t('mon.unavailable')
+          sample.diskTotal ? t('monitor.free', { size: formatBytes(sample.diskFree) }) : t('monitor.unavailable')
         }
       />
 
@@ -199,12 +199,12 @@ export function SystemMonitor({ sessions }: { sessions: Session[] }) {
           the machine meters say the box is busy, and this says which session is
           doing it. */}
       <div className="mt-4 border-t border-hairline pt-3">
-        <p className="mb-2 text-[11px] uppercase tracking-wide text-ink-2">{t('mon.perSession')}</p>
+        <p className="mb-2 text-[11px] uppercase tracking-wide text-ink-2">{t('monitor.perSession')}</p>
         {usage && !usage.readable ? (
-          <p className="text-[11px] leading-relaxed text-ink-2">{t('mon.noProc')}</p>
+          <p className="text-[11px] leading-relaxed text-ink-2">{t('monitor.noProc')}</p>
         ) : measured.length === 0 ? (
           <p className="text-[11px] text-ink-2">
-            {usage ? t('mon.noSessions') : t('mon.sampling')}
+            {usage ? t('monitor.noSessions') : t('monitor.sampling')}
           </p>
         ) : (
           measured.map(({ session, usage: u }) => (
@@ -217,8 +217,8 @@ export function SystemMonitor({ sessions }: { sessions: Session[] }) {
         {measured.length > 0 && (
           <p className="tabular mt-1 text-[10.5px] text-ink-2">
             {measured.reduce((n, r) => n + r.usage.procs, 0) === 1
-              ? t('mon.oneProc')
-              : t('mon.procs', { n: String(measured.reduce((n, r) => n + r.usage.procs, 0)) })}
+              ? t('monitor.oneProc')
+              : t('monitor.procs', { n: String(measured.reduce((n, r) => n + r.usage.procs, 0)) })}
           </p>
         )}
       </div>
@@ -229,7 +229,7 @@ export function SystemMonitor({ sessions }: { sessions: Session[] }) {
           "—" because a single line of prose has nothing to draw. */}
       {sample.uptime > 0 && (
         <p className="tabular mt-4 text-[10.5px] text-ink-2">
-          {t('mon.up', { d: duration(sample.uptime) })}
+          {t('monitor.up', { d: duration(sample.uptime) })}
         </p>
       )}
     </div>

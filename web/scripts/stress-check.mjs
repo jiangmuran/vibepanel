@@ -198,7 +198,16 @@ try {
   await select('wide')
 
   const grid = await page.locator('[data-testid="grid-size"]').innerText().catch(() => '')
-  const cols = Number(grid.split('x')[0])
+  // Split on anything that is not a digit. The separator is a multiplication
+  // sign now and was an ASCII "x" when this was written, and `split('x')` on
+  // "79\u00d7133" gives NaN -- a check reporting that it could not read the
+  // grid, about a change to the typography of the chip that displays it.
+  const cols = Number(grid.split(/\D+/).filter(Boolean)[0])
+  // Focus the terminal here rather than inside the branch below. It used to be
+  // in the else, so a failure to read the grid also silently disabled the two
+  // measurements after it: they typed into a page with no focus in the
+  // terminal and reported "output never arrived".
+  await page.locator('.xterm-screen').click()
   if (!Number.isFinite(cols) || cols < 20) {
     note('FAIL', 'wide', `could not read the grid size: ${JSON.stringify(grid)}`)
   } else {
@@ -209,7 +218,6 @@ try {
     const perRow = Math.floor(cols / 2)
     const count = perRow + 10
     const marker = 'WIDEEND'
-    await page.locator('.xterm-screen').click()
     // Literal characters, not escapes: the shell's printf does not understand
     // \u or \U, and a test that types those measures nothing but its own
     // payload arriving as text.

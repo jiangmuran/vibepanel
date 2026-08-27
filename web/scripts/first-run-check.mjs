@@ -139,35 +139,48 @@ try {
   }
   await page.screenshot({ path: join(SHOTS, 'empty.png') })
 
-  // Adding the first project, through the prompt, which is what a person does.
-  let promptText = ''
-  page.once('dialog', async (d) => {
-    promptText = `${d.message()} | ${d.defaultValue()}`
-    await d.accept(join(DATA, 'not-created-yet'))
-  })
-  await page.locator('button[title="Add project"]').first().click()
-  await sleep(1800)
-  if (!promptText.includes('|')) {
-    note('FAIL', 'project', 'clicking "Add project" asked nothing')
-  }
-  const afterBad = await page.innerText('body')
-  if (!/no such file|does not exist|cannot open/i.test(afterBad)) {
-    note('FAIL', 'project',
-      'a directory that does not exist was refused with nothing on screen to explain it; ' +
-      'the first thing a new user does is accept the suggested path')
-  }
-  await page.screenshot({ path: join(SHOTS, 'bad-path.png') })
+  // Adding the first project, through the directory picker, which is what a
+  // person does.
+  //
+  // This used to drive a window.prompt and accept a typed path. The prompt is
+  // gone -- the first thing anybody said about this panel was that there was no
+  // way to pick a directory -- and the check went on passing against a dialog
+  // that no longer opens, because `page.once('dialog')` simply never fired and
+  // the assertion under it read a body that had not changed. It is the picker's
+  // own controls now.
+  await page.locator('[data-testid="add-project"]').first().click()
+  await sleep(1200)
+  if ((await page.locator('[data-testid="dir-picker"]').count()) === 0) {
+    note('FAIL', 'project', 'clicking "Add project" opened no directory picker')
+  } else {
+    // A path that does not exist, typed into the manual field, which is the
+    // way out of HOME and the only way to reach a bad path at all now.
+    const manual = page.locator('[data-testid="dir-manual"]')
+    await manual.fill(join(DATA, 'not-created-yet'))
+    await manual.press('Enter')
+    await sleep(1500)
+    const afterBad = await page.innerText('body')
+    if (!/no such file|does not exist|cannot open|not a directory/i.test(afterBad)) {
+      note('FAIL', 'project',
+        'a directory that does not exist was refused with nothing on screen to explain it; ' +
+        'the first thing a new user does is accept whatever is in front of them')
+    }
+    await page.screenshot({ path: join(SHOTS, 'bad-path.png') })
 
-  const real = join(DATA, 'work')
-  mkdirSync(real, { recursive: true })
-  page.once('dialog', async (d) => { await d.accept(real) })
-  await page.locator('button[title="Add project"]').first().click()
-  await sleep(2500)
-  if ((await page.locator('[data-testid="project-group"]').count()) === 0) {
-    note('FAIL', 'project', 'a real directory was accepted but no project appeared in the sidebar')
-  }
-  if (/no such file|does not exist|cannot open/i.test(await page.innerText('body'))) {
-    note('FAIL', 'project', 'the failed attempt is still on screen after a successful one')
+    const real = join(DATA, 'work')
+    mkdirSync(real, { recursive: true })
+    await manual.fill(real)
+    await manual.press('Enter')
+    await sleep(2500)
+    if ((await page.locator('[data-testid="project-group"]').count()) === 0) {
+      note('FAIL', 'project', 'a real directory was accepted but no project appeared in the sidebar')
+    }
+    if ((await page.locator('[data-testid="dir-picker"]').count()) !== 0) {
+      note('FAIL', 'project', 'the picker stayed open after it had made the project')
+    }
+    if (/no such file|does not exist|cannot open/i.test(await page.innerText('body'))) {
+      note('FAIL', 'project', 'the failed attempt is still on screen after a successful one')
+    }
   }
   await page.screenshot({ path: join(SHOTS, 'first-project.png') })
 } catch (err) {

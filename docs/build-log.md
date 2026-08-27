@@ -11078,3 +11078,50 @@ That is three findings in a row where an older or slower machine did something
 this one does not, and the loop that made each of them tractable was the same:
 reproduce it locally first — an extracted tmux 3.4, `env -u TERM`, two pinned
 cores — and only then read the code.
+
+## `make verify` found four things the translation had broken, and one it had not
+
+The full run had been green before the language work landed. Afterwards:
+
+**A selector on user-visible text.** `first-run-check` clicked
+`button[title="Add project"]`. The i18n pass renamed that string to "Add a
+project" and the check timed out. Both add-project buttons carry a
+`data-testid` now. Translated text is not a selector, and this is the general
+form of it — the same file also had `header button[title="Projects"]`, which
+is worse: the title is not "Projects" when something is waiting, it is
+"Projects — 2 waiting for you", and the check guarded it with
+`isVisible().catch(() => false)`. So the drawer-opacity check underneath had
+been skipping itself, silently, for as long as the fixture has had a waiting
+session. A check that stops checking looks exactly like one that passes; that
+branch is a FAIL now.
+
+**A separator changed for typography.** `stress-check` read the grid chip and
+split on `"x"`. Making it a chip changed the text from `130x46` to `130×46`,
+so the parse produced NaN and the check reported that it could not read the
+grid — about a change to the font of the thing it was reading. It splits on
+non-digits now.
+
+And the failure cascaded: the click that focuses the terminal was inside the
+`else` of that same test, so the emoji and font measurements after it typed
+into an unfocused page and reported "output never arrived" as two warnings.
+Three findings, one cause, and the two downstream ones named the wrong thing.
+The click is unconditional now.
+
+**A whole modal that was never translated.** `DirectoryPicker` had six
+hardcoded Chinese strings — 上一层, 取消, 使用这个目录 — while the dictionary
+already carried `dir.up`, `dir.cancel` and `dir.use` for exactly those. An
+English reader got a Chinese modal. Nothing caught it; it was found by grepping
+the components for CJK. The mobile menu button and the header's "No session
+selected" were English-only in the other direction.
+
+**And one that was not about language at all.** Rewriting the first-run check
+for the picker exposed the flow: picking closed the modal *before* the project
+was created, so a path that did not exist took the modal away and left an error
+in a banner at the top of the app. The way to retry was to reopen the picker
+and type the whole path again, with the field that was wrong already gone.
+`onPick` returns a promise now; the picker stays open on rejection and puts the
+reason in the error slot it already had.
+
+The two duplicate monitor namespaces — `mon.*` added beside the existing
+`monitor.*`, both defining `cpu`, `memory`, `disk` — are merged. A dictionary
+with two names for one string is how a translation gets updated in one of them.

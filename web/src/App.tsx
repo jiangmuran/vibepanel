@@ -594,7 +594,12 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             <button
               type="button"
               onClick={() => setDrawerOpen(true)}
-              title={waiting > 0 ? `Projects — ${waiting} waiting for you` : 'Projects'}
+              title={
+                waiting > 0
+                  ? t('app.projectsWaiting', { n: String(waiting) })
+                  : t('app.projects')
+              }
+              data-testid="menu-button"
               className="relative rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
             >
               <Menu size={16} />
@@ -664,7 +669,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               </span>
             </>
           ) : (
-            <span className="text-[13px] text-ink-2">No session selected</span>
+            <span className="text-[13px] text-ink-2">{t('app.noSessionShort')}</span>
           )}
           {!narrow && rightWidth === 0 && (
             <button
@@ -709,9 +714,24 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         {picking && (
           <DirectoryPicker
             onClose={() => setPicking(false)}
-            onPick={(path) => {
+            onPick={async (path) => {
+              // Not through guard(): the picker wants the rejection so it can
+              // stay open and say why, and guard() swallows it into a banner
+              // behind a modal that has already closed.
+              try {
+                await api.createProject(path)
+              } catch (e) {
+                // The one error that is not about the directory. A session that
+                // expired while the tab was asleep belongs on the sign-in
+                // screen, not inside a modal about paths.
+                if (e instanceof UnauthorizedError) {
+                  onSignOut()
+                  return
+                }
+                throw e
+              }
               setPicking(false)
-              void guard(() => api.createProject(path))
+              setError(null)
             }}
           />
         )}

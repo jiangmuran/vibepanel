@@ -25,7 +25,16 @@ export function DirectoryPicker({
   onPick,
   onClose,
 }: {
-  onPick: (absolutePath: string) => void
+  /**
+   * Take this directory. Rejecting keeps the picker open with the reason in it.
+   *
+   * It used to return void and the picker closed the moment you chose. A path
+   * that did not exist then took the modal away and left an error in a banner
+   * at the top of the app -- so the way to retry was to reopen the picker and
+   * type the whole thing again, and the field that was wrong was gone before
+   * you could see what was wrong with it.
+   */
+  onPick: (absolutePath: string) => Promise<void>
   onClose: () => void
 }) {
   useLang()
@@ -81,6 +90,17 @@ export function DirectoryPicker({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  const pick = async (path: string) => {
+    setBusy(true)
+    try {
+      await onPick(path)
+      // No setBusy(false): a successful pick unmounts this.
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      setBusy(false)
+    }
+  }
+
   const here = listing ? (listing.path ? `~/${listing.path}` : '~') : '…'
   const absHere = listing ? (listing.path ? `${listing.root}/${listing.path}` : listing.root) : ''
 
@@ -129,7 +149,7 @@ export function DirectoryPicker({
               className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-ink-2 transition-colors duration-150 ease-vp hover:bg-surface-2 hover:text-ink"
             >
               <ChevronRight size={13} className="shrink-0 rotate-180" />
-              上一层
+              {t('dir.up')}
             </button>
           )}
           {listing?.entries.map((e) => (
@@ -147,7 +167,7 @@ export function DirectoryPicker({
           ))}
           {listing && listing.entries.length === 0 && (
             <div className="px-3 py-6 text-center text-[12px] text-ink-2">
-              这里没有子目录 — 可以直接选它，或者新建一个
+              {t('dir.empty')}
             </div>
           )}
           {listing?.truncated && (
@@ -190,7 +210,7 @@ export function DirectoryPicker({
                 className="shrink-0 rounded-vp px-3 py-1.5 text-[13px] disabled:opacity-40"
                 style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
               >
-                建
+                {t('dir.create')}
               </button>
             </div>
           ) : (
@@ -201,7 +221,7 @@ export function DirectoryPicker({
               className="mb-2 flex items-center gap-1.5 text-[12.5px] text-ink-2 transition-colors duration-150 ease-vp hover:text-ink"
             >
               <FolderPlus size={13} />
-              在这里新建目录
+              {t('dir.newFolder')}
             </button>
           )}
 
@@ -212,7 +232,7 @@ export function DirectoryPicker({
             value={manual}
             onChange={(ev) => setManual(ev.target.value)}
             onKeyDown={(ev) => {
-              if (ev.key === 'Enter' && manual.trim()) onPick(manual.trim())
+              if (ev.key === 'Enter' && manual.trim()) void pick(manual.trim())
             }}
             placeholder={t('dir.manual')}
             data-testid="dir-manual"
@@ -226,17 +246,17 @@ export function DirectoryPicker({
               data-testid="dir-cancel"
               className="flex-1 rounded-vp border border-hairline px-3 py-2 text-[13px] text-ink-2 transition-colors duration-150 ease-vp hover:text-ink"
             >
-              取消
+              {t('dir.cancel')}
             </button>
             <button
               type="button"
-              onClick={() => onPick(manual.trim() || absHere)}
+              onClick={() => void pick(manual.trim() || absHere)}
               disabled={!listing && !manual.trim()}
               data-testid="dir-confirm"
               className="flex-[2] rounded-vp px-3 py-2 text-[13px] disabled:opacity-40"
               style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
             >
-              使用这个目录
+              {t('dir.use')}
             </button>
           </div>
         </div>

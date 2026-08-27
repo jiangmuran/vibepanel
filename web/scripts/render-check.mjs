@@ -1592,8 +1592,16 @@ try {
   // it entirely.
   await page.setViewportSize({ width: 390, height: 844 })
   await sleep(700)
-  const menu = page.locator('header button[title="Projects"]')
-  if (await menu.isVisible().catch(() => false)) {
+  // By testid, and loudly. This was `header button[title="Projects"]`, and the
+  // title is not "Projects" when something is waiting -- it is "Projects — 2
+  // waiting for you" -- so the selector missed and the whole drawer check
+  // below it was skipped by the isVisible guard. A check that stops checking
+  // looks exactly like a check that passes. It is also now translated, which
+  // would have broken the old selector a second way.
+  const menu = page.locator('[data-testid="menu-button"]')
+  if (!(await menu.isVisible().catch(() => false))) {
+    note('FAIL', 'mobile', 'no menu button at 390 wide, so the drawer cannot be opened or checked')
+  } else {
     await menu.click()
     await sleep(600)
     const drawer = await page.evaluate(() => {
@@ -1618,8 +1626,6 @@ try {
       .click({ timeout: 3000 })
       .catch(() => {})
     await sleep(400)
-  } else {
-    note('WARN', 'layout/drawer', 'no menu button at phone width; the sidebar may be taking the screen')
   }
 
   for (const e of consoleErrors) note('WARN', 'console', e)

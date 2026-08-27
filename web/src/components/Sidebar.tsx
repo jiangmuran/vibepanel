@@ -178,6 +178,7 @@ export function Sidebar(props: SidebarProps) {
           type="button"
           onClick={props.onAddProject}
           title={t('app.addProject')}
+          data-testid="add-project"
           className="mt-1 shrink-0 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
         >
           <Plus size={15} />
@@ -234,6 +235,7 @@ export function Sidebar(props: SidebarProps) {
           type="button"
           onClick={props.onAddProject}
           title={t('app.addProject')}
+          data-testid="add-project"
           className={`rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink ${
             props.projectOrder === 'manual' || props.hasProjectOrder ? '' : 'ml-auto'
           }`}
