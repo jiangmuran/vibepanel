@@ -11922,3 +11922,133 @@ Three things that are easy to get wrong and are pinned by mutation:
 systemd stops the panel and leaves the tmux server and every agent under it
 alone. Without that line this would be a button that kills everybody's work, and
 the confirmation says so before it is pressed rather than after.
+
+## The file panel could only take files out
+
+The right-hand file tab listed a directory and offered a download per row, and
+that was all it did. Clicking a filename did nothing at all — not a preview, not
+an error, nothing — and there was no way to put a file *in*. Both halves of the
+gap had the same shape: the panel knew what was in the directory and would not
+act on it.
+
+**Uploading already existed, and the file panel could not reach it.**
+`POST /api/projects/{id}/upload?path=` has been there since the terminal learned
+to take a dropped screenshot, and the browser side of it was two copies of the
+same forty lines — one in `Terminal.tsx` for a paste, one in `App.tsx` for a
+drop — that had already drifted. The paste copy read `clipboardData.items`,
+which is the only place a *pasted* screenshot appears on Chromium; the drop copy
+read `dataTransfer.files`, which is the only place a dropped file appears. Each
+was right about its own event and blind to the other, and a third copy in the
+file panel would have inherited whichever half got copied.
+
+So `components/upload.ts` now holds both: `filesFrom` reads items and falls back
+to files, and `uploadFiles` does the request and the three lines of narration
+around it. The narration is the part that turned out to matter — `Uploading
+${n} file${n === 1 ? '' : 's'}…` was an English literal in `App.tsx`, invisible
+to `i18n.untranslated.test.ts` because a template literal is not a string
+literal and not prose between tags, and it had been showing English on a Chinese
+page for as long as dropping a file has worked. One and many are separate
+dictionary entries, following the `monitor.procs`/`monitor.oneProc` precedent,
+because "Uploading 1 files" is the plural rule everybody ships by accident.
+
+The panel takes a drop anywhere in the column (`min-h-full`, so the empty space
+under a short listing is a target too), a paste, and a button that opens a file
+chooser — which is the only one of the three that works on a phone. The paste
+listener is on `window`, because a div cannot receive a paste without focus and
+nobody clicks a file list before pressing ctrl-V; it takes the event only when
+the target is inside the panel or is `document.body`, so a paste aimed at a
+focused terminal still goes to the terminal, which uploads next to the session
+and types the path instead.
+
+**The preview is where the thinking went.** A preview reached by tapping a row
+is a much lower bar than a download reached by clicking a download button, and
+one of those rows is a core dump. Without a ceiling, clicking it is a denial of
+service against the person who clicked.
+
+Three bounds, because one number does not cover it:
+
+- **8 MiB** (`previewMaxBytes`) on the transfer. An image or a PDF past it is
+  `413` — half a picture draws nothing, so there is nothing to truncate to. The
+  number is chosen against what the feature is for: a screenshot off a 5K
+  display is two to four megabytes, a scanned page is a few, source is
+  kilobytes. Far below `maxUploadBytes`, which is 256 MiB, and the difference is
+  the point: an upload is a file you chose, a preview is a file you brushed
+  against.
+- **256 KiB** on text, which is truncated rather than refused. That is what
+  makes a two-gigabyte log worth clicking: what anybody wants from it is the
+  top, and the top is the only part ever read.
+- **4000 lines**, and this one is not redundant. A quarter of a megabyte of
+  `a\n` is a quarter of a million lines, and a wrapped monospace block of those
+  in a 280px column is hundreds of megabytes of layout boxes — the byte budget
+  bounds the transfer and does nothing at all about the work.
+
+The browser holds the 8 MiB too, so clicking a two-gigabyte file is answered
+from the size the listing already carries with no request at all. That copy is
+not the enforcement and is not offered as one;
+`TestThePreviewBoundIsTheSameOnBothSides` reads `preview.ts` and compares, which
+is the same shape as the state enum and its mirrors — a definition with a copy
+somewhere no compiler looks. The drift it catches is the quiet one: raise the
+server's limit alone and the panel goes on refusing files it would now serve.
+
+**The kind comes from the bytes, never from the name**, and in a directory an
+agent writes into that is not fussiness: a log written as `output.dat` is text,
+a `notes.txt` holding a truncated tarball is not, and half the files worth
+reading — `Makefile`, `Dockerfile`, a shell script — have no extension to
+consult. `browse.SniffMagic` matches PNG, JPEG, GIF, WebP, AVIF and PDF;
+`browse.IsText` is git's NUL heuristic plus a UTF-8 check. The UTF-8 half costs
+something worth naming: a README in CP1252 is refused rather than shown, and
+that is deliberate, because the alternative is a screen of U+FFFD that reads as
+the panel being broken. "No preview, here is the file" is the smaller lie.
+
+Two formats are deliberately absent. **SVG** is read as text: it is a document
+with scripting in it, and the two ways to show one at a useful size — an
+`<object>` or an `<iframe>` — run that script on the panel's own origin, against
+a file that arrived because an agent was told to do something. **BMP**'s magic
+is the two bytes `BM`, which is also how a great many sentences begin, and a
+heuristic that turns a README into a broken image is worse than one that shows
+it as text.
+
+Nothing is served inline. The preview response is `application/octet-stream`
+with `nosniff` and an `attachment` disposition — the same headers as the
+download, which is why they are one function now — and the bytes reach the
+browser through `fetch`. What they *are* is decided by the `Blob` type the
+browser side builds, from the kind rather than echoed from the header:
+`blobTypeFor` will not let a response name `text/html` where an image was
+promised. That is the one place a file out of a project directory could have
+been handed to the browser as something to run.
+
+**The preview is a modal over the whole window, and the panel's width is what
+decides that.** It is 280px by default and 200 at its narrowest. A picture at
+that width is a thumbnail with a scrollbar and wrapped source is a column of
+five words; the panel's job is finding the file, and reading it is a different
+job that wants the window. A takeover of the panel was the other candidate and
+costs more than it looks: it has to restore the directory, the scroll position
+and the row you were on, and it needs a back affordance that sits next to the
+"up one level" control already in that header — two controls that look alike and
+mean different things, in a column too narrow to label either. The modal leaves
+the list untouched behind it, so closing *is* the restore.
+
+Through `createPortal`, and that is not a preference. The panel carries
+`vp-blur`, which is `backdrop-filter`, and an element with a backdrop-filter is
+a containing block for `position: fixed` descendants — so a `fixed inset-0`
+modal rendered inside the panel is clipped to the panel, which is exactly the
+280 pixels it exists to escape.
+
+**Two things fixed on the way past.** The rows were `<div onClick>`, so a
+keyboard could not reach them at all — not the directories either, which has
+been true since the panel was written. The name is a `<button>` now, and it is
+the name rather than the row because a row that is a button cannot contain the
+download link: nested interactive elements are invalid and the inner one is
+unreachable. And `FileTree` still had four English literals in it — "Reading…",
+"Showing N of M items", the download title and the "outside" badge, the last of
+which had a translated `files.escapes` entry sitting unused in the dictionary
+since the day it was added.
+
+Left undone on purpose: syntax highlighting, which would be a dependency for a
+thing nobody reads a file this way to get; and a browser check for the modal
+itself. The testids are in place for one — `file-open`, `file-upload`,
+`file-chooser`, `file-drop-overlay`, `file-note`, `file-preview`,
+`preview-text`, `preview-image`, `preview-pdf`, `preview-truncated`,
+`preview-unavailable`, `preview-download`, `preview-close`, `preview-backdrop` —
+and the drop, the paste and the portal are all things only a real browser can
+answer, so they are asserted by nothing today.

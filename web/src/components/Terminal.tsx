@@ -12,6 +12,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import type { PanelSocket } from '../protocol/socket'
 import { terminalTheme } from './theme'
 import { t, useLang } from '../i18n'
+import { filesFrom } from './upload'
 
 /**
  * The smallest a passive viewer is allowed to shrink the text to.
@@ -354,14 +355,7 @@ export function TerminalView({
     // xterm's job and it does it correctly, including asking the pane whether
     // it wants bracketing.
     const onPaste = (e: ClipboardEvent) => {
-      const items = e.clipboardData?.items
-      if (!items) return
-      const files: File[] = []
-      for (const item of items) {
-        if (item.kind !== 'file') continue
-        const f = item.getAsFile()
-        if (f) files.push(f)
-      }
+      const files = filesFrom(e.clipboardData)
       if (files.length === 0) return
       // Only now: preventing the default for a text paste would break the
       // ordinary case in order to serve the rare one.

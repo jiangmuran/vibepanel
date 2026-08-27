@@ -39,6 +39,7 @@ import { askConfirm } from './components/ask'
 import { dismissToast, showToast } from './components/toasts'
 import { focusTerminal } from './components/focus'
 import { RestoreDialog } from './components/RestoreDialog'
+import { filesFrom } from './components/upload'
 import { t, useLang } from './i18n'
 
 /**
@@ -535,14 +536,11 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   // terminal does have focus it should be the one to answer.
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
-      const items = e.clipboardData?.items
-      if (!items) return
-      const files: File[] = []
-      for (const item of items) {
-        if (item.kind !== 'file') continue
-        const f = item.getAsFile()
-        if (f) files.push(f)
-      }
+      // Both places, through one reader. A *pasted* screenshot on Chromium
+      // lives only in `items`; a *dropped* file lives only in `files`, and the
+      // two handlers in this file each read one of them and were blind to the
+      // other's case.
+      const files = filesFrom(e.clipboardData)
       if (files.length === 0) return
       // A field that can take a file itself gets to keep it: pasting into the
       // file panel's own drop target should not be intercepted from here.
@@ -990,7 +988,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             if (!current) return
             e.preventDefault()
             setDropping(false)
-            void uploadInto([...e.dataTransfer.files])
+            void uploadInto(filesFrom(e.dataTransfer))
           }}
         >
           {dropping && (
@@ -999,7 +997,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-vp border-2 border-dashed text-vp-md"
               style={{ borderColor: 'var(--vp-accent)', color: 'var(--vp-accent)' }}
             >
-              Drop to upload into {current?.cwd || currentProject?.path}
+              {t('upload.dropHere', { dir: safeText(current?.cwd || currentProject?.path || '') })}
             </div>
           )}
           {blockedClip && (

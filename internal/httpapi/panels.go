@@ -27,6 +27,7 @@ func (s *Server) registerPanelRoutes(r chi.Router) {
 	r.Post("/browse/mkdir", s.handleBrowseMkdir)
 	r.Get("/projects/{id}/files", s.handleFiles)
 	r.Get("/projects/{id}/download", s.handleDownload)
+	r.Get("/projects/{id}/preview", s.handlePreview)
 	r.Post("/projects/{id}/upload", s.handleUpload)
 	r.Get("/projects/{id}/notes", s.handleGetNote)
 	r.Put("/projects/{id}/notes", s.handlePutNote)
@@ -125,6 +126,37 @@ func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
 // before anyone notices.
 const maxUploadBytes = 256 << 20
 
+// previewMaxBytes bounds what one click can pull off the disk.
+//
+// A preview is not asked for by name the way a download is -- it is what
+// happens when somebody taps a row in a list of files an agent wrote, and one
+// of those rows is a core dump. Without a ceiling, clicking it is a denial of
+// service against the person who clicked: the server streams it, the browser
+// holds it, and neither of them was told how big it was first.
+//
+// Eight mebibytes is chosen against what a preview is for. A screenshot off a
+// 5K display is two to four megabytes of PNG, a scanned page is a few, and
+// source files are kilobytes; nothing this feature exists to show is near the
+// limit, and everything that would hurt is well past it. Far below
+// maxUploadBytes on purpose -- an upload is a file you chose, a preview is a
+// file you brushed against.
+//
+// The browser holds the same number, in web/src/components/panels/preview.ts,
+// so it can answer instantly from the size it already has instead of starting
+// a transfer to be told no. TestThePreviewBoundIsTheSameOnBothSides is what
+// keeps the two from drifting.
+const previewMaxBytes = 8 << 20
+
+// previewTextBytes and previewTextLines bound the *rendering* rather than the
+// transfer, and they are much smaller for a reason the byte limit does not
+// cover: a browser will happily stream eight megabytes and then spend a minute
+// laying it out as wrapped monospace in a 280px column. See browse.ClipText,
+// which is where both bites are decided and where the line bound is argued.
+const (
+	previewTextBytes = 256 << 10
+	previewTextLines = 4000
+)
+
 // handleDownload streams one file out of a project.
 //
 // Deliberately not http.FileServer over the project root: that would serve
@@ -176,28 +208,147 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer f.Close()
 
-	// Both forms of the filename, per RFC 6266.
-	//
-	// `filename` is ISO-8859-1 by specification, so putting raw UTF-8 in it
-	// leaves the result to the browser: Chromium usually guesses UTF-8 and
-	// Firefox has historically read it as Latin-1, which turns 报告.pdf into
-	// æŠ¥å'Š.pdf on the way to the disk. `filename*` says the encoding out loud.
-	// Old clients that do not understand it fall back to the quoted one, which
-	// is why both are sent rather than only the correct one.
-	//
-	// A filename is attacker-controlled the moment an agent writes one, so the
-	// fallback drops everything outside printable ASCII — a raw CR in a header
-	// is a response-splitting bug — and the encoder escapes everything that is
-	// not an RFC 5987 attr-char. url.PathEscape is not a substitute: it leaves
-	// ';' and ',' alone, and ';' is the parameter separator.
 	name := filepath.Base(abs)
+	setAttachmentHeaders(w, name)
+	http.ServeContent(w, r, name, info.ModTime(), f)
+}
+
+// setAttachmentHeaders names a file for the browser and forbids it from
+// deciding the bytes are a page.
+//
+// Both forms of the filename, per RFC 6266.
+//
+// `filename` is ISO-8859-1 by specification, so putting raw UTF-8 in it leaves
+// the result to the browser: Chromium usually guesses UTF-8 and Firefox has
+// historically read it as Latin-1, which turns a CJK name into mojibake on the
+// way to the disk. `filename*` says the encoding out loud. Old clients that do
+// not understand it fall back to the quoted one, which is why both are sent
+// rather than only the correct one.
+//
+// A filename is attacker-controlled the moment an agent writes one, so the
+// fallback drops everything outside printable ASCII -- a raw CR in a header is
+// a response-splitting bug -- and the encoder escapes everything that is not
+// an RFC 5987 attr-char. url.PathEscape is not a substitute: it leaves ';' and
+// ',' alone, and ';' is the parameter separator.
+//
+// The content type is the other half, and it is why the preview endpoint
+// shares this rather than sending something a browser would render. Both
+// endpoints serve whatever an agent happened to write, HTML included, on the
+// panel's own origin. Nothing here is ever offered inline: the preview hands
+// the bytes to fetch(), and what they are is decided from a type this server
+// picked off a whitelist.
+func setAttachmentHeaders(w http.ResponseWriter, name string) {
 	w.Header().Set("Content-Disposition",
 		`attachment; filename="`+asciiFilename(name)+`"; filename*=UTF-8''`+rfc5987(name))
-	// Never let a browser decide it knows better and render the thing inline;
-	// this endpoint serves whatever an agent happened to write, HTML included.
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	http.ServeContent(w, r, name, info.ModTime(), f)
+}
+
+// handlePreview answers "what is in this file" without committing to reading
+// all of it.
+//
+// One endpoint rather than two, and bytes rather than JSON. The kind has to be
+// decided from the content (browse.SniffMagic), which means the server is
+// already holding the head of the file at the moment it knows the answer -- so
+// it says what it found in a header and sends what it read, and the browser
+// makes one request instead of asking what the file is and then asking for it.
+// Base64 in a JSON envelope was the alternative, and it is a third larger for
+// the only two kinds that need it.
+func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
+	p, err := s.DB.GetProject(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	abs, err := browse.Resolve(p.Path, r.URL.Query().Get("path"))
+	if err != nil {
+		writeBrowseErr(w, err)
+		return
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "no such file")
+		return
+	}
+	if info.IsDir() {
+		writeErr(w, http.StatusBadRequest, "that is a directory")
+		return
+	}
+	// Regular files only, for the reason spelled out on handleDownload: opening
+	// a FIFO with no writer never returns, and it takes the request goroutine
+	// and graceful shutdown with it. A preview is reached by clicking a row
+	// rather than a download button, so it is the easier of the two to trip
+	// over by accident.
+	if !info.Mode().IsRegular() {
+		writeErr(w, http.StatusBadRequest, "not a regular file")
+		return
+	}
+	f, err := os.Open(abs)
+	if err != nil {
+		writeErr(w, http.StatusForbidden, "cannot read that file")
+		return
+	}
+	defer f.Close()
+
+	head := make([]byte, 512)
+	n, err := io.ReadFull(f, head)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	head = head[:n]
+	name := filepath.Base(abs)
+
+	if kind, mime := browse.SniffMagic(head); kind != browse.KindBinary {
+		// Half a picture draws nothing, so these are the kinds the ceiling
+		// refuses outright rather than truncating.
+		if info.Size() > previewMaxBytes {
+			writeErr(w, http.StatusRequestEntityTooLarge,
+				fmt.Sprintf("%d bytes is past the %d-byte preview limit; download it instead",
+					info.Size(), previewMaxBytes))
+			return
+		}
+		setAttachmentHeaders(w, name)
+		w.Header().Set("X-Preview-Kind", string(kind))
+		w.Header().Set("X-Preview-Type", mime)
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		// LimitReader as well as the Stat above. An agent may be writing this
+		// file right now, so the size that was checked is not the size that
+		// arrives: the check is a courtesy, the limit is the enforcement.
+		_, _ = io.Copy(w, io.LimitReader(f, previewMaxBytes))
+		return
+	}
+
+	// Text is truncated rather than refused, which is what makes a
+	// two-gigabyte log worth clicking at all: the part anybody wants is the
+	// top, and the budget below is the only part of it ever read.
+	rest, err := io.ReadAll(io.LimitReader(f, previewTextBytes+1-int64(len(head))))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	buf := append(head, rest...)
+	more := len(buf) > previewTextBytes
+	if more {
+		buf = buf[:previewTextBytes]
+	}
+	text, truncated := browse.ClipText(buf, more, previewTextLines)
+	if !browse.IsText(text) {
+		writeErr(w, http.StatusUnsupportedMediaType, "no preview for this kind of file")
+		return
+	}
+	setAttachmentHeaders(w, name)
+	w.Header().Set("X-Preview-Kind", string(browse.KindText))
+	if truncated {
+		// The panel says so on screen. A preview that silently stops is the
+		// same defect as a directory listing that silently stops, which this
+		// panel already refuses to do.
+		w.Header().Set("X-Preview-Truncated", "true")
+	}
+	_, _ = w.Write(text)
 }
 
 // handleUpload writes files into a directory inside a project.

@@ -251,6 +251,46 @@ const DICT = {
 
   'files.up': { zh: '上一层', en: 'Up one level' },
   'files.reread': { zh: '重新读取这个目录', en: 'Read this directory again' },
+  'files.reading': { zh: '读取中…', en: 'Reading…' },
+  'files.truncated': { zh: '目录太大，只显示了 {shown} / {total} 项', en: 'Showing {shown} of {total} items' },
+  'files.downloadOne': { zh: '下载 {name}', en: 'Download {name}' },
+  'files.panel': { zh: '项目文件；可以把文件拖进来或粘贴进来', en: 'Project files — drop or paste files here' },
+  'files.choose': { zh: '上传到这个目录', en: 'Upload into this directory' },
+
+  'upload.dropHere': { zh: '松手就上传到 {dir}', en: 'Drop to upload into {dir}' },
+  'upload.one': { zh: '上传中…', en: 'Uploading a file…' },
+  'upload.many': { zh: '{n} 个文件上传中…', en: 'Uploading {n} files…' },
+  'upload.doneOne': { zh: '已上传 1 个文件', en: '1 file uploaded' },
+  'upload.doneMany': { zh: '已上传 {n} 个文件', en: '{n} files uploaded' },
+  'upload.failed': { zh: '上传失败', en: 'Upload failed' },
+
+  'preview.title': { zh: '预览', en: 'Preview' },
+  'preview.close': { zh: '关闭预览', en: 'Close preview' },
+  'preview.loading': { zh: '读取中…', en: 'Reading…' },
+  'preview.lines': { zh: '{n} 行', en: '{n} lines' },
+  'preview.oneLine': { zh: '1 行', en: '1 line' },
+  'preview.empty': { zh: '空文件', en: 'Empty file' },
+  // Truncation is never silent. A preview that just stops is the same defect as
+  // a directory listing that just stops, which this panel already refuses.
+  'preview.truncated': {
+    zh: '文件太长，这里只显示了前 {n} 行 —— 下载下来看全部。',
+    en: 'Too long to show here; these are the first {n} lines. Download it for the rest.',
+  },
+  'preview.tooBig': {
+    zh: '{size} 超过了 {limit} 的预览上限。预览是点一下就发生的事，所以它有上限；下载没有。',
+    en: 'At {size} this is past the {limit} preview limit. A preview happens on one click, so it has a ceiling; the download does not.',
+  },
+  'preview.none': {
+    zh: '这个文件不是文本、图片或 PDF（{size}），没法在这里显示。',
+    en: 'Not text, an image or a PDF ({size}), so there is nothing honest to show here.',
+  },
+  'preview.pdfFallback': {
+    zh: '这个浏览器不显示内嵌 PDF。下载下来看。',
+    en: 'This browser will not show a PDF inline. Download it instead.',
+  },
+  'preview.imageAlt': { zh: '{name} 的预览', en: 'Preview of {name}' },
+  'preview.open': { zh: '预览 {name}', en: 'Preview {name}' },
+  'preview.enter': { zh: '进入 {name}', en: 'Open {name}' },
   'bottom.close': { zh: '关闭终端', en: 'Close terminal' },
   'bottom.hide': { zh: '收起终端', en: 'Hide terminals' },
   'bottom.new': { zh: '新建终端', en: 'New terminal' },
