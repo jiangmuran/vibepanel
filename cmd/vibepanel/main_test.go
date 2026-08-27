@@ -196,3 +196,61 @@ func TestTheRunbookExplainsEveryDoctorLine(t *testing.T) {
 			"is the only place saying what each line means.", missing)
 	}
 }
+
+// `vibepanel session new --profile` takes a name as well as an id.
+//
+// The ids are opaque hex, so a flag that only took one would send everybody to
+// the settings page with a mouse in order to run a command. What matters more
+// is the miss: a name matching nothing has to be an error, because a session
+// started against the default endpoint when a gateway profile was asked for is
+// a substitution nobody notices until the bill.
+func TestTheCLIResolvesAProfileByNameAndRefusesAMiss(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	made, err := db.CreateLaunchProfile(ctx, "prof1", store.LaunchProfile{
+		Name: "My Gateway",
+		Env: []store.LaunchEnvVar{
+			{Name: "ANTHROPIC_BASE_URL", Value: "https://gw"},
+			// A secret, because that is the variable a redacted listing loses.
+			// The first version of this test used a plain one, and taking the
+			// row straight out of ListLaunchProfiles -- which is what the
+			// lookup by name reads -- passed it.
+			{Name: "ANTHROPIC_AUTH_TOKEN", Value: "sk-secret", Secret: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create profile: %v", err)
+	}
+
+	if got, rerr := resolveProfile(ctx, db, made.ID); rerr != nil || got == nil || got.ID != made.ID {
+		t.Fatalf("by id: %+v %v", got, rerr)
+	}
+	// Case-insensitively, because nobody retypes a name exactly.
+	got, err := resolveProfile(ctx, db, "my gateway")
+	if err != nil || got == nil {
+		t.Fatalf("by name: %+v %v", got, err)
+	}
+	// And with the values the launch needs, which the listing does not carry.
+	if len(got.Env) != 2 || got.Env[0].Value != "https://gw" {
+		t.Fatalf("resolved by name without its values: %+v", got.Env)
+	}
+	if got.Env[1].Value != "sk-secret" {
+		t.Fatalf("the key did not come back with the profile, so a session started "+
+			"from the CLI would reach the gateway unauthenticated: %+v", got.Env[1])
+	}
+
+	if b, berr := resolveProfile(ctx, db, store.BuiltinShell); berr != nil || b == nil {
+		t.Fatalf("a built-in is not resolvable: %+v %v", b, berr)
+	}
+	if _, merr := resolveProfile(ctx, db, "no such thing"); merr == nil {
+		t.Fatal("a profile name that matches nothing was accepted as 'no profile'")
+	}
+	if none, nerr := resolveProfile(ctx, db, ""); nerr != nil || none != nil {
+		t.Fatalf("no --profile should be no profile: %+v %v", none, nerr)
+	}
+}

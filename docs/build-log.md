@@ -13295,3 +13295,272 @@ away from them. The assertion is now a number rather than a flag.
   `### ` lines, and a conflict marker is not a `### ` line. That gap is now
   `TestNoConflictMarkersAreCommitted`, which walks the tree rather than one file
   — the marker had already survived two merges by the time anybody looked.
+
+
+## Launch profiles: the same agent, three endpoints
+
+「可以针对不同启动参数 不同 apihost 快速自定义不同的配置」. The panel could be
+told what to run — one free-text argv per session, and even that had no field in
+the UI; both call sites passed `[]` and the "new session" button created a login
+shell in one click. It could be told nothing at all about the environment that
+command runs in, which is the half people actually need. The same agent pointed
+at Anthropic, at a company proxy and at a self-hosted gateway is three
+configurations differing only in `ANTHROPIC_BASE_URL`.
+
+A profile is a name, an argv, and a list of variables. Migration v13 adds
+`launch_profiles` and one column on `sessions`.
+
+### There is no "API host" field, and that is the decision
+
+The obvious reading of the request is a column called `apiHost`. It is the wrong
+shape, because the panel would then have to know which variable each agent reads
+to make it mean anything: `ANTHROPIC_BASE_URL` for claude, `OPENAI_BASE_URL` for
+codex, and for opencode **nothing at all** — its endpoint is chosen per provider
+in its own configuration file, and there is no single variable to set. That
+mapping is guesswork about somebody else's tool that goes stale with their next
+release, and the day it is wrong the panel sets a variable nothing reads and the
+session looks configured.
+
+So the profile carries variables, and the panel names none of them itself —
+except in the built-in catalogue, where getting one wrong costs a prefilled field
+somebody edits rather than a launch that quietly does nothing.
+
+### Keys are stored, and the reasoning is written down rather than assumed
+
+A base URL almost always arrives with a key, so the question was never whether
+the panel touches credentials but where they end up. Refusing them sends people
+to the argv field — `env ANTHROPIC_AUTH_TOKEN=sk-... claude` — which is worse in
+three ways that were measured rather than argued: it lands in `launch_command`,
+which the restore dialog prints on screen; it lands in the process command line,
+where `ps -eo args` shows it to every other user on the machine; and it is re-run
+verbatim on every restore. Measured on tmux 3.6: a variable passed with `-e` does
+not appear in `ps -eo args`, and one passed in the argv does.
+
+So keys are allowed, and `secret` is what the panel does about it. A secret value
+is **never sent back to a browser**: every read gives `value: ""` and
+`hasValue: true`, so the settings page, a screenshot of it and an unlocked phone
+disclose the name and nothing else. It goes to the process through `-e`, never
+through an argv. It never reaches the audit log, which records profile names
+only, and a test drives create/update/delete and greps the rows for the key.
+
+What that does **not** do is encrypt anything: the value is plaintext in the
+SQLite file. The settings page says so in one line. Encrypting it with a key
+stored beside the database is not encryption — it is obfuscation with a migration
+path to maintain, and it would let that same line make a promise the file cannot
+keep.
+
+The consequence of never sending a secret out is that a browser cannot send one
+back, so a save would wipe every key in a profile the moment somebody renamed it.
+An incoming secret with an empty value therefore means "keep what is stored".
+Matched by name, which has one edge worth stating rather than hiding: renaming a
+secret variable and saving in the same edit clears its value. The form says so;
+a test pins it.
+
+### The ordering is the security boundary, and it was measured
+
+`store.LaunchEnv` puts a profile's variables **before** the panel's own. That is
+not tidiness. Measured against tmux 3.6: given two `-e` flags naming one
+variable, the session gets the last one. `VIBEPANEL_URL` is where a session's
+hooks post and `VIBEPANEL_TOKEN` is what they authenticate with, so a profile
+that could displace either would point every state report a session makes at an
+address of its choosing, with the panel's own hook token attached.
+
+Enforced twice, on purpose. The validator refuses to save any name starting
+`VIBEPANEL_`; the ordering means a row that got there anyway — a restored backup,
+a downgrade, somebody with sqlite3 — still loses. There is a test that writes
+exactly that row past the validator and asserts the session's `VIBEPANEL_URL` is
+still the panel's, and `TestTheLastEnvFlagWins` in `internal/tmux` pins the tmux
+behaviour the ordering rests on, against a real tmux, so that a future tmux
+taking the *first* instead cannot silently invert it.
+
+### What is refused in a variable, and what is deliberately not
+
+Names must match `[A-Za-z_][A-Za-z0-9_]*`. tmux refuses none of this itself, and
+that was measured rather than assumed: `-e '=x'` creates an entry with an empty
+name and says nothing, `-e 'JUSTNAME'` with no `=` is accepted and sets nothing,
+and a name containing a newline is stored verbatim. All three produce a session
+that looks configured and is not — the failure this project keeps running into.
+A value may not contain a line break: tmux stores one, and `show-environment`
+then emits a value spanning two lines, which is what `SessionEnvValue` parses to
+find out where a live session reports to.
+
+`LD_PRELOAD`, `LD_LIBRARY_PATH` and `PATH` are **accepted**, and there is a test
+row saying so. Refusing them would look like a security measure and be none:
+everyone who can save a profile can already create a session running an arbitrary
+argv, so the shortest path to loading a library is to type the command that loads
+it. A rule that stops nothing while implying it stops something is worse than no
+rule, because the next person builds on the implication.
+
+**An empty value is not passed to the process.** `FOO=` and "FOO unset" are
+different to a program — an agent that checks whether its base URL is *set*
+behaves differently from one whose base URL is `""` — and of the two mistakes
+this can make, the common one is a half-filled form. It is also what makes the
+built-in catalogue work.
+
+### Built-ins are code, not seeded rows
+
+The catalogue is four Go constants with ids under `builtin:` — a shell, claude,
+codex, opencode — and the reason is that the panel is bilingual. A row seeded by
+the migration has a name in whichever language the person installing happened to
+be using, frozen at install time, in a panel where every other string has both.
+A built-in's name is a dictionary key, and
+`TestEveryBuiltinProfileHasBothLanguages` fails if one is missing — the same
+shape as the board vocabulary's test, for the same reason: these are ids the
+server owns, in a `.go` file the untranslated-string scanner cannot see.
+
+Two smaller reasons point the same way. A release can correct a built-in that
+turned out to be wrong; and a built-in cannot be deleted into a state where a
+fresh panel offers nothing.
+
+They carry variable **names** with empty values — which is exactly why empty
+values are dropped. Using `builtin:claude` directly runs claude as a bare
+terminal would; duplicating it in the settings page gives a form with
+`ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` already spelled correctly.
+opencode has none, because inventing one would be a hint pointing at a variable
+nothing reads.
+
+### The picker, and what it costs
+
+The button in each project row created a login shell in one click. That is the
+right default for exactly one kind of user; everybody else clicked it and then
+typed the name of an agent into the pane. It now opens a list, with the shell
+first — so the old action is two clicks and nothing is hidden.
+
+A centred dialog rather than a menu anchored to the row: the sidebar's list
+scrolls inside `overflow-y-auto` and an anchored popover is clipped by it, and
+the centred panel is the one shape that works unchanged on a phone. Nothing in it
+is editable — making a profile is a settings action, and the most-used control in
+the panel is not the place to grow a form.
+
+The list is fetched once on load and again when the settings dialog closes,
+rather than carried in the state snapshot: the snapshot is broadcast to every
+viewer on every change, and profiles change when somebody edits them and at no
+other time.
+
+### Restoring, and the third caller
+
+`sessions.launch_profile_id` records the id, not a copy of the variables. Copying
+them would have put every key in a second table, once per session, where nothing
+redacts them. So a restore reads the profile again and the session comes back
+against the same gateway. A profile deleted since leaves the session
+**restorable** — without those variables, with a warning in the log — because
+refusing to restore it would be worse; and the id it keeps is what lets the
+restore dialog say "the profile it used has been removed" instead of looking like
+a session that never had one.
+
+Restarting a session in place needed no change and that was checked rather than
+assumed: `respawn-pane` reuses the tmux session's environment, so a crashed agent
+comes back against the same endpoint. `TestRespawnKeepsTheSessionEnvironment`
+pins it.
+
+`vibepanel session new --profile` goes through the same `store.LaunchEnv`. This
+project has already had that path drift once — it built its own two-variable
+environment and left out the hook token, producing sessions that looked
+configured and reported nothing — and the fix then was to move the building
+somewhere both callers share. It takes an id or a name, and a name matching
+nothing is an error rather than "no profile", because a session started against
+the default endpoint when a gateway was asked for is a substitution nobody
+notices until the bill.
+
+### The mutation run, and the four it caught
+
+Fifty-two mutations applied to the working tree one at a time, each run against
+the test that should catch it and restored afterwards. Forty-eight went red. Four
+did not.
+
+- **`ORDER BY name COLLATE NOCASE` was untested.** The fixture was
+  `zeta`/`Alpha`/`middle`, which sorts identically under a binary collation —
+  `A`(65) < `m`(109) < `z`(122). It is `beta`/`Alpha`/`Zulu` now, where `Z`(90)
+  before `b`(98) makes the two orderings disagree.
+- **`profileLabel`'s `if (!p.builtin) return p.name` guard was unobservable.**
+  Removing it changed nothing, because a row's id has no dictionary entry and the
+  fallback for a built-in nobody has heard of is `p.name` too — every path
+  converges. It is one expression now, keyed on the whole id
+  (`profile.name.builtin:claude`), with no branch at all.
+- **`profileOf`'s `if (!id) return null` was the same shape.** No profile has an
+  empty id, so the lookup already returns null. Gone.
+- **The CLI's lookup-by-name re-reading the row was untested.** `resolveProfile`
+  finds a name in `ListLaunchProfiles`, whose rows are *redacted*, and then reads
+  the row again for the values — and returning the listing row directly passed,
+  because the fixture's only variable was a plain one. It has a secret now, which
+  is the variable a redacted row loses: a session started from the CLI would have
+  reached the gateway unauthenticated.
+
+Two of these were tests asserting nothing. The other two were not: they were code
+asserting nothing, which is the more interesting result — a line that reads as a
+rule and enforces none is the kind the next person preserves at a cost.
+
+| mutation | test |
+|---|---|
+| the empty-name refusal goes | tmux makes an entry with no name and says nothing |
+| the name pattern goes | a name with a space, a dash, a newline or a leading digit |
+| the panel's own namespace is writable | a profile redirects every state report |
+| a line break in a value is allowed | `show-environment` output spans two lines |
+| the value / name length bounds go | an unbounded string into a process environment |
+| a nameless profile is accepted | the picker is a list of names |
+| duplicate variables are last-wins, like tmux | the row you edited was not the one that won |
+| an empty command word is accepted | the pane exec's "" and dies unwatched |
+| the variable / argument count bounds go | a form with no ceiling |
+| an empty value is exported empty | a half-filled form changes what the agent does |
+| the panel's own variables go first | a row displaces the hook token's destination |
+| secrets are not carried through an edit | renaming a profile wipes its key |
+| a new secret value does not replace the stored one | the key can never be changed |
+| redaction stops withholding the value | a key on the settings page |
+| redaction writes through to the caller's copy | the launch sets an empty key |
+| `hasValue` is not set | a stored secret looks unset and the form offers to set one |
+| the catalogue is handed out by reference | one caller's edit is everybody's profile |
+| a stored row is trusted on the way out | a hand-edited row keeps `VIBEPANEL_TOKEN` |
+| a corrupt env column is an error | one bad row takes the settings page down |
+| rows are ordered case-sensitively | a picker order nobody can predict |
+| built-ins are not listed first | one click stops meaning what it meant |
+| `Get` does not resolve a built-in | the picker offers what the server refuses |
+| the session column is not written | a restore loses the profile's environment |
+| a built-in can be edited / removed | the shipped catalogue drifts one panel at a time |
+| secrets are not merged in the handler | the API's rename wipes the key |
+| the handler does not validate | `VIBEPANEL_URL` over HTTP |
+| the profile cap goes | an unbounded picker |
+| the audit detail is the whole profile | a key in the journal |
+| an unknown profile id is silently no profile | a session against the default endpoint |
+| a deleted profile makes the session unrestorable | one deletion strands every session that used it |
+| the profile's environment is not passed to tmux | the whole feature does nothing |
+| the profile's argv is not used | the picker starts a shell whatever you chose |
+| the session does not record its profile | nothing to restore from |
+| a restore does not reapply the profile | a rebooted agent goes to the default endpoint |
+| a built-in loses its dictionary entry | an English name in a Chinese picker |
+| `splitArgv` drops an empty quoted argument | `foo "" bar` becomes a two-word command |
+| `joinArgv` does not spell out the empty word | opening the field and saving changes what runs |
+| `splitArgv` acts on `&&`, `|`, `>` | a shell that is not there |
+| the built-in name lookup goes / loses its fallback | an identifier in the picker |
+| `profileOf` matches on the name / falls back to the first | a session shows a profile it never had |
+| the CLI resolves only by id | a flag nobody can use without a mouse |
+| the CLI matches a name case-sensitively | nobody retypes a name exactly |
+| the CLI takes the redacted listing row | a CLI session reaches the gateway with no key |
+| a profile name that matches nothing is no profile | `--profile typo` runs against the default endpoint |
+
+### Left undone
+
+- **No browser check covers any of it.** `render-check` would want
+  `launch-picker`, `launch-option` (carrying `data-profile`), `launch-backdrop`,
+  `launch-profiles`, `profile-row` (carrying `data-profile`), `profile-new`,
+  `profile-edit`, `profile-remove`, `profile-duplicate`, `profile-editor`,
+  `profile-name`, `profile-command`, `profile-env-row`, `profile-env-name`,
+  `profile-env-value`, `profile-env-secret`, `profile-env-add`,
+  `profile-env-remove`, `profile-save`, `profile-cancel` and `profile-error`.
+  The two worth driving first are the picker actually starting the profile that
+  was clicked, and the secret field surviving a rename — the second is the one
+  whose failure is silent.
+- **A profile cannot be reordered, and the picker's order is fixed** — built-ins
+  in catalogue order, then rows by name. Somebody with eight profiles will want
+  the one they use to be first. A `sort_index` column is the obvious answer and
+  was left out rather than added speculatively.
+- **Nothing tells you a profile is in use.** Deleting one that four sessions were
+  started with is allowed and warns about nothing specific; the confirmation says
+  what happens in general terms. Counting the rows would be one query.
+- **Duplicate profile names are allowed.** The picker is a list of names, so two
+  called "gateway" is a coin flip — but a `UNIQUE` index turns "duplicate this
+  built-in" into a naming problem the form has to solve, and a duplicate is a
+  mistake somebody notices immediately.
+- **`splitArgv` is not a shell and says so, but the field looks like one.**
+  Typing `~/bin/claude` or `$HOME/x` puts those characters in `argv[0]` and the
+  exec fails. That is correct — tmux exec's a multi-word command directly,
+  measured — and the failure is visible in the pane, but nothing warns first.

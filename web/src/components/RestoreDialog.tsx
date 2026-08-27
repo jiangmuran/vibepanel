@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { AlertTriangle, Loader2, RotateCcw } from 'lucide-react'
 
-import type { Project, Session } from '../protocol/wire'
+import type { LaunchProfile, Project, Session } from '../protocol/wire'
 import { api } from '../protocol/api'
 import { projectLabel, sessionLabel } from './label'
+import { profileLabel, profileOf } from './profiles'
 import { safeText } from './text'
 import { shellQuote } from '../shell'
 import { t, useLang } from '../i18n'
@@ -24,12 +25,14 @@ import { t, useLang } from '../i18n'
 export function RestoreDialog({
   sessions,
   projects,
+  profiles,
   labels,
   onClose,
   onDone,
 }: {
   sessions: Session[]
   projects: Project[]
+  profiles: LaunchProfile[]
   labels: Map<string, string>
   onClose: () => void
   onDone: () => void
@@ -157,6 +160,18 @@ export function RestoreDialog({
                       t('restore.willRunShell')
                     )}
                   </div>
+                  {/* The environment comes back from the profile rather than
+                      from the row, so a profile deleted since is the one thing
+                      a restore silently does less of. The session keeps the id,
+                      which is what makes "it is gone" sayable at all instead of
+                      the row looking like one that never had a profile. */}
+                  {s.launchProfileId !== '' && (
+                    <div className="mt-0.5 min-w-0 truncate text-vp-sm text-ink-2">
+                      {profileOf(profiles, s.launchProfileId)
+                        ? safeText(profileLabel(profileOf(profiles, s.launchProfileId)!))
+                        : t('profile.gone')}
+                    </div>
+                  )}
                   <div className="mt-0.5 min-w-0 truncate font-mono text-vp-sm text-ink-2">
                     {safeText(s.cwd)}
                   </div>

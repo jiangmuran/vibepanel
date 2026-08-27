@@ -32,6 +32,7 @@ import type { ThemeChoice } from './components/theme'
 import { NARROW_QUERY, useMediaQuery } from './hooks/useMediaQuery'
 import { EXIT_VANISHED } from './protocol/wire'
 import { shellQuote } from './shell'
+import type { LaunchProfile } from './protocol/wire'
 import { safeText } from './components/text'
 import { DirectoryPicker } from './components/DirectoryPicker'
 import { Toasts } from './components/Toasts'
@@ -40,6 +41,7 @@ import { askConfirm } from './components/ask'
 import { dismissToast, showToast } from './components/toasts'
 import { focusTerminal } from './components/focus'
 import { RestoreDialog } from './components/RestoreDialog'
+import { LaunchPicker } from './components/LaunchPicker'
 import { filesFrom } from './components/upload'
 import { t, useLang } from './i18n'
 
@@ -582,7 +584,37 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   const [picking, setPicking] = useState(false)
   const addProject = () => setPicking(true)
 
-  const newSession = (project: Project) => void guard(() => api.createSession(project.id, []))
+  // The launch profiles, fetched once rather than carried in the state
+  // snapshot: the snapshot is broadcast to every viewer on every change, and
+  // this list changes when somebody edits it in settings and at no other time.
+  // Reloaded when the settings dialog closes, which is the only place it can
+  // have changed.
+  const [profiles, setProfiles] = useState<LaunchProfile[]>([])
+  const loadProfiles = () => {
+    api.launchProfiles().then(setProfiles, () => {
+      // A picker with nothing in it is a dead button, and "new session" is the
+      // most-used control in the panel. So a failed fetch leaves the one entry
+      // the button used to be: the server resolves this id whatever else has
+      // gone wrong, and if it cannot, the create fails where somebody sees it
+      // rather than the picker silently offering nothing.
+      setProfiles([
+        {
+          id: 'builtin:shell',
+          name: 'Shell',
+          builtin: true,
+          command: [],
+          env: [],
+          createdAt: 0,
+          updatedAt: 0,
+        },
+      ])
+    })
+  }
+  useEffect(loadProfiles, [])
+
+  // Which project the picker is open for, null when it is closed.
+  const [launchFor, setLaunchFor] = useState<Project | null>(null)
+  const newSession = (project: Project) => setLaunchFor(project)
 
   const newBottomTerminal = () => {
     if (!current) return
@@ -1135,7 +1167,26 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           compose box and the key bar, and that is what the plan scoped. Saying
           otherwise made a gap read as a decision that had already been carried
           out. */}
-      {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && (
+        <Settings
+          onClose={() => {
+            setSettingsOpen(false)
+            loadProfiles()
+          }}
+        />
+      )}
+
+      {launchFor && (
+        <LaunchPicker
+          profiles={profiles}
+          onClose={() => setLaunchFor(null)}
+          onPick={(launchProfileId) => {
+            const project = launchFor
+            setLaunchFor(null)
+            void guard(() => api.createSession(project.id, [], { launchProfileId }))
+          }}
+        />
+      )}
 
       {/* Full width, because a 53-week year grid and a six-column session
           table do not go in a 280-pixel panel. The panel holds the glance and
@@ -1152,6 +1203,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         <RestoreDialog
           sessions={restorable}
           projects={state.projects}
+          profiles={profiles}
           labels={labels}
           onClose={() => setRestoreOpen(false)}
           onDone={() => {

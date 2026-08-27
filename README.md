@@ -180,8 +180,9 @@ if the sessions are cheap to lose.
 
 1. **Add a project** — a name and a directory. The picker filters as you type,
    or jumps to a path you paste.
-2. **Open a session** — you get a shell in that directory. Type `claude`, or
-   `codex`, or `npm run dev`. The panel does not launch agents for you.
+2. **Open a session** — pick what to start it with. A shell in that directory
+   is the first entry and is what the button used to do; the rest are launch
+   profiles.
 3. **Rename it** if you like. The automatic title from the pane stops
    overwriting a name you chose.
 4. **Close the tab.** The session is a tmux session and does not notice.
@@ -243,6 +244,36 @@ visible on all of them.
   The numbers come from the transcripts Claude Code and Codex write for
   themselves. Nothing is estimated and nothing is priced; where there is no
   transcript to read the panel shows a dash rather than a zero.
+
+### Launch profiles
+
+**Settings → Launch profiles** is where you name a way to start a session: an
+argv, and the environment to start it in. The reason it exists is the API host —
+the same agent pointed at Anthropic, at a company proxy and at a self-hosted
+gateway is three configurations differing only in one variable, and retyping it
+every time is what this replaces.
+
+It ships with a shell, `claude`, `codex` and `opencode`. Those cannot be edited;
+duplicate one and the copy arrives with the variable names that agent reads
+already filled in — `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` for claude,
+`OPENAI_BASE_URL` and `OPENAI_API_KEY` for codex. A variable left empty is not
+set at all, so a half-filled profile runs the agent exactly as a bare terminal
+would.
+
+There is no "API host" field on purpose. Which variable carries the endpoint is
+each agent's decision, and opencode has none — it chooses per provider in its own
+configuration. A field would need the panel to keep that mapping right for every
+release of somebody else's tool.
+
+A variable can be marked a **secret**, and then its value is never sent back to a
+browser: the settings page shows the name and says something is stored. It
+reaches the process through tmux, not through a command line, so it is not in
+`ps`, and it is not in the audit log. It is **not encrypted** — it is plaintext
+in the panel's database file, the same as anything else there. Encrypting it with
+a key kept beside the database would be obfuscation wearing the word.
+
+A session remembers which profile started it, so restoring it after a reboot
+brings back the endpoint as well as the command.
 
 ### Share links
 

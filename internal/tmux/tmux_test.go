@@ -1282,3 +1282,82 @@ func TestWhereAPaneTitleEndsUp(t *testing.T) {
 			"client saw: %q", client)
 	}
 }
+
+// The last -e wins, and everything about the ordering of a launch profile's
+// environment rests on it.
+//
+// store.LaunchEnv puts a profile's variables before the panel's own so that a
+// row -- from a backup, a downgrade, or somebody with sqlite3 -- cannot point a
+// session's state reports at an address of its choosing with the panel's hook
+// token attached. If tmux ever took the *first* instead, that ordering would
+// silently invert into the hole it was written to close, and nothing else in
+// the tree would notice.
+func TestTheLastEnvFlagWins(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	if err := c.EnsureServer(ctx); err != nil {
+		t.Fatalf("EnsureServer: %v", err)
+	}
+	const name = "vp_envlast"
+	err := c.Create(ctx, CreateOptions{
+		Name:    name,
+		Dir:     t.TempDir(),
+		Command: []string{"sh", "-c", "sleep 60"},
+		Env:     []string{"VIBEPANEL_URL=profile", "VIBEPANEL_URL=panel"},
+		Width:   80,
+		Height:  24,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := c.SessionEnvValue(ctx, name, "VIBEPANEL_URL")
+	if err != nil {
+		t.Fatalf("SessionEnvValue: %v", err)
+	}
+	if got != "panel" {
+		t.Fatalf("VIBEPANEL_URL = %q, want the last -e. store.LaunchEnv orders the "+
+			"panel's own variables last precisely because this is what tmux does; "+
+			"if this has changed, a launch profile can now override them.", got)
+	}
+}
+
+// A restart is respawn-pane, not a new session, so it reuses the environment
+// the session was created with. That is what makes restarting a crashed agent
+// come back against the same gateway without the panel doing anything.
+func TestRespawnKeepsTheSessionEnvironment(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	if err := c.EnsureServer(ctx); err != nil {
+		t.Fatalf("EnsureServer: %v", err)
+	}
+	const name = "vp_envrespawn"
+	err := c.Create(ctx, CreateOptions{
+		Name:    name,
+		Dir:     t.TempDir(),
+		Command: []string{"sh", "-c", "printf %s \"[$ANTHROPIC_BASE_URL]\"; sleep 60"},
+		Env:     []string{"ANTHROPIC_BASE_URL=https://gw.example/v1"},
+		Width:   80,
+		Height:  24,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := c.Respawn(ctx, name); err != nil {
+		t.Fatalf("Respawn: %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		out, cerr := c.Capture(ctx, name)
+		if cerr != nil {
+			t.Fatalf("Capture: %v", cerr)
+		}
+		if strings.Contains(out, "[https://gw.example/v1]") {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the respawned pane does not have the session's environment; "+
+				"a restarted agent would silently go to the default endpoint. Screen:\n%s", out)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}

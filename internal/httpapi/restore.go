@@ -350,11 +350,19 @@ func (s *Server) restoreSession(ctx context.Context, rec store.Session) error {
 	argv := append([]string{"/bin/sh", "-c", restoreScript, "vibepanel-restore", path},
 		rec.LaunchCommand...)
 
+	// The profile's environment comes back with the session, looked up again
+	// rather than copied onto the row when it was created. A session that was
+	// pointed at a gateway has to come back pointed at the same gateway; one
+	// whose profile has since been deleted comes back without it, because the
+	// alternative is a row that cannot be restored at all. The panel's own
+	// variables go last, as everywhere else.
+	profile := s.restoreProfileFor(ctx, rec.ID, rec.LaunchProfileID)
+
 	if err := s.Tmux.Create(ctx, tmux.CreateOptions{
 		Name:    rec.TmuxName,
 		Dir:     dir,
 		Command: argv,
-		Env:     s.hookEnv(ctx, rec.ID, rec.ProjectID),
+		Env:     store.LaunchEnv(profile, s.hookEnv(ctx, rec.ID, rec.ProjectID)),
 		Width:   rec.Cols,
 		Height:  rec.Rows,
 	}); err != nil {

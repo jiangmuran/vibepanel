@@ -511,6 +511,7 @@ func cmdSession(args []string) error {
 		fs := flag.NewFlagSet("session new", flag.ContinueOnError)
 		project := fs.String("project", "", "project id")
 		title := fs.String("title", "", "initial title (otherwise taken from the pane title)")
+		profile := fs.String("profile", "", "launch profile id or name (see the settings page)")
 		cols := fs.Int("cols", 120, "initial grid width")
 		rows := fs.Int("rows", 32, "initial grid height")
 		if err := fs.Parse(rest); err != nil {
@@ -553,13 +554,30 @@ func cmdSession(args []string) error {
 			token = ""
 		}
 		env := hooks.SessionEnv(sid, p.ID, a.cfg.LoopbackURL(), token)
+
+		// The same resolution the HTTP path does, through the same function.
+		// This path has already been the one that drifted — it built its own
+		// two-variable environment and left out the hook token — and the fix
+		// then was to move the building somewhere both callers share.
+		prof, err := resolveProfile(ctx, a.db, *profile)
+		if err != nil {
+			return fmt.Errorf("session new: %w", err)
+		}
+		argv := fs.Args()
+		if len(argv) == 0 && prof != nil {
+			argv = prof.Command
+		}
+
 		err = a.tmux.Create(ctx, tmux.CreateOptions{
 			Name:    tmuxName,
 			Dir:     p.Path,
-			Command: fs.Args(),
-			Env:     env,
-			Width:   *cols,
-			Height:  *rows,
+			Command: argv,
+			// The panel's own last: tmux takes the last -e when two name the
+			// same variable, so this is what stops a profile redirecting a
+			// session's state reports.
+			Env:    store.LaunchEnv(prof, env),
+			Width:  *cols,
+			Height: *rows,
 		})
 		if err != nil {
 			return fmt.Errorf("session new: %w", err)
@@ -572,7 +590,8 @@ func cmdSession(args []string) error {
 			// The same argv that was just handed to tmux. Without it a session
 			// made from the CLI is one the panel cannot rebuild after a reboot
 			// — the same asymmetry that made this path miss the hook token.
-			LaunchCommand: fs.Args(),
+			LaunchCommand:   argv,
+			LaunchProfileID: profileID(prof),
 		})
 		if err != nil {
 			// The tmux session exists but we cannot track it. Removing it is
@@ -1201,6 +1220,51 @@ func ago(unix int64) string {
 		return fmt.Sprintf("%dh", int(d.Hours()))
 	}
 	return fmt.Sprintf("%dd", int(d.Hours()/24))
+}
+
+// resolveProfile finds a launch profile by id, or failing that by name.
+//
+// By name as well because a person typing a command has the name in front of
+// them and the id nowhere -- the ids are opaque hex, and a flag that only took
+// one would send everybody to the settings page with a mouse. The id is tried
+// first so that a profile somebody named after another profile's id cannot
+// shadow it.
+//
+// A name that matches nothing is an error rather than "no profile". Starting an
+// agent against the default endpoint because the gateway profile was spelled
+// wrong is a substitution nobody notices until the bill.
+func resolveProfile(ctx context.Context, db *store.DB, want string) (*store.LaunchProfile, error) {
+	if want == "" {
+		return nil, nil
+	}
+	if p, err := db.GetLaunchProfile(ctx, want); err == nil {
+		return &p, nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return nil, err
+	}
+	list, err := db.ListLaunchProfiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range list {
+		if !strings.EqualFold(p.Name, want) {
+			continue
+		}
+		// The list is redacted, so read the row again for the values it holds.
+		full, err := db.GetLaunchProfile(ctx, p.ID)
+		if err != nil {
+			return nil, err
+		}
+		return &full, nil
+	}
+	return nil, fmt.Errorf("no launch profile called %q", want)
+}
+
+func profileID(p *store.LaunchProfile) string {
+	if p == nil {
+		return ""
+	}
+	return p.ID
 }
 
 // killSessionTree kills a session's tmux session and those of the scratch
