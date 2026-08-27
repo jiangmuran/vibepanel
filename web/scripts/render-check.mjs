@@ -2037,11 +2037,6 @@ try {
       deviceScaleFactor: 3,
       permissions: ['clipboard-read', 'clipboard-write'],
     })
-    // The DOM renderer for this one context: the touch-scroll check finds a
-    // row by its text and then asks where it is on screen, and a row only has a
-    // position when it is an element. Under the GPU renderer it is pixels on a
-    // canvas.
-    await touchCtx.addInitScript(() => localStorage.setItem('vibepanel.renderer', 'dom'))
     const touch = await touchCtx.newPage()
     await touch.goto(BASE, { waitUntil: 'networkidle' })
     await touch.locator('[data-testid="auth-username"]').fill(USERNAME)
@@ -2547,13 +2542,25 @@ try {
     await touch.locator('[data-testid="compose-send"]').click()
     let markerBox = null
     for (let i = 0; i < 30; i++) {
+      // Where the marker is, computed rather than looked up.
+      //
+      // This used to find the row element and ask it. Under the renderer that
+      // ships there is no row element -- the screen is a canvas -- and pinning
+      // this one context to the DOM renderer to keep the lookup working meant
+      // the phone paths were only ever checked against a renderer nobody runs.
+      // That hid a real defect: the touch layer measured `.xterm-rows` too, so
+      // dragging scrolled zero rows on every real phone.
+      //
+      // The screen's box and the row's index in the viewport are enough.
       markerBox = await touch.evaluate((needle) => {
-        const row = [...document.querySelectorAll('.xterm-rows > div')].find((d) =>
-          (d.textContent ?? '').includes(needle),
-        )
-        if (!row) return null
-        const r = row.getBoundingClientRect()
-        return { x: r.x, y: r.y, w: r.width, h: r.height }
+        const rows = window.vibepanelScreen?.() ?? []
+        const i = rows.findIndex((r) => r.includes(needle))
+        if (i < 0) return null
+        const screen = document.querySelector('.xterm-screen')
+        if (!screen) return null
+        const r = screen.getBoundingClientRect()
+        const h = r.height / rows.length
+        return { x: r.x, y: r.y + i * h, w: r.width, h }
       }, marker)
       if (markerBox) break
       await sleep(400)

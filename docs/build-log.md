@@ -12390,3 +12390,27 @@ different things and only one of them is stopped by code in this repository.
   the system unit that is a different account with no transcripts, and the panel
   reports "not found" rather than zero — correct, but the runbook does not yet
   say that is what an operator seeing it should expect.
+
+## The check that hid the defect it was written to find
+
+`render-check` failed on the phone drag after the token-usage merge, and the
+failure had nothing to do with tokens. The touch layer measures a row's height
+by reading `.xterm-rows` — the DOM renderer's grid of spans — and divides by it.
+Under the renderer that actually ships that element exists and has **no height
+at all**, so the drag scrolled zero rows and the selection could not find a
+cell. On a real phone the terminal had stopped scrolling and stopped being
+selectable the moment the WebGL renderer was loaded.
+
+It did not fail then, because of a decision made in the same commit. Two checks
+needed DOM geometry, so their contexts were pinned to the DOM renderer — which
+meant the phone paths were only ever exercised against a renderer nobody runs.
+The pin was reasonable and the consequence was not: a check pinned to the thing
+it is not testing will keep passing about the thing it is.
+
+Both are gone now. `.xterm-screen` is the element both renderers draw into and
+is the same box, so the touch layer measures that. The marker's position in
+render-check is computed from the buffer index and the screen's rect instead of
+looked up on an element, so that context runs the shipped renderer too.
+Restoring the `.xterm-rows` read fails two assertions — "pressing and holding
+selected nothing; there is no way to copy from a phone" and the drag — which is
+the pair that should have failed the first time.

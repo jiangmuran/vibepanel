@@ -92,9 +92,18 @@ export function attachTouchSelection(host: HTMLElement, term: Terminal): () => v
   let carried = 0
   let scrolling = false
 
+  // The screen, not the rows.
+  //
+  // `.xterm-rows` is the DOM renderer's grid of spans, and under the GPU
+  // renderer -- which is what ships -- it is an empty element with no height at
+  // all. Every measurement here divides by that height: the drag scrolled zero
+  // rows and the selection could not find a cell, so on a phone the terminal
+  // stopped scrolling and stopped being selectable the moment the renderer was
+  // loaded. `.xterm-screen` is the element both renderers draw into and is the
+  // same box.
   const rowsBox = () => {
-    const rows = host.querySelector('.xterm-rows')
-    return rows ? rows.getBoundingClientRect() : null
+    const screen = host.querySelector('.xterm-screen')
+    return screen ? screen.getBoundingClientRect() : null
   }
 
   const cellFor = (touch: { clientX: number; clientY: number }): Cell | null => {
