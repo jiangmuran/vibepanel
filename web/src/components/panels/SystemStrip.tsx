@@ -80,9 +80,13 @@ export function SystemStrip() {
           {/* Wide enough for "Memory", which is the longest of the three in
               either language. At w-8 the English label ran into its own bar. */}
           <span className="w-12 shrink-0 truncate text-vp-xs text-ink-2">{label}</span>
-          <span className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-surface-2">
+          {/* `.vp-bar`, the same object the monitor's meters are made of. It
+              was a hand-written track and fill here and a different
+              hand-written pair there, at two heights, which is the drift
+              `.vp-control` exists to stop one layer up. */}
+          <span className="vp-bar h-1 min-w-0 flex-1">
             <span
-              className="block h-full rounded-full transition-[width] duration-500 ease-vp"
+              className="vp-bar-fill"
               style={{
                 width: `${Math.min(100, Math.max(0, pct ?? 0))}%`,
                 // Colour follows pressure, and never alone: the number beside

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { PANEL_TABS, type PanelTab } from './chrome'
+import { PANEL_TABS, RETIRED_TABS, type PanelTab } from './chrome'
 import {
   MAX_PANES,
   PANE_MIN_HEIGHT,
@@ -15,13 +15,11 @@ import {
   mergeGroup,
   moveTab,
   moveTowards,
-  notesTodosSplit,
   paneKeyCommand,
   parseLayout,
   readLayout,
   resizeAt,
   serialiseLayout,
-  toggleNotesTodos,
   type PaneLayout,
 } from './panes'
 
@@ -36,7 +34,7 @@ import {
  */
 function expectSound(layout: PaneLayout, what: string) {
   const all = layout.groups.flatMap((g) => g.tabs)
-  expect(all.slice().sort(), `${what}: the tabs are not the five tabs`).toEqual(
+  expect(all.slice().sort(), `${what}: the tabs are not the panel's tabs`).toEqual(
     [...PANEL_TABS].sort(),
   )
   expect(new Set(all).size, `${what}: a tab is in two panes at once`).toBe(all.length)
@@ -70,31 +68,34 @@ function expectSameLayout(got: PaneLayout, want: PaneLayout, what: string) {
   })
 }
 
-/** files+monitor+tokens over notes over todos. Three panes, all five tabs. */
+// The last three tabs in the strip, whatever they are called.
+//
+// Named positionally rather than spelled out, because everything below is
+// about index arithmetic and not about which tabs exist. Three tests broke the
+// day a sixth tab was added and several more the day six became four, every
+// one of them on a hard-coded name that had nothing to do with what was being
+// asserted.
+const [B, C, D] = [PANEL_TABS[1], PANEL_TABS[2], PANEL_TABS[3]]
+
+/** The rest, then B, then C. Three panes, every tab. */
 function three(): PaneLayout {
   let l = defaultLayout()
-  l = moveTab(l, 'notes', { kind: 'new', at: 1 })
-  l = moveTab(l, 'todos', { kind: 'new', at: 2 })
+  l = moveTab(l, B, { kind: 'new', at: 1 })
+  l = moveTab(l, C, { kind: 'new', at: 2 })
   return l
 }
 
-/** Four panes: everything else, then notes, todos and tokens each on their own. */
-
 // What is left in the first pane after `moved` have been dragged out of it.
-//
-// Written as a difference rather than spelled out, because these tests are
-// about index arithmetic and not about which tabs exist: three of them broke
-// the day a sixth tab was added, every one of them on a hard-coded leftover
-// list that had nothing to do with what was being asserted.
 function rest(...moved: PanelTab[]): string {
   return PANEL_TABS.filter((t) => !moved.includes(t)).join('+')
 }
 
+/** Four panes: everything else, then B, C and D each on their own. */
 function four(): PaneLayout {
   let l = defaultLayout()
-  l = moveTab(l, 'notes', { kind: 'new', at: 1 })
-  l = moveTab(l, 'todos', { kind: 'new', at: 2 })
-  l = moveTab(l, 'tokens', { kind: 'new', at: 3 })
+  l = moveTab(l, B, { kind: 'new', at: 1 })
+  l = moveTab(l, C, { kind: 'new', at: 2 })
+  l = moveTab(l, D, { kind: 'new', at: 3 })
   return l
 }
 
@@ -136,6 +137,101 @@ describe('a stored layout is data, not code', () => {
     expect(l.groups[0].tabs).not.toContain('sockets' as PanelTab)
   })
 
+  // The repairs above were written for a key edited by hand or a build from a
+  // branch. The case that actually happened is a tab this build *retired*:
+  // `git` and `todos` stopped being tabs, and every layout in every browser
+  // named at least one of them -- most of them in a pane of its own, because
+  // giving the repository or the checklist its own pane was the point of the
+  // feature.
+  //
+  // Same code path, different blast radius, and nothing pinned it with the
+  // names that were really in those keys.
+  describe('a layout written by yesterday, naming tabs that are gone', () => {
+    it('keeps the panes that survive and drops the ones that do not', () => {
+      const l = parseLayout({
+        version: 1,
+        groups: [
+          { tabs: ['files', 'git'], active: 'git', size: 0.4 },
+          { tabs: ['monitor', 'tokens'], active: 'tokens', size: 0.3 },
+          { tabs: ['notes', 'todos'], active: 'todos', size: 0.3 },
+        ],
+      })
+      expectSound(l, 'yesterday, three panes')
+      expect(l.groups.map((g) => g.tabs.join('+'))).toEqual(['files', 'monitor+tokens', 'notes'])
+      // The pane whose selected tab was retired shows the one that is left,
+      // rather than a pane with a body and no tab selected.
+      expect(l.groups[0].active).toBe('files')
+      expect(l.groups[2].active).toBe('notes')
+    })
+
+    it('does not let a pane that emptied cost a pane that did not', () => {
+      // MAX_PANES is the tab count, which is four. Six stored panes with two
+      // of them retired is exactly four survivors -- and only if the cap is
+      // counted after a group is dropped rather than before. Counted before,
+      // the last two panes fall off the end and `tokens` and `notes` are
+      // appended to whatever pane came fourth.
+      const l = parseLayout({
+        version: 1,
+        groups: [
+          { tabs: ['files'], active: 'files', size: 0.2 },
+          { tabs: ['git'], active: 'git', size: 0.2 },
+          { tabs: ['monitor'], active: 'monitor', size: 0.2 },
+          { tabs: ['todos'], active: 'todos', size: 0.1 },
+          { tabs: ['tokens'], active: 'tokens', size: 0.2 },
+          { tabs: ['notes'], active: 'notes', size: 0.1 },
+        ],
+      })
+      expectSound(l, 'yesterday, six panes')
+      expect(l.groups.map((g) => g.tabs.join('+'))).toEqual([
+        'files',
+        'monitor',
+        'tokens',
+        'notes',
+      ])
+    })
+
+    it('comes back as a panel when every stored pane was a retired tab', () => {
+      // Not empty, and not a throw. Somebody who had dragged the repository
+      // and the checklist out and closed everything else opens on the default,
+      // which is a panel they can use.
+      const l = parseLayout({
+        version: 1,
+        groups: [
+          { tabs: ['git'], active: 'git', size: 0.5 },
+          { tabs: ['todos'], active: 'todos', size: 0.5 },
+        ],
+      })
+      expectSound(l, 'yesterday, nothing left')
+      expect(l).toEqual(defaultLayout())
+    })
+
+    it('survives every retired name in every position', () => {
+      // Each one on its own, in a pane of its own, beside a pane that holds
+      // everything else. Driven from RETIRED_TABS so the next tab that is
+      // retired is covered by adding one string.
+      for (const gone of RETIRED_TABS) {
+        const l = parseLayout({
+          version: 1,
+          groups: [
+            { tabs: [gone], active: gone, size: 0.5 },
+            { tabs: [...PANEL_TABS], active: PANEL_TABS[0], size: 0.5 },
+          ],
+        })
+        expectSound(l, `a pane holding only ${gone}`)
+        expect(l.groups, gone).toHaveLength(1)
+      }
+    })
+
+    it('falls back to the first tab the pane still holds', () => {
+      const l = parseLayout({
+        version: 1,
+        groups: [{ tabs: [...PANEL_TABS], active: 'todos', size: 1 }],
+      })
+      expectSound(l, 'a retired active tab')
+      expect(l.groups[0].active).toBe(PANEL_TABS[0])
+    })
+  })
+
   it('keeps a duplicated tab in the first pane that claims it', () => {
     const l = parseLayout({
       version: 1,
@@ -163,7 +259,7 @@ describe('a stored layout is data, not code', () => {
   it('replaces an active tab the pane does not hold', () => {
     const l = parseLayout({
       version: 1,
-      groups: [{ tabs: ['files', 'monitor'], active: 'todos', size: 1 }],
+      groups: [{ tabs: ['files', 'monitor'], active: 'notes', size: 1 }],
     })
     expectSound(l, 'a stray active tab')
     expect(l.groups[0].active).toBe('files')
@@ -175,7 +271,7 @@ describe('a stored layout is data, not code', () => {
         version: 1,
         groups: [
           { tabs: ['files'], active: 'files', size },
-          { tabs: ['monitor', 'notes', 'todos', 'tokens'], active: 'monitor', size: 1 },
+          { tabs: ['monitor', 'tokens', 'notes'], active: 'monitor', size: 1 },
         ],
       })
       expectSound(l, `size ${String(size)}`)
@@ -188,14 +284,14 @@ describe('a stored layout is data, not code', () => {
       version: 1,
       groups: [
         { tabs: ['files'], active: 'files', size: 0.001 },
-        { tabs: ['monitor', 'notes', 'todos', 'tokens'], active: 'monitor', size: 0.999 },
+        { tabs: ['monitor', 'tokens', 'notes'], active: 'monitor', size: 0.999 },
       ],
     })
     expectSound(l, 'a hairline pane')
     expect(l.groups[0].size).toBeGreaterThanOrEqual(PANE_MIN_RATIO)
   })
 
-  it('drops panes past the fifth', () => {
+  it('drops panes past the last one there is a tab for', () => {
     const l = parseLayout({
       version: 1,
       groups: Array.from({ length: 40 }, () => ({ tabs: ['files'], active: 'files', size: 1 })),
@@ -304,7 +400,7 @@ describe('moving a tab', () => {
 
   it('leaves the pane it emptied behind rather than an empty strip', () => {
     const l = three()
-    const merged = moveTab(l, 'notes', { kind: 'join', group: 0 })
+    const merged = moveTab(l, B, { kind: 'join', group: 0 })
     expectSound(merged, 'emptied pane')
     expect(merged.groups).toHaveLength(2)
   })
@@ -320,9 +416,9 @@ describe('moving a tab', () => {
     const l = three()
     // Same object, so a released drag that went nowhere does not rewrite
     // storage or remount four panels.
-    expect(moveTab(l, 'files', { kind: 'join', group: 0 })).toBe(l)
-    expect(moveTab(l, 'notes', { kind: 'new', at: 1 })).toBe(l)
-    expect(moveTab(l, 'notes', { kind: 'new', at: 2 })).toBe(l)
+    expect(moveTab(l, PANEL_TABS[0], { kind: 'join', group: 0 })).toBe(l)
+    expect(moveTab(l, B, { kind: 'new', at: 1 })).toBe(l)
+    expect(moveTab(l, B, { kind: 'new', at: 2 })).toBe(l)
   })
 
   it('lands where it was aimed when the source pane vanishes under it', () => {
@@ -334,27 +430,19 @@ describe('moving a tab', () => {
     // insertion index is clamped to the end of the list anyway, so the wrong
     // answer and the right one agree — this test passed against the arithmetic
     // removed until it was written this way.
-    const l = four() // [files+git+monitor, notes, todos, tokens]
-    const moved = moveTab(l, 'notes', { kind: 'new', at: 3 })
+    const l = four() // [rest, B, C, D]
+    const moved = moveTab(l, B, { kind: 'new', at: 3 })
     expectSound(moved, 'moved past the pane it left')
-    expect(moved.groups.map((g) => g.tabs.join('+'))).toEqual([
-      rest('notes', 'todos', 'tokens'),
-      'todos',
-      'notes',
-      'tokens',
-    ])
+    expect(moved.groups.map((g) => g.tabs.join('+'))).toEqual([rest(B, C, D), C, B, D])
   })
 
   it('joins the pane it was aimed at when the source pane vanishes under it', () => {
     // The same correction on the other arm. Without it the index runs off the
     // end of the shortened list and the drop is silently dropped.
-    const l = three() // [everything else, notes, todos]
-    const joined = moveTab(l, 'notes', { kind: 'join', group: 2 })
+    const l = three() // [everything else, B, C]
+    const joined = moveTab(l, B, { kind: 'join', group: 2 })
     expectSound(joined, 'joined past the pane it left')
-    expect(joined.groups.map((g) => g.tabs.join('+'))).toEqual([
-      rest('notes', 'todos'),
-      'todos+notes',
-    ])
+    expect(joined.groups.map((g) => g.tabs.join('+'))).toEqual([rest(B, C), `${C}+${B}`])
   })
 
   it('cannot be asked to move a tab that is not in the layout', () => {
@@ -366,17 +454,17 @@ describe('moving a tab', () => {
   })
 
   it('brings the moved tab to the front of where it landed', () => {
-    const l = moveTab(three(), 'todos', { kind: 'join', group: 0 })
-    expect(l.groups[0].active).toBe('todos')
+    const l = moveTab(three(), C, { kind: 'join', group: 0 })
+    expect(l.groups[0].active).toBe(C)
   })
 })
 
 describe('moving a tab without a pointer', () => {
   it('goes to the next pane in that direction', () => {
     const l = three()
-    const up = moveTowards(l, 'todos', 'up')
+    const up = moveTowards(l, C, 'up')
     expectSound(up, 'moved up')
-    expect(groupOf(up, 'todos')).toBe(1)
+    expect(groupOf(up, C)).toBe(1)
   })
 
   it('makes a new pane when there is not one to go to', () => {
@@ -390,7 +478,7 @@ describe('moving a tab without a pointer', () => {
   it('stops rather than shuffling when there is nowhere to go', () => {
     const l = three()
     // Already a pane of its own at the bottom.
-    expect(moveTowards(l, 'todos', 'down')).toBe(l)
+    expect(moveTowards(l, C, 'down')).toBe(l)
   })
 
   it('is reachable from Alt and an arrow, and from nothing else', () => {
@@ -408,7 +496,7 @@ describe('merging', () => {
     const l = mergeGroup(three(), 2, 'up')
     expectSound(l, 'merged up')
     expect(l.groups).toHaveLength(2)
-    expect(l.groups[1].tabs).toEqual(['notes', 'todos'])
+    expect(l.groups[1].tabs).toEqual([B, C])
   })
 
   it('gives the merged pane the room the other one had', () => {
@@ -455,41 +543,6 @@ describe('resizing', () => {
   })
 })
 
-describe('notes and todo together, in one press', () => {
-  it('is off in the default layout', () => {
-    expect(notesTodosSplit(defaultLayout())).toBe(false)
-  })
-
-  it('builds the pair and takes it apart again', () => {
-    const on = toggleNotesTodos(defaultLayout())
-    expectSound(on, 'the pair')
-    expect(notesTodosSplit(on)).toBe(true)
-    expect(groupOf(on, 'notes')).not.toBe(groupOf(on, 'todos'))
-
-    const off = toggleNotesTodos(on)
-    expectSound(off, 'the pair, undone')
-    expect(notesTodosSplit(off)).toBe(false)
-  })
-
-  it('works from any tab, which is what its label promises', () => {
-    for (const from of PANEL_TABS) {
-      const on = toggleNotesTodos(activate(defaultLayout(), from))
-      expectSound(on, `from ${from}`)
-      expect(notesTodosSplit(on), `from ${from}`).toBe(true)
-    }
-  })
-
-  it('does not report the pair when one of them is behind another tab', () => {
-    // Both in panes, but the notes pane is showing the file tree: they are not
-    // "together" in any sense a person would recognise.
-    let l = toggleNotesTodos(defaultLayout())
-    const at = groupOf(l, 'notes')
-    l = moveTab(l, 'files', { kind: 'join', group: at })
-    expect(l.groups[at].active).toBe('files')
-    expect(notesTodosSplit(l)).toBe(false)
-  })
-})
-
 describe('a layout that does not fit the window it opens in', () => {
   it('merges from the bottom until it does', () => {
     const l = three()
@@ -498,7 +551,7 @@ describe('a layout that does not fit the window it opens in', () => {
     expect(fitted.groups).toHaveLength(2)
     // From the bottom, because the top of the column is where the panel opens
     // and what you were looking at is up there.
-    expect(fitted.groups[0].tabs.join('+')).toEqual(rest('notes', 'todos'))
+    expect(fitted.groups[0].tabs.join('+')).toEqual(rest(B, C))
   })
 
   it('leaves a layout that fits alone', () => {

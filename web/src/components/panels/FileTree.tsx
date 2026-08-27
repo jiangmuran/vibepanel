@@ -5,8 +5,10 @@ import { safeText } from '../text'
 import { api } from '../../protocol/api'
 import type { FileEntry, FileListing } from '../../protocol/wire'
 import { t, useLang } from '../../i18n'
+import type { PanelDensity } from '../chrome'
 import { filesFrom, uploadFiles } from '../upload'
 import { FilePreview } from './FilePreview'
+import { formatAgo } from './ago'
 import { formatBytes } from './preview'
 
 /**
@@ -23,7 +25,13 @@ import { formatBytes } from './preview'
  * looking at, which is the other half of the question, and the two share
  * everything but that last step (see components/upload.ts).
  */
-export function FileTree({ projectId }: { projectId: string }) {
+export function FileTree({
+  projectId,
+  density = 'narrow',
+}: {
+  projectId: string
+  density?: PanelDensity
+}) {
   useLang()
   // The caller keys this component by project, so switching projects gives a
   // fresh instance starting at the root. Resetting state from an effect
@@ -38,6 +46,11 @@ export function FileTree({ projectId }: { projectId: string }) {
   const [dropping, setDropping] = useState(false)
   const [note, setNote] = useState('')
   const [previewing, setPreviewing] = useState<FileEntry | null>(null)
+  // One clock for the whole listing, set when the listing lands. A Date.now()
+  // in the body is a value that changes without the component being told —
+  // React's purity rule refuses it — and one clock means forty rows cannot
+  // disagree about what time it is. Same reason GitPanel keeps one.
+  const [readAt, setReadAt] = useState(() => Math.floor(Date.now() / 1000))
   const rootRef = useRef<HTMLDivElement | null>(null)
   const chooserRef = useRef<HTMLInputElement | null>(null)
 
@@ -51,6 +64,7 @@ export function FileTree({ projectId }: { projectId: string }) {
       .then((l) => {
         if (ignore) return
         setListing(l)
+        setReadAt(Math.floor(Date.now() / 1000))
         setError(null)
       })
       .catch((e: unknown) => {
@@ -155,6 +169,16 @@ export function FileTree({ projectId }: { projectId: string }) {
         <span className="min-w-0 flex-1 truncate text-vp-sm text-ink-2" title={safeText(here)}>
           {safeText(here)}
         </span>
+        {/* How many things are in here, which the server has always sent as
+            `total` and the panel only ever read when it was capped. A count
+            beside the path is the difference between "this directory is empty"
+            and "this listing has not arrived", and it is one number in space
+            that was blank. */}
+        {listing && listing.entries.length > 0 && (
+          <span data-testid="file-count" className="tabular shrink-0 text-vp-xs text-ink-2">
+            {t('files.count', { n: listing.total.toLocaleString() })}
+          </span>
+        )}
         {/* The third way in, after dropping and pasting. It is the only one
             that works on a phone, where there is nothing to drag from and no
             clipboard with a file on it. */}
@@ -235,7 +259,7 @@ export function FileTree({ projectId }: { projectId: string }) {
           <div
             key={e.path}
             data-testid="file-entry"
-            className="group flex items-center gap-2 rounded-md px-2 py-1.5 text-vp-base hover:bg-surface-2"
+            className="group flex items-center gap-2 rounded-md px-2 py-1 text-vp-base hover:bg-surface-2"
             title={safeText(e.path)}
           >
             {/* The name is the button, not the row. A row that is a button
@@ -278,6 +302,23 @@ export function FileTree({ projectId }: { projectId: string }) {
                 className="shrink-0 text-vp-xs text-ink-2"
               >
                 {t('files.escapes')}
+              </span>
+            )}
+            {/* `modTime` is in every listing the server has ever sent and was
+                thrown away in every one of them. In a directory agents are
+                writing into, which file changed last is most of what the
+                listing is being read for — and it is the fact a `ls` in the
+                terminal above would have given for free.
+
+                Only above 380px: at the narrow end the name is already
+                truncating and a second column would take from it. */}
+            {density === 'wide' && e.modTime > 0 && (
+              <span
+                data-testid="file-modified"
+                className="tabular w-16 shrink-0 text-right text-vp-xs text-ink-2"
+                title={t('files.modified')}
+              >
+                {formatAgo(e.modTime, readAt)}
               </span>
             )}
             {!e.isDir && <span className="tabular shrink-0 text-vp-xs text-ink-2">{formatBytes(e.size)}</span>}

@@ -175,6 +175,25 @@ function withSizes(groups: PaneGroup[]): PaneGroup[] {
  * The seventh is the one that matters most and is the least obvious: a tab
  * missing from the stored layout is a tab with no strip anywhere, and therefore
  * a panel with no way to reach the file tree at all.
+ *
+ * The second and the fourth are the pair that carries a *retired* tab, and
+ * they were written for a different case — a key edited by hand, a build from
+ * a branch. Retirement is the case that actually happened: `git` and `todos`
+ * stopped being tabs, and every layout in every browser named at least one of
+ * them, most of them in a pane of their own. Two things have to hold and
+ * neither is obvious from the list above. A group whose tabs were *all*
+ * retired empties, and an empty group is dropped rather than kept as a strip
+ * with nothing under it — and `groups.length >= MAX_PANES` is checked before
+ * the group is parsed rather than after, so a dropped group does not spend one
+ * of the four slots and push a surviving pane off the end. And a layout in
+ * which *every* group empties reaches `groups.length === 0` and returns the
+ * default, which is why yesterday's arrangement comes back as a panel rather
+ * than as nothing at all.
+ *
+ * The version is deliberately not bumped for this. Bumping it is the blunt
+ * answer — every stored layout resets — and it would throw away the half of
+ * each arrangement that is still valid, which is the half somebody built. See
+ * RETIRED_TABS in chrome.ts for the names, and the tests that use them.
  */
 export function parseLayout(raw: unknown): PaneLayout {
   if (!isRecord(raw)) return defaultLayout()
@@ -390,38 +409,18 @@ export function resetLayout(): PaneLayout {
   return defaultLayout()
 }
 
-/** Notes and todo, in two panes, both on screen. What `split` used to mean. */
-export function notesTodosSplit(layout: PaneLayout): boolean {
-  const notes = groupOf(layout, 'notes')
-  const todos = groupOf(layout, 'todos')
-  if (notes < 0 || todos < 0 || notes === todos) return false
-  return (
-    layout.groups[notes].active === 'notes' && layout.groups[todos].active === 'todos'
-  )
-}
-
-/**
- * The one-press version of the arrangement people actually want.
+/*
+ * `notesTodosSplit` and `toggleNotesTodos` were here, and the control that
+ * drove them was in every pane header.
  *
- * Kept as its own control because it is the answer to "what you are thinking
- * and what you have left, at the same time", and asking somebody to build that
- * by dragging twice is asking them to do the interface's job.
+ * They built the one arrangement people actually wanted out of notes and todo:
+ * two panes, both on screen, what you are thinking above what you have left.
+ * That arrangement is now the `notes` tab — the two are stacked with a divider
+ * between them and there is nothing left to toggle. Deleted rather than left
+ * returning `false`, because a preset that cannot be off is a control that
+ * presses and does nothing, and the layout it used to build cannot be
+ * expressed any more: `todos` is not a tab.
  */
-export function toggleNotesTodos(layout: PaneLayout): PaneLayout {
-  if (notesTodosSplit(layout)) {
-    const notes = groupOf(layout, 'notes')
-    const todos = groupOf(layout, 'todos')
-    return mergeGroup(layout, todos, todos > notes ? 'up' : 'down')
-  }
-  let next = activate(layout, 'notes')
-  const notesAt = groupOf(next, 'notes')
-  if (next.groups[notesAt].tabs.length > 1) {
-    next = moveTab(next, 'notes', { kind: 'new', at: notesAt + 1 })
-  }
-  const at = groupOf(next, 'notes')
-  next = moveTab(next, 'todos', { kind: 'new', at: at + 1 })
-  return activate(activate(next, 'notes'), 'todos')
-}
 
 /**
  * A layout that fits the window it is being opened in.

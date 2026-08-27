@@ -208,8 +208,6 @@ const DICT = {
   'panel.notes': { zh: '笔记', en: 'Notes' },
   'panel.todos': { zh: '待办', en: 'Todo' },
   'panel.tokens': { zh: '用量', en: 'Tokens' },
-  'panel.splitOn': { zh: '笔记和待办一起显示', en: 'Show notes and todo together' },
-  'panel.splitOff': { zh: '一次显示一个', en: 'Show one at a time' },
   'panel.tablist': { zh: '侧栏面板', en: 'Side panel sections' },
 
   // The pane layout. Every one of these is also reachable by dragging a tab;
@@ -229,12 +227,16 @@ const DICT = {
   'files.download': { zh: '下载', en: 'Download' },
   'files.empty': { zh: '这个目录是空的', en: 'Nothing here' },
   'files.escapes': { zh: '指向项目之外', en: 'points outside the project' },
+  'files.count': { zh: '{n} 项', en: '{n} items' },
+  'files.modified': { zh: '改动时间', en: 'Modified' },
 
   'todos.add': { zh: '加一条待办', en: 'Add an item' },
   'todos.leftOf': { zh: '{done} / {total} 已完成', en: '{left} of {total} left' },
   'todos.markDone': { zh: '标记为完成', en: 'Mark done' },
   'todos.markNotDone': { zh: '标记为未完成', en: 'Mark not done' },
   'todos.empty': { zh: '还没有待办', en: 'Nothing to do' },
+  'todos.added': { zh: '加于', en: 'Added' },
+  'todos.completed': { zh: '完成于', en: 'Completed' },
 
   'notes.saved': { zh: '已保存', en: 'Saved' },
   'notes.saving': { zh: '保存中…', en: 'Saving…' },
@@ -243,6 +245,8 @@ const DICT = {
   'notes.error': { zh: '保存失败', en: 'Could not save' },
   'notes.conflict': { zh: '别处改过了', en: 'Changed elsewhere' },
   'notes.placeholder': { zh: '这个项目的笔记，Markdown', en: 'Notes for this project, in Markdown' },
+  'notes.chars': { zh: '{n} 字', en: '{n} chars' },
+  'notes.lines': { zh: '{n} 行', en: '{n} lines' },
 
   'monitor.cpu': { zh: 'CPU', en: 'CPU' },
   'monitor.memory': { zh: '内存', en: 'Memory' },
@@ -264,6 +268,12 @@ const DICT = {
     en: 'No /proc here, so per-session usage cannot be measured.',
   },
   'monitor.strip': { zh: '点开监控标签看完整数据', en: 'Open the monitor tab for the rest' },
+  'monitor.load': { zh: '负载', en: 'Load' },
+  'monitor.perCore': { zh: '每核 {n}', en: '{n} per core' },
+  'monitor.mount': { zh: '挂载点', en: 'Mount' },
+  'monitor.total': { zh: '合计', en: 'Total' },
+  'monitor.machine': { zh: '这台机器', en: 'Machine' },
+  'monitor.state': { zh: '状态时长', en: 'In this state' },
 
   'dir.title': { zh: '选一个目录', en: 'Choose a directory' },
   'dir.here': { zh: '当前位置', en: 'Where you are' },
@@ -1150,6 +1160,12 @@ const DICT = {
   'spend.close': { zh: '关闭', en: 'Close' },
   'spend.today': { zh: '今天', en: 'Today' },
   'spend.rangeDays': { zh: '近 {n} 天', en: 'Last {n} days' },
+  'spend.thisMonth': { zh: '本月', en: 'This month' },
+  'spend.lastMonth': { zh: '上月', en: 'Last month' },
+  'spend.sessionCount': { zh: '{n} 个 agent 会话', en: '{n} agent sessions' },
+  'spend.source': { zh: '数据来源', en: 'Where this came from' },
+  'spend.breakdown': { zh: '构成', en: 'Breakdown' },
+  'spend.perRequest': { zh: '每次请求', en: 'Per request' },
   // The segmented control has four of these side by side and "Last 365 days"
   // four times does not fit; the long form stays for headings.
   'spend.rangeShort': { zh: '{n} 天', en: '{n}d' },
@@ -1193,7 +1209,10 @@ const DICT = {
     zh: '还没读过任何记录。这里是空的，不是 0。',
     en: 'Nothing has been read yet. This is empty, not zero.',
   },
-  'spend.scannedAgo': { zh: '{ago}前读的', en: 'read {ago} ago' },
+  // `{ago}` arrives already relative -- "3天前", "3 days ago" -- from
+  // formatAgo, which is Intl's phrasing rather than a suffix table of ours.
+  // It used to read '{ago}前读的' / 'read {ago} ago' and say the word twice.
+  'spend.scannedAgo': { zh: '{ago}读的', en: 'read {ago}' },
   'spend.whose': {
     zh: 'agent 自己记的账，包括不经过面板跑的。',
     en: "Counted from the agents' own records, including runs this panel did not start.",

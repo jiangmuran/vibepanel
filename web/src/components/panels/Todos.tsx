@@ -5,6 +5,8 @@ import { api } from '../../protocol/api'
 import type { Todo } from '../../protocol/wire'
 import type { PanelSocket } from '../../protocol/socket'
 import { InlineName } from '../InlineName'
+import type { PanelDensity } from '../chrome'
+import { formatAgo } from './ago'
 import { t as tr, useLang } from '../../i18n'
 
 /**
@@ -14,17 +16,29 @@ import { t as tr, useLang } from '../../i18n'
  * finished is most of the value of ticking it off, and a list that empties
  * itself gives no sense of having got anywhere.
  */
-export function Todos({ projectId, socket }: { projectId: string; socket: PanelSocket }) {
+export function Todos({
+  projectId,
+  socket,
+  density = 'narrow',
+}: {
+  projectId: string
+  socket: PanelSocket
+  density?: PanelDensity
+}) {
   // Repaint when the language changes. Without this the strings are
   // resolved once and a switch needs a reload to be believed.
   useLang()
   const [todos, setTodos] = useState<Todo[]>([])
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string | null>(null)
+  // One clock for every row, set when the list lands. See GitPanel's Ago for
+  // why this is not a Date.now() in the body.
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000))
 
   const load = useCallback(async () => {
     try {
       setTodos(await api.todos(projectId))
+      setNow(Math.floor(Date.now() / 1000))
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -44,6 +58,7 @@ export function Todos({ projectId, socket }: { projectId: string; socket: PanelS
       .then((t) => {
         if (ignore) return
         setTodos(t)
+        setNow(Math.floor(Date.now() / 1000))
         setError(null)
       })
       .catch((e: unknown) => {
@@ -74,7 +89,7 @@ export function Todos({ projectId, socket }: { projectId: string; socket: PanelS
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="todos">
-      <div className="flex shrink-0 items-center gap-1 px-2 py-2">
+      <div className="flex shrink-0 items-center gap-1 px-2 py-1.5">
         <input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -124,7 +139,7 @@ export function Todos({ projectId, socket }: { projectId: string; socket: PanelS
             key={t.id}
             data-testid="todo-item"
             data-done={t.done}
-            className="vp-press group flex items-start gap-2 rounded-vp px-2 py-1.5 hover:bg-surface-2"
+            className="vp-press group flex items-start gap-2 rounded-vp px-2 py-1 hover:bg-surface-2"
           >
             <button
               type="button"
@@ -146,6 +161,25 @@ export function Todos({ projectId, socket }: { projectId: string; socket: PanelS
               }`}
               title={tr('todos.edit')}
             />
+            {/* When it was added, or when it was ticked — both are in every
+                row the server has ever sent and neither reached the screen. A
+                list where the top item is from March and the bottom from ten
+                minutes ago is a different list from one written in one sitting,
+                and the panel could not say which it was.
+
+                Above 380px only, and in a fixed column: at the narrow end the
+                item's own text is what the row is for. The delete control is
+                `.vp-reveal`, which is opacity rather than display, so nothing
+                here shifts when the pointer arrives. */}
+            {density === 'wide' && (
+              <span
+                data-testid="todo-when"
+                className="tabular mt-0.5 w-14 shrink-0 text-right text-vp-xs text-ink-2"
+                title={t.done && t.doneAt ? tr('todos.completed') : tr('todos.added')}
+              >
+                {formatAgo(t.done && t.doneAt ? t.doneAt : t.createdAt, now)}
+              </span>
+            )}
             <button
               type="button"
               onClick={() => void guard(() => api.deleteTodo(t.id))}

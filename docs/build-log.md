@@ -14995,3 +14995,255 @@ impressive axis is scale and liveness, both of which happen to be true.
   rather than the projects. A `UsageByDayAndProject` query would be needed.
 - **A per-session CPU sparkline inside a session tile** would need a ring per
   session rather than one per scope. Left out rather than added speculatively.
+
+## Four tabs, two of them stacked
+
+The ask, verbatim:
+
+> 右栏只留文件、用量、笔记（包括待办）、用量的icon 不显示汉字 要有动画 数据详细一点 排版满一点
+
+then, on where the repository panel goes:
+
+> 放在文件tab的下半段 可以上下拖动
+
+and on VNC:
+
+> 把vnc模块默认禁用吧 暂时用不上 别占用右栏的地方
+
+VNC was already off unless `--vnc` and already out of the strip, so that third
+line cost nothing. The first one was ambiguous in one place — 用量 names both
+the token panel and the machine monitor — and the answer was 「token用量和监视器
+都留着」, both of them.
+
+So four tabs where there were six:
+
+| tab | what is in it |
+|---|---|
+| 文件 | the file tree, with the repository panel below a divider you can drag |
+| 监视器 | the machine and the per-session load |
+| 用量 | token spend |
+| 笔记 | the note, with the checklist below the same divider |
+
+### `git` and `todos` were never tabs, they were second halves
+
+The obvious reading of "merge two tabs" is a rename. It is not one, and the
+reason is in what each pair is for.
+
+The repository panel answers "what has changed in here". The file tree answers
+"what is in here". Nobody asks the first without having just asked the second,
+and while they were two tabs, answering the second cost you sight of the first.
+The same is true of a note and a checklist, which is precisely why the panel
+already had a *control* whose whole job was to put those two on screen together
+— `toggleNotesTodos`, one press, in every pane header.
+
+That control is the evidence. A preset that exists to build one arrangement is a
+statement that the arrangement should have been the default. So the two pairs
+are stacked inside one tab each, with a divider between them, and the preset is
+deleted rather than left returning the layout it was given: notes and todo are
+one tab now, there is nothing to toggle, and a control that presses and changes
+nothing teaches people the panel does not respond.
+
+The divider is `components/StackedTab.tsx` over `components/stack.ts`, and it is
+deliberately the *same* gesture as the divider between two panes — same
+`.vp-grip`, same `role="separator"`, same arrow keys, same shift for a larger
+step. Three draggable boundaries in one column that behave three ways is the
+「拼起来的」 complaint one layer down.
+
+Its position is one number per stacked tab in `localStorage`, and it is not part
+of `PaneLayout`. A pane layout's invariant is about tabs; this survives a tab
+being dragged into another pane, and folding it in would have meant every
+operation in `panes.ts` carrying a value none of them have an opinion about. It
+is also not bucketed by viewport the way the pane layout is: a ratio is already
+relative to whatever height it lands in, so it carries across screens correctly
+by construction — which is exactly the thing a pixel count could not do and is
+why `panes.ts` buckets.
+
+The lower half is named; the upper one is not. The upper half's name is the tab
+you are on, and repeating it is a heading that says what the selection already
+says.
+
+### The strip is icons, and the name has to survive somewhere
+
+「用量的icon 不显示汉字」. The selected tab used to fold its name open over
+260ms; `.vp-tab-label` and `PANEL_LABEL_WIDTH` are gone with it.
+
+The name goes to `title` *and* `aria-label`, both, because they fail in
+different directions: a tooltip is not something a finger can ask for, and an
+aria-label is announced and never seen. `lib/names.mjs` in the render check
+already refuses a control announced as just "button", and it accepts a `title`
+— so it would have passed a strip with no accessible name at all. The
+panes-check now asserts both attributes on every tab, that they agree, and that
+the tab renders no text.
+
+Removing the label also changed the animation, which is the part that is easy to
+miss. The tabs used to be unequal — the selected one grew — so the marker grew
+as it travelled and the eye read the growth as much as the movement. Equal icons
+give the marker a constant width and a shorter distance, so the travel is all
+there is. Two things were added to keep it legible: the glyph on the selected
+tab lifts (`.vp-tab-icon`, opacity and a 1.12 scale, composited so it cannot
+reflow the strip it is standing in), and the panes-check assertion that the
+marker is mid-flight a frame later matters more than it used to.
+
+### 要有动画, and what it may not carry
+
+Everything added collapses under `prefers-reduced-motion` and none of it is the
+only carrier of anything (red line 4).
+
+- `.vp-bar` / `.vp-bar-fill` — the meter track and fill, defined once. Four
+  components drew it by hand and had already drifted to two heights with the
+  radius written out at each site. The 500ms width transition is what makes a
+  meter read as the same quantity changing rather than as a fresh reading.
+- `.vp-rows` — a list that fills in rather than appearing. Six session rows
+  arriving on one frame is a block of text the eye has to re-read to find what
+  changed; staggered, they arrive in the order they are sorted in, which is
+  itself the information (busiest first).
+- `.vp-stack-half` — the divider eases for a keyboard step and does not for a
+  pointer drag. A transition on the thing under the pointer means the divider
+  arrives where the pointer was two frames ago, which reads as the panel
+  lagging.
+
+The stagger is where the reduced-motion block turned out to be incomplete. It
+collapsed `animation-duration` and not `animation-delay`, and a `backwards` fill
+holds the from-state — opacity 0 — for the whole delay whatever the duration is.
+The eighth row of the monitor was invisible for 175ms to exactly the people who
+had asked for nothing to move. `styles.test.ts` pins the fix.
+
+### 数据详细一点 — all of it was already on the wire
+
+Nothing here is a new endpoint, a new field, or a computed estimate. Every
+figure below was in a payload the panel was already fetching and was being
+dropped on the floor.
+
+**Monitor.** Per-session `procs` was summed at the foot of the list and never
+shown per row, so a row reading 0% could not say whether it was an idle agent or
+a shell. Dwell — how long the session has been in the state its dot is showing,
+from `stateChangedAt` — is the other half of that: 4% on something that went to
+`waiting` two hours ago is a different fact from 4% on something that started
+ten seconds ago. `diskPath` changes an answer outright: "12% free" means one
+thing about `/` and another about the volume a project sits on, and the panel
+was not saying which it had measured. Load moved out of the CPU meter's detail
+line, where it only appeared if the CPU was readable, into a row of its own with
+a per-core figure on its title; it gets no bar, because it is a queue length and
+drawing it against 0–100 would be the lie the per-session bars refuse to tell.
+A totals row appears with more than one session, so "two agents at 30% under a
+machine reading 95%" is a conclusion the panel can now offer.
+
+**Tokens.** It had two figures and a sparkline. The payload carries the four
+token classes separately — cache read is routinely the largest by an order of
+magnitude, so one total hid the number that explains the rest — plus a request
+count, `byMonth`, `byTool` with its per-tool problem count, `sessionCount`, the
+per-source file counts and `scannedAt`. All of it is a label and a number, which
+is the shape a narrow column is good at. "0 today" from a reader that has not
+run since Tuesday looked exactly like a quiet Tuesday; it now says when it last
+read. `spend.sourceRead` and `spend.scannedAgo` were in the dictionary, unused,
+the whole time.
+
+Still absent, and settled: money and lines of code. The panel does not know
+either, and a reader cannot tell a price it guessed from one it was told.
+
+**Files.** `modTime` is in every listing the server has ever sent and was thrown
+away in every one of them — in a directory agents are writing into, which file
+changed last is most of what the listing is read for. `total` was read only when
+the cap bit; it is now a count beside the path, which is the difference between
+"this directory is empty" and "this listing has not arrived".
+
+**Notes.** `updatedAt` arrives with every load and every save and was dropped by
+both, so the status line could say "saved" and not say *when* — which is the
+whole question when a note is open in two windows. Beside it, the size of the
+note, taken from the text on screen rather than from the server because it has
+to be right while you are typing.
+
+**Todos.** `createdAt` and `doneAt` are in every row and reached nothing. A list
+whose top item is from March and whose bottom is from ten minutes ago is a
+different list from one written in one sitting.
+
+### 排版满一点
+
+`PANEL_LABEL_WIDTH` is replaced by `PANEL_DENSE_WIDTH`, and the replacement is
+the point. The old threshold decided whether the selected tab wore its name; the
+strip has no names now, so the only thing width still buys is more figures on
+screen at once — which is what a wider column is dragged out for. Above 380px
+the monitor's meters and the token breakdown lay out in two columns, the file
+list grows a modified column and the checklist grows a time column. Below it,
+the same information stacks. One threshold, not two: a panel that reflows twice
+on one drag is the label fold's defect wearing a smaller hat.
+
+The rest is rows. Meter blocks went from `mb-3` with a 12px gap to 2px of
+separation; file rows and todo rows from `py-1.5` to `py-1`; the monitor's
+process count moved from a line under the list, where nobody looked, to beside
+the heading, where it is read before the rows rather than after them; the token
+panel's two headline figures went from two stacked rows to one.
+
+### A stored layout that names tabs which no longer exist
+
+Every browser that has opened this panel has `git` and `todos` in its pane-layout
+key, most of them in panes of their own — giving the repository or the checklist
+its own pane was the point of the feature.
+
+`parseLayout` already handled it, and that is worth being precise about rather
+than relieved by. Two of its repairs carry the case and neither was written for
+it: a tab this build does not recognise is dropped, and a group left with nothing
+in it is dropped rather than kept as a strip with no body. Two things then have
+to hold that are not obvious from reading the list. The pane cap is checked
+*before* a group is parsed and counts only groups that were pushed, so a dropped
+group does not spend one of the four slots and push a surviving pane off the
+end — six stored panes with two retired is exactly four survivors, and only
+because of that ordering. And a layout in which every group empties reaches
+`groups.length === 0` and returns the default, which is why yesterday's
+arrangement comes back as a panel rather than as nothing.
+
+The version is deliberately **not** bumped. Bumping it is the blunt answer —
+every stored layout resets — and it throws away the half of each arrangement
+that is still valid, which is the half somebody built.
+
+What was missing was not the code but the pin: the existing test used a
+fabricated tab name (`'sockets'`), which exercises the same branch and says
+nothing about the strings that were really in those keys. `chrome.ts` now
+exports `RETIRED_TABS`, `panes.test.ts` drives the repair from it in four shapes
+— mixed panes, six panes against a cap of four, every pane retired, and each
+name alone — and `chrome.test.ts` asserts the other direction, that nothing in
+`RETIRED_TABS` is still a tab. The panes-check seeds a real six-tab layout into
+`localStorage` across every viewport band and asserts the panel comes back with
+a strip and all four tabs.
+
+`vibepanel.rightSplit`, the other seed key, is left unread rather than migrated:
+there is no layout it could produce that this build can express.
+
+### What the test files were told not to do again
+
+Three test files previously hard-coded the tab list and broke when a sixth tab
+was added, every one of them on an assertion that had nothing to do with what it
+was checking. Going from six to four did it again to the ones that had not been
+converted. So `panes.test.ts` now names its fixtures positionally (`B`, `C`,
+`D` = the second, third and fourth tabs), `chrome.test.ts` derives its arrow-key
+pairs from `PANEL_TABS`, and `panes-check.mjs` reads the list out of `chrome.ts`
+rather than keeping a copy — a literal there is a selector that silently matches
+nothing the day a tab is renamed, which the script reports as a missing element
+rather than as the rename it is.
+
+The one literal that stays a literal is `PANEL_TABS`'s own order in
+`chrome.test.ts`. That one is the guard.
+
+`agoParts` moved out of `panels/git.ts` into `panels/ago.ts` with a `formatAgo`
+beside it. It was fine there while the repository tab was the only thing with
+timestamps on it; three panels have them now, and the third one importing
+`./git` for a date is where a helper has outgrown the file it was written in.
+`formatAgo` returns the empty string for a zero timestamp, because "never
+happened" is what a zero means everywhere it is used and "56 years ago" beside
+an unticked item is worse than a blank.
+
+### The harness needed a project
+
+`panes-check` renders the panel through `panes-harness.tsx` with `project: null`,
+which is what leaves nothing but chrome on screen. The divider inside a tab only
+exists when there is a project — a stacked tab with nothing to show would say
+"no project selected" twice with a line between them — so the harness takes
+`?project=1` and hands it a project-shaped object. The panels inside then fetch
+and fail against no server, which is the point: the stack is the tab's structure
+and does not depend on either half having anything to say.
+
+That surfaced a stub that had been wrong and harmless. The harness socket was
+`{ onNote, onTodo }`; `PanelSocket` has neither, and the real method is
+`onPanelChange`. It never mattered while `project` was always null and those two
+panels never mounted, and it was an immediate crash into the error boundary the
+moment they did. A stub is only a stub of what is actually called.

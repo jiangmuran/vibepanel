@@ -31,7 +31,7 @@ import {
   parseLayout,
   readLayout,
   serialiseLayout,
-  toggleNotesTodos,
+  type PaneGroup,
   type PaneLayout,
 } from './components/panes'
 import { disambiguatedLabels, projectLabel, sessionLabel } from './components/label'
@@ -69,11 +69,13 @@ const BOTTOM_OPEN_KEY = 'vibepanel.bottomOpen'
 const BOTTOM_DEFAULT_HEIGHT = 220
 const RIGHT_KEY = 'vibepanel.right'
 const RIGHT_OPEN_KEY = 'vibepanel.rightOpen'
-// The two keys the pane layout replaced. Still read once, so somebody who had
-// chosen a tab or turned the old split on opens on the arrangement they left
-// rather than on the default; never written again.
+// The key the pane layout replaced. Still read once, so somebody who had
+// chosen a tab opens on it rather than on the default; never written again.
+//
+// There was a second, `vibepanel.rightSplit`, holding the old notes/todo
+// preset. Notes and todo are one tab now, so there is no arrangement that key
+// could seed; it is left alone in whatever browsers still have it.
 const RIGHT_TAB_KEY = 'vibepanel.rightTab'
-const RIGHT_SPLIT_KEY = 'vibepanel.rightSplit'
 const RIGHT_DEFAULT_WIDTH = 280
 
 
@@ -137,24 +139,29 @@ function panelState(sizeKey: string, openKey: string, fallback: number) {
  * The pane layout for this screen, or the nearest thing to one.
  *
  * A screen that has never been arranged does not get the flat default: it gets
- * whatever the two keys this feature replaced were holding — the tab you were
- * last on, and whether you had the old notes/todo split turned on. Otherwise
+ * the tab you were last on, out of the key the pane layout replaced. Otherwise
  * the day this shipped, everybody's panel forgot where they were.
+ *
+ * The other seed used to be `RIGHT_SPLIT_KEY` — "notes and todo, stacked" —
+ * and it is gone because that arrangement is the notes tab now: the two are
+ * stacked inside one tab and there is nothing to turn on. The key is left
+ * unread rather than migrated, because there is no layout it could produce
+ * that this build can express.
  *
  * Everything goes out through parseLayout even when it was built here, because
  * `RIGHT_TAB_KEY` is a string out of localStorage like any other and "we wrote
- * it ourselves" was true of the value in that key too.
+ * it ourselves" was true of the value in that key too — and it can now name a
+ * tab that no longer exists, which parseLayout answers by falling back to the
+ * group's own first tab.
  */
 function seedLayout(key: string): PaneLayout {
   const stored = readStored(key)
   if (stored !== null) return readLayout(stored)
-  const base = readStored(RIGHT_SPLIT_KEY) === 'on'
-    ? toggleNotesTodos(defaultLayout())
-    : defaultLayout()
+  const base = defaultLayout()
   const want = readStored(RIGHT_TAB_KEY)
   return parseLayout({
     version: base.version,
-    groups: base.groups.map((g) => ({ ...g, active: want ?? g.active })),
+    groups: base.groups.map((g: PaneGroup) => ({ ...g, active: want ?? g.active })),
   })
 }
 

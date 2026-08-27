@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react'
 import { AlertTriangle, Maximize2, RefreshCw } from 'lucide-react'
 
 import { api } from '../../protocol/api'
-import type { TokenUsage as Usage } from '../../protocol/wire'
+import type { TokenUsage as Usage, UsageDay } from '../../protocol/wire'
 import { t, useLang } from '../../i18n'
+import type { PanelDensity } from '../chrome'
 import { safeText } from '../text'
+import { formatAgo } from './ago'
 import { compact, exact, sum, totalOf } from './tokens'
 
 /** How often the panel refreshes while it is on screen. */
@@ -14,7 +16,7 @@ const POLL_MS = 20000
 const SPARK_DAYS = 30
 
 /**
- * A summary of what the agents have spent, in a 280-pixel column.
+ * A summary of what the agents have spent, in a side panel.
  *
  * The panel is a glance, not the analysis — everything that needs width lives
  * behind the button at the bottom. The measurement that settled it: a
@@ -23,20 +25,34 @@ const SPARK_DAYS = 30
  * means either three months instead of a year or squares too small to aim at,
  * and both are worse than a link.
  *
- * What the panel does hold is the two figures somebody actually glances for —
- * today, and the range — plus the reason any of them might be missing.
+ * What the panel holds is everything that fits in a column of numbers, which
+ * turned out to be a good deal more than it was showing. It had two figures and
+ * a sparkline; the payload it was already fetching carries the four token
+ * classes separately, a request count, a month-by-month series, a per-tool
+ * breakdown, how many agent sessions are behind the figures and when the last
+ * pass finished. All of it is a label and a number — the shape a narrow column
+ * is *good* at — and none of it was on screen.
+ *
+ * What is deliberately still absent is money and lines of code. The panel does
+ * not know either: pricing is per model, per tier and changes, and the reader
+ * cannot tell a price the panel guessed from one it was told. That is settled.
  */
 export function TokenUsage({
   projectId,
+  density = 'narrow',
   onOpen,
 }: {
   projectId: string | null
+  density?: PanelDensity
   onOpen: () => void
 }) {
   useLang()
   const [data, setData] = useState<Usage | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  // One clock for every relative time on the panel, moved on by the poll. See
+  // GitPanel's Ago for why this is not a Date.now() in the body.
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000))
 
   useEffect(() => {
     // Self-scheduling and only while mounted, like the monitor: a panel nobody
@@ -48,6 +64,7 @@ export function TokenUsage({
         const next = await api.tokenUsage({ days: SPARK_DAYS, project: projectId ?? undefined })
         if (!cancelled) {
           setData(next)
+          setNow(Math.floor(Date.now() / 1000))
           setError(null)
         }
       } catch (e) {
@@ -87,21 +104,36 @@ export function TokenUsage({
 
   const today = data.byDay.find((d) => d.day === data.today)
   const todayTotal = today ? totalOf(today) : 0
-  const rangeTotal = totalOf(sum(data.byDay))
+  const range = sum(data.byDay)
+  const rangeTotal = totalOf(range)
   // Never read is not zero, and the difference is the whole point. Until a
   // pass has finished there is no figure to show at all.
   const known = data.scannedAt > 0
   const missing = data.sources.filter((s) => !s.found)
   const skipped = data.sources.reduce((n, s) => n + s.skipped, 0)
 
+  // `byMonth` is every month there has been, oldest first, and the panel had
+  // never opened it. The month you are in and the one before it is the
+  // comparison people actually make — a range of thirty days straddles two of
+  // them and answers neither.
+  const thisMonth = monthAt(data.byMonth, data.today.slice(0, 7))
+  const lastMonth = monthAt(data.byMonth, previousMonth(data.today.slice(0, 7)))
+
+  // Requests are how the four token classes become a rate rather than a pile.
+  // 400k tokens is meaningless; 400k over 60 requests is a session with a large
+  // context being re-sent, which is a thing somebody can act on.
+  const perRequest = range.requests > 0 ? Math.round(rangeTotal / range.requests) : null
+
   return (
-    <div className="px-3 py-3" data-testid="token-panel">
-      <Figure
-        label={t('spend.today')}
-        value={known ? todayTotal : null}
-        emphasis
-      />
-      <Figure label={t('spend.rangeDays', { n: SPARK_DAYS })} value={known ? rangeTotal : null} />
+    <div className="px-3 py-2" data-testid="token-panel">
+      {/* The two headline figures side by side rather than stacked. They are
+          the same kind of fact measured over two windows, and reading them as
+          a pair is the point; stacked, each had a whole row to itself and the
+          panel was two lines deep before it said anything else. */}
+      <div className="flex items-baseline justify-between gap-3">
+        <Headline label={t('spend.today')} value={known ? todayTotal : null} emphasis />
+        <Headline label={t('spend.rangeDays', { n: SPARK_DAYS })} value={known ? rangeTotal : null} />
+      </div>
 
       {known && <Spark data={data} />}
 
@@ -111,11 +143,97 @@ export function TokenUsage({
         </p>
       )}
 
+      {known && (
+        <>
+          {/* What the range is made of. Four classes and a count, all of which
+              the payload has always carried and none of which reached the
+              panel — cache read is usually the largest of the four by an order
+              of magnitude, so a single total hides the one number that
+              explains the rest. Two columns above 380px. */}
+          <Section label={t('spend.breakdown')}>
+            <div className={`grid gap-x-4 ${density === 'wide' ? 'grid-cols-2' : 'grid-cols-1'}`}>
+              <Row label={t('spend.input')} value={range.input} />
+              <Row label={t('spend.output')} value={range.output} />
+              <Row label={t('spend.cacheRead')} value={range.cacheRead} />
+              <Row label={t('spend.cacheWrite')} value={range.cacheWrite} />
+              <Row label={t('spend.requests')} value={range.requests} plain />
+              {perRequest !== null && <Row label={t('spend.perRequest')} value={perRequest} />}
+            </div>
+          </Section>
+
+          {(thisMonth !== null || lastMonth !== null) && (
+            <Section label={t('spend.month')}>
+              <div className={`grid gap-x-4 ${density === 'wide' ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                <Row label={t('spend.thisMonth')} value={thisMonth} />
+                <Row label={t('spend.lastMonth')} value={lastMonth} />
+              </div>
+            </Section>
+          )}
+
+          {data.byTool.length > 0 && (
+            <Section label={t('spend.tools')}>
+              <div className="vp-rows">
+                {data.byTool.map((tool) => (
+                  <div
+                    key={tool.tool}
+                    data-testid="token-tool"
+                    className="flex items-baseline justify-between gap-2 py-[1px] text-vp-xs"
+                  >
+                    <span className="flex min-w-0 items-baseline gap-1">
+                      {/* A tool that could not be read fully is marked, not
+                          silently short. Shape and a word, not a tint. */}
+                      {tool.problems > 0 && (
+                        <AlertTriangle
+                          size={9}
+                          className="shrink-0 self-center"
+                          style={{ color: 'var(--vp-state-waiting)' }}
+                        />
+                      )}
+                      <span className="truncate text-ink-2">{safeText(tool.tool)}</span>
+                    </span>
+                    <span className="tabular shrink-0 text-ink-2">
+                      {exact(tool.requests)} · {compact(totalOf(tool))}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </Section>
+          )}
+
+          {/* Where the numbers came from and how old they are. `sources` was
+              read only for its failures, so a working panel said nothing at all
+              about what it had read — and "0 today" from a reader that has not
+              run since Tuesday looks exactly like a quiet Tuesday. */}
+          <Section label={t('spend.source')}>
+            {data.sessionCount > 0 && (
+              <div className="tabular text-vp-xs text-ink-2" data-testid="token-sessions">
+                {t('spend.sessionCount', { n: exact(data.sessionCount) })}
+              </div>
+            )}
+            {data.sources
+              .filter((s) => s.found)
+              .map((s) => (
+                <div
+                  key={s.tool}
+                  data-testid="token-source"
+                  className="tabular truncate text-vp-xs text-ink-2"
+                  title={safeText(s.root)}
+                >
+                  {t('spend.sourceRead', { tool: safeText(s.tool), files: s.files })}
+                </div>
+              ))}
+            <div className="tabular text-vp-xs text-ink-2" data-testid="token-scanned">
+              {t('spend.scannedAgo', { ago: formatAgo(data.scannedAt, now) })}
+            </div>
+          </Section>
+        </>
+      )}
+
       {/* Said on the panel, not only behind the button. Somebody who never
           opens the full view still has to know these are the agents' figures
           and not the panel's, or every number above is read as a claim the
           panel cannot make. */}
-      <p className="mt-3 text-vp-xs leading-relaxed text-ink-3">{t('spend.whose')}</p>
+      <p className="mt-2 text-vp-xs leading-relaxed text-ink-3">{t('spend.whose')}</p>
 
       {missing.map((s) => (
         <Warning
@@ -126,7 +244,7 @@ export function TokenUsage({
       {skipped > 0 && <Warning text={t('spend.lowerBound', { n: exact(skipped) })} />}
       {data.passError !== '' && <Warning text={t('spend.passError', { why: data.passError })} />}
 
-      <div className="mt-3 flex items-center gap-1">
+      <div className="mt-2 flex items-center gap-1">
         <button
           type="button"
           data-testid="token-open"
@@ -151,13 +269,37 @@ export function TokenUsage({
   )
 }
 
+/** The total for one `YYYY-MM` bucket, or null if the series has no such month. */
+function monthAt(byMonth: UsageDay[], key: string): number | null {
+  const found = byMonth.find((m) => m.day === key)
+  return found ? totalOf(found) : null
+}
+
+/** The month before `YYYY-MM`, in the same form. */
+function previousMonth(key: string): string {
+  const [y, m] = key.split('-').map(Number)
+  if (!Number.isFinite(y) || !Number.isFinite(m)) return ''
+  const back = m === 1 ? [y - 1, 12] : [y, m - 1]
+  return `${back[0]}-${String(back[1]).padStart(2, '0')}`
+}
+
+/** A heading over a set of rows, with a hairline above it. */
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="mt-2 border-t border-hairline pt-1.5">
+      <p className="mb-0.5 text-vp-xs uppercase tracking-wide text-ink-2">{label}</p>
+      {children}
+    </div>
+  )
+}
+
 /**
  * One headline number, or an explicit absence.
  *
  * `null` renders an em dash rather than a zero. There is no formatting trick
  * that makes a zero mean "not known", so it does not get to try.
  */
-function Figure({
+function Headline({
   label,
   value,
   emphasis,
@@ -167,13 +309,34 @@ function Figure({
   emphasis?: boolean
 }) {
   return (
-    <div className="mb-2 flex items-baseline justify-between gap-2">
-      <span className="truncate text-vp-sm text-ink-2">{label}</span>
-      <span
-        className={`tabular shrink-0 ${emphasis ? 'text-vp-lg' : 'text-vp-md'} text-ink`}
+    <div className="min-w-0">
+      <div className="truncate text-vp-xs text-ink-2">{label}</div>
+      <div
+        className={`tabular ${emphasis ? 'text-vp-lg' : 'text-vp-md'} text-ink`}
         title={value === null ? undefined : `${exact(value)} ${t('spend.tokens')}`}
       >
         {value === null ? '—' : compact(value)}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * One label and one figure in a column of them.
+ *
+ * `plain` prints the number as it is rather than folding it: a request count is
+ * four digits at most and "1.2k requests" throws away the digit somebody is
+ * counting. Token totals are nine digits and always fold.
+ */
+function Row({ label, value, plain }: { label: string; value: number | null; plain?: boolean }) {
+  return (
+    <div className="flex min-w-0 items-baseline justify-between gap-2 py-[1px] text-vp-xs">
+      <span className="truncate text-ink-2">{label}</span>
+      <span
+        className="tabular shrink-0 text-ink-2"
+        title={value === null || plain ? undefined : `${exact(value)} ${t('spend.tokens')}`}
+      >
+        {value === null ? '—' : plain ? exact(value) : compact(value)}
       </span>
     </div>
   )
@@ -231,7 +394,7 @@ function Spark({ data }: { data: Usage }) {
 function Warning({ text }: { text: string }) {
   return (
     <p
-      className="mt-2 flex items-start gap-1 text-vp-xs leading-relaxed"
+      className="mt-1.5 flex items-start gap-1 text-vp-xs leading-relaxed"
       style={{ color: 'var(--vp-state-waiting)' }}
     >
       <AlertTriangle size={11} className="mt-0.5 shrink-0" />

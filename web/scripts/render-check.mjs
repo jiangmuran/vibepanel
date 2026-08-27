@@ -920,11 +920,11 @@ try {
     note('FAIL', 'panel', 'the side panel never appeared')
   } else {
     // Every control in the header has to stay reachable. Labelling all four
-    // tabs once pushed the collapse button off the edge of a 280px column —
-    // and the split toggle, which is now in the header on all five tabs
-    // rather than arriving when you reach notes, is 28 more pixels of the
-    // same risk.
-    for (const id of ['files', 'monitor', 'notes', 'todos']) {
+    // tabs once pushed the collapse button off the edge of a 280px column.
+    // The strip draws no words at all now, which takes that risk away and
+    // introduces its own: four icons in a track that has to leave room for
+    // the menu and the chevron beside it.
+    for (const id of ['files', 'monitor', 'tokens', 'notes']) {
       await page.locator(`[data-testid="panel-tab-${id}"]`).click()
       await sleep(300)
       const header = await page.locator('[data-testid="panel-header"]').boundingBox()
@@ -954,6 +954,30 @@ try {
     }
     if (/\bNaN\b|undefined/.test(monitorText)) {
       note('FAIL', 'panel/monitor', `the monitor rendered a broken value: ${JSON.stringify(monitorText)}`)
+    }
+
+    // The figures the payload has always carried and the panel never showed.
+    // `diskPath` is the one that changes an answer -- "12% free" means one
+    // thing about / and another about the volume a project sits on, and the
+    // panel was not saying which it had measured. Load is the other: it is a
+    // queue length, it is in every sample, and it was folded into the CPU
+    // meter's detail line where it only appeared if the CPU was readable.
+    //
+    // Both come out of /proc, so both are asserted only where /proc is.
+    if (process.platform === 'linux') {
+      for (const want of ['Mount', 'Load']) {
+        if (!monitorText.includes(want)) {
+          note('FAIL', 'panel/monitor',
+            `the monitor is missing ${want}: ${JSON.stringify(monitorText.replace(/\s+/g, ' ').trim())}`)
+        }
+      }
+      // Per-session process counts, per row rather than only summed at the
+      // foot. A pane at a shell prompt is one process reading zero, which is
+      // true and uninteresting, and the row could not say which it was.
+      const procCols = await page.locator('[data-testid="session-procs"]').count()
+      if (procCols === 0) {
+        note('FAIL', 'panel/monitor', 'no session row says how many processes it is measuring')
+      }
     }
 
     // Per-session usage: the machine meters say the box is busy, and this says
@@ -1207,9 +1231,17 @@ try {
     // touches the note, so a later save is not refused as a conflict.
     await sleep(1500)
 
-    // Todos
-    await page.locator('[data-testid="panel-tab-todos"]').click()
+    // Todos, which live under the note now rather than in a tab of their own.
+    // One tab, two panels, a divider between them -- so getting to the
+    // checklist is getting to the notes tab and looking down.
+    await page.locator('[data-testid="panel-tab-notes"]').click()
     await sleep(600)
+    if ((await page.locator('[data-testid="stack-notes-divider"]').count()) !== 1) {
+      note('FAIL', 'panel/todos', 'the notes tab has no divider, so the checklist is not under it')
+    }
+    if (!(await page.locator('[data-testid="todos"]').isVisible().catch(() => false))) {
+      note('FAIL', 'panel/todos', 'the checklist is not on screen with the note')
+    }
     await page.locator('[data-testid="todo-input"]').fill('ship the panel')
     await page.keyboard.press('Enter')
     let added = false
@@ -1274,18 +1306,57 @@ try {
       }
     }
 
-    // Notes and todos side by side.
-    await page.locator('[data-testid="panel-split"]').click()
-    await sleep(800)
-    const split = await rightPanel.getAttribute('data-split')
-    if (split !== 'true') {
-      note('FAIL', 'panel', 'the split control did not show notes and todo together')
-    } else {
-      const bothVisible =
-        (await page.locator('[data-testid="notes"]').isVisible().catch(() => false)) &&
-        (await page.locator('[data-testid="todos"]').isVisible().catch(() => false))
-      if (!bothVisible) note('FAIL', 'panel', 'split is on but only one of the two is showing')
+    // Notes and todo together, and the file tree over the repository. They
+    // were four tabs and a preset that arranged two of them into two panes;
+    // they are two tabs with a draggable divider inside each, so the
+    // arrangement the preset built is the arrangement you get.
+    //
+    // Both halves have to be *on screen*, which is what the preset was for and
+    // is the whole reason the tabs were merged.
+    for (const [tab, top, bottom] of [
+      ['notes', 'notes', 'todos'],
+      ['files', 'file-tree', 'git-panel'],
+    ]) {
+      await page.locator(`[data-testid="panel-tab-${tab}"]`).click()
+      await sleep(900)
+      const divider = page.locator(`[data-testid="stack-${tab}-divider"]`)
+      if ((await divider.count()) !== 1) {
+        note('FAIL', 'panel', `the ${tab} tab is not two panels with a divider`)
+        continue
+      }
+      const topBox = await page.locator(`[data-testid="${top}"]`).boundingBox().catch(() => null)
+      const lowBox = await page.locator(`[data-testid="${bottom}"]`).boundingBox().catch(() => null)
+      if (!topBox || !lowBox) {
+        // The lower half may legitimately be showing a message rather than a
+        // panel -- a directory that is not a repository -- so this reports
+        // what it saw rather than only that it saw nothing.
+        const stackText = await page.locator(`[data-testid="stack-${tab}-bottom"]`).innerText()
+          .catch(() => '')
+        if (!stackText.trim()) {
+          note('FAIL', 'panel',
+            `the ${tab} tab shows only its top half: ${JSON.stringify(stackText)}`)
+        }
+      } else if (lowBox.y <= topBox.y) {
+        note('FAIL', 'panel', `the ${tab} tab draws its lower half above its upper one`)
+      }
+      // And the divider drags. It is the gesture the whole restructure rests
+      // on -- 「可以上下拖动」.
+      const before = await page.locator(`[data-testid="stack-${tab}-top"]`).boundingBox()
+      const grip = await divider.boundingBox()
+      await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
+      await page.mouse.down()
+      await page.mouse.move(grip.x + grip.width / 2, grip.y - 120, { steps: 10 })
+      await sleep(200)
+      await page.mouse.up()
+      await sleep(400)
+      const after = await page.locator(`[data-testid="stack-${tab}-top"]`).boundingBox()
+      if (!(before.height - after.height > 60)) {
+        note('FAIL', 'panel',
+          `the ${tab} divider does not drag (${Math.round(before.height)} -> ${Math.round(after.height)})`)
+      }
     }
+    await page.locator('[data-testid="panel-tab-notes"]').click()
+    await sleep(700)
 
     // The note must survive a reload; it is the panel's only durable prose.
     await page.reload({ waitUntil: 'networkidle' })

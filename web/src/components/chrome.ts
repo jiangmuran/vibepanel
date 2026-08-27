@@ -16,12 +16,51 @@
  * Presentation may change with size; the set of controls may not.
  */
 
-// `git` sits beside `files` rather than at the end. It is the second thing
-// anybody asks about a directory, the two are read together, and appending it
-// would have put the newest tab furthest from the one it belongs with.
-export const PANEL_TABS = ['files', 'git', 'monitor', 'notes', 'todos', 'tokens'] as const
+// Four, and each one is a question rather than a data source.
+//
+// It was six. `git` and `todos` were tabs of their own, and both were the
+// bottom half of a question somebody was already asking on another tab: what
+// is in this directory *and* what has changed in it; what am I thinking *and*
+// what is left. A tab you have to leave to answer the second half of your own
+// question is a tab that costs you the first half. So they moved inside
+// `files` and `notes`, below a divider you can drag — see STACKED_TABS.
+//
+// Their names did not disappear with them: `panel.git` and `panel.todos` still
+// name the lower half of the tab that absorbed them. What disappeared is the
+// tab strip's claim that they were separate places.
+export const PANEL_TABS = ['files', 'monitor', 'tokens', 'notes'] as const
 
 export type PanelTab = (typeof PANEL_TABS)[number]
+
+/**
+ * Tab ids that a build before this one could have written into localStorage.
+ *
+ * Not used by anything at runtime — parseLayout drops an unknown tab by not
+ * recognising it, which is the same path a corrupted key takes and needs no
+ * list. This is here so the test that pins that repair names the strings that
+ * were actually in people's browsers rather than a plausible-looking
+ * invention, and so the next tab that is retired is added here rather than
+ * quietly relied upon to behave the same way.
+ */
+export const RETIRED_TABS = ['git', 'todos', 'vnc'] as const
+
+/**
+ * The tabs whose body divides the pane's height itself.
+ *
+ * A stacked tab is two panels and a divider, so its height is the pane's
+ * height and not the height of its content. The pane gives it `h-full` rather
+ * than the `min-h-full` every other tab gets — a box whose height is its
+ * content's leaves the flex column inside it nothing to divide, and it
+ * collapses to its two headers with the divider between them.
+ *
+ * Named here rather than checked with `tab === 'files' || tab === 'notes'` at
+ * the one call site, because the second call site is the one that forgets.
+ */
+export const STACKED_TABS = ['files', 'notes'] as const
+
+export function tabOwnsHeight(tab: PanelTab): boolean {
+  return (STACKED_TABS as readonly string[]).includes(tab)
+}
 
 /** Narrower than this and the panels are unusable rather than merely tight. */
 export const PANEL_MIN_WIDTH = 200
@@ -30,47 +69,40 @@ export const PANEL_MIN_WIDTH = 200
 export const PANEL_MAX_WIDTH = 640
 
 /**
- * The width at which the selected tab is named in words rather than drawn as
- * an icon alone.
+ * The width above which a panel lays its figures out in two columns.
  *
- * Below it the segmented track has under 170 pixels to divide between every
- * tab, and a name in the selected share of that is two letters and an ellipsis
- * — which tells you less than the icon it displaced. The label does not blink
- * out at this width; it folds shut. See the `max-width` transition in
- * RightPanel.
+ * This replaced PANEL_LABEL_WIDTH, and the replacement is the point. That
+ * threshold decided whether the selected tab wore its name; the strip is icons
+ * now, so the only thing width still buys is *more figures on screen at once*,
+ * which is what a wider column was dragged out for in the first place. A panel
+ * that only stretches as it widens is a panel where the extra 360 pixels the
+ * range allows buy nothing but whitespace.
  *
- * It was 250 while there were five tabs and is one unlabelled tab wider now
- * that there are six, because the thing being divided did not grow with them.
- * A number that stays put while the row it describes gets longer is a label
- * that clips instead of folding.
+ * 380 is where two label/value pairs and their gutter stop having to truncate:
+ * the widest pair in either language is the memory meter's "内存 / 12.4 GiB of
+ * 31.1 GiB", which needs about 175px, and two of those plus 16px of gutter and
+ * 24px of padding is 390. Below it the same figures stack, which is the same
+ * information and not a different layout.
  *
- * A label is not a control, which is why this is allowed to depend on width at
- * all. paneControls() below does not.
+ * A column count is not a control, which is why this is allowed to depend on
+ * width at all. paneControls() below does not.
  */
-export const PANEL_LABEL_WIDTH = 276
+export const PANEL_DENSE_WIDTH = 380
 
-export interface PanelChrome {
-  /** The selected tab shows its name; the others are icons either way. */
-  labelled: boolean
-}
-
-export function panelChrome(width: number): PanelChrome {
-  return { labelled: width >= PANEL_LABEL_WIDTH }
-}
+export type PanelDensity = 'narrow' | 'wide'
 
 /**
- * Whether a pane's selected tab is named, which also depends on how many tabs
- * it is sharing the strip with.
+ * How much a panel body may put on one row.
  *
- * A pane holding one tab has the whole strip for one name and is always
- * labelled, at any width the panel can be. The width threshold is about every
- * name competing for 170 pixels, and one name is not competing with anything.
+ * Two values and one threshold, deliberately. Three would mean a panel that
+ * reflows twice on one drag, which is the same defect the label fold had,
+ * wearing a smaller hat.
  */
-export function paneLabelled(width: number, tabCount: number): boolean {
-  return tabCount <= 1 || panelChrome(width).labelled
+export function panelDensity(width: number): PanelDensity {
+  return width >= PANEL_DENSE_WIDTH ? 'wide' : 'narrow'
 }
 
-export type PaneControlId = 'menu' | 'split' | 'collapse'
+export type PaneControlId = 'menu' | 'collapse'
 
 export interface PaneControl {
   id: PaneControlId
@@ -82,17 +114,17 @@ export interface PaneControl {
  *
  * Every pane has its menu — which is where splitting, merging and restoring
  * live for anyone not using a mouse. The first pane additionally carries the
- * two controls that belong to the *panel* rather than to a pane: the notes/todo
- * preset and the collapse chevron. That is a structural rule, not a
- * size-dependent or tab-dependent one: the first pane is always the first pane,
- * and the panel's own controls have to be somewhere.
+ * one control that belongs to the *panel* rather than to a pane: the collapse
+ * chevron. That is a structural rule, not a size-dependent or tab-dependent
+ * one: the first pane is always the first pane, and the panel's own control has
+ * to be somewhere.
  *
- * The split toggle used to be rendered only on the notes and todo tabs, on the
- * reasoning that it means nothing on the other three. It means something
- * wherever it is now — see toggleNotesTodos() in panes.ts, which builds the
- * arrangement its label has always promised from whatever the layout is — and
- * that is the whole fix: a control whose meaning is constant does not have to
- * appear and disappear to stay honest.
+ * There were two. The other was a toggle that put notes and todo in two panes
+ * at once, and it was removed rather than left as furniture: notes and todo are
+ * one tab now, stacked with a divider between them, so the arrangement the
+ * toggle built is the arrangement you get. A control that presses and changes
+ * nothing is worse than no control, because it teaches people the panel does
+ * not respond.
  *
  * Written as a function of the pane rather than a constant so the test has
  * something to hold. A constant array would let the next conditional be written
@@ -101,11 +133,7 @@ export interface PaneControl {
 export function paneControls(index: number, panelHeader: boolean): PaneControl[] {
   const menu: PaneControl = { id: 'menu', testid: `pane-menu-${index}` }
   if (!panelHeader) return [menu]
-  return [
-    menu,
-    { id: 'split', testid: 'panel-split' },
-    { id: 'collapse', testid: 'panel-collapse' },
-  ]
+  return [menu, { id: 'collapse', testid: 'panel-collapse' }]
 }
 
 /**

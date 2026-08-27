@@ -12,8 +12,6 @@ import {
   Merge,
   NotebookPen,
   RotateCcw,
-  Rows2,
-  Square,
 } from 'lucide-react'
 
 import type { Project, Session } from '../protocol/wire'
@@ -32,10 +30,11 @@ import {
   PANEL_TABS,
   clampPanelWidth,
   paneControls,
-  paneLabelled,
+  panelDensity,
   resizeStep,
   swapDirection,
   tabFromKey,
+  tabOwnsHeight,
   type PanelTab,
 } from './chrome'
 import {
@@ -47,16 +46,15 @@ import {
   mergeGroup,
   moveTab,
   moveTowards,
-  notesTodosSplit,
   paneKeyCommand,
   resetLayout,
   resizeAt,
-  toggleNotesTodos,
   type DropKind,
   type DropTarget,
   type PaneGroup,
   type PaneLayout,
 } from './panes'
+import { StackedTab } from './StackedTab'
 import { t, useLang, type Key } from '../i18n'
 
 export type { PanelTab }
@@ -68,13 +66,18 @@ export type { PanelTab }
 // the order on screen is the order chrome.ts navigates and animates in. Two
 // lists in two files that have to agree is how a left arrow ends up moving
 // right.
+//
+// The strip draws the icon and nothing else — 「用量的icon 不显示汉字」 — so the
+// name is carried by `title` and `aria-label` rather than by a `<span>` that
+// folds open. Both, not one: a title is a hover tooltip and a finger has no
+// hover, and an aria-label is announced and never seen. A tab whose only name
+// is its glyph is a row of "button, button, button" to a screen reader, which
+// is what lib/names.mjs is watching for.
 const TABS: Record<PanelTab, { icon: typeof Activity; key: Key }> = {
   files: { icon: FolderTree, key: 'panel.files' },
-  git: { icon: GitBranch, key: 'panel.git' },
   monitor: { icon: Activity, key: 'panel.monitor' },
-  notes: { icon: NotebookPen, key: 'panel.notes' },
-  todos: { icon: ListChecks, key: 'panel.todos' },
   tokens: { icon: Coins, key: 'panel.tokens' },
+  notes: { icon: NotebookPen, key: 'panel.notes' },
 }
 
 const DROP_LABEL: Record<DropKind, Key> = {
@@ -135,7 +138,7 @@ export function RightPanel(props: Props) {
   }, [])
 
   const focused = layout.groups[0].active
-  const split = notesTodosSplit(layout)
+  const density = panelDensity(width)
 
   // A stored layout is not a promise about the screen it comes back on. Four
   // panes in a browser window dragged short is four tab strips and no content,
@@ -297,32 +300,62 @@ export function RightPanel(props: Props) {
   }
 
   const bodyFor = (tab: PanelTab) => {
-    // Before the no-project guard, and the only tab that is. The others
-    // are all *about* a project — its files, its notes, its sessions' load —
-    // and have nothing to say without one. Token spend is a fact about the
-    // machine: an agent that ran in a directory the panel has never been told
-    // about still spent it, and hiding the whole tab until somebody adds a
-    // project would hide exactly that case.
+    // Two tabs sit above the no-project guard, because both are facts about
+    // the *machine* rather than about a project. An agent that ran in a
+    // directory the panel has never been told about still spent tokens, and
+    // hiding the whole tab until somebody adds a project would hide exactly
+    // that case. The monitor is the same argument one step further: the strip
+    // at the foot of this panel is already showing the machine's CPU, memory
+    // and disk with no project anywhere, so a monitor tab reading "no project
+    // selected" above it was the panel disagreeing with itself.
+    //
+    // The other two are about a project — its files, its notes — and have
+    // nothing to say without one.
     if (tab === 'tokens') {
-      return <TokenUsage projectId={project?.id ?? null} onOpen={props.onOpenTokens} />
+      return (
+        <TokenUsage
+          projectId={project?.id ?? null}
+          density={density}
+          onOpen={props.onOpenTokens}
+        />
+      )
     }
+    if (tab === 'monitor') return <SystemMonitor sessions={props.sessions} density={density} />
     if (!project) {
+      // One line, not two. A stacked tab with no project would otherwise say
+      // "no project selected" twice with a divider between them, which reads
+      // as two failures rather than as one absence.
       return <p className="px-3 py-4 text-vp-base text-ink-2">{t('panel.noProject')}</p>
     }
-    if (tab === 'files') return <FileTree key={project.id} projectId={project.id} />
-    if (tab === 'git') {
-      return <GitPanel key={project.id} projectId={project.id} sessions={props.sessions} />
+    if (tab === 'files') {
+      return (
+        <StackedTab
+          key={project.id}
+          id="files"
+          label="panel.git"
+          icon={GitBranch}
+          top={<FileTree projectId={project.id} density={density} />}
+          bottom={<GitPanel projectId={project.id} sessions={props.sessions} />}
+        />
+      )
     }
-    if (tab === 'monitor') return <SystemMonitor sessions={props.sessions} />
-    if (tab === 'notes') return <Notes key={project.id} projectId={project.id} socket={props.socket} />
-    return <Todos key={project.id} projectId={project.id} socket={props.socket} />
+    return (
+      <StackedTab
+        key={project.id}
+        id="notes"
+        label="panel.todos"
+        icon={ListChecks}
+        top={<Notes projectId={project.id} socket={props.socket} />}
+        bottom={<Todos projectId={project.id} socket={props.socket} density={density} />}
+      />
+    )
   }
 
   return (
     <aside
       data-testid="right-panel"
       data-tab={focused}
-      data-split={split}
+      data-density={density}
       data-panes={layout.groups.length}
       data-dragging={drag ? drag.tab : undefined}
       // It arrives from the edge it lives on. Opening a panel is a reveal, and
@@ -504,15 +537,23 @@ function Pane(props: PaneProps) {
   const lang = useLang()
   const tab = group.active
   const solo = group.tabs.length === 1
-  const labelled = paneLabelled(width, group.tabs.length)
   const panelHeader = index === 0
 
   // Where the marker sits, measured rather than computed.
   //
-  // The tabs are not equal widths — the selected one grows to hold its name —
-  // so there is no arithmetic that gets this right, and a marker a few pixels
-  // out is worse than none. offsetLeft is relative to the track, which is the
-  // marker's containing block.
+  // Still measured, and the reason changed. It used to be that the tabs were
+  // *not* equal widths — the selected one grew to hold its name — so no
+  // arithmetic got it right. The tabs are icons now and `flex: 1 1 0` makes
+  // them equal, so `index / count` would very nearly work. It is still wrong at
+  // the edges: the track has 2px of padding, the tabs have a gap, and a marker
+  // two pixels out reads as a marker that missed. Measuring costs one
+  // ResizeObserver and cannot be off.
+  //
+  // What the equal widths did change is what the movement looks like. The
+  // marker used to grow into a wider destination as it travelled and the eye
+  // read the growth as much as the travel; now the width is constant and the
+  // travel is all there is, which is why the panes-check assertion about the
+  // marker being mid-flight a frame later matters more than it did.
   //
   // A plain effect, and it was written here as useLayoutEffect first with a
   // confident comment about a property that changes without an intervening
@@ -538,10 +579,10 @@ function Pane(props: PaneProps) {
       setMarker({ left: el.offsetLeft, width: el.offsetWidth })
     }
     measure()
-    // The label folds open over 260ms and the tab grows with it, so the final
-    // geometry is not available at the moment the tab changes. Observing both
-    // boxes is what makes the marker travel with the tab instead of to where
-    // the tab used to be going.
+    // The panel is dragged wider and narrower and the tabs divide whatever is
+    // there, so the marker's destination moves without the tab changing.
+    // Observing both boxes is what makes it travel with the tab rather than to
+    // where the tab used to be.
     const ro = new ResizeObserver(measure)
     ro.observe(track)
     ro.observe(el)
@@ -588,7 +629,6 @@ function Pane(props: PaneProps) {
           role="tablist"
           aria-label={t('panel.tablist')}
           aria-orientation="horizontal"
-          data-labelled={labelled}
           data-solo={solo}
           data-marker={marker ? 'on' : 'off'}
           className="vp-segmented flex-1"
@@ -643,10 +683,14 @@ function Pane(props: PaneProps) {
                 onPointerUp={props.tabDrag.onPointerUp}
                 onPointerCancel={props.tabDrag.onPointerCancel}
                 title={label}
-                className="vp-tab vp-tab-drag text-vp-sm"
+                // The name, for anything that is not an eye. The strip draws
+                // no words at all now, so this is the whole of it: without it
+                // a screen reader announces four buttons with no names and a
+                // tooltip is not something a finger can ask for.
+                aria-label={label}
+                className="vp-tab vp-tab-drag"
               >
-                <Icon size={13} className="shrink-0" />
-                <span className="vp-tab-label">{label}</span>
+                <Icon size={14} className="vp-tab-icon shrink-0" />
               </button>
             )
           })}
@@ -656,7 +700,7 @@ function Pane(props: PaneProps) {
 
         {/* Rendered from the list rather than written out, so "which controls
             are in this strip" is one answer in one place a test can sweep. The
-            menu is on every pane; the panel's own two are on the first, which
+            menu is on every pane; the panel's own one is on the first, which
             is a structural rule rather than one that changes under a pointer.
             See paneControls(). */}
         {paneControls(index, panelHeader).map((control) => {
@@ -674,25 +718,6 @@ function Pane(props: PaneProps) {
                 className="vp-control"
               >
                 <EllipsisVertical size={14} />
-              </button>
-            )
-          }
-          if (control.id === 'split') {
-            return (
-              <button
-                key={control.id}
-                type="button"
-                data-testid={control.testid}
-                onClick={() => props.onLayout(toggleNotesTodos(layout))}
-                aria-pressed={notesTodosSplit(layout)}
-                title={t(notesTodosSplit(layout) ? 'panel.splitOff' : 'panel.splitOn')}
-                className="vp-control"
-              >
-                {/* The current arrangement, by shape: one pane or two rows.
-                    The accent tint says the same thing a second way, which is
-                    the point — a pressed state carried by hue alone is
-                    unreadable in a dark room at 2am. */}
-                {notesTodosSplit(layout) ? <Rows2 size={14} /> : <Square size={14} />}
               </button>
             )
           }
@@ -742,7 +767,28 @@ function Pane(props: PaneProps) {
           aria-labelledby={`panel-tab-${tab}`}
           className="h-full overflow-x-clip overflow-y-auto border-t border-hairline"
         >
-          <div key={tab} data-dir={swap.dir} className="vp-swap min-h-full">
+          {/* `h-full` for a tab that divides the pane's height itself — a panel
+              over a panel with a grip between them — and `min-h-full` for one
+              that is a single scrolling column.
+
+              The difference is the whole of whether a stacked tab exists.
+              `min-h-full` leaves the box's height as its content's, so the flex
+              column inside it has no height to divide and collapses to its two
+              headers with the divider between them and nothing else.
+              tabOwnsHeight() names which is which, in chrome.ts, because the
+              second place this is decided is the place that forgets.
+
+              The scroller above stays `overflow-y-auto` for both. It was
+              `overflow-y-hidden` for a stacked tab on the reasoning that a
+              scroller cannot hold one — true of the height, which is what
+              `h-full` here settles, and untrue of the overflow: a child that is
+              exactly its parent's height never scrolls it. Mutation testing
+              found it, by removing the branch and watching nothing go red. */}
+          <div
+            key={tab}
+            data-dir={swap.dir}
+            className={`vp-swap ${tabOwnsHeight(tab) ? 'h-full' : 'min-h-full'}`}
+          >
             <ErrorBoundary label={`The ${tab} panel`}>
               {props.body(tab)}
             </ErrorBoundary>

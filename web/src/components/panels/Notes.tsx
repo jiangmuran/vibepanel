@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, ConflictError } from '../../protocol/api'
 import type { PanelSocket } from '../../protocol/socket'
 import { t, useLang } from '../../i18n'
+import { formatAgo } from './ago'
 
 /** How long typing has to pause before a save goes out. */
 const SAVE_DEBOUNCE_MS = 800
@@ -24,6 +25,12 @@ export function Notes({ projectId, socket }: { projectId: string; socket: PanelS
     'loading' | 'saved' | 'saving' | 'dirty' | 'error' | 'conflict'
   >('loading')
   const [error, setError] = useState<string | null>(null)
+  // When the server last wrote this note, and one clock to read it against.
+  // `updatedAt` arrives with every load and every save and was dropped on the
+  // floor by both — so the status line could say "saved" and not say *when*,
+  // which is the whole question when a note has been open in two windows.
+  const [updatedAt, setUpdatedAt] = useState(0)
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000))
   const timer = useRef(0)
   // The text a scheduled save is going to write, kept outside React state so
   // the flush below can reach it from an unmount or an unload, when there is
@@ -103,6 +110,8 @@ export function Notes({ projectId, socket }: { projectId: string; socket: PanelS
         if (ignore) return
         saved.current = note.content
         base.current = note.rev
+        setUpdatedAt(note.updatedAt)
+        setNow(Math.floor(Date.now() / 1000))
         setContent(note.content)
         setStatus('saved')
       })
@@ -130,6 +139,8 @@ export function Notes({ projectId, socket }: { projectId: string; socket: PanelS
           if (statusRef.current !== 'saved') return
           saved.current = note.content
           base.current = note.rev
+          setUpdatedAt(note.updatedAt)
+          setNow(Math.floor(Date.now() / 1000))
           setContent(note.content)
         })
         .catch(() => {
@@ -154,6 +165,8 @@ export function Notes({ projectId, socket }: { projectId: string; socket: PanelS
           .then((note) => {
             saved.current = next
             base.current = note.rev
+            setUpdatedAt(note.updatedAt)
+            setNow(Math.floor(Date.now() / 1000))
             // Only clear the indicator if nothing was typed while the request
             // was in flight; otherwise it would claim saved while dirty.
             setStatus((s) => (s === 'saving' ? 'saved' : s))
@@ -209,13 +222,44 @@ export function Notes({ projectId, socket }: { projectId: string; socket: PanelS
         spellCheck={false}
         className="min-h-0 flex-1 resize-none bg-transparent px-3 py-2 text-vp-base leading-relaxed text-ink outline-none placeholder:text-ink-2"
       />
+      {/* Three facts on the line that used to carry one, because the line was
+          already there and two thirds of it was empty. How big the note is
+          answers "did that paste land"; when the server last wrote it answers
+          "is what I am looking at what the other window saved". Both are
+          measured, neither is a guess.
+
+          Character count from the text on screen rather than from the server:
+          it has to be right *while you are typing*, which is the only moment
+          anybody looks at it. Line count beside it because a note in Markdown
+          is read in lines. */}
       <div
         data-testid="notes-status"
         data-status={status}
-        className="shrink-0 px-3 py-1 text-right text-vp-xs"
-        style={{ color: status === 'error' ? 'var(--vp-state-waiting)' : 'var(--vp-ink-2)' }}
+        className="tabular flex shrink-0 items-baseline justify-between gap-2 px-3 py-1 text-vp-xs text-ink-2"
       >
-        {label[status]}
+        <span className="shrink-0">
+          {content.length > 0 && (
+            <>
+              {t('notes.chars', { n: content.length.toLocaleString() })}
+              {' · '}
+              {t('notes.lines', { n: content.split('\n').length.toLocaleString() })}
+            </>
+          )}
+        </span>
+        {/* The truncating half is this one, not the counts: an error keeps the
+            server's own text -- it is the only thing that says which failure
+            it was -- and "This note changed in another window" is longer than
+            the panel is wide at its narrowest. */}
+        <span
+          className="min-w-0 truncate"
+          title={label[status]}
+          style={{ color: status === 'error' ? 'var(--vp-state-waiting)' : 'var(--vp-ink-2)' }}
+        >
+          {label[status]}
+          {status === 'saved' && updatedAt > 0 && (
+            <span className="text-ink-2"> · {formatAgo(updatedAt, now)}</span>
+          )}
+        </span>
       </div>
     </div>
   )

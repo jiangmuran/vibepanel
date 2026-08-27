@@ -16,7 +16,8 @@ import type { GitHubResult, GitInfo, GitPR, GitSession, Session } from '../../pr
 import { getLang, t, useLang, type Key } from '../../i18n'
 import { safeText } from '../text'
 import { StateDot } from '../StateDot'
-import { agoParts, checkTone, dirtyTotal, prForBranch, reviewTone, type CheckTone } from './git'
+import { agoParts } from './ago'
+import { checkTone, dirtyTotal, prForBranch, reviewTone, type CheckTone } from './git'
 
 /**
  * What the repository is doing, for somebody watching agents edit it.

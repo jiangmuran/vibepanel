@@ -872,14 +872,21 @@ body {
 /* The segmented track, and the marker that slides inside it.
  *
  * The marker is why switching tabs is a *move* and not two repaints on the
- * same frame. Five destinations swapping their backgrounds at once give the
+ * same frame. Four destinations swapping their backgrounds at once give the
  * eye nothing to follow, so it has to find the selection again from scratch —
  * which is the complaint. One marker travelling from the old tab to the new is
  * the same fact delivered as a movement.
  *
- * It carries nothing by itself. The selected tab is the darker one, it is the
- * one named in words while the rest are icons, and it reports aria-selected;
- * under prefers-reduced-motion the marker simply arrives. */
+ * The strip is icons now, so the tabs are equal widths and the marker's own
+ * width no longer changes as it travels. That took away half of what made the
+ * movement legible — the growth was as readable as the travel — so the tab
+ * under it lifts its glyph instead (`.vp-tab-icon` below). Two things move,
+ * one of them is the destination, and neither is the only thing saying which
+ * tab you are on.
+ *
+ * It carries nothing by itself. The selected tab is the darker one, it reports
+ * aria-selected, and its name is on `title` and `aria-label`; under
+ * prefers-reduced-motion the marker simply arrives. */
 .vp-segmented {
   position: relative;
   display: flex;
@@ -898,12 +905,6 @@ body {
   justify-content: center;
 }
 
-/* Wider, but only when it has a name to show. See panelChrome() for the width
-   that decision is made at and why it is made there rather than here. */
-.vp-segmented[data-labelled='true'] > .vp-tab[aria-selected='true'] {
-  flex-grow: 2.4;
-}
-
 /* Until the marker has been measured the selected tab wears the lift itself —
    the first paint, and any environment where layout reports nothing at all: a
    display:none ancestor, a headless probe. It looks identical, which is the
@@ -914,24 +915,38 @@ body {
   box-shadow: none;
 }
 
-/* The name folds; it does not blink out.
+/* The glyph on the tab you are on.
  *
- * A label that is simply absent below 250px is a strip that restructures
- * itself while the pointer is inside it — the same complaint as a button that
- * appears, one size down. Folded, the same fact arrives as a movement you can
- * follow, and under prefers-reduced-motion it is still just present or absent,
- * which is where it started. */
-.vp-tab-label {
-  overflow: hidden;
-  white-space: nowrap;
-  max-width: 0;
-  opacity: 0;
-  transition: max-width 260ms var(--vp-ease), opacity 200ms var(--vp-ease);
+ * `.vp-tab-label` was here — a name that folded open on the selected tab over
+ * 260ms — and the strip has no names in it any more: 「用量的icon 不显示汉字」.
+ * The name lives on `title` and `aria-label`, which is where a pointer and a
+ * screen reader look for it.
+ *
+ * What the fold was doing, besides naming the tab, was making the selection
+ * change legible as a movement: the tab grew, the marker followed it, and the
+ * eye had something to track. Equal icons give the marker a constant width and
+ * a shorter distance, so this replaces the growth with a lift on the glyph
+ * itself — full opacity and a hair larger. It is the third thing saying which
+ * tab is selected, after the marker and aria-selected, and under
+ * prefers-reduced-motion it is still just brighter, which is where it started.
+ *
+ * transform rather than font-size or width: it is composited, so it cannot
+ * reflow the strip mid-animation and cannot move the marker it is standing
+ * under. */
+.vp-tab-icon {
+  opacity: 0.75;
+  transition: opacity 200ms var(--vp-ease), transform 200ms var(--vp-ease);
 }
 
-.vp-segmented[data-labelled='true'] > .vp-tab[aria-selected='true'] .vp-tab-label {
-  max-width: 6rem;
+.vp-tab[aria-selected='true'] .vp-tab-icon,
+.vp-tab[data-active='true'] .vp-tab-icon,
+.vp-tab:hover .vp-tab-icon {
   opacity: 1;
+}
+
+.vp-tab[aria-selected='true'] .vp-tab-icon,
+.vp-tab[data-active='true'] .vp-tab-icon {
+  transform: scale(1.12);
 }
 
 .vp-marker {
@@ -1144,7 +1159,100 @@ body {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+    /* The delay, as well as the duration.
+       A staggered list (`.vp-rows`) uses `animation-delay` with a `backwards`
+       fill, so the last row holds its from-state — opacity 0 — for the whole
+       delay whatever the duration is. Collapsing only the duration left the
+       eighth row of the monitor invisible for 175ms to exactly the people who
+       asked for no animation. */
+    animation-delay: 0ms !important;
+    transition-delay: 0ms !important;
   }
+}
+
+/* A meter's fill.
+ *
+ * Four components drew this by hand — a rounded track with `bg-surface-2`, a
+ * rounded fill with `transition-[width] duration-500 ease-vp` — and they had
+ * already drifted two ways: 500ms in the monitor and 500ms in the strip, but
+ * `h-1.5` in one and `h-1` in the other with the radius written out at each
+ * site. It is the same object, so it is defined once, which is the same
+ * argument `.vp-control` settled one section up.
+ *
+ * The width transition is the whole animation. A meter that jumps between
+ * samples reads as a fresh reading; one that travels reads as the same
+ * quantity changing, which is what it is. Two seconds between samples and
+ * 500ms of travel means it is still for three quarters of the interval — a
+ * bar that is always moving is a bar nobody can read a value off.
+ *
+ * The colour is left to the caller: it is pressure, it is chosen per meter,
+ * and it is never alone — the number beside every one of these says the same
+ * thing (red line 4). */
+.vp-bar {
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--vp-surface-2);
+}
+
+.vp-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transition: width 500ms var(--vp-ease);
+}
+
+/* A list that fills in rather than appearing.
+ *
+ * Six session rows or four meters arriving on one frame is a block of text
+ * that was not there and now is; the eye has to re-read all of it to find what
+ * changed. Staggered, they arrive in the order they are sorted in — busiest
+ * first, in the monitor — and the order is itself the information.
+ *
+ * The delays are written out rather than computed because CSS cannot count.
+ * Eight is where it stops: past that the last row would arrive a third of a
+ * second late, which is a wait rather than a movement, and a list long enough
+ * to have a ninth row is a list you scroll rather than watch.
+ *
+ * It runs on mount only, and it carries nothing: every row is fully opaque
+ * 200ms later, and under prefers-reduced-motion they are all opaque
+ * immediately. */
+@keyframes vp-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.vp-rows > * {
+  animation: vp-row-in 200ms var(--vp-ease) backwards;
+}
+
+.vp-rows > *:nth-child(2) { animation-delay: 25ms; }
+.vp-rows > *:nth-child(3) { animation-delay: 50ms; }
+.vp-rows > *:nth-child(4) { animation-delay: 75ms; }
+.vp-rows > *:nth-child(5) { animation-delay: 100ms; }
+.vp-rows > *:nth-child(6) { animation-delay: 125ms; }
+.vp-rows > *:nth-child(7) { animation-delay: 150ms; }
+.vp-rows > *:nth-child(n + 8) { animation-delay: 175ms; }
+
+/* Half of a stacked tab, while nothing is dragging it.
+ *
+ * The divider inside a tab is dragged with a pointer and stepped with the
+ * arrow keys, and the two want opposite things. A keyboard step is discrete —
+ * 16 pixels appearing from nowhere reads as a jump, and easing it is what makes
+ * it read as one boundary moving. A pointer drag is already continuous, and a
+ * transition on the thing under the pointer means the divider arrives where the
+ * pointer was two frames ago, which reads as the panel lagging.
+ *
+ * So the class is applied only while `data-dragging` is false; StackedTab does
+ * that in the component rather than here, because the state is the component's.
+ * Under prefers-reduced-motion the keyboard step simply arrives. */
+.vp-stack-half {
+  transition: flex-grow 180ms var(--vp-ease);
 }
 
 /* The working indicator breathes rather than blinking: a blink in the corner

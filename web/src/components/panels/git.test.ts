@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { agoParts, checkTone, dirtyTotal, prForBranch, reviewTone } from './git'
+import { checkTone, dirtyTotal, prForBranch, reviewTone } from './git'
 import type { GitPR, GitStatus } from '../../protocol/wire'
 
 const status = (over: Partial<GitStatus> = {}): GitStatus => ({
@@ -95,25 +95,5 @@ describe('the words for a review decision', () => {
     expect(reviewTone('review_required')).toBe('wait')
     // No review required on this base is not "nobody looked".
     expect(reviewTone('')).toBe('none')
-  })
-})
-
-describe('how long ago something happened', () => {
-  const now = 1_700_000_000
-
-  it('climbs a unit at a time', () => {
-    expect(agoParts(now - 30, now)).toEqual({ value: -30, unit: 'second' })
-    expect(agoParts(now - 120, now)).toEqual({ value: -2, unit: 'minute' })
-    expect(agoParts(now - 7200, now)).toEqual({ value: -2, unit: 'hour' })
-    expect(agoParts(now - 3 * 86400, now)).toEqual({ value: -3, unit: 'day' })
-    expect(agoParts(now - 60 * 86400, now)).toEqual({ value: -2, unit: 'month' })
-    expect(agoParts(now - 800 * 86400, now)).toEqual({ value: -2, unit: 'year' })
-  })
-
-  it('clamps a commit from the future to now', () => {
-    // Clocks differ across machines that share a repository, and "in 3 hours"
-    // under a commit reads as the panel being broken rather than as the clock
-    // being wrong.
-    expect(agoParts(now + 10_000, now)).toEqual({ value: 0, unit: 'second' })
   })
 })

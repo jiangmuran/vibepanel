@@ -99,6 +99,45 @@ describe('theme blocks', () => {
   })
 })
 
+describe('motion that collapses to nothing', () => {
+  /*
+   * The reduced-motion block is what makes every animation in this file
+   * optional, so anything it fails to reset is an animation somebody who asked
+   * for none still gets.
+   *
+   * The delay is the one that bites. A staggered list (`.vp-rows`) uses
+   * `animation-delay` with a `backwards` fill, so the last row holds its
+   * from-state -- opacity 0 -- for the whole delay whatever the duration is.
+   * Collapsing only the duration left the eighth row of the monitor invisible
+   * for 175ms to exactly the people who asked for it not to move.
+   */
+  const block = (() => {
+    const at = stripped.indexOf('@media (prefers-reduced-motion: reduce)')
+    return at < 0 ? '' : blockAt(stripped, at).body
+  })()
+
+  it('exists', () => {
+    // Without this the two below pass by measuring an empty string.
+    expect(block.length).toBeGreaterThan(20)
+  })
+
+  it('has something to collapse', () => {
+    // A stagger with no delays is not a stagger, and the assertion below would
+    // pass over a stylesheet that had lost it.
+    const delays = [...stripped.matchAll(/animation-delay:\s*\d+ms/g)]
+    expect(delays.length, 'no staggered animation left to protect').toBeGreaterThan(3)
+  })
+
+  it('collapses the delay as well as the duration', () => {
+    for (const prop of ['animation-duration', 'animation-delay', 'transition-duration']) {
+      expect(
+        declaredProperties(block),
+        `an animation's ${prop} survives prefers-reduced-motion`,
+      ).toContain(prop)
+    }
+  })
+})
+
 describe('theme tokens', () => {
   const rootBody = (() => {
     // The bare `:root {` at the top, not `:root[data-theme=...]`.
