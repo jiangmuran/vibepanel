@@ -37,7 +37,12 @@ for target in linux/amd64 linux/arm64 darwin/arm64; do
     go build -trimpath -ldflags "$LDFLAGS" -o "dist/${name}/vibepanel" ./cmd/vibepanel
 
   mkdir -p "dist/${name}/deploy"
-  cp deploy/vibepanel.service deploy/vibepanel.env "dist/${name}/deploy/"
+  # vibepanel-system.service ships too, and not as documentation: install.sh
+  # offers it whenever root is available and installs it from here. It was left
+  # out of the archive while the README told people to run it, so the one path
+  # that needs root was the one path only a git clone had.
+  cp deploy/vibepanel.service deploy/vibepanel-system.service deploy/vibepanel.env \
+     "dist/${name}/deploy/"
   # The install script is the difference between "unpack it and it runs" and
   # five manual steps documented in a comment inside a file you have not opened.
   cp deploy/install.sh "dist/${name}/deploy/"

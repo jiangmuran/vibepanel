@@ -73,33 +73,61 @@
 ```sh
 tar -xzf vibepanel_<version>_linux_amd64.tar.gz
 cd vibepanel_<version>_linux_amd64
-./deploy/install.sh --enable          # 它碰的所有东西都在 $HOME 底下
-journalctl --user -u vibepanel -n 30  # 一次性的 setup token
+./deploy/install.sh
 ```
 
-不需要 root：这是 systemd **user** service，因为面板是以你的身份、用你的密钥和你的
-dotfiles 跑 agent 的。安装脚本会顺手替你开 lingering —— 这不是可选项：user service 会在
-你最后一个登录会话结束时停掉，而一个「你一登出就死」的面板只是看起来能用。
+它会问你。装哪一种服务、要不要现在就起来，然后把接下来要做的事整个列出来，等你点头才
+动手。跑完会告诉你：装的是哪个 unit、是「启动」还是「重启」、一次性的 setup token 在哪
+里看、以及该打开哪个地址。
+
+默认是 systemd **user** service，因为面板是以你的身份、用你的密钥和你的 dotfiles 跑
+agent 的，整件事不需要 root。安装脚本还会顺手替你开 lingering —— 这不是可选项：user
+service 会在你最后一个登录会话结束时停掉，而一个「你一登出就死」的面板只是看起来能用。
+
+如果这台机器上拿得到 root（你就是 root，或者 `sudo` 能用），它会把系统级服务也作为一个
+选项摆出来，并且就在问你的地方把区别讲清楚。如果拿不到 root，它会直说，然后改装 user
+service —— 它不会因为一件你当下无法解决的事情而失败。
 
 打开 `http://<主机>:8443`，粘贴 setup token，设一个密码。首次配置到此结束。
 
 <details>
-<summary><b>改成系统级服务</b></summary>
+<summary><b>无人值守：CI 和 <code>curl | bash</code></b></summary>
 
-如果机器内存吃得比较紧，或者你希望没人登录时面板也已经起来了，用
-`deploy/vibepanel-system.service`：
+只有 stdin **和** stdout 都是终端时才会出现提问，所以管道里跑到的就是以前那套行为，不
+需要额外交代。要写清楚的话：
 
 ```sh
-sudo cp deploy/vibepanel-system.service /etc/systemd/system/vibepanel.service
-sudo sed -i "s/__USER__/$USER/g; s#__HOME__#$HOME#g" /etc/systemd/system/vibepanel.service
-sudo systemctl daemon-reload && sudo systemctl enable --now vibepanel
+./deploy/install.sh --yes --enable    # 不问，装 user service，并启动
+./deploy/install.sh --yes --system    # 不问，装系统级服务（需要 root）
+./deploy/install.sh --help
 ```
+
+`--yes` 全部取默认值；`--enable` 启动服务；`--user` / `--system` 指定 unit 种类；
+`--migrate` 允许把已经装着的那一种换成另一种。
+
+</details>
+
+<details>
+<summary><b>改成系统级服务</b></summary>
+
+```sh
+./deploy/install.sh --system          # 已经装了 user unit 的话再加 --migrate
+```
+
+如果机器内存吃得比较紧，或者你希望没人登录时面板也已经起来了，就选它。脚本会把用户名和
+home 目录替换进去，写到 `/etc/systemd/system/vibepanel.service`；服务本身依然会切到
+`User=<你>` —— 同一个账号、同一套环境、同一批 agent。
 
 区别是实测出来的，不是推测：**user** unit 里写 `OOMScoreAdjust=-500`，进程实际读到的是
 `100` —— 调低这个值需要 `CAP_SYS_RESOURCE`，而 user manager 没有。更糟的是
 `systemd-analyze verify` 两种写法都放行。系统级 unit 会在切到 `User=` 之前设好，进程才
 真的读到 `-500`：这样一来，面板和它手里握着全部会话的 tmux server，会是内核最后才动的
 东西。
+
+**两种只能有一种。** user unit 和系统级 unit 同时存在，等于两个面板共用一个 tmux socket
+和一个数据库；它们不会吵起来，只会轮流写，症状是「面板会忘事」。安装脚本发现另一种已经
+装着时会拒绝，而不是悄悄再装一个 —— `--migrate` 是你明确表示「我就是要换」的方式，它会
+先停掉并删掉旧的，再装新的。
 
 </details>
 
@@ -158,6 +186,10 @@ tar -xzf vibepanel_<新版本>_linux_amd64.tar.gz
 cd vibepanel_<新版本>_linux_amd64
 ./deploy/install.sh              # 换掉二进制并重启服务
 ```
+
+它会沿用你现在装着的那种 unit，不会再问一遍；而且只要服务本来就在跑，不管你有没有加
+`--enable` 都会重启它 —— 新二进制躺在磁盘上、旧的还在服务，就是下面那条「看起来什么都
+没发生」的故障。
 
 会话不会跟着重启。任何开着面板的浏览器重连后会发现构建变了并提示刷新——网页只是视图，
 刷新不花任何代价。

@@ -470,6 +470,51 @@ A server started before this check existed reports `the running server predates
 this check` — the stamp is written at `start-server`, so there is nothing to
 compare against until the next one.
 
+## Two panels: a user unit and a system unit at once
+
+**Symptom.** Nothing fails. Notes and todos come back stale or empty, a project
+added in the morning is gone by the afternoon, the session list disagrees with
+`tmux -L vibepanel ls` in one direction and then the other, and every restart
+seems to fix it for a while. `doctor` is clean, because from inside either panel
+everything is exactly as it should be.
+
+**Cause.** Both units are installed and enabled, so two processes are serving the
+same data directory on the same tmux socket. SQLite does not let them corrupt the
+file; they take turns, and each one's in-memory view drifts from the other's. The
+`running panel` line in `doctor` reports one pid — the one it found — and says
+nothing about the second.
+
+`install.sh` refuses to create the second unit now, and asks to migrate instead.
+This is for a machine where both were installed before that, or by hand.
+
+```sh
+systemctl --user is-enabled vibepanel   # the user unit
+systemctl is-enabled vibepanel          # the system unit
+ls ~/.config/systemd/user/vibepanel.service /etc/systemd/system/vibepanel.service
+```
+
+Two answers that are not "No such file or directory" is the diagnosis. Keep one —
+the system unit if you installed it for `OOMScoreAdjust`, the user unit
+otherwise — and remove the other:
+
+```sh
+# keeping the system unit
+systemctl --user disable --now vibepanel
+rm ~/.config/systemd/user/vibepanel.service
+systemctl --user daemon-reload
+
+# or keeping the user unit
+sudo systemctl disable --now vibepanel
+sudo rm /etc/systemd/system/vibepanel.service
+sudo systemctl daemon-reload
+```
+
+Sessions survive both of those: `KillMode=process` is in both units, so stopping
+either leaves the tmux server and everything under it alone. Start the survivor
+and the panel's view is whatever the last writer wrote — check the project list
+and the notes on anything you edited that day, because a write from the panel you
+just stopped may have been the one that lost.
+
 ## A killed agent shows as "exited 0" (tmux 3.4 and older)
 
 **Symptom.** A session whose process was killed — by you, by the OOM killer,
