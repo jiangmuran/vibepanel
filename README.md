@@ -4,11 +4,7 @@
 
 # vibepanel
 
-**A web console for running many parallel coding-agent sessions.**
-
-tmux keeps the processes alive. The browser owns everything else: how sessions are
-grouped into projects, what they are called, which one needs you right now, and
-what order they appear in.
+**Run a dozen coding agents at once and see which one is waiting for you.**
 
 [![check](https://github.com/jiangmuran/vibepanel/actions/workflows/check.yml/badge.svg)](https://github.com/jiangmuran/vibepanel/actions/workflows/check.yml)
 [![Go 1.26](https://img.shields.io/badge/go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
@@ -21,99 +17,65 @@ what order they appear in.
 
 ![The panel](docs/images/panel-dark.png)
 
-## The problem
+<sup>The sidebar is every session, grouped by project, with whatever is blocked
+on you at the top. Triangle: stopped to ask a question. Circle: still working.
+Check: finished. Cross: exited non-zero. The strip along the bottom is a scratch
+terminal attached to the selected session. On the right, the project's files,
+and under them the machine's CPU, memory and disk.</sup>
 
-Run a dozen coding agents at once and a terminal multiplexer gives you a flat strip
-of tabs called `bash`. You cannot tell which agent is waiting on a confirmation and
-which is still working without clicking into each one. Tabs belonging to one project
-are scattered among tabs from five others. None of it is usable from a phone.
+## What it is
 
-That is a task-management problem wearing a terminal costume. vibepanel splits the
-two apart: **tmux does process persistence, the web UI does organisation.**
+A single Go binary that serves one web page. Every session it creates is a real
+tmux session holding a shell in a project's directory. You type the command:
+`claude`, `codex`, a test loop, a `tail -f`.
 
-## What you get
+The panel takes care of what tmux has no opinion about. Sessions belong to
+projects. Names stick. Status is readable at a glance and the ones that need you
+sort to the top. Each project carries notes, todos and a file tree. The whole
+thing works on a phone.
 
-- **Sessions that outlive the panel.** Every session is a tmux session on a
-  dedicated socket. Restart, upgrade or crash the panel and nothing notices —
-  the processes are children of the tmux server, not of this program.
-- **A status you can read across the room.** *working*, *waiting for you*, *done*.
-  Waiting sorts first and is the loudest thing on screen. States are told to the
-  panel by the agent where a hook is installed, and read from the output stream
-  where it is not.
-- **Projects, names that stick, and ordering that means something.** Rename a
-  session and it stays renamed; the automatic title from the pane never overwrites
-  a name you chose.
-- **The same session in several places at once.** One authoritative grid per
-  session, owned by whoever last typed. Other viewers scale it rather than reflow
-  it — an agent's TUI is not confetti on your phone.
-- **A phone layout that is not a shrunken desktop.** A command composer that gets
-  along with an IME, a soft key row with `esc` `tab` `ctrl` and the `y`/`n`/`1`/`2`
-  answers agents actually ask for, and touch selection with drag handles.
-- **Files without a transfer protocol.** Click to download. Drop onto the terminal
-  to upload — it lands next to the session and types its absolute path at the
-  prompt, ready to press enter on. Paste a screenshot straight into the terminal
-  and the same thing happens.
-- **Notes, todos, a file tree and system load** per project, in the side panel.
-- **English and 简体中文**, chosen automatically from the browser and switchable in
-  settings.
-- **Install as an app.** A PWA with notifications, so a session that starts waiting
-  reaches your phone with the panel in the background.
-- **A read-only dashboard on a second screen.** Make a share link in settings and
-  open it on the monitor beside you: machine load, what every session is costing,
-  who is waiting for you, in type you can read across a room — and a connection
-  state you cannot mistake for a quiet system. The link reaches that one page and
-  nothing else, and by default it shows no names at all.
-- **An HTTP API for agents**, with tokens that are separate from your password —
-  see [docs/api.md](docs/api.md).
-- **Passkeys, passwords, TLS of its own**, including automatic certificates over
-  DNS-01. It is designed to face the public internet.
+Nothing you run belongs to the panel. Restart it, upgrade it or kill it, and
+the agents carry on under tmux.
 
-<div align="center">
-<img src="docs/images/panel-light.png" width="49%" alt="Light theme, in Simplified Chinese">
-<img src="docs/images/phone.png" width="20%" alt="The phone layout">
-</div>
+## Who it's for
+
+You keep several agents going at once, across more than one repository, on a
+machine that stays up: a workstation you also reach from a laptop, or a VPS you
+check from your phone.
+
+If you run one agent at a time in a terminal that is already in front of you,
+you do not need this.
+
+Three things to know before you install:
+
+- **Linux, amd64 or arm64.** The machine monitor reads `/proc` and the installer
+  writes systemd units. A `darwin/arm64` binary is built and the panel runs, but
+  the monitor is blank and you supervise it yourself.
+- **One account.** No sharing, no roles. For a second screen there is a
+  [read-only share link](#share-links).
+- **Agents run as you**, with your keys, your dotfiles and your repositories.
+  Anyone who gets into the panel has a shell as you.
 
 ## Requirements
 
-- **tmux 3.3 or newer** (`apt install tmux`).
+tmux 3.3 or newer (`apt install tmux`). Nothing else: the release binary is
+static, with the frontend, the database driver and the TLS client inside it.
 
-  3.3 rather than 3.2 because the embedded config sets `allow-passthrough`, which
-  arrived in 3.3. An older tmux does not refuse to start: it reports an unknown
-  option, carries on with defaults, and the sequences agent TUIs use for progress
-  and notifications are quietly swallowed from then on.
+The 3.3 floor is `allow-passthrough`. An older tmux still starts the panel, and
+agent TUIs lose the escape sequences they use for progress bars and
+notifications. `vibepanel doctor` reports it.
 
-  The test suite is run against **3.4** — what Ubuntu 24.04 LTS ships — as well
-  as 3.6, because the two differ in ways that reach the product: how tmux
-  escapes its own `-F` output, and how eagerly it repaints an attached client.
-  Point it at any tmux with `TEST_TMUX_BIN=/path/to/tmux go test ./...`.
-- **Nothing else.** The release binary is static and self-contained — the frontend,
-  the database driver and the TLS client are all inside it.
+CI runs the suite on tmux 3.4; development is on 3.6. Point it at another build
+with `TEST_TMUX_BIN=/path/to/tmux go test ./...`.
 
 ## Install
 
-### Which way is yours
-
-Four ways in, and the difference between them is not "how advanced are you" —
-it is who the machine belongs to and what has to survive.
-
 | | Use it when | Sessions survive | Needs root | Starts at boot |
 |---|---|---|---|---|
-| **User service** (the default) | It is your machine or your account on a shared one. This is the right answer for almost everyone. | a panel restart, a panel crash, a logout | no | yes, via lingering (the installer enables it) |
-| **System service** | The box runs close to its memory, or the panel must be up before anyone logs in. | the same, and the kernel reaches for it last under memory pressure | yes, once, to install | yes |
-| **Just run it** (`./vibepanel serve`) | Trying it out, or you already have a supervisor you like. | a panel restart — tmux is still the one holding them | no | no |
-| **Docker** | You want it contained and can afford to lose sessions. | **nothing**: in a container tmux is a child of the entrypoint, so `docker restart` takes every agent with it | no | container policy |
-
-The first two are the same panel and the same data; the only real difference is
-`OOMScoreAdjust`, and it is a measured one — a *user* unit asking for `-500`
-gets `100`, because lowering it needs `CAP_SYS_RESOURCE` and a user manager does
-not have it, while `systemd-analyze verify` accepts the directive either way.
-The installer offers the second only when root is actually available and says
-what it buys at the point of asking.
-
-Do not install both. They are two panels on one tmux socket; the installer
-detects the other kind and refuses rather than quietly making the second one.
-
-From a release archive, on any machine with tmux:
+| **User service** (default) | It is your machine, or your account on a shared one | a panel restart, a crash, a logout | no | yes |
+| **System service** | The box runs close to its memory, or the panel must be up before anyone logs in | the same, and the kernel reaches for it last under memory pressure | once, to install | yes |
+| **Just run it** | Trying it out, or you have a supervisor you like | a panel restart | no | no |
+| **Docker** | You want it contained and can afford to lose sessions | **nothing** — in a container tmux is a child of the entrypoint, and `docker restart` takes every agent with it | no | container policy |
 
 ```sh
 tar -xzf vibepanel_<version>_linux_amd64.tar.gz
@@ -121,30 +83,37 @@ cd vibepanel_<version>_linux_amd64
 ./deploy/install.sh
 ```
 
-It asks. Which service to install, whether to start it now, and then it prints
-the plan and waits for you to agree before it touches anything. At the end it
-says which unit it installed, whether it started or restarted it, where the
-one-time setup token is, and the URL to open.
+The installer asks which unit to use and whether to start it now, prints the
+plan, and waits for you to agree. It prompts only when stdin and stdout are both
+terminals, so a pipeline gets the unattended path.
 
-The default is a systemd *user* service, because the panel runs your agents as
-you, with your keys and your dotfiles, and nothing about it needs root. The
-installer also enables lingering for you, which is not optional — a user service
-stops when your last login session ends, and a panel that dies when you log out
-is a panel that only appears to work.
+Then open `http://<host>:8443`, paste the setup token it printed, and choose a
+password.
 
-If root is available — you are root, or `sudo` works — it offers the system
-service as well, and says what the difference is at the point of asking. If root
-is *not* available it says so and installs the user service instead; it never
-fails over something you cannot fix from where you are standing.
+<details>
+<summary><b>The system service</b></summary>
 
-Open `http://<host>:8443`, paste the setup token, choose a password. That is the
-whole first run.
+```sh
+./deploy/install.sh --system          # add --migrate to replace a user unit
+```
+
+Same panel, same data, same account: the unit drops to `User=<you>`. What it
+buys is `OOMScoreAdjust=-500`, which a user unit cannot have, so the panel and
+the tmux server holding your sessions are the last things the kernel kills.
+Choose it if the machine runs close to its memory, or if the panel has to be up
+before anyone logs in.
+
+Both units carry `MemoryHigh=20G` and `MemoryMax=26G`, sized for a 32 GB machine
+running a dozen agents. Lower them on a small VPS.
+
+Install one or the other, never both: two units are two panels on one tmux
+socket and one database, and the symptom is a panel that forgets things. The
+installer refuses unless you pass `--migrate`, which removes the old unit first.
+
+</details>
 
 <details>
 <summary><b>Unattended, for CI and <code>curl | bash</code></b></summary>
-
-The prompts appear only when stdin *and* stdout are terminals, so a pipeline
-gets the old behaviour without asking for it. To be explicit:
 
 ```sh
 ./deploy/install.sh --yes --enable    # no questions, user service, start it
@@ -152,35 +121,12 @@ gets the old behaviour without asking for it. To be explicit:
 ./deploy/install.sh --help
 ```
 
-`--yes` takes every default; `--enable` starts the service; `--user` and
-`--system` pick the unit; `--migrate` allows replacing one kind with the other.
+`--yes` takes every default, `--enable` starts the service, `--user` and
+`--system` pick the unit, `--migrate` allows replacing one kind with the other.
+Without root it says so and installs the user service.
 
-</details>
-
-<details>
-<summary><b>Running it as a system service instead</b></summary>
-
-```sh
-./deploy/install.sh --system          # add --migrate if the user unit is there
-```
-
-Choose this if the machine runs close to its memory, or if you want the panel up
-before anyone logs in. It writes `/etc/systemd/system/vibepanel.service` with
-your username and home directory substituted in, and the service still drops to
-`User=<you>` — same account, same environment, same agents.
-
-The difference is measured, not theoretical: a *user* unit asking for
-`OOMScoreAdjust=-500` gets `100`, because lowering it needs `CAP_SYS_RESOURCE` and
-a user manager does not have it. `systemd-analyze verify` accepts the directive
-either way. A system unit with `User=` sets it before dropping privileges and the
-process really reads `-500` — the panel and the tmux server holding every session
-are then the last things the kernel reaches for.
-
-**Only ever one of the two.** A user unit and a system unit are two panels on one
-tmux socket and one database; they do not collide loudly, they take turns, and
-the symptom is a panel that forgets things. The installer detects the other kind
-and refuses rather than create the second one — `--migrate` is how you say you
-meant it, and it stops and removes the old one before installing the new.
+For a user service the installer also enables lingering. Without it the unit
+stops when your last login session ends.
 
 </details>
 
@@ -190,7 +136,7 @@ meant it, and it stops and removes the old one before installing the new.
 ```sh
 cd web && npm ci && npm run build && cd ..
 make build            # CGO_ENABLED=0 go build -o vibepanel ./cmd/vibepanel
-./vibepanel doctor    # checks tmux, the database, disk, and isolation
+./vibepanel doctor
 ./vibepanel serve
 ```
 
@@ -203,209 +149,210 @@ make build            # CGO_ENABLED=0 go build -o vibepanel ./cmd/vibepanel
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
-**In a container, restarting the panel kills every session.** Everywhere else the
-tmux server outlives the Go process, which is what makes `systemctl restart` and an
-upgrade harmless — the whole premise of the project. Inside a container tmux is a
-child of the entrypoint and the container is the boundary, so `docker restart`, a
-rebuild, and anything that recreates the container take the agents with them.
-Nothing can be done about that from inside the image.
-
-Agents also run with the container's tools, keys and repositories, which is a
-smaller world than most people expect. Run it this way only if the sessions are
-cheap to lose.
+Restarting the panel in a container kills every session, and nothing in the image
+can change that: tmux is a child of the entrypoint and the container is the
+boundary, so `docker restart` and any rebuild take the agents with them. Agents
+also see only the container's tools, keys and repositories. Run it this way only
+if the sessions are cheap to lose.
 
 </details>
 
-## Why the sessions survive
+## Using it
 
-This is the one property everything else is arranged around, so it is worth being
-explicit about how it is kept:
+1. **Add a project** — a name and a directory. The picker filters as you type,
+   or jumps to a path you paste.
+2. **Open a session** — you get a shell in that directory. Type `claude`, or
+   `codex`, or `npm run dev`. The panel does not launch agents for you.
+3. **Rename it** if you like. The automatic title from the pane stops
+   overwriting a name you chose.
+4. **Close the tab.** The session is a tmux session and does not notice.
 
-- The panel never owns a PTY that a session's process is a child of. It runs
-  `tmux attach` as a client, exactly like you would.
-- The systemd unit sets `KillMode=process`, so stopping the service kills the panel
-  and leaves the tmux server and every agent under it alone.
-- The tmux socket is `-L vibepanel` with its own config file, never the default
-  one. You can run this beside an existing tmux or zellij setup with weeks-old
-  sessions in it, and `vibepanel doctor` asserts that its socket contains nothing
-  but its own sessions.
+Sessions sort by urgency inside their project, so the one that stopped to ask you
+something sits at the top. Pin anything you want held in place. Each session can
+carry scratch terminals, the strip along the bottom of the screenshot. They open
+in the same directory, for a `git status` that does not interrupt the agent
+above.
+
+<div align="center">
+<img src="docs/images/panel-light.png" width="49%" alt="Light theme, in Simplified Chinese">
+<img src="docs/images/phone.png" width="20%" alt="The phone layout">
+</div>
+
+### States
+
+Shape carries the meaning as much as colour does.
+
+| | | |
+|---|---|---|
+| ▲ | **waiting** | the agent stopped and wants a human; sorts first |
+| ● | **working** | producing output, or thinking |
+| ✓ | **done** | finished, or a shell at its prompt |
+
+A process that is gone gets its own shape: a cross for a non-zero exit with the
+status in the label, a hollow square for a clean one, a dashed square when the
+tmux session itself has vanished. You can mark a live session *waiting* or *done*
+by hand, and it stays that way until the session does something new.
+
+### On a phone
+
+A layout of its own: a command composer that gets along with an IME, a soft key
+row with `esc` `tab` `ctrl` and the `y`/`n`/`1`/`2` answers agents ask for, and
+touch selection with drag handles.
+
+Add it to the home screen and it is a PWA with notifications, fired when a
+session becomes *waiting*, and never while you are looking at the page. These are
+browser notifications, not Web Push. They arrive while the page is alive, in a
+background tab or in the installed app. A closed browser gets nothing.
+
+### The side panel
+
+Five tabs per project, over a strip of machine CPU, memory and disk that stays
+visible on all of them.
+
+- **Files** — browse and download. Drag onto the tree or onto the terminal to
+  upload; the file lands next to the session and its absolute path is typed at
+  the prompt, ready to press enter on. Pasting a screenshot into the terminal
+  does the same. Preview reads the file's magic bytes rather than its name and
+  handles text, PNG, JPEG, GIF, WebP, AVIF and PDF, up to 8 MiB. Long text is
+  truncated at 256 KiB or 4,000 lines. SVG is shown as text.
+- **Monitor** — the machine, plus CPU and memory per session, summed over each
+  session's whole process tree. The percentage is a share of the machine, not of
+  one core.
+- **Notes** and **Todos** — markdown and a list per project, saved as you stop
+  typing.
+- **Tokens** — what the agents recorded spending, today and over thirty days.
+  The numbers come from the transcripts Claude Code and Codex write for
+  themselves. Nothing is estimated and nothing is priced; where there is no
+  transcript to read the panel shows a dash rather than a zero.
+
+### Share links
+
+**Settings → Read-only share links** makes a URL for the monitor beside you:
+`https://<panel>/share/<token>`. It opens a dashboard: machine load, CPU and
+memory per session, and every session with its state, grouped by project, in type
+you can read across a room. It opens nothing else. There is no terminal, no write
+path, no file browser and no way to make a second link from the first.
+
+Pick the detail level when you make it. **Counts** shows shapes and numbers and
+no text at all. **Names** adds session titles and project names. Neither ever
+sends a path, a working directory, a command line, a hostname or the panel's own
+ids.
+
+Treat the link as a credential: anyone holding it can watch. The panel stores
+only a hash, so the moment you create it is the only time it can be read. Links
+are revoked individually, can be given an expiry, and their creation and
+revocation are in the audit log.
+
+The dashboard says *live*, *reconnecting* or *disconnected* in words and shapes,
+and always shows the time of the last reading and how long ago it was.
+
+## Restarts, reboots and upgrades
+
+A restart of the panel costs nothing:
 
 ```sh
 systemctl --user restart vibepanel   # the panel goes away and comes back
 tmux -L vibepanel ls                 # every session still there, still running
 ```
 
-The browser notices the new build on reconnect and offers to reload, so an upgrade
-mid-session is a banner rather than a puzzle.
+The panel attaches to tmux as a client and never owns a session's terminal, and
+it runs on its own socket (`-L vibepanel`) with its own config, so it sits
+happily beside an existing tmux or zellij setup. Browsers with the panel open
+notice the new build on reconnect and offer to reload.
 
-### What a reboot takes, and what comes back
+**A reboot is different.** The tmux server is an ordinary process and its
+scrollback is in that process's memory, so the machine going down takes both.
 
-tmux outlives the panel. It does not outlive the machine: the tmux server is an
-ordinary process and its scrollback is in that process's memory, so `reboot`
-takes both.
+The panel keeps what it needs to rebuild each session: the command it was created
+with, its directory, its name and place, and the last 2,000 lines or 256 KiB of
+its scrollback, captured every thirty seconds and again at shutdown. An orderly
+reboot loses no output; a power cut loses up to half a minute.
 
-The panel records what it needs to rebuild a session — the argv it was created
-with, its directory, its name and place, and a bounded copy of its scrollback
-captured every thirty seconds and once more on the way down. After a reboot it
-offers to bring them back, one or all, showing the exact command each one will
-run and where. There is a per-session switch for the ones you want back
-automatically; it is off by default, because a boot that starts two dozen agents
-at once is worse than a list to click through.
+When it comes back it offers to restore them, one or all, showing the command
+each will run and where. There is a per-session switch for the ones you want back
+without being asked; it is off by default.
 
-**The processes do not come back.** An agent's context lived in its process and
-in a conversation with a provider, and neither survived the power going off.
-Re-running the command starts a new agent that remembers none of it. The restored
-pane says so in a banner between the old scrollback and the new process, and the
-session keeps a `restored` mark afterwards, because that banner scrolls away and
-the fact does not.
+The **processes** do not come back. An agent's context lived in its process and
+in a conversation with a provider, and re-running the command starts a new agent
+that remembers none of it. The restored pane says so in a banner above the new
+process, and the session keeps a `restored` mark afterwards.
 
-An orderly `reboot` or `systemctl stop` loses no output. A power cut loses up to
-half a minute of it — there was no shutdown for the last capture to ride along
-with.
+**Upgrading.** Settings → Update fetches the newest release from GitHub, checks
+it against the published `SHA256SUMS`, swaps the binary and restarts the service,
+keeping the old binary as `.old`. It runs only when you press the button: no
+scheduled check, no heartbeat, no telemetry. Or unpack the new archive and run
+`./deploy/install.sh` again, which keeps the unit you already have and restarts
+it. Either way your sessions keep running.
 
-### Upgrading
+Two things behave in ways worth knowing:
 
-```sh
-tar -xzf vibepanel_<new>_linux_amd64.tar.gz
-cd vibepanel_<new>_linux_amd64
-./deploy/install.sh              # replaces the binary and restarts the service
-```
+- **A changed tmux config takes effect at the next `start-server`.** tmux reads
+  its config once and the panel never kills its server, so an upgrade leaves the
+  new file on disk and the old settings in memory. The settings page and
+  `vibepanel doctor` both say when that has happened. Applying it means
+  `tmux -L vibepanel kill-server`, which ends every session.
+- **An older binary refuses a database a newer one has migrated**, and names both
+  versions rather than opening it and dropping columns.
 
-It keeps the unit kind you already have and does not ask about it again, and a
-service that is already running is restarted whether or not you passed
-`--enable` — leaving the new binary on disk with the old one still serving is
-the failure below, and it looks like nothing.
+[docs/runbook.md](docs/runbook.md) is organised by symptom for everything else.
 
-Your sessions do not restart with it. Any browser with the panel open reconnects,
-notices the build changed and offers to reload — the page is a view, so reloading
-it costs nothing.
+## State reporting
 
-Three things are worth knowing, because each of them looks like nothing:
+Left alone, the panel reads the output stream: recent bytes mean *working*, a
+terminal bell means *waiting*, a pane back at a shell prompt means *done*. A
+silent session is never called finished.
 
-- **The tmux config only takes effect at the next `start-server`.** tmux reads
-  its `-f` file once, and the panel never kills its server. So an upgrade that
-  changes the config leaves the new file on disk and the old settings in memory.
-  The settings page and `vibepanel doctor` both say so when that has happened.
-  Applying it means `tmux -L vibepanel kill-server`, which ends every session —
-  which is why the panel tells you rather than doing it.
-- **Rolling back is safe but not silent.** An older binary refuses a database a
-  newer one has migrated, and says both version numbers. It does not open it and
-  quietly drop the columns it does not know.
-- **An older installer did not restart the service.** `install.sh` does now, and
-  says which it did. If you upgraded with one that did not, the new binary is on
-  disk and the old one is still running: `systemctl --user restart vibepanel` is
-  the whole fix, and `docs/runbook.md` has the symptom to recognise it by.
-
-## Telling the panel what an agent is doing
-
-Without help, the panel reads the output stream: bytes recently means *working*,
-a terminal bell means *waiting*, and a pane back at a shell prompt means *done*.
-That is honest but coarse.
-
-Settings → **state reporting** installs a small hook into Claude Code's or Codex's
-own configuration, a button each, showing you exactly what it will write first and
-backing up the file it merges into. The hook reads two environment variables the
-panel injects into each session and posts the state directly:
+**Settings → state reporting** has a button for Claude Code and one for Codex. It
+merges a hook into the agent's own config, showing you what it will write and
+backing up the file first. The hook reads two environment variables the panel
+injects into each session and posts the state:
 
 ```json
 {"sessionId": "…", "state": "waiting"}
 ```
 
-Sessions started outside the panel do not have those variables, so the same global
-hook config is a no-op for them. Removing it takes only the entries vibepanel
-tagged.
+Sessions started outside the panel do not have those variables, so the same
+global config does nothing for them. Uninstalling removes only the entries
+vibepanel added. The hook is a `/bin/sh` script that calls `curl`; without curl
+the panel falls back to guessing and says nothing about it.
 
-Claude Code gets four events and can report *working*, *waiting* and *done*. Codex
-has one `notify` command for one event, so a Codex session reports *waiting* and
-guesses the rest — that is the setting doing its job, not a misconfiguration. Its
-line goes into `~/.codex/config.toml` above the first table, because a top-level
-key appended to the end of that file would belong to whichever table came last
-and Codex would never read it.
+Claude Code exposes four events and reports *working*, *waiting* and *done*.
+Codex has a single `notify` command, so a Codex session reports *waiting* and
+guesses the rest.
 
-## Configuration
+Other agents have no button. Anything can report by posting to
+`/api/hook/state` itself; the shape is in [docs/api.md](docs/api.md).
 
-Every flag has a `VIBEPANEL_<UPPER_SNAKE>` environment equivalent. Flags win. Any
-`VIBEPANEL_*` variable that is not recognised is *reported* at startup and by
-`doctor` rather than ignored — a misspelled `VIBEPANEL_TLS` used to mean a panel
-serving plaintext on a public port while its operator believed otherwise.
+## Reaching it over a network
 
-| Flag | Default | Notes |
-|---|---|---|
-| `--data-dir` | `~/.local/share/vibepanel` | database, tmux config, ACME state |
-| `--addr` | `:8443` | listen address; the default is every interface |
-| `--domain` | — | public hostname; also the WebAuthn Relying Party ID |
-| `--tls` | `off` | `off`, `files`, or `acme`. `off` on anything but loopback is warned about at startup: the terminal, the password and the session cookie all cross the network in the clear |
-| `--tls-cert` / `--tls-key` | — | for `--tls files`; reloaded when the files change |
-| `--acme-dns` | — | DNS-01 provider for `--tls acme` (currently `cloudflare`) |
-| `--acme-email` | — | contact address for the CA |
-| `--acme-directory` | Let's Encrypt | point at a staging endpoint while testing |
-| `--allow-from` | — | comma-separated CIDRs allowed to reach the panel |
-| `--trusted-proxies` | — | CIDRs whose `X-Forwarded-For` may be believed |
-| `--tmux-socket` | `vibepanel` | keep it dedicated to stay isolated |
-| `--static-dir` | — | serve the frontend from disk instead of the embedded build |
+The panel listens on `:8443`, every interface, and is built to face the public
+internet.
 
-### Signing in
+Everything needs a credential, including the WebSocket, which is the terminal.
+The exceptions are the health probe, the hook endpoint (which takes a token
+injected into every session) and the share dashboard (which takes a share token,
+on one `GET`, and is rejected everywhere else).
 
-First run prints a one-time setup token to the console. That is the handover:
-whoever can read the server's output is entitled to claim the panel, and merely
-reaching it over the network is not. The setup endpoint closes permanently once an
-account exists.
+First run prints a one-time setup token to the console: whoever can read the
+server's output claims the panel. The endpoint closes once an account exists.
+Failed logins back off exponentially per source address, and `--allow-from`
+limits who can reach the panel at all. Both judge the address that
+`--trusted-proxies` says to trust; with none configured that is the peer on the
+socket and `X-Forwarded-For` is ignored.
 
-Everything except the health probe and the agent-hook endpoint needs a credential,
-the WebSocket included — it *is* the terminal.
+**Passkeys** sit on top of the password and never replace it. WebAuthn needs a
+registrable domain name, so an IP address can never register one however the TLS
+is arranged. Use a hostname. `vibepanel doctor` and the sign-in screen both say
+whether the current configuration supports them.
 
-Failed logins are throttled per source address with exponential backoff, and
-`--allow-from` narrows who may reach the panel at all. Both judge the address
-`--trusted-proxies` says to believe: with no trusted proxy configured, that is the
-peer on the socket and `X-Forwarded-For` is ignored entirely. A header that can
-rename the caller turns both controls off.
+**API tokens** are independent of the password: changing the password signs out
+browsers and leaves tokens alone, and the reverse. A token is readable once, when
+you create it.
 
-### Read-only share links
-
-**Settings → Read-only share links** makes a URL you can leave open on another
-monitor: `https://<panel>/share/<token>`. It opens a dashboard — machine load,
-per-session CPU and memory, every session with its state, grouped by project —
-and it opens nothing else.
-
-The link is a capability, so treat it as one. Anyone holding it can watch, and
-the panel stores only a SHA-256 of the token, which means the moment it is
-created is the only time it can be read. Each link is revoked on its own, may be
-given an expiry, and its creation and revocation are in the audit log.
-
-What it reaches is decided by the router, not by a flag: a share token is
-accepted on one `GET`, and presenting it as a session cookie or a `Bearer`
-header answers `401` on every other route including the WebSocket. There is no
-terminal, no write path, no file browser, no notes, no settings, and no way to
-make a second link from the first.
-
-Two levels of detail, chosen when you make it. **Counts** — the default — shows
-shapes and numbers and no text at all; **names** adds session titles and project
-names. Neither ever sends a path, a command line, a hostname or the panel's own
-ids, because a project path names a customer and a home directory and a command
-line carries whatever an agent was invoked with. If the screen is behind you in
-a room other people walk through, the default is the one to leave alone.
-
-The dashboard says out loud when it has stopped hearing from the panel: *live*,
-*reconnecting* and *disconnected* are distinguished by shape and by word as well
-as by colour, and the header always carries the time of the last reading and how
-long ago that was. A dashboard that has silently frozen otherwise looks exactly
-like a quiet system.
-
-### Passkeys
-
-WebAuthn needs a secure context and a Relying Party ID that is a registrable domain
-name. **An IP address is never a valid RP ID**, so `https://192.168.1.10:8443`
-cannot register a passkey however the TLS is arranged. Use a hostname.
-
-Password login always works and is set up on first run. Passkeys are an addition on
-top of it, never the only way in. Both `vibepanel doctor` and the sign-in screen
-report whether the current configuration supports them, and say why not if it does
-not.
-
-### Certificates
+**TLS** is the panel's own, either supplied or issued:
 
 ```sh
-# your own certificate, reloaded when it changes
+# your own certificate, reloaded when the files change
 vibepanel --domain panel.example.com --tls files \
           --tls-cert /etc/ssl/panel.pem --tls-key /etc/ssl/panel.key
 
@@ -414,8 +361,36 @@ CLOUDFLARE_API_TOKEN=… vibepanel --domain panel.example.com \
           --tls acme --acme-dns cloudflare --acme-email you@example.com
 ```
 
-HTTP-01 validation needs port 80, which this panel does not expect to have, so
-automatic certificates use DNS-01.
+Automatic certificates use DNS-01, since HTTP-01 needs port 80. Cloudflare is
+the provider that is wired up. Leaving TLS off anywhere but loopback is warned
+about at startup.
+
+## Configuration
+
+Every flag has a `VIBEPANEL_<UPPER_SNAKE>` environment equivalent, and flags win.
+A `VIBEPANEL_*` variable nothing reads is reported at startup and by `doctor`
+instead of being ignored.
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--data-dir` | `~/.local/share/vibepanel` | database, tmux config, ACME state |
+| `--addr` | `:8443` | listen address |
+| `--domain` | — | public hostname; also the WebAuthn Relying Party ID |
+| `--tls` | `off` | `off`, `files` or `acme` |
+| `--tls-cert` / `--tls-key` | — | for `--tls files`; reloaded when the files change |
+| `--acme-dns` | — | DNS-01 provider for `--tls acme` (`cloudflare`) |
+| `--acme-email` | — | contact address for the CA |
+| `--acme-directory` | Let's Encrypt | point at a staging endpoint while testing |
+| `--allow-from` | — | CIDRs allowed to reach the panel; empty means all |
+| `--trusted-proxies` | — | CIDRs whose `X-Forwarded-For` may be believed |
+| `--tmux-socket` | `vibepanel` | keep it dedicated to stay isolated |
+| `--static-dir` | — | serve the frontend from disk instead of the embedded build |
+
+The binary is also the admin CLI: `serve`, `project`, `session`, `hook`,
+`doctor`, `version`. `doctor` prints fifteen lines and never stops at the first
+failure: tmux and its version, the data directory, the database and a real write
+to it, disk, socket isolation, a stale tmux config, hook URLs and tokens that
+live sessions still hold, passkeys, and unread `VIBEPANEL_*` variables.
 
 ## Driving it from a program
 
@@ -427,38 +402,23 @@ curl -sX POST https://panel.example.com:8443/api/sessions \
   -d '{"projectId":"…","title":"billing","command":["claude"]}'
 ```
 
-Everything the panel's own frontend does is available over the same API.
+`command` is an argv; omit it for a shell, which is what the panel's own UI
+sends. Everything the frontend does is available over the same API.
 [docs/api.md](docs/api.md) is the whole surface, and it is checked against the
-router in both directions — an endpoint that is not documented fails the build,
-and so does a paragraph describing a route that no longer exists.
+router in both directions.
 
 ## Design notes
 
-**The page is a view, not the state.** Close it, open it in three places, reload it
-mid-command — the sessions never notice. All state lives in the backend and is
-broadcast to every connected client.
+Three that change what you do:
 
-**One authoritative grid per session.** A desktop at 200×50 and a phone at 45×20
-cannot both size the same terminal. Rather than reflowing, the panel keeps one grid
-owned by whoever last interacted and other viewers scale it to fit. Everyone sees
-the same bytes in the same grid.
+- **The page is a view, not the state.** Close it, open it in three places,
+  reload it mid-command; the sessions never notice.
+- ***Done* means the process exited**, not that a session went quiet.
+- **Colour is never the only carrier of meaning.**
 
-***Done* means the process exited, not that a session went quiet.** An agent
-thinking, waiting on a slow tool call, or writing somewhere other than the screen
-produces no output for as long as it likes, and reporting that as finished is the
-panel giving a confident wrong answer to the only question it exists to answer.
-Without a hook, a silent running agent is reported as *working* — true whether it
-is thinking or asking — and the two signals that mean a person is genuinely needed,
-the terminal bell and a hook report, outrank it.
-
-**Colour is never the only carrier of meaning.** Each state has a shape as well as
-a hue: circle, triangle, check. People read this panel at 2am on a phone in a dark
-room.
-
-**Files move by HTTP, not through the terminal.** In-band transfer protocols fight
-with full-screen TUIs, and the reason to put a screenshot on the server is to hand
-it to the agent — so the path being ready to press enter on is the feature, not a
-detail.
+[docs/design.md](docs/design.md) has the reasoning behind the decisions that
+would otherwise look arbitrary. [docs/build-log.md](docs/build-log.md) is the
+chronological record of what was built and what fought back.
 
 ## Development
 
@@ -468,7 +428,7 @@ make verify        # everything, including the browser checks (~20 min)
 make head-check    # build and test a clean worktree at HEAD, not your tree
 ```
 
-`make check` never starts a browser, and most of this project's bugs were found by
+`make check` never starts a browser. Most of this project's bugs were found by
 the ones that do:
 
 | | |
@@ -479,15 +439,14 @@ the ones that do:
 | `make restart-check` | kill the backend; the sessions and the login must outlive it |
 | `make scale-check` | two dozen sessions: snapshot size, sidebar reachability, poller |
 | `make tls-check` | its own TLS: wss, the Secure cookie, swapping a certificate |
+| `make install-check` | `deploy/install.sh` down every branch, without sudo |
 | `make release-check` | build the archives and run one from a throwaway HOME |
 
-The tmux wrapper is tested against a real tmux on a throwaway socket rather than a
-mock — the bugs worth catching there are tmux's, and a mock reproduces none of them.
+The tmux wrapper is tested against a real tmux on a throwaway socket rather than
+a mock. `web/scripts/shots.mjs` takes the screenshots in this file by booting the
+real binary and photographing it.
 
-`AGENTS.md` has the conventions and the red lines. `docs/build-log.md` is the
-chronological record of what was built and what went wrong, including a tmux 3.6
-crash that shaped one of the core design details. `docs/runbook.md` is where to
-look when a running deployment misbehaves.
+`AGENTS.md` has the conventions and the red lines.
 
 ## License
 

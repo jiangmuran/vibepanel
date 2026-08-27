@@ -12442,3 +12442,78 @@ mount, which is what "switching took N ms" means.
 build. `internal/webui/dist` is tracked and embedded, so `go build` from a fresh
 clone was shipping an older frontend than the repository's own source. Rebuilt
 and committed.
+
+---
+
+## The README was reporting work, not describing a product
+
+The owner's verdict was that it read like a status report to him rather than an
+introduction to the software. That is a fair description of what it was. Its
+first section was an argument, its second was a thirteen-item flat list where
+"sessions outlive the panel" carried the same weight as "notes and todos", and
+almost every paragraph justified a decision — the OOM measurement twice, nearly
+word for word, the KillMode reasoning, the reasons behind the grid, the colour
+rule, the file transfer choice. All of that is true and most of it is good
+writing. None of it is what somebody arriving from a link is reading for.
+
+So the rationale moved to `docs/design.md` and the two READMEs now describe the
+product: what it is, who it is for, how to install it, what the panel does, and
+where the caveats bite. `AGENTS.md` pointed at `README.md` for "the design and
+the decisions behind it" and now points at the new file.
+
+What that costs: the design prose was the best writing in the repository and it
+was at the bottom of a page people already had open. Behind a link, fewer people
+will read it. The trade is that the first screen now answers "what is this" and
+"is it for me" instead of arguing for a design the reader has not yet decided to
+care about.
+
+**Six things the README claimed that the code does not do.**
+
+- *"a user unit asking for `-500` gets `100`"* implied the shipped user unit asks
+  for it. It does not set `OOMScoreAdjust` at all — deliberately, and with the
+  measurement in a comment — and instead sets `CPUWeight`, `IOWeight` and
+  `ManagedOOMPreference`, none of which the README mentioned.
+- *"the test suite is run against 3.4 as well as 3.6"* — CI installs Ubuntu
+  24.04's tmux and that is 3.4. 3.6 is the development machine. There is no CI
+  job on 3.6.
+- *"everything except the health probe and the agent-hook endpoint needs a
+  credential"* — the hook endpoint has a credential, a bearer token injected into
+  every session, and the share dashboard is a third route outside the login.
+- *"Nothing else"* as a runtime dependency, next to a state reporter that shells
+  out to `curl` and suppresses its own failures. No curl, no state reports, no
+  error anywhere.
+- *"what every session is costing"* in the share-link paragraph reads as money.
+  The dashboard shows CPU and RSS. The token panel — which the README did not
+  mention at all — reports tokens and never prices them.
+- *"a PWA with notifications, so a session that starts waiting reaches your phone
+  with the panel in the background"* — true for a background tab or the installed
+  app, and `notify.ts` says in its own header that this is deliberately not Web
+  Push. A closed browser gets nothing.
+
+Also stale rather than untrue: no mention of token accounting, in-panel updates,
+file upload or preview, the `hook` subcommand or `make install-check`; "notes,
+todos, a file tree and system load" for a side panel that has five tabs; three
+state shapes for a component that draws six; and release archives described only
+as `linux_amd64` when `linux/arm64` and `darwin/arm64` are built too — the last
+of which matters, because `/proc` is not there on a Mac.
+
+**And the biggest one was an omission.** Nothing in either README said that the
+panel's own "new session" opens a *shell* and that you type `claude` yourself.
+The only code example showed `{"command":["claude"]}`, which is the API's
+behaviour and the opposite of the UI's. A reader formed the wrong model of the
+whole product from the first example they saw. Both files now say it in step two
+of "using it", and the API example says which one it is.
+
+**The screenshot was decoration.** `panel-dark.png` shows six things — the state
+shapes, an agent mid-question, the scratch terminal strip, the file tree, the
+system strip, the log pane — and the page explained one of them, sixty lines
+later, and the scratch terminals nowhere at all. It has a caption now that reads
+the picture. No new screenshots: the fix was a caption, not another photograph.
+
+`README.zh-CN.md` was structurally the English file — same headings, same order,
+same paragraph boundaries. An earlier entry in this log claims the two were
+written so that "neither reads like the other's shadow"; that was true of the
+sentences and not of the document. The Chinese one now opens by clearing up what
+the thing is not, keeps the share links with the rest of the public-facing
+material instead of in the feature tour, and says where the English-only
+documentation is. Same facts, both directions.

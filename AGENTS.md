@@ -4,10 +4,11 @@ A web console for running many parallel coding-agent sessions. tmux keeps the
 processes alive; the browser owns everything about how they are organised,
 named, sorted and surfaced.
 
-Read `README.md` for the design and the decisions behind it before changing
-anything structural. `docs/build-log.md` is the chronological record of what
-was built and what went wrong; `docs/runbook.md` is where to look when a
-running deployment misbehaves.
+Read `docs/design.md` for the decisions behind the shape of this before
+changing anything structural; `README.md` describes the product and points
+there. `docs/build-log.md` is the chronological record of what was built and
+what went wrong; `docs/runbook.md` is where to look when a running deployment
+misbehaves.
 
 ## Red lines
 
