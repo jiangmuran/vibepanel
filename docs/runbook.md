@@ -124,6 +124,13 @@ for one event, so a Codex session can only ever report `waiting` — never
 `working` or `done`. A Codex session that shows a guessed state most of the
 time is behaving as designed, not misconfigured.
 
+Settings → state reporting has a button for it, the same as Claude's. If the
+line is missing after pressing it, check *where* it landed: it belongs above the
+first `[table]` in the file, and a `notify` under `[notice]` or
+`[tui.model_availability_nux]` is a different key that Codex never reads. That
+is the one failure the installer is written to avoid and the one to look for if
+a hand-edited file goes quiet.
+
 ```sh
 codex doctor | grep -A2 'config.toml'   # does Codex still accept the setting?
 grep notify ~/.codex/config.toml        # is it still there?
@@ -135,6 +142,38 @@ sessions go quiet with no error anywhere: the reporter script suppresses its
 own failures on purpose, because a hook that makes an agent wait is worse than
 a missed state update. `codex doctor` reporting a parse error or a deprecation
 on that line is the signal.
+
+## A session is named after its directory, and renaming it from inside does nothing
+
+The automatic name comes from the title the program in the pane set, and there
+are two ways for it to get here:
+
+- A plain `OSC 0/2`, which tmux records in `#{pane_title}`. The poller reads
+  that every couple of seconds.
+- The same sequence wrapped in tmux's passthrough DCS, which is what a program
+  that has noticed `$TMUX` sends — the title is meant for the terminal a human
+  is looking at, not for tmux. tmux hands those bytes to its client without
+  looking inside, so `pane_title` never moves and the panel's own PTY is the
+  only place the title exists.
+
+The panel reads both. Check which one you are looking at before changing
+anything:
+
+```sh
+tmux -L vibepanel display -p -t '=vp_abc123:' '#{pane_title}'
+tmux -L vibepanel show -wg allow-set-title      # must be on where it exists
+tmux -L vibepanel show -wg allow-passthrough    # must be on
+```
+
+`allow-set-title` does not exist below tmux 3.6 and defaults to `on` where it
+does, so a missing option there is normal. `allow-passthrough` off is not: it
+takes the second route away entirely, and the sessions that use it are exactly
+the ones running a tmux-aware agent.
+
+A name you typed yourself is never overwritten by either route — that is what
+`title_source` is for — so a tab that ignores the program's title may simply
+have been renamed by hand. Renaming it back to nothing is not possible on
+purpose; create a session or rename it to what you want.
 
 ## Hooks say they are installed and no state ever arrives
 

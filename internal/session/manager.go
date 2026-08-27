@@ -102,6 +102,25 @@ type Live struct {
 	// reconfiguredAt is when the terminal was last set up — attached or
 	// resized. See settleWindow.
 	reconfiguredAt time.Time
+
+	// title is the last OSC 0/2 title that arrived on this PTY, and it is the
+	// panel's second and only other source of a session name.
+	//
+	// The first is #{pane_title}, which the poller reads. A program that has
+	// noticed $TMUX does not set that: it wraps its OSC in tmux's passthrough
+	// DCS so the sequence reaches the terminal a human is actually looking at,
+	// and tmux then forwards the bytes to its client — us — without touching
+	// pane_title. Measured, with a real client attached:
+	//
+	//	printf '\033]2;X\007'                    pane_title becomes X
+	//	printf '\033Ptmux;\033\033]2;X\007\033\\'  pane_title unchanged, client gets ESC]2;X BEL
+	//
+	// The scanner has always parsed that title, bounded it and broadcast it to
+	// the browser as a title event, where nothing consumed it: no store write,
+	// and no component passing onTitle. So a title sent the only way a
+	// tmux-aware program sends one was parsed, truncated, delivered and thrown
+	// away, and the session kept the name of the directory it was sitting in.
+	title string
 }
 
 // settleWindow is how long after reconfiguring the terminal the pump stops
@@ -446,6 +465,15 @@ func (m *Manager) pump(l *Live) {
 			for _, t := range titles {
 				l.broadcastLocked(Event{Kind: EventTitle, Text: t})
 			}
+			if len(titles) > 0 {
+				// Kept rather than acted on here: naming a session is one
+				// decision made in one place (deriveTitle), and the poller is
+				// where that happens. Writing from the pump would put a
+				// database write between the PTY and the viewers watching it,
+				// and would give a program that repaints its title a way to
+				// write a row several times a second.
+				l.title = titles[len(titles)-1]
+			}
 			l.mu.Unlock()
 
 			// Writing to the PTY stays outside the lock: it is I/O, and the
@@ -484,6 +512,17 @@ func (m *Manager) pump(l *Live) {
 			return
 		}
 	}
+}
+
+// Title returns the last OSC 0/2 title seen on this session's PTY.
+//
+// Empty when none has arrived, which is the normal case: with set-titles off
+// tmux does not forward pane titles to its client, so the only titles that get
+// here are the ones a program sent through passthrough on purpose.
+func (l *Live) Title() string {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.title
 }
 
 // Get returns the live attachment for a session, if any.

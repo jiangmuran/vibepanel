@@ -216,6 +216,15 @@ configuration file, backing it up first and tagging every entry so removing them
 later cannot take anybody else's with it. `GET` shows what it would write before
 you agree to it.
 
+`POST` and `DELETE` take `?agent=claude` (the default, and what the parameter-less
+request has always meant) or `?agent=codex`. Anything else is a `400`: the value
+decides which file in the user's home directory gets edited, so an unrecognised
+one has to be refused rather than resolved to whichever agent is first in the
+code. Claude's four events are merged into `~/.claude/settings.json`; Codex's one
+`notify` line goes into `~/.codex/config.toml`, above the first table — a
+top-level key appended to the end of that file would belong to the last table in
+it and Codex would never read it.
+
 ## Authentication
 
 ### `POST /api/auth/setup`

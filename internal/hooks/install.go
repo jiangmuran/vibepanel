@@ -35,9 +35,18 @@ type Status struct {
 	Events []string `json:"events"`
 	// Snippet is what would be merged, for the user to read before agreeing.
 	Snippet string `json:"snippet"`
-	// CodexSnippet is the equivalent for Codex, which has no merge story and
-	// is shown for the user to paste themselves.
+	// CodexSnippet is the equivalent for Codex: the one line that goes into
+	// config.toml, shown before the button is pressed the same way Snippet is.
 	CodexSnippet string `json:"codexSnippet"`
+	// CodexPath is the file that line goes into.
+	CodexPath string `json:"codexPath"`
+	// CodexInstalled reports whether that file's notify is ours.
+	//
+	// Separate from Installed rather than folded into it. They are two agents
+	// configured by two mechanisms that fail separately -- the runbook has a
+	// section for exactly that -- and one flag would make a page that can only
+	// say "hooks are installed" about a machine where half of them are.
+	CodexInstalled bool `json:"codexInstalled"`
 }
 
 // events maps a hook event to the state it reports.
@@ -54,12 +63,18 @@ func Inspect(scriptPath string) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
+	codexPath, err := CodexConfigPath()
+	if err != nil {
+		return Status{}, err
+	}
 	st := Status{
-		SettingsPath: settingsPath,
-		ScriptPath:   scriptPath,
-		Snippet:      ClaudeSettings(scriptPath),
-		CodexSnippet: CodexNotify(scriptPath),
-		Events:       []string{},
+		SettingsPath:   settingsPath,
+		ScriptPath:     scriptPath,
+		Snippet:        ClaudeSettings(scriptPath),
+		CodexSnippet:   CodexNotify(scriptPath),
+		CodexPath:      codexPath,
+		CodexInstalled: codexInstalled(codexPath),
+		Events:         []string{},
 		// Empty here rather than normalised at the end, because there are two
 		// returns and the early one -- no settings file, which is the state of
 		// every fresh install -- skipped the normalisation and sent `null`.

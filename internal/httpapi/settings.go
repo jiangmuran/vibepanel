@@ -170,16 +170,44 @@ func (s *Server) handleHooksStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, st)
 }
 
+// hookAgent reads which agent a hook request is about.
+//
+// Defaults to Claude, which is what the parameter-less request meant before
+// Codex had a button of its own, and refuses anything else rather than quietly
+// installing for whichever one is first in the code. This decides which file in
+// somebody's home directory gets edited, so a value nobody recognises has to be
+// an error and not a guess.
+func hookAgent(w http.ResponseWriter, r *http.Request) (string, bool) {
+	switch agent := r.URL.Query().Get("agent"); agent {
+	case "", "claude":
+		return "claude", true
+	case "codex":
+		return "codex", true
+	default:
+		writeErr(w, http.StatusBadRequest, "unknown agent "+agent+"; want claude or codex")
+		return "", false
+	}
+}
+
 func (s *Server) handleHooksInstall(w http.ResponseWriter, r *http.Request) {
+	agent, ok := hookAgent(w, r)
+	if !ok {
+		return
+	}
 	script, err := s.scriptPath()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// The user's own settings file. It is backed up first, merged rather than
-	// replaced, and every entry is tagged so removing them later cannot take
-	// anybody else's with it.
-	st, err := hooks.InstallClaude(script)
+	// The user's own configuration file, either way. It is backed up first,
+	// merged rather than replaced, and what the panel wrote stays recognisable
+	// so that removing it later cannot take anybody else's hook with it.
+	var st hooks.Status
+	if agent == "codex" {
+		st, err = hooks.InstallCodex(script)
+	} else {
+		st, err = hooks.InstallClaude(script)
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -190,18 +218,27 @@ func (s *Server) handleHooksInstall(w http.ResponseWriter, r *http.Request) {
 	s.forgetHookStatus()
 	s.notifyState()
 	if u, ok := currentUserFrom(r); ok {
-		s.audit(r.Context(), "hooks.installed", u.Username, s.clientIP(r), st.SettingsPath)
+		s.audit(r.Context(), "hooks.installed", u.Username, s.clientIP(r), hookTarget(agent, st))
 	}
 	writeJSON(w, http.StatusOK, st)
 }
 
 func (s *Server) handleHooksUninstall(w http.ResponseWriter, r *http.Request) {
+	agent, ok := hookAgent(w, r)
+	if !ok {
+		return
+	}
 	script, err := s.scriptPath()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	st, err := hooks.UninstallClaude(script)
+	var st hooks.Status
+	if agent == "codex" {
+		st, err = hooks.UninstallCodex(script)
+	} else {
+		st, err = hooks.UninstallClaude(script)
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -209,7 +246,7 @@ func (s *Server) handleHooksUninstall(w http.ResponseWriter, r *http.Request) {
 	s.forgetHookStatus()
 	s.notifyState()
 	if u, ok := currentUserFrom(r); ok {
-		s.audit(r.Context(), "hooks.removed", u.Username, s.clientIP(r), st.SettingsPath)
+		s.audit(r.Context(), "hooks.removed", u.Username, s.clientIP(r), hookTarget(agent, st))
 	}
 	writeJSON(w, http.StatusOK, st)
 }
@@ -288,4 +325,16 @@ func (s *Server) handleDeleteToken(w http.ResponseWriter, r *http.Request) {
 		s.audit(r.Context(), "token.revoked", u.Username, s.clientIP(r), tokenID)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// hookTarget names the file an audit entry is about.
+//
+// The audit log is read after the fact by somebody asking what this panel
+// changed on their machine. Recording ~/.claude/settings.json for an edit to
+// ~/.codex/config.toml sends them to the wrong file.
+func hookTarget(agent string, st hooks.Status) string {
+	if agent == "codex" {
+		return st.CodexPath
+	}
+	return st.SettingsPath
 }

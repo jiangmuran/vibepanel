@@ -728,7 +728,11 @@ func (s *Server) hooksAreInstalled() bool {
 	installed := false
 	if script, err := s.scriptPath(); err == nil {
 		if st, ierr := hooks.Inspect(script); ierr == nil {
-			installed = st.Installed
+			// Either agent counts. This read only Claude's, so a machine where
+			// Codex was the one wired up was told to install hooks it already
+			// had -- and the notice offering the remedy is the panel's own
+			// admission that it is guessing, which it was not.
+			installed = st.Installed || st.CodexInstalled
 		}
 	}
 	s.hookInstalled, s.hookCheckedAt = installed, time.Now()
@@ -1641,9 +1645,12 @@ func (s *Server) pollOnce(ctx context.Context) error {
 		// The cost is one tmux client and one replay buffer per session. For
 		// the couple of dozen sessions this is built for, that is a few tens of
 		// megabytes and a handful of small processes.
-		if _, ok := s.Manager.Get(row.ID); !ok {
-			if _, aerr := s.Manager.Attach(ctx, row.ID, row.TmuxName, row.Cols, row.Rows); aerr != nil {
+		live, attached := s.Manager.Get(row.ID)
+		if !attached {
+			if l, aerr := s.Manager.Attach(ctx, row.ID, row.TmuxName, row.Cols, row.Rows); aerr != nil {
 				s.Log.Debug("attach for monitoring", "session", row.ID, "err", aerr)
+			} else {
+				live = l
 			}
 		}
 		// This writes on every tick whether anything changed or not, and so does
@@ -1668,7 +1675,14 @@ func (s *Server) pollOnce(ctx context.Context) error {
 		if err := s.DB.UpdateSessionRuntime(ctx, row.ID, info.Path, info.Command); err != nil {
 			return err
 		}
-		if title := deriveTitle(info, row.ParentID != nil); title != "" {
+		// The title the PTY saw, which is where a tmux-aware program's OSC
+		// arrives. See Live.title: it is not in #{pane_title} and never will
+		// be, because passthrough is defined as tmux not looking.
+		var ptyTitle string
+		if live != nil {
+			ptyTitle = live.Title()
+		}
+		if title := deriveTitle(info, ptyTitle, row.ParentID != nil); title != "" {
 			// SetSessionTitle with TitleAuto is a no-op once the user has
 			// renamed the tab, so this cannot stomp a manual name.
 			if err := s.DB.SetSessionTitle(ctx, row.ID, title, store.TitleAuto); err != nil {
@@ -1699,22 +1713,39 @@ func (s *Server) pollOnce(ctx context.Context) error {
 
 // deriveTitle picks the best automatic name for a session.
 //
-// Three fallbacks, in descending order of how much they tell the user:
+// Four fallbacks, in descending order of how much they tell the user:
 //
-//  1. The title the application set over OSC 0/2. Agents set useful ones.
-//  2. The running command — "claude", "codex" is exactly what is being looked
-//     for. #{pane_title} is skipped when it is just the hostname, which is what
-//     a plain shell leaves it as and is identical for every session on the box.
-//  3. For a shell, the directory it sits in. Every shell is called "bash", so
+//  1. The title the application set over OSC 0/2, as tmux recorded it in
+//     #{pane_title}. Agents set useful ones. Skipped when it is just the
+//     hostname, which is what a plain shell leaves it as and is identical for
+//     every session on the box.
+//  2. The same thing sent the other way: an OSC wrapped in tmux's passthrough
+//     DCS, which reaches the panel's own PTY and never reaches pane_title.
+//     That is the form a program that has noticed $TMUX uses, because the title
+//     is meant for the terminal a human is looking at rather than for tmux —
+//     codex already sends its OSC 9 and OSC 52 exactly that way. The panel
+//     parsed those titles, bounded them, broadcast them to the browser, and
+//     stored none of them.
+//  3. The running command — "claude", "codex" is exactly what is being looked
+//     for.
+//  4. For a shell, the directory it sits in. Every shell is called "bash", so
 //     the command tells you nothing; where it is at least distinguishes the one
 //     in a worktree from the one at the repo root.
+//
+// 1 before 2 because pane_title is live and the PTY title is the last one ever
+// seen: a program that stops setting titles should stop naming the session. In
+// practice they do not both hold — a program picks one route, and the route it
+// picks is the one tmux is not watching.
 //
 // The directory fallback is skipped for scratch terminals. They live in a tab
 // strip that already belongs to one session in one directory, so naming them
 // all after it produces a row of identical tabs. The UI numbers those instead.
-func deriveTitle(info tmux.Info, isScratch bool) string {
+func deriveTitle(info tmux.Info, ptyTitle string, isScratch bool) string {
 	if info.Title != "" && info.Title != hostname() && info.Title != info.Command {
 		return info.Title
+	}
+	if ptyTitle != "" && ptyTitle != hostname() {
+		return ptyTitle
 	}
 	if info.Command != "" && !isShell(info.Command) {
 		return info.Command

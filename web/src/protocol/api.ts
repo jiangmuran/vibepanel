@@ -4,6 +4,7 @@ import type {
   DirListing,
   AuthState,
   FileListing,
+  HookAgent,
   HookStatus,
   SettingsInfo,
   Note,
@@ -126,9 +127,14 @@ export const api = {
 
   hookStatus: () => request<HookStatus>('/api/settings/hooks'),
 
-  installHooks: () => request<HookStatus>('/api/settings/hooks', { method: 'POST' }),
+  /** Which agent's configuration to edit. The server refuses anything else
+   *  rather than guessing, because the answer decides which file in the user's
+   *  home directory gets written. */
+  installHooks: (agent: HookAgent = 'claude') =>
+    request<HookStatus>(`/api/settings/hooks?agent=${agent}`, { method: 'POST' }),
 
-  removeHooks: () => request<HookStatus>('/api/settings/hooks', { method: 'DELETE' }),
+  removeHooks: (agent: HookAgent = 'claude') =>
+    request<HookStatus>(`/api/settings/hooks?agent=${agent}`, { method: 'DELETE' }),
 
   state: () => request<PanelState>('/api/state'),
 

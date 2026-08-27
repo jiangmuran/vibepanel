@@ -11258,3 +11258,108 @@ to the list, and stays visible when the list is long enough to scroll.
 **The checkbox tooltip said the same thing in both branches.**
 `title={t.done ? tr('session.done') : tr('session.done')}` — copy-paste, and it
 told you the item was "done" whether it was or not. Mark done / mark not done.
+
+
+## Two ways to send a title, and the panel read one of them
+
+A session running Codex never got a useful name, and setting the title from
+inside the process did not reach the panel either. The obvious suspects were all
+innocent, and it is worth writing down that they were measured rather than
+reasoned about, because three of them look guilty:
+
+- `allow-set-title` is guarded by `%if "#{>=:#{version},3.6}"`. On tmux 3.6 the
+  option reads `on` under the embedded config, and it defaults to `on` wherever
+  it exists, so the guard changes nothing.
+- A plain `OSC 0/2` from inside a pane does set `#{pane_title}` — with a client
+  attached and without one, on the primary screen and from inside the alternate
+  screen, which is where a full-screen agent TUI lives.
+- The whole chain then works. A session created with no command, sent
+  `printf '\033]2;set from inside\007'` the way a person would type it, is
+  renamed by the next poll. That was written as a test before anything was
+  changed, and it passed.
+
+What does not work is the other way of sending a title, and it is the way a
+program that knows it is inside tmux sends one. The title is meant for the
+terminal a human is looking at, not for tmux, so the sequence goes in the
+passthrough DCS:
+
+```
+printf '\033]2;X\007'                        pane_title becomes X
+printf '\033Ptmux;\033\033]2;X\007\033\\'    pane_title unchanged
+```
+
+Passthrough is defined as tmux not looking. It hands the bytes to its client —
+which is the panel — and `#{pane_title}`, the only source `deriveTitle` had,
+never moves. Measured on tmux 3.6 with a real client attached: the client PTY
+receives `ESC ] 2 ; X BEL` verbatim, and `pane_title` still reads the hostname.
+`TestWhereAPaneTitleEndsUp` pins both halves, and each half fails silently on
+its own.
+
+**The panel was already parsing that title.** `internal/session/osc.go` reads
+OSC 0/2 off the client PTY, bounds it with `TruncateTitle`, and the manager
+broadcasts it as a title event; `internal/ws` forwards it as `MsgTitle`;
+`socket.ts` calls `onTitle`. Nothing in `web/src` passes `onTitle` — it is
+declared on `Terminal` and supplied by no caller — and nothing wrote it to the
+store. So a title sent the only way a tmux-aware program sends one was parsed,
+truncated, delivered to the browser, and dropped, and the session kept the name
+of the directory it was sitting in. That is the whole bug: two channels, one
+reader.
+
+`Live` now keeps the last title the PTY saw, and `deriveTitle` takes it as its
+second source, behind `#{pane_title}` and ahead of the command. Behind, because
+`pane_title` is live and the PTY title is the last one ever seen; in practice
+they never both hold, because a program picks a route and the route it picks is
+the one tmux is not watching. Kept on the attachment rather than written from
+the pump: naming a session is one decision in one place, and a write on the pump
+goroutine would sit between the PTY and the viewers watching it — and would hand
+a program that repaints its title a way to write a row several times a second.
+
+Deliberately not answered here: whether Codex itself uses passthrough for its
+title. Its binary carries the wrapped forms of `OSC 9` and `OSC 52` as literals
+and a bare `\033]0;{}\007` for the title, so today it probably sets
+`pane_title` like everything else — but the panel is not allowed to run it, and
+that is exactly the situation where a channel nobody reads should be read. The
+`codex_tui::terminal_title` module and a `[tui] terminal_title` list of item
+identifiers (`project-name`, `current-dir`, `run-state`, `thread-title`, …) are
+also in there, which is worth knowing before blaming the panel for a Codex
+session called `codex`: that name is `deriveTitle`'s command fallback, and it
+appears when the agent set no title at all.
+
+## Codex gets the same button Claude has
+
+`CodexNotify` had produced a snippet to paste by hand since it existed, and the
+settings page said so in as many words: *Codex (paste yourself)*. It installs
+now, from a button beside Claude's.
+
+Line editing, not a TOML round-trip. This machine's `~/.codex/config.toml` has a
+model provider, thirty-odd `[projects."..."]` tables, aligned assignments and
+comments in it; every encoder that reads and rewrites a document loses the
+comments and reorders the keys, and handing somebody back a file they did not
+write in exchange for one line is the same sin the Claude installer avoids by
+merging JSON rather than replacing it. A test asserts the file comes back
+byte-identical apart from the inserted line.
+
+**The insertion point is the part with teeth.** TOML keys belong to the table
+above them, so `notify` appended to the end of that file defines
+`notice.notify` — a key Codex never reads. Nothing reports it: the file still
+parses, `codex doctor` is happy, reading the line back finds it, the settings
+page says installed, and no Codex session ever reports a state. It goes above
+the first table header, and `TestInstallCodexPutsNotifyAboveTheFirstTable` fails
+if it does not.
+
+Four more cases, each of which corrupts a file the agent will not start without:
+a `notify` written across several lines is replaced whole rather than by its
+first line; a `notify` inside a table is a different key and is left alone; our
+own older line (an upgrade that moved the data directory) is replaced rather
+than duplicated; and somebody else's is commented out in place rather than
+deleted, because Codex has exactly one notify slot and a backup beside the file
+is not where anybody looks. Uninstall removes only ours.
+
+`hooksAreInstalled` counts either agent now. It read Claude's flag alone, so a
+machine wired up through Codex was told to install hooks it already had — and
+that notice is the panel admitting it is guessing, which it was not.
+
+`?agent=claude|codex` on `POST` and `DELETE /api/settings/hooks`, defaulting to
+Claude, which is what the parameter-less request has always meant. Anything else
+is a `400`: the value picks a file in somebody's home directory to edit, so an
+unrecognised one is refused rather than resolved to whichever branch is first.
