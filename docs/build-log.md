@@ -15232,6 +15232,91 @@ timestamps on it; three panels have them now, and the third one importing
 happened" is what a zero means everywhere it is used and "56 years ago" beside
 an unticked item is worse than a blank.
 
+### Mutation testing
+
+29 mutations, 29 killed, 0 survived. `scripts/mutate-panel.py` re-runs them —
+twenty against `vitest`, nine against `panes-check`, which is the only thing
+that can see a divider that does not drag or a tab that draws a word.
+
+Two survived the first pass, and both were guards that were not guarding.
+
+| removed | what goes wrong |
+|---|---|
+| either bound on a stacked tab's divider | a half dragged to nothing, with the grip on an edge |
+| the lower bound only | the same, one way |
+| a ratio that is not a number resolves to a bound | NaN is treated as a position somebody chose |
+| the empty-key check before `Number()` | `Number('')` is 0, which collapses the top half |
+| a stored position is clamped | a key holding 0.95 opens a tab as one panel and a line |
+| `stackRatioAt`'s zero-height guard | the frame before first paint writes NaN into the key |
+| a divider position per stacked tab | the notes tab follows the files tab's divider |
+| the tab order | the strip navigates and animates the wrong way |
+| a retired tab back in `PANEL_TABS` | the repair is tested against a name it will never see |
+| `tabOwnsHeight` always false | both stacked tabs collapse to their two headers |
+| `tabOwnsHeight` always true | the monitor and the token panel stop scrolling |
+| the density threshold | the panel is two columns at 200px |
+| the split preset back in the header | a control that presses and changes nothing |
+| a pane emptied by a retired tab is kept | a tab strip with nothing under it |
+| the pane cap counts panes that were dropped | a surviving pane falls off the end of a six-pane layout |
+| `groups.length === 0` returning the default | yesterday's layout opens as an empty panel |
+| `isTab` accepting any string | `git` comes back as a tab that renders nothing |
+| the `active`-in-`tabs` check | a pane showing a tab it does not hold |
+| the missing-tab append | a tab with no strip anywhere |
+| the tab's `aria-label` | four buttons a screen reader announces as "button" |
+| the tab's `title` | no name for a pointer |
+| a label span back in the strip | 汉字 in the tab strip |
+| a stacked tab given `min-h-full` | the stack has no height and collapses |
+| the marker's transition | switching tabs happens between two frames |
+| the selected glyph's lift | one of the two things that make the move legible |
+| `.vp-stack-half` applied during a drag | the divider arrives where the pointer was |
+| `.vp-stack-half`'s transition entirely | a keyboard step is a jump |
+| `animation-delay` in the reduced-motion block | a staggered row invisible for 175ms |
+| the divider position is never written | a divider you place again on every reload |
+
+**M5 — `readStackRatio`'s own `Number.isFinite` check.** Removing it changed
+nothing, because `clampStackRatio` already answers NaN with the default. Two
+guards in a row where one does the work is the reader having to decide which is
+load-bearing; the second is deleted and the mutation now takes the clamp itself.
+
+**M23 — `overflow-y-hidden` on a stacked tab's scroller.** The reasoning was
+"a scroller cannot hold a stacked tab", which is true of the *height* and untrue
+of the overflow: `h-full` already makes the child exactly its parent's height,
+and a child that is exactly its parent's height never scrolls it. The branch is
+removed and the mutation now takes `h-full` itself, which is the half that was
+actually doing the work.
+
+### The checks
+
+- `make check` — clean.
+- `make panes-check` — `=== panes check: 0 FAIL, 0 WARN ===`, 75 assertions.
+- `make render-check` — `=== render check: 1 FAIL, 0 WARN ===`, and the one is
+  `[FAIL] bottom: typing into a bottom terminal produced no output`. Verified
+  pre-existing: the same line, alone, on a detached checkout of `efecb5f` built
+  and run the same way. It is a terminal, not the side panel.
+
+  Three FAILs and four WARNs on the first run, all of them this change's:
+
+  - **The monitor took its whole panel down on a payload with no `diskPath`.**
+    The new mount row tested `sample.diskPath !== ''`, and `undefined !== ''` is
+    true, so `safeText(undefined)` reached `.replace`. The check's "a machine it
+    cannot measure" section serves exactly that payload, which is how it was
+    found; the second FAIL (`an unreadable meter should read "—"`) was the same
+    crash reported by the assertion downstream of it. Truthiness now, and the
+    comment says which payload.
+  - **Every file row scrolled past the bottom of the new second scroller was
+    reported as covered.** `findCoveredControls` skips a control whose centre is
+    outside the *window*; it had no reason to know about a scroller that ends
+    part-way down a column, and the files tab is now exactly that. A row you
+    scroll to is not a row something is on top of — the same distinction
+    `overflow.mjs` already draws for its own case — so the scan now also skips a
+    control whose centre is outside its nearest scrolling ancestor. Only
+    scrollable ancestors: a clipped ancestor that cannot be scrolled is content
+    that is genuinely unreachable, and reporting that is what the file is for.
+  - **`text-ink-3` at 10.5px is below AA on the panel.** The new "17 items"
+    count beside the directory path measured 2.97:1 in light and 3.99:1 in dark.
+    Every small figure added by this change moved to `text-ink-2`. The one
+    `text-ink-3` left in the panel is `spend.whose`, which predates this and was
+    not on screen when the probe ran — worth a look separately.
+
 ### The harness needed a project
 
 `panes-check` renders the panel through `panes-harness.tsx` with `project: null`,
@@ -15247,3 +15332,30 @@ That surfaced a stub that had been wrong and harmless. The harness socket was
 `onPanelChange`. It never mattered while `project` was always null and those two
 panels never mounted, and it was an immediate crash into the error boundary the
 moment they did. A stub is only a stub of what is actually called.
+
+### Left undone
+
+- **`spend.whose` is still `text-ink-3` at 10.5px**, which is the combination the
+  contrast probe measured at 2.97:1 on the panel. It predates this change and was
+  not on screen when the probe ran, so it is not this change's finding — but the
+  measurement applies to it and the token panel is where somebody will next hit
+  it.
+- **`render-check` does not drive the divider from the keyboard.** `panes-check`
+  does, against the harness. The one it cannot reach is the interaction between
+  an arrow key on the divider and the note's textarea below it, which needs a
+  real project.
+- **Nothing measures the stacked tab at `PANEL_MIN_WIDTH`.** Both browser checks
+  drive it at 320 and 420. A 200px files tab is a file list, a divider and a
+  repository panel in a column narrower than the repository panel's own branch
+  line, and whether that is usable is a question neither check asks.
+- **The divider position is per stacked tab and not per project.** Somebody who
+  keeps the repository large in one project and the file tree large in another
+  gets one answer for both. Deliberate for now — a key per project is a key that
+  accumulates one entry per project forever, and nothing sweeps it.
+- **`byMonth` is read for two months and nothing else.** The series is every
+  month there has been; a twelve-month column would fit the panel at `wide` and
+  is the obvious next thing to put in the space the density work opened up.
+- **A retired tab's *stack* position is never swept.** `vibepanel.stack.files`
+  and `vibepanel.stack.notes` are the only two keys this writes, so there is
+  nothing to sweep yet — but the day a stacked tab is retired, its key stays in
+  every browser. `RETIRED_TABS` is where that would be noticed.
