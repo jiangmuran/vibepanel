@@ -27,6 +27,7 @@ import type {
   WebhookTest,
   UpdateResult,
   Todo,
+  VncTarget,
 } from './wire'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -401,6 +402,27 @@ export const api = {
     request<Webhook[]>('/api/settings/webhooks', { method: 'PUT', body: JSON.stringify(list) }),
   testWebhook: (w: Webhook) =>
     request<WebhookTest>('/api/settings/webhooks/test', { method: 'POST', body: JSON.stringify(w) }),
+
+  vncTargets: () => request<VncTarget[]>('/api/vnc/targets'),
+
+  /**
+   * `password` is write-only in both directions of this pair.
+   *
+   * Omitting it on a save leaves whatever is stored alone; sending `''`
+   * clears it. That is why it is optional here rather than a string with a
+   * default — a default of `''` would mean every rename wiped the password,
+   * silently, because the field never comes back for anything to notice.
+   */
+  saveVncTarget: (
+    id: string | null,
+    body: { name: string; host: string; port: number; viewOnly: boolean; password?: string },
+  ) =>
+    request<VncTarget>(id === null ? '/api/vnc/targets' : `/api/vnc/targets/${id}`, {
+      method: id === null ? 'POST' : 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  deleteVncTarget: (id: string) => request<void>(`/api/vnc/targets/${id}`, { method: 'DELETE' }),
 
   checkUpdate: () => request<UpdateCheck>('/api/update'),
   applyUpdate: () => request<UpdateResult>('/api/update', { method: 'POST' }),

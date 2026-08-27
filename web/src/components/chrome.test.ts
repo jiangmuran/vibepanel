@@ -110,6 +110,14 @@ describe('what does change with width is presentation', () => {
   })
 })
 
+// The ends of the strip rather than two tab names: wrapping is what these
+// assert, and a sixth tab turned every one of them into a failure about
+// `tokens` that had nothing to do with wrapping. The literal order below is
+// deliberately still a literal -- that one is the guard, and changing it is
+// the moment to notice the order changed.
+const first = PANEL_TABS[0]
+const last = PANEL_TABS[PANEL_TABS.length - 1]
+
 describe('arrow keys inside the tab strip', () => {
   it('moves one tab at a time, in the direction of the arrow', () => {
     expect(tabFromKey('ArrowRight', 'files')).toBe('monitor')
@@ -117,13 +125,13 @@ describe('arrow keys inside the tab strip', () => {
   })
 
   it('wraps rather than stopping', () => {
-    expect(tabFromKey('ArrowRight', 'tokens')).toBe('files')
-    expect(tabFromKey('ArrowLeft', 'files')).toBe('tokens')
+    expect(tabFromKey('ArrowRight', last)).toBe(first)
+    expect(tabFromKey('ArrowLeft', first)).toBe(last)
   })
 
   it('has Home and End', () => {
     expect(tabFromKey('Home', 'todos')).toBe('files')
-    expect(tabFromKey('End', 'files')).toBe('tokens')
+    expect(tabFromKey('End', first)).toBe(last)
   })
 
   it('leaves every other key alone', () => {
@@ -137,8 +145,8 @@ describe('arrow keys inside the tab strip', () => {
 
 describe('the body enters from the side the strip moved towards', () => {
   it('follows the order of the tabs', () => {
-    expect(swapDirection('files', 'tokens')).toBe('forward')
-    expect(swapDirection('tokens', 'files')).toBe('back')
+    expect(swapDirection(first, last)).toBe('forward')
+    expect(swapDirection(last, first)).toBe('back')
     expect(swapDirection('notes', 'todos')).toBe('forward')
     expect(swapDirection('todos', 'notes')).toBe('back')
   })

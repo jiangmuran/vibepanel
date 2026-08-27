@@ -102,6 +102,11 @@ func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 		},
 	}
 	mgr.OnSignals = srv.HandleSignals
+	// On here, off in the product. The suite needs the routes to exist to test
+	// them at all; that they are *absent* by default is the separate and more
+	// important claim, and TestTheVncRoutesDoNotExistUnlessAskedFor is where
+	// it is made -- against a server built the way a real one is.
+	srv.VNCEnabled = true
 	ts := httptest.NewServer(srv.Routes())
 	t.Cleanup(ts.Close)
 

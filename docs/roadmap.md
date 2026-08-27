@@ -271,7 +271,21 @@
       opencode 会加载每一个 `.js`，`vibepanel.js.bak` 等于装了第二份、每个状态报两次。
 - [ ] **U2 GitHub 预览。** 原话是「文件和 **github 预览**」。文件预览做了（文本/图片/PDF），
       GitHub 那半没有。
-- [ ] **U3 内置 VNC。** 一行都没有。
+- [x] **U3 内置 VNC。** 面板是 **RFB 代理**，不是 VNC 客户端：浏览器走 WebSocket，
+      VNC server 走 TCP，字节只在 `internal/httpapi/vnc.go` 一个地方过。握手两头都由面板
+      终结——它拿存下来的密码去跟 display 认证，然后对浏览器只 offer RFB 3.8 + security
+      type `None`，所以那 8 个字节从来没进过浏览器。ClientInit 之后原样对拷，编码
+      （Tight / ZRLE / JPEG）由两端自己谈，面板一个像素都不解。
+      **地址永远不在请求里**：浏览器给的是一行的 id，host/port 从库里的行读。行本身再受
+      `--vnc-allow` 约束，**空表示只允许回环**（跟 `--allow-from` 相反，故意的），存的时候查
+      一次、每次连接再查一次，而且要求域名解析出来的**每一个**地址都在策略内，然后按 IP
+      字面量去 dial——中间没有第二次解析可以给 rebinding 用。
+      「只看」在代理里落实（丢掉键盘、指针、剪贴板、resize、xvp），不是在 noVNC 上设个属性。
+      客户端用 noVNC（MPL-2.0，未修改，动态 import 单独成 chunk）；自己写一个的话，
+      难的从来不是画布，是 Tight/ZRLE 和键盘映射。
+      「卡住」和「没动静」用**探针**区分：静默 5 秒发一条 non-incremental 的 1×1
+      FramebufferUpdateRequest（server 必须回），再 5 秒没回就是 not responding，形状和文字
+      都跟 live 不一样。
 - [ ] **U4 HTML 预览。** 现在的预览把 HTML/SVG **当作文本**显示——那是故意的（SVG 是能跑脚本
       的文档，用 `<iframe>` 会在面板自己的源上执行它）。但「预览一个 html 页面」这件事没做，
       要做就得想清楚怎么隔离。
@@ -291,9 +305,18 @@
       ntfy、Gotify、Server酱、PushPlus、Slack、Discord 和反代后面的一个 shell 脚本。
       **两种转义**，按占位符在哪里选：URL 里走百分号编码（`fix a&b` 不这么做会在 `&` 处
       断成另一个查询参数），body 里走 JSON 转义（agent 标题里全是引号）。触发的是**状态
-      转换**而不是状态，所以一个一直等着的会话不会每两秒发一条。- [ ] **U7 插件系统。** 原话是「正在设计的插件和 api 系统 可以让一个 harness 接入管理所有
-      session」。**API 和 apidoc 已经有了**（`docs/api.md` + API 令牌），harness 接管所有
-      session 这一半是通的；插件系统这一半没做。
+      转换**而不是状态，所以一个一直等着的会话不会每两秒发一条。
+- [~] **U7 插件系统 —— 设计完了，结论是不要做运行时。** 原话是「正在设计的插件和 api 系统
+      可以让一个 harness 接入管理所有 session」。逐条拆下来，「插件」是四件事共用一个词：
+      **响应 session 变化**（API 令牌 + `/ws` 推送已经做到，而且比进程内插件好）、
+      **把事件发到别处**（webhook 已经做到）、**往界面里加东西**（拒绝：面板这个 origin 上
+      挂着可写终端和会话 cookie，第三方 JS 就是「以你的身份跑任意代码」）、
+      **打包成一个文件而不是一个守护进程**（真正缺的那件事，但那是分发问题不是运行时问题）。
+      `docs/plugins.md` 是完整论证：能力模型、装一个插件意味着什么（照实说：以运行面板的
+      用户身份跑任意代码）、慢/抛异常/死循环怎么办（**不能让 session 状态停止更新**，
+      `fireWebhooks` 那道疤就是这条规则的来源）、以及怎么做版本。
+      唯一动的代码是 `docs/api.md` 里新加的「Attaching a harness」一节——把三样本来互不相识
+      的东西写在一起：那就是插件系统，它只是一直没有名字。
 
 ### 一处需要你拍板的偏离
 

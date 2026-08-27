@@ -78,7 +78,18 @@ function three(): PaneLayout {
   return l
 }
 
-/** Four panes: files+monitor, then notes, todos and tokens each on their own. */
+/** Four panes: everything else, then notes, todos and tokens each on their own. */
+
+// What is left in the first pane after `moved` have been dragged out of it.
+//
+// Written as a difference rather than spelled out, because these tests are
+// about index arithmetic and not about which tabs exist: three of them broke
+// the day a sixth tab was added, every one of them on a hard-coded leftover
+// list that had nothing to do with what was being asserted.
+function rest(...moved: PanelTab[]): string {
+  return PANEL_TABS.filter((t) => !moved.includes(t)).join('+')
+}
+
 function four(): PaneLayout {
   let l = defaultLayout()
   l = moveTab(l, 'notes', { kind: 'new', at: 1 })
@@ -327,7 +338,7 @@ describe('moving a tab', () => {
     const moved = moveTab(l, 'notes', { kind: 'new', at: 3 })
     expectSound(moved, 'moved past the pane it left')
     expect(moved.groups.map((g) => g.tabs.join('+'))).toEqual([
-      'files+monitor',
+      rest('notes', 'todos', 'tokens'),
       'todos',
       'notes',
       'tokens',
@@ -337,11 +348,11 @@ describe('moving a tab', () => {
   it('joins the pane it was aimed at when the source pane vanishes under it', () => {
     // The same correction on the other arm. Without it the index runs off the
     // end of the shortened list and the drop is silently dropped.
-    const l = three() // [files+monitor+tokens, notes, todos]
+    const l = three() // [everything else, notes, todos]
     const joined = moveTab(l, 'notes', { kind: 'join', group: 2 })
     expectSound(joined, 'joined past the pane it left')
     expect(joined.groups.map((g) => g.tabs.join('+'))).toEqual([
-      'files+monitor+tokens',
+      rest('notes', 'todos'),
       'todos+notes',
     ])
   })
@@ -487,7 +498,7 @@ describe('a layout that does not fit the window it opens in', () => {
     expect(fitted.groups).toHaveLength(2)
     // From the bottom, because the top of the column is where the panel opens
     // and what you were looking at is up there.
-    expect(fitted.groups[0].tabs).toEqual(['files', 'monitor', 'tokens'])
+    expect(fitted.groups[0].tabs.join('+')).toEqual(rest('notes', 'todos'))
   })
 
   it('leaves a layout that fits alone', () => {

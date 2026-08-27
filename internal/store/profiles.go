@@ -483,8 +483,6 @@ func (d *DB) GetLaunchProfile(ctx context.Context, id string) (LaunchProfile, er
 	return p, nil
 }
 
-type scanner interface{ Scan(dest ...any) error }
-
 func scanLaunch(row scanner) (LaunchProfile, error) {
 	var p LaunchProfile
 	var cmd, env string
