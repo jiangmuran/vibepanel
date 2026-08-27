@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  vibepanel as a macOS LaunchAgent — the launchd equivalent of the systemd
+  *user* service, and the only service kind macOS gets.
+
+    cp io.github.jiangmuran.vibepanel.plist ~/Library/LaunchAgents/
+    sed -i '' "s#__HOME__#$HOME#g" ~/Library/LaunchAgents/io.github.jiangmuran.vibepanel.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.github.jiangmuran.vibepanel.plist
+
+  deploy/install.sh does all of that. It is written down here because a plist
+  is the one file in this project people hand-edit, and the reasons below are
+  not guessable from the keys.
+
+  There is no LaunchDaemon counterpart, deliberately. A daemon runs as root at
+  boot and would have to drop back to your account to be any use — and the one
+  thing the systemd system unit buys, OOMScoreAdjust, has no macOS equivalent
+  at all: there is no oom_score_adj, and the memory pressure that kills things
+  on macOS is jetsam, which a plist cannot bias. A LaunchDaemon would be the
+  same panel with more privilege and nothing to show for it.
+
+  What you give up against the Linux user unit: a LaunchAgent runs in your GUI
+  session, so it starts when you log in and stops when you log out. macOS has
+  no `loginctl enable-linger`. On a Mac left logged in — which is what a Mac
+  used as a dev box is — that is the same thing; on one you log out of, it is
+  not, and install.sh says so at the point it installs this.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>io.github.jiangmuran.vibepanel</string>
+
+  <!-- The marker deploy/install.sh looks for before it will overwrite a file
+       at this path. launchd has no Documentation= key, so the systemd units'
+       equivalent is this comment, and it is load-bearing: without it the
+       installer treats its own plist as somebody else's and refuses to touch
+       it. https://github.com/jiangmuran/vibepanel -->
+
+  <!-- launchd has no EnvironmentFile. The env file is the one file the user
+       edits, it holds the domain, the TLS choice and any ACME credentials, and
+       it is written as bare KEY=value lines with no `export` — so it has to be
+       sourced under `set -a` by a shell, and that shell has to be in the
+       ProgramArguments. Putting the settings into EnvironmentVariables here
+       instead would freeze them at install time: editing the env file would
+       then change nothing until somebody reinstalled. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>set -a; [ -f "$HOME/.config/vibepanel.env" ] &amp;&amp; . "$HOME/.config/vibepanel.env"; set +a; exec "$HOME/.local/bin/vibepanel" serve</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Restart on a crash, but not on a clean exit. The panel exits 0 on
+       SIGTERM, so `launchctl bootout` — which is what `vibepanel service stop`
+       runs — actually stops it instead of being immediately undone. A plain
+       <true/> here makes the service unstoppable except by removing the file. -->
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <!-- The launchd half of KillMode=process, and the same red line: the tmux
+       server holds every session and must outlive the panel process.
+       Without this, launchd SIGKILLs anything left in the job's process group
+       when the job goes away, and `vibepanel service restart` becomes the
+       destructive operation the whole architecture exists to prevent.
+       tmux daemonises into its own session, so this is belt as well as braces
+       — but the cost of being wrong is every running agent. -->
+  <key>AbandonProcessGroup</key>
+  <true/>
+
+  <!-- Interactive, not Background. launchd puts Background jobs in a throttled
+       CPU and I/O band; the agents run under the tmux server this job starts,
+       and a coding agent throttled to background priority is one that takes
+       minutes to answer. -->
+  <key>ProcessType</key>
+  <string>Interactive</string>
+
+  <key>WorkingDirectory</key>
+  <string>__HOME__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>__HOME__</string>
+    <!-- A LaunchAgent inherits almost no PATH, and the panel shells out to
+         tmux — /opt/homebrew/bin on Apple silicon, /usr/local/bin on Intel.
+         Without both, the panel starts and then cannot create a session. -->
+    <key>PATH</key>
+    <string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <!-- There is no journal. Everything the panel prints — including the
+       one-time setup token — goes here, which is why `vibepanel service logs`
+       and `vibepanel service token` read this file on macOS. -->
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/vibepanel.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/vibepanel.log</string>
+</dict>
+</plist>

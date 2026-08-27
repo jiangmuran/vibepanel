@@ -58,7 +58,7 @@
 
 ## 环境要求
 
-- **tmux 3.3 或更新**（`apt install tmux`）。
+- **tmux 3.3 或更新**（`apt install tmux`，或者让安装脚本替你装）。
 
   要 3.3 而不是 3.2，是因为内置配置里用了 `allow-passthrough`，这个选项 3.3 才有。旧版
   tmux 不会拒绝启动：它报一句「未知选项」，然后带着默认值继续跑，从此 agent TUI 用来做
@@ -77,38 +77,50 @@
 
 | | 什么时候用 | 会话能活过 | 需要 root | 开机自启 |
 |---|---|---|---|---|
-| **user service**（默认） | 这是你自己的机器，或共享机器上你自己的账号。绝大多数人是这一种。 | 面板重启、面板崩溃、你登出 | 不需要 | 需要 lingering，安装脚本会替你开 |
-| **系统服务** | 机器内存吃得紧，或者要求没人登录时面板也已经起来。 | 同上，并且内存紧张时内核最后才动它 | 装的时候需要一次 | 是 |
+| **user service** | 这是你自己的机器、共享机器上你自己的账号，或者这里根本拿不到 root——安装脚本会退到这一种，并且会说出来。 | 面板重启、面板崩溃、你登出 | 不需要 | 需要 lingering，安装脚本会替你开 |
+| **系统服务**（拿得到 root 时的默认） | 拿得到 root。另外：机器内存吃得紧，或者要求没人登录时面板也已经起来。 | 同上，并且内存紧张时内核最后才动它 | 装的时候需要一次 | 是 |
 | **直接跑**（`./vibepanel serve`） | 只是试一下，或者你已经有自己顺手的进程管理。 | 面板重启——会话本来就在 tmux 手里 | 不需要 | 否 |
 | **Docker** | 想要隔离，并且**丢会话无所谓**。 | **什么都活不下来**：容器里 tmux 是 entrypoint 的子进程，`docker restart` 会带走所有 agent | 不需要 | 看容器策略 |
 
 前两种是同一个面板、同一份数据，真正的区别只有 `OOMScoreAdjust`，而且是实测出来的：
 **user unit 里写 `-500`，进程读到的是 `100`**——调低它需要 `CAP_SYS_RESOURCE`，user manager
-没有；而 `systemd-analyze verify` 两种写法都放行。安装脚本只在 root 真的可用时才提供第二种，
-并且在问你的那一刻就说清楚它买到了什么。
+没有；而 `systemd-analyze verify` 两种写法都放行。root 真的可用时安装脚本就选第二种，
+并且在问你的那一刻就说清楚它买到了什么；拿不到 root 就退回第一种，并且明说。macOS 上两种
+都不适用：那里只有一种，LaunchAgent，为什么没有 LaunchDaemon 写在
+`deploy/io.github.jiangmuran.vibepanel.plist` 里。
 
 **不要两种都装。** 那是一个 tmux socket 上跑两个面板；安装脚本会检测到另一种并拒绝，
 而不是悄悄再装一个。
 
-在任何一台装了 tmux 的机器上，解开发布包：
+一行命令，Linux 和 macOS 都行，机器上什么都没有也行：
 
 ```sh
-tar -xzf vibepanel_<version>_linux_amd64.tar.gz
-cd vibepanel_<version>_linux_amd64
-./deploy/install.sh
+curl -fsSL https://raw.githubusercontent.com/jiangmuran/vibepanel/main/install.sh | sh
 ```
+
+它会认出平台、下载对应的发布包、**拿发布的 `SHA256SUMS` 校验**，对不上就拒绝解包；tmux
+缺失或低于 3.3 时会问你要不要装；然后装服务——Linux 上是 systemd unit，macOS 上是 launchd
+LaunchAgent。已经解开发布包的话，`./deploy/install.sh` 就是同一个安装脚本，只是不用下载。
 
 它会问你。装哪一种服务、要不要现在就起来，然后把接下来要做的事整个列出来，等你点头才
 动手。跑完会告诉你：装的是哪个 unit、是「启动」还是「重启」、一次性的 setup token 在哪
-里看、以及该打开哪个地址。
+里看、以及该打开哪个地址。全部选项在 `... | sh -s -- --help`；之后出问题看
+[docs/runbook.md](docs/runbook.md)。
 
-默认是 systemd **user** service，因为面板是以你的身份、用你的密钥和你的 dotfiles 跑
-agent 的，整件事不需要 root。安装脚本还会顺手替你开 lingering —— 这不是可选项：user
-service 会在你最后一个登录会话结束时停掉，而一个「你一登出就死」的面板只是看起来能用。
+**拿得到 root 时，推荐并且默认装系统级服务**：同一个账号、同一套环境（它会 `User=你`
+降下来），没人登录时也已经起来，而且只有它能真的把 OOM 分数调低。拿不到 root 时它会直说，
+改装 **user** service —— 那个完全不需要 root，并且会替你打开 lingering：user service 会
+在你最后一个登录会话结束时停掉，而一个「你一登出就死」的面板只是看起来能用。
 
-如果这台机器上拿得到 root（你就是 root，或者 `sudo` 能用），它会把系统级服务也作为一个
-选项摆出来，并且就在问你的地方把区别讲清楚。如果拿不到 root，它会直说，然后改装 user
-service —— 它不会因为一件你当下无法解决的事情而失败。
+面板的第一个账号也可以直接在安装时建，不必走浏览器：
+`--username 你 --password-file /path/to/pw`。**没有 `--password <明文>` 这个开关**——那是
+把密码写进 shell 历史，并且在 `ps` 里对这台机器上的每个用户可见。
+
+装完之后，不管它是以哪种方式在跑，都只用记一条命令：
+
+```sh
+vibepanel service status | start | stop | restart | logs | token | upgrade | uninstall
+```
 
 打开 `http://<主机>:8443`，粘贴 setup token，设一个密码。首次配置到此结束。
 

@@ -119,7 +119,7 @@ Each of these exists because the alternative broke something real.
   | `make scale-check` | two dozen sessions: snapshot size, sidebar reachability, poller |
   | `make tls-check` | its own TLS: wss, the Secure cookie, swapping a certificate |
   | `make release-check` | build the archives and run one from a throwaway HOME |
-  | `make install-check` | `deploy/install.sh` down every branch: interactive and not, user unit and system unit, root and no root, and the refusal to install both |
+  | `make install-check` | both installers down every branch: the one-liner against a local HTTP server (checksums, platforms, a tampered archive), then `deploy/install.sh` — tmux missing/old, six package managers, Linux and macOS, user unit and system unit, root and no root, no systemd at all, the refusal to install both, and the first account |
 
   Run the one that covers what you touched, and `verify` before anything
   structural. A change that only passes `check` has not been looked at.
@@ -133,6 +133,13 @@ Each of these exists because the alternative broke something real.
 
   Commit whole changes. `git add <path>` for some of the files and not the
   others is how that happened.
+- **The installer is two files, and the split is deliberate.** `install.sh` at
+  the repository root is the network bootstrap the one-liner pipes into `sh`:
+  POSIX `sh`, no bash anywhere in it, and its whole job is to fetch a release,
+  verify it against `SHA256SUMS` and hand over. `deploy/install.sh` installs
+  from an unpacked archive and knows about tmux, services and everything else;
+  it is bash, and bash 3.2, because macOS still ships that one. Neither may
+  grow a `--password <value>` flag — see `cmd/vibepanel/account.go` for why.
 - **Commits**: English Conventional Commits (`feat(tmux): ...`). No
   `Co-Authored-By` trailers.
 - **Docs**: English. Keep `docs/build-log.md` current as you go; a decision that

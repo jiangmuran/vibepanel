@@ -75,7 +75,7 @@ two apart: **tmux does process persistence, the web UI does organisation.**
 
 ## Requirements
 
-- **tmux 3.3 or newer** (`apt install tmux`).
+- **tmux 3.3 or newer** (`apt install tmux`, or let the installer do it).
 
   3.3 rather than 3.2 because the embedded config sets `allow-passthrough`, which
   arrived in 3.3. An older tmux does not refuse to start: it reports an unknown
@@ -98,8 +98,8 @@ it is who the machine belongs to and what has to survive.
 
 | | Use it when | Sessions survive | Needs root | Starts at boot |
 |---|---|---|---|---|
-| **User service** (the default) | It is your machine or your account on a shared one. This is the right answer for almost everyone. | a panel restart, a panel crash, a logout | no | yes, via lingering (the installer enables it) |
-| **System service** | The box runs close to its memory, or the panel must be up before anyone logs in. | the same, and the kernel reaches for it last under memory pressure | yes, once, to install | yes |
+| **User service** | It is your machine or your account on a shared one, or there is no root here. The installer falls back to this and says so. | a panel restart, a panel crash, a logout | no | yes, via lingering (the installer enables it) |
+| **System service** (the default where root is available) | Root is available. Also: the box runs close to its memory, or the panel must be up before anyone logs in. | the same, and the kernel reaches for it last under memory pressure | yes, once, to install | yes |
 | **Just run it** (`./vibepanel serve`) | Trying it out, or you already have a supervisor you like. | a panel restart — tmux is still the one holding them | no | no |
 | **Docker** | You want it contained and can afford to lose sessions. | **nothing**: in a container tmux is a child of the entrypoint, so `docker restart` takes every agent with it | no | container policy |
 
@@ -107,35 +107,50 @@ The first two are the same panel and the same data; the only real difference is
 `OOMScoreAdjust`, and it is a measured one — a *user* unit asking for `-500`
 gets `100`, because lowering it needs `CAP_SYS_RESOURCE` and a user manager does
 not have it, while `systemd-analyze verify` accepts the directive either way.
-The installer offers the second only when root is actually available and says
-what it buys at the point of asking.
+The installer chooses the second whenever root is actually available, says what
+it buys at the point of asking, and falls back to the first — out loud — when it
+is not. On macOS neither applies: there is one kind, a LaunchAgent, and
+`deploy/io.github.jiangmuran.vibepanel.plist` says why there is no LaunchDaemon.
 
 Do not install both. They are two panels on one tmux socket; the installer
 detects the other kind and refuses rather than quietly making the second one.
 
-From a release archive, on any machine with tmux:
+One line, on Linux or macOS, on a machine with nothing on it:
 
 ```sh
-tar -xzf vibepanel_<version>_linux_amd64.tar.gz
-cd vibepanel_<version>_linux_amd64
-./deploy/install.sh
+curl -fsSL https://raw.githubusercontent.com/jiangmuran/vibepanel/main/install.sh | sh
 ```
+
+It works out the platform, fetches the matching release, **checks it against the
+published `SHA256SUMS`** and refuses to unpack it otherwise, offers to install
+tmux if it is missing or older than 3.3, and then installs the service — a
+systemd unit on Linux, a launchd LaunchAgent on macOS. From an unpacked release
+archive, `./deploy/install.sh` is the same installer without the download.
 
 It asks. Which service to install, whether to start it now, and then it prints
 the plan and waits for you to agree before it touches anything. At the end it
 says which unit it installed, whether it started or restarted it, where the
-one-time setup token is, and the URL to open.
+one-time setup token is, and the URL to open. Everything it can do is in
+`... | sh -s -- --help`; what goes wrong afterwards is in
+[docs/runbook.md](docs/runbook.md).
 
-The default is a systemd *user* service, because the panel runs your agents as
-you, with your keys and your dotfiles, and nothing about it needs root. The
-installer also enables lingering for you, which is not optional — a user service
-stops when your last login session ends, and a panel that dies when you log out
-is a panel that only appears to work.
+Where root is available the recommended default is the systemd *system*
+service: the same account and the same environment (it drops to `User=you`),
+up before anyone logs in, and the only one that can actually lower its OOM
+score. Where root is not available it says so and installs the *user* service,
+which needs none — and enables lingering for you, because a user service stops
+when your last login session ends and a panel that dies when you log out is a
+panel that only appears to work.
 
-If root is available — you are root, or `sudo` works — it offers the system
-service as well, and says what the difference is at the point of asking. If root
-is *not* available it says so and installs the user service instead; it never
-fails over something you cannot fix from where you are standing.
+You can create the panel's first account from the installer instead of from the
+browser: `--username you --password-file /path/to/pw`. There is deliberately no
+`--password <value>` — that is a password in your shell history and in `ps`.
+
+Afterwards, one command for all of it, whichever way it runs:
+
+```sh
+vibepanel service status | start | stop | restart | logs | token | upgrade | uninstall
+```
 
 Open `http://<host>:8443`, paste the setup token, choose a password. That is the
 whole first run.

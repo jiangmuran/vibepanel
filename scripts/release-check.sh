@@ -41,7 +41,8 @@ mkdir -p "$WORK/clean"
 tar -xzf "$ARCH" -C "$WORK/clean" || fail "the archive does not extract"
 DIR="$WORK/clean/vibepanel_test-release_linux_amd64"
 for f in vibepanel LICENSE README.md deploy/vibepanel.service \
-         deploy/vibepanel-system.service deploy/vibepanel.env; do
+         deploy/vibepanel-system.service deploy/vibepanel.env \
+         deploy/io.github.jiangmuran.vibepanel.plist; do
   [ -e "$DIR/$f" ] && ok "ships $f" || fail "the archive is missing $f"
 done
 [ -x "$DIR/vibepanel" ] && ok "the binary is executable" || fail "the binary is not executable"
@@ -171,6 +172,27 @@ if [ "$CLI_ENV_OK" = 1 ]; then
     || fail "a CLI-created session is missing:$MISSING"
 fi
 
+echo "==> the bootstrap the one-liner runs"
+# Not fetched. scripts/install-check.sh drives install.sh against a local HTTP
+# server; here the only question is whether the file people are told to pipe
+# into sh is present, executable and syntactically valid under a POSIX shell --
+# a bashism in it is invisible on a machine whose /bin/sh is bash, and fatal on
+# Debian and Alpine, which is most of them.
+[ -f "$REPO/install.sh" ] && ok "the repository ships install.sh at its root" \
+  || fail "no install.sh at the repository root; the one-liner has nothing to fetch"
+if [ -f "$REPO/install.sh" ]; then
+  for SHELL_BIN in dash busybox sh; do
+    case "$SHELL_BIN" in
+      busybox) command -v busybox >/dev/null 2>&1 && { busybox sh -n "$REPO/install.sh" \
+                 && ok "install.sh parses under busybox sh" \
+                 || fail "install.sh does not parse under busybox sh"; } ;;
+      *) command -v "$SHELL_BIN" >/dev/null 2>&1 && { "$SHELL_BIN" -n "$REPO/install.sh" \
+           && ok "install.sh parses under $SHELL_BIN" \
+           || fail "install.sh does not parse under $SHELL_BIN"; } ;;
+    esac
+  done
+fi
+
 echo "==> the documented install path"
 [ -x "$DIR/deploy/install.sh" ] && ok "the archive ships an executable install.sh" \
   || fail "the archive has no install script; the unit expects the binary at a path nothing puts it in"
@@ -185,7 +207,16 @@ if [ -x "$DIR/deploy/install.sh" ]; then
   # the logged-in user, which does not care what HOME this check sets. On a
   # machine where the developer runs the panel, a run that decides to start or
   # restart "vibepanel" would be starting or restarting theirs.
-  ( cd "$DIR" && HOME="$WORK/home" ./deploy/install.sh --yes --no-enable >"$WORK/install.log" 2>&1 )
+  #
+  # VIBEPANEL_ROOT_CMD=none is new and is not decoration. The recommended
+  # default is now the system service wherever root is available, so on a
+  # machine with passwordless sudo -- which is every CI runner -- an unadorned
+  # run of this would write /etc/systemd/system/vibepanel.service for real and
+  # enable it. `none` is the documented way to say "root is not available
+  # here", and it makes this check exercise exactly the branch it is asserting
+  # about: the no-root default.
+  ( cd "$DIR" && HOME="$WORK/home" VIBEPANEL_ROOT_CMD=none \
+      ./deploy/install.sh --yes --no-enable >"$WORK/install.log" 2>&1 )
   RC=$?
   sed 's/^/       /' "$WORK/install.log"
   [ $RC -eq 0 ] && ok "install.sh exits 0" || fail "install.sh exited $RC"
@@ -205,13 +236,17 @@ if [ -x "$DIR/deploy/install.sh" ]; then
     && ok "it says which unit it installed" \
     || fail "the installer did not name the unit it installed: $(tail -3 "$WORK/install.log" | tr '\n' ' ')"
   grep -q "installed: the systemd system service" "$WORK/install.log" \
-    && fail "the unattended default chose the system unit, which needs root" \
-    || ok "the unattended default is the user unit, which needs none"
+    && fail "it installed the system unit with no root available" \
+    || ok "with no root, the unattended default is the user unit"
+  grep -q "root is not available here" "$WORK/install.log" \
+    && ok "and it says why rather than falling back silently" \
+    || fail "it chose the user unit without saying root was unavailable"
 
   # An edited env file must survive a reinstall — it holds the domain and any
   # ACME credentials.
   echo "VIBEPANEL_DOMAIN=edited.example" > "$WORK/home/.config/vibepanel.env"
-  ( cd "$DIR" && HOME="$WORK/home" ./deploy/install.sh --yes --no-enable >/dev/null 2>&1 ) || true
+  ( cd "$DIR" && HOME="$WORK/home" VIBEPANEL_ROOT_CMD=none \
+      ./deploy/install.sh --yes --no-enable >/dev/null 2>&1 ) || true
   grep -q "edited.example" "$WORK/home/.config/vibepanel.env" \
     && ok "reinstalling keeps an edited env file" \
     || fail "reinstalling overwrote the env file the user had edited"
@@ -245,6 +280,52 @@ if [ -x "$DIR/deploy/install.sh" ]; then
     fi
   fi
 fi
+
+echo "==> the management command, against what the install just wrote"
+# The mapping is unit-tested; what cannot be unit-tested is whether the real
+# binary, on the real files the real installer produced, resolves to the same
+# thing. --dry-run so nothing is started, stopped or restarted on the machine
+# running this.
+SVC="$(HOME="$WORK/home" "$DIR/vibepanel" service --dry-run status 2>&1)"
+echo "$SVC" | grep -q "systemctl --user status vibepanel" \
+  && ok "it resolves the installed user unit: $SVC" \
+  || fail "vibepanel service did not find the unit the installer wrote: $SVC"
+SVCU="$(HOME="$WORK/home" "$DIR/vibepanel" service --dry-run uninstall 2>&1)"
+echo "$SVCU" | grep -q "$WORK/home/.config/systemd/user/vibepanel.service" \
+  && ok "uninstall names the unit file it would remove" \
+  || fail "uninstall does not name the right file: $SVCU"
+echo "$SVCU" | grep -q "$WORK/data" \
+  && fail "uninstall would remove the data directory" \
+  || ok "and would not touch the data directory"
+
+echo "==> the first account, created from the command line"
+# The other half of the installer's --username: the same argon2id path the
+# browser wizard uses, exercised against a real database rather than a stub.
+ACCTDIR="$WORK/acctdata"
+PWF="$WORK/acct.pw"
+printf 'a sufficiently long password\n' > "$PWF"
+A_OUT="$(HOME="$WORK/home" VIBEPANEL_DATA_DIR="$ACCTDIR" \
+  "$DIR/vibepanel" account create --username admin --password-file "$PWF" 2>&1)"
+A_RC=$?
+[ $A_RC -eq 0 ] && ok "it creates the first account: $(echo "$A_OUT" | head -1)" \
+  || fail "account create exited $A_RC: $A_OUT"
+# The safety property: it is never a password reset. Anybody who can run the
+# binary can run this, and under the system unit that is a wider set than the
+# people who should be able to change the password.
+A_OUT2="$(HOME="$WORK/home" VIBEPANEL_DATA_DIR="$ACCTDIR" \
+  "$DIR/vibepanel" account create --username admin --password-file "$PWF" 2>&1)"
+A_RC2=$?
+[ $A_RC2 -ne 0 ] && ok "and refuses to create a second one" \
+  || fail "it created a second account, which makes it a password reset"
+echo "$A_OUT2" | grep -q "already has an account" && ok "saying why" \
+  || fail "the refusal does not explain itself: $A_OUT2"
+# And a password on the command line is refused rather than accepted quietly:
+# `ps` shows it to every other user on the machine for as long as it runs.
+A_OUT3="$(HOME="$WORK/home" VIBEPANEL_DATA_DIR="$WORK/acctdata2" \
+  "$DIR/vibepanel" account create --username admin --password hunter2hunter2 2>&1)"
+[ $? -ne 0 ] && ok "a password on the command line is refused" \
+  || fail "--password was accepted"
+echo "$A_OUT3" | grep -q "shell history" && ok "with the reason" || fail "no reason given: $A_OUT3"
 
 # ── the container image ───────────────────────────────────────────────────
 #

@@ -43,6 +43,11 @@ for target in linux/amd64 linux/arm64 darwin/arm64; do
   # that needs root was the one path only a git clone had.
   cp deploy/vibepanel.service deploy/vibepanel-system.service deploy/vibepanel.env \
      "dist/${name}/deploy/"
+  # The LaunchAgent ships in every archive, not only the darwin one. It costs
+  # two kilobytes, and the alternative is a per-archive file list -- which is
+  # the shape that left vibepanel-system.service out while the README told
+  # people to run it.
+  cp deploy/io.github.jiangmuran.vibepanel.plist "dist/${name}/deploy/"
   # The install script is the difference between "unpack it and it runs" and
   # five manual steps documented in a comment inside a file you have not opened.
   cp deploy/install.sh "dist/${name}/deploy/"

@@ -670,3 +670,153 @@ is the far more common case.
 **What to do.** Upgrade tmux if the distinction matters to you. Otherwise read
 the session's last screen: a killed agent leaves its output where it stopped,
 and a finished one usually says so.
+
+## The one-liner refused with "checksum mismatch"
+
+The archive that arrived is not the archive `SHA256SUMS` describes, and the
+download has already been deleted. Nearly always a truncated transfer or a
+caching proxy; retry once.
+
+If it happens twice, do not install it. Download both files by hand and look:
+
+```sh
+curl -fsSLO https://github.com/jiangmuran/vibepanel/releases/download/<tag>/SHA256SUMS
+curl -fsSLO https://github.com/jiangmuran/vibepanel/releases/download/<tag>/vibepanel_<tag>_linux_amd64.tar.gz
+sha256sum -c SHA256SUMS --ignore-missing
+```
+
+"SHA256SUMS does not mention ..." is a different fault and says so: the
+checksum file belongs to another release. That is a broken release, not a
+broken download.
+
+## "vibepanel: command not found" right after installing it
+
+`~/.local/bin` is on `PATH` by default on some distributions and on none of
+the others. The service does not care — the unit uses the full path — but you
+will. The installer prints the exact line for your shell; it is:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"     # ~/.bashrc or ~/.zshrc
+fish_add_path ~/.local/bin               # fish
+```
+
+## The installer said the binary will not run on this machine
+
+It installs the binary and then runs `vibepanel version` once. Three different
+things make that fail and they are indistinguishable afterwards:
+
+```sh
+~/.local/bin/vibepanel version
+```
+
+- `Permission denied` → the filesystem holding `$HOME` is mounted `noexec`
+  (`findmnt -no OPTIONS --target ~`), or SELinux/AppArmor refuses that label
+  (`ausearch -m avc -ts recent`).
+- `Exec format error` → the archive is for another architecture. `uname -m`,
+  and re-run the one-liner, which picks by `uname` and would not have got this
+  wrong on its own.
+
+No service is installed when this happens; there would be nothing for it to
+start.
+
+## The installer said there is no service manager here
+
+Containers, WSL1, and machines with an init that is not systemd. The binary and
+the env file are installed and nothing else, which is correct: the panel runs
+perfectly well from a shell.
+
+```sh
+~/.local/bin/vibepanel serve
+```
+
+Put it behind whatever supervises that machine. `vibepanel service` will only
+answer `upgrade` there — the rest of it needs a service to talk to.
+
+## The unit is installed and `systemctl --user` will not talk to it
+
+`XDG_RUNTIME_DIR` is not set in this shell, so there is no session bus to
+reach. This is the state of a bare non-login ssh command and of every cron job;
+it is not a broken install. From a real login session:
+
+```sh
+ssh -t you@host 'systemctl --user enable --now vibepanel'
+```
+
+Under the *system* unit this does not arise, which is one more reason it is the
+recommended default where root is available.
+
+## tmux is too old and the package manager will not fix it
+
+The floor is 3.3, for `allow-passthrough`. The installer offers an upgrade and
+then re-reads the version, because on a distribution shipping 3.2 the package
+*is* the old version and the upgrade changes nothing while reporting success.
+
+Nothing is broken — the panel works. What is lost is every progress and
+notification sequence an agent TUI emits, and every symptom of that is
+something not appearing. Building from source is the only way up:
+<https://github.com/tmux/tmux/wiki/Installing>.
+
+`vibepanel doctor` says the same thing, and marks it `--` rather than `FAIL`.
+
+## macOS: the panel stops when I log out
+
+Expected, and it is the one real gap against the Linux user unit. A LaunchAgent
+runs in your login session; macOS has no `loginctl enable-linger`. On a Mac you
+stay logged into, this is the same as lingering. On one you log out of, it is
+not, and there is no plist key that changes it.
+
+## The installer refused to touch a unit file
+
+There is already a file at that path with no vibepanel `Documentation=` line in
+it — a hand-written unit, a distribution package, or an older layout.
+Overwriting it loses whatever was configured in it and there is no copy
+anywhere. Move it aside and run the installer again:
+
+```sh
+mv ~/.config/systemd/user/vibepanel.service{,.bak}
+```
+
+## `vibepanel service` says no service is installed
+
+It looks for the files the installer writes, not for what systemd or launchd
+believes: `systemctl --user is-active` answers for the logged-in user's manager
+whatever `$HOME` says, which on a machine with two accounts is somebody else's
+panel.
+
+```
+~/.config/systemd/user/vibepanel.service     the user unit
+/etc/systemd/system/vibepanel.service        the system unit
+~/Library/LaunchAgents/io.github.jiangmuran.vibepanel.plist   macOS
+```
+
+If one of those exists and this still says nothing is installed, you are
+running the command as a different user than the one it was installed for.
+
+## `vibepanel service token` finds nothing
+
+Three situations, and the message says all three because guessing between them
+is worse:
+
+- Somebody has already claimed this panel. A setup token exists only while
+  `CountUsers()` is zero. Log in normally.
+- The account was created by the installer (`--username`), so no token was ever
+  printed. That is the line the installer ends with.
+- It scrolled out of the window. `vibepanel service logs -n 2000`.
+
+If the panel never started, `vibepanel service status` says so first.
+
+## I want a fresh setup token
+
+There is no way to reissue one, deliberately — it would be a second door into a
+claimed panel. If the account is lost, the recovery is to remove the users row
+from the database with the panel stopped, at which point the next start prints a
+new token:
+
+```sh
+vibepanel service stop
+sqlite3 ~/.local/share/vibepanel/vibepanel.db 'DELETE FROM users;'
+vibepanel service start && vibepanel service token
+```
+
+Everything else — projects, sessions, notes — survives that. Passkeys do not:
+they are registered against the account that is being deleted.
