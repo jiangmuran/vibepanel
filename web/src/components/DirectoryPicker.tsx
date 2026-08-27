@@ -411,7 +411,7 @@ export function DirectoryPicker({
               data-testid="dir-edit-path"
               title={t('dir.editPath')}
               aria-label={t('dir.editPath')}
-              className="vp-press vp-tap shrink-0 rounded-md p-1.5 text-ink-3 transition-colors duration-150 ease-vp hover:bg-surface hover:text-ink"
+              className="vp-control vp-control-on-2 vp-tap"
             >
               <Pencil size={13} />
             </button>
@@ -421,7 +421,7 @@ export function DirectoryPicker({
               data-testid="dir-new"
               title={t('dir.newFolder')}
               aria-label={t('dir.newFolder')}
-              className="vp-press vp-tap shrink-0 rounded-md p-1.5 text-ink-3 transition-colors duration-150 ease-vp hover:bg-surface hover:text-ink"
+              className="vp-control vp-control-on-2 vp-tap"
             >
               <FolderPlus size={13} />
             </button>

@@ -181,6 +181,12 @@ export function BottomTerminals(props: Props) {
                   props.onClose(term)
                 }}
                 title={tr('bottom.close')}
+                // Not `.vp-control`. This one lives *inside* a `.vp-tab`, and
+                // both are `--vp-control-h` tall: a control the height of its
+                // own container bursts the tab it sits in. What it shares with
+                // the vocabulary is the height it is measured against, which
+                // is why it is written as a fraction of the tab rather than as
+                // a second chrome button. vp-tap still gives a thumb its 44px.
                 className="vp-press vp-tap rounded-md p-0.5 vp-reveal hover:text-ink"
               >
                 <X size={11} />

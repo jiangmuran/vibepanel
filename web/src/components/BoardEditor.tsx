@@ -295,7 +295,7 @@ export function BoardEditor({
               onClick={() => move(i, -1)}
               title={t('board.up')}
               data-testid="widget-up"
-              className="vp-press shrink-0 rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+              className="vp-control"
             >
               <ArrowUp size={13} />
             </button>
@@ -304,7 +304,7 @@ export function BoardEditor({
               onClick={() => move(i, 1)}
               title={t('board.down')}
               data-testid="widget-down"
-              className="vp-press shrink-0 rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+              className="vp-control"
             >
               <ArrowDown size={13} />
             </button>
@@ -313,7 +313,7 @@ export function BoardEditor({
               onClick={() => remove(i)}
               title={t('board.remove')}
               data-testid="widget-remove"
-              className="vp-press shrink-0 rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+              className="vp-control"
             >
               <Trash2 size={13} />
             </button>

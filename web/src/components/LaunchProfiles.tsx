@@ -145,7 +145,7 @@ export function LaunchProfiles() {
                 onClick={() => setDraft(draftOf(p, '', t('profile.copySuffix', { name: profileLabel(p) })))}
                 title={t('profile.duplicate')}
                 data-testid="profile-duplicate"
-                className="vp-press shrink-0 rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+                className="vp-control vp-press"
               >
                 <Copy size={13} />
               </button>
@@ -157,7 +157,7 @@ export function LaunchProfiles() {
                 onClick={() => setDraft(draftOf(p, p.id, p.name))}
                 title={t('profile.edit')}
                 data-testid="profile-edit"
-                className="vp-press shrink-0 rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+                className="vp-control vp-press"
               >
                 <Pencil size={13} />
               </button>
@@ -166,7 +166,7 @@ export function LaunchProfiles() {
                 onClick={() => void remove(p)}
                 title={t('profile.remove')}
                 data-testid="profile-remove"
-                className="vp-press shrink-0 rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+                className="vp-control vp-press"
               >
                 <Trash2 size={13} />
               </button>
@@ -314,7 +314,7 @@ function Editor({
             onClick={() => removeVar(i)}
             title={t('profile.envRemove')}
             data-testid="profile-env-remove"
-            className="vp-press shrink-0 rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+            className="vp-control vp-press"
           >
             <Trash2 size={13} />
           </button>

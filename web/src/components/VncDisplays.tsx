@@ -135,7 +135,7 @@ export function VncDisplays() {
               disabled={busy}
               title={t('vnc.remove')}
               data-testid="vnc-remove"
-              className="vp-press shrink-0 rounded-md p-1 text-ink-2 hover:text-ink disabled:opacity-50"
+              className="vp-control vp-press disabled:opacity-50"
             >
               <Trash2 size={13} />
             </button>

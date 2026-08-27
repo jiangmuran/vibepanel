@@ -342,7 +342,7 @@ export function ShareLinks() {
                 }
                 title={t('board.edit')}
                 data-testid="share-edit"
-                className="vp-press shrink-0 rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+                className="vp-control"
               >
                 <Pencil size={13} />
               </button>
@@ -371,7 +371,7 @@ export function ShareLinks() {
                   onClick={() => setConfirming(link.id)}
                   title={t('share.revoke')}
                   data-testid="share-revoke"
-                  className="vp-press shrink-0 rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+                  className="vp-control"
                 >
                   <Trash2 size={13} />
                 </button>

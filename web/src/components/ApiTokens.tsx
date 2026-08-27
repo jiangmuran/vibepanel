@@ -169,7 +169,7 @@ export function ApiTokens() {
               onClick={() => void revoke(tok)}
               title={t('tok.revoke')}
               data-testid="token-revoke"
-              className="vp-press shrink-0 rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+              className="vp-control"
             >
               <Trash2 size={13} />
             </button>

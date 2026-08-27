@@ -216,7 +216,7 @@ function Display({ target }: { target: VncTarget }) {
             data-testid="vnc-retry"
             onClick={retry}
             title={t('vnc.retry')}
-            className="vp-press shrink-0 rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+            className="vp-control vp-press"
           >
             <RotateCw size={13} />
           </button>
