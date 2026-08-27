@@ -4,6 +4,7 @@ import { KeyRound, Trash2 } from 'lucide-react'
 import { api } from '../protocol/api'
 import type { ApiToken } from '../protocol/wire'
 import { t, useLang } from '../i18n'
+import { askConfirm } from './ask'
 import { safeText } from './text'
 
 /**
@@ -52,10 +53,22 @@ export function ApiTokens() {
   }
 
   const revoke = async (tok: ApiToken) => {
-    // A confirm, because this is the destructive one and an agent stops working
-    // the moment it lands. The name is what the person recognises, so it is
-    // what the question is about.
-    if (!window.confirm(`${t('tok.revoke')} ${safeText(tok.name)} (${tok.prefix}…)?`)) return
+    // A confirmation, because this is the destructive one and an agent stops
+    // working the moment it lands. The name is what the person recognises, so
+    // it is what the question is about; the prefix is in the body, because two
+    // tokens called "ci" are the reason the prefix is shown at all.
+    //
+    // safeText is applied by the dialog rather than here. It was applied here
+    // when the question was a window.confirm, and it had to be: a browser
+    // dialog renders a string and nothing funnels it.
+    const yes = await askConfirm({
+      title: t('ask.revokeTitle', { name: tok.name }),
+      body: t('ask.revokeBody', { prefix: tok.prefix }),
+      confirm: t('tok.revoke'),
+      cancel: t('ask.cancel'),
+      destructive: true,
+    })
+    if (!yes) return
     try {
       await api.deleteToken(tok.id)
       setTokens(await api.listTokens())

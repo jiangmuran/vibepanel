@@ -370,6 +370,66 @@ const DICT = {
   'upgrade.reload': { zh: '刷新载入新版', en: 'Reload' },
   'upgrade.later': { zh: '待会儿', en: 'Later' },
 
+  // What the panel says in the corner when something has just happened, and
+  // what it asks before something cannot be taken back. Both used to be the
+  // browser's: window.alert in the operating system's language and
+  // window.confirm in the operating system's chrome, neither of them reachable
+  // from this dictionary at all.
+  'toast.dismiss': { zh: '关掉这条提示', en: 'Dismiss' },
+  'toast.uploadingOne': { zh: '正在上传 1 个文件…', en: 'Uploading one file…' },
+  'toast.uploadingMany': { zh: '正在上传 {n} 个文件…', en: 'Uploading {n} files…' },
+  'toast.uploadedOne': {
+    zh: '已上传，路径打在命令行上了',
+    en: 'Uploaded. The path is on the command line.',
+  },
+  'toast.uploadedMany': {
+    zh: '{n} 个文件已上传，路径打在命令行上了',
+    en: '{n} files uploaded. The paths are on the command line.',
+  },
+  'toast.uploadFailed': { zh: '上传失败', en: 'The upload failed' },
+  'toast.copied': { zh: '已复制到剪贴板', en: 'Copied to your clipboard' },
+  'toast.passkeyGone': { zh: '这个 passkey 删不掉', en: 'That passkey could not be removed' },
+
+  'ask.cancel': { zh: '取消', en: 'Cancel' },
+  'ask.remove': { zh: '移除', en: 'Remove' },
+  'ask.kill': { zh: '结束它', en: 'Kill it' },
+  'ask.add': { zh: '添加', en: 'Add' },
+  'ask.removeProjectTitle': { zh: '把 {name} 从面板移除？', en: 'Remove {name} from the panel?' },
+  'ask.removeProjectNone': {
+    zh: '它现在没有会话。目录本身不动。',
+    en: 'It has no sessions right now. The directory itself is left alone.',
+  },
+  'ask.removeProjectOne': {
+    zh: '它的 1 个会话会被杀掉。目录本身不动。',
+    en: 'Its 1 session will be killed. The directory itself is left alone.',
+  },
+  'ask.removeProjectMany': {
+    zh: '它的 {n} 个会话会被杀掉。目录本身不动。',
+    en: 'Its {n} sessions will be killed. The directory itself is left alone.',
+  },
+  'ask.killTitle': { zh: '结束 {name}？', en: 'Kill {name}?' },
+  'ask.killBody': {
+    zh: '里面的进程会被终止。pane 和滚动历史会留着，所以还能回去看它最后说了什么。',
+    en: 'The process is terminated. The pane and its scrollback stay, so what it said last is still there to read.',
+  },
+  'ask.revokeTitle': { zh: '吊销 {name}？', en: 'Revoke {name}?' },
+  'ask.revokeBody': {
+    zh: '拿着 {prefix}… 的程序会立刻失效，而且没法撤销 —— 令牌只在创建时显示过一次。',
+    en: 'Anything holding {prefix}… stops working immediately, and it cannot be undone: the token was shown once, when it was made.',
+  },
+  'ask.passkeyNameTitle': { zh: '给这个 passkey 起个名字', en: 'Name this passkey' },
+  'ask.passkeyNameBody': {
+    zh: '写清楚是哪台设备。以后要移除的时候，这是你唯一认得出它的东西。',
+    en: 'Say which device it is. When you come to remove one, the name is all you have to tell them apart.',
+  },
+  'ask.passkeyNameField': { zh: '名字', en: 'Name' },
+  'ask.passkeyNameDefault': { zh: '这台设备', en: 'This device' },
+  'ask.removePasskeyTitle': { zh: '移除 {name}？', en: 'Remove {name}?' },
+  'ask.removePasskeyBody': {
+    zh: '这台设备就不能再免密码登录了。密码不受影响。',
+    en: 'That device can no longer sign in without a password. Your password is unaffected.',
+  },
+
   'guessed.installed': {
     zh: '状态还在靠猜：装 hook 之前就开着的会话要重开一次才会上报。在里面输入 /hooks，或者重启那个 agent。',
     en: 'States are still guessed. Sessions open before reporting was installed keep guessing until they reload — run /hooks in each, or restart the agent.',

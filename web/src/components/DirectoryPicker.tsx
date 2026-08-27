@@ -189,6 +189,9 @@ export function DirectoryPicker({
       <div
         className="vp-panel-in flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-vp border border-hairline bg-surface shadow-xl"
         onClick={(e) => e.stopPropagation()}
+        // Read by focusTerminal: while this is up the keyboard is the picker's,
+        // and a terminal must not take it back mid-choice.
+        data-vp-modal="directory"
         data-testid="dir-picker"
       >
         <div className="flex shrink-0 items-center gap-2 border-b border-hairline px-3 py-2.5">

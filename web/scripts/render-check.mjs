@@ -2229,12 +2229,39 @@ try {
           // The confirmation counts what goes and promises what stays. Read it
           // rather than blindly accepting: a count that is wrong here is a
           // person agreeing to something other than what happens.
-          let prompt = ''
-          page.once('dialog', (d) => {
-            prompt = d.message()
-            void d.accept()
-          })
+          //
+          // The panel's own dialog, not the browser's. This drove
+          // `page.once('dialog')` until window.confirm was replaced, and that
+          // listener does not fail when there is no longer a dialog to hear --
+          // it simply never fires, the click sits on an unanswered modal, and
+          // the assertions below read a page that never changed. The same trap
+          // the first-run check fell into over the directory picker.
           await remove.click()
+          const asked = await page
+            .waitForSelector('[data-testid="confirm-dialog"]', { timeout: 5000 })
+            .then(() => true)
+            .catch(() => false)
+          if (!asked) {
+            note('FAIL', 'projects', 'removing a project asked nothing before killing its sessions')
+            throw new Error('no confirmation')
+          }
+          const prompt = [
+            await page.locator('[data-testid="confirm-title"]').innerText(),
+            await page.locator('[data-testid="confirm-body"]').innerText(),
+          ].join('\n')
+          // The destructive answer is marked as destructive, and it is not the
+          // one the keyboard starts on: a dialog that opens with "kill" focused
+          // turns the Enter somebody was already pressing into a confirmation.
+          if ((await page.getAttribute('[data-testid="confirm-dialog"]', 'data-destructive')) !== 'true') {
+            note('FAIL', 'projects', 'the confirmation does not mark itself destructive')
+          }
+          const focusedOnSafe = await page.evaluate(() =>
+            document.activeElement?.getAttribute('data-testid') === 'confirm-no')
+          if (!focusedOnSafe) {
+            note('FAIL', 'projects', 'the confirmation opens with the focus on the destructive button')
+          }
+          await page.screenshot({ path: join(SHOTS, 'confirm.png') })
+          await page.locator('[data-testid="confirm-yes"]').click()
           await sleep(1500)
 
           const after = await listProjects()
@@ -3637,8 +3664,20 @@ try {
     }
 
     await page.screenshot({ path: join(SHOTS, 'settings.png') })
-    page.once('dialog', (d) => void d.accept('Virtual key'))
+    // Naming the passkey is the panel's own field now, not window.prompt. The
+    // dialog is asked for from inside the settings modal, so this also covers
+    // it being drawn above one.
     await page.locator('[data-testid="passkey-add"]').click()
+    const named = await page
+      .waitForSelector('[data-testid="confirm-field"]', { timeout: 5000 })
+      .then(() => true)
+      .catch(() => false)
+    if (!named) {
+      note('FAIL', 'passkey', 'adding a passkey asked for no name')
+    } else {
+      await page.locator('[data-testid="confirm-field"]').fill('Virtual key')
+      await page.locator('[data-testid="confirm-yes"]').click()
+    }
     let registered = false
     for (let i = 0; i < 30; i++) {
       if ((await page.locator('[data-testid="passkey-row"]').count()) > 0) { registered = true; break }

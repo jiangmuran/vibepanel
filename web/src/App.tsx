@@ -33,6 +33,11 @@ import { EXIT_VANISHED } from './protocol/wire'
 import { shellQuote } from './shell'
 import { safeText } from './components/text'
 import { DirectoryPicker } from './components/DirectoryPicker'
+import { Toasts } from './components/Toasts'
+import { ConfirmDialog } from './components/ConfirmDialog'
+import { askConfirm } from './components/ask'
+import { dismissToast, showToast } from './components/toasts'
+import { focusTerminal } from './components/focus'
 import { t, useLang } from './i18n'
 
 /**
@@ -430,7 +435,6 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   // be offered behind a click, which is the activation the write needs.
   const [blockedClip, setBlockedClip] = useState('')
   const [dropping, setDropping] = useState(false)
-  const [dropNote, setDropNote] = useState('')
   const uploadInto = useCallback(
     async (files: File[]) => {
       if (!current || !currentProject || files.length === 0) return
@@ -440,7 +444,15 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
       const root = currentProject.path.replace(/\/+$/, '')
       const cwd = current.cwd || root
       const rel = cwd === root ? '' : cwd.startsWith(root + '/') ? cwd.slice(root.length + 1) : ''
-      setDropNote(`Uploading ${files.length} file${files.length === 1 ? '' : 's'}…`)
+      // The stack, not a note pinned to the corner of the terminal. The note
+      // was one string in one place, so a second upload overwrote the first
+      // one's result, and every one of its three sentences was English on a
+      // Chinese page -- it had no way to reach the dictionary at all.
+      const progress = showToast({
+        kind: 'info',
+        key: files.length === 1 ? 'toast.uploadingOne' : 'toast.uploadingMany',
+        params: { n: files.length },
+      })
       try {
         const { paths } = await api.upload(currentProject.id, rel, files)
         // Quoted only when it needs to be: a shell-quoted path that did not
@@ -460,11 +472,25 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         // was the one place a filename's bytes reached a shell unexamined.
         const typed = paths.map(shellQuote).join(' ')
         sendToCurrent(typed + ' ')
-        setDropNote(`${paths.length} file${paths.length === 1 ? '' : 's'} uploaded`)
+        // Taken back rather than left to expire: "uploading…" sitting above
+        // "uploaded" for another three seconds is the panel disagreeing with
+        // itself about something that has already finished.
+        dismissToast(progress)
+        showToast({
+          kind: 'success',
+          key: paths.length === 1 ? 'toast.uploadedOne' : 'toast.uploadedMany',
+          params: { n: paths.length },
+        })
       } catch (err) {
-        setDropNote(err instanceof Error ? err.message : 'upload failed')
+        dismissToast(progress)
+        // The server's own words, which name the file often enough that
+        // dropping them would leave "the upload failed" and nothing to act on.
+        showToast({
+          kind: 'error',
+          key: 'toast.uploadFailed',
+          detail: err instanceof Error ? err.message : String(err),
+        })
       }
-      window.setTimeout(() => setDropNote(''), 4000)
     },
     [current, currentProject, sendToCurrent],
   )
@@ -502,19 +528,37 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   // Removing a project kills every session in it, which is the part nobody
   // expects from a control that looks like "take this off the list". So the
   // confirmation counts them, and says what survives: the directory.
-  const removeProject = (p: Project) => {
+  const removeProject = async (p: Project) => {
     const running = state.sessions.filter((s) => s.projectId === p.id).length
-    const what =
+    // Singular and plural are separate lines of the dictionary rather than a
+    // conditional 's' in the caller: the caller that appends one has already
+    // decided the sentence is English.
+    const body =
       running === 0
-        ? `Remove ${projectLabel(p)} from the panel?`
-        : `Remove ${projectLabel(p)} from the panel? Its ${running} session${running === 1 ? '' : 's'} ` +
-          `will be killed.`
-    if (!window.confirm(`${what}\n\nThe directory itself is left alone.`)) return
+        ? t('ask.removeProjectNone')
+        : running === 1
+          ? t('ask.removeProjectOne')
+          : t('ask.removeProjectMany', { n: running })
+    const yes = await askConfirm({
+      title: t('ask.removeProjectTitle', { name: projectLabel(p) }),
+      body,
+      confirm: t('ask.remove'),
+      cancel: t('ask.cancel'),
+      destructive: true,
+    })
+    if (!yes) return
     void guard(() => api.deleteProject(p.id))
   }
 
-  const killSession = (s: Session) => {
-    if (!window.confirm(`Kill ${labelOf(s)}? The process is terminated.`)) return
+  const killSession = async (s: Session) => {
+    const yes = await askConfirm({
+      title: t('ask.killTitle', { name: labelOf(s) }),
+      body: t('ask.killBody'),
+      confirm: t('ask.kill'),
+      cancel: t('ask.cancel'),
+      destructive: true,
+    })
+    if (!yes) return
     void guard(() => api.deleteSession(s.id))
   }
 
@@ -530,6 +574,11 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     // On a narrow screen the list is an overlay covering the terminal; leaving
     // it up after a choice hides the thing that was just chosen.
     if (narrow) setDrawerOpen(false)
+    // And the keyboard follows the choice. Picking a session and then having to
+    // click the terminal before you can type is a step nobody asked for -- see
+    // focusTerminal for when it declines to do this, which is the half that
+    // matters.
+    focusTerminal(id)
   }
 
   const showOverlay = narrow && drawerOpen
@@ -557,11 +606,11 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           onAddProject={addProject}
           onNewSession={newSession}
           onRenameProject={(p, name) => void guard(() => api.patchProject(p.id, { name }))}
-          onRemoveProject={removeProject}
+          onRemoveProject={(p) => void removeProject(p)}
           onRenameSession={(s, title) => void guard(() => api.patchSession(s.id, { title }))}
           onPinSession={(s, pinned) => void guard(() => api.patchSession(s.id, { pinned }))}
           onSetSessionState={(s, st) => void guard(() => api.patchSession(s.id, { state: st }))}
-          onKillSession={killSession}
+          onKillSession={(s) => void killSession(s)}
           onRestartSession={restartSession}
           projectOrder={state.projectOrder}
           onReorderProjects={(ids) => void guard(() => api.reorderProjects(ids))}
@@ -868,6 +917,10 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
                   legacy()
                 }
                 setBlockedClip('')
+                // The click is the whole point of this button -- it is what
+                // makes the write legal -- so the button vanishing is the only
+                // thing that ever said it worked.
+                showToast({ kind: 'success', key: 'toast.copied' })
               }}
               className="absolute top-2 left-1/2 z-10 -translate-x-1/2 rounded-vp border border-hairline px-3 py-1.5 text-vp-sm vp-solid hover:text-ink"
               title={t('app.clipboardRefused')}
@@ -875,15 +928,6 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               The terminal copied {blockedClip.length} character
               {blockedClip.length === 1 ? '' : 's'} — click to put it on your clipboard
             </button>
-          )}
-          {dropNote && (
-            <div
-              data-testid="drop-note"
-              className="absolute top-2 right-2 z-10 rounded-vp border border-hairline px-2 py-1 text-vp-sm vp-solid"
-            >
-              {/* Same channel: this one holds err.message from an upload. */}
-              {safeText(dropNote)}
-            </div>
           )}
           {current ? (
             <TerminalView
@@ -912,6 +956,10 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             </div>
           )}
         </div>
+
+        {/* Before the phone's compose box and key bar, and after the terminal:
+            on a narrow screen the stack anchors itself here. See Toasts. */}
+        <Toasts narrow={narrow} />
 
         {current && narrow && (
           <>
@@ -975,7 +1023,10 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           sessions={state.sessions}
           socket={socket}
           tab={rightTab}
-          onTab={setRightTab}
+          onTab={(next) => {
+            setRightTab(next)
+            if (current) focusTerminal(current.id)
+          }}
           width={rightWidth}
           onWidthChange={setRightSize}
           onCollapse={() => setRightOpen(false)}
@@ -985,6 +1036,10 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           onSplitRatioChange={setSplitRatio}
         />
       )}
+
+      {/* Last in the tree and z-50, so it is over the settings dialog that two
+          of its questions are asked from. */}
+      <ConfirmDialog />
     </div>
   )
 }

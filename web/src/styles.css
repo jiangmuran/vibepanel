@@ -519,6 +519,32 @@ body {
   animation: vp-panel-in 220ms var(--vp-ease) both;
 }
 
+/* A toast arrives from the edge it lives on rather than from behind.
+ *
+ * The same 160ms and the same curve as the backdrop, and the same rule about
+ * carrying no state: the global reduced-motion block below collapses this to
+ * nothing, and a toast that only reads as new because it slid would then be
+ * indistinguishable from the three above it. What says it is new is that it is
+ * the one at the end of the stack.
+ *
+ * Eight pixels, not twenty. This appears in the corner of the eye of somebody
+ * reading a terminal; a large movement there is an interruption, which is
+ * precisely what a notification about a finished upload must not be. */
+@keyframes vp-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.vp-toast-in {
+  animation: vp-toast-in 160ms var(--vp-ease) both;
+}
+
 /* Press feedback.
  *
  * A control that only changes colour on hover gives a touch device nothing at

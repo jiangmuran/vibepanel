@@ -11467,3 +11467,138 @@ that notice is the panel admitting it is guessing, which it was not.
 Claude, which is what the parameter-less request has always meant. Anything else
 is a `400`: the value picks a file in somebody's home directory to edit, so an
 unrecognised one is refused rather than resolved to whichever branch is first.
+
+## The three dialogs that were never the panel's
+
+`window.confirm` asked before killing a session, removing a project and
+revoking an API token; `window.prompt` asked what to call a passkey. Four
+questions, and all four of them were the browser's rather than this product's.
+
+The complaint that started this was about how they look, and that is the least
+of it. They arrive in the operating system's chrome, in the operating system's
+language — so a panel translated line by line into Chinese asked the one
+question that destroys something in English, with an OK button nobody in the
+dictionary chose. They are a single string, so the count of sessions about to
+be killed, the promise that the directory survives and the token prefix were
+concatenated into one paragraph with a blank line in the middle of it. They
+cannot mark the destructive answer as destructive: OK and Cancel are the same
+button twice, and OK is the one under the cursor. And on a phone installed to
+the home screen they are a system sheet with the hostname printed above the
+question, which is the shape a phishing prompt has.
+
+They are also invisible to the harness in the direction that hurts. The render
+check drove both of them with `page.once('dialog')`, a listener that does not
+fail when there is no longer a dialog to hear — it simply never fires, and the
+assertions after it read a page that never changed. That has already cost this
+project once: the first-run check went on passing against the directory
+`window.prompt` for some time after the picker replaced it, and the comment
+there says so. Both call sites are the panel's own controls now, and the
+project-removal one additionally asserts what the browser dialog could never
+have offered: that the dialog marks itself destructive and that the focus does
+not start on the button that kills things.
+
+**Two pieces, both module-level stores rather than contexts.** `ask.ts` holds
+the question on screen and `toasts.ts` holds the stack; components subscribe
+with `useSyncExternalStore`, which is the shape `i18n.ts` already uses and needs
+no library. A context would work equally well and would mean every component
+between App and a row inside the settings dialog taking a provider it has no
+other use for — the passkey list is four levels down and raises both a question
+and a toast.
+
+The answer is `string | null` and null is the only thing that means no. An
+emptied field is a real answer to a question with a field in it, and a caller
+writing `if (!answer) return` would read it as a cancellation and quietly do
+nothing; `askConfirm` returns a boolean and `askText` a string or null, so
+neither caller can make that mistake. Questions queue rather than replacing one
+another, because a dropped one is a promise that never settles and a caller
+awaiting it is a click that did nothing.
+
+A toast carries a dictionary key and its parameters, never a finished string.
+That is the enforcement rather than a convention: there is nowhere to put an
+English sentence. Anything from outside the panel — a filename, a server's
+error text — goes in `detail` and is rendered through `safeText`, along with
+the composed sentence, because the parameters are the same name-carrying
+channel every other funnel exists for.
+
+Three details that are decisions rather than defaults:
+
+- **Enter confirms while the focus starts on cancel**, which reads as a
+  contradiction until you write it: Enter on a focused button generates a click
+  as its *default action*, so `preventDefault` on the keydown cancels that
+  click and leaves the confirm handler as the only thing that runs. Mid-IME
+  Enter is excluded — there it is choosing a candidate, not answering.
+- **Cancel is the wide button.** The one that destroys something is the
+  narrower target and the further one, because the two mistakes do not cost the
+  same: cancelling by accident costs a second click.
+- **The stack is placed differently on a phone, and not by moving the desktop
+  one.** The bottom of a phone screen is the compose box, the key bar, and —
+  whenever anybody is typing — the software keyboard, so any fixed offset from
+  the bottom of the window is either on top of the controls or underneath the
+  keyboard, and which one it is depends on hardware the page is not reliably
+  told about. The stack is a zero-height anchor sitting in the layout
+  immediately above that chrome instead: the keyboard pushes the chrome, the
+  chrome carries the anchor, and nothing has to be measured. Zero-height
+  because a toast that took space in the column would resize the terminal
+  under it, which means reflowing the grid for every viewer of that session,
+  twice, for a sentence about an upload.
+
+The upload note moved into the stack on the way past. It was one string in one
+place, so a second upload overwrote the first one's result, and all three of
+its sentences were English literals with no route to the dictionary at all.
+
+`no-raw-dialogs.test.ts` fails on `window.confirm(` and on a bare `confirm(`,
+which is the same function and the one that is not greppable by eye.
+
+## The keyboard follows the tab
+
+Clicking a session, a terminal tab or a side-panel tab left the focus on the
+tab. You then had to click the terminal before you could type, every time,
+which is the kind of friction that sends people back to a real terminal.
+
+The rule, and it is one sentence: focus moves only when a person asked for a
+terminal by choosing one, and only if — at the instant that terminal is ready
+to take it — nothing else is holding the keyboard.
+
+Both halves were arrived at by asking what breaks.
+
+**It is called from click handlers, never from an effect on the selected id.**
+An effect fires for every reason the selection changes, and the selection
+changes without anybody touching it: `applyState` reselects the first session in
+the list whenever the current one stops existing, which happens when a process
+exits in another project. Focus jumping out of the notes textarea because a
+build finished somewhere else is a worse bug than the one being fixed, and it
+would be blamed on the keyboard rather than on the panel.
+
+**The check happens when the focus is applied, not when it was asked for.** The
+terminal for a session that was just chosen does not exist yet — the view is
+keyed by session id, so choosing another unmounts one xterm and a new one
+registers a frame or two later. That gap is long enough to click into the
+compose box, and `document.activeElement` at the moment of the click is the tab
+that was clicked, not the field somebody was typing in a moment earlier. Asked
+at the click, the question has the wrong answer twice over. So the request
+waits for the terminal to appear, re-asking each time, and gives up after six
+hundred milliseconds rather than holding a claim on the keyboard forever.
+
+Two exceptions with teeth:
+
+- **xterm's hidden textarea is not a text field.** A terminal receives
+  keystrokes through a `<textarea>`, so "is the focus in a textarea" answers
+  yes for a focused terminal — and this feature is mostly about moving focus
+  *between* terminals. Without the exception, clicking a tab in the bottom
+  strip while the main terminal has the keyboard would be told somebody is
+  typing, forever.
+- **A read-only terminal is never focused.** That is the phone: the terminal
+  there is a display, input arrives through the compose box, and focusing
+  xterm's textarea raises the software keyboard over the thing being read —
+  which is the reason `readOnly` is set on the narrow layout in the first
+  place.
+
+An open modal counts as holding the keyboard too, which the text-field rule
+alone does not cover: the picker's list, the settings dialog and the
+confirmation's cancel button are all things the keyboard was handed to on
+purpose and none of them is an input. They carry `data-vp-modal` and the rule
+looks for it.
+
+The registry of live terminals moved out of `Terminal.tsx` into `terminals.ts`
+so that two things can read it — the screen reader the browser checks use, and
+this — without focus.ts importing the component that imports it.

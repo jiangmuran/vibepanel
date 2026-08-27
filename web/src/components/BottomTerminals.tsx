@@ -5,6 +5,7 @@ import type { PanelSocket } from '../protocol/socket'
 import type { Session } from '../protocol/wire'
 import { terminalLabel } from './label'
 import { TerminalView } from './Terminal'
+import { focusTerminal } from './focus'
 import { InlineName } from './InlineName'
 import { StateDot } from './StateDot'
 import { t as tr, useLang } from '../i18n'
@@ -113,7 +114,14 @@ export function BottomTerminals(props: Props) {
             data-testid="bottom-tab"
             data-session-id={t.id}
             data-active={active?.id === t.id}
-            onClick={() => setActiveId(t.id)}
+            onClick={() => {
+              setActiveId(t.id)
+              // The tab you just chose is the one you want to type into. The
+              // main terminal above usually has the keyboard at this point, and
+              // its hidden textarea is why focusTerminal has to know an xterm
+              // from a text field.
+              focusTerminal(t.id)
+            }}
             className={`group flex max-w-44 shrink-0 cursor-pointer items-center gap-1 rounded-vp px-2 py-1 text-vp-base transition-colors duration-200 ease-vp ${
               active?.id === t.id ? 'bg-surface-2 text-ink' : 'text-ink-2 hover:bg-surface-2'
             }`}
