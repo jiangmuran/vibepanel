@@ -152,6 +152,23 @@ type Server struct {
 	spendMu    sync.Mutex
 	spendCache map[string]cachedSpend
 
+	// trendRings is the last few minutes of the machine and the token total,
+	// per scope, for the widgets that draw a line rather than a number.
+	//
+	// In memory and never a table: a restart is meant to lose it, because the
+	// honest line after a restart is a short one starting now rather than a
+	// long one with a hole in it. See internal/httpapi/sharelive.go.
+	trendMu    sync.Mutex
+	trendRings map[string]*trendRing
+
+	// viewers is who has each share link open right now, counted from the polls
+	// they were already making rather than from anything they send.
+	//
+	// A number, not a column. A wall polls every two seconds forever, and a
+	// count in a table would be that many writes for a fact that is true for
+	// two seconds and must be false again after a restart.
+	viewers shareViewerBook
+
 	// TrimEvery and AuditKeep override the audit trim's schedule and cap. Zero
 	// means the constants. Tests set them small; nothing else should. They
 	// exist because a periodic job nobody can drive from a test is how this

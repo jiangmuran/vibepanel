@@ -104,7 +104,53 @@ type ShareLink struct {
 	// the settings page's own query rather than stored. Empty on the dashboard
 	// side, which never reads it.
 	ScopeName string `json:"scopeName"`
+	// Remark is a short label the owner writes for the people looking at the
+	// screen -- "the one in meeting room three", "for the customer". Free text,
+	// bounded at MaxRemark runes, and disclosed in both detail modes: see
+	// internal/httpapi/share.go for why that is a decision rather than an
+	// oversight.
+	Remark string `json:"remark"`
+	// Locked fixes the board: the dashboard stops offering its local
+	// rearrangement and ignores one already stored.
+	//
+	// Not a permission and not a boundary. A viewer's rearrangement is in that
+	// viewer's own browser and never reaches this row, so there is nothing
+	// here for a server to enforce -- and a rearranged board discloses exactly
+	// what an un-rearranged one does. This says "this board is fixed", which is
+	// what somebody who hung a screen on a wall means by it.
+	Locked bool `json:"locked"`
+	// Viewers is how many screens had this link open a moment ago, filled in by
+	// the settings page's own count rather than stored -- like ScopeName above,
+	// and for a stronger reason: it is a fact about right now, and a column
+	// would be a write on every poll of every link.
+	Viewers int `json:"viewers"`
+	// ViewportWidth and ViewportHeight are the largest live viewer's screen, in
+	// CSS pixels, or 0 when nothing is looking or nothing said.
+	//
+	// The largest rather than the most recent, because the owner is composing
+	// for a screen they cannot see: if a television and the phone somebody
+	// checked it from are both on the link, the television is the one the board
+	// is for. Reported by the viewer and believed only as far as a settings row
+	// -- nothing the panel does depends on it.
+	ViewportWidth  int `json:"viewportWidth"`
+	ViewportHeight int `json:"viewportHeight"`
 }
+
+// MaxRemark is how much of a remark is kept, in runes.
+//
+// Runes rather than bytes, for the same reason MaxCaption is: this is cut and
+// then rendered, and a byte slice through a multi-byte character renders the
+// last one as U+FFFD. Longer than a caption because a remark carries a place
+// and a purpose -- "会议室三的那块屏，给客户看的" -- and shorter than a name would be if
+// it were a paragraph, because it is drawn under a heading on a wall.
+const MaxRemark = 80
+
+// TruncateRemark cuts a remark to MaxRemark runes.
+//
+// Exported and used by the one handler that stores one, so the bound is in the
+// same package as the column and not repeated at a call site. A second copy of
+// this number is how a validator and an editor come to disagree.
+func TruncateRemark(s string) string { return truncateRunes(s, MaxRemark) }
 
 // Deliberately no `func (s ShareLink) Expired(now int64) bool` here.
 //
@@ -116,30 +162,33 @@ type ShareLink struct {
 
 // CreateShareLink records a link. The token itself is never stored.
 func (d *DB) CreateShareLink(ctx context.Context, id string, tokenHash []byte, prefix, name string,
-	detail ShareDetail, board Board, scope ShareScope, scopeID, userID string,
-	expiresAt int64) (ShareLink, error) {
+	detail ShareDetail, board Board, scope ShareScope, scopeID, userID, remark string,
+	locked bool, expiresAt int64) (ShareLink, error) {
 	encoded, err := EncodeBoard(board)
 	if err != nil {
 		return ShareLink{}, err
 	}
+	remark = TruncateRemark(remark)
 	n := now()
 	_, err = d.sql.ExecContext(ctx, `
 		INSERT INTO share_links
 			(id, token_hash, prefix, name, detail, board, scope, scope_id,
-			 user_id, created_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 user_id, created_at, expires_at, remark, locked)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, tokenHash, prefix, name, string(detail), encoded, string(scope), scopeID,
-		userID, n, expiresAt)
+		userID, n, expiresAt, remark, locked)
 	if err != nil {
 		return ShareLink{}, fmt.Errorf("store: create share link: %w", err)
 	}
 	return ShareLink{
 		ID: id, Prefix: prefix, Name: name, Detail: string(detail), Board: board,
 		Scope: string(scope), ScopeID: scopeID, ExpiresAt: expiresAt, CreatedAt: n,
+		Remark: remark, Locked: locked,
 	}, nil
 }
 
-// UpdateShareLink changes what an existing link is called and what it shows.
+// UpdateShareLink changes what an existing link is called, what it says, what
+// it shows and whether that arrangement is fixed.
 //
 // Deliberately not the detail mode, and that is the interesting omission. The
 // URL is already pasted into a television or an email by the time anybody edits
@@ -148,13 +197,25 @@ func (d *DB) CreateShareLink(ctx context.Context, id string, tokenHash []byte, p
 // without a new link being handed out. Rearranging a board cannot disclose
 // anything the link did not already carry; changing the mode can. So the mode
 // is fixed at creation and a different one means a different link.
-func (d *DB) UpdateShareLink(ctx context.Context, id, name string, board Board) error {
+//
+// A remark is on the near side of that line and it is worth saying why, since
+// it is free text and the mode is about text. `name` is already sent in both
+// modes and always was: what `detail` governs is whether the *panel's* words --
+// session titles, project names, read out of its own database -- may leave the
+// machine. A remark is not the panel's; it is a sentence the owner writes to
+// whoever is standing in front of the screen, and one they can see the effect
+// of. Suppressing it under `counts` would leave an owner labelling a wall with
+// a label the wall never shows, which they would work around by putting it in
+// `name` -- which is disclosed anyway.
+func (d *DB) UpdateShareLink(ctx context.Context, id, name, remark string, board Board,
+	locked bool) error {
 	encoded, err := EncodeBoard(board)
 	if err != nil {
 		return err
 	}
 	res, err := d.sql.ExecContext(ctx,
-		`UPDATE share_links SET name = ?, board = ? WHERE id = ?`, name, encoded, id)
+		`UPDATE share_links SET name = ?, board = ?, remark = ?, locked = ? WHERE id = ?`,
+		name, encoded, TruncateRemark(remark), locked, id)
 	if err != nil {
 		return fmt.Errorf("store: update share link: %w", err)
 	}
@@ -169,7 +230,7 @@ func (d *DB) UpdateShareLink(ctx context.Context, id, name string, board Board) 
 func (d *DB) ListShareLinks(ctx context.Context) ([]ShareLink, error) {
 	rows, err := d.sql.QueryContext(ctx, `
 		SELECT id, prefix, name, detail, board, scope, scope_id,
-		       expires_at, created_at, last_used_at
+		       expires_at, created_at, last_used_at, remark, locked
 		FROM share_links ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("store: list share links: %w", err)
@@ -180,7 +241,7 @@ func (d *DB) ListShareLinks(ctx context.Context) ([]ShareLink, error) {
 		var s ShareLink
 		var board string
 		if err := rows.Scan(&s.ID, &s.Prefix, &s.Name, &s.Detail, &board, &s.Scope, &s.ScopeID,
-			&s.ExpiresAt, &s.CreatedAt, &s.LastUsedAt); err != nil {
+			&s.ExpiresAt, &s.CreatedAt, &s.LastUsedAt, &s.Remark, &s.Locked); err != nil {
 			return nil, fmt.Errorf("store: scan share link: %w", err)
 		}
 		s.Board = DecodeBoard(board)
@@ -201,16 +262,48 @@ func (d *DB) ShareLinkByToken(ctx context.Context, tokenHash []byte) (ShareLink,
 	var board string
 	err := d.sql.QueryRowContext(ctx, `
 		SELECT id, prefix, name, detail, board, scope, scope_id,
-		       expires_at, created_at, last_used_at
+		       expires_at, created_at, last_used_at, remark, locked
 		FROM share_links
 		WHERE token_hash = ? AND (expires_at = 0 OR expires_at > ?)`, tokenHash, now()).
 		Scan(&s.ID, &s.Prefix, &s.Name, &s.Detail, &board, &s.Scope, &s.ScopeID,
-			&s.ExpiresAt, &s.CreatedAt, &s.LastUsedAt)
+			&s.ExpiresAt, &s.CreatedAt, &s.LastUsedAt, &s.Remark, &s.Locked)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ShareLink{}, ErrNotFound
 	}
 	if err != nil {
 		return ShareLink{}, fmt.Errorf("store: share link lookup: %w", err)
+	}
+	s.Board = DecodeBoard(board)
+	return s, nil
+}
+
+// ShareLinkByID reads one link the owner named, for the preview the editor
+// draws.
+//
+// Deliberately a different lookup from ShareLinkByToken and not a shared
+// helper with a flag. That one resolves a capability and has the expiry in its
+// WHERE clause; this one is reached only from behind a signed-in session and
+// must return an expired link, because "this link has expired" is exactly what
+// the settings page has to be able to say about a row it is showing. One
+// function answering both questions is one WHERE clause somebody has to
+// remember which caller it is for.
+//
+// token_hash is not among the columns read, here as everywhere: there is no
+// path from a signed-in session to a live share token either.
+func (d *DB) ShareLinkByID(ctx context.Context, id string) (ShareLink, error) {
+	var s ShareLink
+	var board string
+	err := d.sql.QueryRowContext(ctx, `
+		SELECT id, prefix, name, detail, board, scope, scope_id,
+		       expires_at, created_at, last_used_at, remark, locked
+		FROM share_links WHERE id = ?`, id).
+		Scan(&s.ID, &s.Prefix, &s.Name, &s.Detail, &board, &s.Scope, &s.ScopeID,
+			&s.ExpiresAt, &s.CreatedAt, &s.LastUsedAt, &s.Remark, &s.Locked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ShareLink{}, ErrNotFound
+	}
+	if err != nil {
+		return ShareLink{}, fmt.Errorf("store: share link by id: %w", err)
 	}
 	s.Board = DecodeBoard(board)
 	return s, nil

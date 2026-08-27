@@ -312,21 +312,51 @@ terminal, no write path, no file browser, no way to make a second link from the
 first.
 
 What the dashboard shows is a **board** you pick when you make the link.
-Nineteen starting points, grouped by who is looking at the screen:
+Twenty-four starting points, grouped by the screen they were composed for:
 
 | | |
 |---|---|
-| while you work | overview · does anything need me · the waiting queue · every session as a tile · everything at once |
-| a screen on a wall | four numbers and a clock · one number filling the screen · how busy it is · three pages that cycle |
-| whoever runs the machine | only the machine · what has gone wrong |
-| a manager | cost against output · where it went · the calm one · the year as a grid of days |
-| one thing, closely | per project · which model is working · what today cost |
+| a phone | one column, three things, four seconds standing up |
+| a laptop | overview · does anything need me · the waiting queue · everything at once · only the machine · what has gone wrong · cost against output · where it went · per project · which model is working · what today cost |
+| a screen on a wall | four numbers and a clock · one number filling the screen · how busy it is · three pages that cycle · **what it is spending, live** · every session as a tile · **for a client** · the calm one · the year as a grid of days |
+| a 4K wall | **for leadership** · a corridor screen |
+
+Two of those are named for who is in the room. **For leadership** is the 4K one:
+a hero — today's tokens, and how many agents are working — over a machine line
+that moves, over the fine grid that fills the rest. **For a client** scopes
+itself to one project and turns names off, because the failure there is a
+customer reading another customer's project name off the screen they are sat in
+front of.
 
 A preset is a starting point, not a mode. Every widget moves, resizes, points at
 a different number or splits by a different dimension — agent, project, model,
-day, month — and there are twenty-one kinds to add. The board is stored with the
-link and collapses with the viewport, so one stored board is a summary on a
-phone and forty tiles on a television.
+day, month — and there are **thirty-seven kinds** to add: single figures,
+gauges, sparklines, a filled machine line over the last fifteen minutes, stacked
+token bars, ranked breakdowns, session tiles, a dwell timeline, the year as a
+grid of days, and the furniture a composed screen needs — a spacer, a rule, a
+section heading, and the screen's own name.
+
+The grid is **twelve columns wide and four rows tall**, so a widget can be a
+third of a wall or three times the height of the tiles beside it. That ratio is
+where hierarchy comes from: a screen where every tile is the same size is a
+dashboard, not a display. A board can also be set to **fill** the screen rather
+than flow down it — nobody is going to scroll a television. The same stored
+board still collapses with the viewport, so it is a summary on a phone and a
+composed wall on a 4K screen.
+
+**You do not have to walk to the wall to change it.** Edit the board from the
+settings page on your laptop and the screen follows within two seconds, with
+nobody touching it — every poll re-reads the link. Beside the editor is a live
+preview drawn at the shape of the screen that is actually showing the link, and
+each row says how many screens have it open right now. **Lock** a link and its
+board cannot be changed until it is unlocked, which is what stops you
+rearranging the one a customer is watching from an editor left open on the wrong
+row.
+
+Give a link a **remark** — "the screen in meeting room three", "for the
+customer" — and it appears on the screen as well as in the settings row. It is
+shown in both detail levels, because it is your sentence to whoever is standing
+in front of the screen rather than one of the panel's own words.
 
 The numbers are what the panel already knows: states and how long each has held,
 CPU and memory per session, the machine, checklist progress, and what the agents

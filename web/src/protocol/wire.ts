@@ -650,6 +650,22 @@ export interface ShareLink {
    *  read, so what arrives here is always a board this build's vocabulary
    *  covers. */
   board: ShareBoard
+  /** The owner's own label for the screen: which room, which audience. Shown
+   *  to viewers under both detail modes — it is the owner's sentence to them,
+   *  not one of the panel's own words. */
+  remark: string
+  /** The board is fixed. The server refuses an edit to a locked link, so this
+   *  is a guard and not a hint: it is what stops the wall a customer is
+   *  looking at being rearranged from an editor left open on the wrong row. */
+  locked: boolean
+  /** How many screens had this open a moment ago, counted from their polls.
+   *  Not stored: it is true for about two seconds and must be 0 again after a
+   *  restart. */
+  viewers: number
+  /** The largest live viewer's screen, or 0 when nothing is looking. What the
+   *  owner is composing for when they cannot see it. */
+  viewportWidth: number
+  viewportHeight: number
 }
 
 /**
@@ -730,6 +746,13 @@ export interface ShareDashboard {
    *  is what stops a frozen page from looking like a quiet system. */
   at: number
   name: string
+  /** The owner's label for this screen. Sent under both detail modes: `detail`
+   *  governs whether the panel's own words may leave the machine, and this is
+   *  the owner's sentence to whoever is standing in front of the screen. */
+  remark: string
+  /** The owner has fixed this board. Said on screen because the lock is about
+   *  which wall is safe to rearrange, and the wall is where you find out. */
+  locked: boolean
   detail: string
   /** Unix seconds, 0 when the link does not expire. */
   expiresAt: number
@@ -752,6 +775,10 @@ export interface ShareDashboard {
   spend: ShareSpend | null
   /** Null unless a widget on the board shows checklist progress. */
   todos: ShareTodos | null
+  /** Null unless a widget on the board draws a moving line. Short after a
+   *  restart or a screen that has just been switched on: the ring is filled by
+   *  the polls that draw it. */
+  trend: ShareTrend | null
   /** '', 'project' or 'session': what this link is about. A scoped board
    *  showing nothing means "nothing in the thing you were sent", which is a
    *  different sentence from "nothing is running". */
@@ -793,15 +820,27 @@ export interface ShareWidget {
   /** A caption the owner typed. The only free text on a board, so the only
    *  thing here that goes through safeText. */
   text?: string
+  /** How many grid rows tall, 1..catalogue.maxRows. Absent means one.
+   *  The dimension that makes a hero a hero: a flat list of equal tiles is a
+   *  dashboard, and a wall needs one thing four times the size of the rest. */
+  height?: number
 }
 
 /** An arrangement. Mirrors store.Board. */
 export interface ShareBoard {
+  /** How many columns the spans are counted in. Twelve, for anything this
+   *  build wrote; the server converts a board stored in the old quarters on
+   *  the way through, so a board that arrives here is always in twelfths. */
+  grid: number
   /** Which preset it started from, kept as provenance for the editor. Nothing
    *  renders from it. */
   preset: string
   /** Seconds each page stays on screen, or 0 for a board that does not move. */
   rotate: number
+  /** Stretch the rows to the height of the screen instead of flowing down it.
+   *  The difference between a board and a wall — nobody is going to scroll a
+   *  television. */
+  fill: boolean
   widgets: ShareWidget[]
 }
 
@@ -818,6 +857,8 @@ export interface ShareWidgetSpec {
   text: boolean
   /** This kind draws a list, so it can page through one that does not fit. */
   rotate: boolean
+  /** How many grid rows tall this kind may be made. */
+  rows: number
 }
 
 /** A starting arrangement offered by the settings page. Mirrors store.Preset. */
@@ -826,7 +867,18 @@ export interface SharePreset {
   /** Who the board is for: the axis the catalogue is organised on. A label,
    *  nothing renders from it except the grouping in the editor. */
   audience: string
+  /** What it was composed for: phone, laptop, wall, bigwall. The question
+   *  somebody can always answer, unlike "which of twenty-four do I want". */
+  screen: string
   rotate: number
+  /** This arrangement was drawn to occupy a whole screen. */
+  fill: boolean
+  /** The disclosure mode this preset is only correct at, or '' when that is
+   *  the owner's call. Applied by the editor; validated by the server on its
+   *  own, from the request, exactly as before. */
+  detail: string
+  /** This arrangement is meaningless pointed at the whole panel. */
+  needsScope: boolean
   widgets: ShareWidget[]
 }
 
@@ -840,10 +892,47 @@ export interface SharePreset {
 export interface ShareCatalogue {
   presets: SharePreset[]
   widgets: ShareWidgetSpec[]
+  /** The screen sizes a preset can be composed for, in the order to offer. */
+  screens: string[]
+  /** The widths worth offering, in twelfths. The server accepts any span from
+   *  1 to `maxSpan`; these are the ones a select should hold. Served rather
+   *  than listed here, so a preset's widths and the editor's cannot drift. */
+  steps: number[]
   maxWidgets: number
   maxSpan: number
+  maxRows: number
   maxCaption: number
+  maxRemark: number
   maxDays: number
+}
+
+/** One reading of the machine and the running token total. */
+export interface ShareTrendPoint {
+  at: number
+  /** Whole-machine percent, or null where /proc could not be read. Null rather
+   *  than 0, because 0 is a real and very different reading. */
+  cpu: number | null
+  /** Fractions in use, 0..1. */
+  memory: number
+  load: number
+  /** The running total for the server's local day, within this link's scope.
+   *  A rate is drawn from the differences; the total is what survives a
+   *  dropped sample. */
+  tokens: number
+}
+
+/**
+ * The last few minutes, for the widgets that draw a line rather than a number.
+ *
+ * A wall of still numbers cannot be told from a wall that has frozen, and a
+ * line that moves is the cheapest honest proof the screen is alive.
+ */
+export interface ShareTrend {
+  /** The sampling interval in seconds, so the axis means something without
+   *  being guessed from the gaps. */
+  every: number
+  /** Oldest first. Short after a restart: the ring is in memory on purpose. */
+  points: ShareTrendPoint[]
 }
 
 // ── token spend on a board ─────────────────────────────────────────────────
@@ -864,6 +953,14 @@ export interface ShareSpendBucket {
   label: string
   total: number
   requests: number
+  /** The four columns behind `total`, so a bar can be stacked. The same tokens
+   *  the totals already disclose, cut the same way: a day that is nine tenths
+   *  cache reads and one that is nine tenths output are the same number and
+   *  different afternoons. */
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
 }
 
 /** One bar of a by-tool or by-project breakdown. `id` is empty for the row that
@@ -895,6 +992,9 @@ export interface ShareSpend {
   month: ShareSpendTotals
   lastMonth: ShareSpendTotals
   window: ShareSpendTotals
+  /** Every token this panel has recorded within this scope. The only figure
+   *  here that only ever goes up, which is what an odometer needs. */
+  allTime: ShareSpendTotals
   /** Empty unless a widget on the board asks for them. */
   days: ShareSpendBucket[]
   months: ShareSpendBucket[]

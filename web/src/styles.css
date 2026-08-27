@@ -1137,24 +1137,46 @@ body {
    A span wider than the track count is clamped by the grid itself, which is why
    a `span 4` widget does not overflow a two-column layout — that behaviour is
    what makes one span field work at every width. */
+/* Twelve columns at every width, and the collapsing happens to the *spans*.
+   Four columns could say a half and a quarter and nothing else; twelve divides
+   by 2, 3, 4 and 6, which is what a third costs.
+
+   The columns do not change with the viewport, because a span of 7 in a
+   6-column grid is placed by rules nobody wants to reason about. Dashboard.tsx
+   raises each widget's minimum span as the screen narrows instead — half a
+   screen below 1100, the whole of it below 640 — which is the same collapse the
+   four-column grid had, said where it can be tested.
+
+   `grid-auto-flow: dense` so a tall hero does not leave a hole beside it that
+   the next small tile could have filled. It is what makes an ordered list plus
+   a span and a height enough to compose with, and the reason there is no
+   coordinate per widget per breakpoint. */
 .vp-board {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-auto-flow: row dense;
+  grid-auto-rows: minmax(8rem, auto);
   gap: 1.5rem;
   align-items: stretch;
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 640px) {
   .vp-board {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    grid-auto-rows: minmax(6rem, auto);
   }
 }
 
-@media (max-width: 640px) {
-  .vp-board {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 1rem;
-  }
+/* A board that was drawn to occupy a screen rather than flow down one.
+
+   The rows share the height instead of taking their content's, which is the
+   difference between a wall and a long page nobody is going to scroll: there is
+   nobody standing at a television to scroll it. `min-height: 0` on the rows via
+   `minmax(0, 1fr)` so a tall list inside a tile scrolls itself rather than
+   pushing the grid past the viewport. */
+.vp-board[data-fill='true'] {
+  height: 100%;
+  grid-auto-rows: minmax(0, 1fr);
 }
 
 /* xterm sizes itself against the element it is given; without an explicit

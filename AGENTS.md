@@ -93,6 +93,22 @@ Each of these exists because the alternative broke something real.
    command lines, tmux names, the hostname and the panel's real ids are never
    sent, in any mode.
 
+   The pressure this rule has actually come under, once, was not an attack: it
+   was "I should not have to walk to the wall and log in to change the layout".
+   The obvious answer is a `PATCH` here, one line, obviously correct in review.
+   The right answer was that the person who wants to change it is not at the
+   screen — they are on a laptop, signed in — so the board is edited through
+   `PATCH /api/settings/shares/{id}` and the wall picks it up on its next poll,
+   because every poll re-reads the row. The whole live-update feature cost this
+   file nothing. If the next request sounds like it needs a write here, ask
+   first where the person making the change actually is.
+
+   Two things a viewer *does* send, on the query string of that one GET: an
+   opaque per-tab id and its viewport, for the owner's "how many screens have
+   this open". They are recorded in process memory and never read back — nothing
+   a viewer sends decides anything the response carries, and
+   `TestWhatAViewerSaysAboutItselfCannotChangeTheDashboard` is what says so.
+
 ## Conventions
 
 - **Comments explain why, and what breaks otherwise.** Not what the line does.

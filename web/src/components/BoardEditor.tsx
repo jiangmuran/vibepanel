@@ -1,6 +1,6 @@
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react'
 
-import type { ShareBoard, ShareCatalogue, ShareWidget } from '../protocol/wire'
+import type { ShareBoard, ShareCatalogue, SharePreset, ShareWidget } from '../protocol/wire'
 import { t } from '../i18n'
 import {
   byLabel,
@@ -11,8 +11,8 @@ import {
   orderLabel,
   presetLabel,
   presetWhy,
+  screenLabel,
 } from './board/labels'
-import { audienceLabel } from './board/labels'
 
 /**
  * Where a board is made.
@@ -30,9 +30,21 @@ import { audienceLabel } from './board/labels'
  * the person who finds out is the one who pressed the button.
  */
 
-/** Widths a widget can be given, in a four-column grid. */
-function spans(max: number): number[] {
-  return Array.from({ length: max }, (_, i) => i + 1)
+/**
+ * The widths worth offering, from the server's own catalogue.
+ *
+ * Not all twelve, and not a list in this file: a select with twelve entries is
+ * a control nobody can aim at, and a second copy of which fractions are worth
+ * offering is how an editor comes to offer a width no preset uses and miss one
+ * every preset does.
+ */
+function spans(catalogue: ShareCatalogue): number[] {
+  return catalogue.steps.filter((n) => n >= 1 && n <= catalogue.maxSpan)
+}
+
+/** How many grid rows tall. Heights are what make a hero a hero. */
+function heights(max: number): number[] {
+  return Array.from({ length: Math.max(1, max) }, (_, i) => i + 1)
 }
 
 /** Rotation intervals worth offering. 0 is a board that does not move. */
@@ -48,11 +60,30 @@ export function BoardEditor({
   board,
   catalogue,
   onChange,
+  onPickPreset,
 }: {
   board: ShareBoard
   catalogue: ShareCatalogue
   onChange: (next: ShareBoard) => void
+  /** Told which preset was chosen, not only what it expanded to.
+   *
+   *  A preset can carry more than widgets: one of them is only correct scoped
+   *  to a single project in `counts` mode, because the failure there is a
+   *  customer reading another customer's project name off the screen they were
+   *  sat in front of. The form above applies those; this editor only knows
+   *  about boards. */
+  onPickPreset?: (preset: SharePreset) => void
 }) {
+  const onPreset = (preset: SharePreset) => {
+    onChange({
+      grid: catalogue.maxSpan,
+      preset: preset.id,
+      rotate: preset.rotate,
+      fill: preset.fill,
+      widgets: [...preset.widgets],
+    })
+    onPickPreset?.(preset)
+  }
   const specOf = (kind: string) => catalogue.widgets.find((s) => s.kind === kind)
 
   const setWidget = (index: number, next: ShareWidget) => {
@@ -90,23 +121,43 @@ export function BoardEditor({
   return (
     <div data-testid="board-editor">
       <div className="mb-2 flex flex-wrap items-center gap-2">
+        {/* Grouped by the screen it was composed for rather than by audience.
+            "Which of twenty-four do I want" is a question nobody can answer;
+            "what am I putting this on" is one everybody can. The audience is
+            still in the sentence under it. */}
         <select
           value={board.preset}
           onChange={(e) => {
             const preset = catalogue.presets.find((p) => p.id === e.target.value)
             if (!preset) return
-            onChange({ preset: preset.id, rotate: preset.rotate, widgets: [...preset.widgets] })
+            onPreset(preset)
           }}
           title={t('board.preset')}
           data-testid="board-preset"
           className={SELECT}
         >
-          {catalogue.presets.map((p) => (
-            <option key={p.id} value={p.id}>
-              {audienceLabel(p.audience)} · {presetLabel(p.id)}
-            </option>
+          {catalogue.screens.map((screen) => (
+            <optgroup key={screen} label={screenLabel(screen)}>
+              {catalogue.presets
+                .filter((p) => p.screen === screen)
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {presetLabel(p.id)}
+                  </option>
+                ))}
+            </optgroup>
           ))}
         </select>
+        <button
+          type="button"
+          onClick={() => onChange({ ...board, fill: !board.fill })}
+          aria-pressed={board.fill}
+          title={t('board.fill')}
+          data-testid="board-fill"
+          className="vp-control px-2"
+        >
+          {t('board.fill')}
+        </button>
         <select
           value={board.rotate}
           onChange={(e) => onChange({ ...board, rotate: Number(e.target.value) })}
@@ -265,9 +316,25 @@ export function BoardEditor({
               data-testid="widget-span"
               className={SELECT}
             >
-              {spans(catalogue.maxSpan).map((n) => (
+              {spans(catalogue).map((n) => (
                 <option key={n} value={n}>
                   {t('board.widthOf', { n })}
+                </option>
+              ))}
+            </select>
+            {/* The other half of the hero/texture ratio. A screen where every
+                tile is the same size is a dashboard, not a display, and a span
+                alone cannot make one thing four times the area of the rest. */}
+            <select
+              value={w.height ?? 1}
+              onChange={(e) => setWidget(i, { ...w, height: Number(e.target.value) })}
+              title={t('board.height')}
+              data-testid="widget-height"
+              className={SELECT}
+            >
+              {heights(catalogue.maxRows).map((n) => (
+                <option key={n} value={n}>
+                  {t('board.heightOf', { n })}
                 </option>
               ))}
             </select>

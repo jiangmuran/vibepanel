@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Lock } from 'lucide-react'
 
 import { api, UnauthorizedError } from '../protocol/api'
 import type { ShareDashboard } from '../protocol/wire'
 import { t, useLang } from '../i18n'
 import { Widget } from './board/render'
 import { agoText, clockText, duration } from './board/format'
+import { forViewport, viewerID } from './board/viewer'
 import { safeText } from './text'
 
 /**
@@ -26,6 +28,15 @@ import { safeText } from './text'
  * one, the page rotation, and the grid the widgets are placed into. A board
  * that named a widget this build has never heard of renders an empty tile; see
  * board/render.tsx for why that is the only acceptable answer.
+ *
+ * There is also no way to change that board from here, and that is the design
+ * rather than an omission. The screen this is for is a television with nobody
+ * standing at it; the person who wants to rearrange it is somewhere else, on a
+ * laptop, signed in. So the board is edited through the settings API and this
+ * page picks the change up on its next poll — two seconds — because every poll
+ * re-reads the link's row. That is also why the whole share surface is still
+ * one GET: nothing had to be added here for the owner to be able to edit a wall
+ * they are not standing in front of.
  */
 
 /** How often the dashboard asks. The same cadence the monitor panel uses. */
@@ -165,8 +176,40 @@ function usePages(pages: number, seconds: number): number {
   return Math.min(page, pages - 1)
 }
 
+/**
+ * The viewport this screen has, banded so it changes when the screen does.
+ *
+ * Two jobs. It decides how far a stored board collapses (see board/viewer.ts),
+ * and it is reported to the panel so the owner composing this wall from a
+ * laptop can see what shape of screen they are composing for. Banded to 20px so
+ * a window being dragged does not re-render the board on every frame or send a
+ * different number on every poll.
+ */
+function useViewport(): { width: number; height: number } {
+  const [size, setSize] = useState(() => band(window.innerWidth, window.innerHeight))
+  useEffect(() => {
+    const onResize = () => setSize((was) => {
+      const next = band(window.innerWidth, window.innerHeight)
+      return next.width === was.width && next.height === was.height ? was : next
+    })
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+  return size
+}
+
+function band(w: number, h: number): { width: number; height: number } {
+  const to20 = (v: number) => Math.max(0, Math.round(v / 20) * 20)
+  return { width: to20(w), height: to20(h) }
+}
+
 export function Dashboard({ token }: { token: string }) {
   useLang()
+  const viewport = useViewport()
+  // Made once for the life of the tab. It is not a credential and grants
+  // nothing; it is what lets the owner's settings page say "two screens" rather
+  // than "one address".
+  const [viewer] = useState(viewerID)
   const [data, setData] = useState<ShareDashboard | null>(null)
   const [connection, setConnection] = useState<Connection>('connecting')
   // A second clock, ticking whether or not the polls are landing. Without it
@@ -183,7 +226,7 @@ export function Dashboard({ token }: { token: string }) {
 
   const poll = useCallback(async () => {
     try {
-      const next = await api.shareDashboard(token)
+      const next = await api.shareDashboard(token, viewer, viewport.width, viewport.height)
       lastOkRef.current = Date.now()
       setData(next)
       setConnection('live')
@@ -202,7 +245,7 @@ export function Dashboard({ token }: { token: string }) {
           : 'disconnected',
       )
     }
-  }, [token])
+  }, [token, viewer, viewport.width, viewport.height])
 
   useEffect(() => {
     let cancelled = false
@@ -228,7 +271,15 @@ export function Dashboard({ token }: { token: string }) {
     if (linkName) document.title = safeText(linkName)
   }, [linkName])
 
-  const widgets = useMemo(() => data?.board.widgets ?? [], [data])
+  // Collapsed for this screen. One stored board opens on a phone and on a
+  // television, and the collapsing is here rather than in CSS because the grid
+  // is twelve columns wide at every size — a span of 7 in a narrower grid is
+  // placed by rules nobody wants to reason about.
+  const width = viewport.width
+  const widgets = useMemo(
+    () => (data?.board.widgets ?? []).map((w) => forViewport(w, width)),
+    [data, width],
+  )
   const pages = useMemo(
     () => widgets.reduce((most, w) => Math.max(most, (w.page ?? 0) + 1), 1),
     [widgets],
@@ -260,7 +311,25 @@ export function Dashboard({ token }: { token: string }) {
                 : t('dash.oneProject')}
           </span>
         )}
+        {/* The owner's own label for this screen. Under both detail modes:
+            `detail` is about whether the panel's words may leave the machine,
+            and this is the owner's sentence to the person in front of it. */}
+        {data.remark !== '' && (
+          <span className="min-w-0 shrink truncate text-vp-xl text-ink-2" data-testid="dash-remark">
+            {safeText(data.remark)}
+          </span>
+        )}
         <span className="shrink-0 text-vp-xl text-ink-3">{t('dash.readOnly')}</span>
+        {/* Red line 4: the closed padlock is the carrier, not a colour. */}
+        {data.locked && (
+          <span
+            className="flex shrink-0 items-center gap-2 text-vp-xl text-ink-3"
+            data-testid="dash-locked"
+          >
+            <Lock size={18} aria-hidden="true" />
+            {t('dash.locked')}
+          </span>
+        )}
         <div
           className="flex shrink-0 items-center gap-3"
           data-testid="dash-connection"
@@ -310,7 +379,7 @@ export function Dashboard({ token }: { token: string }) {
           not hidden: the last true reading is still the most useful thing on
           the screen, it just must not be presented as this moment's. */}
       <div
-        className="min-h-0 flex-1 overflow-y-auto px-8 py-6"
+        className={`min-h-0 flex-1 px-8 py-6 ${data.board.fill ? 'overflow-hidden' : 'overflow-y-auto'}`}
         style={{ opacity: frozen ? 0.55 : 1, transition: 'opacity 400ms var(--vp-ease)' }}
       >
         {onThisPage.length === 0 ? (
@@ -318,7 +387,12 @@ export function Dashboard({ token }: { token: string }) {
             {t('dash.nothing')}
           </p>
         ) : (
-          <div className="vp-board" data-testid="dash-board" data-page={page}>
+          <div
+            className="vp-board"
+            data-testid="dash-board"
+            data-page={page}
+            data-fill={data.board.fill ? 'true' : 'false'}
+          >
             {onThisPage.map((w, i) => (
               <Widget key={`${w.kind}-${i}`} w={w} data={data} now={now} />
             ))}

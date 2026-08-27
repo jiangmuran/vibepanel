@@ -35,6 +35,11 @@ export function audienceLabel(id: string): string {
   return look('board.audience', id, id)
 }
 
+/** Which screen a preset was composed for: phone, laptop, wall, bigwall. */
+export function screenLabel(id: string): string {
+  return look('board.screen', id, id)
+}
+
 export function metricLabel(metric: string, fallback: string): string {
   return look('board.metric', metric, fallback)
 }

@@ -104,7 +104,7 @@ function machineMetric(
 /** The four meters together. */
 export function Machine({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
   return (
-    <Tile kind={w.kind} span={w.span} testid="widget-machine" label={t('board.kind.machine')}>
+    <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-machine" label={t('board.kind.machine')}>
       <div className="grid gap-x-8 gap-y-5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
         {(['cpu', 'memory', 'disk', 'swap'] as const).map((metric) => {
           const { value, detail } = machineMetric(metric, data)
@@ -139,7 +139,7 @@ export function Gauge({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
   const dash = circumference * sweep
 
   return (
-    <Tile kind={w.kind} span={w.span} testid="widget-gauge" label={metricLabel(metric, metric)}>
+    <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-gauge" label={metricLabel(metric, metric)}>
       <div className="flex flex-col items-center">
         <div className="relative w-full" style={{ maxWidth: '13rem' }}>
           <svg viewBox="0 0 100 100" className="w-full" role="img" aria-label={metricLabel(metric, metric)}>
@@ -184,7 +184,7 @@ export function Gauge({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
 export function Uptime({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
   const m = data.machine
   return (
-    <Tile kind={w.kind} span={w.span} testid="widget-uptime" label={t('dash.uptimeLabel')}>
+    <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-uptime" label={t('dash.uptimeLabel')}>
       <div className="tabular text-vp-2xl font-semibold text-ink">{duration(m.uptime)}</div>
       <div className="mt-3 text-vp-xl text-ink-3">{t('dash.load')}</div>
       <div className="tabular text-vp-2xl font-semibold text-ink">
@@ -200,7 +200,7 @@ export function Uptime({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
 /** Nothing to draw, said in as few words as the tile allows. */
 export function Unknown({ w }: { w: ShareWidget }) {
   return (
-    <Tile kind={w.kind} span={w.span} testid="widget-unknown">
+    <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-unknown">
       <Empty text={t('dash.emptyWidget')} />
     </Tile>
   )

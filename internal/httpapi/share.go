@@ -112,6 +112,17 @@ func (s *Server) shareCooldowns() *auth.Cooldown {
 // the list of what a share token deliberately cannot do: read terminal bytes,
 // open the socket, write anything, browse a file, see a note or a todo, or
 // learn where on the disk any of it lives.
+//
+// It stayed one route through the change that made a board editable from
+// somewhere else, and that is worth recording because the obvious design was
+// the other one. "Let the person at the screen rearrange it" wants a PATCH
+// here, one line, obviously correct in review. What was actually asked for was
+// "I should not have to walk to the wall and log in to change it" — which is an
+// *owner* editing a board from a laptop, over a route that already exists
+// behind a session. The wall picks the change up on its next poll, two seconds
+// later, because every poll re-reads the row. Nothing a viewer sends decides
+// anything: `v`, `w` and `h` on the query string are recorded in memory for the
+// owner's count and are not readable through this token at all.
 func (s *Server) registerShareRoutes(r chi.Router) {
 	r.Route("/share/{token}", func(r chi.Router) {
 		r.Use(s.requireShareToken)
@@ -174,6 +185,14 @@ func (s *Server) requireShareToken(next http.Handler) http.Handler {
 				s.Log.Debug("touch share link", "err", terr)
 			}
 		}
+
+		// Who is looking, counted from the poll rather than from anything the
+		// viewer had to be given permission to send. Hashed under the link's
+		// own secret so the book holds nothing about who: the same viewer on
+		// two links is two unrelated keys, which is the property shareID
+		// already exists for.
+		raw, vw, vh := shareViewerFrom(r, ip)
+		s.viewers.saw(link.ID, shareID(hash, raw), vw, vh, time.Now())
 
 		next.ServeHTTP(w, r.WithContext(
 			context.WithValue(ctx, shareContextKey{}, shareContext{link: link, secret: hash})))
@@ -334,6 +353,48 @@ type shareSpendBucket struct {
 	Label    string `json:"label"`
 	Total    int64  `json:"total"`
 	Requests int64  `json:"requests"`
+	// The four columns behind Total, so a bar can be stacked.
+	//
+	// The same tokens the totals above already disclose, cut the same way; no
+	// new fact reaches the wire because a board asked for a stacked chart. It
+	// is here because a total hides the thing worth seeing: a day that is nine
+	// tenths cache reads and a day that is nine tenths output are the same
+	// number and different afternoons.
+	Input      int64 `json:"input"`
+	Output     int64 `json:"output"`
+	CacheRead  int64 `json:"cacheRead"`
+	CacheWrite int64 `json:"cacheWrite"`
+}
+
+// shareTrendPoint is one reading of the machine and the running token total.
+//
+// Restated rather than embedding sysmon.Sample, exactly like shareMachine: a
+// field added to the sample must not become a field on a line drawn on a wall.
+type shareTrendPoint struct {
+	At int64 `json:"at"`
+	// CPU is whole-machine percent, or null where /proc could not be read. Null
+	// rather than zero, because zero is a real and very different reading.
+	CPU    *float64 `json:"cpu"`
+	Memory float64  `json:"memory"`
+	Load   float64  `json:"load"`
+	// Tokens is the running total for the server's local day, within this
+	// link's scope. The differences are what a rate is drawn from; the total is
+	// what survives a dropped sample, and a difference would not.
+	Tokens int64 `json:"tokens"`
+}
+
+// shareTrend is the last few minutes, for the widgets that draw a line.
+//
+// The one section that is not a reading of now. It exists because a wall of
+// still numbers cannot be told from a wall that has frozen, and a line that
+// moves is the cheapest honest proof the screen is alive.
+type shareTrend struct {
+	// Every is the sampling interval in seconds, so the client can say what the
+	// horizontal axis means without guessing it from the gaps.
+	Every int `json:"every"`
+	// Points is oldest first, and short: a wall that has just been switched on
+	// draws a short line, because the ring is filled by the polls that draw it.
+	Points []shareTrendPoint `json:"points"`
 }
 
 // shareSpendGroup is one bar of a by-tool or by-project breakdown.
@@ -380,6 +441,13 @@ type shareSpend struct {
 	Month     shareSpendTotals `json:"month"`
 	LastMonth shareSpendTotals `json:"lastMonth"`
 	Window    shareSpendTotals `json:"window"`
+	// AllTime is every token this panel has ever recorded within this scope.
+	//
+	// Summed from the months, which are already every month there has ever
+	// been, so it costs nothing beyond the addition. It is the only figure here
+	// that only ever goes up, which is exactly what an odometer needs and what
+	// no chart of a window can say.
+	AllTime shareSpendTotals `json:"allTime"`
 
 	// The arrays are empty unless a widget on this board asks for them. Empty
 	// rather than absent so the client renders one shape either way.
@@ -427,6 +495,28 @@ type shareDashboard struct {
 	// so it is theirs to put on a wall, and it is the only free text here that
 	// did not come from a machine.
 	Name string `json:"name"`
+	// Remark is the owner's own label for this screen: the room it is in, the
+	// audience it is for. Written by somebody signed in, read by whoever is
+	// standing in front of it.
+	//
+	// Sent under both detail modes, and that is a decision rather than an
+	// omission. `detail` governs whether the *panel's* words -- session titles
+	// and project names, read out of its own database -- may leave the machine.
+	// A remark is not the panel's: it is a sentence the owner wrote to the
+	// viewer, about the screen, with the effect in front of them. `name` has
+	// always been sent in both modes for the same reason, and a remark
+	// suppressed under `counts` would be a label the owner cannot see on the
+	// wall they labelled -- which they would then put in `name`, which is
+	// disclosed anyway. The settings page says so where it is typed.
+	Remark string `json:"remark"`
+	// Locked says the owner has fixed this board.
+	//
+	// Sent so the screen can say it -- the lock exists so that a wall a
+	// customer is looking at is not the one you rearrange by accident, and it
+	// is enforced where the edit happens, in handleUpdateShare. Nothing here
+	// depends on the viewer honouring it, because there is nothing for a viewer
+	// to honour: a board is not editable from this side at all.
+	Locked bool `json:"locked"`
 	// Detail echoes which mode this link is in, so the page can say so rather
 	// than leaving a reader to wonder why nothing has a name.
 	Detail string `json:"detail"`
@@ -463,6 +553,8 @@ type shareDashboard struct {
 	Spend *shareSpend `json:"spend"`
 	// Todos is null unless a widget on this board shows checklist progress.
 	Todos *shareTodos `json:"todos"`
+	// Trend is null unless a widget on this board draws a moving line.
+	Trend *shareTrend `json:"trend"`
 
 	// Scope is "", "project" or "session": what this link is about.
 	//
@@ -481,8 +573,9 @@ type shareDashboard struct {
 //
 // It reads the same two sources the panel's own monitor does -- the session
 // rows and the process-tree sampler -- and returns a redaction of them. It
-// writes nothing, and the only state it touches is the sampler's previous
-// counters, which is what makes a CPU percentage a percentage.
+// writes nothing to the database, and the only state it touches is the
+// sampler's previous counters, which is what makes a CPU percentage a
+// percentage, and the in-memory viewer book and trend ring next door.
 func (s *Server) handleShareDashboard(w http.ResponseWriter, r *http.Request) {
 	sc, ok := shareFrom(r)
 	if !ok {
@@ -493,17 +586,43 @@ func (s *Server) handleShareDashboard(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "this link is not valid")
 		return
 	}
-	ctx := r.Context()
-
-	projects, err := s.DB.ListProjects(ctx)
+	out, err := s.buildShareDashboard(r.Context(), sc.link, sc.secret)
 	if err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}
+	// No caching, anywhere between here and the screen. This is a live
+	// reading, and a dashboard served from a proxy's cache is the exact failure
+	// the connection indicator exists to make visible -- except that it would
+	// look live, because the numbers would arrive.
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, out)
+}
+
+// buildShareDashboard is the redaction itself, with no HTTP in it.
+//
+// Split out from the handler so that the editor's preview draws from *this*
+// function rather than from a second one. An owner composing a wall from a
+// laptop has to be shown what that wall shows, and the way to get that wrong is
+// to write a second reduction of the panel's state for the preview: it would
+// diverge on the first field added to either, and the direction it diverges in
+// is "the preview shows something the real screen does not".
+//
+// secret is what the pseudonymous ids are derived from. For a real poll it is
+// the presented token's stored hash; for the preview it is the link's id, so a
+// preview's ids are stable, different from the live link's, and join to
+// nothing. Nothing downstream cares which it was, which is the point.
+func (s *Server) buildShareDashboard(ctx context.Context, link store.ShareLink,
+	secret []byte) (shareDashboard, error) {
+	sc := shareContext{link: link, secret: secret}
+
+	projects, err := s.DB.ListProjects(ctx)
+	if err != nil {
+		return shareDashboard{}, err
+	}
 	sessions, err := s.DB.ListSessions(ctx)
 	if err != nil {
-		s.writeStoreErr(w, err)
-		return
+		return shareDashboard{}, err
 	}
 
 	named := store.ShareDetail(sc.link.Detail) == store.ShareNames
@@ -521,6 +640,7 @@ func (s *Server) handleShareDashboard(w http.ResponseWriter, r *http.Request) {
 
 	out := shareDashboard{
 		At: time.Now().Unix(), Name: sc.link.Name, Detail: sc.link.Detail,
+		Remark: sc.link.Remark, Locked: sc.link.Locked,
 		ExpiresAt: sc.link.ExpiresAt, UsageReadable: sysmon.ProcReadable(),
 		Stale: s.stale() != "", Machine: shareMachineFrom(sample), Board: board,
 		Scope: string(scope.kind), Projects: []shareProject{}, Sessions: []shareSession{},
@@ -636,13 +756,35 @@ func (s *Server) handleShareDashboard(w http.ResponseWriter, r *http.Request) {
 		todos := s.shareTodosFor(ctx, projects, sc.secret, named, scope, dayStart)
 		out.Todos = &todos
 	}
-
-	// No caching, anywhere between here and the screen. This is a live
-	// reading, and a dashboard served from a proxy's cache is the exact failure
-	// the connection indicator exists to make visible -- except that it would
-	// look live, because the numbers would arrive.
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, out)
+	if needs[store.NeedTrend] {
+		// Sampled here rather than by the poller, and only when a widget on
+		// this board draws it. A panel nobody is watching does no work for a
+		// graph nobody is looking at -- the same rule the token ingester
+		// already follows.
+		//
+		// The token half comes from the spend section when the board carries
+		// one and is zero otherwise, which is honest: a board with a machine
+		// line and no spend widget has no token figures to make a rate from,
+		// and inventing one by querying anyway would be five GROUP BYs a poll
+		// for a line nothing draws.
+		var today int64
+		if out.Spend != nil {
+			today = out.Spend.Today.Total
+		}
+		trend := shareTrend{Every: int(trendSampleEvery / time.Second),
+			Points: []shareTrendPoint{}}
+		for _, pt := range s.observeTrend(scope.cwd, time.Now(),
+			trendFrom(time.Now(), sample, today)) {
+			p := shareTrendPoint{At: pt.at, Memory: pt.memory, Load: pt.load, Tokens: pt.tokens}
+			if pt.cpu >= 0 {
+				cpu := pt.cpu
+				p.CPU = &cpu
+			}
+			trend.Points = append(trend.Points, p)
+		}
+		out.Trend = &trend
+	}
+	return out, nil
 }
 
 // shareUsage samples per-session cost, tolerating a tmux that cannot answer.
@@ -1084,7 +1226,7 @@ func (s *Server) shareSpendFor(ctx context.Context, projects []store.Project, se
 		if windowFrom != "" && d.Day >= windowFrom {
 			addDay(&out.Window, d)
 		}
-		bucket := shareSpendBucket{Label: d.Day, Total: d.Total(), Requests: d.Requests}
+		bucket := bucketOf(d.Day, d)
 		if daysCut != "" && d.Day >= daysCut {
 			out.Days = append(out.Days, bucket)
 		}
@@ -1096,9 +1238,13 @@ func (s *Server) shareSpendFor(ctx context.Context, projects []store.Project, se
 		if m.Day == lastMonth {
 			addDay(&out.LastMonth, m)
 		}
+		// Every month there has ever been is already in hand, so the running
+		// total of everything is an addition rather than a query. The odometer
+		// is the only figure on a board that only goes up, and it would be a
+		// sixth GROUP BY if it were asked for separately.
+		addDay(&out.AllTime, m)
 		if needs[store.NeedSpendMonths] {
-			out.Months = append(out.Months, shareSpendBucket{
-				Label: m.Day, Total: m.Total(), Requests: m.Requests})
+			out.Months = append(out.Months, bucketOf(m.Day, m))
 		}
 	}
 
@@ -1127,6 +1273,20 @@ func (s *Server) shareSpendFor(ctx context.Context, projects []store.Project, se
 	return out
 }
 
+// bucketOf is one labelled column, restated field by field.
+//
+// A function rather than a literal at each of the three call sites, so that
+// what a bucket discloses is decided once. Restated rather than embedding
+// store.UsageDay, for the reason everything in this file is restated: that row
+// carries the day's own columns and a column added to it must not become a
+// column on a chart on a wall without somebody writing the line.
+func bucketOf(label string, d store.UsageDay) shareSpendBucket {
+	return shareSpendBucket{
+		Label: label, Total: d.Total(), Requests: d.Requests,
+		Input: d.Input, Output: d.Output, CacheRead: d.CacheRead, CacheWrite: d.CacheWrite,
+	}
+}
+
 // addDay folds one day's row into a running total, column by column.
 //
 // Restated rather than embedding store.UsageTotals, for the reason the rest of
@@ -1141,11 +1301,21 @@ func addDay(into *shareSpendTotals, d store.UsageDay) {
 	into.Total += d.Total()
 }
 
-// boardSpendDays is the widest day range any bar widget on a board asked for.
+// daySeriesKinds are the widget kinds that draw the day series.
+//
+// A list rather than a single name, because "which widgets draw days" and
+// "which widgets need the days section" are the same question asked in two
+// places -- board.Needs answers the second from the registry, and this answers
+// the first. A kind missing from here still gets its section; it just gets it
+// cut to the default window, which is a chart that quietly shows a fortnight
+// when its author asked for a year.
+var daySeriesKinds = map[string]bool{"spendbars": true, "sparkline": true, "spendstack": true}
+
+// boardSpendDays is the widest day range any series widget on a board asked for.
 func boardSpendDays(board store.Board) int {
 	widest := 0
 	for _, w := range board.Widgets {
-		if w.Kind != "spendbars" || (w.By != "" && w.By != "day") {
+		if !daySeriesKinds[w.Kind] || (w.By != "" && w.By != "day") {
 			continue
 		}
 		days := w.Days
@@ -1203,12 +1373,54 @@ func shareKind(command string) string {
 // again. Comparing the seconds the caller actually sent cannot overflow.
 const maxShareSeconds = 365 * 24 * 60 * 60
 
+// registerShareAdminRoutes is where a link is made, edited and revoked.
+//
+// Behind the ordinary session, and that is the whole answer to "I should not
+// have to walk to the wall and log in to change it". The board a television is
+// showing is edited from here, by somebody signed in on a laptop, and the
+// television picks it up on its next poll. Nothing was added under the share
+// token to make that work.
 func (s *Server) registerShareAdminRoutes(r chi.Router) {
 	r.Get("/settings/shares", s.handleListShares)
 	r.Post("/settings/shares", s.handleCreateShare)
 	r.Get("/settings/shares/catalogue", s.handleShareCatalogue)
+	r.Get("/settings/shares/{shareID}/preview", s.handleSharePreview)
 	r.Patch("/settings/shares/{shareID}", s.handleUpdateShare)
 	r.Delete("/settings/shares/{shareID}", s.handleDeleteShare)
+}
+
+// handleSharePreview answers with what that screen is showing right now.
+//
+// The editor's whole problem is that the owner is composing for a screen they
+// cannot see, and the two ways to solve it badly are both worse than this one:
+// invented sample data, which composes a layout against numbers that will not
+// be the real ones; or a second reduction of the panel's state written in the
+// frontend, which diverges from the real redaction on the first field either
+// side gains.
+//
+// So it is the same builder the dashboard uses, called with the link's own row.
+// It is a settings route: it needs the ordinary session, a share token answers
+// 401 to it like everything else, and it discloses strictly less than
+// /api/state -- which the caller already has -- so there is nothing here a
+// signed-in owner could not already read.
+func (s *Server) handleSharePreview(w http.ResponseWriter, r *http.Request) {
+	link, err := s.DB.ShareLinkByID(r.Context(), chi.URLParam(r, "shareID"))
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	// The link's id as the secret, not its token hash. The hash is a live
+	// credential's fingerprint and this response is not the place to derive
+	// anything from it; the preview's pseudonyms only have to be stable within
+	// the preview, and joining them to the real screen's is not something
+	// anybody wants to be able to do.
+	out, err := s.buildShareDashboard(r.Context(), link, []byte(link.ID))
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, out)
 }
 
 // shareCatalogue is the vocabulary a board is built from.
@@ -1220,18 +1432,29 @@ func (s *Server) registerShareAdminRoutes(r chi.Router) {
 type shareCatalogue struct {
 	Presets []store.Preset     `json:"presets"`
 	Widgets []store.WidgetSpec `json:"widgets"`
+	// Screens are the sizes a preset can be composed for, in the order the
+	// editor offers them. Served rather than mirrored, like everything else
+	// here: a screen the picker offers and the catalogue does not name is a
+	// group with nothing in it.
+	Screens []string `json:"screens"`
+	// Steps are the widths the editor offers, in twelfths. The validator takes
+	// any span from 1 to MaxSpan; these are the ones worth putting in a select.
+	Steps []int `json:"steps"`
 	// The bounds, so the editor can stop somebody rather than watch the server
 	// stop them.
 	MaxWidgets int `json:"maxWidgets"`
 	MaxSpan    int `json:"maxSpan"`
+	MaxRows    int `json:"maxRows"`
 	MaxCaption int `json:"maxCaption"`
+	MaxRemark  int `json:"maxRemark"`
 	MaxDays    int `json:"maxDays"`
 }
 
 func (s *Server) handleShareCatalogue(w http.ResponseWriter, r *http.Request) {
 	out := shareCatalogue{
-		Presets: store.Presets(), MaxWidgets: store.MaxWidgets, MaxSpan: store.MaxSpan,
-		MaxCaption: store.MaxCaption, MaxDays: store.MaxSpendDays,
+		Presets: store.Presets(), Screens: store.Screens(), Steps: store.GridSteps(),
+		MaxWidgets: store.MaxWidgets, MaxSpan: store.MaxSpan, MaxRows: store.MaxRows,
+		MaxCaption: store.MaxCaption, MaxRemark: store.MaxRemark, MaxDays: store.MaxSpendDays,
 	}
 	for _, kind := range store.KnownWidgetKinds() {
 		if spec, ok := store.WidgetOptions(kind); ok {
@@ -1265,8 +1488,18 @@ func (s *Server) handleListShares(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreErr(w, serr)
 		return
 	}
+	now := time.Now()
 	for i := range links {
 		links[i].ScopeName = resolveScope(links[i], projects, sessions).name
+		// How many screens have this open, and the largest of them. Both are
+		// counted from the polls those screens were already making; see
+		// internal/httpapi/sharelive.go for why neither is a column.
+		//
+		// This is the signal that tells an owner about to rearrange a wall
+		// whether anything is actually showing it -- and, when something is,
+		// what shape of screen they are composing for.
+		links[i].Viewers, links[i].ViewportWidth, links[i].ViewportHeight =
+			s.viewers.count(links[i].ID, now)
 	}
 	writeJSON(w, http.StatusOK, emptyIfNil(links))
 }
@@ -1295,6 +1528,12 @@ type createShareRequest struct {
 	// poll, and look exactly like a project that had been deleted.
 	Scope   string `json:"scope"`
 	ScopeID string `json:"scopeId"`
+	// Remark is the owner's label for the screen. Free text, cut to
+	// store.MaxRemark runes rather than refused: it is a sentence somebody
+	// typed, and a 400 on the eighty-first character is a form that argues.
+	Remark string `json:"remark"`
+	// Locked fixes the board against later edits until it is unlocked.
+	Locked bool `json:"locked"`
 }
 
 // scopeFor validates a requested scope against the rows that exist.
@@ -1427,7 +1666,7 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 		prefix = prefix[:8]
 	}
 	rec, err := s.DB.CreateShareLink(r.Context(), id.New(), auth.HashToken(token), prefix, name,
-		detail, board, scope, scopeID, u.ID, expiresAt)
+		detail, board, scope, scopeID, u.ID, req.Remark, req.Locked, expiresAt)
 	if err != nil {
 		s.writeStoreErr(w, err)
 		return
@@ -1445,6 +1684,8 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 		"detail":    rec.Detail,
 		"board":     rec.Board,
 		"scope":     rec.Scope,
+		"remark":    rec.Remark,
+		"locked":    rec.Locked,
 		"expiresAt": rec.ExpiresAt,
 		"createdAt": rec.CreatedAt,
 	})
@@ -1472,8 +1713,13 @@ func boardLabel(b store.Board) string {
 }
 
 type updateShareRequest struct {
-	Name  string       `json:"name"`
-	Board *store.Board `json:"board"`
+	Name   string       `json:"name"`
+	Remark string       `json:"remark"`
+	Board  *store.Board `json:"board"`
+	// Locked is a pointer so that "not mentioned" and "set to false" are
+	// different requests. They have to be: on a locked link the second is the
+	// only edit that is allowed, and the first is the one that gets refused.
+	Locked *bool `json:"locked"`
 }
 
 // handleUpdateShare renames a link and rearranges its board.
@@ -1489,6 +1735,41 @@ func (s *Server) handleUpdateShare(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
+
+	// What the row says now, before anything is written. The lock is decided
+	// against the stored value and never against one in the request: a client
+	// that believed a link was unlocked is exactly the client the lock exists
+	// to stop.
+	current, err := s.DB.ShareLinkByID(r.Context(), linkID)
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	if current.Locked {
+		// A locked board accepts one change and it is unlocking. Not "unlock
+		// and also apply this board": the failure being prevented is a screen
+		// somebody is sitting in front of being rearranged by an editor left
+		// open on the wrong row, and a single request that could do both would
+		// leave the lock as a message rather than a guard.
+		//
+		// So the rest of the request is dropped, deliberately, rather than
+		// merged. The editor unlocks, refetches, and edits -- two acts, which
+		// is the whole of what a lock is.
+		if req.Locked == nil || *req.Locked {
+			writeErr(w, http.StatusConflict, "this board is locked")
+			return
+		}
+		if uerr := s.DB.UpdateShareLink(r.Context(), linkID, current.Name, current.Remark,
+			current.Board, false); uerr != nil {
+			s.writeStoreErr(w, uerr)
+			return
+		}
+		if u, ok := currentUserFrom(r); ok {
+			s.audit(r.Context(), "share.unlocked", u.Username, s.clientIP(r), current.Name)
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if req.Board == nil {
 		writeErr(w, http.StatusBadRequest, "a board is required")
 		return
@@ -1502,11 +1783,20 @@ func (s *Server) handleUpdateShare(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = "dashboard"
 	}
-	if err := s.DB.UpdateShareLink(r.Context(), linkID, name, board); err != nil {
+	locked := req.Locked != nil && *req.Locked
+	if err := s.DB.UpdateShareLink(r.Context(), linkID, name, req.Remark, board,
+		locked); err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}
 	if u, ok := currentUserFrom(r); ok {
+		// A lock is its own line rather than a word inside share.updated. An
+		// operator reading the trail for "who fixed the screen the customer is
+		// looking at" is asking a different question from "who moved a widget",
+		// and one event answering both is one somebody has to grep inside.
+		if locked {
+			s.audit(r.Context(), "share.locked", u.Username, s.clientIP(r), name)
+		}
 		s.audit(r.Context(), "share.updated", u.Username, s.clientIP(r),
 			name+" ("+boardLabel(board)+")")
 	}
@@ -1521,6 +1811,11 @@ func (s *Server) handleDeleteShare(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreErr(w, err)
 		return
 	}
+	// The viewers of a link that no longer exists. They will stop polling
+	// within a couple of seconds anyway and their entries would age out, but a
+	// revoked link reading "3 screens" for the fifteen seconds after it was
+	// revoked is the one moment somebody is looking at that number hardest.
+	s.viewers.forget(linkID)
 	if u, ok := currentUserFrom(r); ok {
 		s.audit(r.Context(), "share.revoked", u.Username, s.clientIP(r), linkID)
 	}

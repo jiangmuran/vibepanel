@@ -461,6 +461,42 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+
+	// v14: a remark on a share link, and a lock on its board.
+	//
+	// Both are the owner's, and both are read by the dashboard on its next
+	// poll -- which is the whole of how a change reaches a wall somebody else
+	// is standing in front of. No socket, no second route: the dashboard
+	// already asks every two seconds, and every one of those asks re-reads this
+	// row.
+	//
+	// remark is free text and the second piece of it on a share row, after
+	// name. Bounded in runes at MaxRemark on the way in and rendered through
+	// safeText on the way out, exactly like a caption widget -- a byte slice
+	// through a multi-byte character renders the last one as U+FFFD, and this
+	// string is a heading somebody put on a television.
+	//
+	// locked is a product control and not a boundary, and the column comment is
+	// the place to say so before somebody builds on it: it tells the viewer's
+	// browser not to offer the local rearrangement below, and a viewer's local
+	// rearrangement never reaches the server in the first place. There is
+	// nothing here for a server to enforce and nothing a locked link discloses
+	// less of. Read it as "this board is fixed", not as "this viewer is
+	// restricted".
+	//
+	// Defaulted rather than backfilled: every link written before this step is
+	// an unlocked link with no remark, which is what they all were.
+	func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`ALTER TABLE share_links ADD COLUMN remark TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE share_links ADD COLUMN locked INTEGER NOT NULL DEFAULT 0`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	},
 }
 
 // schemaVersion is the version this build writes.
