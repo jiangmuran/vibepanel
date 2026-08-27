@@ -25,7 +25,15 @@ import { TokenUsageView } from './components/TokenUsageView'
 import { MobileKeyBar } from './components/mobile/MobileKeyBar'
 import { ComposeInput } from './components/mobile/ComposeInput'
 import { SelectionCopy } from './components/mobile/SelectionCopy'
-import type { PanelTab } from './components/RightPanel'
+import {
+  defaultLayout,
+  layoutStorageKey,
+  parseLayout,
+  readLayout,
+  serialiseLayout,
+  toggleNotesTodos,
+  type PaneLayout,
+} from './components/panes'
 import { disambiguatedLabels, projectLabel, sessionLabel } from './components/label'
 import { applyTheme, loadTheme } from './components/theme'
 import type { ThemeChoice } from './components/theme'
@@ -59,6 +67,9 @@ const BOTTOM_OPEN_KEY = 'vibepanel.bottomOpen'
 const BOTTOM_DEFAULT_HEIGHT = 220
 const RIGHT_KEY = 'vibepanel.right'
 const RIGHT_OPEN_KEY = 'vibepanel.rightOpen'
+// The two keys the pane layout replaced. Still read once, so somebody who had
+// chosen a tab or turned the old split on opens on the arrangement they left
+// rather than on the default; never written again.
 const RIGHT_TAB_KEY = 'vibepanel.rightTab'
 const RIGHT_SPLIT_KEY = 'vibepanel.rightSplit'
 const RIGHT_DEFAULT_WIDTH = 280
@@ -118,6 +129,31 @@ function panelState(sizeKey: string, openKey: string, fallback: number) {
     size: stored > 0 ? stored : fallback,
     open: readStored(openKey) !== 'closed' && stored !== 0,
   }
+}
+
+/**
+ * The pane layout for this screen, or the nearest thing to one.
+ *
+ * A screen that has never been arranged does not get the flat default: it gets
+ * whatever the two keys this feature replaced were holding — the tab you were
+ * last on, and whether you had the old notes/todo split turned on. Otherwise
+ * the day this shipped, everybody's panel forgot where they were.
+ *
+ * Everything goes out through parseLayout even when it was built here, because
+ * `RIGHT_TAB_KEY` is a string out of localStorage like any other and "we wrote
+ * it ourselves" was true of the value in that key too.
+ */
+function seedLayout(key: string): PaneLayout {
+  const stored = readStored(key)
+  if (stored !== null) return readLayout(stored)
+  const base = readStored(RIGHT_SPLIT_KEY) === 'on'
+    ? toggleNotesTodos(defaultLayout())
+    : defaultLayout()
+  const want = readStored(RIGHT_TAB_KEY)
+  return parseLayout({
+    version: base.version,
+    groups: base.groups.map((g) => ({ ...g, active: want ?? g.active })),
+  })
 }
 
 function writeStored(key: string, value: string | null) {
@@ -188,18 +224,17 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   )
   const rightWidth = rightOpen ? rightSize : 0
   const [selection, setSelection] = useState('')
-  const [rightTab, setRightTab] = useState<PanelTab>(() => {
-    const raw = readStored(RIGHT_TAB_KEY)
-    return raw === 'files' ||
-      raw === 'monitor' ||
-      raw === 'notes' ||
-      raw === 'todos' ||
-      raw === 'tokens'
-      ? raw
-      : 'files'
-  })
-  const [rightSplit, setRightSplit] = useState(() => readStored(RIGHT_SPLIT_KEY) === 'on')
-  const [splitRatio, setSplitRatio] = useState(0.5)
+
+  // How the side panel is divided, and which screen that arrangement belongs
+  // to. Both live in localStorage and neither is ever sent anywhere: a layout
+  // that followed you from a 4K monitor to a laptop, or from a laptop to a
+  // phone, is the failure this is keyed to avoid. See panes.ts.
+  const [layoutKey, setLayoutKey] = useState(() =>
+    layoutStorageKey(window.innerWidth, window.innerHeight),
+  )
+  const [paneLayout, setPaneLayout] = useState<PaneLayout>(() =>
+    seedLayout(layoutStorageKey(window.innerWidth, window.innerHeight)),
+  )
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [tokensOpen, setTokensOpen] = useState(false)
   const [restoreOpen, setRestoreOpen] = useState(false)
@@ -318,8 +353,26 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   useEffect(() => writeStored(BOTTOM_OPEN_KEY, bottomOpen ? 'open' : 'closed'), [bottomOpen])
   useEffect(() => writeStored(RIGHT_KEY, String(rightSize)), [rightSize])
   useEffect(() => writeStored(RIGHT_OPEN_KEY, rightOpen ? 'open' : 'closed'), [rightOpen])
-  useEffect(() => writeStored(RIGHT_TAB_KEY, rightTab), [rightTab])
-  useEffect(() => writeStored(RIGHT_SPLIT_KEY, rightSplit ? 'on' : 'off'), [rightSplit])
+  useEffect(() => writeStored(layoutKey, serialiseLayout(paneLayout)), [layoutKey, paneLayout])
+
+  // A window moved to another display, or resized across a band, gets that
+  // screen's own arrangement rather than carrying this one over — which is the
+  // whole point of the key including the band. Both pieces of state are set
+  // from the same event so React applies them together; the write effect above
+  // would otherwise fire once with the new key and the old layout and stamp
+  // one screen's arrangement onto another's key.
+  const layoutKeyRef = useRef(layoutKey)
+  useEffect(() => {
+    const onResize = () => {
+      const key = layoutStorageKey(window.innerWidth, window.innerHeight)
+      if (key === layoutKeyRef.current) return
+      layoutKeyRef.current = key
+      setLayoutKey(key)
+      setPaneLayout(seedLayout(key))
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
 
   // The xterm palette is rebuilt when this changes. It has to react to the
   // system preference as well as the toggle, or a laptop switching to dark at
@@ -1193,19 +1246,15 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           project={currentProject}
           sessions={state.sessions}
           socket={socket}
-          tab={rightTab}
-          onTab={(next) => {
-            setRightTab(next)
+          layout={paneLayout}
+          onLayout={setPaneLayout}
+          onRefocus={() => {
             if (current) focusTerminal(current.id)
           }}
           width={rightWidth}
           onWidthChange={setRightSize}
           onCollapse={() => setRightOpen(false)}
           onOpenTokens={() => setTokensOpen(true)}
-          split={rightSplit}
-          onSplitChange={setRightSplit}
-          splitRatio={splitRatio}
-          onSplitRatioChange={setSplitRatio}
         />
       )}
 

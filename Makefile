@@ -47,6 +47,13 @@ tmux-notice:
 	  echo ""; \
 	}
 
+# No `build` prerequisite, and that is the point of it: the side panel is
+# rendered on its own through panes-harness.html, so this needs no binary, no
+# tmux and no database. Twenty seconds against the working tree.
+.PHONY: panes-check
+panes-check:          ## The side panel's pane layout: drag, drop, merge, restore
+	cd web && npm run check:panes
+
 .PHONY: first-run-check
 first-run-check: build ## The setup wizard and the first project, in a browser
 	cd web && npm run check:first-run

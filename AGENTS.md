@@ -112,6 +112,7 @@ Each of these exists because the alternative broke something real.
 
   | | |
   |---|---|
+  | `make panes-check` | the side panel's pane layout: drag, drop, merge, restore. No binary, no tmux, ~20s |
   | `make first-run-check` | the setup wizard and the first project — every other check reaches past them |
   | `make render-check` | the largest: layout, states, arbitration, panels, mobile, clipboard, passkeys |
   | `make stress-check` | wide characters, full-screen programs, scrollback, floods, dropped sockets |

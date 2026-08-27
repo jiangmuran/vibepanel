@@ -12,14 +12,11 @@ import {
   bottomControls,
   clampBottomHeight,
   clampPanelWidth,
-  clampSplitRatio,
+  paneControls,
+  paneLabelled,
   panelChrome,
-  panelControls,
   panelFocusOrder,
   resizeStep,
-  splitTarget,
-  splitTitleKey,
-  splittable,
   swapDirection,
   tabFromKey,
   type PanelTab,
@@ -38,21 +35,35 @@ describe('the set of controls does not depend on the size of the window', () => 
   // so arriving at either of them grew the header a button and slid the
   // collapse control 28 pixels left — under a pointer already travelling
   // towards where it used to be.
-  it('is the same two controls on every tab', () => {
-    const ids = PANEL_TABS.map((tab) => panelControls(tab).map((c) => c.id).join(','))
-    expect(new Set(ids), `panelControls varies by tab: ${JSON.stringify(ids)}`).toEqual(
-      new Set(['split,collapse']),
+  it('is the same three controls on every tab', () => {
+    const ids = PANEL_TABS.map(() => paneControls(0, true).map((c) => c.id).join(','))
+    expect(new Set(ids), `the panel header varies by tab: ${JSON.stringify(ids)}`).toEqual(
+      new Set(['menu,split,collapse']),
     )
   })
 
-  it('is the same two controls at every width', () => {
+  it('is the same three controls at every width', () => {
     const orders = everyWidth().map((w) => panelFocusOrder(w, 'files').join(','))
     expect(new Set(orders).size, 'the panel header restructures itself as it is resized').toBe(1)
   })
 
-  it('puts the tabs before the controls, so focus crosses the header once', () => {
+  it('gives every pane below the first its menu and nothing else', () => {
+    // The menu is the only way to split, merge or restore without a mouse, so
+    // a pane without one is a pane a keyboard cannot rearrange.
+    for (const i of [1, 2, 3, 4]) {
+      expect(paneControls(i, false).map((c) => c.id), `pane ${i}`).toEqual(['menu'])
+    }
+  })
+
+  it('gives every pane menu its own name in the DOM', () => {
+    const ids = [0, 1, 2, 3, 4].map((i) => paneControls(i, false)[0].testid)
+    expect(new Set(ids).size, `two panes share a testid: ${ids.join(', ')}`).toBe(ids.length)
+  })
+
+  it('puts the tabs before the controls, so focus crosses the strip once', () => {
     expect(panelFocusOrder(320, 'notes')).toEqual([
       'panel-tab-notes',
+      'pane-menu-0',
       'panel-split',
       'panel-collapse',
     ])
@@ -81,6 +92,14 @@ describe('what does change with width is presentation', () => {
     expect(panelChrome(PANEL_MIN_WIDTH).labelled).toBe(false)
   })
 
+  it('always names the tab in a pane holding only that tab', () => {
+    // The threshold is about five names competing for 170 pixels. One name is
+    // not competing with anything, so a pane split out on its own is labelled
+    // at every width the panel has.
+    for (const w of everyWidth()) expect(paneLabelled(w, 1), `${w}px`).toBe(true)
+    expect(paneLabelled(PANEL_MIN_WIDTH, 2)).toBe(false)
+  })
+
   it('changes exactly once across the whole range', () => {
     // Two thresholds is a strip that reflows twice on one drag, which is the
     // same defect wearing a smaller hat.
@@ -88,32 +107,6 @@ describe('what does change with width is presentation', () => {
       (w, i, all) => i > 0 && panelChrome(w).labelled !== panelChrome(all[i - 1]).labelled,
     )
     expect(flips).toEqual([PANEL_LABEL_WIDTH])
-  })
-})
-
-describe('the split control means something on all five tabs', () => {
-  it('turns the split on and goes to notes from a tab that has none', () => {
-    for (const tab of ['files', 'monitor', 'tokens'] as const) {
-      expect(splitTarget(tab, false)).toEqual({ tab: 'notes', split: true })
-      // Already on elsewhere: pressing it still takes you to the pair, which
-      // is what the label promises.
-      expect(splitTarget(tab, true)).toEqual({ tab: 'notes', split: true })
-    }
-  })
-
-  it('toggles in place on the two tabs that are the split', () => {
-    for (const tab of ['notes', 'todos'] as const) {
-      expect(splittable(tab)).toBe(true)
-      expect(splitTarget(tab, false)).toEqual({ tab, split: true })
-      expect(splitTarget(tab, true)).toEqual({ tab, split: false })
-    }
-  })
-
-  it('says which of the two it is about to do', () => {
-    expect(splitTitleKey('files', false)).toBe('panel.splitOn')
-    expect(splitTitleKey('files', true)).toBe('panel.splitOn')
-    expect(splitTitleKey('notes', false)).toBe('panel.splitOn')
-    expect(splitTitleKey('notes', true)).toBe('panel.splitOff')
   })
 })
 
@@ -205,12 +198,6 @@ describe('clamping', () => {
     // negative height is a strip with no tab row, and the tab row is the only
     // way back out of it.
     expect(clampBottomHeight(220, 150)).toBe(BOTTOM_MIN_HEIGHT)
-  })
-
-  it('never squeezes notes or todo to a caption', () => {
-    expect(clampSplitRatio(0)).toBe(0.15)
-    expect(clampSplitRatio(1)).toBe(0.85)
-    expect(clampSplitRatio(0.5)).toBe(0.5)
   })
 })
 

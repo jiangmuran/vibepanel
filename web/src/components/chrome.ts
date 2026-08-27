@@ -1,4 +1,4 @@
-import type { Key } from '../i18n'
+
 
 /**
  * What the chrome around the terminal contains, and how it presents itself.
@@ -36,12 +36,12 @@ export const PANEL_MAX_WIDTH = 640
  * this width; it folds shut. See the `max-width` transition in RightPanel.
  *
  * A label is not a control, which is why this is allowed to depend on width at
- * all. panelControls() below does not.
+ * all. paneControls() below does not.
  */
 export const PANEL_LABEL_WIDTH = 250
 
 export interface PanelChrome {
-  /** The selected tab shows its name; the other four are icons either way. */
+  /** The selected tab shows its name; the others are icons either way. */
   labelled: boolean
 }
 
@@ -49,69 +49,65 @@ export function panelChrome(width: number): PanelChrome {
   return { labelled: width >= PANEL_LABEL_WIDTH }
 }
 
-export type PanelControlId = 'split' | 'collapse'
+/**
+ * Whether a pane's selected tab is named, which also depends on how many tabs
+ * it is sharing the strip with.
+ *
+ * A pane holding one tab has the whole strip for one name and is always
+ * labelled, at any width the panel can be. The width threshold is about five
+ * names competing for 170 pixels, and one name is not competing with anything.
+ */
+export function paneLabelled(width: number, tabCount: number): boolean {
+  return tabCount <= 1 || panelChrome(width).labelled
+}
 
-export interface PanelControl {
-  id: PanelControlId
+export type PaneControlId = 'menu' | 'split' | 'collapse'
+
+export interface PaneControl {
+  id: PaneControlId
   testid: string
 }
 
 /**
- * The controls after the tabs, in focus order — the same two, always.
+ * The controls after a pane's tabs, in focus order.
+ *
+ * Every pane has its menu — which is where splitting, merging and restoring
+ * live for anyone not using a mouse. The first pane additionally carries the
+ * two controls that belong to the *panel* rather than to a pane: the notes/todo
+ * preset and the collapse chevron. That is a structural rule, not a
+ * size-dependent or tab-dependent one: the first pane is always the first pane,
+ * and the panel's own controls have to be somewhere.
  *
  * The split toggle used to be rendered only on the notes and todo tabs, on the
- * reasoning that it means nothing on the other three. It means something on
- * all five now: see splitTarget(), which reads it as "show me notes and todo
- * together" and goes there. That is a smaller change than it sounds and it is
- * the whole fix — a control whose *meaning* is constant does not have to
+ * reasoning that it means nothing on the other three. It means something
+ * wherever it is now — see toggleNotesTodos() in panes.ts, which builds the
+ * arrangement its label has always promised from whatever the layout is — and
+ * that is the whole fix: a control whose meaning is constant does not have to
  * appear and disappear to stay honest.
  *
- * The argument is taken and ignored on purpose. A function of the tab that
- * does not vary with the tab is what the test can hold on to; a constant array
- * would let a future conditional be written at the call site instead, where
- * nothing is watching.
+ * Written as a function of the pane rather than a constant so the test has
+ * something to hold. A constant array would let the next conditional be written
+ * at the call site instead, where nothing is watching.
  */
-export function panelControls(_tab: PanelTab): PanelControl[] {
+export function paneControls(index: number, panelHeader: boolean): PaneControl[] {
+  const menu: PaneControl = { id: 'menu', testid: `pane-menu-${index}` }
+  if (!panelHeader) return [menu]
   return [
+    menu,
     { id: 'split', testid: 'panel-split' },
     { id: 'collapse', testid: 'panel-collapse' },
   ]
 }
 
 /**
- * Everything in the panel header a keyboard reaches, in the order it reaches
- * it: the tabs left to right, then the controls.
+ * Everything in a pane's strip a keyboard reaches, in the order it reaches it:
+ * the tabs left to right, then the controls.
  *
  * Only the selected tab is in the tab order — that is what a tablist is, and
  * arrow keys move within it. See tabFromKey().
  */
 export function panelFocusOrder(_width: number, tab: PanelTab): string[] {
-  return [`panel-tab-${tab}`, ...panelControls(tab).map((c) => c.testid)]
-}
-
-/** Notes and todo are the pair worth seeing at once: what you are thinking and
- *  what you have left. Files and the monitor are lookups, not companions. */
-export function splittable(tab: PanelTab): boolean {
-  return tab === 'notes' || tab === 'todos'
-}
-
-/**
- * Where the split control takes you.
- *
- * From notes or todo with the split on, it turns the split off and leaves you
- * where you are. From anywhere else it turns the split on and moves to notes,
- * because that is what the control has always promised in words — "show notes
- * and todo together" — and doing it from the files tab is not a surprise, it
- * is the sentence.
- */
-export function splitTarget(tab: PanelTab, split: boolean): { tab: PanelTab; split: boolean } {
-  if (split && splittable(tab)) return { tab, split: false }
-  return { tab: splittable(tab) ? tab : 'notes', split: true }
-}
-
-/** Which of the two things the split control is about to do, for its tooltip. */
-export function splitTitleKey(tab: PanelTab, split: boolean): Key {
-  return splitTarget(tab, split).split ? 'panel.splitOn' : 'panel.splitOff'
+  return [`panel-tab-${tab}`, ...paneControls(0, true).map((c) => c.testid)]
 }
 
 /**
@@ -169,11 +165,6 @@ export function resizeStep(key: string, shift: boolean): number | null {
 
 export function clampPanelWidth(px: number): number {
   return Math.max(PANEL_MIN_WIDTH, Math.min(px, PANEL_MAX_WIDTH))
-}
-
-/** Notes over todo, or the reverse; never one of them squeezed to a caption. */
-export function clampSplitRatio(ratio: number): number {
-  return Math.max(0.15, Math.min(0.85, ratio))
 }
 
 /** Below this the strip is a row of tabs with no terminal under it. */

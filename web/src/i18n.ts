@@ -211,6 +211,19 @@ const DICT = {
   'panel.splitOff': { zh: '一次显示一个', en: 'Show one at a time' },
   'panel.tablist': { zh: '侧栏面板', en: 'Side panel sections' },
 
+  // The pane layout. Every one of these is also reachable by dragging a tab;
+  // they are here because dragging is a mouse gesture and the panel has to be
+  // rearrangeable without one.
+  'pane.menu': { zh: '这一格的布局', en: 'Pane layout' },
+  'pane.moveUp': { zh: '移到上一格', en: 'Move to the pane above' },
+  'pane.moveDown': { zh: '移到下一格', en: 'Move to the pane below' },
+  'pane.mergeUp': { zh: '并入上一格', en: 'Merge into the pane above' },
+  'pane.mergeDown': { zh: '并入下一格', en: 'Merge into the pane below' },
+  'pane.reset': { zh: '恢复默认布局', en: 'Restore the default layout' },
+  'pane.dropBefore': { zh: '放到这一格上面', en: 'New pane above' },
+  'pane.dropJoin': { zh: '和这一格并排', en: 'Add to these tabs' },
+  'pane.dropAfter': { zh: '放到这一格下面', en: 'New pane below' },
+
   'files.refresh': { zh: '刷新', en: 'Refresh' },
   'files.download': { zh: '下载', en: 'Download' },
   'files.empty': { zh: '这个目录是空的', en: 'Nothing here' },

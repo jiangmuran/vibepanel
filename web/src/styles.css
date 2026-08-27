@@ -700,8 +700,20 @@ body {
   padding-inline: 0.375rem;
   border-radius: var(--vp-radius-control);
   color: var(--vp-ink-2);
+  /* A tab is draggable, and a press that drags across two labels selects the
+     text of both. There is nothing in a tab worth selecting. */
+  user-select: none;
+  -webkit-user-select: none;
   transition: transform 120ms var(--vp-ease), background-color 200ms var(--vp-ease),
     color 200ms var(--vp-ease), flex-grow 260ms var(--vp-ease);
+}
+
+/* Only where a tab can be dragged into a pane. Without it a touch screen
+   scrolls instead of reporting the gesture and the drag never arrives — and
+   *with* it on the terminal strip, whose tabs scroll sideways, the strip stops
+   scrolling. Two strips, two answers. */
+.vp-tab-drag {
+  touch-action: none;
 }
 
 .vp-tab:hover {
@@ -796,6 +808,37 @@ body {
   background: var(--vp-surface);
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
   transition: transform 260ms var(--vp-ease), width 260ms var(--vp-ease);
+}
+
+/* Where a dragged tab would land, drawn for every pane at once.
+ *
+ * A drop target that lights up only under the pointer is a guessing game: the
+ * way to find out where a tab would have gone is to put it there and look. So
+ * while something is in the air every band is outlined, and the one under the
+ * pointer fills. Nothing here appears or disappears *during* a drag — only the
+ * emphasis moves.
+ *
+ * The dragged tab itself dims rather than vanishing, so the strip does not
+ * reflow under the gesture that is reading it. */
+.vp-drop {
+  border: 1px dashed transparent;
+  border-radius: var(--vp-radius);
+  margin: 2px;
+  transition: background-color 160ms var(--vp-ease), border-color 160ms var(--vp-ease);
+}
+
+[data-dragging] .vp-drop {
+  border-color: var(--vp-hairline-strong);
+}
+
+.vp-drop[data-over='true'] {
+  border-color: var(--vp-accent);
+  border-style: solid;
+  background: var(--vp-selection);
+}
+
+.vp-tab[data-drag-source='true'] {
+  opacity: 0.45;
 }
 
 /* One resize affordance, in the three places this layout has one.

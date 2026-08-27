@@ -71,7 +71,13 @@ describe('scripts', () => {
     // A harness with no script is a harness nobody runs. scale-check spent a
     // while in exactly that state: written, committed, and unreachable through
     // npm because the entry was never added.
-    for (const name of ['check:render', 'check:stress', 'check:restart', 'check:scale']) {
+    for (const name of [
+      'check:render',
+      'check:stress',
+      'check:restart',
+      'check:scale',
+      'check:panes',
+    ]) {
       expect(pkg.scripts, `${name} is missing, so that check has no way to be run`).toHaveProperty(
         name,
       )

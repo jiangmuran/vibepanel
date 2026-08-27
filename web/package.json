@@ -12,7 +12,8 @@
     "check:stress": "node scripts/stress-check.mjs",
     "check:restart": "node scripts/restart-check.mjs",
     "check:scale": "node scripts/scale-check.mjs",
-    "check:first-run": "node scripts/first-run-check.mjs"
+    "check:first-run": "node scripts/first-run-check.mjs",
+    "check:panes": "node scripts/panes-check.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
