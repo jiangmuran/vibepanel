@@ -59,6 +59,15 @@ func Inspect(scriptPath string) (Status, error) {
 		ScriptPath:   scriptPath,
 		Snippet:      ClaudeSettings(scriptPath),
 		CodexSnippet: CodexNotify(scriptPath),
+		Events:       []string{},
+		// Empty here rather than normalised at the end, because there are two
+		// returns and the early one -- no settings file, which is the state of
+		// every fresh install -- skipped the normalisation and sent `null`.
+		//
+		// It passed locally for a year: this machine has a settings.json, so
+		// the early return was never taken and the test that exists for this
+		// exact field never exercised the path it was written for. CI, on a
+		// runner with no ~/.claude, took it on the first try.
 	}
 
 	doc, err := readSettings(settingsPath)
@@ -81,15 +90,6 @@ func Inspect(scriptPath string) (Status, error) {
 	// Pinned by TestTheEventListComesBackInTheSameOrderEveryTime, which asks
 	// twenty times: one call cannot tell a sort from a lucky shuffle.
 	sort.Strings(st.Events)
-	if st.Events == nil {
-		// A JSON array, not null. Nothing is installed on a fresh panel, which
-		// is when the settings page first reads this, and `[]string(nil)`
-		// marshals to `null` -- so the one caller guards with
-		// `(status.events ?? []).length`. That guard is the symptom patched at
-		// the reader, in exactly the place a helper exists to make unnecessary,
-		// and the next reader written without it throws.
-		st.Events = []string{}
-	}
 	st.Installed = len(st.Events) > 0
 	return st, nil
 }

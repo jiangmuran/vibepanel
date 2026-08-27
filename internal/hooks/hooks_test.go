@@ -598,6 +598,14 @@ func TestTheEventListComesBackInTheSameOrderEveryTime(t *testing.T) {
 // the reader, and the type changed to agree with the bug. The next reader
 // written without the guard throws on a page that has never had hooks.
 func TestTheEventListIsAnArrayEvenWhenNothingIsInstalled(t *testing.T) {
+	// A home with no settings file, which is the state this test is named for.
+	//
+	// Without this it read the developer's own ~/.claude/settings.json, took
+	// the other branch of Inspect entirely, and passed for a year while the
+	// path it exists to cover returned null. CI on a fresh runner failed it on
+	// the first run. A test whose subject is "nothing is installed" cannot ask
+	// the machine it happens to be running on whether that is true.
+	t.Setenv("HOME", t.TempDir())
 	dir := t.TempDir()
 	script := filepath.Join(dir, "report.sh")
 

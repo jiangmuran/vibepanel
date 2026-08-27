@@ -581,7 +581,15 @@ func (c *Client) Get(ctx context.Context, name string) (Info, error) {
 func parseInfo(line string) (Info, error) {
 	f := strings.Split(line, fieldSep)
 	if len(f) != len(infoFields) {
-		return Info{}, fmt.Errorf("tmux: expected %d fields, got %d", len(infoFields), len(f))
+		// The line itself, quoted, because the count alone names nothing. A
+		// format variable this tmux does not know expands to empty and the
+		// count still comes out right; a *modifier* it does not know makes
+		// tmux refuse the whole format and put its complaint here instead --
+		// and "got 1" is then a sentence in English that the caller throws
+		// away. One CI run on an older tmux was spent guessing at which
+		// variable it was, from an error that was holding the answer.
+		return Info{}, fmt.Errorf("tmux: expected %d fields, got %d in %q",
+			len(infoFields), len(f), line)
 	}
 	atoi := func(s string) int { n, _ := strconv.Atoi(s); return n }
 	return Info{
