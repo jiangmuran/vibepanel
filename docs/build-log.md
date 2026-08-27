@@ -13295,3 +13295,219 @@ away from them. The assertion is now a number rather than a flag.
   `### ` lines, and a conflict marker is not a `### ` line. That gap is now
   `TestNoConflictMarkersAreCommitted`, which walks the tree rather than one file
   — the marker had already survived two merges by the time anybody looked.
+
+## The side panel learns to read a repository, and to draw a page
+
+Two halves of one request: 「文件和 github 预览」 and, separately, HTML preview.
+The file half already existed. What was missing was the repository, and the
+ability to render a page at all.
+
+### U2 — what the repository tab shows, and what it deliberately does not
+
+`internal/git` is `os/exec` and the git CLI. No dependency, `CGO_ENABLED=0`
+unaffected, and every argument is an argument — a branch name is
+attacker-controlled the moment somebody clones a repository, and
+`--upload-pack=...` is a legal branch name.
+
+Four questions, because they are the four somebody watching six agents edit one
+repository actually asks:
+
+- **What branch, and how far from the upstream.** One `status --porcelain=v2
+  --branch -z` carries the branch, the upstream and the ahead/behind counts in
+  the same output as the file list, so the answer is one process rather than
+  four.
+- **What is uncommitted**, counted by kind. Staged, unstaged, untracked and
+  conflicted are four separate numbers on purpose: folded into one "12 changes"
+  the conflict disappears, and a conflict is the state that stops an agent.
+- **What just landed.** Fifteen commits. The history is one keystroke away in
+  the session directly above this panel, in a real pager.
+- **Which session is on which branch.** Only the sessions whose directory is on
+  a *different commit* than the project root get a row. Six agents in one
+  directory are six identical rows saying nothing; six agents in six worktrees
+  are the thing this tab exists for, and no other screen in the panel would tell
+  you.
+
+What it is not: a diff viewer, a blame, a branch switcher, a stash list. All of
+that exists in a terminal that is already on screen, and none of it answers a
+question you have *while watching agents work*.
+
+**The network is a separate package, a separate route and a separate verb.**
+`POST /api/projects/{id}/git/github` is one GraphQL query — twenty open pull
+requests with their check rollups and review decisions in a single round trip,
+where REST would be one request per pull request against somebody's rate limit.
+It is a `POST` and not a `GET` because a `GET` is a thing a browser re-issues on
+its own: a reload, a back button, a prefetch, a preconnect. "The panel never
+makes an outbound request nobody asked for" cannot survive an endpoint with that
+property.
+
+The token is read from `GITHUB_TOKEN` or `GH_TOKEN` at the moment of the request
+and is never stored. That is not laziness about a settings page — it is the
+absence of a long-lived third-party credential at rest, of a rotation story, of
+an audit surface and of a screen explaining scopes, for a feature whose whole
+point is that it is optional. The names are gh(1)'s, deliberately not
+`VIBEPANEL_*`: `config.go` reports unread `VIBEPANEL_*` variables at startup, so
+a panel-specific name would have to be registered there as configuration, and
+this is not configuration.
+
+`api.github.com` is a constant. Derived from the remote URL it would be a
+hostname out of a cloned repository, resolved by the panel, with a token in the
+`Authorization` header.
+
+**The guard that keeps all of this true is an allowlist of subcommands.**
+`status`, `log`, `remote` — and nothing else. The two that will be argued for
+are `fetch` (to make ahead/behind current) and `ls-remote` (to see the remote's
+branches); both are the network, both need credentials, and both would run on
+whatever schedule the tab polls at. Deny by default, in one function, with a
+test that names every subcommand that must be refused.
+
+Three environment variables that are not decoration. `GIT_OPTIONAL_LOCKS=0` is
+the one with a visible cost if it is missing: `status` refreshes the index and
+takes `.git/index.lock` to do it, and the agent in that directory is running
+`git add` and `git commit` at the same time — a panel that polls status loses
+the *agent* a commit, with an error the agent then has to interpret.
+`GIT_TERMINAL_PROMPT=0` because a credential prompt with no terminal behind it
+is a request goroutine that never returns and takes graceful shutdown with it.
+And the overrides are *removed from* the inherited environment before being
+appended, because `exec` passes the slice through untouched and which duplicate
+the child reads is the libc's business, not ours.
+
+`-c core.fsmonitor=false` is the one hardening worth stating honestly:
+`core.fsmonitor` is a program path read out of the repository's own config and
+`status` runs it. The panel runs as the same user as the agents, in a directory
+they already have a shell in, so this is not a boundary that can be created
+here — but the panel runs git the moment somebody opens a tab, which is a lower
+bar than "somebody typed a command".
+
+Session directories go back through `browse.Resolve` against the project root,
+which is the one path check in this codebase. A session that has `cd`'d outside
+the project has no row. That check is not there to stop an escape — `Resolve`
+cleans `../../etc` against `/` and lands back inside the project either way — it
+is there to stop something worse than an error: `../other/thing` cleans to
+`other/thing`, which is a *different directory inside this project*, and the row
+would name one session while describing another one's tree, with nothing saying
+so.
+
+### U4 — how a page from a project gets drawn without getting the origin
+
+`SniffMagic` refuses SVG, and the comment saying why is correct: an SVG is a
+scriptable document, and an `<iframe>` runs it on the panel's own origin, next
+to the cookie that is a writable terminal. That reasoning is untouched.
+`/preview` still answers `application/octet-stream` with `attachment` and
+`nosniff`, and a test now pins that it still does.
+
+The new door is a second route, and the placement is the design — the same shape
+as red line 8. The capability "these bytes are rendered as a document" is
+narrowed by which handler answers, not by a query parameter on the handler that
+already exists, so "which code path in this panel can produce an inline
+`text/html` response out of a project directory" is a question with one answer.
+
+Four layers, each written down in `internal/httpapi/preview_render.go` with what
+it does *not* buy:
+
+1. **The separate route.** Reviewability, not protection.
+2. **`sandbox` with no `allow-same-origin`.** The actual boundary: an opaque
+   origin, so `document.cookie` is empty, storage throws and `window.parent` is
+   unreadable. It does not stop the document drawing anything it likes.
+3. **`default-src 'none'` on the response.** This is the part that keeps 「不联网」
+   true. Without it a preview containing `<img src="https://someone/?leak">` — or
+   a nested `<iframe>` — is an outbound request nobody asked for, made by the
+   panel's own tab, the moment a file is clicked. Only `data:` and `blob:`
+   subresources load. The policy also carries the `sandbox` *directive*, which
+   matters more than it looks: the iframe attribute applies only when the panel
+   is doing the framing, and this URL can be typed into a tab. It does not stop
+   the frame navigating itself on a click, and it does not help against a bug in
+   the browser's own parser.
+4. **Scripts off unless asked, decided on the server.** The effective sandbox is
+   the intersection of the attribute and the header, so the browser runs script
+   only when both say so — editing the sandbox attribute in devtools gets you
+   nothing. `'unsafe-eval'` is deliberately absent even with scripts on: a
+   bundle that needs it renders wrong, which is the smaller cost.
+
+**Considered and rejected.** `srcdoc` gives the same opaque origin under
+`sandbox`, but it cannot carry a *response* CSP — the policy would have to be a
+`<meta>` injected into somebody else's bytes, which is weaker and involves
+editing the file. A `blob:` URL inherits its origin from the creating document,
+which is the panel; it is the worst of the options and looks like the easiest.
+A **one-shot token** on the preview path buys nothing here and was dropped for
+that reason: it does not create a second origin (there is one binary on one
+port), the route is already behind `RequireAuth` with a `SameSite=Strict`
+cookie, and the header `sandbox` already covers the top-level-navigation case a
+token would otherwise be reaching for. It would have been server state for no
+isolation.
+
+`Content-Disposition: inline` is on this route and it is a *functional* header,
+not a protective one — `attachment` makes the iframe download the file instead
+of drawing it. Said out loud in the code because it looks like a weakening of
+`setAttachmentHeaders` and is not: nothing above depends on it.
+
+**The default is rendered, and that was the decision worth arguing.** Before
+this, HTML showed as text; turning rendering on by default means a click on a
+file draws attacker content. With scripts off, an opaque origin and no network,
+what that buys an attacker is the ability to *look* like something — a fake
+sign-in form, inside a dialog whose header shows the file's real name, that
+cannot submit (`form-action 'none'`, and `allow-forms` is not granted), cannot
+open a window, cannot navigate the tab and cannot reach a network. Against that,
+rendering is the entire point of the feature. **Source** sits in the header at
+all times, outside the frame, because a rendered page can draw a convincing
+header of its own.
+
+**What an attacker can still do**, because a threat model with no residue is one
+nobody checked: draw a picture of a lie; navigate the *frame* to a remote page
+when a person clicks a link in it (a network request, person-initiated, which is
+the line the product draws — and the page that lands is in the same sandbox);
+hang the frame if scripts were explicitly enabled, until the dialog is closed;
+`postMessage` at a parent that registers no message listener. And exploit the
+renderer, which a sandbox was never going to stop.
+
+Scripts reset to off on every file and are not remembered anywhere. A remembered
+"yes" is a decision made about one document being applied to the next one, and
+the next one is the one that was cloned this morning. The iframe is keyed by
+that switch rather than merely pointed at a different URL: `sandbox` is read when
+the document is created, so updating the attribute on a loaded frame would leave
+a running script running.
+
+Reading a *name* to decide markup contradicts the doctrine directly above
+`SniffMarkup`, and the comment argues it rather than hiding it: "is this file
+meant to be a page" is a statement of intent, and intent is what an extension
+records — an HTML fragment with no `<html>` in it is still an HTML file. What
+makes it acceptable is that nothing rests on it: guessing wrong renders
+something odd inside a box. The media type still comes from a two-entry
+whitelist, which a test pins.
+
+### Left undone
+
+- **Nothing here was compiled, run or mutation-tested.** The environment this
+  was written in began refusing every command that is not a read, part of the
+  way through — so `make check`, `go vet`, `gofmt`, `vitest`, `tsc`, the
+  mutation runs and the commit itself did not happen. The tests were written
+  alongside the code and each names the mutation it exists for, but "a test
+  exists" and "a test fails when the guard is removed" are different claims and
+  only the first can be made. This entry is the record of intent. The next
+  person here should run the gate first and treat failures as expected work
+  rather than as a surprise.
+- **No browser check covers any of it.** `render-check` would want
+  `preview-frame` (carrying `data-scripts`), `preview-mode`, `preview-as-source`,
+  `preview-as-page`, `preview-scripts`, and on the repository tab `git-panel`,
+  `git-branch`, `git-detached`, `git-aheadbehind`, `git-clean`, `git-staged`,
+  `git-unstaged`, `git-untracked`, `git-conflicted`, `git-change` (carrying
+  `data-kind`), `git-changes-truncated`, `git-session`, `git-commit`,
+  `git-offline`, `git-ask`, `git-pr`, `git-tone` (carrying `data-tone`),
+  `git-no-token`, `git-not-github` and `panel-tab-git`. The two worth driving
+  first are the frame actually refusing a remote subresource, and the scripts
+  switch actually reloading the document — both are browser behaviour that no
+  unit test sees.
+- **The repository tab polls every five seconds while it is open**, which is a
+  `status` and a `log` process per tick per viewer. Fine for one person on one
+  project; six viewers on the same project is twelve processes every five
+  seconds for an answer that changes when an agent commits. A cache keyed by
+  directory with a short TTL is the obvious fix and was not written.
+- **`allow-scripts` has no allowlist and no memory.** Somebody iterating on a
+  generated report turns it on again on every reload. That is the intended cost
+  of not remembering it.
+- **The pane system named in the brief does not exist on this branch.**
+  `web/src/components/panes.ts` and `chrome.ts` are not in this tree, so the new
+  tab is built on the vocabulary that *is* here — the segmented-control idiom
+  `RightPanel` already uses for its tabs. It will need moving when those land.
+- **Six tabs is one more than the segmented control was sized for.** The label
+  threshold now moves with the tab count instead of being a flat 230, which is
+  arithmetic nobody has looked at in a browser at 200px.

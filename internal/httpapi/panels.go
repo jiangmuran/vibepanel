@@ -28,6 +28,11 @@ func (s *Server) registerPanelRoutes(r chi.Router) {
 	r.Get("/projects/{id}/files", s.handleFiles)
 	r.Get("/projects/{id}/download", s.handleDownload)
 	r.Get("/projects/{id}/preview", s.handlePreview)
+	// A second route rather than a mode on the first, and that placement is the
+	// design. See internal/httpapi/preview_render.go: /preview can only ever
+	// answer with an attachment, and exactly one handler in this codebase can
+	// produce an inline text/html response out of a project directory.
+	r.Get("/projects/{id}/preview/render", s.handleRenderPreview)
 	r.Post("/projects/{id}/upload", s.handleUpload)
 	r.Get("/projects/{id}/notes", s.handleGetNote)
 	r.Put("/projects/{id}/notes", s.handlePutNote)
@@ -342,6 +347,13 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	}
 	setAttachmentHeaders(w, name)
 	w.Header().Set("X-Preview-Kind", string(browse.KindText))
+	// Still text, still an attachment, still nothing a browser will render --
+	// this header only says that a *second* endpoint would draw this file, so
+	// the panel can offer the choice. The bytes in this response are unchanged
+	// by it, which is why it can be added to the safe endpoint at all.
+	if markup, _ := browse.SniffMarkup(name, head); markup != browse.MarkupNone {
+		w.Header().Set("X-Preview-Markup", string(markup))
+	}
 	if truncated {
 		// The panel says so on screen. A preview that silently stops is the
 		// same defect as a directory listing that silently stops, which this

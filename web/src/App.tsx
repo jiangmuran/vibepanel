@@ -191,6 +191,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   const [rightTab, setRightTab] = useState<PanelTab>(() => {
     const raw = readStored(RIGHT_TAB_KEY)
     return raw === 'files' ||
+      raw === 'git' ||
       raw === 'monitor' ||
       raw === 'notes' ||
       raw === 'todos' ||

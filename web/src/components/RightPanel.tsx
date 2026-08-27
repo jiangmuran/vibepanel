@@ -1,9 +1,19 @@
 import { useCallback, useRef, useState } from 'react'
-import { Activity, ChevronRight, Coins, Columns2, FolderTree, ListChecks, NotebookPen } from 'lucide-react'
+import {
+  Activity,
+  ChevronRight,
+  Coins,
+  Columns2,
+  FolderTree,
+  GitBranch,
+  ListChecks,
+  NotebookPen,
+} from 'lucide-react'
 
 import type { Project, Session } from '../protocol/wire'
 import type { PanelSocket } from '../protocol/socket'
 import { FileTree } from './panels/FileTree'
+import { GitPanel } from './panels/GitPanel'
 import { SystemMonitor } from './panels/SystemMonitor'
 import { Notes } from './panels/Notes'
 import { Todos } from './panels/Todos'
@@ -12,12 +22,15 @@ import { SystemStrip } from './panels/SystemStrip'
 import { TokenUsage } from './panels/TokenUsage'
 import { t, useLang, type Key } from '../i18n'
 
-export type PanelTab = 'files' | 'monitor' | 'notes' | 'todos' | 'tokens'
+export type PanelTab = 'files' | 'git' | 'monitor' | 'notes' | 'todos' | 'tokens'
 
 // The label is a key, not a string: resolving it at render is what makes a
 // language switch repaint the tabs instead of needing a reload.
 const TABS: { id: PanelTab; icon: typeof Activity; key: Key }[] = [
   { id: 'files', icon: FolderTree, key: 'panel.files' },
+  // Beside the files rather than at the end. It is the second thing you ask
+  // about a directory, and the two are read together.
+  { id: 'git', icon: GitBranch, key: 'panel.git' },
   { id: 'monitor', icon: Activity, key: 'panel.monitor' },
   { id: 'notes', icon: NotebookPen, key: 'panel.notes' },
   { id: 'todos', icon: ListChecks, key: 'panel.todos' },
@@ -62,7 +75,12 @@ export function RightPanel(props: Props) {
   // near each other. Equal widths in a track read as one thing you are choosing
   // within — which is what it is — and the width the label needs is then taken
   // from the group instead of from the buttons beside it.
-  const showLabel = (id: PanelTab) => id === tab && width >= 230
+  //
+  // The threshold moves with the number of tabs rather than being a constant.
+  // It was 230 for five; at six, 230 is a selected label that squeezes the
+  // other five icons until they clip, which is a worse answer than no label.
+  // 26px is one unlabelled tab.
+  const showLabel = (id: PanelTab) => id === tab && width >= 230 + (TABS.length - 5) * 26
   useLang()
   const dragFrom = useRef<{ x: number; width: number } | null>(null)
   const splitRef = useRef<HTMLDivElement | null>(null)
@@ -123,6 +141,9 @@ export function RightPanel(props: Props) {
       return <p className="px-3 py-4 text-vp-base text-ink-2">{t('panel.noProject')}</p>
     }
     if (tab === 'files') return <FileTree key={project.id} projectId={project.id} />
+    if (tab === 'git') {
+      return <GitPanel key={project.id} projectId={project.id} sessions={props.sessions} />
+    }
     if (tab === 'monitor') return <SystemMonitor sessions={props.sessions} />
     if (showSplit) {
       return (

@@ -22,6 +22,7 @@ import (
 
 	"github.com/jiangmuran/vibepanel/internal/auth"
 	"github.com/jiangmuran/vibepanel/internal/config"
+	"github.com/jiangmuran/vibepanel/internal/git"
 	"github.com/jiangmuran/vibepanel/internal/hooks"
 	"github.com/jiangmuran/vibepanel/internal/id"
 	"github.com/jiangmuran/vibepanel/internal/selfupdate"
@@ -48,6 +49,15 @@ type Server struct {
 	// Updater fetches releases. A value rather than a pointer so the zero
 	// Server has a working one; see TreeSampler below for the same reasoning.
 	Updater selfupdate.Client
+
+	// GitHub queries pull requests, when somebody presses the button that asks
+	// it to. A value with a zero Endpoint, which means api.github.com; tests
+	// point it at an httptest server, and nothing else sets it.
+	//
+	// The token is deliberately not on it: it is read from the environment at
+	// the moment of the request, so a panel restarted without one stops being
+	// able to ask rather than carrying a copy from startup.
+	GitHub git.Client
 
 	// fullscreen holds the session ids whose pane has a full-screen program
 	// drawing in it, as the poller last saw them.
@@ -313,6 +323,7 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/sessions/restore", s.handleRestoreSessions)
 
 			s.registerPanelRoutes(r)
+			s.registerGitRoutes(r)
 			s.registerUpdateRoutes(r)
 			s.registerWebhookRoutes(r)
 			s.registerTokenRoutes(r)
