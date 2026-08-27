@@ -12555,3 +12555,99 @@ as long as somebody is away from their desk — which is the whole time the
 feature exists to cover. Sends are goroutines the poller never waits for, and a
 failure goes to the log: somebody else's outage must not become a poll tick that
 fails.
+
+## The picker was five decisions in a box, taken on five different days
+
+**"选择目录那个控件我认为仍然得完全重构"**, and it was right for a reason a
+repaint would not have touched: every piece of that dialog was correct on its
+own and none of them had been decided together. A list. A filter box added over
+it the day somebody asked whether they could search. A create-folder row that
+was a mode toggle at the bottom. Two buttons under that. A path at the top that
+was a *title* — the one thing in the dialog that says where you are, and it was
+the only thing you could not click.
+
+Five decisions stacked vertically read as five products. The content — the
+directories, the only reason the dialog exists — was fourth in line for the
+eye.
+
+**It is one list with one field over it now, and the field is one control doing
+what three used to.** The crumbs live inside it, to the left of the caret:
+click a segment to go there, type to filter what is on screen, or type
+something starting with `/` or `~` and the crumbs step aside, because you have
+stopped searching a place and started addressing one. A breadcrumb you can
+click and a path you can edit are the same fact — every file dialog worth using
+treats them as one control, and this one had them as a title and a text box at
+opposite ends of the dialog.
+
+The title bar is gone. A dialog whose subject is a list should open with the
+list nearest the eye, and a heading reading "Choose a directory" over a control
+that is visibly a directory chooser spends a row of the only thing anybody came
+to read. It is an `aria-label` now, which is worth something to a screen reader
+and nothing to the layout.
+
+**The mode is on screen, in words, before you commit to it.** The old confirm
+button said "use this directory" and silently took the *typed* path when the
+box held one — the visible directory and the taken directory could differ with
+nothing saying so. The button now says which: `进入` for a path under home that
+the picker can list, `用这个路径` for one outside it that it cannot. Outside is
+not an error and does not read as one: a project under `/srv` or `/opt` is
+ordinary, the server roots the listing at home for noise rather than for
+safety, and "there is nothing to show you" is a reason to accept the path
+rather than to refuse it.
+
+**Motion says which direction you went.** Going into a directory and coming
+back out redrew identically — one frame of a list, then one frame of a
+different list — so the only way to find out which had happened was to re-read
+the path. Deeper arrives from the right, up arrives from the left, on the same
+curve as everything else; a typed path gets neither, because it is not a step
+in the hierarchy. `prefers-reduced-motion` removes all three, which is why the
+crumb bar states where you are at all times rather than only while moving.
+
+**Refusals moved to whatever was refused.** One strip above the buttons used to
+hold every one of them: a path that does not exist, a folder name already
+taken, a directory the server would not list. Now the refusal carries where it
+came from, and lands under the field, under the new-folder row, or above the
+confirm button.
+
+**Loading and empty are drawn rather than fallen into.** Four skeleton rows the
+shape of the rows that are coming, so the list does not jump when they arrive,
+plus the word for what is happening — the shimmer is gone under reduced motion
+and grey bars alone could be an empty directory rendered badly. An empty
+directory and a filter that matched nothing are different sentences and each
+offers the folder you would make next, named after what you typed.
+
+**The keyboard has one rule now, and it is a sentence.** One box and one list
+share one focus, so every key belongs to exactly one of them: *the box owns the
+keys that edit text as soon as there is text to edit.* Empty box, and Backspace
+goes up a level the way it does in a browser; text in it, and Backspace deletes
+a character. Home and End are the deliberate exception while filtering — a
+filter is five characters and Home there moves a caret across three of them,
+while in a directory of two hundred entries it moves you two hundred rows. In
+path mode they go back to being text keys, because a path is long and worth
+editing.
+
+**All of that is in `web/src/components/dirpicker.ts`, and that is the actual
+change.** What the text means, where a path sits relative to the root, which
+rows survive a filter and in what order, what every key does: they were spread
+through a component that could only be checked by opening a browser and
+looking, which is how `Home` came to move a caret in one mode and a selection
+in the other with nothing saying which. Thirty-seven tests, and nineteen
+mutations run against them — removing the `~` expansion, the `..` collapse, the
+prefix-first ordering, the clamp at the ends of the list, the difference
+between `go` and `use` — each one fails at least one test.
+
+Two of those mutations are about the ends nothing else covers. The picker is
+driven from `web/scripts` by `data-testid`, and those scripts start a browser:
+a renamed testid is a failure twenty minutes into a run somebody started for
+another reason, reading as the feature being broken rather than as the handle
+having moved. So the test scans the scripts for every `dir-` testid they reach
+for and checks the component still has it, and checks that every class the
+picker's motion is in has a rule in `styles.css` — two files that have to agree
+with nothing between them, because house rule keeps component motion out of
+components.
+
+**One thing was found and left alone.** `browse.Dirs` skips entries beginning
+with a dot, so `~/.config/x` cannot be reached by clicking — but it can be
+reached by typing, which is exactly what the field is for. A "show hidden"
+toggle is a server change and another control in a dialog this entry exists to
+take controls out of.

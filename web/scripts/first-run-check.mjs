@@ -153,14 +153,16 @@ try {
   if ((await page.locator('[data-testid="dir-picker"]').count()) === 0) {
     note('FAIL', 'project', 'clicking "Add project" opened no directory picker')
   } else {
-    // A path that does not exist, typed into the manual field, which is the
-    // way out of HOME and the only way to reach a bad path at all now.
-    // One box now, at the top, and what you type decides what it does: a
-    // leading / or ~ is a path to go to, anything else filters what is on
-    // screen. The field it replaced was at the bottom, under a list and a
-    // create-folder row -- a good answer to a question nobody could see was
-    // answered, which is why "能不能搜索，或者我手动打目录行不行" was asked about a
-    // picker that already did the second half.
+    // A path that does not exist, typed into the field, which is the way out
+    // of HOME and the only way to reach a bad path at all now.
+    //
+    // One field, at the top, with the breadcrumbs inside it to the left of the
+    // caret: what you type decides which of the two things it is. A leading /
+    // or ~ is a place -- Enter goes there when it is under HOME and takes it as
+    // it is when it is not, which is this case -- and anything else filters
+    // what is on screen. The refusal lands under that same field rather than in
+    // a strip above the buttons, which is why the assertion below reads the
+    // body rather than one element.
     const manual = page.locator('[data-testid="dir-search"]')
     await manual.fill(join(DATA, 'not-created-yet'))
     await manual.press('Enter')

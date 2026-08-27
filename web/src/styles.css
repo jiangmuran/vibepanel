@@ -594,6 +594,110 @@ body {
   transform: scale(0.97);
 }
 
+/* ── the directory picker ───────────────────────────────────────────────── */
+
+/* Going into a directory and coming back out are opposite directions.
+ *
+ * The dialog redrew with no transition, so both looked identical: one frame of
+ * a list, then one frame of a different list, and the only way to find out
+ * which had happened was to re-read the path at the top. A list that arrives
+ * from the right came from deeper in; one that arrives from the left came from
+ * above. That is the same convention every phone's navigation stack uses, and
+ * people already read it without being told.
+ *
+ * Sixteen pixels, and no scale: this is a hint about direction, not an
+ * entrance. The reduced-motion block below removes both, which is why the
+ * crumb bar states where you are at all times rather than only while moving.
+ */
+@keyframes vp-enter-right {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes vp-enter-left {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.vp-enter-right {
+  animation: vp-enter-right 200ms var(--vp-ease) both;
+}
+
+.vp-enter-left {
+  animation: vp-enter-left 200ms var(--vp-ease) both;
+}
+
+/* The crumbs step aside when the box stops filtering and starts addressing.
+ *
+ * They share one field: the crumbs sit inside it, to the left of the caret, so
+ * clicking a segment and typing a path are two ways of driving one control
+ * rather than two controls that both take a location. When what is typed is an
+ * absolute path the crumbs are no longer what the box is about, so they give
+ * their width to the text instead of competing with it.
+ *
+ * max-width rather than display, because both ends are lengths and the
+ * transition between them is what says the box changed jobs. Percentages
+ * animate; `auto` does not, which is why it is not written as one.
+ *
+ * The scrollbar is hidden because this strip scrolls itself to the end on
+ * every navigation -- a horizontal bar under three words reads as a defect.
+ */
+.vp-crumbs {
+  max-width: 60%;
+  overflow-x: auto;
+  scrollbar-width: none;
+  transition: max-width 220ms var(--vp-ease), opacity 140ms var(--vp-ease);
+}
+
+.vp-crumbs::-webkit-scrollbar {
+  display: none;
+}
+
+.vp-crumbs-away {
+  max-width: 0;
+  opacity: 0;
+}
+
+/* A read that takes long enough to see gets rows rather than a spinner.
+ *
+ * A spinner in the middle of an empty box says "something is happening"; four
+ * bars the shape of the rows that are coming say what is happening and how
+ * much of it, and the list does not jump when they are replaced. Under
+ * prefers-reduced-motion the shimmer stops and they are still four bars where
+ * the rows will be, which is why the word for it is on screen as well.
+ */
+@keyframes vp-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+.vp-skeleton {
+  background-image: linear-gradient(
+    90deg,
+    var(--vp-surface-2) 0%,
+    var(--vp-hairline) 50%,
+    var(--vp-surface-2) 100%
+  );
+  background-size: 200% 100%;
+  animation: vp-shimmer 1.3s linear infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
