@@ -32,6 +32,7 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/sysmon"
 	"github.com/jiangmuran/vibepanel/internal/tlsmgr"
 	"github.com/jiangmuran/vibepanel/internal/tmux"
+	"github.com/jiangmuran/vibepanel/internal/usage"
 	"github.com/jiangmuran/vibepanel/internal/version"
 	"github.com/jiangmuran/vibepanel/internal/webui"
 	"github.com/jiangmuran/vibepanel/internal/ws"
@@ -203,6 +204,27 @@ func cmdServe(args []string) error {
 			BlockedAudit:   auth.NewCooldown(time.Minute),
 		},
 		Log: logger,
+	}
+
+	// Token usage reads the agents' own transcripts out of the home directory
+	// of whoever the panel runs as -- which is the same account that runs the
+	// agents, because the panel starts them. Under the system unit that is a
+	// different user with no transcripts, and the panel says so on screen
+	// rather than reporting zero.
+	if home, herr := os.UserHomeDir(); herr == nil {
+		srv.Tokens = &usage.Ingester{
+			Scanner: usage.DefaultScanner(home),
+			DB:      a.db,
+			Log:     logger,
+		}
+		// One pass at start, in the background, so the tab is populated before
+		// anybody opens it. Not blocking the listener: a first pass over a
+		// year of history is seconds, and a panel that will not accept
+		// connections while it reads somebody's history is a panel that looks
+		// broken on every restart.
+		srv.Tokens.Ensure(true)
+	} else {
+		logger.Warn("no home directory, so token usage has nothing to read", "err", herr)
 	}
 
 	// A setup token exists only while there is no account. Printing it to the

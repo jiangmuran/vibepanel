@@ -292,6 +292,79 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+
+	// v11: what the agents recorded about their own token spend.
+	//
+	// Two tables because they answer two different questions and rot at
+	// different rates.
+	//
+	// usage_files is the cursor. A pass compares (size, modified_at) against
+	// what is on disk and reads nothing when they match — which is the whole
+	// of the incremental design, because on the machine this was written on
+	// the transcripts are 2.16 GB across 568 files and all but a handful of
+	// them have not changed since the last pass.
+	//
+	// The cursor is a whole file, not a byte offset, and that is deliberate.
+	// A byte offset is the obvious answer and it is wrong for Claude Code: a
+	// resumed session replays its entire history back into the same transcript,
+	// so records already counted reappear later in the file. Deduplicating
+	// across a resume boundary needs the keys from before the offset, and there
+	// are 67,339 of them here — more state than re-reading costs. Measured, a
+	// full cold pass over all 2.16 GB is 3.09 s; a pass where nothing changed is
+	// 35 ms, and one where a single 395 MB transcript grew is 539 ms. The
+	// measurement lives in internal/usage's TestIngestPassCost.
+	//
+	// usage_daily is the fact table, already rolled up to (day, agent session,
+	// model). A row per API request is the obvious shape and would be about
+	// 650,000 rows and 40 MB a year — larger than everything else in this
+	// database together — to answer questions that are all per-day anyway.
+	//
+	// path is the foreign key rather than an id, so replacing a file's
+	// contribution is one DELETE and then inserts, inside a transaction. A
+	// re-read of a whole file replaces the whole of what it said, which is what
+	// makes reading it twice harmless.
+	//
+	// project_id is absent on purpose. The cwd is stored raw and matched
+	// against projects at query time: projects are created, renamed and deleted
+	// long after the transcripts were written, and baking the answer in at
+	// ingest would mean a project added today never sees the history that
+	// belongs to it.
+	func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`CREATE TABLE IF NOT EXISTS usage_files (
+			     path        TEXT PRIMARY KEY,
+			     tool        TEXT NOT NULL,
+			     size        INTEGER NOT NULL,
+			     modified_at INTEGER NOT NULL,
+			     scanned_at  INTEGER NOT NULL,
+			     skipped     INTEGER NOT NULL DEFAULT 0,
+			     problem     TEXT NOT NULL DEFAULT ''
+			 )`,
+			`CREATE TABLE IF NOT EXISTS usage_daily (
+			     path          TEXT NOT NULL REFERENCES usage_files(path) ON DELETE CASCADE,
+			     day           TEXT NOT NULL,
+			     tool          TEXT NOT NULL,
+			     agent_session TEXT NOT NULL,
+			     cwd           TEXT NOT NULL,
+			     model         TEXT NOT NULL,
+			     input         INTEGER NOT NULL DEFAULT 0,
+			     output        INTEGER NOT NULL DEFAULT 0,
+			     cache_read    INTEGER NOT NULL DEFAULT 0,
+			     cache_write   INTEGER NOT NULL DEFAULT 0,
+			     requests      INTEGER NOT NULL DEFAULT 0,
+			     PRIMARY KEY (path, day, agent_session, model)
+			 )`,
+			// The heatmap and the day table both scan by day across every
+			// file, which is the one access pattern that would otherwise be a
+			// full table scan.
+			`CREATE INDEX IF NOT EXISTS idx_usage_daily_day ON usage_daily(day)`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	},
 }
 
 // schemaVersion is the version this build writes.

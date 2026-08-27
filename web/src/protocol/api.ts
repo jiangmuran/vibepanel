@@ -17,6 +17,7 @@ import type {
   ShareDetail,
   ShareLink,
   SystemSample,
+  TokenUsage,
   UsageSample,
   UpdateCheck,
   UpdateResult,
@@ -351,6 +352,28 @@ export const api = {
 
   checkUpdate: () => request<UpdateCheck>('/api/update'),
   applyUpdate: () => request<UpdateResult>('/api/update', { method: 'POST' }),
+
+  /**
+   * What the agents recorded spending. Not `usage` above, which is CPU and
+   * memory right now — the two are a name apart and mean nothing alike.
+   *
+   * `project` is a project id, never a path: the server resolves it, so a
+   * caller cannot ask about an arbitrary directory and learn from the answer
+   * whether an agent has ever run in it.
+   */
+  tokenUsage: (opts: { days?: number; project?: string; tool?: string } = {}) => {
+    const q = new URLSearchParams()
+    if (opts.days) q.set('days', String(opts.days))
+    if (opts.project) q.set('project', opts.project)
+    if (opts.tool) q.set('tool', opts.tool)
+    const s = q.toString()
+    return request<TokenUsage>('/api/token-usage' + (s ? `?${s}` : ''))
+  },
+
+  /** Reads the transcripts again. Returns as soon as a pass has been asked
+   *  for; the numbers arrive on the next poll. */
+  refreshTokenUsage: () =>
+    request<{ started: boolean }>('/api/token-usage/refresh', { method: 'POST' }),
 
   /**
    * A URL rather than a request: downloading is the browser's job, and it does

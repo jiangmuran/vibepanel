@@ -73,6 +73,16 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		{"ShareCounts", shareCounts{}},
 		{"ShareProject", shareProject{}},
 		{"ShareSession", shareSession{}},
+		// Token usage. Pinned from the first commit rather than after the
+		// first drift, because this surface has more fields than anything
+		// above it and every one of them is a number somebody will believe.
+		{"TokenUsage", tokenUsageResponse{}},
+		{"TokenUsageSource", tokenUsageSource{}},
+		{"TokenUsageSession", tokenUsageSession{}},
+		{"TokenUsageProject", tokenUsageProject{}},
+		{"TokenUsageTool", store.UsageToolTotals{}},
+		{"UsageDay", store.UsageDay{}},
+		{"UsageTotals", store.UsageTotals{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sent := jsonKeys(t, tc.row)

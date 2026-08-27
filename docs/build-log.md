@@ -11468,7 +11468,6 @@ Claude, which is what the parameter-less request has always meant. Anything else
 is a `400`: the value picks a file in somebody's home directory to edit, so an
 unrecognised one is refused rather than resolved to whichever branch is first.
 
-<<<<<<< HEAD
 ## The three dialogs that were never the panel's
 
 `window.confirm` asked before killing a session, removing a project and
@@ -12053,7 +12052,7 @@ itself. The testids are in place for one — `file-open`, `file-upload`,
 `preview-unavailable`, `preview-download`, `preview-close`, `preview-backdrop` —
 and the drop, the paste and the portal are all things only a real browser can
 answer, so they are asserted by nothing today.
-=======
+
 ## A second door, and the shape it had to be
 
 A read-only link that opens a dashboard on another monitor: machine load,
@@ -12168,4 +12167,226 @@ is read from `location.pathname` and used in one fetch — never stored, never
 sent anywhere else, never rendered. `Referrer-Policy: no-referrer` was already
 set, which is what stops a URL-borne capability leaking to whatever a link on
 the page points at.
->>>>>>> worktree-agent-a300b55d058841cd8
+
+## Counting tokens, and finding out the count was wrong twice before it was right
+
+**"我希望右边 tab 可以统计 token"** — a fifth panel tab for token spend, per session,
+per day, in total, filtered by project, tool and time, with a monthly view and
+a GitHub-style year grid.
+
+The chart was the easy half. The question that took the day was where a number
+that is not a guess comes from at all.
+
+### It comes out of the agents' own files, or it does not come
+
+There is exactly one honest source: the transcripts the agents write for
+themselves. Claude Code keeps `~/.claude/projects/**/*.jsonl`, one record per
+line, and every assistant record carries a `usage` object with the real input,
+output and cache counts the API billed. Codex keeps
+`~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` and emits an
+`event_msg`/`token_count` payload carrying both `last_token_usage` and a running
+`total_token_usage`.
+
+Everything else that was considered is an estimator, and there is no estimator
+in this. Counting characters and dividing by four produces a number that looks
+like a measurement, is not one, and is never checked again because it already
+looks right. Where a source cannot be read the answer is "unknown" and the
+reason travels with it, all the way to the screen.
+
+The cost of that honesty is a sentence the UI has to keep saying: **these are
+the agents' numbers, not the panel's.** A `claude` run in a terminal this panel
+never started is counted. A session the panel *did* start that wrote no
+transcript is not. Neither agent publishes the id of the transcript it is
+writing, so there is no mapping from a transcript back to a `sessions` row —
+`launch_command` and `cwd` are what the panel has, and a cwd is shared by every
+session in a project. So the unit reported is the agent's own session, said in
+as many words on the panel, in the full view and in `docs/api.md`.
+
+`cwd` *is* enough to place work in a project, and that is done at query time
+rather than at ingest: projects are created and renamed long after the
+transcripts were written, and baking the answer in would mean a project added
+today never sees the history that belongs to it. Directories that match no
+project keep a row of their own — dropping them would make the project table
+disagree with the total above it by an amount nothing explains.
+
+### Two counting bugs that both flatter
+
+**Claude Code writes one line per content block, and every line carries the same
+`usage` object.** One response with a thinking block and a text block is two
+lines, both saying 242 output tokens. Measured on one real 89 MB transcript:
+13,869 usage-bearing lines for 6,563 actual requests, and 14,118,636 "output
+tokens" against a true 5,954,333. An over-count of 2.37x, in the direction
+nobody questions. Across all 430 Claude transcripts on this machine, 125,102
+lines for 67,339 requests.
+
+So records are deduplicated on `(message.id, requestId)`. The interesting part
+is *how far apart* the duplicates sit, because that decides the whole storage
+design. Measured across every transcript: 57,296 duplicates are adjacent, and
+466 sit **exactly 1,787 usage-lines apart**, all in one file. That second shape
+is a resumed session — Claude Code replays the entire history back into the same
+transcript. A sliding window of any affordable size passes the adjacent case
+and silently double-counts the replayed prefix, which is the failure that looks
+correct.
+
+**Codex re-emits `token_count` with an unchanged `last_token_usage` when only
+the rate limits moved.** Summing `last` over this machine's largest rollout
+gives 53,309,297 tokens where Codex's own final `total_token_usage` says
+52,519,697 — 1.5% high. Differencing the running total reproduces that figure
+*to the token*, which is the check that settled it: what the panel reports for
+a whole thread is exactly what Codex last wrote down about it. A duplicate event
+contributes a delta of zero and needs no dedupe table at all.
+
+**And the two agents do not mean the same thing by `input_tokens`.** Claude's
+excludes what came from cache; Codex's includes it. Added into one column, this
+machine's largest Codex thread reads as 52.4M tokens of fresh input where 50.7M
+of them were cache reads. Everything is normalised to Claude's split, once, in
+the reader.
+
+### Why the cursor is a whole file and not a byte offset
+
+The obvious incremental design is `(path, offset)`: read only the bytes that are
+new. It is wrong here, and the 1,787-line replay is why. Deduplicating across a
+resume boundary needs the keys from *before* the offset, and there are 67,339 of
+them — more state to carry than re-reading costs.
+
+So `usage_files` stores `(size, modified_at)` and a changed file is re-read
+whole, its previous contribution deleted and replaced inside one transaction.
+That is what makes reading a file twice harmless, and it is a property with its
+own test, because the failure without it is that every *active* session's
+numbers creep upward on every pass — slowly, plausibly, and only for the
+sessions somebody is using.
+
+Measured on this machine, 568 transcripts totalling 2.16 GB:
+
+| pass | files read | time |
+|---|---|---|
+| first | 568 of 568 | 3.09 s |
+| nothing changed since | 0 of 568 | 35 ms |
+| one 395 MB transcript grew | 1 of 568 | 539 ms |
+
+618–810 MB/s, which is what the `bytes.Contains` prefilter buys: most lines in a
+transcript are user turns and tool results with no usage object anywhere in
+them, and `json.Unmarshal` on those is where a pass would otherwise spend nearly
+all of its time. `TestIngestPassCost` and `TestFullPassCost` are how those
+numbers were taken and are skipped unless `VIBEPANEL_USAGE_BENCH` is set — a
+test whose result depends on the developer's own history is not a gate, but the
+stopwatch needs somewhere to live.
+
+The facts are rolled up to `(day, agent session, model)` at read time, in
+`usage_daily`. A row per API request is the obvious shape and would be roughly
+650,000 rows and 40 MB a year on this machine — larger than everything else in
+the database together — to answer questions that are all per-day anyway.
+
+A day is a **local** day. Transcripts stamp UTC, and at UTC+8 bucketing by the
+raw stamp moves a whole working morning onto the previous date: the total stays
+right and only the bars move, which is the shape of error nobody notices.
+
+### Where it went on screen
+
+The panel is 280 pixels. A 53-week year grid is about 580 before a day-of-week
+gutter, and the per-session table has six columns. So the tab holds the glance —
+today, the range, a thirty-day sparkline, and the reason any figure might be
+missing — and a button opens a full-width overlay with the grid, the filters and
+the four tables. The alternative was three months of grid instead of a year, or
+squares too small to aim at.
+
+The tokens tab is the only one that renders **before** the no-project guard. The
+other four are about a project; token spend is a fact about the machine, and an
+agent run in a directory the panel has never been told about is exactly the case
+that hiding the tab would hide.
+
+Colour is not doing any work alone (red line 4). Every square carries its exact
+figure on hover, on focus and in `aria-label`; every square is tab-reachable;
+the legend says what the shades mean in words. A day the range never covered is
+drawn as a dashed outline rather than a fainter fill — a different *shape* from
+the legend's leftmost square, which is a day that was covered and empty. And the
+shades are `--vp-accent` at five opacities rather than a fixed palette, so the
+grid follows the theme instead of becoming the white-on-white failure with an
+extra step.
+
+The quantiles for those five shades come from the non-empty days only. Including
+the empty ones, on a year that is mostly empty, puts every cut at zero and
+paints every working day the darkest shade.
+
+Nothing from inside a transcript is ever served. The counts leave the machine's
+own process; the words do not, and `TestNoTranscriptContentIsEverServed` writes
+a passphrase into a transcript and fails if it appears anywhere in the response.
+Reading outside the data directory is a new capability for this panel, so the
+walk resolves its root through `EvalSymlinks`, refuses anything that is not a
+regular file, and checks every path against the resolved root anyway.
+
+### The mutation run, and the two things it caught
+
+Twenty-eight mutations, each restored afterwards. Twenty-six went red
+immediately. Two did not, and both were the test's fault rather than the code's:
+
+**`eachLine` had a real hole.** The mutation "an overlong record ends the file"
+passed, which should have been impossible. The cap on a record's length was
+checked only while the buffer was *filling*, never on the final chunk — so a
+record that filled the 256 KiB buffer an exact number of times and then grew
+past 16 MiB on its last piece sailed through. The test had been passing for an
+unrelated reason (the giant line had no timestamp, so it was skipped as
+unparseable). Fixed, and the fix is what the mutation now proves.
+
+**The symlink test was pinning the standard library, not this package.** It
+built a symlinked *directory* pointing outside the root — which `filepath.WalkDir`
+declines to descend into on its own, so removing this package's file-type check
+changed nothing. It now also builds a symlinked *file* named `linked.jsonl`,
+where the only thing between the walk and a file outside the root is the
+`IsRegular` check. Both halves are asserted, because they are stopped by
+different things and only one of them is stopped by code in this repository.
+
+| mutation | test |
+|---|---|
+| the Claude dedupe is removed | one response counts as three |
+| a sliding window replaces the whole-file seen-set | a replayed prefix counts twice |
+| Codex input keeps its cached part | 50.7M cache reads become fresh input |
+| Codex sums `last` instead of differencing `total` | a repeated event becomes a request |
+| a decreasing Codex total is not treated as a reset | a negative token count |
+| days are bucketed in UTC | a working morning moves to the previous date |
+| an overlong record ends the file | everything after it is lost, silently |
+| a missing directory reports as read | Codex says zero instead of "not found" |
+| the file-type check goes | a symlink leads out of the root |
+| the ingest cursor is ignored | every pass reads 2.16 GB |
+| a re-read is added to the old rows rather than replacing them | active sessions creep upward |
+| a deleted transcript keeps its numbers | totals nothing on disk supports |
+| the project filter is a string prefix | `/home/me/api-v2` folds into `/home/me/api` |
+| the project filter is a LIKE pattern | a `%` in a path matches its siblings |
+| months are cut to years | the monthly chart is an annual one |
+| a tool with no rows is left out of the file stats | "read and empty" looks like "never read" |
+| the capped session list does not say it is capped | a partial list implies it is complete |
+| an unknown project id is accepted | an empty chart looks like a quiet week |
+| the heatmap follows the range control | a 53-week grid holding seven days |
+| work outside every project is dropped | the project table stops adding up |
+| a tool with no spend is left off the screen | an agent's absence has no explanation |
+| the response stops saying which day is today | a phone abroad highlights the wrong square |
+| transcript text reaches the response | the panel serves conversations |
+| a field leaves `wire.ts` | it is `undefined` at runtime and nothing says so |
+| a route leaves `docs/api.md` | nobody can find the endpoint |
+| the heatmap quantiles count the empty days | every working day is the darkest shade |
+| `today` is parsed as UTC | the whole grid shifts by one square |
+| tomorrow is drawn as an empty day | a claim about the future |
+| a day outside the range becomes a zero | "not read" and "nothing spent" look alike |
+
+### Left undone
+
+- **No browser check covers any of it.** The Go and vitest suites pin the
+  arithmetic, the containment, the API and the grid layout; nothing drives the
+  tab, the overlay, the filters or the heatmap in a real browser. That is the
+  gap, and it is the kind this project's own notes say is where most of the
+  defects have been. `render-check` would want `panel-tab-tokens`,
+  `token-panel`, `token-spark`, `token-open`, `token-refresh`, `token-view`,
+  `token-view-close`, `token-filters`, `token-filter-project`,
+  `token-filter-tool`, `token-range-7|30|90|365`, `token-totals`,
+  `token-heatmap` (whose squares carry `data-level`), `token-session-row`.
+- **Only two agents are read.** Anything else reports nothing, and says so only
+  by not appearing — there is no row for "an agent this panel has never heard
+  of". Adding one means adding a reader, which is the right shape.
+- **No cost in money.** Prices differ per model, per tier and over time, and a
+  currency figure derived from a stale table is exactly the confident-looking
+  wrong number this whole entry is about. The token columns are what the
+  transcripts actually say.
+- **The ingester reads the home directory of whoever the panel runs as.** Under
+  the system unit that is a different account with no transcripts, and the panel
+  reports "not found" rather than zero — correct, but the runbook does not yet
+  say that is what an operator seeing it should expect.
