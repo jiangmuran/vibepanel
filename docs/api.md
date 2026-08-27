@@ -119,6 +119,91 @@ Deliberately not part of `/api/state`: that snapshot is broadcast to every
 viewer whenever it changes, and a number that moves every tick would make every
 tick a broadcast.
 
+## Token usage
+
+Two different things are called "usage" and "tokens" in this API, so the names
+here are deliberately long. `/api/usage` above is CPU and memory *right now*.
+`/api/settings/tokens` is API credentials. This section is **token spend**, read
+out of the coding agents' own transcripts.
+
+### `GET /api/token-usage?days=&project=&tool=`
+
+What the agents recorded spending, by day, by month, by agent session, by
+project and by tool.
+
+```json
+{"scannedAt": 1787900000, "scanning": false, "passMs": 35, "passError": "",
+ "sources": [{"tool": "claude", "root": "/home/me/.claude/projects", "found": true,
+              "files": 430, "bytes": 1257242624, "skipped": 0},
+             {"tool": "codex", "root": "/home/me/.codex/sessions", "found": false,
+              "problem": "not found", "files": 0, "bytes": 0, "skipped": 0}],
+ "today": "2026-08-27", "from": "2026-07-29", "to": "2026-08-27", "days": 30,
+ "total": {"input": 91234, "output": 5954333, "cacheRead": 812004112,
+           "cacheWrite": 44120983, "requests": 67339},
+ "byDay":   [{"day": "2026-08-27", "input": 12, "output": 478564, "cacheRead": 0,
+              "cacheWrite": 0, "requests": 1820}],
+ "heatmap": [{"day": "2026-08-27", "…": "the same shape, always the last 371 days"}],
+ "byMonth": [{"day": "2026-08", "…": "the same shape, every month there has been"}],
+ "byTool":  [{"tool": "claude", "input": 0, "output": 0, "cacheRead": 0,
+              "cacheWrite": 0, "requests": 0, "files": 430, "skipped": 0,
+              "problems": 0, "problem": ""}],
+ "projects": [{"id": "p_abc", "name": "vibepanel", "path": "/home/me/vibepanel",
+               "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0,
+               "requests": 0}],
+ "sessions": [{"session": "1e85b81b-…", "tool": "claude", "cwd": "/home/me/vibepanel",
+               "models": "claude-opus-5", "firstDay": "2026-08-23",
+               "lastDay": "2026-08-27", "days": 5, "input": 0, "output": 0,
+               "cacheRead": 0, "cacheWrite": 0, "requests": 0,
+               "projectId": "p_abc", "projectName": "vibepanel"}],
+ "sessionCount": 312, "sessionLimit": 200}
+```
+
+**These are the agents' numbers, not the panel's.** They are read from the files
+Claude Code and Codex write for themselves — `~/.claude/projects/**/*.jsonl` and
+`~/.codex/sessions/**/*.jsonl` — so a `claude` run in a terminal this panel
+never started is counted, and a session the panel did start that ran something
+with no transcript is not. Nothing is estimated; there is no token count derived
+from character counts anywhere in this.
+
+`session` is the **agent's** session id, out of its own transcript. It is not a
+vibepanel session id and there is no mapping between them: neither agent
+publishes the id of the transcript it is writing, so the honest unit is the
+agent's own session. `cwd` is what ties a session to a project, matched by
+directory containment — `/home/me/api-v2` is not inside `/home/me/api`.
+
+`found: false` in `sources` means that agent contributed nothing **because
+nothing could be read**, with `problem` saying why. That is not the same claim as
+zero spend and must not be rendered as one. `skipped` counts records the reader
+could not use, so a non-zero value makes every total below it a lower bound.
+
+`scannedAt` is zero until the first pass over the transcripts has finished.
+Until then there is no answer yet — which is also not zero. A `GET` starts a
+pass in the background when the last one is more than 30 seconds old, and never
+blocks on it.
+
+Counts are normalised across the two agents: `input` is what was sent **fresh**,
+with cache reads in `cacheRead`. Codex's own `input_tokens` includes its cached
+part and is split here; Claude's does not and is not.
+
+`days` is the range for `byDay`, `total`, `byTool`, `projects` and `sessions`,
+clamped to 1–3660 and defaulting to 30. `heatmap` is always the last 371 days
+(53 whole weeks) and `byMonth` is always every month — a range control should
+not be able to make a year grid into a broken one. `project` is a project id,
+never a path; `tool` is `claude` or `codex`. An unknown value of either is a
+400 rather than an empty chart.
+
+`sessions` is capped at `sessionLimit`, biggest first, with `sessionCount`
+saying how many there were.
+
+### `POST /api/token-usage/refresh`
+
+Reads the transcripts again now. `202` with `{"started": true}`, or `started:
+false` when a pass was already running. It does not wait: a first pass over a
+year of history is seconds of disk, and the numbers arrive on the next `GET`.
+
+Transcript **contents** are never served by either endpoint. The panel reads
+counts and timestamps out of those files and nothing else leaves the machine.
+
 ## Projects
 
 ### `GET /api/projects/{id}/files?path=`

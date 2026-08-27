@@ -274,6 +274,130 @@ export interface UsageSample {
   sessions: Record<string, SessionUsage>
 }
 
+// ── token usage ────────────────────────────────────────────────────────────
+//
+// Read out of the agents' own transcripts, which is why almost every interface
+// here carries a way of saying "unknown". A zero from this API means one of two
+// things — nothing was spent, or nothing could be read — and the panel is not
+// allowed to render them the same way.
+
+/** Which agent a number came from. Mirrors internal/usage.Tools. */
+export type UsageTool = 'claude' | 'codex'
+
+export interface UsageTotals {
+  /** Tokens sent fresh. Cache reads are counted separately, in both agents. */
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+  /** API calls, after duplicates were removed. Zero requests is what tells a
+   *  quiet day apart from a day whose transcripts said zero. */
+  requests: number
+}
+
+// The rows below spell their token columns out rather than extending
+// UsageTotals. TestTypeScriptRowsMatchWhatIsSent reads each interface's own
+// properties and compares them with the Go struct's flattened json tags, so an
+// `extends` would hide exactly the fields it exists to pin.
+
+/** One day, or — in `byMonth` — one month, where `day` is `YYYY-MM`. */
+export interface UsageDay {
+  day: string
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+  requests: number
+}
+
+/** One agent's transcript directory as the last pass found it. */
+export interface TokenUsageSource {
+  tool: string
+  root: string
+  /**
+   * False means this agent contributed nothing *because nothing could be
+   * read*. Render the reason, never a zero.
+   */
+  found: boolean
+  problem: string
+  files: number
+  bytes: number
+  /** Records the reader could not use. Non-zero makes every total a lower bound. */
+  skipped: number
+}
+
+export interface TokenUsageTool {
+  tool: string
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+  requests: number
+  files: number
+  skipped: number
+  problems: number
+  problem: string
+}
+
+export interface TokenUsageProject {
+  /** Empty for the catch-all row: work done outside every known project. */
+  id: string
+  name: string
+  path: string
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+  requests: number
+}
+
+export interface TokenUsageSession {
+  /** The *agent's* session id, from its own transcript. Not a vibepanel id. */
+  session: string
+  tool: string
+  cwd: string
+  models: string
+  firstDay: string
+  lastDay: string
+  days: number
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+  requests: number
+  /** Empty when the directory belongs to no project the panel knows about. */
+  projectId: string
+  projectName: string
+}
+
+export interface TokenUsage {
+  /** Zero until a pass has finished. Not the same as "nothing was spent". */
+  scannedAt: number
+  scanning: boolean
+  passMs: number
+  passError: string
+  sources: TokenUsageSource[]
+
+  /** The server's local date. The buckets are local days, so the browser must
+   *  not decide for itself which square is today. */
+  today: string
+  from: string
+  to: string
+  days: number
+
+  total: UsageTotals
+  byDay: UsageDay[]
+  /** Always the last 371 days, whatever the range control says. */
+  heatmap: UsageDay[]
+  /** Always every month there has been. */
+  byMonth: UsageDay[]
+  byTool: TokenUsageTool[]
+  projects: TokenUsageProject[]
+  sessions: TokenUsageSession[]
+  sessionCount: number
+  sessionLimit: number
+}
+
 export interface SystemSample {
   at: number
   /** Null on the very first sample: there is nothing to difference against. */

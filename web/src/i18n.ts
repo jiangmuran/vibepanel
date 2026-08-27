@@ -193,6 +193,7 @@ const DICT = {
   'panel.monitor': { zh: '监控', en: 'Monitor' },
   'panel.notes': { zh: '笔记', en: 'Notes' },
   'panel.todos': { zh: '待办', en: 'Todo' },
+  'panel.tokens': { zh: '用量', en: 'Tokens' },
   'panel.splitOn': { zh: '笔记和待办一起显示', en: 'Show notes and todo together' },
   'panel.splitOff': { zh: '一次显示一个', en: 'Show one at a time' },
 
@@ -486,6 +487,87 @@ const DICT = {
     zh: '状态是从输出猜的，只有终端响铃能传到面板，而大多数 agent 不响铃 —— 所以“等你处理”会被漏掉。点这里打开状态上报。',
     en: 'States are guessed from output, and only the terminal bell reaches the panel. The agent most people run here does not ring one, so "waiting for you" will be missed. Turn on state reporting.',
   },
+  // Token spend. Prefixed `spend.` and not `tok.`: `tok.` is already
+  // API credentials above, and two unrelated meanings of "token" sharing a
+  // key prefix is how somebody translates the wrong string.
+  // Half of these exist to say what a number is *not*: the
+  // feature's whole risk is a confident zero standing in for "the file was not
+  // there", and every one of those cases needs its own sentence.
+  'spend.title': { zh: 'Token 用量', en: 'Token usage' },
+  'spend.open': { zh: '打开完整视图', en: 'Open the full view' },
+  'spend.close': { zh: '关闭', en: 'Close' },
+  'spend.today': { zh: '今天', en: 'Today' },
+  'spend.rangeDays': { zh: '近 {n} 天', en: 'Last {n} days' },
+  // The segmented control has four of these side by side and "Last 365 days"
+  // four times does not fit; the long form stays for headings.
+  'spend.rangeShort': { zh: '{n} 天', en: '{n}d' },
+  'spend.filesRead': { zh: '读了 {n} 个文件', en: '{n} files read' },
+  'spend.allTime': { zh: '全部时间', en: 'All time' },
+  'spend.total': { zh: '合计', en: 'Total' },
+  'spend.input': { zh: '新输入', en: 'Fresh input' },
+  'spend.output': { zh: '输出', en: 'Output' },
+  'spend.cacheRead': { zh: '缓存读取', en: 'Cache read' },
+  'spend.cacheWrite': { zh: '缓存写入', en: 'Cache write' },
+  'spend.requests': { zh: '请求数', en: 'Requests' },
+  'spend.tokens': { zh: 'token', en: 'tokens' },
+  'spend.day': { zh: '按天', en: 'By day' },
+  'spend.month': { zh: '按月', en: 'By month' },
+  'spend.sessions': { zh: '按会话', en: 'By session' },
+  'spend.projects': { zh: '按项目', en: 'By project' },
+  'spend.tools': { zh: '按工具', en: 'By tool' },
+  'spend.heatmap': { zh: '近一年', en: 'The last 12 months' },
+  'spend.less': { zh: '少', en: 'Less' },
+  'spend.more': { zh: '多', en: 'More' },
+  'spend.legend': {
+    zh: '颜色越深用得越多；每格上有确切数字。',
+    en: 'Darker is more. The exact figure is on every square.',
+  },
+  'spend.cellSpent': { zh: '{day}：{n} tokens', en: '{day}: {n} tokens' },
+  'spend.cellNone': { zh: '{day}：没有记录', en: '{day}: nothing recorded' },
+  'spend.cellOutside': { zh: '{day}：不在读取范围内', en: '{day}: outside the range that was read' },
+  'spend.filterProject': { zh: '项目', en: 'Project' },
+  'spend.filterTool': { zh: '工具', en: 'Tool' },
+  'spend.filterRange': { zh: '时间范围', en: 'Range' },
+  'spend.all': { zh: '全部', en: 'All' },
+  'spend.outsideProjects': { zh: '不在任何项目里', en: 'Outside every project' },
+  'spend.noData': { zh: '这个范围里没有记录。', en: 'Nothing was recorded in this range.' },
+  'spend.refresh': { zh: '重新读取', en: 'Read again' },
+  'spend.refreshing': { zh: '正在读取…', en: 'Reading…' },
+  'spend.scanning': {
+    zh: '正在读取 agent 自己的记录，读完就会出现在这里。',
+    en: 'Reading what the agents recorded. The numbers appear when it finishes.',
+  },
+  'spend.neverScanned': {
+    zh: '还没读过任何记录，所以这里是空的 —— 不是 0。',
+    en: 'Nothing has been read yet, so this is empty rather than zero.',
+  },
+  'spend.scannedAgo': { zh: '{ago}前读的', en: 'read {ago} ago' },
+  'spend.whose': {
+    zh: '这些数字是 agent 自己记的账，不是面板记的：不经过面板跑的 claude 也会算进来，而面板开的、没有记录文件的会话不会。',
+    en: "These are the agents' own numbers, not the panel's: a run this panel never started is counted, and a session it did start that wrote no transcript is not.",
+  },
+  'spend.agentSessionNote': {
+    zh: '这里的“会话”是 agent 自己的会话，不是面板里的会话 —— 两边没有可靠的对应关系。',
+    en: "A session here is the agent's own, not one of the panel's: there is no reliable mapping between them.",
+  },
+  'spend.sourceMissing': {
+    zh: '找不到 {tool} 的记录（{why}），所以它这里是“不知道”，不是 0。',
+    en: 'No {tool} records could be read ({why}), so its figure is unknown rather than zero.',
+  },
+  'spend.sourceRead': { zh: '{tool}：读了 {files} 个文件', en: '{tool}: {files} files read' },
+  'spend.lowerBound': {
+    zh: '有 {n} 条记录读不出来，所以下面的数字是下限。',
+    en: '{n} records could not be read, so the figures below are a lower bound.',
+  },
+  'spend.passError': { zh: '上一次读取出错：{why}', en: 'The last pass failed: {why}' },
+  'spend.capped': {
+    zh: '按用量排前 {n} 个，共 {total} 个。',
+    en: 'The largest {n} of {total}.',
+  },
+  'spend.model': { zh: '模型', en: 'Model' },
+  'spend.directory': { zh: '目录', en: 'Directory' },
+  'spend.lastSeen': { zh: '最后一天', en: 'Last day' },
+  'spend.unknownModel': { zh: '未记录模型', en: 'model not recorded' },
 } satisfies Record<string, Entry>
 
 export type Key = keyof typeof DICT

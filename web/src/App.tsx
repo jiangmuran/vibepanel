@@ -21,6 +21,7 @@ import { Sidebar } from './components/Sidebar'
 import { BottomTerminals } from './components/BottomTerminals'
 import { RightPanel } from './components/RightPanel'
 import { Settings } from './components/Settings'
+import { TokenUsageView } from './components/TokenUsageView'
 import { MobileKeyBar } from './components/mobile/MobileKeyBar'
 import { ComposeInput } from './components/mobile/ComposeInput'
 import { SelectionCopy } from './components/mobile/SelectionCopy'
@@ -188,13 +189,18 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   const [selection, setSelection] = useState('')
   const [rightTab, setRightTab] = useState<PanelTab>(() => {
     const raw = readStored(RIGHT_TAB_KEY)
-    return raw === 'files' || raw === 'monitor' || raw === 'notes' || raw === 'todos'
+    return raw === 'files' ||
+      raw === 'monitor' ||
+      raw === 'notes' ||
+      raw === 'todos' ||
+      raw === 'tokens'
       ? raw
       : 'files'
   })
   const [rightSplit, setRightSplit] = useState(() => readStored(RIGHT_SPLIT_KEY) === 'on')
   const [splitRatio, setSplitRatio] = useState(0.5)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [tokensOpen, setTokensOpen] = useState(false)
   const [restoreOpen, setRestoreOpen] = useState(false)
   // Dismissing the offer is per visit, not remembered.
   //
@@ -1133,6 +1139,17 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           out. */}
       {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
 
+      {/* Full width, because a 53-week year grid and a six-column session
+          table do not go in a 280-pixel panel. The panel holds the glance and
+          this holds the reading. */}
+      {tokensOpen && (
+        <TokenUsageView
+          projects={state.projects}
+          projectId={currentProject?.id ?? null}
+          onClose={() => setTokensOpen(false)}
+        />
+      )}
+
       {restoreOpen && restorable.length > 0 && (
         <RestoreDialog
           sessions={restorable}
@@ -1159,6 +1176,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           width={rightWidth}
           onWidthChange={setRightSize}
           onCollapse={() => setRightOpen(false)}
+          onOpenTokens={() => setTokensOpen(true)}
           split={rightSplit}
           onSplitChange={setRightSplit}
           splitRatio={splitRatio}

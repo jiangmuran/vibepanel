@@ -27,6 +27,7 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/store"
 	"github.com/jiangmuran/vibepanel/internal/sysmon"
 	"github.com/jiangmuran/vibepanel/internal/tmux"
+	"github.com/jiangmuran/vibepanel/internal/usage"
 	"github.com/jiangmuran/vibepanel/internal/version"
 	"github.com/jiangmuran/vibepanel/internal/webui"
 	"github.com/jiangmuran/vibepanel/internal/ws"
@@ -63,6 +64,15 @@ type Server struct {
 	// the server; the browser only carries an opaque id for it.
 	Challenges *challengeStore
 	Log        *slog.Logger
+
+	// Tokens reads the agents' own transcripts for what they spent.
+	//
+	// A pointer that must be set explicitly, and nil is a working state: the
+	// token-usage endpoints answer 503 and everything else is unaffected. It
+	// is deliberately not built on demand from the running user's home
+	// directory, because every test that constructs a Server by hand would
+	// then start a background walk of whoever's machine the tests are on.
+	Tokens *usage.Ingester
 
 	// hookToken authenticates state reports from agent hooks. Cached after the
 	// first read so the hot path does not hit the database.
@@ -261,6 +271,7 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/sessions/restore", s.handleRestoreSessions)
 
 			s.registerPanelRoutes(r)
+			s.registerTokenRoutes(r)
 			s.registerSettingsRoutes(r)
 		})
 

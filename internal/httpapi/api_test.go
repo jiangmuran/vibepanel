@@ -34,6 +34,7 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/store"
 	"github.com/jiangmuran/vibepanel/internal/sysmon"
 	"github.com/jiangmuran/vibepanel/internal/tmux"
+	"github.com/jiangmuran/vibepanel/internal/usage"
 	"github.com/jiangmuran/vibepanel/internal/ws"
 )
 
@@ -87,6 +88,18 @@ func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 		Sampler:  &sysmon.Sampler{DiskPath: dir},
 		Auth:     &Auth{Throttle: auth.NewThrottle(), SetupToken: "test-setup-token"},
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		// Pointed at empty directories under the test's own tree, never at the
+		// running user's home. Without this every test that touches the token
+		// endpoints would start a background walk of whoever's machine the
+		// suite is on -- gigabytes of somebody's private transcripts, read by
+		// a unit test, for no reason.
+		Tokens: &usage.Ingester{
+			Scanner: &usage.Scanner{
+				ClaudeRoot: filepath.Join(dir, "claude", "projects"),
+				CodexRoot:  filepath.Join(dir, "codex", "sessions"),
+			},
+			DB: db,
+		},
 	}
 	mgr.OnSignals = srv.HandleSignals
 	ts := httptest.NewServer(srv.Routes())

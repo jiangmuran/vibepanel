@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react'
-import { Activity, ChevronRight, Columns2, FolderTree, ListChecks, NotebookPen } from 'lucide-react'
+import { Activity, ChevronRight, Coins, Columns2, FolderTree, ListChecks, NotebookPen } from 'lucide-react'
 
 import type { Project, Session } from '../protocol/wire'
 import type { PanelSocket } from '../protocol/socket'
@@ -9,9 +9,10 @@ import { Notes } from './panels/Notes'
 import { Todos } from './panels/Todos'
 import { ErrorBoundary } from './ErrorBoundary'
 import { SystemStrip } from './panels/SystemStrip'
+import { TokenUsage } from './panels/TokenUsage'
 import { t, useLang, type Key } from '../i18n'
 
-export type PanelTab = 'files' | 'monitor' | 'notes' | 'todos'
+export type PanelTab = 'files' | 'monitor' | 'notes' | 'todos' | 'tokens'
 
 // The label is a key, not a string: resolving it at render is what makes a
 // language switch repaint the tabs instead of needing a reload.
@@ -20,6 +21,7 @@ const TABS: { id: PanelTab; icon: typeof Activity; key: Key }[] = [
   { id: 'monitor', icon: Activity, key: 'panel.monitor' },
   { id: 'notes', icon: NotebookPen, key: 'panel.notes' },
   { id: 'todos', icon: ListChecks, key: 'panel.todos' },
+  { id: 'tokens', icon: Coins, key: 'panel.tokens' },
 ]
 
 interface Props {
@@ -33,6 +35,8 @@ interface Props {
   width: number
   onWidthChange: (px: number) => void
   onCollapse: () => void
+  /** Opens the full-width token view. The panel is too narrow to hold it. */
+  onOpenTokens: () => void
   /** Show notes and todos together, split vertically. */
   split: boolean
   onSplitChange: (split: boolean) => void
@@ -106,6 +110,15 @@ export function RightPanel(props: Props) {
   const showSplit = split && splittable
 
   const body = () => {
+    // Before the no-project guard, and the only tab that is. The other four
+    // are all *about* a project — its files, its notes, its sessions' load —
+    // and have nothing to say without one. Token spend is a fact about the
+    // machine: an agent that ran in a directory the panel has never been told
+    // about still spent it, and hiding the whole tab until somebody adds a
+    // project would hide exactly that case.
+    if (tab === 'tokens') {
+      return <TokenUsage projectId={project?.id ?? null} onOpen={props.onOpenTokens} />
+    }
     if (!project) {
       return <p className="px-3 py-4 text-vp-base text-ink-2">{t('panel.noProject')}</p>
     }
