@@ -13,6 +13,9 @@ import type {
   Project,
   Session,
   SessionState,
+  ShareDashboard,
+  ShareDetail,
+  ShareLink,
   SystemSample,
   UsageSample,
   UpdateCheck,
@@ -215,6 +218,49 @@ export const api = {
     }),
   deleteToken: (id: string) =>
     request<void>(`/api/settings/tokens/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  listShares: () => request<ShareLink[]>('/api/settings/shares'),
+
+  /**
+   * Mints a read-only link. The response is the only time its token is
+   * readable, exactly like an API token.
+   *
+   * `expiresIn` is seconds from now and 0 means never. A duration rather than
+   * an instant, because the browser has no standing to be believed about what
+   * time it is on the server.
+   */
+  // Spelled out rather than `ShareLink & { token }`, which is what the token
+  // endpoint next to it does. The creation response is not a ShareLink: it has
+  // no `lastUsedAt`, because a link made half a second ago has never been used.
+  // Declaring a field the server does not send is the drift red line 3 is
+  // about — it type-checks and is `undefined` at runtime.
+  createShare: (name: string, detail: ShareDetail, expiresIn: number) =>
+    request<{
+      token: string
+      id: string
+      name: string
+      prefix: string
+      detail: string
+      expiresAt: number
+      createdAt: number
+    }>('/api/settings/shares', {
+      method: 'POST',
+      body: JSON.stringify({ name, detail, expiresIn }),
+    }),
+
+  deleteShare: (id: string) =>
+    request<void>(`/api/settings/shares/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  /**
+   * The whole surface a share token can reach.
+   *
+   * The token is in the path because that is what makes the URL the
+   * capability: one address you can put on a second screen, with nothing to
+   * sign in to. Everything else about the panel answers 401 to it, which is
+   * enforced by the server's routing rather than by this file.
+   */
+  shareDashboard: (token: string) =>
+    request<ShareDashboard>(`/api/share/${encodeURIComponent(token)}/dashboard`),
 
   browse: (path = '') =>
     request<DirListing>(`/api/browse?path=${encodeURIComponent(path)}`),

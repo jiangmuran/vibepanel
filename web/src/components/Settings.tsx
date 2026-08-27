@@ -14,6 +14,7 @@ import { notifyEnabled, notifySupported, requestNotifyPermission, setNotifyEnabl
 import { ApiTokens } from './ApiTokens'
 import { askConfirm, askText } from './ask'
 import { showToast } from './toasts'
+import { ShareLinks } from './ShareLinks'
 import { safeText } from './text'
 import { UpdateSection } from './UpdateSection'
 
@@ -163,6 +164,14 @@ export function Settings({ onClose }: { onClose: () => void }) {
 
         <Section title={t('tok.title')}>
           <ApiTokens />
+        </Section>
+
+        {/* Below the API tokens, because it is the same kind of thing — a
+            credential you make deliberately and revoke one at a time — and
+            reading the two together is how somebody notices that one of them
+            opens a terminal and the other opens a page. */}
+        <Section title={t('share.title')}>
+          <ShareLinks />
         </Section>
 
         <Section title={t('settings.language')}>

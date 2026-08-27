@@ -479,3 +479,113 @@ export interface UpdateResult {
   restarting: boolean
   restartWhy: string
 }
+
+// ── read-only share links ──────────────────────────────────────────────────
+
+/**
+ * How much a share link is allowed to say. Mirrors store.ShareDetail.
+ *
+ * 'counts' is shapes and numbers and no text at all; 'names' adds session
+ * titles and project names. Neither ever carries a path, a command line or a
+ * real id — that is not a mode, it is the shape of the payload.
+ */
+export type ShareDetail = 'counts' | 'names'
+
+/** A link as the settings page lists it. The token is never in here. */
+export interface ShareLink {
+  id: string
+  /** The first characters, kept so a row can be named on the way to revoking
+   *  it. The rest is only ever readable in the response that created it. */
+  prefix: string
+  name: string
+  detail: string
+  /** Unix seconds, or 0 for a link that does not expire. */
+  expiresAt: number
+  createdAt: number
+  lastUsedAt: number
+}
+
+/**
+ * The machine, with the path taken out.
+ *
+ * Not SystemSample: that carries `diskPath`, which is the panel's data
+ * directory and so names a user account and a filesystem layout. The server
+ * restates the fields deliberately so each one is a decision somebody made.
+ */
+export interface ShareMachine {
+  cpuReadable: boolean
+  cpuPercent: number | null
+  cores: number
+  load1: number
+  load5: number
+  load15: number
+  memTotal: number
+  memAvailable: number
+  swapTotal: number
+  swapFree: number
+  diskTotal: number
+  diskFree: number
+  uptime: number
+}
+
+export interface ShareCounts {
+  projects: number
+  sessions: number
+  waiting: number
+  working: number
+  done: number
+  exited: number
+  crashed: number
+}
+
+export interface ShareProject {
+  /** Pseudonymous and stable for the life of one link; not the panel's id. */
+  id: string
+  /** Empty under 'counts'. The dashboard numbers the groups instead. */
+  name: string
+  waiting: number
+  working: number
+  done: number
+  total: number
+}
+
+export interface ShareSession {
+  id: string
+  projectId: string
+  /** Empty under 'counts'. */
+  name: string
+  state: SessionState
+  /** 'agent' | 'shell' | 'other' — a summary of the pane's foreground process,
+   *  never the command line. Widened to string because the server owns the set
+   *  and an unknown value has to render as something rather than crash. */
+  kind: string
+  stateChangedAt: number
+  exited: boolean
+  exitStatus: number
+  /** A usage reading was found. A session whose pane has gone is absent from
+   *  the sampler rather than zero, and zero is a real reading. */
+  measured: boolean
+  cpuPercent: number
+  rss: number
+  procs: number
+}
+
+/** Everything a share link discloses, in one object. Read it as the list. */
+export interface ShareDashboard {
+  /** When the server took this reading. The dashboard counts up from it, which
+   *  is what stops a frozen page from looking like a quiet system. */
+  at: number
+  name: string
+  detail: string
+  /** Unix seconds, 0 when the link does not expire. */
+  expiresAt: number
+  usageReadable: boolean
+  /** The panel has stopped keeping its records up to date. The reason is not
+   *  sent: it is a message about this machine's storage, and a wall display can
+   *  do nothing with it. */
+  stale: boolean
+  machine: ShareMachine
+  counts: ShareCounts
+  projects: ShareProject[]
+  sessions: ShareSession[]
+}

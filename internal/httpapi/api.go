@@ -20,6 +20,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/jiangmuran/vibepanel/internal/auth"
 	"github.com/jiangmuran/vibepanel/internal/config"
 	"github.com/jiangmuran/vibepanel/internal/hooks"
 	"github.com/jiangmuran/vibepanel/internal/id"
@@ -117,6 +118,14 @@ type Server struct {
 	// with every session ever created.
 	archMu         sync.Mutex
 	archivedOutput map[string]int64
+	// shareTouch rate-limits the "last seen" write on a share link.
+	//
+	// A wall display polls the dashboard every couple of seconds and never
+	// stops, so stamping every lookup is tens of thousands of writes a day
+	// through SQLite's one write lock, for a field the settings page renders as
+	// a date. Lazily built so a Server assembled by hand still has one.
+	shareTouchOnce sync.Once
+	shareTouch     *auth.Cooldown
 
 	// TrimEvery and AuditKeep override the audit trim's schedule and cap. Zero
 	// means the constants. Tests set them small; nothing else should. They
@@ -242,6 +251,19 @@ func (s *Server) Routes() http.Handler {
 		s.registerPasskeyRoutes(r)
 		r.Post("/hook/state", s.handleHookState)
 
+		// A read-only share link carries its own capability in the URL and is
+		// resolved against its own table, so it is registered outside the
+		// session group rather than inside it with an exemption.
+		//
+		// That placement is the security boundary, and it is worth being blunt
+		// about which direction the danger runs. Everything below RequireAuth
+		// is protected by being below it; this is protected by reaching exactly
+		// one GET handler and by share_links being a table currentUser does not
+		// consult. Move a route from below into here and it loses its
+		// authentication; add a second route here and a share token can reach
+		// it. There is no flag in between, on purpose.
+		s.registerShareRoutes(r)
+
 		// Everything else needs a session. This panel hands out a writable
 		// terminal; there is no such thing as a harmless unauthenticated
 		// endpoint here.
@@ -268,6 +290,11 @@ func (s *Server) Routes() http.Handler {
 			s.registerPanelRoutes(r)
 			s.registerUpdateRoutes(r)
 			s.registerSettingsRoutes(r)
+			// Making and revoking share links is an ordinary settings action
+			// and needs the ordinary session. A share token cannot mint another
+			// one, which is the property that keeps one leaked link from
+			// becoming a supply of them.
+			s.registerShareAdminRoutes(r)
 		})
 
 		r.NotFound(func(w http.ResponseWriter, r *http.Request) {

@@ -11468,6 +11468,7 @@ Claude, which is what the parameter-less request has always meant. Anything else
 is a `400`: the value picks a file in somebody's home directory to edit, so an
 unrecognised one is refused rather than resolved to whichever branch is first.
 
+<<<<<<< HEAD
 ## The three dialogs that were never the panel's
 
 `window.confirm` asked before killing a session, removing a project and
@@ -12052,3 +12053,119 @@ itself. The testids are in place for one — `file-open`, `file-upload`,
 `preview-unavailable`, `preview-download`, `preview-close`, `preview-backdrop` —
 and the drop, the paste and the portal are all things only a real browser can
 answer, so they are asserted by nothing today.
+=======
+## A second door, and the shape it had to be
+
+A read-only link that opens a dashboard on another monitor: machine load,
+per-session CPU and memory, every session with its state, grouped by project.
+The request was `我希望可以生成只读链接 … 然后在我的其他显示屏上打开 同时能看见且断开链接状态`,
+and the last clause of it is the part that shaped the page.
+
+**The authorisation design, and what it is not.** The obvious implementation is
+a `scope` column on `api_tokens` and a `readOnly` check in each handler. That is
+a hole in whichever handler is written next year, and the handler written next
+year is the one nobody re-reads this decision for. So: a separate table, and one
+route.
+
+`share_links` stores a SHA-256 and never the token, exactly as `api_tokens`
+does, plus a prefix in the clear so a row can be named on the way to being
+revoked. `currentUser` does not consult it — which is the property that makes
+the whole thing work, because it means a share token presented as a `Bearer`
+header or as the session cookie is not a credential at all. It is an unknown
+string, and every authenticated route already answers 401 to those.
+`TestAShareTokenReachesTheDashboardAndNothingElse` presents it both ways against
+nine routes and the WebSocket.
+
+The route lives outside the `RequireAuth` group with its own middleware, and
+`registerShareRoutes` mounts exactly one `GET` under it. `POST` to the same path
+is a 405 and `/api/share/{token}/state` is a 404, both asserted, because "the
+share surface is one GET" is only a fact while nothing has been added to it.
+
+Two things were nearly got wrong and are worth writing down. The allowlist check
+is in the share middleware, in the same order `RequireAuth` does it: without it,
+creating a link would have been a way around `--allow-from`, which is the
+hardening the operator turned on deliberately. And an unresolvable token answers
+503 rather than 401 when the *database* is the thing that failed — a 401 there
+makes a wall display say "this link was revoked" about a disk hiccup, and there
+is nobody standing at a wall display to know better.
+
+**What the link discloses, and the one judgement call.** The redaction is a set
+of structs in `internal/httpapi/share.go` rather than an omission at each call
+site, so what is absent is reviewable in one place. Absent in every mode: the
+project path, the session `cwd`, the command line, the tmux session name, the
+hostname, the sampler's disk path, and the panel's own ids. A project path names
+a customer and a home directory. A command line carries whatever an agent was
+invoked with.
+
+`sysmon.Sample` is not embedded, and that is deliberate rather than tidy: it
+carries `DiskPath`, which is the data directory. Restating the numbers means the
+next field added to `Sample` is not disclosed by default.
+
+The ids are pseudonyms — an HMAC of the real id under the link's own stored hash
+— which costs nothing and buys two things: React gets a stable key, and two
+dashboards on two walls cannot be joined into one picture of the panel by
+somebody who watches both.
+
+The judgement call is names. A session title is written by an agent and a
+project name is typed by the owner, and either can carry a customer or a
+repository; both are also what makes a wall useful. So it is a decision per
+link: `counts` shows shapes and numbers and no text, `names` adds the two.
+`counts` is the default, because the default is what a link made in a hurry gets
+and this one is going on a screen chosen because other people can see it. An
+unrecognised `detail` is a 400 rather than a default, the same rule
+`?agent=claude|codex` follows and for the same reason.
+
+**Bottom terminals are left out**, which is a content decision and not a privacy
+one. They are session rows with a parent, so listing them reports two rows for
+one job and counts a shell sitting at a prompt as something that finished. What
+they cost is still on screen, in the machine meters.
+
+**The page polls; it does not hold a socket.** `/ws` is authorised once at the
+handshake and then lives for hours, which is why it needed `StillAuthorized` and
+a revalidation tick. A dashboard reading six numbers does not justify a second
+copy of that machinery, and revocation-on-next-poll is a property that needs no
+machinery at all. It also means the read-only page has no write path to
+accidentally leave open: there is nothing to write to.
+
+**Connection state, which is what was actually asked for.** A dashboard that has
+silently frozen looks exactly like a quiet system — six sessions all "done" and
+a flat CPU line is either a calm afternoon or a page that stopped talking forty
+minutes ago, and nothing about the numbers says which.
+
+Four states, not two: `connecting`, `live`, `reconnecting` (a failure within ten
+seconds of the last success), `disconnected`, and `gone` for a link that has
+been revoked or has expired. `gone` is terminal and stops the polling: it is not
+going to start working, saying "reconnecting" about it forever is a lie somebody
+eventually acts on, and continuing to ask would be an unauthenticated request in
+a loop against an endpoint that records rejections.
+
+Each carries a shape as well as a hue, per red line 4 — a dot inside a ring, a
+ring with a gap, a ring struck through, a broken chain — with the word beside it
+at the largest size on the page. The header always shows the time of the reading
+and how long ago that was, counted by a one-second timer that is deliberately
+independent of the polling: if the two shared a clock, the "as of" line would
+freeze at exactly the moment the numbers did. Anything other than `live` puts a
+band across the top and dims the content to 55%. Dimmed and not hidden — the
+last true reading is still the most useful thing on the screen, it just must not
+be presented as this moment's.
+
+**Three new steps on the type scale.** The five that exist top out at 15px,
+which is a caption at three metres, and the alternative is an arbitrary
+`text-[42px]` in one component — the tenth font size arriving by exactly the
+route `scale.test.ts` exists to close. `--text-vp-xl|2xl|3xl` are in the
+`@theme` block with a comment saying they are the dashboard's and nothing
+else's. They are `clamp()` against `vw` rather than fixed, which is the
+difference between "legible at 1080p" and "legible at 1080p and at 4K": a 4K
+panel at 100% reports 3840 CSS pixels, so a fixed 56px headline has a third of
+the angular size it has on a 1920 screen at the same distance — and the distance
+is the reason the display was chosen.
+
+**The dashboard is a separate root, not the panel with pieces hidden.**
+`main.tsx` reads `/share/<token>` off the path and builds either `<Dashboard>`
+or `<AuthGate><App>`. `AuthGate` is what asks who you are and then hands over
+the whole console; a read-only page must not be one `if` away from it. The token
+is read from `location.pathname` and used in one fetch — never stored, never
+sent anywhere else, never rendered. `Referrer-Policy: no-referrer` was already
+set, which is what stops a URL-borne capability leaking to whatever a link on
+the page points at.
+>>>>>>> worktree-agent-a300b55d058841cd8

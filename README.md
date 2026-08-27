@@ -58,6 +58,11 @@ two apart: **tmux does process persistence, the web UI does organisation.**
   settings.
 - **Install as an app.** A PWA with notifications, so a session that starts waiting
   reaches your phone with the panel in the background.
+- **A read-only dashboard on a second screen.** Make a share link in settings and
+  open it on the monitor beside you: machine load, what every session is costing,
+  who is waiting for you, in type you can read across a room — and a connection
+  state you cannot mistake for a quiet system. The link reaches that one page and
+  nothing else, and by default it shows no names at all.
 - **An HTTP API for agents**, with tokens that are separate from your password —
   see [docs/api.md](docs/api.md).
 - **Passkeys, passwords, TLS of its own**, including automatic certificates over
@@ -354,6 +359,37 @@ Failed logins are throttled per source address with exponential backoff, and
 `--trusted-proxies` says to believe: with no trusted proxy configured, that is the
 peer on the socket and `X-Forwarded-For` is ignored entirely. A header that can
 rename the caller turns both controls off.
+
+### Read-only share links
+
+**Settings → Read-only share links** makes a URL you can leave open on another
+monitor: `https://<panel>/share/<token>`. It opens a dashboard — machine load,
+per-session CPU and memory, every session with its state, grouped by project —
+and it opens nothing else.
+
+The link is a capability, so treat it as one. Anyone holding it can watch, and
+the panel stores only a SHA-256 of the token, which means the moment it is
+created is the only time it can be read. Each link is revoked on its own, may be
+given an expiry, and its creation and revocation are in the audit log.
+
+What it reaches is decided by the router, not by a flag: a share token is
+accepted on one `GET`, and presenting it as a session cookie or a `Bearer`
+header answers `401` on every other route including the WebSocket. There is no
+terminal, no write path, no file browser, no notes, no settings, and no way to
+make a second link from the first.
+
+Two levels of detail, chosen when you make it. **Counts** — the default — shows
+shapes and numbers and no text at all; **names** adds session titles and project
+names. Neither ever sends a path, a command line, a hostname or the panel's own
+ids, because a project path names a customer and a home directory and a command
+line carries whatever an agent was invoked with. If the screen is behind you in
+a room other people walk through, the default is the one to leave alone.
+
+The dashboard says out loud when it has stopped hearing from the panel: *live*,
+*reconnecting* and *disconnected* are distinguished by shape and by word as well
+as by colour, and the header always carries the time of the last reading and how
+long ago that was. A dashboard that has silently frozen otherwise looks exactly
+like a quiet system.
 
 ### Passkeys
 

@@ -63,6 +63,16 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		{"FileListing", browse.Listing{}},
 		{"SystemSample", sysmon.Sample{}},
 		{"Passkey", store.Credential{}},
+		// The share-link surface. The dashboard one matters more than most:
+		// this struct is the definition of what a read-only link discloses,
+		// and a field the server sends that wire.ts does not declare is a
+		// field nobody reviewing the TypeScript would know had been added.
+		{"ShareLink", store.ShareLink{}},
+		{"ShareDashboard", shareDashboard{}},
+		{"ShareMachine", shareMachine{}},
+		{"ShareCounts", shareCounts{}},
+		{"ShareProject", shareProject{}},
+		{"ShareSession", shareSession{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sent := jsonKeys(t, tc.row)
@@ -251,6 +261,9 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"password.change_refused": true,
 		"password.changed":        true,
 		"setup.completed":         true,
+		"share.created":           true,
+		"share.rejected":          true,
+		"share.revoked":           true,
 		"token.created":           true,
 		"token.revoked":           true,
 		"update.installed":        true,
