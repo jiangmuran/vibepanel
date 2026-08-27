@@ -214,7 +214,7 @@ export function Sidebar(props: SidebarProps) {
             type="button"
             data-testid="order-auto"
             onClick={props.onAutoOrderProjects}
-            title="Sort by recent activity instead — your arrangement is kept"
+            title={t('app.sortByActivity')}
             className="ml-auto rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
           >
             <Clock size={14} />
@@ -247,7 +247,7 @@ export function Sidebar(props: SidebarProps) {
       <nav className="flex-1 overflow-y-auto px-2 pb-3">
         {projects.length === 0 && (
           <p className="px-2 py-6 text-[12px] leading-relaxed text-ink-2">
-            No projects yet. Add one to point the panel at a directory.
+            {t('app.noProjects')}
           </p>
         )}
         {projects.map((p, index) => (
@@ -277,7 +277,7 @@ export function Sidebar(props: SidebarProps) {
               <InlineName
                 value={projectLabel(p)}
                 onCommit={(next) => props.onRenameProject(p, next)}
-                className="text-[11px] font-semibold tracking-wide text-ink-2 uppercase"
+                className="text-[11px] font-semibold tracking-wide text-ink-2"
                 title={p.path}
               />
               <button
@@ -361,7 +361,7 @@ export function Sidebar(props: SidebarProps) {
                         e.stopPropagation()
                         props.onRestartSession(s)
                       }}
-                      title="Restart this session's command in the same pane"
+                      title={t('app.restartHint')}
                       className="vp-tap shrink-0 rounded p-0.5 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
                     >
                       <RotateCcw size={12} />

@@ -136,7 +136,7 @@ export function FileTree({ projectId }: { projectId: string }) {
           {e.escapes && (
             <span
               data-testid="file-escapes"
-              title="This link points outside the project. The panel will not open it."
+              title={t('files.escapeLink')}
               className="shrink-0 text-[10.5px] text-ink-2"
             >
               outside

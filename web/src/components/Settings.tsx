@@ -269,7 +269,7 @@ function PasswordSection() {
       )}
       {done && (
         <p data-testid="password-done" className="mt-2 text-[12px] text-state-done">
-          Changed. Every other browser has been signed out.
+          {t('settings.passwordChanged')}
         </p>
       )}
     </Section>

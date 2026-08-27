@@ -11125,3 +11125,43 @@ reason in the error slot it already had.
 The two duplicate monitor namespaces — `mon.*` added beside the existing
 `monitor.*`, both defining `cpu`, `memory`, `disk` — are merged. A dictionary
 with two names for one string is how a translation gets updated in one of them.
+
+## The translation was half a translation
+
+`make verify` going green said nothing about language, because a string in the
+wrong language still renders. Grepping the components turned up the rest of it:
+
+- **The sign-in screen** — the first thing anybody sees — was English only.
+  Title, both hints, all three field labels, the submit button, the divider,
+  the passkey button and the "passkeys unavailable" line.
+- `DirectoryPicker` was the mirror image: six hardcoded Chinese strings with
+  `dir.up`, `dir.cancel` and `dir.use` sitting unused in the dictionary.
+- Eleven soft-key tooltips, the empty-project line, the empty-terminals line,
+  the "Add" button on todos, the clipboard-refused tooltip, the settings
+  password-changed line, the file-tree escaped-link warning, the sidebar's
+  sort-by-activity and restart tooltips, and the storage-fault banner.
+
+None of it broke anything. That is the point: this class of defect has no
+symptom a test can see, so it needs a test that reads the source instead.
+`i18n.untranslated.test.ts` scans every `.tsx` for the two shapes a literal
+takes — an attribute (`title`, `placeholder`, `aria-label`) and a line of prose
+between tags — with comments stripped first. Crude on purpose: a checker that
+needs a TSX parser this project does not depend on would not exist. Mutating a
+button's title back to English fails it.
+
+Its first run found the storage-fault banner, which the eye-grep had missed.
+
+**Two self-inflicted wounds worth recording.** `git checkout --` was used to
+undo a deliberate mutation and took the real work in the same files with it —
+the whole sign-in translation, silently, because the mutation and the work were
+in one file. And a blanket `s.replace("t(", "tr(")` to restore an alias turned
+`preventDefault(` into `preventDefaultr(` and `useEffect(` into `useEffectr(`.
+The alias exists for a reason the edit did not know: both of those files map
+over items bound to `t`, so the translator cannot also be `t` in that scope.
+Reverting and applying the two intended edits by hand took less time than the
+clever version had already cost.
+
+Also dropped `uppercase` from the project name in the sidebar. It is an
+editable field: you type `my-app`, it shows `MY-APP`, and clicking to rename
+shows something different again from what you typed. Case is information, and
+the section already reads as a section from its size and colour.

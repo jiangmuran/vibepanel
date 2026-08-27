@@ -1,5 +1,9 @@
 import { Component } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
+// `t` only: this is a class component, so it cannot subscribe to the language
+// with a hook. It renders once, after a crash, and a language change while an
+// error screen is on top of the app is not a case worth a second mechanism for.
+import { t } from '../i18n'
 
 /**
  * Keeps one broken component from taking the whole console with it.
@@ -49,7 +53,7 @@ export class ErrorBoundary extends Component<
           onClick={() => this.setState({ error: null })}
           className="rounded-vp border border-hairline px-2 py-1 text-[11px] text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
         >
-          Try again
+          {t('err.tryAgain')}
         </button>
       </div>
     )

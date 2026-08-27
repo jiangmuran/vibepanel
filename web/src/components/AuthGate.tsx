@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Fingerprint, KeyRound, LogIn } from 'lucide-react'
 
+import { t, useLang } from '../i18n'
 import { api } from '../protocol/api'
 import {
   decodeRequestOptions,
@@ -75,6 +76,7 @@ function Centered({ children }: { children: React.ReactNode }) {
 }
 
 function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
+  useLang()
   const setup = !state.configured
   const [token, setToken] = useState('')
   const [username, setUsername] = useState('')
@@ -134,16 +136,14 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
         className="w-full max-w-80 rounded-vp-lg border border-hairline bg-surface p-6"
       >
         <h1 className="mb-1 text-[15px] font-semibold tracking-tight text-ink">
-          {setup ? 'Set up vibepanel' : 'vibepanel'}
+          {setup ? t('auth.setupTitle') : 'vibepanel'}
         </h1>
         <p className="mb-5 text-[12px] leading-relaxed text-ink-2">
-          {setup
-            ? 'Paste the one-time token the server printed, then choose an account.'
-            : 'Sign in to reach your sessions.'}
+          {setup ? t('auth.setupHint') : t('auth.signInHint')}
         </p>
 
         {setup && (
-          <Field label="Setup token">
+          <Field label={t('auth.setupToken')}>
             <input
               value={token}
               onChange={(e) => setToken(e.target.value)}
@@ -155,7 +155,7 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
           </Field>
         )}
 
-        <Field label="Username">
+        <Field label={t('auth.username')}>
           <input
             value={username}
             onChange={(e) => setUsername(e.target.value)}
@@ -166,8 +166,8 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
         </Field>
 
         <Field
-          label="Password"
-          hint={setup ? 'At least 12 characters. Length beats punctuation.' : undefined}
+          label={t('auth.password')}
+          hint={setup ? t('auth.passwordHint') : undefined}
         >
           <input
             type="password"
@@ -193,14 +193,14 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
           style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
         >
           {setup ? <KeyRound size={14} /> : <LogIn size={14} />}
-          {busy ? 'Working…' : setup ? 'Create account' : 'Sign in'}
+          {busy ? t('auth.working') : setup ? t('auth.create') : t('auth.signIn')}
         </button>
 
         {!setup && state.passkeysUsable && passkeysSupported() && (
           <>
             <div className="my-4 flex items-center gap-3">
               <span className="h-px flex-1" style={{ background: 'var(--vp-hairline)' }} />
-              <span className="text-[10.5px] text-ink-2">or</span>
+              <span className="text-[10.5px] text-ink-2">{t('auth.or')}</span>
               <span className="h-px flex-1" style={{ background: 'var(--vp-hairline)' }} />
             </div>
             <button
@@ -211,14 +211,14 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
               className="flex w-full items-center justify-center gap-1.5 rounded-vp border border-hairline px-3 py-2 text-[13px] text-ink transition-colors duration-200 ease-vp hover:bg-surface-2 disabled:opacity-50"
             >
               <Fingerprint size={14} />
-              Use a passkey
+              {t('auth.usePasskey')}
             </button>
           </>
         )}
 
         {!setup && !state.passkeysUsable && (
           <p className="mt-4 text-[11px] leading-relaxed text-ink-2" data-testid="passkey-note">
-            Passkeys unavailable: {state.passkeyReason ?? 'not supported here'}.
+            {t('auth.noPasskeys', { why: state.passkeyReason ?? t('auth.notSupported') })}
           </p>
         )}
       </form>

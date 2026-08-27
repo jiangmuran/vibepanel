@@ -88,7 +88,7 @@ export function Todos({ projectId, socket }: { projectId: string; socket: PanelS
         <button
           type="button"
           onClick={add}
-          title="Add"
+          title={tr('todos.addShort')}
           className="rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
         >
           <Plus size={14} />

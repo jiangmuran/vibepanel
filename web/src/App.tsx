@@ -580,7 +580,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
       {showOverlay && (
         <button
           type="button"
-          aria-label="Close projects"
+          aria-label={t('app.closeProjects')}
           onClick={() => setDrawerOpen(false)}
           className="absolute inset-0 z-10 bg-black/30"
         />
@@ -676,7 +676,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               type="button"
               data-testid="right-show"
               onClick={() => setRightOpen(true)}
-              title="Show side panel"
+              title={t('app.showPanelShort')}
               className="ml-1 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
             >
               <PanelRight size={15} />
@@ -686,7 +686,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             type="button"
             data-testid="settings-open"
             onClick={() => setSettingsOpen(true)}
-            title="Settings"
+            title={t('app.settings')}
             className="ml-1 rounded-md p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
           >
             <SettingsIcon size={15} />
@@ -796,8 +796,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             className="border-b border-hairline px-4 py-2 text-[12px]"
             style={{ color: 'var(--vp-state-waiting)' }}
           >
-            The panel has stopped recording what the sessions are doing. The
-            terminals are unaffected. {state.stale}
+            {t('app.stale')} {safeText(state.stale)}
           </div>
         )}
 
@@ -871,7 +870,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
                 setBlockedClip('')
               }}
               className="absolute top-2 left-1/2 z-10 -translate-x-1/2 rounded-vp border border-hairline px-3 py-1.5 text-[11.5px] vp-solid hover:text-ink"
-              title="The browser refused a clipboard write that did not come from a click"
+              title={t('app.clipboardRefused')}
             >
               The terminal copied {blockedClip.length} character
               {blockedClip.length === 1 ? '' : 's'} — click to put it on your clipboard
@@ -946,7 +945,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             type="button"
             data-testid="bottom-show"
             onClick={() => setBottomOpen(true)}
-            title="Show terminals"
+            title={t('app.showTerminals')}
             className="flex h-6 shrink-0 items-center justify-center gap-1 border-t border-hairline text-[11px] text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink vp-blur"
           >
             <ChevronUp size={12} />

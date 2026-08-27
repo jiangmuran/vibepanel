@@ -3,6 +3,7 @@ import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CornerDownLeft } from 'lucid
 
 import { KEY_SEQUENCES, withAlt, withCtrl } from './keys'
 import type { KeyName } from './keys'
+import { t, useLang } from '../../i18n'
 
 /**
  * A keyboard for the keys a phone does not have.
@@ -14,6 +15,7 @@ import type { KeyName } from './keys'
  * one-character answers that are most of what anybody types from a phone.
  */
 export function MobileKeyBar({ onSend }: { onSend: (bytes: string) => void }) {
+  useLang()
   // Sticky modifiers: tap, then tap the key it applies to. Holding two places
   // at once is not a gesture a thumb can make.
   const [ctrl, setCtrl] = useState(false)
@@ -75,18 +77,18 @@ export function MobileKeyBar({ onSend }: { onSend: (bytes: string) => void }) {
             to. Two taps for the most urgent thing in the product was the
             wrong trade even if it had worked. */}
         <Key label="^C" onPress={() => sendRaw(withCtrl('c'))} wide
-          title="Interrupt (Ctrl-C)" />
+          title={t('key.interrupt')} />
         <Key label="y" onPress={() => sendRaw('y\r')} wide />
         <Key label="n" onPress={() => sendRaw('n\r')} wide />
-        <Key label="enter" onPress={key('enter')} title="Enter">
+        <Key label="enter" onPress={key('enter')} title={t('key.enter')}>
           <CornerDownLeft size={13} />
         </Key>
         <Key label="esc" onPress={key('escape')} wide />
         <Key label="tab" onPress={key('tab')} wide />
         <Key label="ctrl" onPress={() => setCtrl((v) => !v)} active={ctrl} wide
-          title="Applies to the next key" />
+          title={t('key.sticky')} />
         <Key label="alt" onPress={() => setAlt((v) => !v)} active={alt} wide
-          title="Applies to the next key" />
+          title={t('key.sticky')} />
       </div>
 
       {/* Everything else. This one may scroll: losing sight of "~" costs far
@@ -96,15 +98,15 @@ export function MobileKeyBar({ onSend }: { onSend: (bytes: string) => void }) {
         className="flex items-center gap-1 overflow-x-auto"
         style={{ touchAction: 'pan-x' }}
       >
-        <Key label="up" onPress={key('up')} title="Up"><ArrowUp size={13} /></Key>
-        <Key label="down" onPress={key('down')} title="Down"><ArrowDown size={13} /></Key>
-        <Key label="left" onPress={key('left')} title="Left"><ArrowLeft size={13} /></Key>
-        <Key label="right" onPress={key('right')} title="Right"><ArrowRight size={13} /></Key>
+        <Key label="up" onPress={key('up')} title={t('key.up')}><ArrowUp size={13} /></Key>
+        <Key label="down" onPress={key('down')} title={t('key.down')}><ArrowDown size={13} /></Key>
+        <Key label="left" onPress={key('left')} title={t('key.left')}><ArrowLeft size={13} /></Key>
+        <Key label="right" onPress={key('right')} title={t('key.right')}><ArrowRight size={13} /></Key>
         <Divider />
-        <Key label="home" onPress={key('home')} wide title="Home" />
-        <Key label="end" onPress={key('end')} wide title="End" />
-        <Key label="pgup" onPress={key('pageUp')} wide title="Page up" />
-        <Key label="pgdn" onPress={key('pageDown')} wide title="Page down" />
+        <Key label="home" onPress={key('home')} wide title={t('key.home')} />
+        <Key label="end" onPress={key('end')} wide title={t('key.end')} />
+        <Key label="pgup" onPress={key('pageUp')} wide title={t('key.pageUp')} />
+        <Key label="pgdn" onPress={key('pageDown')} wide title={t('key.pageDown')} />
         <Divider />
         {['1', '2', '3'].map((d) => (
           <Key key={d} label={d} onPress={() => sendChar(d)} />

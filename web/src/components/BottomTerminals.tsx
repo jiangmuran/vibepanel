@@ -183,7 +183,7 @@ export function BottomTerminals(props: Props) {
           />
         ) : (
           <div className="flex h-full items-center justify-center text-[12px] text-ink-2">
-            No terminals here yet
+            {tr('bottom.empty')}
           </div>
         )}
       </div>
