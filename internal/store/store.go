@@ -199,6 +199,60 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+
+	// v9: enough to rebuild a session the machine took with it.
+	//
+	// tmux outliving the *panel* is the premise of the project. tmux does not
+	// outlive the *machine*: a reboot takes the server and every session in it,
+	// and what was left was a sidebar full of rows marked GONE with no way
+	// back. Every column needed to recreate one was already here except the
+	// one that matters most.
+	//
+	// launch_command is that one. `command` holds #{pane_current_command} --
+	// the name of whatever was running last, "node" for an agent and "bash" for
+	// a shell somebody used -- which the poller overwrites every two seconds. It
+	// is a label, not an argv, and handleRestartSession already says so in as
+	// many words and falls back to a login shell because of it. This is the argv
+	// the session was created with, JSON, and it is never written again after
+	// creation. Empty string means "not recorded" -- every row that predates
+	// this migration, and nothing else; `[]` is the recorded fact that a session
+	// was asked for with no command, which is a login shell and is exactly
+	// reproducible. The two have to be distinguishable, because one of them is
+	// something the UI must admit to and the other is not.
+	//
+	// restore_on_boot is the opt-in. Rebuilding two dozen agents unasked on
+	// every boot is a worse failure than the one this fixes, so the default is
+	// off and the panel offers rather than acts.
+	//
+	// restored_at is what stops a restored screen reading as a live one. The
+	// pane carries a banner of its own, but a banner scrolls; this is the fact
+	// the sidebar and the header can keep showing.
+	//
+	// The scrollback goes in its own table, not in a column here. `sessions` is
+	// read whole by ListSessions on every poll tick and on every state
+	// broadcast -- at two dozen sessions that is a couple of dozen rows twice a
+	// second -- and a few hundred kilobytes of blob per row would be dragged
+	// through all of it. A separate table is read only by the thing that
+	// restores.
+	func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`ALTER TABLE sessions ADD COLUMN launch_command TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE sessions ADD COLUMN restore_on_boot INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE sessions ADD COLUMN restored_at INTEGER NOT NULL DEFAULT 0`,
+			`CREATE TABLE IF NOT EXISTS session_scrollback (
+			     session_id  TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+			     captured_at INTEGER NOT NULL,
+			     lines       INTEGER NOT NULL DEFAULT 0,
+			     truncated   INTEGER NOT NULL DEFAULT 0,
+			     content     BLOB NOT NULL
+			 )`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	},
 }
 
 // schemaVersion is the version this build writes.

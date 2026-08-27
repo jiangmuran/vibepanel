@@ -200,6 +200,15 @@ func (c Config) TmuxDir() string { return filepath.Join(c.DataDir, "tmux") }
 // ACMEDir holds cached certificates and account keys.
 func (c Config) ACMEDir() string { return filepath.Join(c.DataDir, "acme") }
 
+// RestoreDir holds the scrollback handed to a pane being rebuilt.
+//
+// A file rather than an argument or an environment variable: the archive is a
+// couple of hundred kilobytes, and both of those routes go through the process
+// argument space. The pane's own first command reads it and deletes it, so a
+// file here means either a restore that is still in flight or one whose pane
+// never started.
+func (c Config) RestoreDir() string { return filepath.Join(c.DataDir, "restore") }
+
 // PasskeysUsable reports whether WebAuthn registration can succeed with this
 // configuration. The login page uses it to explain why the passkey button is
 // disabled rather than letting the browser fail with an opaque error.
@@ -265,7 +274,7 @@ func (c Config) Validate() error {
 // 0700 throughout: the database holds password hashes and passkey material,
 // and the panel is frequently run as a normal user on a shared box.
 func (c Config) EnsureDirs() error {
-	for _, dir := range []string{c.DataDir, c.TmuxDir(), c.ACMEDir()} {
+	for _, dir := range []string{c.DataDir, c.TmuxDir(), c.ACMEDir(), c.RestoreDir()} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return fmt.Errorf("config: create %s: %w", dir, err)
 		}

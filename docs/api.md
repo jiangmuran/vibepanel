@@ -147,6 +147,7 @@ included.
 ### `PATCH /api/sessions/{id}`
 ### `DELETE /api/sessions/{id}`
 ### `POST /api/sessions/{id}/restart`
+### `POST /api/sessions/restore`
 
 ```sh
 curl -sX POST .../api/sessions -H "Authorization: Bearer $TOKEN" \
@@ -158,13 +159,55 @@ curl -sX POST .../api/sessions -H "Authorization: Bearer $TOKEN" \
 what the panel's own UI does — it never launches an agent for you.
 `parentSessionId` makes the new session a scratch terminal under another one.
 
-`PATCH` accepts `title` and `state`. Setting `state` is the manual override the
-status dot offers, and it stands until the session does something new.
+The argv is kept, on the row, as `launchCommand`. Do not confuse it with
+`command`, which is `#{pane_current_command}` — the name of whatever is in the
+pane right now, rewritten every two seconds, `"node"` for an agent and `"bash"`
+for a shell somebody used. `launchCommand` is what a restore executes;
+`command` is a label. `launchRecorded` is `false` on rows written before the
+panel kept the argv at all, which is a different thing from an empty
+`launchCommand` (a login shell, and exactly reproducible).
+
+`PATCH` accepts `title`, `state`, `pinned`, `sortIndex`, `clearSortIndex` and
+`restoreOnBoot`. Setting `state` is the manual override the status dot offers,
+and it stands until the session does something new. `restoreOnBoot` asks for
+this session to be rebuilt at the next startup that finds its tmux session
+missing, without confirmation; it is off by default, and it should stay off for
+anything you would not want two dozen of starting at once.
 
 `restart` brings a **dead** session's process back in the same pane, keeping its
 id, name and scrollback. It refuses a session that is still running with `409`:
 two viewers looking at one panel is the ordinary case, and a stale tab offering
-the button must not kill the agent somebody else just started.
+the button must not kill the agent somebody else just started. If the *tmux
+session itself* is gone — which is what a reboot leaves behind — `restart` does
+what `restore` does, because there is no pane to respawn into.
+
+`restore` rebuilds sessions whose tmux session no longer exists:
+
+```sh
+curl -sX POST .../api/sessions/restore -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"ids":["…","…"]}'
+# {"results":[{"id":"…","ok":true},{"id":"…","ok":false,"error":"…"}]}
+```
+
+`ids` is required and there is no "all" flag. It answers `200` with one result
+per id even when some failed — after a reboot the ordinary failure is a single
+project directory that was pruned while the machine was off, and refusing the
+whole batch over it would leave twenty-three sessions dead to report one.
+
+**What restore restores, and what it cannot.** The session comes back under the
+same id, in the same project, with the same name, working directory, ordering
+and tmux name; the recorded `launchCommand` is executed again; and the archived
+scrollback is printed into the new pane's history above a banner saying when it
+was captured. The **process** does not come back. An agent's context lived in
+that process and in a provider's conversation, and neither survived the machine
+going down: what starts is a new agent that remembers none of it. Anything you
+build on this should say so where a person will read it.
+
+The scrollback is captured every 30 seconds for sessions that have produced
+output, bounded to the last 2,000 lines and 256 KiB, and once more for every
+session when the panel shuts down — so an orderly reboot loses nothing and a
+power cut loses at most half a minute. `scrollbackAt` on a session row is when
+its archive was taken, or `0` when there is none.
 
 `DELETE` kills the tmux session and its scratch terminals, then removes the row.
 

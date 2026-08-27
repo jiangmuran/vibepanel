@@ -344,6 +344,85 @@ func TestEnvIsInjected(t *testing.T) {
 	}
 }
 
+// The bound on CaptureLines is real, and it is what makes archiving affordable.
+//
+// Measured against tmux 3.6 on a full 20,000-line history, the unbounded
+// capture is 2.97 MB and 69 ms per pane — 71 MB and 1.7 seconds of tmux across
+// the two dozen sessions this panel is built for, every archive pass. The whole
+// design of the archive rests on the bound actually being applied by tmux
+// rather than trimmed afterwards, and nothing else says so.
+//
+// A version of this that asked for lines and got the whole history would look
+// exactly the same from the outside: the archive would still work, still be
+// restorable, still be correct — and would cost ten times what it was budgeted.
+func TestCaptureLinesAsksTmuxForTheBound(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	if err := c.EnsureServer(ctx); err != nil {
+		t.Fatalf("EnsureServer: %v", err)
+	}
+
+	const name = "vp_capbound"
+	// 3,000 numbered lines into a 24-row pane, so 2,976 of them are history.
+	err := c.Create(ctx, CreateOptions{
+		Name: name,
+		Dir:  t.TempDir(),
+		Command: []string{"sh", "-c",
+			"i=0; while [ $i -lt 3000 ]; do echo LINE$i; i=$((i+1)); done; sleep 60"},
+		Width:  80,
+		Height: 24,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		out, cerr := c.Capture(ctx, name)
+		if cerr == nil && strings.Contains(out, "LINE2999") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the pane never finished printing: %v", cerr)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	full, err := c.Capture(ctx, name)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	bounded, err := c.CaptureLines(ctx, name, 100)
+	if err != nil {
+		t.Fatalf("CaptureLines: %v", err)
+	}
+
+	if !strings.Contains(full, "LINE0") {
+		t.Fatalf("the unbounded capture is missing the start of the history, so this test "+
+			"is not comparing what it thinks it is: %d bytes", len(full))
+	}
+	if strings.Contains(bounded, "LINE0") {
+		t.Error("CaptureLines(100) returned the whole history; the bound is not reaching tmux, " +
+			"and the archive costs ten times what it is budgeted for")
+	}
+	if !strings.Contains(bounded, "LINE2999") {
+		t.Error("CaptureLines dropped the end of the history, which is the half anybody wants")
+	}
+	if len(bounded) >= len(full) {
+		t.Errorf("bounded capture is %d bytes and the whole history is %d", len(bounded), len(full))
+	}
+
+	// A non-positive count is the whole history, so callers that do not want a
+	// bound do not have to know a sentinel.
+	whole, err := c.CaptureLines(ctx, name, 0)
+	if err != nil {
+		t.Fatalf("CaptureLines(0): %v", err)
+	}
+	if !strings.Contains(whole, "LINE0") {
+		t.Error("CaptureLines(0) is not the whole history")
+	}
+}
+
 func TestCaptureKeepsEscapeSequences(t *testing.T) {
 	c := newTestClient(t)
 	ctx := context.Background()

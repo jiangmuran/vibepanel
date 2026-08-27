@@ -96,12 +96,25 @@ type Server struct {
 	outMu      sync.Mutex
 	outputSeen map[string]time.Time
 
+	// archivedOutput remembers the last_output_at each session had when its
+	// scrollback was last captured, so a session that has printed nothing since
+	// is not captured and rewritten every archive tick. Pruned in archiveOnce
+	// against the sessions that still exist, which is what stops it growing
+	// with every session ever created.
+	archMu         sync.Mutex
+	archivedOutput map[string]int64
+
 	// TrimEvery and AuditKeep override the audit trim's schedule and cap. Zero
 	// means the constants. Tests set them small; nothing else should. They
 	// exist because a periodic job nobody can drive from a test is how this
 	// one came to run only at startup for as long as it did.
 	TrimEvery time.Duration
 	AuditKeep int
+
+	// ArchiveEvery overrides how often scrollback is captured. Zero means
+	// archiveInterval. Same reasoning as TrimEvery: a periodic job nobody can
+	// drive from a test is one that gets shipped never having run.
+	ArchiveEvery time.Duration
 
 	// staleMu guards the record of a panel that has stopped keeping up.
 	//
@@ -232,6 +245,11 @@ func (s *Server) Routes() http.Handler {
 			r.Patch("/sessions/{id}", s.handlePatchSession)
 			r.Delete("/sessions/{id}", s.handleDeleteSession)
 			r.Post("/sessions/{id}/restart", s.handleRestartSession)
+			// Plural and id-less on purpose. Restoring after a reboot is a
+			// batch by nature — the whole machine went down, so the whole list
+			// is gone — and a per-id route would have the browser fire two
+			// dozen requests that each shell out to tmux.
+			r.Post("/sessions/restore", s.handleRestoreSessions)
 
 			s.registerPanelRoutes(r)
 			s.registerSettingsRoutes(r)
@@ -1094,6 +1112,10 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		ID: sid, ProjectID: p.ID, TmuxName: tmuxName,
 		Title: req.Title, CWD: dir, Cols: req.Cols, Rows: req.Rows,
 		State: session.StateWorking, ParentID: parent,
+		// The argv as asked for, which is the only version of it that can be
+		// run again. Everything the poller writes into `command` after this is
+		// a name for what happens to be in the pane right now.
+		LaunchCommand: req.Command,
 	})
 	if err != nil {
 		// Untracked tmux session: remove it rather than orphan a process the
@@ -1128,6 +1150,9 @@ type patchSessionRequest struct {
 	State          *string `json:"state"`
 	SortIndex      *int    `json:"sortIndex"`
 	ClearSortIndex bool    `json:"clearSortIndex"`
+	// RestoreOnBoot asks for this session to be rebuilt without confirmation
+	// the next time the panel starts and finds its tmux session gone.
+	RestoreOnBoot *bool `json:"restoreOnBoot"`
 }
 
 func (s *Server) handlePatchSession(w http.ResponseWriter, r *http.Request) {
@@ -1163,6 +1188,12 @@ func (s *Server) handlePatchSession(w http.ResponseWriter, r *http.Request) {
 			s.Detector.SetManual(sid, st, time.Now())
 		}
 		if err := s.DB.SetSessionState(ctx, sid, st, session.SourceManual); err != nil {
+			s.writeStoreErr(w, err)
+			return
+		}
+	}
+	if req.RestoreOnBoot != nil {
+		if err := s.DB.SetSessionRestoreOnBoot(ctx, sid, *req.RestoreOnBoot); err != nil {
 			s.writeStoreErr(w, err)
 			return
 		}
@@ -1226,15 +1257,18 @@ func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request) {
 	// nothing to restart and this used to answer 500, so the button offered on
 	// exactly those rows was the one button that could not work.
 	//
-	// Build a new tmux session under the same name instead. The row keeps its
-	// id, its title, its place in the project and anything written about it;
-	// only the process is new, which is what "restart" means here.
+	// It then built a bare tmux session under the same name, and ran a login
+	// shell in it. The reasoning was correct at the time and is written out in
+	// store.Session.LaunchCommand: `command` holds #{pane_current_command},
+	// which is a label rather than an argv, and running it would start
+	// something nobody asked for.
 	//
-	// A login shell rather than the recorded command: `command` holds
-	// #{pane_current_command}, the name of whatever was running last — "node"
-	// for an agent, "bash" for a shell that had been used — and starting that
-	// as an argv would run something the user never asked for. A shell in the
-	// right directory is honest and always works.
+	// The panel records the real argv now, so that fallback is no longer the
+	// best available answer — it was a shell wearing the name of an agent. This
+	// branch is restoreSession, which runs what the session was created with
+	// and puts the archived scrollback back above it under a banner saying the
+	// process below is new. Restarting a *dead pane* is unchanged: respawn in
+	// place, which is what the other branch does.
 	exists, cerr := s.Tmux.Has(ctx, rec.TmuxName)
 	if cerr != nil {
 		writeErr(w, http.StatusInternalServerError, cerr.Error())
@@ -1274,22 +1308,16 @@ func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		dir := rec.CWD
-		if dir == "" {
-			if p, perr := s.DB.GetProject(ctx, rec.ProjectID); perr == nil {
-				dir = p.Path
-			}
-		}
-		if err := s.Tmux.Create(ctx, tmux.CreateOptions{
-			Name:   rec.TmuxName,
-			Dir:    dir,
-			Env:    s.hookEnv(ctx, rec.ID, rec.ProjectID),
-			Width:  rec.Cols,
-			Height: rec.Rows,
-		}); err != nil {
+		if err := s.restoreSession(ctx, rec); err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		// restoreSession already cleared the exit flag, forgot the old
+		// evidence, set the state and attached. Falling through would redo all
+		// of it, and would overwrite restored_at's meaning with nothing.
+		s.notifyState()
+		w.WriteHeader(http.StatusNoContent)
+		return
 	}
 	// Clear the flag here rather than waiting for the poller: the button the
 	// user just pressed has to visibly do something, and a tick of latency
@@ -1471,6 +1499,11 @@ func (s *Server) Reconcile(ctx context.Context) error {
 		s.Log.Warn("tmux sessions on our socket with no database row",
 			"count", orphans, "socket", s.Cfg.TmuxSocket)
 	}
+
+	// Last, after every row has been compared with tmux and the missing ones
+	// marked. Restoring reads that mark, so doing it inside the loop above
+	// would race the loop's own writes.
+	s.RestoreFlagged(ctx)
 	return nil
 }
 
@@ -1523,10 +1556,27 @@ func (s *Server) Poll(ctx context.Context) {
 	}
 	trim := time.NewTicker(every)
 	defer trim.Stop()
+	arch := s.ArchiveEvery
+	if arch <= 0 {
+		arch = archiveInterval
+	}
+	archive := time.NewTicker(arch)
+	defer archive.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-archive.C:
+			// Here rather than in a goroutine of its own, for the same reason
+			// the audit trim is: this loop already exists to do periodic work
+			// against tmux and the database, and a second lifecycle to start,
+			// stop and get wrong buys nothing.
+			//
+			// Not routed through noteStale either. A capture that fails is a
+			// session whose scrollback will be a little older than it could
+			// have been, not the panel losing track of what the sessions are
+			// doing, and the banner says the second thing.
+			s.archiveOnce(ctx)
 		case <-trim.C:
 			// Not routed through noteStale: a failure here is housekeeping
 			// falling behind, not the panel losing track of the sessions, and

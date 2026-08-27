@@ -11467,3 +11467,250 @@ that notice is the panel admitting it is guessing, which it was not.
 Claude, which is what the parameter-less request has always meant. Anything else
 is a `400`: the value picks a file in somebody's home directory to edit, so an
 unrecognised one is refused rather than resolved to whichever branch is first.
+
+## Surviving a reboot
+
+tmux outliving the panel is the premise of this project, and it is written at
+the top of `internal/tmux`: the Go server is a client, `systemctl restart
+vibepanel` costs nothing, every agent keeps running. All of that is true and
+none of it applies to `reboot`. The tmux server is a process on the same
+machine, its 20,000 lines of scrollback per pane are in that process's memory,
+and both go with the power.
+
+What the panel did about it was mark every row GONE and offer a restart button
+that started a login shell. So the state after a reboot was: two dozen rows
+saying a session existed, one button per row, and the button quietly did
+something other than what the row's name implied.
+
+### The column that looked like it was already there
+
+`sessions.command` is populated, non-empty and named `command`. It is
+`#{pane_current_command}`, which the poller overwrites every two seconds with
+the name of whatever process is in the pane — `node` for an agent, `bash` for a
+shell somebody typed in, `sleep` for the test above. It is a label. Running it
+as an argv starts something nobody asked for, and `handleRestartSession` already
+knew this and said so in a comment, which is why it ran a login shell instead.
+
+So the first half of restoring is a column that did not exist:
+`launch_command`, the argv the session was created with, written once and never
+touched again. Migration v9, along with `restore_on_boot` and `restored_at`.
+
+The distinction that took the most thought is `''` versus `'[]'`. An empty argv
+is a real, recorded fact — a session created as a login shell, and restoring it
+is exact. `''` is what the `ALTER` leaves on every row that already existed, and
+means nobody knows. Those have to stay apart, because collapsing them gives
+every pre-upgrade agent session a restore that starts a shell under the agent's
+name and says nothing. `TestMigrationV9RecordsWhatIsNeededToRebuildASession`
+pins the default; changing it to `'[]'` fails on the default *and* on
+`launchRecorded` coming back true for a row the panel knows nothing about.
+
+### capture-pane, which nothing had ever called
+
+`internal/tmux` has had `Capture` — `capture-pane -p -e -J -S -` — since the
+manager was written, with a comment describing it as the cold path for a
+backend restart. Nothing in the product called it. The manager's comment
+explains why: attaching makes tmux repaint, the repaint fills the ring, and
+priming the ring with history was measured to be invisible because tmux's attach
+begins with `ESC[?1049h`.
+
+It is exactly the right thing for this, though, because this is not about the
+ring. It is about having a copy of the screen somewhere that is not in the tmux
+server's memory.
+
+**The bound is the whole design.** Measured on tmux 3.6, a pane holding a full
+20,000-line history of coloured 130-column output:
+
+| | bytes | ms |
+|---|---|---|
+| `-S -` | 2,971,621 | 69 |
+| `-S -8000` | 1,195,852 | 31 |
+| `-S -4000` | 601,591 | 19 |
+| `-S -2000` | 304,423 | 13 |
+| `-S -1000` | 155,836 | 8 |
+
+Linear, so choosing the bound is choosing the cost. Unbounded, across the two
+dozen sessions this panel is built for, is 71 MB and 1.7 seconds of tmux per
+pass. 2,000 lines is around forty screens, which is well past the point where
+what is on it answers a different question than "what was this doing when the
+machine went down".
+
+`CaptureLines` asks tmux for the bound rather than trimming afterwards, and
+`TestCaptureLinesAsksTmuxForTheBound` is there because a version that asked for
+the lines and got the whole history would look identical from the outside — the
+archive would still work, still restore, still be correct, and cost ten times
+its budget.
+
+A second cap in bytes, 256 KiB, because 2,000 lines is not 2,000 lines worth of
+bytes: the 304 KB above is long, densely coloured lines, and the cap is what
+keeps the database's size a function of how many sessions exist rather than of
+what an agent decided to print. Trimmed from the front, on a line boundary — a
+capture sliced at an arbitrary byte can begin inside `ESC [ 3 8 ; 5 ; 2 0 0 m`,
+and the tail of that sequence is then printed into the restored pane as literal
+text.
+
+The first version of the test for that asserted "it does not look like it starts
+with an escape", which a mid-line cut passes vacuously, since arbitrary bytes
+usually are not an escape. It asserts the exact thing now: what came back must
+be preceded by a newline in what went in.
+
+### What it costs to keep
+
+Measured end to end, six sessions each holding a full 20,000-line history: a
+pass that captures all six is 40.7 ms and stores 150 KB each; a pass where none
+of them has printed since is 219 µs. The difference is the gate on
+`last_output_at`, which the PTY pump already maintains and already debounces to
+once a second. Without it, a panel where nothing at all is happening would
+rewrite 6 MB of blob every thirty seconds, forever, on a machine that is meant
+to stay up for months.
+
+Scaled to two dozen sessions: about 160 ms every thirty seconds at full tilt,
+under a millisecond at idle. On disk, 24 sessions all sitting at the byte cap is
+6,291,456 bytes of content in a 6,467,584-byte database — 2.8% overhead — written
+in 28.6 ms. `TestTheScrollbackArchiveFitsItsBudget` asserts that, because the
+obvious "improvement" of keeping a history of captures rather than one row per
+session would multiply the largest thing in the database and would pass every
+other test in the package.
+
+The blob is in `session_scrollback`, not on the `sessions` row, for a reason
+that has nothing to do with tidiness: `ListSessions` runs on every poll tick and
+every state broadcast, and a few hundred kilobytes per row would be dragged
+through all of it. The row carries `captured_at` through a `LEFT JOIN` instead,
+which is what lets the restore dialog say whether there is anything to put back
+and how old it is.
+
+And one more capture of everything on the way down, in `ArchiveAll`. An orderly
+reboot stops the unit before it stops anything else, so the panel is the last
+thing running that can still read those panes — and the thirty seconds the
+ticker might be behind by are exactly the seconds somebody wants tomorrow, being
+the last thing that was on screen. A power cut still loses up to half a minute;
+nothing can fix that, and the API doc says so.
+
+### Putting it back where scrollback lives
+
+The archive has to end up in the pane's own history, not in a viewer beside it.
+Scrolling back through a session is tmux's copy-mode, the panel's own capture
+reads the same history, and a second read-only "here is what it used to say"
+surface would be a second place to look for one thing.
+
+So the pane's first command prints it:
+
+```sh
+f=$1; shift
+if [ -f "$f" ]; then cat -- "$f"; rm -f -- "$f"; fi
+if [ "$#" -gt 0 ]; then exec "$@"; fi
+exec "${SHELL:-/bin/sh}" -l
+```
+
+Nothing is interpolated into that script. The archive path and the recorded argv
+arrive as positional parameters, so a directory with a quote in it, a command
+with a space in it, or output containing anything at all cannot change what the
+shell runs. It was the alternative — building a command string per session —
+that made this worth writing as a fixed constant.
+
+The file deletes itself as it is read, which is what makes the restart button
+still work on a restored session: `respawn-pane` reuses a pane's original
+command, so without the delete it would replay somebody's scrollback a second
+time under a banner that had become a lie. `exec` in both branches, so the
+pane's process is the agent rather than a shell holding one — otherwise the
+per-session CPU meter reports on the wrong tree and `#{pane_dead}` describes the
+wrapper.
+
+### The part that cannot be restored, said out loud
+
+The process. An agent that was halfway through a refactor is gone; its context
+lived in a process's memory and in a provider's conversation, and neither
+survived. Re-running the command starts a new agent that remembers none of it.
+
+This is the failure mode the whole feature is one step away from: old output on
+screen, the old name on the tab, a fresh agent underneath, and nobody told. So
+it is marked in two places that fail differently.
+
+In the pane, a bilingual banner between the archive and the new process, with
+the timestamp the capture was taken. Hard-coded English and Chinese, which is
+the one place in this project allowed to be: `web/src/i18n.ts` is the browser's
+dictionary, and this text is printed by a shell into a tmux pane by the server,
+where there is no browser and no language preference to read. It opens with
+`ESC[0m` — the capture carries SGR, its last line can leave the terminal bold or
+coloured, and without the reset the banner and then the agent's first output
+inherit it.
+
+In the UI, `restoredAt` and a chip in the header, because banners scroll. The
+chip's tooltip says everything above the banner belongs to a process that no
+longer exists.
+
+`TestRestoredScrollbackComesBackMarkedAsOld` checks both halves in one test on
+purpose, and also checks their order: the banner has to be *below* the old
+output, or it marks the wrong half. Removing the archive fails it at the old
+marker; removing the banner fails it at "The process below is new".
+
+### Offering rather than acting
+
+An automatic restore of everything on boot would launch two dozen agents, each
+of them starting to work, each of them costing money, on a machine somebody just
+turned on. That is a worse morning than a list of dead rows.
+
+So: a notice, a dialog that spells out the argv and the directory per session
+before anything is pressed, and a per-session `restore_on_boot` for the ones
+somebody does want back without being asked. `RestoreFlagged` runs at the end of
+`Reconcile` — last, after every row has been compared with tmux, because it
+reads the mark the loop above it writes.
+
+`POST /api/sessions/restore` takes explicit ids and has no "all" flag. It
+answers 200 with one result per id even when some failed: after a reboot the
+ordinary failure is one project directory pruned while the machine was off, and
+refusing the batch over it would leave twenty-three sessions dead in order to
+report one. The dialog stays open holding the failures rather than closing on a
+partial success, which is how somebody would otherwise find out tomorrow that
+three of the twenty-four never came back.
+
+`restart` on a vanished session now goes through the same path. Its old comment
+reasoned carefully about `command` being a label and concluded that a login
+shell was the honest fallback; that conclusion was right, and it stopped being
+the best answer available the moment the real argv was recorded.
+
+### Simulating the reboot in a test
+
+Two things go at once, and doing only one produces a state a real reboot never
+produces. `simulateReboot` kills the tmux server **on the test's own throwaway
+socket** and calls `DetachAll`, because every PTY the manager holds is a child
+of the panel and dies with it. Leaving the attachments would have the tests pass
+or fail for reasons unrelated to restoring.
+
+It also waits. `kill-server` returns before the server has finished going, and a
+command arriving in that window gets `server exited unexpectedly` — which is
+neither `ErrNoServer` nor `ErrNoSession`, so `Reconcile` propagates it and a
+test fails somewhere that has nothing to do with what it was checking. A real
+reboot has no such window: there is nothing left running to ask. That cost one
+confusing red run to find.
+
+### Mutations run
+
+Ten, each restored afterwards. Every one made its test red:
+
+| mutation | test |
+|---|---|
+| `handleCreateSession` does not record the argv | the restored pane is a login shell |
+| `Restorable` returns false | nothing is ever offered for restoring |
+| the restore payload carries no banner | the pane has old output and no marker |
+| `archiveSession` returns immediately | there is nothing to put back |
+| `RestoreFlagged` ignores `restore_on_boot` | a session nobody asked for starts on boot |
+| an unrecorded `launch_command` reports as recorded | a pre-v9 row claims to know its command |
+| the batch restore breaks on the first error | one bad id loses the rest of the batch |
+| the archive ignores `last_output_at` | an idle session is captured and rewritten every pass |
+| the byte cap keeps the front | the end of the session is thrown away |
+| the byte cap cuts mid-line | the archive begins inside an escape sequence |
+| migration v9 defaults `launch_command` to `'[]'` | every pre-upgrade row claims to be a login shell |
+
+### Left undone, deliberately
+
+- **Scratch terminals are not offered.** They are tabs under a session holding a
+  shell somebody opened for a minute, and two dozen of them in the restore
+  dialog would bury the choice that matters. They are still archived and still
+  restorable through the API; they are just not in the list.
+- **The archive is not compressed.** 6 MB at the worst case is affordable and
+  gzip would put a decoder between the database and a shell's `cat`. If the
+  bound is ever raised this is the first thing to reach for.
+- **No browser check covers the dialog.** The restore path is pinned by the Go
+  suite against a real tmux; the notice, the dialog and the chip are not driven
+  by `render-check`. That is the gap, and it is the kind of gap this project's
+  own notes say is where most of the defects have been.

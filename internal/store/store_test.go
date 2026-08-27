@@ -871,3 +871,94 @@ func TestAnOlderBinaryRefusesANewerDatabase(t *testing.T) {
 		}
 	}
 }
+
+// v9 is the migration that makes a reboot survivable, and its shape is what the
+// restore depends on.
+//
+// The number is a literal for the same reason the audit rename's is: migrations
+// are append-only, so `len(migrations)-1` moves under the test and starts
+// checking whatever was added last.
+//
+// What is actually pinned here is the *default* the ALTER leaves behind. Every
+// session row that existed before this migration gets launch_command = ”, and
+// ” has to keep meaning "nobody knows what this was running". The wrong
+// default -- '[]' -- would mean "created with no command", which is a login
+// shell, and every pre-upgrade agent session would silently offer to come back
+// as a shell wearing the agent's name.
+func TestMigrationV9RecordsWhatIsNeededToRebuildASession(t *testing.T) {
+	ctx := context.Background()
+	db := openTest(t)
+
+	const restoreMigration = 9
+	if len(migrations) < restoreMigration {
+		t.Fatalf("there are %d migrations and this test wants v%d", len(migrations), restoreMigration)
+	}
+
+	cols := map[string]string{}
+	rows, err := db.sql.QueryContext(ctx, `SELECT name, dflt_value FROM pragma_table_info('sessions')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		var def sql.NullString
+		if err := rows.Scan(&name, &def); err != nil {
+			t.Fatal(err)
+		}
+		cols[name] = def.String
+	}
+	for _, want := range []struct{ col, def string }{
+		{"launch_command", "''"},
+		{"restore_on_boot", "0"},
+		{"restored_at", "0"},
+	} {
+		got, ok := cols[want.col]
+		if !ok {
+			t.Errorf("sessions has no %s column; nothing can rebuild a session without it", want.col)
+			continue
+		}
+		if got != want.def {
+			t.Errorf("sessions.%s defaults to %q, want %q. The default is what every row "+
+				"written before this migration gets, and '[]' would claim those sessions "+
+				"were created with no command -- a login shell -- which is a different fact",
+				want.col, got, want.def)
+		}
+	}
+
+	// A row that predates the column, which is what the ALTER above produces.
+	proj, err := db.CreateProject(ctx, "proj1", "p", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.ExecContext(ctx, `
+		INSERT INTO sessions (id, project_id, tmux_name, created_at)
+		VALUES ('old', ?, 'vp_old', 1)`, proj.ID); err != nil {
+		t.Fatal(err)
+	}
+	old, err := db.GetSession(ctx, "old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old.LaunchRecorded {
+		t.Error("a row from before v9 reports a recorded command; the restore would start a " +
+			"shell and say nothing about it")
+	}
+
+	// And the archive goes away with its session. A blob keyed by a session id
+	// that no longer exists is unreachable and unbounded.
+	if err := db.PutScrollback(ctx, Scrollback{
+		SessionID: "old", CapturedAt: 1, Content: []byte("something")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DeleteSession(ctx, "old"); err != nil {
+		t.Fatal(err)
+	}
+	n, bytes, err := db.ScrollbackBytes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 || bytes != 0 {
+		t.Errorf("the archive outlived its session: %d rows, %d bytes", n, bytes)
+	}
+}

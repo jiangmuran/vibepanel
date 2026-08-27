@@ -370,6 +370,52 @@ const DICT = {
   'upgrade.reload': { zh: '刷新载入新版', en: 'Reload' },
   'upgrade.later': { zh: '待会儿', en: 'Later' },
 
+  // Restoring after the machine restarted.
+  //
+  // Every one of these is written to be honest about the half that cannot come
+  // back. A restore that reads as "your work is back" is worse than no restore
+  // at all, because somebody believes it.
+  'restore.title': { zh: '有会话没能活过这次重启', en: 'Sessions did not survive the restart' },
+  'restore.body': {
+    zh: '{n} 个会话的 tmux 会话已经不在了 —— 重启会带走整个 tmux server。面板可以按原来的命令、原来的目录重建它们，并把重启前的回滚记录放回去。',
+    en: '{n} sessions have lost their tmux session — a restart takes the whole tmux server with it. The panel can rebuild them with the command and directory they had, and put the scrollback from before back on screen.',
+  },
+  'restore.warning': {
+    zh: '进程本身回不来。agent 的上下文随进程一起没了，重跑命令启动的是一个全新的、什么都不记得的 agent。',
+    en: 'The processes cannot come back. An agent’s context went with its process, and re-running the command starts a new one that remembers none of it.',
+  },
+  'restore.open': { zh: '看看要恢复哪些', en: 'Choose what to restore' },
+  'restore.later': { zh: '待会儿', en: 'Later' },
+  'restore.dialogTitle': { zh: '恢复会话', en: 'Restore sessions' },
+  'restore.selectAll': { zh: '全选', en: 'Select all' },
+  'restore.selectNone': { zh: '全不选', en: 'Select none' },
+  'restore.willRun': { zh: '将运行', en: 'will run' },
+  'restore.willRunShell': {
+    zh: '将启动一个登录 shell —— 这个会话是在面板开始记录命令之前建的，原来跑的是什么已经无从得知',
+    en: 'will start a login shell — this session predates the panel recording commands, so what it was running is not known',
+  },
+  'restore.willRunShellKnown': {
+    zh: '将启动一个登录 shell —— 它当初就是这么建的',
+    en: 'will start a login shell — that is what it was created as',
+  },
+  'restore.scrollbackFrom': { zh: '回滚记录：{when}', en: 'scrollback from {when}' },
+  'restore.noScrollback': { zh: '没有存下回滚记录', en: 'no scrollback was archived' },
+  'restore.onBoot': { zh: '以后开机自动恢复', en: 'Restore this one automatically next time' },
+  'restore.onBootWhy': {
+    zh: '勾上之后，下次面板启动发现它不在了就直接重建，不再问你。默认不勾：一次开机同时拉起二十几个 agent 比现在这个问题更糟。',
+    en: 'Checked, the panel rebuilds it at startup without asking. Off by default: two dozen agents all starting at once on boot is a worse morning than a list of dead rows.',
+  },
+  'restore.go': { zh: '恢复选中的 {n} 个', en: 'Restore {n}' },
+  'restore.working': { zh: '恢复中…', en: 'Restoring…' },
+  'restore.failed': { zh: '{n} 个没能恢复', en: '{n} could not be restored' },
+  'restore.close': { zh: '关闭', en: 'Close' },
+  'restore.gone': { zh: '这个会话的 tmux 会话没了，可以重建', en: 'The tmux session is gone; rebuild it' },
+  'restore.badge': { zh: '已恢复', en: 'restored' },
+  'restore.badgeWhy': {
+    zh: '这个会话在 {when} 被重建过。屏幕上分隔线以上的内容属于一个已经不存在的进程。',
+    en: 'This session was rebuilt at {when}. Everything above the banner on screen belongs to a process that no longer exists.',
+  },
+
   'guessed.installed': {
     zh: '状态还在靠猜：装 hook 之前就开着的会话要重开一次才会上报。在里面输入 /hooks，或者重启那个 agent。',
     en: 'States are still guessed. Sessions open before reporting was installed keep guessing until they reload — run /hooks in each, or restart the agent.',

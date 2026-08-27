@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 
 	"github.com/jiangmuran/vibepanel/internal/session"
@@ -35,6 +36,48 @@ type Session struct {
 	Command        string         `json:"command"`
 	Cols           int            `json:"cols"`
 	Rows           int            `json:"rows"`
+
+	// LaunchCommand is the argv this session was created with, and it is the
+	// only thing here that can be run again.
+	//
+	// Command above is #{pane_current_command}, rewritten by the poller every
+	// couple of seconds with the name of whatever is running now. "node" is
+	// what an agent looks like through it, "bash" is what a shell somebody
+	// typed in looks like, and neither is something to exec. Written once, at
+	// creation, and never touched afterwards.
+	LaunchCommand []string `json:"launchCommand"`
+
+	// LaunchRecorded distinguishes "created with no command" from "created
+	// before the panel recorded commands at all".
+	//
+	// Both are an empty LaunchCommand and they mean opposite things: the first
+	// is a login shell and restoring it is exact, the second is a session the
+	// panel cannot honestly claim to be able to rebuild. Rows that predate
+	// migration v9 are the second, and the restore dialog has to say so rather
+	// than quietly starting a shell under an agent's name.
+	LaunchRecorded bool `json:"launchRecorded"`
+
+	// RestoreOnBoot means: when the tmux session is found missing at startup,
+	// bring this one back without asking.
+	//
+	// Off by default and deliberately opt-in per session. A panel that silently
+	// launched two dozen agents on every boot would be a worse failure than the
+	// one restore exists to fix.
+	RestoreOnBoot bool `json:"restoreOnBoot"`
+
+	// RestoredAt is when this session was last rebuilt from a database row,
+	// zero if never.
+	//
+	// The process behind a restored session is new — the agent's conversation
+	// did not survive the reboot and nothing can bring it back. The pane gets a
+	// banner saying so, but a banner scrolls off; this is what lets the UI keep
+	// saying it after it has.
+	RestoredAt int64 `json:"restoredAt"`
+
+	// ScrollbackAt is when the archived scrollback for this session was
+	// captured, zero if there is none. Joined in rather than stored here; see
+	// session_scrollback.
+	ScrollbackAt int64 `json:"scrollbackAt"`
 	// Not sent. It changes at most once a second per session, and the state
 	// snapshot is broadcast to every viewer whenever it differs from the last
 	// one — so a single session producing output made every tick a broadcast,
@@ -95,32 +138,70 @@ func (d *DB) CreateSession(ctx context.Context, s Session) (Session, error) {
 	if s.ParentID != nil {
 		parent = *s.ParentID
 	}
-	_, err := d.sql.ExecContext(ctx, `
+
+	// Always recorded from here on, including the empty argv. A caller that
+	// creates a session at all knows what it asked for, so "not recorded" is
+	// reserved for rows written before this column existed — and a restore
+	// that cannot tell the two apart has to guess at a shell for a session
+	// that was running an agent.
+	launch, err := json.Marshal(emptyIfNil(s.LaunchCommand))
+	if err != nil {
+		return Session{}, fmt.Errorf("store: encode launch command: %w", err)
+	}
+	s.LaunchRecorded = true
+
+	_, err = d.sql.ExecContext(ctx, `
 		INSERT INTO sessions
 			(id, project_id, tmux_name, title, title_source, state, state_source,
-			 state_changed_at, cwd, command, cols, rows, created_at, parent_session_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 state_changed_at, cwd, command, cols, rows, created_at, parent_session_id,
+			 launch_command)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		s.ID, s.ProjectID, s.TmuxName, s.Title, s.TitleSource, s.State, s.StateSource,
-		s.StateChangedAt, s.CWD, s.Command, s.Cols, s.Rows, s.CreatedAt, parent)
+		s.StateChangedAt, s.CWD, s.Command, s.Cols, s.Rows, s.CreatedAt, parent,
+		string(launch))
 	if err != nil {
 		return Session{}, fmt.Errorf("store: insert session: %w", err)
 	}
 	return s, nil
 }
 
-const sessionColumns = `id, project_id, tmux_name, title, title_source, state, state_source,
-	state_changed_at, pinned, sort_index, cwd, command, cols, rows,
-	last_output_at, created_at, archived_at, parent_session_id, exited, exit_status`
+// emptyIfNil keeps a nil argv from marshalling as `null`.
+//
+// json.Marshal([]string(nil)) is "null", which reads back as nil and is
+// indistinguishable from the column never having been written. The whole point
+// of launch_command is telling those two apart.
+func emptyIfNil(v []string) []string {
+	if v == nil {
+		return []string{}
+	}
+	return v
+}
+
+// sessionColumns is qualified because every read joins the scrollback archive.
+//
+// The join is a primary-key lookup per row and buys the one fact the restore UI
+// cannot do without: whether there is anything to put back, and how old it is.
+// The blob itself is deliberately not in this list — see ScrollbackAt.
+const sessionColumns = `s.id, s.project_id, s.tmux_name, s.title, s.title_source, s.state,
+	s.state_source, s.state_changed_at, s.pinned, s.sort_index, s.cwd, s.command, s.cols,
+	s.rows, s.last_output_at, s.created_at, s.archived_at, s.parent_session_id, s.exited,
+	s.exit_status, s.launch_command, s.restore_on_boot, s.restored_at,
+	COALESCE(sb.captured_at, 0)`
+
+// sessionFrom is the FROM clause every session read shares.
+const sessionFrom = `FROM sessions s LEFT JOIN session_scrollback sb ON sb.session_id = s.id`
 
 func scanSession(sc interface{ Scan(...any) error }) (Session, error) {
 	var s Session
 	var sortIdx sql.NullInt64
 	var archived sql.NullInt64
 	var parent sql.NullString
+	var launch string
 	err := sc.Scan(&s.ID, &s.ProjectID, &s.TmuxName, &s.Title, &s.TitleSource,
 		&s.State, &s.StateSource, &s.StateChangedAt, &s.Pinned, &sortIdx,
 		&s.CWD, &s.Command, &s.Cols, &s.Rows, &s.LastOutputAt, &s.CreatedAt, &archived,
-		&parent, &s.Exited, &s.ExitStatus)
+		&parent, &s.Exited, &s.ExitStatus, &launch, &s.RestoreOnBoot, &s.RestoredAt,
+		&s.ScrollbackAt)
 	if err != nil {
 		return Session{}, err
 	}
@@ -134,6 +215,22 @@ func scanSession(sc interface{ Scan(...any) error }) (Session, error) {
 	if parent.Valid {
 		s.ParentID = &parent.String
 	}
+	// A row written before v9 has '' here, which is not JSON and must not be
+	// reported as an empty argv: an empty argv is a login shell, and a session
+	// that was running an agent restarted as a shell under the agent's name is
+	// exactly the silent wrongness restore exists to avoid. Anything that fails
+	// to parse is treated the same way — unrecorded — rather than surfaced as
+	// an error that would take the whole sidebar down with it.
+	if launch != "" {
+		var argv []string
+		if json.Unmarshal([]byte(launch), &argv) == nil {
+			s.LaunchCommand = emptyIfNil(argv)
+			s.LaunchRecorded = true
+		}
+	}
+	if s.LaunchCommand == nil {
+		s.LaunchCommand = []string{}
+	}
 	return s, nil
 }
 
@@ -144,9 +241,9 @@ func scanSession(sc interface{ Scan(...any) error }) (Session, error) {
 // tab strip that reorders itself while you are using it is hostile.
 func (d *DB) ListChildSessions(ctx context.Context, parentID string) ([]Session, error) {
 	rows, err := d.sql.QueryContext(ctx, fmt.Sprintf(`
-		SELECT %s FROM sessions
-		WHERE parent_session_id = ?
-		ORDER BY sort_index ASC, created_at ASC`, sessionColumns), parentID)
+		SELECT %s %s
+		WHERE s.parent_session_id = ?
+		ORDER BY s.sort_index ASC, s.created_at ASC`, sessionColumns, sessionFrom), parentID)
 	if err != nil {
 		return nil, fmt.Errorf("store: list child sessions: %w", err)
 	}
@@ -174,19 +271,19 @@ func (d *DB) ListSessions(ctx context.Context) ([]Session, error) {
 
 // ListProjectSessions returns the sessions of one project in display order.
 func (d *DB) ListProjectSessions(ctx context.Context, projectID string) ([]Session, error) {
-	return d.listSessions(ctx, "WHERE project_id = ?", []any{projectID})
+	return d.listSessions(ctx, "WHERE s.project_id = ?", []any{projectID})
 }
 
 func (d *DB) listSessions(ctx context.Context, where string, args []any) ([]Session, error) {
 	q := fmt.Sprintf(`
-		SELECT %s FROM sessions
+		SELECT %s %s
 		%s
-		ORDER BY pinned DESC,
-		         CASE state WHEN 'waiting' THEN 0 WHEN 'working' THEN 1 WHEN 'done' THEN 2 ELSE 3 END,
-		         CASE WHEN sort_index IS NULL THEN 1 ELSE 0 END,
-		         sort_index ASC,
-		         last_output_at DESC,
-		         created_at DESC`, sessionColumns, where)
+		ORDER BY s.pinned DESC,
+		         CASE s.state WHEN 'waiting' THEN 0 WHEN 'working' THEN 1 WHEN 'done' THEN 2 ELSE 3 END,
+		         CASE WHEN s.sort_index IS NULL THEN 1 ELSE 0 END,
+		         s.sort_index ASC,
+		         s.last_output_at DESC,
+		         s.created_at DESC`, sessionColumns, sessionFrom, where)
 
 	rows, err := d.sql.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -208,7 +305,7 @@ func (d *DB) listSessions(ctx context.Context, where string, args []any) ([]Sess
 // GetSession returns one session by id.
 func (d *DB) GetSession(ctx context.Context, id string) (Session, error) {
 	row := d.sql.QueryRowContext(ctx,
-		fmt.Sprintf(`SELECT %s FROM sessions WHERE id = ?`, sessionColumns), id)
+		fmt.Sprintf(`SELECT %s %s WHERE s.id = ?`, sessionColumns, sessionFrom), id)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
 		return Session{}, ErrNotFound
@@ -349,6 +446,21 @@ func (d *DB) TouchSessionOutput(ctx context.Context, id string, at int64) error 
 		return fmt.Errorf("store: touch session output: %w", err)
 	}
 	return nil
+}
+
+// SetSessionRestoreOnBoot decides whether a startup that finds this session's
+// tmux session missing should rebuild it without asking.
+func (d *DB) SetSessionRestoreOnBoot(ctx context.Context, id string, on bool) error {
+	return d.exec1(ctx, `UPDATE sessions SET restore_on_boot = ? WHERE id = ?`, on, id)
+}
+
+// MarkSessionRestored records that a session was rebuilt from its row.
+//
+// Kept rather than cleared on the next restart: it is a fact about the pane
+// somebody is looking at — the scrollback above the banner belongs to a process
+// that no longer exists — and it stays true until the session is killed.
+func (d *DB) MarkSessionRestored(ctx context.Context, id string, at int64) error {
+	return d.exec1(ctx, `UPDATE sessions SET restored_at = ? WHERE id = ?`, at, id)
 }
 
 // DeleteSession removes a session row.
