@@ -147,7 +147,7 @@ export function BigNumber({ w, data, now }: { w: ShareWidget; data: ShareDashboa
   const metric = w.metric ?? 'waiting'
   const read = readMetric(metric, data, now)
   return (
-    <Tile kind={w.kind} span={w.span} testid="widget-bignumber" plain>
+    <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-bignumber" plain>
       <Headline
         testid="dash-bignumber"
         value={read.value}
@@ -171,7 +171,7 @@ export function Attention({ w, data, now }: { w: ShareWidget; data: ShareDashboa
   const oldest = data.counts.longestWaitAt > 0 ? now - data.counts.longestWaitAt : 0
   const quiet = data.counts.waiting === 0
   return (
-    <Tile kind={w.kind} span={w.span} testid="widget-attention" plain>
+    <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-attention" plain>
       <div className="flex flex-wrap items-baseline gap-x-8 gap-y-2">
         <span
           className="tabular text-vp-3xl font-semibold"
@@ -204,7 +204,7 @@ export function Attention({ w, data, now }: { w: ShareWidget; data: ShareDashboa
 export function States({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
   const c = data.counts
   return (
-    <Tile kind={w.kind} span={w.span} testid="widget-states" plain>
+    <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-states" plain>
       <div className="flex flex-wrap items-start gap-x-12 gap-y-6" data-testid="dash-counts">
         <Tally
           value={c.waiting}
@@ -278,7 +278,7 @@ function Tally({
 export function Output({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
   const spend = data.spend
   return (
-    <Tile kind={w.kind} span={w.span} testid="widget-output" label={t('board.kind.output')}>
+    <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-output" label={t('board.kind.output')}>
       <div className="flex flex-wrap gap-x-10 gap-y-4">
         <Headline
           testid="output-done"
@@ -310,7 +310,7 @@ export function Clock({ w }: { w: ShareWidget }) {
     return () => clearInterval(timer)
   }, [])
   return (
-    <Tile kind={w.kind} span={w.span} testid="widget-clock" plain>
+    <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-clock" plain>
       <div className="tabular text-vp-3xl font-semibold text-ink" data-testid="dash-clock">
         {now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
       </div>
@@ -328,7 +328,7 @@ export function Clock({ w }: { w: ShareWidget }) {
  */
 export function Caption({ w }: { w: ShareWidget }) {
   return (
-    <Tile kind={w.kind} span={w.span} testid="widget-caption" plain>
+    <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-caption" plain>
       <p className="text-vp-2xl font-medium text-ink" data-testid="dash-caption">
         {safeText(w.text ?? '')}
       </p>

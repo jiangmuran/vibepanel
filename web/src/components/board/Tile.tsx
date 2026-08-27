@@ -9,9 +9,28 @@ import type { ReactNode } from 'react'
  * because the widgets that exist to be read from three metres (a single number,
  * a clock) are worse with a caption above them.
  */
+/**
+ * How many grid rows a tile takes.
+ *
+ * Clamped here as well as on the server. The server refuses a bad height on the
+ * way in and drops the widget on the way out; this is the third place the same
+ * rule is applied, because it is the one running on somebody else's machine and
+ * `grid-row: span NaN` is a tile that swallows the whole board.
+ *
+ * Exported so the clamp has a test rather than only a comment.
+ */
+export function rowSpan(height?: number): number {
+  if (!Number.isFinite(height) || (height ?? 0) <= 1) return 1
+  return Math.min(Math.floor(height!), MAX_ROWS)
+}
+
+/** The server's own bound, restated. store.MaxRows. */
+const MAX_ROWS = 4
+
 export function Tile({
   label,
   span,
+  height,
   children,
   testid,
   kind,
@@ -19,6 +38,13 @@ export function Tile({
 }: {
   label?: string
   span: number
+  /** How many grid rows tall, or absent for one.
+   *
+   *  Hierarchy on a wall is a size ratio, not a colour: the hero has to be
+   *  several times the area of the texture around it, and a grid of equal
+   *  tiles is a dashboard however carefully it is coloured. Height is the half
+   *  of that ratio a span cannot express. */
+  height?: number
   children: ReactNode
   testid: string
   kind: string
@@ -26,16 +52,18 @@ export function Tile({
    *  box around it only makes the figure smaller. */
   plain?: boolean
 }) {
+  const rows = rowSpan(height)
   return (
     <section
       data-testid={testid}
       data-widget={kind}
+      data-height={rows}
       className={
         plain
           ? 'flex min-w-0 flex-col justify-center'
           : 'flex min-w-0 flex-col rounded-vp-lg border border-hairline bg-surface p-5'
       }
-      style={{ gridColumn: `span ${span}` }}
+      style={{ gridColumn: `span ${span}`, gridRow: `span ${rows}` }}
     >
       {label && (
         <h2 className="mb-3 truncate text-vp-xl font-medium text-ink-3" data-testid="tile-label">

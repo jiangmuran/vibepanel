@@ -3,6 +3,20 @@ import { Gauge, Machine, Unknown, Uptime } from './machine'
 import { Attention, BigNumber, Caption, Clock, Output, States } from './numbers'
 import { CPUTop, Exits, Projects, SessionGrid, SessionList, Todos } from './sessions'
 import { SpendBars, SpendCompare, SpendHeatmap, SpendRate, SpendSplit, SpendTotals } from './spend'
+import { MachineArea, Odometer, Sparkline, SpendStack, TokenBurn } from './charts'
+import {
+  Busiest,
+  DateTime,
+  Health,
+  Heading,
+  Kinds,
+  NowStrip,
+  RemarkTile,
+  Rule,
+  Spacer,
+  StateBar,
+  Timeline,
+} from './wall'
 
 /**
  * One widget, chosen by kind.
@@ -72,6 +86,38 @@ export function Widget({
       return <SpendSplit w={w} data={data} />
     case 'spendheatmap':
       return <SpendHeatmap w={w} data={data} />
+    case 'statebar':
+      return <StateBar w={w} data={data} />
+    case 'nowstrip':
+      return <NowStrip w={w} data={data} />
+    case 'kinds':
+      return <Kinds w={w} data={data} />
+    case 'busiest':
+      return <Busiest w={w} data={data} />
+    case 'timeline':
+      return <Timeline w={w} data={data} now={now} />
+    case 'health':
+      return <Health w={w} data={data} now={now} />
+    case 'machinearea':
+      return <MachineArea w={w} data={data} />
+    case 'tokenburn':
+      return <TokenBurn w={w} data={data} />
+    case 'odometer':
+      return <Odometer w={w} data={data} />
+    case 'sparkline':
+      return <Sparkline w={w} data={data} />
+    case 'spendstack':
+      return <SpendStack w={w} data={data} />
+    case 'datetime':
+      return <DateTime w={w} />
+    case 'remark':
+      return <RemarkTile w={w} data={data} />
+    case 'heading':
+      return <Heading w={w} />
+    case 'rule':
+      return <Rule w={w} />
+    case 'spacer':
+      return <Spacer w={w} />
     default:
       return <Unknown w={w} />
   }

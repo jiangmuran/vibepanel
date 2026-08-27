@@ -14731,3 +14731,267 @@ cannot tell `[]` from `null` — both become a nil slice in Go, and in TypeScrip
 the difference only exists at runtime, which is exactly where it bit. A test
 that decodes would have passed against the bug. The same trap survived a
 mutation on another branch this week for the same reason.
+## The wall you cannot walk to
+
+The ask arrived in three messages and the third one moved the centre of the
+work:
+
+> 我要能够在服务端为 view only link 添加 remark 或者 lock 或者更换模版 同时所有打开这个 link 的人都能看见 以及查看连接 client 数量、同时在 admin client 和 view client 配置布局
+
+then
+
+> 可能我需要把这个放在大屏上 然后不能每次要改布局都得登录到大屏去改 所以说你得加一个我在管理员客户端改布局的功能 … viewer布局改成互相同步
+
+and finally
+
+> 你想想这个屏幕上能放啥 这是重中之重之重中之重 … 比如说你实时消耗Token 服务器的资源占用图之类的 就把这个画面给他布满 同时有整个的层次
+
+The first reading of "在 view client 配置布局" was "let the person at the screen
+rearrange it", and a whole per-viewer `localStorage` layout was designed on that
+reading, banded by viewport exactly like `components/panes.ts`. It was wrong,
+and the second message is what says so. **The screen is a television with nobody
+standing at it.** A layout feature for the person at the screen is a feature for
+a screen that has a person at it. Worse, it would have made two walls on one
+link disagree, which is the opposite of what a link is.
+
+So: one board per link, on the server, authoritative for every viewer. The
+per-viewer layout was deleted before it was written.
+
+### How a change reaches an open screen
+
+It already did. `store/share.go` had recorded, in the comment on
+`DeleteShareLink`, that "revocation takes effect on the next poll, and there is
+nothing else to invalidate … that is most of why the dashboard polls rather than
+holding a connection." The dashboard asks every two seconds and every ask
+re-reads the link's row. An owner edits the board through
+`PATCH /api/settings/shares/{id}` — an ordinary authenticated route, from a
+laptop — and the wall has it two seconds later without anybody touching it.
+
+Nothing was added under the share token. Red line 8 survives untouched:
+`registerShareRoutes` still mounts exactly one `GET`.
+
+What was considered and rejected:
+
+| | |
+|---|---|
+| a WebSocket for viewers | a share viewer is unauthenticated; a socket authorised once and open for a week needs the revalidation machinery `/ws` has, for a page that reads six numbers — and revocation stops being free |
+| SSE or long-poll under `/api/share/{token}` | a second route below `requireShareToken`, which is the one-line edit red line 8 is about |
+| a writable link (`docs/writable-links.md`) | not needed. The whole ask is served by the *owner* editing remotely, so the second table and its own token prefix buy nothing here |
+
+### The client count
+
+In memory, in `internal/httpapi/sharelive.go`, keyed by link and by a per-tab
+opaque id the viewer sends as `?v=` on the poll it was already making. The id is
+hashed under the link's own stored hash before it is kept, so the book holds
+nothing about who and the same tab on two links is two unrelated entries.
+
+Not a column, for two reasons and the second is the one that decides it. A wall
+polls every two seconds forever, so a stored count is tens of thousands of
+writes a day for a number true for two seconds. And a stored count survives a
+restart, where the truthful answer is "nobody, until somebody polls again".
+
+**A connection that dies silently needs no cleanup**, which is the direct
+benefit of polling over a socket: nothing is held open to notice dying. An
+unplugged television stops refreshing its entry and ages out in fifteen seconds.
+A socket would need a close handler that fires reliably, and the one that does
+not fire is the one that leaves a phantom viewer on the owner's row forever.
+
+Viewers are **not** told the count. It is a fact about other people holding the
+same URL, and a link that discloses nothing about who holds it should not start
+telling one holder that another exists — least of all under `counts`, whose
+entire point is that the screen says nothing about people.
+
+### The remark, and why it is shown under `counts`
+
+A short owner-written label — the room a screen is in, the audience it is for —
+bounded at 80 runes by `store.TruncateRemark` and rendered through `safeText`.
+
+It is disclosed in **both** detail modes, and that is a decision. `detail`
+governs whether the *panel's* words may leave the machine: session titles and
+project names, read out of its own database. A remark is not the panel's; it is
+a sentence the owner wrote to whoever is standing in front of the screen, with
+the effect in front of them. `name` has always been sent in both modes for
+exactly this reason. Suppressed under `counts`, a remark would be a label its
+author cannot see on the wall they labelled — which they would work around by
+putting it in `name`, which is disclosed anyway. The settings page says so where
+it is typed.
+
+### Lock
+
+A column, enforced on the server. A `PATCH` to a locked link answers `409`
+unless it is the one that unlocks it, and the unlocking request applies nothing
+else — the editor unlocks, refetches, edits. Two acts, which is the whole of
+what a lock is; a single request that could unlock *and* apply a board would
+make it a message rather than a guard.
+
+What it guards against is not an attacker. It is the wall a customer is sitting
+in front of being rearranged from an editor left open on the wrong row, with
+several links in a list.
+
+### Editing a screen you are not standing in front of
+
+Three things make it workable and all three are on the settings page.
+
+**A preview**, from `GET /api/settings/shares/{id}/preview` — the *same builder*
+the dashboard endpoint uses, called with the link's own row, rendered through
+the *same* widget switch. The two ways to get this wrong both look reasonable:
+invented sample data composes a layout against numbers that will not be the real
+ones, and a second reduction of the panel's state written in the frontend
+diverges on the first field either side gains, in the direction "the preview
+shows something the real screen does not". The preview box takes the *reported*
+viewport's aspect ratio, and says out loud when nothing has opened the link —
+"nothing is showing this" is exactly what somebody about to hang a screen needs
+to know.
+
+**The viewer count**, which is the signal that says whether the wall is on.
+
+**Live editing, debounced at 700ms, with no save button.** The wall is the
+preview. A save button on a thing you are watching change is a second source of
+truth, and its failure is worse than a flicker: you edit, walk away, and the
+screen keeps the old board because nobody pressed it. Debounced so the wall
+lands on finished states rather than on every keystroke, and so one edit is one
+row write rather than one per character.
+
+### Placement: what was chosen and what was rejected
+
+**Chosen:** the flat ordered list, kept, with a wider vocabulary — twelve
+columns instead of four, a height of one to four rows, `grid-auto-flow: dense`,
+and a `spacer`/`rule`/`heading` for composition. Plus `fill`, which stretches
+the rows to the screen's height instead of letting them flow down it.
+
+Twelve because four could say a half and a quarter and nothing else: a third —
+the width that makes three things read as three things — could not be expressed
+at all. Height because that is the dimension a flat list did not have, and
+hierarchy on a wall is a size ratio: a screen where every tile is the same size
+is a dashboard, not a display.
+
+**Rejected: an explicit grid** — column start and span, row start and span, per
+breakpoint band. It is the obvious candidate and it costs four numbers times
+three bands per widget, all of which have to be validated, all of which a
+hand-written board can get wrong, and the band nobody authored is the one
+somebody's phone gets. Editing it needs a drag canvas; a list with a width and a
+height is editable from a phone. Auto-flow with dense packing plus a spacer
+expresses every arrangement in the twenty-four presets, so the coordinates would
+have bought nothing that was actually drawn.
+
+Old boards are converted rather than migrated: `normaliseGrid` reads a board
+with no `grid` as the old quarters and multiplies by three, on both the read and
+the write path. In SQL it would have meant parsing JSON in a migration to
+multiply one field, which cannot be re-run and cannot be reviewed. Deliberately
+**not** clamping as it multiplies — that would turn the refusal `validateWidget`
+owes somebody into a silent repair.
+
+### The catalogue: 21 kinds to 37
+
+Crossed *forms* — big number, gauge, area, sparkline, stacked bar, ranked bar,
+grid, tile, timeline, strip, text, nothing — against what the panel actually
+knows. Sixteen new kinds:
+
+| tier | kinds | why |
+|---|---|---|
+| hero | `tokenburn`, `odometer` | today's spend at headline size with the rate under it; every token ever recorded, as the only number that only goes up |
+| movement | `machinearea`, `sparkline`, `spendstack` | a line that changes is the cheapest honest proof the screen is alive; a wall of still numbers cannot be told from a wall that has frozen |
+| texture | `timeline`, `busiest`, `kinds`, `statebar`, `nowstrip`, `health` | dwell as a picture; where it is all happening; agents against shells; the panel in one strip; whether the panel behind the screen is well |
+| furniture | `spacer`, `rule`, `heading`, `remark`, `datetime` | you cannot compose a screen without empty space and grouping, and this is the part that gets forgotten |
+
+`cputop` gained a `by` of cpu/memory, because a session pinning a core and one
+holding eight gigabytes are two problems and one list answers neither.
+
+Two honesty problems were solved rather than shipped around:
+
+- **"实时Token消耗" is not live.** The figures come from a pass over the agents'
+  transcripts. `tokenburn` draws its rate from the differences between samples
+  in a ring — a real rate over a real interval — and prints when the last pass
+  finished underneath it. With fewer than two samples it falls back to the
+  average so far today and says *that* instead: two sentences, because they are
+  two numbers.
+- **A session timeline segmented by state cannot be drawn.** The panel stores
+  when a session entered its *current* state and nothing about the states
+  before it. `timeline` draws dwell on a shared scale, which is true, and is
+  still the widget that turns "seventeen agents" into a picture. A segmented one
+  needs a state-change log first.
+
+The trend ring lives in `internal/httpapi/sharelive.go`: fifteen minutes at ten
+seconds, per scope, in memory. Filled by the polls that draw it — a panel nobody
+is watching does no work for a graph nobody is looking at, the same rule the
+token ingester already follows. In memory rather than a table because a restart
+is *meant* to lose it: the honest line after a restart starts now rather than
+having a hole in it that renders as a cliff nobody can explain.
+
+### Presets: 19 to 24, grouped by screen
+
+`Preset.Screen` — phone, laptop, wall, bigwall — is what the picker groups on
+now. "Which of twenty-four do I want" is a question nobody can answer; "what am
+I putting this on" is one everybody can. It says what the board was *composed*
+for, not what it is limited to: every board still collapses with the viewport.
+
+Two are named for who is in the room. `exec` is the 4K one, in three tiers: hero
+(today's tokens, agents working), movement (a machine line, a stacked series),
+texture (where the spend went, what is running), closed by a `nowstrip`.
+`client` carries `Detail: counts` and `NeedsScope: true` as *hints the editor
+applies*, because the failure there is not an ugly screen — it is a customer
+reading another customer's project name off the wall they are sat in front of.
+The server validates `detail` and `scope` from the request regardless.
+
+Nothing here is a value or a productivity number. The panel knows what the
+agents recorded; it does not know money and it never reads a repository. So the
+impressive axis is scale and liveness, both of which happen to be true.
+
+### Mutation testing
+
+26 mutations, 26 killed, 0 survived. `scripts/mutate-share.py` re-runs them.
+
+| removed | what goes wrong |
+|---|---|
+| the preview mounted under the share token | a second `GET` below `requireShareToken` |
+| the reported viewport decides what is sent | a query parameter selects disclosure |
+| the viewer id decides what is sent | the same, through the other parameter |
+| the builder always uses names | a `counts` link starts using words |
+| `shareMachine` grows the sampler's disk path | a home directory on a wall |
+| the trend is sent whether or not a board draws one | a board stops being able to subtract |
+| `TruncateRemark` cuts bytes | U+FFFD in the middle of a label |
+| the edit path stores a remark unbounded | the bound is only on one of two call sites |
+| the create path stores a remark unbounded | the same, the other way |
+| the dashboard renders the remark without `safeText` | a bidi override reverses the header |
+| the lock is not checked | the wall a customer is watching is rearranged |
+| unlocking also applies the request it came with | the lock is one step, not two |
+| the lock is read from the request, not the row | a stale client unlocks by asserting |
+| viewer entries are never aged out | a switched-off television counted forever |
+| a revoked link keeps its viewers | "3 screens" about a link that is gone |
+| viewers counted by address, not by screen | two tabs on one machine are one screen |
+| the largest screen is not the one reported | composing for the phone, not the wall |
+| the edit path drops the remark | the owner's label never reaches the wall |
+| `fill` is dropped in `ValidateBoard` | a board drawn for a wall arrives as a page |
+| the read path does not convert an old board | every existing wall rearranges itself |
+| the write path does not convert an old board | a documented `curl` means something else |
+| the conversion clamps a bad span | a refusal becomes a silent repair |
+| a widget height is unbounded | `grid-row: span 40` swallows the board |
+| a preset uses a width the editor cannot offer | a board changes when you touch it |
+| a board does not collapse on a narrow screen | a phone gets a 4K composition |
+| a tile asks for whatever the row said | `grid-row: span NaN` |
+
+### Left undone
+
+- **No browser check covers any of it.** `render-check` would want
+  `share-lock`, `share-row-viewers`, `share-row-remark`, `share-edit-remark`,
+  `share-edit-status`, `board-preview`, `preview-board`, `preview-viewport`,
+  `preview-cold`, `widget-height`, `board-fill`, `dash-remark`, `dash-locked`,
+  and the new widget test ids. The two worth driving first are an edit on the
+  settings page arriving on a second browser tab open on the share URL, and the
+  preview's aspect ratio following the reported viewport.
+- **The preview shows page one only.** A rotating board's later pages drawn into
+  the same grid would overlap into an arrangement that is on no screen anywhere.
+  A page selector beside the preview is the obvious answer.
+- **The trend is per scope, so two links on the same scope share a ring** and a
+  link whose scope is deleted gets the whole-panel ring's key (`""`). That is
+  the same key a whole-panel link uses, which is correct for the machine half
+  and wrong for the token half — but a scoped link with a deleted target already
+  reports no spend at all, so the token half is zero either way.
+- **Nothing warns before an edit lands on a screen somebody is watching.** The
+  viewer count is beside the row and the lock exists, but neither is a
+  confirmation. Deliberate: a dialog on every keystroke is not live editing.
+- **A stacked series split by project or model is not possible.** The day series
+  is not grouped by anything, so `spendstack` stacks the four token columns
+  rather than the projects. A `UsageByDayAndProject` query would be needed.
+- **A per-session CPU sparkline inside a session tile** would need a ring per
+  session rather than one per scope. Left out rather than added speculatively.

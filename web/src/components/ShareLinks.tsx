@@ -1,32 +1,52 @@
-import { useEffect, useState } from 'react'
-import { ExternalLink, MonitorSmartphone, Pencil, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { ExternalLink, Lock, LockOpen, Monitor, MonitorSmartphone, Pencil, Trash2 } from 'lucide-react'
 
 import { api } from '../protocol/api'
-import type { Project, Session, ShareBoard, ShareCatalogue, ShareDetail, ShareLink } from '../protocol/wire'
+import type {
+  Project,
+  Session,
+  ShareBoard,
+  ShareCatalogue,
+  ShareDetail,
+  ShareLink,
+} from '../protocol/wire'
 import type { Key } from '../i18n'
 import { t, useLang } from '../i18n'
 import { BoardEditor } from './BoardEditor'
+import { BoardPreview } from './BoardPreview'
 import { presetLabel } from './board/labels'
 import { safeText } from './text'
 
 /**
- * Read-only share links.
+ * Read-only share links, and the place a screen on a wall is edited from.
  *
- * The same shape as ApiTokens and for the same reason: the token is readable
- * exactly once, in the response that made it, because the database keeps a
- * SHA-256 and a leaked backup must not hand over live links.
+ * The second half is the point of the page now. The case this exists for is a
+ * television: nobody is standing at it, and walking to it to sign in and move a
+ * widget is the thing that must not be necessary. So the board is changed from
+ * here, on a laptop, and the wall picks it up on its next poll — two seconds —
+ * because every poll re-reads the link's row. Nothing was added to the share
+ * token's own surface to make that work; it is still exactly one GET.
  *
- * What is different is that the thing you copy is a URL rather than a
- * credential to paste into a header, so that is what the reveal shows. Anybody
- * holding it can watch, which is the whole point and also the whole risk — the
- * copy above the button says so before the link exists rather than after.
+ * Three things make editing a screen you cannot see workable, and all three are
+ * on this page:
  *
- * Three decisions are made here and two of them are permanent. What the board
- * shows can be changed afterwards, because rearranging it cannot disclose
- * anything the link did not already carry. What it *may* say — `detail` — and
- * what it is *about* — `scope` — cannot, because by then the URL is already in
- * an email or typed into a television, and widening it is a change the people
- * holding it would never see.
+ *   - a preview drawn from the server's own builder, at the shape of the screen
+ *     that is actually showing the link;
+ *   - the count of screens that have it open, which is what tells you whether
+ *     the wall you are about to rearrange is on at all;
+ *   - a lock, so the one showing to a customer is not the one you edit by
+ *     accident with several links open in a list.
+ *
+ * Editing is **live**, debounced. The wall is the preview, and a save button on
+ * a thing you are watching change is a second source of truth: the failure it
+ * creates is worse than a flicker, because you edit, walk away, and the screen
+ * keeps the old board because nobody pressed it. Debounced so the wall lands on
+ * finished states rather than on every keystroke, and so one edit is one row
+ * write rather than one per character.
+ *
+ * The token is still readable exactly once, in the response that made it,
+ * because the database keeps a SHA-256 and a leaked backup must not hand over
+ * live links.
  */
 
 /** Expiry choices, in seconds. 0 is a link that does not expire. */
@@ -36,6 +56,21 @@ const EXPIRIES: { seconds: number; label: Key }[] = [
   { seconds: 604800, label: 'share.expiryWeek' },
   { seconds: 2592000, label: 'share.expiryMonth' },
 ]
+
+/**
+ * How long an edit sits still before it reaches the wall.
+ *
+ * Long enough that typing a caption arrives as a word rather than as letters,
+ * short enough that dragging a widget and looking up is the same gesture.
+ */
+const SAVE_AFTER_MS = 700
+
+/** How often the list is refetched while it is on screen.
+ *
+ *  Only for the viewer counts, which are true for about fifteen seconds each.
+ *  A row that says "2 watching" about a television somebody switched off ten
+ *  minutes ago is the one number on this page nobody would think to distrust. */
+const LIST_MS = 5000
 
 function shareURL(token: string): string {
   return `${location.origin}/share/${token}`
@@ -54,6 +89,14 @@ function scopeLabel(link: ShareLink): string {
   return t('share.scopeGone')
 }
 
+/** What is being edited, and whether it has reached the server yet. */
+interface Editing {
+  id: string
+  name: string
+  remark: string
+  board: ShareBoard
+}
+
 export function ShareLinks() {
   useLang()
   const [links, setLinks] = useState<ShareLink[]>([])
@@ -64,6 +107,7 @@ export function ShareLinks() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [catalogue, setCatalogue] = useState<ShareCatalogue | null>(null)
   const [name, setName] = useState('')
+  const [remark, setRemark] = useState('')
   const [detail, setDetail] = useState<ShareDetail>('counts')
   const [expiresIn, setExpiresIn] = useState(0)
   // "", "project:<id>" or "session:<id>". One control rather than two, because
@@ -76,14 +120,23 @@ export function ShareLinks() {
   // rather than a browser dialog: this panel is used on a phone, where a
   // native confirm covers the screen and reads as a page change.
   const [confirming, setConfirming] = useState<string | null>(null)
-  // Which existing link's board is open for editing, and what it has become.
-  const [editing, setEditing] = useState<{ id: string; name: string; board: ShareBoard } | null>(
-    null,
-  )
+  const [editing, setEditing] = useState<Editing | null>(null)
+  const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+
+  const refresh = useCallback(async () => {
+    try {
+      setLinks(await api.listShares())
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
+    // The first listing is fetched here rather than through refresh(), which is
+    // an async function the hooks lint reads as a setState in an effect body.
+    // Same request, and the cancellation flag is what an unmounted modal needs.
     api.listShares().then(
       (list) => {
         if (!cancelled) setLinks(list)
@@ -92,6 +145,9 @@ export function ShareLinks() {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e))
       },
     )
+    // Kept fresh while the page is open, for the viewer counts. Nothing else on
+    // a row changes without this tab having changed it.
+    const timer = window.setInterval(() => void refresh(), LIST_MS)
     api.state().then(
       (state) => {
         if (cancelled) return
@@ -110,7 +166,15 @@ export function ShareLinks() {
         // is refused by the server, and offering a state that cannot be saved
         // is offering a dead end.
         const first = cat.presets[0]
-        if (first) setBoard({ preset: first.id, rotate: first.rotate, widgets: [...first.widgets] })
+        if (first) {
+          setBoard({
+            grid: cat.maxSpan,
+            preset: first.id,
+            rotate: first.rotate,
+            fill: first.fill,
+            widgets: [...first.widgets],
+          })
+        }
       },
       (e: unknown) => {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e))
@@ -118,8 +182,41 @@ export function ShareLinks() {
     )
     return () => {
       cancelled = true
+      clearInterval(timer)
     }
-  }, [])
+  }, [refresh])
+
+  // ── the live edit ──────────────────────────────────────────────────────
+  //
+  // A ref for the timer rather than state, because rescheduling it must not
+  // re-render: the thing being edited is a board with twenty selects in it, and
+  // a render per keystroke is a select that loses focus while somebody is using
+  // it.
+  const saveTimer = useRef(0)
+  useEffect(() => {
+    if (!editing) return
+    clearTimeout(saveTimer.current)
+    saveTimer.current = window.setTimeout(() => {
+      void (async () => {
+        setSaving(true)
+        try {
+          await api.updateShare(editing.id, {
+            name: editing.name,
+            remark: editing.remark,
+            board: editing.board,
+            locked: false,
+          })
+          setError('')
+          await refresh()
+        } catch (e) {
+          setError(e instanceof Error ? e.message : String(e))
+        } finally {
+          setSaving(false)
+        }
+      })()
+    }, SAVE_AFTER_MS)
+    return () => clearTimeout(saveTimer.current)
+  }, [editing, refresh])
 
   const create = async () => {
     if (!board) return
@@ -132,23 +229,36 @@ export function ShareLinks() {
         board,
         scope,
         scopeId: scopeId ?? '',
+        remark: remark.trim(),
+        locked: false,
       })
       setFresh(shareURL(made.token))
       setCopied(false)
       setName('')
-      setLinks(await api.listShares())
+      setRemark('')
+      await refresh()
       setError('')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
   }
 
-  const save = async () => {
-    if (!editing) return
+  const setLock = async (link: ShareLink, locked: boolean) => {
     try {
-      await api.updateShare(editing.id, editing.name, editing.board)
-      setLinks(await api.listShares())
-      setEditing(null)
+      if (locked) {
+        await api.updateShare(link.id, {
+          name: link.name,
+          remark: link.remark,
+          board: link.board,
+          locked: true,
+        })
+        // The editor closes on lock. Leaving it open on a board that can no
+        // longer be saved is a form that silently stops working.
+        if (editing?.id === link.id) setEditing(null)
+      } else {
+        await api.unlockShare(link.id)
+      }
+      await refresh()
       setError('')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -158,7 +268,7 @@ export function ShareLinks() {
   const revoke = async (link: ShareLink) => {
     try {
       await api.deleteShare(link.id)
-      setLinks(await api.listShares())
+      await refresh()
       setConfirming(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -234,6 +344,15 @@ export function ShareLinks() {
               data-testid="share-name"
               className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent"
             />
+            <input
+              value={remark}
+              maxLength={catalogue?.maxRemark ?? 80}
+              onChange={(e) => setRemark(e.target.value)}
+              placeholder={t('share.remark')}
+              title={t('share.remarkWhy')}
+              data-testid="share-remark"
+              className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent"
+            />
             <select
               value={target}
               onChange={(e) => setTarget(e.target.value)}
@@ -293,10 +412,29 @@ export function ShareLinks() {
           </div>
 
           {catalogue && board && (
-            <BoardEditor board={board} catalogue={catalogue} onChange={setBoard} />
+            <BoardEditor
+              board={board}
+              catalogue={catalogue}
+              onChange={setBoard}
+              // A preset can carry a disclosure decision. One of them is only
+              // correct scoped to a single project with names off, because the
+              // failure is a customer reading another customer's project name
+              // off the screen they were sat in front of. Applied here rather
+              // than left to somebody to remember; the server checks both
+              // again, from the request, exactly as it always did.
+              onPickPreset={(preset) => {
+                if (preset.detail === 'counts' || preset.detail === 'names') {
+                  setDetail(preset.detail)
+                }
+                if (preset.needsScope && target === '' && projects[0]) {
+                  setTarget(`project:${projects[0].id}`)
+                }
+              }}
+            />
           )}
 
           <p className="mt-2 text-vp-sm leading-relaxed text-ink-3">{t('share.detailWhy')}</p>
+          <p className="text-vp-sm leading-relaxed text-ink-3">{t('share.remarkWhy')}</p>
         </div>
       )}
 
@@ -311,7 +449,32 @@ export function ShareLinks() {
             >
               <MonitorSmartphone size={13} className="shrink-0 text-ink-2" />
               <span className="min-w-0 flex-1 truncate text-ink">{safeText(link.name)}</span>
+              {link.remark !== '' && (
+                <span
+                  className="min-w-0 shrink truncate text-vp-sm text-ink-2"
+                  data-testid="share-row-remark"
+                >
+                  {safeText(link.remark)}
+                </span>
+              )}
               <code className="shrink-0 font-mono text-vp-sm text-ink-2">{link.prefix}…</code>
+              {/* How many screens have this open. An icon and a count, never a
+                  colour: this is the number that decides whether the wall you
+                  are about to rearrange is on at all. */}
+              <span
+                className="flex w-28 shrink-0 items-center justify-end gap-1 text-vp-sm text-ink-2"
+                data-testid="share-row-viewers"
+                data-viewers={link.viewers}
+              >
+                {link.viewers > 0 ? (
+                  <>
+                    <Monitor size={12} />
+                    {t('share.viewers', { n: link.viewers })}
+                  </>
+                ) : (
+                  <span className="text-ink-3">{t('share.noViewers')}</span>
+                )}
+              </span>
               <span className="shrink-0 truncate text-vp-sm text-ink-2" data-testid="share-row-scope">
                 {scopeLabel(link)}
               </span>
@@ -326,23 +489,37 @@ export function ShareLinks() {
                       date: new Date(link.expiresAt * 1000).toLocaleDateString(),
                     })}
               </span>
-              <span className="w-24 shrink-0 text-right text-vp-sm text-ink-2">
-                {link.lastUsedAt === 0
-                  ? t('tok.neverUsed')
-                  : new Date(link.lastUsedAt * 1000).toLocaleDateString()}
-              </span>
+              {/* Red line 4: an open padlock and a closed one, plus the word in
+                  the title. A locked row is not distinguished by a tint. */}
               <button
                 type="button"
+                onClick={() => void setLock(link, !link.locked)}
+                aria-pressed={link.locked}
+                title={link.locked ? t('share.unlock') : t('share.lock')}
+                data-testid="share-lock"
+                data-locked={link.locked}
+                className="vp-control vp-press"
+              >
+                {link.locked ? <Lock size={13} /> : <LockOpen size={13} />}
+              </button>
+              <button
+                type="button"
+                disabled={link.locked}
                 onClick={() =>
                   setEditing(
                     editing?.id === link.id
                       ? null
-                      : { id: link.id, name: link.name, board: link.board },
+                      : {
+                          id: link.id,
+                          name: link.name,
+                          remark: link.remark,
+                          board: link.board,
+                        },
                   )
                 }
-                title={t('board.edit')}
+                title={link.locked ? t('board.locked') : t('board.edit')}
                 data-testid="share-edit"
-                className="vp-control"
+                className="vp-control disabled:opacity-40"
               >
                 <Pencil size={13} />
               </button>
@@ -391,16 +568,21 @@ export function ShareLinks() {
                     data-testid="share-edit-name"
                     className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent"
                   />
-                  <button
-                    type="button"
-                    onClick={() => void save()}
-                    disabled={editing.board.widgets.length === 0}
-                    data-testid="share-edit-save"
-                    className="shrink-0 rounded-vp px-3 py-1.5 text-vp-base"
-                    style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
-                  >
-                    {t('board.save')}
-                  </button>
+                  <input
+                    value={editing.remark}
+                    maxLength={catalogue.maxRemark}
+                    onChange={(e) => setEditing({ ...editing, remark: e.target.value })}
+                    placeholder={t('share.remark')}
+                    title={t('share.remarkWhy')}
+                    data-testid="share-edit-remark"
+                    className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent"
+                  />
+                  {/* Two words, and no save button. The wall is the preview;
+                      a button on a thing you are watching change is a second
+                      source of truth, and the one that gets forgotten. */}
+                  <span className="shrink-0 text-vp-sm text-ink-3" data-testid="share-edit-status">
+                    {saving ? t('board.saving') : t('board.live')}
+                  </span>
                   <button
                     type="button"
                     onClick={() => setEditing(null)}
@@ -410,11 +592,19 @@ export function ShareLinks() {
                     {t('board.cancel')}
                   </button>
                 </div>
-                <BoardEditor
-                  board={editing.board}
-                  catalogue={catalogue}
-                  onChange={(next) => setEditing({ ...editing, board: next })}
-                />
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <BoardEditor
+                    board={editing.board}
+                    catalogue={catalogue}
+                    onChange={(next) => setEditing({ ...editing, board: next })}
+                  />
+                  <BoardPreview
+                    linkID={link.id}
+                    board={editing.board}
+                    viewportWidth={link.viewportWidth}
+                    viewportHeight={link.viewportHeight}
+                  />
+                </div>
               </div>
             )}
           </div>

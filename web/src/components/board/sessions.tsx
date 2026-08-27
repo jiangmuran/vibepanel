@@ -75,7 +75,7 @@ export function SessionGrid({ w, data, now }: { w: ShareWidget; data: ShareDashb
   return (
     <Tile
       kind={w.kind}
-      span={w.span}
+      span={w.span} height={w.height}
       testid="widget-sessiongrid"
       label={t('board.kind.sessiongrid')}
     >
@@ -193,7 +193,7 @@ export function SessionList({ w, data, now }: { w: ShareWidget; data: ShareDashb
   }
 
   return (
-    <Tile kind={w.kind} span={w.span} testid="widget-sessionlist">
+    <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-sessionlist">
       {rows.length === 0 ? (
         <Empty text={t('dash.nothing')} />
       ) : (
@@ -215,7 +215,7 @@ export function SessionList({ w, data, now }: { w: ShareWidget; data: ShareDashb
 /** Which project is where: a stacked bar per project. */
 export function Projects({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
   return (
-    <Tile kind={w.kind} span={w.span} testid="widget-projects" label={t('board.kind.projects')}>
+    <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-projects" label={t('board.kind.projects')}>
       {data.projects.length === 0 ? (
         <Empty text={t('dash.nothing')} />
       ) : (
@@ -266,7 +266,7 @@ export function CPUTop({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
     .slice(0, 6)
   const top = rows.length > 0 ? Math.max(rows[0].cpuPercent, 1) : 1
   return (
-    <Tile kind={w.kind} span={w.span} testid="widget-cputop" label={t('board.kind.cputop')}>
+    <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-cputop" label={t('board.kind.cputop')}>
       {!data.usageReadable ? (
         <Empty text={t('dash.noMeasurements')} />
       ) : rows.length === 0 ? (
@@ -291,7 +291,7 @@ export function CPUTop({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
 export function Exits({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
   const rows = data.sessions.filter((r) => r.exited).slice(0, 8)
   return (
-    <Tile kind={w.kind} span={w.span} testid="widget-exits" label={t('board.kind.exits')}>
+    <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-exits" label={t('board.kind.exits')}>
       <div className="mb-3 flex items-baseline gap-6">
         <span className="tabular text-vp-2xl font-semibold text-ink">{data.counts.exited}</span>
         <span className="text-vp-xl text-ink-2">{t('dash.exited')}</span>
@@ -332,7 +332,7 @@ export function Exits({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
 export function Todos({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
   const todos = data.todos
   return (
-    <Tile kind={w.kind} span={w.span} testid="widget-todos" label={t('board.kind.todos')}>
+    <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-todos" label={t('board.kind.todos')}>
       {!todos || todos.projects.length === 0 ? (
         <Empty text={t('dash.emptyWidget')} />
       ) : (

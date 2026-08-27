@@ -25,7 +25,7 @@ import { byLabel } from './labels'
 /** The tile a spend widget shows before any pass has finished. */
 function NotCounted({ w }: { w: ShareWidget }) {
   return (
-    <Tile kind={w.kind} span={w.span} testid="widget-spend-unknown">
+    <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-spend-unknown">
       <Empty text={t('dash.noSpendYet')} />
     </Tile>
   )
@@ -36,7 +36,7 @@ export function SpendTotals({ w, data }: { w: ShareWidget; data: ShareDashboard 
   const spend = data.spend
   if (!spend?.readable) return <NotCounted w={w} />
   return (
-    <Tile kind={w.kind} span={w.span} testid="widget-spendtotals" label={t('board.kind.spendtotals')}>
+    <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-spendtotals" label={t('board.kind.spendtotals')}>
       <div className="mb-4 flex flex-wrap gap-x-10 gap-y-3">
         <Figure label={t('dash.today')} value={spend.today.total} />
         <Figure label={t('dash.thisMonth')} value={spend.month.total} />
@@ -127,7 +127,7 @@ export function SpendRate({ w, data }: { w: ShareWidget; data: ShareDashboard })
   const perHour = spend.today.total / hours
   const windowPerHour = spend.window.total / (spend.windowDays * 24)
   return (
-    <Tile kind={w.kind} span={w.span} testid="widget-spendrate" label={t('board.kind.spendrate')}>
+    <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-spendrate" label={t('board.kind.spendrate')}>
       <div className="tabular text-vp-3xl font-semibold text-ink" data-testid="spend-rate-value">
         {compact(perHour)}
       </div>
@@ -173,7 +173,7 @@ export function SpendCompare({ w, data }: { w: ShareWidget; data: ShareDashboard
   return (
     <Tile
       kind={w.kind}
-      span={w.span}
+      span={w.span} height={w.height}
       testid="widget-spendcompare"
       label={t('board.kind.spendcompare')}
     >
@@ -213,7 +213,7 @@ export function SpendBars({ w, data }: { w: ShareWidget; data: ShareDashboard })
   return (
     <Tile
       kind={w.kind}
-      span={w.span}
+      span={w.span} height={w.height}
       testid="widget-spendbars"
       label={`${t('board.kind.spendbars')} · ${byLabel(by, by)}`}
     >
@@ -257,7 +257,7 @@ export function SpendSplit({ w, data }: { w: ShareWidget; data: ShareDashboard }
   return (
     <Tile
       kind={w.kind}
-      span={w.span}
+      span={w.span} height={w.height}
       testid="widget-spendsplit"
       label={`${t('board.kind.spendsplit')} · ${byLabel(by, by)}`}
     >
@@ -322,7 +322,7 @@ export function SpendHeatmap({ w, data }: { w: ShareWidget; data: ShareDashboard
   }
 
   return (
-    <Tile kind={w.kind} span={w.span} testid="widget-spendheatmap" label={t('board.kind.spendheatmap')}>
+    <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-spendheatmap" label={t('board.kind.spendheatmap')}>
       <div
         className="grid gap-1"
         style={{ gridTemplateRows: 'repeat(7, minmax(0, 1fr))', gridAutoFlow: 'column' }}

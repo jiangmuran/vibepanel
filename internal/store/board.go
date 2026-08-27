@@ -43,8 +43,53 @@ const MaxWidgets = 24
 // mistake session.TruncateTitle exists to avoid on a session title.
 const MaxCaption = 64
 
-// MaxSpan is the widest a widget may be, in a four-column grid.
-const MaxSpan = 4
+// GridColumns is how many columns a board is divided into.
+//
+// Twelve rather than four, and the reason is the screen this is now aimed at.
+// Four columns can express a half and a quarter and nothing else: a wall of
+// 3840 pixels laid out in quarters is four cards in a row, forever, and a third
+// -- the width that makes three things read as three things -- cannot be said
+// at all. Twelve divides by 2, 3, 4 and 6, which is the whole reason every
+// layout grid ever shipped picked it.
+//
+// Boards stored before this are in quarters and are converted on the way
+// through, not migrated in SQL: see normaliseGrid. A board is a JSON document
+// in a TEXT column, and parsing JSON in a migration to multiply one field is
+// the sort of step that cannot be re-run and cannot be reviewed.
+const GridColumns = 12
+
+// MaxSpan is the widest a widget may be.
+const MaxSpan = GridColumns
+
+// gridSteps are the widths worth offering, in twelfths.
+//
+// Not all twelve, and this is a product decision served from the server rather
+// than a second list in the editor. A select with twelve entries is a control
+// nobody can aim at, and 5/12 and 7/12 are widths whose only use is stopping a
+// row from lining up. These are the fractions twelve columns exist to provide:
+// a sixth, a quarter, a third, a half, two thirds, three quarters, all of it.
+//
+// The validator still accepts any span from 1 to MaxSpan -- a hand-written
+// board is allowed to be strange. This is what the editor offers, and it is
+// here so that "what the editor offers" and "what a preset uses" cannot drift
+// apart in two files.
+var gridSteps = []int{2, 3, 4, 6, 8, 9, 12}
+
+// GridSteps returns the widths the editor offers.
+func GridSteps() []int {
+	out := make([]int, len(gridSteps))
+	copy(out, gridSteps)
+	return out
+}
+
+// MaxRows is the tallest a widget may be, in grid rows.
+//
+// Height is the dimension a flat, ordered, auto-flowing list did not have, and
+// the one a wall wants: a session list beside two stacked figures is a tall
+// thing next to two short ones. Bounded low because a widget four rows tall
+// already fills a television, and a row count driven by a stored number is a
+// page whose height a row in a table decides.
+const MaxRows = 4
 
 // MaxSpendDays bounds the day range a bar widget may ask for.
 //
@@ -114,6 +159,13 @@ type Widget struct {
 	Rotate int `json:"rotate,omitempty"`
 	// Text is a caption the owner typed. The only free text on a board.
 	Text string `json:"text,omitempty"`
+	// Height is 1..MaxRows grid rows. Zero means one row, which is what every
+	// board written before heights existed meant.
+	//
+	// Omitted when it is one, so a board that never asked for a tall widget
+	// serialises exactly as it did before -- which is what keeps the diff of a
+	// stored column readable by whoever is looking at why a wall changed.
+	Height int `json:"height,omitempty"`
 }
 
 // The data a widget needs, as tags the HTTP layer maps to sections of the
@@ -129,6 +181,13 @@ const (
 	NeedSpendTools    = "spendTools"
 	NeedSpendProjects = "spendProjects"
 	NeedSpendModels   = "spendModels"
+	// NeedTrend is the short ring of recent machine and token readings.
+	//
+	// The one section that is not a reading of right now but a few minutes of
+	// them, kept in memory on the server. It is per panel and not per viewer:
+	// two walls on two links draw the same line, because it is the same
+	// machine.
+	NeedTrend = "trend"
 )
 
 // widgetSpec is what one kind may carry.
@@ -164,7 +223,7 @@ var bigMetrics = []string{
 	// What came out, which is the half a board of costs alone leaves off.
 	"doneToday", "todosOpen", "todosDone", "todosClosedToday", "todoPercent",
 	// What the machine is doing.
-	"cpu", "memory", "disk", "load", "uptime",
+	"cpu", "memory", "disk", "swap", "load", "uptime",
 	// What it cost, and how fast it is costing it.
 	"tokensToday", "tokensMonth", "tokensWindow", "requestsToday", "tokensPerHour",
 }
@@ -189,61 +248,182 @@ var seriesBy = []string{"day", "month"}
 
 var splitBy = []string{"tool", "project", "model"}
 
+// costBy is which cost a "heaviest sessions" list is ranked by.
+var costBy = []string{"cpu", "memory"}
+
+// pressureBy is which machine pressure the moving area chart draws.
+var pressureBy = []string{"cpu", "memory", "load"}
+
 // widgetKinds is the vocabulary. Nothing outside this map renders.
+//
+// Spans are in twelfths. The set is grouped by the question it answers rather
+// than by the table it reads, because that is the axis somebody composing a
+// screen is thinking on -- and because a catalogue organised by data source
+// produces thirty arrangements of the same grid.
+//
+// It is also composed in *tiers*, which is the thing a wall needs and a
+// settings page does not. A screen read at three metres carries five to nine
+// things before it is noise, and the failure is uniform card size: every tile
+// the same size is a dashboard, not a display. So:
+//
+//	hero      one figure that dominates, legible across a room
+//	movement  something that visibly changes, which is what proves the screen
+//	          is live rather than a screenshot somebody left up
+//	texture   the fine grid that fills the rest and rewards a closer look
+//	furniture space, rules and words, without which "filled" becomes "crowded"
+//
+// The tier is not a field. It is which kind you pick and how many twelfths and
+// rows you give it, because a tier stored on a widget would be a second way of
+// saying the same thing and the two would come to disagree.
 var widgetKinds = map[string]widgetSpec{
+	// -- does anything need me --
 	// "Does anything need me", from across a room: the waiting count at
 	// headline size, and how long the oldest one has been waiting.
-	"attention": {span: 4, needs: []string{NeedSessions}},
+	"attention": {span: 12, needs: []string{NeedSessions}},
 	// The state tallies, each with its own shape.
-	"states": {span: 4},
-	// One number, as large as the widget is.
-	"bignumber": {span: 1, metrics: bigMetrics},
-	// The wall clock, for a screen somebody walks past.
-	"clock": {span: 1},
-	// Words the owner typed. Nothing else on a board is free text.
-	"caption": {span: 4, text: true},
+	"states": {span: 12},
+	// The same tallies as one proportional strip. A count says how many; a
+	// strip says what the shape of the afternoon is, from the door.
+	"statebar": {span: 12},
+	// One row, full width: working, waiting, done, load, uptime. The cheapest
+	// thing that makes a wall read as composed rather than assembled, and the
+	// only widget meant to sit under a hero rather than beside one.
+	"nowstrip": {span: 12},
+
+	// -- what is running --
 	// Every session as a tile: the many-at-once view.
-	"sessiongrid": {span: 4, filters: sessionFilters, orders: sessionOrders,
+	"sessiongrid": {span: 12, filters: sessionFilters, orders: sessionOrders,
 		needs: []string{NeedSessions}},
-	// Every session as a row: the dense view. `group` is the dimension —
+	// Every session as a row: the dense view. `group` is the dimension --
 	// by project, by state, or a flat list.
-	"sessionlist": {span: 4, filters: sessionFilters, orders: sessionOrders,
+	"sessionlist": {span: 12, filters: sessionFilters, orders: sessionOrders,
 		groups: sessionGroups, needs: []string{NeedSessions}},
+	// How long each session has been where it is, as bars on one shared scale.
+	//
+	// Deliberately dwell and not history. The panel stores when a session
+	// entered its current state and not the states before it, so a bar
+	// segmented by state over the last hour would be drawn from data that does
+	// not exist. This draws the part that is true, and it is still the widget
+	// that turns "seventeen agents" from a number into a picture.
+	"timeline": {span: 12, filters: sessionFilters, orders: sessionOrders,
+		needs: []string{NeedSessions}},
+	// Agents, shells and everything else, counted. "Four agents and two
+	// shells" is a different sentence from "six sessions".
+	"kinds": {span: 3, needs: []string{NeedSessions}},
 	// Per-project progress: how many of each project's sessions are where.
-	"projects": {span: 2},
-	// How much of each project's checklist is finished. Counts only — a todo
+	"projects": {span: 6},
+	// The projects with the most running, ranked and cut. `projects` lists
+	// every group; this answers "where is it all happening" in four rows.
+	"busiest": {span: 6, needs: []string{NeedSessions}},
+	// What has exited, and what exited badly.
+	"exits": {span: 6, needs: []string{NeedSessions}},
+
+	// -- what came out --
+	// How much of each project's checklist is finished. Counts only -- a todo
 	// line is never on the wire, at either detail setting.
-	"todos": {span: 2, needs: []string{NeedTodos}},
+	"todos": {span: 6, needs: []string{NeedTodos}},
 	// What came out today rather than what went in: sessions finished, todos
 	// ticked off, requests made.
-	"output": {span: 2, needs: []string{NeedSessions, NeedTodos, NeedSpend}},
+	"output": {span: 6, needs: []string{NeedSessions, NeedTodos, NeedSpend}},
+
+	// -- the machine --
 	// The four machine meters together.
-	"machine": {span: 2},
+	"machine": {span: 6},
 	// One pressure as an arc.
-	"gauge": {span: 1, metrics: gaugeMetrics},
+	"gauge": {span: 3, metrics: gaugeMetrics},
+	// CPU, memory or load over the last few minutes, as a filled line.
+	//
+	// The movement tier, and the reason it exists rather than a third gauge: a
+	// gauge is a still picture of a number, and a wall of still pictures cannot
+	// be told from a wall that has frozen. A line that moves is the cheapest
+	// honest proof the screen is alive.
+	"machinearea": {span: 6, bys: pressureBy, needs: []string{NeedTrend}},
 	// Uptime and the three load averages.
-	"uptime": {span: 1},
-	// The sessions costing the most right now.
-	"cputop": {span: 2, needs: []string{NeedSessions}},
-	// What has exited, and what exited badly.
-	"exits": {span: 2, needs: []string{NeedSessions}},
+	"uptime": {span: 3},
+	// The sessions costing the most right now. `by` chooses which cost: a
+	// session pinning a core and one holding eight gigabytes are two different
+	// problems and one list answers neither on its own.
+	"cputop": {span: 6, bys: costBy, needs: []string{NeedSessions}},
+	// Whether the panel behind this screen is well: is it keeping its records
+	// up to date, can it read the process tree, when does this link go dark.
+	// A wall that has quietly stopped being true looks exactly like a quiet
+	// afternoon, and this is the widget that says which.
+	"health": {span: 3},
+
+	// -- what it cost --
+	// One number, as large as the widget is.
+	"bignumber": {span: 3, metrics: bigMetrics},
+	// The hero for token spend: today's total at headline size, the rate under
+	// it, and the recent trend behind it.
+	//
+	// It says when it was counted, and that is not decoration. The figures come
+	// from a pass over the agents' transcripts, so "now" is "as of the last
+	// pass" -- a live meter implying a per-second reading would be a lie told
+	// in large type. See internal/httpapi/share.go for the cadence.
+	"tokenburn": {span: 6, needs: []string{NeedSpend, NeedTrend}},
+	// Every token this panel has ever recorded, as one accumulating figure.
+	// A chart says how it is going; an odometer says how far it has come, and
+	// it is the only number here that only ever goes up.
+	"odometer": {span: 6, needs: []string{NeedSpend}},
 	// Today, this month and the window, with input, output and cache split out.
-	"spendtotals": {span: 2, needs: []string{NeedSpend}},
+	"spendtotals": {span: 6, needs: []string{NeedSpend}},
 	// How fast it is being spent, rather than how much in total.
-	"spendrate": {span: 2, needs: []string{NeedSpend}},
+	"spendrate": {span: 6, needs: []string{NeedSpend}},
 	// Today against yesterday, this month against last. A total says what; a
 	// comparison says whether that is a lot.
-	"spendcompare": {span: 2, needs: []string{NeedSpend}},
+	"spendcompare": {span: 6, needs: []string{NeedSpend}},
 	// Spend over time. `by` chooses the bucket.
-	"spendbars": {span: 2, bys: seriesBy, days: true, needs: []string{NeedSpend},
+	"spendbars": {span: 6, bys: seriesBy, days: true, needs: []string{NeedSpend},
+		byNeeds: map[string]string{"day": NeedSpendDays, "month": NeedSpendMonths}},
+	// The same series as one line at tile size. A bar chart needs a tile to
+	// itself; a line reads beside the number it belongs to, which is the only
+	// way a trend fits on a board that is mostly figures.
+	"sparkline": {span: 3, bys: seriesBy, days: true, needs: []string{NeedSpend},
+		byNeeds: map[string]string{"day": NeedSpendDays, "month": NeedSpendMonths}},
+	// The series with the four token columns stacked. A total hides the thing
+	// worth seeing: a day that is nine tenths cache reads and a day that is
+	// nine tenths output are the same number and different afternoons.
+	"spendstack": {span: 6, bys: seriesBy, days: true, needs: []string{NeedSpend},
 		byNeeds: map[string]string{"day": NeedSpendDays, "month": NeedSpendMonths}},
 	// Where the spend went, ranked. `by` chooses the dimension: which agent,
 	// which project, which model.
-	"spendsplit": {span: 2, bys: splitBy, needs: []string{NeedSpend},
+	"spendsplit": {span: 6, bys: splitBy, needs: []string{NeedSpend},
 		byNeeds: map[string]string{
 			"tool": NeedSpendTools, "project": NeedSpendProjects, "model": NeedSpendModels}},
 	// The year, as a grid of days.
-	"spendheatmap": {span: 4, needs: []string{NeedSpend, NeedSpendHeatmap}},
+	"spendheatmap": {span: 12, needs: []string{NeedSpend, NeedSpendHeatmap}},
+
+	// -- the furniture --
+	// The wall clock, for a screen somebody walks past.
+	"clock": {span: 3},
+	// The clock with the date and the day of the week under it. A screen in a
+	// corridor is a clock most of the time, and the date is what somebody
+	// standing in front of one actually looks for.
+	"datetime": {span: 3},
+	// Words the owner typed.
+	"caption": {span: 12, text: true},
+	// Words the owner typed, as a section heading over what follows.
+	//
+	// A caption is a sentence in a tile; this is a label with a rule under it
+	// and no surface of its own. Grouping is the half of composition that gets
+	// forgotten, and without it a filled screen is a crowded one.
+	"heading": {span: 12, text: true},
+	// A hairline across the board.
+	"rule": {span: 12},
+	// The remark the owner put on the link itself, at heading size.
+	//
+	// The same string the dashboard shows in its header, placeable: on a
+	// rotating board the header is one line above every page, and the name of
+	// the room the screen is in belongs on the page. It is the one widget whose
+	// words the owner can change without touching the board at all.
+	"remark": {span: 12},
+	// Nothing at all, occupying its span.
+	//
+	// A flat auto-flowing list has no way to leave a hole, and a hole is how a
+	// wall stops being a solid brick of tiles. This is the whole of the
+	// explicit-placement vocabulary: a gap you can put anywhere, instead of a
+	// coordinate per widget per breakpoint.
+	"spacer": {span: 3},
 }
 
 // KnownWidgetKinds lists the vocabulary, sorted, for the settings page and for
@@ -265,6 +445,11 @@ func WidgetOptions(kind string) (spec WidgetSpec, ok bool) {
 	return WidgetSpec{
 		Kind: kind, Span: s.span, Metrics: s.metrics, Filters: s.filters,
 		Orders: s.orders, Groups: s.groups, Bys: s.bys, Days: s.days, Text: s.text,
+		// Every kind takes a height, so this is a constant rather than a field
+		// on the spec. It is served anyway: the editor builds its controls from
+		// this answer and nothing else, and a control it has to know about
+		// without being told is the first copy of the table.
+		Rows: MaxRows,
 		// A rotation only means something for a kind that draws a list longer
 		// than its tile. Offering it on a gauge would be a control that does
 		// nothing, which is worse than one that is missing.
@@ -289,10 +474,21 @@ type WidgetSpec struct {
 	Text    bool     `json:"text"`
 	// Rotate says this kind can page through a list that does not fit.
 	Rotate bool `json:"rotate"`
+	// Rows is how many grid rows tall this kind may be made.
+	Rows int `json:"rows"`
 }
 
 // Board is one arrangement, as it is stored and as it is served.
 type Board struct {
+	// Grid is how many columns the spans below are counted in.
+	//
+	// Present so that a board stored when the grid was four columns wide is
+	// still the board its author drew. Anything that is not GridColumns is read
+	// as the old quarters and converted once, on the way through -- see
+	// normaliseGrid. Without it, every span of 2 stored by an older build would
+	// silently become a sixth of a screen instead of a half, on walls nobody is
+	// standing in front of.
+	Grid int `json:"grid"`
 	// Preset is where this board started, kept so the editor can say so. It is
 	// provenance and nothing reads it to decide behaviour — validated against
 	// the catalogue anyway, because an unchecked string echoed back to the
@@ -300,8 +496,52 @@ type Board struct {
 	Preset string `json:"preset"`
 	// Rotate is how many seconds each page stays on screen, or 0 for a board
 	// that does not move. Ignored when every widget is on page 0.
-	Rotate  int      `json:"rotate"`
+	Rotate int `json:"rotate"`
+	// Fill stretches the rows to the height of the screen instead of letting
+	// them flow and scroll.
+	//
+	// The difference between a board and a wall. A screen behind somebody's
+	// desk with six tiles at the top and a field of background under them is
+	// not filled, and nobody is going to scroll it -- there is nobody standing
+	// there. Off by default, because the same board opens on a phone, where
+	// stretching four rows to the height of a handset is four unreadable tiles.
+	Fill    bool     `json:"fill"`
 	Widgets []Widget `json:"widgets"`
+}
+
+// normaliseGrid brings a board into this build's column count.
+//
+// A board stored when the grid was four columns wide says `span: 2` and means
+// half a screen. Read against twelve columns that is a sixth, so every wall
+// written before this change would have quietly rearranged itself -- on screens
+// with nobody in front of them, which is the whole failure mode this file keeps
+// coming back to.
+//
+// Applied on both paths, deliberately. The read path needs it for stored rows;
+// the write path needs it because docs/api.md described spans as 1-4 and
+// somebody's `curl` still says so. A board that arrives without a grid is a
+// board in quarters, whichever direction it arrived from.
+func normaliseGrid(b Board) Board {
+	if b.Grid == GridColumns {
+		return b
+	}
+	scale := GridColumns / 4
+	out := b
+	out.Grid = GridColumns
+	out.Widgets = make([]Widget, len(b.Widgets))
+	copy(out.Widgets, b.Widgets)
+	for i := range out.Widgets {
+		// Only a span that was legal in quarters is converted. A span of 99 is
+		// not a wide widget, it is a bad value, and clamping it here would turn
+		// the refusal validateWidget owes somebody into a silent repair -- the
+		// exact thing the top of this file says a board must never get. Left as
+		// it is, it fails the bound below, which is where it should fail. It
+		// also cannot overflow, which multiplying an unbounded int could.
+		if out.Widgets[i].Span > 0 && out.Widgets[i].Span <= 4 {
+			out.Widgets[i].Span *= scale
+		}
+	}
+	return out
 }
 
 // Pages is how many pages this board has.
@@ -380,6 +620,7 @@ func (w Widget) needs() []string {
 // something they can act on — and a board silently repaired into a different
 // board is one whose author believes it says something it does not.
 func ValidateBoard(b Board) (Board, error) {
+	b = normaliseGrid(b)
 	if b.Preset != "" && !KnownPreset(b.Preset) {
 		return Board{}, fmt.Errorf("unknown preset %q", b.Preset)
 	}
@@ -392,7 +633,8 @@ func ValidateBoard(b Board) (Board, error) {
 	if b.Rotate < 0 || b.Rotate > MaxRotateSeconds {
 		return Board{}, fmt.Errorf("rotate must be between 0 and %d seconds", MaxRotateSeconds)
 	}
-	out := Board{Preset: b.Preset, Rotate: b.Rotate, Widgets: make([]Widget, 0, len(b.Widgets))}
+	out := Board{Grid: GridColumns, Preset: b.Preset, Rotate: b.Rotate, Fill: b.Fill,
+		Widgets: make([]Widget, 0, len(b.Widgets))}
 	for i, w := range b.Widgets {
 		clean, err := validateWidget(w)
 		if err != nil {
@@ -438,6 +680,12 @@ func validateWidget(w Widget) (Widget, error) {
 	}
 	if w.Days < 0 || w.Days > MaxSpendDays {
 		return Widget{}, fmt.Errorf("days must be between 1 and %d", MaxSpendDays)
+	}
+	if w.Height == 0 {
+		w.Height = 1
+	}
+	if w.Height < 1 || w.Height > MaxRows {
+		return Widget{}, fmt.Errorf("height must be between 1 and %d", MaxRows)
 	}
 	if w.Page < 0 || w.Page >= MaxPages {
 		return Widget{}, fmt.Errorf("page must be between 0 and %d", MaxPages-1)
@@ -497,7 +745,8 @@ func oneOf(field, value string, allowed []string, kind string) error {
 // leave a working screen rather than an error page. Unknown widgets are
 // dropped, never repaired; if nothing survives, the default board is used.
 func SanitiseBoard(b Board) Board {
-	out := Board{}
+	b = normaliseGrid(b)
+	out := Board{Grid: GridColumns, Fill: b.Fill}
 	if KnownPreset(b.Preset) {
 		out.Preset = b.Preset
 	}

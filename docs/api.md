@@ -691,18 +691,63 @@ options that are enums or bounded numbers. There is no widget that names a
 table, a field, a directory, a URL or a template, which is what keeps a stored
 row from being able to make the panel do anything.
 
-Three decisions are made when a link is created, and two of them are permanent:
+Five things are decided when a link is created, and two of them are permanent:
 
 | | | |
 |---|---|---|
 | `board` | what it shows | changeable afterwards |
+| `remark` | a label the owner writes for whoever is looking | changeable afterwards |
+| `locked` | the board is fixed | changeable afterwards |
 | `detail` | whether it may use words | fixed at creation |
 | `scope` | which rows it is about | fixed at creation |
 
-The board can be rearranged later because rearranging it cannot disclose
-anything the link did not already carry. The other two can, and by then the URL
-is in an email or typed into a television — so a different mode or a different
-scope means a different link, which somebody has to hand out on purpose.
+The first three can be changed later because none of them can disclose anything
+the link did not already carry. The other two can, and by then the URL is in an
+email or typed into a television — so a different mode or a different scope
+means a different link, which somebody has to hand out on purpose.
+
+### Editing a screen you are not standing in front of
+
+The case this is built for is a television on a wall. Nobody is at it, and
+walking to it to sign in and move a widget is the thing that must not be
+necessary. So the board is edited from `PATCH /api/settings/shares/{shareID}` —
+an ordinary authenticated route, from a laptop — and every open viewer picks the
+change up on its **next poll**, about two seconds later, because every poll
+re-reads the link's row.
+
+There is no push, no socket and no second route under the share token. A share
+viewer is not authenticated, and a socket authorised once and held open for a
+week would need the revalidation machinery `/ws` has, for a page that reads six
+numbers; revocation currently takes effect on the next poll precisely because
+there is nothing else to invalidate. Polling is what makes "the owner changed it
+and the wall followed" free.
+
+`remark` is a short label — the room a screen is in, the audience it is for —
+cut to 80 runes. It is disclosed **under both detail modes**, deliberately.
+`detail` governs whether the *panel's* words may leave the machine: session
+titles and project names, read out of its own database. A remark is not the
+panel's; it is a sentence the owner wrote to the person in front of the screen,
+with the effect visible to them. `name` has always been sent in both modes for
+the same reason, and a remark suppressed under `counts` would be a label its
+author cannot see on the wall they labelled — which they would then put in
+`name`, which is disclosed anyway.
+
+`locked` fixes a board. It is enforced on the server: a `PATCH` to a locked link
+answers `409` unless it is the one that unlocks it, and an unlocking `PATCH`
+changes nothing else — the editor unlocks, refetches and edits, which is two
+acts, which is the whole of what a lock is. What it guards against is not an
+attacker; it is a wall a customer is sitting in front of being rearranged from
+an editor left open on the wrong row.
+
+`viewers` on each listed link is how many screens had it open a moment ago,
+counted from the polls they were already making. It is not a column: a wall
+polls every two seconds forever, and a stored count would be that many writes
+for a number that is true for two seconds — and one that must read zero again
+after a restart, which a row would not. A viewer that is unplugged needs no
+cleanup, because nothing is held open to notice dying: its entry simply stops
+being refreshed and ages out within fifteen seconds. Viewers are **not** told
+the count; it is a fact about other people holding the same URL, and a link that
+says nothing about who holds it should not start.
 
 ### `GET /api/settings/shares`
 ### `POST /api/settings/shares`
@@ -742,14 +787,33 @@ only that scope's checklists — enforced by the handler from the stored row, no
 from anything in the request. If the project or session is later deleted, the
 link shows **nothing**; it does not fall back to the whole panel.
 
-`PATCH` takes `{"name": "...", "board": {...}}` and nothing else. Sending
-`detail` or `scope` is a `400`, because unknown fields are refused: an edit that
-quietly did less than it asked for is worse than one that says no.
+`PATCH` takes `{"name": "...", "remark": "...", "board": {...}, "locked": false}`
+and nothing else. Sending `detail` or `scope` is a `400`, because unknown fields
+are refused: an edit that quietly did less than it asked for is worse than one
+that says no. On a **locked** link the only accepted request is
+`{"locked": false}`; anything else is a `409`, and the unlocking request applies
+nothing but the unlock.
 
-Creation, editing and revocation are audited as `share.created`,
-`share.updated` and `share.revoked`. Revocation takes effect on the link's next
-poll; there is nothing else to invalidate, because a share link has no session,
-no cookie and no socket.
+Creation, editing, locking and revocation are audited as `share.created`,
+`share.updated`, `share.locked`, `share.unlocked` and `share.revoked`.
+Revocation takes effect on the link's next poll; there is nothing else to
+invalidate, because a share link has no session, no cookie and no socket.
+
+### `GET /api/settings/shares/{shareID}/preview`
+
+What that screen is showing right now, for the editor to draw beside the board
+being composed. The **same builder** the dashboard uses, called with the link's
+own row — not a second reduction of the panel's state, which would diverge on
+the first field either side gained, in the direction "the preview shows
+something the real screen does not".
+
+The response is exactly a `GET /api/share/{token}/dashboard` body. Its `id` and
+`projectId` pseudonyms are derived from the link's id rather than its token
+hash, so they are stable within the preview and join to nothing outside it.
+
+A settings route: it needs the ordinary session, a share token answers `401` to
+it, and it discloses strictly less than `/api/state`, which the caller already
+has.
 
 ### `GET /api/settings/shares/catalogue`
 
@@ -759,21 +823,51 @@ Served rather than mirrored in the frontend, so that every option an editor
 offers is an option the validator accepts.
 
 ```json
-{"presets": [{"id": "attention", "audience": "working", "rotate": 0,
-              "widgets": [{"kind": "attention", "span": 4}, …]}, …],
- "widgets": [{"kind": "spendsplit", "span": 2, "metrics": null, "filters": null,
+{"presets": [{"id": "exec", "audience": "manager", "screen": "bigwall",
+              "rotate": 0, "fill": true, "detail": "", "needsScope": false,
+              "widgets": [{"kind": "tokenburn", "span": 6, "height": 3}, …]}, …],
+ "widgets": [{"kind": "spendsplit", "span": 6, "metrics": null, "filters": null,
               "orders": null, "groups": null, "bys": ["tool", "project", "model"],
-              "days": false, "text": false, "rotate": false}, …],
- "maxWidgets": 24, "maxSpan": 4, "maxCaption": 64, "maxDays": 371}
+              "days": false, "text": false, "rotate": false, "rows": 4}, …],
+ "screens": ["phone", "laptop", "wall", "bigwall"],
+ "maxWidgets": 24, "maxSpan": 12, "maxRows": 4, "maxCaption": 64,
+ "maxRemark": 80, "maxDays": 371}
 ```
 
-A widget is `{"kind", "span", "metric"?, "filter"?, "order"?, "group"?, "by"?,
-"days"?, "page"?, "rotate"?, "text"?}`. `span` is 1–4 columns in a grid that
-collapses to two and then to one as the screen narrows, so one stored board is a
-summary on a phone and a wall of tiles on a television. `page` puts a widget on
-one page of a rotating board and the board's own `rotate` is how many seconds
-each page stays; a widget's `rotate` pages through a list longer than its tile.
-A field a kind does not accept is a `400` rather than an ignored value.
+A widget is `{"kind", "span", "height"?, "metric"?, "filter"?, "order"?,
+"group"?, "by"?, "days"?, "page"?, "rotate"?, "text"?}`.
+
+`span` is **1–12 columns**. Twelve rather than four because twelve divides by 2,
+3, 4 and 6: a third is the width that makes three things read as three things,
+and four columns cannot say it. The grid stays twelve wide at every size and the
+*minimum* span rises as the screen narrows — half a screen below about 1100
+pixels, the whole of it below 640 — so one stored board is a summary on a phone
+and a composed wall on a television.
+
+`height` is 1–4 grid rows. It is the dimension a flat list did not have and the
+one a wall needs: a screen where every tile is the same size is a dashboard, not
+a display, and hierarchy comes from the size ratio between a hero and the
+texture around it. A board's `fill` stretches the rows to the height of the
+screen rather than letting them flow down it — nobody is going to scroll a
+television.
+
+A board carries `grid`, which is the column count its spans are in. A board that
+arrives without one is read as the old four columns and its spans are multiplied
+by three, so a `curl` written against the previous version of this page still
+means what it meant. Anything this build writes says `12`.
+
+`page` puts a widget on one page of a rotating board and the board's own
+`rotate` is how many seconds each page stays; a widget's `rotate` pages through
+a list longer than its tile. A field a kind does not accept is a `400` rather
+than an ignored value.
+
+A preset carries `screen` — `phone`, `laptop`, `wall` or `bigwall` — which is
+what it was *composed* for, not what it is limited to; every board still
+collapses with the viewport. `detail` and `needsScope` are hints the editor
+applies: one preset (`client`) is only correct scoped to one project in `counts`
+mode, because the failure there is a customer reading another customer's project
+name off the screen they were sat in front of. The server validates `detail` and
+`scope` from the request regardless, exactly as it always did.
 
 This is a settings route: a share token answers `401` to it, like everything
 else that is not the one dashboard `GET`.
@@ -806,7 +900,8 @@ handler reads.
                "state": "waiting", "kind": "agent", "stateChangedAt": 1735689000,
                "exited": false, "exitStatus": 0,
                "measured": true, "cpuPercent": 24.1, "rss": 831258624, "procs": 7}],
- "spend": null, "todos": null}
+ "spend": null, "todos": null, "trend": null,
+ "remark": "the screen in meeting room three", "locked": false}
 ```
 
 `sessions` is empty, and `spend` and `todos` are `null`, unless a widget on the
@@ -825,6 +920,22 @@ split into input, output, cache read, cache write, requests and a summed
 clock, and the arrays a board asked for: `days`, `months`, `heatmap`, `tools`,
 `models`, `projects`. Its `date` is the server's local day, because the buckets
 are local days and a phone abroad must not decide which square is today.
+
+`trend` is the last fifteen minutes of the machine and the running token total,
+sampled every ten seconds, for the widgets that draw a line rather than a
+number: `{"every": 10, "points": [{"at", "cpu", "memory", "load", "tokens"}]}`.
+`cpu` is `null` where `/proc` could not be read, which is a different fact from
+zero. It is kept in this process's memory and never stored, so it is short after
+a restart or on a screen that has just been switched on — the honest line after
+a restart starts now rather than having a hole in it. It is filled by the polls
+that draw it: a panel nobody is watching does no work for a graph nobody is
+looking at.
+
+`spend.allTime` is every token recorded within the link's scope, summed from the
+months already in hand. Each bucket in `days`, `months` and `heatmap` carries
+`input`, `output`, `cacheRead` and `cacheWrite` as well as `total`, which is
+what a stacked bar is drawn from — the same tokens the totals already disclose,
+cut the same way.
 
 `todos` is counts only — `open`, `done`, `closedToday`, and the same per project.
 The items themselves are never sent, at either `detail`. A todo line says what

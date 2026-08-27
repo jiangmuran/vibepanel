@@ -265,6 +265,9 @@ export const api = {
     board: ShareBoard
     scope: string
     scopeId: string
+    /** The owner's label for the screen. Shown to viewers under both modes. */
+    remark: string
+    locked: boolean
   }) =>
     request<{
       token: string
@@ -274,6 +277,8 @@ export const api = {
       detail: string
       board: ShareBoard
       scope: string
+      remark: string
+      locked: boolean
       expiresAt: number
       createdAt: number
     }>('/api/settings/shares', {
@@ -282,7 +287,12 @@ export const api = {
     }),
 
   /**
-   * Renames a link and rearranges its board.
+   * Renames a link, relabels it, rearranges its board and fixes or unfixes it.
+   *
+   * This is how a television on a wall is changed: from a laptop, signed in,
+   * with the wall picking it up on its next poll. There is nothing to do at the
+   * screen itself, which is the whole point — and the reason the share surface
+   * is still exactly one GET.
    *
    * Deliberately no `detail` and no `scope`. By the time anybody edits a link
    * its URL is already in an email or typed into a television, and widening
@@ -290,11 +300,40 @@ export const api = {
    * see. The server refuses them too; this signature is the same refusal said
    * where the caller reads it.
    */
-  updateShare: (id: string, name: string, board: ShareBoard) =>
+  updateShare: (
+    id: string,
+    fields: { name: string; remark: string; board: ShareBoard; locked: boolean },
+  ) =>
     request<void>(`/api/settings/shares/${encodeURIComponent(id)}`, {
       method: 'PATCH',
-      body: JSON.stringify({ name, board }),
+      body: JSON.stringify(fields),
     }),
+
+  /**
+   * Unlocks a link, and does nothing else.
+   *
+   * Its own call rather than `updateShare({locked: false, ...})`, because the
+   * server accepts exactly one thing on a locked link and this is it. A locked
+   * board is a guard against rearranging the wall a customer is sitting in
+   * front of from an editor left open on the wrong row; a single request that
+   * could unlock *and* apply a board would make it a message instead.
+   */
+  unlockShare: (id: string) =>
+    request<void>(`/api/settings/shares/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ locked: false }),
+    }),
+
+  /**
+   * What one link's screen is showing right now.
+   *
+   * The same body the dashboard itself receives, built by the same function on
+   * the server. Not a second reduction written here: that would diverge on the
+   * first field either side gained, in the direction "the preview shows
+   * something the real screen does not".
+   */
+  sharePreview: (id: string) =>
+    request<ShareDashboard>(`/api/settings/shares/${encodeURIComponent(id)}/preview`),
 
   /** The vocabulary a board is built from: presets, widget kinds, bounds. */
   shareCatalogue: () => request<ShareCatalogue>('/api/settings/shares/catalogue'),
@@ -310,8 +349,11 @@ export const api = {
    * sign in to. Everything else about the panel answers 401 to it, which is
    * enforced by the server's routing rather than by this file.
    */
-  shareDashboard: (token: string) =>
-    request<ShareDashboard>(`/api/share/${encodeURIComponent(token)}/dashboard`),
+  shareDashboard: (token: string, viewer: string, width: number, height: number) =>
+    request<ShareDashboard>(
+      `/api/share/${encodeURIComponent(token)}/dashboard` +
+        `?v=${encodeURIComponent(viewer)}&w=${width}&h=${height}`,
+    ),
 
   browse: (path = '') =>
     request<DirListing>(`/api/browse?path=${encodeURIComponent(path)}`),
