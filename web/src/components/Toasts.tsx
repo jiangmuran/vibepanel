@@ -96,7 +96,7 @@ export function Toasts({ narrow }: { narrow: boolean }) {
               onClick={() => dismissToast(toast.id)}
               aria-label={t('toast.dismiss')}
               title={t('toast.dismiss')}
-              className="vp-press -mr-1 shrink-0 rounded-md p-0.5 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+              className="vp-control -mr-1"
             >
               <X size={12} />
             </button>

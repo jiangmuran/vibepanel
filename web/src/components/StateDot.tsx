@@ -75,6 +75,17 @@ export function StateDot({
       }}
       // A generous hit area around a 10px glyph; the visual size is the point,
       // not the target size, and on a phone a 10px target is unusable.
+      //
+      // Not `.vp-control`, and this is the one place in the sweep where that
+      // is deliberate. A chrome button is a box you aim at with an icon drawn
+      // inside it; this is a state *indicator* that also happens to be
+      // pressable, and its geometry is the glyph's — `-m-1` cancels the `p-1`
+      // so the padding buys a target without moving the dot one pixel. Give it
+      // `.vp-control` and the dot inherits a 28px box with a `min-width`, which
+      // pushes every session name in the sidebar to the right and puts a
+      // hoverable rectangle around something the render check reads as a
+      // status glyph. The size it must not gain is exactly the size
+      // `.vp-control` exists to impose.
       className="vp-press -m-1 flex shrink-0 items-center justify-center rounded-md p-1 transition-colors duration-200 ease-vp hover:bg-surface-2"
     >
       {glyph}

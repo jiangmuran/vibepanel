@@ -13727,3 +13727,89 @@ Seven mutations, two survived, both because the test was weaker than it read:
   go looking for a release instead of printing usage — the same shape as the
   real failure, where `--yes` is eaten and the installer starts asking questions
   in a pipeline that cannot answer.
+
+### The rest of the chrome, and a test that keeps it
+
+The first pass of the chrome sweep converted the side panel and the terminal
+strip and stopped there. Everything else still wrote a chrome button's class
+list out by hand: **40 controls across 22 distinct hand-written variants**, in
+twelve files. Three square paddings (`p-0.5`, `p-1`, `p-1.5` — 20, 24 and 27
+css pixels tall) and four hover treatments, for one object. Two of the three
+heights were in the sidebar at once: the header's controls at 27, a project
+row's at 24, a session row's at 20, stacked vertically down the same column.
+
+All 34 icon controls are now `.vp-control`. What survived beside it is only
+what is orthogonal to the primitive: `ml-auto`, `-mr-1`, `mb-1`/`mt-1`,
+`vp-reveal`, `vp-tap`, `disabled:opacity-50` — position and behaviour, not
+identity. `shrink-0` did *not* survive: `.vp-control` already declares
+`flex-shrink: 0`, so keeping it is a second copy of the same decision, which is
+the thing being removed.
+
+The two hand-rolled segmented controls are the panel's segmented control now.
+The language picker in Settings and the range picker in the spend view each had
+their own track (`rounded-vp bg-surface-2 p-0.5`) and their own selected state
+written out as `bg-surface text-ink shadow-[0_1px_2px_rgb(0_0_0/0.12)]` — the
+same lift `.vp-tab` draws, restated twice from memory. They are
+`.vp-segmented` + `.vp-tab` with `data-active`, keeping `aria-pressed` beside it
+because these are toggle groups rather than tablists: the attribute the reader
+hears and the attribute the sheet reads are not the same attribute here.
+
+One new rule in the vocabulary, `.vp-control-on-2`. The directory picker's two
+controls live inside the search bar, and the bar is `bg-surface-2` — which is
+exactly what `.vp-control:hover` paints, so on that ground the hover is a no-op
+and the button reads as dead. One rule saying *which ground the control is on*
+rather than a second class list differing from the first by one colour, because
+the second class list is how this started.
+
+**Left different, on purpose, with the reason in the file:**
+
+- **`StateDot`.** A state indicator that happens to be pressable, not a button
+  with an icon in it. Its `-m-1` cancels its `p-1`, so the padding buys a target
+  without moving the dot a pixel; `.vp-control` would give it a 28px box with a
+  `min-width` and push every session name in the sidebar to the right.
+- **The bottom terminal tab's close.** It lives *inside* a `.vp-tab`, and both
+  are `--vp-control-h` tall: a control the height of its own container bursts
+  it. `vp-tap` still gives a thumb its 44px.
+- **Outlined icon buttons** (`share-open`, the spend panel's `token-refresh`).
+  These are the square siblings of an outlined *text* button, sit at that
+  button's height, and read as broken beside it stripped down to a bare 28px
+  glyph. The guard below excludes anything carrying `border` for this reason,
+  which is also the one way to evade it — but adding a border to dodge a test is
+  visible in the product, so it is a hole with a witness.
+- **The directory picker's breadcrumbs.** They look like a tab set and are not
+  one: a crumb navigates, and the last one is a location rather than a
+  selection.
+- **The project drag handle.** No `vp-press`, deliberately — `.vp-control`'s
+  `:active { transform: scale(0.94) }` would scale it for the whole duration of
+  a drag.
+
+**`web/src/chrome-vocabulary.test.ts` pins it.** Square padding plus a radius
+plus a hover treatment is the fingerprint of an icon-only control, and it is the
+only shape the drift ever took. Exceptions are keyed by the class list itself,
+so editing an excused control re-opens the question rather than inheriting its
+excuse, and a fourth assertion fails when an excused list is no longer written
+anywhere — the same shape as `i18n.prose.test.ts`, for the same reason. A fifth
+asserts styles.css still defines the six primitives: rename `.vp-control` and
+every converted button loses all of its styling while nothing else fails, since
+the class is simply absent and Tailwind never had an opinion about it.
+
+Twenty-five mutations — one per hand-written variant, put back at a real call
+site rather than in a fixture, so the class lists are tested where they are
+actually written. All twenty-five killed, none survived. The exception mechanism
+was checked in both directions too: removing either excuse turns the test red
+(the detector *is* the reason those two were quiet), altering an excused
+control's class list loses it its excuse, and an excuse that matches nothing is
+reported stale.
+
+**The render check found the one thing that mattered**, and it was not a
+padding. `.vp-tap`'s 44px `min-width` is defined hundreds of lines above the
+chrome section; `.vp-control`'s `min-width: var(--vp-control-h)` is one class
+too, so specificity tied and source order decided — silently, in favour of 28px.
+Three controls in a phone's session row came out 28×44, one of which kills a
+running agent. Restated in the chrome section rather than fixed by moving
+`.vp-tap` down, because the touch floor belongs where somebody looks for it.
+
+Everything else was clean: 47 tap targets in the phone drawer, 31 at 320 wide,
+31 in landscape, no overflow, no unreachable content. The one remaining FAIL —
+`bottom: typing into a bottom terminal produced no output` — reproduces on a
+stashed tree at HEAD and is not from this change.

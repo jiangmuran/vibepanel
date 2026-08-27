@@ -241,7 +241,7 @@ export function FilePreview({
             onClick={onClose}
             data-testid="preview-close"
             title={t('preview.close')}
-            className="vp-press shrink-0 rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+            className="vp-control"
           >
             <X size={14} />
           </button>

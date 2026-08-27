@@ -102,7 +102,7 @@ export function Settings({ onClose }: { onClose: () => void }) {
             onClick={onClose}
             title={t('settings.close')}
             data-testid="settings-close"
-            className="vp-press rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+            className="vp-control"
           >
             <X size={15} />
           </button>
@@ -176,22 +176,22 @@ export function Settings({ onClose }: { onClose: () => void }) {
         </Section>
 
         <Section title={t('settings.language')}>
-          <div
-            data-testid="settings-language"
-            className="inline-flex items-center gap-0.5 rounded-vp bg-surface-2 p-0.5"
-          >
+          {/* w-fit, because `.vp-segmented` is a flex container and a track
+              that fills the dialog puts two words at either end of 600px. */}
+          <div data-testid="settings-language" className="vp-segmented w-fit">
             {(['zh', 'en'] as const).map((code) => (
               <button
                 key={code}
                 type="button"
                 data-testid={`lang-${code}`}
                 onClick={() => setLang(code)}
+                // aria-pressed says it to a screen reader; data-active is what
+                // the stylesheet reads. Both, because `.vp-tab` keys its
+                // selected look off aria-selected/data-active and this is a
+                // toggle group rather than a tablist.
                 aria-pressed={lang === code}
-                className={`rounded-md px-3 py-1 text-vp-base transition-colors duration-200 ease-vp ${
-                  lang === code
-                    ? 'bg-surface text-ink shadow-[0_1px_2px_rgb(0_0_0/0.12)]'
-                    : 'text-ink-2 hover:text-ink'
-                }`}
+                data-active={lang === code}
+                className="vp-tab px-3 text-vp-base"
               >
                 {code === 'zh' ? t('settings.languageZh') : t('settings.languageEn')}
               </button>
@@ -627,7 +627,7 @@ function Snippet({ label, text }: { label: string; text: string }) {
               .then(() => setCopied(true))
               .catch(() => setCopied(false))
           }}
-          className="vp-press flex items-center gap-1 rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+          className="vp-control"
         >
           {copied ? <Check size={11} /> : <Copy size={11} />}
           <span className="text-vp-xs">{copied ? 'Copied' : 'Copy'}</span>
@@ -745,7 +745,7 @@ function PasskeysSection() {
               })()
             }}
             title={t('set.remove')}
-            className="vp-press shrink-0 rounded-md p-0.5 text-ink-2 vp-reveal hover:text-ink"
+            className="vp-control vp-reveal"
           >
             <X size={12} />
           </button>

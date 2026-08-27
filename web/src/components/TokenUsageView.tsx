@@ -113,7 +113,7 @@ export function TokenUsageView({
             onClick={() => void refresh()}
             disabled={busy}
             title={busy ? t('spend.refreshing') : t('spend.refresh')}
-            className="vp-press rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink disabled:opacity-50"
+            className="vp-control disabled:opacity-50"
           >
             <RefreshCw size={14} className={busy || data?.scanning ? 'animate-spin' : ''} />
           </button>
@@ -122,7 +122,7 @@ export function TokenUsageView({
             onClick={onClose}
             title={t('spend.close')}
             data-testid="token-view-close"
-            className="vp-press rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+            className="vp-control"
           >
             <X size={15} />
           </button>
@@ -207,19 +207,18 @@ function Filters(props: {
 
       <div className="flex items-center gap-1.5 text-vp-sm text-ink-2">
         {t('spend.filterRange')}
-        <div className="flex items-center gap-0.5 rounded-vp bg-surface-2 p-0.5">
+        <div className="vp-segmented w-fit">
           {RANGES.map((n) => (
             <button
               key={n}
               type="button"
               data-testid={`token-range-${n}`}
+              // See the language picker in Settings: aria-pressed for the
+              // reader, data-active for the sheet.
               aria-pressed={props.days === n}
+              data-active={props.days === n}
               onClick={() => props.onDays(n)}
-              className={`rounded-md px-2 py-1 text-vp-sm transition-colors duration-200 ease-vp ${
-                props.days === n
-                  ? 'bg-surface text-ink shadow-[0_1px_2px_rgb(0_0_0/0.12)]'
-                  : 'text-ink-2 hover:text-ink'
-              }`}
+              className="vp-tab text-vp-sm"
             >
               {t('spend.rangeShort', { n })}
             </button>

@@ -759,6 +759,37 @@ body {
   transform: scale(0.94);
 }
 
+/* `.vp-tap`'s 44px min-width has to survive `.vp-control`.
+ *
+ * Both are one class, so specificity ties and source order decides — and the
+ * touch floor is defined hundreds of lines further up, which means
+ * `.vp-control`'s `min-width: var(--vp-control-h)` silently won. The render
+ * check measured the result and named it: pin-session, kill-session and
+ * project-new-shell at 28x44 css pixels on a phone, three controls in a row
+ * that are exactly half as wide as a thumb needs and one of which kills a
+ * running agent.
+ *
+ * Restated here rather than moved, because moving `.vp-tap` down would put the
+ * touch floor in the middle of the chrome section, which is not where anybody
+ * looking for it would go. */
+@media (pointer: coarse) {
+  .vp-control.vp-tap {
+    min-width: 2.75rem;
+  }
+}
+
+/* A control whose ground is already `--vp-surface-2`.
+ *
+ * `.vp-control`'s hover *is* `--vp-surface-2`, so on that ground the hover is
+ * a no-op and the button reads as dead — which is what the directory picker's
+ * two controls sit on: they live inside the search bar, and the bar is
+ * `bg-surface-2`. One rule saying which ground the control is on, rather than
+ * a second hand-written class list that differs from the first by one colour,
+ * which is how the drift this section exists to remove started. */
+.vp-control-on-2:hover:not(:disabled) {
+  background: var(--vp-surface);
+}
+
 /* On, as opposed to merely hovered. Colour is not carrying this alone (red
    line 4): the only control that uses it is the split toggle, and what says
    the split is on is that there are two panes below instead of one. */

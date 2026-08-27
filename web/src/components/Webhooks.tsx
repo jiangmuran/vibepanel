@@ -138,7 +138,7 @@ export function Webhooks() {
               disabled={busy}
               title={t('wh.test')}
               data-testid="webhook-test"
-              className="vp-press shrink-0 rounded-md p-1 text-ink-2 hover:text-ink disabled:opacity-50"
+              className="vp-control disabled:opacity-50"
             >
               <Send size={13} />
             </button>
@@ -148,7 +148,7 @@ export function Webhooks() {
               disabled={busy}
               title={t('wh.remove')}
               data-testid="webhook-remove"
-              className="vp-press shrink-0 rounded-md p-1 text-ink-2 hover:text-ink disabled:opacity-50"
+              className="vp-control disabled:opacity-50"
             >
               <Trash2 size={13} />
             </button>
