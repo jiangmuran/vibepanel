@@ -11875,3 +11875,50 @@ somebody's clipboard going into a text field and is left entirely alone.
 `gofmt -l .` descends into `.claude/worktrees/`, where the agent worktrees live,
 so an unformatted file in one of them failed the gate here. Excluded alongside
 `web/`.
+
+## Updating the panel from the panel
+
+The most dangerous thing in the product, and the design says so out loud rather
+than reading as routine.
+
+`GET /api/update` asks GitHub what the newest release of one **compiled-in**
+repository is. Not configurable, and that is the point: a settable update source
+is a way to make a panel install a binary of somebody else's choosing with one
+database write. `POST /api/update` downloads that release's archive for this
+exact GOOS/GOARCH, checks it against the `SHA256SUMS` published with it, unpacks
+only the binary — replacing the unit files or the installer under a running
+service is a separate decision nobody asked for by pressing "update" — moves the
+running binary aside to `.old`, renames the new one into place, and asks systemd
+to restart.
+
+**The version is not a parameter.** A request cannot name what to install; the
+panel installs the latest release or refuses with 409. The case this closes is
+not a typo, it is somebody with a session cookie who would like this panel to
+run something else.
+
+What the checksum buys, stated in `docs/api.md` rather than implied: it detects
+a corrupt or truncated download and nothing more, because the sums come from the
+same release as the archive. Whoever can publish a release can publish sums to
+match. That is the same trust anyone gets from `curl | tar`, and the compiled-in
+repository is what keeps it bounded.
+
+Three things that are easy to get wrong and are pinned by mutation:
+
+- **A development build must not talk itself into an update.** `dev` is what a
+  build without ldflags reports, and it is what runs on the machine this was
+  written on. A comparison that treated an unparseable string as "behind" would
+  offer an update on every check and replace a working local build with a
+  release nobody asked for. Removing the parse guard fails the table.
+- **Rename, not truncate.** A running program's file cannot be rewritten in
+  place — the kernel refuses with ETXTBSY — but it can be renamed over, because
+  the running process holds the old inode until it exits. The old binary is
+  moved aside first, so a panel that will not start again is one `mv` from
+  working. Replacing that move with a delete fails the test.
+- **The symlink is resolved first.** `~/.local/bin/vibepanel` is often a link to
+  somewhere versioned, and renaming over the link would replace the link with a
+  file and orphan the real binary.
+
+`KillMode=process` in both units is what makes the button safe to press at all:
+systemd stops the panel and leaves the tmux server and every agent under it
+alone. Without that line this would be a button that kills everybody's work, and
+the confirmation says so before it is pressed rather than after.

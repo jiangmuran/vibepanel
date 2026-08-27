@@ -15,6 +15,7 @@ import { ApiTokens } from './ApiTokens'
 import { askConfirm, askText } from './ask'
 import { showToast } from './toasts'
 import { safeText } from './text'
+import { UpdateSection } from './UpdateSection'
 
 function bytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -188,6 +189,7 @@ export function Settings({ onClose }: { onClose: () => void }) {
           </div>
         </Section>
 
+        <UpdateBlock />
         {info && <StatusSection info={info} />}
         <HooksSection />
         <PasswordSection />
@@ -327,6 +329,14 @@ function Row({
         {value}
       </span>
     </div>
+  )
+}
+
+function UpdateBlock() {
+  return (
+    <Section title={t('upd.title')}>
+      <UpdateSection />
+    </Section>
   )
 }
 

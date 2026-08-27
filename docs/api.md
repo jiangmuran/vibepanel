@@ -268,6 +268,38 @@ code. Claude's four events are merged into `~/.claude/settings.json`; Codex's on
 top-level key appended to the end of that file would belong to the last table in
 it and Codex would never read it.
 
+## Updating
+
+### `GET /api/update`
+### `POST /api/update`
+
+`GET` asks GitHub what the newest release of `jiangmuran/vibepanel` is and
+answers with the tag, whether it is ahead of what is running, the release page
+and its notes. A panel with no route to GitHub answers `200` with
+`{"current": "...", "unreachable": "..."}` rather than failing: an air-gapped
+box is a normal state, not a broken one.
+
+`POST` downloads that release's archive for this exact GOOS/GOARCH, checks it
+against the `SHA256SUMS` published in the same release, unpacks the binary,
+moves the running one aside to `<path>.old`, renames the new one into place, and
+then asks systemd to restart the unit. It answers before restarting, with
+`{"installed", "previous", "restarting", "restartWhy"}` — `restarting: false`
+and a reason when the panel was started by hand and cannot bring itself back.
+
+**The version is not a parameter.** A request cannot name what to install; the
+panel installs the latest release or refuses with `409`. The interesting case
+this closes is not a typo, it is somebody with a session cookie who would like
+this panel to run something else.
+
+What the checksum buys: it detects a corrupt or truncated download. It does not
+defend against a compromised release, because the sums come from the same
+release as the archive — the same trust anyone gets from `curl | tar`. What
+makes it defensible is that the repository is compiled into the binary rather
+than configurable, so an update cannot be aimed somewhere else by a setting.
+
+Your sessions are not restarted with the panel. `KillMode=process` in both units
+is what makes the button safe to press at all.
+
 ## Authentication
 
 ### `POST /api/auth/setup`

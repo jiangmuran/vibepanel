@@ -15,6 +15,8 @@ import type {
   SessionState,
   SystemSample,
   UsageSample,
+  UpdateCheck,
+  UpdateResult,
   Todo,
 } from './wire'
 
@@ -245,6 +247,9 @@ export const api = {
   system: () => request<SystemSample>('/api/system'),
 
   usage: () => request<UsageSample>('/api/usage'),
+
+  checkUpdate: () => request<UpdateCheck>('/api/update'),
+  applyUpdate: () => request<UpdateResult>('/api/update', { method: 'POST' }),
 
   /**
    * A URL rather than a request: downloading is the browser's job, and it does

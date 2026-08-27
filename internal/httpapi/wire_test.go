@@ -253,6 +253,7 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"setup.completed":         true,
 		"token.created":           true,
 		"token.revoked":           true,
+		"update.installed":        true,
 		"setup.rejected":          true,
 	}
 

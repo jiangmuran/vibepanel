@@ -23,6 +23,7 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/config"
 	"github.com/jiangmuran/vibepanel/internal/hooks"
 	"github.com/jiangmuran/vibepanel/internal/id"
+	"github.com/jiangmuran/vibepanel/internal/selfupdate"
 	"github.com/jiangmuran/vibepanel/internal/session"
 	"github.com/jiangmuran/vibepanel/internal/store"
 	"github.com/jiangmuran/vibepanel/internal/sysmon"
@@ -41,6 +42,10 @@ type Server struct {
 	Hub      *ws.Hub
 	Detector *session.Detector
 	Sampler  *sysmon.Sampler
+
+	// Updater fetches releases. A value rather than a pointer so the zero
+	// Server has a working one; see TreeSampler below for the same reasoning.
+	Updater selfupdate.Client
 
 	// fullscreen holds the session ids whose pane has a full-screen program
 	// drawing in it, as the poller last saw them.
@@ -261,6 +266,7 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/sessions/restore", s.handleRestoreSessions)
 
 			s.registerPanelRoutes(r)
+			s.registerUpdateRoutes(r)
 			s.registerSettingsRoutes(r)
 		})
 

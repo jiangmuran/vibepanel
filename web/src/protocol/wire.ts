@@ -453,3 +453,29 @@ export interface AuditEntry {
   ip: string
   detail: string
 }
+
+/** What `GET /api/update` answers. */
+export interface UpdateCheck {
+  current: string
+  /** The newest release's tag, empty when the repository has none. */
+  version?: string
+  /** Whether that tag is ahead of what is running. */
+  newer?: boolean
+  url?: string
+  notes?: string
+  /** Empty when the release has no archive for this platform. */
+  asset?: string
+  /**
+   * Why GitHub could not be reached. An air-gapped panel is a normal state,
+   * not a broken one, so this arrives with 200 rather than as an error.
+   */
+  unreachable?: string
+}
+
+/** What `POST /api/update` answers, before it restarts. */
+export interface UpdateResult {
+  installed: string
+  previous: string
+  restarting: boolean
+  restartWhy: string
+}
