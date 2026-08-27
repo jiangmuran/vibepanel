@@ -96,6 +96,29 @@ LaunchAgent。已经解开发布包的话，`./deploy/install.sh` 就是同一�
 vibepanel service status | start | stop | restart | logs | token | upgrade | uninstall
 ```
 
+#### 连不上 GitHub 的时候
+
+`--mirror` 会把每一次下载——发布包、它的 `SHA256SUMS`、以及查最新 tag——都走镜像。默认是
+`github.muran.tech`，它按 IP 授权：第一次请求会回一段文字，里面有个要在**浏览器里**打开的
+链接，安装脚本会把那段原样打印出来并等你。
+
+```sh
+curl -fsSL https://github.muran.tech/https://raw.githubusercontent.com/jiangmuran/vibepanel/main/install.sh -o vibepanel-install.sh \
+  || curl -sSL https://github.muran.tech/https://raw.githubusercontent.com/jiangmuran/vibepanel/main/install.sh
+sh vibepanel-install.sh --mirror
+```
+
+两条而不是一条，关键在那个 `||`：`curl -f` 遇到 HTTP 错误会把响应体丢掉，所以对着一个还没
+给你授权的镜像跑 `curl -f ... | sh`，屏幕上什么都不会有——而被丢掉的那段，正是你需要的
+那个链接。第二条 `curl` 只在这种情况下跑，把它打出来。
+
+从管道里跑是没法等你的，所以它会打印链接然后以 `3` 退出——这是它自己的状态码，外层脚本
+能把「去点个链接」和「下载失败」分开。点完再跑一次就行。
+
+它不会自动替你选。`--mirror` 下发布包和用来校验它的 SHA256SUMS 都来自镜像，所以这个校验
+不再能说明镜像本身的任何事情——这是「你在信任谁」变了，不该因为 GitHub 超时就悄悄发生。
+换一个：`--mirror=https://your.mirror`；另外只有 GitHub 自己的域名会被改道。
+
 <details>
 <summary><b>系统级服务</b></summary>
 

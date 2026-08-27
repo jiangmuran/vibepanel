@@ -109,6 +109,35 @@ Afterwards, one command whichever way it runs:
 vibepanel service status | start | stop | restart | logs | token | upgrade | uninstall
 ```
 
+#### Where GitHub is not reachable
+
+`--mirror` sends every fetch — the release, its `SHA256SUMS` and the latest-tag
+lookup — through a GitHub mirror. It defaults to `github.muran.tech`, which
+authorises by IP: the first request answers with a link to open in a browser,
+and the installer prints that link and waits for you.
+
+```sh
+curl -fsSL https://github.muran.tech/https://raw.githubusercontent.com/jiangmuran/vibepanel/main/install.sh -o vibepanel-install.sh \
+  || curl -sSL https://github.muran.tech/https://raw.githubusercontent.com/jiangmuran/vibepanel/main/install.sh
+sh vibepanel-install.sh --mirror
+```
+
+Two commands rather than one, and the `||` is the reason: `curl -f` throws away
+the body on an HTTP error, so a `curl -f ... | sh` against a mirror that has not
+authorised you yet fails with nothing on screen — and the thing it threw away
+was the link you needed. The second `curl` runs only in that case and prints it.
+
+A run through the pipe cannot wait for you, so it prints the link and exits `3`
+— its own status, so a wrapper can tell "go and click a link" from "the download
+failed". Run it again once you are through.
+
+It is never chosen for you. Under `--mirror` the archive and the checksums it is
+checked against both come from the mirror, so the check no longer says anything
+about the mirror itself — which is a change in who you are trusting, and the
+sort of change that should not happen silently because GitHub timed out. Point
+it somewhere else with `--mirror=https://your.mirror`, and note that only
+GitHub's own hosts are ever rerouted.
+
 <details>
 <summary><b>The system service</b></summary>
 

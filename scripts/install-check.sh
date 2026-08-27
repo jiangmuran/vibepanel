@@ -32,6 +32,7 @@ fail() { echo "[FAIL] $*"; FAILS=$((FAILS + 1)); }
 ok() { echo "[ ok ] $*"; }
 cleanup() {
   [ -n "${HTTPD:-}" ] && kill "$HTTPD" 2>/dev/null
+  [ -n "${MIRRORD:-}" ] && kill "$MIRRORD" 2>/dev/null
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -1097,6 +1098,73 @@ else
   has "$LOG" "could not download" && ok "it says what it could not fetch" \
     || fail "no explanation: $(tail -3 "$LOG" | tr '\n' ' ')"
 
+  # ── the mirror ───────────────────────────────────────────────────────────
+  #
+  # A stand-in for github.muran.tech on a second port: 401 with a verification
+  # block until a flag file appears, then serving the same archives. The real
+  # one authorises by IP and cannot be driven from a check at all -- and the
+  # branch worth pinning is not "does the mirror work", it is "does the person
+  # who cannot reach it get told what to click, or a bare failure".
+  MPORT=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')
+  MFLAG="$WORK/mirror-authorised"
+  ( python3 "$REPO/scripts/lib/fake-mirror.py" "$MPORT" "$SERVE" "$MFLAG" >/dev/null 2>&1 ) &
+  MIRRORD=$!
+  for _ in $(seq 40); do
+    curl -s -o /dev/null "http://127.0.0.1:$MPORT/x" && break
+    sleep 0.1
+  done
+
+  echo "==> not authorised: the notice reaches the person, not a bare failure"
+  BOOTENV=(VIBEPANEL_VERSION=v9.9.9 VIBEPANEL_MIRROR="http://127.0.0.1:$MPORT")
+  bootrun --yes --no-enable
+  [ $RC -eq 3 ] && ok "exits 3, which is its own status and not a download failure" \
+    || fail "exited $RC; a wrapper cannot tell 'go and click a link' from 'it broke'"
+  has "$LOG" "verify?code=DEADBEEF" && ok "it prints the URL the mirror sent" \
+    || fail "the link never reached the person: $(tail -5 "$LOG" | tr '\n' ' ')"
+  [ -x "$HOME_DIR/.local/bin/vibepanel" ] && fail "it installed anyway" \
+    || ok "and nothing was installed"
+
+  echo "==> authorised: the archive travels through the mirror"
+  : > "$MFLAG"
+  # A github.com base, so url_for reroutes it. With the local BASE_URL of every
+  # other case the mirror would be bypassed and this would pass without ever
+  # having used it.
+  BOOTENV=(VIBEPANEL_VERSION=v9.9.9 VIBEPANEL_MIRROR="http://127.0.0.1:$MPORT"
+           VIBEPANEL_BASE_URL="https://github.com/x/y/releases/download/v9.9.9")
+  bootrun --yes --no-enable
+  [ $RC -eq 0 ] && ok "exits 0" || { fail "exited $RC"; sed 's/^/       /' "$LOG"; }
+  has "$LOG" "fetching through http://127.0.0.1:$MPORT" \
+    && ok "it says where it is fetching from" \
+    || fail "it used a mirror without saying so: $(head -5 "$LOG" | tr '\n' ' ')"
+  has "$LOG" "sha256 verified" && ok "and still checks the archive" \
+    || fail "the checksum was skipped on the mirror path"
+  [ -x "$HOME_DIR/.local/bin/vibepanel" ] && ok "and installed" \
+    || fail "nothing was installed through the mirror"
+
+  echo "==> a base URL that is not GitHub is never rerouted"
+  # The mirror is pointed at a port with nothing on it. If VIBEPANEL_BASE_URL
+  # were rerouted this could not possibly succeed -- which is the point: two
+  # options that each look reasonable alone must not send an internal URL to a
+  # third party.
+  BOOTENV=(VIBEPANEL_VERSION=v9.9.9 VIBEPANEL_MIRROR="http://127.0.0.1:$MPORT")
+  bootrun --yes --no-enable
+  [ $RC -eq 0 ] && ok "the local base URL was used directly" \
+    || { fail "exited $RC: a non-GitHub base URL went through the mirror"; sed 's/^/       /' "$LOG"; }
+
+  echo "==> bare --mirror does not eat the option after it"
+  # `--mirror --yes` must mean the default mirror and --yes, not a mirror
+  # called "--yes". Driven through --help because --help answers before any
+  # fetch happens: if --mirror swallowed it, HELP is never set and the script
+  # goes looking for a release instead of printing usage -- which is the same
+  # shape as the real failure, where --yes is eaten and the installer starts
+  # asking questions in a pipeline that cannot answer.
+  BOOTENV=(VIBEPANEL_VERSION=v9.9.9)
+  bootrun --mirror --help
+  [ $RC -eq 0 ] && has "$LOG" "vibepanel bootstrap installer" \
+    && ok "the option after bare --mirror is still an option" \
+    || fail "bare --mirror swallowed --help: exited $RC, $(head -2 "$LOG" | tr '\n' ' ')"
+
+  kill "$MIRRORD" 2>/dev/null; MIRRORD=""
   kill "$HTTPD" 2>/dev/null; HTTPD=""
 fi
 

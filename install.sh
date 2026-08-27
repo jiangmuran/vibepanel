@@ -21,6 +21,26 @@ set -eu
 
 REPO="${VIBEPANEL_REPO:-jiangmuran/vibepanel}"
 
+# -- the mirror -------------------------------------------------------------
+#
+# Where GitHub is not reachable, `--mirror` sends every fetch through a
+# proxy that is: the release archive, its SHA256SUMS, and the latest-release
+# lookup. The URL is the whole original URL appended to the mirror's own, which
+# is the shape ghproxy-style mirrors use.
+#
+# It is opt-in and it is never chosen automatically, which is a decision worth
+# stating because the alternative looks helpful. Both halves of the checksum
+# check -- the archive and the sums it is checked against -- would then come
+# from the same host, so a mirror that wanted to serve a different binary would
+# only have to serve a matching SHA256SUMS beside it. That is not a reason not
+# to offer a mirror; it is a reason the person installing has to be the one who
+# says so. A script that silently reroutes to a third party the moment GitHub
+# times out has changed who you are trusting without telling you.
+#
+# DEFAULT_MIRROR is where `--mirror` with no value points.
+DEFAULT_MIRROR="https://github.muran.tech"
+MIRROR="${VIBEPANEL_MIRROR:-}"
+
 # -- four overrides that exist only so this script can be tested -----------
 #
 # scripts/install-check.sh drives all of the above against a local HTTP server
@@ -62,6 +82,12 @@ and runs the installer inside it.
 
   --version <tag>   install this release instead of the latest
   --repo <o/r>      a fork
+  --mirror[=<url>]  fetch through a GitHub mirror rather than GitHub.
+                    Defaults to https://github.muran.tech, which authorises by
+                    IP: the first request answers with a link to open in a
+                    browser, and this script shows you that link and waits.
+                    Note that the archive and the checksums it is checked
+                    against then both come from the mirror.
   --keep            leave the unpacked archive behind and say where
   -h, --help        this, and the inner installer's options below
 
@@ -98,6 +124,11 @@ while [ $# -gt 0 ]; do
     --version=*) VERSION="${1#--version=}"; shift ;;
     --repo) [ $# -ge 2 ] || die "--repo needs owner/name"; REPO="$2"; shift 2 ;;
     --repo=*) REPO="${1#--repo=}"; shift ;;
+    # `--mirror` on its own means the default one; `--mirror <url>` means that
+    # one. Bare `--mirror` may not swallow the next argument, or
+    # `--mirror --yes` installs from a mirror called "--yes".
+    --mirror) MIRROR="$DEFAULT_MIRROR"; shift ;;
+    --mirror=*) MIRROR="${1#--mirror=}"; shift ;;
     --keep) KEEP=yes; shift ;;
     -h|--help) usage; HELP=yes; shift ;;
     # Deliberately forwarded rather than rejected: the options worth knowing
@@ -125,6 +156,81 @@ else
   die "neither curl nor wget is installed, and one of them has to be.
        apt install curl   |   dnf install curl   |   apk add curl"
 fi
+
+# Everything above fetches a URL. Everything below asks for one by *name*, and
+# these two are the only place the mirror exists. Adding a fetch that builds its
+# own URL is how half a download ends up going direct on a machine that cannot
+# reach GitHub at all.
+url_for() { # url_for <the real github url>
+  [ -n "$MIRROR" ] || { echo "$1"; return 0; }
+  # Only GitHub's own hosts are rerouted. VIBEPANEL_BASE_URL points the archive
+  # somewhere else entirely -- it is how install-check serves a *tampered*
+  # archive from a local HTTP server -- and sending that through a public
+  # mirror would be both broken and a way to leak an internal URL to a third
+  # party by setting two options that each look reasonable alone.
+  case "$1" in
+    https://github.com/*|https://raw.githubusercontent.com/*|https://api.github.com/*|https://objects.githubusercontent.com/*)
+      echo "${MIRROR%/}/$1" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+get() { get_to="$2"; fetch "$(url_for "$1")" "$get_to"; }
+get_stdout() { fetch_stdout "$(url_for "$1")"; }
+
+# -- the mirror wants to know you are a person ------------------------------
+#
+# github.muran.tech authorises by IP and answers an unauthorised request with
+# 401 and a block of text naming a URL to open in a browser. That block is the
+# whole point: it carries a code that expires, so printing "you are not
+# authorised, go and sort it out" instead of the body it actually sent would
+# make the message useless.
+#
+# curl's -f is why this needs its own request rather than reading a failure:
+# -f discards the body on an HTTP error, which is correct for every other fetch
+# here and exactly wrong for this one. The retry is dropped too -- a 401 is an
+# answer, not a hiccup, and retrying it twice only delays showing the person
+# the link.
+mirror_notice() { # mirror_notice <url>  -> prints the body, or nothing
+  if command -v curl >/dev/null 2>&1; then
+    curl -sSL --proto '=https,http' "$1" 2>/dev/null || true
+  else
+    wget -qO- "$1" 2>/dev/null || true
+  fi
+}
+
+mirror_ready() {
+  [ -n "$MIRROR" ] || return 0
+
+  probe="$(url_for "https://raw.githubusercontent.com/$REPO/main/install.sh")"
+  attempt=1
+  while :; do
+    if fetch_stdout "$probe" >/dev/null 2>&1; then
+      [ "$attempt" = 1 ] || echo "vibepanel: the mirror is open"
+      return 0
+    fi
+
+    echo ""
+    echo "vibepanel: ${MIRROR%/} will not serve this machine yet. It said:"
+    echo ""
+    mirror_notice "$probe"
+    echo ""
+
+    # Under `curl | sh` this script *is* stdin, so there is nobody to ask and
+    # waiting would hang a pipeline forever. Say what to do and stop -- with a
+    # status of its own, so a wrapper can tell "go and click a link" apart from
+    # "the download failed".
+    if [ ! -t 0 ] || [ ! -t 1 ]; then
+      echo "vibepanel: open the link above in a browser, then run this again."
+      exit 3
+    fi
+
+    [ "$attempt" -lt 5 ] || die "still not authorised after $attempt tries."
+    printf "vibepanel: open the link above, then press enter to retry (ctrl-c to stop) "
+    read -r _ || die "nothing on stdin, so there is nobody to wait for."
+    attempt=$((attempt + 1))
+  done
+}
 
 # tar, which is the one other tool this needs and the one people assume is
 # always there. It is not in a from-scratch container image, and `tar: not
@@ -163,12 +269,18 @@ if [ "$OS" = darwin ] && [ "$ARCH" = amd64 ]; then
 fi
 
 # -- which release? ---------------------------------------------------------
+# One handshake, before anything is downloaded. Doing it here rather than on
+# first failure means the person is asked to open a link *before* the script
+# has told them it is looking up a release, not in the middle of it.
+mirror_ready
+[ -z "$MIRROR" ] || echo "vibepanel: fetching through ${MIRROR%/} (archive and checksums both)"
+
 if [ -z "$VERSION" ]; then
   echo "vibepanel: looking up the latest release"
   # sed rather than a JSON parser, because requiring jq to install something
   # would make the one-liner a two-liner on most machines. Nothing else in the
   # latest-release response is shaped like the tag_name key.
-  VERSION="$(fetch_stdout "$API_URL" 2>/dev/null \
+  VERSION="$(get_stdout "$API_URL" 2>/dev/null \
     | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 || true)"
   [ -n "$VERSION" ] || die "could not work out the latest release from $API_URL.
        Either the network is not there, or the rate limit was hit (60 an hour
@@ -226,10 +338,10 @@ cleanup() { [ "$KEEP" = yes ] || rm -rf "$WORK"; }
 trap cleanup EXIT INT TERM
 
 echo "vibepanel: $VERSION for $OS/$ARCH"
-fetch "$BASE_URL/$NAME" "$WORK/$NAME" \
+get "$BASE_URL/$NAME" "$WORK/$NAME" \
   || die "could not download $BASE_URL/$NAME
        If that release exists, it ships no archive for $OS/$ARCH."
-fetch "$BASE_URL/SHA256SUMS" "$WORK/SHA256SUMS" \
+get "$BASE_URL/SHA256SUMS" "$WORK/SHA256SUMS" \
   || die "downloaded $NAME but not its SHA256SUMS, so there is nothing to check
        it against. Refusing to unpack an archive nobody has vouched for."
 
@@ -243,6 +355,11 @@ fetch "$BASE_URL/SHA256SUMS" "$WORK/SHA256SUMS" \
 # comes from the same host over the same TLS as the archive, so this catches a
 # truncated download, a corrupted mirror and a proxy that rewrote the bytes. It
 # is not a signature and does not defend against whoever can publish releases.
+#
+# Under --mirror it catches strictly less, and the comment says so where the
+# check is rather than only where the flag is: both the archive and the sums it
+# is compared against then come from the mirror, so it no longer says anything
+# about the mirror itself. It still catches a truncated download.
 if command -v sha256sum >/dev/null 2>&1; then
   sum() { sha256sum "$1" | cut -d' ' -f1; }
 elif command -v shasum >/dev/null 2>&1; then

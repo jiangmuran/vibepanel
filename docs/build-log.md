@@ -13675,3 +13675,55 @@ and a stated reason, which is the moment to notice a paragraph is being written;
 and a third test fails when an excused string has since shrunk, so the list
 cannot quietly accumulate. That test found four stale entries the moment
 placeholders stopped counting.
+
+### A GitHub mirror, and the link the person has to click
+
+`--mirror` routes every fetch the bootstrap makes — the archive, its
+`SHA256SUMS`, the latest-tag lookup — through a GitHub mirror, defaulting to
+`github.muran.tech`. The URL form is the whole original URL appended to the
+mirror's, which is what ghproxy-style mirrors take.
+
+The interesting part is not the proxying, it is that this particular mirror
+**authorises by IP** and answers an unauthorised request with `401` and a block
+of text carrying a code that expires in thirty minutes and a URL to open in a
+browser. That block is the entire value of the response, and three things
+conspire to throw it away:
+
+- `curl -f` discards the body on an HTTP error. That is right for every other
+  fetch in the script and exactly wrong for this one, so `mirror_notice` makes
+  its own request without `-f` and without the retry — a `401` is an answer, not
+  a hiccup, and retrying twice only delays showing somebody the link.
+- Under `curl | sh` the script *is* stdin, so there is nobody to prompt. It
+  prints the link and exits **3** rather than hanging a pipeline forever, and 3
+  rather than 1 so a wrapper can tell "go and click a link" from "it broke".
+- A one-liner written the obvious way — `curl -fsSL <mirror>/... | sh` — fails
+  with an empty screen for exactly the same reason. The README's mirror form is
+  two commands with a `||` for that, and says why.
+
+**Opt-in, never automatic.** Under `--mirror` the archive and the sums it is
+checked against both come from the mirror, so the checksum stops saying anything
+about the mirror itself. That is not a reason to refuse to have one; it is a
+reason the person installing has to be the one who chooses it. A script that
+reroutes to a third party the moment GitHub times out has changed who you trust
+without telling you. The comment saying so sits at the checksum too, not only at
+the flag.
+
+`url_for` reroutes **only** GitHub's own hosts. `VIBEPANEL_BASE_URL` points the
+archive somewhere else entirely — it is how install-check serves a *tampered*
+one from a local HTTP server — and sending that through a public mirror would be
+both broken and a way to leak an internal URL to a third party by setting two
+options that each look reasonable on their own.
+
+Seven mutations, two survived, both because the test was weaker than it read:
+
+- **The host restriction survived being deleted.** `scripts/lib/fake-mirror.py`
+  served by basename, so a rerouted `http://127.0.0.1:…` URL was answered just
+  as happily as a GitHub one and "only GitHub is rerouted" was indistinguishable
+  from "everything is". The fake mirror now `403`s anything that is not a GitHub
+  URL, which is also what a real GitHub mirror does.
+- **Bare `--mirror` swallowing the next argument survived**, because every case
+  set `VIBEPANEL_MIRROR` and none used the flag. It is driven through `--help`
+  now: `--help` answers before any fetch, so if it were eaten the script would
+  go looking for a release instead of printing usage — the same shape as the
+  real failure, where `--yes` is eaten and the installer starts asking questions
+  in a pipeline that cannot answer.
