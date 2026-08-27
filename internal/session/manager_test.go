@@ -1563,4 +1563,12 @@ func TestAttachBringsThePanesHistoryWithIt(t *testing.T) {
 	if !strings.Contains(text, "HIST_200") {
 		t.Errorf("the replay is missing the end of the history")
 	}
+	// Deliberately no assertion that the boundary line appears once.
+	//
+	// It appears twice in these bytes and that is not a defect: the primed
+	// history leaves the cursor at the bottom, and tmux's repaint then homes the
+	// cursor and draws the visible screen over those same cells. A terminal
+	// renders one screen; only a reader counting substrings sees two. What is
+	// worth asserting is what a browser ends up showing, and restart-check does
+	// that against a real one.
 }

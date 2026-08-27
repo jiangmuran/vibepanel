@@ -384,6 +384,20 @@ try {
       'so a session that has been running for an hour opens with one screenful and nothing above it')
   }
 
+  // And once, not twice.
+  //
+  // Priming the ring from the pane's history leaves the cursor at the bottom,
+  // and tmux's repaint then homes it and draws the visible screen over the same
+  // cells. In the byte stream the boundary appears twice; in a terminal it must
+  // appear once, and only a real one can answer that. If this ever reads two,
+  // scrolling up walks through a copy of what is already on screen.
+  const marks = (await screen(fresh, { all: true })).split(MARK).length - 1
+  if (marks !== 1) {
+    note('FAIL', 'replay',
+      `the marker is on screen ${marks} times after the restart; the repaint and the ` +
+      `primed history are both being rendered instead of one covering the other`)
+  }
+
   // The session must still be the one it was, not a stranger with the same name.
   const list = await (await authed('/api/state')).json()
   const still = (list.sessions ?? []).filter((s) => s.title === 'survivor')

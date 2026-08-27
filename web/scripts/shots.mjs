@@ -257,7 +257,7 @@ try {
     await shoot(page, `desktop-${tag}`)
 
     // The right panel, one tab at a time.
-    for (const tab of ['files', 'monitor', 'notes', 'todos']) {
+    for (const tab of ['files', 'monitor', 'notes', 'todos', 'tokens']) {
       await page.locator(`[data-testid="panel-tab-${tab}"]`).click().catch(() => {})
       await shoot(page, `panel-${tab}-${tag}`)
     }
