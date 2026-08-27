@@ -37,7 +37,11 @@
       把面板钉在旧版本上，而这个项目的整个前提是后端可以随时重启升级。
 - [x] **C2 通知权限 + 手机推送** — 只在"进入 waiting 的那一次跳变"上推，第一份快照静默播种，
       页面在前台时不推。
-- [ ] **C3 每个会话的 CPU / 内存** — 未做。按 tab 看占用，找出跑飞的 agent。
+- [x] **C3 每个会话的 CPU / 内存** — `GET /api/usage`：一次遍历 `/proc`，按 pane pid 把整棵进程树
+      的占用汇总到会话上。百分比用**整机**做分母（和上面的机器仪表同一套），不用 top 的
+      「100% = 一核」——两个数字挨在一起时，会话 310% 配机器 31% 只会让人得出唯一一个错误结论。
+      pane 已经没了的会话是**缺席**而不是 0（0 是一个真实读数）。render-check 端到端钉住，
+      把归属逻辑拿掉会红。
 - [x] **C4 开放 API + API 文档** — API 令牌（存 SHA-256，只显示一次，可单独吊销）+
       `docs/api.md`。文档和路由表**双向**校验：漏写的接口和多写的段落都会让构建红。
 
@@ -56,8 +60,9 @@
 
 - [x] **E1 专业易懂的 README** — `README.md`（英文）+ `README.zh-CN.md`（简体中文），带真实截图，
       截图由 `web/scripts/shots.mjs` 从真的面板拍出来，不是画的。
-- [ ] **E2 推到 GitHub public** — `jiangmuran/vibepanel`。仓库和 CI（`.github/workflows/check.yml`）
-      已就位，等推。
+- [x] **E2 推到 GitHub public** — https://github.com/jiangmuran/vibepanel ，CI 在
+      `.github/workflows/check.yml`。CI 第一次跑就抓到一个真 bug：Ubuntu 24.04 的 tmux 3.4
+      不认 `allow-set-title`，而 README 写着最低 3.3。
 
 ## F — 热升级
 

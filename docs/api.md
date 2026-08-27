@@ -92,6 +92,33 @@ samples to difference, and `cpuReadable` is `false` where there is no
 `/proc/stat` at all — a machine that cannot be measured says so rather than
 reporting zero.
 
+### `GET /api/usage`
+
+What each session's process tree is costing right now, keyed by session id:
+
+```json
+{"readable": true, "cores": 16,
+ "sessions": {"s_abc": {"cpuPercent": 24.1, "rss": 831258624, "procs": 7}}}
+```
+
+`cpuPercent` is a share of the **whole machine**, the same denominator
+`/api/system` uses — not top's, where 100% means one core. Both numbers appear
+within an inch of each other in the UI, and a session reading "310%" beside a
+machine reading "31%" invites exactly one wrong conclusion. `cores` is there to
+convert if you want the other convention.
+
+`rss` sums the resident set across the tree and so double-counts pages shared
+with forked children; it is an over-estimate, like every tree total. `procs` is
+how many processes were found, which is what says whether the reading means
+anything — 1 is a bare shell.
+
+A session whose pane has gone is **absent** rather than zero, because zero is a
+real reading. `readable` is `false` where there is no `/proc` to walk.
+
+Deliberately not part of `/api/state`: that snapshot is broadcast to every
+viewer whenever it changes, and a number that moves every tick would make every
+tick a broadcast.
+
 ## Projects
 
 ### `GET /api/projects/{id}/files?path=`

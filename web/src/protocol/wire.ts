@@ -204,6 +204,29 @@ export interface StateMessage extends PanelState {
 
 // ── side panels ────────────────────────────────────────────────────────────
 
+/** What one session's process tree is costing. */
+export interface SessionUsage {
+  /**
+   * A share of the whole machine, not top's convention where 100% is one core.
+   *
+   * The machine meter is an inch away on the same panel, and a session reading
+   * 310% beside a machine reading 31% invites exactly one wrong conclusion.
+   */
+  cpuPercent: number
+  /** Summed resident set across the tree; double-counts shared pages. */
+  rss: number
+  /** How many processes were found. 1 is a bare shell. */
+  procs: number
+}
+
+export interface UsageSample {
+  /** False where there is no /proc to walk, which is not "everything is idle". */
+  readable: boolean
+  cores: number
+  /** Keyed by session id. A session whose pane has gone is absent, not zero. */
+  sessions: Record<string, SessionUsage>
+}
+
 export interface SystemSample {
   at: number
   /** Null on the very first sample: there is nothing to difference against. */

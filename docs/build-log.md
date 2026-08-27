@@ -10869,3 +10869,92 @@ code. The Makefile warns about that locally; the workflow makes it impossible.
 The browser checks stay out of CI. They boot real tmux servers and a real
 Chromium and take twenty minutes, and a gate that slow attached to every push
 becomes a gate people route around.
+
+---
+
+## Which session is eating the machine
+
+The side panel could say the box was at 90% and not which of a dozen agents was
+doing it, which is the question a person actually has at that moment.
+
+`sysmon.TreeSampler` walks `/proc` **once** per tick and attributes usage to
+each pane pid by summing its whole process tree. Once, not once per session:
+a panel with two dozen sessions would otherwise walk the process table two
+dozen times a tick, and the first walk and the last would disagree with each
+other about the same instant.
+
+Three decisions, each of which could have gone the other way:
+
+*The percentage is a share of the whole machine, not top's.* top and htop mean
+"one core saturated" by 100%, which is more informative in isolation. But the
+machine meter is an inch above this list on the same panel, and a session
+reading 310% beside a machine reading 31% invites exactly one wrong conclusion.
+`cores` is in the payload for anyone who wants to convert.
+
+*A session whose pane has gone is absent, not zero.* Zero is a real reading —
+a shell sitting at a prompt — and a dead session drawn at 0.0% looks like an
+idle one.
+
+*RSS is summed across the tree and over-counts pages shared with forks.* The
+honest alternative is walking `smaps` for every process on every sample, which
+costs more than the number is worth. Every process viewer that shows a tree
+total has the same footnote.
+
+The parse of `/proc/<pid>/stat` starts after the **last** `)`, not by splitting
+the line. Field 2 is the executable name in parentheses and it is not escaped:
+a process can be called `(weird) name)` and Chromium's renderers routinely
+carry spaces. Splitting on whitespace shifts every field after it and the
+numbers that come out are still numbers, so it fails silently with a plausible
+ppid belonging to nobody. Mutating `LastIndex` to `Index` fails the test.
+
+The tree walk keeps a visited set, which is not tidiness either. `/proc` is
+read without a lock, so a process can be reparented between reading its stat
+and reading its children's, and the graph assembled from two instants can
+contain a cycle the kernel's real tree never had. Removing the set hangs the
+walk; the test has a five-second deadline so it reports that rather than
+hanging the suite.
+
+Not part of the state broadcast. That snapshot goes to every viewer whenever it
+differs from the last one, and a number that moves every tick would make every
+tick a broadcast — the same reasoning that keeps `LastOutputAt` off the wire.
+It is polled by whoever has the monitor open, and by nobody otherwise.
+
+**And the monitor panel turned out to be the one surface that was never
+translated.** CPU / Memory / Disk / "Reading…" were English on a Chinese page,
+one tab away from a strip that says 内存 and 磁盘. Found by looking at the
+screenshot rather than by anything failing.
+
+## CI found a bug on its first run, and it was ours
+
+`.github/workflows/check.yml` went green on nothing: fourteen tests failed
+across `internal/tmux` and `internal/session` on Ubuntu 24.04, which ships tmux
+**3.4**. The symptoms all named something else — sessions missing from the
+listing, panes that never started their command, `expected 13 fields, got 1` —
+and the cause was one line in the embedded config:
+
+    invalid option: allow-set-title
+
+That option does not exist below tmux 3.6. The README claimed 3.3 as the floor
+and `MinMinor` agreed, so the panel was advertising support for a version its
+own config could not load on. Debian 12 ships 3.3a and Ubuntu 24.04 ships 3.4:
+between them that is most of the machines anybody would run this on.
+
+Measured before fixing: on 3.6, `allow-set-title` **defaults to on**, verified
+against a server started with `-f /dev/null`. So the line is an assertion
+against a future default flipping, not configuration, and an assertion is not
+worth breaking a supported tmux over. It is now guarded by
+`%if "#{>=:#{version},3.6}"` — 3.6 rather than the version it actually arrived
+in, because 3.6 is the one that could be verified here and skipping the line
+below it changes nothing.
+
+The general fix matters more than the specific one. Nothing was checking that
+the embedded config is valid on the tmux that is installed, and tmux makes that
+hard to notice: it does not report config errors on stderr at `start-server`,
+does not put them in `show-messages`, and instead draws them in the pane and
+carries on. `source-file` is the one command that does report them — non-zero
+exit, message on stderr — so `TestTheEmbeddedConfigLoadsWithoutComplaintOnThisTmux`
+sources the file into a throwaway server and every option in it becomes a
+checked claim about the local tmux rather than about the author's.
+
+A per-option assertion would not have caught this. The assertion for
+`allow-set-title` was passing on the machine it was written on.

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -14,12 +15,14 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/browse"
 	"github.com/jiangmuran/vibepanel/internal/id"
 	"github.com/jiangmuran/vibepanel/internal/store"
+	"github.com/jiangmuran/vibepanel/internal/sysmon"
 )
 
 // registerPanelRoutes mounts the side-panel endpoints: system stats, the file
 // browser, notes and todos.
 func (s *Server) registerPanelRoutes(r chi.Router) {
 	r.Get("/system", s.handleSystem)
+	r.Get("/usage", s.handleUsage)
 	r.Get("/browse", s.handleBrowse)
 	r.Post("/browse/mkdir", s.handleBrowseMkdir)
 	r.Get("/projects/{id}/files", s.handleFiles)
@@ -35,6 +38,62 @@ func (s *Server) registerPanelRoutes(r chi.Router) {
 
 func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.Sampler.Sample())
+}
+
+// usageResponse is what each session's process tree is costing right now.
+type usageResponse struct {
+	// Readable is false where there is no /proc to read, which is a different
+	// thing from every session reading zero.
+	Readable bool `json:"readable"`
+	Cores    int  `json:"cores"`
+
+	// Sessions is keyed by session id, and a session is absent rather than
+	// zero when its pane has gone -- zero is a real reading.
+	Sessions map[string]sysmon.Usage `json:"sessions"`
+}
+
+// handleUsage samples per-session CPU and memory.
+//
+// Deliberately not part of the state broadcast. That snapshot goes to every
+// viewer whenever it differs from the last one, and a number that moves every
+// tick would make every tick a broadcast -- the same reasoning that keeps
+// LastOutputAt off the wire. This is polled by whoever is looking at it, and
+// by nobody when the panel is in the background.
+func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
+	out := usageResponse{
+		Readable: sysmon.ProcReadable(),
+		Cores:    runtime.NumCPU(),
+		Sessions: map[string]sysmon.Usage{},
+	}
+	if !out.Readable {
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+
+	sessions, err := s.DB.ListSessions(r.Context())
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	infos, err := s.Tmux.List(r.Context())
+	if err != nil {
+		// tmux being unreachable is not a reason to fail the page. The meters
+		// go blank; everything else on screen is still true.
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	pidOf := make(map[string]int, len(infos))
+	for _, i := range infos {
+		pidOf[i.Name] = i.PID
+	}
+	panes := make(map[string]int, len(sessions))
+	for _, sess := range sessions {
+		if pid, ok := pidOf[sess.TmuxName]; ok && pid > 0 {
+			panes[sess.ID] = pid
+		}
+	}
+	out.Sessions = s.TreeSampler.Sample(panes)
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {

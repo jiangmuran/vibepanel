@@ -953,6 +953,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
       {!narrow && rightWidth > 0 && (
         <RightPanel
           project={currentProject}
+          sessions={state.sessions}
           socket={socket}
           tab={rightTab}
           onTab={setRightTab}

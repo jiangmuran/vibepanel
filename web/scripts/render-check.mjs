@@ -931,6 +931,61 @@ try {
       note('FAIL', 'panel/monitor', `the monitor rendered a broken value: ${JSON.stringify(monitorText)}`)
     }
 
+    // Per-session usage: the machine meters say the box is busy, and this says
+    // which session is doing it. End to end against the real /proc rather than
+    // a stub, because the part worth checking is the attribution -- a pane pid
+    // walked to its whole tree and matched back to a session id -- and a stub
+    // asserts nothing about any of that.
+    // Case-insensitive: the heading is uppercased in CSS and innerText returns
+    // what is rendered, not what the source says.
+    if (!/per session/i.test(monitorText)) {
+      note('FAIL', 'panel/monitor',
+        `the monitor has no per-session section: ${JSON.stringify(monitorText)}`)
+    }
+    const usageRows = await page.locator('[data-testid="session-usage"]').count()
+    if (usageRows === 0) {
+      note('FAIL', 'panel/monitor',
+        'no session was measured, so the panel cannot answer which one is running away: ' +
+        JSON.stringify(monitorText.replace(/\s+/g, ' ').trim()))
+    }
+    // A percentage of the whole machine, never top's convention -- the machine
+    // meter is an inch above it, and a session reading 310% beside a machine
+    // reading 31% invites exactly one wrong conclusion.
+    for (const m of monitorText.matchAll(/(\d+(?:\.\d+)?)%/g)) {
+      if (Number(m[1]) > 100) {
+        note('FAIL', 'panel/monitor', `a meter read ${m[1]}%, which is not a share of anything`)
+      }
+    }
+
+    // No /proc is not the same as every session idle. A list of zeroes is a
+    // measurement nobody made -- the same mistake the machine meters below
+    // already have a check for.
+    let usageRouteHits = 0
+    await page.route('**/api/usage', async (route) => {
+      usageRouteHits++
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ readable: false, cores: 8, sessions: {} }),
+      })
+    })
+    await page.locator('[data-testid="panel-tab-files"]').click()
+    await sleep(400)
+    await page.locator('[data-testid="panel-tab-monitor"]').click()
+    await sleep(3000)
+    const noProc = await page.locator('[data-testid="system-monitor"]').innerText().catch(() => '')
+    if (usageRouteHits === 0) {
+      note('FAIL', 'panel/monitor', 'the fake /api/usage was never requested')
+    } else if (!/No \/proc/.test(noProc)) {
+      note('FAIL', 'panel/monitor',
+        'a machine with no /proc gets no per-session explanation, just an empty list: ' +
+        JSON.stringify(noProc.replace(/\s+/g, ' ').trim()))
+    }
+    if (await page.locator('[data-testid="session-usage"]').count() > 0) {
+      note('FAIL', 'panel/monitor', 'sessions were drawn from a payload that says it measured nothing')
+    }
+    await page.unroute('**/api/usage')
+
     // A machine the panel cannot measure must not be described as an idle one.
     //
     // readMem returns zeroes when /proc/meminfo cannot be opened — every
@@ -942,6 +997,16 @@ try {
     // Served rather than provoked: this machine has a readable /proc, so the
     // only honest way to see that payload is to send it.
     let systemRouteHits = 0
+    // Empty rather than absent: the assertions below match on "0%" across the
+    // whole panel, and a real per-session row reading 0.0% would trip them
+    // while saying nothing about the machine meters under test.
+    await page.route('**/api/usage', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ readable: true, cores: 8, sessions: {} }),
+      })
+    })
     await page.route('**/api/system', async (route) => {
       systemRouteHits++
       await route.fulfill({
@@ -987,6 +1052,7 @@ try {
         `sample: ${JSON.stringify(unmeasured.replace(/\s+/g, ' ').trim())}`)
     }
     await page.unroute('**/api/system')
+    await page.unroute('**/api/usage')
 
     // A panel you resized and then closed has to come back the size you left
     // it, and the size and the closed-ness have to be two stored things.

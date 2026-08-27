@@ -40,7 +40,16 @@ type Server struct {
 	Hub      *ws.Hub
 	Detector *session.Detector
 	Sampler  *sysmon.Sampler
-	Auth     *Auth
+	// TreeSampler holds the previous per-process CPU counters, so it has to be
+	// the same one across requests: a fresh sampler per request has nothing to
+	// difference against and reports every session at zero forever.
+	//
+	// A value rather than a pointer, so the zero Server has a working one. Every
+	// test that builds a Server by hand would otherwise have to remember this
+	// field, and forgetting it is a nil dereference in a handler rather than a
+	// compile error.
+	TreeSampler sysmon.TreeSampler
+	Auth        *Auth
 	// Challenges holds in-flight WebAuthn ceremonies. The challenge stays on
 	// the server; the browser only carries an opaque id for it.
 	Challenges *challengeStore

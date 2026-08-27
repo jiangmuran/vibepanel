@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { Activity, ChevronRight, Columns2, FolderTree, ListChecks, NotebookPen } from 'lucide-react'
 
-import type { Project } from '../protocol/wire'
+import type { Project, Session } from '../protocol/wire'
 import type { PanelSocket } from '../protocol/socket'
 import { FileTree } from './panels/FileTree'
 import { SystemMonitor } from './panels/SystemMonitor'
@@ -24,6 +24,8 @@ const TABS: { id: PanelTab; icon: typeof Activity; key: Key }[] = [
 
 interface Props {
   project: Project | null
+  /** Every session, so the monitor can name what it is measuring. */
+  sessions: Session[]
   /** Needed by the notes and todo panels so they hear about other viewers. */
   socket: PanelSocket
   tab: PanelTab
@@ -108,7 +110,7 @@ export function RightPanel(props: Props) {
       return <p className="px-3 py-4 text-[12px] text-ink-2">{t('panel.noProject')}</p>
     }
     if (tab === 'files') return <FileTree key={project.id} projectId={project.id} />
-    if (tab === 'monitor') return <SystemMonitor />
+    if (tab === 'monitor') return <SystemMonitor sessions={props.sessions} />
     if (showSplit) {
       return (
         <div ref={splitRef} className="flex h-full min-h-0 flex-col">

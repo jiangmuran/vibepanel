@@ -13,6 +13,7 @@ import type {
   Session,
   SessionState,
   SystemSample,
+  UsageSample,
   Todo,
 } from './wire'
 
@@ -216,6 +217,8 @@ export const api = {
     request<void>(`/api/sessions/${id}/restart`, { method: 'POST' }),
 
   system: () => request<SystemSample>('/api/system'),
+
+  usage: () => request<UsageSample>('/api/usage'),
 
   /**
    * A URL rather than a request: downloading is the browser's job, and it does

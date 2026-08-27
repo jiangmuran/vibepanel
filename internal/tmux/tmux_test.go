@@ -57,7 +57,6 @@ func TestEnsureServerLoadsConfig(t *testing.T) {
 		{[]string{"show-options", "-g", "-v", "status"}, "off"},
 		{[]string{"show-options", "-g", "-v", "history-limit"}, "20000"},
 		{[]string{"show-options", "-wg", "-v", "remain-on-exit"}, "on"},
-		{[]string{"show-options", "-wg", "-v", "allow-set-title"}, "on"},
 		{[]string{"show-options", "-wg", "-v", "window-size"}, "latest"},
 
 		// The settings whose failure is silent rather than loud. One per scope
@@ -989,4 +988,61 @@ func TestTheServerRecordsTheConfigItStartedWith(t *testing.T) {
 		t.Error("ServerRunning says no for a server with no sessions; EnsureServer would then " +
 			"restamp every server it is asked about")
 	}
+}
+
+// The embedded config has to be valid on the tmux that is actually installed,
+// and nothing was checking that.
+//
+// `allow-set-title` did not exist below tmux 3.6. On 3.4 -- which is what
+// Ubuntu 24.04 LTS ships, so a very ordinary place to run this -- tmux
+// answered `invalid option: allow-set-title`, and from there fourteen tests
+// across internal/tmux and internal/session failed with symptoms that named
+// something else entirely: sessions missing from the listing, panes that never
+// started their command, `expected 13 fields, got 1`. Nothing pointed at the
+// config, because tmux does not report config errors on stderr at start-server
+// and does not put them in `show-messages` either. It draws them in the pane
+// and carries on.
+//
+// `source-file` is the one place tmux does report them: non-zero exit and the
+// message on stderr. So the config is sourced into a throwaway server here,
+// which makes every option in the file a checked claim about the local tmux
+// rather than about the author's.
+//
+// This is the general form of the bug. A specific assertion per option would
+// not have caught it -- the assertion for allow-set-title was passing on the
+// machine it was written on.
+func TestTheEmbeddedConfigLoadsWithoutComplaintOnThisTmux(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+
+	// A server started with no config of its own, so the only thing being
+	// judged is the file sourced into it a moment later. Starting it with the
+	// embedded config would hide the error rather than raise it: tmux draws a
+	// config error in the pane and defers the message to whichever command
+	// comes next, which is exactly how this went unnoticed.
+	//
+	// `new-session` rather than `start-server`, because a server with no
+	// sessions exits immediately under tmux's default exit-empty -- and
+	// exit-empty is one of the things this very file turns off.
+	plain := &Client{Socket: c.Socket, Bin: c.Bin}
+	if out, err := plain.run(ctx, "new-session", "-d", "sleep", "60"); err != nil {
+		t.Fatalf("new-session: %v\n%s", err, out)
+	}
+
+	path := filepath.Join(t.TempDir(), "vibepanel.conf")
+	if err := os.WriteFile(path, Config, 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := plain.run(ctx, "source-file", path); err != nil {
+		t.Fatalf("the embedded config is not valid on %s:\n%v\n%s", versionOf(t, plain), err, out)
+	}
+}
+
+func versionOf(t *testing.T, c *Client) string {
+	t.Helper()
+	v, err := c.Version(context.Background())
+	if err != nil {
+		return "an unknown tmux"
+	}
+	return "tmux " + v
 }
