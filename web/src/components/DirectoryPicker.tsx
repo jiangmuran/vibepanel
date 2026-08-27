@@ -134,7 +134,7 @@ export function DirectoryPicker({
       >
         <div className="flex shrink-0 items-center gap-2 border-b border-hairline px-3 py-2.5">
           <Folder size={14} className="shrink-0 text-ink-2" />
-          <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-ink" title={absHere}>
+          <span className="min-w-0 flex-1 truncate font-mono text-vp-base text-ink" title={absHere}>
             {safeText(here)}
           </span>
           {busy && <Loader2 size={13} className="shrink-0 animate-spin text-ink-2" />}
@@ -146,7 +146,7 @@ export function DirectoryPicker({
               type="button"
               onClick={() => void load(listing.parent ?? '')}
               data-testid="dir-up"
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-ink-2 transition-colors duration-150 ease-vp hover:bg-surface-2 hover:text-ink"
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-vp-md text-ink-2 transition-colors duration-150 ease-vp hover:bg-surface-2 hover:text-ink"
             >
               <ChevronRight size={13} className="shrink-0 rotate-180" />
               {t('dir.up')}
@@ -158,7 +158,7 @@ export function DirectoryPicker({
               type="button"
               onClick={() => void load(e.path)}
               data-testid="dir-entry"
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-ink transition-colors duration-150 ease-vp hover:bg-surface-2"
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-vp-md text-ink transition-colors duration-150 ease-vp hover:bg-surface-2"
             >
               <Folder size={13} className="shrink-0 text-ink-2" />
               <span className="min-w-0 flex-1 truncate">{safeText(e.name)}</span>
@@ -166,12 +166,12 @@ export function DirectoryPicker({
             </button>
           ))}
           {listing && listing.entries.length === 0 && (
-            <div className="px-3 py-6 text-center text-[12px] text-ink-2">
+            <div className="px-3 py-6 text-center text-vp-base text-ink-2">
               {t('dir.empty')}
             </div>
           )}
           {listing?.truncated && (
-            <div className="px-3 py-2 text-[11px] text-ink-2">
+            <div className="px-3 py-2 text-vp-sm text-ink-2">
               {t('dir.truncated', { shown: listing.entries.length, total: listing.total })}
             </div>
           )}
@@ -180,7 +180,7 @@ export function DirectoryPicker({
         {error && (
           <div
             data-testid="dir-error"
-            className="shrink-0 border-t border-hairline px-3 py-2 text-[12px]"
+            className="shrink-0 border-t border-hairline px-3 py-2 text-vp-base"
             style={{ color: 'var(--vp-state-crashed)' }}
           >
             {safeText(error)}
@@ -200,14 +200,14 @@ export function DirectoryPicker({
                 }}
                 placeholder={t('dir.newName')}
                 data-testid="dir-new-name"
-                className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-[13px] text-ink outline-none focus:border-accent"
+                className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent"
               />
               <button
                 type="button"
                 onClick={() => void create()}
                 disabled={!newName.trim()}
                 data-testid="dir-new-confirm"
-                className="shrink-0 rounded-vp px-3 py-1.5 text-[13px] disabled:opacity-40"
+                className="shrink-0 rounded-vp px-3 py-1.5 text-vp-md disabled:opacity-40"
                 style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
               >
                 {t('dir.create')}
@@ -218,7 +218,7 @@ export function DirectoryPicker({
               type="button"
               onClick={() => setCreating(true)}
               data-testid="dir-new"
-              className="mb-2 flex items-center gap-1.5 text-[12.5px] text-ink-2 transition-colors duration-150 ease-vp hover:text-ink"
+              className="mb-2 flex items-center gap-1.5 text-vp-base text-ink-2 transition-colors duration-150 ease-vp hover:text-ink"
             >
               <FolderPlus size={13} />
               {t('dir.newFolder')}
@@ -236,7 +236,7 @@ export function DirectoryPicker({
             }}
             placeholder={t('dir.manual')}
             data-testid="dir-manual"
-            className="mb-3 w-full rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 font-mono text-[12.5px] text-ink outline-none focus:border-accent"
+            className="mb-3 w-full rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 font-mono text-vp-base text-ink outline-none focus:border-accent"
           />
 
           <div className="flex gap-2">
@@ -244,7 +244,7 @@ export function DirectoryPicker({
               type="button"
               onClick={onClose}
               data-testid="dir-cancel"
-              className="flex-1 rounded-vp border border-hairline px-3 py-2 text-[13px] text-ink-2 transition-colors duration-150 ease-vp hover:text-ink"
+              className="flex-1 rounded-vp border border-hairline px-3 py-2 text-vp-md text-ink-2 transition-colors duration-150 ease-vp hover:text-ink"
             >
               {t('dir.cancel')}
             </button>
@@ -253,7 +253,7 @@ export function DirectoryPicker({
               onClick={() => void pick(manual.trim() || absHere)}
               disabled={!listing && !manual.trim()}
               data-testid="dir-confirm"
-              className="flex-[2] rounded-vp px-3 py-2 text-[13px] disabled:opacity-40"
+              className="flex-[2] rounded-vp px-3 py-2 text-vp-md disabled:opacity-40"
               style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
             >
               {t('dir.use')}

@@ -112,7 +112,7 @@ export function ComposeInput({
         data-testid="compose-input"
         // The terminal is a monospace grid; what you are about to send should
         // look like what will arrive.
-        className="max-h-24 min-h-8 flex-1 resize-none rounded-vp border border-hairline bg-surface px-2 py-1.5 font-mono text-[13px] text-ink outline-none placeholder:font-sans placeholder:text-ink-2 focus:border-accent"
+        className="max-h-24 min-h-8 flex-1 resize-none rounded-vp border border-hairline bg-surface px-2 py-1.5 font-mono text-vp-md text-ink outline-none placeholder:font-sans placeholder:text-ink-2 focus:border-accent"
       />
       <button
         type="button"

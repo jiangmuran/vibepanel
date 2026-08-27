@@ -99,7 +99,7 @@ export function InlineName({ value, onCommit, className, title }: Props) {
         }}
         onClick={(e) => e.stopPropagation()}
         onDoubleClick={(e) => e.stopPropagation()}
-        className={`min-w-0 rounded border border-accent bg-surface px-1 outline-none ${className ?? ''}`}
+        className={`min-w-0 rounded-md border border-accent bg-surface px-1 outline-none ${className ?? ''}`}
       />
     )
   }

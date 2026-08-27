@@ -45,7 +45,7 @@ export function SelectionCopy({ selection = '' }: { selection?: string }) {
       data-testid="selection-bar"
       className="flex shrink-0 items-center gap-2 border-t border-hairline px-3 py-1.5 vp-blur"
     >
-      <span className="tabular min-w-0 flex-1 truncate text-[11px] text-ink-2">
+      <span className="tabular min-w-0 flex-1 truncate text-vp-sm text-ink-2">
         {chars} character{chars === 1 ? '' : 's'} selected
       </span>
       <button
@@ -57,7 +57,7 @@ export function SelectionCopy({ selection = '' }: { selection?: string }) {
             .then(() => setCopiedText(text))
             .catch(() => setCopiedText(''))
         }}
-        className="flex shrink-0 items-center gap-1 rounded-vp px-3 py-1 text-[12px] font-medium"
+        className="flex shrink-0 items-center gap-1 rounded-vp px-3 py-1 text-vp-base font-medium"
         style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
       >
         <Copy size={12} />

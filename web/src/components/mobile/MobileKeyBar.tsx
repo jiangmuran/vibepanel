@@ -151,7 +151,7 @@ function Key({
         e.preventDefault()
         onPress()
       }}
-      className={`flex h-8 shrink-0 items-center justify-center rounded-vp border border-hairline text-[12px] transition-colors duration-150 ease-vp ${
+      className={`flex h-8 shrink-0 items-center justify-center rounded-vp border border-hairline text-vp-base transition-colors duration-150 ease-vp ${
         wide ? 'min-w-11 px-2' : 'w-8'
       } ${active ? 'text-accent-ink' : 'text-ink'}`}
       style={active ? { background: 'var(--vp-accent)', borderColor: 'var(--vp-accent)' } : undefined}

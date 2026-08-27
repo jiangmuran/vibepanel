@@ -69,7 +69,7 @@ export function AuthGate({ children }: { children: (state: AuthState, signOut: (
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-full w-full items-center justify-center bg-bg text-[13px] text-ink">
+    <div className="flex h-full w-full items-center justify-center bg-bg text-vp-md text-ink">
       {children}
     </div>
   )
@@ -135,10 +135,10 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
         data-testid={setup ? 'setup-form' : 'login-form'}
         className="w-full max-w-80 rounded-vp-lg border border-hairline bg-surface p-6"
       >
-        <h1 className="mb-1 text-[15px] font-semibold tracking-tight text-ink">
+        <h1 className="mb-1 text-vp-lg font-semibold tracking-tight text-ink">
           {setup ? t('auth.setupTitle') : 'vibepanel'}
         </h1>
-        <p className="mb-5 text-[12px] leading-relaxed text-ink-2">
+        <p className="mb-5 text-vp-base leading-relaxed text-ink-2">
           {setup ? t('auth.setupHint') : t('auth.signInHint')}
         </p>
 
@@ -150,7 +150,7 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
               autoComplete="off"
               spellCheck={false}
               data-testid="setup-token"
-              className="w-full rounded-vp border border-hairline bg-bg px-2 py-1.5 font-mono text-[12px] text-ink outline-none focus:border-accent"
+              className="w-full rounded-vp border border-hairline bg-bg px-2 py-1.5 font-mono text-vp-base text-ink outline-none focus:border-accent"
             />
           </Field>
         )}
@@ -161,7 +161,7 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
             onChange={(e) => setUsername(e.target.value)}
             autoComplete="username"
             data-testid="auth-username"
-            className="w-full rounded-vp border border-hairline bg-bg px-2 py-1.5 text-[13px] text-ink outline-none focus:border-accent"
+            className="w-full rounded-vp border border-hairline bg-bg px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent"
           />
         </Field>
 
@@ -175,12 +175,12 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
             onChange={(e) => setPassword(e.target.value)}
             autoComplete={setup ? 'new-password' : 'current-password'}
             data-testid="auth-password"
-            className="w-full rounded-vp border border-hairline bg-bg px-2 py-1.5 text-[13px] text-ink outline-none focus:border-accent"
+            className="w-full rounded-vp border border-hairline bg-bg px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent"
           />
         </Field>
 
         {error && (
-          <p data-testid="auth-error" className="mb-3 text-[12px]" style={{ color: 'var(--vp-state-waiting)' }}>
+          <p data-testid="auth-error" className="mb-3 text-vp-base" style={{ color: 'var(--vp-state-waiting)' }}>
             {error}
           </p>
         )}
@@ -189,7 +189,7 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
           type="submit"
           disabled={busy}
           data-testid="auth-submit"
-          className="flex w-full items-center justify-center gap-1.5 rounded-vp px-3 py-2 text-[13px] font-medium transition-opacity duration-200 ease-vp disabled:opacity-50"
+          className="flex w-full items-center justify-center gap-1.5 rounded-vp px-3 py-2 text-vp-md font-medium transition-opacity duration-200 ease-vp disabled:opacity-50"
           style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
         >
           {setup ? <KeyRound size={14} /> : <LogIn size={14} />}
@@ -200,7 +200,7 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
           <>
             <div className="my-4 flex items-center gap-3">
               <span className="h-px flex-1" style={{ background: 'var(--vp-hairline)' }} />
-              <span className="text-[10.5px] text-ink-2">{t('auth.or')}</span>
+              <span className="text-vp-xs text-ink-2">{t('auth.or')}</span>
               <span className="h-px flex-1" style={{ background: 'var(--vp-hairline)' }} />
             </div>
             <button
@@ -208,7 +208,7 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
               disabled={busy}
               onClick={() => void signInWithPasskey()}
               data-testid="passkey-signin"
-              className="flex w-full items-center justify-center gap-1.5 rounded-vp border border-hairline px-3 py-2 text-[13px] text-ink transition-colors duration-200 ease-vp hover:bg-surface-2 disabled:opacity-50"
+              className="flex w-full items-center justify-center gap-1.5 rounded-vp border border-hairline px-3 py-2 text-vp-md text-ink transition-colors duration-200 ease-vp hover:bg-surface-2 disabled:opacity-50"
             >
               <Fingerprint size={14} />
               {t('auth.usePasskey')}
@@ -217,7 +217,7 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
         )}
 
         {!setup && !state.passkeysUsable && (
-          <p className="mt-4 text-[11px] leading-relaxed text-ink-2" data-testid="passkey-note">
+          <p className="mt-4 text-vp-sm leading-relaxed text-ink-2" data-testid="passkey-note">
             {t('auth.noPasskeys', { why: state.passkeyReason ?? t('auth.notSupported') })}
           </p>
         )}
@@ -237,9 +237,9 @@ function Field({
 }) {
   return (
     <label className="mb-3 block">
-      <span className="mb-1 block text-[11px] text-ink-2">{label}</span>
+      <span className="mb-1 block text-vp-sm text-ink-2">{label}</span>
       {children}
-      {hint && <span className="mt-1 block text-[10.5px] text-ink-2">{hint}</span>}
+      {hint && <span className="mt-1 block text-vp-xs text-ink-2">{hint}</span>}
     </label>
   )
 }

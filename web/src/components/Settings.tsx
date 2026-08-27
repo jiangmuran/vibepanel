@@ -90,20 +90,20 @@ export function Settings({ onClose }: { onClose: () => void }) {
         className="w-full max-w-2xl rounded-vp-lg border border-hairline bg-surface p-6"
       >
         <div className="mb-5 flex items-center gap-2">
-          <h2 className="flex-1 text-[15px] font-semibold tracking-tight text-ink">{t('settings.title')}</h2>
+          <h2 className="flex-1 text-vp-lg font-semibold tracking-tight text-ink">{t('settings.title')}</h2>
           <button
             type="button"
             onClick={onClose}
             title={t('settings.close')}
             data-testid="settings-close"
-            className="rounded p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+            className="rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
           >
             <X size={15} />
           </button>
         </div>
 
         {error && (
-          <p className="mb-4 text-[12px]" style={{ color: 'var(--vp-state-waiting)' }}>
+          <p className="mb-4 text-vp-base" style={{ color: 'var(--vp-state-waiting)' }}>
             {error}
           </p>
         )}
@@ -117,16 +117,16 @@ export function Settings({ onClose }: { onClose: () => void }) {
             arrival is why browsers stopped showing them, and Safari refuses one
             outside a gesture at all. */}
         <Section title={t('notify.title')}>
-          <p className="mb-2 text-[12px] leading-relaxed text-ink-2">{t('notify.explain')}</p>
+          <p className="mb-2 text-vp-base leading-relaxed text-ink-2">{t('notify.explain')}</p>
           {!notifySupported() ? (
-            <p className="text-[12px] text-ink-3">{t('notify.insecure')}</p>
+            <p className="text-vp-base text-ink-3">{t('notify.insecure')}</p>
           ) : notifyState === 'denied' ? (
-            <p className="text-[12px]" style={{ color: 'var(--vp-state-waiting)' }}>
+            <p className="text-vp-base" style={{ color: 'var(--vp-state-waiting)' }}>
               {t('notify.denied')}
             </p>
           ) : notifyState === 'granted' && notifyOn ? (
             <div className="flex items-center gap-2">
-              <span className="text-[12.5px] text-ink">{t('notify.on')}</span>
+              <span className="text-vp-base text-ink">{t('notify.on')}</span>
               <button
                 type="button"
                 data-testid="notify-off"
@@ -134,7 +134,7 @@ export function Settings({ onClose }: { onClose: () => void }) {
                   setNotifyEnabled(false)
                   setNotifyOn(false)
                 }}
-                className="rounded-vp border border-hairline px-2 py-1 text-[12px] text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+                className="rounded-vp border border-hairline px-2 py-1 text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
               >
                 {t('dir.cancel')}
               </button>
@@ -149,7 +149,7 @@ export function Settings({ onClose }: { onClose: () => void }) {
                   setNotifyOn(p === 'granted')
                 })
               }}
-              className="rounded-vp px-3 py-1.5 text-[12.5px]"
+              className="rounded-vp px-3 py-1.5 text-vp-base"
               style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
             >
               {t('notify.enable')}
@@ -164,7 +164,7 @@ export function Settings({ onClose }: { onClose: () => void }) {
         <Section title={t('settings.language')}>
           <div
             data-testid="settings-language"
-            className="inline-flex items-center gap-0.5 rounded-lg bg-surface-2 p-0.5"
+            className="inline-flex items-center gap-0.5 rounded-vp bg-surface-2 p-0.5"
           >
             {(['zh', 'en'] as const).map((code) => (
               <button
@@ -173,7 +173,7 @@ export function Settings({ onClose }: { onClose: () => void }) {
                 data-testid={`lang-${code}`}
                 onClick={() => setLang(code)}
                 aria-pressed={lang === code}
-                className={`rounded-[7px] px-3 py-1 text-[12.5px] transition-colors duration-200 ease-vp ${
+                className={`rounded-md px-3 py-1 text-vp-base transition-colors duration-200 ease-vp ${
                   lang === code
                     ? 'bg-surface text-ink shadow-[0_1px_2px_rgb(0_0_0/0.12)]'
                     : 'text-ink-2 hover:text-ink'
@@ -231,7 +231,7 @@ function PasswordSection() {
 
   return (
     <Section title={t('set.password')}>
-      <p className="mb-2 text-[12px] text-ink-2">
+      <p className="mb-2 text-vp-base text-ink-2">
         {t('set.passwordWhy')}
       </p>
       <div className="flex flex-wrap items-center gap-2">
@@ -242,7 +242,7 @@ function PasswordSection() {
           onChange={(e) => setCurrent(e.target.value)}
           placeholder={t('set.currentPassword')}
           autoComplete="current-password"
-          className="min-w-48 flex-1 rounded-vp border border-hairline bg-surface px-2 py-1.5 text-[12.5px] text-ink outline-none focus:border-accent"
+          className="min-w-48 flex-1 rounded-vp border border-hairline bg-surface px-2 py-1.5 text-vp-base text-ink outline-none focus:border-accent"
         />
         <input
           type="password"
@@ -251,25 +251,25 @@ function PasswordSection() {
           onChange={(e) => setNext(e.target.value)}
           placeholder={t('set.newPassword')}
           autoComplete="new-password"
-          className="min-w-48 flex-1 rounded-vp border border-hairline bg-surface px-2 py-1.5 text-[12.5px] text-ink outline-none focus:border-accent"
+          className="min-w-48 flex-1 rounded-vp border border-hairline bg-surface px-2 py-1.5 text-vp-base text-ink outline-none focus:border-accent"
         />
         <button
           type="button"
           data-testid="password-submit"
           disabled={busy || !current || !next}
           onClick={() => void submit()}
-          className="rounded-vp bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white transition-opacity duration-200 ease-vp disabled:opacity-40"
+          className="rounded-vp bg-accent px-3 py-1.5 text-vp-base font-medium text-white transition-opacity duration-200 ease-vp disabled:opacity-40"
         >
           {busy ? t('set.working') : t('set.change')}
         </button>
       </div>
       {error && (
-        <p data-testid="password-error" className="mt-2 text-[12px] text-state-crashed">
+        <p data-testid="password-error" className="mt-2 text-vp-base text-state-crashed">
           {error}
         </p>
       )}
       {done && (
-        <p data-testid="password-done" className="mt-2 text-[12px] text-state-done">
+        <p data-testid="password-done" className="mt-2 text-vp-base text-state-done">
           {t('settings.passwordChanged')}
         </p>
       )}
@@ -280,7 +280,7 @@ function PasswordSection() {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="mb-6">
-      <h3 className="mb-2 text-[11px] font-semibold tracking-wide text-ink-2 uppercase">{title}</h3>
+      <h3 className="mb-2 text-vp-sm font-semibold tracking-wide text-ink-2 uppercase">{title}</h3>
       {children}
     </section>
   )
@@ -314,9 +314,9 @@ function Row({
 }) {
   return (
     <div className="flex items-baseline gap-3 border-b border-hairline py-1.5 last:border-0">
-      <span className="w-32 shrink-0 text-[11.5px] text-ink-2">{label}</span>
+      <span className="w-32 shrink-0 text-vp-sm text-ink-2">{label}</span>
       <span
-        className={`tabular min-w-0 flex-1 truncate text-[12.5px] ${
+        className={`tabular min-w-0 flex-1 truncate text-vp-base ${
           tone === 'bad' ? 'text-state-crashed' : tone === 'warn' ? 'text-state-waiting' : 'text-ink'
         }`}
         title={value}
@@ -347,13 +347,13 @@ function StatusSection({ info }: { info: SettingsInfo }) {
         {(info.tmuxConfigStale || info.tmuxConfigUnknown) && (
           <div
             data-testid="tmux-config-stale"
-            className="border-t border-hairline py-2 text-[12px] leading-relaxed"
+            className="border-t border-hairline py-2 text-vp-base leading-relaxed"
             style={{ color: 'var(--vp-state-waiting)' }}
           >
             <span className="mr-1 text-ink-2">{t('set.tmuxConfigLabel')}</span>
             {info.tmuxConfigStale ? t('set.tmuxConfigStale') : t('set.tmuxConfigUnknown')}
             {info.tmuxConfigStale && (
-              <code className="mt-1 block font-mono text-[11.5px] text-ink">
+              <code className="mt-1 block font-mono text-vp-sm text-ink">
                 tmux -L {safeText(info.tmuxSocket)} kill-server
               </code>
             )}
@@ -426,12 +426,12 @@ function HooksSection() {
 
   return (
     <Section title={t('set.reporting')}>
-      <p className="mb-3 text-[12px] leading-relaxed text-ink-2">
+      <p className="mb-3 text-vp-base leading-relaxed text-ink-2">
         {t('set.reportingWhy')}
       </p>
 
       {error && (
-        <p className="mb-2 text-[12px]" style={{ color: 'var(--vp-state-waiting)' }}>
+        <p className="mb-2 text-vp-base" style={{ color: 'var(--vp-state-waiting)' }}>
           {error}
         </p>
       )}
@@ -460,7 +460,7 @@ function HooksSection() {
                 disabled={busy}
                 data-testid="hooks-remove"
                 onClick={() => void act(() => api.removeHooks())}
-                className="rounded-vp border border-hairline px-3 py-1.5 text-[12px] text-ink transition-colors duration-200 ease-vp hover:bg-surface-2 disabled:opacity-50"
+                className="rounded-vp border border-hairline px-3 py-1.5 text-vp-base text-ink transition-colors duration-200 ease-vp hover:bg-surface-2 disabled:opacity-50"
               >
                 Remove
               </button>
@@ -470,7 +470,7 @@ function HooksSection() {
                 disabled={busy}
                 data-testid="hooks-install"
                 onClick={() => void act(() => api.installHooks())}
-                className="rounded-vp px-3 py-1.5 text-[12px] font-medium disabled:opacity-50"
+                className="rounded-vp px-3 py-1.5 text-vp-base font-medium disabled:opacity-50"
                 style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
               >
                 {busy ? t('set.working') : t('set.install')}
@@ -480,7 +480,7 @@ function HooksSection() {
               type="button"
               onClick={() => setShowSnippet((v) => !v)}
               data-testid="hooks-preview"
-              className="rounded-vp border border-hairline px-3 py-1.5 text-[12px] text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+              className="rounded-vp border border-hairline px-3 py-1.5 text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
             >
               {showSnippet ? t('set.hide') : t('set.showWrites')}
             </button>
@@ -498,7 +498,7 @@ function HooksSection() {
               ends this turn." So the agent will not even be able to explain
               it. */}
           {justChanged && (
-            <p data-testid="hooks-restart-note" className="mt-3 text-[12px] leading-relaxed text-ink-2">
+            <p data-testid="hooks-restart-note" className="mt-3 text-vp-base leading-relaxed text-ink-2">
               Sessions that are already running will not pick this up. In each one, open{' '}
               <code className="font-mono">/hooks</code> once to reload, or restart the agent.
             </p>
@@ -525,7 +525,7 @@ function Snippet({ label, text }: { label: string; text: string }) {
   return (
     <div className="mb-3">
       <div className="mb-1 flex items-center gap-2">
-        <span className="text-[11px] text-ink-2">{label}</span>
+        <span className="text-vp-sm text-ink-2">{label}</span>
         <button
           type="button"
           onClick={() => {
@@ -534,13 +534,13 @@ function Snippet({ label, text }: { label: string; text: string }) {
               .then(() => setCopied(true))
               .catch(() => setCopied(false))
           }}
-          className="flex items-center gap-1 rounded p-1 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+          className="flex items-center gap-1 rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
         >
           {copied ? <Check size={11} /> : <Copy size={11} />}
-          <span className="text-[10.5px]">{copied ? 'Copied' : 'Copy'}</span>
+          <span className="text-vp-xs">{copied ? 'Copied' : 'Copy'}</span>
         </button>
       </div>
-      <pre className="max-h-56 overflow-auto rounded-vp border border-hairline bg-bg p-2 font-mono text-[11px] leading-relaxed text-ink">
+      <pre className="max-h-56 overflow-auto rounded-vp border border-hairline bg-bg p-2 font-mono text-vp-sm leading-relaxed text-ink">
         {text}
       </pre>
     </div>
@@ -599,15 +599,15 @@ function PasskeysSection() {
 
   return (
     <Section title={t('set.passkeys')}>
-      <p className="mb-3 text-[12px] leading-relaxed text-ink-2">
+      <p className="mb-3 text-vp-base leading-relaxed text-ink-2">
         {t('set.passkeysWhy')}
       </p>
       {error && (
-        <p className="mb-2 text-[12px]" style={{ color: 'var(--vp-state-waiting)' }}>
+        <p className="mb-2 text-vp-base" style={{ color: 'var(--vp-state-waiting)' }}>
           {error}
         </p>
       )}
-      {keys.length === 0 && <p className="mb-2 text-[12px] text-ink-2">{t('set.noPasskeys')}</p>}
+      {keys.length === 0 && <p className="mb-2 text-vp-base text-ink-2">{t('set.noPasskeys')}</p>}
       {keys.map((k) => (
         <div
           key={k.id}
@@ -615,8 +615,8 @@ function PasskeysSection() {
           className="group flex items-center gap-2 rounded-vp px-2 py-1.5 hover:bg-surface-2"
         >
           <Fingerprint size={12} className="shrink-0 text-ink-2" />
-          <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink">{passkeyLabel(k)}</span>
-          <span className="shrink-0 text-[10.5px] text-ink-2">
+          <span className="min-w-0 flex-1 truncate text-vp-base text-ink">{passkeyLabel(k)}</span>
+          <span className="shrink-0 text-vp-xs text-ink-2">
             {k.lastUsedAt ? `used ${new Date(k.lastUsedAt * 1000).toLocaleDateString()}` : 'never used'}
           </span>
           <button
@@ -626,7 +626,7 @@ function PasskeysSection() {
               void api.deletePasskey(k.id).then(load).catch(() => setError('could not remove it'))
             }}
             title={t('set.remove')}
-            className="shrink-0 rounded p-0.5 text-ink-2 vp-reveal hover:text-ink"
+            className="shrink-0 rounded-md p-0.5 text-ink-2 vp-reveal hover:text-ink"
           >
             <X size={12} />
           </button>
@@ -637,7 +637,7 @@ function PasskeysSection() {
         disabled={busy || !passkeysSupported()}
         onClick={() => void add()}
         data-testid="passkey-add"
-        className="mt-3 flex items-center gap-1.5 rounded-vp px-3 py-1.5 text-[12px] font-medium disabled:opacity-50"
+        className="mt-3 flex items-center gap-1.5 rounded-vp px-3 py-1.5 text-vp-base font-medium disabled:opacity-50"
         style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
       >
         <Plus size={13} />
@@ -684,7 +684,7 @@ function AuditSection() {
           */}
       <div data-testid="settings-audit" className="max-h-56 overflow-y-auto">
         {entries.map((e, i) => (
-          <div key={i} className="flex items-baseline gap-2 py-0.5 text-[11.5px]">
+          <div key={i} className="flex items-baseline gap-2 py-0.5 text-vp-sm">
             <span className="tabular w-32 shrink-0 text-ink-2">
               {new Date(e.at * 1000).toLocaleString()}
             </span>

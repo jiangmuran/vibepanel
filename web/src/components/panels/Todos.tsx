@@ -83,7 +83,7 @@ export function Todos({ projectId, socket }: { projectId: string; socket: PanelS
           }}
           placeholder={tr('todos.add')}
           data-testid="todo-input"
-          className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface px-2 py-1 text-[12px] text-ink outline-none placeholder:text-ink-2 focus:border-accent"
+          className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface px-2 py-1 text-vp-base text-ink outline-none placeholder:text-ink-2 focus:border-accent"
         />
         <button
           type="button"
@@ -102,7 +102,7 @@ export function Todos({ projectId, socket }: { projectId: string; socket: PanelS
           part of the screen. Here it is adjacent to the list and stays visible
           when the list is long enough to scroll. */}
       {todos.length > 0 && (
-        <div className="tabular shrink-0 px-3 pb-1 text-right text-[10.5px] text-ink-2">
+        <div className="tabular shrink-0 px-3 pb-1 text-right text-vp-xs text-ink-2">
           {/* The two languages put the numbers in different places, so the
               call passes both facts and the dictionary decides the order. */}
           {tr('todos.leftOf', { left: outstanding, done: todos.length - outstanding, total: todos.length })}
@@ -110,14 +110,14 @@ export function Todos({ projectId, socket }: { projectId: string; socket: PanelS
       )}
 
       {error && (
-        <p className="px-3 pb-2 text-[11px]" style={{ color: 'var(--vp-state-waiting)' }}>
+        <p className="px-3 pb-2 text-vp-sm" style={{ color: 'var(--vp-state-waiting)' }}>
           {error}
         </p>
       )}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-2">
         {todos.length === 0 && (
-          <p className="px-2 py-3 text-[12px] text-ink-2">{tr('todos.empty')}</p>
+          <p className="px-2 py-3 text-vp-base text-ink-2">{tr('todos.empty')}</p>
         )}
         {todos.map((t) => (
           <div
@@ -130,7 +130,7 @@ export function Todos({ projectId, socket }: { projectId: string; socket: PanelS
               type="button"
               onClick={() => void guard(() => api.patchTodo(t.id, { done: !t.done }))}
               title={t.done ? tr('todos.markNotDone') : tr('todos.markDone')}
-              className="mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-colors duration-200 ease-vp"
+              className="mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-md border transition-colors duration-200 ease-vp"
               style={{
                 borderColor: t.done ? 'var(--vp-state-done)' : 'var(--vp-hairline-strong)',
                 background: t.done ? 'var(--vp-state-done)' : 'transparent',
@@ -141,7 +141,7 @@ export function Todos({ projectId, socket }: { projectId: string; socket: PanelS
             <InlineName
               value={t.text}
               onCommit={(next) => void guard(() => api.patchTodo(t.id, { text: next }))}
-              className={`flex-1 text-[12.5px] leading-snug !whitespace-normal ${
+              className={`flex-1 text-vp-base leading-snug !whitespace-normal ${
                 t.done ? 'text-ink-2 line-through' : 'text-ink'
               }`}
               title={tr('todos.edit')}
@@ -150,7 +150,7 @@ export function Todos({ projectId, socket }: { projectId: string; socket: PanelS
               type="button"
               onClick={() => void guard(() => api.deleteTodo(t.id))}
               title={tr('todos.delete')}
-              className="mt-0.5 shrink-0 rounded p-0.5 text-ink-2 vp-reveal hover:text-ink"
+              className="mt-0.5 shrink-0 rounded-md p-0.5 text-ink-2 vp-reveal hover:text-ink"
             >
               <X size={11} />
             </button>

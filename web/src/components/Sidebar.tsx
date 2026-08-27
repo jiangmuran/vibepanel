@@ -157,7 +157,7 @@ export function Sidebar(props: SidebarProps) {
               // 36px down to 17, which is neither readable nor tappable, and
               // the overflow rule added to fix "the rail spills" never fired
               // because nothing ever spilled.
-              className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-vp text-[11px] font-semibold transition-colors duration-200 ease-vp ${
+              className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-vp text-vp-sm font-semibold transition-colors duration-200 ease-vp ${
                 active ? 'bg-surface-2 text-ink' : 'text-ink-2 hover:bg-surface-2'
               }`}
             >
@@ -204,7 +204,7 @@ export function Sidebar(props: SidebarProps) {
         >
           <ChevronLeft size={15} />
         </button>
-        <span className="text-[13px] font-semibold tracking-tight">{t('app.projects')}</span>
+        <span className="text-vp-md font-semibold tracking-tight">{t('app.projects')}</span>
         {/* Two views of the same projects, and switching between them costs
             nothing now. This used to be one button that erased the
             arrangement and then removed itself, so there was no way back and
@@ -246,7 +246,7 @@ export function Sidebar(props: SidebarProps) {
 
       <nav className="flex-1 overflow-y-auto px-2 pb-3">
         {projects.length === 0 && (
-          <p className="px-2 py-6 text-[12px] leading-relaxed text-ink-2">
+          <p className="px-2 py-6 text-vp-base leading-relaxed text-ink-2">
             {t('app.noProjects')}
           </p>
         )}
@@ -270,14 +270,14 @@ export function Sidebar(props: SidebarProps) {
                 {...drag.handleProps(p.id)}
                 data-testid="project-grip"
                 title={t('project.reorder')}
-                className="vp-tap -ml-1 cursor-grab rounded p-0.5 text-ink-2 vp-reveal active:cursor-grabbing"
+                className="vp-tap -ml-1 cursor-grab rounded-md p-0.5 text-ink-2 vp-reveal active:cursor-grabbing"
               >
                 <GripVertical size={12} />
               </span>
               <InlineName
                 value={projectLabel(p)}
                 onCommit={(next) => props.onRenameProject(p, next)}
-                className="text-[11px] font-semibold tracking-wide text-ink-2"
+                className="text-vp-sm font-semibold tracking-wide text-ink-2"
                 title={p.path}
               />
               <button
@@ -285,7 +285,7 @@ export function Sidebar(props: SidebarProps) {
                 onClick={() => props.onNewSession(p)}
                 data-testid="project-new-shell"
                 title={t('session.new')}
-                className="vp-tap ml-auto rounded p-1 text-ink-2 vp-reveal hover:text-ink"
+                className="vp-tap ml-auto rounded-md p-1 text-ink-2 vp-reveal hover:text-ink"
               >
                 <TerminalIcon size={13} />
               </button>
@@ -299,7 +299,7 @@ export function Sidebar(props: SidebarProps) {
                 onClick={() => props.onRemoveProject(p)}
                 data-testid="project-remove"
                 title={t('project.remove')}
-                className="vp-tap rounded p-1 text-ink-2 vp-reveal hover:text-ink"
+                className="vp-tap rounded-md p-1 text-ink-2 vp-reveal hover:text-ink"
               >
                 <X size={13} />
               </button>
@@ -326,7 +326,7 @@ export function Sidebar(props: SidebarProps) {
                   <InlineName
                     value={props.labels.get(s.id) ?? sessionLabel(s)}
                     onCommit={(next) => props.onRenameSession(s, next)}
-                    className="flex-1 text-[12.5px]"
+                    className="flex-1 text-vp-base"
                   />
                   {s.pinned && <Pin size={11} className="shrink-0 text-ink-2" />}
                   {/* The glyph says "gone" and this says how. A shape cannot
@@ -334,7 +334,7 @@ export function Sidebar(props: SidebarProps) {
                       "it crashed" and "it finished and closed". */}
                   {s.exited && (
                     <span
-                      className={`shrink-0 text-[10px] tabular ${
+                      className={`shrink-0 text-vp-xs tabular ${
                         s.exitStatus === 0 || s.exitStatus === EXIT_VANISHED
                           ? 'text-ink-2'
                           : 'text-state-crashed'
@@ -348,7 +348,7 @@ export function Sidebar(props: SidebarProps) {
                     </span>
                   )}
                   {!isLive && !s.exited && (
-                    <span className="shrink-0 text-[10px] text-ink-2">idle</span>
+                    <span className="shrink-0 text-vp-xs text-ink-2">idle</span>
                   )}
                   {/* Always visible, unlike pin and kill: a dead session is a
                       thing to act on, not an affordance to discover on hover —
@@ -362,7 +362,7 @@ export function Sidebar(props: SidebarProps) {
                         props.onRestartSession(s)
                       }}
                       title={t('app.restartHint')}
-                      className="vp-tap shrink-0 rounded p-0.5 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+                      className="vp-tap shrink-0 rounded-md p-0.5 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
                     >
                       <RotateCcw size={12} />
                     </button>
@@ -375,7 +375,7 @@ export function Sidebar(props: SidebarProps) {
                     }}
                     data-testid="pin-session"
                     title={s.pinned ? 'Unpin' : 'Pin to the top of this project'}
-                    className="vp-tap shrink-0 rounded p-0.5 text-ink-2 vp-reveal hover:text-ink"
+                    className="vp-tap shrink-0 rounded-md p-0.5 text-ink-2 vp-reveal hover:text-ink"
                   >
                     {s.pinned ? <PinOff size={12} /> : <Pin size={12} />}
                   </button>
@@ -387,7 +387,7 @@ export function Sidebar(props: SidebarProps) {
                     }}
                     data-testid="kill-session"
                     title={t('session.kill')}
-                    className="vp-tap shrink-0 rounded p-0.5 text-ink-2 vp-reveal hover:text-ink"
+                    className="vp-tap shrink-0 rounded-md p-0.5 text-ink-2 vp-reveal hover:text-ink"
                   >
                     <X size={12} />
                   </button>
@@ -408,7 +408,7 @@ export function Sidebar(props: SidebarProps) {
           type="button"
           data-testid="state-guessed-notice"
           onClick={props.onOpenSettings}
-          className="border-t border-hairline px-3 py-2 text-left text-[11px] leading-relaxed text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+          className="border-t border-hairline px-3 py-2 text-left text-vp-sm leading-relaxed text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
         >
           {props.hooksInstalled ? t('guessed.installed') : t('guessed.notInstalled')}
         </button>

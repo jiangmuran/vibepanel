@@ -66,23 +66,23 @@ export function ApiTokens() {
 
   return (
     <div data-testid="api-tokens">
-      <p className="mb-2 text-[12px] leading-relaxed text-ink-2">{t('tok.why')}</p>
+      <p className="mb-2 text-vp-base leading-relaxed text-ink-2">{t('tok.why')}</p>
 
       {error && (
-        <p className="mb-2 text-[12px]" style={{ color: 'var(--vp-state-crashed)' }}>
+        <p className="mb-2 text-vp-base" style={{ color: 'var(--vp-state-crashed)' }}>
           {safeText(error)}
         </p>
       )}
 
       {fresh ? (
         <div className="mb-3 rounded-vp border border-hairline bg-surface-2 p-3">
-          <p className="mb-2 text-[12px]" style={{ color: 'var(--vp-state-waiting)' }}>
+          <p className="mb-2 text-vp-base" style={{ color: 'var(--vp-state-waiting)' }}>
             {t('tok.once')}
           </p>
           <div className="flex items-center gap-2">
             <code
               data-testid="token-value"
-              className="min-w-0 flex-1 truncate rounded-vp bg-surface px-2 py-1.5 font-mono text-[12px] text-ink"
+              className="min-w-0 flex-1 truncate rounded-vp bg-surface px-2 py-1.5 font-mono text-vp-base text-ink"
             >
               {fresh}
             </code>
@@ -95,7 +95,7 @@ export function ApiTokens() {
                   () => setCopied(false),
                 )
               }}
-              className="shrink-0 rounded-vp border border-hairline px-2 py-1.5 text-[12px] text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+              className="shrink-0 rounded-vp border border-hairline px-2 py-1.5 text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
             >
               {copied ? t('tok.copied') : t('tok.copy')}
             </button>
@@ -103,7 +103,7 @@ export function ApiTokens() {
               type="button"
               data-testid="token-dismiss"
               onClick={() => setFresh(null)}
-              className="shrink-0 rounded-vp px-2.5 py-1.5 text-[12px]"
+              className="shrink-0 rounded-vp px-2.5 py-1.5 text-vp-base"
               style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
             >
               {t('tok.done')}
@@ -120,13 +120,13 @@ export function ApiTokens() {
             }}
             placeholder={t('tok.name')}
             data-testid="token-name"
-            className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-[13px] text-ink outline-none focus:border-accent"
+            className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent"
           />
           <button
             type="button"
             onClick={() => void create()}
             data-testid="token-create"
-            className="shrink-0 rounded-vp px-3 py-1.5 text-[12.5px]"
+            className="shrink-0 rounded-vp px-3 py-1.5 text-vp-base"
             style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
           >
             {t('tok.create')}
@@ -135,18 +135,18 @@ export function ApiTokens() {
       )}
 
       {tokens.length === 0 ? (
-        <p className="text-[12px] text-ink-3">{t('tok.none')}</p>
+        <p className="text-vp-base text-ink-3">{t('tok.none')}</p>
       ) : (
         tokens.map((tok) => (
           <div
             key={tok.id}
             data-testid="token-row"
-            className="flex items-center gap-2 border-t border-hairline py-2 text-[12.5px] first:border-t-0"
+            className="flex items-center gap-2 border-t border-hairline py-2 text-vp-base first:border-t-0"
           >
             <KeyRound size={13} className="shrink-0 text-ink-2" />
             <span className="min-w-0 flex-1 truncate text-ink">{safeText(tok.name)}</span>
-            <code className="shrink-0 font-mono text-[11px] text-ink-2">{tok.prefix}…</code>
-            <span className="w-24 shrink-0 text-right text-[11px] text-ink-2">
+            <code className="shrink-0 font-mono text-vp-sm text-ink-2">{tok.prefix}…</code>
+            <span className="w-24 shrink-0 text-right text-vp-sm text-ink-2">
               {tok.lastUsedAt === 0
                 ? t('tok.neverUsed')
                 : new Date(tok.lastUsedAt * 1000).toLocaleDateString()}
@@ -156,7 +156,7 @@ export function ApiTokens() {
               onClick={() => void revoke(tok)}
               title={t('tok.revoke')}
               data-testid="token-revoke"
-              className="shrink-0 rounded p-1 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+              className="shrink-0 rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
             >
               <Trash2 size={13} />
             </button>

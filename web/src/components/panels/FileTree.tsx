@@ -59,10 +59,10 @@ export function FileTree({ projectId }: { projectId: string }) {
   }, [projectId, path, reloads])
 
   if (error) {
-    return <p className="px-3 py-4 text-[12px]" style={{ color: 'var(--vp-state-waiting)' }}>{error}</p>
+    return <p className="px-3 py-4 text-vp-base" style={{ color: 'var(--vp-state-waiting)' }}>{error}</p>
   }
   if (!listing) {
-    return <p className="px-3 py-4 text-[12px] text-ink-2">Reading…</p>
+    return <p className="px-3 py-4 text-vp-base text-ink-2">Reading…</p>
   }
 
   return (
@@ -73,12 +73,12 @@ export function FileTree({ projectId }: { projectId: string }) {
             type="button"
             onClick={() => setPath(listing.parent ?? '')}
             title={t('files.up')}
-            className="rounded p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+            className="rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
           >
             <ChevronLeft size={13} />
           </button>
         )}
-        <span className="min-w-0 flex-1 truncate text-[11px] text-ink-2" title={listing.path || '/'}>
+        <span className="min-w-0 flex-1 truncate text-vp-sm text-ink-2" title={listing.path || '/'}>
           {listing.path || '/'}
         </span>
         <button
@@ -86,14 +86,14 @@ export function FileTree({ projectId }: { projectId: string }) {
           data-testid="file-refresh"
           onClick={() => setReloads((n) => n + 1)}
           title={t('files.reread')}
-          className="shrink-0 rounded p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+          className="shrink-0 rounded-md p-1 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
         >
           <RefreshCw size={12} />
         </button>
       </div>
 
       {listing.entries.length === 0 && (
-        <p className="px-3 py-3 text-[12px] text-ink-2">{t('files.empty')}</p>
+        <p className="px-3 py-3 text-vp-base text-ink-2">{t('files.empty')}</p>
       )}
 
       {/* A partial listing has to say so. The server caps a directory at two
@@ -102,7 +102,7 @@ export function FileTree({ projectId }: { projectId: string }) {
           directory — a file browser that quietly stops is worse than one that
           admits its limit. */}
       {listing.truncated && (
-        <p data-testid="file-truncated" className="px-3 py-2 text-[11px] text-ink-2">
+        <p data-testid="file-truncated" className="px-3 py-2 text-vp-sm text-ink-2">
           Showing {listing.entries.length.toLocaleString()} of{' '}
           {listing.total.toLocaleString()} items
         </p>
@@ -113,7 +113,7 @@ export function FileTree({ projectId }: { projectId: string }) {
           key={e.path}
           data-testid="file-entry"
           onClick={() => e.isDir && setPath(e.path)}
-          className={`group flex items-center gap-2 rounded-md px-2 py-1.5 text-[12px] ${
+          className={`group flex items-center gap-2 rounded-md px-2 py-1.5 text-vp-base ${
             e.isDir ? 'cursor-pointer hover:bg-surface-2' : 'hover:bg-surface-2'
           }`}
           title={safeText(e.path)}
@@ -137,12 +137,12 @@ export function FileTree({ projectId }: { projectId: string }) {
             <span
               data-testid="file-escapes"
               title={t('files.escapeLink')}
-              className="shrink-0 text-[10.5px] text-ink-2"
+              className="shrink-0 text-vp-xs text-ink-2"
             >
               outside
             </span>
           )}
-          {!e.isDir && <span className="tabular shrink-0 text-[10.5px] text-ink-2">{bytes(e.size)}</span>}
+          {!e.isDir && <span className="tabular shrink-0 text-vp-xs text-ink-2">{bytes(e.size)}</span>}
           {!e.isDir && e.readable && (
             // A link, not a fetch-and-blob: the browser's own download machinery
             // handles the progress, the resume and the save dialog, and a blob
@@ -153,7 +153,7 @@ export function FileTree({ projectId }: { projectId: string }) {
               data-testid="file-download"
               onClick={(ev) => ev.stopPropagation()}
               title={`Download ${safeText(e.name)}`}
-              className="vp-reveal shrink-0 rounded p-0.5 text-ink-2 hover:text-ink"
+              className="vp-reveal shrink-0 rounded-md p-0.5 text-ink-2 hover:text-ink"
             >
               <Download size={12} />
             </a>

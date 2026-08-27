@@ -42,16 +42,16 @@ export class ErrorBoundary extends Component<
     if (!this.state.error) return this.props.children
     return (
       <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-4 text-center">
-        <p className="text-[13px] text-ink">{this.props.label} could not be displayed</p>
+        <p className="text-vp-md text-ink">{this.props.label} could not be displayed</p>
         {/* Wrapped, not truncated. This is the only thing anyone can paste
             into a bug report, and the first version cut it off mid-word at
             "Cannot read properties of null (reading 'le…" — which names
             neither the property nor the place. */}
-        <p className="max-w-full text-[11px] break-words text-ink-2">{this.state.error.message}</p>
+        <p className="max-w-full text-vp-sm break-words text-ink-2">{this.state.error.message}</p>
         <button
           type="button"
           onClick={() => this.setState({ error: null })}
-          className="rounded-vp border border-hairline px-2 py-1 text-[11px] text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+          className="rounded-vp border border-hairline px-2 py-1 text-vp-sm text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
         >
           {t('err.tryAgain')}
         </button>

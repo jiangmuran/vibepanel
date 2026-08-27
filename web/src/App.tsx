@@ -614,7 +614,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
                   // sliced in half by the edge of the viewport -- the count of
                   // things waiting for you, unreadable, in the corner the whole
                   // product is about.
-                  className="tabular absolute top-0 right-0 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-1 text-[9px] font-semibold"
+                  className="tabular absolute top-0 right-0 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-1 text-vp-xs font-semibold"
                   style={{ background: 'var(--vp-state-waiting)', color: '#fff' }}
                 >
                   {waiting}
@@ -630,11 +630,11 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
                 exitStatus={current.exitStatus}
                 onToggle={(st) => void guard(() => api.patchSession(current.id, { state: st }))}
               />
-              <span data-testid="session-title" className="truncate text-[13px] font-medium">
+              <span data-testid="session-title" className="truncate text-vp-md font-medium">
                 {labelOf(current)}
               </span>
               {!narrow && (
-                <span className="truncate text-[12px] text-ink-2">{currentProject?.name}</span>
+                <span className="truncate text-vp-base text-ink-2">{currentProject?.name}</span>
               )}
               {/* Where you are when you find out. Reading a stack trace and
                   then having to go hunting in the sidebar for the way to try
@@ -645,7 +645,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
                   type="button"
                   data-testid="restart-current"
                   onClick={() => restartSession(current)}
-                  className="ml-1 flex shrink-0 items-center gap-1 rounded-full border border-hairline px-2 py-0.5 text-[11px] text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+                  className="ml-1 flex shrink-0 items-center gap-1 rounded-full border border-hairline px-2 py-0.5 text-vp-sm text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
                   title={
                     current.exitStatus === EXIT_VANISHED
                       ? 'The tmux session is gone. Start it again in a new one.'
@@ -663,13 +663,13 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               <span
                 data-testid="grid-size"
                 title={t('app.gridSize')}
-                className="ml-auto shrink-0 rounded-md bg-surface-2 px-1.5 py-0.5 tabular text-[10.5px] text-ink-2"
+                className="ml-auto shrink-0 rounded-md bg-surface-2 px-1.5 py-0.5 tabular text-vp-xs text-ink-2"
               >
                 {current.cols}×{current.rows}
               </span>
             </>
           ) : (
-            <span className="text-[13px] text-ink-2">{t('app.noSessionShort')}</span>
+            <span className="text-vp-md text-ink-2">{t('app.noSessionShort')}</span>
           )}
           {!narrow && rightWidth === 0 && (
             <button
@@ -738,7 +738,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
 
         {error && (
           <div
-            className="border-b border-hairline px-4 py-2 text-[12px]"
+            className="border-b border-hairline px-4 py-2 text-vp-base"
             style={{ color: 'var(--vp-state-waiting)' }}
           >
             {safeText(error)}
@@ -754,7 +754,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         {upgraded && (
           <div
             data-testid="upgrade-notice"
-            className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-hairline px-4 py-2 text-[12px]"
+            className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-hairline px-4 py-2 text-vp-base"
             style={{ background: 'var(--vp-surface-2)' }}
           >
             <span className="font-semibold text-ink">{t('upgrade.title')}</span>
@@ -763,7 +763,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               type="button"
               data-testid="upgrade-reload"
               onClick={() => window.location.reload()}
-              className="shrink-0 rounded-vp px-2.5 py-1 text-[12px]"
+              className="shrink-0 rounded-vp px-2.5 py-1 text-vp-base"
               style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
             >
               {t('upgrade.reload')}
@@ -771,7 +771,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             <button
               type="button"
               onClick={() => setUpgraded(false)}
-              className="shrink-0 rounded-vp px-2 py-1 text-[12px] text-ink-2 transition-colors duration-150 ease-vp hover:text-ink"
+              className="shrink-0 rounded-vp px-2 py-1 text-vp-base text-ink-2 transition-colors duration-150 ease-vp hover:text-ink"
             >
               {t('upgrade.later')}
             </button>
@@ -781,7 +781,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         {socketError && (
           <div
             data-testid="socket-error"
-            className="border-b border-hairline px-4 py-2 text-[12px]"
+            className="border-b border-hairline px-4 py-2 text-vp-base"
             style={{ color: 'var(--vp-state-crashed)' }}
           >
             {/* And this one holds whatever the server put in an error frame,
@@ -793,7 +793,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         {state.stale && (
           <div
             data-testid="stale-notice"
-            className="border-b border-hairline px-4 py-2 text-[12px]"
+            className="border-b border-hairline px-4 py-2 text-vp-base"
             style={{ color: 'var(--vp-state-waiting)' }}
           >
             {t('app.stale')} {safeText(state.stale)}
@@ -832,7 +832,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           {dropping && (
             <div
               data-testid="drop-overlay"
-              className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-vp border-2 border-dashed text-[13px]"
+              className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-vp border-2 border-dashed text-vp-md"
               style={{ borderColor: 'var(--vp-accent)', color: 'var(--vp-accent)' }}
             >
               Drop to upload into {current?.cwd || currentProject?.path}
@@ -869,7 +869,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
                 }
                 setBlockedClip('')
               }}
-              className="absolute top-2 left-1/2 z-10 -translate-x-1/2 rounded-vp border border-hairline px-3 py-1.5 text-[11.5px] vp-solid hover:text-ink"
+              className="absolute top-2 left-1/2 z-10 -translate-x-1/2 rounded-vp border border-hairline px-3 py-1.5 text-vp-sm vp-solid hover:text-ink"
               title={t('app.clipboardRefused')}
             >
               The terminal copied {blockedClip.length} character
@@ -879,7 +879,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           {dropNote && (
             <div
               data-testid="drop-note"
-              className="absolute top-2 right-2 z-10 rounded-vp border border-hairline px-2 py-1 text-[11px] vp-solid"
+              className="absolute top-2 right-2 z-10 rounded-vp border border-hairline px-2 py-1 text-vp-sm vp-solid"
             >
               {/* Same channel: this one holds err.message from an upload. */}
               {safeText(dropNote)}
@@ -905,7 +905,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               className="h-full w-full p-2"
             />
           ) : (
-            <div className="flex h-full items-center justify-center px-6 text-center text-[13px] text-ink-2">
+            <div className="flex h-full items-center justify-center px-6 text-center text-vp-md text-ink-2">
               {state.projects.length === 0
                 ? t('app.noProjects')
                 : t('app.noSession')}
@@ -946,7 +946,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             data-testid="bottom-show"
             onClick={() => setBottomOpen(true)}
             title={t('app.showTerminals')}
-            className="flex h-6 shrink-0 items-center justify-center gap-1 border-t border-hairline text-[11px] text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink vp-blur"
+            className="flex h-6 shrink-0 items-center justify-center gap-1 border-t border-hairline text-vp-sm text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink vp-blur"
           >
             <ChevronUp size={12} />
             terminals

@@ -40,7 +40,7 @@ function Meter({
     pct >= 90 ? 'var(--vp-state-waiting)' : pct >= 75 ? 'var(--vp-state-working)' : 'var(--vp-accent)'
   return (
     <div className="mb-3">
-      <div className="mb-1 flex items-baseline justify-between text-[11px]">
+      <div className="mb-1 flex items-baseline justify-between text-vp-sm">
         <span className="text-ink-2">{label}</span>
         <span className="tabular text-ink">{meterText(value)}</span>
       </div>
@@ -50,7 +50,7 @@ function Meter({
           style={{ width: `${pct}%`, background: tone }}
         />
       </div>
-      <div className="mt-1 tabular text-[10.5px] text-ink-2">{detail}</div>
+      <div className="mt-1 tabular text-vp-xs text-ink-2">{detail}</div>
     </div>
   )
 }
@@ -70,7 +70,7 @@ function SessionRow({ session, usage }: { session: Session; usage: SessionUsage 
     pct >= 50 ? 'var(--vp-state-waiting)' : pct >= 20 ? 'var(--vp-state-working)' : 'var(--vp-accent)'
   return (
     <div className="mb-2" data-testid="session-usage">
-      <div className="flex items-baseline gap-1.5 text-[11.5px]">
+      <div className="flex items-baseline gap-1.5 text-vp-sm">
         <StateDot state={session.state} size={9} exited={session.exited} exitStatus={session.exitStatus} />
         <span className="min-w-0 flex-1 truncate text-ink" title={safeText(session.title)}>
           {safeText(session.title)}
@@ -124,13 +124,13 @@ export function SystemMonitor({ sessions }: { sessions: Session[] }) {
 
   if (error) {
     return (
-      <p className="px-3 py-4 text-[12px]" style={{ color: 'var(--vp-state-waiting)' }}>
+      <p className="px-3 py-4 text-vp-base" style={{ color: 'var(--vp-state-waiting)' }}>
         {safeText(error)}
       </p>
     )
   }
   if (!sample) {
-    return <p className="px-3 py-4 text-[12px] text-ink-2">{t('monitor.reading')}</p>
+    return <p className="px-3 py-4 text-vp-base text-ink-2">{t('monitor.reading')}</p>
   }
 
   const memUsed = sample.memTotal - sample.memAvailable
@@ -199,11 +199,11 @@ export function SystemMonitor({ sessions }: { sessions: Session[] }) {
           the machine meters say the box is busy, and this says which session is
           doing it. */}
       <div className="mt-4 border-t border-hairline pt-3">
-        <p className="mb-2 text-[11px] uppercase tracking-wide text-ink-2">{t('monitor.perSession')}</p>
+        <p className="mb-2 text-vp-sm uppercase tracking-wide text-ink-2">{t('monitor.perSession')}</p>
         {usage && !usage.readable ? (
-          <p className="text-[11px] leading-relaxed text-ink-2">{t('monitor.noProc')}</p>
+          <p className="text-vp-sm leading-relaxed text-ink-2">{t('monitor.noProc')}</p>
         ) : measured.length === 0 ? (
-          <p className="text-[11px] text-ink-2">
+          <p className="text-vp-sm text-ink-2">
             {usage ? t('monitor.noSessions') : t('monitor.sampling')}
           </p>
         ) : (
@@ -215,7 +215,7 @@ export function SystemMonitor({ sessions }: { sessions: Session[] }) {
             pane sitting at a shell prompt is one process and reads zero, which
             is true and uninteresting. */}
         {measured.length > 0 && (
-          <p className="tabular mt-1 text-[10.5px] text-ink-2">
+          <p className="tabular mt-1 text-vp-xs text-ink-2">
             {measured.reduce((n, r) => n + r.usage.procs, 0) === 1
               ? t('monitor.oneProc')
               : t('monitor.procs', { n: String(measured.reduce((n, r) => n + r.usage.procs, 0)) })}
@@ -228,7 +228,7 @@ export function SystemMonitor({ sessions }: { sessions: Session[] }) {
           Same zero-means-unknown as the two meters above; hidden rather than
           "—" because a single line of prose has nothing to draw. */}
       {sample.uptime > 0 && (
-        <p className="tabular mt-4 text-[10.5px] text-ink-2">
+        <p className="tabular mt-4 text-vp-xs text-ink-2">
           {t('monitor.up', { d: duration(sample.uptime) })}
         </p>
       )}

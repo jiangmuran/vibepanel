@@ -114,7 +114,7 @@ export function BottomTerminals(props: Props) {
             data-session-id={t.id}
             data-active={active?.id === t.id}
             onClick={() => setActiveId(t.id)}
-            className={`group flex max-w-44 shrink-0 cursor-pointer items-center gap-1 rounded-vp px-2 py-1 text-[12px] transition-colors duration-200 ease-vp ${
+            className={`group flex max-w-44 shrink-0 cursor-pointer items-center gap-1 rounded-vp px-2 py-1 text-vp-base transition-colors duration-200 ease-vp ${
               active?.id === t.id ? 'bg-surface-2 text-ink' : 'text-ink-2 hover:bg-surface-2'
             }`}
           >
@@ -140,7 +140,7 @@ export function BottomTerminals(props: Props) {
                 props.onClose(t)
               }}
               title={tr('bottom.close')}
-              className="vp-tap rounded p-0.5 vp-reveal hover:text-ink"
+              className="vp-tap rounded-md p-0.5 vp-reveal hover:text-ink"
             >
               <X size={11} />
             </button>
@@ -182,7 +182,7 @@ export function BottomTerminals(props: Props) {
             className="h-full w-full px-2 py-1"
           />
         ) : (
-          <div className="flex h-full items-center justify-center text-[12px] text-ink-2">
+          <div className="flex h-full items-center justify-center text-vp-base text-ink-2">
             {tr('bottom.empty')}
           </div>
         )}

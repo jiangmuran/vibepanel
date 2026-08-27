@@ -207,12 +207,12 @@ export function Notes({ projectId, socket }: { projectId: string; socket: PanelS
         }}
         placeholder={t('notes.placeholder')}
         spellCheck={false}
-        className="min-h-0 flex-1 resize-none bg-transparent px-3 py-2 text-[12.5px] leading-relaxed text-ink outline-none placeholder:text-ink-2"
+        className="min-h-0 flex-1 resize-none bg-transparent px-3 py-2 text-vp-base leading-relaxed text-ink outline-none placeholder:text-ink-2"
       />
       <div
         data-testid="notes-status"
         data-status={status}
-        className="shrink-0 px-3 py-1 text-right text-[10.5px]"
+        className="shrink-0 px-3 py-1 text-right text-vp-xs"
         style={{ color: status === 'error' ? 'var(--vp-state-waiting)' : 'var(--vp-ink-2)' }}
       >
         {label[status]}

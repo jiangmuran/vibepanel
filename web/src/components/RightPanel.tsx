@@ -107,7 +107,7 @@ export function RightPanel(props: Props) {
 
   const body = () => {
     if (!project) {
-      return <p className="px-3 py-4 text-[12px] text-ink-2">{t('panel.noProject')}</p>
+      return <p className="px-3 py-4 text-vp-base text-ink-2">{t('panel.noProject')}</p>
     }
     if (tab === 'files') return <FileTree key={project.id} projectId={project.id} />
     if (tab === 'monitor') return <SystemMonitor sessions={props.sessions} />
@@ -177,7 +177,7 @@ export function RightPanel(props: Props) {
           data-testid="panel-header"
           className="flex h-10 shrink-0 items-center gap-1 overflow-hidden border-b border-hairline px-2"
         >
-          <div className="flex min-w-0 flex-1 items-center gap-0.5 rounded-lg bg-surface-2 p-0.5">
+          <div className="flex min-w-0 flex-1 items-center gap-0.5 rounded-vp bg-surface-2 p-0.5">
             {TABS.map(({ id, icon: Icon, key }) => {
               const label = t(key)
               return (
@@ -188,7 +188,7 @@ export function RightPanel(props: Props) {
                 onClick={() => props.onTab(id)}
                 title={label}
                 aria-pressed={tab === id}
-                className={`flex min-w-0 flex-1 items-center justify-center gap-1 rounded-[7px] py-1 text-[11px] transition-colors duration-200 ease-vp ${
+                className={`flex min-w-0 flex-1 items-center justify-center gap-1 rounded-md py-1 text-vp-sm transition-colors duration-200 ease-vp ${
                   tab === id
                     ? 'bg-surface text-ink shadow-[0_1px_2px_rgb(0_0_0/0.12)]'
                     : 'text-ink-2 hover:text-ink'

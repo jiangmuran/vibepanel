@@ -226,6 +226,36 @@
     'Source Han Mono SC', 'WenQuanYi Zen Hei Mono', 'PingFang SC',
     'Microsoft YaHei', NSimSun, monospace;
 
+  /* The type scale.
+     Nine sizes were in use across the components -- 9, 10, 10.5, 11, 11.5, 12,
+     12.5, 13 and 15 -- which is not a scale, it is nine separate decisions
+     taken at nine different moments. Nothing looks *wrong* at any one of them,
+     and that is the point: the difference between 11 and 11.5 is invisible on
+     its own and the sum of eight such differences is what "unrefined" means.
+
+     Five steps, each with a job. Collapsing rounds up rather than down, because
+     the complaint that started this was that the panel was too cramped.
+
+       xs   labels, counts, meta       (absorbed 9, 10, 10.5)
+       sm   secondary text, tooltips   (absorbed 11, 11.5)
+       base body, list rows            (absorbed 12, 12.5)
+       md   primary rows, inputs
+       lg   headings
+
+     Pinned by a test: an arbitrary text-[Npx] in a component fails it, which is
+     the only thing that stops a sixth size arriving the next time somebody
+     needs something "just a bit smaller". */
+  --text-vp-xs: 10.5px;
+  --text-vp-xs--line-height: 1.45;
+  --text-vp-sm: 11.5px;
+  --text-vp-sm--line-height: 1.45;
+  --text-vp-base: 12.5px;
+  --text-vp-base--line-height: 1.5;
+  --text-vp-md: 13px;
+  --text-vp-md--line-height: 1.5;
+  --text-vp-lg: 15px;
+  --text-vp-lg--line-height: 1.4;
+
   --radius-vp: var(--vp-radius);
   --radius-vp-lg: var(--vp-radius-lg);
   --ease-vp: var(--vp-ease);
