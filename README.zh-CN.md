@@ -86,6 +86,19 @@ LaunchAgent。已经解开发布包的话，`./deploy/install.sh` 就是同一�
 它会问你装哪一种，把接下来要做的事列出来，等你点头才动手。只有 stdin 和 stdout 都是终端
 时才提问，管道里跑就是无人值守那条路。全部选项在 `... | sh -s -- --help`。
 
+**安装脚本本身会说中文。** `--lang zh` 或 `--lang en` 说了算；不给的话，就看 `LC_ALL`、
+`LC_MESSAGES`、`LANG`——三个里最先设了的那一个，而且只认 `zh` 或 `en` 开头的值。它们都
+没说、而终端那头有人时，第一个问题就是问语言，问在别的任何问题之前。管道里跑永远不会
+停下来问：先看参数，再看环境变量，都没有就用英文。
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/jiangmuran/vibepanel/main/install.sh | sh -s -- --lang zh
+```
+
+会翻译的是你要据此做决定的那些话：每个提问、动手之前列出的计划、结束时的总结，以及每一条
+告诉你下一步该做什么的报错。执行过程中那几行「installed <路径>」的流水账仍然是英文——它们
+是已经发生过的事的记录，翻译它们只会把两种语言掺在同一段里。
+
 然后打开 `http://<主机>:8443`，粘贴它打印出来的 setup token，设一个密码——或者直接在安装
 脚本里建账号：`--username you --password-file /path/to/pw`。**故意没有** `--password <值>`：
 那是把密码写进 shell history 和 `ps`。
@@ -149,6 +162,7 @@ tmux server 就是内核最后才杀的东西。机器内存吃得紧，或者�
 
 `--yes` 全取默认值，`--enable` 启动服务，`--user` / `--system` 指定 unit 种类，
 `--migrate` 允许把已装的那一种换成另一种。拿不到 root 时它会直说，然后改装 user service。
+`--yes` 也把语言一并定死，不会停下来问：先 `--lang`，再看环境变量，都没有就用英文。
 
 装 user service 时脚本还会替你开 lingering。不开的话，unit 会在你最后一个登录会话结束时停掉。
 

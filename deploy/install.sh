@@ -74,10 +74,773 @@ LAUNCHCTL="${VIBEPANEL_LAUNCHCTL:-launchctl}"
 TMUX_BIN="${VIBEPANEL_TMUX_BIN:-tmux}"
 PKG_RUNNER="${VIBEPANEL_PKG_RUNNER:-}"
 
+# ── which language does this installer speak? ─────────────────────────────
+#
+# Three ways, in this order: --lang, then the environment, then the person.
+#
+#   --lang zh | --lang en   explicit, and it wins. The bootstrap (install.sh at
+#                           the repository root) forwards it here.
+#   LC_ALL, LC_MESSAGES,    the first of the three that is set decides, and only
+#   LANG                    it -- that is the order the C library resolves
+#                           messages in, and LC_ALL=C beside LANG=zh_CN means
+#                           the person asked for C.
+#   the question below      when neither of the above answered and there is
+#                           somebody to ask.
+#
+# Only zh* and en* are read. A locale this does not know is not a guess to be
+# made -- de_DE implies neither of the two languages this speaks -- so it leaves
+# the question open, and the question is only asked when there is a terminal.
+# Unattended, undecided means English: a `curl | sh` inside a pipeline must
+# never stop to ask which language to fail in.
+VP_LANG=en
+VP_LANG_DECIDED=no
+
+# `return` after the first variable that is set, whatever it said. Falling
+# through from an LC_ALL this does not recognise to LANG would be this script
+# overruling the variable the C library gives priority to.
+vp_lang_of() { # vp_lang_of <locale or flag value> -> en | zh | nothing
+  case "$1" in
+    zh|zh_*|zh-*|ZH|ZH_*|ZH-*) echo zh ;;
+    en|en_*|en-*|EN|EN_*|EN-*) echo en ;;
+  esac
+}
+
+vp_lang_from_env() {
+  local v x
+  for v in "${LC_ALL:-}" "${LC_MESSAGES:-}" "${LANG:-}"; do
+    [ -n "$v" ] || continue
+    x="$(vp_lang_of "$v")"
+    if [ -n "$x" ]; then VP_LANG="$x"; VP_LANG_DECIDED=yes; fi
+    return 0
+  done
+}
+
+# Read before the argument loop, so `--lang zh --help` and `--help --lang zh`
+# print the same page. The loop below sees --lang again and steps over it.
+vp_lang_from_args() {
+  local a want=no x
+  for a in "$@"; do
+    if [ "$want" = yes ]; then
+      want=no
+      x="$(vp_lang_of "$a")"
+      if [ -n "$x" ]; then VP_LANG="$x"; VP_LANG_DECIDED=yes; fi
+      continue
+    fi
+    case "$a" in
+      --lang) want=yes ;;
+      --lang=*) vp_lang_from_args --lang "${a#--lang=}" ;;
+    esac
+  done
+}
+
+vp_lang_from_env
+vp_lang_from_args "$@"
+
+# ── strings: begin ────────────────────────────────────────────────────────
+#
+# Every sentence a person reads while deciding something, in both languages, on
+# adjacent lines.
+#
+# The rule for what is in here, because a half-translated screen is worse than
+# either language on its own: if a line is part of a decision -- a question, the
+# plan printed before anything is touched, an error saying what to do next, the
+# closing summary and its notes -- it is in here. If it is a record of something
+# that already happened, and it is a verb and a path, it stays in English where
+# it is: `installed /home/x/.local/bin/vibepanel` reads the same either way, and
+# translating it would only put a second language in the middle of a block
+# nobody reads for meaning.
+#
+# bash 3.2 has no associative arrays -- macOS ships 3.2 and always will -- so
+# this is one `case`. Keys are added here and nowhere else, and every one of
+# them carries both languages: scripts/install-check.sh walks every arm below
+# and fails if either side is empty, which is the whole reason a pair cannot
+# quietly become a single.
+#
+# Substitutions are %1$s, %2$s, and always numbered -- never a bare %s. Two
+# reasons, and the first is not a preference: bash's builtin printf has no
+# positional specifiers at all (`printf: \`$': invalid format character`), and
+# bash 3.2's is the one macOS has, so `m` substitutes by hand rather than
+# through a format string. The second is that Chinese does not put the noun
+# where English does, and a pair that used bare %s on both sides would silently
+# swap two arguments in one language only. Numbering them also means the strings
+# are data and not formats: a literal % in a message cannot break anything.
+mstr() { # mstr <key>  -> MS_EN / MS_ZH; non-zero if there is no such key
+  MS_EN=
+  MS_ZH=
+  case "$1" in
+    # Both sides are the same on purpose, and it is the one key where that is
+    # right: this is asked before anybody has chosen, so a person who reads only
+    # one of the two languages has to be able to find their own name in it.
+    lang.ask)
+      MS_EN='Which language should this installer speak? / 安装程序用哪种语言？
+
+  1) English
+  2) 简体中文'
+      MS_ZH='Which language should this installer speak? / 安装程序用哪种语言？
+
+  1) English
+  2) 简体中文' ;;
+    # The question above is bilingual, so its prompt is too -- at that moment
+    # neither language has been ruled out.
+    lang.prompt)
+      MS_EN='  choice / 选择 [1]: '
+      MS_ZH='  choice / 选择 [1]: ' ;;
+    # The service-kind menu below, which is asked after the language is known.
+    choice.prompt)
+      MS_EN='  choice [1]: '
+      MS_ZH='  选择 [1]：' ;;
+
+    banner)
+      MS_EN='vibepanel installer'
+      MS_ZH='vibepanel 安装程序' ;;
+
+    usage)
+      MS_EN='vibepanel installer
+
+  ./install.sh                    ask what to install, show the plan, do it
+  ./install.sh --yes              take the defaults, ask nothing
+  ./install.sh --yes --enable     ...and start the service at the end
+  ./install.sh --user             the per-user service, even where root works
+
+  -y, --yes, --non-interactive  never ask; suitable for CI and curl | sh
+      --interactive             ask even when stdin is not a terminal
+      --lang <en|zh>            which language this installer speaks. Without
+                                it, LC_ALL / LC_MESSAGES / LANG decide; if none
+                                of them says and there is somebody to ask, the
+                                first question is which language.
+      --enable                  start (or restart) the service when done
+      --no-enable               only put the files in place
+      --system                  Linux: the systemd *system* service. The
+                                default wherever root is available, because it
+                                is the only one that can lower OOMScoreAdjust
+                                and the only one that is up before you log in.
+      --user                    Linux: the systemd *user* service, which needs
+                                no root. macOS: the LaunchAgent, which is the
+                                only kind there and what --system gets too.
+      --migrate                 if the other kind is already installed, remove
+                                it. Without this the installer refuses rather
+                                than leave two panels on one tmux socket.
+      --skip-tmux               do not check for tmux, and never offer to
+                                install or upgrade it
+
+  The panel'"'"'s first account. Without any of these, the panel prints a one-time
+  setup token at startup and you create the account in the browser -- that path
+  is unchanged and still works.
+
+      --username <name>         create the first account as part of the install
+      --password-stdin          read its password from this script'"'"'s stdin.
+                                Implies --yes: the prompts read stdin too, and
+                                they cannot both have it.
+      --password-file <path>    read it from a file, which is the safe way
+                                through the one-liner
+      --password-env <VAR>      read it from an environment variable
+                                There is no --password <value>: that is a
+                                password in your shell history and in `ps`.
+  -h, --help
+
+Interactive by default when stdin and stdout are both terminals.
+
+tmux 3.3 or newer is the one prerequisite. If it is missing this offers to
+install it with whichever of apt/dnf/pacman/zypper/apk/brew is on the machine,
+and if it is too old it says exactly what that costs and offers the same. It
+never assumes sudo works: where root is not available it prints the one command
+for you to run and stops there.
+
+Afterwards, `vibepanel service` is the single command for status, start, stop,
+restart, logs, the one-time setup token, upgrade and uninstall -- on both
+platforms and both service kinds, so there is nothing to remember about
+systemctl --user versus launchctl.'
+      MS_ZH='vibepanel 安装程序
+
+  ./install.sh                    询问装什么，先给出计划，再动手
+  ./install.sh --yes              全部用默认值，什么都不问
+  ./install.sh --yes --enable     ……并在结束时启动服务
+  ./install.sh --user             用按用户的服务，哪怕这里 root 可用
+
+  -y, --yes, --non-interactive  从不发问；CI 和 curl | sh 要的就是它
+      --interactive             即使标准输入不是终端也发问
+      --lang <en|zh>            安装程序说哪种语言。不给时由 LC_ALL /
+                                LC_MESSAGES / LANG 决定；它们都没说，
+                                而这里有人可问时，第一个问题就是问语言。
+      --enable                  结束时启动（或重启）服务
+      --no-enable               只把文件放到位
+      --system                  Linux：systemd *system* 服务。只要 root 可用
+                                就是默认值，因为只有它能把 OOMScoreAdjust
+                                调低，也只有它在你登录之前就已经起来了。
+      --user                    Linux：systemd *user* 服务，完全不需要 root。
+                                macOS：LaunchAgent，那边只有这一种，
+                                --system 得到的也是它。
+      --migrate                 如果已经装了另一种，就删掉它。不加这个时，
+                                安装程序会拒绝，而不是留下两个面板共用
+                                一个 tmux socket。
+      --skip-tmux               不检查 tmux，也不提出安装或升级
+
+  面板的第一个账号。一个都不给时，面板会在启动时打印一次性的 setup token，
+  你在浏览器里创建账号 —— 那条路没有变，仍然能用。
+
+      --username <name>         安装的同时创建第一个账号
+      --password-stdin          从本脚本的标准输入读它的密码。隐含 --yes：
+                                提问也要读标准输入，两者不能都占着它。
+      --password-file <path>    从文件里读，这是通过一行命令安装时安全的做法
+      --password-env <VAR>      从环境变量里读
+                                没有 --password <value>：那是把密码留在你的
+                                shell 历史里，也留在 `ps` 的输出里。
+  -h, --help
+
+标准输入和标准输出都是终端时，默认发问。
+
+唯一的前置条件是 tmux 3.3 或更新。缺了它，本程序会用机器上
+apt/dnf/pacman/zypper/apk/brew 里的那一个提出安装；版本太旧时，会说清楚那
+究竟损失了什么，并提出同样的升级。它从不假定 sudo 能用：没有 root 时，它只
+把那一条命令打印出来，然后停在那里。
+
+装完之后，`vibepanel service` 是查看状态、启动、停止、重启、日志、一次性
+setup token、升级和卸载的唯一命令 —— 两个平台、两种服务都一样，不用去记
+systemctl --user 和 launchctl 的分别。'  ;;
+
+    arg.lang)
+      MS_EN='--lang needs en or zh'
+      MS_ZH='--lang 后面要跟 en 或 zh' ;;
+    arg.username)
+      MS_EN='--username needs a name'
+      MS_ZH='--username 后面要跟一个名字' ;;
+    arg.pwfile)
+      MS_EN='--password-file needs a path'
+      MS_ZH='--password-file 后面要跟一个路径' ;;
+    arg.pwenv)
+      MS_EN='--password-env needs a variable name'
+      MS_ZH='--password-env 后面要跟一个变量名' ;;
+    arg.password)
+      MS_EN='there is no --password flag, on purpose: a password on a command line is in
+your shell history and in `ps` output for every other user on this machine.
+Use --password-file <path>, --password-env <VAR> or --password-stdin.'
+      MS_ZH='没有 --password 这个选项，这是故意的：命令行上的密码会留在你的 shell
+历史里，也会出现在这台机器上任何其他用户都能看到的 `ps` 输出里。
+请用 --password-file <path>、--password-env <VAR> 或 --password-stdin。' ;;
+    arg.unknown)
+      MS_EN='unknown option: %1$s
+try --help'
+      MS_ZH='不认识的选项：%1$s
+试试 --help' ;;
+
+    pre.platform)
+      MS_EN='error: %1$s is not a platform this installs on; Linux and macOS only.'
+      MS_ZH='错误：%1$s 不是本程序能安装的平台；只支持 Linux 和 macOS。' ;;
+    pre.nobinary)
+      MS_EN='error: no vibepanel binary next to this script
+       run this from an unpacked release archive, or use the one-liner:
+       curl -fsSL https://raw.githubusercontent.com/jiangmuran/vibepanel/main/install.sh | sh'
+      MS_ZH='错误：这个脚本旁边没有 vibepanel 可执行文件
+       请在解开的发布包里运行它，或者用那一行命令：
+       curl -fsSL https://raw.githubusercontent.com/jiangmuran/vibepanel/main/install.sh | sh' ;;
+    pre.homero)
+      MS_EN='error: %1$s is not writable, and everything this installs lives under it.
+       Nothing was changed.'
+      MS_ZH='错误：%1$s 不可写，而本程序装的每样东西都在它下面。
+       什么都没有改动。' ;;
+    pre.bindirro)
+      MS_EN='error: %1$s exists and is not writable, so the binary cannot be installed.
+       Nothing was changed. Fix the permissions, or install it somewhere else
+       and edit the unit'"'"'s ExecStart to match.'
+      MS_ZH='错误：%1$s 已存在且不可写，可执行文件装不进去。
+       什么都没有改动。要么修好权限，要么装到别处，并把 unit 里的
+       ExecStart 改成对应的路径。' ;;
+
+    tmux.missing)
+      MS_EN='tmux is not installed. The panel keeps every session alive inside it, so
+there is nothing to run without it.'
+      MS_ZH='没有装 tmux。面板的每个会话都活在它里面，没有它就没有东西可跑。' ;;
+    tmux.old)
+      MS_EN='tmux %1$s is older than %2$s, so the panel'"'"'s config line
+allow-passthrough is not applied and the sequences agent TUIs use for
+progress and notifications are silently dropped. Everything else works.'
+      MS_ZH='tmux %1$s 比 %2$s 旧，面板配置里的 allow-passthrough 那一行不会生效，
+agent 的 TUI 用来发进度和通知的转义序列会被悄悄丢掉。其余一切照常。' ;;
+    tmux.nopkg)
+      MS_EN='No package manager this knows about (apt/dnf/pacman/zypper/apk/brew) is
+on this machine, so tmux has to be installed by hand:
+  https://github.com/tmux/tmux/wiki/Installing'
+      MS_ZH='这台机器上没有本程序认识的包管理器（apt/dnf/pacman/zypper/apk/brew），
+所以 tmux 得自己动手装：
+  https://github.com/tmux/tmux/wiki/Installing' ;;
+    tmux.noroot)
+      MS_EN='Installing it needs root, and root is not available here (no sudo, or it
+would need a password and there is nobody to type it). From an account
+that has it:
+  %1$s'
+      MS_ZH='装它需要 root，而这里没有 root（没有 sudo，或者 sudo 会要密码而这里
+没有人来输）。请在有 root 的账号下运行：
+  %1$s' ;;
+    tmux.offer.install)
+      MS_EN='install it now with: %1$s  ?'
+      MS_ZH='现在就用这条命令装上：%1$s  ？' ;;
+    tmux.offer.upgrade)
+      MS_EN='try to upgrade it now with: %1$s  ?'
+      MS_ZH='现在就用这条命令试着升级：%1$s  ？' ;;
+    tmux.autoinstall)
+      MS_EN='installing tmux with: %1$s'
+      MS_ZH='正在用这条命令安装 tmux：%1$s' ;;
+    tmux.noupgrade)
+      MS_EN='Not upgrading it unattended -- the distribution'"'"'s package is this same
+version, so it would change nothing and say it had. Deliberately:
+  https://github.com/tmux/tmux/wiki/Installing'
+      MS_ZH='无人值守时不升级它 —— 发行版的包就是同一个版本，升级什么都不会改变，
+却会报告成功。这是故意的：
+  https://github.com/tmux/tmux/wiki/Installing' ;;
+    tmux.gone)
+      MS_EN='the package manager reported success and there is still no tmux here.'
+      MS_ZH='包管理器报告成功了，而这里仍然没有 tmux。' ;;
+    tmux.installed)
+      MS_EN='tmux %1$s installed'
+      MS_ZH='已装上 tmux %1$s' ;;
+    tmux.samever)
+      MS_EN='tmux %1$s is what this machine'"'"'s packages offer, and it is still
+older than %2$s. Building from source is the only way up:
+  https://github.com/tmux/tmux/wiki/Installing'
+      MS_ZH='tmux %1$s 就是这台机器的软件源能给的版本，它仍然比 %2$s 旧。
+只能从源码编译才能再往上：
+  https://github.com/tmux/tmux/wiki/Installing' ;;
+    tmux.pkgfail)
+      MS_EN='that did not work. Install tmux and run this again:
+  %1$s'
+      MS_ZH='没成功。装好 tmux 之后再运行一次：
+  %1$s' ;;
+    tmux.none)
+      MS_EN='error: nothing was installed. vibepanel needs tmux.'
+      MS_ZH='错误：什么都没有安装。vibepanel 需要 tmux。' ;;
+
+    acct.twosources)
+      MS_EN='error: choose one of --password-stdin, --password-file and --password-env.
+       Two of them means a script that believes it set one password and set
+       another, and neither of us would know which.'
+      MS_ZH='错误：--password-stdin、--password-file 和 --password-env 只能选一个。
+       给两个，就是一个自以为设了这个密码、其实设了另一个的脚本，
+       而你我都不知道到底是哪一个。' ;;
+    acct.nouser)
+      MS_EN='error: a password was given with no --username, so there is no account to
+       create. Add --username <name>, or drop the password and use the
+       setup token in the browser.'
+      MS_ZH='错误：给了密码却没有 --username，于是没有账号可创建。
+       要么补上 --username <name>，要么去掉密码，在浏览器里用
+       setup token。' ;;
+    acct.stdinclash)
+      MS_EN='error: --password-stdin needs stdin to itself, and the prompts read stdin too.
+       Add --yes, or use --password-file <path> instead.'
+      MS_ZH='错误：--password-stdin 要独占标准输入，而那些提问也要读标准输入。
+       请加上 --yes，或者改用 --password-file <path>。' ;;
+    acct.unreadable)
+      MS_EN='error: cannot read the password file %1$s'
+      MS_ZH='错误：读不了密码文件 %1$s' ;;
+    acct.failed)
+      MS_EN='the account was not created (see above). Everything else is installed, and
+the panel will print a one-time setup token at startup as it always did.'
+      MS_ZH='账号没有创建成功（原因见上）。其余的都装好了，面板会像以前一样在启动时
+打印一次性的 setup token。' ;;
+
+    found.agent)
+      MS_EN='  found an existing LaunchAgent:    %1$s'
+      MS_ZH='  发现已有的 LaunchAgent：       %1$s' ;;
+    found.user)
+      MS_EN='  found an existing user service:   %1$s'
+      MS_ZH='  发现已有的用户级服务：         %1$s' ;;
+    found.system)
+      MS_EN='  found an existing system service: %1$s'
+      MS_ZH='  发现已有的系统级服务：         %1$s' ;;
+
+    kind.menu)
+      MS_EN='How should the panel run?
+
+  1) systemd *system* service (recommended; root is available here)
+     Same account, same environment -- it drops to User=%1$s. It is up
+     before anyone logs in, and it is the only one that can lower the
+     OOM score: measured, a user unit asking for -500 gets 100, a
+     system unit gets -500. Needs root once, to write one file.
+
+  2) systemd *user* service
+     Runs as you and needs no root at all. Starts at boot once
+     lingering is on, which this will enable. Choose this on a shared
+     machine, or if you would rather nothing of yours lived in /etc.
+'
+      MS_ZH='面板要以哪种方式运行？
+
+  1) systemd *system* 服务（推荐；这里 root 可用）
+     还是同一个账号、同一套环境 —— 它会降到 User=%1$s。它在任何人登录
+     之前就已经起来，而且只有它能把 OOM 分数调低：实测，用户级 unit
+     写 -500 拿到的是 100，系统级 unit 拿到的才是 -500。
+     只需要一次 root，用来写一个文件。
+
+  2) systemd *user* 服务
+     以你的身份运行，完全不需要 root。开启 lingering 之后就会开机自启，
+     本程序会替你开。共用的机器上，或者你不希望 /etc 里有你的东西时，
+     选这个。
+' ;;
+    kind.noroot)
+      MS_EN='root is not available here (no sudo, or it would need a password and
+there is nobody to type it), so this is the systemd *user* service.
+It needs no root at all; what it gives up is the OOM score.'
+      MS_ZH='这里没有 root（没有 sudo，或者 sudo 会要密码而这里没有人来输），
+所以装的是 systemd *user* 服务。它完全不需要 root；放弃的是 OOM 分数。' ;;
+
+    conflict.head)
+      MS_EN='there is already a %1$s service installed, and you asked for the
+%2$s one. Both at once means two panels sharing one tmux socket and one
+database, which does not fail loudly -- it loses writes.'
+      MS_ZH='这里已经装了 %1$s 服务，而你要的是 %2$s 的那个。两个同时在，
+就是两个面板共用一个 tmux socket 和一个数据库；它不会大声报错 ——
+它会丢写入。' ;;
+    conflict.ask)
+      MS_EN='  remove the %1$s service and install the %2$s one?'
+      MS_ZH='  删掉 %1$s 服务，改装 %2$s 的那个？' ;;
+    conflict.stop)
+      MS_EN='nothing was changed. Either keep what you have, or re-run with:
+  %1$s'
+      MS_ZH='什么都没有改动。要么保持现状，要么这样再运行一次：
+  %1$s' ;;
+    conflict.needroot)
+      MS_EN='error: removing %1$s needs root, and root is not available here.
+       Nothing was changed. From an account that has sudo:
+         sudo systemctl disable --now vibepanel && sudo rm %1$s'
+      MS_ZH='错误：删掉 %1$s 需要 root，而这里没有 root。
+       什么都没有改动。请在有 sudo 的账号下运行：
+         sudo systemctl disable --now vibepanel && sudo rm %1$s' ;;
+
+    fallback.darwin)
+      MS_EN='macOS has no equivalent of the systemd system service worth installing.
+A LaunchDaemon would run as root at boot and then have to drop back to
+your account to be any use, and the one thing the Linux system unit
+buys -- a lower OOM score -- does not exist here: macOS has no
+oom_score_adj, and jetsam cannot be biased from a plist.
+Installing the LaunchAgent, which is the macOS answer.'
+      MS_ZH='macOS 上没有值得装的、与 systemd 系统服务对应的东西。
+LaunchDaemon 会在开机时以 root 运行，然后还得降回你的账号才有用；
+而 Linux 系统 unit 换来的那一样东西 —— 更低的 OOM 分数 —— 在这里
+根本不存在：macOS 没有 oom_score_adj，jetsam 也没法从 plist 里调。
+所以装 LaunchAgent，那是 macOS 上的答案。' ;;
+    fallback.noroot)
+      MS_EN='root is not available here (no sudo, or it would need a password and
+there is nobody to type it), so the system service cannot be installed.
+Installing the user service instead -- it gives up the OOM score and
+needs lingering to start at boot, and nothing else.'
+      MS_ZH='这里没有 root（没有 sudo，或者 sudo 会要密码而这里没有人来输），
+所以装不了系统服务。改装用户服务 —— 它放弃的只是 OOM 分数，
+以及要靠 lingering 才能开机自启，除此之外没有别的。' ;;
+    fallback.nosrc)
+      MS_EN='this archive does not ship vibepanel-system.service; installing the user
+service instead.'
+      MS_ZH='这个压缩包里没有 vibepanel-system.service；改装用户服务。' ;;
+    fallback.nosvc)
+      MS_EN='no service manager here: %1$s.
+Installing the binary and the env file only. Nothing will start the panel
+for you, so start it yourself, or from whatever supervises this machine:
+  %2$s serve'
+      MS_ZH='这里没有服务管理器：%1$s。
+只装可执行文件和环境变量文件。不会有东西替你启动面板，所以请自己启动，
+或者交给这台机器上负责看管进程的东西：
+  %2$s serve' ;;
+    err.noplist)
+      MS_EN='error: this archive does not ship %1$s.plist, so there is
+       nothing to install as a service on macOS.'
+      MS_ZH='错误：这个压缩包里没有 %1$s.plist，所以在 macOS 上
+       没有东西可以装成服务。' ;;
+
+    foreign.head)
+      MS_EN='there is already a file at
+  %1$s
+and it was not written by this installer -- it has no vibepanel
+Documentation= line in it. A hand-written unit, a distribution package,
+or an older layout; whichever it is, overwriting it loses whatever was
+configured in it, and there is no copy anywhere.'
+      MS_ZH='这个位置已经有一个文件：
+  %1$s
+而它不是本安装程序写的 —— 里面没有 vibepanel 的 Documentation= 那一行。
+可能是手写的 unit、发行版的包，或者更早的布局；无论是哪一种，覆盖它都会
+丢掉里面配置过的一切，而且任何地方都没有副本。' ;;
+    foreign.ask)
+      MS_EN='  replace it?'
+      MS_ZH='  要替换它吗？' ;;
+    foreign.replacing)
+      MS_EN='  (replacing it. The old one is not backed up.)'
+      MS_ZH='  （这就替换。旧的那个不会备份。）' ;;
+    foreign.stop)
+      MS_EN='nothing was changed. Move it aside and run this again:
+  mv %1$s %1$s.bak'
+      MS_ZH='什么都没有改动。把它挪开，然后再运行一次：
+  mv %1$s %1$s.bak' ;;
+
+    enable.ask)
+      MS_EN='start the service now?'
+      MS_ZH='现在就启动服务吗？' ;;
+
+    plan.head)
+      MS_EN='about to:'
+      MS_ZH='接下来会：' ;;
+    plan.bin.install)
+      MS_EN='  install  %1$s   (%2$s)'
+      MS_ZH='  安装     %1$s   (%2$s)' ;;
+    plan.bin.same)
+      MS_EN='  replace  %1$s   (the same build: %2$s)'
+      MS_ZH='  替换     %1$s   (同一个构建：%2$s)' ;;
+    plan.bin.upgrade)
+      MS_EN='  replace  %1$s   (%2$s -> %3$s)'
+      MS_ZH='  替换     %1$s   (%2$s -> %3$s)' ;;
+    plan.unit.user)
+      MS_EN='  install  %1$s   (systemd user service)'
+      MS_ZH='  安装     %1$s   (systemd 用户服务)' ;;
+    plan.unit.system)
+      MS_EN='  install  %1$s   (systemd system service, as root)
+           with User=%2$s and HOME=%3$s substituted in'
+      MS_ZH='  安装     %1$s   (systemd 系统服务，以 root 写入)
+           其中 User=%2$s、HOME=%3$s 会被替换进去' ;;
+    plan.unit.agent)
+      MS_EN='  install  %1$s   (launchd LaunchAgent)
+           with HOME=%2$s substituted in'
+      MS_ZH='  安装     %1$s   (launchd LaunchAgent)
+           其中 HOME=%2$s 会被替换进去' ;;
+    plan.unit.none)
+      MS_EN='  install  no service: %1$s'
+      MS_ZH='  安装     不装服务：%1$s' ;;
+    plan.env.keep)
+      MS_EN='  keep     %1$s   (already there, yours to edit)'
+      MS_ZH='  保留     %1$s   (已经在那里了，归你自己改)' ;;
+    plan.env.install)
+      MS_EN='  install  %1$s   (edit it before exposing the panel)'
+      MS_ZH='  安装     %1$s   (把面板暴露出去之前先改它)' ;;
+    plan.remove)
+      MS_EN='  remove   the existing %1$s service, so there is only ever one'
+      MS_ZH='  删除     现有的 %1$s 服务，这样任何时候都只有一个' ;;
+    plan.linger)
+      MS_EN='  enable   lingering for %1$s, so it starts at boot and survives logout'
+      MS_ZH='  开启     %1$s 的 lingering，让它开机自启、注销后仍在' ;;
+    plan.restart)
+      MS_EN='  restart  vibepanel (your sessions belong to tmux and survive it)'
+      MS_ZH='  重启     vibepanel（你的会话属于 tmux，重启活得下来）' ;;
+    plan.start)
+      MS_EN='  start    vibepanel'
+      MS_ZH='  启动     vibepanel' ;;
+    plan.account)
+      MS_EN='  create   the panel'"'"'s first account, as %1$s
+           (the panel will then not print a setup token at startup)'
+      MS_ZH='  创建     面板的第一个账号，用户名 %1$s
+           （那样面板启动时就不会再打印 setup token）' ;;
+    plan.port)
+      MS_EN='  WARNING: something is already listening on port %1$s, so the panel will
+           start, fail to bind and be restarted on a three-second loop.
+           Set VIBEPANEL_ADDR in %2$s to a free port first.'
+      MS_ZH='  警告：  端口 %1$s 上已经有东西在监听，面板会启动、绑定失败，
+          然后被每三秒重启一次。请先在 %2$s 里把 VIBEPANEL_ADDR
+          设成一个没人占的端口。' ;;
+    plan.sudo)
+      MS_EN='  sudo will ask for your password.'
+      MS_ZH='  sudo 会问你要密码。' ;;
+    plan.proceed)
+      MS_EN='proceed?'
+      MS_ZH='就这样做吗？' ;;
+    plan.nochange)
+      MS_EN='nothing was changed.'
+      MS_ZH='什么都没有改动。' ;;
+
+    err.exec)
+      MS_EN='error: %1$s is installed and will not run on this machine.
+       Three things do this and they look identical from here:
+         - the filesystem holding %2$s is mounted noexec
+         - SELinux or AppArmor refuses to execute a file with that label
+         - the archive is for a different architecture (%3$s here)
+       What it says when you run it directly is the thing that tells them apart:
+         %1$s version
+       No service was installed; there would be nothing for it to start.'
+      MS_ZH='错误：%1$s 已经装好了，但在这台机器上跑不起来。
+       有三件事会造成这个现象，而从这里看它们一模一样：
+         - 放着 %2$s 的文件系统是 noexec 挂载的
+         - SELinux 或 AppArmor 拒绝执行带那个标签的文件
+         - 这个压缩包是给别的架构的（这里是 %3$s）
+       直接运行它时它说的那句话，才是把三者区分开的东西：
+         %1$s version
+       没有装任何服务；装了也没有东西可启动。' ;;
+
+    mac.nolaunchctl)
+      MS_EN='no launchctl here; from a login session on that Mac:
+  launchctl bootstrap %1$s %2$s'
+      MS_ZH='这里没有 launchctl；请在那台 Mac 的登录会话里运行：
+  launchctl bootstrap %1$s %2$s' ;;
+    mac.note)
+      MS_EN='note      a LaunchAgent runs in your login session: it starts when you
+          log in and stops when you log out. macOS has no lingering.'
+      MS_ZH='注意      LaunchAgent 跑在你的登录会话里：你登录时它才启动，
+          你注销时它就停。macOS 没有 lingering 这回事。' ;;
+
+    linger.on)
+      MS_EN='lingering already on — the panel starts at boot and survives logout'
+      MS_ZH='lingering 本来就开着 —— 面板会开机自启，注销后仍在' ;;
+    linger.enabled)
+      MS_EN='enabled lingering — the panel now starts at boot and survives logout
+  (undo with: loginctl disable-linger %1$s)'
+      MS_ZH='已开启 lingering —— 面板从此开机自启，注销后仍在
+  （要撤销：loginctl disable-linger %1$s）' ;;
+    linger.failed)
+      MS_EN='could not enable lingering; without it the panel stops when you log out:
+  loginctl enable-linger %1$s'
+      MS_ZH='开不了 lingering；没有它，你一注销面板就停：
+  loginctl enable-linger %1$s' ;;
+    user.nosession)
+      MS_EN='no user systemd session here; from a login shell on that machine:
+  systemctl --user daemon-reload && systemctl --user enable --now vibepanel'
+      MS_ZH='这里没有用户级 systemd 会话；请在那台机器的登录 shell 里运行：
+  systemctl --user daemon-reload && systemctl --user enable --now vibepanel' ;;
+    sys.note)
+      MS_EN='note      a system service needs no lingering; it is up before anyone logs in'
+      MS_ZH='注意      系统服务不需要 lingering；任何人登录之前它就已经起来了' ;;
+
+    what.user)
+      MS_EN='the systemd user service (%1$s)'
+      MS_ZH='systemd 用户服务（%1$s）' ;;
+    what.system)
+      MS_EN='the systemd system service (%1$s)'
+      MS_ZH='systemd 系统服务（%1$s）' ;;
+    what.agent)
+      MS_EN='the launchd LaunchAgent (%1$s)'
+      MS_ZH='launchd LaunchAgent（%1$s）' ;;
+    what.none)
+      MS_EN='the binary only -- no service, because %1$s'
+      MS_ZH='只有可执行文件 —— 没有服务，因为%1$s' ;;
+
+    done.rule)
+      MS_EN='── done ──'
+      MS_ZH='── 完成 ──' ;;
+    done.installed)
+      MS_EN='installed: %1$s'
+      MS_ZH='已安装：  %1$s' ;;
+    done.account)
+      MS_EN='account:   %1$s, created just now -- there is no setup token to find'
+      MS_ZH='账号：    %1$s，刚刚创建 —— 没有 setup token 要去找' ;;
+    state.started)
+      MS_EN='state:     started just now'
+      MS_ZH='状态：    刚刚启动' ;;
+    state.restarted)
+      MS_EN='state:     restarted (it was already running)
+           your sessions are untouched -- they belong to tmux, not to
+           the panel process.'
+      MS_ZH='状态：    已重启（它本来就在跑）
+          你的会话没被动过 —— 它们属于 tmux，不属于面板进程。' ;;
+    state.notstarted)
+      MS_EN='state:     not started; the files are in place'
+      MS_ZH='状态：    没有启动；文件都已就位' ;;
+    state.nonestarted)
+      MS_EN='state:     not started, and nothing here can start it for you'
+      MS_ZH='状态：    没有启动，而这里没有东西能替你启动它' ;;
+    open.login)
+      MS_EN='open  %1$s  and log in as %2$s.'
+      MS_ZH='打开  %1$s  ，用 %2$s 登录。' ;;
+    token.head)
+      MS_EN='the one-time setup token:'
+      MS_ZH='一次性的 setup token：' ;;
+    token.cmd)
+      MS_EN='  %1$s token          # or: %2$s'
+      MS_ZH='  %1$s token          # 或者：%2$s' ;;
+    token.thenopen)
+      MS_EN='then open  %1$s  and paste it.'
+      MS_ZH='然后打开  %1$s  ，把它粘进去。' ;;
+    restarted.token)
+      MS_EN='the setup token was consumed at first install. The log, if you need it:
+  %1$s logs           # or: %2$s'
+      MS_ZH='setup token 在第一次安装时就用掉了。要看日志的话：
+  %1$s logs           # 或者：%2$s' ;;
+    restarted.url)
+      MS_EN='the panel is at  %1$s'
+      MS_ZH='面板在  %1$s' ;;
+    notstarted.cmd)
+      MS_EN='  %1$s start'
+      MS_ZH='  %1$s start' ;;
+    notstarted.token)
+      MS_EN='  %1$s token          # the one-time setup token'
+      MS_ZH='  %1$s token          # 一次性的 setup token' ;;
+    notstarted.serve)
+      MS_EN='  %1$s serve'
+      MS_ZH='  %1$s serve' ;;
+    after.none)
+      MS_EN='afterwards: %1$s upgrade   (the rest of it needs a service to talk to)'
+      MS_ZH='之后：    %1$s upgrade   （其余的都得有个服务可说话才行）' ;;
+    after.svc)
+      MS_EN='afterwards: %1$s {status|start|stop|restart|logs|token|upgrade|uninstall}'
+      MS_ZH='之后：    %1$s {status|start|stop|restart|logs|token|upgrade|uninstall}' ;;
+
+    note.path)
+      MS_EN='note:      %1$s is not on your PATH, so "vibepanel" will not be a
+           command you can type. The service does not care -- it uses the
+           full path -- but you will want it. Add to %2$s:'
+      MS_ZH='注意：    %1$s 不在你的 PATH 上，所以 "vibepanel" 不会是一条
+          你能直接敲的命令。服务本身不在乎 —— 它用的是全路径 —— 但你会
+          想要它。在 %2$s 里加上：' ;;
+    note.xdg)
+      MS_EN='note:      XDG_RUNTIME_DIR is not set in this shell, so the systemd *user*
+           manager cannot be reached from here -- which is the state of a
+           bare non-login ssh command and of every cron job. The unit is
+           installed; enable it from a real login session:
+             ssh -t %1$s@%2$s '"'"'systemctl --user enable --now vibepanel'"'"''
+      MS_ZH='注意：    这个 shell 里没有设 XDG_RUNTIME_DIR，所以从这里够不到
+          systemd 的 *用户* 管理器 —— 一条不带登录的 ssh 命令、以及每个
+          cron 任务，都是这个状态。unit 已经装好了；请在真正的登录会话里
+          启用它：
+             ssh -t %1$s@%2$s '"'"'systemctl --user enable --now vibepanel'"'"''  ;;
+    note.tmuxold)
+      MS_EN='note:      tmux %1$s is older than %2$s. The panel works; progress and
+           notification sequences from agent TUIs will not reach it.'
+      MS_ZH='注意：    tmux %1$s 比 %2$s 旧。面板能用；agent 的 TUI 发出的进度和
+          通知序列到不了它那里。' ;;
+    note.systemunit)
+      MS_EN='if this machine runs close to its memory and you want the kernel to look
+elsewhere first, there is a system unit that can actually say so:
+  ./install.sh --system --migrate   (needs root; the user unit cannot)'
+      MS_ZH='如果这台机器的内存一直吃得很紧，而你希望内核先去找别人麻烦，
+那么有一个系统 unit 能真的把这件事说出口：
+  ./install.sh --system --migrate   （需要 root；用户 unit 做不到）' ;;
+    *) return 1 ;;
+  esac
+  return 0
+}
+# ── strings: end ──────────────────────────────────────────────────────────
+
+# m <key> [args...] -- the string for the chosen language, with a newline.
+#
+# A key that is not in the table, or one whose side of the pair is empty, does
+# not print an empty line. An empty line is the worst possible failure here: the
+# question above it still gets asked, the consequence under it is simply gone,
+# and nothing anywhere reports a problem. So it prints a marker where the
+# sentence should have been and says so on stderr as well, and
+# scripts/install-check.sh walks every key in both languages looking for exactly
+# that marker.
+m() {
+  local key="$1" s i
+  shift
+  if ! mstr "$key"; then
+    printf 'vibepanel installer BUG: no string for key %s\n' "$key" >&2
+    printf '[missing string: %s]\n' "$key"
+    return 0
+  fi
+  s="$MS_EN"
+  [ "$VP_LANG" = zh ] && s="$MS_ZH"
+  if [ -z "$s" ]; then
+    printf 'vibepanel installer BUG: key %s has no %s string\n' "$key" "$VP_LANG" >&2
+    printf '[missing string: %s/%s]\n' "$key" "$VP_LANG"
+    return 0
+  fi
+  # By hand, not through printf: see the note above the table. An argument that
+  # is never referenced leaves the message intact, and a %1$s with no argument
+  # is left standing in the output where it is impossible to miss.
+  i=1
+  while [ $# -gt 0 ]; do
+    s="${s//%$i\$s/$1}"
+    i=$((i + 1))
+    shift
+  done
+  printf '%s\n' "$s"
+}
+# The same thing on stderr, which is where every error in this script goes.
+me() { m "$@" >&2; }
+
 case "${VIBEPANEL_PLATFORM:-$(uname -s)}" in
   [Dd]arwin) PLATFORM=darwin ;;
   [Ll]inux)  PLATFORM=linux ;;
-  *) echo "error: $(uname -s) is not a platform this installs on; Linux and macOS only." >&2
+  *) me pre.platform "$(uname -s)"
      exit 1 ;;
 esac
 
@@ -119,61 +882,7 @@ ACCT_STDIN=no
 ACCT_FILE=
 ACCT_ENV=
 
-usage() {
-  cat <<'EOF'
-vibepanel installer
-
-  ./install.sh                    ask what to install, show the plan, do it
-  ./install.sh --yes              take the defaults, ask nothing
-  ./install.sh --yes --enable     ...and start the service at the end
-  ./install.sh --user             the per-user service, even where root works
-
-  -y, --yes, --non-interactive  never ask; suitable for CI and curl | sh
-      --interactive             ask even when stdin is not a terminal
-      --enable                  start (or restart) the service when done
-      --no-enable               only put the files in place
-      --system                  Linux: the systemd *system* service. The
-                                default wherever root is available, because it
-                                is the only one that can lower OOMScoreAdjust
-                                and the only one that is up before you log in.
-      --user                    Linux: the systemd *user* service, which needs
-                                no root. macOS: the LaunchAgent, which is the
-                                only kind there and what --system gets too.
-      --migrate                 if the other kind is already installed, remove
-                                it. Without this the installer refuses rather
-                                than leave two panels on one tmux socket.
-      --skip-tmux               do not check for tmux, and never offer to
-                                install or upgrade it
-
-  The panel's first account. Without any of these, the panel prints a one-time
-  setup token at startup and you create the account in the browser -- that path
-  is unchanged and still works.
-
-      --username <name>         create the first account as part of the install
-      --password-stdin          read its password from this script's stdin.
-                                Implies --yes: the prompts read stdin too, and
-                                they cannot both have it.
-      --password-file <path>    read it from a file, which is the safe way
-                                through the one-liner
-      --password-env <VAR>      read it from an environment variable
-                                There is no --password <value>: that is a
-                                password in your shell history and in `ps`.
-  -h, --help
-
-Interactive by default when stdin and stdout are both terminals.
-
-tmux 3.3 or newer is the one prerequisite. If it is missing this offers to
-install it with whichever of apt/dnf/pacman/zypper/apk/brew is on the machine,
-and if it is too old it says exactly what that costs and offers the same. It
-never assumes sudo works: where root is not available it prints the one command
-for you to run and stops there.
-
-Afterwards, `vibepanel service` is the single command for status, start, stop,
-restart, logs, the one-time setup token, upgrade and uninstall -- on both
-platforms and both service kinds, so there is nothing to remember about
-systemctl --user versus launchctl.
-EOF
-}
+usage() { m usage; }
 
 # A shifting loop rather than `for arg in "$@"`, because three of the options
 # take a value and the for-loop cannot see the argument after the one it is
@@ -182,6 +891,13 @@ EOF
 while [ $# -gt 0 ]; do
   case "$1" in
     -y|--yes|--non-interactive) INTERACTIVE=no ;;
+    # Taken already, by vp_lang_from_args above -- before anything could be
+    # printed in the language this flag was about to change. Read a second time
+    # here to step over the value and to refuse one that names neither
+    # language, which the pre-scan cannot do: it runs before --help.
+    --lang) shift; [ $# -gt 0 ] || { me arg.lang; exit 2; }
+            [ -n "$(vp_lang_of "$1")" ] || { me arg.lang; exit 2; } ;;
+    --lang=*) [ -n "$(vp_lang_of "${1#--lang=}")" ] || { me arg.lang; exit 2; } ;;
     --interactive) INTERACTIVE=yes ;;
     --enable) ENABLE=yes ;;
     --no-enable) ENABLE=no ;;
@@ -189,23 +905,21 @@ while [ $# -gt 0 ]; do
     --system) KIND=system; ASKED_SYSTEM=yes ;;
     --migrate) MIGRATE=yes ;;
     --skip-tmux) DO_TMUX=no ;;
-    --username) shift; [ $# -gt 0 ] || { echo "--username needs a name" >&2; exit 2; }; ACCT_USER="$1" ;;
+    --username) shift; [ $# -gt 0 ] || { me arg.username; exit 2; }; ACCT_USER="$1" ;;
     --username=*) ACCT_USER="${1#--username=}" ;;
     --password-stdin) ACCT_STDIN=yes ;;
-    --password-file) shift; [ $# -gt 0 ] || { echo "--password-file needs a path" >&2; exit 2; }; ACCT_FILE="$1" ;;
+    --password-file) shift; [ $# -gt 0 ] || { me arg.pwfile; exit 2; }; ACCT_FILE="$1" ;;
     --password-file=*) ACCT_FILE="${1#--password-file=}" ;;
-    --password-env) shift; [ $# -gt 0 ] || { echo "--password-env needs a variable name" >&2; exit 2; }; ACCT_ENV="$1" ;;
+    --password-env) shift; [ $# -gt 0 ] || { me arg.pwenv; exit 2; }; ACCT_ENV="$1" ;;
     --password-env=*) ACCT_ENV="${1#--password-env=}" ;;
     --password|--password=*)
       # The same refusal `vibepanel account create` makes, made here as well:
       # forwarding it and letting the binary explain would mean the password
       # had already spent this whole script in `ps`.
-      echo "there is no --password flag, on purpose: a password on a command line is in" >&2
-      echo "your shell history and in \`ps\` output for every other user on this machine." >&2
-      echo "Use --password-file <path>, --password-env <VAR> or --password-stdin." >&2
+      me arg.password
       exit 2 ;;
     -h|--help) usage; exit 0 ;;
-    *) echo "unknown option: $1" >&2; echo "try --help" >&2; exit 2 ;;
+    *) me arg.unknown "$1"; exit 2 ;;
   esac
   shift
 done
@@ -239,10 +953,30 @@ yesno() { # yesno <question> <y|n, the default>
   case "$ANSWER" in [Yy]*) return 0 ;; *) return 1 ;; esac
 }
 
+# ── the language, when neither the flag nor the environment said ──────────
+#
+# First, and that is the whole point of where it is. A language chosen after
+# three questions have been answered in English is a language chosen too late,
+# so this sits above the tmux offer, above the service menu and above the plan
+# -- there is nothing before it but argument parsing.
+#
+# Never when --password-stdin is in play. The prompts and the password cannot
+# both have stdin; that is refused further down, but the refusal is two hundred
+# lines away and this question would get there first -- reading the first line
+# of the password and, because stdin is not a terminal, echoing it into the log.
+if [ "$VP_LANG_DECIDED" = no ] && [ "$INTERACTIVE" = yes ] && [ "$ACCT_STDIN" = no ]; then
+  m lang.ask
+  ask "$(m lang.prompt)" 1
+  case "$ANSWER" in
+    2) VP_LANG=zh ;;
+    *) VP_LANG=en ;;
+  esac
+  VP_LANG_DECIDED=yes
+  echo
+fi
+
 if [ ! -f "$BIN_SRC" ]; then
-  echo "error: no vibepanel binary next to this script" >&2
-  echo "       run this from an unpacked release archive, or use the one-liner:" >&2
-  echo "       curl -fsSL https://raw.githubusercontent.com/jiangmuran/vibepanel/main/install.sh | sh" >&2
+  me pre.nobinary
   exit 1
 fi
 
@@ -380,82 +1114,69 @@ else
 fi
 
 BANNER_DONE=no
-banner() { [ "$BANNER_DONE" = yes ] && return 0; echo "vibepanel installer"; echo; BANNER_DONE=yes; }
+banner() { [ "$BANNER_DONE" = yes ] && return 0; m banner; echo; BANNER_DONE=yes; }
 
 if [ "$TMUX_STATE" != ok ] && [ "$TMUX_STATE" != skipped ]; then
   detect_pkg
   banner
   if [ "$TMUX_STATE" = missing ]; then
-    echo "tmux is not installed. The panel keeps every session alive inside it, so"
-    echo "there is nothing to run without it."
+    m tmux.missing
   else
     # Not fatal, deliberately, and for the same reason `vibepanel doctor` marks
     # it "--" rather than FAIL: the panel works, one thing about it is worse,
     # and refusing to install over that would be the installer making a
     # judgement that is not its to make.
-    echo "tmux $TMUX_VER is older than $TMUX_MIN_MAJOR.$TMUX_MIN_MINOR, so the panel's config line"
-    echo "allow-passthrough is not applied and the sequences agent TUIs use for"
-    echo "progress and notifications are silently dropped. Everything else works."
+    m tmux.old "$TMUX_VER" "$TMUX_MIN_MAJOR.$TMUX_MIN_MINOR"
   fi
   echo
 
   WANT_TMUX=no
   if [ -z "$PKG" ]; then
-    echo "No package manager this knows about (apt/dnf/pacman/zypper/apk/brew) is"
-    echo "on this machine, so tmux has to be installed by hand:"
-    echo "  https://github.com/tmux/tmux/wiki/Installing"
+    m tmux.nopkg
   elif [ "$PKG_NEEDS_ROOT" = yes ] && [ "$HAVE_ROOT" = no ]; then
-    echo "Installing it needs root, and root is not available here (no sudo, or it"
-    echo "would need a password and there is nobody to type it). From an account"
-    echo "that has it:"
-    echo "  $(pkg_command_line)"
+    m tmux.noroot "$(pkg_command_line)"
   elif [ "$INTERACTIVE" = yes ]; then
     if [ "$TMUX_STATE" = missing ]; then
-      yesno "install it now with: $(pkg_command_line)  ?" y && WANT_TMUX=yes
+      yesno "$(m tmux.offer.install "$(pkg_command_line)")" y && WANT_TMUX=yes
     else
-      yesno "try to upgrade it now with: $(pkg_command_line)  ?" n && WANT_TMUX=yes
+      yesno "$(m tmux.offer.upgrade "$(pkg_command_line)")" n && WANT_TMUX=yes
     fi
   elif [ "$TMUX_STATE" = missing ]; then
     # Unattended, and tmux is missing: install it. This is what makes the
     # one-liner true on a machine with nothing on it, which is the whole
     # promise. --skip-tmux is how a caller says otherwise.
-    echo "installing tmux with: $(pkg_command_line)"
+    m tmux.autoinstall "$(pkg_command_line)"
     WANT_TMUX=yes
   else
     # Unattended and merely old: do not. The distribution's package *is* the
     # old version, so `apt-get install -y tmux` would be a no-op that reported
     # success, and an unattended run has nobody to read the difference.
-    echo "Not upgrading it unattended -- the distribution's package is this same"
-    echo "version, so it would change nothing and say it had. Deliberately:"
-    echo "  https://github.com/tmux/tmux/wiki/Installing"
+    m tmux.noupgrade
   fi
 
   if [ "$WANT_TMUX" = yes ]; then
     if run_pkg; then
       TMUX_VER="$(tmux_version_of)"
       if [ -z "$TMUX_VER" ]; then
-        echo "the package manager reported success and there is still no tmux here."
+        m tmux.gone
         TMUX_STATE=missing
       elif tmux_at_least_min "$TMUX_VER"; then
-        echo "tmux $TMUX_VER installed"
+        m tmux.installed "$TMUX_VER"
         TMUX_STATE=ok
       else
         # The likeliest outcome of the too-old branch, and the one worth saying
         # out loud: the distribution ships the version that is already here.
-        echo "tmux $TMUX_VER is what this machine's packages offer, and it is still"
-        echo "older than $TMUX_MIN_MAJOR.$TMUX_MIN_MINOR. Building from source is the only way up:"
-        echo "  https://github.com/tmux/tmux/wiki/Installing"
+        m tmux.samever "$TMUX_VER" "$TMUX_MIN_MAJOR.$TMUX_MIN_MINOR"
         TMUX_STATE=old
       fi
     else
-      echo "that did not work. Install tmux and run this again:"
-      echo "  $(pkg_command_line)"
+      m tmux.pkgfail "$(pkg_command_line)"
     fi
   fi
 
   if [ "$TMUX_STATE" = missing ]; then
     echo
-    echo "error: nothing was installed. vibepanel needs tmux." >&2
+    me tmux.none
     exit 1
   fi
   echo
@@ -470,15 +1191,11 @@ if [ "$ACCT_STDIN" = yes ]; then ACCT_SOURCES=$((ACCT_SOURCES + 1)); fi
 if [ -n "$ACCT_FILE" ]; then ACCT_SOURCES=$((ACCT_SOURCES + 1)); fi
 if [ -n "$ACCT_ENV" ]; then ACCT_SOURCES=$((ACCT_SOURCES + 1)); fi
 if [ "$ACCT_SOURCES" -gt 1 ]; then
-  echo "error: choose one of --password-stdin, --password-file and --password-env." >&2
-  echo "       Two of them means a script that believes it set one password and set" >&2
-  echo "       another, and neither of us would know which." >&2
+  me acct.twosources
   exit 2
 fi
 if [ "$ACCT_SOURCES" -gt 0 ] && [ -z "$ACCT_USER" ]; then
-  echo "error: a password was given with no --username, so there is no account to" >&2
-  echo "       create. Add --username <name>, or drop the password and use the" >&2
-  echo "       setup token in the browser." >&2
+  me acct.nouser
   exit 2
 fi
 if [ "$ACCT_STDIN" = yes ] && [ "$INTERACTIVE" = yes ]; then
@@ -486,12 +1203,11 @@ if [ "$ACCT_STDIN" = yes ] && [ "$INTERACTIVE" = yes ]; then
   # --password-stdin reads it to EOF, so whichever went first would consume the
   # other's input -- and the failure would be a password silently set to the
   # word "y".
-  echo "error: --password-stdin needs stdin to itself, and the prompts read stdin too." >&2
-  echo "       Add --yes, or use --password-file <path> instead." >&2
+  me acct.stdinclash
   exit 2
 fi
 if [ -n "$ACCT_FILE" ] && [ ! -r "$ACCT_FILE" ]; then
-  echo "error: cannot read the password file $ACCT_FILE" >&2
+  me acct.unreadable "$ACCT_FILE"
   exit 2
 fi
 
@@ -505,14 +1221,11 @@ fi
 # `install: cannot create regular file` twelve lines in is a worse way to find
 # out than one line saying so before anything has changed.
 if [ ! -w "$HOME" ]; then
-  echo "error: $HOME is not writable, and everything this installs lives under it." >&2
-  echo "       Nothing was changed." >&2
+  me pre.homero "$HOME"
   exit 1
 fi
 if [ -e "$BIN_DIR" ] && [ ! -w "$BIN_DIR" ]; then
-  echo "error: $BIN_DIR exists and is not writable, so the binary cannot be installed." >&2
-  echo "       Nothing was changed. Fix the permissions, or install it somewhere else" >&2
-  echo "       and edit the unit's ExecStart to match." >&2
+  me pre.bindirro "$BIN_DIR"
   exit 1
 fi
 
@@ -595,10 +1308,10 @@ HAVE_AGENT=no; [ -f "$PLIST" ] && HAVE_AGENT=yes
 # ── what are we installing? ───────────────────────────────────────────────
 banner
 if [ "$PLATFORM" = darwin ]; then
-  if [ "$HAVE_AGENT" = yes ]; then echo "  found an existing LaunchAgent:    $PLIST"; fi
+  if [ "$HAVE_AGENT" = yes ]; then m found.agent "$PLIST"; fi
 else
-  if [ "$HAVE_USER_UNIT" = yes ]; then echo "  found an existing user service:   $USER_UNIT"; fi
-  if [ "$HAVE_SYSTEM_UNIT" = yes ]; then echo "  found an existing system service: $SYSTEM_UNIT"; fi
+  if [ "$HAVE_USER_UNIT" = yes ]; then m found.user "$USER_UNIT"; fi
+  if [ "$HAVE_SYSTEM_UNIT" = yes ]; then m found.system "$SYSTEM_UNIT"; fi
 fi
 
 if [ "$PLATFORM" = darwin ]; then
@@ -621,20 +1334,8 @@ elif [ -z "$KIND" ]; then
     # its OOM score at all -- measured, a user unit asking for -500 gets 100.
     KIND=system
     if [ "$INTERACTIVE" = yes ]; then
-      echo "How should the panel run?"
-      echo
-      echo "  1) systemd *system* service (recommended; root is available here)"
-      echo "     Same account, same environment -- it drops to User=$WHO. It is up"
-      echo "     before anyone logs in, and it is the only one that can lower the"
-      echo "     OOM score: measured, a user unit asking for -500 gets 100, a"
-      echo "     system unit gets -500. Needs root once, to write one file."
-      echo
-      echo "  2) systemd *user* service"
-      echo "     Runs as you and needs no root at all. Starts at boot once"
-      echo "     lingering is on, which this will enable. Choose this on a shared"
-      echo "     machine, or if you would rather nothing of yours lived in /etc."
-      echo
-      ask "  choice [1]: " 1
+      m kind.menu "$WHO"
+      ask "$(m choice.prompt)" 1
       echo
       case "$ANSWER" in
         2) KIND=user ;;
@@ -648,9 +1349,7 @@ elif [ -z "$KIND" ]; then
     # reads as the installer having a different opinion than the README, and
     # the actual reason -- no root here -- is one the person may be able to fix.
     if [ -f "$SYSTEM_UNIT_SRC" ] && [ "$HAVE_ROOT" = no ]; then
-      echo "root is not available here (no sudo, or it would need a password and"
-      echo "there is nobody to type it), so this is the systemd *user* service."
-      echo "It needs no root at all; what it gives up is the OOM score."
+      m kind.noroot
       echo
     fi
   fi
@@ -667,24 +1366,19 @@ if [ "$KIND" = user ] && [ "$HAVE_SYSTEM_UNIT" = yes ]; then CONFLICT=system; fi
 
 if [ "$CONFLICT" != no ] && [ "$MIGRATE" != yes ]; then
   echo
-  echo "there is already a $CONFLICT service installed, and you asked for the"
-  echo "$KIND one. Both at once means two panels sharing one tmux socket and one"
-  echo "database, which does not fail loudly -- it loses writes."
-  if [ "$INTERACTIVE" = yes ] && yesno "  remove the $CONFLICT service and install the $KIND one?" n; then
+  m conflict.head "$CONFLICT" "$KIND"
+  if [ "$INTERACTIVE" = yes ] && yesno "$(m conflict.ask "$CONFLICT" "$KIND")" n; then
     MIGRATE=yes
   else
     echo
-    echo "nothing was changed. Either keep what you have, or re-run with:"
-    echo "  $0 --$KIND --migrate"
+    m conflict.stop "$0 --$KIND --migrate"
     exit 3
   fi
 fi
 
 # Removing a system unit needs root; refusing here beats getting halfway.
 if [ "$MIGRATE" = yes ] && [ "$CONFLICT" = system ] && [ "$HAVE_ROOT" = no ]; then
-  echo "error: removing $SYSTEM_UNIT needs root, and root is not available here." >&2
-  echo "       Nothing was changed. From an account that has sudo:" >&2
-  echo "         sudo systemctl disable --now vibepanel && sudo rm $SYSTEM_UNIT" >&2
+  me conflict.needroot "$SYSTEM_UNIT"
   exit 3
 fi
 
@@ -695,27 +1389,18 @@ FELL_BACK=no
 # is how an installer gets a reputation for lying.
 if [ "$PLATFORM" = darwin ] && [ "$ASKED_SYSTEM" = yes ]; then
   echo
-  echo "macOS has no equivalent of the systemd system service worth installing."
-  echo "A LaunchDaemon would run as root at boot and then have to drop back to"
-  echo "your account to be any use, and the one thing the Linux system unit"
-  echo "buys -- a lower OOM score -- does not exist here: macOS has no"
-  echo "oom_score_adj, and jetsam cannot be biased from a plist."
-  echo "Installing the LaunchAgent, which is the macOS answer."
+  m fallback.darwin
   FELL_BACK=yes
 fi
 if [ "$KIND" = system ] && [ "$HAVE_ROOT" = no ]; then
   echo
-  echo "root is not available here (no sudo, or it would need a password and"
-  echo "there is nobody to type it), so the system service cannot be installed."
-  echo "Installing the user service instead -- it gives up the OOM score and"
-  echo "needs lingering to start at boot, and nothing else."
+  m fallback.noroot
   KIND=user
   FELL_BACK=yes
 fi
 if [ "$KIND" = system ] && [ ! -f "$SYSTEM_UNIT_SRC" ]; then
   echo
-  echo "this archive does not ship vibepanel-system.service; installing the user"
-  echo "service instead."
+  m fallback.nosrc
   KIND=user
   FELL_BACK=yes
 fi
@@ -725,16 +1410,12 @@ fi
 # installed would be worse than either.
 if [ "$SERVICE_MGR" = no ]; then
   echo
-  echo "no service manager here: $SERVICE_WHY."
-  echo "Installing the binary and the env file only. Nothing will start the panel"
-  echo "for you, so start it yourself, or from whatever supervises this machine:"
-  echo "  $BIN_DIR/vibepanel serve"
+  m fallback.nosvc "$SERVICE_WHY" "$BIN_DIR/vibepanel"
   KIND=none
   FELL_BACK=yes
 fi
 if [ "$KIND" = agent ] && [ ! -f "$PLIST_SRC" ]; then
-  echo "error: this archive does not ship $MAC_LABEL.plist, so there is" >&2
-  echo "       nothing to install as a service on macOS." >&2
+  me err.noplist "$MAC_LABEL"
   exit 1
 fi
 
@@ -747,18 +1428,12 @@ case "$KIND" in
 esac
 if [ -n "$TARGET_FILE" ] && foreign "$TARGET_FILE"; then
   echo
-  echo "there is already a file at"
-  echo "  $TARGET_FILE"
-  echo "and it was not written by this installer -- it has no vibepanel"
-  echo "Documentation= line in it. A hand-written unit, a distribution package,"
-  echo "or an older layout; whichever it is, overwriting it loses whatever was"
-  echo "configured in it, and there is no copy anywhere."
-  if [ "$INTERACTIVE" = yes ] && yesno "  replace it?" n; then
-    echo "  (replacing it. The old one is not backed up.)"
+  m foreign.head "$TARGET_FILE"
+  if [ "$INTERACTIVE" = yes ] && yesno "$(m foreign.ask)" n; then
+    m foreign.replacing
   else
     echo
-    echo "nothing was changed. Move it aside and run this again:"
-    echo "  mv $TARGET_FILE $TARGET_FILE.bak"
+    m foreign.stop "$TARGET_FILE"
     exit 3
   fi
 fi
@@ -797,7 +1472,7 @@ if [ "$ENABLE" = auto ]; then
   if [ "$RUNNING" = yes ]; then
     ENABLE=yes    # a restart, and it is not optional -- see above
   elif [ "$INTERACTIVE" = yes ]; then
-    if yesno "start the service now?" y; then ENABLE=yes; else ENABLE=no; fi
+    if yesno "$(m enable.ask)" y; then ENABLE=yes; else ENABLE=no; fi
   else
     ENABLE=no
   fi
@@ -827,60 +1502,55 @@ fi
 
 # ── the plan, before anything happens ─────────────────────────────────────
 echo
-echo "about to:"
+m plan.head
 # Which of the three this is. "I ran it and nothing happened" is nearly always
 # a reinstall of the same build, and saying so costs a line.
 if [ -z "$OLD_VER" ]; then
-  echo "  install  $BIN_DIR/vibepanel   ($NEW_VER)"
+  m plan.bin.install "$BIN_DIR/vibepanel" "$NEW_VER"
 elif [ "$OLD_VER" = "$NEW_VER" ]; then
-  echo "  replace  $BIN_DIR/vibepanel   (the same build: $NEW_VER)"
+  m plan.bin.same "$BIN_DIR/vibepanel" "$NEW_VER"
 else
-  echo "  replace  $BIN_DIR/vibepanel   ($OLD_VER -> $NEW_VER)"
+  m plan.bin.upgrade "$BIN_DIR/vibepanel" "$OLD_VER" "$NEW_VER"
 fi
 case "$KIND" in
-  user)   echo "  install  $USER_UNIT   (systemd user service)" ;;
-  system) echo "  install  $SYSTEM_UNIT   (systemd system service, as root)"
-          echo "           with User=$WHO and HOME=$HOME substituted in" ;;
-  agent)  echo "  install  $PLIST   (launchd LaunchAgent)"
-          echo "           with HOME=$HOME substituted in" ;;
-  none)   echo "  install  no service: $SERVICE_WHY" ;;
+  user)   m plan.unit.user "$USER_UNIT" ;;
+  system) m plan.unit.system "$SYSTEM_UNIT" "$WHO" "$HOME" ;;
+  agent)  m plan.unit.agent "$PLIST" "$HOME" ;;
+  none)   m plan.unit.none "$SERVICE_WHY" ;;
 esac
 if [ -e "$ENV_FILE" ]; then
-  echo "  keep     $ENV_FILE   (already there, yours to edit)"
+  m plan.env.keep "$ENV_FILE"
 else
-  echo "  install  $ENV_FILE   (edit it before exposing the panel)"
+  m plan.env.install "$ENV_FILE"
 fi
 if [ "$CONFLICT" != no ] && [ "$MIGRATE" = yes ]; then
-  echo "  remove   the existing $CONFLICT service, so there is only ever one"
+  m plan.remove "$CONFLICT"
 fi
 if [ "$KIND" = user ]; then
-  echo "  enable   lingering for $WHO, so it starts at boot and survives logout"
+  m plan.linger "$WHO"
 fi
 if [ "$ENABLE" = yes ]; then
   if [ "$RUNNING" = yes ]; then
-    echo "  restart  vibepanel (your sessions belong to tmux and survive it)"
+    m plan.restart
   else
-    echo "  start    vibepanel"
+    m plan.start
   fi
 fi
 if [ -n "$ACCT_USER" ]; then
-  echo "  create   the panel's first account, as $ACCT_USER"
-  echo "           (the panel will then not print a setup token at startup)"
+  m plan.account "$ACCT_USER"
 fi
 if [ "$PORT_TAKEN" = yes ]; then
   echo
-  echo "  WARNING: something is already listening on port $PORT, so the panel will"
-  echo "           start, fail to bind and be restarted on a three-second loop."
-  echo "           Set VIBEPANEL_ADDR in $ENV_FILE to a free port first."
+  m plan.port "$PORT" "$ENV_FILE"
 fi
 if [ "$ROOT_HOW" = sudo-ask ] && [ "$KIND" = system ]; then
   echo
-  echo "  sudo will ask for your password."
+  m plan.sudo
 fi
 echo
 
 if [ "$INTERACTIVE" = yes ]; then
-  if ! yesno "proceed?" y; then echo "nothing was changed."; exit 0; fi
+  if ! yesno "$(m plan.proceed)" y; then m plan.nochange; exit 0; fi
   echo
 fi
 
@@ -904,14 +1574,7 @@ echo "installed $BIN_DIR/vibepanel"
 # says anything about the architecture.
 if ! "$BIN_DIR/vibepanel" version >/dev/null 2>&1; then
   echo >&2
-  echo "error: $BIN_DIR/vibepanel is installed and will not run on this machine." >&2
-  echo "       Three things do this and they look identical from here:" >&2
-  echo "         - the filesystem holding $HOME is mounted noexec" >&2
-  echo "         - SELinux or AppArmor refuses to execute a file with that label" >&2
-  echo "         - the archive is for a different architecture ($(uname -m) here)" >&2
-  echo "       What it says when you run it directly is the thing that tells them apart:" >&2
-  echo "         $BIN_DIR/vibepanel version" >&2
-  echo "       No service was installed; there would be nothing for it to start." >&2
+  me err.exec "$BIN_DIR/vibepanel" "$HOME" "$(uname -m)"
   exit 1
 fi
 
@@ -969,8 +1632,7 @@ if [ -n "$ACCT_USER" ]; then
     # ending here would leave a half-installed machine over a password that can
     # be typed again in thirty seconds.
     echo
-    echo "the account was not created (see above). Everything else is installed, and"
-    echo "the panel will print a one-time setup token at startup as it always did."
+    m acct.failed
   fi
 fi
 
@@ -1004,13 +1666,11 @@ elif [ "$KIND" = agent ]; then
     fi
   else
     echo
-    echo "no launchctl here; from a login session on that Mac:"
-    echo "  launchctl bootstrap $GUI $PLIST"
+    m mac.nolaunchctl "$GUI" "$PLIST"
   fi
   # The macOS equivalent of the lingering paragraph, and the one real gap
   # against the Linux user unit.
-  echo "note      a LaunchAgent runs in your login session: it starts when you"
-  echo "          log in and stops when you log out. macOS has no lingering."
+  m mac.note
 elif [ "$KIND" = user ]; then
   mkdir -p "$USER_UNIT_DIR"
   install -m 0644 "$SRC/vibepanel.service" "$USER_UNIT"
@@ -1028,14 +1688,12 @@ elif [ "$KIND" = user ]; then
   # back.
   if command -v loginctl >/dev/null; then
     if [ "$(loginctl show-user "$WHO" -p Linger --value 2>/dev/null || echo no)" = yes ]; then
-      echo "lingering already on — the panel starts at boot and survives logout"
+      m linger.on
     elif loginctl enable-linger "$WHO" 2>/dev/null; then
-      echo "enabled lingering — the panel now starts at boot and survives logout"
-      echo "  (undo with: loginctl disable-linger $WHO)"
+      m linger.enabled "$WHO"
     else
       echo
-      echo "could not enable lingering; without it the panel stops when you log out:"
-      echo "  loginctl enable-linger $WHO"
+      m linger.failed "$WHO"
     fi
   fi
 
@@ -1060,8 +1718,7 @@ elif [ "$KIND" = user ]; then
     fi
   else
     echo
-    echo "no user systemd session here; from a login shell on that machine:"
-    echo "  systemctl --user daemon-reload && systemctl --user enable --now vibepanel"
+    m user.nosession
   fi
 else
   # __USER__/__HOME__ are substituted here rather than with `sudo sed -i` on the
@@ -1084,7 +1741,7 @@ else
       STARTED=started
     fi
   fi
-  echo "note      a system service needs no lingering; it is up before anyone logs in"
+  m sys.note
 fi
 
 # ── what actually happened ────────────────────────────────────────────────
@@ -1095,19 +1752,19 @@ fi
 case "$KIND" in
   user)
     JOURNAL="journalctl --user -u vibepanel -n 30"
-    WHAT="the systemd user service ($USER_UNIT)"
+    WHAT="$(m what.user "$USER_UNIT")"
     ;;
   system)
     JOURNAL="sudo journalctl -u vibepanel -n 30"
-    WHAT="the systemd system service ($SYSTEM_UNIT)"
+    WHAT="$(m what.system "$SYSTEM_UNIT")"
     ;;
   agent)
     JOURNAL="tail -n 30 $MAC_LOG"
-    WHAT="the launchd LaunchAgent ($PLIST)"
+    WHAT="$(m what.agent "$PLIST")"
     ;;
   none)
     JOURNAL="whatever your init writes"
-    WHAT="the binary only -- no service, because $SERVICE_WHY"
+    WHAT="$(m what.none "$SERVICE_WHY")"
     ;;
 esac
 # One command for all three, which is the point of it existing. The raw one is
@@ -1115,59 +1772,56 @@ esac
 VPCTL="$BIN_DIR/vibepanel service"
 
 echo
-echo "── done ──"
-echo "installed: $WHAT"
+m done.rule
+m done.installed "$WHAT"
 if [ "$ACCOUNT_MADE" = yes ]; then
   # Said once, here, and nowhere in the branches below: with an account in
   # place there is no token, and every line about finding one would send
   # somebody looking for something that was never printed.
-  echo "account:   $ACCT_USER, created just now -- there is no setup token to find"
+  m done.account "$ACCT_USER"
 fi
 case "$STARTED" in
   started)
-    echo "state:     started just now"
+    m state.started
     echo
     if [ "$ACCOUNT_MADE" = yes ]; then
-      echo "open  http://$HOST:$PORT  and log in as $ACCT_USER."
+      m open.login "http://$HOST:$PORT" "$ACCT_USER"
     else
-      echo "the one-time setup token:"
-      echo "  $VPCTL token          # or: $JOURNAL"
+      m token.head
+      m token.cmd "$VPCTL" "$JOURNAL"
       echo
-      echo "then open  http://$HOST:$PORT  and paste it."
+      m token.thenopen "http://$HOST:$PORT"
     fi
     ;;
   restarted)
-    echo "state:     restarted (it was already running)"
-    echo "           your sessions are untouched -- they belong to tmux, not to"
-    echo "           the panel process."
+    m state.restarted
     echo
-    echo "the setup token was consumed at first install. The log, if you need it:"
-    echo "  $VPCTL logs           # or: $JOURNAL"
+    m restarted.token "$VPCTL" "$JOURNAL"
     echo
-    echo "the panel is at  http://$HOST:$PORT"
+    m restarted.url "http://$HOST:$PORT"
     ;;
   *)
     if [ "$KIND" = none ]; then
-      echo "state:     not started, and nothing here can start it for you"
+      m state.nonestarted
       echo
-      echo "  $BIN_DIR/vibepanel serve"
+      m notstarted.serve "$BIN_DIR/vibepanel"
     else
-      echo "state:     not started; the files are in place"
+      m state.notstarted
       echo
-      echo "  $VPCTL start"
+      m notstarted.cmd "$VPCTL"
       if [ "$ACCOUNT_MADE" != yes ]; then
-        echo "  $VPCTL token          # the one-time setup token"
+        m notstarted.token "$VPCTL"
       fi
     fi
     echo
-    echo "then open  http://$HOST:$PORT"
+    m token.thenopen "http://$HOST:$PORT"
     ;;
 esac
 echo
 if [ "$KIND" = none ]; then
-  echo "afterwards: $VPCTL upgrade   (the rest of it needs a service to talk to)"
+  m after.none "$VPCTL"
 else
-  echo "afterwards: $VPCTL {status|start|stop|restart|logs|token|upgrade|uninstall}"
+  m after.svc "$VPCTL"
 fi
 
 # Installed, and not typeable.
@@ -1187,9 +1841,7 @@ case ":$PATH:" in
       fish) RCFILE="~/.config/fish/config.fish" ;;
     esac
     echo
-    echo "note:      $BIN_DIR is not on your PATH, so \"vibepanel\" will not be a"
-    echo "           command you can type. The service does not care -- it uses the"
-    echo "           full path -- but you will want it. Add to $RCFILE:"
+    m note.path "$BIN_DIR" "$RCFILE"
     if [ "$RCFILE" = "~/.config/fish/config.fish" ]; then
       echo "             fish_add_path $BIN_DIR"
     else
@@ -1201,16 +1853,11 @@ esac
 # `systemctl --user` needs a session bus, and this shell has not got one.
 if [ "$KIND" = user ] && [ "$USER_BUS" = no ]; then
   echo
-  echo "note:      XDG_RUNTIME_DIR is not set in this shell, so the systemd *user*"
-  echo "           manager cannot be reached from here -- which is the state of a"
-  echo "           bare non-login ssh command and of every cron job. The unit is"
-  echo "           installed; enable it from a real login session:"
-  echo "             ssh -t $WHO@$HOST 'systemctl --user enable --now vibepanel'"
+  m note.xdg "$WHO" "$HOST"
 fi
 if [ "$TMUX_STATE" = old ]; then
   echo
-  echo "note:      tmux $TMUX_VER is older than $TMUX_MIN_MAJOR.$TMUX_MIN_MINOR. The panel works; progress and"
-  echo "           notification sequences from agent TUIs will not reach it."
+  m note.tmuxold "$TMUX_VER" "$TMUX_MIN_MAJOR.$TMUX_MIN_MINOR"
 fi
 
 # The other unit, and why it is not the default here.
@@ -1224,7 +1871,5 @@ fi
 # and then being told about it reads as a script that was not listening.
 if [ "$KIND" = user ] && [ "$FELL_BACK" = no ] && [ "$INTERACTIVE" != yes ]; then
   echo
-  echo "if this machine runs close to its memory and you want the kernel to look"
-  echo "elsewhere first, there is a system unit that can actually say so:"
-  echo "  ./install.sh --system --migrate   (needs root; the user unit cannot)"
+  m note.systemunit
 fi

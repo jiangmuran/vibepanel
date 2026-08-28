@@ -15455,3 +15455,193 @@ out.
 Measured after: **40px → 26px**, and the terminal is 14 columns' worth wider —
 812px of screen where there were 798. What is left is 4px of wrapper, the 8px
 scrollbar lane, and the fit remainder, which is inherent to a character grid.
+## An installer that speaks Chinese
+
+The panel has been bilingual since `web/src/i18n.ts` existed. The installer was
+not, which put the one part of this project that runs before anything else — on
+a machine nobody has looked at, in front of somebody who has typed one line into
+a shell — in one language only.
+
+### Where the line was drawn, and why
+
+`deploy/install.sh` has roughly 199 places where it prints something. 105 of
+them are now keys in a table; the rest are still English on purpose, and the
+rule that separates them is the only interesting decision in this change:
+
+> If a sentence is part of a decision, it is translated. If it is a record of
+> something that already happened, it may stay English.
+
+So the translated half is: every question, the plan printed before anything is
+touched, every error that says what to do next, the closing summary, the notes
+under it (PATH, `XDG_RUNTIME_DIR`, an old tmux, the system unit that was never
+offered), and `--help`.
+
+The untranslated half is nine lines, and they all have the same shape — a verb
+and a path, printed while the work is happening:
+
+```
+installed /home/x/.local/bin/vibepanel
+kept      /home/x/.config/vibepanel.env (already there, left alone)
+removed   /home/x/.config/systemd/user/vibepanel.service (migrated to the system service)
+```
+
+Those were left alone because translating them buys nothing and costs
+something. They are read as a log, not as prose; the path is the content; and
+each of them already appears in the plan above and the summary below, both of
+which *are* translated. The two command lines the PATH note asks you to paste
+(`export PATH=...`, `fish_add_path ...`) are in the same category: they are
+things to copy, not things to read.
+
+The failure mode being avoided in both directions is a half-translated screen —
+a question in Chinese with the consequence under it in English. That is worse
+than either language alone, because the person reading it cannot tell whether
+the English line was left out of the translation or is saying something the
+Chinese one is not. Which is why the summary block and its notes are translated
+as a unit: they are one paragraph, and the `note:` lines are next steps.
+
+### How the language is chosen
+
+Three ways, in this order, and the same order in both scripts:
+
+1. `--lang zh` / `--lang en`, which wins. The bootstrap reads it for its own
+   messages *and* forwards it as `--lang=<v>` to the installer in the archive —
+   a screen that changes language halfway through the install is the bug that
+   half of this is here to prevent.
+2. `LC_ALL`, then `LC_MESSAGES`, then `LANG`. **The first of the three that is
+   set decides, and only it.** Falling through from an `LC_ALL` this does not
+   recognise to `LANG` looks like helpfulness and is the installer overruling
+   the variable the C library gives priority to: `LC_ALL=C` beside
+   `LANG=zh_CN` is somebody asking for C. Only `zh*` and `en*` are read;
+   `de_DE` is not a guess to be made.
+3. The question, when neither of the above answered it and there is somebody to
+   ask. It is the **first** thing on the screen — above the banner, above the
+   tmux offer, above the service menu — because a language chosen after three
+   questions have been answered in English is a language chosen too late. It
+   names both languages in their own language and defaults to English.
+
+Unattended, undecided means English and nothing is asked. A `curl | sh` inside
+a pipeline that stops to ask which language to fail in does not fail; it hangs.
+
+Only the installer inside the archive ever asks. Under `curl ... | sh` the
+bootstrap *is* stdin — there is nobody there to ask, which is the same reason it
+hands `/dev/tty` to the inner installer rather than the pipe it is being read
+from. So the bootstrap takes the flag, then the environment, then English, and
+the question happens once, where it can be answered.
+
+### The table, and why it is not printf
+
+Both scripts hold their strings in one `case`, with the two languages on
+adjacent lines, behind `m <key> [args...]`. bash 3.2 has no associative arrays
+and macOS still ships 3.2, so a `case` is what there is; the bootstrap's copy is
+the same shape in POSIX `sh`.
+
+Substitutions are `%1$s`, `%2$s`, always numbered, never a bare `%s` — and
+`printf` is not what expands them. bash's builtin printf has no positional
+specifiers at all:
+
+```
+$ printf '%1$s\n' x
+bash: printf: `$': invalid format character
+```
+
+which is not a footnote when the shell in question is the one macOS ships. So
+`m` substitutes by hand: `${s//%1\$s/$1}` in bash, and a prefix/suffix split in
+the POSIX half, where `${var//a/b}` does not exist either. Two things fall out
+of that and both are worth having: Chinese can put the noun where it belongs
+without silently swapping two arguments in one language only, and the strings
+are data rather than formats, so a literal `%` in a message cannot break
+anything.
+
+A key that is missing, or a pair with one empty side, prints
+`[missing string: <key>/<lang>]` and a `BUG:` line on stderr. It does not print
+an empty line — an empty line is the worst available failure here, because the
+question above it still gets asked and the consequence under it is simply gone,
+with nothing anywhere reporting a problem.
+
+### What keeps the pair honest
+
+`scripts/install-check.sh` extracts the table and `m()` from each script, walks
+every key, and calls it in both languages. It fails if either side is empty, if
+the two sides do not use the same set of substitutions (a translation that drops
+a `%2$s` leaves the path out of one language only, and nothing else would
+notice), if an unknown key does not report itself as unknown, and — the
+guard-of-the-guard — if the walk finds fewer than 20 keys, which is what a
+broken `sed` looks like: a check that passes by testing nothing.
+
+Today that is 105 keys in `deploy/install.sh` and 24 in the bootstrap.
+
+The check also pins the three locale variables on every run it makes. Without
+that, a developer with `LANG=zh_CN` runs a check that asserts on English
+sentences the installer has stopped printing, and watches it fail for a reason
+that has nothing to do with what they changed.
+
+### Mutation testing
+
+15 mutations, 15 killed, 0 survived. `scripts/mutate-install-lang.py` re-runs
+them; each one runs the whole install check, which is the point — the guard has
+to be pinned by the file that is actually run.
+
+Two survived the first pass and both were fixed by making the check say what it
+actually wanted:
+
+- **The unknown-key marker was removable.** Deleting it left the *empty-side*
+  marker to catch the same case, so the walk still saw a marker and passed. But
+  the two are different jobs — a key nothing defines is a typo at a call site, a
+  key with one side empty is a translation nobody wrote — and a message that
+  cannot tell them apart sends the reader to the wrong file. The walk now
+  requires an unknown key to be reported as unknown.
+- **`LC_ALL` could start falling through to `LANG`** and nothing noticed,
+  because the case that exercised the precedence used `LC_ALL=en_US`, which is
+  recognised. It now also runs `LC_ALL=C` beside `LANG=zh_CN`, where the two
+  behaviours differ.
+
+| removed | what goes wrong |
+|---|---|
+| a Chinese string, from one key | the pair silently becomes a single |
+| the empty-side marker in `m` | a missing translation is a blank line mid-install |
+| the unknown-key marker in `m` | a typo'd key reads as an untranslated one |
+| a `%1$s` from one side of a pair | the path appears in one language only |
+| the `INTERACTIVE` guard on the question | a pipeline stops on a prompt nobody can see |
+| the `ACCT_STDIN` guard on the question | the question eats the first line of a password, and echoes it |
+| the question's position | it is asked after the banner, then after everything |
+| `return` after the first locale variable | `LC_ALL=C` is overruled by a Chinese `LANG` |
+| `--lang` read before the environment | the flag loses to the locale |
+| the `--lang` value check | `--lang de` installs in English without saying so |
+| the bootstrap's forwarding of `--lang` | the screen changes language halfway through |
+| `--help` printed after the argument loop | `--help --lang zh` is English, `--lang zh --help` is not |
+| the bootstrap's locale detection | the two halves disagree about the language |
+| the key walk's own key list | the coverage check passes by testing nothing |
+| the check's locale pinning | every assertion depends on the developer's `LANG` |
+
+One of them had to be strengthened rather than the code: putting `--help` back
+where it used to be is two edits, and either one alone still prints it once, in
+the right language. A mutation that only half-removes a guard reports the guard
+as decoration.
+
+### Left undone
+
+- **The panel does not learn what the installer was told.** Somebody who
+  installs with `--lang zh` and opens the panel in an English browser gets an
+  English panel. It is smaller than it sounds — `i18n.ts` reads
+  `navigator.languages`, so a Chinese browser already gets a Chinese panel, and
+  the gap is exactly "Chinese install, English browser".
+
+  What it would take, and why it was not done: `VIBEPANEL_LANG` written into
+  `~/.config/vibepanel.env` by the installer (which today never writes that file
+  except to install the template, and must not overwrite an edited one), a field
+  in `internal/config` with its validation and test, the field added to
+  `authState` in `internal/httpapi/auth.go` and to its TypeScript interface, and
+  then the awkward half: `i18n.ts` decides `current` synchronously at module
+  load, while `/auth/state` is a fetch. Using it means either a language that
+  changes after first paint, or templating the embedded `index.html` at serve
+  time so the answer is there before the bundle runs. Four files, a wire change
+  and a flicker decision, for a case the browser mostly already covers.
+- **`vibepanel doctor`, `vibepanel service` and every other CLI subcommand are
+  English.** They are Go, not shell, and they would want a different mechanism
+  than a `case` in a shell script — probably the same key/pair discipline, in
+  one package, with the same walk over it in a test. The installer was the part
+  somebody meets before they have decided to use this at all.
+- **No pty case covers the language question.** `install-check` drives it
+  through `--interactive` with a file on stdin, which is how every other prompt
+  in that file is driven; the one real-terminal case (`script -qec`) still runs
+  with a decided locale and so never sees the question.

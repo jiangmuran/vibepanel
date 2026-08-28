@@ -176,14 +176,26 @@ newhome() {
   PKG_OVERRIDE=
   INIT_OVERRIDE="$INIT_DEFAULT"
   XDG_OVERRIDE="$XDG_DEFAULT"
+  LC_OVERRIDE=en_US.UTF-8
+  LCM_OVERRIDE=
+  LANG_OVERRIDE=
   : > "$WORK/binary.log"
   stub_version v1.0.0
 }
 # run [--stdin <file>] -- <args...>   with the current throwaway HOME
+#
+# The three locale variables are set on every run, never inherited. The
+# installer reads them to decide which language to speak, so a developer with
+# LANG=zh_CN would otherwise run a check that asserts on English sentences the
+# installer had stopped printing -- and see it fail for a reason that has
+# nothing to do with what they changed. en_US.UTF-8 is the default because it
+# is the answer every case below except the language block wants; that block
+# sets LC_OVERRIDE itself, and empty means "the environment says nothing".
 run() {
   local input=/dev/null
   if [ "${1:-}" = "--stdin" ]; then input="$2"; shift 2; fi
   ( cd "$REL" && HOME="$HOME_DIR" \
+      LC_ALL="$LC_OVERRIDE" LC_MESSAGES="$LCM_OVERRIDE" LANG="$LANG_OVERRIDE" \
       VIBEPANEL_DESTDIR="$HOME_DIR/root" \
       VIBEPANEL_SYSTEMCTL="$SCTL" \
       VIBEPANEL_LAUNCHCTL="$LCTL" \
@@ -929,6 +941,245 @@ has "$LOG" "is not on your PATH" && ok "it says the binary will not be typeable"
 has "$LOG" "export PATH=" && ok "and gives the line to paste" \
   || fail "the advice is not something that can be copied"
 
+# ── the language, which is decided before anything else is asked ──────────
+#
+# Three ways in, in this order: --lang, then LC_ALL / LC_MESSAGES / LANG, then
+# the question. The one that matters most is the one that must *not* happen: an
+# unattended run has nobody to answer, and a question there does not fail, it
+# hangs -- a pipeline stopped forever on a prompt written to a log file.
+
+echo "==> every string exists in both languages"
+#
+# The whole reason the two languages can be kept honest. A key whose Chinese
+# side was never written does not fail: it prints an empty line in the middle
+# of somebody's install, under a question they have just been asked. So every
+# key in both tables is called in both languages and the marker `m` prints
+# instead of an empty line is what this looks for.
+strings_of() { # strings_of <script> <label> -> a sourceable file of the table + m()
+  local f="$1" out="$WORK/strings-$2.sh"
+  # From the table's opening marker down to the end of m() itself, which is
+  # everything the walk needs and nothing that would run on being sourced.
+  sed -n '/strings: begin/,/^m() {/p' "$f" > "$out"
+  sed -n '/^m() {/,/^}$/p' "$f" | tail -n +2 >> "$out"
+  printf '%s' "$out"
+}
+check_strings() { # check_strings <script> <label>
+  local f="$1" label="$2" blk keys count driver out
+  blk="$(strings_of "$f" "$label")"
+  # The case arms are the key list. Four spaces and a lower-case letter is the
+  # shape of every one of them; `*)` is the fallthrough and is not a key.
+  keys="$(grep -oE '^    [a-z][a-z0-9._]*\)' "$blk" | tr -d ' )' | sort -u)"
+  count="$(printf '%s\n' "$keys" | grep -c . || true)"
+  # A sed that stopped matching would produce an empty list and a check that
+  # passes by testing nothing, which is the failure mode of every walk like
+  # this one.
+  if [ "$count" -lt 20 ]; then
+    fail "$label: found only $count keys, so the table was not read at all"
+    return
+  fi
+  driver="$WORK/strings-$label-driver.sh"
+  cat "$blk" > "$driver"
+  cat >> "$driver" <<'EOS'
+bad=0
+for k in $KEYS; do
+  # The two sides must also agree on their substitutions. A translation that
+  # dropped a %2$s leaves the path or the version out of one language only,
+  # and nothing else here would notice.
+  mstr "$k"
+  ten="$(printf '%s' "$MS_EN" | grep -o '%[0-9]\$s' | sort -u | tr '\n' ' ')"
+  tzh="$(printf '%s' "$MS_ZH" | grep -o '%[0-9]\$s' | sort -u | tr '\n' ' ')"
+  if [ "$ten" != "$tzh" ]; then echo "$k: en has [$ten], zh has [$tzh]"; bad=1; fi
+  for L in en zh; do
+    VP_LANG="$L"
+    out="$(m "$k" one two three 2>&1)"
+    case "$out" in
+      ''|*'missing string'*) echo "$k/$L is missing"; bad=1 ;;
+    esac
+  done
+done
+VP_LANG=en
+# Both halves: the marker where the sentence should have been, and a line that
+# says which key. The two failures are different jobs -- a key nothing defines
+# is a typo at a call site, an empty side is a translation nobody wrote -- and
+# a message that cannot tell them apart sends the reader to the wrong file.
+out="$(m no.such.key.at.all 2>&1)"
+case "$out" in
+  *'missing string'*) ;;
+  *) echo "an unknown key printed [$out] instead of a marker"; bad=1 ;;
+esac
+case "$out" in
+  *'no string for key'*) ;;
+  *) echo "an unknown key was not reported as unknown: [$out]"; bad=1 ;;
+esac
+# The other half of the same guard, and the shape drift actually takes: the key
+# is there, one language is not. Every key above has both sides today, so the
+# only way to pin the behaviour is to hand `m` a pair with one side missing.
+mstr() { MS_EN='the english one'; MS_ZH=''; return 0; }
+VP_LANG=zh
+out="$(m any.key.at.all 2>&1)"
+case "$out" in
+  *'missing string'*) ;;
+  *) echo "a half-translated key printed [$out] instead of saying so"; bad=1 ;;
+esac
+exit $bad
+EOS
+  if out="$(KEYS="$keys" bash "$driver" 2>&1)"; then
+    ok "$label: $count keys, both languages, matching substitutions"
+  else
+    fail "$label: $(printf '%s' "$out" | head -6 | tr '\n' '; ')"
+  fi
+}
+check_strings "$REPO/deploy/install.sh" deploy
+check_strings "$REPO/install.sh" bootstrap
+
+echo "==> unattended never asks which language, whatever the environment says"
+# The one that hangs rather than fails. `--yes` with nothing in the environment
+# is a pipeline, and a question there is a pipeline stopped forever on a prompt
+# nobody can see being asked.
+newhome
+ROOT_OVERRIDE=none
+LC_OVERRIDE=
+run --yes
+[ $RC -eq 0 ] && ok "exits 0 with no locale set at all" || { fail "exited $RC"; sed 's/^/       /' "$LOG"; }
+has "$LOG" "Which language" && fail "it asked a question no pipeline can answer" \
+  || ok "it does not ask"
+has "$LOG" "about to:" && ok "and falls back to English rather than guessing" \
+  || fail "an undecided language did not produce English: $(head -6 "$LOG" | tr '\n' ' ')"
+
+echo "==> interactive with nothing in the environment: it asks, and asks first"
+newhome
+LC_OVERRIDE=
+printf '2\n1\nn\ny\n' > "$WORK/answers"
+run --stdin "$WORK/answers" --interactive
+[ $RC -eq 0 ] && ok "exits 0" || { fail "exited $RC"; sed 's/^/       /' "$LOG"; }
+has "$LOG" "Which language should this installer speak?" && ok "it asks" \
+  || fail "no language question: $(head -6 "$LOG" | tr '\n' ' ')"
+has "$LOG" "简体中文" && ok "both languages are named in their own language" \
+  || fail "the choice does not name itself in Chinese"
+# First, and not merely present. A language chosen after three questions have
+# been answered in English is a language chosen too late.
+LANGLINE="$(grep -n "Which language" "$LOG" | head -1 | cut -d: -f1)"
+MENULINE="$(grep -n "vibepanel" "$LOG" | head -1 | cut -d: -f1)"
+[ -n "$LANGLINE" ] && [ "$LANGLINE" -lt "${MENULINE:-999}" ] \
+  && ok "it is the first thing on the screen, before the banner" \
+  || fail "something was printed before the language question (line $LANGLINE vs $MENULINE)"
+has "$LOG" "面板要以哪种方式运行？" && ok "answering 2 puts the service menu in Chinese" \
+  || fail "the menu after the answer is not Chinese: $(sed -n '6,12p' "$LOG" | tr '\n' ' ')"
+has "$LOG" "就这样做吗？" && ok "and so is the confirmation under the plan" \
+  || fail "the plan was confirmed in another language than the question"
+[ -f "$(SYSU)" ] && ok "and the answers after it still land where they did" \
+  || fail "choosing a language shifted every later answer by one"
+
+echo "==> a zh locale installs in Chinese and asks nothing"
+newhome
+ROOT_OVERRIDE=none
+LC_OVERRIDE=zh_CN.UTF-8
+run --yes
+[ $RC -eq 0 ] && ok "exits 0" || { fail "exited $RC"; sed 's/^/       /' "$LOG"; }
+has "$LOG" "Which language" && fail "it asked about a language the environment had already named" \
+  || ok "it does not ask what LC_ALL already said"
+has "$LOG" "接下来会：" && ok "the plan is in Chinese" \
+  || fail "LC_ALL=zh_CN did not produce Chinese: $(head -8 "$LOG" | tr '\n' ' ')"
+has "$LOG" "── 完成 ──" && ok "and so is the summary at the end" \
+  || fail "the run ends in English: $(tail -8 "$LOG" | tr '\n' ' ')"
+
+echo "==> --lang beats the environment, in both directions"
+newhome
+ROOT_OVERRIDE=none
+LC_OVERRIDE=en_US.UTF-8
+run --yes --lang zh
+has "$LOG" "接下来会：" && ok "--lang zh under an English locale is Chinese" \
+  || fail "the flag lost to the environment: $(head -6 "$LOG" | tr '\n' ' ')"
+newhome
+ROOT_OVERRIDE=none
+LC_OVERRIDE=zh_CN.UTF-8
+run --yes --lang en
+has "$LOG" "about to:" && ok "--lang en under a Chinese locale is English" \
+  || fail "the flag lost to the environment: $(head -6 "$LOG" | tr '\n' ' ')"
+run --yes --lang=zh
+has "$LOG" "接下来会：" && ok "and --lang=zh is the same flag" || fail "--lang=zh was not read"
+
+echo "==> LC_ALL, then LC_MESSAGES, then LANG -- the first one that is set"
+newhome
+ROOT_OVERRIDE=none
+LC_OVERRIDE=
+LCM_OVERRIDE=zh_CN.UTF-8
+run --yes
+has "$LOG" "接下来会：" && ok "LC_MESSAGES decides when LC_ALL is unset" \
+  || fail "LC_MESSAGES was not consulted"
+newhome
+ROOT_OVERRIDE=none
+LC_OVERRIDE=
+LANG_OVERRIDE=zh_CN.UTF-8
+run --yes
+has "$LOG" "接下来会：" && ok "LANG decides when neither of the others is set" \
+  || fail "LANG was not consulted"
+# The one that is easy to get backwards: LC_ALL is the override, so a C library
+# would never look at LANG once it is set. Neither may this.
+newhome
+ROOT_OVERRIDE=none
+LC_OVERRIDE=en_US.UTF-8
+LANG_OVERRIDE=zh_CN.UTF-8
+run --yes
+has "$LOG" "about to:" && ok "LC_ALL wins over LANG, as the C library has it" \
+  || fail "LANG overruled LC_ALL"
+# A locale that names neither language is not a guess to be made. Unattended,
+# that is English.
+newhome
+ROOT_OVERRIDE=none
+LC_OVERRIDE=de_DE.UTF-8
+run --yes
+has "$LOG" "about to:" && ok "a locale it does not know is English, not a guess" \
+  || fail "an unknown locale produced something else"
+# And an LC_ALL it does not recognise still ends the question. Falling through
+# to LANG from there looks like helpfulness and is the installer overruling the
+# variable the C library gives priority to: LC_ALL=C beside LANG=zh_CN is
+# somebody asking for C.
+newhome
+ROOT_OVERRIDE=none
+LC_OVERRIDE=C
+LANG_OVERRIDE=zh_CN.UTF-8
+run --yes
+has "$LOG" "about to:" && ok "an LC_ALL it does not know is not handed down to LANG" \
+  || fail "LANG was consulted behind an LC_ALL that was set"
+
+echo "==> --lang with a language it does not have is refused"
+newhome
+ROOT_OVERRIDE=none
+run --yes --lang de
+[ $RC -eq 2 ] && ok "exits 2" || fail "exited $RC, not 2"
+has "$LOG" "--lang needs en or zh" && ok "and says what it takes" \
+  || fail "no explanation: $(cat "$LOG")"
+run --yes --lang
+[ $RC -eq 2 ] && ok "a bare --lang is refused too" || fail "exited $RC, not 2"
+
+echo "==> --help is in the chosen language"
+newhome
+run --lang zh --help
+[ $RC -eq 0 ] && has "$LOG" "vibepanel 安装程序" && ok "--lang zh --help is Chinese" \
+  || fail "--help ignored the language: $(head -3 "$LOG" | tr '\n' ' ')"
+has "$LOG" "--lang <en|zh>" && ok "and documents the flag itself" \
+  || fail "--help does not mention --lang"
+run --help --lang zh
+has "$LOG" "vibepanel 安装程序" && ok "and the flag is read whichever side of --help it is on" \
+  || fail "--help --lang zh printed the other language"
+
+echo "==> the language question never reads a password"
+# --password-stdin and the prompts cannot both have stdin; that is refused, but
+# the refusal is two hundred lines further down and this question would get
+# there first -- reading the first line of the password and, because stdin is
+# not a terminal, echoing it into the log.
+newhome
+ROOT_OVERRIDE=none
+LC_OVERRIDE=
+printf 'correct horse battery staple\n' > "$WORK/pw-lang"
+run --stdin "$WORK/pw-lang" --interactive --username admin --password-stdin
+[ $RC -eq 2 ] && ok "exits 2, as it did before" || fail "exited $RC, not 2"
+has "$LOG" "correct horse battery staple" \
+  && fail "the language question ate the password and echoed it into the log" \
+  || ok "the password was not read, and not echoed"
+has "$LOG" "Which language" && fail "it asked anyway" || ok "and the question was not asked"
+
 # ── the bootstrap: install.sh at the repository root ──────────────────────
 #
 # The one-liner, driven against a local HTTP server holding archives built a
@@ -986,6 +1237,7 @@ else
     HOME_DIR="$WORK/home$CASE"; mkdir -p "$HOME_DIR"
     LOG="$WORK/log$CASE"
     env HOME="$HOME_DIR" \
+      LC_ALL=en_US.UTF-8 LC_MESSAGES= LANG= \
       VIBEPANEL_BASE_URL="$BASE" \
       VIBEPANEL_DESTDIR="$HOME_DIR/root" \
       VIBEPANEL_SYSTEMCTL="$SCTL" VIBEPANEL_LAUNCHCTL="$LCTL" \
@@ -1097,6 +1349,49 @@ else
   [ $RC -ne 0 ] && ok "exits non-zero" || fail "a missing release was treated as success"
   has "$LOG" "could not download" && ok "it says what it could not fetch" \
     || fail "no explanation: $(tail -3 "$LOG" | tr '\n' ' ')"
+
+  echo "==> the bootstrap says its own refusals in the chosen language"
+  # Its own, because by the time the archive is unpacked it is the installer
+  # inside it doing the talking -- and every message here is one that stops the
+  # install, which is exactly the kind that has to be readable.
+  BOOTENV=(VIBEPANEL_VERSION=v0.0.0 LC_ALL=zh_CN.UTF-8)
+  bootrun --yes
+  [ $RC -ne 0 ] && ok "exits non-zero" || fail "a missing release was treated as success"
+  has "$LOG" "下载不了" && ok "a download that failed says so in Chinese" \
+    || fail "the refusal is not in the locale's language: $(tail -3 "$LOG" | tr '\n' ' ')"
+
+  BOOTENV=(VIBEPANEL_VERSION=v0.0.0)
+  bootrun --yes --lang zh
+  has "$LOG" "下载不了" && ok "and --lang says it without a locale to help" \
+    || fail "--lang did not reach the bootstrap's own messages"
+
+  echo "==> and hands the language to the installer in the archive"
+  # The half that is easy to leave out: the bootstrap gets it right, the
+  # archive's installer is never told, and the screen changes language halfway
+  # through for no reason the person can see.
+  BOOTENV=(VIBEPANEL_VERSION=v9.9.9)
+  bootrun --yes --no-enable --lang zh
+  [ $RC -eq 0 ] && ok "exits 0" || { fail "exited $RC"; sed 's/^/       /' "$LOG"; }
+  has "$LOG" "── 完成 ──" && ok "the inner installer finished in Chinese too" \
+    || fail "--lang stopped at the bootstrap: $(tail -4 "$LOG" | tr '\n' ' ')"
+  has "$LOG" "已安装：" && ok "and named what it installed in the same language" \
+    || fail "the summary is in the other language"
+
+  BOOTENV=(VIBEPANEL_VERSION=v9.9.9 LC_ALL=zh_CN.UTF-8)
+  bootrun --yes --no-enable
+  has "$LOG" "── 完成 ──" && ok "a zh locale reaches it too, with no flag at all" \
+    || fail "the locale did not survive the hand-over: $(tail -4 "$LOG" | tr '\n' ' ')"
+
+  echo "==> the bootstrap's --help is in the chosen language"
+  BOOTENV=(VIBEPANEL_API_URL="http://127.0.0.1:1/nope" VIBEPANEL_BASE_URL="http://127.0.0.1:1")
+  bootrun --lang zh --help
+  [ $RC -eq 0 ] && has "$LOG" "vibepanel 引导安装程序" && ok "--lang zh --help is Chinese" \
+    || fail "--help exited $RC in the wrong language: $(head -2 "$LOG" | tr '\n' ' ')"
+  BOOTENV=(VIBEPANEL_API_URL="http://127.0.0.1:1/nope" VIBEPANEL_BASE_URL="http://127.0.0.1:1")
+  bootrun --help --lang zh
+  has "$LOG" "vibepanel 引导安装程序" \
+    && ok "and the flag counts on either side of --help" \
+    || fail "--help was printed before --lang was read"
 
   # ── the mirror ───────────────────────────────────────────────────────────
   #
