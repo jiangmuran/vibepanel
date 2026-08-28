@@ -16073,3 +16073,119 @@ running process. It is `~/.local/bin/vibepanel` now, stamped
 (`v0.1.0-22-g3a746c3` rather than `dev`/`none`), and the nine live sessions were
 byte-identical before and after the restart — which is the guarantee the whole
 architecture exists for, checked rather than assumed.
+
+## The README was a letter, and it was in the wrong order
+
+Third rejection of this file. The first two were 「你的 readme 也写的像屎」 and
+「AI 味太重 不像是在介绍项目 而是在跟我汇报工作」; the entry above, "The README
+was reporting work, not describing a product", is the rewrite that followed
+them, and it fixed the *content* — it moved the rationale to `docs/design.md`
+and found six untrue claims. It did not fix the voice, and it never questioned
+the order. So the third verdict was more useful than either of the first two:
+
+> 我认为你仍然得重构 readme 文件 现在不像是一个正式的项目 它像是一个自言自语吧
+> 我觉得一个项目可能是比如说他先介绍一下这个项目本身 然后再介绍一下它适合哪些人
+> 然后再介绍一下它的优点 然后再介绍一下怎么安装 比如说你在国外或者说再使用国内加速源
+> 然后再加上一些要点 还有先杂一杂八的东西再往后放什么功能介绍啊什么之类的
+> 我觉得这个排版是比较正常的 而且你要像是在介绍这个项目 而不是在自言自语
+
+### The voice, said as a rule
+
+**Describe the software, not the reader.** The file was written in the second
+person throughout, to one person, as if continuing a conversation:
+
+- "**You keep** several agents going at once, across more than one repository"
+- "If you run one agent at a time in a terminal that is already in front of you,
+  **you do not need this**."
+- "**Three things to know before you install:**"
+- "Nothing **you** run belongs to the panel."
+
+Seventy occurrences of *you* / *your* in 630 lines. Every one of them addressed
+somebody, which is what 「自言自语」 was pointing at: a letter has an addressee,
+and a README has a stranger who arrived from a search result and owes it thirty
+seconds. Two survive, both inside a shell example (`# your own certificate`,
+`you@example.com`), where the second person is correct because that is a command
+to run rather than a narration of a life. The rule is narrower than "no second
+person": instructions may address a reader, prose about the software may not.
+
+The two subsidiary faults both leak from this log, whose voice is right here and
+wrong there:
+
+- **Reasoning with the measurement that produced it.** The build log's whole job
+  is why; `docs/design.md`'s is why; a README's is what. The surviving
+  exceptions are the ones that change what a reader would *do*: Docker losing
+  every session, an IP address never being a valid WebAuthn RP ID, a mirror
+  meaning the checksum no longer says anything about the mirror.
+- **The em-dash aside.** Forty-five in the file, most of them `— which is …` or
+  `— because …`, which is the build log's sentence shape. Twenty now: eight are
+  the "no default" cell in the flags table, and none of the other twelve
+  introduces a reason. The ones left are enumerative — they open a list.
+
+### The order, which nobody had questioned
+
+The requested order is the ordinary one and there was no argument for the old
+one: what it is · who it is for · what it does well · how to install it · the
+things that will bite · the feature tour · everything else.
+
+The old file had **no "what it does well" section at all**. Its highlights were
+at line 220, inside "Using it", *after* a 148-line install chapter — so the
+first thing a reader met after two short paragraphs was a table comparing
+systemd unit kinds, and the reasons to care were four screens below the decision
+they were meant to inform. Install is now 45 lines with both routes visible, the
+ordinary one and `--mirror` for where GitHub is not reachable, and the rest
+moved to `docs/install.md`: unit kinds, every flag, unattended installs, the
+first account, Docker, from source.
+
+`README.md` is 630 → 531 lines; `README.zh-CN.md` 536 → 425; and the material
+did not evaporate, it moved.
+
+### What the code said that the README did not
+
+Everything factual was re-read against the source. Six claims were wrong, and
+three of those are wrong because a *feature was removed and the README was not*:
+
+- **"Six tabs per project, over a strip of machine CPU, memory and disk."** Two
+  tabs, `files` and `notes`, since "Two tabs, and a dock under both". The strip
+  is gone; the dock's monitor block is what it became.
+- **Todos.** Gone from the interface. The routes stay for the wall boards and
+  for API callers, which is in that entry, but there is nothing to describe.
+- **The Screen tab.** `RETIRED_TABS` includes `vnc`. `VncView.tsx` still
+  compiles and **nothing imports it** — the tab was removed and the component
+  was left behind, so the panel has a VNC proxy, a `--vnc` flag, a settings page
+  for displays, and no viewer. The README described the viewer in six lines.
+  Cut, along with "for the Screen tab" in the licence note.
+- **"a button for Claude Code and one for Codex … other agents have no button."**
+  Three buttons: opencode has had one since `internal/hooks/opencode.go`.
+- **PWA notifications "fired when a session becomes waiting".** `notifyOnWaiting`
+  in `web/src/notify.ts` is transition-only, seeds its first snapshot, guards on
+  focus — and is called from nowhere. The permission toggle works and no
+  notification is ever fired. Cut. What is actually wired is
+  **Settings → Push notifications**, twenty destinations POSTed to from the
+  poller (`fireWebhooks`), with Bark / ntfy / ServerChan presets, which the
+  README had never mentioned at all.
+- **`--vnc` was missing from the flags table** while `--vnc-allow` was in it, so
+  the table documented how to scope the VNC proxy without saying how to turn it
+  on.
+
+Smaller: the CLI is eight subcommands and the README listed six (`service` and
+`account` missing — `AGENTS.md` lists four and is also wrong); `doctor`'s
+fifteen checks were enumerated with four of them missing; token usage is four
+figures and a thirty-day window, not "today and over thirty days"; the share
+detail levels are labelled *Counts and states* and *Names as well*; "CI runs the
+suite on tmux 3.4, development is on 3.6" is asserted nowhere in the repository
+— the workflow installs whatever `ubuntu-24.04` ships — so it is cut rather than
+softened.
+
+Verified and kept, because they are the ones that would have been guessed wrong:
+24 board presets, 37 widget kinds, a 12×4 grid, 2,000 lines / 256 KiB of
+scrollback every 30 s, the last fifteen commits, 8 MiB and 256 KiB / 4,000 lines
+in preview, four built-in launch profiles, `MemoryHigh=20G` / `MemoryMax=26G` on
+both units and `OOMScoreAdjust=-500` on only the system one.
+
+### Left undone, deliberately
+
+`docs/images/panel-dark.png` predates the two-tab side panel and shows five tab
+icons. The caption describes what is in the picture and does not claim a tab
+count, so nothing in the file is false, but the hero screenshot is a build
+behind. Regenerating it is `web/scripts/shots.mjs` against a fresh binary and it
+belongs with the next UI change rather than with a documentation commit.
