@@ -207,7 +207,7 @@ async function scanUnreachable(target, where, minExpected = 20) {
  * Only the terminal. The other innerText reads in this file are React elements,
  * which have no per-run spans.
  */
-const screenText = async (target, sel = '.xterm-screen') => {
+const screenText = async (target, sel = '.xterm-screen', opts) => {
   // The buffer first, the DOM second.
   //
   // `.xterm-screen` has text only under xterm's DOM renderer. The GPU renderer
@@ -218,8 +218,12 @@ const screenText = async (target, sel = '.xterm-screen') => {
   //
   // `sel` is still honoured for the callers that read something other than the
   // terminal; only the default path goes through the buffer.
+  //
+  // `opts` names which terminal, for the callers that mean a particular one
+  // rather than the focused one -- see the bottom-terminal check, where "the
+  // focused one" was the whole of a flake.
   if (sel === '.xterm-screen' && typeof target.evaluate === 'function') {
-    const rows = await screenRows(target).catch(() => null)
+    const rows = await screenRows(target, opts).catch(() => null)
     if (rows && rows.length) return rows.join('\n').replace(/\u00a0/g, ' ')
   }
   return (await target.locator(sel).first().innerText().catch(() => '')).replace(/\u00a0/g, ' ')
@@ -1395,15 +1399,31 @@ try {
       // It must be a working terminal, not just a tab.
       const bottomScreen = bottom.locator('.xterm-screen')
       await bottomScreen.click()
+
       await page.keyboard.type('echo BOTTOM_TERMINAL_OK')
       await page.keyboard.press('Enter')
-      // Through the buffer of whichever terminal has focus -- which is this
-      // one, because the click above put it there. `bottomScreen.innerText()`
-      // reads the DOM, and the DOM is empty under the GPU renderer however full
-      // the terminal is.
+
+      // Read this terminal by name, not "whichever has focus".
+      //
+      // Asking for the focused one made this the flakiest assertion in the
+      // file -- red on roughly one run in three. `vibepanelScreen` used to
+      // fall back to the first terminal in the map when focus was on none of
+      // them, and with a main terminal above and a scratch one below, the
+      // frame where focus is between the two answered about the wrong screen.
+      // The fallback is gone now, but naming the terminal is what makes this
+      // check independent of focus at all: what it is asserting is that a
+      // bottom terminal works, not where the caret happens to be.
+      //
+      // Through the buffer, not the DOM: `.xterm-rows` is empty under the GPU
+      // renderer however full the terminal is.
+      const bottomID = await page.locator('[data-testid="bottom-tab"]').first()
+        .getAttribute('data-session-id')
+      if (!bottomID) {
+        note('FAIL', 'bottom', 'a bottom tab carries no session id, so its screen cannot be read')
+      }
       let echoed = false
       for (let i = 0; i < 40; i++) {
-        const txt = await screenText(page)
+        const txt = await screenText(page, undefined, { id: bottomID })
         if ((txt.match(/BOTTOM_TERMINAL_OK/g) ?? []).length >= 2) { echoed = true; break }
         await sleep(300)
       }
@@ -3093,9 +3113,16 @@ try {
     await sleep(2500)
 
     // The upload is only half of it: the path has to be waiting at the prompt.
+    //
+    // Named, not focused. A synthetic drop leaves focus on nothing in
+    // particular, and this used to read whichever terminal `vibepanelScreen`
+    // guessed at -- which was right here and wrong for the bottom terminal
+    // check, in the same run.
+    const mainID = await zone.locator('xpath=ancestor::*[@data-session-id][1]')
+      .getAttribute('data-session-id').catch(() => null)
     let typed = ''
     for (let i = 0; i < 25; i++) {
-      typed = await screenText(page)
+      typed = await screenText(page, undefined, mainID ? { id: mainID } : undefined)
       if (typed.includes('dropped-note.txt')) break
       await sleep(400)
     }

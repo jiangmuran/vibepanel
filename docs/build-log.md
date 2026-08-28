@@ -15359,3 +15359,37 @@ moment they did. A stub is only a stub of what is actually called.
   and `vibepanel.stack.notes` are the only two keys this writes, so there is
   nothing to sweep yet — but the day a stacked tab is retired, its key stays in
   every browser. `RETIRED_TABS` is where that would be noticed.
+
+### The flakiest assertion in the file was reading a different terminal
+
+`bottom: typing into a bottom terminal produced no output` went red on roughly
+one run in three, and it was believed twice to be a pre-existing failure and
+once to be a regression from a merge. It was neither. A flaky check is worse
+than a failing one: it teaches people to re-run until it is green, and it did.
+
+`window.vibepanelScreen` answers "the focused terminal" when no id is named,
+and it fell back to `all[0]` when nothing was focused. The comment above that
+line already described this exact bug — *"Picking the first in the map read the
+wrong screen and reported that typing had produced no output"* — and the fix
+that added the focus lookup kept the guess as a default, which reintroduces it
+in every frame where focus is on neither terminal: between a click and the
+textarea receiving it, or across a re-render that replaces the textarea. With a
+main terminal above and a scratch one below, that guess answers about the main
+one.
+
+Two changes, and the second is the one that matters:
+
+**The guess is gone.** One terminal is unambiguous and still answers without
+focus; with several and none focused, the question has no answer and it returns
+`null` rather than a different terminal's screen.
+
+**The main terminal can now be named.** It carried no `data-session-id` — the
+one terminal on screen that nothing identified, which is why every caller had
+to ask for "the focused one" and why the fallback existed at all. Bottom tabs
+have carried theirs all along. Both callers that meant a particular terminal
+now say which.
+
+Removing the fallback immediately turned up the caller that had been living on
+it: the dropped-file check reads the main terminal after a synthetic drop,
+which leaves focus on nothing. It had been right by luck — `all[0]` is the main
+terminal only because it was created first. It names it now.

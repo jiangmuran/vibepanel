@@ -38,9 +38,23 @@ if (typeof window !== 'undefined') {
     // terminal means *that* terminal, and the panel has several: a main one and
     // a row of scratch ones underneath. Picking the first in the map read the
     // wrong screen and reported that typing had produced no output.
+    //
+    // And when nothing is focused, the answer is *nothing* rather than the
+    // first one. Falling back to all[0] was the same bug the paragraph above
+    // describes, kept as a default: with a main terminal and a scratch one
+    // below it, a read taken in the frame where focus is on neither -- between
+    // a click and the textarea receiving it, or across a re-render that
+    // replaces the textarea -- silently answered about the main terminal. The
+    // check that typed into the bottom one then reported no output roughly one
+    // run in three, which is worse than failing every time: a flaky check
+    // teaches people to re-run it until it is green.
+    //
+    // One terminal is not ambiguous, so it still answers without focus. Two
+    // are, and an unanswerable question gets no answer.
+    const focused = all.find((t) => t.textarea === document.activeElement)
     const term = opts.id
       ? liveTerminals.get(opts.id)
-      : (all.find((t) => t.textarea === document.activeElement) ?? all[0])
+      : (focused ?? (all.length === 1 ? all[0] : undefined))
     if (!term) return null
     const buf = term.buffer.active
     // The viewport by default, which is what "what is on screen" means and what

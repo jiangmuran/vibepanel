@@ -521,6 +521,12 @@ export function TerminalView({
   return (
     <div
       ref={wrapRef}
+      // Which session's terminal this is, the same way a bottom tab says so.
+      // The panel has several terminals on screen at once and this was the
+      // only one nothing named, so anything outside the page asking "what does
+      // that terminal say" had to ask for the focused one -- and got a
+      // different terminal's screen in any frame where focus was on neither.
+      data-session-id={sessionId}
       data-fullscreen={fullscreen ? 'true' : undefined}
       className={`relative overflow-hidden ${className ?? ''}`}
     >
