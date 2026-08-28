@@ -43,6 +43,17 @@ var ErrNotAttached = errors.New("session: not attached")
 // and replays from the ring buffer, which is exactly what the ring is for.
 const subscriberQueue = 256
 
+// controllerGrace is how long a departed controller's grid stays frozen for
+// them.
+//
+// Long enough to cover a reload, a phone locking, a tunnel dropping and a
+// laptop lid closed for a meeting; short enough that "I opened the panel this
+// morning" is not spent looking at yesterday's grid scaled into a corner. Two
+// minutes is a guess, but it is a guess about human absence rather than about
+// network timing, and it fails in the direction of handing the session to
+// whoever is in front of it.
+const controllerGrace = 2 * time.Minute
+
 // Subscriber is one viewer of one session.
 type Subscriber struct {
 	Events chan Event
@@ -91,6 +102,26 @@ type Live struct {
 	// protected the instant of departure. The returning desktop then found a
 	// 46-column view it did not own.
 	lastController string
+
+	// lastControllerAt is when they went away, and it is what stops the freeze
+	// from being a permanent claim.
+	//
+	// A reload is over in seconds. A laptop closed for the night is not coming
+	// back before morning, and holding a session's grid at its size until then
+	// means the next person to open the panel -- often the same person, in a
+	// new tab -- is told they are a passive viewer of a session nobody else is
+	// watching. Their terminal renders yesterday's grid scaled into the corner
+	// with black either side of it, moving the layout rescales that instead of
+	// reflowing it, and the only way out is a button offering to take control
+	// from nobody. Those were three separate bug reports and one cause.
+	//
+	// The client id lives in sessionStorage, so it survives a reload and does
+	// not survive closing the tab: "open the panel again tomorrow" is always a
+	// stranger, which is why the identity check alone could not fix this.
+	lastControllerAt time.Time
+
+	// now is time.Now except in tests, which cannot wait out a grace period.
+	now func() time.Time
 
 	scanner *oscScanner
 	done    chan struct{}
@@ -373,6 +404,7 @@ func (m *Manager) Attach(ctx context.Context, sessionID, tmuxName string, cols, 
 		done:           make(chan struct{}),
 		pumped:         make(chan struct{}),
 		reconfiguredAt: time.Now(),
+		now:            time.Now,
 	}
 
 	// Install, unless somebody asked for this session to go while it was being
@@ -673,9 +705,23 @@ func (l *Live) Subscribe(clientID string) (*Subscriber, []byte) {
 	// A session whose driver stepped away is different: it stays frozen at
 	// their grid until they come back, or until somebody else deliberately
 	// takes it. See lastController.
-	if l.controller == "" && (l.lastController == "" || l.lastController == sub.ClientID) {
+	//
+	// But only for a while. The freeze is a grace period, not a claim: it is
+	// there so that a reload, a phone locking or a flaky minute does not cost
+	// somebody the grid they are working in. Past that, whoever is actually
+	// here should have the session they are actually looking at.
+	//
+	// Deciding this on "is anybody else connected" instead was wrong in the
+	// other direction, and worth writing down because it looks right: the
+	// desktop's tab closes, the phone opens the session a minute later as the
+	// only viewer, and takes a 147-column agent view down to 46. Nobody was
+	// there to protect, and the harm happened anyway. Recency is the property
+	// that separates "reloading" from "gone".
+	stale := !l.lastControllerAt.IsZero() && l.now().Sub(l.lastControllerAt) >= controllerGrace
+	if l.controller == "" && (stale || l.lastController == "" || l.lastController == sub.ClientID) {
 		l.controller = sub.ClientID
 		l.lastController = ""
+		l.lastControllerAt = time.Time{}
 	}
 	cols, rows := l.cols, l.rows
 
@@ -715,6 +761,7 @@ func (l *Live) Unsubscribe(sub *Subscriber) {
 	if l.controller == sub.ClientID {
 		l.controller = ""
 		l.lastController = sub.ClientID
+		l.lastControllerAt = l.now()
 	}
 }
 

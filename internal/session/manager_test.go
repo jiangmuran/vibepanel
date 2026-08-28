@@ -1213,13 +1213,21 @@ func TestTakingControlWorksOnAGridFrozenForSomebodyElse(t *testing.T) {
 	// TakeControl with the same identity check that guards Subscribe, a viewer
 	// whose colleague closed their laptop is stuck scaling a grid it cannot
 	// have, with a button that does nothing.
+	// Both connected first, and the phone stays connected throughout. That
+	// shape matters: a viewer who *arrives* to find a session nobody is
+	// watching is handed the grid, because freezing it against the only person
+	// there protects nobody. The freeze is for the case this test is about --
+	// somebody was here, they closed their laptop, and you were already
+	// watching over their shoulder. You do not inherit their grid by outliving
+	// them; you take it by asking.
 	live := attachedFor(t, "vp_arb_take")
 
 	desktop, _ := live.Subscribe("desktop")
-	live.Unsubscribe(desktop) // frozen at 120x40, remembered for "desktop"
-
 	phone, _ := live.Subscribe("phone")
 	defer live.Unsubscribe(phone)
+
+	live.Unsubscribe(desktop) // frozen at 120x40, remembered for "desktop"
+
 	if got := live.Controller(); got != "" {
 		t.Fatalf("controller = %q, want the grid still frozen", got)
 	}
@@ -1571,4 +1579,79 @@ func TestAttachBringsThePanesHistoryWithIt(t *testing.T) {
 	// renders one screen; only a reader counting substrings sees two. What is
 	// worth asserting is what a browser ends up showing, and restart-check does
 	// that against a real one.
+}
+
+// The freeze is a grace period, not a claim on the session forever.
+//
+// It exists so a reload, a locked phone or a flaky minute does not cost
+// somebody the grid they are working in. Past that window, whoever is here
+// should have the session they are looking at.
+//
+// This is what opening the panel the next morning looks like. The client id
+// lives in sessionStorage, so it survives a reload and does not survive the
+// tab: every such return is a stranger, and every one of them arrived as a
+// *passive* viewer of a session nobody else was watching -- rendering
+// yesterday's grid scaled into the corner with black either side, not
+// reflowing when the layout moved, and offering a "take control" button over
+// a session no one else held. Three separate complaints, one cause.
+//
+// Deciding it on "is anybody else connected" was the first attempt and it was
+// wrong in the other direction: the desktop's tab closes, the phone opens the
+// session a minute later as the only viewer, and reflows a 147-column agent
+// view down to 46. Nobody was there to protect and the harm happened anyway.
+func TestALoneViewerGetsTheGridEvenAfterSomebodyElseHeldIt(t *testing.T) {
+	ctx := context.Background()
+	tm := newTestTmux(t)
+	const name = "vp_ctlalone"
+	if err := tm.Create(ctx, tmux.CreateOptions{
+		Name: name, Dir: t.TempDir(), Width: 80, Height: 24,
+		Command: []string{"sh", "-c", "sleep 30"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	m := NewManager(tm, 64<<10)
+	defer m.DetachAll()
+
+	live, err := m.Attach(ctx, "s1", name, 120, 32)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+
+	yesterday, _ := live.Subscribe("yesterday")
+	if err := live.Resize("yesterday", 147, 46); err != nil {
+		t.Fatalf("Resize: %v", err)
+	}
+	// The tab closes. Nobody is watching.
+	live.Unsubscribe(yesterday)
+
+	// Straight away, the grid is still theirs: this is the reload case.
+	soon, _ := live.Subscribe("someone-else")
+	if got := live.Controller(); got != "" {
+		t.Fatalf("controller = %q immediately after the owner left; a reload "+
+			"must not cost them their grid", got)
+	}
+	live.Unsubscribe(soon)
+
+	// Tomorrow. A different client id, and the only viewer there is.
+	live.mu.Lock()
+	base := live.lastControllerAt
+	live.now = func() time.Time { return base.Add(controllerGrace + time.Second) }
+	live.mu.Unlock()
+
+	today, _ := live.Subscribe("today")
+	defer live.Unsubscribe(today)
+	if got := live.Controller(); got != "today" {
+		t.Fatalf("controller = %q, want %q. The only viewer of a session was "+
+			"told it was passive, so its terminal scaled a grid nobody else "+
+			"was looking at and offered to take control from nobody.",
+			got, "today")
+	}
+
+	// And it can actually move the grid, which is the point of holding it.
+	if err := live.Resize("today", 100, 40); err != nil {
+		t.Fatalf("Resize: %v", err)
+	}
+	if cols, rows := live.Size(); cols != 100 || rows != 40 {
+		t.Errorf("grid = %dx%d after the lone viewer resized, want 100x40", cols, rows)
+	}
 }

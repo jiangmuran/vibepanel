@@ -1184,7 +1184,12 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               // then put the path on the command line. A screenshot is the
               // most common thing anyone pastes at an agent.
               onPasteFiles={(files) => void uploadInto(files)}
-              className="h-full w-full p-2"
+              // Less on the right than the other three sides. That edge
+              // already carries the scrollbar's reserved lane and, when the
+              // side panel is open, a border a few pixels further out; 8px on
+              // top of both was the widest stretch of black in the window and
+              // it was next to the scrollbar rather than around the text.
+              className="h-full w-full py-2 pr-1 pl-2"
             />
           ) : (
             <div className="flex h-full items-center justify-center px-6 text-center text-vp-md text-ink-2">

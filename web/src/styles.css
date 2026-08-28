@@ -1353,9 +1353,25 @@ body {
 /* And then reserve the width deterministically.
    The fit addon subtracts the terminal element's horizontal padding when it
    proposes columns, so this is the one measurement that does not depend on how
-   the platform draws scrollbars. 14px is what xterm's overlay slider is. */
+   the platform draws scrollbars.
+
+   14px was xterm's default slider and it was reserving the width twice.
+   Measured on the running panel at 1400px: `.xterm` content box ends at 1089,
+   the scrollbar draws at 1075-1089 -- *inside* the content box, at its right
+   edge -- and the padding then adds fourteen more pixels of black to the right
+   of the scrollbar, out to 1103. Plus the wrapper's own 8px, that is 22px of
+   permanent black beside a 14px scrollbar, which is the reported 进度条旁边还
+   有黑边. The padding is not what keeps text out from under the slider either;
+   what does that today is the fit remainder, which is luck and is 0 at some
+   widths.
+
+   So: one number, and it is the slider's own width. `--vp-scrollbar` is set
+   here and read by the slider rule below, so the reservation and the thing
+   being reserved for cannot drift apart -- which is how they came to be 14 and
+   14 stacked end to end. */
 .xterm {
-  padding-right: 14px;
+  --vp-scrollbar: 8px;
+  padding-right: var(--vp-scrollbar);
 }
 
 /* On a touch screen the browser's own long-press selection is the gesture
@@ -1383,9 +1399,18 @@ body {
    background layer now and the scrolling moved to `.xterm-scrollable-element`,
    whose scrollbar is built out of divs the way Monaco's is. Dead CSS that reads
    as live is worse than none -- it answers "is the scrollbar styled?" with yes. */
+/* Narrower than xterm's default, and the same width the padding above
+   reserves. 14px is a desktop scrollbar from a decade ago; this one is drawn
+   over a terminal and only has to be grabbable, which a coarse pointer gets
+   through the track rather than the slider. */
+.xterm .xterm-scrollable-element > .scrollbar.vertical,
+.xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
+  width: var(--vp-scrollbar) !important;
+}
+
 .xterm .xterm-scrollable-element > .scrollbar > .slider {
   background: var(--vp-ink-3);
-  border-radius: 4px;
+  border-radius: 999px;
 }
 
 .xterm .xterm-scrollable-element > .scrollbar > .slider:hover {

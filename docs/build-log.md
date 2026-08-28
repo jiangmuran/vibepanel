@@ -15393,3 +15393,65 @@ Removing the fallback immediately turned up the caller that had been living on
 it: the dropped-file check reads the main terminal after a synthetic drop,
 which leaves focus on nothing. It had been right by luck — `all[0]` is the main
 terminal only because it was created first. It names it now.
+
+### Three complaints, one line of grid arbitration
+
+Reported together: 「终端右边的黑边有点太大」, 「我挪动布局不会自适应」, 「有个意义
+不明的接管按钮」. Two of the three were the same cause, and it was written down as a
+known cost eight months before anybody hit it — the comment on `Unsubscribe` said
+*"the cost is that a lone remaining viewer keeps scaling until it taps take
+control once"*, which reads as an edge case and is in fact the ordinary path.
+
+The client id lives in `sessionStorage`. It survives a reload and does **not**
+survive closing the tab, so "open the panel again tomorrow" is always a
+stranger. A stranger arriving at a session whose controller left is refused the
+grid, so the terminal renders yesterday's grid scaled into the corner of the
+window with black either side; moving the layout rescales that instead of
+reflowing it, because a passive viewer is not allowed to fit; and the only way
+out is a button offering to take control from nobody.
+
+**The first fix was wrong in the other direction and is worth recording.** Hand
+the grid to whoever is the only viewer: correct for the case above, and it
+reintroduces exactly what the freeze exists to prevent — the desktop's tab
+closes, the phone opens the session a minute later as the only viewer, and
+reflows a 147-column agent view down to 46. Nobody was there to protect and the
+harm happened anyway. Being alone is not the property that separates "reloading"
+from "gone".
+
+Recency is. The freeze is now a two-minute grace period: long enough for a
+reload, a locked phone, a dropped tunnel or a lid closed for a meeting, short
+enough that the morning does not begin with yesterday's grid. Three mutations,
+all red — freeze forever, never freeze, and never record the departure time.
+
+`TestTakingControlWorksOnAGridFrozenForSomebodyElse` had to change its setup,
+not its assertion. It built the shape that now hands the grid over
+automatically; the escape hatch it exists to prove belongs to the case its own
+comment describes — a colleague closed their laptop while you were already
+watching. Both viewers connect first now, which is the scenario, and the test
+still fails if `TakeControl` is ever guarded by the same identity check that
+guards `Subscribe`.
+
+### 40px of black to the right of the terminal, 22 of it permanent
+
+Measured on the running panel at 1400px wide, right edge outwards: the screen
+ends at 1071, the scrollbar draws at 1075–1089, `.xterm`'s content box ends at
+1089, its `padding-right: 14px` runs to 1103, and the wrapper's `p-2` to 1111.
+
+**The scrollbar is inside the content box.** The padding is not keeping text out
+from under it — it is fourteen pixels of black *to the right of* the scrollbar,
+which is the reported 进度条旁边还有黑边. What actually keeps the slider off the
+last column is the fit remainder, which is luck and is zero at some widths.
+
+The reservation and the thing being reserved for were two independent 14s
+stacked end to end. They are one number now, `--vp-scrollbar`, set on `.xterm`
+and read by both the padding and the slider's width — they cannot drift apart
+again, which is how they came to be doubled. 8px: this slider is drawn over a
+terminal and only has to be grabbable, and a coarse pointer grabs the track.
+
+The wrapper is `pr-1` rather than `p-2`: that edge already carries the
+scrollbar's lane and, with the side panel open, a border a few pixels further
+out.
+
+Measured after: **40px → 26px**, and the terminal is 14 columns' worth wider —
+812px of screen where there were 798. What is left is 4px of wrapper, the 8px
+scrollbar lane, and the fit remainder, which is inherent to a character grid.
