@@ -352,7 +352,6 @@ export function Sidebar(props: SidebarProps) {
                     onCommit={(next) => props.onRenameSession(s, next)}
                     className="flex-1 text-vp-base"
                   />
-                  {s.pinned && <Pin size={11} className="shrink-0 text-ink-2" />}
                   {/* The glyph says "gone" and this says how. A shape cannot
                       carry an exit code, and 3 vs 0 is the difference between
                       "it crashed" and "it finished and closed". */}
@@ -402,8 +401,14 @@ export function Sidebar(props: SidebarProps) {
                       props.onPinSession(s, !s.pinned)
                     }}
                     data-testid="pin-session"
-                    title={s.pinned ? 'Unpin' : 'Pin to the top of this project'}
-                    className="vp-control vp-tap vp-reveal"
+                    title={s.pinned ? t('session.unpin') : t('session.pin')}
+                    // Not vp-reveal while it is on. Being pinned is state you
+                    // have to be able to see without hovering, so the row used
+                    // to draw a second pin badge beside the name -- and on
+                    // hover both were on screen at once, which is the reported
+                    // 「按下后会出现两个icon」. One element: the control is the
+                    // badge, and it stops hiding once it has something to say.
+                    className={`vp-control vp-tap ${s.pinned ? 'text-accent' : 'vp-reveal'}`}
                   >
                     {s.pinned ? <PinOff size={12} /> : <Pin size={12} />}
                   </button>

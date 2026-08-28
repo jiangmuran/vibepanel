@@ -348,7 +348,7 @@ export function RightPanel(props: Props) {
     </ErrorBoundary>
   )
 
-  const bodyFor = (tab: PanelTab) => {
+  const bodyFor = (tab: PanelTab, swapDir?: 'forward' | 'back') => {
     // The top half is the only part that differs, and the only part that needs
     // a project. The dock below it is about the machine — an agent that ran in
     // a directory the panel has never been told about still spent tokens, and
@@ -369,7 +369,7 @@ export function RightPanel(props: Props) {
         <Notes key={project.id} projectId={project.id} socket={props.socket} />
       )
     return (
-      <StackedTab id={tab} top={top} bottom={dock} />
+      <StackedTab id={tab} top={top} bottom={dock} swapDir={swapDir} />
     )
   }
 
@@ -604,7 +604,8 @@ interface PaneProps {
   onLayout: (next: PaneLayout) => void
   onRefocus: () => void
   onCollapse: () => void
-  body: (tab: PanelTab) => React.ReactNode
+  /** The second argument is which way the strip moved, for the half that changes. */
+  body: (tab: PanelTab, swapDir?: 'forward' | 'back') => React.ReactNode
 }
 
 function Pane(props: PaneProps) {
@@ -859,13 +860,15 @@ function Pane(props: PaneProps) {
               `h-full` here settles, and untrue of the overflow: a child that is
               exactly its parent's height never scrolls it. Mutation testing
               found it, by removing the branch and watching nothing go red. */}
-          <div
-            key={tab}
-            data-dir={swap.dir}
-            className={`vp-swap ${tabOwnsHeight(tab) ? 'h-full' : 'min-h-full'}`}
-          >
+          {/* No key and no animation here any more. Both moved inside, onto
+              the top half, because the bottom half is the same content on both
+              tabs: sliding it says something changed when nothing did, and the
+              key was tearing the dock down and rebuilding it on every switch —
+              a two-second gap in the monitor, which is the one block meant to
+              be always on. */}
+          <div className={tabOwnsHeight(tab) ? 'h-full' : 'min-h-full'}>
             <ErrorBoundary label={`The ${tab} panel`}>
-              {props.body(tab)}
+              {props.body(tab, swap.dir)}
             </ErrorBoundary>
           </div>
         </div>

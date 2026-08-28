@@ -12,6 +12,12 @@ import { safeText } from './text'
  *
  * Presets rather than providers: each one fills in the same three fields, so
  * adding a service is a value in this array and not a branch in the server.
+ *
+ * Each preset carries what its service *requires* and nothing else. It used to
+ * add a `?url={url}` to Bark, and Title and Click headers to ntfy -- neither
+ * asked for, both then somebody else's to find and delete. 「不要有自带的参数」.
+ * And the custom one is empty, because choosing the option that says you will
+ * write it yourself is not an invitation to write half of it for you.
  */
 const PRESETS: Array<{ key: string; make: () => Omit<Webhook, 'id'> }> = [
   {
@@ -19,7 +25,7 @@ const PRESETS: Array<{ key: string; make: () => Omit<Webhook, 'id'> }> = [
     make: () => ({
       name: 'Bark',
       method: 'GET',
-      url: 'https://api.day.app/YOUR_KEY/{session}/{state}?url={url}',
+      url: 'https://api.day.app/YOUR_KEY/{session}/{state}',
       enabled: true,
     }),
   },
@@ -29,8 +35,7 @@ const PRESETS: Array<{ key: string; make: () => Omit<Webhook, 'id'> }> = [
       name: 'ntfy',
       method: 'POST',
       url: 'https://ntfy.sh/YOUR_TOPIC',
-      headers: { Title: '{session}', Click: '{url}' },
-      body: '{state}',
+      body: '{session} {state}',
       enabled: true,
     }),
   },
@@ -51,7 +56,6 @@ const PRESETS: Array<{ key: string; make: () => Omit<Webhook, 'id'> }> = [
       name: '',
       method: 'POST',
       url: '',
-      body: '{"session":"{session}","state":"{state}","url":"{url}"}',
       enabled: true,
     }),
   },

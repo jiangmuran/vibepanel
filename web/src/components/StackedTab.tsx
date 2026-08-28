@@ -32,11 +32,25 @@ export function StackedTab({
   id,
   top,
   bottom,
+  swapDir,
 }: {
   /** Which tab this is, which is also where its divider position lives. */
   id: string
   top: React.ReactNode
   bottom: React.ReactNode
+  /**
+   * Which way the tab strip moved, or undefined for no movement.
+   *
+   * On the top half and nowhere else. The dock below is the same content on
+   * both tabs, and sliding something that did not change says a change
+   * happened -- 「下半部分既然内容不变那么也不要有切换动画了」. It also used
+   * to be *remounted*: the animation wrapper carried `key={tab}`, so every tab
+   * switch tore down the monitor and rebuilt it, which is a two-second gap in
+   * the one block that is supposed to be always on. The comment above the dock
+   * already said the two tabs are handed one element; the key made that untrue
+   * one component further out.
+   */
+  swapDir?: 'forward' | 'back'
 }) {
   useLang()
   const boxRef = useRef<HTMLDivElement | null>(null)
@@ -89,13 +103,15 @@ export function StackedTab({
           the divider takes and the pair overflows by exactly that much. */}
       <div
         data-testid={`stack-${id}-top`}
+        key={id}
+        data-dir={swapDir}
         // Not `vp-stack-half` while dragging: a transition on the size of the
         // thing under the pointer means the divider arrives where the pointer
         // was two frames ago, which reads as a lag in the panel rather than as
         // a movement. Off for the drag, on for the keyboard — where the step
         // is discrete and the ease is what makes it read as one boundary
         // moving rather than two panels resizing.
-        className={`min-h-0 overflow-y-auto ${dragging ? '' : 'vp-stack-half'}`}
+        className={`vp-swap min-h-0 overflow-y-auto ${dragging ? '' : 'vp-stack-half'}`}
         style={{ flexGrow: ratio, flexShrink: 1, flexBasis: 0 }}
       >
         {top}
