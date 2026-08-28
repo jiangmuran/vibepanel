@@ -15118,8 +15118,12 @@ that has nothing to do with what they changed.
 
 ### Mutation testing
 
-15 mutations, 15 killed, 0 survived. Two survived the first pass and both were
-fixed by making the check say what it actually wanted:
+15 mutations, 15 killed, 0 survived. `scripts/mutate-install-lang.py` re-runs
+them; each one runs the whole install check, which is the point — the guard has
+to be pinned by the file that is actually run.
+
+Two survived the first pass and both were fixed by making the check say what it
+actually wanted:
 
 - **The unknown-key marker was removable.** Deleting it left the *empty-side*
   marker to catch the same case, so the walk still saw a marker and passed. But
@@ -15149,6 +15153,11 @@ fixed by making the check say what it actually wanted:
 | the bootstrap's locale detection | the two halves disagree about the language |
 | the key walk's own key list | the coverage check passes by testing nothing |
 | the check's locale pinning | every assertion depends on the developer's `LANG` |
+
+One of them had to be strengthened rather than the code: putting `--help` back
+where it used to be is two edits, and either one alone still prints it once, in
+the right language. A mutation that only half-removes a guard reports the guard
+as decoration.
 
 ### Left undone
 
