@@ -484,6 +484,224 @@ type shareTodosProject struct {
 	ClosedToday int    `json:"closedToday"`
 }
 
+// ─── how the day went ─────────────────────────────────────────────────────
+
+// shareFlowTotals is how many transitions of each kind happened in a span.
+//
+// Out of the session-event log, which is what made a trend on this dashboard
+// possible at all: before it the panel stored one `state_changed_at` per
+// session and nothing about what came before, so every widget with a time axis
+// had a single current number to draw.
+//
+// Transitions, never a census. A row in that log says a session left one state
+// for another; nothing says how many were waiting at 14:00, and reconstructing
+// that from the flow needs a starting count and every event since, which the
+// first dropped write makes silently wrong. See internal/store/events.go.
+type shareFlowTotals struct {
+	Started  int `json:"started"`
+	Waited   int `json:"waited"`
+	Finished int `json:"finished"`
+	// WaitSeconds and WaitEnded are the dwell of every wait that *ended* in the
+	// span, and how many ended. Two numbers rather than an average, so an empty
+	// span is empty rather than a zero-second wait -- and so the client's
+	// arithmetic is the same one everywhere.
+	WaitSeconds int64 `json:"waitSeconds"`
+	WaitEnded   int   `json:"waitEnded"`
+}
+
+// shareFlowBucket is one interval of it.
+//
+// The five figures are written out rather than embedding shareFlowTotals, and
+// that is not tidiness: the wire test walks exported fields, an embedded
+// unexported type is not one, and the section would have been the one part of
+// this response with nothing checking that the server and wire.ts still agree.
+type shareFlowBucket struct {
+	At          int64 `json:"at"`
+	Started     int   `json:"started"`
+	Waited      int   `json:"waited"`
+	Finished    int   `json:"finished"`
+	WaitSeconds int64 `json:"waitSeconds"`
+	WaitEnded   int   `json:"waitEnded"`
+}
+
+func bucketOfFlow(at int64, t shareFlowTotals) shareFlowBucket {
+	return shareFlowBucket{At: at, Started: t.Started, Waited: t.Waited,
+		Finished: t.Finished, WaitSeconds: t.WaitSeconds, WaitEnded: t.WaitEnded}
+}
+
+// shareFlow is the session-event log, bucketed.
+//
+// No id of any kind. A bucket is five counts and a timestamp, so this section
+// carries nothing that could name a session, a project or a person -- which is
+// why it is sent under both detail modes.
+type shareFlow struct {
+	// Every is the bucket width in seconds, so the client can label the axis
+	// without inferring it from the gaps.
+	Every int `json:"every"`
+	// Since is the start of the first bucket, unix seconds.
+	Since int64 `json:"since"`
+	// WindowDays is what Window covers. Today is always the server's local day.
+	WindowDays int               `json:"windowDays"`
+	Today      shareFlowTotals   `json:"today"`
+	Window     shareFlowTotals   `json:"window"`
+	Buckets    []shareFlowBucket `json:"buckets"`
+}
+
+// shareFeedEntry is one thing that happened.
+//
+// Exactly the fields a session row already carries -- the per-link pseudonym,
+// the state, the time -- in the order they happened. That is the whole of the
+// disclosure argument: a feed of these adds no new fact to the wire, it
+// re-serves facts the dashboard already sends as counts, and it is the cheapest
+// honest way to make a television look alive rather than left on.
+type shareFeedEntry struct {
+	At        int64  `json:"at"`
+	SessionID string `json:"sessionId"`
+	ProjectID string `json:"projectId"`
+	// Name is the session's title, empty under store.ShareCounts and also empty
+	// for a session that has since been deleted -- the log outlives the row on
+	// purpose, so a feed entry with no name is an ordinary thing rather than a
+	// bug.
+	Name       string        `json:"name"`
+	From       session.State `json:"from"`
+	To         session.State `json:"to"`
+	ForSeconds int64         `json:"forSeconds"`
+}
+
+type shareFeed struct {
+	Entries []shareFeedEntry `json:"entries"`
+}
+
+// ─── what was built ───────────────────────────────────────────────────────
+
+// shareRepoTotals is production, counted.
+//
+// Commits, changed lines and files touched. These replaced "sessions finished
+// today" and "todos ticked today" as the headline figures on a wall, and the
+// reason is that both of those were self-reported: a todo is ticked because
+// somebody remembered to, and a session reaches `done` because an agent's hook
+// said so. On a real board both read 0 beside a four-figure request count.
+// These are things that exist now and did not this morning.
+//
+// Added and Removed are two numbers and never a net one. +1200/-800 is a
+// different day from +400/-0, and a net figure hides a refactor completely.
+type shareRepoTotals struct {
+	Commits int `json:"commits"`
+	Added   int `json:"added"`
+	Removed int `json:"removed"`
+	Files   int `json:"files"`
+}
+
+// shareRepoDay is one local day of it. Label is "2026-08-27" on the server's
+// clock, the same convention the spend buckets use.
+//
+// Written out rather than embedding shareRepoTotals, for the reason
+// shareFlowBucket gives.
+type shareRepoDay struct {
+	Label   string `json:"label"`
+	Commits int    `json:"commits"`
+	Added   int    `json:"added"`
+	Removed int    `json:"removed"`
+	Files   int    `json:"files"`
+}
+
+func (d *shareRepoDay) add(t shareRepoTotals) {
+	d.Commits += t.Commits
+	d.Added += t.Added
+	d.Removed += t.Removed
+	d.Files += t.Files
+}
+
+// shareRepoProject is one project's production, renamed for this link.
+type shareRepoProject struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Repo is false for a project directory that is not a working tree. Sent
+	// rather than omitted so the widget can say "not a repository" -- which has
+	// to look deliberate rather than broken, because it is.
+	Repo   bool            `json:"repo"`
+	Today  shareRepoTotals `json:"today"`
+	Window shareRepoTotals `json:"window"`
+	// Ahead and Behind are against the branch's own upstream; Dirty is how many
+	// paths git has something to say about.
+	//
+	// Counts only. A branch *name* is a feature name and often a ticket or a
+	// customer, so it is refused here at both detail settings even though the
+	// git tab shows it to a signed-in owner -- the same distinction that keeps
+	// a commit count on the wire and a commit subject off it.
+	Ahead  int `json:"ahead"`
+	Behind int `json:"behind"`
+	Dirty  int `json:"dirty"`
+}
+
+// shareRepoPRs is a repository's pull requests, as counts.
+//
+// Restated rather than embedding git.PRSummary, exactly like shareMachine: a
+// field added to that struct must not become a field on a wall. What is
+// deliberately absent is every part of a pull request that is text -- title,
+// number, author, branch, URL. A count says how much is in flight; a title says
+// what somebody is building for whom.
+type shareRepoPRs struct {
+	// Readable is false until the first fetch has finished, or when there is no
+	// token in the panel's environment. Different from "no pull requests are
+	// open", and a zero drawn for the first is the failure this flag exists to
+	// prevent.
+	Readable bool `json:"readable"`
+	// AgeSeconds is how old the answer is. On screen, because there is no
+	// poller behind it: it is refreshed in the background at most once every
+	// few minutes, and without a age a list looks live.
+	AgeSeconds       int64 `json:"ageSeconds"`
+	Open             int   `json:"open"`
+	Draft            int   `json:"draft"`
+	Green            int   `json:"green"`
+	Red              int   `json:"red"`
+	Pending          int   `json:"pending"`
+	Approved         int   `json:"approved"`
+	ChangesRequested int   `json:"changesRequested"`
+	MergedToday      int   `json:"mergedToday"`
+	// MergedPartial says the merge count is a floor: every one of the most
+	// recent merges this build asks about was today, so there may be more.
+	MergedPartial bool `json:"mergedPartial"`
+}
+
+// shareRepo is what the working trees say, redacted.
+//
+// The first section on this surface that is read from a disk rather than from
+// the database, and the list of what it does *not* carry is the part worth
+// reading: no path, no filename, no branch name, no commit subject, no sha, no
+// author. `git log --shortstat` is what produces it, and that is a disclosure
+// decision rather than a parsing convenience -- `--numstat` would carry every
+// changed filename in the repository through this process on its way here, and
+// `%s` would carry the messages. Neither is asked for, so neither is read.
+//
+// Sent under both detail modes. A commit count names nobody; the project names
+// beside it follow `named`, exactly like every other group on this dashboard.
+type shareRepo struct {
+	// Readable is false until the first background read has finished. Zero and
+	// "not counted yet" are different facts about a repository and the second
+	// one is said out loud.
+	Readable bool `json:"readable"`
+	// AgeSeconds is how old the reading is, or -1 when there is none. A wall
+	// polls every two seconds; this is refreshed every ninety, so the figure is
+	// shown with its age rather than presented as this second's.
+	AgeSeconds int64 `json:"ageSeconds"`
+	// Repos is how many of the projects in scope are working trees, and
+	// Projects is how many were looked at. A panel whose projects are not
+	// checkouts shows zeroes, and these two are what let the widget say why.
+	Repos      int `json:"repos"`
+	Projects   int `json:"projects"`
+	WindowDays int `json:"windowDays"`
+
+	Today  shareRepoTotals `json:"today"`
+	Window shareRepoTotals `json:"window"`
+	// Days is empty unless a widget on this board draws a series.
+	Days []shareRepoDay `json:"days"`
+	// ByProject is empty unless a widget on this board ranks them.
+	ByProject []shareRepoProject `json:"byProject"`
+	// PRs is null unless a widget on this board shows pull requests.
+	PRs *shareRepoPRs `json:"prs"`
+}
+
 // shareDashboard is the whole response, and the whole of what a share link
 // discloses. Read it as the list.
 type shareDashboard struct {
@@ -555,6 +773,16 @@ type shareDashboard struct {
 	Todos *shareTodos `json:"todos"`
 	// Trend is null unless a widget on this board draws a moving line.
 	Trend *shareTrend `json:"trend"`
+	// Flow is null unless a widget on this board draws how the day went, and
+	// Feed unless one lists what just happened. Both come out of the
+	// session-event log.
+	Flow *shareFlow `json:"flow"`
+	Feed *shareFeed `json:"feed"`
+	// Repo is null unless a widget on this board shows what was built. It is
+	// the only section read from a disk rather than from the database, and it
+	// is computed from a background-refreshed cache -- a wall polling every two
+	// seconds must never be the thing that runs `git log`.
+	Repo *shareRepo `json:"repo"`
 
 	// Scope is "", "project" or "session": what this link is about.
 	//
@@ -787,6 +1015,23 @@ func (s *Server) buildShareDashboard(ctx context.Context, link store.ShareLink,
 	if needs[store.NeedTodos] {
 		todos := s.shareTodosFor(ctx, projects, sc.secret, named, scope, dayStart)
 		out.Todos = &todos
+	}
+	if needs[store.NeedFlow] {
+		flow := s.shareFlowFor(ctx, scope, board, time.Now(), dayStart)
+		out.Flow = &flow
+	}
+	if needs[store.NeedFeed] {
+		feed := s.shareFeedFor(ctx, sessions, sc.secret, named, scope, dayStart)
+		out.Feed = &feed
+	}
+	if needs[store.NeedRepo] || needs[store.NeedRepoDays] || needs[store.NeedRepoPRs] {
+		// Nothing here runs a process. Every figure comes from the warm cache
+		// in internal/git, which refreshes behind the request; a wall polling
+		// every two seconds must never be the thing that runs `git log`, and
+		// the version of this that called ReadActivity directly would be one
+		// fork per project per poll, forever.
+		repo := s.shareRepoWork(ctx, projects, sc.secret, named, needs, board, scope, dayStart)
+		out.Repo = &repo
 	}
 	if needs[store.NeedTrend] {
 		// Sampled here rather than by the poller, and only when a widget on
@@ -1505,6 +1750,10 @@ type shareCatalogue struct {
 	MaxCaption int `json:"maxCaption"`
 	MaxRemark  int `json:"maxRemark"`
 	MaxDays    int `json:"maxDays"`
+	// MaxDensity is how many density steps there are, so the editor's control
+	// is built from the server's answer rather than from a number in a file
+	// beside it.
+	MaxDensity int `json:"maxDensity"`
 }
 
 func (s *Server) handleShareCatalogue(w http.ResponseWriter, r *http.Request) {
@@ -1512,6 +1761,7 @@ func (s *Server) handleShareCatalogue(w http.ResponseWriter, r *http.Request) {
 		Presets: store.Presets(), Screens: store.Screens(), Steps: store.GridSteps(),
 		MaxWidgets: store.MaxWidgets, MaxSpan: store.MaxSpan, MaxRows: store.MaxRows,
 		MaxCaption: store.MaxCaption, MaxRemark: store.MaxRemark, MaxDays: store.MaxSpendDays,
+		MaxDensity: store.MaxDensity,
 	}
 	for _, kind := range store.KnownWidgetKinds() {
 		if spec, ok := store.WidgetOptions(kind); ok {

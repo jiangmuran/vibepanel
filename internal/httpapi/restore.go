@@ -388,7 +388,7 @@ func (s *Server) restoreSession(ctx context.Context, rec store.Session) error {
 	if s.Detector != nil {
 		s.Detector.Forget(rec.ID)
 	}
-	if err := s.DB.SetSessionState(ctx, rec.ID, session.StateWorking, session.SourceHeuristic); err != nil {
+	if err := s.setSessionState(ctx, rec, session.StateWorking, session.SourceHeuristic); err != nil {
 		return err
 	}
 	if _, aerr := s.Manager.Attach(ctx, rec.ID, rec.TmuxName, rec.Cols, rec.Rows); aerr != nil {

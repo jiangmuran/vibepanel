@@ -457,6 +457,30 @@ More than one row per session there, or a total far past `sessions × 256 KiB`,
 means something is keeping a history of captures instead of one; that is a bug,
 not a configuration.
 
+A third arrived with the boards: `session_events`, one row per session state
+transition. It is the only table here that grows with *time* rather than with
+what exists.
+
+```
+sqlite3 ~/.local/share/vibepanel/vibepanel.db \
+  'SELECT COUNT(*), MIN(date(at, "unixepoch", "localtime")) FROM session_events'
+```
+
+It is kept for 31 days and swept hourly plus once at startup, so the oldest day
+should be about a month back and the count should be roughly sessions ×
+transitions a day × 31 — a few tens of thousands on a busy panel. An oldest day
+much further back than a month means the sweep is not running, and the sweep
+runs on the same goroutine that drains the log: if that has stopped, so has the
+poller, and the sidebar would have gone stale long before this table became the
+problem.
+
+The opposite reading — a count that is *low* while a share board's trends are
+empty — is not a database problem. Transitions are queued to one writer through
+a bounded channel and **dropped when it is full** rather than made to wait,
+because the alternative is the poller stalling and the whole panel losing track
+of what is running. That only happens when writes are already failing, which the
+stale banner says in words.
+
 Otherwise it is `audit_log`. Check before assuming:
 
 ```

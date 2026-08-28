@@ -81,6 +81,14 @@ type Preset struct {
 	// Fill says this arrangement was drawn to occupy a whole screen rather
 	// than to flow down one.
 	Fill bool `json:"fill"`
+	// Density is how much each widget on it says: MinDensity is one figure at a
+	// time, MaxDensity is everything it knows. Zero means DefaultDensity.
+	//
+	// On the preset rather than derived from Screen, because they are two
+	// different questions and the whole point of the field is that they are not
+	// the same axis: an atrium board and a board somebody sits in front of can
+	// both be for a wall. See store.Board.Density.
+	Density int `json:"density"`
 	// Detail is the disclosure mode this preset is only correct at, or "" when
 	// that is the owner's call.
 	//
@@ -156,6 +164,15 @@ var presets = []Preset{
 	}},
 	{ID: "answer", Audience: audienceWorking, Screen: screenLaptop, Widgets: []Widget{
 		{Kind: "sessiongrid", Filter: "waiting", Order: "waited", Span: 12, Height: 2},
+	}},
+	// How today has gone, out of the session-event log: what started, what went
+	// quiet waiting, what finished, and how long things sat before somebody got
+	// to them. None of this could be drawn before the log existed.
+	{ID: "today", Audience: audienceWorking, Screen: screenLaptop, Widgets: []Widget{
+		{Kind: "flow", By: "hour", Span: 8, Height: 2},
+		{Kind: "feed", Span: 4, Height: 2},
+		{Kind: "waits", By: "hour", Span: 6},
+		{Kind: "output", Span: 6},
 	}},
 	{ID: "dense", Audience: audienceWorking, Screen: screenLaptop, Widgets: []Widget{
 		{Kind: "states", Span: 6},
@@ -256,13 +273,83 @@ var presets = []Preset{
 	// are true.
 	{ID: "exec", Audience: audienceManager, Screen: screenBig, Fill: true, Widgets: []Widget{
 		{Kind: "tokenburn", Span: 6, Height: 3},
+		{Kind: "output", Span: 3, Height: 3},
 		{Kind: "bignumber", Metric: "working", Span: 3, Height: 3},
-		{Kind: "bignumber", Metric: "doneToday", Span: 3, Height: 3},
 		{Kind: "machinearea", By: "cpu", Span: 6, Height: 2},
 		{Kind: "spendstack", By: "day", Days: 30, Span: 6, Height: 2},
 		{Kind: "spendsplit", By: "project", Span: 6, Height: 2},
 		{Kind: "sessiongrid", Filter: "active", Order: "state", Span: 6, Height: 2},
 		{Kind: "nowstrip", Span: 12},
+	}},
+
+	// The television as the room's central display, and the design decision it
+	// is: hierarchy from size ratio rather than from colour, five things rather
+	// than twelve, and something that visibly moves.
+	//
+	// The hero is *production* -- commits, lines changed, files touched today.
+	// It used to be "sessions finished today" and on a real wall that read 0,
+	// because it is self-reported and a session left running all day never
+	// reports it. Beside it, at a third of the width, is the one number that is
+	// an instruction rather than a report: how many agents are waiting for a
+	// person. Under both, the two series that answer "what did it cost, what
+	// came out of it" on one axis, which is the pairing this whole board exists
+	// for and could not be drawn before the panel read repositories.
+	//
+	// The feed is what stops a wall being a screenshot. Empty space and one
+	// full-width strip at the bottom are the composition -- a grid of equal
+	// cards is a dashboard; a hero, a movement band and a rule is a display.
+	{ID: "newsroom", Audience: audienceManager, Screen: screenBig, Fill: true,
+		Density: MinDensity, Widgets: []Widget{
+			{Kind: "output", Span: 8, Height: 2},
+			{Kind: "bignumber", Metric: "waiting", Span: 4, Height: 2},
+			{Kind: "spentmade", Span: 8, Height: 2, Days: 14},
+			{Kind: "feed", Span: 4, Height: 2},
+			{Kind: "nowstrip", Span: 12},
+		}},
+	// The same room, from the chair in front of it.
+	//
+	// Same screen, same distance from the wall, and everything on it says more:
+	// this is what Density is for and why it is not derived from the viewport.
+	// Nothing here is smaller than the board above -- it is denser, which is a
+	// different axis.
+	{ID: "deskwall", Audience: audienceManager, Screen: screenWall, Fill: true,
+		Density: MaxDensity, Widgets: []Widget{
+			{Kind: "output", Span: 4, Height: 2},
+			{Kind: "prs", Span: 4, Height: 2},
+			{Kind: "tokenburn", Span: 4, Height: 2},
+			{Kind: "spentmade", Span: 12, Height: 2, Days: 30},
+			{Kind: "codechurn", By: "lines", Days: 14, Span: 4, Height: 2},
+			{Kind: "flow", By: "hour", Span: 4, Height: 2},
+			{Kind: "feed", Span: 4, Height: 2},
+			{Kind: "sessionlist", Filter: "active", Order: "state", Group: "project", Span: 12},
+		}},
+	// What was built today, and nothing about what it cost.
+	//
+	// The board for somebody who wants the answer to "did anything ship" and
+	// does not want a cost figure in the same glance -- the two are worth
+	// pairing on a chart and not worth mixing in a headline.
+	{ID: "made", Audience: audienceManager, Screen: screenWall, Fill: true, Widgets: []Widget{
+		{Kind: "bignumber", Metric: "commitsToday", Span: 4, Height: 2},
+		{Kind: "bignumber", Metric: "linesChanged", Span: 4, Height: 2},
+		{Kind: "bignumber", Metric: "prsMergedToday", Span: 4, Height: 2},
+		{Kind: "codechurn", By: "lines", Days: 30, Span: 12, Height: 2},
+		{Kind: "repoprojects", By: "commits", Span: 6},
+		{Kind: "prs", Span: 6},
+	}},
+	// The pairing on its own, over a month, with the split underneath.
+	{ID: "spentmade", Audience: audienceManager, Screen: screenLaptop, Widgets: []Widget{
+		{Kind: "spentmade", Span: 12, Days: 30, Height: 2},
+		{Kind: "output", Span: 6},
+		{Kind: "spendtotals", Span: 6},
+		{Kind: "repoprojects", By: "lines", Span: 6},
+		{Kind: "spendsplit", By: "project", Span: 6},
+	}},
+	// Pull requests and what is in front of them.
+	{ID: "shipping", Audience: audienceManager, Screen: screenLaptop, Widgets: []Widget{
+		{Kind: "prs", Span: 6, Height: 2},
+		{Kind: "output", Span: 6, Height: 2},
+		{Kind: "codechurn", By: "commits", Days: 30, Span: 12},
+		{Kind: "repoprojects", By: "commits", Span: 12},
 	}},
 	// One customer's own project, and nobody else's name anywhere near it.
 	//
@@ -334,13 +421,22 @@ var presets = []Preset{
 	}},
 }
 
+// density is the preset's own setting, or the default where it did not say.
+func (p Preset) density() int {
+	if p.Density < MinDensity || p.Density > MaxDensity {
+		return DefaultDensity
+	}
+	return p.Density
+}
+
 // Presets returns the catalogue, in the order it is offered.
 func Presets() []Preset {
 	out := make([]Preset, 0, len(presets))
 	for _, p := range presets {
 		out = append(out, Preset{
 			ID: p.ID, Audience: p.Audience, Screen: p.Screen, Rotate: p.Rotate, Fill: p.Fill,
-			Detail: p.Detail, NeedsScope: p.NeedsScope, Widgets: copyWidgets(p.Widgets)})
+			Density: p.density(), Detail: p.Detail, NeedsScope: p.NeedsScope,
+			Widgets: copyWidgets(p.Widgets)})
 	}
 	return out
 }
@@ -360,7 +456,7 @@ func PresetBoard(id string) (Board, bool) {
 	for _, p := range presets {
 		if p.ID == id {
 			return Board{Grid: GridColumns, Preset: p.ID, Rotate: p.Rotate, Fill: p.Fill,
-				Widgets: copyWidgets(p.Widgets)}, true
+				Density: p.density(), Widgets: copyWidgets(p.Widgets)}, true
 		}
 	}
 	return Board{}, false
@@ -373,7 +469,8 @@ func DefaultBoard() Board {
 		// Unreachable while DefaultPreset names a row above, and a panic here
 		// would take down a wall display. One widget that needs nothing is the
 		// floor: a screen showing the state tallies is still a dashboard.
-		return Board{Grid: GridColumns, Widgets: []Widget{{Kind: "states", Span: MaxSpan}}}
+		return Board{Grid: GridColumns, Density: DefaultDensity,
+			Widgets: []Widget{{Kind: "states", Span: MaxSpan}}}
 	}
 	return b
 }

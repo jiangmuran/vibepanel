@@ -781,6 +781,18 @@ export interface ShareDashboard {
    *  restart or a screen that has just been switched on: the ring is filled by
    *  the polls that draw it. */
   trend: ShareTrend | null
+  /** Null unless a widget on the board draws how the day went. Out of the
+   *  session-event log, which is what made a trend possible at all: before it
+   *  the panel stored one timestamp per session and nothing about what came
+   *  before, so every time axis degraded to a single current number. */
+  flow: ShareFlow | null
+  /** Null unless a widget on the board lists what just happened. */
+  feed: ShareFeed | null
+  /** Null unless a widget on the board shows what was built. The only section
+   *  read off a disk, and refreshed in the background rather than by the poll —
+   *  a wall asking every two seconds must never be the thing that runs
+   *  `git log`. `readable` tells "not counted yet" from "nothing today". */
+  repo: ShareRepo | null
   /** '', 'project' or 'session': what this link is about. A scoped board
    *  showing nothing means "nothing in the thing you were sent", which is a
    *  different sentence from "nothing is running". */
@@ -853,6 +865,16 @@ export interface ShareBoard {
    *  The difference between a board and a wall — nobody is going to scroll a
    *  television. */
   fill: boolean
+  /**
+   * How much each widget says: 1 spare, 3 dense. Not how large it is drawn.
+   *
+   * Scale and density are two axes and the whole point of this field is that
+   * they are independent. How large everything is drawn follows the viewport
+   * and is settled in CSS with no stored value (`.vp-wall` in styles.css); how
+   * much is on screen is this. Somebody sitting in front of the same
+   * television wants it denser, not smaller.
+   */
+  density: number
   widgets: ShareWidget[]
 }
 
@@ -891,6 +913,9 @@ export interface SharePreset {
   detail: string
   /** This arrangement is meaningless pointed at the whole panel. */
   needsScope: boolean
+  /** How much each widget on it says. See ShareBoard.density — a wall preset
+   *  and a sit-in-front-of-it preset can be for the same screen. */
+  density: number
   widgets: ShareWidget[]
 }
 
@@ -916,6 +941,141 @@ export interface ShareCatalogue {
   maxCaption: number
   maxRemark: number
   maxDays: number
+  /** How many density steps there are. Served, so the editor's control and the
+   *  validator's bound cannot drift. */
+  maxDensity: number
+}
+
+/** How many transitions of each kind happened in a span. */
+export interface ShareFlowTotals {
+  started: number
+  waited: number
+  finished: number
+  /** The dwell of every wait that *ended* in the span, and how many ended. Two
+   *  numbers rather than an average, so an empty span is empty rather than a
+   *  zero-second wait. */
+  waitSeconds: number
+  waitEnded: number
+}
+
+/** One interval of the flow series. Carries no id of any kind.
+ *
+ *  Written out flat rather than `extends ShareFlowTotals`, because the Go side
+ *  embeds the totals struct and the wire test compares the *flattened* keys
+ *  against one interface block. An `extends` here declares the same shape and
+ *  is invisible to the thing that checks the two have not drifted. */
+export interface ShareFlowBucket {
+  at: number
+  started: number
+  waited: number
+  finished: number
+  waitSeconds: number
+  waitEnded: number
+}
+
+/** The session-event log, bucketed. Transitions, never a census — see the Go
+ *  side for why a flow log cannot honestly draw a queue depth. */
+export interface ShareFlow {
+  /** Bucket width in seconds, so the axis can be labelled rather than guessed
+   *  from the gaps. */
+  every: number
+  since: number
+  windowDays: number
+  today: ShareFlowTotals
+  window: ShareFlowTotals
+  buckets: ShareFlowBucket[]
+}
+
+/** One thing that happened. Exactly the fields a session row already carries,
+ *  in the order they happened — no new fact reaches the wire because a board
+ *  asked for a feed. */
+export interface ShareFeedEntry {
+  at: number
+  sessionId: string
+  projectId: string
+  /** Empty under 'counts', and also empty for a session that has since been
+   *  deleted: the log outlives the row on purpose. */
+  name: string
+  from: SessionState
+  to: SessionState
+  forSeconds: number
+}
+
+export interface ShareFeed {
+  entries: ShareFeedEntry[]
+}
+
+/** Production, counted. Added and removed are two numbers and never a net one:
+ *  +1200/−800 is a different day from +400/−0. */
+export interface ShareRepoTotals {
+  commits: number
+  added: number
+  removed: number
+  files: number
+}
+
+/** One local day of it, labelled '2026-08-27' on the server's clock.
+ *
+ *  Flat rather than `extends`, for the reason ShareFlowBucket gives. */
+export interface ShareRepoDay {
+  label: string
+  commits: number
+  added: number
+  removed: number
+  files: number
+}
+
+/** One project's production, renamed for this link. */
+export interface ShareRepoProject {
+  id: string
+  name: string
+  /** False for a project directory that is not a working tree. Sent rather
+   *  than omitted so the widget can say so — it has to look deliberate. */
+  repo: boolean
+  today: ShareRepoTotals
+  window: ShareRepoTotals
+  /** Counts only. A branch *name* is a feature name and often a ticket or a
+   *  customer, so it is refused at both detail settings. */
+  ahead: number
+  behind: number
+  dirty: number
+}
+
+/** A repository's pull requests, as counts. No title, number, author, branch
+ *  or URL: a count says how much is in flight, a title says what somebody is
+ *  building for whom. */
+export interface ShareRepoPRs {
+  /** False until the first fetch has finished, or with no token in the
+   *  panel's environment. Different from "nothing is open". */
+  readable: boolean
+  /** How old the answer is. On screen, because there is no poller behind it. */
+  ageSeconds: number
+  open: number
+  draft: number
+  green: number
+  red: number
+  pending: number
+  approved: number
+  changesRequested: number
+  mergedToday: number
+  /** The merge count is a floor: every recent merge examined was today. */
+  mergedPartial: boolean
+}
+
+/** What the working trees say. No path, filename, branch name, commit subject,
+ *  sha or author — `git log --shortstat` is what produces it, and that is the
+ *  disclosure decision rather than a parsing convenience. */
+export interface ShareRepo {
+  readable: boolean
+  ageSeconds: number
+  repos: number
+  projects: number
+  windowDays: number
+  today: ShareRepoTotals
+  window: ShareRepoTotals
+  days: ShareRepoDay[]
+  byProject: ShareRepoProject[]
+  prs: ShareRepoPRs | null
 }
 
 /** One reading of the machine and the running token total. */

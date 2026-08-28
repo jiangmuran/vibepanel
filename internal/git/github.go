@@ -17,9 +17,25 @@ import (
 //
 // Three rules, and all three are structural rather than remembered:
 //
-//   - **It runs when a person presses a button.** There is no poller, no
-//     refresh timer and no prefetch. The handler that calls this is a POST for
-//     that reason: a GET is something a browser will re-issue on its own.
+//   - **It runs when a person asked for it.** There is no poller, no refresh
+//     timer and no prefetch. The handler that calls this is a POST for that
+//     reason: a GET is something a browser will re-issue on its own.
+//
+//     This said "when a person presses a button" until a second caller arrived,
+//     and the amendment is worth reading rather than glossing. A read-only
+//     dashboard polls every two seconds forever, so a wall whose board carries
+//     a pull-request tile would be forty thousand requests a day against
+//     somebody's rate limit -- which is not a feature, it is an outage with a
+//     nice font. What makes the second caller admissible is that all four of
+//     these are true at once, and none of them is a default: an owner signed in
+//     put a pull-request widget on a board, pointed that link at one project,
+//     set it to disclose names, and started the panel with a token in its
+//     environment. What bounds it is internal/git/warm.go: at most one request
+//     per repository per GitHubTTL, shared by every viewer of every link,
+//     never on the request goroutine, and stopped entirely the moment nobody is
+//     looking. A ticker would have been the obvious implementation and is the
+//     one thing that may not be added here -- a panel nobody is watching must
+//     make no outbound request at all.
 //   - **It needs a token, and there is no token in the database.** The token is
 //     read from the environment the panel was started with. A settings page
 //     that stores one would be a long-lived third-party credential at rest,

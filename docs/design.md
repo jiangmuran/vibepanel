@@ -163,6 +163,57 @@ either is not disclosed by default. Row ids on the dashboard are
 `HMAC(token hash, real id)`: stable within one link, different between links, so
 two screens cannot be correlated and neither carries the panel's real ids.
 
+The surface reads working trees now, and the same argument was applied twice
+more rather than relaxed. What it asks git for is `--shortstat` and a commit
+timestamp — so filenames, subjects, authors and shas cannot leak, because they
+are never read, and the *argument list* is what a test pins rather than the
+parser. The one outbound request a wall can cause needs four independent
+decisions by a signed-in owner and is bounded by a cache that stops the moment
+nobody is looking; a ticker is the thing that may not be added to it.
+
+Neither is read on the request goroutine. A wall polls every two seconds
+forever, so a poll that runs `git log` is a fork per project per poll: the poll
+takes what a background refresh already produced and says how old it is, and
+"not counted yet" stays a different answer from zero.
+
+## What a board can show is what the panel wrote down at the time
+
+The read-only dashboard was empty for a reason that no arrangement of widgets
+could fix: the panel kept *state* and no history. `sessions` carries one
+`state_changed_at` and nothing about what came before, so every widget with a
+time axis had a single current number to draw. The fix is an append-only row per
+state transition, and the shape of that row decides what can honestly be asked
+of it.
+
+It is a **flow** log: a row says a session left one state for another, having
+been in the first for so many seconds. It does not say how many sessions were
+waiting at two o'clock. Reconstructing a stock from a flow needs a starting
+census and every event since, and one dropped write makes the reconstruction
+wrong in a way nothing can detect — on a screen with nobody standing at it. So
+the queue is reported as a duration ("how long did things sit") rather than as a
+depth, because that is a flow and is true.
+
+Nothing hung off a state change may run on the poller's goroutine. That loop is
+what keeps the panel's idea of every session current, and it is the thing every
+other feature is built on; the log is written through a bounded channel whose
+producer side is a non-blocking send, so a full queue loses a row in a chart
+rather than stopping the panel from knowing what is running.
+
+## What was produced is counted, not reported
+
+"Sessions finished today" and "checklist items ticked today" were the headline
+output figures, and both read zero on a real wall. Neither was unlucky: both are
+self-reported. A todo is ticked because somebody remembered; a session reaches
+`done` because a hook said so, and one left running all day never says it. They
+measure whether the panel was *told* something.
+
+Commits, changed lines and merged pull requests are things that exist now and
+did not this morning, and anybody can check them against the repository. Lines
+are two numbers and never a net one — +1200/−800 is a different day from +400/−0
+and the net figure is identical — and they are labelled as change rather than as
+output. Work an agent has not committed is invisible to all of it, which is
+worth knowing before quoting the number at anybody.
+
 ## Token counts come from what the agents wrote down, or not at all
 
 The usage panel reads the transcripts Claude Code and Codex write for

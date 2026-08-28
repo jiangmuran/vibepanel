@@ -16073,3 +16073,415 @@ running process. It is `~/.local/bin/vibepanel` now, stamped
 (`v0.1.0-22-g3a746c3` rather than `dev`/`none`), and the nine live sessions were
 byte-identical before and after the restart — which is the guarantee the whole
 architecture exists for, checked rather than assumed.
+
+## The board was empty because the panel had no yesterday
+
+`只读面板部分简直是灾难 … 哪怕我选了所有内容 仍然太空了 就那么点数据 然后也没法
+修改 也没有自适应缩放`, with the board in question quoted back:
+
+```
+0 今天做完的      0 今天勾掉的      1,044 请求
+```
+
+Three figures on a television, two of them zero. Everything below started from
+asking why selecting *every* widget still left the wall bare.
+
+### The diagnosis: it is not a layout problem
+
+The board could not be filled because there was nothing to fill it with, and
+that is architectural rather than cosmetic.
+
+`sessions` carries `state_changed_at` and no record of what came before it. So
+the panel knew what every session was doing *now* and nothing at all about how
+the day had gone — which means every widget with a time axis degraded to a
+single current number, and 「各种走势图」 was not a feature that had been skipped,
+it was a feature that could not be written. The three figures on that screen
+were close to the only three the payload could honestly produce.
+
+The second half is that two of them were also the *wrong* figures, and that took
+a second look to see. `今天做完的` is sessions that reached `done`; `今天勾掉的`
+is todos ticked. **Both are self-reported.** A todo is ticked because somebody
+remembered to tick it; a session reaches `done` because an agent's hook said so,
+and a session left running all day never says it at all. They measure whether
+the panel was *told* something, so they sit at zero on days when a great deal
+happened, for reasons that have nothing to do with how much happened.
+
+So: a log, so that trends exist at all; and production figures out of the working
+trees, so that the numbers are of things that exist now and did not this
+morning.
+
+### An append-only row per transition
+
+`session_events`: `at`, `session_id`, `project_id`, `from_state`, `to_state`,
+`for_seconds`. Migration v16, one index, on `at`.
+
+Four decisions in it are load-bearing.
+
+**It is a flow log, not a stock log.** A row says a session left one state for
+another at a time, having been in the first for 412 seconds. It does *not* say
+how many sessions were waiting at 14:00. Reconstructing a stock from a flow needs
+a starting census plus every event since, and the first dropped write makes the
+reconstruction wrong in a way nothing can detect — on a wall, silently. Flows are
+exactly true or absent, and "eleven things finished this afternoon" is the
+sentence somebody standing in a room wants anyway. The queue question is answered
+as a *duration* instead: how long things sat before somebody got to them, which
+is a flow and is true.
+
+**`for_seconds` is written at the transition.** The poller is already holding the
+row it is about to overwrite, so the dwell is a subtraction that costs nothing
+there. Computing it afterwards is a self-join against each session's previous
+event, which is the one query shape this table would need an index it does not
+have.
+
+**No foreign key to `sessions`.** A deleted session must not delete yesterday's
+afternoon. The same reasoning `launch_profile_id` records one file up, with a
+sharper edge: a cascade would rewrite a chart somebody has already read.
+
+That has one consequence a test caught rather than a review: a project-scoped
+link whose project has been **deleted** still has matching rows in this table,
+where it has no matching sessions anywhere else. Left alone it would be a link
+somebody sent about one project quietly outliving that project. `scope.missing`
+is checked in `shareFlowFor` for that and nothing else.
+
+**It is swept, not kept.** 31 days — the widest window any widget draws over it
+is 30, and one day of slack keeps the oldest bucket whole. The arithmetic is the
+argument: two dozen sessions changing state a hundred times a day is 2,400 rows a
+day, so a year is close to a million rows in the file the panel writes session
+state into every two seconds. The token rollups next door hold a year because
+they are aggregated to one row per day per model; this is not, and must not
+pretend to be. Swept hourly and once at startup, because a panel restarted daily
+would otherwise never reach the first tick.
+
+### The log may not be able to stop the panel
+
+`pollOnce` keeps the panel's idea of every session current, and it is the thing
+every other feature is built on. `fireWebhooks` already states the rule: nothing
+hung off a state change may run on that goroutine. It solves it with a goroutine
+per send, which is right for an outbound HTTP request and wrong here — this
+writes to the same SQLite file the poller is writing to, through one write lock,
+and an unbounded number of goroutines contending for it is a worse failure than
+the one being avoided.
+
+So: a bounded channel and one drain. The producer side is a **non-blocking send
+and nothing else** — no database call, no lock, nothing that can wait — which is
+what makes "the event log cannot stall a state update" a property of the code
+shape rather than something to be careful about. A full queue drops the event and
+counts it, because a lost row in a chart is visibly better than a panel that has
+stopped knowing what is running.
+
+`TestRecordingAStateChangeCannotStallTheStateUpdate` fills the queue with nobody
+draining it and records another transition; a blocking send deadlocks it, which
+is the failure it is meant to be.
+
+### Five call sites, two of which the poller would never have seen
+
+The obvious implementation records the transition where the poller notices one.
+That would have missed **every hook-driven and every manual change**, because by
+the time the poller looks the detector already agrees with the row — and the hook
+is the *accurate* path, the one where the agent said so itself. The trends would
+have been drawn from the guesses alone and nothing would have said so.
+
+There were five places in `internal/httpapi` that wrote a session state. Now
+there is one: `setSessionState` in `events.go`, which every handler goes through.
+`TestOnlyOnePlaceInThisPackageWritesASessionState` reads the package and fails if
+`s.DB.SetSessionState(` appears anywhere but there — so the sixth handler that
+changes a state cannot be the one that forgets.
+
+### "The panel does not read repositories" stopped being true
+
+It had been said twice that lines of code were unknowable. That was true when it
+was said and is not any more: `internal/git` exists, with a deny-by-default
+subcommand allowlist, `GIT_OPTIONAL_LOCKS=0` and a cache with single flight.
+
+What reaches a board now: **commits**, **lines added and removed**, **files
+touched** — today and over a window, per project and totalled, as a per-day
+series — plus **branches ahead and behind** and a **dirty count**, and, on the
+one shape of link that may have it, **open pull requests, drafts, checks green
+and red, and merges today**.
+
+`git log --shortstat`, never `--numstat`, and that is a disclosure decision
+rather than a parsing convenience. numstat is a line per changed path, so the
+natural implementation carries every filename in somebody's repository through
+this process on its way to a wall. shortstat is one summary line per commit, so a
+path cannot reach a caller because it never reaches the package. `--format=%at`
+asks for a timestamp and nothing else, so no subject, no author and no sha is
+read either. It also makes the parse boring: numstat's paths are C-quoted or not
+depending on `core.quotepath`, and a filename with a newline in it is a
+line-based parser reading half a path as a record.
+
+`--branches` rather than `HEAD` or `--all`. The panel exists to watch several
+agents at once and they work on branches, so HEAD reports one of six; `--all`
+would count a `git fetch` in another window as somebody's afternoon.
+
+Lines are **two numbers and never a net one**, everywhere. +1200/−800 is a
+different day from +400/−0 and the net figure is identical in both, which hides a
+refactor completely. They are labelled as *change*. Money is still not knowable
+and still does not appear.
+
+### A wall polls every two seconds, so the poll runs nothing
+
+`internal/git/cache.go` exists so six tabs are one `git status`, and its contract
+is that a caller arriving on a cold entry *waits*. That is right for a tab
+somebody just opened and exactly wrong here: `git log --shortstat` over a month
+is not a two-second question, and a poll that ever *starts* one per project is a
+panel forking a process a second.
+
+`internal/git/warm.go` is the opposite contract. The poll reads what is already
+there and reports its age; a refresh runs on a goroutine of its own, at most one
+per key, and only because somebody asked. Working trees at most every 90 seconds;
+GitHub at most every 5 minutes, shared across every viewer of every link. The
+first poll for a repository therefore returns `readable: false`, which is "not
+counted yet" and not "nothing happened today" — the same distinction
+`shareSpend.readable` already makes, and a zero drawn for the first is a lie
+about a morning's work.
+
+Two clocks per entry, and the second is the load-bearing one. `at` gates "is the
+answer old"; `tried` gates "may another process be started". Without `tried`, the
+one case that always fails — a project directory that is not a checkout, a mount
+that has gone away — is the one that starts a process on *every* poll, because
+`at` never advances. The fork-per-poll arriving through the error path rather
+than the happy one.
+
+Nothing here has a ticker, and that is what keeps the GitHub half honest.
+`internal/git/github.go` said the network runs when somebody presses a button;
+its comment now says why a second caller is admissible and what bounds it, rather
+than being quietly contradicted. Four things have to be true at once, none a
+default: an owner signed in put a pull-request widget on a board, pointed that
+link at one project, set it to disclose names, and started the panel with a token
+in its environment. A key nobody asks about stops being refreshed and is swept,
+so a panel nobody is watching makes no outbound request at all.
+
+### What a wall may know about a repository
+
+The section restates its fields, like `shareMachine` and for the same reason.
+Sent under **both** detail modes, which is a decision rather than an oversight: a
+commit count names nobody, and withholding it would have left the board as empty
+as it was. The project names inside it follow `names`, exactly like every other
+group.
+
+Refused at both settings: paths, filenames, branch names, commit subjects, shas,
+authors, remote URLs. A commit *count* is a number; a commit *subject* is prose
+from inside somebody's repository, and a branch name is usually a ticket or a
+customer. The pull-request rollup is counts only — no title, number, author,
+branch or URL.
+
+`TestTheRepositorySectionCarriesCountsAndNoText` builds a repository with
+`payroll-secrets.txt` on branch `release-for-acme`, committed by "Somebody Real"
+with the message "rotate the production keys for acme", and asserts that none of
+the five appears anywhere in either mode's body.
+
+One thing is invisible to all of it, and it is written down in `docs/api.md`
+rather than on screen: an agent that has been editing for an hour without
+committing produces zero here. The dirty count beside it is the only sign.
+
+### Scale and density are two axes
+
+`没有自适应缩放` was one complaint and 「也可以密一点啊 我可能坐在前面」 was the
+correction to the first answer to it. That first design keyed how much a widget
+said to how large it was drawn, on the reasoning that a television is read from
+three metres and so must be sparse. Wrong as the only case: the person it is for
+sits in front of the same screen half the time.
+
+So:
+
+- **scale** — how large everything is drawn. A property of the *viewport*,
+  settled in CSS, with no stored value at all.
+- **density** — how much is on screen. A property of the *board*, stored on it,
+  three steps.
+
+All four corners are real. `.vp-wall` is one base unit, `clamp(13px, 100vw/120,
+26px)`, and every size on the dashboard is a multiple of it: the three type
+steps, the grid gap, the row height. 100vw/120 is exactly 16px at 1920, so a
+board outside `.vp-wall` falling back to `1rem` is pixel-for-pixel what it was,
+and 3840 gets 1.6× of it.
+
+It is a *length* and not a ratio because `clamp()` cannot mix a unitless number
+with a length and there is no way to divide `vw` down to a plain number. `em` is
+wrong for a different reason: it compounds through every nested element, so a
+figure inside a tile inside a section is scaled three times.
+
+The two candidates it replaced are worth keeping written down. Fixed pixels: a
+56px headline on a 3840 screen has a third of the angular size it has on a 1920
+one at the same distance, which is the distance a wall is chosen for. More
+columns: the grid is twelve wide at every size and `board/viewer.ts` only ever
+*raises* a widget's minimum span as the screen narrows — so a wider screen
+already shows the same arrangement, and the only thing left to do is draw it
+bigger.
+
+Density is per board rather than per widget, and the argument is that the thing
+being adjusted is a property of the **room**. Somebody walks up to the screen and
+everything on it should have more to say, not the one tile they remembered to
+set. Per widget it is also one more control on every tile, in an editor whose
+whole problem was too many controls. It is a hint and never a mode: a widget with
+nothing more to say ignores it, and it must never decide whether a widget renders
+— that would be a stored number choosing a code path.
+
+Nothing a viewer sends decides any of this. The factor is computed by the browser
+from its own width, and the viewport reported on the poll is still only for the
+owner's screen count.
+
+### The editor is the picture now
+
+「我希望可以有一个小组件库 然后我简单拖拽布局排版就能生成（？）也有很多排好的模版」.
+There were already thirty-seven widget kinds and two dozen templates; the
+complaint was not that there were too few, it was that both were `<select>`
+elements beside a picture of the result.
+
+Three parts:
+
+- **a palette** — thirty-seven kinds as small wireframes, grouped by what they
+  tell you. Schematic and not live: a palette of thirty-seven live widgets is
+  thirty-seven renders of the payload per poll, and what a picture has to carry
+  here is *shape* — figure, chart, series, list, grid, meter, rule, text — which
+  is exactly what a wireframe says.
+- **a canvas** — which is the preview. It draws the real board from `/preview`,
+  the same builder the dashboard endpoint runs, through the same widget switch,
+  so what is on the laptop and what is on the wall come from one function. Pick a
+  tile up, drop it, drag its right edge for width and its bottom for height.
+- **a gallery** — every preset as a thumbnail of its actual arrangement, drawn
+  from its own spans and heights. A template you choose by looking at it is what
+  makes having two dozen of them worth anything.
+
+The drag follows `RightPanel`'s idiom exactly, because two different drag feels
+in one product is the 「拼起来的」 complaint in another form: Pointer Events (HTML5
+DnD never fires on touch), a five-pixel threshold so a press is a press, Escape
+from anywhere, and **every** landing place drawn for the whole gesture with the
+one under the pointer filled and three times as wide. Geometry is read off the
+DOM at the moment of the move — `data-slot-index` is on the element that draws
+the tile, so the rectangle and the index cannot disagree.
+
+The arithmetic is in `board/edit.ts` with a test each, because the interesting
+failures here are off-by-ones in a list. The one worth naming: a gap index is not
+a widget index, and moving a tile one place right is `to - 1` after the splice.
+The version without that puts the tile back where it started, which reads as the
+drag not working.
+
+Keyboard equivalents are not an afterthought — the canvas is the only way to
+arrange a board now, so a pointer-only canvas would have taken the feature away
+from anybody who cannot use one. Arrows move, shift-arrows resize, Delete
+removes.
+
+The inspector shows **one** widget's settings rather than twenty-four rows of
+them. That is most of 「一团乱麻」: what made the old editor unreadable was that
+every widget's controls were on screen at once.
+
+### The television
+
+`你想想现在就有一块电视作为中台 怎么样进行布局`. `newsroom`, three tiers:
+
+- **hero** — production, at 8/12 and two rows: commits, +lines, −lines today.
+  Beside it at 4/12, the one number that is an instruction rather than a report:
+  how many agents are waiting for a person.
+- **movement** — `spentmade` at 8/12, the two series on one time axis, and the
+  feed at 4/12. Something has to visibly change or the screen cannot be told from
+  a screenshot somebody left up, and a feed that gains a line when an agent
+  finishes is the cheapest proof it is live. It carries exactly what a session
+  row already carries, so it is no new disclosure.
+- **texture** — one full-width strip along the bottom.
+
+Five things, hierarchy from size ratio rather than from colour, and empty space
+as composition. `deskwall` is the same room from the chair in front of it: same
+screen, density 3, eight widgets. Nothing on it is drawn smaller.
+
+`spentmade` is the thing this board exists for and could not draw before —
+「花了多少 vs 做出来什么」. Two series, deliberately **not** one ratio: tokens per
+line is a nonsense number that would be quoted at somebody in a meeting. Two
+bands rather than two lines in one box, because a shared axis puts a four-figure
+token count and a two-figure commit count on one scale and flattens the second
+into the baseline. Aligned by date and not by index: the two series come off
+different tables over different windows, and lining them up by position would
+silently offset one against the other.
+
+### Mutation testing
+
+`scripts/mutate-wall.py`. Every disclosure decision, the event log not being able
+to stall a state update, and the warm cache not being able to fork a process per
+poll.
+
+Forty-five mutations, none surviving. Four worth recording because they were not
+obvious, and two of them survived the first sweep:
+
+- Making the queue's send blocking *deadlocks* the test rather than failing it,
+  which is the right shape — a blocking producer is a hung poller. The same
+  shape bit the sweep itself: the first version of the warm cache's mutation ran
+  the read while holding the lock, which deadlocks, so `go test` took its ten
+  minute timeout to go red. The fixture was rewritten to a slow-but-finite read
+  and an assertion on how long fifty polls took, which fails in milliseconds.
+- Removing `e.tried` from the warm cache leaves every *successful* path green and
+  fails only on the directory that is not a repository. That is the one mutation
+  that would otherwise have shipped.
+- Reading shortstat's fields by position rather than by clause passes every
+  commit that both added and removed lines, and fails only on the ones that did
+  one or the other — so the first attempt at that mutation *survived*, because
+  it had been written to fall through to the correct parser on exactly those
+  cases.
+- Deleting the day-range clamp survived too, until the test stopped pointing at
+  a bare `t.TempDir()`: a directory that is not a checkout returns before the
+  day frame is built at all, so the assertion was measuring nothing.
+
+### The one red line in `render-check`, and the real bug behind it
+
+`make render-check` came back with one failure, three runs in a row:
+
+```
+[FAIL] bottom: typing into a bottom terminal produced no output
+```
+
+Three runs is not a flake, and the check's own comment records that assertion as
+historically the flakiest in the file — which is exactly the reasoning that gets
+a real regression waved through. So it was bisected instead: HEAD's Go with this
+frontend, and this Go with HEAD's frontend, each in a copy of the tree. **Both
+passed.** Neither half reproduced it and the combination did, which is a shape
+that usually means the experiment is wrong rather than the code.
+
+It was. `render-check.mjs` was cut down to everything up to that assertion and
+made to print what the terminal actually contained:
+
+```
+"jmr@…/.claude/worktrees/agent-adc49cc79424c01b2/web$ echo BO
+TTOM_TERMINAL_OK
+BOTTOM_TERMINAL_OK
+```
+
+The terminal echoed perfectly. The assertion counts **two** occurrences of the
+string — the typed line and the output — and the typed one had *wrapped*,
+because the shell prompt carries the working directory and this work was done in
+a git worktree sixty-two characters deep. One occurrence, not two. The
+difference between the copies was the length of their paths.
+
+That is a check that fails on where it is run from rather than on what it is
+checking, and it is left alone here deliberately: fixing it means either
+matching across a wrap or forcing a prompt, and neither is this change's
+business. It is written down so the next person spends two minutes on it rather
+than forty.
+
+**What the probe did find** was worth the detour. Two runs in four printed:
+
+```
+[FAIL] panel/notes: … "a note could not be saved on the way out
+store: set note: database is locked (5) (SQLITE_BUSY)"
+```
+
+Zero runs at HEAD did. SQLite takes one write lock for the whole database, the
+pool is four connections wide with a five-second busy timeout, and the poller is
+already writing every two seconds — and the event log had just added a second
+writer that took the lock **once per transition**. A burst of two dozen
+transitions in one tick, which is what a restart looks like, was two dozen
+separate acquisitions competing with whatever a person was saving at that
+moment.
+
+So the drain gathers: the first event off the queue starts a 250 ms settle, and
+everything that arrives inside it is written as one transaction, up to 64 rows.
+Nothing here is latency-sensitive — the wall's next poll is two seconds away and
+the chart is drawn from whole minutes — and it is strictly fewer lock
+acquisitions than before, not more machinery for its own sake. The bound is on
+the transaction rather than on the queue, so a drain that has fallen behind
+writes several short transactions instead of one long one holding the lock while
+it catches up.
+
+Two mutations cover it, and both are red: writing an empty batch, and gathering
+that keeps only the first of a burst.
+
+The general lesson is the one this log keeps recording in different clothes: a
+failing check is either the code or the check, and the way to tell is to make it
+print what it saw rather than to reason about what it must have seen.

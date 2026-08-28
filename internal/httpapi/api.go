@@ -212,6 +212,22 @@ type Server struct {
 	// drive from a test is one that gets shipped never having run.
 	ArchiveEvery time.Duration
 
+	// EventSweepEvery and EventKeepDays override the session-event log's
+	// housekeeping. Zero means the constants in events.go. Same reasoning as
+	// TrimEvery, with the same warning: tests set them, nothing else should.
+	EventSweepEvery time.Duration
+	EventKeepDays   int
+
+	// events carries state transitions to the one goroutine that writes them.
+	//
+	// Bounded and written to with a non-blocking send, which is the whole of
+	// why the log cannot stall a state update. Made on first use so a Server
+	// built by hand has a working one; a nil channel blocks forever on send,
+	// which is the one failure this queue may not have. See events.go.
+	eventsOnce    sync.Once
+	events        chan store.SessionEvent
+	eventsDropped atomic.Int64
+
 	// staleMu guards the record of a panel that has stopped keeping up.
 	//
 	// The poller writes on every tick — session runtime, derived titles, exit
@@ -666,7 +682,8 @@ func (s *Server) handleHookState(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "unknown state "+req.State)
 		return
 	}
-	if _, err := s.DB.GetSession(ctx, req.SessionID); err != nil {
+	prev, err := s.DB.GetSession(ctx, req.SessionID)
+	if err != nil {
 		// An unknown session id is the normal case for an agent started
 		// outside the panel that happens to have the hook installed. Say so
 		// plainly rather than treating it as an error to be alarmed by.
@@ -674,7 +691,12 @@ func (s *Server) handleHookState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Detector.Report(req.SessionID, st, time.Now())
-	if err := s.DB.SetSessionState(ctx, req.SessionID, st, session.SourceHook); err != nil {
+	// The row is kept rather than discarded because the transition has to be
+	// recorded from here. A hook is the *accurate* path -- the agent said so
+	// itself -- and by the time the poller looks, the detector already agrees
+	// with the row, so a poller-only log would miss every hook-driven change
+	// and the trends would be drawn from the guesses alone.
+	if err := s.setSessionState(ctx, prev, st, session.SourceHook); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1372,7 +1394,7 @@ func (s *Server) handlePatchSession(w http.ResponseWriter, r *http.Request) {
 		if s.Detector != nil {
 			s.Detector.SetManual(sid, st, time.Now())
 		}
-		if err := s.DB.SetSessionState(ctx, sid, st, session.SourceManual); err != nil {
+		if err := s.setSessionStateByID(ctx, sid, st, session.SourceManual); err != nil {
 			s.writeStoreErr(w, err)
 			return
 		}
@@ -1517,7 +1539,7 @@ func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request) {
 	if s.Detector != nil {
 		s.Detector.Forget(sid)
 	}
-	if err := s.DB.SetSessionState(ctx, sid, session.StateWorking, session.SourceHeuristic); err != nil {
+	if err := s.setSessionStateByID(ctx, sid, session.StateWorking, session.SourceHeuristic); err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}
@@ -1747,6 +1769,13 @@ func (s *Server) Poll(ctx context.Context) {
 	}
 	archive := time.NewTicker(arch)
 	defer archive.Stop()
+	// The one thing here that is deliberately *not* in this loop. Everything
+	// else is periodic work; this is the drain for the session-event log, and
+	// putting it in the select would put a database write for a chart on the
+	// goroutine that keeps the panel's idea of every session current. See
+	// events.go: the producer side is a non-blocking send precisely so that
+	// nothing on this goroutine ever waits for that write.
+	go s.drainEvents(ctx)
 	for {
 		select {
 		case <-ctx.Done():
@@ -1828,7 +1857,7 @@ func (s *Server) markVanished(ctx context.Context, row store.Session) error {
 	if row.State == session.StateDone {
 		return nil
 	}
-	return s.DB.SetSessionState(ctx, row.ID, session.StateDone, session.SourceHeuristic)
+	return s.setSessionState(ctx, row, session.StateDone, session.SourceHeuristic)
 }
 
 func (s *Server) pollOnce(ctx context.Context) error {
@@ -1950,7 +1979,14 @@ func (s *Server) pollOnce(ctx context.Context) error {
 				ShellOnly: session.IsShellCommand(info.Command),
 			}, now)
 			if st != row.State || src != row.StateSource {
-				if err := s.DB.SetSessionState(ctx, row.ID, st, src); err != nil {
+				// setSessionState rather than the store's: it is what records
+				// the transition, and doing that here would be a second copy of
+				// the comparison below. Neither the write nor the recording can
+				// take longer than the write already did -- the log is a
+				// non-blocking send onto a bounded queue drained elsewhere,
+				// because this loop is what keeps the panel's idea of every
+				// session current and nothing hung off it may hold it up.
+				if err := s.setSessionState(ctx, row, st, src); err != nil {
 					return err
 				}
 				// On the transition, not on the state. This runs every two

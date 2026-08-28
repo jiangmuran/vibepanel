@@ -346,56 +346,90 @@ terminal, no write path, no file browser, no way to make a second link from the
 first.
 
 What the dashboard shows is a **board** you pick when you make the link.
-Twenty-four starting points, grouped by the screen they were composed for:
+Thirty starting points, grouped by the screen they were composed for:
 
 | | |
 |---|---|
 | a phone | one column, three things, four seconds standing up |
 | a laptop | overview · does anything need me · the waiting queue · everything at once · only the machine · what has gone wrong · cost against output · where it went · per project · which model is working · what today cost |
-| a screen on a wall | four numbers and a clock · one number filling the screen · how busy it is · three pages that cycle · **what it is spending, live** · every session as a tile · **for a client** · the calm one · the year as a grid of days |
-| a 4K wall | **for leadership** · a corridor screen |
+| a screen on a wall | four numbers and a clock · one number filling the screen · how busy it is · three pages that cycle · **what it is spending, live** · every session as a tile · **for a client** · **what got built** · **sitting in front of it** · the year as a grid of days |
+| a 4K wall | **the room screen** · **for leadership** · a corridor screen |
 
-Two of those are named for who is in the room. **For leadership** is the 4K one:
-a hero — today's tokens, and how many agents are working — over a machine line
-that moves, over the fine grid that fills the rest. **For a client** scopes
-itself to one project and turns names off, because the failure there is a
-customer reading another customer's project name off the screen they are sat in
-front of.
+Three of those are named for the room. **The room screen** is the 4K one: what
+got built today at headline size, the number of agents waiting for a person
+beside it, what it cost against what came out on one time axis under both, and a
+feed. Five things, because a screen read across a room carries five to nine
+before it is noise. **Sitting in front of it** is the same board at the highest
+density, for when you are at the desk it is on. **For a client** scopes itself to
+one project and turns names off, because the failure there is a customer reading
+another customer's project name off the screen they are sat in front of.
 
-A preset is a starting point, not a mode. Every widget moves, resizes, points at
-a different number or splits by a different dimension — agent, project, model,
-day, month — and there are **thirty-seven kinds** to add: single figures,
-gauges, sparklines, a filled machine line over the last fifteen minutes, stacked
-token bars, ranked breakdowns, session tiles, a dwell timeline, the year as a
-grid of days, and the furniture a composed screen needs — a spacer, a rule, a
-section heading, and the screen's own name.
+A template is a starting point, not a mode, and you **arrange it by dragging
+it**. The preview of the wall *is* the editor: pick a tile up and drop it where
+it goes, drag its right edge for width and its bottom for height, and pick the
+next one out of a library of small pictures beside it. Templates are chosen the
+same way — a gallery of thumbnails of the actual arrangement, not a list of
+names. Every landing place is drawn for the whole drag with the one under the
+pointer filled, and arrow keys do the same thing without a pointer.
+
+There are **forty-four widget kinds**: single figures, gauges, sparklines, a
+filled machine line over the last fifteen minutes, stacked token bars, ranked
+breakdowns, session tiles, a dwell timeline, the year as a grid of days, what
+just happened as a feed, how the day went hour by hour, what was committed, and
+the furniture a composed screen needs — a spacer, a rule, a section heading, and
+the screen's own name.
 
 The grid is **twelve columns wide and four rows tall**, so a widget can be a
 third of a wall or three times the height of the tiles beside it. That ratio is
 where hierarchy comes from: a screen where every tile is the same size is a
 dashboard, not a display. A board can also be set to **fill** the screen rather
-than flow down it — nobody is going to scroll a television. The same stored
-board still collapses with the viewport, so it is a summary on a phone and a
-composed wall on a 4K screen.
+than flow down it — nobody is going to scroll a television.
+
+Two more settings, and they are two different questions:
+
+- **How large** everything is drawn follows the screen and needs no setting. A
+  4K television shows the same composition *bigger*, not more columns of smaller
+  type; a phone gets the same board collapsed to one column.
+- **How much** is on screen is the board's **density**, in three steps. The same
+  wall can be a headline you read from the door and a working dashboard you read
+  from the chair in front of it, without rebuilding it.
 
 **You do not have to walk to the wall to change it.** Edit the board from the
 settings page on your laptop and the screen follows within two seconds, with
-nobody touching it — every poll re-reads the link. Beside the editor is a live
-preview drawn at the shape of the screen that is actually showing the link, and
-each row says how many screens have it open right now. **Lock** a link and its
-board cannot be changed until it is unlocked, which is what stops you
-rearranging the one a customer is watching from an editor left open on the wrong
-row.
+nobody touching it — every poll re-reads the link. The canvas you arrange is
+drawn at the shape of the screen that is actually showing the link, from that
+screen's own live data, and each row says how many screens have it open right
+now. **Lock** a link and its board cannot be changed until it is unlocked, which
+is what stops you rearranging the one a customer is watching from an editor left
+open on the wrong row.
 
 Give a link a **remark** — "the screen in meeting room three", "for the
 customer" — and it appears on the screen as well as in the settings row. It is
 shown in both detail levels, because it is your sentence to whoever is standing
 in front of the screen rather than one of the panel's own words.
 
-The numbers are what the panel already knows: states and how long each has held,
-CPU and memory per session, the machine, checklist progress, and what the agents
-recorded spending. Tokens, never money — prices differ by model and tier and
-change, and a figure from a stale table is a confident wrong number on a wall.
+The numbers are what the panel knows and what your repositories say.
+
+**What it cost**: what the agents recorded spending, by day, by agent, by model,
+by project. Tokens, never money — prices differ by model and tier and change,
+and a figure from a stale table is a confident wrong number on a wall.
+
+**What came out**: commits, lines added and removed, files touched — today, over
+a window, and as a series. Pull requests open, checks green or red, and what was
+merged today, where you have given the panel a GitHub token. These are counted
+by reading the working trees, so they are things that exist now and did not this
+morning rather than things somebody remembered to tick off. Lines are always two
+numbers and never a net one, and they are labelled as *change*: +1200/−800 is a
+different day from +400/−0 and the net figure is the same in both. Work an agent
+has not committed yet is invisible to all of it.
+
+**How the day went**: what started, what went quiet waiting for a person, what
+finished, and how long things sat before somebody got to them — hour by hour, or
+day by day. And a feed of what just happened, which is the thing on a wall that
+moves.
+
+The two halves on one time axis — what it cost beside what came out — is the
+board worth pointing a television at, and it is a template of its own.
 
 Scope it to the whole panel, one project or one session. The project-scoped link
 is the one you send to somebody working on that project. Scope is enforced by

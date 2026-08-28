@@ -188,6 +188,27 @@ const (
 	// two walls on two links draw the same line, because it is the same
 	// machine.
 	NeedTrend = "trend"
+
+	// NeedFlow and NeedFeed come out of the session-event log.
+	//
+	// The log is what made every trend on this dashboard buildable: before it,
+	// the panel stored one `state_changed_at` per session and nothing about
+	// what came before, so every widget with a time axis degraded to a single
+	// current number. NeedFlow is the bucketed series; NeedFeed is the last few
+	// transitions in order, which is the thing on a wall that visibly moves.
+	NeedFlow = "flow"
+	NeedFeed = "feed"
+
+	// NeedRepo, NeedRepoDays and NeedRepoPRs come out of the working trees.
+	//
+	// The half of "what did it cost / what came out of it" that could not be
+	// built while the panel did not read repositories. Split three ways because
+	// they cost three different things: the totals are one `git log` per
+	// project behind a background-refreshed cache, the day series is the same
+	// read written out per day, and the pull requests are a request to GitHub.
+	NeedRepo     = "repo"
+	NeedRepoDays = "repoDays"
+	NeedRepoPRs  = "repoPRs"
 )
 
 // widgetSpec is what one kind may carry.
@@ -220,8 +241,28 @@ var bigMetrics = []string{
 	// What is happening.
 	"waiting", "working", "done", "sessions", "projects", "crashed", "exited",
 	"longestWait",
-	// What came out, which is the half a board of costs alone leaves off.
-	"doneToday", "todosOpen", "todosDone", "todosClosedToday", "todoPercent",
+	// What was produced. These are the headline numbers, and which ones they
+	// are is a decision that was made twice.
+	//
+	// It used to be "sessions finished today" and "todos ticked today", and on
+	// a real wall both of them read 0 next to a four-figure request count. They
+	// were not unlucky: both are *self-reported*. A todo is ticked because
+	// somebody remembered to; a session reaches `done` because an agent's hook
+	// said so, and a session left running all day never says it at all. They
+	// measure whether the panel was told something.
+	//
+	// Commits, changed lines and merged pull requests measure things that exist
+	// now and did not this morning, and anybody can check them by looking at
+	// the repository. `todosClosedToday` is gone from this list entirely -- the
+	// `todos` widget still shows a project's checklist as a fraction, which is
+	// where a checklist figure belongs. `doneToday` stays, because a session
+	// finishing is a real event; it is simply not the size of a hero, and no
+	// preset here uses it as one any more.
+	"commitsToday", "commitsWindow", "linesAdded", "linesRemoved", "linesChanged",
+	"filesToday", "openPRs", "prsMergedToday", "checksRed",
+	"doneToday", "todosOpen", "todosDone", "todoPercent",
+	// How the day has gone, out of the session-event log.
+	"startedToday", "waitsToday", "avgWaitToday",
 	// What the machine is doing.
 	"cpu", "memory", "disk", "swap", "load", "uptime",
 	// What it cost, and how fast it is costing it.
@@ -253,6 +294,22 @@ var costBy = []string{"cpu", "memory"}
 
 // pressureBy is which machine pressure the moving area chart draws.
 var pressureBy = []string{"cpu", "memory", "load"}
+
+// flowBy is how finely the session-event series is cut.
+//
+// Two, and they are two different questions rather than two resolutions of one.
+// "Hour" is today, and it is the shape of an afternoon; "day" is the window, and
+// it is whether this week is like last week. A single control with six steps
+// would be a chart whose axis nobody standing in front of it can identify.
+var flowBy = []string{"hour", "day"}
+
+// churnBy is which production figure the repository series draws.
+//
+// Lines are two numbers and not one: +1200/-800 is a different day from
+// +400/-0, and a net figure hides a refactor completely. That is why "lines" is
+// one choice here rather than two, and why the widget draws both sides of the
+// axis.
+var churnBy = []string{"lines", "commits", "files"}
 
 // widgetKinds is the vocabulary. Nothing outside this map renders.
 //
@@ -322,9 +379,57 @@ var widgetKinds = map[string]widgetSpec{
 	// How much of each project's checklist is finished. Counts only -- a todo
 	// line is never on the wire, at either detail setting.
 	"todos": {span: 6, needs: []string{NeedTodos}},
-	// What came out today rather than what went in: sessions finished, todos
-	// ticked off, requests made.
-	"output": {span: 6, needs: []string{NeedSessions, NeedTodos, NeedSpend}},
+	// What was produced today: commits, changed lines, files touched.
+	//
+	// This widget used to be "sessions finished, todos ticked off, requests
+	// made", and on a real wall the first two read 0 next to a four-figure
+	// request count. Both were self-reported -- a todo is ticked because
+	// somebody remembered to, and a session reaches `done` because a hook said
+	// so -- so they measured whether the panel had been told something. Commits
+	// and changed lines are things that exist now and did not this morning, and
+	// they can be checked by looking at the repository.
+	//
+	// The lines are labelled as change, never as output, and they are two
+	// numbers rather than a net one. See churnBy.
+	"output": {span: 6, needs: []string{NeedRepo}},
+	// The repository series: commits, changed lines or files touched, per day.
+	// The movement tier for the production half.
+	"codechurn": {span: 6, bys: churnBy, days: true,
+		needs: []string{NeedRepo, NeedRepoDays}},
+	// What it cost and what came out of it, on one time axis.
+	//
+	// The thing this whole dashboard was asked for and could not do: the panel
+	// had the cost half and nothing to put beside it. Two series, deliberately
+	// not one ratio -- tokens per line is a nonsense number that would be quoted
+	// at somebody in a meeting.
+	"spentmade": {span: 12, days: true,
+		needs: []string{NeedSpend, NeedSpendDays, NeedRepo, NeedRepoDays}},
+	// Where the commits went, by project.
+	"repoprojects": {span: 6, bys: churnBy, needs: []string{NeedRepo}},
+	// Open pull requests, drafts, and whether the checks are green.
+	"prs": {span: 6, needs: []string{NeedRepo, NeedRepoPRs}},
+
+	// -- how the day has gone --
+	// Sessions started, sessions that went quiet waiting, sessions finished --
+	// per hour of today or per day of the window.
+	//
+	// Out of the session-event log, which is the reason a board can show a
+	// trend at all. `by` chooses the axis; see flowBy.
+	"flow": {span: 6, bys: flowBy, days: true, needs: []string{NeedFlow}},
+	// How long things sat waiting before somebody got to them, over the same
+	// axis. The queue question, answered as a duration rather than a depth --
+	// see internal/store/events.go for why a flow log cannot honestly draw a
+	// depth.
+	"waits": {span: 6, bys: flowBy, days: true, needs: []string{NeedFlow}},
+	// What just happened, newest first.
+	//
+	// The other half of the movement tier, and the honest way to fill a
+	// television: a screen where nothing ever changes cannot be told from a
+	// screenshot somebody left up, and a list that gains a line when an agent
+	// finishes is the cheapest proof it is live. It carries exactly what a
+	// session row already carries -- a pseudonym, a state, a time -- so it is
+	// no new disclosure, only the same facts in the order they happened.
+	"feed": {span: 6, needs: []string{NeedFeed}},
 
 	// -- the machine --
 	// The four machine meters together.
@@ -505,9 +610,52 @@ type Board struct {
 	// not filled, and nobody is going to scroll it -- there is nobody standing
 	// there. Off by default, because the same board opens on a phone, where
 	// stretching four rows to the height of a handset is four unreadable tiles.
-	Fill    bool     `json:"fill"`
+	Fill bool `json:"fill"`
+	// Density is how much each widget says, 1 (spare) to MaxDensity (dense).
+	// Zero means DefaultDensity, which is what every board written before this
+	// existed meant.
+	//
+	// **Density is not scale, and conflating them was the mistake this field
+	// exists to correct.** The first design keyed how much a widget said to how
+	// large it was drawn, on the reasoning that a television is read from three
+	// metres and so must be sparse. That is wrong as the only case: the person
+	// who asked for this sits in front of the same screen half the time, and
+	// then wants it packed. So there are two axes and they are independent —
+	// how large everything is drawn is a property of the *viewport* and is
+	// settled in CSS with no stored value at all (see `.vp-wall` in
+	// styles.css), and how much is on screen is a property of the *board* and
+	// is this field. All four corners are real: dense and close, spare and
+	// across the room, and both crosses.
+	//
+	// **Per board rather than per widget**, and that is the argument worth
+	// having. Per widget it is one more control on every tile in the editor, it
+	// is twenty-four decisions where one was wanted, and — the deciding
+	// reason — the thing being adjusted is a property of the *room*: somebody
+	// walks up to the screen and everything on it should have more to say, not
+	// the one tile they remembered to set. A board is also the unit that
+	// already travels: one stored board opens on a phone and on a wall, and one
+	// step of this turns a wall back into a working dashboard without
+	// rebuilding it.
+	//
+	// A widget with nothing more to say ignores it, which is why this is a hint
+	// rather than a mode: it must never be the difference between a widget
+	// rendering and not rendering, because that would be a stored number
+	// choosing a code path.
+	Density int      `json:"density"`
 	Widgets []Widget `json:"widgets"`
 }
+
+// The density steps, and the default.
+//
+// Three, because the useful distinctions are "one thing at a time", "a working
+// dashboard" and "everything it knows", and a fourth would be a slider nobody
+// can aim at. DefaultDensity is the middle one so that a board written before
+// this field existed opens as what it already was.
+const (
+	MinDensity     = 1
+	MaxDensity     = 3
+	DefaultDensity = 2
+)
 
 // normaliseGrid brings a board into this build's column count.
 //
@@ -576,16 +724,33 @@ func (b Board) Needs() map[string]bool {
 // dashboard. Without this a board whose only figure is "sessions waiting" would
 // still carry the whole spend section: every number the transcripts produced,
 // on a link made to show one count.
-var metricNeeds = map[string]string{
-	"todosOpen":        NeedTodos,
-	"todosDone":        NeedTodos,
-	"todosClosedToday": NeedTodos,
-	"todoPercent":      NeedTodos,
-	"tokensToday":      NeedSpend,
-	"tokensMonth":      NeedSpend,
-	"tokensWindow":     NeedSpend,
-	"requestsToday":    NeedSpend,
-	"tokensPerHour":    NeedSpend,
+var metricNeeds = map[string][]string{
+	"todosOpen":     {NeedTodos},
+	"todosDone":     {NeedTodos},
+	"todoPercent":   {NeedTodos},
+	"tokensToday":   {NeedSpend},
+	"tokensMonth":   {NeedSpend},
+	"tokensWindow":  {NeedSpend},
+	"requestsToday": {NeedSpend},
+	"tokensPerHour": {NeedSpend},
+	// The production figures. NeedRepo is one `git log` per project behind a
+	// background-refreshed cache, so a board whose only number is "sessions
+	// waiting" must not pull it -- which is the whole reason this table exists.
+	"commitsToday":  {NeedRepo},
+	"commitsWindow": {NeedRepo},
+	"linesAdded":    {NeedRepo},
+	"linesRemoved":  {NeedRepo},
+	"linesChanged":  {NeedRepo},
+	"filesToday":    {NeedRepo},
+	// The pull-request figures pull the rollup and *not* the working-tree
+	// totals. A board whose only number is "how many are open" must not keep a
+	// `git log` alive per project for a figure it does not draw.
+	"openPRs":        {NeedRepoPRs},
+	"prsMergedToday": {NeedRepoPRs},
+	"checksRed":      {NeedRepoPRs},
+	"startedToday":   {NeedFlow},
+	"waitsToday":     {NeedFlow},
+	"avgWaitToday":   {NeedFlow},
 }
 
 // needs is what one widget asks for, which for a widget with settings depends
@@ -597,9 +762,7 @@ func (w Widget) needs() []string {
 	spec := widgetKinds[w.Kind]
 	out := append([]string{}, spec.needs...)
 	if spec.metrics != nil {
-		if need, ok := metricNeeds[w.Metric]; ok {
-			out = append(out, need)
-		}
+		out = append(out, metricNeeds[w.Metric]...)
 	}
 	if spec.bys != nil {
 		by := w.By
@@ -633,8 +796,15 @@ func ValidateBoard(b Board) (Board, error) {
 	if b.Rotate < 0 || b.Rotate > MaxRotateSeconds {
 		return Board{}, fmt.Errorf("rotate must be between 0 and %d seconds", MaxRotateSeconds)
 	}
+	density := b.Density
+	if density == 0 {
+		density = DefaultDensity
+	}
+	if density < MinDensity || density > MaxDensity {
+		return Board{}, fmt.Errorf("density must be between %d and %d", MinDensity, MaxDensity)
+	}
 	out := Board{Grid: GridColumns, Preset: b.Preset, Rotate: b.Rotate, Fill: b.Fill,
-		Widgets: make([]Widget, 0, len(b.Widgets))}
+		Density: density, Widgets: make([]Widget, 0, len(b.Widgets))}
 	for i, w := range b.Widgets {
 		clean, err := validateWidget(w)
 		if err != nil {
@@ -746,7 +916,13 @@ func oneOf(field, value string, allowed []string, kind string) error {
 // dropped, never repaired; if nothing survives, the default board is used.
 func SanitiseBoard(b Board) Board {
 	b = normaliseGrid(b)
-	out := Board{Grid: GridColumns, Fill: b.Fill}
+	out := Board{Grid: GridColumns, Fill: b.Fill, Density: DefaultDensity}
+	// Clamped rather than refused, unlike the way in: there is nobody at the
+	// wall to be told, and a density out of range is a screen that is still
+	// worth drawing at the setting every board written before this had.
+	if b.Density >= MinDensity && b.Density <= MaxDensity {
+		out.Density = b.Density
+	}
 	if KnownPreset(b.Preset) {
 		out.Preset = b.Preset
 	}

@@ -831,7 +831,7 @@ offers is an option the validator accepts.
               "days": false, "text": false, "rotate": false, "rows": 4}, …],
  "screens": ["phone", "laptop", "wall", "bigwall"],
  "maxWidgets": 24, "maxSpan": 12, "maxRows": 4, "maxCaption": 64,
- "maxRemark": 80, "maxDays": 371}
+ "maxRemark": 80, "maxDays": 371, "maxDensity": 3}
 ```
 
 A widget is `{"kind", "span", "height"?, "metric"?, "filter"?, "order"?,
@@ -850,6 +850,16 @@ a display, and hierarchy comes from the size ratio between a hero and the
 texture around it. A board's `fill` stretches the rows to the height of the
 screen rather than letting them flow down it — nobody is going to scroll a
 television.
+
+A board also carries `density`, 1–3, which is **how much each widget says** and
+not how large it is drawn. Those are two axes and neither derives from the
+other. Scale — the same composition drawn bigger on a bigger screen — follows
+the viewport and is settled in the browser's own CSS with no stored value at
+all; density is a property of the board, so one link can be a headline read from
+the door and a working dashboard read from the chair in front of the same
+television. A widget with nothing more to say ignores it; it never decides
+whether a widget renders, because that would be a stored number choosing a code
+path. Zero on the way in means the default, 2.
 
 A board carries `grid`, which is the column count its spans are in. A board that
 arrives without one is read as the old four columns and its spans are multiplied
@@ -901,12 +911,13 @@ handler reads.
                "state": "waiting", "kind": "agent", "stateChangedAt": 1735689000,
                "exited": false, "exitStatus": 0,
                "measured": true, "cpuPercent": 24.1, "rss": 831258624, "procs": 7}],
- "spend": null, "todos": null, "trend": null,
+ "spend": null, "todos": null, "trend": null, "flow": null, "feed": null,
+ "repo": null,
  "remark": "the screen in meeting room three", "locked": false}
 ```
 
-`sessions` is empty, and `spend` and `todos` are `null`, unless a widget on the
-board asks for them. A board can only ever subtract: the sections a dashboard
+`sessions` is empty, and `spend`, `todos`, `trend`, `flow`, `feed` and `repo`
+are `null`, unless a widget on the board asks for them. A board can only ever subtract: the sections a dashboard
 may carry are a fixed set, a widget chooses among them, and no arrangement of
 widgets produces a field that is not in the list. `null` and a zeroed object are
 different facts — the first is "this board does not show it", and the second has
@@ -943,11 +954,71 @@ The items themselves are never sent, at either `detail`. A todo line says what
 somebody is about to do about a customer, a bug or a date; it is closer to a
 note than to a session title.
 
-`counts.doneToday` is how many sessions reached `done` since the server's local
-midnight. It is the closest thing to *output* this panel honestly has: nothing
-here counts lines of code, because no number on this surface is derived from the
-contents of a repository and a number invented for a wall is worse than a
-missing one.
+`flow` and `feed` come out of the session-event log — one append-only row per
+state transition, written where the poller already notices one. Before it the
+panel kept state and no history, so every widget with a time axis on this
+surface degraded to a single current number and a board of trends was
+unbuildable. `flow` is `{"every", "since", "windowDays", "today", "window",
+"buckets": [{"at", "started", "waited", "finished", "waitSeconds",
+"waitEnded"}]}`; `feed` is the same transitions in the order they happened, each
+carrying the per-link pseudonyms, the state and the time — no new fact reaches
+the wire because a board asked for a feed.
+
+It is a **flow**, not a stock: a bucket counts transitions that happened in it,
+never how many sessions were in each state at the time. Reconstructing a stock
+from a flow needs a starting census and every event since, and the first dropped
+write makes it wrong in a way nothing can detect. `waitSeconds` and `waitEnded`
+are sent rather than an average, so a bucket where nothing finished waiting is
+empty rather than a zero-second wait. The log is kept for 31 days and swept
+hourly: a wall that has been up for a month should not be carrying a year of
+rows.
+
+`repo` is what the working trees produced, and it is the half of "what did it
+cost / what came out of it" the panel could not answer at all until it read
+repositories. `{"readable", "ageSeconds", "repos", "projects", "windowDays",
+"today", "window", "days", "byProject", "prs"}`, where a totals object is
+`{"commits", "added", "removed", "files"}`.
+
+This replaced `counts.doneToday` and the checklist figure as the headline
+numbers a board offers, and the reason is that both of those are *self-reported*:
+a todo is ticked because somebody remembered to tick it, and a session reaches
+`done` because an agent's hook said so — a session left running all day never
+says it at all. They measure whether the panel was told something. Commits and
+changed lines are things that exist now and did not this morning, and anybody
+can check them against the repository. `counts.doneToday` is still sent and is
+still a real event; it is simply not a measure of output.
+
+Added and removed lines are two numbers and never a net one: +1200/−800 is a
+different day from +400/−0 and a net figure is identical in both, hiding a
+refactor completely. They are labelled as *change*, not as productivity.
+
+Three things about `repo` are worth building against:
+
+- **It is never fresh.** A wall polls every two seconds; `git log` is not a
+  two-second question and a GitHub round trip certainly is not. So the poll
+  reads whatever a background refresh has already produced and reports its
+  `ageSeconds`; the first poll for a repository comes back with
+  `readable: false`, which is "not counted yet" and not "nothing happened
+  today". A working tree is re-read at most every 90 seconds, a repository's
+  pull requests at most every 5 minutes, shared across every viewer of every
+  link, and not at all once nobody is looking.
+- **`prs` is the only outbound request a wall can cause, and four things have to
+  be true at once**, none of them a default: the board carries a pull-request
+  widget, the link is scoped to one project, `detail` is `names`, and a token is
+  in the panel's environment. It is counts and rollups — `open`, `draft`,
+  `green`, `red`, `pending`, `approved`, `changesRequested`, `mergedToday` — and
+  never a title, a number, an author, a branch or a URL.
+- **Uncommitted work is invisible to all of it.** An agent that has been editing
+  for an hour without committing produces zero commits and zero lines here; the
+  `dirty` count on `byProject` is the only sign of it.
+
+The figures come from `git log --shortstat`, and that is the disclosure decision
+rather than a parsing convenience: `--numstat` would carry every changed
+filename through the panel on its way to a wall, and asking for `%s` would carry
+the commit messages. A commit *count* is a number; a commit *subject* is prose
+from inside somebody's repository. So no path, no filename, no branch name, no
+sha, no author and no subject appears here at either `detail` — only the project
+names, which follow `names` exactly like every other group on this dashboard.
 
 `scopeRepoOwner` and `scopeRepoName` are the scoped project's repository, and
 they are the one thing on this surface that reads a working tree — one

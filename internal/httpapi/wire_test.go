@@ -94,6 +94,22 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		{"ShareWidgetSpec", store.WidgetSpec{}},
 		{"SharePreset", store.Preset{}},
 		{"ShareCatalogue", shareCatalogue{}},
+		// The two sections that were added when the board turned out to be
+		// empty because the panel had no history. Pinned for the same reason
+		// everything else here is, with one extra: the repository half is the
+		// part of this surface that reads somebody's working tree, so a field
+		// added to it and not declared in wire.ts is a disclosure nobody
+		// reviewing the TypeScript would know had been made.
+		{"ShareFlow", shareFlow{}},
+		{"ShareFlowTotals", shareFlowTotals{}},
+		{"ShareFlowBucket", shareFlowBucket{}},
+		{"ShareFeed", shareFeed{}},
+		{"ShareFeedEntry", shareFeedEntry{}},
+		{"ShareRepo", shareRepo{}},
+		{"ShareRepoTotals", shareRepoTotals{}},
+		{"ShareRepoDay", shareRepoDay{}},
+		{"ShareRepoProject", shareRepoProject{}},
+		{"ShareRepoPRs", shareRepoPRs{}},
 		{"ShareSpend", shareSpend{}},
 		{"ShareSpendTotals", shareSpendTotals{}},
 		{"ShareSpendBucket", shareSpendBucket{}},
