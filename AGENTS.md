@@ -178,7 +178,8 @@ Each of these exists because the alternative broke something real.
 ## Layout
 
 ```
-cmd/vibepanel/      entrypoint; also the admin CLI (serve, project, session, doctor)
+cmd/vibepanel/      entrypoint; also the admin CLI (serve, project, session,
+                    hook, service, account, doctor, version)
 internal/tmux/      tmux CLI wrapper + the embedded vibepanel.conf
 internal/session/   state enum (source of truth) and, later, the session manager
 internal/store/     SQLite schema, migrations, typed queries
