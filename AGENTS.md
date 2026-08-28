@@ -158,6 +158,18 @@ Each of these exists because the alternative broke something real.
   from an unpacked archive and knows about tmux, services and everything else;
   it is bash, and bash 3.2, because macOS still ships that one. Neither may
   grow a `--password <value>` flag — see `cmd/vibepanel/account.go` for why.
+
+  Both of them speak English and 简体中文, and each holds its strings in one
+  `case` between `strings: begin` and `strings: end`, behind `m <key>`. Add a
+  key there and nowhere else, with both languages filled in: `make
+  install-check` walks every arm in both files and fails on an empty side, on a
+  pair whose substitutions disagree, and on a key nothing defines. What is in
+  the table is what a person reads while deciding something — the questions, the
+  plan, the errors that say what to do next, the summary, `--help`. The `verb +
+  path` trace lines during the install are deliberately still English; the
+  build-log entry "An installer that speaks Chinese" says why. Substitutions are
+  `%1$s`, never a bare `%s`, and `m` expands them itself: bash's builtin printf
+  rejects positional specifiers outright.
 - **Commits**: English Conventional Commits (`feat(tmux): ...`). No
   `Co-Authored-By` trailers.
 - **Docs**: English. Keep `docs/build-log.md` current as you go; a decision that

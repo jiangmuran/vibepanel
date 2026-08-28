@@ -98,6 +98,17 @@ It asks which service, prints the plan, and waits for you to agree. It prompts
 only when stdin and stdout are both terminals, so a pipeline gets the unattended
 path. `... | sh -s -- --help` lists everything it can do.
 
+The installer speaks English and 简体中文. `--lang zh` or `--lang en` decides;
+without it, `LC_ALL`, `LC_MESSAGES` and `LANG` do — the first of the three that
+is set, and only a value starting `zh` or `en` counts. If none of them says and
+there is somebody at a terminal, the first question is which language, before
+anything else is asked. A pipeline never stops to ask: it takes the flag, then
+the environment, then English.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/jiangmuran/vibepanel/main/install.sh | sh -s -- --lang zh
+```
+
 Then open `http://<host>:8443`, paste the setup token it printed, and choose a
 password — or create the account from the installer with `--username you
 --password-file /path/to/pw`. There is deliberately no `--password <value>`:
@@ -171,7 +182,8 @@ installer refuses unless you pass `--migrate`, which removes the old unit first.
 
 `--yes` takes every default, `--enable` starts the service, `--user` and
 `--system` pick the unit, `--migrate` allows replacing one kind with the other.
-Without root it says so and installs the user service.
+Without root it says so and installs the user service. `--yes` also settles the
+language without asking: `--lang`, then the environment, then English.
 
 For a user service the installer also enables lingering. Without it the unit
 stops when your last login session ends.
