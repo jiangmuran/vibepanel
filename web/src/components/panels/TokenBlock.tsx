@@ -2,7 +2,7 @@ import type { TokenUsage as Usage } from '../../protocol/wire'
 import { t, useLang } from '../../i18n'
 import type { PanelDensity } from '../chrome'
 import { safeText } from '../text'
-import { formatAgo } from './ago'
+import { formatAgo, spendIsStale } from './ago'
 import { compact, exact } from './tokens'
 import { dayTotal, outputTotal, projectTotal, toolShares, windowTotal } from './spend'
 
@@ -103,7 +103,7 @@ export function TokenBlock({
         {t('spend.output')} {output === null ? '—' : compact(output)}
         {' · '}
         {t('spend.rangeDays', { n: span })}
-        {data.scannedAt > 0 && (
+        {spendIsStale(data.scannedAt, now) && (
           <> · {t('spend.scannedAgo', { ago: formatAgo(data.scannedAt, now) })}</>
         )}
       </p>
@@ -181,6 +181,16 @@ const TOOL_TONES = [
   'var(--vp-state-dead)',
 ]
 
+// The bar is a bar. The legend under it names the segments.
+//
+// The segments used to carry their own labels -- white on the accent inside a
+// ten-pixel-tall bar, which render-check measured at 4.02:1 against a required
+// 4.5 in light and 3.65:1 in dark. That is the same tool name the legend below
+// already prints beside a colour dot, at a legible size, so the failing copy
+// was duplicate information nobody could read.
+//
+// Nothing here depends on colour alone (red line 4): every segment is named in
+// the legend, and its width is the figure.
 function ToolBar({ tools }: { tools: { tool: string; total: number; share: number }[] }) {
   return (
     <div className="mt-2" data-testid="token-tools">
@@ -190,15 +200,12 @@ function ToolBar({ tools }: { tools: { tool: string; total: number; share: numbe
             key={x.tool}
             data-testid="token-tool-seg"
             title={`${x.tool} · ${exact(x.total)}`}
-            className="flex items-center justify-center overflow-hidden whitespace-nowrap text-vp-xs"
+            className="overflow-hidden"
             style={{
               width: `${x.share * 100}%`,
               background: TOOL_TONES[i % TOOL_TONES.length],
-              color: 'var(--vp-accent-ink)',
             }}
-          >
-            {x.share >= 0.34 ? safeText(x.tool) : ''}
-          </span>
+          />
         ))}
       </div>
       <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">

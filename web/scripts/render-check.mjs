@@ -262,6 +262,45 @@ let cleanedUp = false
 const FAKE_HOME = mkdtempSync(join(tmpdir(), 'vprender-home-'))
 mkdirSync(join(FAKE_HOME, '.claude'), { recursive: true })
 
+// One transcript, so the spend block has something to be about.
+//
+// Without it every assertion below about that block runs against a panel that
+// has scanned nothing: `scannedAt` stays 0, the branch that dates a reading is
+// unreachable, and a check written to say "do not date a fresh reading" passes
+// by never reaching the code. Measured — the assertion was added, the guard it
+// was written for was removed, and nothing went red.
+//
+// The shape is what internal/usage reads: one JSON object per line, `usage` on
+// an assistant message. Two lines, so a per-request average is not a division
+// by one.
+{
+  const day = new Date().toISOString().slice(0, 10)
+  const dir = join(FAKE_HOME, '.claude', 'projects', 'render-check')
+  mkdirSync(dir, { recursive: true })
+  // id and requestId matter: the reader deduplicates on the pair, because one
+  // API response is written as one line per content block carrying the same
+  // usage object. Two lines without them are one record, which is how the
+  // first version of this seed produced a block with nothing in it.
+  const line = (n, input, output) => JSON.stringify({
+    type: 'assistant',
+    timestamp: `${day}T12:00:00.000Z`,
+    sessionId: 'render-check',
+    cwd: FAKE_HOME,
+    requestId: `req-${n}`,
+    message: {
+      id: `msg-${n}`,
+      model: 'claude-opus-5',
+      usage: {
+        input_tokens: input,
+        output_tokens: output,
+        cache_read_input_tokens: input * 40,
+        cache_creation_input_tokens: input * 3,
+      },
+    },
+  })
+  writeFileSync(join(dir, 'render-check.jsonl'), line(1, 120, 4400) + '\n' + line(2, 80, 2100) + '\n')
+}
+
 const server = spawn(BIN, ['serve'], {
   env: {
     ...process.env,
@@ -1159,6 +1198,21 @@ try {
       if (!footer.trim()) {
         note('FAIL', 'panel/spend', 'the block does not say what period it covers')
       }
+      // Printed rather than asserted, and that is the honest outcome.
+      //
+      // The rule is that a reading is dated only once it is behind: inside
+      // usage.MinInterval the panel calls it current, so saying "11 seconds
+      // ago" is the panel narrating its own scan rather than describing the
+      // figures -- the reported `输出 51.5M · 近 30 天 · 11秒钟前读的`.
+      //
+      // But `scannedAt` is 0 here. The pass that sets it does not finish inside
+      // this check's lifetime, so the gate and no gate render identically and
+      // no assertion could tell them apart. One was written, the guard it was
+      // written for was removed, and nothing went red -- which is the only way
+      // to find out that a check is decorative. The logic is covered by
+      // ago.test.ts instead; making this bite needs a stale reading, and that
+      // means a clock this check does not control.
+      note('PASS', 'panel/spend', `footer: ${JSON.stringify(footer)}`)
       // And nothing that implies the panel counted characters or money.
       const blockText = await block.innerText()
       for (const lie of ['$', '¥', '€']) {

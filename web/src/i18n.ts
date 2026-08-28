@@ -1210,17 +1210,17 @@ const DICT = {
   'spend.refresh': { zh: '重新读取', en: 'Read again' },
   'spend.refreshing': { zh: '正在读取…', en: 'Reading…' },
   'spend.scanning': {
-    zh: '正在读取 agent 自己的记录，读完就会出现在这里。',
-    en: 'Reading what the agents recorded. The numbers appear when it finishes.',
+    zh: '正在统计…',
+    en: 'Counting…',
   },
   'spend.neverScanned': {
-    zh: '还没读过任何记录。这里是空的，不是 0。',
-    en: 'Nothing has been read yet. This is empty, not zero.',
+    zh: '暂无数据 —— 不是 0。',
+    en: 'No data yet — not zero.',
   },
   // `{ago}` arrives already relative -- "3天前", "3 days ago" -- from
   // formatAgo, which is Intl's phrasing rather than a suffix table of ours.
   // It used to read '{ago}前读的' / 'read {ago} ago' and say the word twice.
-  'spend.scannedAgo': { zh: '{ago}读的', en: 'read {ago}' },
+  'spend.scannedAgo': { zh: '截至 {ago}前', en: 'as of {ago} ago' },
   'spend.whose': {
     zh: 'agent 自己记的账，包括不经过面板跑的。',
     en: "Counted from the agents' own records, including runs this panel did not start.",

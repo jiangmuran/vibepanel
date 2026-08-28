@@ -4,6 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -158,5 +161,36 @@ func TestAnIngesterWithNoCompletedPassSaysSo(t *testing.T) {
 	}
 	if running {
 		t.Error("a fresh ingester claims a pass is running")
+	}
+}
+
+// The frontend has its own copy of MinInterval and they have to agree.
+//
+// The spend footer used to read `输出 51.5M · 近 30 天 · 11秒钟前读的`, and by
+// this constant's own definition eleven seconds is *current* — so the panel was
+// announcing a scan it had just run rather than saying anything about the
+// figures. It now says the age only past this window, which makes the number a
+// mirror of this one: too small and the footer flickers on and off between
+// passes, too large and a genuinely stale reading claims to be fresh.
+func TestTheSpendFreshnessWindowAgreesWithTheFrontend(t *testing.T) {
+	const path = "../../web/src/components/panels/ago.ts"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	m := regexp.MustCompile(`SPEND_CURRENT_MS = ([0-9_]+)`).FindStringSubmatch(string(b))
+	if m == nil {
+		t.Fatalf("%s no longer declares SPEND_CURRENT_MS, so nothing pins the two together", path)
+	}
+	got, err := strconv.Atoi(strings.ReplaceAll(m[1], "_", ""))
+	if err != nil {
+		t.Fatalf("SPEND_CURRENT_MS is not a number: %q", m[1])
+	}
+	if want := int(MinInterval / time.Millisecond); got != want {
+		t.Errorf("SPEND_CURRENT_MS is %d ms and usage.MinInterval is %d ms. "+
+			"The panel decides a reading is worth dating from the frontend "+
+			"number and decides when to take a new one from this one; drift "+
+			"between them shows as a footer that flickers, or as a stale "+
+			"figure with nothing saying so.", got, want)
 	}
 }

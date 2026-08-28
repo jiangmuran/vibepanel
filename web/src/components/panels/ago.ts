@@ -48,3 +48,25 @@ export function formatAgo(when: number, now: number): string {
   const fmt = new Intl.RelativeTimeFormat(getLang() === 'zh' ? 'zh-CN' : 'en', { numeric: 'auto' })
   return fmt.format(value, unit)
 }
+
+/**
+ * How long a token-spend reading stays current, in milliseconds.
+ *
+ * Mirrors `usage.MinInterval` in Go, which is where a pass's answer stops being
+ * reused and a new scan is allowed. `TestTheSpendFreshnessWindowsAgree` fails
+ * if the two drift.
+ *
+ * It exists so the panel can stop announcing its own housekeeping. The spend
+ * footer read `输出 51.5M · 近 30 天 · 11秒钟前读的` — and by the server's own
+ * definition eleven seconds is *current*, so the third clause was the panel
+ * describing a scan it had just run rather than the figures the reader came
+ * for. Past this window the age is worth saying, because then the numbers
+ * really are behind; inside it there is nothing to report.
+ */
+export const SPEND_CURRENT_MS = 30_000
+
+/** Whether a reading taken at `scannedAt` (unix seconds) is behind. */
+export function spendIsStale(scannedAt: number, now: number): boolean {
+  if (scannedAt <= 0) return false
+  return now - scannedAt * 1000 > SPEND_CURRENT_MS
+}

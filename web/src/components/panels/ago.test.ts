@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { agoParts, formatAgo } from './ago'
+import { agoParts, formatAgo, spendIsStale, SPEND_CURRENT_MS } from './ago'
 import { setLang } from '../../i18n'
 
 describe('how long ago something happened', () => {
@@ -46,5 +46,28 @@ describe('the same as a string', () => {
     // is what nobody says in either language.
     setLang('en')
     expect(formatAgo(now - 86400, now)).toBe('yesterday')
+  })
+})
+
+describe('a spend reading is only worth dating when it is behind', () => {
+  // The panel's own definition of current is usage.MinInterval, mirrored as
+  // SPEND_CURRENT_MS. Inside that window the figures are the newest there are
+  // and the age is the panel talking about its own scan.
+  const at = (secondsAgo: number, now: number) => Math.floor(now / 1000) - secondsAgo
+
+  it('says nothing about a reading taken moments ago', () => {
+    const now = 1_800_000_000_000
+    expect(spendIsStale(at(0, now), now)).toBe(false)
+    expect(spendIsStale(at(11, now), now)).toBe(false)
+  })
+
+  it('says so once the reading is older than the window', () => {
+    const now = 1_800_000_000_000
+    expect(spendIsStale(at(SPEND_CURRENT_MS / 1000 + 5, now), now)).toBe(true)
+    expect(spendIsStale(at(3600, now), now)).toBe(true)
+  })
+
+  it('treats "never scanned" as nothing to date rather than as infinitely old', () => {
+    expect(spendIsStale(0, 1_800_000_000_000)).toBe(false)
   })
 })

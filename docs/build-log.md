@@ -16073,3 +16073,54 @@ running process. It is `~/.local/bin/vibepanel` now, stamped
 (`v0.1.0-22-g3a746c3` rather than `dev`/`none`), and the nine live sessions were
 byte-identical before and after the restart — which is the guarantee the whole
 architecture exists for, checked rather than assumed.
+
+### The panel narrating its own housekeeping
+
+Reported: 「整个面板 也有好多这种自言自语的表达」, pointing at the spend footer:
+
+```
+输出 51.5M · 近 30 天 · 11秒钟前读的
+```
+
+The first two clauses describe the figures. The third describes **a scan the
+panel had just run**. It is the README's fault in miniature — the build log's
+voice, where the panel explains its own workings to a reader who came for a
+number.
+
+And by the panel's own definition eleven seconds is *current*:
+`usage.MinInterval` is thirty seconds, the window inside which a pass's answer
+is reused rather than recomputed. So the clause was not merely wordy, it was
+reporting freshness the panel itself considered unremarkable — on almost every
+render, forever.
+
+It now says the age **only past that window**, phrased as a property of the
+figures (`截至 X前` / `as of X ago`) rather than of the scan (`X读的` /
+`read X ago`). `SPEND_CURRENT_MS` mirrors `usage.MinInterval` and
+`TestTheSpendFreshnessWindowAgreesWithTheFrontend` fails when they drift: too
+small and the footer flickers on and off between passes, too large and a stale
+reading claims to be fresh.
+
+Two siblings went with it — *"正在读取 agent 自己的记录，读完就会出现在这里"* is
+now *"正在统计…"*, and *"还没读过任何记录。这里是空的，不是 0"* is
+*"暂无数据 —— 不是 0"*, which keeps the one part that carries meaning.
+
+**The render check could not see any of this, because it had never scanned
+anything.** `FAKE_HOME` had no transcripts, so `/api/token-usage` returned
+nothing and every assertion about the spend block ran against a block with no
+data in it. Seeding one transcript found a real bug on the first run: the tool
+bar drew its labels in white on the accent inside a ten-pixel-tall bar —
+**4.02:1 in light and 3.65:1 in dark against a required 4.5** — printing the
+same tool name the legend beneath it already prints beside a colour dot, at a
+legible size. The bar is a bar now.
+
+The seed's own `id` and `requestId` matter, and the first version omitted them:
+the reader deduplicates on that pair, so two lines without them are one record.
+
+**One assertion was written and then removed for being decorative.** "Do not
+date a reading taken seconds ago" cannot be checked here: `scannedAt` is still 0
+by the time the check looks, because the pass that sets it has not finished, so
+the guard and its absence render identically. It was written, the guard was
+removed, and nothing went red — which is the only way to discover that a check
+is decoration. The logic is pinned by `ago.test.ts`; making the browser check
+bite would need a clock it does not control, and a note that prints the footer
+is worth more than an assertion that cannot fail.
