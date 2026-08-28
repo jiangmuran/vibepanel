@@ -1,14 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { TokenUsage, UsageDay } from '../../protocol/wire'
-import {
-  dayBefore,
-  dayTotal,
-  outputTotal,
-  projectTotal,
-  toolShares,
-  windowTotal,
-} from './spend'
+import { dayBefore, dayTotal, outputTotal, projectTotal, toolShares, windowTotal, daySeries } from './spend'
 
 /** A day row, with the four token columns spelled out. */
 function day(d: string, over: Partial<UsageDay> = {}): UsageDay {
@@ -173,5 +166,29 @@ describe('what was produced', () => {
 
   it('is zero rather than everything when the date is unreadable', () => {
     expect(outputTotal(days, '', 30)).toBe(0)
+  })
+})
+
+describe('the day series behind the sparkline', () => {
+  const days = [
+    { day: '2026-08-20', input: 1, output: 0, cacheRead: 0, cacheWrite: 0, requests: 1 },
+    // 21st absent: a day with nothing on it is not in byDay at all.
+    { day: '2026-08-22', input: 3, output: 0, cacheRead: 0, cacheWrite: 0, requests: 1 },
+  ]
+
+  it('is oldest first, so a line reads left to right', () => {
+    expect(daySeries(days, '2026-08-22', 3)).toEqual([1, 0, 3])
+  })
+
+  it('fills a quiet day with zero rather than closing the gap', () => {
+    // Joining the 20th to the 22nd draws two days as one step and hides the
+    // day off, which is the shape somebody opens a chart to see.
+    const s = daySeries(days, '2026-08-22', 3)
+    expect(s).toHaveLength(3)
+    expect(s[1]).toBe(0)
+  })
+
+  it('is all zeros where nothing has been recorded', () => {
+    expect(daySeries([], '2026-08-22', 4)).toEqual([0, 0, 0, 0])
   })
 })

@@ -623,6 +623,8 @@ const DICT = {
   },
   'toast.uploadFailed': { zh: '上传失败', en: 'The upload failed' },
   'toast.copied': { zh: '已复制到剪贴板', en: 'Copied to your clipboard' },
+  'spend.requestsShort': { zh: '{n} 次请求', en: '{n} requests' },
+  'spend.sparkDays': { zh: '近 {n} 天', en: 'the last {n} days' },
   'toast.copyFailed': { zh: '复制没成功，浏览器拒绝了', en: 'The copy did not go through' },
   'app.clipboardOffer': { zh: '复制了 {n} 个字符 —— 点一下放进剪贴板', en: 'Copied {n} characters — click to put them on your clipboard' },
   'toast.passkeyGone': { zh: '这个 passkey 删不掉', en: 'That passkey could not be removed' },

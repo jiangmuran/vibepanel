@@ -3,6 +3,21 @@ import { t } from '../../i18n'
 import { Empty, Tile } from './Tile'
 import { bucketLabel, compact, exact } from './format'
 import { byLabel } from './labels'
+import { Spark } from '../spark'
+
+/**
+ * The board's area chart: the shared one, plus what a board shows instead of a
+ * line it cannot draw.
+ *
+ * `Spark` returns null on a series too short to be a line, because each caller
+ * has its own answer to that. On a wall the answer has to be words -- a blank
+ * rectangle where a chart goes reads as a chart that failed, not as a series
+ * with one reading in it.
+ */
+function Area(props: { values: number[]; max: number; tone: string; testid: string }) {
+  const chart = Spark(props)
+  return chart ?? <Empty text={t('dash.trendShort')} />
+}
 
 /**
  * The widgets that draw a shape rather than a figure.
@@ -20,69 +35,6 @@ import { byLabel } from './labels'
  * property the rest of the board has.
  */
 
-/** How the area charts are drawn: a unit box, stretched by CSS. */
-const VIEW = { w: 100, h: 100 }
-
-/**
- * A polyline through a series, in the unit box.
- *
- * `max` is passed rather than derived so that two charts drawn side by side can
- * share a scale when they should and not when they should not. A series shorter
- * than two points has no line — one reading is a dot, and a dot drawn as a flat
- * line across a chart reads as "nothing is happening" rather than "nothing has
- * been measured yet".
- */
-function points(values: number[], max: number): string {
-  if (values.length < 2) return ''
-  const top = max > 0 ? max : 1
-  const step = VIEW.w / (values.length - 1)
-  return values
-    .map((v, i) => `${(i * step).toFixed(2)},${(VIEW.h - (v / top) * VIEW.h).toFixed(2)}`)
-    .join(' ')
-}
-
-/**
- * A filled area under a line.
- *
- * `vector-effect: non-scaling-stroke` on the stroke, because the box is
- * stretched to the tile with `preserveAspectRatio="none"` — without it a chart
- * on a wide tile has a hairline top edge and a fat one on a narrow tile, from
- * the same markup.
- */
-function Area({
-  values,
-  max,
-  tone,
-  testid,
-}: {
-  values: number[]
-  max: number
-  tone: string
-  testid: string
-}) {
-  const line = points(values, max)
-  if (!line) return <Empty text={t('dash.trendShort')} />
-  return (
-    <svg
-      viewBox={`0 0 ${VIEW.w} ${VIEW.h}`}
-      preserveAspectRatio="none"
-      className="h-full w-full"
-      role="img"
-      data-testid={testid}
-      data-points={values.length}
-    >
-      <polygon points={`0,${VIEW.h} ${line} ${VIEW.w},${VIEW.h}`} fill={tone} opacity="0.18" />
-      <polyline
-        points={line}
-        fill="none"
-        stroke={tone}
-        strokeWidth="2"
-        strokeLinejoin="round"
-        vectorEffect="non-scaling-stroke"
-      />
-    </svg>
-  )
-}
 
 /**
  * CPU, memory or load over the last few minutes.

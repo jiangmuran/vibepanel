@@ -146,3 +146,21 @@ export function outputTotal(days: UsageDay[], today: string, span: number): numb
   }
   return sum
 }
+
+/**
+ * The last `span` days as a series, oldest first, with gaps as zeros.
+ *
+ * Gaps matter: `byDay` only carries days that had something on them, so a
+ * quiet Sunday is absent rather than zero. Drawing the array as it arrives
+ * joins Saturday to Monday and hides the quiet day entirely — the shape of a
+ * week with a day off is the shape somebody is looking at the chart for.
+ */
+export function daySeries(days: UsageDay[], today: string, span: number): number[] {
+  const by = new Map(days.map((d) => [d.day, totalOf(d)]))
+  const out: number[] = []
+  for (let i = span - 1; i >= 0; i--) {
+    const day = dayBefore(today, i)
+    out.push(day === '' ? 0 : (by.get(day) ?? 0))
+  }
+  return out
+}

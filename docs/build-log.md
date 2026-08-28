@@ -16837,3 +16837,37 @@ deleted rather than superseded (the renumbering, and the store suite fatals
 because there is no v17 to test); `VIBEPANEL_VNC_ALLOW` added to the list of
 names `envOverlay` skips; `--vnc` re-registered as accepted-and-ignored; and
 `'vnc'` taken out of `RETIRED_TABS`.
+
+### The compact spend block was four numbers in a lot of air
+
+「你不觉得缩略的 token 消耗部分有点空吗」. Measured on a panel reading real
+transcripts: **275 × 165 px** holding four figures, a two-segment bar and a
+legend row that printed the same two percentages the bar was already drawn to.
+No trend anywhere — and thirty days of `byDay` had been on the payload the whole
+time, drawn by nothing.
+
+Now 275 × **150**, carrying more: a fourteen-day sparkline beside the hero, the
+bar and its legend on one line, and the request count in the footer. Denser and
+shorter, which is the only version of "denser" worth having.
+
+Fourteen days rather than thirty because thirty points across 120px is two
+pixels each and reads as texture; a fortnight is the window over which "is today
+unusual" is answerable by looking.
+
+`daySeries` fills absent days with zero rather than closing the gap. `byDay`
+only carries days that had something on them, so a quiet Sunday is missing
+rather than zero, and drawing the array as it arrives joins Saturday to Monday —
+hiding the day off, which is the shape somebody opens a chart to see.
+
+The chart itself moved to `web/src/components/spark.tsx` and the board's charts
+now use it. There was one of this shape in the product and it was about to
+become two; two copies of a chart drift the way charts drift, and then the panel
+and the wall showing the same series stop looking like the same product. The
+board keeps a four-line wrapper for the one thing that differs — what it draws
+instead of a line it cannot draw, which on a wall has to be words rather than a
+blank rectangle.
+
+**A freshly added project reads `—` for up to thirty seconds**, and that is
+`usage.MinInterval` rather than a bug: the pass that ran before the project
+existed is reused, and its answer has no row for it. Worth knowing before
+somebody goes looking for it.

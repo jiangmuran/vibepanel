@@ -3,8 +3,16 @@ import { t, useLang } from '../../i18n'
 import type { PanelDensity } from '../chrome'
 import { safeText } from '../text'
 import { formatAgo, spendIsStale } from './ago'
+import { Spark } from '../spark'
 import { compact, exact } from './tokens'
-import { dayTotal, outputTotal, projectTotal, toolShares, windowTotal } from './spend'
+import {
+  dayTotal,
+  daySeries,
+  outputTotal,
+  projectTotal,
+  toolShares,
+  windowTotal,
+} from './spend'
 
 /**
  * What the agents are costing, in the height of about six lines.
@@ -61,6 +69,12 @@ export function TokenBlock({
   const project = known ? projectTotal(data, projectId) : null
   const output = known ? outputTotal(data.byDay, data.today, span) : null
   const tools = known ? toolShares(data) : []
+  // Fourteen days rather than the thirty the footer names. A fortnight is what
+  // fits legibly in a strip this wide -- thirty points across 120px is two
+  // pixels each and reads as texture -- and it is the window over which "is
+  // today unusual" is answerable by looking.
+  const series = known ? daySeries(data.byDay, data.today, 14) : []
+  const seriesMax = Math.max(1, ...series)
 
   return (
     <div className="px-3 py-2" data-testid="token-block">
@@ -72,12 +86,30 @@ export function TokenBlock({
           density === 'wide' ? 'grid-cols-[1.4fr_1fr_1fr]' : 'grid-cols-2'
         }`}
       >
-        <Figure
-          label={t('spend.today')}
-          value={today}
-          rank="hero"
-          className={density === 'wide' ? '' : 'col-span-2'}
-        />
+        {/* The hero with its trend on the same line.
+
+            The block was four figures and a bar in 275x165 and the complaint
+            was that it looks empty -- which it was: every figure was one number
+            with no way to tell an ordinary day from a remarkable one. Thirty
+            days of the series were already on the payload and nothing drew
+            any of it. */}
+        <div className={`flex items-end gap-2 ${density === 'wide' ? '' : 'col-span-2'}`}>
+          <Figure label={t('spend.today')} value={today} rank="hero" />
+          {series.length > 1 && (
+            <div
+              className="h-7 min-w-0 flex-1 pb-1 opacity-80"
+              data-testid="token-spark"
+              title={t('spend.sparkDays', { n: series.length })}
+            >
+              <Spark
+                values={series}
+                max={seriesMax}
+                tone="var(--vp-accent)"
+                testid="token-spark-svg"
+              />
+            </div>
+          )}
+        </div>
         <Figure label={t('spend.week')} value={week} rank="pair" />
         <Figure
           label={t('spend.thisProject')}
@@ -101,6 +133,11 @@ export function TokenBlock({
         title={output === null ? undefined : `${exact(output)} ${t('spend.tokens')}`}
       >
         {t('spend.output')} {output === null ? '—' : compact(output)}
+        {' · '}
+        {/* Requests, because it is the other axis of the same story: the same
+            spend over ten requests and over ten thousand are different days,
+            and the payload has carried the number all along. */}
+        {t('spend.requestsShort', { n: compact(data.total.requests) })}
         {' · '}
         {t('spend.rangeDays', { n: span })}
         {spendIsStale(data.scannedAt, now) && (
@@ -193,8 +230,16 @@ const TOOL_TONES = [
 // the legend, and its width is the figure.
 function ToolBar({ tools }: { tools: { tool: string; total: number; share: number }[] }) {
   return (
-    <div className="mt-2" data-testid="token-tools">
-      <div className="vp-bar flex h-2.5">
+    <div className="mt-2 flex items-center gap-2" data-testid="token-tools">
+      {/* The bar and its legend on one line.
+
+          They were two rows for two agents, and the second row said
+          "claude 89% codex 11%" beside a bar already drawn 89/11 -- the same
+          fact twice, in a block whose complaint was that it looks empty. The
+          bar keeps enough width to be a proportion rather than a decoration;
+          the legend takes what is left and wraps under it only when there are
+          enough agents that it must. */}
+      <div className="vp-bar flex h-2.5 min-w-16 flex-1">
         {tools.map((x, i) => (
           <span
             key={x.tool}
@@ -208,12 +253,12 @@ function ToolBar({ tools }: { tools: { tool: string; total: number; share: numbe
           />
         ))}
       </div>
-      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+      <div className="flex flex-wrap items-center justify-end gap-x-2.5 gap-y-0.5">
         {tools.map((x, i) => (
           <span
             key={x.tool}
             data-testid="token-tool-key"
-            className="tabular inline-flex min-w-0 items-center gap-1 text-vp-xs text-ink-2"
+            className="tabular inline-flex min-w-0 shrink items-center gap-1 text-vp-xs text-ink-2"
           >
             <span
               aria-hidden="true"
