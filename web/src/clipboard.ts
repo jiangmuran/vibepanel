@@ -66,7 +66,25 @@ function legacyCopy(text: string): boolean {
   ta.style.opacity = '0'
   ta.setAttribute('readonly', '')
   document.body.appendChild(ta)
+
+  // focus() before select(), and it is the whole bug.
+  //
+  // `select()` sets the selection *of that element*. What execCommand copies is
+  // the document's selection, and the document's selection follows focus --
+  // which in this panel is xterm's hidden textarea, always, because that is how
+  // a web terminal receives keystrokes. So select() moved a selection nobody
+  // was looking at, execCommand copied the focused element's empty one, and
+  // **returned true**. Nothing reached the clipboard and the call said it had.
+  //
+  // Not reproducible headless, and that is worth writing down rather than
+  // claiming a fix: with and without focus(), a headless Chromium reports the
+  // same document selection, because nothing there competes for focus. What is
+  // certain is that focus() before select() is the form this trick has to take
+  // -- select() on an unfocused element is unreliable across browsers -- and
+  // that this panel always has a competitor, by construction.
+  const had = document.activeElement as HTMLElement | null
   try {
+    ta.focus({ preventScroll: true })
     ta.select()
     ta.setSelectionRange(0, text.length)
     return document.execCommand('copy')
@@ -74,5 +92,8 @@ function legacyCopy(text: string): boolean {
     return false
   } finally {
     ta.remove()
+    // Back to the terminal. Without this a copy costs the keyboard: the next
+    // keystroke goes to a textarea that no longer exists.
+    had?.focus?.({ preventScroll: true })
   }
 }

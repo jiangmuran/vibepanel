@@ -1150,18 +1150,27 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               type="button"
               data-testid="clipboard-offer"
               onClick={() => {
-                copyTextInGesture(blockedClip)
+                // On the result, not on having tried.
+                //
+                // This said "copied" unconditionally, with a comment claiming
+                // the button vanishing was what reported success. It was
+                // reporting that a function had been called -- and the
+                // function was failing, so the panel cheerfully confirmed a
+                // copy that never happened. A message about an outcome has to
+                // come from the outcome.
+                copyTextInGesture(blockedClip, (ok) => {
+                  showToast(
+                    ok
+                      ? { kind: 'success', key: 'toast.copied' }
+                      : { kind: 'error', key: 'toast.copyFailed' },
+                  )
+                })
                 setBlockedClip('')
-                // The click is the whole point of this button -- it is what
-                // makes the write legal -- so the button vanishing is the only
-                // thing that ever said it worked.
-                showToast({ kind: 'success', key: 'toast.copied' })
               }}
               className="absolute top-2 left-1/2 z-10 -translate-x-1/2 rounded-vp border border-hairline px-3 py-1.5 text-vp-sm vp-solid hover:text-ink"
               title={t('app.clipboardRefused')}
             >
-              The terminal copied {blockedClip.length} character
-              {blockedClip.length === 1 ? '' : 's'} — click to put it on your clipboard
+              {t('app.clipboardOffer', { n: blockedClip.length })}
             </button>
           )}
           {current ? (
