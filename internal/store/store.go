@@ -464,6 +464,12 @@ var migrations = []func(tx *sql.Tx) error{
 
 	// v14: the VNC displays the panel is allowed to reach.
 	//
+	// **Superseded by v17, which drops this table.** It is kept, in full,
+	// because migrations are positional: removing this entry would renumber
+	// every step after it rather than remove a step. The rest of the comment
+	// is why the table looked the way it did, and it is left as written --
+	// `store.VncTarget` and the handler it describes are gone.
+	//
 	// A table rather than a row in `settings`, which is where the webhook list
 	// lives. The difference is that a webhook is only ever read as a whole
 	// list by the code that fires all of them, while a display is fetched by
@@ -579,6 +585,36 @@ var migrations = []func(tx *sql.Tx) error{
 			if _, err := tx.Exec(stmt); err != nil {
 				return fmt.Errorf("%s: %w", stmt, err)
 			}
+		}
+		return nil
+	},
+
+	// v17: drop vnc_targets, because the feature it belonged to is gone.
+	//
+	// Two halves to this, and the first is why v14 above is still here in
+	// full even though nothing reads the table it creates. Migrations are
+	// positional -- `schemaVersion = len(migrations)`, and `migrate` applies
+	// `migrations[v]` for each v the database is behind -- so deleting v14
+	// would not remove a step, it would renumber every step after it. A
+	// database sitting at 14 would then be declared up to date while missing
+	// launch profiles' successors: share remarks, session events, and this.
+	// Retracting a feature never means editing history; it means adding to it.
+	//
+	// The second half is why this step exists at all, rather than leaving an
+	// unread table behind. `vnc_targets.password` held VNC passwords **in the
+	// clear**. That was a defensible trade while something read them -- see
+	// v14, and the argument that eight bytes verified by single-DES is not a
+	// secret worth encrypting beside its own key -- and it is not defensible
+	// for a column nothing will ever read again. A retracted feature that
+	// leaves credentials in everybody's database has not been retracted, it
+	// has been abandoned. DROP is the only version of this that is finished.
+	//
+	// IF EXISTS because both orderings have to work: a database upgraded from
+	// v13 runs v14's CREATE and then this DROP, and one that somehow lacks the
+	// table must not fail on a name it never had.
+	func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`DROP TABLE IF EXISTS vnc_targets`); err != nil {
+			return fmt.Errorf("drop vnc_targets: %w", err)
 		}
 		return nil
 	},

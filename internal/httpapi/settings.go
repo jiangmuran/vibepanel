@@ -76,12 +76,6 @@ type settingsResponse struct {
 	PasskeysUsable bool   `json:"passkeysUsable"`
 	PasskeyReason  string `json:"passkeyReason,omitempty"`
 	Username       string `json:"username"`
-
-	// VNCEnabled says whether the VNC routes exist at all. The settings
-	// section is hidden when they do not -- not because hiding it protects
-	// anything, the routes are simply absent, but because a form that posts
-	// into a 404 is worse than no form.
-	VNCEnabled bool `json:"vncEnabled"`
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +121,6 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		TLSMode: string(s.Cfg.TLSMode), Domain: s.Cfg.Domain,
 
 		PasskeysUsable: s.Cfg.PasskeysUsable(),
-		VNCEnabled:     s.VNCEnabled,
 	}
 	if s.CertExpiry != nil {
 		if at := s.CertExpiry(); !at.IsZero() {

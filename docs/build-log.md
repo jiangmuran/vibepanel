@@ -16736,3 +16736,104 @@ mistake, and the first attempt made it before `tsc` said so.
 The allowlist holds two entries and each is a file loaded rather than imported:
 `main.tsx` by `index.html`, `panes-harness.tsx` by the harness page that ships
 nowhere. `novnc.d.ts` and `vite-env.d.ts` are ambient types.
+
+## Taking VNC back out
+
+> vnc服务端收口
+
+The end of a sequence rather than a decision on its own. VNC shipped on
+2026-08-27 as an RFB proxy — 4,179 lines in one commit. The tab went a day
+later («暂时用不上 别占用右栏的地方») and `--vnc` was added so the routes would
+not exist unless somebody asked. Then `wired.test.ts` found `VncView.tsx`
+imported by nothing: the viewer had gone with the tab, and it was deleted.
+
+Which left `--vnc` switching on a proxy, a policy, a store table and a settings
+page **with no viewer anywhere**. That is worse than either having the feature
+or not having it: the flag is documented, the settings section renders, a
+display can be added and saved, and there is nothing that can display it. So
+the server half goes too.
+
+Gone: `internal/vnc` (policy, proxy, the RFB handshake, their tests),
+`internal/httpapi/vnc.go` and its suite, `internal/store/vnc.go`, the `--vnc`
+and `--vnc-allow` flags with their validation, the `vncEnabled` field on the
+settings payload, `VncDisplays.tsx`, `panels/vnc.ts`, `novnc.d.ts`, the
+`@novnc/novnc` dependency, twenty-two dictionary keys, the `docs/api.md`
+section and the flag rows in both READMEs. About 3,150 lines deleted, and the
+binary went from **26,155,969 to 26,034,235 bytes — 121,734 bytes smaller**, of
+which 7,366 is the frontend bundle (the noVNC chunk itself went with `VncView`
+a commit earlier) and the rest is `internal/vnc` and the handlers around it. A
+feature nobody could use was costing 119 KB in every release archive.
+
+### The migration stays; a new one drops the table
+
+`internal/store/store.go` numbers migrations by **position** —
+`schemaVersion = len(migrations)`, and `migrate` applies `migrations[v]` for
+each `v` the database is behind. So deleting v14, the step that created
+`vnc_targets`, does not remove a step: it renumbers every step after it. A
+database sitting at 14 would then be told it is current while missing share
+remarks, session events and everything since. Retracting a feature never means
+editing history.
+
+The alternative — leave v14 alone and let the empty table sit there — is what
+tidiness would have accepted and it is wrong for a different reason.
+`vnc_targets.password` held VNC passwords **in the clear**. That was defensible
+while something read them (the argument is in v14's comment: eight bytes
+verified by single-DES, no key on the machine that is not in the same 0600
+directory as the database), and it is not defensible for a column nothing will
+ever read again. A retraction that leaves credentials in everybody's database
+is not a retraction.
+
+So **v17: `DROP TABLE IF EXISTS vnc_targets`**, and the comment on it says both
+halves, because the next person to look at v14 will wonder why a dead table's
+creation is still in the list.
+
+### One flag refused, one variable reported, and the difference is the point
+
+Two upgrade paths break, and they get opposite treatment.
+
+`VIBEPANEL_VNC_ALLOW` in a unit file now names a variable nothing reads.
+Nothing had to be built for this: `envOverlay` already collects every
+`VIBEPANEL_*` it did not consume into `UnknownEnv`, and `main` prints them
+above the setup token where they cannot be scrolled past. A test now pins the
+retired name specifically, because this is the one case where the variable
+*used* to be applied — the operator's outbound allowlist is silently not there
+any more, and that is exactly the class of failure the warning exists for.
+
+`--vnc` on a command line is refused: `flag provided but not defined: -vnc`,
+usage, and the panel does not start. The tempting kindness is to accept it and
+ignore it for a version so nobody's service fails after an upgrade. It is the
+wrong kindness — a panel that starts on `--vnc` is one whose operator believes
+they have a viewer that is not in the binary, which is the same silent-inert
+failure, except a flag can do better than a warning because it is refused
+before anything starts. The environment cannot be treated that way: an unknown
+`VIBEPANEL_*` name may belong to a newer build, and refusing to start over one
+would make every rename a breaking change. A flag has an author, a machine that
+visibly failed to come up, and an error naming the word to delete.
+
+### What had to stay
+
+`RETIRED_TABS` keeps `'vnc'`, and the feature being gone *entirely* is the
+reason it stays rather than a reason to remove it. What that list names is a
+string sitting in somebody's `localStorage` right now; a saved layout naming a
+tab that will never come back is precisely the layout the repair path has to
+handle. Nothing is ever removed from that list — it only grows.
+
+`docs/api.md` failed the build on its own, which is what it is for:
+`TestTheAPIDocCoversEveryRoute` named all five routes the paragraph still
+documented and the router no longer had. `wired.test.ts` went quieter by one
+allowlist entry, as removing a feature should. Nothing in either installer
+mentioned the flags, so `install-check` needed no edit. There is no test
+anywhere that reports an *unused* dictionary key — `i18n.untranslated.test.ts`
+scans sources for English literals and `i18n.prose.test.ts` measures length;
+both are blind to an orphan, so the twenty-two keys were removed by hand and
+nothing would have complained if they had not been.
+
+### Mutations
+
+`scripts/mutate-vnc.py`, seven mutations, **7 run, 0 survived**: the migration
+running and dropping nothing; dropping a misspelled name; `DELETE FROM` instead
+of `DROP TABLE`, which empties the rows and leaves the password column; v14
+deleted rather than superseded (the renumbering, and the store suite fatals
+because there is no v17 to test); `VIBEPANEL_VNC_ALLOW` added to the list of
+names `envOverlay` skips; `--vnc` re-registered as accepted-and-ignored; and
+`'vnc'` taken out of `RETIRED_TABS`.
