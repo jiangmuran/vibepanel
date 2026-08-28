@@ -76,12 +76,35 @@ KillMode=process
 #
 # What is worth keeping is the part that does not fight the job:
 NoNewPrivileges=yes
-ProtectClock=yes
 ProtectKernelTunables=yes
-ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictSUIDSGID=yes
 RestrictRealtime=yes
+
+# Not ProtectClock, and not ProtectKernelModules. They are the two on that list
+# that a *user* manager cannot apply, and applying them does not fail softly:
+#
+#   vibepanel.service: Failed to drop capabilities: Operation not permitted
+#   Failed at step CAPABILITIES spawning .../vibepanel
+#   status=218/CAPABILITIES
+#
+# Both work by shrinking CapabilityBoundingSet -- ProtectClock drops CAP_SYS_TIME
+# and CAP_WAKE_ALARM, ProtectKernelModules drops CAP_SYS_MODULE -- and shrinking
+# the bounding set needs CAP_SETPCAP, which a per-user systemd does not have. So
+# the unit never starts, on any machine, and it did not: this file was shipped,
+# installed and documented for weeks before anybody ran `systemctl --user start`
+# on it, because install-check drives a stub systemctl and never executes a unit.
+#
+# They also buy nothing here. A user process cannot set the clock or load a
+# module whatever the bounding set says; these two are hardening that only means
+# something to a unit that starts privileged. deploy/vibepanel-system.service
+# does start privileged, so it keeps them -- and that is the difference between
+# the two files, not an oversight in this one.
+#
+# ProtectKernelTunables stays: it is documented as implying a capability drop
+# too, and was measured to start clean in a user unit here. Measure before
+# adding another; the list above is what was tested, one directive at a time,
+# in a real unit file under a real user manager.
 
 # The database holds password hashes and passkey material.
 UMask=0077

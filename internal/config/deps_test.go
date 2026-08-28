@@ -2,6 +2,8 @@ package config
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -135,5 +137,101 @@ func TestUnitLeavesTheSessionsAlone(t *testing.T) {
 	default:
 		t.Fatalf("%s sets KillMode=%s; only `process` leaves the tmux server "+
 			"running (mixed was measured to kill the sessions too)", path, mode)
+	}
+}
+
+// The user unit has to actually start, which nothing checked until it did not.
+//
+// `deploy/vibepanel.service` shipped with `ProtectClock=yes` and
+// `ProtectKernelModules=yes` and could never start on any machine:
+//
+//	vibepanel.service: Failed to drop capabilities: Operation not permitted
+//	Failed at step CAPABILITIES spawning .../vibepanel
+//	status=218/CAPABILITIES
+//
+// Both shrink CapabilityBoundingSet, and shrinking it needs CAP_SETPCAP, which
+// a per-user systemd does not have. Everything around it was green:
+// `systemd-analyze verify` accepts the file, install-check drives a *stub*
+// systemctl on purpose -- it must not touch the real user manager, or a check
+// run would stop the panel of whoever is running it -- and both READMEs
+// documented the install. Nothing anywhere executed a unit.
+//
+// So this does, with a name that cannot collide and `/bin/true` in place of the
+// panel: what is under test is the `[Service]` block, not the program. The
+// directives are read out of the shipped file rather than restated here, or
+// this passes while the real unit rots.
+func TestTheUserUnitCanActuallyStart(t *testing.T) {
+	if _, err := exec.LookPath("systemctl"); err != nil {
+		t.Skip("no systemctl")
+	}
+	// A user manager, not merely the binary. Container and CI images often have
+	// systemd installed and no per-user instance to talk to.
+	out, err := exec.Command("systemctl", "--user", "is-system-running").CombinedOutput()
+	state := strings.TrimSpace(string(out))
+	if err != nil && state != "degraded" && state != "running" {
+		t.Skipf("no user manager to talk to: %q", state)
+	}
+
+	body, err := os.ReadFile("../../deploy/vibepanel.service")
+	if err != nil {
+		t.Fatalf("read the unit: %v", err)
+	}
+
+	// Everything in [Service] except what names the panel: ExecStart is
+	// replaced, and the restart and stop directives would make a oneshot look
+	// like a failure.
+	var keep []string
+	inService := false
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") {
+			inService = line == "[Service]"
+			continue
+		}
+		if !inService || line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "ExecStart="),
+			strings.HasPrefix(line, "Type="),
+			strings.HasPrefix(line, "Restart="),
+			strings.HasPrefix(line, "RestartSec="),
+			strings.HasPrefix(line, "EnvironmentFile="):
+			continue
+		}
+		keep = append(keep, line)
+	}
+	if len(keep) < 5 {
+		t.Fatalf("only %d [Service] directives were read out of the unit; the "+
+			"parse is broken and this test would pass by checking nothing", len(keep))
+	}
+
+	const name = "vibepanel-unitcheck-test.service"
+	dir := filepath.Join(os.Getenv("HOME"), ".config", "systemd", "user")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Skipf("cannot write a unit here: %v", err)
+	}
+	path := filepath.Join(dir, name)
+	unit := "[Unit]\nDescription=vibepanel unit check (test)\n\n[Service]\nType=oneshot\nExecStart=/bin/true\n" +
+		strings.Join(keep, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(unit), 0o644); err != nil {
+		t.Skipf("cannot write a unit here: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = exec.Command("systemctl", "--user", "stop", name).Run()
+		_ = os.Remove(path)
+		_ = exec.Command("systemctl", "--user", "daemon-reload").Run()
+	})
+	if err := exec.Command("systemctl", "--user", "daemon-reload").Run(); err != nil {
+		t.Skipf("daemon-reload: %v", err)
+	}
+
+	if out, err := exec.Command("systemctl", "--user", "start", name).CombinedOutput(); err != nil {
+		shown, _ := exec.Command("systemctl", "--user", "show", name,
+			"-p", "Result", "-p", "ExecMainStatus").CombinedOutput()
+		t.Fatalf("the shipped [Service] block does not start under a user manager.\n"+
+			"start: %v %s\n%s\ndirectives:\n  %s",
+			err, strings.TrimSpace(string(out)), strings.TrimSpace(string(shown)),
+			strings.Join(keep, "\n  "))
 	}
 }

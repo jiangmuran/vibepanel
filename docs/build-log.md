@@ -16021,3 +16021,55 @@ is.
   that would be one working-tree read per project per poll. If somebody wants
   that, it needs a `Need*` tag so a board that does not draw the widget does not
   pay for it.
+
+### The user unit could never have started, on any machine
+
+`systemctl --user start vibepanel` on the shipped unit:
+
+```
+vibepanel.service: Failed to drop capabilities: Operation not permitted
+Failed at step CAPABILITIES spawning /home/jmr/.local/bin/vibepanel
+status=218/CAPABILITIES
+```
+
+`ProtectClock=yes` and `ProtectKernelModules=yes`. Both work by shrinking
+`CapabilityBoundingSet` — the first drops `CAP_SYS_TIME` and `CAP_WAKE_ALARM`,
+the second `CAP_SYS_MODULE` — and shrinking the bounding set needs
+`CAP_SETPCAP`, which a per-user systemd does not have. Not a machine-specific
+failure and not a degradation: the unit does not start.
+
+They also bought nothing. A user process cannot set the clock or load a module
+whatever the bounding set says. They are hardening that only means something to
+a unit which starts privileged, which is why `vibepanel-system.service` keeps
+them — that is the difference between the two files rather than an oversight in
+one of them.
+
+**Everything around this was green.** `systemd-analyze verify` accepts the file.
+`TestUnitLeavesTheSessionsAlone` reads it and checks `KillMode`. `install-check`
+drives all six package managers, both service kinds, root and no root — with a
+**stub** `systemctl`, on purpose, because a check that drove the real user
+manager would stop the panel of whoever ran it. Both READMEs documented the
+install. The file had been shipped in a release. Nothing anywhere had executed a
+unit.
+
+`TestTheUserUnitCanActuallyStart` does, under the real user manager, with a name
+that cannot collide and `/bin/true` in place of the panel — what is under test
+is the `[Service]` block, not the program. It reads the directives out of the
+shipped file rather than restating them, or it would pass while the real unit
+rotted; it skips where there is no user manager to talk to; and it fails if the
+parse yields fewer than five directives, because a broken parse would otherwise
+pass by testing nothing. Three mutations, all red: each fatal directive put
+back, and the section parse pointed at a section that does not exist.
+
+`ProtectKernelTunables` stays. It is documented as implying a capability drop
+too and was measured to start clean here — which is the rule this leaves behind:
+measure the directive in a real unit under a real user manager before adding it,
+one at a time. That is how these two were found, after `systemd-run` with the
+same set had passed and sent me looking in the wrong place.
+
+Deployed at the same time: production was a bare `./vibepanel serve` run out of
+the repository working tree, so every `make build` swapped the binary under the
+running process. It is `~/.local/bin/vibepanel` now, stamped
+(`v0.1.0-22-g3a746c3` rather than `dev`/`none`), and the nine live sessions were
+byte-identical before and after the restart — which is the guarantee the whole
+architecture exists for, checked rather than assumed.
