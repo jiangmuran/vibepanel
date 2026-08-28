@@ -17,7 +17,6 @@ import { showToast } from './toasts'
 import { ShareLinks } from './ShareLinks'
 import { safeText } from './text'
 import { UpdateSection } from './UpdateSection'
-import { VncDisplays } from './VncDisplays'
 import { Webhooks } from './Webhooks'
 import { LaunchProfiles } from './LaunchProfiles'
 import { copyTextInGesture } from '../clipboard'
@@ -214,11 +213,6 @@ export function Settings({ onClose }: { onClose: () => void }) {
           <LaunchProfiles />
         </Section>
 
-        {info?.vncEnabled && (
-          <Section title={t('vnc.title')}>
-            <VncDisplays />
-          </Section>
-        )}
         <UpdateBlock />
         {info && <StatusSection info={info} />}
         <HooksSection />

@@ -502,8 +502,6 @@ win. A `VIBEPANEL_*` variable nothing reads is reported at startup and by
 | `--trusted-proxies` | — | CIDRs whose `X-Forwarded-For` may be believed |
 | `--tmux-socket` | `vibepanel` | keep it dedicated to stay isolated |
 | `--static-dir` | — | serve the frontend from disk instead of the embedded build |
-| `--vnc` | off | turn on the built-in VNC proxy; off means its routes do not exist |
-| `--vnc-allow` | — | CIDRs the VNC proxy may connect out to; empty means loopback only |
 
 The binary is also the admin CLI: `serve`, `project`, `session`, `hook`,
 `service`, `account`, `doctor` and `version`. `doctor` prints fifteen checks and
@@ -577,8 +575,3 @@ binary and photographing it.
 ## License
 
 [MIT](LICENSE).
-
-The frontend depends on [noVNC](https://github.com/novnc/noVNC), unmodified,
-under the [MPL-2.0](https://github.com/novnc/noVNC/blob/master/LICENSE.txt).
-That licence is per-file, so it covers noVNC's own files and nothing around
-them; its source is at the link above.

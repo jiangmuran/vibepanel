@@ -80,25 +80,6 @@ type Config struct {
 	// internet-facing deployment, not a requirement for a local one.
 	AllowFrom []string
 
-	// VNC turns the built-in VNC viewer on. Off by default, and off means the
-	// routes are never registered rather than a tab being hidden: this is the
-	// one place the panel opens an outbound TCP connection on a browser's
-	// say-so, and a capability nobody asked for should not be reachable at
-	// all. The same shape as red line 8 -- what a caller can do is decided by
-	// which routes exist, not by a flag a handler is supposed to consult.
-	VNC bool
-
-	// VNCAllow lists the CIDRs the built-in VNC viewer may connect out to.
-	// Empty means loopback and nothing else.
-	//
-	// The opposite default from AllowFrom, one field above it, and the
-	// difference is the point. AllowFrom narrows who may reach a panel that
-	// works without it; this decides where this process will send bytes on
-	// somebody else's behalf, and an unconfigured panel must not be one that
-	// can be walked across the network it sits on. internal/vnc.Policy is
-	// where it is enforced and carries the longer argument.
-	VNCAllow []string
-
 	// UnknownEnv lists VIBEPANEL_* variables that nothing here reads. Not an
 	// error — a future version may add names this build does not know — but
 	// worth saying out loud, because the failure mode is a setting that
@@ -179,12 +160,6 @@ func (c *Config) envOverlay() {
 		seen[key] = true
 		if v, ok := os.LookupEnv(key); ok && v != "" {
 			c.AllowFrom = splitAndTrim(v)
-		}
-	}
-	for _, key := range []string{"VIBEPANEL_VNC_ALLOW"} {
-		seen[key] = true
-		if v, ok := os.LookupEnv(key); ok && v != "" {
-			c.VNCAllow = splitAndTrim(v)
 		}
 	}
 	// Anything else starting with VIBEPANEL_ is almost certainly a typo or a
@@ -289,15 +264,6 @@ func (c Config) Validate() error {
 	for _, cidr := range c.AllowFrom {
 		if _, _, err := net.ParseCIDR(cidr); err != nil {
 			return fmt.Errorf("config: allow-from %q is not a CIDR: %w", cidr, err)
-		}
-	}
-	// Refused at startup rather than at the first connection. A typo here is
-	// silently a *narrower* policy than the operator wrote, and the symptom is
-	// one display that will not open weeks later — by which time nobody is
-	// looking at the flag.
-	for _, cidr := range c.VNCAllow {
-		if _, _, err := net.ParseCIDR(cidr); err != nil {
-			return fmt.Errorf("config: vnc-allow %q is not a CIDR: %w", cidr, err)
 		}
 	}
 	return nil

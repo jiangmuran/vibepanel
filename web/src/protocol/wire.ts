@@ -542,8 +542,6 @@ export interface SettingsInfo {
   passkeysUsable: boolean
   passkeyReason?: string
   username: string
-  /** Whether the VNC routes exist. Off by default; off means absent, not hidden. */
-  vncEnabled: boolean
 }
 
 /** Which agent an install request is about. The server accepts these two and
@@ -1252,31 +1250,6 @@ export interface WebhookTest {
   /** What the destination replied, bounded. */
   said: string
   error?: string
-}
-
-/**
- * One VNC display the panel knows how to reach.
- *
- * There is no `password` here and there is not meant to be. The server stores
- * one and never sends it back; `hasPassword` is the only thing this side is
- * told about it. Declaring the field would type-check forever and be
- * `undefined` at runtime, which is the exact drift
- * TestTypeScriptRowsMatchWhatIsSent exists to catch — and here it would look
- * like a password the browser is holding.
- *
- * `host` and `port` are shown so somebody can see what a row points at. They
- * are never sent back to open a connection: the socket takes the id, and the
- * server reads the address out of its own row.
- */
-export interface VncTarget {
-  id: string
-  name: string
-  host: string
-  port: number
-  /** Enforced at the proxy. The client is not where this can be decided. */
-  viewOnly: boolean
-  hasPassword: boolean
-  createdAt: number
 }
 
 /** One path the working tree has something to say about. */

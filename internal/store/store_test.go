@@ -962,3 +962,107 @@ func TestMigrationV9RecordsWhatIsNeededToRebuildASession(t *testing.T) {
 		t.Errorf("the archive outlived its session: %d rows, %d bytes", n, bytes)
 	}
 }
+
+// v17 drops vnc_targets, and what it is really dropping is a column of
+// passwords in the clear.
+//
+// The VNC feature is gone -- proxy, policy, routes, settings page, flags. v14
+// stays, because migrations are positional and deleting one renumbers every
+// step after it; so the table it creates has to be taken away by a step of its
+// own, and this is the test that says the step does something. A migration
+// that ran and dropped nothing is indistinguishable from one that was never
+// written, exactly like the audit rename above.
+//
+// Two databases, because the two failures are different. A fresh one proves
+// the DROP outlives the CREATE three steps earlier. An upgraded one proves the
+// passwords a user already has stop being in their database -- which is the
+// only reason this migration exists rather than an unread table being left to
+// sit there.
+//
+// The number is a literal for the reason every other migration test here says:
+// migrations are append-only, so len(migrations) moves and a relative index
+// starts checking whatever was added last.
+func TestMigrationV17DropsTheVncTableAndItsPasswords(t *testing.T) {
+	ctx := context.Background()
+
+	const dropVnc = 17
+	if len(migrations) < dropVnc {
+		t.Fatalf("there are %d migrations and this test wants v%d", len(migrations), dropVnc)
+	}
+
+	// A fresh database runs v14's CREATE and then this DROP.
+	if n := tableCount(t, openTest(t), "vnc_targets"); n != 0 {
+		t.Errorf("a database created by this build still has vnc_targets. Nothing reads it, "+
+			"and its password column was in the clear (found %d)", n)
+	}
+
+	// A database from before this build, with a display and a password in it,
+	// which is what an upgrade actually finds.
+	path := filepath.Join(t.TempDir(), "old.db")
+	raw, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)")
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	tx, err := raw.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < dropVnc-1; i++ {
+		if err := migrations[i](tx); err != nil {
+			t.Fatalf("apply v%d: %v", i+1, err)
+		}
+	}
+	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", dropVnc-1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`
+		INSERT INTO vnc_targets (id, name, host, port, view_only, password, created_at)
+		VALUES ('v1','desk','127.0.0.1',5900,0,'hunter2',1)`); err != nil {
+		t.Fatalf("seed display: %v", err)
+	}
+	// A row the upgrade must NOT take with it, so a DROP that reached for the
+	// wrong name cannot pass this by wrecking the database instead.
+	if _, err := raw.Exec(
+		`INSERT INTO projects (id, name, path, last_active_at, created_at) VALUES ('p1','Keep','/tmp',1,1)`,
+	); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	raw.Close()
+
+	db, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open: a database written before this build no longer opens: %v", err)
+	}
+	defer db.Close()
+
+	if v, verr := db.Version(ctx); verr != nil || v != schemaVersion {
+		t.Fatalf("version = %d (err %v), want %d", v, verr, schemaVersion)
+	}
+	if n := tableCount(t, db, "vnc_targets"); n != 0 {
+		t.Errorf("vnc_targets survived the upgrade. It holds VNC passwords in the clear and "+
+			"nothing in this build will ever read them again (found %d)", n)
+	}
+	ps, err := db.ListProjects(ctx)
+	if err != nil {
+		t.Fatalf("ListProjects: %v", err)
+	}
+	if len(ps) != 1 || ps[0].Name != "Keep" {
+		t.Errorf("the upgrade did not leave the rest of the database alone: %+v", ps)
+	}
+}
+
+// tableCount reports how many tables of that name sqlite_master holds: 1 while
+// it exists, 0 once it does not.
+func tableCount(t *testing.T, db *DB, name string) int {
+	t.Helper()
+	var n int
+	if err := db.sql.QueryRowContext(context.Background(),
+		`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?`,
+		name).Scan(&n); err != nil {
+		t.Fatalf("look for %s: %v", name, err)
+	}
+	return n
+}

@@ -43,6 +43,13 @@ export type PanelTab = (typeof PANEL_TABS)[number]
  * were actually in people's browsers rather than a plausible-looking
  * invention, and so the next tab that is retired is added here rather than
  * quietly relied upon to behave the same way.
+ *
+ * `vnc` stays on this list although the feature behind it is gone entirely --
+ * the proxy, the flag, the settings page and the table, not only the tab. That
+ * is the reason it stays rather than a reason to take it off: what this list
+ * names is a string sitting in somebody's browser today, and a saved layout
+ * naming a tab that will never come back is exactly the layout the repair path
+ * has to handle. Nothing is ever removed from here; it only grows.
  */
 export const RETIRED_TABS = ['git', 'todos', 'vnc', 'monitor', 'tokens'] as const
 

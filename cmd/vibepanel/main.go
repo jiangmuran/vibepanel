@@ -34,7 +34,6 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/tmux"
 	"github.com/jiangmuran/vibepanel/internal/usage"
 	"github.com/jiangmuran/vibepanel/internal/version"
-	"github.com/jiangmuran/vibepanel/internal/vnc"
 	"github.com/jiangmuran/vibepanel/internal/webui"
 	"github.com/jiangmuran/vibepanel/internal/ws"
 )
@@ -195,10 +194,6 @@ func cmdServe(args []string) error {
 	if err != nil {
 		return fmt.Errorf("allow-from: %w", err)
 	}
-	vncAllow, err := auth.ParseCIDRs(a.cfg.VNCAllow)
-	if err != nil {
-		return fmt.Errorf("vnc-allow: %w", err)
-	}
 
 	srv := &httpapi.Server{
 		Cfg: a.cfg, DB: a.db, Tmux: a.tmux, Manager: mgr,
@@ -210,9 +205,7 @@ func cmdServe(args []string) error {
 			Allow:          allow,
 			BlockedAudit:   auth.NewCooldown(time.Minute),
 		},
-		VNC:        vnc.Policy{Allow: vncAllow},
-		VNCEnabled: a.cfg.VNC,
-		Log:        logger,
+		Log: logger,
 	}
 
 	// Token usage reads the agents' own transcripts out of the home directory
@@ -289,13 +282,6 @@ func cmdServe(args []string) error {
 	}
 	if len(allow) > 0 {
 		fmt.Printf("  allowed from %s\n", strings.Join(a.cfg.AllowFrom, ", "))
-	}
-	// Printed whenever it is not the default, because widening it is the one
-	// setting on this list that lets the panel make connections somebody else
-	// did not expect, and a line at startup is where an operator sees what
-	// they actually asked for.
-	if len(vncAllow) > 0 {
-		fmt.Printf("  vnc reaches  %s\n", strings.Join(a.cfg.VNCAllow, ", "))
 	}
 	// Loud, and above the setup token where it cannot be scrolled past. A
 	// misspelled VIBEPANEL_TLS is a panel serving plaintext on a public port

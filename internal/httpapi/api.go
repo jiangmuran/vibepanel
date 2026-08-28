@@ -32,7 +32,6 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/tmux"
 	"github.com/jiangmuran/vibepanel/internal/usage"
 	"github.com/jiangmuran/vibepanel/internal/version"
-	"github.com/jiangmuran/vibepanel/internal/vnc"
 	"github.com/jiangmuran/vibepanel/internal/webui"
 	"github.com/jiangmuran/vibepanel/internal/ws"
 )
@@ -51,20 +50,6 @@ type Server struct {
 	// Server has a working one; see TreeSampler below for the same reasoning.
 	Updater selfupdate.Client
 
-	// VNC decides which addresses the panel may open a TCP connection to on a
-	// browser's behalf.
-	//
-	// A value, and the zero value is loopback-only. Same reasoning as
-	// TreeSampler, with a sharper edge: a pointer would make "nobody set it"
-	// a nil dereference or, worse, a nil check that falls through to no
-	// policy at all. The zero value here is the strictest setting, so a Server
-	// assembled by hand -- in a test, or by a caller that has not been updated
-	// -- fails closed rather than open.
-	VNC vnc.Policy
-
-	// VNCEnabled gates whether the VNC routes are registered at all. False is
-	// the default, and false means they are absent rather than guarded.
-	VNCEnabled bool
 	// GitHub queries pull requests, when somebody presses the button that asks
 	// it to. A value with a zero Endpoint, which means api.github.com; tests
 	// point it at an httptest server, and nothing else sets it.
@@ -378,18 +363,6 @@ func (s *Server) Routes() http.Handler {
 
 			s.registerLaunchProfileRoutes(r)
 			s.registerPanelRoutes(r)
-			// Inside the group, and it has to stay there. This is the one
-			// place the panel opens an outbound TCP connection on a browser's
-			// say-so; a route that reached it without a session would be a
-			// port scanner anybody could point at this machine's networks.
-			//
-			// And off unless asked for. Not a hidden tab -- the routes do not
-			// exist, so a panel nobody turned it on for answers 404 to every
-			// one of them. Hiding a control is a decision the frontend makes;
-			// this is one the router makes.
-			if s.VNCEnabled {
-				s.registerVncRoutes(r)
-			}
 			s.registerGitRoutes(r)
 			s.registerUpdateRoutes(r)
 			s.registerWebhookRoutes(r)

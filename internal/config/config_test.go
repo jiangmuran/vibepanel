@@ -174,6 +174,59 @@ func TestMisspelledEnvIsReported(t *testing.T) {
 	}
 }
 
+// A setting whose feature has been removed reads exactly like a misspelling,
+// and it has to.
+//
+// VNC is gone. Nobody is going to edit a unit file because a release note said
+// to, so the upgrade this has to survive is a machine that starts with
+// `Environment=VIBEPANEL_VNC_ALLOW=10.0.0.0/8` still in it. The panel starts --
+// this is not a fatal error, a future version may add names this build does
+// not know -- but it says the line is doing nothing, which is the whole point
+// of the report: a security setting that is inert and looks applied is the
+// failure this mechanism exists for, and a retired name is the one case where
+// it *used* to be applied.
+func TestARetiredSettingIsReportedRatherThanIgnored(t *testing.T) {
+	t.Setenv("VIBEPANEL_VNC_ALLOW", "10.0.0.0/8")
+	c := Default()
+	c.envOverlay()
+
+	if len(c.UnknownEnv) != 1 || c.UnknownEnv[0] != "VIBEPANEL_VNC_ALLOW" {
+		t.Errorf("UnknownEnv = %v, want exactly [VIBEPANEL_VNC_ALLOW]. A name that was read "+
+			"by the previous release and is read by nothing now has to be said out loud, "+
+			"or the operator's allowlist is silently not there any more.", c.UnknownEnv)
+	}
+}
+
+// A retired *flag* is refused, and that is the opposite treatment from the
+// environment variable above. The difference is deliberate and this pins it.
+//
+// The tempting kindness is to keep accepting `--vnc` and do nothing with it for
+// a version, so an upgrade does not stop a panel. It is the wrong kindness:
+// there is no viewer, no proxy and no settings page any more, so a panel that
+// starts on `--vnc` is one whose operator believes they have a feature that is
+// not in the binary -- which is precisely the "a setting that is not applied
+// looks exactly like one that is" failure the UnknownEnv warning exists for,
+// except a flag can do better than a warning because a flag is refused before
+// anything starts.
+//
+// The environment cannot be treated that way: a VIBEPANEL_* name this build
+// does not know may belong to a newer one, and refusing to start over a
+// variable would make every rename a breaking change. A flag typed on a command
+// line has an author, a machine that failed to come up, and `flag provided but
+// not defined: -vnc` naming the word to delete.
+func TestTheRetiredVncFlagsAreRefusedRatherThanAcceptedAndIgnored(t *testing.T) {
+	for _, args := range [][]string{
+		{"--domain", "localhost", "--vnc"},
+		{"--domain", "localhost", "--vnc-allow", "10.0.0.0/8"},
+	} {
+		if _, err := Load(args, io.Discard); err == nil {
+			t.Errorf("%v was accepted. A flag that is taken and ignored leaves an operator "+
+				"believing the panel has a VNC viewer; there is no longer any code behind "+
+				"the word.", args)
+		}
+	}
+}
+
 // Flags have to be able to override the environment, including downwards.
 //
 // The ordering exists so that somebody debugging a unit-managed instance can
@@ -325,87 +378,5 @@ func TestPlaintextOnANetworkIsNoticed(t *testing.T) {
 			t.Errorf("Addr=%q TLSMode=%q: PlaintextOnANetwork() = %v, want %v",
 				tc.addr, tc.tls, got, tc.want)
 		}
-	}
-}
-
-// --vnc-allow is the one flag whose default is the strict setting, so both
-// directions of the flag/environment precedence matter for a different reason
-// than --allow-from's.
-//
-// There, clearing the flag opens the panel up and the failure is being locked
-// out. Here, clearing it closes the panel down: an operator who has widened the
-// VNC policy in a unit file and wants to take it back to loopback for one run
-// has to be able to say so on the command line. Testing the flag for emptiness
-// instead of asking whether it was typed makes that a no-op — which is the bug
-// its neighbour --allow-from already had once.
-func TestVncAllowCanBeClearedFromTheCommandLine(t *testing.T) {
-	t.Setenv("VIBEPANEL_VNC_ALLOW", "10.0.0.0/8")
-
-	kept, err := Load([]string{"--domain", "localhost"}, io.Discard)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if len(kept.VNCAllow) != 1 || kept.VNCAllow[0] != "10.0.0.0/8" {
-		t.Errorf("the environment was not applied: %v", kept.VNCAllow)
-	}
-
-	cleared, err := Load([]string{"--domain", "localhost", "--vnc-allow="}, io.Discard)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if len(cleared.VNCAllow) != 0 {
-		t.Errorf("an emptied --vnc-allow left %v; a policy cannot be narrowed from the "+
-			"command line", cleared.VNCAllow)
-	}
-}
-
-// A typo here is silently a narrower policy than was written, and the symptom
-// is one display that will not open, weeks later. Refused at startup instead.
-func TestVncAllowMustBeCIDRs(t *testing.T) {
-	if _, err := Load([]string{"--domain", "localhost", "--vnc-allow", "192.168.1.1"}, io.Discard); err == nil {
-		t.Error("a bare address was accepted as a CIDR")
-	}
-	if _, err := Load([]string{"--domain", "localhost", "--vnc-allow", "192.168.1.0/24,10.0.0.0/8"},
-		io.Discard); err != nil {
-		t.Errorf("a valid list was refused: %v", err)
-	}
-}
-
-// The default is the inversion of --allow-from's, and it is worth a test of its
-// own because the two sit next to each other in the flag table and read as a
-// pair. Empty here is what internal/vnc.Policy reads as loopback-only.
-func TestVncAllowDefaultsToNothing(t *testing.T) {
-	c, err := Load([]string{"--domain", "localhost"}, io.Discard)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if len(c.VNCAllow) != 0 {
-		t.Errorf("VNCAllow defaults to %v, which is not the strict setting", c.VNCAllow)
-	}
-}
-
-// The VNC viewer is off unless asked for, and this is the test that says so.
-//
-// Nothing else did: removing the gate in the router is caught, but flipping
-// the flag's own default to true passed every test in the tree. That is the
-// mutation that matters most, because it is the one that ships a capability
-// nobody asked for while every check stays green -- the routes exist, they
-// work, and the tests that exercise them are happier than before.
-func TestTheVncViewerIsOffUnlessAskedFor(t *testing.T) {
-	c, err := Load([]string{"--domain", "localhost"}, io.Discard)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if c.VNC {
-		t.Error("a panel nobody configured has the VNC viewer on. It dials out " +
-			"to a host and port on a browser's say-so; that is not a default.")
-	}
-
-	on, err := Load([]string{"--domain", "localhost", "--vnc"}, io.Discard)
-	if err != nil {
-		t.Fatalf("Load --vnc: %v", err)
-	}
-	if !on.VNC {
-		t.Error("--vnc did not turn it on, so the check above proves nothing")
 	}
 }

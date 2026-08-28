@@ -10,7 +10,10 @@ import { join } from 'node:path'
  * settings toggle asked for notification permission, stored a boolean and
  * promised something that could never happen. `panels/VncView.tsx` was a whole
  * viewer left behind when its tab was retired, sitting next to a working proxy,
- * a `--vnc` flag and a settings page for displays.
+ * a `--vnc` flag and a settings page for displays -- which is what this test
+ * finding it started: a viewer nothing imported turned out to be the only half
+ * of that feature anybody would have noticed missing, and the rest of it has
+ * since been taken out too.
  *
  * Neither is a compile error, neither is a lint error, and both survived
  * review. What found them was reading the README against the code, by hand.
@@ -24,7 +27,6 @@ const ROOT = new URL('.', import.meta.url).pathname
 const EXPECTED_UNIMPORTED = new Set([
   'main.tsx', // the entry point; index.html loads it by URL
   'vite-env.d.ts', // ambient types, referenced by tsc rather than imported
-  'novnc.d.ts', // the same, for the vendored viewer
   'panes-harness.tsx', // panes-harness.html loads it; it ships nowhere
 ])
 

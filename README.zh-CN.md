@@ -398,8 +398,6 @@ CLOUDFLARE_API_TOKEN=… vibepanel --domain panel.example.com \
 | `--trusted-proxies` | — | 其 `X-Forwarded-For` 可信的 CIDR |
 | `--tmux-socket` | `vibepanel` | 保持专用，才谈得上隔离 |
 | `--static-dir` | — | 从磁盘而不是内嵌产物提供前端 |
-| `--vnc` | 关 | 打开内置 VNC 代理；不打开时它的路由根本不存在 |
-| `--vnc-allow` | — | VNC 代理可以外连的 CIDR；空表示只允许回环地址 |
 
 同一个二进制也是管理 CLI：`serve`、`project`、`session`、`hook`、`service`、`account`、
 `doctor`、`version`。`doctor` 一次打印十五项检查，不会遇到第一个失败就停：tmux 和它的版本、
@@ -465,7 +463,3 @@ tmux 封装是拿真的 tmux 在一个一次性 socket 上测的，不是 mock�
 ## 许可证
 
 [MIT](LICENSE)。
-
-前端依赖 [noVNC](https://github.com/novnc/noVNC)，未作修改，遵循
-[MPL-2.0](https://github.com/novnc/noVNC/blob/master/LICENSE.txt)。该许可证按文件生效，
-只覆盖 noVNC 自己的文件；源码见上面的链接。

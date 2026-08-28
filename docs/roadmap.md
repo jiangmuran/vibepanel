@@ -277,7 +277,8 @@
       `git commit` 的时候拿走 `.git/index.lock`，**失败的是 agent**。原本的说明保留在下面：
       文件预览做了（文本/图片/PDF），
       GitHub 那半没有。
-- [x] **U3 内置 VNC。** 面板是 **RFB 代理**，不是 VNC 客户端：浏览器走 WebSocket，
+- [x] ~~**U3 内置 VNC。**~~ **整体撤回了，见 X2。**下面留作记录：
+      面板是 **RFB 代理**，不是 VNC 客户端：浏览器走 WebSocket，
       VNC server 走 TCP，字节只在 `internal/httpapi/vnc.go` 一个地方过。握手两头都由面板
       终结——它拿存下来的密码去跟 display 认证，然后对浏览器只 offer RFB 3.8 + security
       type `None`，所以那 8 个字节从来没进过浏览器。ClientInit 之后原样对拷，编码
@@ -484,8 +485,12 @@ Passkey + 密码 ✅ · 滑动复制 ✅
 - [ ] **X1 `bottom terminal` 那个间歇失败。** 后半段的原因找到了：断言要数两次
       `BOTTOM_TERMINAL_OK`，而**工作树路径长的时候 shell 提示符把回显的命令折了行**，
       字符串被切成两半，只剩一次匹配。修法是匹配前先把缓冲区的行接起来，不是调长等待。
-- [ ] **X2 VNC 没有任何浏览器检查覆盖**，而且现在 `--vnc` 打开的是「路由 + 设置页，没有查看器」
-      ——查看器随 tab 一起退役了。要么把它接回来（`--vnc` 打开时才出现那个 tab），要么把
-      服务端那半也收掉。
+- [x] **X2 VNC 服务端那半也收掉了。**「vnc服务端收口」——两条路里选了第二条。删掉的是
+      `internal/vnc`（policy / proxy / RFB 握手）、`internal/httpapi/vnc.go`、
+      `internal/store/vnc.go`、`--vnc` 和 `--vnc-allow`、设置页那一节、`novnc` 依赖，
+      一共约 2900 行。**`RETIRED_TABS` 里的 `'vnc'` 留着**：那是别人浏览器里现在就存着的
+      字符串，布局修复路径靠它。迁移**没有删 v14**——迁移是按位置编号的，删一条等于把后面
+      每一条都改号——而是新加了 v17 `DROP TABLE vnc_targets`：那张表的 `password` 列是**明文**
+      存的，功能都没了还把别人的密码留在库里，那不叫收口。
 - [ ] **X8 `docs/images/panel-dark.png` 落后一个版本**，画的还是五个 tab 的侧栏。
       重新截图是 `web/scripts/shots.mjs` 配一个新构建。
