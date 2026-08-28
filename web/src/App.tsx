@@ -52,6 +52,7 @@ import { focusTerminal } from './components/focus'
 import { RestoreDialog } from './components/RestoreDialog'
 import { LaunchPicker } from './components/LaunchPicker'
 import { filesFrom } from './components/upload'
+import { copyTextInGesture } from './clipboard'
 import { t, useLang } from './i18n'
 
 /**
@@ -1131,34 +1132,14 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             </div>
           )}
           {blockedClip && (
-            // Inside a click, so the write is allowed. execCommand is the
-            // fallback rather than a preference: over plain http there is no
-            // navigator.clipboard at all, and a self-hosted panel on a LAN
-            // address is exactly that.
+            // Inside a click, so the write is allowed -- which is the whole
+            // reason this button exists. See clipboard.ts for why the
+            // deprecated path is the one that works here.
             <button
               type="button"
               data-testid="clipboard-offer"
               onClick={() => {
-                const text = blockedClip
-                const legacy = () => {
-                  const ta = document.createElement('textarea')
-                  ta.value = text
-                  ta.style.position = 'fixed'
-                  ta.style.opacity = '0'
-                  document.body.appendChild(ta)
-                  ta.select()
-                  try {
-                    document.execCommand('copy')
-                  } finally {
-                    ta.remove()
-                  }
-                }
-                const clip = navigator.clipboard
-                if (clip) {
-                  void clip.writeText(text).catch(legacy)
-                } else {
-                  legacy()
-                }
+                copyTextInGesture(blockedClip)
                 setBlockedClip('')
                 // The click is the whole point of this button -- it is what
                 // makes the write legal -- so the button vanishing is the only

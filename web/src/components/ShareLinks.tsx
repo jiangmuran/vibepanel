@@ -9,13 +9,15 @@ import type {
   ShareCatalogue,
   ShareDetail,
   ShareLink,
+  SharePreset,
 } from '../protocol/wire'
 import type { Key } from '../i18n'
 import { t, useLang } from '../i18n'
 import { BoardEditor } from './BoardEditor'
-import { BoardPreview } from './BoardPreview'
+import { useBoardPreview } from './board/preview'
 import { presetLabel } from './board/labels'
 import { safeText } from './text'
+import { copyTextInGesture } from '../clipboard'
 
 /**
  * Read-only share links, and the place a screen on a wall is edited from.
@@ -172,6 +174,7 @@ export function ShareLinks() {
             preset: first.id,
             rotate: first.rotate,
             fill: first.fill,
+            density: first.density,
             widgets: [...first.widgets],
           })
         }
@@ -301,10 +304,7 @@ export function ShareLinks() {
               type="button"
               data-testid="share-copy"
               onClick={() => {
-                void navigator.clipboard?.writeText(fresh).then(
-                  () => setCopied(true),
-                  () => setCopied(false),
-                )
+                copyTextInGesture(fresh, setCopied)
               }}
               className="vp-press shrink-0 rounded-vp border border-hairline px-2 py-1.5 text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
             >
@@ -412,9 +412,12 @@ export function ShareLinks() {
           </div>
 
           {catalogue && board && (
-            <BoardEditor
+            <BoardEditorFor
+              linkID=""
               board={board}
               catalogue={catalogue}
+              viewportWidth={0}
+              viewportHeight={0}
               onChange={setBoard}
               // A preset can carry a disclosure decision. One of them is only
               // correct scoped to a single project with names off, because the
@@ -592,23 +595,60 @@ export function ShareLinks() {
                     {t('board.cancel')}
                   </button>
                 </div>
-                <div className="grid gap-3 lg:grid-cols-2">
-                  <BoardEditor
-                    board={editing.board}
-                    catalogue={catalogue}
-                    onChange={(next) => setEditing({ ...editing, board: next })}
-                  />
-                  <BoardPreview
-                    linkID={link.id}
-                    board={editing.board}
-                    viewportWidth={link.viewportWidth}
-                    viewportHeight={link.viewportHeight}
-                  />
-                </div>
+                {/* One surface, not two. The picture of the wall used to sit
+                    beside a list of dropdowns; it is the thing you arrange
+                    now. */}
+                <BoardEditorFor
+                  linkID={link.id}
+                  board={editing.board}
+                  catalogue={catalogue}
+                  viewportWidth={link.viewportWidth}
+                  viewportHeight={link.viewportHeight}
+                  onChange={(next) => setEditing({ ...editing, board: next })}
+                />
               </div>
             )}
           </div>
         ))
+      )}
+    </div>
+  )
+}
+
+/**
+ * The editor with its own live payload attached.
+ *
+ * A wrapper rather than a fetch inside BoardEditor, so that file has no network
+ * in it and so a board being *created* -- which has no link and therefore no
+ * preview -- goes through the same component as one being edited. The canvas
+ * still draws the arrangement in that case; the rectangles are the board.
+ */
+function BoardEditorFor(props: {
+  linkID: string
+  board: ShareBoard
+  catalogue: ShareCatalogue
+  viewportWidth: number
+  viewportHeight: number
+  onChange: (next: ShareBoard) => void
+  onPickPreset?: (preset: SharePreset) => void
+}) {
+  const preview = useBoardPreview(props.linkID)
+  return (
+    <div>
+      <BoardEditor
+        board={props.board}
+        catalogue={props.catalogue}
+        preview={preview.data}
+        linkID={props.linkID}
+        viewportWidth={props.viewportWidth}
+        viewportHeight={props.viewportHeight}
+        onChange={props.onChange}
+        onPickPreset={props.onPickPreset}
+      />
+      {preview.failed && (
+        <p className="mt-1 text-vp-sm text-ink-3" data-testid="preview-failed">
+          {t('share.previewGone')}
+        </p>
       )}
     </div>
   )

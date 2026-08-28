@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { attachTouchSelection } from './mobile/touchSelect'
 import { liveTerminals } from './terminals'
+import { copyText, copyTextInGesture } from '../clipboard'
 import { rendererPreference } from './renderer'
 import { Terminal as Xterm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -303,15 +304,10 @@ export function TerminalView({
         // Swallowing the failure meant copying inside tmux did nothing and
         // said nothing, so the outcome is reported and the shell offers the
         // click that makes it legal.
-        const clip = navigator.clipboard
-        if (!clip) {
-          onClipboardRef.current?.(text, false)
-          return
-        }
-        clip.writeText(text).then(
-          () => onClipboardRef.current?.(text, true),
-          () => onClipboardRef.current?.(text, false),
-        )
+        // No gesture here, so no legacy fallback: execCommand outside one is
+        // refused too. What this can do is say whether it worked, and the
+        // shell offers the click that makes it legal.
+        void copyText(text).then((ok) => onClipboardRef.current?.(text, ok))
       },
       onExit: () => onExit?.(),
     })
@@ -339,11 +335,15 @@ export function TerminalView({
       if (!term.hasSelection()) return
       const text = term.getSelection()
       if (!text) return
-      navigator.clipboard?.writeText(text).catch(() => {
-        // Refused anyway -- a non-secure context, or a browser that wants more
-        // than a gesture. Fall through to the offer that predates this, rather
-        // than losing the text silently.
-        onClipboardRef.current?.(text, false)
+      // Inside the pointerup that ended the selection, so the deprecated path
+      // is allowed and a panel served over plain http can still copy.
+      //
+      // This read `navigator.clipboard?.writeText(text).catch(...)`, and
+      // optional chaining short-circuits the whole chain: with no
+      // navigator.clipboard the expression was `undefined` and the catch never
+      // ran. Nothing reached the clipboard and nothing was offered.
+      copyTextInGesture(text, (ok) => {
+        if (!ok) onClipboardRef.current?.(text, false)
       })
     }
     host.addEventListener('pointerup', copyOnSelect)

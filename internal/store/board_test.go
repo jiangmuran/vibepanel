@@ -160,3 +160,42 @@ func TestEveryWidgetKindIsInTheCatalogue(t *testing.T) {
 		t.Error("WidgetOptions answered for a kind that does not exist")
 	}
 }
+
+// Density is refused on the way in and clamped on the way out.
+//
+// The asymmetry is the same one the rest of this file has: on the way in there
+// is a person at a keyboard to tell, and on the way out there is a wall display
+// with nobody standing at it, so a board that has become strange must still
+// leave a working screen.
+func TestDensityIsRefusedOnTheWayInAndClampedOnTheWayOut(t *testing.T) {
+	one := []Widget{{Kind: "states", Span: 12}}
+
+	if _, err := ValidateBoard(Board{Grid: GridColumns, Density: 9, Widgets: one}); err == nil {
+		t.Error("a density of 9 was accepted; the steps are a closed set and a board that " +
+			"could name a tenth is a stored number choosing a code path")
+	}
+	if _, err := ValidateBoard(Board{Grid: GridColumns, Density: -1, Widgets: one}); err == nil {
+		t.Error("a negative density was accepted")
+	}
+	// Zero means "this board was written before densities existed", which every
+	// stored board is.
+	got, err := ValidateBoard(Board{Grid: GridColumns, Widgets: one})
+	if err != nil {
+		t.Fatalf("a board with no density was refused: %v", err)
+	}
+	if got.Density != DefaultDensity {
+		t.Errorf("a board with no density came back at %d, want %d", got.Density, DefaultDensity)
+	}
+
+	// And on the read path, where there is nobody to tell.
+	for _, in := range []int{0, -3, 99} {
+		out := SanitiseBoard(Board{Grid: GridColumns, Density: in, Widgets: one})
+		if out.Density < MinDensity || out.Density > MaxDensity {
+			t.Errorf("a stored density of %d was served as %d", in, out.Density)
+		}
+	}
+	kept := SanitiseBoard(Board{Grid: GridColumns, Density: MaxDensity, Widgets: one})
+	if kept.Density != MaxDensity {
+		t.Errorf("a legal density of %d was served as %d", MaxDensity, kept.Density)
+	}
+}

@@ -1,7 +1,17 @@
 import type { ShareDashboard, ShareWidget } from '../../protocol/wire'
 import { Gauge, Machine, Unknown, Uptime } from './machine'
-import { Attention, BigNumber, Caption, Clock, Output, States } from './numbers'
+import { Attention, BigNumber, Caption, Clock, States } from './numbers'
 import { CPUTop, Exits, Projects, SessionGrid, SessionList, Todos } from './sessions'
+import {
+  CodeChurn,
+  Feed,
+  Flow,
+  Output,
+  PRs,
+  RepoProjects,
+  SpentMade,
+  Waits,
+} from './work'
 import { SpendBars, SpendCompare, SpendHeatmap, SpendRate, SpendSplit, SpendTotals } from './spend'
 import { MachineArea, Odometer, Sparkline, SpendStack, TokenBurn } from './charts'
 import {
@@ -64,6 +74,20 @@ export function Widget({
       return <Todos w={w} data={data} />
     case 'output':
       return <Output w={w} data={data} />
+    case 'codechurn':
+      return <CodeChurn w={w} data={data} />
+    case 'spentmade':
+      return <SpentMade w={w} data={data} />
+    case 'repoprojects':
+      return <RepoProjects w={w} data={data} />
+    case 'prs':
+      return <PRs w={w} data={data} />
+    case 'flow':
+      return <Flow w={w} data={data} />
+    case 'waits':
+      return <Waits w={w} data={data} />
+    case 'feed':
+      return <Feed w={w} data={data} now={now} />
     case 'machine':
       return <Machine w={w} data={data} />
     case 'gauge':

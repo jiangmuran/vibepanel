@@ -109,6 +109,30 @@ Each of these exists because the alternative broke something real.
    a viewer sends decides anything the response carries, and
    `TestWhatAViewerSaysAboutItselfCannotChangeTheDashboard` is what says so.
 
+   The surface now **reads working trees**, which it did not when this rule was
+   written, so two sentences that used to be simple are not:
+
+   - What it reads is `git log --shortstat`, and that is the disclosure
+     decision rather than a parsing convenience. `--numstat` is a line per
+     changed path, so it would carry every filename in somebody's repository
+     through this process on the way to a wall; `%s` would carry the commit
+     messages. Counts are the only thing asked for, so counts are the only
+     thing that can leak. Paths, filenames, branch names, subjects, shas and
+     authors are refused at both detail settings, and
+     `TestTheActivityReadAsksForATimestampAndNothingElse` pins the argument
+     list rather than trusting the parser.
+   - It can cause **one outbound request**, to github.com, and four things must
+     be true at once — a pull-request widget on the board, a project-scoped
+     link, `names` mode, and a token in the environment — behind a cache that
+     refreshes at most once per repository per five minutes and stops entirely
+     when nobody is looking. `internal/git/warm.go` is where that is enforced;
+     the thing that may not be added to it is a ticker.
+
+   Neither may be read on the request goroutine. A wall polls every two seconds
+   forever, so a `git log` on that path is a fork per project per poll — the
+   poll takes what the background refresh has already produced and reports its
+   age, and "not counted yet" is a distinct answer from zero.
+
 ## Conventions
 
 - **Comments explain why, and what breaks otherwise.** Not what the line does.

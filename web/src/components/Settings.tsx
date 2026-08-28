@@ -20,6 +20,7 @@ import { UpdateSection } from './UpdateSection'
 import { VncDisplays } from './VncDisplays'
 import { Webhooks } from './Webhooks'
 import { LaunchProfiles } from './LaunchProfiles'
+import { copyTextInGesture } from '../clipboard'
 
 function bytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -638,10 +639,7 @@ function Snippet({ label, text }: { label: string; text: string }) {
         <button
           type="button"
           onClick={() => {
-            void navigator.clipboard
-              ?.writeText(text)
-              .then(() => setCopied(true))
-              .catch(() => setCopied(false))
+            copyTextInGesture(text, setCopied)
           }}
           className="vp-control"
         >

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 import type { ShareDashboard, ShareSession, ShareWidget } from '../../protocol/wire'
 import { t } from '../../i18n'
+import { rows as rowsAt, useDensity } from './density'
 import { StateDot } from '../StateDot'
 import { safeText } from '../text'
 import { Bar, Empty, Tile } from './Tile'
@@ -146,7 +147,8 @@ export function Kinds({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
  * groups already use, so the two tiles line up.
  */
 export function Busiest({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
-  const rows = [...data.projects].sort((a, b) => b.total - a.total).slice(0, 6)
+  const density = useDensity()
+  const rows = [...data.projects].sort((a, b) => b.total - a.total).slice(0, rowsAt(density, 6))
   const most = rows.reduce((n, r) => Math.max(n, r.total), 0)
   return (
     <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-busiest" label={t('dash.projects')}>
@@ -183,6 +185,7 @@ export function Busiest({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
  * length is a duration printed at the end of the row.
  */
 export function Timeline({ w, data, now }: { w: ShareWidget; data: ShareDashboard; now: number }) {
+  const density = useDensity()
   const rows = orderRows(filterRows(data.sessions, w.filter ?? 'all'), w.order ?? 'waited')
   const longest = rows.reduce((n, r) => Math.max(n, dwell(r, now)), 1)
   return (
@@ -191,7 +194,7 @@ export function Timeline({ w, data, now }: { w: ShareWidget; data: ShareDashboar
         <Empty text={t('dash.nothing')} />
       ) : (
         <div className="flex flex-col gap-2" data-testid="timeline">
-          {rows.slice(0, 16).map((row, i) => (
+          {rows.slice(0, rowsAt(density, 12)).map((row, i) => (
             <div key={row.id} className="flex items-center gap-3" data-testid="timeline-row">
               <StateDot state={row.state} size={18} />
               <span className="w-40 min-w-0 shrink-0 truncate text-vp-xl text-ink-2">

@@ -122,7 +122,7 @@ export function RepoLine({
         <span
           data-testid="repo-line-conflict"
           className="shrink-0 text-vp-xs"
-          style={{ color: 'var(--vp-state-crashed)' }}
+          style={{ color: 'var(--vp-danger-ink)' }}
         >
           {t('git.conflictWord')}
         </span>

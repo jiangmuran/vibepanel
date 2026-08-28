@@ -530,6 +530,58 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+
+	// v16: what a session used to be doing.
+	//
+	// The panel kept state and no history, and every trend on the read-only
+	// dashboard was therefore unbuildable: `sessions.state_changed_at` says
+	// when the current state began and nothing says what came before it. A
+	// board asking "how did today go" had one current number to draw, which is
+	// how a television ended up showing two zeroes and a request count.
+	//
+	// Deliberately not a foreign key to `sessions`. A deleted session must not
+	// take yesterday's afternoon with it -- a cascade here would rewrite a
+	// chart somebody has already read, silently, on a wall nobody is standing
+	// in front of. The same reasoning `launch_profile_id` records one file up,
+	// with a sharper edge because this table is only ever read in aggregate.
+	//
+	// Two ids and two states per row and nothing else. No title, no command, no
+	// path: the share surface renames the ids under a per-link secret, and a
+	// title in here would be a name that has to be redacted in a second place.
+	//
+	// `for_seconds` is written at the transition rather than derived. The
+	// poller is holding the row it is about to overwrite, so the dwell is a
+	// subtraction that costs nothing there; computing it later is a self-join
+	// against each session's previous event, which is the one query shape this
+	// table would need an index it does not have.
+	//
+	// One index, on `at`. Every read is a window of time -- a series between
+	// two moments, the feed since a moment, the sweep before a moment -- and a
+	// second index on session_id would be paid for on every insert to serve no
+	// query that exists. The scope filters narrow *within* a window that the
+	// index has already cut down.
+	//
+	// It is swept rather than kept: see store.EventRetentionDays. Nothing else
+	// in this database grows per event, and a wall that has been up a month is
+	// the case this table has to stay small under.
+	func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`CREATE TABLE IF NOT EXISTS session_events (
+			     at          INTEGER NOT NULL,
+			     session_id  TEXT NOT NULL,
+			     project_id  TEXT NOT NULL,
+			     from_state  TEXT NOT NULL,
+			     to_state    TEXT NOT NULL,
+			     for_seconds INTEGER NOT NULL DEFAULT 0
+			 )`,
+			`CREATE INDEX IF NOT EXISTS idx_session_events_at ON session_events(at)`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	},
 }
 
 // scanner is *sql.Row and *sql.Rows both, so one scan function serves a

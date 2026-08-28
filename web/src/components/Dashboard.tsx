@@ -7,6 +7,7 @@ import { t, useLang } from '../i18n'
 import { Widget } from './board/render'
 import { agoText, clockText, duration } from './board/format'
 import { forViewport, viewerID } from './board/viewer'
+import { DensityProvider } from './board/density'
 import { githubURL } from './repo'
 import { safeText } from './text'
 
@@ -303,7 +304,13 @@ export function Dashboard({ token }: { token: string }) {
   const onThisPage = widgets.filter((w) => (w.page ?? 0) === page)
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-bg text-ink" data-testid="dashboard">
+    // `vp-wall` is the type scale, and it is the answer to 「没有自适应缩放」:
+    // one base unit derived from the viewport, with every size on the page a
+    // multiple of it, so a 4K screen at three metres shows the same composition
+    // *bigger* rather than more columns of the same-sized type. See styles.css.
+    // It is computed by this browser from its own width and is not the viewport
+    // this page reports to the server, which nothing reads back.
+    <div className="vp-wall flex h-full min-h-0 flex-col bg-bg text-ink" data-testid="dashboard">
       <header className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-hairline px-8 py-5">
         <h1 className="min-w-0 flex-1 truncate text-vp-2xl font-semibold text-ink">
           {safeText(data.name)}
@@ -417,16 +424,23 @@ export function Dashboard({ token }: { token: string }) {
             {t('dash.nothing')}
           </p>
         ) : (
-          <div
-            className="vp-board"
-            data-testid="dash-board"
-            data-page={page}
-            data-fill={data.board.fill ? 'true' : 'false'}
-          >
-            {onThisPage.map((w, i) => (
-              <Widget key={`${w.kind}-${i}`} w={w} data={data} now={now} />
-            ))}
-          </div>
+          // Density is the other axis, and it is the board's rather than the
+          // screen's: how much each widget says, so the same wall is a headline
+          // from the door and a working dashboard from the chair in front of
+          // it. See components/board/density.ts.
+          <DensityProvider value={data.board.density}>
+            <div
+              className="vp-board"
+              data-testid="dash-board"
+              data-page={page}
+              data-density={data.board.density}
+              data-fill={data.board.fill ? 'true' : 'false'}
+            >
+              {onThisPage.map((w, i) => (
+                <Widget key={`${w.kind}-${i}`} w={w} data={data} now={now} />
+              ))}
+            </div>
+          </DensityProvider>
         )}
 
         {data.detail === 'counts' && (

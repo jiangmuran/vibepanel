@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import type { ShareDashboard, ShareSession, ShareWidget } from '../../protocol/wire'
 import { EXIT_VANISHED } from '../../protocol/wire'
 import { t } from '../../i18n'
+import { rows as rowsAt, useDensity } from './density'
 import { StateDot } from '../StateDot'
 import { formatBytes } from '../panels/meter'
 import { safeText } from '../text'
@@ -260,10 +261,11 @@ export function Projects({ w, data }: { w: ShareWidget; data: ShareDashboard }) 
 
 /** What is costing the most right now. */
 export function CPUTop({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
+  const density = useDensity()
   const rows = data.sessions
     .filter((r) => r.measured && !r.exited)
     .sort((a, b) => b.cpuPercent - a.cpuPercent)
-    .slice(0, 6)
+    .slice(0, rowsAt(density, 6))
   const top = rows.length > 0 ? Math.max(rows[0].cpuPercent, 1) : 1
   return (
     <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-cputop" label={t('board.kind.cputop')}>
@@ -289,7 +291,8 @@ export function CPUTop({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
 
 /** What has stopped, and what stopped badly. */
 export function Exits({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
-  const rows = data.sessions.filter((r) => r.exited).slice(0, 8)
+  const density = useDensity()
+  const rows = data.sessions.filter((r) => r.exited).slice(0, rowsAt(density, 8))
   return (
     <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-exits" label={t('board.kind.exits')}>
       <div className="mb-3 flex items-baseline gap-6">

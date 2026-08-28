@@ -57,7 +57,13 @@ function readMetric(
   const m = data.machine
   const spend = data.spend
   const todos = data.todos
+  const repo = data.repo
+  const flow = data.flow
   const unknown = { value: '—', detail: t('dash.unknown') }
+  // "Not counted yet" rather than "unknown", and the distinction is the whole
+  // point of ShareRepo.readable: a repository figure of 0 before the first
+  // background read has landed is a lie about a morning's work.
+  const notRead = { value: '—', detail: t('dash.notRead') }
 
   switch (metric) {
     case 'waiting':
@@ -84,8 +90,87 @@ function readMetric(
       return todos ? { value: String(todos.open) } : unknown
     case 'todosDone':
       return todos ? { value: String(todos.done) } : unknown
-    case 'todosClosedToday':
-      return todos ? { value: String(todos.closedToday) } : unknown
+    // What was produced. These replaced "sessions finished today" and "todos
+    // ticked today" as the headline figures, because both of those are
+    // self-reported and on a real wall both read 0. See internal/store/board.go.
+    case 'commitsToday':
+      return repo?.readable
+        ? { value: String(repo.today.commits), tone: 'var(--vp-state-done)' }
+        : notRead
+    case 'commitsWindow':
+      return repo?.readable
+        ? {
+            value: String(repo.window.commits),
+            detail: t('dash.lastDays', { n: repo.windowDays }),
+          }
+        : notRead
+    case 'linesAdded':
+      return repo?.readable
+        ? {
+            value: `+${compact(repo.today.added)}`,
+            detail: exact(repo.today.added),
+            tone: 'var(--vp-state-done)',
+          }
+        : notRead
+    case 'linesRemoved':
+      return repo?.readable
+        ? {
+            value: `−${compact(repo.today.removed)}`,
+            detail: exact(repo.today.removed),
+            tone: 'var(--vp-state-crashed)',
+          }
+        : notRead
+    case 'linesChanged':
+      // Added and removed shown as two halves under one figure, never a net
+      // number: a net figure hides a refactor completely, and the two are
+      // different days.
+      return repo?.readable
+        ? {
+            value: compact(repo.today.added + repo.today.removed),
+            detail: `+${exact(repo.today.added)} −${exact(repo.today.removed)}`,
+          }
+        : notRead
+    case 'filesToday':
+      return repo?.readable ? { value: String(repo.today.files) } : notRead
+    case 'openPRs':
+      return repo?.prs?.readable
+        ? {
+            value: String(repo.prs.open),
+            detail: repo.prs.draft > 0 ? t('dash.prsDraft', { n: repo.prs.draft }) : undefined,
+          }
+        : notRead
+    case 'prsMergedToday':
+      return repo?.prs?.readable
+        ? {
+            value: repo.prs.mergedPartial
+              ? `${repo.prs.mergedToday}+`
+              : String(repo.prs.mergedToday),
+            tone: 'var(--vp-state-done)',
+          }
+        : notRead
+    case 'checksRed':
+      return repo?.prs?.readable
+        ? {
+            value: String(repo.prs.red),
+            tone: repo.prs.red > 0 ? 'var(--vp-state-crashed)' : undefined,
+          }
+        : notRead
+    // How the day has gone, out of the session-event log.
+    case 'startedToday':
+      return flow ? { value: String(flow.today.started) } : unknown
+    case 'waitsToday':
+      return flow
+        ? { value: String(flow.today.waited), tone: 'var(--vp-state-waiting)' }
+        : unknown
+    case 'avgWaitToday':
+      // Zero waits is not a zero-second wait, which is why the wire carries the
+      // sum and the count rather than the average.
+      return flow && flow.today.waitEnded > 0
+        ? {
+            value: duration(flow.today.waitSeconds / flow.today.waitEnded),
+            detail: t('dash.waitsCounted', { n: flow.today.waitEnded }),
+          }
+        : { value: '—', detail: t('dash.noWaitsToday') }
     case 'todoPercent': {
       if (!todos) return unknown
       const total = todos.open + todos.done
@@ -264,41 +349,6 @@ function Tally({
       </div>
       <span className="truncate text-vp-xl text-ink-2">{label}</span>
     </div>
-  )
-}
-
-/**
- * What came out today, next to what went in.
- *
- * The panel does not know how many lines were written — it never reads a
- * repository — so this counts what it does know: sessions that reached done,
- * checklist items ticked off, requests made. Three honest numbers rather than
- * one impressive one.
- */
-export function Output({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
-  const spend = data.spend
-  return (
-    <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-output" label={t('board.kind.output')}>
-      <div className="flex flex-wrap gap-x-10 gap-y-4">
-        <Headline
-          testid="output-done"
-          value={String(data.counts.doneToday)}
-          label={t('dash.finishedToday')}
-          tone="var(--vp-state-done)"
-        />
-        <Headline
-          testid="output-todos"
-          value={data.todos ? String(data.todos.closedToday) : '—'}
-          label={t('dash.todosClosedToday')}
-        />
-        <Headline
-          testid="output-requests"
-          value={spend?.readable ? exact(spend.today.requests) : '—'}
-          label={t('dash.requests')}
-          detail={spend?.readable ? undefined : t('dash.noSpendYet')}
-        />
-      </div>
-    </Tile>
   )
 }
 

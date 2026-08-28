@@ -65,6 +65,12 @@
   --vp-state-done: #34c759;
   --vp-state-dead: rgb(60 60 67 / 0.40);
   --vp-state-crashed: #ff3b30;
+  /* The same alarm, dark enough to be read as words.
+     #ff3b30 is the state dot's red, and a dot is a shape as well as a colour so
+     it never had to pass a contrast bar. Used as *text* on the light surface it
+     measures 3.34:1 against a required 4.5 -- render-check found it the day the
+     repo line started writing the word "conflict" in it. */
+  --vp-danger-ink: #c9251d;
 
   /* Terminal palette, light. Tuned for contrast on white rather than lifted
      straight from a dark theme — inverted dark palettes wash out badly. */
@@ -136,6 +142,7 @@
     --vp-state-done: #30d158;
     --vp-state-dead: rgb(235 235 245 / 0.30);
     --vp-state-crashed: #ff453a;
+    --vp-danger-ink: #ff6961;
 
     --vp-term-fg: #f5f5f7;
     --vp-term-cursor: #0a84ff;
@@ -181,6 +188,7 @@
   --vp-state-done: #30d158;
   --vp-state-dead: rgb(235 235 245 / 0.30);
   --vp-state-crashed: #ff453a;
+  --vp-danger-ink: #ff6961;
 
   --vp-term-fg: #f5f5f7;
   --vp-term-cursor: #0a84ff;
@@ -206,6 +214,16 @@
    `inline` keeps them as var() references so a theme switch repaints without
    Tailwind having to regenerate anything. */
 @theme inline {
+  /* The three dashboard steps, indirect. See the note beside --vp-text-*: a
+     literal here is inlined into every generated utility, and the scaling the
+     wall depends on stops working. */
+  --text-vp-xl: var(--vp-text-xl);
+  --text-vp-xl--line-height: 1.35;
+  --text-vp-2xl: var(--vp-text-2xl);
+  --text-vp-2xl--line-height: 1.2;
+  --text-vp-3xl: var(--vp-text-3xl);
+  --text-vp-3xl--line-height: 1.1;
+
   --color-bg: var(--vp-bg);
   --color-surface: var(--vp-surface);
   --color-surface-2: var(--vp-surface-2);
@@ -222,6 +240,7 @@
   --color-state-done: var(--vp-state-done);
   --color-state-dead: var(--vp-state-dead);
   --color-state-crashed: var(--vp-state-crashed);
+  --color-danger-ink: var(--vp-danger-ink);
 
   --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI',
     system-ui, 'Helvetica Neue', 'PingFang SC', 'Hiragino Sans GB',
@@ -290,19 +309,24 @@
        2xl  the per-group tallies and the machine's figures
        3xl  the headline counts and the connection state
 
-     Viewport-relative between two fixed bounds, unlike the five above, and
-     that is the difference between "legible at 1080p" and "legible at 1080p
-     and at 4K". A 4K panel at 100% reports 3840 CSS pixels, so a fixed 56px
-     headline is a third of the angular size it has on a 1920 screen at the
-     same distance — which is the size a wall display is chosen for. The lower
-     bound keeps a narrow window readable; the upper stops a very wide one
-     turning three numbers into a poster. */
-  --text-vp-xl: clamp(18px, 1.15vw, 30px);
-  --text-vp-xl--line-height: 1.35;
-  --text-vp-2xl: clamp(28px, 1.8vw, 48px);
-  --text-vp-2xl--line-height: 1.2;
-  --text-vp-3xl: clamp(44px, 3vw, 84px);
-  --text-vp-3xl--line-height: 1.1;
+     All three are multiples of one base unit, `--vp-wall`, and they are
+     `var()` rather than literals on purpose: `@theme inline` *inlines* a
+     literal into every utility it generates, so a `.vp-wall` redefining
+     `--text-vp-3xl` further down the document would have changed nothing at
+     all. Only a value that reads another variable stays indirect at the point
+     of use, which is what lets the dashboard's root scale all three at once.
+     This was written the other way first and the whole mechanism was inert;
+     `TestTheWallScaleIsIndirect` is what says so now.
+
+     The base unit is 16px here, so a dashboard-sized utility outside the
+     dashboard is exactly the 22/36/56px it always was. `.vp-wall` recomputes
+     it from the viewport — see the rule near the board grid for why that is a
+     length rather than a ratio, and for the two ways of doing this that are
+     worse. */
+  --vp-wall: 16px;
+  --vp-text-xl: calc(1.375 * var(--vp-wall));
+  --vp-text-2xl: calc(2.25 * var(--vp-wall));
+  --vp-text-3xl: calc(3.5 * var(--vp-wall));
 
   --radius-vp: var(--vp-radius);
   --radius-vp-lg: var(--vp-radius-lg);
@@ -1294,8 +1318,13 @@ body {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
   grid-auto-flow: row dense;
-  grid-auto-rows: minmax(8rem, auto);
-  gap: 1.5rem;
+  /* Multiples of --vp-wall rather than of rem, so a board inside `.vp-wall`
+     grows its gaps and rows with its type instead of holding 1080p spacing
+     around 4K figures. The base unit is 16px at :root and 16px is what the
+     clamp works out to on a 1920 screen, so a board drawn outside `.vp-wall`
+     is pixel-for-pixel what it was. */
+  grid-auto-rows: minmax(calc(8 * var(--vp-wall)), auto);
+  gap: calc(1.5 * var(--vp-wall));
   align-items: stretch;
 }
 
@@ -1304,6 +1333,75 @@ body {
     gap: 1rem;
     grid-auto-rows: minmax(6rem, auto);
   }
+}
+
+/* ── one screen, drawn bigger ────────────────────────────────────────────
+   `没有自适应缩放`: a 4K television at three metres was showing the same
+   composition at 1080p's size with more empty space around it.
+
+   Scale and density are two axes and neither derives from the other. This is
+   scale, and it is the one that is *not* stored: it follows the viewport, in
+   CSS, on the machine that has the viewport. Density -- how much each widget
+   says -- is on the board, chosen by the owner, and lives in
+   components/board/density.ts. The first design keyed the second to the first,
+   on the reasoning that a television is read from three metres and so must be
+   sparse; that is wrong as the only case, because the person it is for sits in
+   front of it half the time.
+
+   One number, and everything on the page is a multiple of it. Reading it any
+   other way is what went wrong before:
+
+     - Fixed pixels. A 56px headline on a 3840-wide screen has a third of the
+       angular size it has on a 1920 one at the same distance, which is exactly
+       the distance a wall display is chosen for.
+     - More columns. The grid stays twelve wide at every size and
+       board/viewer.ts only ever *raises* a widget's minimum span as the screen
+       narrows -- it never lowers one as the screen widens. So a wider screen
+       shows the same arrangement, and this makes it bigger rather than making
+       it hold more.
+     - `em`. Redefining the steps in em compounds through every nested element,
+       so a figure inside a tile inside a section is scaled three times. `rem`
+       is the root and does not compound; the factor multiplies it here.
+
+   It is a *length*, not a ratio, and that is not a stylistic choice: `clamp()`
+   cannot mix a unitless number with a length, and there is no way to divide a
+   `vw` down to a plain number in CSS. So --vp-wall is the page's own base unit
+   -- what `1rem` would have been if rem followed the screen -- and every size
+   below is a multiple of it. 100vw/120 works out to exactly 16px on a 1920
+   screen, which is why a board outside `.vp-wall` -- where the base unit is
+   the 16px declared at :root -- is pixel-for-pixel what it was.
+
+   Clamped at 13px below about 1560, where a window stops being a wall and
+   starts being a page, and at 26px, which is reached at 3120 and stops a very
+   wide window turning three numbers into a poster.
+
+   Nothing a viewer sends decides any of this. The factor is computed by the
+   browser from its own width; the viewport the dashboard reports on its poll is
+   for the owner's "how many screens have this open" and is never read back --
+   TestWhatAViewerSaysAboutItselfCannotChangeTheDashboard is what says so. */
+.vp-wall {
+  --vp-wall: clamp(13px, 100vw / 120, 26px);
+}
+
+/* A preset's thumbnail: the same twelve columns and the same dense flow, at
+   ninety pixels wide.
+
+   The grid properties are here rather than inline because a template gallery
+   whose thumbnails flowed by different rules from the board would be showing
+   somebody a composition they will not get -- and because `grid-auto-flow: row
+   dense` in a style object is an English phrase in a component, which the
+   dictionary test reads as an untranslated string. The column count is still
+   inline: it comes from the server's catalogue. */
+.vp-thumb {
+  display: grid;
+  width: 100%;
+  gap: 2px;
+  padding: 4px;
+  border-radius: var(--vp-radius);
+  background: var(--vp-bg);
+  grid-auto-flow: row dense;
+  grid-auto-rows: 7px;
+  aspect-ratio: 16 / 9;
 }
 
 /* A board that was drawn to occupy a screen rather than flow down one.

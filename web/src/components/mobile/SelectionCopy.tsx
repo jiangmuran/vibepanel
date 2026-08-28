@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Copy } from 'lucide-react'
+import { copyTextInGesture } from '../../clipboard'
 
 /**
  * A copy button that appears while text is selected.
@@ -52,10 +53,7 @@ export function SelectionCopy({ selection = '' }: { selection?: string }) {
         type="button"
         data-testid="selection-copy"
         onClick={() => {
-          void navigator.clipboard
-            ?.writeText(text)
-            .then(() => setCopiedText(text))
-            .catch(() => setCopiedText(''))
+          copyTextInGesture(text, (ok) => setCopiedText(ok ? text : ''))
         }}
         className="flex shrink-0 items-center gap-1 rounded-vp px-3 py-1 text-vp-base font-medium"
         style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}

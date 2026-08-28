@@ -7,6 +7,7 @@ import type {
   ShareWidget,
 } from '../../protocol/wire'
 import { t } from '../../i18n'
+import { rows as rowsAt, useDensity } from './density'
 import { safeText } from '../text'
 import { Bar, Empty, Tile } from './Tile'
 import { bucketLabel, compact, exact } from './format'
@@ -248,6 +249,7 @@ export function SpendBars({ w, data }: { w: ShareWidget; data: ShareDashboard })
 
 /** Where it went, ranked. `by` picks the dimension: agent, project, model. */
 export function SpendSplit({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
+  const density = useDensity()
   const spend = data.spend
   if (!spend?.readable) return <NotCounted w={w} />
   const by = w.by ?? 'tool'
@@ -264,7 +266,7 @@ export function SpendSplit({ w, data }: { w: ShareWidget; data: ShareDashboard }
       {groups.length === 0 ? (
         <Empty text={t('dash.emptyWidget')} />
       ) : (
-        groups.slice(0, 10).map((g, i) => (
+        groups.slice(0, rowsAt(density, 8)).map((g, i) => (
           <Bar
             key={g.id || `outside-${i}`}
             testid="spend-split-row"

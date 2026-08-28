@@ -68,8 +68,19 @@ type Cache struct {
 	// all, which is what a test that counts processes wants.
 	TTL time.Duration
 
+	// WarmFor and GitHubFor override the *other* cache in this type -- the
+	// background-refreshed one in warm.go, which a wall display reads and never
+	// waits for. Zero means the constants there. See that file for why the two
+	// halves have opposite contracts and cannot share one.
+	WarmFor   time.Duration
+	GitHubFor time.Duration
+
 	mu      sync.Mutex
 	entries map[string]*cacheEntry
+	// warmed holds the background-refreshed answers. Under the same lock as
+	// `entries`: both are short critical sections around a map, and one lock is
+	// one thing to reason about rather than two that can be taken in an order.
+	warmed map[string]*warmEntry
 }
 
 // cacheEntry is one read, in flight or finished.

@@ -6,6 +6,7 @@ import type { ApiToken } from '../protocol/wire'
 import { t, useLang } from '../i18n'
 import { askConfirm } from './ask'
 import { safeText } from './text'
+import { copyTextInGesture } from '../clipboard'
 
 /**
  * Credentials for programs.
@@ -103,10 +104,7 @@ export function ApiTokens() {
               type="button"
               data-testid="token-copy"
               onClick={() => {
-                void navigator.clipboard?.writeText(fresh).then(
-                  () => setCopied(true),
-                  () => setCopied(false),
-                )
+                copyTextInGesture(fresh, setCopied)
               }}
               className="vp-press shrink-0 rounded-vp border border-hairline px-2 py-1.5 text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
             >

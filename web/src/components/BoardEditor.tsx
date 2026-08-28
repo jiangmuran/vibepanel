@@ -1,7 +1,17 @@
-import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Trash2 } from 'lucide-react'
 
-import type { ShareBoard, ShareCatalogue, SharePreset, ShareWidget } from '../protocol/wire'
+import type {
+  ShareBoard,
+  ShareCatalogue,
+  ShareDashboard,
+  SharePreset,
+  ShareWidget,
+  ShareWidgetSpec,
+} from '../protocol/wire'
 import { t } from '../i18n'
+import { BoardCanvas, type CanvasGesture } from './BoardCanvas'
+import { BoardGallery, BoardPalette } from './BoardPalette'
 import {
   byLabel,
   filterLabel,
@@ -9,61 +19,76 @@ import {
   kindLabel,
   metricLabel,
   orderLabel,
-  presetLabel,
-  presetWhy,
-  screenLabel,
 } from './board/labels'
+import {
+  DRAG_THRESHOLD,
+  gapAt,
+  insertWidget,
+  moveWidget,
+  removeWidget,
+  snapHeight,
+  snapSpan,
+  widgetFrom,
+  type Slot,
+} from './board/edit'
 
 /**
- * Where a board is made.
+ * Where a board is made, by dragging it.
  *
- * A preset is a starting point rather than a mode: choosing one drops its
- * widgets in, and from that moment every one of them can be moved, resized,
- * pointed at a different number, split by a different dimension or thrown away.
- * That is the whole difference between "a template" and "a fixed picture with a
- * name", and it is why the preset select does not stay in charge of anything
- * after it is used.
+ * This replaced a form. The form was a preset in a `<select>`, a list of every
+ * widget as a row of eight dropdowns, and a picture of the result beside it —
+ * 「整个ui就是一团乱麻 … 然后也没法修改」. What is here instead is the three
+ * things that were asked for: a library you can see, a canvas you drag onto,
+ * and templates you pick by looking at them.
  *
- * Every control here is built from the server's own catalogue — the kinds, the
- * metrics, the dimensions, the bounds. Not from a copy in this file, because a
- * copy is how a settings page comes to offer a widget the server refuses, and
- * the person who finds out is the one who pressed the button.
+ * The gesture lives here rather than in the canvas or the palette, because one
+ * gesture spans both: a press on a palette entry and a release over the canvas
+ * is one drag, and the element that received the pointerdown is the one that
+ * keeps the capture. So both children report `onGrab` upward and this file owns
+ * what happens next — including the geometry, which is read off the DOM at the
+ * moment of the move rather than out of a registry the tiles maintain.
+ *
+ * Everything it offers comes from the server's catalogue: the kinds, the
+ * metrics, the widths, the bounds. A copy in this file is how a settings page
+ * comes to offer a widget the server refuses, and the person who finds out is
+ * the one who pressed the button.
  */
-
-/**
- * The widths worth offering, from the server's own catalogue.
- *
- * Not all twelve, and not a list in this file: a select with twelve entries is
- * a control nobody can aim at, and a second copy of which fractions are worth
- * offering is how an editor comes to offer a width no preset uses and miss one
- * every preset does.
- */
-function spans(catalogue: ShareCatalogue): number[] {
-  return catalogue.steps.filter((n) => n >= 1 && n <= catalogue.maxSpan)
-}
-
-/** How many grid rows tall. Heights are what make a hero a hero. */
-function heights(max: number): number[] {
-  return Array.from({ length: Math.max(1, max) }, (_, i) => i + 1)
-}
 
 /** Rotation intervals worth offering. 0 is a board that does not move. */
 const ROTATIONS = [0, 10, 20, 30, 60]
 
-/** Day ranges a bar chart is worth drawing over. */
+/** Day ranges a series is worth drawing over. */
 const DAY_RANGES = [7, 14, 30, 90, 365]
 
 const SELECT =
   'shrink-0 rounded-vp border border-hairline bg-surface-2 px-2 py-1 text-vp-sm text-ink outline-none focus:border-accent'
 
+/** What is being dragged, and where it would land. */
+type Drag =
+  | { kind: 'move'; index: number; gap: number | null }
+  | { kind: 'add'; spec: ShareWidgetSpec; gap: number | null }
+  | { kind: 'span'; index: number }
+  | { kind: 'height'; index: number }
+
 export function BoardEditor({
   board,
   catalogue,
+  preview,
+  linkID,
+  viewportWidth,
+  viewportHeight,
   onChange,
   onPickPreset,
 }: {
   board: ShareBoard
   catalogue: ShareCatalogue
+  /** The live payload the canvas draws, or null before the first one lands.
+   *  Fetched by the parent so one poll serves the canvas and anything else on
+   *  the page, and so this file has no fetch in it. */
+  preview: ShareDashboard | null
+  linkID: string
+  viewportWidth: number
+  viewportHeight: number
   onChange: (next: ShareBoard) => void
   /** Told which preset was chosen, not only what it expanded to.
    *
@@ -74,279 +99,329 @@ export function BoardEditor({
    *  about boards. */
   onPickPreset?: (preset: SharePreset) => void
 }) {
+  const [selected, setSelected] = useState<number | null>(null)
+  const [page, setPage] = useState(0)
+  const [drag, setDragState] = useState<Drag | null>(null)
+  // The drag twice: once as state so it can be drawn, once in a ref so the
+  // release handler can read it. A pointerup can arrive before React has
+  // flushed the pointermove just before it -- a flick is exactly when those two
+  // land together -- and committing the target from one move ago drops the tile
+  // in the wrong place. The same reason the panel's tab drag keeps a ref.
+  const live = useRef<Drag | null>(null)
+  // The pressed widget's index lives in the ref beside the start point, not in
+  // `selected`. A pointermove can arrive before React has flushed the
+  // setSelected from the pointerdown just before it -- a flick is exactly when
+  // those two land together -- and reading the state there loses the first
+  // frames of the drag.
+  const press = useRef<{
+    x: number
+    y: number
+    index: number
+    span: number
+    height: number
+  } | null>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  const setDrag = useCallback((next: Drag | null) => {
+    live.current = next
+    setDragState(next)
+  }, [])
+
+  // Escape cancels, from anywhere. A drag you can only get out of by finding a
+  // neutral place to release is a drag people abandon by dropping the tile
+  // somewhere they did not want it.
+  useEffect(() => {
+    if (!drag) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setDrag(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [drag, setDrag])
+
+  /**
+   * The tiles' rectangles, read off the DOM now.
+   *
+   * `data-slot-index` is on the element that draws the tile, so the rectangle
+   * and the index cannot disagree. A map kept up to date by the tiles would be
+   * one more thing that can be stale exactly while they are being rearranged.
+   */
+  const slots = useCallback((): Slot[] => {
+    const root = rootRef.current
+    if (!root) return []
+    const out: Slot[] = []
+    for (const el of root.querySelectorAll<HTMLElement>('[data-slot-index]')) {
+      const r = el.getBoundingClientRect()
+      if (r.width <= 0 || r.height <= 0) continue
+      out.push({
+        index: Number(el.dataset.slotIndex),
+        left: r.left,
+        top: Math.round(r.top),
+        right: r.right,
+        bottom: r.bottom,
+      })
+    }
+    return out
+  }, [])
+
+  const setWidget = (index: number, next: ShareWidget) => {
+    onChange({ ...board, widgets: board.widgets.map((w, i) => (i === index ? next : w)) })
+  }
+
+  const onGrabWidget = (e: React.PointerEvent, index: number, gesture: CanvasGesture) => {
+    if (e.button !== 0) return
+    e.currentTarget.setPointerCapture(e.pointerId)
+    const w = board.widgets[index]
+    press.current = { x: e.clientX, y: e.clientY, index, span: w?.span ?? 1, height: w?.height ?? 1 }
+    setSelected(index)
+    if (gesture === 'move') {
+      // Not a drag yet. A threshold, so a plain press selects and only a real
+      // movement paints every landing place on the board.
+      setDrag(null)
+    } else {
+      setDrag({ kind: gesture, index })
+    }
+  }
+
+  const onGrabSpec = (e: React.PointerEvent, spec: ShareWidgetSpec) => {
+    if (e.button !== 0) return
+    e.currentTarget.setPointerCapture(e.pointerId)
+    press.current = { x: e.clientX, y: e.clientY, index: -1, span: spec.span, height: 1 }
+    setDrag({ kind: 'add', spec, gap: null })
+  }
+
+  const onMove = (e: React.PointerEvent) => {
+    const from = press.current
+    if (!from) return
+    const moved =
+      Math.abs(e.clientX - from.x) > DRAG_THRESHOLD || Math.abs(e.clientY - from.y) > DRAG_THRESHOLD
+    const current = live.current
+
+    if (current?.kind === 'span') {
+      const el = tileOf(rootRef.current, current.index)
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      const grid = gridOf(rootRef.current)
+      if (!grid) return
+      // Against the grid's own box rather than the tile's, so the width that
+      // comes out is the fraction of the *board* the tile covers -- which is
+      // what a span is. Measuring against the tile makes every drag relative to
+      // wherever it started, and a tile can then never be made narrower than it
+      // already is.
+      const fraction = (e.clientX - r.left) / grid.width
+      const next = snapSpan(fraction, catalogue.steps, catalogue.maxSpan)
+      const w = board.widgets[current.index]
+      if (w && w.span !== next) setWidget(current.index, { ...w, span: next })
+      return
+    }
+    if (current?.kind === 'height') {
+      const el = tileOf(rootRef.current, current.index)
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      const one = r.height / Math.max(1, from.height)
+      const next = snapHeight(e.clientY - r.top, one, catalogue.maxRows)
+      const w = board.widgets[current.index]
+      if (w && (w.height ?? 1) !== next) setWidget(current.index, { ...w, height: next })
+      return
+    }
+    if (current?.kind === 'add') {
+      setDrag({ ...current, gap: gapAt(slots(), e.clientX, e.clientY) })
+      return
+    }
+    if (!moved && !current) return
+    if (from.index < 0) return
+    setDrag({ kind: 'move', index: from.index, gap: gapAt(slots(), e.clientX, e.clientY) })
+  }
+
+  const onUp = (e: React.PointerEvent) => {
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    }
+    press.current = null
+    const current = live.current
+    setDrag(null)
+    if (!current) return
+    if (current.kind === 'move' && current.gap !== null) {
+      const next = moveWidget(board.widgets, current.index, current.gap)
+      // moveWidget returns the same array when the drop changes nothing, which
+      // is what stops a drag that went nowhere from rewriting the board and
+      // re-saving it two seconds later.
+      if (next !== board.widgets) onChange({ ...board, widgets: next })
+    }
+    if (current.kind === 'add') {
+      if (board.widgets.length >= catalogue.maxWidgets) return
+      const made = widgetFrom(current.spec)
+      // Onto the page being edited, not always page 0: dropping a tile while
+      // looking at page three and finding it on page one is a control that did
+      // something other than what it looked like.
+      if (page > 0) made.page = page
+      const at = current.gap ?? board.widgets.length
+      onChange({ ...board, widgets: insertWidget(board.widgets, made, at) })
+      setSelected(at)
+    }
+  }
+
+  /**
+   * The keyboard equivalent of the drag.
+   *
+   * Not an afterthought: the canvas is the only way to arrange a board now, so
+   * a pointer-only canvas would have removed the feature from anybody who
+   * cannot use one. Arrows move the selected tile in the order; with shift they
+   * resize it.
+   */
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (selected === null) return
+    const w = board.widgets[selected]
+    if (!w) return
+    const steps = catalogue.steps
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      e.preventDefault()
+      onChange({ ...board, widgets: removeWidget(board.widgets, selected) })
+      setSelected(null)
+      return
+    }
+    if (e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      e.preventDefault()
+      const i = steps.indexOf(w.span)
+      const at = i < 0 ? 0 : i
+      const to = Math.max(0, Math.min(steps.length - 1, at + (e.key === 'ArrowRight' ? 1 : -1)))
+      setWidget(selected, { ...w, span: steps[to] ?? w.span })
+      return
+    }
+    if (e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      e.preventDefault()
+      const next = Math.max(
+        1,
+        Math.min(catalogue.maxRows, (w.height ?? 1) + (e.key === 'ArrowDown' ? 1 : -1)),
+      )
+      setWidget(selected, { ...w, height: next })
+      return
+    }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      const next = moveWidget(board.widgets, selected, selected - 1)
+      if (next !== board.widgets) {
+        onChange({ ...board, widgets: next })
+        setSelected(selected - 1)
+      }
+      return
+    }
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      e.preventDefault()
+      const next = moveWidget(board.widgets, selected, selected + 2)
+      if (next !== board.widgets) {
+        onChange({ ...board, widgets: next })
+        setSelected(selected + 1)
+      }
+    }
+  }
+
   const onPreset = (preset: SharePreset) => {
     onChange({
       grid: catalogue.maxSpan,
       preset: preset.id,
       rotate: preset.rotate,
       fill: preset.fill,
+      density: preset.density,
       widgets: [...preset.widgets],
     })
+    setSelected(null)
+    setPage(0)
     onPickPreset?.(preset)
-  }
-  const specOf = (kind: string) => catalogue.widgets.find((s) => s.kind === kind)
-
-  const setWidget = (index: number, next: ShareWidget) => {
-    const widgets = board.widgets.map((w, i) => (i === index ? next : w))
-    onChange({ ...board, widgets })
-  }
-  const move = (index: number, by: number) => {
-    const to = index + by
-    if (to < 0 || to >= board.widgets.length) return
-    const widgets = [...board.widgets]
-    const [row] = widgets.splice(index, 1)
-    widgets.splice(to, 0, row)
-    onChange({ ...board, widgets })
-  }
-  const remove = (index: number) => {
-    onChange({ ...board, widgets: board.widgets.filter((_, i) => i !== index) })
-  }
-  const add = (kind: string) => {
-    if (!kind) return
-    const spec = specOf(kind)
-    if (!spec || board.widgets.length >= catalogue.maxWidgets) return
-    // The first allowed value for each setting, so a widget added from the
-    // palette is one the server already accepts. A metric left empty is
-    // refused, and refusing on save something the editor offered is the
-    // failure this whole file is arranged to avoid.
-    const w: ShareWidget = { kind, span: spec.span }
-    if (spec.metrics && spec.metrics.length > 0) w.metric = spec.metrics[0]
-    if (spec.bys && spec.bys.length > 0) w.by = spec.bys[0]
-    onChange({ ...board, widgets: [...board.widgets, w] })
   }
 
   const pages = board.widgets.reduce((most, w) => Math.max(most, (w.page ?? 0) + 1), 1)
   const full = board.widgets.length >= catalogue.maxWidgets
+  const current = selected === null ? undefined : board.widgets[selected]
+  const spec = current ? catalogue.widgets.find((s) => s.kind === current.kind) : undefined
 
   return (
-    <div data-testid="board-editor">
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        {/* Grouped by the screen it was composed for rather than by audience.
-            "Which of twenty-four do I want" is a question nobody can answer;
-            "what am I putting this on" is one everybody can. The audience is
-            still in the sentence under it. */}
-        <select
-          value={board.preset}
-          onChange={(e) => {
-            const preset = catalogue.presets.find((p) => p.id === e.target.value)
-            if (!preset) return
-            onPreset(preset)
-          }}
-          title={t('board.preset')}
-          data-testid="board-preset"
-          className={SELECT}
-        >
-          {catalogue.screens.map((screen) => (
-            <optgroup key={screen} label={screenLabel(screen)}>
-              {catalogue.presets
-                .filter((p) => p.screen === screen)
-                .map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {presetLabel(p.id)}
-                  </option>
-                ))}
-            </optgroup>
-          ))}
-        </select>
-        <button
-          type="button"
-          onClick={() => onChange({ ...board, fill: !board.fill })}
-          aria-pressed={board.fill}
-          title={t('board.fill')}
-          data-testid="board-fill"
-          className="vp-control px-2"
-        >
-          {t('board.fill')}
-        </button>
-        <select
-          value={board.rotate}
-          onChange={(e) => onChange({ ...board, rotate: Number(e.target.value) })}
-          title={t('board.rotate')}
-          data-testid="board-rotate"
-          className={SELECT}
-        >
-          {ROTATIONS.map((s) => (
-            <option key={s} value={s}>
-              {s === 0 ? t('board.rotateNever') : t('board.rotateEvery', { n: s })}
-            </option>
-          ))}
-        </select>
-        <span className="text-vp-sm text-ink-3">{t('board.widgets', { n: board.widgets.length })}</span>
-      </div>
+    <div
+      ref={rootRef}
+      data-testid="board-editor"
+      onPointerMove={onMove}
+      onPointerUp={onUp}
+      onPointerCancel={() => {
+        press.current = null
+        setDrag(null)
+      }}
+      onKeyDown={onKeyDown}
+    >
+      <div className="grid gap-3 lg:grid-cols-[1fr_20rem]">
+        <div>
+          <BoardCanvas
+            board={board}
+            data={preview}
+            page={page}
+            selected={selected}
+            dropGap={drag && 'gap' in drag ? drag.gap : null}
+            dragging={drag !== null && 'gap' in drag}
+            viewportWidth={viewportWidth}
+            viewportHeight={viewportHeight}
+            onSelect={setSelected}
+            onGrab={onGrabWidget}
+          />
+          <p className="mt-1 text-vp-sm text-ink-3" data-testid="canvas-hint">
+            {viewportWidth > 0
+              ? t('share.viewport', { w: viewportWidth, h: viewportHeight })
+              : t('share.previewCold')}
+            {' · '}
+            {t('board.widgets', { n: board.widgets.length })}
+            {linkID === '' && ` · ${t('board.newLink')}`}
+          </p>
 
-      {board.preset && (
-        <p className="mb-2 text-vp-sm leading-relaxed text-ink-3" data-testid="board-preset-why">
-          {presetWhy(board.preset)}
-        </p>
-      )}
-
-      {board.widgets.map((w, i) => {
-        const spec = specOf(w.kind)
-        return (
-          <div
-            key={`${w.kind}-${i}`}
-            data-testid="board-widget"
-            data-kind={w.kind}
-            className="mb-1 flex flex-wrap items-center gap-1 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5"
-          >
-            <span className="min-w-0 flex-1 truncate text-vp-base text-ink">
-              {kindLabel(w.kind, w.kind)}
-            </span>
-
-            {spec?.metrics && (
-              <select
-                value={w.metric ?? spec.metrics[0]}
-                onChange={(e) => setWidget(i, { ...w, metric: e.target.value })}
-                title={t('board.metric')}
-                data-testid="widget-metric"
-                className={SELECT}
-              >
-                {spec.metrics.map((m) => (
-                  <option key={m} value={m}>
-                    {metricLabel(m, m)}
-                  </option>
-                ))}
-              </select>
-            )}
-            {spec?.bys && (
-              <select
-                value={w.by ?? spec.bys[0]}
-                onChange={(e) => setWidget(i, { ...w, by: e.target.value })}
-                title={t('board.by')}
-                data-testid="widget-by"
-                className={SELECT}
-              >
-                {spec.bys.map((b) => (
-                  <option key={b} value={b}>
-                    {byLabel(b, b)}
-                  </option>
-                ))}
-              </select>
-            )}
-            {spec?.filters && (
-              <select
-                value={w.filter ?? spec.filters[0]}
-                onChange={(e) => setWidget(i, { ...w, filter: e.target.value })}
-                title={t('board.filter')}
-                data-testid="widget-filter"
-                className={SELECT}
-              >
-                {spec.filters.map((f) => (
-                  <option key={f} value={f}>
-                    {filterLabel(f, f)}
-                  </option>
-                ))}
-              </select>
-            )}
-            {spec?.orders && (
-              <select
-                value={w.order ?? spec.orders[0]}
-                onChange={(e) => setWidget(i, { ...w, order: e.target.value })}
-                title={t('board.order')}
-                data-testid="widget-order"
-                className={SELECT}
-              >
-                {spec.orders.map((o) => (
-                  <option key={o} value={o}>
-                    {orderLabel(o, o)}
-                  </option>
-                ))}
-              </select>
-            )}
-            {spec?.groups && (
-              <select
-                value={w.group ?? spec.groups[0]}
-                onChange={(e) => setWidget(i, { ...w, group: e.target.value })}
-                title={t('board.group')}
-                data-testid="widget-group"
-                className={SELECT}
-              >
-                {spec.groups.map((g) => (
-                  <option key={g} value={g}>
-                    {groupLabel(g, g)}
-                  </option>
-                ))}
-              </select>
-            )}
-            {spec?.days && (
-              <select
-                value={w.days ?? 30}
-                onChange={(e) => setWidget(i, { ...w, days: Number(e.target.value) })}
-                title={t('board.days')}
-                data-testid="widget-days"
-                className={SELECT}
-              >
-                {DAY_RANGES.filter((d) => d <= catalogue.maxDays).map((d) => (
-                  <option key={d} value={d}>
-                    {t('dash.lastDays', { n: d })}
-                  </option>
-                ))}
-              </select>
-            )}
-            {spec?.text && (
-              <input
-                value={w.text ?? ''}
-                maxLength={catalogue.maxCaption}
-                onChange={(e) => setWidget(i, { ...w, text: e.target.value })}
-                placeholder={t('board.caption')}
-                data-testid="widget-text"
-                className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface px-2 py-1 text-vp-base text-ink outline-none focus:border-accent"
-              />
-            )}
-            {spec?.rotate && (
-              <select
-                value={w.rotate ?? 0}
-                onChange={(e) => setWidget(i, { ...w, rotate: Number(e.target.value) })}
-                title={t('board.rotateList')}
-                data-testid="widget-rotate"
-                className={SELECT}
-              >
-                {ROTATIONS.map((s) => (
-                  <option key={s} value={s}>
-                    {s === 0 ? t('board.rotateNever') : t('board.rotateEvery', { n: s })}
-                  </option>
-                ))}
-              </select>
-            )}
-
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onChange({ ...board, fill: !board.fill })}
+              aria-pressed={board.fill}
+              title={t('board.fill')}
+              data-testid="board-fill"
+              className="vp-control px-2"
+            >
+              {t('board.fill')}
+            </button>
+            {/* Density, and it is not a size control. See board/density.ts: how
+                large everything is drawn follows the viewport and is settled in
+                CSS; this is how much each tile says, so the same wall can be a
+                headline from the door and a working dashboard from the chair. */}
             <select
-              value={w.span}
-              onChange={(e) => setWidget(i, { ...w, span: Number(e.target.value) })}
-              title={t('board.width')}
-              data-testid="widget-span"
+              value={board.density}
+              onChange={(e) => onChange({ ...board, density: Number(e.target.value) })}
+              title={t('board.density')}
+              data-testid="board-density"
               className={SELECT}
             >
-              {spans(catalogue).map((n) => (
-                <option key={n} value={n}>
-                  {t('board.widthOf', { n })}
+              {Array.from({ length: Math.max(1, catalogue.maxDensity) }, (_, i) => i + 1).map(
+                (n) => (
+                  <option key={n} value={n}>
+                    {t(densityKey(n, catalogue.maxDensity))}
+                  </option>
+                ),
+              )}
+            </select>
+            <select
+              value={board.rotate}
+              onChange={(e) => onChange({ ...board, rotate: Number(e.target.value) })}
+              title={t('board.rotate')}
+              data-testid="board-rotate"
+              className={SELECT}
+            >
+              {ROTATIONS.map((s) => (
+                <option key={s} value={s}>
+                  {s === 0 ? t('board.rotateNever') : t('board.rotateEvery', { n: s })}
                 </option>
               ))}
             </select>
-            {/* The other half of the hero/texture ratio. A screen where every
-                tile is the same size is a dashboard, not a display, and a span
-                alone cannot make one thing four times the area of the rest. */}
-            <select
-              value={w.height ?? 1}
-              onChange={(e) => setWidget(i, { ...w, height: Number(e.target.value) })}
-              title={t('board.height')}
-              data-testid="widget-height"
-              className={SELECT}
-            >
-              {heights(catalogue.maxRows).map((n) => (
-                <option key={n} value={n}>
-                  {t('board.heightOf', { n })}
-                </option>
-              ))}
-            </select>
-            {/* The page selector only appears once a board actually rotates.
-                A control for a feature that is switched off is one somebody
-                sets and then waits for. */}
+            {/* Which page is on the canvas. Only once the board rotates: a
+                control for a feature that is switched off is one somebody sets
+                and then waits for. */}
             {board.rotate > 0 && (
               <select
-                value={w.page ?? 0}
-                onChange={(e) => setWidget(i, { ...w, page: Number(e.target.value) })}
+                value={page}
+                onChange={(e) => setPage(Number(e.target.value))}
                 title={t('board.page')}
-                data-testid="widget-page"
+                data-testid="canvas-page"
                 className={SELECT}
               >
                 {Array.from({ length: Math.min(pages + 1, 12) }, (_, n) => (
@@ -356,66 +431,255 @@ export function BoardEditor({
                 ))}
               </select>
             )}
-
-            <button
-              type="button"
-              onClick={() => move(i, -1)}
-              title={t('board.up')}
-              data-testid="widget-up"
-              className="vp-control"
-            >
-              <ArrowUp size={13} />
-            </button>
-            <button
-              type="button"
-              onClick={() => move(i, 1)}
-              title={t('board.down')}
-              data-testid="widget-down"
-              className="vp-control"
-            >
-              <ArrowDown size={13} />
-            </button>
-            <button
-              type="button"
-              onClick={() => remove(i)}
-              title={t('board.remove')}
-              data-testid="widget-remove"
-              className="vp-control"
-            >
-              <Trash2 size={13} />
-            </button>
           </div>
-        )
-      })}
+        </div>
 
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <Plus size={13} className="shrink-0 text-ink-2" />
-        <select
-          value=""
-          disabled={full}
-          onChange={(e) => add(e.target.value)}
-          title={t('board.add')}
-          data-testid="board-add"
-          className={SELECT}
-        >
-          <option value="">{t('board.add')}</option>
-          {catalogue.widgets.map((s) => (
-            <option key={s.kind} value={s.kind}>
-              {kindLabel(s.kind, s.kind)}
-            </option>
-          ))}
-        </select>
-        {full && (
-          <span className="text-vp-sm text-ink-3">
-            {t('board.full', { n: catalogue.maxWidgets })}
-          </span>
-        )}
-        {board.widgets.length === 0 && (
-          <span className="text-vp-sm" style={{ color: 'var(--vp-state-waiting)' }}>
-            {t('board.empty')}
-          </span>
-        )}
+        <div className="min-w-0">
+          <BoardPalette catalogue={catalogue} full={full} onGrab={onGrabSpec} />
+
+          {/* The inspector: one widget's settings, not twenty-four rows of
+              them. What made the old editor unreadable was that every widget's
+              controls were on screen at once; here the thing being adjusted is
+              the thing that is selected on the canvas. */}
+          <div className="mt-3" data-testid="widget-inspector">
+            {!current || !spec ? (
+              <p className="text-vp-sm text-ink-3" data-testid="inspector-empty">
+                {t('board.pickOne')}
+              </p>
+            ) : (
+              <div className="rounded-vp border border-hairline bg-surface-2 p-2">
+                <div className="mb-2 flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate text-vp-base text-ink">
+                    {kindLabel(current.kind, current.kind)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onChange({ ...board, widgets: removeWidget(board.widgets, selected!) })
+                      setSelected(null)
+                    }}
+                    title={t('board.remove')}
+                    data-testid="widget-remove"
+                    className="vp-control"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center gap-1">
+                  {spec.metrics && (
+                    <Choice
+                      testid="widget-metric"
+                      title={t('board.metric')}
+                      value={current.metric ?? spec.metrics[0]}
+                      options={spec.metrics}
+                      label={metricLabel}
+                      onPick={(v) => setWidget(selected!, { ...current, metric: v })}
+                    />
+                  )}
+                  {spec.bys && (
+                    <Choice
+                      testid="widget-by"
+                      title={t('board.by')}
+                      value={current.by ?? spec.bys[0]}
+                      options={spec.bys}
+                      label={byLabel}
+                      onPick={(v) => setWidget(selected!, { ...current, by: v })}
+                    />
+                  )}
+                  {spec.filters && (
+                    <Choice
+                      testid="widget-filter"
+                      title={t('board.filter')}
+                      value={current.filter ?? spec.filters[0]}
+                      options={spec.filters}
+                      label={filterLabel}
+                      onPick={(v) => setWidget(selected!, { ...current, filter: v })}
+                    />
+                  )}
+                  {spec.orders && (
+                    <Choice
+                      testid="widget-order"
+                      title={t('board.order')}
+                      value={current.order ?? spec.orders[0]}
+                      options={spec.orders}
+                      label={orderLabel}
+                      onPick={(v) => setWidget(selected!, { ...current, order: v })}
+                    />
+                  )}
+                  {spec.groups && (
+                    <Choice
+                      testid="widget-group"
+                      title={t('board.group')}
+                      value={current.group ?? spec.groups[0]}
+                      options={spec.groups}
+                      label={groupLabel}
+                      onPick={(v) => setWidget(selected!, { ...current, group: v })}
+                    />
+                  )}
+                  {spec.days && (
+                    <select
+                      value={current.days ?? 30}
+                      onChange={(e) =>
+                        setWidget(selected!, { ...current, days: Number(e.target.value) })
+                      }
+                      title={t('board.days')}
+                      data-testid="widget-days"
+                      className={SELECT}
+                    >
+                      {DAY_RANGES.filter((d) => d <= catalogue.maxDays).map((d) => (
+                        <option key={d} value={d}>
+                          {t('dash.lastDays', { n: d })}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {spec.rotate && (
+                    <select
+                      value={current.rotate ?? 0}
+                      onChange={(e) =>
+                        setWidget(selected!, { ...current, rotate: Number(e.target.value) })
+                      }
+                      title={t('board.rotateList')}
+                      data-testid="widget-rotate"
+                      className={SELECT}
+                    >
+                      {ROTATIONS.map((s) => (
+                        <option key={s} value={s}>
+                          {s === 0 ? t('board.rotateNever') : t('board.rotateEvery', { n: s })}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {spec.text && (
+                    <input
+                      value={current.text ?? ''}
+                      maxLength={catalogue.maxCaption}
+                      onChange={(e) => setWidget(selected!, { ...current, text: e.target.value })}
+                      placeholder={t('board.caption')}
+                      data-testid="widget-text"
+                      className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface px-2 py-1 text-vp-base text-ink outline-none focus:border-accent"
+                    />
+                  )}
+                  {/* Width and height are dragged on the canvas; the selects
+                      stay because a drag is not reachable from a keyboard and
+                      because an exact twelfth is easier to pick than to aim at. */}
+                  <select
+                    value={current.span}
+                    onChange={(e) =>
+                      setWidget(selected!, { ...current, span: Number(e.target.value) })
+                    }
+                    title={t('board.width')}
+                    data-testid="widget-span"
+                    className={SELECT}
+                  >
+                    {catalogue.steps
+                      .filter((n) => n >= 1 && n <= catalogue.maxSpan)
+                      .map((n) => (
+                        <option key={n} value={n}>
+                          {t('board.widthOf', { n })}
+                        </option>
+                      ))}
+                  </select>
+                  <select
+                    value={current.height ?? 1}
+                    onChange={(e) =>
+                      setWidget(selected!, { ...current, height: Number(e.target.value) })
+                    }
+                    title={t('board.height')}
+                    data-testid="widget-height"
+                    className={SELECT}
+                  >
+                    {Array.from({ length: Math.max(1, catalogue.maxRows) }, (_, i) => i + 1).map(
+                      (n) => (
+                        <option key={n} value={n}>
+                          {t('board.heightOf', { n })}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                  {board.rotate > 0 && (
+                    <select
+                      value={current.page ?? 0}
+                      onChange={(e) =>
+                        setWidget(selected!, { ...current, page: Number(e.target.value) })
+                      }
+                      title={t('board.page')}
+                      data-testid="widget-page"
+                      className={SELECT}
+                    >
+                      {Array.from({ length: Math.min(pages + 1, 12) }, (_, n) => (
+                        <option key={n} value={n}>
+                          {t('board.pageOf', { n: n + 1 })}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="mt-3">
+            <BoardGallery catalogue={catalogue} current={board.preset} onPick={onPreset} />
+          </div>
+        </div>
       </div>
+      {board.widgets.length === 0 && (
+        <p className="mt-2 text-vp-sm" style={{ color: 'var(--vp-state-waiting)' }}>
+          {t('board.empty')}
+        </p>
+      )}
     </div>
   )
+}
+
+function Choice({
+  testid,
+  title,
+  value,
+  options,
+  label,
+  onPick,
+}: {
+  testid: string
+  title: string
+  value: string
+  options: string[]
+  label: (id: string, fallback: string) => string
+  onPick: (value: string) => void
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onPick(e.target.value)}
+      title={title}
+      data-testid={testid}
+      className={SELECT}
+    >
+      {options.map((o) => (
+        <option key={o} value={o}>
+          {label(o, o)}
+        </option>
+      ))}
+    </select>
+  )
+}
+
+/** The word for one density step.
+ *
+ *  Keyed off the ends rather than off the number, so a server that grows a
+ *  fourth step gets "in between" for it instead of an identifier on screen. */
+function densityKey(n: number, max: number): 'board.densitySpare' | 'board.densityNormal' | 'board.densityDense' {
+  if (n <= 1) return 'board.densitySpare'
+  if (n >= max) return 'board.densityDense'
+  return 'board.densityNormal'
+}
+
+function tileOf(root: HTMLElement | null, index: number): HTMLElement | null {
+  return root?.querySelector<HTMLElement>(`[data-slot-index="${index}"]`) ?? null
+}
+
+function gridOf(root: HTMLElement | null): DOMRect | null {
+  const el = root?.querySelector<HTMLElement>('[data-testid="canvas-board"]')
+  return el ? el.getBoundingClientRect() : null
 }

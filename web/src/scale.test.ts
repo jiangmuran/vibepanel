@@ -88,4 +88,37 @@ describe('the design scale lives in the tokens', () => {
     expect(bad, `rounded, rounded-lg and friends are Tailwind's steps, not this ` +
       `project's; use one of the four:\n${bad.join('\n')}`).toEqual([])
   })
+
+  /**
+   * The wall's three steps stay indirect, and the whole scaling mechanism
+   * depends on it.
+   *
+   * `@theme inline` *inlines* whatever it is given into every utility Tailwind
+   * generates, so a literal there compiles to `font-size: clamp(44px,3vw,84px)`
+   * and a `.vp-wall` further down the sheet redefining `--text-vp-3xl` changes
+   * nothing at all. That is how this was written the first time: the CSS looked
+   * correct, the class was on the element, and the dashboard would have drawn
+   * at 1080p sizes on a 4K screen with nothing anywhere saying why.
+   *
+   * A value that reads another variable stays indirect at the point of use,
+   * which is what lets one class scale all three. This checks that shape rather
+   * than the numbers.
+   */
+  it('keeps the wall type scale indirect, or the wall does not scale', () => {
+    const css = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
+    const theme = css.slice(css.indexOf('@theme inline {'))
+    for (const step of ['xl', '2xl', '3xl']) {
+      const line = new RegExp(`--text-vp-${step}:\\s*([^;]+);`).exec(theme)
+      expect(line, `@theme inline does not define --text-vp-${step}`).not.toBeNull()
+      expect(
+        line![1].trim(),
+        `--text-vp-${step} is a literal in @theme inline, so Tailwind bakes it into every ` +
+          'utility and .vp-wall cannot scale it. Point it at a --vp-* variable instead.',
+      ).toMatch(/^var\(--vp-/)
+    }
+    // And the base unit exists at the root, so a dashboard-sized utility used
+    // outside the dashboard still resolves.
+    expect(css).toMatch(/^\s*--vp-wall: 16px;/m)
+    expect(css).toMatch(/\.vp-wall \{\s*--vp-wall: clamp\(/)
+  })
 })
