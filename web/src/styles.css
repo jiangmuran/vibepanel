@@ -1381,6 +1381,25 @@ body {
    TestWhatAViewerSaysAboutItselfCannotChangeTheDashboard is what says so. */
 .vp-wall {
   --vp-wall: clamp(13px, 100vw / 120, 26px);
+
+  /* And the three sizes with it, which is the whole of why this works.
+   *
+   * Redefining the base unit alone does nothing, and it is the same trap as
+   * the `@theme inline` one described up at the scale, one level higher.
+   * A custom property's var() references are substituted at *computed-value
+   * time on the element that declares it*: `--vp-text-2xl` is declared on
+   * :root, so it computes there to `calc(2.25 * 16px)` and descendants
+   * inherit that already-substituted length. By the time `.vp-wall` changes
+   * `--vp-wall`, there is nothing left to change.
+   *
+   * Measured before this: identical 36/22/56px at 1280, 1920 and 3840. The
+   * clamp was declared, computed, inherited -- and consumed by nothing.
+   * TestTheWallScaleIsIndirect checked that the utilities read a variable; it
+   * could not see that the variable had already been resolved.
+   */
+  --vp-text-xl: calc(1.375 * var(--vp-wall));
+  --vp-text-2xl: calc(2.25 * var(--vp-wall));
+  --vp-text-3xl: calc(3.5 * var(--vp-wall));
 }
 
 /* A preset's thumbnail: the same twelve columns and the same dense flow, at

@@ -70,7 +70,18 @@ export function Tile({
           {label}
         </h2>
       )}
-      <div className="min-w-0 flex-1">{children}</div>
+      {/* Centred in the height it was given, not stacked at the top of it.
+       *
+       * A wall tile is as tall as its row, and a row on a television is
+       * several hundred pixels. Three figures drawn at the top of one leave
+       * three quarters of a card empty, and every card doing it makes a board
+       * that is 90% full of grid read as a board that is 90% empty -- which is
+       * what it looked like, and what was reported.
+       *
+       * Children that want the whole box still get it: a chart inside here is
+       * `h-full`, and `min-h-0` keeps a list that overflows scrollable rather
+       * than pushing the row past the viewport. */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col justify-center">{children}</div>
     </section>
   )
 }

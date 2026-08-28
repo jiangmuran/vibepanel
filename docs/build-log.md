@@ -16871,3 +16871,44 @@ blank rectangle.
 `usage.MinInterval` rather than a bug: the pass that ran before the project
 existed is reused, and its answer has no row for it. Worth knowing before
 somebody goes looking for it.
+
+### Opening the share links and looking at them
+
+「你真的打开渲染看过吗」. No. The boards were built by an agent told not to run
+`render-check`, and `render-check` does not drive the share dashboard, so
+nothing and nobody had looked at one. Opening five presets at 1280, 1920 and
+3840 found this, in the order it was found:
+
+**The wall type scale was inert.** Measured: identical `36/22/56px` at all three
+widths. `.vp-wall` redefines `--vp-wall` to `clamp(13px, 100vw/120, 26px)`, and
+the three sizes are `calc(2.25 * var(--vp-wall))` — declared on `:root`. **A
+custom property's `var()` references are substituted at computed-value time on
+the element that declares them**, so `--vp-text-2xl` resolves to
+`calc(2.25 * 16px)` at `:root` and every descendant inherits that already-fixed
+length. By the time `.vp-wall` changes the base unit there is nothing left to
+change.
+
+This is the same trap as the `@theme inline` one documented directly above it,
+one level higher, and the test written for that one could not see it:
+`TestTheWallScaleIsIndirect` checks that the utilities read a *variable*, and
+the variable had already been resolved. `.vp-wall` now redefines the three sizes
+as well as the base. Measured after: 29/46 at 1280, 36/22/56 at 1920 (unchanged
+on the screen it was tuned on), **59/36/91 at 3840**.
+
+**Tile content was stacked at the top of the row it was given.** A wall row is
+several hundred pixels; three figures at the top of one leave three quarters of
+a card empty, and every card doing it makes a board that is 93% full of grid
+read as one that is 93% empty. The content area is centred now.
+
+**Two things I nearly reported and were wrong**, both caught by measuring
+instead of reading: `data-fill` looked unwired because I grepped
+`components/board/` and it is set in `components/Dashboard.tsx`; and the board
+looked like it filled 44% of the screen when it is 2001px of 2160. The
+emptiness was the tiles, not the grid.
+
+**Left undone, and it is the biggest one.** A figure is sized against the
+*viewport* and a tile is sized against the *grid*, so on a 4K wall the type grew
+1.63× while the tiles grew 4× in area — 「22 Commits today」 at 91px inside
+2500×780 is about 3% ink. Sizing a figure against its own tile needs container
+queries (`container-type: size` on the tile, figures in `cqmin`), which is a
+mechanism change rather than a number change.
