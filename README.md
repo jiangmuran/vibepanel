@@ -21,7 +21,8 @@
 on a human at the top. Triangle: stopped to ask a question. Circle: still
 working. Check: finished. Cross: exited non-zero. The strip along the bottom is
 a scratch terminal attached to the selected session. On the right, the project's
-files, and under them the machine's CPU, memory and disk.</sup>
+files under a line naming its branch and what is uncommitted, and beneath both
+the token spend and the machine.</sup>
 
 ## What it is
 

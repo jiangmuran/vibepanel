@@ -1513,9 +1513,27 @@ try {
       if (!bottomID) {
         note('FAIL', 'bottom', 'a bottom tab carries no session id, so its screen cannot be read')
       }
+      // Rows joined before matching, because a terminal wraps.
+      //
+      // Two occurrences are wanted -- the shell's echo of the line, then the
+      // command's output -- and the buffer is a grid, so a line longer than the
+      // pane is two rows with the marker split across them:
+      //
+      //     …/agent-adc49cc79424c01b2/web$ echo BO
+      //     TTOM_TERMINAL_OK
+      //     BOTTOM_TERMINAL_OK
+      //
+      // One match instead of two, and a check that reported "produced no
+      // output" about a terminal that had echoed perfectly. Whether it wrapped
+      // depended on how long the *prompt* was, which is how deep the checkout
+      // is on whoever's disk -- so this passed in a clone at the top of a home
+      // directory and failed in a worktree, for two months, looking like a
+      // race. Joining the rows is what the terminal is showing anyway: the
+      // wrap is a rendering artefact of the pane's width, not something in the
+      // output.
       let echoed = false
       for (let i = 0; i < 40; i++) {
-        const txt = await screenText(page, undefined, { id: bottomID })
+        const txt = (await screenText(page, undefined, { id: bottomID })).replace(/\n/g, '')
         if ((txt.match(/BOTTOM_TERMINAL_OK/g) ?? []).length >= 2) { echoed = true; break }
         await sleep(300)
       }
