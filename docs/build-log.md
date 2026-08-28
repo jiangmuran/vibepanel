@@ -15902,3 +15902,122 @@ is not read at runtime, so nothing breaks if a name is dropped from it — what 
 lost is the fixture the repair is driven from. Mutation testing found exactly
 that by deleting two names and watching every check stay green. It is
 append-only now, and pinned.
+
+### Mutation testing
+
+29 mutations, 29 killed, 0 survived. `scripts/mutate-panel2.py` re-runs them —
+twenty-two against `vitest`, one against the `httpapi` suite's disclosure tests
+(four entries), six against `panes-check`.
+
+Two survived the first pass. Neither was a bug in the product; both were guards
+that no command in the table was consulting.
+
+| removed | what goes wrong |
+|---|---|
+| a retired tab back in `PANEL_TABS` | a strip with three tabs and a repair tested against a name that still exists |
+| the tab order | the strip navigates and animates the wrong way |
+| two names out of `RETIRED_TABS` | the stored-layout repair silently stops testing them |
+| a pane emptied by a retired tab is kept | a tab strip with nothing under it |
+| the pane cap counts panes that were dropped | a surviving pane falls off the end of a six-pane layout |
+| `groups.length === 0` returning the default | yesterday's layout opens as an empty panel |
+| the week window's near bound | "this week" totals the whole thirty-day range |
+| the week window's far bound | a clock a day ahead pulls in a day the server calls tomorrow |
+| the unparseable-date guard | a window starting at the epoch, presented as this week |
+| `projectTotal`'s no-project answer | a machine-wide total under a heading saying "this project" |
+| `projectTotal`'s absent-row answer | a project the window never saw reads as having cost nothing |
+| the zero-total filter on `toolShares` | a legend entry reading 0% and a segment nobody can aim at |
+| the sort in `toolShares` | the bar and the legend list the tools in different orders |
+| `outputTotal` summing all four columns | 字数 becomes the total spend, which is the opposite of production |
+| the hero's own type size | six figures at one size, which is the grid-of-cards mistake |
+| an opened block drawn beside the stack | two things open at once, which is what three states exist to prevent |
+| a second press target inside a dock block | expanding the panel while trying to read a number |
+| Escape from full-screen closing everything | two levels for one keypress |
+| Escape doing nothing at all | a surface you leave by reloading |
+| the `tokens` entry in `DOCK_META` | a header with no name and no way in |
+| the link built from `remote.url` | a file on disk decides where a click goes |
+| the github.com host check | a link to whatever host somebody's config names |
+| the `.`/`..` segment check | `github.com/../payroll`, which is a different repository |
+| the segment character class | a path segment that means more than itself |
+| `named` gating the repository on a board | a counts-mode wall naming the customer |
+| the project-scope check | a session-scoped link disclosing which project it belongs to |
+| `Remote.GitHub()` on the disclosure path | a non-GitHub remote sent to a viewer |
+| the remote URL added back to the payload | the raw config string on a wall |
+| the four-tab mock in the arithmetic suite | the index arithmetic tested against two tabs twice |
+
+**N20 — the `tokens` entry in `DOCK_META`.** `Record<DockBlock, …>` already
+forbids a missing key, and it forbids it *at compile time*, which is not what
+`vitest` runs. Removing the entry left every unit test green. `dock.test.ts` now
+asserts the coverage at runtime, and it earns its place: the type is only
+consulted by a command somebody might not run.
+
+**N3 — two names dropped from `RETIRED_TABS`.** The list is not read at runtime;
+`parseLayout` drops an unrecognised tab by not recognising it. What the list is
+*for* is the fixture `panes.test.ts` drives the repair from, so a shorter list is
+a repair tested against fewer of the strings that were really in people's
+browsers — and nothing anywhere goes red. It is append-only now, pinned by a
+literal, and the literal is the guard for the same reason `PANEL_TABS`'s order
+is.
+
+### The checks
+
+- `make check` — clean. 397 frontend tests, every Go package.
+- `make panes-check` — `=== panes check: 0 FAIL, 0 WARN ===`, 99 assertions.
+- `make render-check` — `=== render check: 1 FAIL, 0 WARN ===`, and the one is
+  `[FAIL] bottom: typing into a bottom terminal produced no output`. Verified
+  pre-existing: the same line, alone, on a detached checkout of `main`
+  (`cf12c75`) built and run the same way. It is a terminal, not the side panel.
+
+  Two FAILs on the first run, both this change's:
+
+  - **`sidebar-project-link is 28px tall` in the phone drawer.** The blanket
+    coarse-pointer floor in `styles.css` covers `button` and `[role=button]`;
+    an `a[href]` sails past it, and the sidebar's repository link is an anchor.
+    `.vp-tap` on the anchor. Worth noting that the rule's own comment says it is
+    a rule about buttons "rather than a class on each" — which is right, and an
+    anchor is the case it does not reach.
+  - The bottom-terminal line, which turned out to be the pre-existing one.
+
+  `repo.test.ts` found the third break before a browser did: `..` passes the
+  owner/name character class and `https://github.com/../payroll` resolves to a
+  different repository. The property test — every URL this builds has exactly two
+  path segments — is what caught it.
+
+
+### Left undone
+
+- **The wall boards still count todos that nothing in the panel can create.**
+  The routes and the widgets are deliberate (see above), but the loop is only
+  closed by an API client, and nobody has one. Either the boards' checklist
+  widgets should go with the panel's, or something should write todos — an
+  agent hook that ticks an item off when a session reaches `done` is the
+  obvious candidate and is a feature, not a cleanup.
+- **`spend.whose` is still `text-ink-3` at 10.5px**, which the contrast probe
+  measured at 2.97:1 on the panel the last time it was on screen when the probe
+  ran. It predates this change and is not this change's finding, but the
+  measurement applies to it.
+- **The token detail's fullscreen goes somewhere the monitor's does not.**
+  Tokens hand over to `TokenUsageView`; the monitor grows into an overlay of the
+  same shape it already had. Defensible — one of the two has a purpose-built
+  analysis screen and the other does not — but it means "press again" lands on
+  two different kinds of surface, and if a third block ever gets a real full
+  view the asymmetry should become the rule rather than the exception.
+- **Nothing measures the two-tab panel at `PANEL_MIN_WIDTH`.** Both browser
+  checks drive it at 320 and 420. A 200px files tab is a repository line, a file
+  list, a divider and two dock blocks in a column narrower than the token
+  block's own hero figure, and whether that is usable is a question neither
+  check asks.
+- **The dock's two blocks divide their half by content, not by a divider.**
+  Token spend is content-height and the monitor takes what is left. Somebody who
+  wants the monitor large and the spend small has to drag the tab's divider,
+  which moves both. A second divider inside the dock is the obvious fix and was
+  left out rather than added speculatively.
+- **The repository line polls independently of the repository panel.** Both read
+  the same cached endpoint, so the cost is bounded, but a tab with the panel open
+  makes two requests where one would do. The cache's whole design is that this
+  is fine; it is worth remembering it is two.
+- **The read-only board names a repository only for a project-scoped link.** A
+  board covering three projects cannot name three repositories in its header,
+  and the `projects` widget — which lists them — was not given the link, because
+  that would be one working-tree read per project per poll. If somebody wants
+  that, it needs a `Need*` tag so a board that does not draw the widget does not
+  pay for it.
