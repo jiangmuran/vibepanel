@@ -16709,3 +16709,30 @@ read as text, defined once in each of the three theme blocks — root, the
 `prefers-color-scheme` media query, and `[data-theme='dark']` — because a token
 defined in only two of them is white-on-white after a theme switch, which is
 what red line 5 is about.
+
+### Two features that shipped switched off by nothing
+
+`notifyOnWaiting` was complete, commented, tested in spirit, described in both
+READMEs — and called from nowhere. The settings toggle asked for notification
+permission, stored a boolean, and promised something that could not happen.
+`panels/VncView.tsx` was a whole viewer left behind when its tab was retired,
+sitting beside a working proxy, a `--vnc` flag and a settings page for displays.
+
+Neither is a compile error. Neither is a lint error. Both survived review. What
+found them was reading the README against the code, line by line, for an
+unrelated reason.
+
+`wired.test.ts` is the guard, in two parts, because the two failures are
+different shapes: a **file** nothing imports (VncView), and an **exported
+function** nothing outside its own file mentions (notifyOnWaiting, whose file
+*was* imported — for three other functions beside it).
+
+It earned itself on the first run, reporting four more uncalled exports, two of
+them merged that same day. One report was subtler than it looked: `BigMeter` is
+used inside its own module, so it is not dead — it just should not be exported.
+Dropping the keyword is the fix; deleting the function would have been the
+mistake, and the first attempt made it before `tsc` said so.
+
+The allowlist holds two entries and each is a file loaded rather than imported:
+`main.tsx` by `index.html`, `panes-harness.tsx` by the harness page that ships
+nowhere. `novnc.d.ts` and `vite-env.d.ts` are ambient types.

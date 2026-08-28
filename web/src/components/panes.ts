@@ -278,11 +278,6 @@ export function groupOf(layout: PaneLayout, tab: PanelTab): number {
   return layout.groups.findIndex((g) => g.tabs.includes(tab))
 }
 
-/** The tab a group is showing, or the panel's own idea of "where I am". */
-export function activeTab(layout: PaneLayout, group: number): PanelTab {
-  return layout.groups[group]?.active ?? layout.groups[0].active
-}
-
 /** Bring a tab to the front of whichever pane holds it. */
 export function activate(layout: PaneLayout, tab: PanelTab): PaneLayout {
   const at = groupOf(layout, tab)

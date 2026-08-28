@@ -14,7 +14,7 @@ import { metricLabel } from './labels'
  */
 
 /** One pressure, with the number that a bar alone cannot carry at a distance. */
-export function BigMeter({
+function BigMeter({
   label,
   value,
   detail,

@@ -53,6 +53,7 @@ import { RestoreDialog } from './components/RestoreDialog'
 import { LaunchPicker } from './components/LaunchPicker'
 import { filesFrom } from './components/upload'
 import { copyTextInGesture } from './clipboard'
+import { notifyOnWaiting } from './notify'
 import { t, useLang } from './i18n'
 
 /**
@@ -279,6 +280,16 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
 
   const applyState = useCallback((next: PanelState) => {
     setState(next)
+    // Every snapshot, because the transition it looks for is only visible by
+    // comparing this one with the last. It was written, tested, documented in
+    // both READMEs, and called from nowhere: the settings toggle asked for
+    // permission, stored a boolean, and promised a notification that could
+    // never arrive. Found by checking the README's claims against the code.
+    //
+    // document.hasFocus() rather than a piece of React state: what matters is
+    // whether this window is the one being looked at, and only the browser
+    // knows that.
+    notifyOnWaiting(next.sessions, document.hasFocus())
     setSelected((cur) => {
       if (cur && next.sessions.some((s) => s.id === cur)) return cur
       return next.sessions[0]?.id ?? null

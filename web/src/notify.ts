@@ -112,7 +112,3 @@ export function notifyOnWaiting(sessions: Session[], focused: boolean) {
     })
 }
 
-/** Forget what was seen, so a reconnect does not announce the whole list. */
-export function resetNotifyState() {
-  lastState = new Map()
-}
