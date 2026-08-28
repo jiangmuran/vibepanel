@@ -211,6 +211,9 @@ try {
     // unknown field -- so every screenshot since had an empty notes tab.
     body: JSON.stringify({ content: '# 今天\n\n- 目录选择器做完了\n- 终端行距 1.2 → 1.0\n- 还差 PWA 通知' }),
   })
+  // Todos are seeded even though the panel no longer shows them: the routes
+  // are still there for the wall boards, and a board screenshot with an empty
+  // checklist widget photographs the wrong thing.
   for (const t of ['把右栏排版重做', '简体中文', 'PWA 通知']) {
     await authed(`/api/projects/${proj.id}/todos`, { method: 'POST', body: JSON.stringify({ text: t }) })
   }
@@ -256,10 +259,19 @@ try {
     const tag = `${theme}-${locale.slice(0, 2)}`
     await shoot(page, `desktop-${tag}`)
 
-    // The right panel, one tab at a time.
-    for (const tab of ['files', 'monitor', 'notes', 'todos', 'tokens']) {
+    // The right panel: both tabs, then each dock block opened out. Five
+    // pictures where there used to be five, and the same coverage — the two
+    // that were tabs are blocks now.
+    for (const tab of ['files', 'notes']) {
       await page.locator(`[data-testid="panel-tab-${tab}"]`).click().catch(() => {})
       await shoot(page, `panel-${tab}-${tag}`)
+    }
+    for (const block of ['tokens', 'monitor']) {
+      await page.locator(`[data-testid="dock-open-${block}"]`).click().catch(() => {})
+      await sleep(600)
+      await shoot(page, `panel-${block}-${tag}`)
+      await page.keyboard.press('Escape').catch(() => {})
+      await sleep(400)
     }
 
     if (theme === 'dark' && locale === 'zh-CN') {

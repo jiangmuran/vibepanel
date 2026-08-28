@@ -171,7 +171,6 @@ const DICT = {
     zh: '这个链接指向项目外面，面板不会打开它。',
     en: 'This link points outside the project. The panel will not open it.',
   },
-  'todos.addShort': { zh: '添加', en: 'Add' },
   'err.tryAgain': { zh: '再试一次', en: 'Try again' },
   'settings.passwordChanged': {
     zh: '已修改。其他浏览器都已被登出。',
@@ -206,9 +205,16 @@ const DICT = {
   'panel.git': { zh: '仓库', en: 'Repo' },
   'panel.monitor': { zh: '监控', en: 'Monitor' },
   'panel.notes': { zh: '笔记', en: 'Notes' },
-  'panel.todos': { zh: '待办', en: 'Todo' },
   'panel.tokens': { zh: '用量', en: 'Tokens' },
   'panel.tablist': { zh: '侧栏面板', en: 'Side panel sections' },
+  'panel.dockDivider': { zh: '上下分隔', en: 'Split this tab' },
+
+  // The three states a block has. One verb for all of them, in all three
+  // blocks, because the gesture is the same one everywhere it appears.
+  'detail.open': { zh: '展开{what}', en: 'Open {what}' },
+  'detail.back': { zh: '返回', en: 'Back' },
+  'detail.full': { zh: '全屏显示', en: 'Fill the window' },
+  'repo.openOn': { zh: '在 GitHub 上打开 {what}', en: 'Open {what} on GitHub' },
 
   // The pane layout. Every one of these is also reachable by dragging a tab;
   // they are here because dragging is a mouse gesture and the panel has to be
@@ -230,13 +236,13 @@ const DICT = {
   'files.count': { zh: '{n} 项', en: '{n} items' },
   'files.modified': { zh: '改动时间', en: 'Modified' },
 
-  'todos.add': { zh: '加一条待办', en: 'Add an item' },
+  // The side panel's checklist is gone; this line is not. It is the one entry
+  // in the dictionary whose two languages take *different placeholders* —
+  // Chinese counts what is done, English counts what is left — which is the
+  // property i18n.test.ts exists to hold, and the wall boards still count
+  // todos. Deleting it would delete the only fixture for a rule that applies
+  // to every future line.
   'todos.leftOf': { zh: '{done} / {total} 已完成', en: '{left} of {total} left' },
-  'todos.markDone': { zh: '标记为完成', en: 'Mark done' },
-  'todos.markNotDone': { zh: '标记为未完成', en: 'Mark not done' },
-  'todos.empty': { zh: '还没有待办', en: 'Nothing to do' },
-  'todos.added': { zh: '加于', en: 'Added' },
-  'todos.completed': { zh: '完成于', en: 'Completed' },
 
   'notes.saved': { zh: '已保存', en: 'Saved' },
   'notes.saving': { zh: '保存中…', en: 'Saving…' },
@@ -396,8 +402,6 @@ const DICT = {
   'project.reorder': { zh: '拖动排序', en: 'Drag to reorder' },
   'project.remove': { zh: '把这个项目从面板移除', en: 'Remove this project from the panel' },
   'project.orderManual': { zh: '回到你排好的顺序', en: 'Back to the order you arranged' },
-  'todos.edit': { zh: '双击编辑', en: 'Double click to edit' },
-  'todos.delete': { zh: '删除', en: 'Delete' },
   'compose.placeholder': { zh: '输入命令…', en: 'Type a command…' },
   'compose.send': { zh: '发送', en: 'Send' },
   'settings.title': { zh: '设置', en: 'Settings' },
@@ -1158,8 +1162,12 @@ const DICT = {
   'spend.title': { zh: 'Token 用量', en: 'Token usage' },
   'spend.open': { zh: '打开完整视图', en: 'Open the full view' },
   'spend.close': { zh: '关闭', en: 'Close' },
-  'spend.today': { zh: '今天', en: 'Today' },
+  'spend.today': { zh: '今日消耗', en: 'Today' },
   'spend.rangeDays': { zh: '近 {n} 天', en: 'Last {n} days' },
+  'spend.week': { zh: '本周消耗', en: 'This week' },
+  'spend.thisProject': { zh: '本项目消耗', en: 'This project' },
+  'spend.noProject': { zh: '没选项目', en: 'no project selected' },
+  'spend.headline': { zh: '消耗', en: 'Spend' },
   'spend.thisMonth': { zh: '本月', en: 'This month' },
   'spend.lastMonth': { zh: '上月', en: 'Last month' },
   'spend.sessionCount': { zh: '{n} 个 agent 会话', en: '{n} agent sessions' },

@@ -788,6 +788,16 @@ export interface ShareDashboard {
   /** The scoped project's or session's name under 'names'; empty under
    *  'counts', and empty when the scoped row no longer exists. */
   scopeName: string
+  /**
+   * The scoped project's repository, as two parsed halves.
+   *
+   * Both empty unless the link is project-scoped, in 'names' mode, and points
+   * at a github.com remote — see the disclosure note on the Go struct. The
+   * page builds the URL from these with githubURL(); the raw remote and the
+   * project's path are never sent, in any mode.
+   */
+  scopeRepoOwner: string
+  scopeRepoName: string
 }
 
 // ── boards ─────────────────────────────────────────────────────────────────

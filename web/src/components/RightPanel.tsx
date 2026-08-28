@@ -4,11 +4,8 @@ import {
   ArrowDown,
   ArrowUp,
   ChevronRight,
-  Coins,
   EllipsisVertical,
   FolderTree,
-  GitBranch,
-  ListChecks,
   Merge,
   NotebookPen,
   RotateCcw,
@@ -20,10 +17,12 @@ import { FileTree } from './panels/FileTree'
 import { GitPanel } from './panels/GitPanel'
 import { SystemMonitor } from './panels/SystemMonitor'
 import { Notes } from './panels/Notes'
-import { Todos } from './panels/Todos'
 import { ErrorBoundary } from './ErrorBoundary'
-import { SystemStrip } from './panels/SystemStrip'
+import { PanelDock } from './panels/PanelDock'
+import { DETAIL_META } from './panels/dock'
+import { PanelDetail } from './PanelDetail'
 import { TokenUsage } from './panels/TokenUsage'
+import { useSpend } from './panels/useSpend'
 import {
   PANEL_MAX_WIDTH,
   PANEL_MIN_WIDTH,
@@ -35,6 +34,7 @@ import {
   swapDirection,
   tabFromKey,
   tabOwnsHeight,
+  type DetailBlock,
   type PanelTab,
 } from './chrome'
 import {
@@ -75,8 +75,6 @@ export type { PanelTab }
 // is what lib/names.mjs is watching for.
 const TABS: Record<PanelTab, { icon: typeof Activity; key: Key }> = {
   files: { icon: FolderTree, key: 'panel.files' },
-  monitor: { icon: Activity, key: 'panel.monitor' },
-  tokens: { icon: Coins, key: 'panel.tokens' },
   notes: { icon: NotebookPen, key: 'panel.notes' },
 }
 
@@ -139,6 +137,37 @@ export function RightPanel(props: Props) {
 
   const focused = layout.groups[0].active
   const density = panelDensity(width)
+
+  /**
+   * Which block is opened out of its compact form, and how far.
+   *
+   * One at a time, and never persisted. See PanelDetail for both rules; the
+   * short version is that this is a thing you are doing rather than a thing you
+   * built, and the pane layout is the other kind.
+   *
+   * `full` for tokens is not drawn here at all — it hands over to the panel's
+   * existing full-width token view, which is a purpose-built analysis screen
+   * and strictly better than the same block stretched. The gesture is the same
+   * in all three blocks: press to open, press again for the window.
+   */
+  const [opened, setDetail] = useState<{ block: DetailBlock; full: boolean } | null>(null)
+  const openDetail = useCallback((block: DetailBlock) => setDetail({ block, full: false }), [])
+
+  // One reading of the token ledger for the compact block and the opened one,
+  // so expanding does not restart the poll under the figures you pressed.
+  const spend = useSpend()
+
+  // A project that has gone takes its detail with it. `repo` is about a
+  // project, and leaving it open over "no project selected" is a header naming
+  // a repository that is not on screen.
+  //
+  // Derived rather than reset from an effect. The effect version passed review
+  // and failed lint for the right reason: it renders the stale detail once,
+  // then re-renders without it, which is a frame of a header naming a project
+  // that has gone. The two dock blocks survive a project change untouched —
+  // they were never about the project.
+  const projectId = project?.id ?? null
+  const detail = opened !== null && (opened.block !== 'repo' || project !== null) ? opened : null
 
   // A stored layout is not a promise about the screen it comes back on. Four
   // panes in a browser window dragged short is four tab strips and no content,
@@ -299,56 +328,66 @@ export function RightPanel(props: Props) {
     },
   }
 
+  /**
+   * The bottom half of every tab, and the same instance of it on both.
+   *
+   * Built here rather than inside bodyFor so the two tabs are handed one
+   * element: the dock is not per-tab state and rebuilding it per tab would
+   * remount the monitor on every tab switch, which is a two-second gap in the
+   * one thing that is supposed to be always on.
+   */
+  const dock = (
+    <ErrorBoundary label="The panel dock">
+      <PanelDock
+        spend={spend}
+        density={density}
+        projectId={projectId}
+        projectName={project?.name ?? null}
+        onOpen={openDetail}
+      />
+    </ErrorBoundary>
+  )
+
   const bodyFor = (tab: PanelTab) => {
-    // Two tabs sit above the no-project guard, because both are facts about
-    // the *machine* rather than about a project. An agent that ran in a
-    // directory the panel has never been told about still spent tokens, and
-    // hiding the whole tab until somebody adds a project would hide exactly
-    // that case. The monitor is the same argument one step further: the strip
-    // at the foot of this panel is already showing the machine's CPU, memory
-    // and disk with no project anywhere, so a monitor tab reading "no project
-    // selected" above it was the panel disagreeing with itself.
-    //
-    // The other two are about a project — its files, its notes — and have
-    // nothing to say without one.
-    if (tab === 'tokens') {
+    // The top half is the only part that differs, and the only part that needs
+    // a project. The dock below it is about the machine — an agent that ran in
+    // a directory the panel has never been told about still spent tokens, and
+    // the machine's memory is the machine's memory — so it is drawn whether or
+    // not anything is selected, and the "no project" line replaces the top half
+    // alone rather than the whole tab.
+    const top =
+      project === null ? (
+        <p className="px-3 py-4 text-vp-base text-ink-2">{t('panel.noProject')}</p>
+      ) : tab === 'files' ? (
+        <FileTree
+          key={project.id}
+          projectId={project.id}
+          density={density}
+          onOpenRepo={() => openDetail('repo')}
+        />
+      ) : (
+        <Notes key={project.id} projectId={project.id} socket={props.socket} />
+      )
+    return (
+      <StackedTab id={tab} top={top} bottom={dock} />
+    )
+  }
+
+  /** What an opened block draws, and whether it has a full-width form. */
+  const detailBody = (block: DetailBlock) => {
+    if (block === 'monitor') return <SystemMonitor sessions={props.sessions} density="wide" />
+    if (block === 'tokens') {
       return (
         <TokenUsage
-          projectId={project?.id ?? null}
+          spend={spend}
+          projectId={projectId}
+          projectName={project?.name ?? null}
           density={density}
-          onOpen={props.onOpenTokens}
         />
       )
     }
-    if (tab === 'monitor') return <SystemMonitor sessions={props.sessions} density={density} />
-    if (!project) {
-      // One line, not two. A stacked tab with no project would otherwise say
-      // "no project selected" twice with a divider between them, which reads
-      // as two failures rather than as one absence.
-      return <p className="px-3 py-4 text-vp-base text-ink-2">{t('panel.noProject')}</p>
-    }
-    if (tab === 'files') {
-      return (
-        <StackedTab
-          key={project.id}
-          id="files"
-          label="panel.git"
-          icon={GitBranch}
-          top={<FileTree projectId={project.id} density={density} />}
-          bottom={<GitPanel projectId={project.id} sessions={props.sessions} />}
-        />
-      )
-    }
-    return (
-      <StackedTab
-        key={project.id}
-        id="notes"
-        label="panel.todos"
-        icon={ListChecks}
-        top={<Notes projectId={project.id} socket={props.socket} />}
-        bottom={<Todos projectId={project.id} socket={props.socket} density={density} />}
-      />
-    )
+    if (!project) return null
+    return <GitPanel projectId={project.id} sessions={props.sessions} />
   }
 
   return (
@@ -400,56 +439,92 @@ export function RightPanel(props: Props) {
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* The panes, and only the panes. The monitor strip below is a sibling
-            rather than the last child, because a divider's position is read as
-            a share of this box — and a box that included the strip would put
-            every boundary a strip's height out. */}
-        <div ref={columnRef} className="flex min-h-0 flex-1 flex-col">
-        {layout.groups.map((group, index) => (
-          // Keyed by the tabs it holds, which is stable while the pane is
-          // resized or its tab switched and changes only when the arrangement
-          // does. Tab sets are disjoint by the invariant, so this is unique.
-          <Fragment key={group.tabs.join('|')}>
-            {index > 0 && (
-              <PaneDivider
-                index={index - 1}
-                layout={layout}
-                columnRef={columnRef}
-                onLayout={props.onLayout}
-              />
-            )}
-            <Pane
-              index={index}
-              group={group}
-              layout={layout}
-              width={width}
-              drag={drag}
-              tabDrag={tabDrag}
-              menuOpen={menuOpen === index}
-              onMenu={(open) => setMenuOpen(open ? index : null)}
-              onLayout={props.onLayout}
-              onRefocus={props.onRefocus}
-              onCollapse={props.onCollapse}
-              body={bodyFor}
-            />
-          </Fragment>
-        ))}
-        </div>
+        {/* An opened block takes the whole column, panes and all.
 
-        {/* Always on, below whatever is chosen above. "Is the machine coping"
-            is not a question you navigate to -- it is a thing you want in the
-            corner of your eye while reading a terminal. As a tab it was three
-            figures given a whole column, and invisible from the other three.
+            Instead of the stack rather than beside it, which is the rule that
+            makes three states predictable: there is no arrangement where a
+            block is half-open behind a tab strip, and nothing to reason about
+            when a second one is pressed. The tab strip goes with it because the
+            header above the detail already carries the way back — two ways out
+            of one surface is how somebody ends up on a tab they did not choose.
 
-            Suppressed only when a pane is already showing the full monitor,
-            which is the same rule as before, asked of every pane rather than
-            of the one tab there used to be. */}
-        {layout.groups.every((g) => g.active !== 'monitor') && (
-          <ErrorBoundary label="The monitor strip">
-            <SystemStrip />
-          </ErrorBoundary>
+            The monitor strip that used to hang below all of this is gone. It
+            said the same three figures the dock's monitor block says, and two
+            places showing one fact was the same complaint one layer up. */}
+        {detail !== null && !detail.full ? (
+          <PanelDetail
+            block={detail.block}
+            title={DETAIL_META[detail.block].key}
+            icon={DETAIL_META[detail.block].icon}
+            full={false}
+            onBack={() => setDetail(null)}
+            // Tokens hand over to the panel's own full-width view, which is a
+            // year grid and four tables and could never be this column. The
+            // other two grow into an overlay of the same shape they already
+            // have. Either way the press means "give this the window".
+            onFull={
+              detail.block === 'tokens'
+                ? () => props.onOpenTokens()
+                : () => setDetail({ block: detail.block, full: true })
+            }
+          >
+            <ErrorBoundary label={`The ${detail.block} detail`}>
+              {detailBody(detail.block)}
+            </ErrorBoundary>
+          </PanelDetail>
+        ) : (
+          <div ref={columnRef} className="flex min-h-0 flex-1 flex-col">
+            {layout.groups.map((group, index) => (
+              // Keyed by the tabs it holds, which is stable while the pane is
+              // resized or its tab switched and changes only when the
+              // arrangement does. Tab sets are disjoint by the invariant, so
+              // this is unique.
+              <Fragment key={group.tabs.join('|')}>
+                {index > 0 && (
+                  <PaneDivider
+                    index={index - 1}
+                    layout={layout}
+                    columnRef={columnRef}
+                    onLayout={props.onLayout}
+                  />
+                )}
+                <Pane
+                  index={index}
+                  group={group}
+                  layout={layout}
+                  width={width}
+                  drag={drag}
+                  tabDrag={tabDrag}
+                  menuOpen={menuOpen === index}
+                  onMenu={(open) => setMenuOpen(open ? index : null)}
+                  onLayout={props.onLayout}
+                  onRefocus={props.onRefocus}
+                  onCollapse={props.onCollapse}
+                  body={bodyFor}
+                />
+              </Fragment>
+            ))}
+          </div>
         )}
       </div>
+
+      {/* The third state, over the window rather than in the column. Rendered
+          as a sibling of the panel's own box so it is not clipped by the
+          panel's width, and only for the blocks that have one — tokens go to
+          the full-width view App already owns. */}
+      {detail !== null && detail.full && (
+        <PanelDetail
+          block={detail.block}
+          title={DETAIL_META[detail.block].key}
+          icon={DETAIL_META[detail.block].icon}
+          full
+          onBack={() => setDetail({ block: detail.block, full: false })}
+        >
+          <ErrorBoundary label={`The ${detail.block} detail`}>
+            {detailBody(detail.block)}
+          </ErrorBoundary>
+        </PanelDetail>
+      )}
     </aside>
   )
 }

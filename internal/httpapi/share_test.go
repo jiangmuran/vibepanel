@@ -270,7 +270,8 @@ func TestTheDashboardNeverCarriesAPathACommandOrARealID(t *testing.T) {
 		}
 		// The field names themselves, because a leak arrives as a field added
 		// to the payload by somebody who did not read this file.
-		for _, key := range []string{`"path"`, `"cwd"`, `"command"`, `"tmuxName"`, `"diskPath"`} {
+		for _, key := range []string{`"path"`, `"cwd"`, `"command"`, `"tmuxName"`, `"diskPath"`,
+			`"url"`, `"remote"`} {
 			if strings.Contains(text, key) {
 				t.Errorf("%s mode carries a %s field; nothing on a wall needs it:\n%s",
 					detail, key, text)
@@ -294,6 +295,18 @@ func TestTheDashboardNeverCarriesAPathACommandOrARealID(t *testing.T) {
 				strings.Contains(text, "Acme payroll") {
 				t.Errorf("counts mode carries a name somewhere in the body:\n%s", text)
 			}
+			// A repository is a name, and a public one. Under counts the board
+			// sends none, so a link to github.com/<org>/<repo> would identify
+			// the customer more precisely than the project path this mode
+			// exists to withhold -- and it would do it on the mode people pick
+			// precisely because they are pointing a camera at the screen.
+			if got.ScopeRepoOwner != "" || got.ScopeRepoName != "" {
+				t.Errorf("counts mode named a repository (%q/%q)",
+					got.ScopeRepoOwner, got.ScopeRepoName)
+			}
+			if strings.Contains(text, "github.com") {
+				t.Errorf("counts mode mentions github.com somewhere in the body:\n%s", text)
+			}
 		case "names":
 			if row.Name != "rotate the production keys" {
 				t.Errorf("names mode did not carry the title; got %q", row.Name)
@@ -303,6 +316,120 @@ func TestTheDashboardNeverCarriesAPathACommandOrARealID(t *testing.T) {
 			}
 		}
 	}
+}
+
+// A board that is about one project may say which repository, and only then.
+//
+// 「read only和面板左下角等等地方 都加上GitHub链接和项目名」. The name half was
+// already there under `names`; the repository is new, and it is the first thing
+// on this surface that reads a working tree — so what it discloses is worth a
+// test of its own rather than a line in the redaction sweep.
+//
+// Four narrowings, one case each below. Only under `names`; only for a
+// project-scoped link; only for a github.com remote; and as two parsed halves
+// rather than the remote string, so the viewer's browser can build one URL and
+// nothing else.
+func TestARepositoryIsNamedOnlyOnAProjectBoardThatAlreadyNamesThings(t *testing.T) {
+	ts, _ := newTestServer(t)
+
+	dir := t.TempDir()
+	repoAtRemote(t, dir, "https://github.com/acme-holdings/payroll.git")
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+dir+`","name":"Acme payroll"}`)
+
+	// Somewhere with a remote this panel will not link to, to prove the refusal
+	// is about the host and not about there being no remote at all.
+	other := t.TempDir()
+	repoAtRemote(t, other, "git@gitlab.example.com:acme/secret.git")
+	elsewhere := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+other+`","name":"Elsewhere"}`)
+
+	read := func(t *testing.T, body string) (shareDashboard, string) {
+		t.Helper()
+		link := newShare(t, ts, body)
+		res, raw := shareGET(t, ts, link.Token)
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("dashboard = %d: %s", res.StatusCode, raw)
+		}
+		return decodeDashboard(t, raw), string(raw)
+	}
+
+	t.Run("named and project-scoped", func(t *testing.T) {
+		got, raw := read(t, `{"name":"wall","detail":"names","scope":"project","scopeId":"`+
+			project.ID+`"}`)
+		if got.ScopeRepoOwner != "acme-holdings" || got.ScopeRepoName != "payroll" {
+			t.Fatalf("repository = %q/%q, want acme-holdings/payroll",
+				got.ScopeRepoOwner, got.ScopeRepoName)
+		}
+		// Two halves and not a URL. What the viewer builds is decided by the
+		// viewer's code, which refuses everything that is not github.com/x/y;
+		// sending a URL would move that decision to whatever is in a config
+		// file on this machine.
+		if strings.Contains(raw, ".git") || strings.Contains(raw, "https://github.com/") {
+			t.Errorf("the body carries a remote URL rather than two halves:\n%s", raw)
+		}
+		// And still nothing about where it is on disk.
+		if strings.Contains(raw, dir) {
+			t.Errorf("the body carries the project's path:\n%s", raw)
+		}
+	})
+
+	t.Run("counts, project-scoped", func(t *testing.T) {
+		got, raw := read(t, `{"name":"wall","detail":"counts","scope":"project","scopeId":"`+
+			project.ID+`"}`)
+		if got.ScopeRepoOwner != "" || got.ScopeRepoName != "" {
+			t.Fatalf("counts mode named %q/%q", got.ScopeRepoOwner, got.ScopeRepoName)
+		}
+		if strings.Contains(raw, "acme-holdings") || strings.Contains(raw, "payroll") {
+			t.Errorf("counts mode leaked the repository:\n%s", raw)
+		}
+	})
+
+	t.Run("named, whole panel", func(t *testing.T) {
+		// No single project, so no single repository. A board covering three
+		// projects that named one of their repositories would be worse than
+		// naming none.
+		got, _ := read(t, `{"name":"wall","detail":"names"}`)
+		if got.ScopeRepoOwner != "" || got.ScopeRepoName != "" {
+			t.Fatalf("an unscoped board named %q/%q", got.ScopeRepoOwner, got.ScopeRepoName)
+		}
+	})
+
+	t.Run("named, session-scoped", func(t *testing.T) {
+		// ScopeName is the session's title here. Hanging a repository off it
+		// would disclose which project a session belongs to on a link that was
+		// deliberately narrowed to one session.
+		sess := postJSON[store.Session](t, ts, "/api/sessions",
+			`{"projectId":"`+project.ID+`","title":"one job","command":[]}`)
+		got, _ := read(t, `{"name":"wall","detail":"names","scope":"session","scopeId":"`+
+			sess.ID+`"}`)
+		if got.ScopeRepoOwner != "" || got.ScopeRepoName != "" {
+			t.Fatalf("a session board named %q/%q", got.ScopeRepoOwner, got.ScopeRepoName)
+		}
+	})
+
+	t.Run("a host this panel does not link to", func(t *testing.T) {
+		got, raw := read(t, `{"name":"wall","detail":"names","scope":"project","scopeId":"`+
+			elsewhere.ID+`"}`)
+		if got.ScopeRepoOwner != "" || got.ScopeRepoName != "" {
+			t.Fatalf("a non-GitHub remote was disclosed as %q/%q",
+				got.ScopeRepoOwner, got.ScopeRepoName)
+		}
+		if strings.Contains(raw, "gitlab.example.com") || strings.Contains(raw, "secret") {
+			t.Errorf("the body carries a remote it will not link to:\n%s", raw)
+		}
+	})
+
+	t.Run("a directory that is not a checkout", func(t *testing.T) {
+		plain := postJSON[store.Project](t, ts, "/api/projects",
+			`{"path":"`+t.TempDir()+`","name":"Plain"}`)
+		got, _ := read(t, `{"name":"wall","detail":"names","scope":"project","scopeId":"`+
+			plain.ID+`"}`)
+		if got.ScopeRepoOwner != "" || got.ScopeRepoName != "" {
+			t.Fatalf("a directory with no repository reported %q/%q",
+				got.ScopeRepoOwner, got.ScopeRepoName)
+		}
+	})
 }
 
 // The row ids are per link, and are not the panel's.

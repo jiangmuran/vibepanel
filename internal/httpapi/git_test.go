@@ -15,8 +15,17 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/store"
 )
 
-// repoAt makes a working tree with one commit in it.
+// repoAt makes a working tree with one commit in it and a GitHub origin.
 func repoAt(t *testing.T, dir string) {
+	repoAtRemote(t, dir, "git@github.com:owner/name.git")
+}
+
+// repoAtRemote is the same, with the origin named by the caller.
+//
+// Split out because "is this remote one we will link to" is a decision with
+// several answers, and a test for the ones that are refused needs a tree whose
+// origin is not github.com.
+func repoAtRemote(t *testing.T, dir, origin string) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
@@ -41,7 +50,7 @@ func repoAt(t *testing.T, dir string) {
 	}
 	sh("add", "a.txt")
 	sh("commit", "-m", "first")
-	sh("remote", "add", "origin", "git@github.com:owner/name.git")
+	sh("remote", "add", "origin", origin)
 }
 
 func TestGitEndpoint(t *testing.T) {

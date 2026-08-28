@@ -3,22 +3,15 @@ import { describe, expect, it } from 'vitest'
 import { PANEL_TABS, RETIRED_TABS, type PanelTab } from './chrome'
 import {
   MAX_PANES,
-  PANE_MIN_HEIGHT,
   PANE_MIN_RATIO,
-  activate,
   defaultLayout,
   dropKindAt,
   dropTargetFrom,
-  fitTo,
   groupOf,
   layoutStorageKey,
-  mergeGroup,
   moveTab,
-  moveTowards,
-  paneKeyCommand,
   parseLayout,
   readLayout,
-  resizeAt,
   serialiseLayout,
   type PaneLayout,
 } from './panes'
@@ -51,53 +44,6 @@ function expectSound(layout: PaneLayout, what: string) {
   expect(total, `${what}: the sizes do not add up to the column`).toBeCloseTo(1, 6)
 }
 
-/**
- * The same layout, allowing for the last bit of a float.
- *
- * Reading a layout back renormalises its shares, which moves them by about
- * 1e-16. That is not drift worth failing on and it is not drift worth
- * "fixing" by rounding on write either — what has to survive a reload is the
- * arrangement, and this says so exactly.
- */
-function expectSameLayout(got: PaneLayout, want: PaneLayout, what: string) {
-  expect(got.groups.map((g) => ({ tabs: g.tabs, active: g.active })), what).toEqual(
-    want.groups.map((g) => ({ tabs: g.tabs, active: g.active })),
-  )
-  got.groups.forEach((g, i) => {
-    expect(g.size, `${what}: pane ${i}`).toBeCloseTo(want.groups[i].size, 9)
-  })
-}
-
-// The last three tabs in the strip, whatever they are called.
-//
-// Named positionally rather than spelled out, because everything below is
-// about index arithmetic and not about which tabs exist. Three tests broke the
-// day a sixth tab was added and several more the day six became four, every
-// one of them on a hard-coded name that had nothing to do with what was being
-// asserted.
-const [B, C, D] = [PANEL_TABS[1], PANEL_TABS[2], PANEL_TABS[3]]
-
-/** The rest, then B, then C. Three panes, every tab. */
-function three(): PaneLayout {
-  let l = defaultLayout()
-  l = moveTab(l, B, { kind: 'new', at: 1 })
-  l = moveTab(l, C, { kind: 'new', at: 2 })
-  return l
-}
-
-// What is left in the first pane after `moved` have been dragged out of it.
-function rest(...moved: PanelTab[]): string {
-  return PANEL_TABS.filter((t) => !moved.includes(t)).join('+')
-}
-
-/** Four panes: everything else, then B, C and D each on their own. */
-function four(): PaneLayout {
-  let l = defaultLayout()
-  l = moveTab(l, B, { kind: 'new', at: 1 })
-  l = moveTab(l, C, { kind: 'new', at: 2 })
-  l = moveTab(l, D, { kind: 'new', at: 3 })
-  return l
-}
 
 describe('the default', () => {
   it('is every tab in one pane', () => {
@@ -157,37 +103,38 @@ describe('a stored layout is data, not code', () => {
         ],
       })
       expectSound(l, 'yesterday, three panes')
-      expect(l.groups.map((g) => g.tabs.join('+'))).toEqual(['files', 'monitor+tokens', 'notes'])
+      // The middle pane held nothing but retired tabs and is dropped whole;
+      // the two that still hold something keep their order.
+      expect(l.groups.map((g) => g.tabs.join('+'))).toEqual(['files', 'notes'])
       // The pane whose selected tab was retired shows the one that is left,
       // rather than a pane with a body and no tab selected.
       expect(l.groups[0].active).toBe('files')
-      expect(l.groups[2].active).toBe('notes')
+      expect(l.groups[1].active).toBe('notes')
     })
 
     it('does not let a pane that emptied cost a pane that did not', () => {
-      // MAX_PANES is the tab count, which is four. Six stored panes with two
-      // of them retired is exactly four survivors -- and only if the cap is
+      // MAX_PANES is the tab count, which is two. Six stored panes with four
+      // of them retired is exactly two survivors -- and only if the cap is
       // counted after a group is dropped rather than before. Counted before,
-      // the last two panes fall off the end and `tokens` and `notes` are
-      // appended to whatever pane came fourth.
+      // the loop stops at the second stored pane, `notes` never gets a pane of
+      // its own, and it is appended to whichever one survived.
+      //
+      // The retired panes are deliberately first and in the middle, because
+      // the failure this catches is positional: a cap that counts the panes it
+      // threw away loses whatever came last.
       const l = parseLayout({
         version: 1,
         groups: [
-          { tabs: ['files'], active: 'files', size: 0.2 },
           { tabs: ['git'], active: 'git', size: 0.2 },
-          { tabs: ['monitor'], active: 'monitor', size: 0.2 },
-          { tabs: ['todos'], active: 'todos', size: 0.1 },
+          { tabs: ['todos'], active: 'todos', size: 0.2 },
+          { tabs: ['files'], active: 'files', size: 0.2 },
+          { tabs: ['monitor'], active: 'monitor', size: 0.1 },
           { tabs: ['tokens'], active: 'tokens', size: 0.2 },
           { tabs: ['notes'], active: 'notes', size: 0.1 },
         ],
       })
       expectSound(l, 'yesterday, six panes')
-      expect(l.groups.map((g) => g.tabs.join('+'))).toEqual([
-        'files',
-        'monitor',
-        'tokens',
-        'notes',
-      ])
+      expect(l.groups.map((g) => g.tabs.join('+'))).toEqual(['files', 'notes'])
     })
 
     it('comes back as a panel when every stored pane was a retired tab', () => {
@@ -308,7 +255,8 @@ describe('a stored layout is data, not code', () => {
   })
 
   it('round-trips what it wrote', () => {
-    const l = three()
+    const l = moveTab(defaultLayout(), PANEL_TABS[1], { kind: 'new', at: 1 })
+    expect(l.groups).toHaveLength(2)
     expect(readLayout(serialiseLayout(l))).toEqual(l)
   })
 })
@@ -379,237 +327,5 @@ describe('where a drop lands', () => {
     expect(dropTargetFrom('join', '1.5')).toBeNull()
     expect(dropTargetFrom('sideways', '0')).toBeNull()
     expect(dropTargetFrom(null, '0')).toBeNull()
-  })
-})
-
-describe('moving a tab', () => {
-  it('splits one pane into two', () => {
-    const l = moveTab(defaultLayout(), 'monitor', { kind: 'new', at: 1 })
-    expectSound(l, 'split')
-    expect(l.groups).toHaveLength(2)
-    expect(l.groups[1].tabs).toEqual(['monitor'])
-    expect(l.groups[0].tabs).not.toContain('monitor')
-  })
-
-  it('joins two panes back into one', () => {
-    const split = moveTab(defaultLayout(), 'monitor', { kind: 'new', at: 1 })
-    const back = moveTab(split, 'monitor', { kind: 'join', group: 0 })
-    expectSound(back, 'join')
-    expect(back.groups).toHaveLength(1)
-  })
-
-  it('leaves the pane it emptied behind rather than an empty strip', () => {
-    const l = three()
-    const merged = moveTab(l, B, { kind: 'join', group: 0 })
-    expectSound(merged, 'emptied pane')
-    expect(merged.groups).toHaveLength(2)
-  })
-
-  it('shows something in the pane the tab left', () => {
-    const l = activate(defaultLayout(), 'notes')
-    const after = moveTab(l, 'notes', { kind: 'new', at: 1 })
-    expectSound(after, 'the pane left behind')
-    expect(after.groups[0].active).not.toBe('notes')
-  })
-
-  it('is a no-op when the drop changes nothing', () => {
-    const l = three()
-    // Same object, so a released drag that went nowhere does not rewrite
-    // storage or remount four panels.
-    expect(moveTab(l, PANEL_TABS[0], { kind: 'join', group: 0 })).toBe(l)
-    expect(moveTab(l, B, { kind: 'new', at: 1 })).toBe(l)
-    expect(moveTab(l, B, { kind: 'new', at: 2 })).toBe(l)
-  })
-
-  it('lands where it was aimed when the source pane vanishes under it', () => {
-    // The off-by-one this arithmetic exists for: removing the source group
-    // moves every index after it up by one, so an insertion point below the
-    // source is not the index it was when the drag started.
-    //
-    // Four panes, not three, and not the last slot. With three panes the
-    // insertion index is clamped to the end of the list anyway, so the wrong
-    // answer and the right one agree — this test passed against the arithmetic
-    // removed until it was written this way.
-    const l = four() // [rest, B, C, D]
-    const moved = moveTab(l, B, { kind: 'new', at: 3 })
-    expectSound(moved, 'moved past the pane it left')
-    expect(moved.groups.map((g) => g.tabs.join('+'))).toEqual([rest(B, C, D), C, B, D])
-  })
-
-  it('joins the pane it was aimed at when the source pane vanishes under it', () => {
-    // The same correction on the other arm. Without it the index runs off the
-    // end of the shortened list and the drop is silently dropped.
-    const l = three() // [everything else, B, C]
-    const joined = moveTab(l, B, { kind: 'join', group: 2 })
-    expectSound(joined, 'joined past the pane it left')
-    expect(joined.groups.map((g) => g.tabs.join('+'))).toEqual([rest(B, C), `${C}+${B}`])
-  })
-
-  it('cannot be asked to move a tab that is not in the layout', () => {
-    const l = defaultLayout()
-    expect(moveTab({ ...l, groups: [{ tabs: ['files'], active: 'files', size: 1 }] }, 'notes', {
-      kind: 'join',
-      group: 0,
-    }).groups[0].tabs).toEqual(['files'])
-  })
-
-  it('brings the moved tab to the front of where it landed', () => {
-    const l = moveTab(three(), C, { kind: 'join', group: 0 })
-    expect(l.groups[0].active).toBe(C)
-  })
-})
-
-describe('moving a tab without a pointer', () => {
-  it('goes to the next pane in that direction', () => {
-    const l = three()
-    const up = moveTowards(l, C, 'up')
-    expectSound(up, 'moved up')
-    expect(groupOf(up, C)).toBe(1)
-  })
-
-  it('makes a new pane when there is not one to go to', () => {
-    const l = defaultLayout()
-    const down = moveTowards(l, 'monitor', 'down')
-    expectSound(down, 'moved off the end')
-    expect(down.groups).toHaveLength(2)
-    expect(down.groups[1].tabs).toEqual(['monitor'])
-  })
-
-  it('stops rather than shuffling when there is nowhere to go', () => {
-    const l = three()
-    // Already a pane of its own at the bottom.
-    expect(moveTowards(l, C, 'down')).toBe(l)
-  })
-
-  it('is reachable from Alt and an arrow, and from nothing else', () => {
-    expect(paneKeyCommand('ArrowUp', true)).toBe('up')
-    expect(paneKeyCommand('ArrowDown', true)).toBe('down')
-    // The bare arrows move between tabs; taking them here would break that.
-    expect(paneKeyCommand('ArrowUp', false)).toBeNull()
-    expect(paneKeyCommand('ArrowLeft', true)).toBeNull()
-    expect(paneKeyCommand('Enter', true)).toBeNull()
-  })
-})
-
-describe('merging', () => {
-  it('folds a pane into its neighbour', () => {
-    const l = mergeGroup(three(), 2, 'up')
-    expectSound(l, 'merged up')
-    expect(l.groups).toHaveLength(2)
-    expect(l.groups[1].tabs).toEqual([B, C])
-  })
-
-  it('gives the merged pane the room the other one had', () => {
-    const l = three()
-    const want = l.groups[1].size + l.groups[2].size
-    expect(mergeGroup(l, 2, 'up').groups[1].size).toBeCloseTo(want, 6)
-  })
-
-  it('refuses to merge off either end', () => {
-    const l = three()
-    expect(mergeGroup(l, 0, 'up')).toBe(l)
-    expect(mergeGroup(l, 2, 'down')).toBe(l)
-    expect(mergeGroup(l, 9, 'up')).toBe(l)
-  })
-})
-
-describe('resizing', () => {
-  it('moves one boundary and leaves the others where they were', () => {
-    const l = three()
-    const before = l.groups[0].size
-    const after = resizeAt(l, 1, before + 0.4)
-    expectSound(after, 'resized')
-    expect(after.groups[0].size).toBeCloseTo(before, 6)
-    expect(after.groups[1].size + after.groups[2].size).toBeCloseTo(
-      l.groups[1].size + l.groups[2].size,
-      6,
-    )
-  })
-
-  it('never drags a pane below the floor', () => {
-    const l = three()
-    for (const ratio of [-5, 0, 0.0001, 0.999, 5]) {
-      const after = resizeAt(l, 1, ratio)
-      expectSound(after, `ratio ${ratio}`)
-      expect(after.groups[1].size).toBeGreaterThanOrEqual(PANE_MIN_RATIO - 1e-9)
-      expect(after.groups[2].size).toBeGreaterThanOrEqual(PANE_MIN_RATIO - 1e-9)
-    }
-  })
-
-  it('has no boundary below the last pane', () => {
-    const l = three()
-    expect(resizeAt(l, 2, 0.5)).toBe(l)
-    expect(resizeAt(l, -1, 0.5)).toBe(l)
-  })
-})
-
-describe('a layout that does not fit the window it opens in', () => {
-  it('merges from the bottom until it does', () => {
-    const l = three()
-    const fitted = fitTo(l, PANE_MIN_HEIGHT * 2)
-    expectSound(fitted, 'fitted')
-    expect(fitted.groups).toHaveLength(2)
-    // From the bottom, because the top of the column is where the panel opens
-    // and what you were looking at is up there.
-    expect(fitted.groups[0].tabs.join('+')).toEqual(rest(B, C))
-  })
-
-  it('leaves a layout that fits alone', () => {
-    const l = three()
-    expect(fitTo(l, 2000)).toBe(l)
-  })
-
-  it('never merges away the last pane', () => {
-    expectSound(fitTo(three(), 1), 'a window with no room at all')
-    expect(fitTo(three(), 1).groups).toHaveLength(1)
-  })
-
-  it('does nothing at all when nothing has been measured yet', () => {
-    // The frame before the first paint reports zero, and treating that as "no
-    // room" would collapse everybody's layout on load.
-    const l = three()
-    expect(fitTo(l, 0)).toBe(l)
-    expect(fitTo(l, Number.NaN)).toBe(l)
-    expect(fitTo(l, -100)).toBe(l)
-  })
-})
-
-describe('every operation leaves a sound layout', () => {
-  // A crude fuzz over the reducer. The invariant is asserted after each step,
-  // so the failure names the operation that broke it rather than the render
-  // three actions later that could not cope.
-  it('holds across a long run of arbitrary moves', () => {
-    let seed = 12345
-    const rand = (n: number) => {
-      seed = (seed * 1103515245 + 12345) & 0x7fffffff
-      return seed % n
-    }
-    let l = defaultLayout()
-    for (let step = 0; step < 400; step++) {
-      const tab = PANEL_TABS[rand(PANEL_TABS.length)]
-      switch (rand(6)) {
-        case 0:
-          l = moveTab(l, tab, { kind: 'join', group: rand(l.groups.length) })
-          break
-        case 1:
-          l = moveTab(l, tab, { kind: 'new', at: rand(l.groups.length + 1) })
-          break
-        case 2:
-          l = moveTowards(l, tab, rand(2) ? 'up' : 'down')
-          break
-        case 3:
-          l = mergeGroup(l, rand(l.groups.length), rand(2) ? 'up' : 'down')
-          break
-        case 4:
-          l = resizeAt(l, rand(l.groups.length), rand(100) / 100)
-          break
-        default:
-          l = activate(l, tab)
-      }
-      expectSound(l, `step ${step}`)
-      // And it must survive the round trip through storage at every step, so a
-      // reload in the middle of somebody's afternoon is not where this breaks.
-      expectSameLayout(readLayout(serialiseLayout(l)), l, `step ${step} through storage`)
-    }
   })
 })

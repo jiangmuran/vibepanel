@@ -12,11 +12,12 @@ import {
   X,
 } from 'lucide-react'
 
-import type { Project, Session, SessionState } from '../protocol/wire'
+import type { GitRemote, Project, Session, SessionState } from '../protocol/wire'
 import { useDragList } from '../hooks/useDragList'
 import { projectLabel, sessionLabel } from './label'
 import { StateDot } from './StateDot'
 import { InlineName } from './InlineName'
+import { ProjectMark } from './ProjectMark'
 import { EXIT_VANISHED } from '../protocol/wire'
 import { t, useLang } from '../i18n'
 
@@ -64,6 +65,18 @@ export interface SidebarProps {
   stateGuessed: boolean
   hooksInstalled: boolean
   onOpenSettings: () => void
+
+  /**
+   * The project the panel is currently on, and its remote if it has a
+   * linkable one.
+   *
+   * Passed in rather than read here. The sidebar lists every project and
+   * reading a remote per row would be one subprocess per project per render;
+   * the foot of the column is about the one you are in, so App reads one
+   * remote when the selection changes and hands it down. See useProjectRemote.
+   */
+  current: Project | null
+  currentRemote: GitRemote | null
 }
 
 
@@ -415,6 +428,24 @@ export function Sidebar(props: SidebarProps) {
           <div className="mx-2 h-0.5 rounded-full bg-accent" />
         )}
       </nav>
+
+      {/* Which project you are in, at the bottom-left of the panel, where the
+          eye goes when it wants to know where it is: 「面板左下角等等地方 都加上
+          GitHub链接和项目名」.
+
+          Below the session list rather than above it, because the list is the
+          thing you navigate and this is the thing you check. Hidden in the
+          collapsed rail — a 48px column has room for a glyph and not for two
+          names — and hidden with no project, where there is nothing to say. */}
+      {props.expanded && props.current && (
+        <div className="shrink-0 border-t border-hairline px-3 py-1.5">
+          <ProjectMark
+            testid="sidebar-project"
+            name={projectLabel(props.current)}
+            remote={props.currentRemote}
+          />
+        </div>
+      )}
 
       {/* Self-clearing: it disappears the moment anything reports state, so it
           is a statement of fact rather than a prompt to be dismissed. */}

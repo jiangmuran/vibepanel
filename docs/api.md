@@ -883,6 +883,7 @@ handler reads.
 ```json
 {"at": 1735689600, "name": "wall display", "detail": "counts", "expiresAt": 0,
  "usageReadable": true, "stale": false, "scope": "", "scopeName": "",
+ "scopeRepoOwner": "", "scopeRepoName": "",
  "board": {"preset": "attention", "rotate": 0,
            "widgets": [{"kind": "attention", "span": 4}]},
  "machine": {"cpuReadable": true, "cpuPercent": 31.4, "cores": 16,
@@ -944,12 +945,31 @@ note than to a session title.
 
 `counts.doneToday` is how many sessions reached `done` since the server's local
 midnight. It is the closest thing to *output* this panel honestly has: nothing
-here counts lines of code, because the panel never reads a repository and a
-number invented for a wall is worse than a missing one.
+here counts lines of code, because no number on this surface is derived from the
+contents of a repository and a number invented for a wall is worse than a
+missing one.
+
+`scopeRepoOwner` and `scopeRepoName` are the scoped project's repository, and
+they are the one thing on this surface that reads a working tree — one
+`git remote get-url`, behind the same cache the repository tab uses. Both are
+empty unless **all** of: the link is scoped to a project, `detail` is `names`,
+and the remote is a `github.com` one this panel is willing to link to. They are
+two parsed halves and never a URL, so a viewer can build
+`https://github.com/{owner}/{name}` and nothing else; the remote string and the
+project's path are never sent, at either `detail`.
+
+The narrowing is the disclosure decision, not a styling one. A repository is a
+public, resolvable name that also names the organisation — under `counts` the
+board sends no names at all, so a repository link there would identify the
+customer more precisely than the project path that mode exists to withhold. A
+session-scoped link's `scopeName` is a session title, and hanging a repository
+off it would disclose which project that session belongs to on a link that was
+narrowed to one session. An unscoped board has no single repository to name.
 
 What it deliberately does **not** carry, in either `detail` mode: the project's
 path on disk, a session's `cwd`, the command line, the tmux session name, the
-hostname, the sampler's disk path, and the panel's own session and project ids.
+hostname, the sampler's disk path, any remote URL, and the panel's own session
+and project ids.
 A path names a customer and a home directory; a command line carries whatever an
 agent was invoked with. Neither has a use on a screen behind somebody's desk.
 

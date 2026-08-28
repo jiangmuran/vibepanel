@@ -28,7 +28,6 @@ import type {
   Webhook,
   WebhookTest,
   UpdateResult,
-  Todo,
   VncTarget,
 } from './wire'
 
@@ -635,16 +634,9 @@ export const api = {
     return (await res.json()) as Note
   },
 
-  todos: (projectId: string) => request<Todo[]>(`/api/projects/${projectId}/todos`),
-
-  addTodo: (projectId: string, text: string) =>
-    request<Todo>(`/api/projects/${projectId}/todos`, {
-      method: 'POST',
-      body: JSON.stringify({ text }),
-    }),
-
-  patchTodo: (id: string, patch: Partial<{ text: string; done: boolean }>) =>
-    request<Todo>(`/api/todos/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
-
-  deleteTodo: (id: string) => request<void>(`/api/todos/${id}`, { method: 'DELETE' }),
+  // The four todo methods were here and are gone with the panel that called
+  // them. The *routes* are not gone — see the note above registerPanelRoutes
+  // in internal/httpapi/panels.go: the wall boards count todos, and an agent
+  // with an API token can still write one. What has no caller is this client,
+  // and dead client code is how somebody concludes the feature is dead.
 }

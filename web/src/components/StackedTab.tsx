@@ -7,40 +7,34 @@ import {
   stackRatioAt,
   stackStorageKey,
 } from './stack'
-import { t, useLang, type Key } from '../i18n'
+import { t, useLang } from '../i18n'
 
 /**
  * Two panels in one tab, with a divider between them you can drag.
  *
- * 「放在文件tab的下半段 可以上下拖动」. The file tree and the repository are
- * two halves of one question — what is in this directory, and what has changed
- * in it — and so are a note and a checklist. Each pair used to be two tabs,
- * which meant answering the second half cost you sight of the first.
+ * 「可以上下拖动」. The top half is what the tab is for — the files, or the
+ * note. The bottom half is the dock, which is the same on both tabs and names
+ * its own blocks, so nothing here labels it: a heading above a thing that
+ * already has two headings is furniture.
  *
- * The same gesture as the divider between two panes, deliberately: same
- * `.vp-grip`, same `role="separator"`, same arrow keys, same shift for a larger
- * step. There are now three places in this layout where a boundary is dragged
- * and all three feel identical, which is most of what stops the panel reading
- * as parts that arrived separately.
+ * The divider position is per tab even though the bottom half is shared, and
+ * that is deliberate rather than an oversight. Somebody reading a long file
+ * list wants the dock small; somebody writing a note wants the same dock in the
+ * same place at whatever size they left it there. One shared ratio would make
+ * every tab switch move a boundary nobody touched.
  *
- * The lower half is named, the upper one is not. The upper half's name is the
- * tab you are on — its icon is lit in the strip above — and repeating it would
- * be a heading that says what the selection already says. The lower half has
- * nothing else to identify it, and an unlabelled second panel below a line is
- * a panel people ask about rather than read.
+ * The same gesture as the divider between two panes: same `.vp-grip`, same
+ * `role="separator"`, same arrow keys, same shift for a larger step. Three
+ * places in this layout drag a boundary and all three feel identical, which is
+ * most of what stops the panel reading as parts that arrived separately.
  */
 export function StackedTab({
   id,
-  label,
-  icon: Icon,
   top,
   bottom,
 }: {
   /** Which tab this is, which is also where its divider position lives. */
   id: string
-  /** Names the *lower* half. The upper half is named by the tab strip. */
-  label: Key
-  icon: React.ComponentType<{ size?: number; className?: string }>
   top: React.ReactNode
   bottom: React.ReactNode
 }) {
@@ -86,7 +80,6 @@ export function StackedTab({
     }
   }, [dragging])
 
-  const name = t(label)
   const pct = Math.round(ratio * 100)
 
   return (
@@ -114,8 +107,8 @@ export function StackedTab({
         aria-orientation="horizontal"
         // What it divides, not what it is. "Separator" announced on its own
         // tells somebody holding the arrow keys nothing about which boundary
-        // they have.
-        aria-label={name}
+        // they have — and there are three of them in this column.
+        aria-label={t('panel.dockDivider')}
         aria-valuenow={pct}
         aria-valuemin={0}
         aria-valuemax={100}
@@ -159,22 +152,11 @@ export function StackedTab({
       />
 
       <div
+        data-testid={`stack-${id}-bottom`}
         className={`flex min-h-0 flex-col ${dragging ? '' : 'vp-stack-half'}`}
         style={{ flexGrow: 1 - ratio, flexShrink: 1, flexBasis: 0 }}
       >
-        {/* Compact on purpose: this is a label, not a chrome row. `.vp-chrome`
-            is 40px tall and a second one of those inside a tab is a quarter of
-            a short pane spent saying a word. */}
-        <div
-          data-testid={`stack-${id}-label`}
-          className="flex shrink-0 items-center gap-1.5 px-2 py-1 text-vp-xs text-ink-2"
-        >
-          <Icon size={11} className="shrink-0" />
-          <span className="truncate">{name}</span>
-        </div>
-        <div data-testid={`stack-${id}-bottom`} className="min-h-0 flex-1 overflow-y-auto">
-          {bottom}
-        </div>
+        {bottom}
       </div>
     </div>
   )

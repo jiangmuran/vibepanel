@@ -925,10 +925,8 @@ try {
   } else {
     // Every control in the header has to stay reachable. Labelling all four
     // tabs once pushed the collapse button off the edge of a 280px column.
-    // The strip draws no words at all now, which takes that risk away and
-    // introduces its own: four icons in a track that has to leave room for
-    // the menu and the chevron beside it.
-    for (const id of ['files', 'monitor', 'tokens', 'notes']) {
+    // The strip draws no words at all now, which takes that risk away.
+    for (const id of ['files', 'notes']) {
       await page.locator(`[data-testid="panel-tab-${id}"]`).click()
       await sleep(300)
       const header = await page.locator('[data-testid="panel-header"]').boundingBox()
@@ -947,8 +945,21 @@ try {
     const fileCount = await page.locator('[data-testid="file-entry"]').count()
     if (fileCount === 0) note('FAIL', 'panel/files', 'the file browser listed nothing')
 
-    // System
-    await page.locator('[data-testid="panel-tab-monitor"]').click()
+    // The machine, opened out of the dock. It is not a tab any more — it is the
+    // bottom half of both tabs, and pressing its header gives it the column.
+    const openBlock = async (block) => {
+      // Idempotent: the dock header only exists while the block is compact, so
+      // a second call while it is already open would time out.
+      if ((await page.locator(`[data-testid="detail-${block}"]`).count()) === 0) {
+        await page.locator(`[data-testid="dock-open-${block}"]`).click()
+      }
+      await sleep(400)
+    }
+    const closeBlock = async () => {
+      await page.keyboard.press('Escape')
+      await sleep(400)
+    }
+    await openBlock('monitor')
     await sleep(3000)
     const monitorText = await page.locator('[data-testid="system-monitor"]').innerText().catch(() => '')
     for (const want of ['CPU', 'Memory', 'Disk']) {
@@ -1022,9 +1033,8 @@ try {
         body: JSON.stringify({ readable: false, cores: 8, sessions: {} }),
       })
     })
-    await page.locator('[data-testid="panel-tab-files"]').click()
-    await sleep(400)
-    await page.locator('[data-testid="panel-tab-monitor"]').click()
+    await closeBlock()
+    await openBlock('monitor')
     await sleep(3000)
     const noProc = await page.locator('[data-testid="system-monitor"]').innerText().catch(() => '')
     if (usageRouteHits === 0) {
@@ -1073,9 +1083,8 @@ try {
         }),
       })
     })
-    await page.locator('[data-testid="panel-tab-files"]').click()
-    await sleep(400)
-    await page.locator('[data-testid="panel-tab-monitor"]').click()
+    await closeBlock()
+    await openBlock('monitor')
     await sleep(3500)
     const unmeasured = await page.locator('[data-testid="system-monitor"]').innerText().catch(() => '')
     if (systemRouteHits === 0) {
@@ -1106,6 +1115,60 @@ try {
     }
     await page.unroute('**/api/system')
     await page.unroute('**/api/usage')
+    await closeBlock()
+
+    // The six figures, and the fact that they are six ranks rather than six
+    // cards. 「几个数字 有布局 … 好看一点」 — the layout is the request, so
+    // this measures it: the hero has to be visibly larger than the pair, and
+    // the pair has to be the same size as each other.
+    await page.locator('[data-testid="panel-tab-files"]').click()
+    await sleep(2500)
+    const block = page.locator('[data-testid="token-block"]')
+    if ((await block.count()) !== 1) {
+      note('FAIL', 'panel/spend', 'the token block is not in the dock')
+    } else {
+      const ranks = await block.evaluate((el) =>
+        [...el.querySelectorAll('[data-testid="spend-figure"]')].map((v) => ({
+          label: v.getAttribute('data-rank'),
+          size: parseFloat(getComputedStyle(v).fontSize),
+        })))
+      if (ranks.length < 3) {
+        note('FAIL', 'panel/spend', `only ${ranks.length} figures in the block`)
+      } else {
+        const [hero, ...pair] = ranks
+        if (!(hero.size > pair[0].size)) {
+          note('FAIL', 'panel/spend',
+            `today is not the largest figure: ${JSON.stringify(ranks)}`)
+        }
+        if (pair.length >= 2 && pair[0].size !== pair[1].size) {
+          note('FAIL', 'panel/spend',
+            `the two context figures are different sizes: ${JSON.stringify(ranks)}`)
+        }
+        // Three ranks and no more. Four sizes in a block this small is the
+        // "nine font sizes" complaint the scale exists for, one layer up.
+        const sizes = new Set(ranks.map((r) => r.size))
+        if (sizes.size > 2) {
+          note('FAIL', 'panel/spend',
+            `${sizes.size} figure sizes in one block: ${JSON.stringify(ranks)}`)
+        }
+      }
+      const footer = await page.locator('[data-testid="token-block-footer"]').innerText()
+        .catch(() => '')
+      // 时间 and 字数, as qualifiers rather than as two more cards: what was
+      // produced, over what period, as of when.
+      if (!footer.trim()) {
+        note('FAIL', 'panel/spend', 'the block does not say what period it covers')
+      }
+      // And nothing that implies the panel counted characters or money.
+      const blockText = await block.innerText()
+      for (const lie of ['$', '¥', '€']) {
+        if (blockText.includes(lie)) {
+          note('FAIL', 'panel/spend',
+            `the block shows ${lie}; pricing is per model and per tier and the panel ` +
+            `does not know it: ${JSON.stringify(blockText)}`)
+        }
+      }
+    }
 
     // A panel you resized and then closed has to come back the size you left
     // it, and the size and the closed-ness have to be two stored things.
@@ -1235,92 +1298,21 @@ try {
     // touches the note, so a later save is not refused as a conflict.
     await sleep(1500)
 
-    // Todos, which live under the note now rather than in a tab of their own.
-    // One tab, two panels, a divider between them -- so getting to the
-    // checklist is getting to the notes tab and looking down.
+    // The checklist is gone from the panel entirely — 「也不要留下 todo」 — and
+    // "gone" has to mean gone rather than hidden. The routes are still there
+    // for the wall boards and for an API client; nothing in the panel offers
+    // them, and this is what says so.
     await page.locator('[data-testid="panel-tab-notes"]').click()
-    await sleep(600)
-    if ((await page.locator('[data-testid="stack-notes-divider"]').count()) !== 1) {
-      note('FAIL', 'panel/todos', 'the notes tab has no divider, so the checklist is not under it')
-    }
-    if (!(await page.locator('[data-testid="todos"]').isVisible().catch(() => false))) {
-      note('FAIL', 'panel/todos', 'the checklist is not on screen with the note')
-    }
-    await page.locator('[data-testid="todo-input"]').fill('ship the panel')
-    await page.keyboard.press('Enter')
-    let added = false
-    for (let i = 0; i < 25; i++) {
-      if ((await page.locator('[data-testid="todo-item"]').count()) > 0) { added = true; break }
-      await sleep(300)
-    }
-    if (!added) {
-      note('FAIL', 'panel/todos', 'adding an item produced no row')
-    } else {
-      // Completed items stay on the list; seeing what you just finished is
-      // most of the value of ticking it off.
-      await page.locator('[data-testid="todo-item"] button').first().click()
-      await sleep(1200)
-      const remaining = await page.locator('[data-testid="todo-item"]').count()
-      if (remaining !== 1) {
-        note('FAIL', 'panel/todos', `ticking an item left ${remaining} rows, want it to stay`)
-      }
-      const done = await page.locator('[data-testid="todo-item"][data-done="true"]').count()
-      if (done !== 1) note('FAIL', 'panel/todos', 'the ticked item is not marked done')
-
-      // A list you cannot correct is a list you rewrite. Editing was reachable
-      // from here, handled by the API and stored by SetTodoText, and checked at
-      // none of those levels — this check only ever added an item and ticked
-      // it.
-      const todoName = page.locator('[data-testid="todo-item"] [data-testid="inline-name"]').first()
-      if (!(await todoName.isVisible().catch(() => false))) {
-        note('FAIL', 'panel/todos', 'a todo cannot be renamed; there is no editable name')
-      } else {
-        await todoName.dblclick()
-        await sleep(400)
-        const field = page.locator('[data-testid="todo-item"] input')
-        if ((await field.count()) === 0) {
-          note('FAIL', 'panel/todos', 'double-clicking a todo does not open it for editing')
-        } else {
-          await field.fill('ship the panel, then sleep')
-          await page.keyboard.press('Enter')
-          await sleep(1200)
-          const after = await page.locator('[data-testid="todo-item"]').first().innerText().catch(() => '')
-          if (!after.includes('ship the panel, then sleep')) {
-            note('FAIL', 'panel/todos', `editing a todo did not stick: ${JSON.stringify(after)}`)
-          }
-          // Clearing it is a mistake, not an instruction: a blank row is one
-          // nobody can identify or click back into.
-          //
-          // Defended twice, and this asserts the outcome rather than which
-          // layer held: the inline editor refuses an empty commit locally, and
-          // the API refuses it with a 400 if anything sends one. Removing
-          // either alone leaves the row intact, which is the right thing for a
-          // check about what the user ends up with.
-          await todoName.dblclick()
-          await sleep(400)
-          await page.locator('[data-testid="todo-item"] input').fill('   ')
-          await page.keyboard.press('Enter')
-          await sleep(1200)
-          const blanked = await page.locator('[data-testid="todo-item"]').first().innerText().catch(() => '')
-          if (!blanked.includes('ship the panel, then sleep')) {
-            note('FAIL', 'panel/todos',
-              `emptying a todo blanked it instead of leaving it alone: ${JSON.stringify(blanked)}`)
-          }
-        }
+    await sleep(700)
+    for (const id of ['todos', 'todo-input', 'todo-item', 'panel-tab-todos']) {
+      if ((await page.locator(`[data-testid="${id}"]`).count()) > 0) {
+        note('FAIL', 'panel/notes', `the checklist is still in the panel: [${id}] is on screen`)
       }
     }
 
-    // Notes and todo together, and the file tree over the repository. They
-    // were four tabs and a preset that arranged two of them into two panes;
-    // they are two tabs with a draggable divider inside each, so the
-    // arrangement the preset built is the arrangement you get.
-    //
-    // Both halves have to be *on screen*, which is what the preset was for and
-    // is the whole reason the tabs were merged.
-    for (const [tab, top, bottom] of [
-      ['notes', 'notes', 'todos'],
-      ['files', 'file-tree', 'git-panel'],
-    ]) {
+    // Two tabs, and the same dock under both. Whichever one you are on, the two
+    // things you glance at are in the same place at the same size.
+    for (const [tab, top] of [['notes', 'notes'], ['files', 'file-tree']]) {
       await page.locator(`[data-testid="panel-tab-${tab}"]`).click()
       await sleep(900)
       const divider = page.locator(`[data-testid="stack-${tab}-divider"]`)
@@ -1329,19 +1321,18 @@ try {
         continue
       }
       const topBox = await page.locator(`[data-testid="${top}"]`).boundingBox().catch(() => null)
-      const lowBox = await page.locator(`[data-testid="${bottom}"]`).boundingBox().catch(() => null)
-      if (!topBox || !lowBox) {
-        // The lower half may legitimately be showing a message rather than a
-        // panel -- a directory that is not a repository -- so this reports
-        // what it saw rather than only that it saw nothing.
-        const stackText = await page.locator(`[data-testid="stack-${tab}-bottom"]`).innerText()
-          .catch(() => '')
-        if (!stackText.trim()) {
-          note('FAIL', 'panel',
-            `the ${tab} tab shows only its top half: ${JSON.stringify(stackText)}`)
+      const dockBox = await page.locator('[data-testid="panel-dock"]').boundingBox()
+        .catch(() => null)
+      if (!topBox || !dockBox) {
+        note('FAIL', 'panel',
+          `the ${tab} tab is missing a half: top=${!!topBox} dock=${!!dockBox}`)
+      } else if (dockBox.y <= topBox.y) {
+        note('FAIL', 'panel', `the ${tab} tab draws the dock above its own content`)
+      }
+      for (const b of ['tokens', 'monitor']) {
+        if ((await page.locator(`[data-testid="dock-${b}"]`).count()) !== 1) {
+          note('FAIL', 'panel', `the ${b} block is not in the dock on the ${tab} tab`)
         }
-      } else if (lowBox.y <= topBox.y) {
-        note('FAIL', 'panel', `the ${tab} tab draws its lower half above its upper one`)
       }
       // And the divider drags. It is the gesture the whole restructure rests
       // on -- 「可以上下拖动」.
@@ -1359,6 +1350,53 @@ try {
           `the ${tab} divider does not drag (${Math.round(before.height)} -> ${Math.round(after.height)})`)
       }
     }
+
+    // The repository, as a line above the file list rather than as a panel or
+    // a tab. The check runs in this repository, so there is one to find.
+    await page.locator('[data-testid="panel-tab-files"]').click()
+    await sleep(1200)
+    const repoLine = page.locator('[data-testid="repo-line"]')
+    if ((await repoLine.count()) !== 1) {
+      note('FAIL', 'panel/repo', 'the file tree has no repository line above it')
+    } else {
+      const lineBox = await repoLine.boundingBox()
+      const entry = await page.locator('[data-testid="file-entry"]').first().boundingBox()
+        .catch(() => null)
+      if (entry && lineBox.y >= entry.y) {
+        note('FAIL', 'panel/repo', 'the repository line is below the listing it describes')
+      }
+      // And it opens the whole panel, same gesture as the dock's two blocks.
+      await repoLine.click()
+      await sleep(600)
+      if ((await page.locator('[data-testid="detail-repo"]').count()) !== 1) {
+        note('FAIL', 'panel/repo', 'pressing the repository line opens nothing')
+      }
+      if ((await page.locator('[data-testid="git-panel"]').count()) !== 1) {
+        note('FAIL', 'panel/repo', 'the opened repository shows no repository panel')
+      }
+      await page.keyboard.press('Escape')
+      await sleep(500)
+      if ((await page.locator('[data-testid="detail-repo"]').count()) !== 0) {
+        note('FAIL', 'panel/repo', 'Escape did not close the repository panel')
+      }
+    }
+
+    // The project's name and its repository, at the foot of the sidebar.
+    // 「面板左下角等等地方 都加上GitHub链接和项目名」.
+    const mark = page.locator('[data-testid="sidebar-project"]')
+    if ((await mark.count()) !== 1) {
+      note('FAIL', 'panel/project', 'the sidebar does not say which project you are in')
+    } else {
+      const link = page.locator('[data-testid="sidebar-project-link"]')
+      if ((await link.count()) === 1) {
+        const href = await link.getAttribute('href')
+        if (!/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+$/.test(href ?? '')) {
+          note('FAIL', 'panel/project',
+            `the repository link is not a github.com project URL: ${JSON.stringify(href)}`)
+        }
+      }
+    }
+
     await page.locator('[data-testid="panel-tab-notes"]').click()
     await sleep(700)
 
@@ -2829,7 +2867,7 @@ try {
   await first.waitForSelector('[data-testid="sidebar"]', { timeout: 15000 })
   await sleep(2500)
   for (const [id, what] of [
-    ['right-panel', 'the files, system monitor, notes and todo panel'],
+    ['right-panel', 'the files and notes tabs, and the dock under both'],
     ['bottom-terminals', 'the terminal strip'],
   ]) {
     if (!(await first.locator(`[data-testid="${id}"]`).isVisible().catch(() => false))) {

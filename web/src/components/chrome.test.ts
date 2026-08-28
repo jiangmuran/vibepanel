@@ -6,6 +6,8 @@ import {
   PANEL_DENSE_WIDTH,
   PANEL_MAX_WIDTH,
   PANEL_MIN_WIDTH,
+  DETAIL_BLOCKS,
+  DOCK_BLOCKS,
   PANEL_TABS,
   RESIZE_STEP,
   RESIZE_STEP_LARGE,
@@ -14,6 +16,7 @@ import {
   bottomControls,
   clampBottomHeight,
   clampPanelWidth,
+  isDetailBlock,
   paneControls,
   panelDensity,
   panelFocusOrder,
@@ -167,8 +170,10 @@ describe('the body enters from the side the strip moved towards', () => {
   it('follows the order of the tabs', () => {
     expect(swapDirection(first, last)).toBe('forward')
     expect(swapDirection(last, first)).toBe('back')
-    expect(swapDirection(PANEL_TABS[1], PANEL_TABS[2])).toBe('forward')
-    expect(swapDirection(PANEL_TABS[2], PANEL_TABS[1])).toBe('back')
+    // A tab to itself is forward, not back. Nothing moved, and a body that
+    // slides in from the left because the strip did not move reads as a
+    // glitch — which is what `>=` in swapDirection is for.
+    expect(swapDirection(first, first)).toBe('forward')
   })
 
   it('agrees with the strip for every pair', () => {
@@ -238,15 +243,14 @@ describe('the tab list', () => {
     // The one literal that stays a literal. Everything else in this file and
     // in panes.test.ts derives from PANEL_TABS, so this is the single place
     // where changing the order is a thing somebody has to look at.
-    expect([...PANEL_TABS]).toEqual(['files', 'monitor', 'tokens', 'notes'])
+    expect([...PANEL_TABS]).toEqual(['files', 'notes'])
   })
 
   it('names every tab a browser check drives', () => {
-    // render-check and panes-check both drive all four by testid. A tab
-    // renamed here and not there is a selector that matches nothing, which
-    // those scripts report as a missing element rather than as the rename it
-    // is.
-    const driven: PanelTab[] = ['files', 'monitor', 'tokens', 'notes']
+    // render-check and panes-check both drive both by testid. A tab renamed
+    // here and not there is a selector that matches nothing, which those
+    // scripts report as a missing element rather than as the rename it is.
+    const driven: PanelTab[] = ['files', 'notes']
     for (const tab of driven) expect(PANEL_TABS).toContain(tab)
   })
 
@@ -259,6 +263,29 @@ describe('the tab list', () => {
         PANEL_TABS as readonly string[],
         `${gone} is retired and still a tab`,
       ).not.toContain(gone)
+    }
+  })
+
+  it('remembers every tab it has ever retired', () => {
+    // The second literal in this file, and it is a literal for the same reason
+    // the tab order is: it is the guard.
+    //
+    // RETIRED_TABS is append-only. It is not read at runtime — parseLayout
+    // drops an unrecognised tab by not recognising it — so nothing anywhere
+    // breaks if a name is dropped from it, and what is lost is the fixture:
+    // panes.test.ts drives the stored-layout repair from this list, and a
+    // shorter list is a repair tested against fewer of the strings that are
+    // really in people's browsers. Mutation testing found exactly that, by
+    // deleting two names and watching every check stay green.
+    //
+    // Six tabs became four became two. Each of these was a tab somebody had in
+    // a pane of their own on the day it was removed.
+    const ever = ['git', 'todos', 'vnc', 'monitor', 'tokens']
+    for (const gone of ever) {
+      expect(
+        RETIRED_TABS as readonly string[],
+        `${gone} was a tab and is not in RETIRED_TABS; the repair no longer tests it`,
+      ).toContain(gone)
     }
   })
 })
@@ -278,8 +305,36 @@ describe('the tabs that divide their own height', () => {
     }
   })
 
-  it('leaves the tabs that are one scrolling column alone', () => {
-    expect(tabOwnsHeight('monitor')).toBe(false)
-    expect(tabOwnsHeight('tokens')).toBe(false)
+  it('is every tab there is, which is a coincidence and not a rule', () => {
+    // Both tabs are stacks today. The list stays a list rather than becoming a
+    // `true` so that the next tab that is one scrolling column is a name added
+    // here, not a condition rebuilt at the call site.
+    expect([...STACKED_TABS].sort()).toEqual([...PANEL_TABS].sort())
+  })
+})
+
+describe('the blocks that open out of their compact form', () => {
+  it('has every dock block in the openable list', () => {
+    // The dock's header is the press target and PanelDetail is what it opens.
+    // A block in one list and not the other is a control that presses and
+    // draws nothing.
+    for (const b of DOCK_BLOCKS) expect(DETAIL_BLOCKS).toContain(b)
+  })
+
+  it('has one that is not in the dock, and knows it', () => {
+    // The repository. Its compact form is a line in the file tree's header,
+    // because it is a fact about the directory above it rather than about the
+    // machine — but the gesture that opens it is the same one.
+    const extra = DETAIL_BLOCKS.filter((b) => !(DOCK_BLOCKS as readonly string[]).includes(b))
+    expect(extra).toEqual(['repo'])
+  })
+
+  it('recognises exactly the blocks it lists', () => {
+    for (const b of DETAIL_BLOCKS) expect(isDetailBlock(b)).toBe(true)
+    // A block id out of a stored value or a data attribute is a string like
+    // any other, and the panel must not open a detail for one it cannot draw.
+    for (const bad of ['', 'todos', 'files', 'vnc', 'Repo']) {
+      expect(isDetailBlock(bad), bad).toBe(false)
+    }
   })
 })

@@ -7,6 +7,7 @@ import { t, useLang } from '../i18n'
 import { Widget } from './board/render'
 import { agoText, clockText, duration } from './board/format'
 import { forViewport, viewerID } from './board/viewer'
+import { githubURL } from './repo'
 import { safeText } from './text'
 
 /**
@@ -285,6 +286,14 @@ export function Dashboard({ token }: { token: string }) {
     [widgets],
   )
   const page = usePages(pages, data?.board.rotate ?? 0)
+  // Built from the two halves the server sent, never from a URL it sent. See
+  // components/repo.ts: this page is the one surface where a link built out of
+  // an unvalidated remote would be handed to somebody who is not signed in.
+  const repo = githubURL(
+    data === null || data.scopeRepoOwner === ''
+      ? null
+      : { url: '', host: 'github.com', owner: data.scopeRepoOwner, name: data.scopeRepoName },
+  )
 
   if (connection === 'gone') return <LinkGone />
   if (!data) return <FirstLoad state={connection} />
@@ -310,6 +319,27 @@ export function Dashboard({ token }: { token: string }) {
                 ? t('dash.oneSession')
                 : t('dash.oneProject')}
           </span>
+        )}
+        {/* Where the code is, for the board that is about one project.
+
+            Both halves are empty unless the server decided to disclose them —
+            project scope, `names` mode, a github.com remote — so the condition
+            here is a render guard and not the disclosure decision. That one is
+            in shareRepoFor, on the side that can be tested against a body.
+
+            githubURL is the same function the sidebar's footer uses, which is
+            what stops a second, looser idea of "is this GitHub" appearing on
+            the surface that matters most. */}
+        {repo !== null && (
+          <a
+            href={repo}
+            target="_blank"
+            rel="noreferrer noopener"
+            data-testid="dash-repo"
+            className="shrink-0 truncate text-vp-xl text-ink-2 underline decoration-dotted underline-offset-4"
+          >
+            {safeText(`${data.scopeRepoOwner}/${data.scopeRepoName}`)}
+          </a>
         )}
         {/* The owner's own label for this screen. Under both detail modes:
             `detail` is about whether the panel's words may leave the machine,

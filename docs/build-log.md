@@ -15645,3 +15645,260 @@ as decoration.
   through `--interactive` with a file on stdin, which is how every other prompt
   in that file is driven; the one real-terminal case (`script -qec`) still runs
   with a decided locale and so never sees the question.
+
+## Two tabs, and a dock under both
+
+The four-tab panel shipped and the verdict was 「右边的tab你现在弄的特别迷惑」 and
+「ui的问题很大」. Then, verbatim:
+
+> 你就留下文件和笔记两个tab 然后文件在现有的监控面板上面加一个token用量 几个数字
+> 有布局（本周消耗、本项目消耗、今日消耗、分应用消耗、时间、字数） 好看一点
+> 笔记tab就也是 把文件部分换成纯笔记区（跟着项目走） 也不要留下 todo
+> 底下是那两个tab 然后token消耗和系统监控点开都能看到详情 都在侧边栏显示
+> 也可以再点一下在全屏显示
+
+and
+
+> read only和面板左下角等等地方 都加上GitHub链接和项目名
+
+### What was wrong with four tabs, said plainly
+
+The same mistake twice, and the second version of it was harder to see because
+the count had gone down.
+
+A tab is a *place*. Four tabs said there were four places, and two of them were
+not places — `monitor` and `tokens` are things you want in the corner of your
+eye while reading something else. The monitor strip at the foot of the panel was
+built on exactly that argument, in writing, and then the monitor was given a tab
+as well: two surfaces for one fact, one of them permanent and one of them
+somewhere you navigate to, and neither of them wrong on its own. That is what
+「特别迷惑」 is made of.
+
+So: two tabs, and everything that is not a place moves into the bottom half of
+both of them, in the same order, at the same size, whichever tab you are on. The
+strip is gone — the dock's monitor block *is* the strip, grown up.
+
+```
+┌─ [文件] [笔记] ──────────────┐
+│  repo line ─────────────────│   ← files only: one line, pressable
+│  file tree   /   notes      │   ← top half, differs per tab
+├────────── drag ─────────────┤   ← the divider, per tab
+│  用量   ▸  six figures      │   ← the dock: identical on both tabs
+│  监控   ▸  three meters     │
+└─────────────────────────────┘
+```
+
+`PANEL_TABS` is `['files', 'notes']`. `RETIRED_TABS` grows to five.
+
+### Where the repository went
+
+Into the file tree's header, as one line: branch, ahead/behind, uncommitted
+count, and a conflict word when there is one. Three facts, which is what
+somebody watching agents edit a directory actually reads at a glance, sitting
+against the path they are about.
+
+It was a tab, then it was the bottom half of the files tab, and both were too
+much furniture for that. The rest of it — the changed files, the commits, the
+open pull requests, the sessions on other branches — is one press away and has
+not moved: the line is a press target and opens the whole `GitPanel` with the
+side panel to itself.
+
+A directory that is not a repository renders no line at all. A file list with an
+empty branch chip over it looks broken; a file list is a perfectly good thing to
+be.
+
+### Todos
+
+Gone from the panel: the tab, the component, the split preset that predated it,
+the API client methods, and every dictionary entry only it used. `render-check`
+asserts the absence by test id rather than trusting the deletion.
+
+**The routes stay, and that is the exception the brief allowed.** "Remove the
+routes if nothing else calls them" — two things do. The read-only wall boards
+count todos: `todos` is a widget kind, `todoPercent` is a gauge metric, `output`
+consumes the counts as one of its three columns, and four shipped presets place
+one, so deleting the routes rewrites somebody's wall. And an API token is a
+documented way in: an agent that finishes a task can tick it off, which is the
+one use of this that never needed a panel. A note above `registerPanelRoutes`
+says both, so the next person to find four handlers with no frontend caller does
+not delete them for the wrong reason.
+
+What did go is `api.ts`'s four client methods. Dead client code is how somebody
+concludes a feature is dead.
+
+One dictionary line survived deliberately: `todos.leftOf` is the only entry whose
+two languages take *different placeholders* — Chinese counts what is done,
+English counts what is left — and it is the fixture `i18n.test.ts` uses for the
+rule that placement belongs to the dictionary and not to the caller. Deleting it
+would have deleted the only test of a rule that applies to every future line.
+
+### The six figures, and why they are not six
+
+「几个数字 有布局 … 好看一点」. The layout *is* the request, and the mistake it
+warns against is a three-by-two grid of identical cards, which says the six are
+six equal things. They are three ranks:
+
+- **今日消耗** is the hero. It is the figure somebody glances at ten times a day
+  and the only one whose answer changes while you watch. First, largest, and on
+  its own line at every width.
+- **本周消耗** and **本项目消耗** are context for it, and a pair rather than two
+  cards: they are read against the hero and against each other, so they are the
+  same size as each other and smaller than it. 本项目 carries the project's name
+  under it, and says 「没选项目」 rather than showing a total wearing a scope it
+  does not have.
+- **分应用消耗** is not a number. Three totals in a column is arithmetic the
+  reader has to do; one bar divided three ways is that arithmetic already done.
+  It reuses `.vp-bar`, so it is the same object as every meter below it.
+- **时间** and **字数** are qualifiers — they say what the five figures above
+  *mean* rather than adding a sixth — so they are one quiet footer line.
+
+The hierarchy is ratio and not a new type size: `text-vp-lg` for the hero,
+`text-vp-md` for the pair, `text-vp-xs` for the rest. The scale tops out at `lg`
+for the panel on purpose (`xl` and up exist for a wall read across a room), and
+three steps is enough to rank three ranks. `panes-check` measures it: today is
+first and largest, its two pieces of context are one size, and there is no third
+size hiding between them.
+
+At 280px the hero spans both columns and the pair sits under it; above
+`PANEL_DENSE_WIDTH` all three share a row at `1.4fr 1fr 1fr`.
+
+**One request feeds all six.** The panel asks for the range with no project and
+no tool filter, because the payload already carries the per-project and per-tool
+splits — three scoped requests would be three transcript passes to draw one
+block, and the three answers would be from three different moments. Every figure
+is over the same window and the footer names it; mixing "today", "this week" and
+"this project, all time" in one block reads as three facts about one thing and is
+three facts about three.
+
+### 时间 and 字数, as read
+
+Both were ambiguous and both are readings rather than the things themselves.
+
+**时间 is the reading's freshness and the period it covers** — "近 30 天 ·
+3分钟前读的". That is what the panel honestly knows about time here. The
+alternative reading, elapsed wall-clock across sessions, was rejected on the
+facts: the panel has `stateChangedAt` per session and nothing that adds up to
+"time spent", agents run unattended, and a session left open overnight would
+dominate a figure that claimed to measure work. A figure the panel cannot
+compute honestly is worse than one it does not show.
+
+**字数 is output tokens**, labelled 输出/Output rather than 字数. The panel
+cannot count characters or lines: what reaches it is a token ledger read out of
+the agents' own transcripts, and a token is not a character in any language and
+is nothing like one in Chinese. Converting would need a per-model tokeniser the
+panel does not have and a ratio it would be inventing. Output is the closest true
+answer to "how much did it write" and the one column of the four that is
+unambiguously production — input, cache read and cache write are all the cost of
+*asking*. So the figure is output and it says so.
+
+Money is still absent and still settled.
+
+### Three states, and the press target
+
+```
+compact   a few figures, sharing the bottom half of the tab
+open      the same subject with the whole side panel
+full      the same subject with the whole window
+```
+
+The rule that makes them predictable is that **each state replaces the one below
+it**. An opened block is open *instead of* the stack — the tab strip goes with
+it, because the header above the detail already carries the way back and two
+ways out of one surface is how somebody lands on a tab they did not choose.
+There is no arrangement in which two blocks are half-open. Escape backs out one
+level, not to the top.
+
+Tokens' third state hands over to the full-width token view the panel already
+had — a year grid and four tables, which could never be a 280px column. The
+monitor's is the same monitor in an overlay. The gesture is identical in all
+three blocks; that one of them lands on a purpose-built screen is a bonus.
+
+**Nothing is persisted.** A pane layout and a divider position are things you
+*built*; this is a thing you are *doing*, and coming back tomorrow to a
+full-screen monitor you opened once is a panel that has remembered the wrong kind
+of state.
+
+The press target is one wide row across the top of each block — icon, name,
+chevron — and **nothing below it is pressable**. A block that is both a button
+and a container full of controls is how somebody expands a panel while trying to
+click a number, and `panes-check` counts the interactive elements inside each
+block to keep it at one. It is visible rather than revealed on hover, because a
+control that appears when the pointer arrives is a control a finger never finds
+and this is the only way in.
+
+The repository line uses the same gesture for the same reason: one idiom, three
+subjects.
+
+### The GitHub link, and what a wall may say
+
+`githubURL()` in `components/repo.ts` is the only thing that builds one, and it
+builds it from an owner and a name — never from `remote.url`. That string is
+whatever is in somebody's git config, and putting it in an `href` is letting a
+file on disk decide where a click goes. `internal/git` parses it once and
+refuses anything that is not github.com; this restates the character class on
+the side that writes the `href`, because "the parser is correct" and "the link is
+safe" are different claims.
+
+Its own test found a real hole: `..` passes `[A-Za-z0-9._-]+` and
+`https://github.com/../payroll` resolves to `https://github.com/payroll` — a
+different repository, under this project's name. The property test ("every URL
+this builds has exactly two path segments") is what caught it.
+
+Two surfaces show the same fact the same way. The **foot of the sidebar** gets
+the project's name and, where there is one, `owner/name` as a link. The remote is
+read once per project change through the repository endpoint rather than a route
+of its own — it is server-cached, it already parses the remote, and a second
+parser would be a second answer to "is this GitHub". It is not polled: a remote
+changes when somebody runs `git remote set-url`, which is not a thing that
+happens while you watch a panel.
+
+#### The disclosure answer for a read-only board
+
+The board is where this stops being styling.
+
+**A repository is disclosed only under `names`, only for a project-scoped link,
+and only as two parsed halves.**
+
+- **Only under `names`.** A repository is a public, resolvable name that also
+  names the organisation. Under `counts` the dashboard sends no names at all —
+  `github.com/acme-holdings/payroll` identifies the customer at least as
+  precisely as the project path that mode exists to withhold, and `counts` is
+  the mode people choose *because* they are pointing a camera at the screen. It
+  is gated by the same `named` that gates `scopeName`.
+- **Only for a project-scoped link.** A session-scoped link's `scopeName` is a
+  session title; hanging a repository off it would disclose which project that
+  session belongs to on a link deliberately narrowed to one session. An unscoped
+  board has no single repository to name.
+- **Never a URL and never a path.** `scopeRepoOwner` and `scopeRepoName`, so the
+  viewer's browser can build one github.com URL and nothing else.
+
+This is the first thing on the share surface that reads a working tree, which
+`docs/api.md` previously said it never does. The doc now says when it does and
+why: one `git remote get-url` behind the cache the repository tab already uses,
+and none at all in counts mode.
+
+`TestARepositoryIsNamedOnlyOnAProjectBoardThatAlreadyNamesThings` covers all six
+cases, and the existing redaction sweep grew two assertions: under `counts` both
+halves are empty *and* the string `github.com` appears nowhere in the body. The
+sweep's forbidden-key list grew `"url"` and `"remote"`.
+
+### The reducer's arithmetic outlived its tab list
+
+Two tabs means `MAX_PANES` is two, and the off-by-one in `moveTab` — the one
+that appears when a pane vanishes *between* two others — needs at least three.
+Every test for it would have quietly become unreachable.
+
+That coverage is not about `files` and `notes`; it is about indices, and it has
+now been broken twice by tab-list changes on assertions that had nothing to do
+with what they were checking. So it moved to `panes.arithmetic.test.ts`, which
+`vi.mock`s the tab universe to four synthetic ids and runs the whole suite
+against those — with a first assertion that the mock actually took, because
+otherwise the file passes by testing two tabs twice. `panes.test.ts` keeps the
+invariant, the stored-layout repair and the storage key, against the real tabs:
+those *are* about which tabs exist.
+
+`RETIRED_TABS` gained a literal test of its own for the same class of reason. It
+is not read at runtime, so nothing breaks if a name is dropped from it — what is
+lost is the fixture the repair is driven from. Mutation testing found exactly
+that by deleting two names and watching every check stay green. It is
+append-only now, and pinned.

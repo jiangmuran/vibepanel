@@ -1,157 +1,104 @@
-import { useEffect, useState } from 'react'
-import { AlertTriangle, Maximize2, RefreshCw } from 'lucide-react'
+import { AlertTriangle, RefreshCw } from 'lucide-react'
 
-import { api } from '../../protocol/api'
 import type { TokenUsage as Usage, UsageDay } from '../../protocol/wire'
 import { t, useLang } from '../../i18n'
 import type { PanelDensity } from '../chrome'
 import { safeText } from '../text'
 import { formatAgo } from './ago'
 import { compact, exact, sum, totalOf } from './tokens'
-
-/** How often the panel refreshes while it is on screen. */
-const POLL_MS = 20000
-
-/** How many of the range's days the sparkline shows. */
-const SPARK_DAYS = 30
+import { dayTotal, projectTotal, toolShares, windowTotal } from './spend'
+import { SPEND_SPAN, type Spend } from './useSpend'
 
 /**
- * A summary of what the agents have spent, in a side panel.
+ * The token ledger with the side panel to itself.
  *
- * The panel is a glance, not the analysis — everything that needs width lives
- * behind the button at the bottom. The measurement that settled it: a
- * GitHub-style year grid is 53 columns, and 53 columns of anything legible is
- * about 580 pixels before a day-of-week gutter. Squeezing it into the panel
- * means either three months instead of a year or squares too small to aim at,
- * and both are worse than a link.
+ * The dock's block is the glance — six figures and a bar. This is the same
+ * subject opened out: where the six came from, what the range is made of, and
+ * every reason a figure might be a lower bound. It is not the analysis; the
+ * analysis is the full-width view behind the header's expand control, because
+ * a 53-week grid needs about 580 pixels before a day-of-week gutter and the
+ * per-session table has six numeric columns.
  *
- * What the panel holds is everything that fits in a column of numbers, which
- * turned out to be a good deal more than it was showing. It had two figures and
- * a sparkline; the payload it was already fetching carries the four token
- * classes separately, a request count, a month-by-month series, a per-tool
- * breakdown, how many agent sessions are behind the figures and when the last
- * pass finished. All of it is a label and a number — the shape a narrow column
- * is *good* at — and none of it was on screen.
+ * Three sizes, three jobs, and the middle one earns its place by answering the
+ * question the glance provokes — "why is that number that" — without leaving
+ * the column you were reading.
  *
- * What is deliberately still absent is money and lines of code. The panel does
- * not know either: pricing is per model, per tier and changes, and the reader
- * cannot tell a price the panel guessed from one it was told. That is settled.
+ * Money and lines of code are still absent and still settled: pricing is per
+ * model, per tier and changes, and a reader cannot tell a price the panel
+ * guessed from one it was told.
  */
 export function TokenUsage({
+  spend,
   projectId,
-  density = 'narrow',
-  onOpen,
+  projectName,
+  density,
 }: {
+  /** The one reading, shared with the dock's compact block. See useSpend. */
+  spend: Spend
   projectId: string | null
-  density?: PanelDensity
-  onOpen: () => void
+  projectName: string | null
+  density: PanelDensity
 }) {
   useLang()
-  const [data, setData] = useState<Usage | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  // One clock for every relative time on the panel, moved on by the poll. See
-  // GitPanel's Ago for why this is not a Date.now() in the body.
-  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000))
+  const { data, error, now, busy, refresh } = spend
 
-  useEffect(() => {
-    // Self-scheduling and only while mounted, like the monitor: a panel nobody
-    // is looking at should cost nothing, and this one starts a disk pass.
-    let cancelled = false
-    let timer = 0
-    const tick = async () => {
-      try {
-        const next = await api.tokenUsage({ days: SPARK_DAYS, project: projectId ?? undefined })
-        if (!cancelled) {
-          setData(next)
-          setNow(Math.floor(Date.now() / 1000))
-          setError(null)
-        }
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e))
-      }
-      if (!cancelled) timer = window.setTimeout(() => void tick(), POLL_MS)
-    }
-    void tick()
-    return () => {
-      cancelled = true
-      window.clearTimeout(timer)
-    }
-  }, [projectId])
-
-  const refresh = async () => {
-    setBusy(true)
-    try {
-      await api.refreshTokenUsage()
-      setData(await api.tokenUsage({ days: SPARK_DAYS, project: projectId ?? undefined }))
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  if (error) {
+  if (error !== null) {
     return (
       <p className="px-3 py-4 text-vp-base" style={{ color: 'var(--vp-state-waiting)' }}>
         {safeText(error)}
       </p>
     )
   }
-  if (!data) {
+  if (data === null) {
     return <p className="px-3 py-4 text-vp-base text-ink-2">{t('spend.scanning')}</p>
   }
 
-  const today = data.byDay.find((d) => d.day === data.today)
-  const todayTotal = today ? totalOf(today) : 0
+  const known = data.scannedAt > 0
   const range = sum(data.byDay)
   const rangeTotal = totalOf(range)
-  // Never read is not zero, and the difference is the whole point. Until a
-  // pass has finished there is no figure to show at all.
-  const known = data.scannedAt > 0
   const missing = data.sources.filter((s) => !s.found)
   const skipped = data.sources.reduce((n, s) => n + s.skipped, 0)
-
-  // `byMonth` is every month there has been, oldest first, and the panel had
-  // never opened it. The month you are in and the one before it is the
-  // comparison people actually make — a range of thirty days straddles two of
-  // them and answers neither.
-  const thisMonth = monthAt(data.byMonth, data.today.slice(0, 7))
-  const lastMonth = monthAt(data.byMonth, previousMonth(data.today.slice(0, 7)))
+  const tools = toolShares(data)
 
   // Requests are how the four token classes become a rate rather than a pile.
   // 400k tokens is meaningless; 400k over 60 requests is a session with a large
   // context being re-sent, which is a thing somebody can act on.
   const perRequest = range.requests > 0 ? Math.round(rangeTotal / range.requests) : null
 
+  // `byMonth` is every month there has been, and the panel had never opened it.
+  // The month you are in and the one before it is the comparison people make; a
+  // thirty-day range straddles two of them and answers neither.
+  const thisMonth = monthAt(data.byMonth, data.today.slice(0, 7))
+  const lastMonth = monthAt(data.byMonth, previousMonth(data.today.slice(0, 7)))
+
+  const cols = density === 'wide' ? 'grid-cols-2' : 'grid-cols-1'
+
   return (
     <div className="px-3 py-2" data-testid="token-panel">
-      {/* The two headline figures side by side rather than stacked. They are
-          the same kind of fact measured over two windows, and reading them as
-          a pair is the point; stacked, each had a whole row to itself and the
-          panel was two lines deep before it said anything else. */}
-      <div className="flex items-baseline justify-between gap-3">
-        <Headline label={t('spend.today')} value={known ? todayTotal : null} emphasis />
-        <Headline label={t('spend.rangeDays', { n: SPARK_DAYS })} value={known ? rangeTotal : null} />
-      </div>
+      <Section label={t('spend.headline')}>
+        <div className={`grid gap-x-4 ${cols}`}>
+          <Row label={t('spend.today')} value={known ? dayTotal(data.byDay, data.today) : null} />
+          <Row
+            label={t('spend.week')}
+            value={known ? windowTotal(data.byDay, data.today, 7) : null}
+          />
+          <Row
+            label={projectName ?? t('spend.thisProject')}
+            value={known ? projectTotal(data, projectId) : null}
+          />
+          <Row label={t('spend.rangeDays', { n: SPEND_SPAN })} value={known ? rangeTotal : null} />
+        </div>
+      </Section>
 
       {known && <Spark data={data} />}
 
-      {!known && (
-        <p className="mt-2 text-vp-sm leading-relaxed text-ink-2">
-          {data.scanning ? t('spend.scanning') : t('spend.neverScanned')}
-        </p>
-      )}
-
       {known && (
         <>
-          {/* What the range is made of. Four classes and a count, all of which
-              the payload has always carried and none of which reached the
-              panel — cache read is usually the largest of the four by an order
-              of magnitude, so a single total hides the one number that
-              explains the rest. Two columns above 380px. */}
+          {/* What the range is made of. Cache read is routinely the largest of
+              the four by an order of magnitude, so a single total hides the one
+              number that explains the rest. */}
           <Section label={t('spend.breakdown')}>
-            <div className={`grid gap-x-4 ${density === 'wide' ? 'grid-cols-2' : 'grid-cols-1'}`}>
+            <div className={`grid gap-x-4 ${cols}`}>
               <Row label={t('spend.input')} value={range.input} />
               <Row label={t('spend.output')} value={range.output} />
               <Row label={t('spend.cacheRead')} value={range.cacheRead} />
@@ -163,14 +110,14 @@ export function TokenUsage({
 
           {(thisMonth !== null || lastMonth !== null) && (
             <Section label={t('spend.month')}>
-              <div className={`grid gap-x-4 ${density === 'wide' ? 'grid-cols-2' : 'grid-cols-1'}`}>
+              <div className={`grid gap-x-4 ${cols}`}>
                 <Row label={t('spend.thisMonth')} value={thisMonth} />
                 <Row label={t('spend.lastMonth')} value={lastMonth} />
               </div>
             </Section>
           )}
 
-          {data.byTool.length > 0 && (
+          {tools.length > 0 && (
             <Section label={t('spend.tools')}>
               <div className="vp-rows">
                 {data.byTool.map((tool) => (
@@ -229,11 +176,17 @@ export function TokenUsage({
         </>
       )}
 
-      {/* Said on the panel, not only behind the button. Somebody who never
+      {!known && (
+        <p className="mt-2 text-vp-sm leading-relaxed text-ink-2">
+          {data.scanning ? t('spend.scanning') : t('spend.neverScanned')}
+        </p>
+      )}
+
+      {/* Said here, not only behind the expand control. Somebody who never
           opens the full view still has to know these are the agents' figures
           and not the panel's, or every number above is read as a claim the
           panel cannot make. */}
-      <p className="mt-2 text-vp-xs leading-relaxed text-ink-3">{t('spend.whose')}</p>
+      <p className="mt-2 text-vp-xs leading-relaxed text-ink-2">{t('spend.whose')}</p>
 
       {missing.map((s) => (
         <Warning
@@ -244,27 +197,17 @@ export function TokenUsage({
       {skipped > 0 && <Warning text={t('spend.lowerBound', { n: exact(skipped) })} />}
       {data.passError !== '' && <Warning text={t('spend.passError', { why: data.passError })} />}
 
-      <div className="mt-2 flex items-center gap-1">
-        <button
-          type="button"
-          data-testid="token-open"
-          onClick={onOpen}
-          className="vp-press flex flex-1 items-center justify-center gap-1 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-sm text-ink transition-colors duration-200 ease-vp hover:bg-surface"
-        >
-          <Maximize2 size={12} />
-          {t('spend.open')}
-        </button>
-        <button
-          type="button"
-          data-testid="token-refresh"
-          onClick={() => void refresh()}
-          disabled={busy}
-          title={busy ? t('spend.refreshing') : t('spend.refresh')}
-          className="vp-press shrink-0 rounded-vp border border-hairline p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink disabled:opacity-50"
-        >
-          <RefreshCw size={12} className={busy || data.scanning ? 'animate-spin' : ''} />
-        </button>
-      </div>
+      <button
+        type="button"
+        data-testid="token-refresh"
+        onClick={refresh}
+        disabled={busy}
+        title={busy ? t('spend.refreshing') : t('spend.refresh')}
+        className="vp-press mt-2 flex w-full items-center justify-center gap-1 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-sm text-ink transition-colors duration-200 ease-vp hover:bg-surface disabled:opacity-50"
+      >
+        <RefreshCw size={12} className={busy || data.scanning ? 'animate-spin' : ''} />
+        {t('spend.refresh')}
+      </button>
     </div>
   )
 }
@@ -286,37 +229,9 @@ function previousMonth(key: string): string {
 /** A heading over a set of rows, with a hairline above it. */
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="mt-2 border-t border-hairline pt-1.5">
+    <div className="mt-2 border-t border-hairline pt-1.5 first:mt-0 first:border-t-0 first:pt-0">
       <p className="mb-0.5 text-vp-xs uppercase tracking-wide text-ink-2">{label}</p>
       {children}
-    </div>
-  )
-}
-
-/**
- * One headline number, or an explicit absence.
- *
- * `null` renders an em dash rather than a zero. There is no formatting trick
- * that makes a zero mean "not known", so it does not get to try.
- */
-function Headline({
-  label,
-  value,
-  emphasis,
-}: {
-  label: string
-  value: number | null
-  emphasis?: boolean
-}) {
-  return (
-    <div className="min-w-0">
-      <div className="truncate text-vp-xs text-ink-2">{label}</div>
-      <div
-        className={`tabular ${emphasis ? 'text-vp-lg' : 'text-vp-md'} text-ink`}
-        title={value === null ? undefined : `${exact(value)} ${t('spend.tokens')}`}
-      >
-        {value === null ? '—' : compact(value)}
-      </div>
     </div>
   )
 }
@@ -331,9 +246,11 @@ function Headline({
 function Row({ label, value, plain }: { label: string; value: number | null; plain?: boolean }) {
   return (
     <div className="flex min-w-0 items-baseline justify-between gap-2 py-[1px] text-vp-xs">
-      <span className="truncate text-ink-2">{label}</span>
+      <span className="truncate text-ink-2" title={label}>
+        {safeText(label)}
+      </span>
       <span
-        className="tabular shrink-0 text-ink-2"
+        className="tabular shrink-0 text-ink"
         title={value === null || plain ? undefined : `${exact(value)} ${t('spend.tokens')}`}
       >
         {value === null ? '—' : plain ? exact(value) : compact(value)}
@@ -354,7 +271,7 @@ function Spark({ data }: { data: Usage }) {
   const [y, m, d] = data.today.split('-').map(Number)
   const end = new Date(y, (m || 1) - 1, d || 1)
   const days: { day: string; total: number | null }[] = []
-  for (let i = SPARK_DAYS - 1; i >= 0; i--) {
+  for (let i = SPEND_SPAN - 1; i >= 0; i--) {
     const at = new Date(end)
     at.setDate(at.getDate() - i)
     const key = `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(
@@ -365,7 +282,7 @@ function Spark({ data }: { data: Usage }) {
   const peak = Math.max(1, ...days.map((x) => x.total ?? 0))
 
   return (
-    <div className="mt-1 flex h-8 items-end gap-px" data-testid="token-spark">
+    <div className="mt-2 flex h-10 items-end gap-px" data-testid="token-spark">
       {days.map((x) => (
         <div
           key={x.day}

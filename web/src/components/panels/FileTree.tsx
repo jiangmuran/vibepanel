@@ -8,6 +8,7 @@ import { t, useLang } from '../../i18n'
 import type { PanelDensity } from '../chrome'
 import { filesFrom, uploadFiles } from '../upload'
 import { FilePreview } from './FilePreview'
+import { RepoLine } from './RepoLine'
 import { formatAgo } from './ago'
 import { formatBytes } from './preview'
 
@@ -28,9 +29,12 @@ import { formatBytes } from './preview'
 export function FileTree({
   projectId,
   density = 'narrow',
+  onOpenRepo,
 }: {
   projectId: string
   density?: PanelDensity
+  /** Opens the repository panel from the status line above the listing. */
+  onOpenRepo?: () => void
 }) {
   useLang()
   // The caller keys this component by project, so switching projects gives a
@@ -155,6 +159,13 @@ export function FileTree({
         take(filesFrom(e.dataTransfer))
       }}
     >
+      {/* The repository, as one line above the listing rather than as a panel
+          below it or a tab beside it. It is a fact about the directory this
+          list is showing, so it belongs against the path it is about — and the
+          rest of it (the changed files, the commits, the pull requests) is one
+          press away rather than permanently taking a third of the column. */}
+      {onOpenRepo && <RepoLine projectId={projectId} onOpen={onOpenRepo} />}
+
       <div className="flex items-center gap-1 px-2 py-1">
         {listing?.parent != null && (
           <button

@@ -18,6 +18,7 @@ import type { AuthState, PanelState, Project, Session } from './protocol/wire'
 import { TerminalView } from './components/Terminal'
 import { StateDot } from './components/StateDot'
 import { Sidebar } from './components/Sidebar'
+import { useProjectRemote } from './hooks/useProjectRemote'
 import { BottomTerminals } from './components/BottomTerminals'
 import { RightPanel } from './components/RightPanel'
 import { Settings } from './components/Settings'
@@ -520,6 +521,9 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   const currentProject = current
     ? (state.projects.find((p) => p.id === current.projectId) ?? null)
     : null
+  // Read once per project, for the name-and-link at the foot of the sidebar.
+  // See useProjectRemote for why this is not polled and not a route of its own.
+  const currentRemote = useProjectRemote(currentProject?.id ?? null)
 
   // Dropping files onto the terminal uploads them next to the session and
   // types the paths at the prompt. That last part is the point: the reason to
@@ -780,6 +784,8 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             setSettingsOpen(true)
             if (narrow) setDrawerOpen(false)
           }}
+          current={currentProject}
+          currentRemote={currentRemote}
         />
       )}
 

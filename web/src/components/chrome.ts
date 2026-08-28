@@ -16,19 +16,21 @@
  * Presentation may change with size; the set of controls may not.
  */
 
-// Four, and each one is a question rather than a data source.
+// Two, and they are the only two things the side panel is *for*: the files in
+// front of you, and what you are thinking about them.
 //
-// It was six. `git` and `todos` were tabs of their own, and both were the
-// bottom half of a question somebody was already asking on another tab: what
-// is in this directory *and* what has changed in it; what am I thinking *and*
-// what is left. A tab you have to leave to answer the second half of your own
-// question is a tab that costs you the first half. So they moved inside
-// `files` and `notes`, below a divider you can drag — see STACKED_TABS.
+// It was six, then four, and four was 「特别迷惑」. The mistake in both was
+// treating a tab as a place to put a data source. `monitor` and `tokens` are
+// not places you go — they are things you want in the corner of your eye while
+// reading a terminal, which is the argument the monitor strip was already
+// built on and which was then contradicted by giving the monitor a tab as
+// well. So they are not tabs: they are the bottom half of both tabs, the same
+// two blocks in the same place whichever one you are on, and pressing either
+// opens it (see PanelDock).
 //
-// Their names did not disappear with them: `panel.git` and `panel.todos` still
-// name the lower half of the tab that absorbed them. What disappeared is the
-// tab strip's claim that they were separate places.
-export const PANEL_TABS = ['files', 'monitor', 'tokens', 'notes'] as const
+// The strip is therefore two icons and a movement between them, which is a
+// thing you can learn in one glance rather than four.
+export const PANEL_TABS = ['files', 'notes'] as const
 
 export type PanelTab = (typeof PANEL_TABS)[number]
 
@@ -42,24 +44,64 @@ export type PanelTab = (typeof PANEL_TABS)[number]
  * invention, and so the next tab that is retired is added here rather than
  * quietly relied upon to behave the same way.
  */
-export const RETIRED_TABS = ['git', 'todos', 'vnc'] as const
+export const RETIRED_TABS = ['git', 'todos', 'vnc', 'monitor', 'tokens'] as const
 
 /**
  * The tabs whose body divides the pane's height itself.
  *
- * A stacked tab is two panels and a divider, so its height is the pane's
- * height and not the height of its content. The pane gives it `h-full` rather
- * than the `min-h-full` every other tab gets — a box whose height is its
- * content's leaves the flex column inside it nothing to divide, and it
- * collapses to its two headers with the divider between them.
+ * Every tab, now — which is why this is still a list rather than a `true`. A
+ * stacked tab is two panels and a divider, so its height is the pane's height
+ * and not the height of its content: the pane gives it `h-full` rather than
+ * `min-h-full`, because a box whose height is its content's leaves the flex
+ * column inside it nothing to divide and it collapses to its two headers.
  *
- * Named here rather than checked with `tab === 'files' || tab === 'notes'` at
- * the one call site, because the second call site is the one that forgets.
+ * Kept as a list because "all of them" is a coincidence of there being two.
+ * The next tab that is not a stack would otherwise be a `true` somebody has to
+ * turn back into a condition, at the call site, where nothing is watching.
  */
 export const STACKED_TABS = ['files', 'notes'] as const
 
 export function tabOwnsHeight(tab: PanelTab): boolean {
   return (STACKED_TABS as readonly string[]).includes(tab)
+}
+
+/**
+ * What sits in the bottom half of every tab, in order.
+ *
+ * The same two blocks on the files tab and on the notes tab, in the same
+ * place, at the same size. That is the whole idea: "is the machine coping" and
+ * "what is this costing" are questions you have *while* reading something
+ * else, so they are never somewhere you navigate to. Token spend above the
+ * monitor because it is the one that was asked for
+ * (「在现有的监控面板上面加一个token用量」) and because the monitor already has
+ * a permanent home in the strip below the panel.
+ */
+export const DOCK_BLOCKS = ['tokens', 'monitor'] as const
+
+export type DockBlock = (typeof DOCK_BLOCKS)[number]
+
+/**
+ * Everything that can be opened out of its compact form, in one list.
+ *
+ * The two dock blocks plus the repository, which is not in the dock: its
+ * compact form is a line in the file tree's own header, because a repository
+ * is a fact about the directory above it rather than about the machine. What
+ * it shares with the other two is the *gesture* — press the compact form, get
+ * the whole side panel; press again, get the window — and that gesture is one
+ * component (PanelDetail) reading this list rather than three components that
+ * each grew their own.
+ *
+ * Three states and no more. A block that is expanded is expanded *instead of*
+ * the stack, not beside it: two of these open at once is the four-tab panel's
+ * mistake in a smaller box.
+ */
+export const DETAIL_BLOCKS = ['repo', 'tokens', 'monitor'] as const
+
+export type DetailBlock = (typeof DETAIL_BLOCKS)[number]
+
+/** Every block in the dock is openable; not every openable block is in the dock. */
+export function isDetailBlock(v: string): v is DetailBlock {
+  return (DETAIL_BLOCKS as readonly string[]).includes(v)
 }
 
 /** Narrower than this and the panels are unusable rather than merely tight. */

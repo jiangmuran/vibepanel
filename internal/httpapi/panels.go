@@ -19,7 +19,8 @@ import (
 )
 
 // registerPanelRoutes mounts the side-panel endpoints: system stats, the file
-// browser, notes and todos.
+// browser, notes, and the todo routes the wall boards and API clients still
+// use after the panel's own checklist was removed.
 func (s *Server) registerPanelRoutes(r chi.Router) {
 	r.Get("/system", s.handleSystem)
 	r.Get("/usage", s.handleUsage)
@@ -36,6 +37,20 @@ func (s *Server) registerPanelRoutes(r chi.Router) {
 	r.Post("/projects/{id}/upload", s.handleUpload)
 	r.Get("/projects/{id}/notes", s.handleGetNote)
 	r.Put("/projects/{id}/notes", s.handlePutNote)
+	// The four below have no caller in this repository's frontend any more.
+	// That is deliberate and they are deliberately still here.
+	//
+	// The side panel's checklist was removed — 「也不要留下 todo」 — and the
+	// obvious next step is to delete the handlers, the store methods and the
+	// table. Two things call them that are not the side panel. The read-only
+	// wall boards count todos: `todos` is a widget kind, `todoPercent` is a
+	// gauge metric, and four of the shipped presets place one, so deleting the
+	// routes means rewriting somebody's wall. And an API token is a documented
+	// way in — an agent that finishes a task can tick it off, which is the one
+	// use of this that never needed a panel at all.
+	//
+	// So: no UI, and an API. If the wall widgets ever go, these go with them,
+	// and `TodoProgressByProject` in internal/store is the thread to pull.
 	r.Get("/projects/{id}/todos", s.handleListTodos)
 	r.Post("/projects/{id}/todos", s.handleCreateTodo)
 	r.Patch("/todos/{todoID}", s.handlePatchTodo)

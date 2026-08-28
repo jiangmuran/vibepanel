@@ -567,6 +567,37 @@ type shareDashboard struct {
 	// scoped row no longer exists, which is the same thing the empty board
 	// below is already saying.
 	ScopeName string `json:"scopeName"`
+
+	// ScopeRepoOwner and ScopeRepoName are the scoped project's repository, as
+	// two parsed halves and nothing else.
+	//
+	// Three narrowings, and each is the disclosure decision rather than styling.
+	//
+	// **Only under `names`.** A repository is a name, and a public resolvable one
+	// that also names the organisation. Under `counts` this dashboard sends no
+	// names at all, and github.com/acme-holdings/payroll identifies the customer
+	// at least as precisely as the project path that mode exists to withhold. So
+	// it is gated by the same `named` that gates ScopeName, and the redaction
+	// test asserts both halves are empty and "github.com" appears nowhere in a
+	// counts-mode body.
+	//
+	// **Only for a project-scoped link.** A session-scoped link's ScopeName is a
+	// session title; hanging a repository off it would disclose the project a
+	// session belongs to on a link narrowed to one session. A whole-panel link
+	// has no single repository to name.
+	//
+	// **Never the remote URL and never the path.** Two halves, so the viewer's
+	// browser can build https://github.com/{owner}/{name} and nothing else.
+	// Sending the raw remote would hand a viewer an ssh URL with a hostname in
+	// it, which is the class of thing this struct exists to restate rather than
+	// forward.
+	//
+	// This is the first thing on the share surface that reads a working tree.
+	// docs/api.md said the surface never does; it now says when it does and why.
+	// One `git remote get-url` behind the cache the repository tab already uses,
+	// and none at all in counts mode.
+	ScopeRepoOwner string `json:"scopeRepoOwner"`
+	ScopeRepoName  string `json:"scopeRepoName"`
 }
 
 // handleShareDashboard is everything a share token can ask for.
@@ -647,6 +678,7 @@ func (s *Server) buildShareDashboard(ctx context.Context, link store.ShareLink,
 	}
 	if named {
 		out.ScopeName = scope.name
+		out.ScopeRepoOwner, out.ScopeRepoName = s.shareRepoFor(ctx, scope)
 	}
 	// Today, on the server's clock. The browser's would put "closed today" and
 	// "finished today" on a different day for a reader in another timezone.
@@ -904,6 +936,31 @@ func resolveScope(link store.ShareLink, projects []store.Project,
 		out.missing = true
 	}
 	return out
+}
+
+// shareRepoFor is the scoped project's repository, as owner and name.
+//
+// Empty for everything that is not a project-scoped link, for a directory that
+// is not a checkout, for a repository nobody has pushed, and for any remote
+// internal/git will not vouch for as github.com. Four ways to get nothing, and
+// the page renders the project's name alone for all of them -- which is what a
+// project without a repository should look like.
+//
+// The parse is not repeated here. Remote.GitHub() is the one place in this
+// product allowed to decide what a remote string means, and a second answer to
+// that question on the disclosure path is how the two drift.
+//
+// Called only under `named`, which is what keeps a counts-mode board from
+// reading a working tree at all.
+func (s *Server) shareRepoFor(ctx context.Context, scope scopeOf) (string, string) {
+	if scope.kind != store.ShareProject || scope.missing || scope.cwd == "" {
+		return "", ""
+	}
+	snap, err := s.Git.Read(ctx, scope.cwd, 0)
+	if err != nil || !snap.HasRemote || !snap.Remote.GitHub() {
+		return "", ""
+	}
+	return snap.Remote.Owner, snap.Remote.Name
 }
 
 // startOfLocalDay is midnight this morning, on the server's clock, in unix
