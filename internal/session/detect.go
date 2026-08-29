@@ -1,6 +1,7 @@
 package session
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
@@ -405,8 +406,51 @@ func IsShellCommand(cmd string) bool {
 // agents, and a notice that fires on them is one people stop reading.
 func IsAgentCommand(cmd string) bool {
 	switch cmd {
-	case "claude", "codex":
+	case "claude", "codex", "opencode":
 		return true
 	}
 	return false
+}
+
+// SessionRunsAnAgent answers the same question for a whole session.
+//
+// It reads what the session was *started* as before what is in the pane now,
+// and that ordering is the point. `pane_current_command` is a fact about this
+// instant: the panel starts every command through a login shell -- so that a
+// version manager's shims are on PATH, see internal/tmux -- and for the
+// moment between the shell starting and its `exec`, the foreground process is
+// the shell. A poll that lands there sees "bash" and concludes the session is
+// a scratch terminal.
+//
+// The launch argv does not have that problem. It is what somebody asked to
+// run, it is stored once, and it does not change under a poll.
+//
+// The current command still counts, because a session started as a plain shell
+// that has `claude` running inside it is running an agent by any useful
+// definition -- and that is the case the argv cannot see.
+func SessionRunsAnAgent(launch []string, current string) bool {
+	if IsAgentCommand(current) {
+		return true
+	}
+	for _, a := range launch {
+		// The basename: a profile's argv is an absolute path more often than
+		// not, and `/home/x/.local/bin/claude` is claude.
+		if IsAgentCommand(baseName(a)) {
+			return true
+		}
+		// Only the program, not its arguments. `claude` appearing in a flag is
+		// not the program being run, and `--model claude-opus-5` would match
+		// on a substring test.
+		break
+	}
+	return false
+}
+
+// baseName is filepath.Base without importing path/filepath for one call in a
+// package that is otherwise about bytes on a wire.
+func baseName(p string) string {
+	if i := strings.LastIndexByte(p, '/'); i >= 0 {
+		return p[i+1:]
+	}
+	return p
 }

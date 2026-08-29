@@ -73,6 +73,22 @@ const note = (sev, area, msg) => findings.push({ sev, area, msg })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 /**
+ * Put a panel tab on screen, without pressing one that is already there.
+ *
+ * The notes tab is a toggle once it is active: pressing it again swaps between
+ * the project's note and the one that belongs to no project. So a check that
+ * clicks it twice to "make sure" ends up looking at a different note than the
+ * one it wrote to -- which is what happened, and it read as the note failing
+ * to save.
+ */
+async function selectTab(target, id) {
+  const tab = target.locator(`[data-testid="panel-tab-${id}"]`)
+  if ((await tab.getAttribute('aria-selected').catch(() => null)) === 'true') return
+  await tab.click()
+}
+
+
+/**
  * Move the settings dialog to one of its groups, and say so if it did not go.
  *
  * The dialog is a rail and one group at a time now, so every block below has
@@ -456,6 +472,15 @@ try {
     note('FAIL', 'auth', 'setup returned no session cookie')
     throw new Error('no cookie')
   }
+
+  // The first-run tour is a modal over the whole panel, so every check that
+  // starts from a fresh install now has to put it away before it can click
+  // anything. It is dismissed through the API rather than through the UI: what
+  // these checks are about is on the other side of it, and driving a dialog
+  // they do not test is a step that can fail for its own reasons.
+  //
+  // first-run-check is the exception and drives it on purpose.
+  await authed('/api/settings/tour', { method: 'POST' })
 
   // Seed content through the API, the same way the UI would.
   const proj = await (await authed('/api/projects', {
@@ -1000,7 +1025,7 @@ try {
     }
 
     // Files
-    await page.locator('[data-testid="panel-tab-files"]').click()
+    await selectTab(page, 'files')
     await sleep(900)
     const fileCount = await page.locator('[data-testid="file-entry"]').count()
     if (fileCount === 0) note('FAIL', 'panel/files', 'the file browser listed nothing')
@@ -1181,7 +1206,7 @@ try {
     // cards. 「几个数字 有布局 … 好看一点」 — the layout is the request, so
     // this measures it: the hero has to be visibly larger than the pair, and
     // the pair has to be the same size as each other.
-    await page.locator('[data-testid="panel-tab-files"]').click()
+    await selectTab(page, 'files')
     await sleep(2500)
     const block = page.locator('[data-testid="token-block"]')
     if ((await block.count()) !== 1) {
@@ -1287,7 +1312,7 @@ try {
 
     // Notes: typing must reach the server without a save button, and the
     // status has to say so — "did that save?" is otherwise unanswerable.
-    await page.locator('[data-testid="panel-tab-notes"]').click()
+    await selectTab(page, 'notes')
     await sleep(700)
     await page.locator('[data-testid="notes"] textarea').fill('remember: NOTE_PERSIST_OK')
     let savedOk = false
@@ -1312,7 +1337,7 @@ try {
     // text would answer a different one.
     await page.locator('[data-testid="notes"] textarea')
       .fill('remember: NOTE_PERSIST_OK\nNOTE_FLUSH_OK')
-    await page.locator('[data-testid="panel-tab-files"]').click()
+    await selectTab(page, 'files')
     let flushed = ''
     for (let i = 0; i < 20; i++) {
       await sleep(300)
@@ -1333,7 +1358,7 @@ try {
         `${JSON.stringify(flushed)}, the panel last reported status ${JSON.stringify(status)}` +
         (complaint.length ? `, and it said: ${JSON.stringify(complaint[0])}` : ', and it said nothing'))
     }
-    await page.locator('[data-testid="panel-tab-notes"]').click()
+    await selectTab(page, 'notes')
     await sleep(600)
 
     // The other way out: closing the page. That save has to go out with
@@ -1353,7 +1378,7 @@ try {
       await leaving.locator('[data-testid="right-show"]').click().catch(() => {})
       await sleep(600)
     }
-    await leaving.locator('[data-testid="panel-tab-notes"]').click().catch(() => {})
+    await selectTab(leaving, 'notes')
     await sleep(900)
     await leaving.locator('[data-testid="notes"] textarea')
       .fill('remember: NOTE_PERSIST_OK\nNOTE_FLUSH_OK\nNOTE_CLOSE_OK')
@@ -1377,7 +1402,7 @@ try {
     // "gone" has to mean gone rather than hidden. The routes are still there
     // for the wall boards and for an API client; nothing in the panel offers
     // them, and this is what says so.
-    await page.locator('[data-testid="panel-tab-notes"]').click()
+    await selectTab(page, 'notes')
     await sleep(700)
     for (const id of ['todos', 'todo-input', 'todo-item', 'panel-tab-todos']) {
       if ((await page.locator(`[data-testid="${id}"]`).count()) > 0) {
@@ -1385,10 +1410,46 @@ try {
       }
     }
 
+    // The notes tab's second scope: press it while it is already on, and it
+    // swaps to the note that belongs to no project.
+    //
+    // Worth its own block because selectTab() above deliberately never
+    // presses an active tab, so nothing else here reaches this at all.
+    await selectTab(page, 'notes')
+    await sleep(500)
+    const projectText = await page.locator('[data-testid="notes"] textarea').inputValue()
+    await page.locator('[data-testid="panel-tab-notes"]').click()
+    await sleep(800)
+    await page.locator('[data-testid="notes"] textarea').fill('GLOBAL_NOTE_OK')
+    let globalSaved = ''
+    for (let i = 0; i < 20; i++) {
+      await sleep(300)
+      const n = await (await authed('/api/notes')).json().catch(() => ({}))
+      globalSaved = n.content ?? ''
+      if (globalSaved.includes('GLOBAL_NOTE_OK')) break
+    }
+    if (!globalSaved.includes('GLOBAL_NOTE_OK')) {
+      note('FAIL', 'panel/notes', `the global note did not save; /api/notes has ${JSON.stringify(globalSaved)}`)
+    }
+    // And the project's note is untouched by it, which is the whole point of
+    // there being two.
+    const stillThere = await (await authed(`/api/projects/${proj.id}/notes`)).json()
+    if (stillThere.content.includes('GLOBAL_NOTE_OK')) {
+      note('FAIL', 'panel/notes', 'writing the global note wrote into the project note')
+    }
+    // Press again: back to the project's, with its text.
+    await page.locator('[data-testid="panel-tab-notes"]').click()
+    await sleep(800)
+    const backTo = await page.locator('[data-testid="notes"] textarea').inputValue()
+    if (backTo !== projectText) {
+      note('FAIL', 'panel/notes',
+        `pressing the tab again did not come back to the project note: ${JSON.stringify(backTo)}`)
+    }
+
     // Two tabs, and the same dock under both. Whichever one you are on, the two
     // things you glance at are in the same place at the same size.
     for (const [tab, top] of [['notes', 'notes'], ['files', 'file-tree']]) {
-      await page.locator(`[data-testid="panel-tab-${tab}"]`).click()
+      await selectTab(page, tab)
       await sleep(900)
       const divider = page.locator(`[data-testid="stack-${tab}-divider"]`)
       if ((await divider.count()) !== 1) {
@@ -1428,7 +1489,7 @@ try {
 
     // The repository, as a line above the file list rather than as a panel or
     // a tab. The check runs in this repository, so there is one to find.
-    await page.locator('[data-testid="panel-tab-files"]').click()
+    await selectTab(page, 'files')
     await sleep(1200)
     const repoLine = page.locator('[data-testid="repo-line"]')
     if ((await repoLine.count()) !== 1) {
@@ -1472,7 +1533,7 @@ try {
       }
     }
 
-    await page.locator('[data-testid="panel-tab-notes"]').click()
+    await selectTab(page, 'notes')
     await sleep(700)
 
     // The note must survive a reload; it is the panel's only durable prose.
@@ -3188,7 +3249,7 @@ try {
       await p.locator('[data-testid="right-show"]').click().catch(() => {})
       await sleep(500)
     }
-    await p.locator('[data-testid="panel-tab-notes"]').click().catch(() => {})
+    await selectTab(p, 'notes')
     await sleep(500)
   }
   const noteBox = (p) => p.locator('[data-testid="notes"] textarea')
@@ -3239,7 +3300,7 @@ try {
   await b.screenshot({ path: join(SHOTS, 'note-conflict.png') })
   await bCtx.close()
   await page.bringToFront()
-  await page.locator('[data-testid="panel-tab-files"]').click().catch(() => {})
+  await selectTab(page, 'files')
   await sleep(400)
 
   // ── moving files in and out ──────────────────────────────────────────────
@@ -3255,7 +3316,7 @@ try {
   // Uploads refuse to overwrite, so a leftover from the last run would make
   // this fail with a 409 that has nothing to do with the code under test.
   rmSync(join(projRoot, 'dropped-note.txt'), { force: true })
-  await page.locator('[data-testid="panel-tab-files"]').click().catch(() => {})
+  await selectTab(page, 'files')
   await sleep(700)
   // The listing is a snapshot; the file was written after it was taken.
   await page.locator('[data-testid="file-refresh"]').click().catch(() => {})
@@ -3485,7 +3546,7 @@ try {
   const escapeLink = join(projRoot, 'escape-link.txt')
   rmSync(escapeLink, { force: true })
   symlinkSync(outsideTarget, escapeLink)
-  await page.locator('[data-testid="panel-tab-files"]').click().catch(() => {})
+  await selectTab(page, 'files')
   await sleep(400)
   await page.locator('[data-testid="file-refresh"]').click().catch(() => {})
   await sleep(900)
@@ -3750,10 +3811,25 @@ try {
   await sleep(600)
   // A link named after the agent, so the pane reports that command. What the
   // program does is irrelevant; the detector keys on its name.
-  execSync(`ln -sf "$(command -v sleep)" ${JSON.stringify(join(DATA, 'claude'))}`)
+  // Linked to python3 and not to sleep.
+  //
+  // The whole trick is that `pane_current_command` is the *name it was exec'd
+  // as*, so a link called `claude` reads as claude. sleep will not play: a
+  // multi-call coreutils build -- which is what this machine has -- looks at
+  // argv[0], does not recognise "claude", and exits immediately with
+  // `coreutils: unknown program`. The pane then holds a dead process and what
+  // tmux reports is whatever is left, which is not the fixture's intent and is
+  // not stable either.
+  //
+  // python3 does not care what it is called and blocks for as long as it is
+  // told to, which is all this needs.
+  execSync(`ln -sf "$(command -v python3)" ${JSON.stringify(join(DATA, 'claude'))}`)
   await authed('/api/sessions', {
     method: 'POST',
-    body: JSON.stringify({ projectId: proj.id, command: [join(DATA, 'claude'), '600'] }),
+    body: JSON.stringify({
+      projectId: proj.id,
+      command: [join(DATA, 'claude'), '-c', 'import time; time.sleep(600)'],
+    }),
   })
 
   let sawNotice = false

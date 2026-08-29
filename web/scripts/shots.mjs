@@ -156,6 +156,10 @@ try {
   })
   cookie = (setup.headers.get('set-cookie') ?? '').split(';')[0]
 
+  // These are pictures of the panel at work, and the first-run tour is a modal
+  // over the whole of it. See the note in render-check.mjs.
+  await authed('/api/settings/tour', { method: 'POST' })
+
   // Enough work on screen that the layout has to cope with something.
   const proj = await (await authed('/api/projects', {
     method: 'POST',

@@ -46,8 +46,22 @@ const note = (sev, area, msg) => findings.push({ sev, area, msg })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 let serverLog = ''
+// A home of its own, which this check did not have.
+//
+// The tour turns on state reporting, and state reporting is four lines written
+// into ~/.claude/settings.json -- so without this, running `make
+// first-run-check` edited the *developer's* own Claude Code configuration and
+// left it edited. render-check has had a FAKE_HOME since it started reading
+// transcripts; this one had no reason to until it grew a step that writes.
+const FAKE_HOME = mkdtempSync(join(tmpdir(), 'vpfirst-home-'))
+
 const server = spawn(BIN, ['serve', '--addr', `127.0.0.1:${PORT}`], {
-  env: { ...process.env, VIBEPANEL_DATA_DIR: join(DATA, 'data'), VIBEPANEL_TMUX_SOCKET: SOCKET },
+  env: {
+    ...process.env,
+    HOME: FAKE_HOME,
+    VIBEPANEL_DATA_DIR: join(DATA, 'data'),
+    VIBEPANEL_TMUX_SOCKET: SOCKET,
+  },
   stdio: ['ignore', 'pipe', 'pipe'],
 })
 server.stdout.on('data', (d) => (serverLog += d))
@@ -63,6 +77,7 @@ async function cleanup() {
   await sleep(500)
   try { execSync(`tmux -L ${SOCKET} kill-server`, { stdio: 'ignore' }) } catch { /* none */ }
   try { rmSync(DATA, { recursive: true, force: true }) } catch { /* best effort */ }
+  try { rmSync(FAKE_HOME, { recursive: true, force: true }) } catch { /* best effort */ }
 }
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
   process.on(sig, () => void cleanup().finally(() => process.exit(130)))
@@ -131,6 +146,52 @@ try {
     throw new Error('setup did not complete')
   }
   await sleep(1500)
+
+  // The tour, which is the thing a first run actually meets.
+  //
+  // Driven here and dismissed through the API in every other browser check:
+  // this is the one that is about the first run, and everywhere else it is a
+  // modal sitting over what the check came to look at.
+  const tour = page.locator('[data-testid="tour"]')
+  if (!(await tour.isVisible().catch(() => false))) {
+    note('FAIL', 'tour', 'a fresh install did not offer the tour')
+  } else {
+    await page.screenshot({ path: join(SHOTS, 'tour-1.png') })
+    // The step that the whole thing exists for: turning on state reporting,
+    // without which a finished agent stays blue forever.
+    await page.locator('[data-testid="tour-next"]').click()
+    await sleep(600)
+    if ((await page.locator('[data-tour-agent]').count()) !== 3) {
+      note('FAIL', 'tour', 'the reporting step does not offer all three agents')
+    }
+    // The outcome, not the button. Whether the button is there at all depends
+    // on whether the agent is already wired up, and what this cares about is
+    // that after the step the reporting is on.
+    const before = await page.evaluate(() => fetch('/api/settings/hooks').then((r) => r.json()))
+    const btn = page.locator('[data-testid="tour-install-claude"]')
+    if (await btn.count()) {
+      await btn.click()
+      await sleep(1500)
+    } else if (!before.installed) {
+      note('FAIL', 'tour', 'no way to turn Claude Code reporting on, and it is not on')
+    }
+    const st = await page.evaluate(() => fetch('/api/settings/hooks').then((r) => r.json()))
+    if (!st.installed) {
+      note('FAIL', 'tour',
+        `the reporting step left Claude Code unwired (events: ${JSON.stringify(st.events)})`)
+    }
+    await page.screenshot({ path: join(SHOTS, 'tour-2.png') })
+
+    // And it goes away for good.
+    await page.locator('[data-testid="tour-skip"]').click()
+    await sleep(600)
+    await page.reload()
+    await page.waitForSelector('[data-testid="sidebar"]', { timeout: 20000 }).catch(() => {})
+    await sleep(1200)
+    if (await page.locator('[data-testid="tour"]').isVisible().catch(() => false)) {
+      note('FAIL', 'tour', 'it came back after being dismissed')
+    }
+  }
 
   // An empty panel has to say what to do next.
   const empty = await page.innerText('body')

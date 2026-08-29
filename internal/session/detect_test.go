@@ -507,3 +507,42 @@ func TestAnAnimationDoesNotClearAManualOverride(t *testing.T) {
 			"the session doing something new", st, src, StateWaiting, SourceManual)
 	}
 }
+
+// What a session was started as counts, not only what is in the pane now.
+//
+// The panel starts every command through a login shell so that a version
+// manager's shims are on PATH. For the moment between that shell starting and
+// its `exec`, `pane_current_command` is the shell -- and a poll landing there
+// used to conclude the session was a scratch terminal, which turns off the
+// "states are being guessed" notice and classifies a working agent as idle.
+func TestASessionKnowsItIsRunningAnAgent(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		launch  []string
+		current string
+		want    bool
+	}{
+		{"claude, seen in the pane", []string{"claude"}, "claude", true},
+		{"claude, mid-exec", []string{"claude"}, "bash", true},
+		{"an absolute path", []string{"/home/x/.local/bin/claude"}, "bash", true},
+		{"with arguments", []string{"codex", "--model", "gpt"}, "sh", true},
+		{"opencode", []string{"opencode"}, "bash", true},
+
+		// A plain shell that has an agent running inside it. The argv cannot
+		// see this and the pane can.
+		{"an agent started by hand", nil, "claude", true},
+
+		{"a scratch terminal", nil, "bash", false},
+		{"a shell profile", []string{"bash"}, "bash", false},
+		{"htop", []string{"htop"}, "htop", false},
+
+		// The program, not its arguments: a flag that mentions an agent is not
+		// the agent being run.
+		{"a flag that says claude", []string{"python", "--model", "claude-opus-5"}, "python", false},
+	} {
+		if got := SessionRunsAnAgent(tc.launch, tc.current); got != tc.want {
+			t.Errorf("%s: SessionRunsAnAgent(%v, %q) = %v, want %v",
+				tc.name, tc.launch, tc.current, got, tc.want)
+		}
+	}
+}

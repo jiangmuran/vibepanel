@@ -197,6 +197,10 @@ try {
     body: JSON.stringify({ token, username: 'restart', password: PASSWORD }),
   })
   cookie = (setupRes.headers.getSetCookie?.() ?? []).map((c) => c.split(';')[0]).join('; ')
+  // The first-run tour would sit over everything this check clicks. See the
+  // note in render-check.mjs; dismissed through the API for the same reason.
+  await authed('/api/settings/tour', { method: 'POST' })
+
 
   const proj = await (await authed('/api/projects', {
     method: 'POST',

@@ -842,7 +842,11 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 func (s *Server) stateIsGuessed(sessions []store.Session) bool {
 	var agent bool
 	for _, sess := range sessions {
-		if session.IsAgentCommand(sess.Command) {
+		// The launch argv as well as the pane's current command: the panel
+		// starts commands through a login shell, so `pane_current_command` is
+		// the shell for the moment before it execs, and a poll landing there
+		// would decide no agent is running.
+		if session.SessionRunsAnAgent(sess.LaunchCommand, sess.Command) {
 			agent = true
 			break
 		}
