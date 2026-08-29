@@ -48,7 +48,7 @@ export function MobileKeyBar({ onSend }: { onSend: (bytes: string) => void }) {
       data-testid="key-bar"
       // vp-safe-bottom: this is the lowest thing on a phone, and the viewport
       // is set to extend under the home indicator. See the class for why.
-      className="flex shrink-0 flex-col gap-1 border-t border-hairline px-1 py-1.5 vp-blur vp-safe-bottom"
+      className="flex shrink-0 flex-col gap-1 border-t border-hairline px-1 py-1.5 [--vp-safe-pad:0.375rem] vp-blur vp-safe-bottom"
     >
       {/* Two rows, because eighteen keys do not fit across a phone and a
           single scrolling row hides whichever ones are not in view — which,

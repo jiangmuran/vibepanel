@@ -1,3 +1,4 @@
+import { Tour } from './components/Tour'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronUp,
@@ -335,6 +336,28 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     const timer = window.setTimeout(() => setSocketError(null), 8000)
     return () => clearTimeout(timer)
   }, [socketError])
+
+  // The first-run tour, from the same payload the settings page reads.
+  //
+  // Asked once, on mount, rather than kept in sync: this is a fact about the
+  // account that changes exactly once, and a tour that could reappear because
+  // a poll raced a dismissal is worse than a tour that needs a reload to show
+  // up on a second browser.
+  const [showTour, setShowTour] = useState(false)
+  useEffect(() => {
+    let gone = false
+    api
+      .settings()
+      .then((s) => {
+        if (!gone) setShowTour(!s.tourDone)
+      })
+      // A settings read that fails is a panel with bigger problems than a
+      // missing tour, and every one of them is already reported elsewhere.
+      .catch(() => {})
+    return () => {
+      gone = true
+    }
+  }, [])
 
   const refresh = useCallback(async () => {
     try {
@@ -1279,6 +1302,10 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           compose box and the key bar, and that is what the plan scoped. Saying
           otherwise made a gap read as a decision that had already been carried
           out. */}
+      {/* Before the settings dialog in the tree so it stacks above one, which
+          only happens if somebody opens settings from the tour. */}
+      {showTour && <Tour onDone={() => setShowTour(false)} />}
+
       {settingsAt && (
         <Settings
           openAt={settingsAt}

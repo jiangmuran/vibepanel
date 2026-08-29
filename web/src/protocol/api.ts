@@ -226,6 +226,10 @@ export const api = {
 
   hookStatus: () => request<HookStatus>('/api/settings/hooks'),
 
+  /** Puts the first-run tour away, on the server: it is read once per person,
+   *  not once per browser. */
+  tourDone: () => request<{ ok: boolean }>('/api/settings/tour', { method: 'POST' }),
+
   /** Which agent's configuration to edit. The server refuses anything else
    *  rather than guessing, because the answer decides which file in the user's
    *  home directory gets written. */

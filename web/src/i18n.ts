@@ -1256,6 +1256,68 @@ const DICT = {
   'share.scopeGone': { zh: '指向的东西没了', en: 'what it pointed at is gone' },
   'share.untitled': { zh: '未命名', en: 'untitled' },
 
+  // The first-run tour. Two of its five steps do something -- they install
+  // the state reporters and offer the Claude Code settings -- and the rest is
+  // the orientation that makes those two make sense.
+  'tour.title': { zh: '先花一分钟', en: 'One minute, first' },
+  'tour.step': { zh: '第 {n} / {of} 步', en: 'Step {n} of {of}' },
+  'tour.back': { zh: '上一步', en: 'Back' },
+  'tour.next': { zh: '下一步', en: 'Next' },
+  'tour.done': { zh: '开始用', en: 'Start' },
+  'tour.skip': { zh: '跳过，不再显示', en: 'Skip, and do not show again' },
+  'tour.on': { zh: '已开启', en: 'on' },
+  'tour.turnOn': { zh: '开启', en: 'Turn on' },
+
+  'tour.introH': { zh: '进程归 tmux，不归这个面板', en: 'tmux owns the processes, not this panel' },
+  'tour.intro1': {
+    zh: '每个会话都是一个 tmux 会话。关掉浏览器、重启面板、升级版本，里面的 agent 照样在跑。',
+    en: 'Every session is a tmux session. Close the browser, restart the panel, upgrade it — the agent inside keeps running.',
+  },
+  'tour.intro2': {
+    zh: '左边是会话，中间是终端，右边是文件和笔记。会话按状态排序，等你处理的排最前。',
+    en: 'Sessions on the left, the terminal in the middle, files and notes on the right. Sessions sort by state, and the ones waiting for you come first.',
+  },
+
+  'tour.hooksH': { zh: '让 agent 自己报状态', en: 'Let the agents report their own state' },
+  'tour.hooks1': {
+    zh: '不开这个，面板只能看见「有个进程在跑」。agent 做完了进程还在，所以会一直是蓝的。',
+    en: 'Without this the panel sees a running process and nothing else. A finished agent is still a running process, so it stays blue.',
+  },
+  'tour.hooks2': {
+    zh: '开启会往对应工具的配置文件里加几行，先备份，随时可以在设置里撤掉。',
+    en: 'Turning it on adds a few lines to that tool\'s own configuration file. It is backed up first, and the settings page removes it again.',
+  },
+  'tour.hooksExisting': {
+    zh: '开启前就开着的会话还是靠猜。在里面输入 /hooks，或者重启那个 agent。',
+    en: 'Sessions that were already open stay guessed. Run /hooks inside them, or restart the agent.',
+  },
+
+  'tour.tuneH': { zh: 'Claude Code 的其他设置', en: 'The rest of Claude Code\'s settings' },
+  'tour.tune1': {
+    zh: '同一个文件里，还有几条决定什么东西离开这台机器、agent 往 git 历史里写什么。',
+    en: 'The same file has a few more: what leaves this machine, and what the agent writes into your git history.',
+  },
+
+  'tour.projectH': { zh: '加一个项目', en: 'Add a project' },
+  'tour.project1': {
+    zh: '项目就是一个目录。左上角的加号选目录，然后在里面开会话。',
+    en: 'A project is a directory. The plus at the top left picks one, and sessions are started inside it.',
+  },
+  'tour.project2': {
+    zh: '每个会话可以选一个启动方式：claude、codex、opencode，或者就是一个 shell。',
+    en: 'Each session picks how it starts: claude, codex, opencode, or just a shell.',
+  },
+
+  'tour.restH': { zh: '其余的在哪', en: 'Where the rest is' },
+  'tour.rest1': {
+    zh: '端口、域名、TLS、访问白名单在设置页的「这个面板」里改，改完点重启。',
+    en: 'Port, domain, TLS and who may reach it are under "This panel" in settings. Press restart after.',
+  },
+  'tour.rest2': {
+    zh: '重启只断开连接，会话不受影响 —— 这是这套架构唯一真正的承诺。',
+    en: 'A restart costs the connection and nothing else. That is what this architecture promises.',
+  },
+
   // The notes tab's second scope. Pressing the tab you are already on swaps
   // between them, so the name has to say which one you are looking at.
   'panel.notesGlobal': { zh: '全局笔记（再点回项目）', en: 'Global notes (press again for the project)' },

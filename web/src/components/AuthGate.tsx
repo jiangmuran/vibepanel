@@ -86,13 +86,14 @@ export function AuthGate({ children }: { children: (state: AuthState, signOut: (
 /* ── the ground everything below stands on ───────────────────────────────── */
 
 /**
- * The panel's icon, drawn from tokens rather than from /icon.svg.
+ * The panel's icon, redrawn from tokens rather than loaded from /icon.svg.
  *
- * The file is `<img>`-able and that was the first version of this. It is the
- * wrong call twice over: the icon's brand blue is a literal that does not move
- * with the theme, and an image request that has not landed yet leaves the one
- * moment of identity on this screen as an empty square. Inline, it paints with
- * the first frame and in whichever palette is on.
+ * `<img src="/icon.svg">` is the shorter line and it is wrong twice here. The
+ * file's colours are literals, so the mark would keep the light theme's blue
+ * in the dark one; and it is a second request, so the one piece of identity on
+ * this screen is an empty square until it lands — on the screen that is served
+ * before anything else has been fetched. Inline, it paints with the first
+ * frame, in whichever palette is on.
  */
 function Mark() {
   return (
@@ -170,8 +171,14 @@ function Shell({ wide, children }: { wide?: boolean; children: React.ReactNode }
         <div className="vp-safe-pad-top flex shrink-0 justify-end px-4 pb-1">
           <LanguageSwitch />
         </div>
-        <div className="vp-safe-bottom flex flex-1 items-center justify-center px-4 pt-2 pb-10">
-          <div className={`w-full ${wide ? 'max-w-md' : 'max-w-sm'}`}>{children}</div>
+        <div className="vp-safe-bottom flex flex-1 items-center justify-center px-4">
+          {/* The breathing room is on this element and not on its parent.
+              `.vp-safe-bottom` used to *replace* padding-bottom -- it is
+              emitted after Tailwind's utilities -- so a `pb-10` up there was
+              silently dead and a tall card ended flush against the bottom of a
+              short window. The class composes now (see styles.css), but the
+              padding is still better here, where the card is. */}
+          <div className={`w-full pt-2 pb-10 ${wide ? 'max-w-md' : 'max-w-sm'}`}>{children}</div>
         </div>
       </div>
     </div>

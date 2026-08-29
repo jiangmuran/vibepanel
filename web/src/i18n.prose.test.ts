@@ -24,6 +24,20 @@ import { readFileSync } from 'node:fs'
 const ZH_MAX = 38
 const EN_MAX = 105
 
+/* The first-run tour gets its own budget, and it is still a budget.
+ *
+ * The rule above is about the panel arguing with somebody who is trying to use
+ * it -- a status line that defends a design, a notice that explains itself.
+ * The tour is the one surface where explaining *is* the content: it was asked
+ * for as 「新手教程」, and a tour written in forty-character fragments is a
+ * worse tour, not a more disciplined one.
+ *
+ * Wide enough for two clauses and no wider. A step that will not fit in these
+ * is a step that is doing two things and should be two steps.
+ */
+const TOUR_ZH_MAX = 60
+const TOUR_EN_MAX = 155
+
 const allowed: Record<string, string> = {
   // Names the exact command to run, which is the whole value of the string.
   'set.tmuxConfigStale': 'carries the command the reader has to run',
@@ -46,10 +60,13 @@ describe('the dictionary', () => {
     const over: string[] = []
     for (const [, key, zh, en] of entries) {
       if (key in allowed) continue
+      const tour = key.startsWith('tour.')
+      const zMax = tour ? TOUR_ZH_MAX : ZH_MAX
+      const eMax = tour ? TOUR_EN_MAX : EN_MAX
       const z = [...prose(zh)].length
       const e = prose(en).length
-      if (z > ZH_MAX) over.push(`${key} zh is ${z} > ${ZH_MAX}: ${zh}`)
-      if (e > EN_MAX) over.push(`${key} en is ${e} > ${EN_MAX}: ${en}`)
+      if (z > zMax) over.push(`${key} zh is ${z} > ${zMax}: ${zh}`)
+      if (e > eMax) over.push(`${key} en is ${e} > ${eMax}: ${en}`)
     }
     expect(over).toEqual([])
   })

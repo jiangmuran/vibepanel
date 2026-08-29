@@ -430,8 +430,19 @@ body {
  *
  * env() is 0 on hardware without an inset, so this costs those devices
  * nothing. */
+/* Adds to the element's own bottom padding rather than replacing it.
+ *
+ * It was a bare `padding-bottom: env(...)`, and this file is emitted after
+ * Tailwind's utilities -- so `py-1.5 vp-safe-bottom` silently lost its bottom
+ * half, and `env()` is 0px on hardware with no inset, which is most phones. The
+ * mobile key bar has been sitting flush against the bottom edge of the screen
+ * on every device without a notch. Nothing said so: the class is named for the
+ * thing it was doing right.
+ *
+ * The variable defaults to 0, so the class alone still means "just the inset".
+ * An element that also wants padding sets it: `[--vp-safe-pad:0.375rem]`. */
 .vp-safe-bottom {
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-bottom: calc(var(--vp-safe-pad, 0px) + env(safe-area-inset-bottom, 0px));
 }
 
 /* The same at the top, for the same reason and one more.
