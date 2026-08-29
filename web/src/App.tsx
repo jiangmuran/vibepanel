@@ -22,6 +22,8 @@ import { useProjectRemote } from './hooks/useProjectRemote'
 import { BottomTerminals } from './components/BottomTerminals'
 import { RightPanel } from './components/RightPanel'
 import { Settings } from './components/Settings'
+import { SETTINGS_HOME } from './components/settings/groups'
+import type { SettingsSection } from './components/settings/groups'
 import { TokenUsageView } from './components/TokenUsageView'
 import { MobileKeyBar } from './components/mobile/MobileKeyBar'
 import { ComposeInput } from './components/mobile/ComposeInput'
@@ -247,7 +249,15 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   const [paneLayout, setPaneLayout] = useState<PaneLayout>(() =>
     seedLayout(layoutStorageKey(window.innerWidth, window.innerHeight)),
   )
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  // Which block of the settings dialog is open, and null for closed.
+  //
+  // A section rather than a boolean, because two things open this dialog and
+  // one of them is pointing at something: the sidebar's "states are being
+  // guessed" notice has to arrive at state reporting. Callers name what they
+  // want to see and settings/groups.ts decides which rail item that is, so a
+  // section moving between groups cannot leave a link pointing at the wrong
+  // one.
+  const [settingsAt, setSettingsAt] = useState<SettingsSection | null>(null)
   const [tokensOpen, setTokensOpen] = useState(false)
   const [restoreOpen, setRestoreOpen] = useState(false)
   // Dismissing the offer is per visit, not remembered.
@@ -793,7 +803,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           stateGuessed={state.stateGuessed}
           hooksInstalled={state.hooksInstalled}
           onOpenSettings={() => {
-            setSettingsOpen(true)
+            setSettingsAt('reporting')
             if (narrow) setDrawerOpen(false)
           }}
           current={currentProject}
@@ -955,7 +965,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             <button
               type="button"
               data-testid="settings-open"
-              onClick={() => setSettingsOpen(true)}
+              onClick={() => setSettingsAt(SETTINGS_HOME)}
               title={t('app.settings')}
               className="vp-control"
             >
@@ -1269,10 +1279,11 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           compose box and the key bar, and that is what the plan scoped. Saying
           otherwise made a gap read as a decision that had already been carried
           out. */}
-      {settingsOpen && (
+      {settingsAt && (
         <Settings
+          openAt={settingsAt}
           onClose={() => {
-            setSettingsOpen(false)
+            setSettingsAt(null)
             loadProfiles()
           }}
         />

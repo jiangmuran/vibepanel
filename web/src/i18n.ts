@@ -407,6 +407,16 @@ const DICT = {
   'settings.title': { zh: '设置', en: 'Settings' },
   'settings.close': { zh: '关闭', en: 'Close' },
   'settings.language': { zh: '语言', en: 'Language' },
+  'settings.groups': { zh: '设置分组', en: 'Settings groups' },
+
+  // The five names on the rail. Each one is the word somebody would think of
+  // before they open the dialog, which is the only test a group name has to
+  // pass -- see settings/groups.ts for what is in each.
+  'grp.sessions': { zh: '会话', en: 'Sessions' },
+  'grp.notify': { zh: '通知', en: 'Notifications' },
+  'grp.sharing': { zh: '分享', en: 'Sharing' },
+  'grp.account': { zh: '账户', en: 'Account' },
+  'grp.panel': { zh: '本机', en: 'This panel' },
   'settings.languageZh': { zh: '简体中文', en: '简体中文' },
   'settings.languageEn': { zh: 'English', en: 'English' },
 
@@ -584,7 +594,7 @@ const DICT = {
 
   'notify.waitingTitle': { zh: '有 agent 在等你', en: 'An agent is waiting' },
   'notify.waitingBody': { zh: '{name} 停下来等你处理了', en: '{name} has stopped and needs you' },
-  'notify.title': { zh: '通知', en: 'Notifications' },
+  'notify.browser': { zh: '这个浏览器', en: 'This browser' },
   'notify.explain': {
     zh: '会话变成“等你处理”时推一条。后台标签页或装成 App 都算开着。',
     en: 'One when a session starts waiting. A background tab or an installed app both count as open.',
