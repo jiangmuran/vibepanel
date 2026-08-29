@@ -9,7 +9,7 @@ vibepanel doctor
 ```
 
 Fifteen lines, and it prints all of them rather than stopping at the first
-failure — a machine with three problems used to take three runs to find them.
+failure. A machine with three problems used to take three runs to find them.
 
 | line | what a failure means |
 |---|---|
@@ -51,7 +51,7 @@ for what that does and does not recover.
 
 ## Everything shows GONE after a reboot
 
-Expected. tmux outlives the *panel*, which is what `KillMode=process` above is
+Expected. tmux outlives the *panel*, which is what `KillMode=process` below is
 about; it does not outlive the *machine*. The tmux server is an ordinary process
 and its scrollback is in that process's memory.
 
@@ -106,7 +106,7 @@ each of them beginning to work, is worse than a list of dead rows.
 
 The archive is handed to the pane as a file under `<data-dir>/restore/`, and the
 pane's first command deletes it as it reads it. A file left there is a restore
-whose pane never started — the tmux session could not be created, or the panel
+whose pane never started: the tmux session could not be created, or the panel
 died between writing the file and creating it.
 
 ```sh
@@ -170,7 +170,7 @@ systemctl --user show vibepanel -p KillMode      # want: KillMode=process
 ```
 
 tmux's server is started by the panel. It daemonises and re-parents, but cgroup
-membership does not change on re-parenting, so it stays in the panel's unit —
+membership does not change on re-parenting, so it stays in the panel's unit,
 and systemd's default `KillMode=control-group` SIGTERMs everything in that
 cgroup on stop. Nothing in the panel's code ties a session to the panel's
 lifetime; the unit file did it instead. Measured: two sessions before the stop,
@@ -185,7 +185,7 @@ was installed before that was fixed, copy it again and `systemctl --user
 daemon-reload`.
 
 If `KillMode` is already `process` and sessions still vanish, then look at the
-socket — a panel started with a different `--tmux-socket` is talking to an
+socket: a panel started with a different `--tmux-socket` is talking to an
 empty server rather than to a dead one:
 
 ```sh
@@ -199,7 +199,7 @@ Claude and Codex are configured by different mechanisms and fail separately, so
 check which one is quiet before assuming the panel is at fault.
 
 Codex is wired through `notify` in `~/.codex/config.toml`, which is one command
-for one event, so a Codex session can only ever report `waiting` — never
+for one event, so a Codex session can only ever report `waiting`, never
 `working` or `done`. A Codex session that shows a guessed state most of the
 time is behaving as designed, not misconfigured.
 
@@ -230,7 +230,7 @@ are two ways for it to get here:
 - A plain `OSC 0/2`, which tmux records in `#{pane_title}`. The poller reads
   that every couple of seconds.
 - The same sequence wrapped in tmux's passthrough DCS, which is what a program
-  that has noticed `$TMUX` sends — the title is meant for the terminal a human
+  that has noticed `$TMUX` sends: the title is meant for the terminal a human
   is looking at, not for tmux. tmux hands those bytes to its client without
   looking inside, so `pane_title` never moves and the panel's own PTY is the
   only place the title exists.
@@ -397,7 +397,7 @@ vibepanel doctor
 ```
 
 The lock is `flock` on `vibepanel.lock` in the data directory, so the kernel
-releases it however the holder exits — a SIGKILL included, which is the case a
+releases it however the holder exits, a SIGKILL included, which is the case a
 pid file gets wrong. If nothing is running and it still refuses, something else
 is holding that file open; `fuser` on it will say what.
 
@@ -433,8 +433,8 @@ inside a transaction it rolls back, so it leaves nothing behind.
 
 The panel says so too, once the failures have lasted three ticks: `/api/health`
 answers `"ok": false` with the reason, and every open page shows a banner. If
-viewers are being told to sign in instead, that is a different fault — a
-database that cannot be *read*; the panel answers 503 for that and says which
+viewers are being told to sign in instead, that is a different fault: a
+database that cannot be *read*. The panel answers 503 for that and says which
 it is.
 
 Usually the disk is full. `du -sh ~/.local/share/vibepanel` and the audit-log
@@ -468,7 +468,7 @@ sqlite3 ~/.local/share/vibepanel/vibepanel.db \
 
 It is kept for 31 days and swept hourly plus once at startup, so the oldest day
 should be about a month back and the count should be roughly sessions ×
-transitions a day × 31 — a few tens of thousands on a busy panel. An oldest day
+transitions a day × 31, a few tens of thousands on a busy panel. An oldest day
 much further back than a month means the sweep is not running, and the sweep
 runs on the same goroutine that drains the log: if that has stopped, so has the
 poller, and the sidebar would have gone stale long before this table became the
@@ -488,9 +488,9 @@ sqlite3 ~/.local/share/vibepanel/vibepanel.db \
   'SELECT event, COUNT(*) FROM audit_log GROUP BY event ORDER BY 2 DESC'
 ```
 
-`login.failed` in the thousands is a panel on a public port doing its job —
-the login throttle bounds how fast those arrive, and the table is trimmed to
-the newest 50,000 rows at every startup.
+`login.failed` in the thousands is a panel on a public port doing its job. The
+login throttle bounds how fast those arrive, and the table is trimmed to the
+newest 50,000 rows at every startup.
 
 `blocked` in the thousands means somebody is hitting a panel with
 `--allow-from` set, from an address that is not on the list. That refusal
@@ -506,20 +506,20 @@ journalctl --user -u vibepanel | grep event=blocked | tail -50
 If the table is far past 50,000 rows on a current binary, something is writing
 faster than the trim runs, which is every five minutes while the panel is up.
 It used to trim only at startup, so on an older build the answer is to restart
-it once — and the reason that was wrong is that a panel is meant to run for
-months, so the bound arrived exactly when nobody needed it.
+it once: a bound that applies only at startup is no bound at all on a panel
+meant to run for months.
 
 ## Memory
 
 Look in both places, and know which is which.
 
-**tmux** holds the authoritative scrollback — 20,000 lines per session, by the
+**tmux** holds the authoritative scrollback: 20,000 lines per session, by the
 `history-limit` in the embedded config. This is the larger number and it grows
 with what agents print.
 
 **The panel** is not flat with session count, whatever an earlier version of
-this page claimed. It attaches to *every* session, not only the one being
-watched, because state detection reads the byte stream — and each attachment
+this page claimed. It attaches to *every* session rather than only the one being
+watched, because state detection reads the byte stream, and each attachment
 costs a replay buffer of up to 2 MiB (`session.DefaultRingSize`), a PTY, and a
 goroutine. Twenty-four sessions is therefore tens of megabytes of panel before
 anything has gone wrong. Buffers fill as output arrives rather than being
@@ -624,7 +624,7 @@ way. If your sessions are cheap to lose, restart the server; if they are not,
 the change lands at the next reboot.
 
 A server started before this check existed reports `the running server predates
-this check` — the stamp is written at `start-server`, so there is nothing to
+this check`: the stamp is written at `start-server`, so there is nothing to
 compare against until the next one.
 
 ## Two panels: a user unit and a system unit at once
@@ -668,9 +668,9 @@ sudo systemctl daemon-reload
 
 Sessions survive both of those: `KillMode=process` is in both units, so stopping
 either leaves the tmux server and everything under it alone. Start the survivor
-and the panel's view is whatever the last writer wrote — check the project list
-and the notes on anything you edited that day, because a write from the panel you
-just stopped may have been the one that lost.
+and the panel's view is whatever the last writer wrote. Check the project list
+and the notes on anything you edited that day, because a write from the panel
+you just stopped may have been the one that lost.
 
 ## A killed agent shows as "exited 0" (tmux 3.4 and older)
 
@@ -726,8 +726,9 @@ fish_add_path ~/.local/bin               # fish
 
 ## The installer said the binary will not run on this machine
 
-It installs the binary and then runs `vibepanel version` once. Three different
-things make that fail and they are indistinguishable afterwards:
+It installs the binary and then runs `vibepanel version` once. Three causes
+share two messages between them, and nothing distinguishes them until you run
+it by hand:
 
 ```sh
 ~/.local/bin/vibepanel version
@@ -754,7 +755,7 @@ perfectly well from a shell.
 ```
 
 Put it behind whatever supervises that machine. `vibepanel service` will only
-answer `upgrade` there — the rest of it needs a service to talk to.
+answer `upgrade` there; the rest of it needs a service to talk to.
 
 ## The unit is installed and `systemctl --user` will not talk to it
 
@@ -775,9 +776,9 @@ The floor is 3.3, for `allow-passthrough`. The installer offers an upgrade and
 then re-reads the version, because on a distribution shipping 3.2 the package
 *is* the old version and the upgrade changes nothing while reporting success.
 
-Nothing is broken — the panel works. What is lost is every progress and
-notification sequence an agent TUI emits, and every symptom of that is
-something not appearing. Building from source is the only way up:
+The panel works. What is lost is every progress and notification sequence an
+agent TUI emits, and every symptom of that is something not appearing. Building
+from source is the only way up:
 <https://github.com/tmux/tmux/wiki/Installing>.
 
 `vibepanel doctor` says the same thing, and marks it `--` rather than `FAIL`.
@@ -792,7 +793,7 @@ not, and there is no plist key that changes it.
 ## The installer refused to touch a unit file
 
 There is already a file at that path with no vibepanel `Documentation=` line in
-it — a hand-written unit, a distribution package, or an older layout.
+it: a hand-written unit, a distribution package, or an older layout.
 Overwriting it loses whatever was configured in it and there is no copy
 anywhere. Move it aside and run the installer again:
 
@@ -831,7 +832,7 @@ If the panel never started, `vibepanel service status` says so first.
 
 ## I want a fresh setup token
 
-There is no way to reissue one, deliberately — it would be a second door into a
+There is no way to reissue one, deliberately: it would be a second door into a
 claimed panel. If the account is lost, the recovery is to remove the users row
 from the database with the panel stopped, at which point the next start prints a
 new token:

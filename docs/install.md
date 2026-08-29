@@ -98,14 +98,14 @@ alternatives to use.
 
 Both installers speak English and 简体中文. `--lang zh` or `--lang en` decides.
 Without it, `LC_ALL`, `LC_MESSAGES` and `LANG` decide, in that order: the first
-of the three that is set wins, and only a value starting `zh` or `en` counts —
-an unrecognised `LC_ALL` leaves English rather than falling through to `LANG`.
+of the three that is set wins, and only a value starting `zh` or `en` counts.
+An unrecognised `LC_ALL` leaves English rather than falling through to `LANG`.
 
 When nothing has said and somebody is at a terminal, the first question is which
 language, before anything else is asked. A pipeline never stops to ask: the
 flag, then the environment, then English.
 
-Translated is what a person reads while deciding something — every question, the
+Translated is what a person reads while deciding something: every question, the
 plan printed before anything is touched, the summary, the errors that say what
 to do next, and `--help`. The `verb + path` trace lines during the install stay
 English.
@@ -129,10 +129,10 @@ sh vibepanel-install.sh --mirror
 
 Two commands rather than one, and the `||` is the reason: `curl -f` throws away
 the body on an HTTP error, so `curl -f ... | sh` against a mirror that has not
-authorised the address yet fails with nothing on screen — and the discarded body
+authorised the address yet fails with nothing on screen, and the discarded body
 was the link. The second `curl` runs only in that case and prints it.
 
-Through a pipe the installer cannot wait, so it prints the link and exits `3` —
+Through a pipe the installer cannot wait, so it prints the link and exits `3`,
 its own status, so a wrapper can tell "go and click a link" from "the download
 failed". Run it again once the address is authorised.
 
@@ -198,7 +198,7 @@ scheduled check, no heartbeat, no telemetry.
 `vibepanel service upgrade` does the same from a terminal.
 
 Or unpack the new archive and run `./deploy/install.sh` again. It keeps the unit
-already installed and restarts it. Either way the sessions keep running — see
+already installed and restarts it. Either way the sessions keep running; see
 [runbook.md](runbook.md) for what to check when one does not.
 
 ## Flags
