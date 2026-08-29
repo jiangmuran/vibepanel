@@ -153,6 +153,13 @@ const DICT = {
   'auth.usePasskey': { zh: '用 passkey 登录', en: 'Use a passkey' },
   'auth.noPasskeys': { zh: 'passkey 用不了：{why}。', en: 'Passkeys unavailable: {why}.' },
   'auth.notSupported': { zh: '这里不支持', en: 'not supported here' },
+  'auth.loading': { zh: '正在连接…', en: 'Connecting…' },
+  'auth.firstRun': { zh: '首次启动', en: 'First run' },
+  'auth.tokenWhere': { zh: '服务端启动时打印在控制台里。', en: 'The server printed it to its console at startup.' },
+  'auth.stepAccount': { zh: '你的账号', en: 'Your account' },
+  'auth.passkeyHint': { zh: '用指纹或面容，不用打字', en: 'Fingerprint or face, nothing to type' },
+  'auth.showPassword': { zh: '显示密码', en: 'Show password' },
+  'auth.hidePassword': { zh: '隐藏密码', en: 'Hide password' },
 
   'app.stale': {
     zh: '面板已经停止记录会话在做什么。终端本身不受影响。',
@@ -1249,13 +1256,24 @@ const DICT = {
   'share.scopeGone': { zh: '指向的东西没了', en: 'what it pointed at is gone' },
   'share.untitled': { zh: '未命名', en: 'untitled' },
 
+  // The notes tab's second scope. Pressing the tab you are already on swaps
+  // between them, so the name has to say which one you are looking at.
+  'panel.notesGlobal': { zh: '全局笔记（再点回项目）', en: 'Global notes (press again for the project)' },
+
   'guessed.installed': {
     zh: '装 hook 前开着的会话还在靠猜。在里面输入 /hooks 或重启它。',
     en: 'Sessions open before reporting was installed are still guessed. Run /hooks in each, or restart the agent.',
   },
+  // Says which state is *never* reached, not which one is unreliable.
+  //
+  // It used to say "waiting for you can be missed", which understates it by a
+  // lot and reads as an edge case. Without reporting, a finished agent is
+  // still a running process, and the heuristic has no way to tell that from
+  // one that is thinking -- so every session that has finished stays blue,
+  // permanently, and the first thing anybody asks is why.
   'guessed.notInstalled': {
-    zh: '状态是猜的，“等你处理”可能被漏掉。点这里打开状态上报。',
-    en: 'States are being guessed, so "waiting for you" can be missed. Turn on state reporting.',
+    zh: '状态靠猜：agent 还在跑就一直是蓝的，做完了也不会变绿。点这里打开上报。',
+    en: 'Guessed: a finished agent stays blue, because its process is still running. Turn on reporting.',
   },
   // Token spend. Prefixed `spend.` and not `tok.`: `tok.` is already
   // API credentials above, and two unrelated meanings of "token" sharing a

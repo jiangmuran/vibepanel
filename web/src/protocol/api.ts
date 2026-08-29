@@ -161,6 +161,21 @@ export class UnauthorizedError extends Error {
   }
 }
 
+/**
+ * The project id that means "the note that belongs to no project".
+ *
+ * A sentinel rather than `null`, because the editor keys its state by this
+ * value and `null` is indistinguishable from "no project selected" -- which is
+ * the state the global note is most often opened from. Matches
+ * store.GlobalNoteID on the server.
+ */
+export const GLOBAL_NOTE = '@global'
+
+/** Where a note lives. The global one is not under /projects/. */
+function notePath(projectId: string): string {
+  return projectId === GLOBAL_NOTE ? '/api/notes' : `/api/projects/${projectId}/notes`
+}
+
 export const api = {
   authState: () => request<AuthState>('/api/auth/state'),
 
@@ -603,7 +618,7 @@ export const api = {
   files: (projectId: string, path = '') =>
     request<FileListing>(`/api/projects/${projectId}/files?path=${encodeURIComponent(path)}`),
 
-  note: (projectId: string) => request<Note>(`/api/projects/${projectId}/notes`),
+  note: (projectId: string) => request<Note>(notePath(projectId)),
 
   /**
    * baseRev is the revision the caller's text was built on. The server
@@ -614,7 +629,7 @@ export const api = {
   // fetch from an unloading document is cancelled by the browser, so the last
   // thing typed before closing the tab never reached the server.
   saveNote: async (projectId: string, content: string, baseRev: number, keepalive = false) => {
-    const res = await fetch(`/api/projects/${projectId}/notes`, {
+    const res = await fetch(notePath(projectId), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content, baseRev }),

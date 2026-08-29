@@ -542,6 +542,8 @@ export interface SettingsInfo {
   passkeysUsable: boolean
   passkeyReason?: string
   username: string
+  /** Whether the first-run tour has been put away. */
+  tourDone: boolean
 }
 
 /** Which agent an install request is about. The server accepts these two and

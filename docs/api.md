@@ -516,10 +516,18 @@ see looks like.
 
 ### `GET /api/projects/{id}/notes`
 ### `PUT /api/projects/{id}/notes`
+### `GET /api/notes`
+### `PUT /api/notes`
 ### `GET /api/projects/{id}/todos`
 ### `POST /api/projects/{id}/todos`
 ### `PATCH /api/todos/{todoID}`
 ### `DELETE /api/todos/{todoID}`
+
+`/api/notes` with no project is the one note that belongs to none of them --
+the same body, the same revision rule, the same `409`. It has its own pair of
+routes rather than a reserved id under `/projects/`, because `{id}` is looked
+up in the projects table and a handler that special-cases one value of a path
+parameter grows a second special case.
 
 `PUT` on notes takes `{"content": "...", "baseRev": N}` and answers `409` with
 the current note if `baseRev` is not the revision on disk. Omit `baseRev`
@@ -552,11 +560,17 @@ element, not a path.
 ### `POST /api/settings/hooks`
 ### `DELETE /api/settings/hooks`
 ### `POST /api/settings/restart`
+### `POST /api/settings/tour`
 ### `GET /api/settings/tune`
 ### `POST /api/settings/tune`
 ### `GET /api/settings/tokens`
 ### `POST /api/settings/tokens`
 ### `DELETE /api/settings/tokens/{tokenID}`
+
+`POST /api/settings/tour` puts the first-run tour away. `GET /api/settings`
+carries `tourDone` -- on that payload rather than a route of its own, because
+the frontend fetches it before drawing anything and a tour that arrives one
+request later appears over a panel somebody has started reading.
 
 `POST /api/settings/restart` stops the panel and lets whatever supervises it
 start a new one. It answers `202` before going anywhere, so the browser knows to

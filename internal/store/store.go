@@ -618,6 +618,32 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+
+	// v18: one note that belongs to nobody.
+	//
+	// `notes.project_id` is `REFERENCES projects(id) ON DELETE CASCADE`, which
+	// is right for a project's scratchpad and is exactly what a note that
+	// outlives every project cannot use. A sentinel id in that table would
+	// need a fake project row to point at, and would be deleted with it.
+	//
+	// Same shape otherwise, `rev` included: the editor detects a conflicting
+	// write by comparing revisions, and a global note is the one more likely
+	// to be open in two tabs at once.
+	//
+	// A single row, pinned by the CHECK. There is one of these, and a table
+	// that could hold two would eventually hold two.
+	func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`
+			CREATE TABLE IF NOT EXISTS global_note (
+			    id          INTEGER PRIMARY KEY CHECK (id = 1),
+			    content_md  TEXT NOT NULL DEFAULT '',
+			    updated_at  INTEGER NOT NULL,
+			    rev         INTEGER NOT NULL DEFAULT 0
+			)`); err != nil {
+			return fmt.Errorf("create global_note: %w", err)
+		}
+		return nil
+	},
 }
 
 // scanner is *sql.Row and *sql.Rows both, so one scan function serves a

@@ -37,6 +37,12 @@ func (s *Server) registerPanelRoutes(r chi.Router) {
 	r.Post("/projects/{id}/upload", s.handleUpload)
 	r.Get("/projects/{id}/notes", s.handleGetNote)
 	r.Put("/projects/{id}/notes", s.handlePutNote)
+	// The note that belongs to no project. Its own pair of routes rather than
+	// a magic id under /projects/: `{id}` is looked up in projects and has to
+	// stay that way, and a handler that special-cases one value of a path
+	// parameter is a handler somebody adds a second special case to.
+	r.Get("/notes", s.handleGetGlobalNote)
+	r.Put("/notes", s.handlePutGlobalNote)
 	// The four below have no caller in this repository's frontend any more.
 	// That is deliberate and they are deliberately still here.
 	//
@@ -554,6 +560,57 @@ type putNoteRequest struct {
 // maxNoteBytes bounds a note. Generous for prose, small enough that the whole
 // thing can be sent on every save without thinking about it.
 const maxNoteBytes = 256 << 10
+
+// handleGetGlobalNote is handleGetNote without a project to look up.
+func (s *Server) handleGetGlobalNote(w http.ResponseWriter, r *http.Request) {
+	note, err := s.DB.GetGlobalNote(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, note)
+}
+
+// handlePutGlobalNote is handlePutNote for it, including the same conflict
+// answer: the editor is the same component and cannot have two shapes of 409.
+func (s *Server) handlePutGlobalNote(w http.ResponseWriter, r *http.Request) {
+	var req putNoteRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	if len(req.Content) > maxNoteBytes {
+		writeErr(w, http.StatusRequestEntityTooLarge, "note is too long")
+		return
+	}
+	var note store.Note
+	var err error
+	if req.BaseRev != nil {
+		note, err = s.DB.SetGlobalNoteIfUnchanged(r.Context(), req.Content, *req.BaseRev)
+		if errors.Is(err, store.ErrNoteStale) {
+			current, gerr := s.DB.GetGlobalNote(r.Context())
+			if gerr != nil {
+				writeErr(w, http.StatusInternalServerError, gerr.Error())
+				return
+			}
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":   "the note changed elsewhere",
+				"current": current,
+			})
+			return
+		}
+	} else {
+		note, err = s.DB.SetGlobalNote(r.Context(), req.Content)
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// Every project's panel socket, because this note is reachable from all of
+	// them and a second tab showing a stale copy is the thing the revision
+	// check exists to make visible rather than silent.
+	s.notifyPanel(store.GlobalNoteID, "note")
+	writeJSON(w, http.StatusOK, note)
+}
 
 func (s *Server) handlePutNote(w http.ResponseWriter, r *http.Request) {
 	pid := chi.URLParam(r, "id")

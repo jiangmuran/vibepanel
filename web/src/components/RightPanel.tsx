@@ -7,6 +7,7 @@ import {
   EllipsisVertical,
   FolderTree,
   Merge,
+  Globe,
   NotebookPen,
   RotateCcw,
 } from 'lucide-react'
@@ -17,6 +18,7 @@ import { FileTree } from './panels/FileTree'
 import { GitPanel } from './panels/GitPanel'
 import { SystemMonitor } from './panels/SystemMonitor'
 import { Notes } from './panels/Notes'
+import { GLOBAL_NOTE } from '../protocol/api'
 import { ErrorBoundary } from './ErrorBoundary'
 import { PanelDock } from './panels/PanelDock'
 import { DETAIL_META } from './panels/dock'
@@ -118,6 +120,26 @@ export function RightPanel(props: Props) {
 
   const dragFrom = useRef<{ x: number; width: number } | null>(null)
   const [widthDragging, setWidthDragging] = useState(false)
+  // Which note the notes tab is showing.
+  //
+  // Remembered per browser rather than on the server: it is a view, not a
+  // setting, and two people looking at the same panel want their own answer.
+  // Wrapped because localStorage throws outright in a private window and in a
+  // thumbnail capture, and a settings read is not worth a blank panel.
+  const [notesGlobal, setNotesGlobal] = useState(() => {
+    try {
+      return localStorage.getItem('vp.notes.global') === '1'
+    } catch {
+      return false
+    }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('vp.notes.global', notesGlobal ? '1' : '0')
+    } catch {
+      /* a browser that will not remember it is not a reason to fail */
+    }
+  }, [notesGlobal])
   const columnRef = useRef<HTMLDivElement | null>(null)
   const [menuOpen, setMenuOpen] = useState<number | null>(null)
 
@@ -355,8 +377,14 @@ export function RightPanel(props: Props) {
     // the machine's memory is the machine's memory — so it is drawn whether or
     // not anything is selected, and the "no project" line replaces the top half
     // alone rather than the whole tab.
+    // The global note is checked before the "no project" line, because a note
+    // that belongs to no project is exactly the thing to be able to open when
+    // none is selected -- which is where somebody writes down what they are
+    // about to go and do.
     const top =
-      project === null ? (
+      tab === 'notes' && notesGlobal ? (
+        <Notes key={GLOBAL_NOTE} projectId={GLOBAL_NOTE} socket={props.socket} />
+      ) : project === null ? (
         <p className="px-3 py-4 text-vp-base text-ink-2">{t('panel.noProject')}</p>
       ) : tab === 'files' ? (
         <FileTree
@@ -501,6 +529,8 @@ export function RightPanel(props: Props) {
                   onRefocus={props.onRefocus}
                   onCollapse={props.onCollapse}
                   body={bodyFor}
+                  notesGlobal={notesGlobal}
+                  onNotesScope={() => setNotesGlobal((v) => !v)}
                 />
               </Fragment>
             ))}
@@ -606,6 +636,16 @@ interface PaneProps {
   onCollapse: () => void
   /** The second argument is which way the strip moved, for the half that changes. */
   body: (tab: PanelTab, swapDir?: 'forward' | 'back') => React.ReactNode
+  /**
+   * Which note the notes tab is on, and how to swap it.
+   *
+   * Threaded down rather than kept here: the body is rendered by RightPanel
+   * and the tab strip by this component, and the two have to agree about which
+   * note is open -- an icon saying "global" over a project's note is worse
+   * than no icon at all.
+   */
+  notesGlobal: boolean
+  onNotesScope: () => void
 }
 
 function Pane(props: PaneProps) {
@@ -717,8 +757,13 @@ function Pane(props: PaneProps) {
             />
           )}
           {PANEL_TABS.filter((id) => group.tabs.includes(id)).map((id) => {
-            const { icon: Icon, key } = TABS[id]
-            const label = t(key)
+            // The notes tab has two of everything, because it has two scopes
+            // and the strip draws an icon and nothing else. A different glyph,
+            // not a different colour: red line 4, and a tint on a 16px icon is
+            // not a thing anybody notices anyway.
+            const globalNotes = id === 'notes' && props.notesGlobal
+            const Icon = globalNotes ? Globe : TABS[id].icon
+            const label = globalNotes ? t('panel.notesGlobal') : t(TABS[id].key)
             return (
               <button
                 key={id}
@@ -735,6 +780,16 @@ function Pane(props: PaneProps) {
                 data-drag-source={drag?.tab === id}
                 onClick={() => {
                   if (props.tabDrag.swallowClick()) return
+                  // Pressing the notes tab you are already on switches between
+                  // this project's note and the one that belongs to none. The
+                  // tab has nowhere else to go when it is already active, and
+                  // a second control for a two-state thing would be one more
+                  // 16px target in a strip that is already all 16px targets.
+                  if (id === 'notes' && tab === id) {
+                    props.onNotesScope()
+                    props.onRefocus()
+                    return
+                  }
                   props.onLayout(activate(layout, id))
                   props.onRefocus()
                 }}

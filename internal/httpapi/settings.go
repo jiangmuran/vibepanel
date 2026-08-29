@@ -29,6 +29,7 @@ func (s *Server) registerSettingsRoutes(r chi.Router) {
 	r.Delete("/settings/tokens/{tokenID}", s.handleDeleteToken)
 	r.Post("/settings/hooks", s.handleHooksInstall)
 	r.Post("/settings/restart", s.handleRestart)
+	r.Post("/settings/tour", s.handleTourDone)
 	r.Get("/settings/tune", s.handleTuneStatus)
 	r.Post("/settings/tune", s.handleTuneApply)
 	r.Delete("/settings/hooks", s.handleHooksUninstall)
@@ -79,6 +80,30 @@ type settingsResponse struct {
 	PasskeysUsable bool   `json:"passkeysUsable"`
 	PasskeyReason  string `json:"passkeyReason,omitempty"`
 	Username       string `json:"username"`
+
+	// TourDone is whether the first-run tour has been dismissed.
+	//
+	// On this payload rather than a route of its own, because the frontend
+	// already fetches it before it draws anything -- and a tour that arrives
+	// one request after the panel is a tour that appears over a panel somebody
+	// has started reading.
+	TourDone bool `json:"tourDone"`
+}
+
+// tourKey is the settings row the first-run tour is remembered in.
+const tourKey = "tour.done"
+
+// handleTourDone puts the first-run tour away for good.
+//
+// A write with no body and no "undone": somebody who wants it back can be
+// shown it again from the settings page, and an endpoint that toggles is an
+// endpoint that gets called with the wrong value.
+func (s *Server) handleTourDone(w http.ResponseWriter, r *http.Request) {
+	if err := s.DB.SetSetting(r.Context(), tourKey, "1"); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
@@ -110,7 +135,14 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Read before the struct rather than inside it: a failure here is not a
+	// reason to fail the whole page, and an unreadable settings row simply
+	// means the tour has not been dismissed.
+	tour, _ := s.DB.GetSetting(r.Context(), tourKey, "")
+
 	out := settingsResponse{
+		TourDone: tour == "1",
+
 		Version: version.Version, Commit: version.Commit, Built: version.Date,
 		Go:     runtime.Version(),
 		Uptime: int64(time.Since(started).Seconds()),
