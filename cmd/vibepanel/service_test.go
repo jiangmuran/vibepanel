@@ -165,6 +165,14 @@ func TestUninstallRemovesTheServiceAndNothingElse(t *testing.T) {
 			if s.Remove != "" {
 				removed = append(removed, s.Remove)
 			}
+			// A system install removes through `sudo rm -f`, because the unit
+			// and the binary are both root's and os.Remove on either is a
+			// permission error from a command that has already stopped the
+			// service. Either mechanism counts as removed; leaving the file is
+			// what this is about.
+			if p := rmTarget(s.Argv); p != "" {
+				removed = append(removed, p)
+			}
 			line := s.String()
 			if strings.Contains(line, "disable --now") || strings.Contains(line, "bootout") {
 				stopped = true
@@ -271,5 +279,115 @@ func TestScrapeTokenReadsTheLastOne(t *testing.T) {
 	claimed := "vibepanel v1.0.0\n  url          http://box:8443\n  data dir     /home/me/.local/share/vibepanel\n"
 	if got := scrapeToken(claimed); got != "" {
 		t.Errorf("scrapeToken on a claimed panel returned %q", got)
+	}
+}
+
+// The system unit is looked for at an absolute path when DESTDIR is empty.
+//
+// DESTDIR is empty in every real install and set in every test in this file,
+// so the one configuration that ships was the one nothing exercised.
+// `filepath.Join("", "etc", ...)` is "etc/systemd/system/vibepanel.service" --
+// relative, resolved against whatever directory the person happened to be in,
+// and therefore never found.
+//
+// What that produced on a machine with a working system install: `vibepanel
+// service token` answering "no vibepanel service is installed for this
+// account" and naming the *user* path, `service uninstall` refusing for the
+// same reason, and `sudo vibepanel` failing separately because the binary is
+// under ~/.local/bin, which is not on root's PATH. The panel was running the
+// whole time, which is what makes the message so hard to argue with.
+func TestTheSystemUnitIsFoundWithNoDestdir(t *testing.T) {
+	sys := detectService("linux", t.TempDir(), "", "1000").Unit
+	// With no destdir the *default* is the user unit, so ask what path the
+	// system branch would even test. Reaching in is the point: the bug is
+	// entirely in how that string is built.
+	got := systemUnitPath("")
+	if !filepath.IsAbs(got) {
+		t.Errorf("systemUnitPath(\"\") = %q, which is relative; it is resolved "+
+			"against the working directory and never matches /etc", got)
+	}
+	if got != "/etc/systemd/system/vibepanel.service" {
+		t.Errorf("systemUnitPath(\"\") = %q", got)
+	}
+	// And a destdir still prefixes it, because install-check depends on that.
+	if want := "/tmp/x/etc/systemd/system/vibepanel.service"; systemUnitPath("/tmp/x") != want {
+		t.Errorf("systemUnitPath(\"/tmp/x\") = %q, want %q", systemUnitPath("/tmp/x"), want)
+	}
+	_ = sys
+}
+
+// And the whole way through: a system unit on disk is detected as one.
+func TestASystemUnitIsDetectedAsSystem(t *testing.T) {
+	dest := t.TempDir()
+	unit := filepath.Join(dest, "etc", "systemd", "system", "vibepanel.service")
+	if err := os.MkdirAll(filepath.Dir(unit), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unit, []byte("[Unit]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tgt := detectService("linux", t.TempDir(), dest, "1000")
+	if tgt.Kind != svcSystem {
+		t.Errorf("Kind = %v, want %v", tgt.Kind, svcSystem)
+	}
+	if tgt.Unit != unit {
+		t.Errorf("Unit = %q, want %q", tgt.Unit, unit)
+	}
+}
+
+// rmTarget is the path an `rm -f <path>` step deletes, or "" for anything else.
+// `sudo` in front is expected: that is the only reason the step is a command.
+func rmTarget(argv []string) string {
+	for i, a := range argv {
+		if a == "rm" && i+2 < len(argv) && argv[i+1] == "-f" {
+			return argv[i+2]
+		}
+	}
+	return ""
+}
+
+// The unit says where its binary is, and that is read rather than assumed.
+//
+// Three installs put it in three places: a system install in /usr/local/bin, a
+// user install in ~/.local/bin, and a system install from before that split in
+// ~/.local/bin as well. Guessing gets one of them wrong, which is a file left
+// behind or -- worse -- a file removed that nobody named.
+func TestTheBinaryComesFromTheUnitsExecStart(t *testing.T) {
+	dest := t.TempDir()
+	unit := filepath.Join(dest, "etc", "systemd", "system", "vibepanel.service")
+	if err := os.MkdirAll(filepath.Dir(unit), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(unit, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	write("[Service]\nExecStart=/opt/somewhere/vibepanel serve\n")
+	if got := detectService("linux", "/h", dest, "1000").Bin; got != "/opt/somewhere/vibepanel" {
+		t.Errorf("Bin = %q, want the unit's ExecStart", got)
+	}
+
+	// An old system install, which put it in the account's home.
+	write("[Service]\nExecStart=/home/x/.local/bin/vibepanel serve\n")
+	if got := detectService("linux", "/h", dest, "1000").Bin; got != "/home/x/.local/bin/vibepanel" {
+		t.Errorf("Bin = %q; an older unit's path was not read", got)
+	}
+
+	// systemd's prefixes are not part of the path.
+	write("[Service]\nExecStart=-/usr/local/bin/vibepanel serve\n")
+	if got := detectService("linux", "/h", dest, "1000").Bin; got != "/usr/local/bin/vibepanel" {
+		t.Errorf("Bin = %q; the `-` prefix was kept", got)
+	}
+
+	// Nothing usable falls back rather than inventing a path.
+	for _, body := range []string{"[Service]\n", "[Service]\nExecStart=\n", "[Service]\nExecStart=vibepanel serve\n"} {
+		write(body)
+		want := filepath.Join(dest, "usr", "local", "bin", "vibepanel")
+		if got := detectService("linux", "/h", dest, "1000").Bin; got != want {
+			t.Errorf("with ExecStart %q: Bin = %q, want the default %q", body, got, want)
+		}
 	}
 }

@@ -17566,3 +17566,80 @@ copy of somebody's data sat one word away from gone while the person typing was
 thinking about sockets, so the newest `vibepanel-data-*.tar.gz` now survives
 `--purge` and needs `--purge-archives`, and the closing summary names the file
 it kept.
+
+## A system install, reported from a real machine
+
+Someone installed the panel with the system service and could not get a token
+out of it. Five separate faults, and the panel was serving the whole time,
+which is what made every message so hard to argue with.
+
+**`vibepanel service` never found a system unit.**
+`filepath.Join(destdir, "etc", "systemd", "system", "vibepanel.service")` with
+an empty `destdir` is `etc/systemd/system/vibepanel.service` -- relative,
+resolved against whatever directory the person is standing in. `VIBEPANEL_DESTDIR`
+is set in every test in the file and empty in every real install, so the branch
+that ships was the only one nothing ran. `service token` answered "no vibepanel
+service is installed for this account" and named the *user* path; `service
+uninstall` refused for the same reason.
+
+The bug was also hiding a test's lack of isolation. One block runs the real
+binary with `HOME` pointed at a sandbox and no `VIBEPANEL_DESTDIR`; the moment
+the path was absolute it started reading the developer's own
+`/etc/systemd/system/vibepanel.service` and failed. It had been passing because
+no system unit was ever found.
+
+**A system install put its binary in the account's home.** `BIN_DIR` was
+`$HOME/.local/bin` unconditionally, and the system unit template hardcoded
+`ExecStart=__HOME__/.local/bin/vibepanel`. So `sudo vibepanel` -- which is what
+the closing summary tells people to type -- is `command not found`, because
+`~/.local/bin` is not on root's `PATH`. It is also a system service that stops
+existing if that home is on a filesystem not mounted at boot. The unit takes a
+`__BIN__` placeholder now and a system install writes to `/usr/local/bin`.
+
+Which meant `uninstall` had to stop guessing where the binary is: three
+installs put it in three places, counting system installs from before this
+change. `detectService` reads `ExecStart` out of the unit and only falls back
+to a default when the unit cannot be read -- a wrong path there is a
+`service uninstall` deleting a file nobody named.
+
+And the removals themselves went through `os.Remove`, on
+`/etc/systemd/system/vibepanel.service` and now `/usr/local/bin/vibepanel`,
+both of which are root's. That is a permission error from a command that has
+already stopped the service: panel down, files still there. The system branch
+uses `sudo rm -f`.
+
+**"Started" was printed over eighteen restarts.** `systemctl enable --now`
+returns 0 when systemd accepts the job, not when the process is alive a second
+later. Something else held port 8443, so the panel bound, failed, and was
+restarted every few seconds by `Restart=always`, while the installer printed
+`── done ──` and told the person where to go for a token. It polls
+`is-active` for five seconds now, and when it does not settle it says so and
+prints the lines from the unit's own journal that mention a bind, a permission
+or an exec failure -- with the port named when it was the port.
+
+The harness's fake `systemctl` had to become active on `start` for that, which
+is what a real one does; `unit-refuses-to-start` drives the other side.
+
+**The language was never offered.** It was skipped whenever
+`LC_ALL`/`LC_MESSAGES`/`LANG` named a language this speaks, on the reasoning
+that the person had already said. They had not: `LANG=en_US.UTF-8` is what a
+server image ships with, and it is set on machines whose owner would rather
+read Chinese. The question is asked whenever there is somebody to ask, the
+locale picks which answer enter takes, and only `--lang` -- somebody saying it
+about this run -- still skips it.
+
+That put one more question in front of every interactive block in
+`scripts/install-check.sh`, which each feed a fixed list of answers on stdin.
+The harness adds `--lang en` to interactive runs and the blocks that are about
+the question clear it. The same shape had already been found once this week,
+when the Claude Code question was added.
+
+**Eighteen megabytes downloaded in silence.** `curl -fsSL`. The bar goes on for
+the archive only, and only when stderr is a terminal: `curl | sh` has one, a
+pipeline does not, and `wget --show-progress` is GNU 1.16 and later, so it is
+probed rather than assumed -- an unknown option to wget is a failed install,
+not a missing progress bar.
+
+One thing in the report was not a bug: the installer did not ask about Claude
+Code because the release being installed was v1.0.1 and that question is newer
+than the tag.

@@ -102,11 +102,25 @@ func detectService(platform, home, destdir, uid string) svcTarget {
 	}
 	// System first, because that is the order the installer resolves an
 	// ambiguous re-run in, and the two are never meant to coexist.
-	sys := filepath.Join(destdir, "etc", "systemd", "system", "vibepanel.service")
+	sys := systemUnitPath(destdir)
 	usr := filepath.Join(home, ".config", "systemd", "user", "vibepanel.service")
 	switch {
 	case fileExists(sys):
 		t.Kind, t.Unit = svcSystem, sys
+		// The unit is the authority on where its own binary is.
+		//
+		// A system install puts it in /usr/local/bin and a user install in
+		// ~/.local/bin, and older system installs put it in ~/.local/bin too --
+		// so guessing gets `uninstall` removing the wrong file, or nothing.
+		// ExecStart is a fact about this machine; the default under it is only
+		// for a unit that cannot be read.
+		t.Bin = filepath.Join(destdir, "usr", "local", "bin", "vibepanel")
+		if destdir == "" {
+			t.Bin = "/usr/local/bin/vibepanel"
+		}
+		if b := execStartBinary(sys); b != "" {
+			t.Bin = b
+		}
 	case fileExists(usr):
 		t.Kind, t.Unit = svcUser, usr
 	default:
@@ -124,6 +138,53 @@ func runtimeGOOS() string {
 		return strings.ToLower(p)
 	}
 	return runtime.GOOS
+}
+
+// systemUnitPath is where the systemd *system* unit lives, under an optional
+// DESTDIR.
+//
+// The "/" is the whole function. `filepath.Join("", "etc", ...)` is
+// "etc/systemd/system/vibepanel.service" -- a relative path, resolved against
+// whatever directory the person is standing in. DESTDIR is empty in every real
+// install and set in every test, so the branch that ships was the only one
+// nothing ran, and on a machine with a working system install `vibepanel
+// service token` reported no service installed and named the user path
+// instead. The panel was serving on 8443 while it said so.
+func systemUnitPath(destdir string) string {
+	if destdir == "" {
+		destdir = "/"
+	}
+	return filepath.Join(destdir, "etc", "systemd", "system", "vibepanel.service")
+}
+
+// execStartBinary is the program a unit file runs, or "" if it cannot be read.
+//
+// The first field of the first ExecStart, with a leading `-`, `@`, `+`, `!` --
+// systemd's prefixes -- stripped. Anything it does not understand returns
+// empty and the caller keeps its default, because a wrong path here is a
+// `service uninstall` deleting a file nobody asked about.
+func execStartBinary(unit string) string {
+	b, err := os.ReadFile(unit)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "ExecStart=") {
+			continue
+		}
+		v := strings.TrimSpace(strings.TrimPrefix(line, "ExecStart="))
+		v = strings.TrimLeft(v, "-@+!:")
+		if v == "" {
+			return ""
+		}
+		first := strings.Fields(v)
+		if len(first) == 0 || !filepath.IsAbs(first[0]) {
+			return ""
+		}
+		return first[0]
+	}
+	return ""
 }
 
 func fileExists(p string) bool {
@@ -248,6 +309,21 @@ func plan(t svcTarget, sub string, o svcOpts) ([]step, error) {
 			}
 			return []step{{Argv: t.root(argv...)}}, nil
 		case "uninstall":
+			// `rm` through root for the system unit, not os.Remove.
+			//
+			// /etc/systemd/system/vibepanel.service is root's, and so is
+			// /usr/local/bin/vibepanel: os.Remove on either is "permission
+			// denied" from a command that has already stopped the service, so
+			// the panel is down and its files are still there. The user unit
+			// stays an os.Remove -- both paths are the caller's own.
+			if t.Kind == svcSystem {
+				return []step{
+					{Argv: sc("disable", "--now", unit), Ignore: true},
+					{Argv: t.root("rm", "-f", t.Unit)},
+					{Argv: sc("daemon-reload"), Ignore: true},
+					{Argv: t.root("rm", "-f", t.Bin)},
+				}, nil
+			}
 			return []step{
 				{Argv: sc("disable", "--now", unit), Ignore: true},
 				{Remove: t.Unit},

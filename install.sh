@@ -425,9 +425,19 @@ if [ "$HELP" = yes ]; then usage; exit 0; fi
 if command -v curl >/dev/null 2>&1; then
   fetch() { curl -fsSL --proto '=https,http' --retry 2 -o "$2" "$1"; }
   fetch_stdout() { curl -fsSL --proto '=https,http' --retry 2 "$1"; }
+  fetch_big() { curl -f#SL --proto '=https,http' --retry 2 -o "$2" "$1"; }
 elif command -v wget >/dev/null 2>&1; then
   fetch() { wget -qO "$2" "$1"; }
   fetch_stdout() { wget -qO- "$1"; }
+  # --show-progress is GNU wget 1.16 and later. busybox's wget does not have
+  # it and neither does anything older, and an unknown option there is a hard
+  # failure, not a warning -- which would turn "no progress bar" into "no
+  # install". Asked once, here.
+  if wget --help 2>&1 | grep -q -- --show-progress; then
+    fetch_big() { wget -q --show-progress -O "$2" "$1"; }
+  else
+    fetch_big() { wget -qO "$2" "$1"; }
+  fi
 else
   die need.fetch
 fi
@@ -451,6 +461,21 @@ url_for() { # url_for <the real github url>
 }
 
 get() { get_to="$2"; fetch "$(url_for "$1")" "$get_to"; }
+# The archive, which is the only download big enough to be worth watching.
+#
+# Eighteen megabytes with no output at all reads as a hang, and the whole
+# installer's first impression is that silence. The bar goes to stderr and only
+# when stderr is a terminal: `curl | sh` still has one, a pipeline does not, and
+# a progress bar in a log file is a line of `#` nobody can use. Everything
+# smaller stays silent -- a bar for a 2 KB API response is noise.
+get_big() {
+  get_to="$2"
+  if [ -t 2 ]; then
+    fetch_big "$(url_for "$1")" "$get_to"
+  else
+    fetch "$(url_for "$1")" "$get_to"
+  fi
+}
 get_stdout() { fetch_stdout "$(url_for "$1")"; }
 
 # -- the mirror wants to know you are a person ------------------------------
@@ -600,7 +625,7 @@ cleanup() { [ "$KEEP" = yes ] || rm -rf "$WORK"; }
 trap cleanup EXIT INT TERM
 
 echo "vibepanel: $VERSION for $OS/$ARCH"
-get "$BASE_URL/$NAME" "$WORK/$NAME" \
+get_big "$BASE_URL/$NAME" "$WORK/$NAME" \
   || die download.fail "$BASE_URL/$NAME" "$OS/$ARCH"
 get "$BASE_URL/SHA256SUMS" "$WORK/SHA256SUMS" \
   || die sums.fail "$NAME"

@@ -26,6 +26,8 @@ SRC="$(cd "$(dirname "$0")" && pwd)"
 BIN_SRC="$SRC/../vibepanel"
 [ -f "$BIN_SRC" ] || BIN_SRC="$SRC/../../vibepanel"
 
+# Set again once the unit kind is known: a system service does not put its
+# binary in one account's home. See the note where that happens.
 BIN_DIR="$HOME/.local/bin"
 ENV_FILE="$HOME/.config/vibepanel.env"
 WHO="${USER:-$(id -un)}"
@@ -105,6 +107,9 @@ PKG_RUNNER="${VIBEPANEL_PKG_RUNNER:-}"
 # never stop to ask which language to fail in.
 VP_LANG=en
 VP_LANG_DECIDED=no
+# Whether --lang said so, as opposed to a locale. Only a flag skips the
+# question: see the block that asks it.
+VP_LANG_FROM_FLAG=no
 
 # `return` after the first variable that is set, whatever it said. Falling
 # through from an LC_ALL this does not recognise to LANG would be this script
@@ -134,7 +139,7 @@ vp_lang_from_args() {
     if [ "$want" = yes ]; then
       want=no
       x="$(vp_lang_of "$a")"
-      if [ -n "$x" ]; then VP_LANG="$x"; VP_LANG_DECIDED=yes; fi
+      if [ -n "$x" ]; then VP_LANG="$x"; VP_LANG_DECIDED=yes; VP_LANG_FROM_FLAG=yes; fi
       continue
     fi
     case "$a" in
@@ -194,8 +199,8 @@ mstr() { # mstr <key>  -> MS_EN / MS_ZH; non-zero if there is no such key
     # The question above is bilingual, so its prompt is too -- at that moment
     # neither language has been ruled out.
     lang.prompt)
-      MS_EN='  choice / 选择 [1]: '
-      MS_ZH='  choice / 选择 [1]: ' ;;
+      MS_EN='  choice / 选择 [%1$s]: '
+      MS_ZH='  choice / 选择 [%1$s]: ' ;;
     # The service-kind menu below, which is asked after the language is known.
     choice.prompt)
       MS_EN='  choice [1]: '
@@ -647,6 +652,21 @@ configured in it, and there is no copy anywhere.'
            (the panel will then not print a setup token at startup)'
       MS_ZH='  创建     面板的第一个账号，用户名 %1$s
            （那样面板启动时就不会再打印 setup token）' ;;
+    state.failed)
+      MS_EN='State:     it was started and is not running.'
+      MS_ZH='状态：    已经启动过，但现在没有在运行。' ;;
+    failed.port)
+      MS_EN='  Something else is on port %1$s, so the panel binds, fails and is
+  restarted every few seconds. Set VIBEPANEL_ADDR in %2$s to a
+  free port, then start it again.'
+      MS_ZH='  端口 %1$s 上有别的东西，所以面板绑定失败、每隔几秒被重启一次。
+  在 %2$s 里把 VIBEPANEL_ADDR 换成一个没人占的端口，再启动一次。'  ;;
+    failed.look)
+      MS_EN='  The whole log:  %1$s'
+      MS_ZH='  完整日志：  %1$s' ;;
+    failed.after)
+      MS_EN='  Then:  %1$s start'
+      MS_ZH='  然后：  %1$s start' ;;
     claude.found)
       MS_EN='Claude Code is here: %1$s'
       MS_ZH='这台机器上有 Claude Code：%1$s' ;;
@@ -1014,9 +1034,23 @@ yesno() { # yesno <question> <y|n, the default>
 # both have stdin; that is refused further down, but the refusal is two hundred
 # lines away and this question would get there first -- reading the first line
 # of the password and, because stdin is not a terminal, echoing it into the log.
-if [ "$VP_LANG_DECIDED" = no ] && [ "$INTERACTIVE" = yes ] && [ "$ACCT_STDIN" = no ]; then
+# Asked whenever there is somebody to ask, and the locale only picks which
+# answer enter takes.
+#
+# It used to be skipped entirely when LC_ALL/LC_MESSAGES/LANG named a language
+# this speaks, on the reasoning that the person had already said. They had not:
+# `LANG=en_US.UTF-8` is what a server image ships with, and it is set on
+# machines whose owner would rather read Chinese. The result was an installer
+# that never offered, on the machines where offering matters. A flag is
+# different -- `--lang zh` is somebody saying it about this run -- so that one
+# still skips the question.
+if [ "$VP_LANG_FROM_FLAG" = no ] && [ "$INTERACTIVE" = yes ] && [ "$ACCT_STDIN" = no ]; then
   m lang.ask
-  ask "$(m lang.prompt)" 1
+  # The default is what the locale said, so enter on a zh_CN machine keeps
+  # Chinese and enter anywhere else keeps English.
+  lang_default=1
+  if [ "$VP_LANG" = zh ]; then lang_default=2; fi
+  ask "$(m lang.prompt "$lang_default")" "$lang_default"
   case "$ANSWER" in
     2) VP_LANG=zh ;;
     *) VP_LANG=en ;;
@@ -1063,6 +1097,40 @@ HAVE_ROOT=no
 
 as_root() {
   if [ "${#ROOT_CMD[@]}" -eq 0 ]; then "$@"; else "${ROOT_CMD[@]}" "$@"; fi
+}
+
+# Did it actually come up?
+#
+# `systemctl enable --now` returns 0 when systemd has accepted the job, not
+# when the process is still alive a second later. A panel whose port is taken
+# binds, fails, and is restarted every three seconds -- `Restart=always` --
+# and the installer printed "── done ──  started" over the top of it. That is
+# what was reported: eighteen restarts, and a summary telling the person to go
+# and fetch a token from a service that was not running.
+#
+# Polled rather than slept once, because a clean start is instant and only a
+# failing one needs the seconds.
+FAILED_WHY=
+svc_settled() { # svc_settled <user|system>
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if [ "$1" = system ]; then
+      sctl_sys is-active --quiet vibepanel 2>/dev/null && return 0
+    else
+      sctl_user is-active --quiet vibepanel 2>/dev/null && return 0
+    fi
+    sleep 0.5
+  done
+  # The reason, from the unit's own log, because "it did not start" without it
+  # sends somebody to a journal command they have to be told twice to run.
+  if [ "$1" = system ]; then
+    FAILED_WHY="$(as_root journalctl -u vibepanel -n 20 --no-pager 2>/dev/null \
+      | grep -iE "bind|permission|no such file|exec format|fatal|error" | tail -3 || true)"
+  else
+    FAILED_WHY="$(journalctl --user -u vibepanel -n 20 --no-pager 2>/dev/null \
+      | grep -iE "bind|permission|no such file|exec format|fatal|error" | tail -3 || true)"
+  fi
+  return 1
 }
 
 # ── tmux: present, and new enough? ────────────────────────────────────────
@@ -1405,6 +1473,30 @@ elif [ -z "$KIND" ]; then
   fi
 fi
 
+# ── where the binary goes, now that the kind is known ─────────────────────
+#
+# A system unit whose ExecStart points into one account's home is not a system
+# service. It breaks when that home is on an encrypted or network filesystem
+# that is not mounted at boot, and `sudo vibepanel` -- which is what the
+# summary tells people to type, and what anybody with a system unit reaches for
+# -- fails with `command not found`, because ~/.local/bin is not on root's
+# PATH. That was reported from a real install, along with everything downstream
+# of it.
+#
+# So: /usr/local/bin for the system unit, ~/.local/bin for the user unit. The
+# user unit's ExecStart is `%h/.local/bin/vibepanel`, which systemd expands per
+# account and is right as it is.
+if [ "$KIND" = system ]; then
+  BIN_DIR="$DESTDIR/usr/local/bin"
+fi
+
+# The writability check again, for the directory actually chosen. The earlier
+# one ran before the kind was known and could only ask about $HOME.
+if [ -e "$BIN_DIR" ] && [ ! -w "$BIN_DIR" ] && [ "$KIND" != system ]; then
+  me pre.bindirro "$BIN_DIR"
+  exit 1
+fi
+
 # ── never both ────────────────────────────────────────────────────────────
 #
 # A user unit and a system unit are two panels with the same data directory on
@@ -1657,8 +1749,16 @@ if [ "$INTERACTIVE" = yes ]; then
 fi
 
 # ── do it ─────────────────────────────────────────────────────────────────
-mkdir -p "$BIN_DIR" "$(dirname "$ENV_FILE")"
-install -m 0755 "$BIN_SRC" "$BIN_DIR/vibepanel"
+mkdir -p "$(dirname "$ENV_FILE")"
+# Through as_root for the system directory, which is the whole reason the two
+# are separate calls: /usr/local/bin is root's and ~/.local/bin is not.
+if [ "$KIND" = system ]; then
+  as_root mkdir -p "$BIN_DIR"
+  as_root install -m 0755 "$BIN_SRC" "$BIN_DIR/vibepanel"
+else
+  mkdir -p "$BIN_DIR"
+  install -m 0755 "$BIN_SRC" "$BIN_DIR/vibepanel"
+fi
 echo "installed $BIN_DIR/vibepanel"
 
 # Does the file that was just written actually run *here*?
@@ -1760,7 +1860,7 @@ if [ -n "$ACCT_USER" ]; then
   fi
 fi
 
-STARTED=no      # no | started | restarted
+STARTED=no      # no | started | restarted | failed
 
 if [ "$KIND" = none ]; then
   : # nothing to install; the message was printed where the decision was made
@@ -1839,6 +1939,7 @@ elif [ "$KIND" = user ]; then
         sctl_user enable --now vibepanel
         STARTED=started
       fi
+      svc_settled user || STARTED=failed
     fi
   else
     echo
@@ -1849,7 +1950,8 @@ else
   # installed copy, so the only privileged write is a single `install`. A sed
   # that fails then leaves no half-rewritten unit under /etc.
   TMP_UNIT="$(mktemp "${TMPDIR:-/tmp}/vibepanel-unit.XXXXXX")"
-  sed -e "s/__USER__/$WHO/g" -e "s#__HOME__#$HOME#g" "$SYSTEM_UNIT_SRC" > "$TMP_UNIT"
+  sed -e "s/__USER__/$WHO/g" -e "s#__HOME__#$HOME#g" \
+      -e "s#__BIN__#$BIN_DIR/vibepanel#g" "$SYSTEM_UNIT_SRC" > "$TMP_UNIT"
   as_root mkdir -p "$(dirname "$SYSTEM_UNIT")"
   as_root install -m 0644 "$TMP_UNIT" "$SYSTEM_UNIT"
   rm -f "$TMP_UNIT"
@@ -1864,6 +1966,7 @@ else
       sctl_sys enable --now vibepanel
       STARTED=started
     fi
+    svc_settled system || STARTED=failed
   fi
   m sys.note
 fi
@@ -1916,6 +2019,21 @@ case "$STARTED" in
       echo
       m token.thenopen "http://$HOST:$PORT"
     fi
+    ;;
+  failed)
+    m state.failed
+    if [ -n "$FAILED_WHY" ]; then
+      echo
+      printf '%s\n' "$FAILED_WHY" | sed 's/^/  /'
+    fi
+    echo
+    if printf '%s' "$FAILED_WHY" | grep -qi "address already in use"; then
+      m failed.port "$PORT" "$ENV_FILE"
+    else
+      m failed.look "$JOURNAL"
+    fi
+    echo
+    m failed.after "$VPCTL"
     ;;
   restarted)
     m state.restarted

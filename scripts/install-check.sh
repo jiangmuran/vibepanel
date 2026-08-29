@@ -82,6 +82,15 @@ cat > "$SCTL" <<EOF
 echo "\$*" >> "$WORK/systemctl.log"
 case "\$*" in
   *is-active*) [ -e "$WORK/unit-is-active" ] && exit 0 || exit 1 ;;
+  # A start makes the unit active, the way a real one does. The installer now
+  # checks that it actually came up -- `enable --now` returning 0 only means
+  # systemd took the job, and a panel whose port is taken fails a moment later
+  # while the summary says "started". A stub that never becomes active would
+  # make every case below report that failure.
+  #
+  # unit-refuses-to-start is how the failing side is driven.
+  *enable\ --now*|*\ start*|*restart*)
+    [ -e "$WORK/unit-refuses-to-start" ] || : > "$WORK/unit-is-active" ;;
 esac
 exit 0
 EOF
@@ -171,6 +180,15 @@ newhome() {
   # nothing leaks from the block before -- which it did, once, and made an
   # assertion about the no-root path pass for a run that had root all along.
   ROOT_OVERRIDE="$ROOTCMD"
+  # `--lang en` on every run unless a block clears it.
+  #
+  # The language question is asked whenever there is somebody to ask -- a
+  # locale only picks which answer enter takes -- so without this every
+  # interactive block below is one question longer than its answer list, and
+  # the answers after it land on the wrong questions. A flag is the only thing
+  # that skips it, which is what makes it usable here. The blocks that are
+  # about the question itself set LANGFLAG= and drive it.
+  LANGFLAG="--lang en"
   # No Claude Code, unless a block says otherwise.
   #
   # Default `none` rather than "whatever this machine has", because otherwise
@@ -201,8 +219,14 @@ newhome() {
 # is the answer every case below except the language block wants; that block
 # sets LC_OVERRIDE itself, and empty means "the environment says nothing".
 run() {
-  local input=/dev/null
+  local input=/dev/null lang=""
   if [ "${1:-}" = "--stdin" ]; then input="$2"; shift 2; fi
+  # The language flag goes on only when the run can be asked.
+  #
+  # An unattended run never reaches the question, and the blocks that check
+  # what LC_ALL / LC_MESSAGES / LANG do are all unattended -- adding --lang to
+  # those would be the harness overruling the thing under test.
+  case " $* " in *" --interactive "*) lang="$LANGFLAG" ;; esac
   ( cd "$REL" && HOME="$HOME_DIR" \
       LC_ALL="$LC_OVERRIDE" LC_MESSAGES="$LCM_OVERRIDE" LANG="$LANG_OVERRIDE" \
       VIBEPANEL_DESTDIR="$HOME_DIR/root" \
@@ -216,7 +240,7 @@ run() {
       XDG_RUNTIME_DIR="$XDG_OVERRIDE" \
       VIBEPANEL_ROOT_CMD="$ROOT_OVERRIDE" \
       VIBEPANEL_CLAUDE_BIN="$CLAUDE_OVERRIDE" \
-      ./deploy/install.sh "$@" <"$input" >"$LOG" 2>&1 )
+      ./deploy/install.sh $lang "$@" <"$input" >"$LOG" 2>&1 )
   RC=$?
 }
 has() { grep -qF -- "$2" "$1"; }
@@ -486,9 +510,20 @@ if [ -f "$U" ]; then
     || ok "__USER__ and __HOME__ are substituted"
   grep -qx "User=${USER:-$(id -un)}" "$U" && ok "User= is the invoking account" \
     || fail "User= is wrong: $(grep '^User=' "$U")"
-  grep -qx "ExecStart=$HOME_DIR/.local/bin/vibepanel serve" "$U" \
-    && ok "ExecStart points at the binary this run installed" \
+  # /usr/local/bin, not the account's home.
+  #
+  # A system unit whose ExecStart is under one account's home breaks when that
+  # home is not mounted at boot, and `sudo vibepanel` -- which is what the
+  # summary tells people to type -- is `command not found`, because
+  # ~/.local/bin is not on root's PATH.
+  grep -qx "ExecStart=$HOME_DIR/root/usr/local/bin/vibepanel serve" "$U" \
+    && ok "ExecStart points at the system binary this run installed" \
     || fail "ExecStart is wrong: $(grep '^ExecStart=' "$U")"
+  grep -q "$HOME_DIR/.local/bin" "$U" \
+    && fail "the system unit still refers to the account's home" \
+    || ok "and nothing in the unit points into ~/.local/bin"
+  [ -x "$HOME_DIR/root/usr/local/bin/vibepanel" ] \
+    && ok "and the binary is there" || fail "no binary at the path the unit names"
   # The entire reason the system unit exists.
   grep -qx "OOMScoreAdjust=-500" "$U" && ok "it is the unit that can lower the OOM score" \
     || fail "no OOMScoreAdjust in the installed unit"
@@ -746,6 +781,10 @@ grep -q -- '--apply' "$WORK/binary.log" \
 echo "==> Claude Code: accepted, and the language goes with it"
 newhome
 CLAUDE_OVERRIDE="$WORK/fake-claude"
+# The flag, not the locale: the language question is asked at a terminal
+# whatever the environment says, so the locale alone no longer settles what
+# `tune` is handed.
+LANGFLAG="--lang zh"
 LC_OVERRIDE=zh_CN.UTF-8
 printf '1\nn\ny\ny\n' > "$WORK/answers"   # user service, do not start, yes to claude, yes to the plan
 run --stdin "$WORK/answers" --interactive
@@ -825,11 +864,18 @@ echo "==> a real terminal gets the questions with no flag at all"
 if command -v script >/dev/null 2>&1; then
   newhome
   PTY_LOG="$WORK/pty.log"
-  printf '1\nn\ny\n' | script -qec "cd '$REL' && HOME='$HOME_DIR' \
+  # The first answer is the language, which a real terminal is now always
+  # asked. This block builds its own command line and gets no LANGFLAG, which
+  # is right: it is the one case that is about what a person at a terminal
+  # actually meets.
+  printf '1\n1\nn\ny\n' | script -qec "cd '$REL' && HOME='$HOME_DIR' \
     VIBEPANEL_DESTDIR='$HOME_DIR/root' VIBEPANEL_SYSTEMCTL='$SCTL' \
     VIBEPANEL_LAUNCHCTL='$LCTL' VIBEPANEL_PLATFORM=linux \
-    VIBEPANEL_PKG_RUNNER='$PKGREC' \
+    VIBEPANEL_PKG_RUNNER='$PKGREC' VIBEPANEL_CLAUDE_BIN=none \
     VIBEPANEL_ROOT_CMD='$ROOTCMD' ./deploy/install.sh" /dev/null > "$PTY_LOG" 2>&1
+  has "$PTY_LOG" "Which language" \
+    && ok "a terminal is asked the language even with a locale set" \
+    || fail "no language question at a terminal"
   has "$PTY_LOG" "proceed?" && ok "under a pty it asks, with no --interactive" \
     || fail "a terminal got no prompt: $(head -20 "$PTY_LOG" | tr -d '\r' | tr '\n' ' ')"
   [ -f "$(SYSU)" ] && ok "and it installed what was chosen" || fail "the pty run installed nothing"
@@ -846,8 +892,13 @@ if [ -x "$REPO/vibepanel" ]; then
   newhome
   ROOT_OVERRIDE=none
   run --yes
-  A="$(HOME="$HOME_DIR" "$REPO/vibepanel" service --dry-run status 2>&1)"
-  B="$(HOME="$HOME_DIR" "$REPO/vibepanel" service status --dry-run 2>&1)"
+  # DESTDIR too, not just HOME. Without it this reads the *developer's* real
+  # /etc/systemd/system/vibepanel.service and reports whatever that machine
+  # has -- which it did the moment the relative-path bug in systemUnitPath was
+  # fixed, because until then no system unit was ever found and the fallback
+  # to the user unit made this look isolated.
+  A="$(HOME="$HOME_DIR" VIBEPANEL_DESTDIR="$HOME_DIR/root" "$REPO/vibepanel" service --dry-run status 2>&1)"
+  B="$(HOME="$HOME_DIR" VIBEPANEL_DESTDIR="$HOME_DIR/root" "$REPO/vibepanel" service status --dry-run 2>&1)"
   [ "$A" = "$B" ] && [ "$A" = "systemctl --user status vibepanel" ] \
     && ok "both orders resolve to: $A" \
     || fail "the two orders disagree: [$A] vs [$B]"
@@ -1145,6 +1196,7 @@ has "$LOG" "about to:" && ok "and falls back to English rather than guessing" \
 
 echo "==> interactive with nothing in the environment: it asks, and asks first"
 newhome
+LANGFLAG=
 LC_OVERRIDE=
 printf '2\n1\nn\ny\n' > "$WORK/answers"
 run --stdin "$WORK/answers" --interactive
@@ -1166,6 +1218,42 @@ has "$LOG" "就这样做吗？" && ok "and so is the confirmation under the plan
   || fail "the plan was confirmed in another language than the question"
 [ -f "$(SYSU)" ] && ok "and the answers after it still land where they did" \
   || fail "choosing a language shifted every later answer by one"
+
+echo "==> a locale is a default, not an answer"
+# LANG=en_US.UTF-8 is what a server image ships with. Treating it as "they have
+# already told us" meant the installer never offered Chinese on exactly the
+# machines where offering matters -- which is how this was reported.
+newhome
+LANGFLAG=
+LC_OVERRIDE=en_US.UTF-8
+printf '2\n1\nn\nn\ny\n' > "$WORK/answers"
+run --stdin "$WORK/answers" --interactive
+has "$LOG" "Which language" \
+  && ok "an English locale is still asked" || fail "it took the locale as the answer"
+has "$LOG" "选择 [1]" \
+  && ok "and the English locale is what enter would take" || fail "the default does not follow the locale"
+has "$LOG" "接下来会：" \
+  && ok "answering 2 overrides the locale" || fail "the answer did not beat the environment"
+
+newhome
+LANGFLAG=
+LC_OVERRIDE=zh_CN.UTF-8
+printf '\n1\nn\nn\ny\n' > "$WORK/answers"
+run --stdin "$WORK/answers" --interactive
+has "$LOG" "选择 [2]" \
+  && ok "a Chinese locale makes 2 the default" || fail "the zh locale did not become the default"
+has "$LOG" "接下来会：" \
+  && ok "and pressing enter keeps it" || fail "enter did not take the locale's language"
+
+echo "==> --lang still skips the question entirely"
+newhome
+LANGFLAG=
+LC_OVERRIDE=
+printf '1\nn\nn\ny\n' > "$WORK/answers"
+run --stdin "$WORK/answers" --interactive --lang en
+has "$LOG" "Which language" \
+  && fail "--lang was given and it asked anyway" \
+  || ok "a flag is somebody saying it about this run"
 
 echo "==> a zh locale installs in Chinese and asks nothing"
 newhome
@@ -1559,6 +1647,31 @@ else
   kill "$MIRRORD" 2>/dev/null; MIRRORD=""
   kill "$HTTPD" 2>/dev/null; HTTPD=""
 fi
+
+# ── the service has to actually be running ────────────────────────────────
+#
+# `systemctl enable --now` returns 0 when systemd accepts the job. A panel
+# whose port is taken binds, fails, and is restarted every few seconds, and the
+# installer printed "── done ──  started" over eighteen restarts of that. The
+# person was then told to fetch a token from a service that was not running.
+
+echo "==> a service that does not stay up is reported, not called started"
+newhome
+: > "$WORK/unit-refuses-to-start"
+run --yes --user --enable
+[ $RC -eq 0 ] && ok "exits 0: the files are installed, which is true" || fail "exited $RC"
+has "$LOG" "is not running" && ok "the summary says it is not running" \
+  || fail "it reported a start that did not happen: $(tail -6 "$LOG" | tr '\n' ' ')"
+has "$LOG" "the one-time setup token is in" \
+  && fail "it sent them to fetch a token from a service that is not up" \
+  || ok "and does not send them after a token"
+rm -f "$WORK/unit-refuses-to-start"
+
+echo "==> and a service that does stay up is still called started"
+newhome
+run --yes --user --enable
+has "$LOG" "is not running" && fail "a healthy start was reported as a failure" \
+  || ok "a start that worked is not reported as one that did not"
 
 # ── deploy/uninstall.sh ───────────────────────────────────────────────────
 #

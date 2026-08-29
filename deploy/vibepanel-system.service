@@ -1,7 +1,8 @@
 # The system unit: for when the panel has to survive a memory squeeze.
 #
 #   sudo cp vibepanel-system.service /etc/systemd/system/vibepanel.service
-#   sudo sed -i "s/__USER__/$USER/g; s#__HOME__#$HOME#g" /etc/systemd/system/vibepanel.service
+#   sudo sed -i "s/__USER__/$USER/g; s#__HOME__#$HOME#g; s#__BIN__#/usr/local/bin/vibepanel#g" \
+#     /etc/systemd/system/vibepanel.service
 #   sudo systemctl daemon-reload && sudo systemctl enable --now vibepanel
 #
 # Why this exists alongside the user unit, measured rather than assumed:
@@ -39,7 +40,7 @@ User=__USER__
 # started by hand and by the installer, and an explicit value is one fewer thing
 # that differs between those paths.
 Environment=HOME=__HOME__
-ExecStart=__HOME__/.local/bin/vibepanel serve
+ExecStart=__BIN__ serve
 EnvironmentFile=-__HOME__/.config/vibepanel.env
 WorkingDirectory=__HOME__
 
