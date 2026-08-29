@@ -33,6 +33,57 @@ const PORT = await new Promise((resolve, reject) => {
 const SOCKET = `vpshots-${process.pid}`
 const DATA = mkdtempSync(join(tmpdir(), 'vpshots-'))
 const HOME = mkdtempSync(join(tmpdir(), 'vpshots-home-'))
+
+// Transcripts, so the spend block has figures rather than four zeros.
+//
+// It reads the agents' own files out of $HOME, and a throwaway home has none —
+// so every screenshot ever taken showed a panel that had never counted
+// anything, next to a terminal full of work. Fourteen days of plausible days,
+// two agents, so the block shows a hero, a week, a project and a trend that
+// has a shape.
+//
+// `id` and `requestId` matter: the reader deduplicates on the pair, because one
+// API response is written as one line per content block carrying the same
+// usage. Lines without them collapse into one record.
+{
+  const day = (back) => {
+    const d = new Date()
+    d.setDate(d.getDate() - back)
+    return d.toISOString().slice(0, 10)
+  }
+  for (const [tool, dir, weight] of [
+    ['claude', join(HOME, '.claude', 'projects', 'vibepanel'), 1],
+    ['codex', join(HOME, '.codex', 'sessions', 'vibepanel'), 0.14],
+  ]) {
+    mkdirSync(dir, { recursive: true })
+    const lines = []
+    for (let back = 13; back >= 0; back--) {
+      // A working week that is not a flat line: some days are quiet.
+      const busy = [0.9, 1.4, 0.7, 1.1, 1.6, 0.2, 0.35][back % 7]
+      for (let n = 0; n < 3; n++) {
+        const scale = weight * busy * (1 + n)
+        lines.push(JSON.stringify({
+          type: 'assistant',
+          timestamp: `${day(back)}T${String(9 + n * 4).padStart(2, '0')}:12:00.000Z`,
+          sessionId: `${tool}-${back}`,
+          cwd: process.cwd(),
+          requestId: `req-${tool}-${back}-${n}`,
+          message: {
+            id: `msg-${tool}-${back}-${n}`,
+            model: tool === 'claude' ? 'claude-opus-5' : 'gpt-5-codex',
+            usage: {
+              input_tokens: Math.round(9000 * scale),
+              output_tokens: Math.round(24000 * scale),
+              cache_read_input_tokens: Math.round(1900000 * scale),
+              cache_creation_input_tokens: Math.round(120000 * scale),
+            },
+          },
+        }))
+      }
+    }
+    writeFileSync(join(dir, 'shots.jsonl'), lines.join('\n') + '\n')
+  }
+}
 const PASSWORD = 'a sufficiently long password'
 const BASE = `http://localhost:${PORT}`
 
@@ -173,6 +224,32 @@ try {
     `  ${Y}?${R} Apply this change to ${C}internal/httpapi/auth.go${R}?`,
     `    ${D}1${R} yes   ${D}2${R} yes, and stop asking   ${D}3${R} no, tell me why`,
     ``,
+    `  ${B}> 1${R}`,
+    ``,
+    `  ${G}OK${R} edit ${C}internal/httpapi/auth.go${R} ${D}+4 -0${R}`,
+    `  ${G}OK${R} go build ./...              ${D}2.1s${R}`,
+    `  ${G}OK${R} go test ./internal/httpapi  ${D}ok  0.44s${R}`,
+    ``,
+    `  Now the test that says so. It has to fail when the order is put back,`,
+    `  or it is a test that a cookie still works.`,
+    ``,
+    `  ${D}internal/httpapi/auth_test.go${R}`,
+    `  ${G}+func TestATokenBeatsACookieOnTheSameRequest(t *testing.T) {${R}`,
+    `  ${G}+  req := signedIn(t, ts, alice)${R}`,
+    `  ${G}+  req.Header.Set("Authorization", "Bearer "+bobToken)${R}`,
+    `  ${G}+  if got := whoami(t, ts, req); got != "bob" {${R}`,
+    `  ${G}+    t.Errorf("both credentials, answered as %q", got)${R}`,
+    ``,
+    `  ${G}OK${R} go test ./internal/httpapi  ${D}ok  0.51s${R}`,
+    `  ${Y}!!${R} mutation: cookie read first ${D}->${R} ${G}test fails, as it should${R}`,
+    ``,
+    `  ${D}Four files, +38 -6. The doc check wants the new behaviour${R}`,
+    `  ${D}written down before it will pass:${R}`,
+    `  ${D}  docs/api.md: \`Authorization\` outranks the session cookie${R}`,
+    ``,
+    `  ${Y}?${R} Write that line and run ${C}make check${R}?`,
+    `    ${D}1${R} yes   ${D}2${R} yes, and stop asking   ${D}3${R} no, tell me why`,
+    ``,
     `  ${Y}>${R} `,
   ].join('\n')
   const scriptDir = join(HOME, 'shots')
@@ -185,6 +262,9 @@ try {
     `${D}12:04:31${R} tmux   socket vibepanel ${D}3.6${R}  ${G}6 sessions adopted${R}`,
     `${D}12:07:02${R} ws     client attached ${D}session=vp_a3f1 130x46${R}`,
     `${D}12:07:19${R} hook   ${C}vp_a3f1${R} -> ${Y}waiting${R}`,
+    `${D}12:09:44${R} git    ${C}vibepanel${R} ${D}main${R}  ${G}3 uncommitted${R}  ${D}+38 -6${R}`,
+    `${D}12:11:02${R} usage  read 2 transcripts ${D}claude 42 requests${R}  ${G}11.1M today${R}`,
+    `${D}12:12:30${R} hook   ${C}vp_7b0e${R} -> ${G}done${R}  ${D}after 4m 12s${R}`,
     ``,
   ].join('\n'))
 
@@ -202,7 +282,7 @@ try {
   await mk(proj.id, ['sh', '-c', 'exec sh'], 'logs').then(() => {})
   await authed('/api/sessions', {
     method: 'POST',
-    body: JSON.stringify({ projectId: proj.id, parentSessionId: waiting.id, command: ['sh', '-c', `cat ${logFile}; exec sh`], title: 'logs' }),
+    body: JSON.stringify({ projectId: proj.id, parentSessionId: waiting.id, command: ['sh', '-c', `cat ${logFile}; exec sleep 3000`], title: 'logs' }),
   })
   await authed(`/api/projects/${proj.id}/notes`, {
     method: 'PUT',

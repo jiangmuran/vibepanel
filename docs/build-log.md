@@ -16991,3 +16991,31 @@ was the first attempt. `--text-vp-sm` and friends are literals in `@theme`,
 which inlines them into every utility it generates, so a descendant redefining
 one changes nothing — the same trap that made the wall scale inert twice today.
 A ternary is duller and it is a thing that can be read.
+
+### A hero image of a panel with nothing in it
+
+「你的头图放张工作页面啊」, and the long caption under it deleted.
+
+The screenshot was a panel that had never done anything: a terminal 80% black
+below a short prompt, a spend block reading four zeros, and an empty strip along
+the bottom. `shots.mjs` says in its own header that a screenshot of an empty
+terminal is a photograph of the background colour — and the panel around it had
+the same problem.
+
+Three fixes, all in the shot rather than in the product:
+
+**The session now finishes its work.** The transcript ran to about half the
+pane; it answers its own question, edits, builds, writes the test, and mutates
+it to prove the test fails when the change is undone. Forty-four lines against
+a forty-six row pane, and a scrollbar, because a terminal with scrollback in it
+looks like a terminal that has been used.
+
+**Fourteen days of transcripts are seeded into the throwaway `$HOME`.** The
+spend block reads the agents' own files, and a fresh home has none — so every
+screenshot ever taken showed a panel that had counted nothing beside a terminal
+full of work. Two agents, weekday-shaped, so the block has a hero, a week, a
+project and a sparkline with a shape rather than a flat line.
+
+**The bottom strip's session ran `exec sh` after printing.** A shell draws a
+prompt, and whatever repaints after that left the strip black in every
+screenshot. It sleeps instead.
