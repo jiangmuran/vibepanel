@@ -1,3 +1,4 @@
+import { RestartPanel } from './RestartPanel'
 import type { SettingsInfo } from '../../protocol/wire'
 import { t } from '../../i18n'
 import { safeText } from '../text'
@@ -115,6 +116,7 @@ export function PanelGroup({ info }: { info: SettingsInfo | null }) {
           </div>
         </Section>
       )}
+      <RestartPanel />
     </>
   )
 }

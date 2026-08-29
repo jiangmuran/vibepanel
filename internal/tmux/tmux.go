@@ -357,10 +357,102 @@ func (c *Client) Create(ctx context.Context, o CreateOptions) error {
 		argv = append(argv, "-e", kv)
 	}
 	if len(o.Command) > 0 {
-		argv = append(argv, o.Command...)
+		argv = append(argv, c.throughLoginShell(ctx, o.Command)...)
 	}
 	_, err := c.run(ctx, argv...)
 	return err
+}
+
+// throughLoginShell wraps an argv so it starts the way the person's own
+// terminal would start it.
+//
+// tmux execs a command given to `new-session` directly, with the *server's*
+// environment. The server is started by the panel, so under systemd that
+// environment is the unit's: a PATH of /usr/bin:/bin and nothing else. None of
+// the person's shell configuration has run.
+//
+// What that costs is everything a version manager does. nvm, asdf, mise, pyenv,
+// rbenv and rustup all work by putting a shim directory on PATH from a file the
+// shell reads, so `claude` is either not found at all or is a different build
+// than the one the same command finds in a terminal two feet away. Anything
+// exported from .profile is missing too -- API base URLs, proxies, locale.
+//
+// A pane with *no* command already gets the login shell, because that is what
+// tmux runs by default. So without this, a scratch terminal and a session
+// running an agent had two different environments on the same machine, and the
+// scratch terminal was the one that worked.
+//
+// The shell is tmux's own `default-shell` rather than $SHELL, so a wrapped
+// command and a bare pane agree by construction: whatever a scratch terminal
+// gets, this gets.
+//
+// `exec` matters and is not tidiness. Without it the shell stays as the pane's
+// process for the life of the session, and `pane_current_command` -- which the
+// state heuristic reads to tell "an agent is running" from "a prompt is
+// waiting" -- reports the shell forever.
+func (c *Client) throughLoginShell(ctx context.Context, command []string) []string {
+	sh := c.loginShell(ctx)
+	if sh == "" {
+		return command
+	}
+	return []string{sh, "-l", "-c", "exec " + shellJoin(command)}
+}
+
+// loginShell is what tmux would start for a pane with no command, or "" when
+// that cannot be used as one.
+//
+// tmux resolves this from the passwd entry or $SHELL and exposes it as a global
+// option, which makes it the one answer guaranteed to match a bare pane.
+//
+// The empty return is the important half. An account whose shell is
+// /usr/sbin/nologin or /bin/false has no shell to wrap anything in, and
+// wrapping would turn every session into a process that exits immediately --
+// strictly worse than the environment problem this exists to fix.
+func (c *Client) loginShell(ctx context.Context) string {
+	out, err := c.run(ctx, "show-option", "-gv", "default-shell")
+	if err != nil {
+		// No server yet, which is the *first* session after a boot -- the one
+		// case this has to get right, because a panel that wraps every session
+		// except the first has two environments again, and which one you get
+		// depends on the order you happened to start things in.
+		//
+		// One invocation, not `start-server` and then a second call: a server
+		// with no sessions exits immediately under tmux's default
+		// `exit-empty`, so by the time a separate `show-option` ran there was
+		// no server again. Inside a single command list it is still there.
+		out, err = c.run(ctx, "start-server", ";", "show-option", "-gv", "default-shell")
+		if err != nil {
+			return ""
+		}
+	}
+	sh := strings.TrimSpace(out)
+	if sh == "" || !filepath.IsAbs(sh) {
+		return ""
+	}
+	switch filepath.Base(sh) {
+	case "nologin", "false", "true":
+		return ""
+	}
+	return sh
+}
+
+// shellJoin renders an argv as one string a shell will split back the same way.
+//
+// Single quotes, because inside them a shell interprets nothing at all; the
+// only character that needs handling is the single quote itself, which is
+// closed, escaped and reopened. Anything less is a session name or a path with
+// a space in it running as two commands.
+func shellJoin(argv []string) string {
+	var b strings.Builder
+	for i, a := range argv {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		b.WriteByte('\'')
+		b.WriteString(strings.ReplaceAll(a, "'", `'\''`))
+		b.WriteByte('\'')
+	}
+	return b.String()
 }
 
 // SocketPath is where tmux puts the socket for this client's name.

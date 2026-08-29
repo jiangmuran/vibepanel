@@ -7,6 +7,7 @@ import { t } from '../../i18n'
 import { copyTextInGesture } from '../../clipboard'
 import { LaunchProfiles } from '../LaunchProfiles'
 import { Row, Section } from './parts'
+import { TuneClaude } from './TuneClaude'
 
 /**
  * What a session is started with, and how the panel learns what it is doing.
@@ -22,6 +23,7 @@ export function SessionsGroup() {
         <LaunchProfiles />
       </Section>
       <HooksSection />
+      <TuneClaude />
     </>
   )
 }

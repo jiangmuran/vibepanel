@@ -560,6 +560,38 @@ const DICT = {
   'set.codex': { zh: 'Codex', en: 'Codex' },
   'set.settingsFile': { zh: '配置文件', en: 'Settings file' },
   'set.notInstalled': { zh: '未安装', en: 'not installed' },
+
+  // Claude Code's own settings, beyond the state-reporting hooks. The
+  // per-key descriptions are NOT here: they arrive with the rows from
+  // internal/hooks, so they cannot drift from the keys they describe.
+  'tune.title': { zh: 'Claude Code 配置', en: 'Claude Code settings' },
+  'tune.loading': { zh: '正在读取…', en: 'reading…' },
+  'tune.what': {
+    zh: '决定哪些东西离开这台机器，以及 agent 往你 git 历史里写什么。',
+    en: 'What leaves this machine, and what the agent writes into your git history.',
+  },
+  'tune.already': { zh: '已经是这样', en: 'already set' },
+  'tune.would': { zh: '会改这一条', en: 'would change' },
+  'tune.was': { zh: '原本是 {v}', en: 'was {v}' },
+  'tune.apply': { zh: '应用这 {n} 条', en: 'Apply {n}' },
+  'tune.nothing': { zh: '无需改动', en: 'Nothing to change' },
+  'tune.applied': { zh: '改了 {n} 条。', en: 'Changed {n}.' },
+  'tune.backup': { zh: '先备份 {p}，其他内容不动', en: 'copies {p} first; nothing else in it changes' },
+
+  // Restarting the panel itself.
+  'rst.title': { zh: '重启面板', en: 'Restart the panel' },
+  'rst.what': {
+    zh: '会话不受影响：进程归 tmux，面板只是连上去的客户端。',
+    en: 'Sessions are untouched: tmux owns them and the panel is a client.',
+  },
+  'rst.go': { zh: '重启', en: 'Restart' },
+  'rst.going': { zh: '正在重启…', en: 'restarting…' },
+  'rst.back': { zh: '回来了。', en: 'back.' },
+  'rst.unsupervised': {
+    zh: '这个面板不是由服务管的，停了就不会自己起来。',
+    en: 'Nothing supervises this panel, so stopping it would not bring it back.',
+  },
+
   // "installed" is a claim about a file, not about behaviour: the panel has
   // read a config, it has not heard from an agent.
   'set.installedEvents': { zh: '已安装，{n} 个事件', en: 'installed for {n} events' },

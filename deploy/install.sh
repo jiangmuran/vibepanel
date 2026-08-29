@@ -71,6 +71,12 @@ TUNE_CLAUDE_FLAG=
 #                         of running it. A check that really runs `apt-get
 #                         install tmux` on the developer's machine is the thing
 #                         all of this exists to avoid.
+#   VIBEPANEL_SUDO        which sudo to run. The sudo-ask path -- sudo that
+#                         works but wants a password -- cannot be produced on
+#                         a machine where sudo is passwordless, and it is the
+#                         path where somebody is told what choosing the system
+#                         service will cost them. A stub answers `-n true` with
+#                         a failure and `-v` with whichever the case wants.
 #   VIBEPANEL_CLAUDE_BIN  which claude to find, or the literal `none` for a
 #                         machine that has none. Without it the Claude Code
 #                         question appears on a developer's box and not on a
@@ -86,6 +92,7 @@ SYSTEMCTL="${VIBEPANEL_SYSTEMCTL:-systemctl}"
 LAUNCHCTL="${VIBEPANEL_LAUNCHCTL:-launchctl}"
 TMUX_BIN="${VIBEPANEL_TMUX_BIN:-tmux}"
 PKG_RUNNER="${VIBEPANEL_PKG_RUNNER:-}"
+SUDO="${VIBEPANEL_SUDO:-sudo}"
 
 # ── which language does this installer speak? ─────────────────────────────
 #
@@ -696,6 +703,17 @@ machine and what the agent writes into your git history:'
       MS_ZH='  警告：  端口 %1$s 上已经有东西在监听，面板会启动、绑定失败，
           然后被每三秒重启一次。请先在 %2$s 里把 VIBEPANEL_ADDR
           设成一个没人占的端口。' ;;
+    kind.sudoask)
+      MS_EN='  Choosing 1 stops once to ask for your password. Nothing else here does.
+'
+      MS_ZH='  选 1 会停下来问你一次密码。这里别的步骤都不会。
+' ;;
+    kind.nosudo)
+      MS_EN='  sudo would not have it, so the system service is not on the table
+  after all. %1$s is probably not in sudoers on this machine. Installing
+  the user service instead -- it needs no root and works the same.'
+      MS_ZH='  sudo 没通过，所以系统服务这条路走不了。%1$s 在这台机器上大概不在
+  sudoers 里。改装用户服务 —— 它不需要 root，用起来一样。' ;;
     plan.sudo)
       MS_EN='  sudo will ask for your password.'
       MS_ZH='  sudo 会问你要密码。' ;;
@@ -1085,12 +1103,12 @@ if [ "${VIBEPANEL_ROOT_CMD+set}" = set ]; then
   esac
 elif [ "$(id -u)" = 0 ]; then
   ROOT_HOW=root
-elif ! command -v sudo >/dev/null; then
+elif ! command -v "$SUDO" >/dev/null; then
   ROOT_HOW=none
-elif sudo -n true 2>/dev/null; then
-  ROOT_HOW=sudo; ROOT_CMD=(sudo)
+elif "$SUDO" -n true 2>/dev/null; then
+  ROOT_HOW=sudo; ROOT_CMD=("$SUDO")
 elif [ "$INTERACTIVE" = yes ] && [ -t 0 ]; then
-  ROOT_HOW=sudo-ask; ROOT_CMD=(sudo)
+  ROOT_HOW=sudo-ask; ROOT_CMD=("$SUDO")
 fi
 HAVE_ROOT=no
 [ "$ROOT_HOW" = none ] || HAVE_ROOT=yes
@@ -1453,12 +1471,43 @@ elif [ -z "$KIND" ]; then
     KIND=system
     if [ "$INTERACTIVE" = yes ]; then
       m kind.menu "$WHO"
+      # Said where the choice is made, not two screens later in the plan.
+      #
+      # The menu's "root is available here" covers two different situations:
+      # sudo that answers without asking, and sudo that will stop and want a
+      # password. Only one of those is worth knowing before picking, and it was
+      # only mentioned afterwards -- so somebody who would happily have typed
+      # their password read "recommended" and had no idea what it would cost,
+      # and somebody who did not want to be asked found out after choosing.
+      if [ "$ROOT_HOW" = sudo-ask ]; then
+        m kind.sudoask
+      fi
       ask "$(m choice.prompt)" 1
       echo
       case "$ANSWER" in
         2) KIND=user ;;
         *) KIND=system ;;
       esac
+    fi
+    # Ask for the password now, while there is still a decision to change.
+    #
+    # `sudo -n true` fails for two different reasons and this script could not
+    # tell them apart: sudo that wants a password, and an account that is not
+    # in sudoers at all. The second one only surfaced when the first `as_root`
+    # ran -- after the binary was on disk -- and took the install down with it.
+    #
+    # `sudo -v` asks once and answers both questions. It also caches the
+    # credential, so the writes further down do not each stop again.
+    if [ "$KIND" = system ] && [ "$ROOT_HOW" = sudo-ask ]; then
+      if ! "$SUDO" -v; then
+        echo
+        m kind.nosudo "$WHO"
+        echo
+        KIND=user
+        HAVE_ROOT=no
+        ROOT_HOW=none
+        ROOT_CMD=()
+      fi
     fi
   else
     KIND=user

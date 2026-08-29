@@ -81,6 +81,11 @@ func TestTuneLeavesEverythingElseAlone(t *testing.T) {
 	if err := os.WriteFile(path, []byte(before), 0o640); err != nil {
 		t.Fatal(err)
 	}
+	// See TestInstallKeepsTheFileMode: WriteFile's mode is masked by umask, so
+	// the fixture needs the chmod to have the mode it then asserts survives.
+	if err := os.Chmod(path, 0o640); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := ApplyTune(); err != nil {
 		t.Fatalf("ApplyTune: %v", err)

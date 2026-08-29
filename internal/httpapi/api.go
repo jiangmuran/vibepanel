@@ -46,6 +46,12 @@ type Server struct {
 	Detector *session.Detector
 	Sampler  *sysmon.Sampler
 
+	// Restart asks the process to stop and be brought back by whatever
+	// supervises it. Nil in tests and in the admin CLI, which is also what the
+	// handler reports to somebody running the panel from a terminal: nothing
+	// would start it again.
+	Restart chan<- struct{}
+
 	// Updater fetches releases. A value rather than a pointer so the zero
 	// Server has a working one; see TreeSampler below for the same reasoning.
 	Updater selfupdate.Client

@@ -102,6 +102,19 @@ type Config struct {
 const DefaultPort = 18443
 
 // Default returns the configuration used when nothing is specified.
+// hookSessionVar reports whether a name is one the panel injects into a
+// session for the state reporter to find.
+//
+// Kept as a function rather than four `||` in the loop so the test that
+// compares it against hooks.SessionEnv has something to call.
+func hookSessionVar(key string) bool {
+	switch key {
+	case "VIBEPANEL_SESSION_ID", "VIBEPANEL_PROJECT_ID", "VIBEPANEL_TOKEN", "VIBEPANEL_URL":
+		return true
+	}
+	return false
+}
+
 func Default() Config {
 	return Config{
 		DataDir:    defaultDataDir(),
@@ -184,9 +197,18 @@ func (c *Config) envOverlay() {
 		if !strings.HasPrefix(key, envPrefix) || seen[key] {
 			continue
 		}
-		// Set by the hook script inside a session; not configuration.
-		if key == "VIBEPANEL_SESSION_ID" || key == "VIBEPANEL_TOKEN" ||
-			key == "VIBEPANEL_URL" || strings.HasPrefix(key, "VIBEPANEL_DEBUG_") {
+		// Set by the panel inside every session it creates; not configuration.
+		//
+		// This list and hooks.SessionEnv are the same four names written down
+		// twice, and they had already drifted: VIBEPANEL_PROJECT_ID was
+		// missing, so anyone running `vibepanel` from a terminal *inside the
+		// panel* -- which is how this project is developed -- was told at every
+		// start that one of their own settings was not recognised. The same
+		// stray variable failed two tests in internal/config for a reason that
+		// had nothing to do with either of them.
+		//
+		// TestEveryHookVariableIsExemptHere reads the other list and compares.
+		if hookSessionVar(key) || strings.HasPrefix(key, "VIBEPANEL_DEBUG_") {
 			continue
 		}
 		c.UnknownEnv = append(c.UnknownEnv, key)

@@ -305,9 +305,14 @@ func TestExitVanishedMatchesTheStore(t *testing.T) {
 // edit somebody has to look at.
 func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 	want := map[string]bool{
-		"blocked":                 true,
-		"hooks.installed":         true,
-		"hooks.removed":           true,
+		"blocked":         true,
+		"hooks.installed": true,
+		"hooks.removed":   true,
+		// Same file as hooks.installed and hooks.removed, so the same prefix:
+		// "what did the panel write into an agent's configuration" is one
+		// question and one GROUP BY.
+		"hooks.tuned":             true,
+		"panel.restarted":         true,
 		"hook.rejected":           true,
 		"login":                   true,
 		"login.failed":            true,

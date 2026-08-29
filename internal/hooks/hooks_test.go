@@ -404,6 +404,14 @@ func TestInstallKeepsTheFileMode(t *testing.T) {
 	if err := os.WriteFile(settings, []byte(`{"model":"opus"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Chmod, because the mode passed to WriteFile is masked by the process
+	// umask and the fixture has to actually *have* the mode it is asserting
+	// about. On a machine with umask 077 -- a hardened box, and what this
+	// project's own systemd unit sets -- the file above is created 0600 and
+	// this test failed without anything being wrong.
+	if err := os.Chmod(settings, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	script, _ := InstallScript(t.TempDir())
 	if _, err := InstallClaude(script); err != nil {
 		t.Fatal(err)

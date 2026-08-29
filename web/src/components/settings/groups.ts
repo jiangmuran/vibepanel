@@ -59,6 +59,7 @@ export const GROUP_TITLE: Record<SettingsGroup, Key> = {
 export const SETTINGS_SECTIONS = [
   'profiles',
   'reporting',
+  'tune',
   'browser',
   'webhooks',
   'shares',
@@ -68,6 +69,7 @@ export const SETTINGS_SECTIONS = [
   'activity',
   'update',
   'status',
+  'restart',
 ] as const
 
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]
@@ -82,6 +84,10 @@ export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]
 export const SECTION_GROUP: Record<SettingsSection, SettingsGroup> = {
   profiles: 'sessions',
   reporting: 'sessions',
+  // Beside reporting, because both edit the same file in somebody else's home
+  // directory and the question "what is the panel allowed to write into my
+  // agent's configuration" is one question, not two.
+  tune: 'sessions',
   browser: 'notify',
   webhooks: 'notify',
   shares: 'sharing',
@@ -91,6 +97,7 @@ export const SECTION_GROUP: Record<SettingsSection, SettingsGroup> = {
   activity: 'account',
   update: 'panel',
   status: 'panel',
+  restart: 'panel',
 }
 
 export function groupOf(section: SettingsSection): SettingsGroup {

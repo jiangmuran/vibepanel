@@ -1358,3 +1358,34 @@ export interface GitHubResult {
    *  is part of the answer. */
   checkedAt: number
 }
+
+/**
+ * One setting the panel offers to change in Claude Code's own settings.json.
+ *
+ * `what` and `whatZh` arrive from the server rather than being looked up in
+ * i18n.ts. They live beside the keys they describe in internal/hooks, for the
+ * reason recorded there: a description that drifts from the key it names is a
+ * summary reporting something other than what was written, and this list is
+ * the whole of what somebody agrees to.
+ */
+export interface TuneRow {
+  key: string
+  what: string
+  whatZh: string
+  have: unknown
+  want: unknown
+  same: boolean
+}
+
+export interface TuneStatus {
+  path: string
+  exists: boolean
+  changes: number
+  rows: TuneRow[]
+}
+
+export interface RestartResult {
+  ok: boolean
+  supervisor?: string
+  reason?: string
+}

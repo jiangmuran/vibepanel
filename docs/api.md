@@ -551,9 +551,26 @@ element, not a path.
 ### `GET /api/settings/hooks`
 ### `POST /api/settings/hooks`
 ### `DELETE /api/settings/hooks`
+### `POST /api/settings/restart`
+### `GET /api/settings/tune`
+### `POST /api/settings/tune`
 ### `GET /api/settings/tokens`
 ### `POST /api/settings/tokens`
 ### `DELETE /api/settings/tokens/{tokenID}`
+
+`POST /api/settings/restart` stops the panel and lets whatever supervises it
+start a new one. It answers `202` before going anywhere, so the browser knows to
+start polling; the sessions are untouched, because tmux owns them and the panel
+is only a client. On a machine where nothing would restart it -- someone running
+the binary from a terminal -- it answers `409` with `{"reason":"unsupervised"}`
+rather than stopping.
+
+`GET /api/settings/tune` reports the settings the panel offers to change in
+`~/.claude/settings.json` beyond hooks: what leaves the machine, and what the
+agent writes into your git history. Each row carries the key, what it does in
+both languages, the value on disk and the value that would be written. `POST`
+writes them, copying the file beside itself first and touching nothing else in
+it. Both are the same list `vibepanel tune claude` prints.
 
 `POST /api/settings/hooks` merges the state-reporting hooks into the agent's own
 configuration file, backing it up first and tagging every entry so removing them

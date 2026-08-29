@@ -1361,3 +1361,115 @@ func TestRespawnKeepsTheSessionEnvironment(t *testing.T) {
 		time.Sleep(25 * time.Millisecond)
 	}
 }
+
+// A session's command starts with the person's shell configuration loaded.
+//
+// tmux execs a `new-session` command directly, with the environment the
+// *server* was started in. Under systemd that is the unit's: PATH is
+// /usr/bin:/bin and nothing the person's shell would have added is there. So
+// nvm, asdf, mise, pyenv and rustup -- all of which work by putting a shim
+// directory on PATH from a file the shell reads -- were invisible, and `claude`
+// was either not found or was a different build than the one the same command
+// finds in a terminal on the same machine.
+//
+// The tell was that a pane with *no* command already worked, because that is
+// tmux's default shell. A scratch terminal and an agent session had two
+// different environments and the scratch terminal was the correct one.
+//
+// The marker goes in four files because which one a login shell reads is the
+// shell's business: bash takes .bash_profile and falls back to .profile, sh and
+// dash take .profile, zsh takes .zprofile and .zshrc.
+func TestASessionsCommandSeesTheLoginEnvironment(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+
+	home := t.TempDir()
+	for _, f := range []string{".profile", ".bash_profile", ".zprofile", ".zshrc"} {
+		if err := os.WriteFile(filepath.Join(home, f),
+			[]byte("export VP_FROM_PROFILE=yes\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("HOME", home)
+
+	out := filepath.Join(home, "seen")
+	name := "vp_loginenv"
+	if err := c.Create(ctx, CreateOptions{
+		Name: name, Dir: home,
+		// `sh -c` and not a bare command, so this reads the environment it was
+		// given rather than needing a fixture binary. The wrapping is still
+		// under test: without it this sh runs with the server's environment
+		// and writes an empty line.
+		Command: []string{"sh", "-c", "printf '%s' \"${VP_FROM_PROFILE:-MISSING}\" > " + out + "; sleep 5"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Kill(ctx, name) })
+
+	var got []byte
+	for i := 0; i < 60; i++ {
+		if b, err := os.ReadFile(out); err == nil && len(b) > 0 {
+			got = b
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if string(got) != "yes" {
+		t.Errorf("the command saw VP_FROM_PROFILE=%q, want \"yes\"\n"+
+			"the login shell's configuration did not run before it", string(got))
+	}
+}
+
+// The argv survives the wrapping exactly, including the parts a shell would
+// otherwise treat as syntax.
+//
+// This is the half that is a security property rather than a convenience: the
+// wrapping builds a single command *string* for `sh -c`, so an argument
+// containing a semicolon, a `$` or a quote is one word if it is quoted
+// correctly and a second command if it is not. Session titles and project
+// paths come from people.
+func TestTheWrappedArgvIsNotReinterpreted(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	out := filepath.Join(dir, "argv")
+
+	// A writer that prints its own arguments, one per line.
+	script := filepath.Join(dir, "echoargs")
+	if err := os.WriteFile(script,
+		[]byte("#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > \""+out+"\"\nsleep 5\n"),
+		0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"it's", "a b", "$HOME; touch /tmp/vp-should-not-exist", "*", "back\\slash"}
+	name := "vp_argv"
+	if err := c.Create(ctx, CreateOptions{
+		Name: name, Dir: dir,
+		Command: append([]string{script}, want...),
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Kill(ctx, name) })
+
+	var lines []string
+	for i := 0; i < 60; i++ {
+		if b, err := os.ReadFile(out); err == nil && len(b) > 0 {
+			lines = strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("got %d arguments, want %d: %q", len(lines), len(want), lines)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("argument %d = %q, want %q", i, lines[i], want[i])
+		}
+	}
+	if _, err := os.Stat("/tmp/vp-should-not-exist"); err == nil {
+		os.Remove("/tmp/vp-should-not-exist")
+		t.Error("the argument ran as a command; the quoting is broken")
+	}
+}

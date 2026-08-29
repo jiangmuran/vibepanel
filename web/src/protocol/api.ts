@@ -28,6 +28,8 @@ import type {
   Webhook,
   WebhookTest,
   UpdateResult,
+  TuneStatus,
+  RestartResult,
 } from './wire'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -212,6 +214,20 @@ export const api = {
   /** Which agent's configuration to edit. The server refuses anything else
    *  rather than guessing, because the answer decides which file in the user's
    *  home directory gets written. */
+  /** What the panel would change in ~/.claude/settings.json beyond hooks. */
+  tuneStatus: () => request<TuneStatus>('/api/settings/tune'),
+  /** Writes them. Answers with the comparison as it was *before* the write. */
+  tuneApply: () => request<TuneStatus>('/api/settings/tune', { method: 'POST' }),
+
+  /**
+   * Stops the panel so its supervisor starts a new one.
+   *
+   * 409 with `reason: "unsupervised"` when nothing would: the caller has to
+   * handle that, because on that machine the button is "stop" and the tab it
+   * was clicked in is about to go dark.
+   */
+  restartPanel: () => request<RestartResult>('/api/settings/restart', { method: 'POST' }),
+
   installHooks: (agent: HookAgent = 'claude') =>
     request<HookStatus>(`/api/settings/hooks?agent=${agent}`, { method: 'POST' }),
 

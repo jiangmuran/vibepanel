@@ -96,6 +96,29 @@ exit 0
 EOF
 chmod +x "$SCTL"
 
+# sudo that wants a password.
+#
+# `sudo -n true` failing means two different things -- a password is needed, or
+# this account is not in sudoers -- and the installer could not tell them apart
+# until the first privileged write blew up mid-install. Neither case can be
+# produced on a machine where sudo is passwordless, which is every machine this
+# is developed on.
+FAKESUDO="$WORK/fake-sudo"
+cat > "$FAKESUDO" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >> "$WORK/sudo.log"
+case "\$1" in
+  # Never passwordless: this stub exists to be the sudo that asks.
+  -n) exit 1 ;;
+  # `sudo -v` is where the password would be typed, and where an account that
+  # is not in sudoers finds out.
+  -v) [ -e "$WORK/sudo-refuses" ] && exit 1 || exit 0 ;;
+esac
+shift 0
+"\$@"
+EOF
+chmod +x "$FAKESUDO"
+
 # launchctl, same shape. `print gui/<uid>/<label>` is how the installer asks
 # whether the agent is loaded, and it is the difference between bootstrap and
 # kickstart -k.
@@ -180,6 +203,8 @@ newhome() {
   # nothing leaks from the block before -- which it did, once, and made an
   # assertion about the no-root path pass for a run that had root all along.
   ROOT_OVERRIDE="$ROOTCMD"
+  SUDO_OVERRIDE=
+  rm -f "$WORK/sudo-refuses" "$WORK/sudo.log"
   # `--lang en` on every run unless a block clears it.
   #
   # The language question is asked whenever there is somebody to ask -- a
@@ -240,6 +265,7 @@ run() {
       XDG_RUNTIME_DIR="$XDG_OVERRIDE" \
       VIBEPANEL_ROOT_CMD="$ROOT_OVERRIDE" \
       VIBEPANEL_CLAUDE_BIN="$CLAUDE_OVERRIDE" \
+      ${SUDO_OVERRIDE:+VIBEPANEL_SUDO="$SUDO_OVERRIDE"} \
       ./deploy/install.sh $lang "$@" <"$input" >"$LOG" 2>&1 )
   RC=$?
 }
@@ -881,6 +907,96 @@ if command -v script >/dev/null 2>&1; then
   [ -f "$(SYSU)" ] && ok "and it installed what was chosen" || fail "the pty run installed nothing"
 else
   echo "[--  ] no script(1) here; the terminal detection was not exercised"
+fi
+
+# ── sudo that wants a password ────────────────────────────────────────────
+#
+# A pty as well: sudo-ask is only reached when stdin is a terminal, which is
+# the guard against hanging on a password prompt in a pipeline.
+echo "==> the system service says it will ask for a password, before it is chosen"
+if command -v script >/dev/null 2>&1; then
+  pty_run() { # pty_run <answers>
+    PTY_LOG="$WORK/pty.log"
+    printf '%b' "$1" | script -qec "cd '$REL' && HOME='$HOME_DIR' \
+      VIBEPANEL_DESTDIR='$HOME_DIR/root' VIBEPANEL_SYSTEMCTL='$SCTL' \
+      VIBEPANEL_LAUNCHCTL='$LCTL' VIBEPANEL_PLATFORM=linux \
+      VIBEPANEL_PKG_RUNNER='$PKGREC' VIBEPANEL_CLAUDE_BIN=none \
+      VIBEPANEL_SUDO='$FAKESUDO' ./deploy/install.sh --lang en" /dev/null \
+      > "$PTY_LOG" 2>&1
+  }
+
+  newhome
+  pty_run '1\nn\ny\n'   # system service, do not start, proceed
+  has "$PTY_LOG" "stops once to ask for your password" \
+    && ok "the cost of choosing 1 is on the same screen as the choice" \
+    || fail "the password was not mentioned where the choice is made"
+  SAIDLINE="$(grep -n "stops once to ask" "$PTY_LOG" | head -1 | cut -d: -f1)"
+  PLANLINE="$(grep -n "about to:" "$PTY_LOG" | head -1 | cut -d: -f1)"
+  [ -n "$SAIDLINE" ] && [ "$SAIDLINE" -lt "${PLANLINE:-999}" ] \
+    && ok "and before the plan, not in it" \
+    || fail "it was only mentioned in the plan (line $SAIDLINE vs $PLANLINE)"
+  [ -f "$(SYSU)" ] && ok "sudo answered, so the system unit went in" \
+    || fail "the system install did not happen"
+
+  echo "==> an account that is not in sudoers finds out before anything is written"
+  newhome
+  : > "$WORK/sudo-refuses"
+  pty_run '1\nn\ny\n'
+  has "$PTY_LOG" "sudo would not have it" && ok "it says sudo refused" \
+    || fail "a refused sudo was not reported: $(tail -6 "$PTY_LOG" | tr -d '\r' | tr '\n' ' ')"
+  [ -f "$(SYSU)" ] && fail "it wrote a system unit with no root" || ok "no system unit"
+  [ -f "$(USRU)" ] && ok "and installed the user service instead" \
+    || fail "it fell back to nothing at all"
+  rm -f "$WORK/sudo-refuses"
+else
+  echo "[--  ] no script(1) here; the sudo-ask path was not exercised"
+fi
+
+# ── sudo that wants a password ────────────────────────────────────────────
+#
+# Needs a pty as well: sudo-ask is only reached when stdin is a terminal, which
+# is the guard against hanging on a password prompt in a pipeline.
+echo "==> the system service says it will ask for a password, before it is chosen"
+if command -v script >/dev/null 2>&1; then
+  pty_run() { # pty_run <answers>
+    PTY_LOG="$WORK/pty.log"
+    printf '%s' "$1" | script -qec "cd '$REL' && HOME='$HOME_DIR' \
+      VIBEPANEL_DESTDIR='$HOME_DIR/root' VIBEPANEL_SYSTEMCTL='$SCTL' \
+      VIBEPANEL_LAUNCHCTL='$LCTL' VIBEPANEL_PLATFORM=linux \
+      VIBEPANEL_PKG_RUNNER='$PKGREC' VIBEPANEL_CLAUDE_BIN=none \
+      VIBEPANEL_SUDO='$FAKESUDO' ./deploy/install.sh --lang en" /dev/null \
+      > "$PTY_LOG" 2>&1
+  }
+
+  newhome
+  # 1 language, 1 system service, n do not start, y proceed
+  pty_run '1\n1\nn\ny\n'
+  has "$PTY_LOG" "stops once to ask for your password" \
+    && ok "the cost of choosing 1 is on the same screen as the choice" \
+    || fail "the password was not mentioned where the choice is made: $(tr -d '\r' < "$PTY_LOG" | grep -A3 'How should' | tr '\n' ' ')"
+  # And it is said before the answer, not after it.
+  SAIDLINE="$(grep -n "stops once to ask" "$PTY_LOG" | head -1 | cut -d: -f1)"
+  PLANLINE="$(grep -n "about to:" "$PTY_LOG" | head -1 | cut -d: -f1)"
+  [ -n "$SAIDLINE" ] && [ "$SAIDLINE" -lt "${PLANLINE:-999}" ] \
+    && ok "and before the plan, not in it" \
+    || fail "it was only mentioned in the plan (line $SAIDLINE vs $PLANLINE)"
+  [ -f "$(SYSU)" ] && ok "sudo answered, so the system unit went in" \
+    || fail "the system install did not happen: $(tail -4 "$PTY_LOG" | tr -d '\r' | tr '\n' ' ')"
+
+  echo "==> an account that is not in sudoers finds out before anything is written"
+  newhome
+  : > "$WORK/sudo-refuses"
+  pty_run '1\n1\nn\ny\n'
+  has "$PTY_LOG" "sudo would not have it" \
+    && ok "it says sudo refused" \
+    || fail "a refused sudo was not reported: $(tail -6 "$PTY_LOG" | tr -d '\r' | tr '\n' ' ')"
+  [ -f "$(SYSU)" ] && fail "it wrote a system unit with no root" \
+    || ok "no system unit"
+  [ -f "$(USRU)" ] && ok "and installed the user service instead" \
+    || fail "it fell back to nothing at all"
+  rm -f "$WORK/sudo-refuses"
+else
+  echo "[--  ] no script(1) here; the sudo-ask path was not exercised"
 fi
 
 # ── the flags that were already documented ────────────────────────────────

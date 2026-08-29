@@ -38,10 +38,25 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/ws"
 )
 
+// errRestart asks the supervisor for a new process.
+//
+// 143 is the exit code, and it is chosen rather than convenient. systemd's
+// units declare `SuccessExitStatus=143`, so this is logged as a clean stop
+// rather than a crash, and `Restart=always` brings it back. launchd's
+// KeepAlive is `SuccessfulExit: false` -- it restarts a job only when it exits
+// *un*successfully -- so the same code has to be non-zero there. One number
+// satisfies both, and 0 would satisfy only systemd.
+var errRestart = errors.New("restart requested")
+
+const restartExitCode = 143
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return // the flag package already printed usage
+		}
+		if errors.Is(err, errRestart) {
+			os.Exit(restartExitCode)
 		}
 		fmt.Fprintln(os.Stderr, "vibepanel:", err)
 		os.Exit(1)
@@ -196,9 +211,15 @@ func cmdServe(args []string) error {
 		return fmt.Errorf("allow-from: %w", err)
 	}
 
+	// Buffered by one: the handler must not block on a restart that is already
+	// under way, and a second click while the first is shutting down is the
+	// same request.
+	restartCh := make(chan struct{}, 1)
+
 	srv := &httpapi.Server{
 		Cfg: a.cfg, DB: a.db, Tmux: a.tmux, Manager: mgr,
-		Hub: ws.NewHub(), Detector: sessionpkg.NewDetector(),
+		Restart: restartCh,
+		Hub:     ws.NewHub(), Detector: sessionpkg.NewDetector(),
 		Sampler: &sysmon.Sampler{DiskPath: a.cfg.DataDir},
 		Auth: &httpapi.Auth{
 			Throttle:       auth.NewThrottle(),
@@ -368,12 +389,22 @@ func cmdServe(args []string) error {
 		errCh <- httpServer.ListenAndServe()
 	}()
 
+	// The restart goes through the same door as SIGTERM.
+	//
+	// Not os.Exit from the handler: everything below this select is what makes
+	// a stop lossless -- the last capture of every pane, and detaching from
+	// tmux rather than killing it. A restart that skipped it would lose the
+	// scrollback since the last archive tick, which is the part somebody is
+	// most likely to want back.
+	restarting := false
 	select {
 	case err := <-errCh:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
 	case <-ctx.Done():
+	case <-restartCh:
+		restarting = true
 	}
 
 	// Shut the HTTP server down, then detach. Detaching is not the same as
@@ -396,6 +427,10 @@ func cmdServe(args []string) error {
 	// place to block forever.
 	srv.ArchiveAll(shutdownCtx)
 	mgr.DetachAll()
+	if restarting {
+		fmt.Println("\nrestarting; tmux sessions keep running")
+		return errRestart
+	}
 	fmt.Println("\nstopped; tmux sessions keep running")
 	return nil
 }

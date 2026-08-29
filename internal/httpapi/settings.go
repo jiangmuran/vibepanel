@@ -28,6 +28,9 @@ func (s *Server) registerSettingsRoutes(r chi.Router) {
 	r.Post("/settings/tokens", s.handleCreateToken)
 	r.Delete("/settings/tokens/{tokenID}", s.handleDeleteToken)
 	r.Post("/settings/hooks", s.handleHooksInstall)
+	r.Post("/settings/restart", s.handleRestart)
+	r.Get("/settings/tune", s.handleTuneStatus)
+	r.Post("/settings/tune", s.handleTuneApply)
 	r.Delete("/settings/hooks", s.handleHooksUninstall)
 }
 
