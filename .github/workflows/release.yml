@@ -66,8 +66,13 @@ jobs:
       - name: vet, gofmt, eslint, Go tests, frontend units
         run: make check
 
+      # Through its own shebang, not `sh`. The script is bash and uses
+      # `set -o pipefail`, which dash rejects outright -- and this ran green
+      # locally because Ubuntu's dash has grown pipefail while the runner's
+      # had not. Every other script in scripts/ is bash too, for the same
+      # reason install.sh is deliberately not.
       - name: build the archives
-        run: sh scripts/build-release.sh "${{ inputs.tag || github.ref_name }}"
+        run: ./scripts/build-release.sh "${{ inputs.tag || github.ref_name }}"
 
       # What the bootstrap installer verifies against. Written by the build
       # script; listed here so a change that stops producing it fails loudly
