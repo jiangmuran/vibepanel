@@ -86,6 +86,7 @@ unless `--migrate` is passed, which removes the other unit first.
 | `--password-file <path>` | read that account's password from a file |
 | `--password-stdin` | read it from standard input |
 | `--password-env <VAR>` | read it from an environment variable |
+| `--tune-claude` / `--no-tune-claude` | force the Claude Code question on or off |
 
 Without root the installer says so and installs the user service.
 
@@ -93,6 +94,30 @@ Without root the installer says so and installs the user service.
 command line is in the shell history and in `ps` while the installer runs. The
 flag is refused with its own exit status and a message saying which of the three
 alternatives to use.
+
+## Claude Code's own settings
+
+If there is a `claude` on `PATH` and somebody to ask, the installer offers to
+adjust `~/.claude/settings.json` as well. Seven keys, all of them about what
+leaves the machine or what the agent writes into your git history: session
+mirroring to claude.ai, whether Remote Control connects on its own, the commit
+and pull-request attribution, the `Claude-Session` link, the `Co-Authored-By`
+byline, and the billing header that carries the CLI's version.
+
+Each key is printed with its current value before the question, and the file is
+copied beside itself before anything is written. Nothing else in it is touched,
+including the hooks the panel installs there. Running it again changes nothing.
+
+It is never done in a run with nobody watching: `--yes` skips it, and
+`--tune-claude` is how a script asks for it anyway. Under `sudo` it is skipped
+with a line saying so, because `~/.claude` then means root's.
+
+The same thing outside the installer, at any time:
+
+```sh
+vibepanel tune claude            # print what it would change
+vibepanel tune claude --apply    # change it
+```
 
 ## Language
 

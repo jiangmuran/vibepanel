@@ -30,6 +30,7 @@ const Commands = `  serve      run the panel (the default with no command)
   project    add, list and remove projects
   session    create, list and kill sessions
   hook       install or remove the agent state reporter
+  tune       adjust another tool's settings (only Claude Code so far)
   service    status, start, stop, logs, token, upgrade, uninstall
   account    create the first account without the browser
   doctor     check tmux, the database, disk and isolation

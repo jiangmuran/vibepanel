@@ -76,6 +76,7 @@ func init() {
 		"session": cmdSession,
 		"doctor":  cmdDoctor,
 		"hook":    cmdHook,
+		"tune":    cmdTune,
 		"service": cmdService,
 		"account": cmdAccount,
 		"version": func([]string) error { fmt.Println("vibepanel", version.String()); return nil },

@@ -29,6 +29,9 @@ BIN_SRC="$SRC/../vibepanel"
 BIN_DIR="$HOME/.local/bin"
 ENV_FILE="$HOME/.config/vibepanel.env"
 WHO="${USER:-$(id -un)}"
+# Whether --tune-claude was said: yes, never, or unset (ask, when there is
+# somebody to ask and a claude to ask about).
+TUNE_CLAUDE_FLAG=
 
 # ── the overrides that exist only so this script can be tested ────────────
 #
@@ -66,6 +69,14 @@ WHO="${USER:-$(id -un)}"
 #                         of running it. A check that really runs `apt-get
 #                         install tmux` on the developer's machine is the thing
 #                         all of this exists to avoid.
+#   VIBEPANEL_CLAUDE_BIN  which claude to find, or the literal `none` for a
+#                         machine that has none. Without it the Claude Code
+#                         question appears on a developer's box and not on a
+#                         CI runner, so the interactive checks would consume a
+#                         different number of answers in the two places -- the
+#                         answers after it shift by one and the plan gets
+#                         whatever the next line happens to be. That is how
+#                         this was found.
 #
 # None of them is documented outside this comment. They are not configuration.
 DESTDIR="${VIBEPANEL_DESTDIR:-}"
@@ -222,6 +233,14 @@ mstr() { # mstr <key>  -> MS_EN / MS_ZH; non-zero if there is no such key
                                 than leave two panels on one tmux socket.
       --skip-tmux               do not check for tmux, and never offer to
                                 install or upgrade it
+      --tune-claude             adjust Claude Code'"'"'s own settings.json as well:
+                                what leaves the machine, and what the agent
+                                writes into your git history. Every key is
+                                printed before anything is written and the file
+                                is copied beside itself first. Without this it
+                                is offered only when there is somebody to ask
+                                and a claude on PATH -- never under --yes.
+      --no-tune-claude          do not offer it at all
 
   The panel'"'"'s first account. Without any of these, the panel prints a one-time
   setup token at startup and you create the account in the browser -- that path
@@ -274,6 +293,12 @@ systemctl --user versus launchctl.'
                                 安装程序会拒绝，而不是留下两个面板共用
                                 一个 tmux socket。
       --skip-tmux               不检查 tmux，也不提出安装或升级
+      --tune-claude             顺带调整 Claude Code 自己的 settings.json：哪些东西
+                                会离开这台机器，以及 agent 往你的 git 历史里写什么。
+                                写之前会逐条列出，并先把原文件复制到旁边。不加这个
+                                参数时，只有在有人可问、且 PATH 上有 claude 的情况
+                                下才会问一次 —— --yes 下永远不问。
+      --no-tune-claude          完全不提这件事
 
   面板的第一个账号。一个都不给时，面板会在启动时打印一次性的 setup token，
   你在浏览器里创建账号 —— 那条路没有变，仍然能用。
@@ -622,6 +647,28 @@ configured in it, and there is no copy anywhere.'
            (the panel will then not print a setup token at startup)'
       MS_ZH='  创建     面板的第一个账号，用户名 %1$s
            （那样面板启动时就不会再打印 setup token）' ;;
+    claude.found)
+      MS_EN='Claude Code is here: %1$s'
+      MS_ZH='这台机器上有 Claude Code：%1$s' ;;
+    claude.what)
+      MS_EN='Its settings.json can be adjusted too. These decide what leaves the
+machine and what the agent writes into your git history:'
+      MS_ZH='它的 settings.json 也可以一并调整。下面这些决定了哪些东西会离开这台
+机器，以及 agent 往你的 git 历史里写什么：' ;;
+    claude.cannot)
+      MS_EN='  skipped  Claude Code settings: could not read them. Nothing was changed.'
+      MS_ZH='  跳过     Claude Code 设置：读不出来。什么都没有改。' ;;
+    claude.ask)
+      MS_EN='Apply these to Claude Code?'
+      MS_ZH='要给 Claude Code 应用这些吗？' ;;
+    claude.asroot)
+      MS_EN='  skipped  Claude Code settings: this is running as root and the file
+           belongs to %1$s. Run `vibepanel tune claude --apply` as %1$s.'
+      MS_ZH='  跳过     Claude Code 设置：现在是以 root 运行，而这个文件是 %1$s 的。
+           请以 %1$s 的身份运行 `vibepanel tune claude --apply`。' ;;
+    plan.claude)
+      MS_EN='  adjust   %1$s (copied beside itself first)'
+      MS_ZH='  调整     %1$s（会先把原文件复制到旁边）' ;;
     plan.port)
       MS_EN='  WARNING: something is already listening on port %1$s, so the panel will
            start, fail to bind and be restarted on a three-second loop.
@@ -905,6 +952,9 @@ while [ $# -gt 0 ]; do
     --system) KIND=system; ASKED_SYSTEM=yes ;;
     --migrate) MIGRATE=yes ;;
     --skip-tmux) DO_TMUX=no ;;
+    # Off unless said, including under --yes. See the section it controls.
+    --tune-claude) TUNE_CLAUDE_FLAG=yes ;;
+    --no-tune-claude) TUNE_CLAUDE_FLAG=never ;;
     --username) shift; [ $# -gt 0 ] || { me arg.username; exit 2; }; ACCT_USER="$1" ;;
     --username=*) ACCT_USER="${1#--username=}" ;;
     --password-stdin) ACCT_STDIN=yes ;;
@@ -1500,6 +1550,55 @@ if [ "$RUNNING" = no ] && port_in_use "$PORT"; then
   PORT_TAKEN=yes
 fi
 
+# ── Claude Code, if it is here ────────────────────────────────────────────
+#
+# The panel already offers to write this person's ~/.claude/settings.json --
+# that is what the hooks installer does, and it is how the panel learns what an
+# agent is doing. This asks about the rest of the file: a handful of settings
+# that decide what leaves the machine and what ends up in their git history.
+#
+# Asked here, above the plan, for the same reason tmux is: the plan is the last
+# screen before anything is touched and everything on it has to be decided by
+# then.
+#
+# Off by default at every non-interactive call site. This edits a file that
+# belongs to another tool, and a `--yes` run -- CI, a reinstall script, the
+# release check -- has nobody reading the summary. `--tune-claude` turns it on
+# for those.
+TUNE_CLAUDE=no
+CLAUDE_BIN="${VIBEPANEL_CLAUDE_BIN:-$(command -v claude 2>/dev/null || true)}"
+# An `if`, not `[ ... ] && VAR=`: under `set -e` the second form exits the
+# script whenever the test is false, which is the common case.
+if [ "$CLAUDE_BIN" = none ]; then CLAUDE_BIN=; fi
+if [ "$TUNE_CLAUDE_FLAG" = never ]; then
+  TUNE_CLAUDE=no
+elif [ "$TUNE_CLAUDE_FLAG" = yes ]; then
+  TUNE_CLAUDE=yes
+elif [ -n "$CLAUDE_BIN" ] && [ "$INTERACTIVE" = yes ]; then
+  echo
+  m claude.found "$CLAUDE_BIN"
+  m claude.what
+  echo
+  # The list is the binary's, not this script's, and it is printed before the
+  # question rather than described by it. Seven keys paraphrased in a sentence
+  # is not something anybody can say yes to, and a paraphrase kept in this file
+  # would drift from the keys it names -- which is the failure that would
+  # matter here, because the summary is the whole consent.
+  # If the list cannot be produced, the question is not asked. A yes to
+  # "apply these?" with nothing above it saying which is consent to a blank
+  # page, and the reasons this fails -- an older binary with no `tune`, a
+  # settings.json that is not valid JSON -- are all reasons not to write to
+  # the file anyway.
+  if "$BIN_SRC" tune claude --lang "$VP_LANG" --asking; then
+    echo
+    if yesno "$(m claude.ask)" n; then
+      TUNE_CLAUDE=yes
+    fi
+  else
+    m claude.cannot
+  fi
+fi
+
 # ── the plan, before anything happens ─────────────────────────────────────
 echo
 m plan.head
@@ -1539,6 +1638,9 @@ fi
 if [ -n "$ACCT_USER" ]; then
   m plan.account "$ACCT_USER"
 fi
+if [ "$TUNE_CLAUDE" = yes ]; then
+  m plan.claude "$HOME/.claude/settings.json"
+fi
 if [ "$PORT_TAKEN" = yes ]; then
   echo
   m plan.port "$PORT" "$ENV_FILE"
@@ -1576,6 +1678,28 @@ if ! "$BIN_DIR/vibepanel" version >/dev/null 2>&1; then
   echo >&2
   me err.exec "$BIN_DIR/vibepanel" "$HOME" "$(uname -m)"
   exit 1
+fi
+
+# Claude Code's settings, if that was the answer.
+#
+# Run through the installed binary rather than $BIN_SRC, so what writes the
+# file is the build that is now on the machine -- the same reason `version` is
+# checked above rather than trusted.
+#
+# `id -u` and not `$KIND`, because the question is whose home directory
+# ~/.claude means. Under sudo this script is root and $HOME may be root's, and
+# writing root's Claude Code settings is not what anybody answering that
+# question meant. It is skipped with a line saying so, rather than guessed at:
+# the person can run one command afterwards, and a wrong guess here edits a
+# file nobody looked at.
+if [ "$TUNE_CLAUDE" = yes ]; then
+  if [ "$(id -u)" = 0 ] && [ "$WHO" != root ]; then
+    m claude.asroot "$WHO"
+  else
+    echo
+    "$BIN_DIR/vibepanel" tune claude --apply --lang "$VP_LANG" || true
+    echo
+  fi
 fi
 
 # Never overwrite the env file: it is the one file here the user edits, and it

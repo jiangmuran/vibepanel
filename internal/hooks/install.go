@@ -77,14 +77,33 @@ func Inspect(scriptPath string) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
+	// Everything that does not depend on the Claude settings file is filled in
+	// here, in the literal, and nothing below adds a field.
+	//
+	// Because there are two returns and the early one is the fresh install --
+	// no ~/.claude/settings.json, which is also every user who runs Codex or
+	// opencode and not Claude Code. Anything assigned after `readSettings`
+	// fails is silently absent for exactly those people. It happened to
+	// `Events`, which went out as `null`; the comment below records that. It
+	// then happened again to OpencodePath and OpencodeInstalled, added later at
+	// the bottom of the function, so the settings page drew a blank path and
+	// said opencode was not installed while its plugin was in place and
+	// reporting -- a false claim about hooks, which red line 3 is about,
+	// arriving with no error anywhere.
+	//
+	// Pinned by TestOpencodeIsReportedWithNoClaudeSettingsFile.
+	opencodePath, _ := OpencodePluginPath()
+
 	st := Status{
-		SettingsPath:   settingsPath,
-		ScriptPath:     scriptPath,
-		Snippet:        ClaudeSettings(scriptPath),
-		CodexSnippet:   CodexNotify(scriptPath),
-		CodexPath:      codexPath,
-		CodexInstalled: codexInstalled(codexPath),
-		Events:         []string{},
+		SettingsPath:      settingsPath,
+		ScriptPath:        scriptPath,
+		Snippet:           ClaudeSettings(scriptPath),
+		CodexSnippet:      CodexNotify(scriptPath),
+		CodexPath:         codexPath,
+		CodexInstalled:    codexInstalled(codexPath),
+		OpencodePath:      opencodePath,
+		OpencodeInstalled: OpencodeInstalled(),
+		Events:            []string{},
 		// Empty here rather than normalised at the end, because there are two
 		// returns and the early one -- no settings file, which is the state of
 		// every fresh install -- skipped the normalisation and sent `null`.
@@ -116,10 +135,6 @@ func Inspect(scriptPath string) (Status, error) {
 	// twenty times: one call cannot tell a sort from a lucky shuffle.
 	sort.Strings(st.Events)
 	st.Installed = len(st.Events) > 0
-	if p, perr := OpencodePluginPath(); perr == nil {
-		st.OpencodePath = p
-	}
-	st.OpencodeInstalled = OpencodeInstalled()
 	return st, nil
 }
 
@@ -140,9 +155,7 @@ func InstallClaude(scriptPath string) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
-		return Status{}, fmt.Errorf("hooks: create %s: %w", filepath.Dir(settingsPath), err)
-	}
+	// The directory is writeSettings' business now; see the note there.
 
 	doc, err := readSettings(settingsPath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -272,6 +285,17 @@ func writeSettings(path string, doc map[string]any) error {
 	b := encode(doc)
 	if b == nil {
 		return fmt.Errorf("hooks: encode settings for %s", path)
+	}
+
+	// The directory, here rather than in each caller.
+	//
+	// It was in InstallClaude only, so the next function to write this file
+	// worked on every machine that had ever run Claude Code and failed on a
+	// fresh one -- with `open ...settings.json.vibepanel.tmp: no such file or
+	// directory`, from a temporary path the person never asked about. That is
+	// the whole of the installer's audience on a new box.
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("hooks: create %s: %w", filepath.Dir(path), err)
 	}
 
 	// Keep the mode the user's file already had. Forcing 0600 would tighten it

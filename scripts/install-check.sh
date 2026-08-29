@@ -171,6 +171,15 @@ newhome() {
   # nothing leaks from the block before -- which it did, once, and made an
   # assertion about the no-root path pass for a run that had root all along.
   ROOT_OVERRIDE="$ROOTCMD"
+  # No Claude Code, unless a block says otherwise.
+  #
+  # Default `none` rather than "whatever this machine has", because otherwise
+  # the Claude Code question appears on a developer's box and not on a CI
+  # runner. Every interactive block below feeds a fixed list of answers on
+  # stdin, so one extra question consumes the answer meant for the next one and
+  # the plan is accepted by a line that was meant to decline it -- which passed
+  # on CI and failed here.
+  CLAUDE_OVERRIDE=none
   PLAT_OVERRIDE=linux
   TMUX_OVERRIDE=tmux
   PKG_OVERRIDE=
@@ -206,6 +215,7 @@ run() {
       VIBEPANEL_INIT_DIR="$INIT_OVERRIDE" \
       XDG_RUNTIME_DIR="$XDG_OVERRIDE" \
       VIBEPANEL_ROOT_CMD="$ROOT_OVERRIDE" \
+      VIBEPANEL_CLAUDE_BIN="$CLAUDE_OVERRIDE" \
       ./deploy/install.sh "$@" <"$input" >"$LOG" 2>&1 )
   RC=$?
 }
@@ -691,6 +701,93 @@ has "$LOG" "How should the panel run?" \
   && fail "it offered a choice one of whose answers cannot be carried out" \
   || ok "with no root there is one answer, and it is not asked as a question"
 [ -f "$(USRU)" ] && ok "the user unit was installed" || fail "nothing was installed"
+
+# ── Claude Code's own settings ────────────────────────────────────────────
+#
+# The installer writes a file belonging to another tool, so the branch that
+# matters most is the one where it does not.
+
+echo "==> Claude Code: not asked about when there is no claude"
+newhome
+printf '1\ny\n' > "$WORK/answers"
+run --stdin "$WORK/answers" --interactive
+has "$LOG" "Claude Code" \
+  && fail "it brought up Claude Code on a machine that has none" \
+  || ok "no claude, no question"
+
+echo "==> Claude Code: never under --yes, even when it is installed"
+newhome
+CLAUDE_OVERRIDE="$WORK/fake-claude"
+: > "$WORK/fake-claude"
+run --yes --user
+has "$LOG" "Claude Code" \
+  && fail "it touched another tool's config in a run with nobody watching" \
+  || ok "--yes does not edit ~/.claude"
+[ -e "$HOME_DIR/.claude/settings.json" ] \
+  && fail "it wrote settings.json under --yes" \
+  || ok "and wrote nothing there"
+
+echo "==> Claude Code: the list is asked for before the question"
+newhome
+CLAUDE_OVERRIDE="$WORK/fake-claude"
+printf '1\nn\nn\ny\n' > "$WORK/answers"   # user service, do not start, no to claude, yes to the plan
+run --stdin "$WORK/answers" --interactive
+# What the keys are is internal/hooks' business and is pinned there. What this
+# checks is that the script asks for them, and asks *before* the question --
+# the stub in $REL is a shell script that logs its argv, so the list itself
+# cannot come from here.
+grep -q '^tune claude --lang en --asking$' "$WORK/binary.log" \
+  && ok "the dry run is asked for" \
+  || fail "it asked without asking the binary what it would write: $(cat "$WORK/binary.log")"
+grep -q -- '--apply' "$WORK/binary.log" \
+  && fail "it applied after being told not to: $(cat "$WORK/binary.log")" \
+  || ok "declining applies nothing"
+
+echo "==> Claude Code: accepted, and the language goes with it"
+newhome
+CLAUDE_OVERRIDE="$WORK/fake-claude"
+LC_OVERRIDE=zh_CN.UTF-8
+printf '1\nn\ny\ny\n' > "$WORK/answers"   # user service, do not start, yes to claude, yes to the plan
+run --stdin "$WORK/answers" --interactive
+[ $RC -eq 0 ] && ok "exits 0" || fail "exited $RC"
+grep -q '^tune claude --apply --lang zh$' "$WORK/binary.log" \
+  && ok "applied, and in the language the installer is speaking" \
+  || fail "not applied as expected: $(cat "$WORK/binary.log")"
+
+echo "==> Claude Code: nothing is asked when the list cannot be produced"
+newhome
+CLAUDE_OVERRIDE="$WORK/fake-claude"
+# A binary that refuses `tune`, which is what an older one does.
+cat > "$REL/vibepanel" <<EOF
+#!/bin/sh
+echo "\$*" >> "$WORK/binary.log"
+[ "\$1" = version ] && echo "vibepanel v1.0.0"
+[ "\$1" = tune ] && exit 2
+exit 0
+EOF
+chmod +x "$REL/vibepanel"
+printf '1\nn\ny\ny\n' > "$WORK/answers"
+run --stdin "$WORK/answers" --interactive
+has "$LOG" "could not read them" && ok "it says it skipped them" \
+  || fail "a binary that cannot tune said nothing about it"
+grep -q -- '--apply' "$WORK/binary.log" \
+  && fail "it applied anyway, having shown nothing" \
+  || ok "and applied nothing"
+stub_version v1.0.0
+
+echo "==> Claude Code: --tune-claude works without a terminal, --no-tune-claude refuses"
+newhome
+CLAUDE_OVERRIDE="$WORK/fake-claude"
+run --yes --user --tune-claude
+grep -q -- '--apply' "$WORK/binary.log" \
+  && ok "--tune-claude applies with nobody to ask" \
+  || fail "--tune-claude did nothing: $(cat "$WORK/binary.log")"
+newhome
+CLAUDE_OVERRIDE="$WORK/fake-claude"
+printf '1\nn\ny\ny\n' > "$WORK/answers"
+run --stdin "$WORK/answers" --interactive --no-tune-claude
+has "$LOG" "Claude Code" && fail "--no-tune-claude asked anyway" \
+  || ok "--no-tune-claude does not bring it up"
 
 echo "==> interactive: declining the plan changes nothing"
 newhome

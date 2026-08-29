@@ -17413,3 +17413,81 @@ and the table below is worse for it in three places.
 `features.md` came out six lines longer than it went in. The four corrections to
 the template table cost more lines than the rhetoric was using, which is the
 answer to what the length of that page was for.
+
+## The installer offers to tune Claude Code, and the summary is the consent
+
+`~/.claude/settings.json` was already a file this project writes: the hooks
+installer merges four events into it, backs it up first and can take them out
+again. This adds the rest of the file — seven keys about what leaves the machine
+and what the agent writes into somebody's git history.
+
+The keys were checked against the installed CLI rather than against their own
+plausibility, and that mattered. `json.schemastore.org`'s copy of the settings
+schema has 142 top-level keys and is missing two of these; the 2.1.251 binary
+has both. Going the other way, an agent asked to verify them reported all three
+of the ones handed to it as confirmed, citing `~/.claude/settings.json` lines 5
+and 91 — which were the lines that had been written into that file ten minutes
+earlier, by this session, for that purpose. Circular, and it would have passed
+review. The schema and the binary are two independent sources; the file you just
+wrote is not a source at all.
+
+There is **no cache-busting nonce setting** in Claude Code. `DISABLE_PROMPT_CACHING`,
+`CLAUDE_CODE_PROMPT_CACHE_TTL` and `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL` exist;
+nothing injects a random value. `CLAUDE_CODE_ATTRIBUTION_HEADER=0` is a real
+env var and suppresses the `anthropic-billing-header` carrying `cc_version` and
+`cc_entrypoint` — which is what it does, and is what the description says. The
+Tweak's comment says so too, because the next person to read that list will be
+looking for the cache knob.
+
+Three things about the shape.
+
+**The descriptions live in Go, next to the keys.** `deploy/install.sh` holds
+every sentence a person reads while deciding something, in both languages, and
+by that rule these belonged in its table. They are in `internal/hooks/tune.go`
+instead, both languages on the `Tweak`, because a description in the table would
+sit two thousand lines from the key it describes and would drift from it. What
+that costs is a second bilingual-pair check —
+`TestEveryTweakSpeaksBothLanguages`, which is the string table's rule restated
+for the one place the string table cannot see.
+
+**The list is printed before the question, and the question is not asked if the
+list cannot be printed.** The dry run was `2>/dev/null || true` at first, which
+produces a screen saying "Apply these to Claude Code?" with nothing above it
+naming a single key — consent to a blank page. An older binary with no `tune`
+subcommand does exactly that.
+
+**`--asking` exists for one sentence.** The dry run ends "Add --apply to write
+it", which is right at a shell prompt and wrong one line above "Apply these?":
+two mechanisms for one action, one of them a command nobody was asked to run.
+
+Four things went wrong on the way, and three of them were found by the checks
+rather than by reading.
+
+`writeSettings` never created `~/.claude`. `InstallClaude` did it itself, so the
+hooks path worked on every machine that had ever run Claude Code and this new
+caller failed on a fresh one — with `open …settings.json.vibepanel.tmp: no such
+file or directory`, naming a temporary path nobody asked about. It is in
+`writeSettings` now, which is the one place every write goes through.
+
+`Inspect` has two returns and the early one is the fresh install — no
+`~/.claude/settings.json`. The comment on `Status.Events` records that exact
+trap: a field normalised after the early return, sending `null` for a year
+because this machine has a settings file and never took the branch. `OpencodePath`
+and `OpencodeInstalled` were then added at the bottom of the same function,
+below the same return. So on a machine with no Claude Code settings — every
+fresh install, and anyone running Codex or opencode and not Claude Code — the
+settings page drew a blank path and said opencode was not installed while its
+plugin sat there reporting. Red line 3 running backwards. Everything that does
+not depend on the settings file is in the composite literal now, and nothing
+below it assigns a field.
+
+`[ "$CLAUDE_BIN" = none ] && CLAUDE_BIN=` under `set -euo pipefail` exits the
+script whenever the test is false, which is the common case.
+
+And the new question ate an answer. Every interactive block in
+`scripts/install-check.sh` feeds a fixed list on stdin, so one more question
+shifts everything after it by one and the plan is accepted by the line that was
+meant to decline it. It also meant the check behaved differently on a machine
+with `claude` installed than on one without. `VIBEPANEL_CLAUDE_BIN` defaults to
+`none` in the harness for that reason, and six blocks drive the branch
+deliberately.
