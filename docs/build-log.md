@@ -17019,3 +17019,129 @@ project and a sparkline with a shape rather than a flat line.
 **The bottom strip's session ran `exec sh` after printing.** A shell draws a
 prompt, and whatever repaints after that left the strip black in every
 screenshot. It sleeps instead.
+
+## Twelve sections in one scroll
+
+> 重构设置页面 现在的设置页面太长太恶心了
+
+`Settings.tsx` was 828 lines drawing twelve `<Section>`s down one column:
+notifications, API tokens, share links, language, webhooks, launch profiles,
+password, update, status, state reporting, passkeys, activity. Four of them
+were whole components of their own. Finding any one of them meant reading past
+the other eleven.
+
+It is a rail now — five names, one group on screen — and the file is 230 lines
+with the groups in `web/src/components/settings/`.
+
+### The five, and the two places the obvious grouping did not survive
+
+The starting point was the obvious one: this browser, the account, what
+sessions do, what leaves the machine, the installation. Three of those five
+came through unchanged. Two did not, and both failures were about the word
+somebody would go looking for rather than about what the thing is.
+
+**Notifications is one group, not two halves in two.** 「通知」 — the permission
+this browser holds — and 「推送通知」 — a webhook to a phone that is not looking
+at the panel — were four sections apart. They are not the same mechanism, and
+anybody arriving at this dialog to "turn on notifications" does not know that:
+they know the question, and the question has two answers. One group, and the
+browser half is titled 「这个浏览器」 so the group's own name is not repeated
+inside it.
+
+**The activity log is under Account, not under the installation.** Its rows are
+`login`, `login.failed`, `password.changed`, `setup.completed` and the profile,
+share and token edits. The question it answers is "has anybody else been in
+here", which is the question somebody already has when they arrive to change a
+password.
+
+**And the language switch is in none of them.** It sits in the dialog's header,
+always on screen. Somebody who needs it cannot read the rail — that is why they
+are looking for it — so it may not be behind a word they would have to
+translate first. It was also the only tenant of a "this browser" group, and a
+rail item holding one segmented control costs more than it carries.
+
+The five: Sessions (launch profiles, state reporting), Notifications (this
+browser, push), Sharing (the read-only links and the wall's board), Account
+(password, passkeys, API tokens, activity), This panel (update, status) — the
+last one 「本机」 rather than 「面板」, because 面板 is what the side panel is
+called four inches to the left of this dialog.
+
+The test a grouping has to pass is that somebody can guess which name their
+thing is under without reading the other four, and the rail makes a wrong guess
+cost one press rather than a hunt: all five names are readable at once, at
+every width.
+
+### Callers name a section, and nothing outside groups.ts names a group
+
+Two things open this dialog and one of them is pointing at something: the
+sidebar's "states are being guessed" notice has to arrive at state reporting.
+So `App` holds a `SettingsSection | null` rather than a boolean, the notice asks
+for `'reporting'`, the gear asks for `SETTINGS_HOME`, and `groups.ts` decides
+which rail item that is. Nothing else in the panel names a group at all, which
+is what makes moving a section between groups a decision rather than a set of
+links that quietly point somewhere else.
+
+`settings/wiring.test.ts` is what holds that up: it resolves the dialog's
+component tree from `Settings.tsx` down and checks the sections each rail item
+actually renders against the map in `groups.ts`. The first version of it grepped
+each file for `<Section id="…">` and asked which file it was in — which says a
+section is *written*, not that anything renders it. Deleting `<AuditSection />`
+from the account group left the activity log declared, unreachable, and
+reported by nothing. That mutant is the reason the test walks components.
+
+### The rail on a phone
+
+The same five buttons at every width, in the same order, with no JavaScript
+branch on the viewport anywhere: below `sm` the rail is a row above the body
+that scrolls sideways, above it a column beside the body. That is
+`components/chrome.ts`'s rule — presentation may change with size, the set of
+controls may not — and the cheapest way to keep it here was for there to be
+nothing to get wrong. `render-check` opens the dialog at 390px, counts the rail,
+brings each item on screen and presses the last one.
+
+The keyboard starts on the rail rather than in a field: arrows move between
+groups from the first keystroke, and opening settings must never put a cursor
+in "current password".
+
+### Escape closed the dialog out from under a drag
+
+The dialog never had an Escape and now does, and the first version of it was
+one line: a `keydown` listener that closed on Escape. The render check found
+what that costs, four assertions after the damage.
+
+The board editor cancels a drag with Escape. Both listeners are on `window`,
+the settings dialog mounts first, so its listener runs first and closed the
+whole dialog — and what the check then reported was that Escape had not
+cancelled the drag, that the template gallery had drawn no thumbnails, and that
+the editor never said whether the change had reached the panel. Three
+symptoms, none of them the cause, and a fourth timing out on a button that no
+longer existed. The same listener would have taken the settings page down
+behind the confirmation asking for a passkey name, where Escape means "not that
+name".
+
+So it closes only when nothing inside is already using Escape: not while
+another `[data-vp-modal]` is over this one, and not while the keyboard is
+inside a group. Which is the same rule `focus.ts` already states for the
+terminal — the keyboard belongs to whatever is holding it.
+
+### What the mutations said
+
+Ten run, one survivor, fixed.
+
+| mutation | what went red |
+|---|---|
+| `reporting` moves to the account group | the tree disagrees with the map; the notice's destination |
+| `<AuditSection />` deleted from the account group | **survived**, until the wiring test resolved components instead of grepping files — then: the tree disagrees, a section is drawn nowhere |
+| the notice asks for `password` instead of `reporting` | the notice no longer leads to state reporting |
+| ArrowUp on the rail returns the same group | both axes; wrapping |
+| the rail stops at the last group instead of wrapping | wrapping |
+| every group claims every section | sections are not partitioned; the tree disagrees |
+| the dialog renders no body for `sharing` | the group draws nothing; a section is drawn nowhere |
+| the webhooks section is declared under the tokens id | the tree disagrees with the map twice over |
+| the dialog opens on a fixed group and ignores what it was asked for | `render-check`: *the notice opens the settings dialog on panel, not on state reporting* |
+| the rail drops two groups below 640px | `render-check`: *the settings rail has 3 groups on a phone and 5 on a laptop* |
+
+The last two were run together, once, because each costs a twenty-minute
+browser pass. Both reported, and the second dragged a thirty-second timeout
+behind it — the desktop settings block asks for the hooks and the dialog was
+somewhere else.

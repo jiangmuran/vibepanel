@@ -72,6 +72,27 @@ const note = (sev, area, msg) => findings.push({ sev, area, msg })
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+/**
+ * Move the settings dialog to one of its groups, and say so if it did not go.
+ *
+ * The dialog is a rail and one group at a time now, so every block below has
+ * to be asked for. Reading back `data-group` rather than trusting the click is
+ * the point: a rail item that selects a different group than the one it is
+ * labelled with is invisible in a screenshot -- something is on screen, and it
+ * is not what was asked for.
+ */
+async function settingsGroup(page, id) {
+  const tab = page.locator(`[data-testid="settings-group-${id}"]`)
+  await tab.scrollIntoViewIfNeeded().catch(() => {})
+  await tab.click()
+  await sleep(500)
+  const at = await page.locator('[data-testid="settings-body"]').getAttribute('data-group')
+    .catch(() => null)
+  if (at !== id) {
+    note('FAIL', 'settings', `the settings rail was asked for ${id} and showed ${at}`)
+  }
+}
+
 /** note()-reporting wrapper around the name scan. See lib/names.mjs. */
 async function scanNames(target, where) {
   const unnamed = await findUnnamedControls(target)
@@ -2646,6 +2667,63 @@ try {
     await scanNames(touch, 'the phone drawer')
     await touch.screenshot({ path: join(SHOTS, 'mobile-drawer.png') })
 
+    // The settings dialog on a phone.
+    //
+    // It is reachable here, and the rule the panel holds itself to is that the
+    // set of controls does not change with the viewport (components/chrome.ts,
+    // and the complaint that produced it). The rail may lie down and scroll
+    // sideways at 390px; it may not drop a group, and it may not fold back
+    // into one long page, which is the thing this restructure exists to end.
+    //
+    // The drawer is open from the long-press check above and covers the header
+    // the gear is in, so it is closed through its own control first — and
+    // opened again at the end, because what follows this expects it open.
+    {
+      await touch
+        .locator('[data-testid="sidebar"][data-overlay="true"] header button')
+        .first()
+        .click({ timeout: 3000 })
+        .catch(() => {})
+      await sleep(400)
+      await touch.locator('[data-testid="settings-open"]').click()
+      await sleep(900)
+      if (!(await touch.locator('[data-testid="settings"]').isVisible().catch(() => false))) {
+        note('FAIL', 'mobile', 'the settings dialog does not open on a phone')
+      } else {
+        const tabs = touch.locator('[data-testid="settings-rail"] [role="tab"]')
+        const count = await tabs.count()
+        if (count !== 5) {
+          note('FAIL', 'mobile',
+            `the settings rail has ${count} groups on a phone and 5 on a laptop; a control set ` +
+            'that changes with the viewport is the complaint chrome.ts exists for')
+        }
+        const view = touch.viewportSize()
+        const ids = []
+        for (let i = 0; i < count; i++) {
+          const tab = tabs.nth(i)
+          ids.push(await tab.getAttribute('data-testid'))
+          await tab.scrollIntoViewIfNeeded().catch(() => {})
+          const box = await tab.boundingBox()
+          const inside =
+            box && box.x >= -1 && box.x + box.width <= view.width + 1 &&
+            box.y >= -1 && box.y + box.height <= view.height + 1
+          if (!inside) {
+            note('FAIL', 'mobile',
+              `${ids[i]} cannot be brought on screen at ${view.width}px: ${JSON.stringify(box)}`)
+          }
+        }
+        // And pressing one moves the dialog, rather than scrolling a page that
+        // has everything on it.
+        const last = ids[ids.length - 1]?.replace('settings-group-', '')
+        if (last) await settingsGroup(touch, last)
+        await touch.screenshot({ path: join(SHOTS, 'mobile-settings.png') })
+        await touch.locator('[data-testid="settings-close"]').click()
+        await sleep(300)
+      }
+      await touch.locator('[data-testid="menu-button"]').click()
+      await sleep(600)
+    }
+
     // The two phone shapes nothing had ever been measured at.
     //
     // 390x844 is one phone. The checks all ran at that one size, and both of
@@ -3698,6 +3776,19 @@ try {
     if (!(await page.locator('[data-testid="settings"]').isVisible().catch(() => false))) {
       note('FAIL', 'honesty', 'the notice does not open the place that fixes it')
     } else {
+      // Opening the dialog is not enough. It shows one group at a time, so a
+      // notice that lands on any other one has sent somebody to a page about
+      // something else and told them it was the fix.
+      const onReporting = await page
+        .locator('[data-section="reporting"]')
+        .isVisible()
+        .catch(() => false)
+      if (!onReporting) {
+        const at = await page.locator('[data-testid="settings-body"]').getAttribute('data-group')
+          .catch(() => null)
+        note('FAIL', 'honesty',
+          `the notice opens the settings dialog on ${at}, not on state reporting`)
+      }
       await page.locator('[data-testid="settings-close"]').click()
       await sleep(400)
     }
@@ -3730,15 +3821,14 @@ try {
     await sleep(900)
 
     // ── settings ───────────────────────────────────────────────────────────
-    const status = await page.locator('[data-testid="settings-status"]').innerText().catch(() => '')
-    for (const want of ['Version', 'Uptime', 'Sessions', 'tmux socket', 'Listening']) {
-      if (!status.includes(want)) {
-        note('FAIL', 'settings', `status is missing ${want}: ${JSON.stringify(status.slice(0, 200))}`)
-      }
+    //
+    // Five groups on a rail, one on screen. Every block below says which one
+    // it needs; the gear opens on Sessions, which is where the hooks are.
+    const rail = await page.locator('[data-testid="settings-rail"] [role="tab"]').count()
+    if (rail !== 5) {
+      note('FAIL', 'settings', `the settings rail has ${rail} groups on it, expected 5`)
     }
-    if (/undefined|NaN/.test(status)) {
-      note('FAIL', 'settings', `status rendered a broken value: ${JSON.stringify(status)}`)
-    }
+    await page.screenshot({ path: join(SHOTS, 'settings.png') })
 
     // What it would write has to be readable before agreeing to it, and it
     // has to be valid JSON — a snippet that does not parse is worse than none.
@@ -3817,10 +3907,17 @@ try {
         `the hooks target is outside the throwaway home: ${JSON.stringify(settingsPathShown.slice(0, 200))}`)
     }
 
-    const audit = await page.locator('[data-testid="settings-audit"]').innerText().catch(() => '')
-    if (!audit.includes('login')) {
-      note('WARN', 'settings', 'the activity log shows no sign-in')
+    await settingsGroup(page, 'panel')
+    const status = await page.locator('[data-testid="settings-status"]').innerText().catch(() => '')
+    for (const want of ['Version', 'Uptime', 'Sessions', 'tmux socket', 'Listening']) {
+      if (!status.includes(want)) {
+        note('FAIL', 'settings', `status is missing ${want}: ${JSON.stringify(status.slice(0, 200))}`)
+      }
     }
+    if (/undefined|NaN/.test(status)) {
+      note('FAIL', 'settings', `status rendered a broken value: ${JSON.stringify(status)}`)
+    }
+
     // The status has to keep being true while you are looking at it.
     //
     // Half of what this dialog shows is live — uptime, session count, how many
@@ -3836,6 +3933,12 @@ try {
       note('FAIL', 'settings',
         'the status block is identical six seconds later, so nothing is being refreshed while ' +
         `the dialog is open: ${JSON.stringify(statusBefore.slice(0, 120))}`)
+    }
+
+    await settingsGroup(page, 'account')
+    const audit = await page.locator('[data-testid="settings-audit"]').innerText().catch(() => '')
+    if (!audit.includes('login')) {
+      note('WARN', 'settings', 'the activity log shows no sign-in')
     }
 
     // Changing the password, from the page rather than from SQLite.
@@ -3902,6 +4005,7 @@ try {
     // and the panel's whole reason for using Pointer Events is that HTML5 drag
     // and drop never fires on touch.
     {
+      await settingsGroup(page, 'sharing')
       const nameField = page.locator('[data-testid="share-name"]')
       if ((await nameField.count()) === 0) {
         note('FAIL', 'board', 'the settings page offers no way to make a share link')
@@ -4033,10 +4137,10 @@ try {
       }
     }
 
-    await page.screenshot({ path: join(SHOTS, 'settings.png') })
     // Naming the passkey is the panel's own field now, not window.prompt. The
     // dialog is asked for from inside the settings modal, so this also covers
     // it being drawn above one.
+    await settingsGroup(page, 'account')
     await page.locator('[data-testid="passkey-add"]').click()
     const named = await page
       .waitForSelector('[data-testid="confirm-field"]', { timeout: 5000 })
