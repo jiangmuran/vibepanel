@@ -4129,6 +4129,45 @@ try {
             if (!saved) {
               note('FAIL', 'board', 'the editor never said whether the change had reached the panel')
             }
+            // Every control in this row says what it sets, and says it on
+            // screen.
+            //
+            // The row wraps to one control per line at the width the settings
+            // panel gives it, and the two selects carried their names in
+            // `title` only. What arrived was "Fill the screen" with "Normal"
+            // and "Never" under it: a heading and two dropdowns about nothing.
+            // A tooltip is not a label -- it needs a pointer to exist, and a
+            // phone has none.
+            for (const [id, want] of [['board-density', 'Density'], ['board-rotate', 'Rotate pages']]) {
+              const sel = page.locator(`[data-testid="${id}"]`)
+              const labelled = await sel.evaluate((el) => {
+                const lab = el.closest('label')
+                return lab ? lab.innerText.trim() : ''
+              }).catch(() => '')
+              if (!labelled.includes(want)) {
+                note('FAIL', 'board', `${id} is not labelled on screen; the row reads "${labelled}"`)
+              }
+            }
+
+            // And fill is a checkbox, so its state is a shape (red line 4).
+            // It was a transparent `.vp-control` whose entire on-state was the
+            // text turning accent-coloured, with nothing else carrying it.
+            const fill = page.locator('[data-testid="board-fill"]')
+            if ((await fill.getAttribute('type')) !== 'checkbox') {
+              note('FAIL', 'board', 'fill does not carry its state as a shape; colour was doing it alone')
+            } else {
+              const was = await fill.isChecked()
+              await fill.click()
+              await sleep(200)
+              if ((await fill.isChecked()) === was) {
+                note('FAIL', 'board', 'the fill checkbox did not change when clicked')
+              } else {
+                note('PASS', 'board', `fill toggles and is a checkbox (${was} -> ${!was})`)
+                await fill.click()
+                await sleep(200)
+              }
+            }
+
             await page.screenshot({ path: join(SHOTS, 'board-editor.png') })
             await page.locator('[data-testid="share-edit-cancel"]').click()
             await sleep(300)

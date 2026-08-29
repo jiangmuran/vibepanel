@@ -227,7 +227,16 @@ export function BoardPalette({
             className="vp-press flex cursor-grab flex-col gap-1 rounded-vp border border-hairline bg-surface-2 p-2 text-left disabled:cursor-default disabled:opacity-50"
           >
             <Sketch shape={shapeOf(spec.kind)} />
-            <span className="truncate text-vp-sm text-ink">{kindLabel(spec.kind, spec.kind)}</span>
+            {/* Two lines, not one. Three columns of these at the width the
+                settings panel gives them is about eleven characters a line,
+                and single-line truncation turned the library into "One big
+                nu...", "Busiest proj...", "Code, over t...", "Heaviest
+                ses..." -- a list to choose from where the names cannot be
+                read. Grid rows stretch to their tallest cell, so the second
+                line costs nothing on rows that do not need it. */}
+            <span className="line-clamp-2 text-vp-sm leading-tight text-ink">
+              {kindLabel(spec.kind, spec.kind)}
+            </span>
           </button>
         ))}
       </div>
@@ -274,8 +283,12 @@ export function BoardGallery({
                   className="vp-press flex flex-col gap-1 rounded-vp border border-hairline bg-surface-2 p-2 text-left aria-pressed:border-accent"
                 >
                   <Thumbnail preset={p} maxSpan={catalogue.maxSpan} />
-                  <span className="truncate text-vp-sm text-ink">{presetLabel(p.id)}</span>
-                  <span className="truncate text-vp-xs text-ink-3">{presetWhy(p.id)}</span>
+                  <span className="line-clamp-2 text-vp-sm leading-tight text-ink">
+                    {presetLabel(p.id)}
+                  </span>
+                  <span className="line-clamp-2 text-vp-xs leading-tight text-ink-3">
+                    {presetWhy(p.id)}
+                  </span>
                 </button>
               ))}
             </div>

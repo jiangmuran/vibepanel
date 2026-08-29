@@ -63,6 +63,9 @@ const DAY_RANGES = [7, 14, 30, 90, 365]
 const SELECT =
   'shrink-0 rounded-vp border border-hairline bg-surface-2 px-2 py-1 text-vp-sm text-ink outline-none focus:border-accent'
 
+/** A select with its name beside it, wrapping as one piece. */
+const FIELD = 'flex shrink-0 items-center gap-1.5 text-vp-sm text-ink-3'
+
 /** What is being dragged, and where it would land. */
 type Drag =
   | { kind: 'move'; index: number; gap: number | null }
@@ -371,65 +374,86 @@ export function BoardEditor({
           </p>
 
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => onChange({ ...board, fill: !board.fill })}
-              aria-pressed={board.fill}
-              title={t('board.fill')}
-              data-testid="board-fill"
-              className="vp-control px-2"
-            >
+            {/* A checkbox, because this is a setting and not an action.
+                It was a `.vp-control` with `aria-pressed`, which is transparent
+                with no border: off, it was text sitting above two fields and
+                read as their heading, and on, the only difference was that the
+                text turned accent-coloured. Red line 4 -- the note on
+                `[aria-pressed='true']` in styles.css says the split toggle is
+                the only control allowed to lean on that colour, because two
+                panes appearing below is what actually carries its state. This
+                one had nothing else carrying it. A tick is a shape. */}
+            <label className={FIELD}>
+              <input
+                type="checkbox"
+                checked={board.fill}
+                onChange={(e) => onChange({ ...board, fill: e.target.checked })}
+                data-testid="board-fill"
+              />
               {t('board.fill')}
-            </button>
+            </label>
             {/* Density, and it is not a size control. See board/density.ts: how
                 large everything is drawn follows the viewport and is settled in
                 CSS; this is how much each tile says, so the same wall can be a
                 headline from the door and a working dashboard from the chair. */}
-            <select
-              value={board.density}
-              onChange={(e) => onChange({ ...board, density: Number(e.target.value) })}
-              title={t('board.density')}
-              data-testid="board-density"
-              className={SELECT}
-            >
-              {Array.from({ length: Math.max(1, catalogue.maxDensity) }, (_, i) => i + 1).map(
-                (n) => (
-                  <option key={n} value={n}>
-                    {t(densityKey(n, catalogue.maxDensity))}
+            {/* Labelled, and visibly. These read "Normal" and "Never" on
+                their own, and the row wraps to one control per line in the
+                settings panel, so what arrived under the fill button was a
+                heading and two dropdowns saying nothing about what they set.
+                `title` does not fix that: it needs a pointer to appear, which
+                a phone does not have, and a screen reader announces it only
+                when there is no label. */}
+            <label className={FIELD}>
+              {t('board.density')}
+              <select
+                value={board.density}
+                onChange={(e) => onChange({ ...board, density: Number(e.target.value) })}
+                data-testid="board-density"
+                className={SELECT}
+              >
+                {Array.from({ length: Math.max(1, catalogue.maxDensity) }, (_, i) => i + 1).map(
+                  (n) => (
+                    <option key={n} value={n}>
+                      {t(densityKey(n, catalogue.maxDensity))}
+                    </option>
+                  ),
+                )}
+              </select>
+            </label>
+            <label className={FIELD}>
+              {t('board.rotate')}
+              <select
+                value={board.rotate}
+                onChange={(e) => onChange({ ...board, rotate: Number(e.target.value) })}
+                data-testid="board-rotate"
+                className={SELECT}
+              >
+                {ROTATIONS.map((s) => (
+                  <option key={s} value={s}>
+                    {s === 0 ? t('board.rotateNever') : t('board.rotateEvery', { n: s })}
                   </option>
-                ),
-              )}
-            </select>
-            <select
-              value={board.rotate}
-              onChange={(e) => onChange({ ...board, rotate: Number(e.target.value) })}
-              title={t('board.rotate')}
-              data-testid="board-rotate"
-              className={SELECT}
-            >
-              {ROTATIONS.map((s) => (
-                <option key={s} value={s}>
-                  {s === 0 ? t('board.rotateNever') : t('board.rotateEvery', { n: s })}
-                </option>
-              ))}
-            </select>
+                ))}
+              </select>
+            </label>
             {/* Which page is on the canvas. Only once the board rotates: a
                 control for a feature that is switched off is one somebody sets
                 and then waits for. */}
             {board.rotate > 0 && (
-              <select
-                value={page}
-                onChange={(e) => setPage(Number(e.target.value))}
-                title={t('board.page')}
-                data-testid="canvas-page"
-                className={SELECT}
-              >
-                {Array.from({ length: Math.min(pages + 1, 12) }, (_, n) => (
-                  <option key={n} value={n}>
-                    {t('board.pageOf', { n: n + 1 })}
-                  </option>
-                ))}
-              </select>
+              <label className={FIELD}>
+                {t('board.page')}
+                <select
+                  value={page}
+                  onChange={(e) => setPage(Number(e.target.value))}
+                  data-testid="canvas-page"
+                  className={SELECT}
+                >
+                  {Array.from({ length: Math.min(pages + 1, 12) }, (_, n) => (
+                    <option key={n} value={n}>
+                      {t('board.pageOf', { n: n + 1 })}
+                    </option>
+                  ))}
+                </select>
+              </label>
             )}
           </div>
         </div>
