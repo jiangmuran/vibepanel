@@ -17694,3 +17694,110 @@ The test for it failed against the fixed script, because
 two sides of a pipe run at the same time, so `ps` sees the `grep`. Fifth time
 this shape has cost something today, and the first time it reported a bug that
 was already fixed rather than killing the shell.
+
+## The panel learns to set itself up
+
+Six things, asked for together and connected by one complaint: a session that
+had finished stayed blue.
+
+That is not a bug in the state machine. Without state reporting the panel sees
+a running process and nothing else, and a finished agent is still a running
+process -- so "done" is not a state the heuristic can ever reach. The panel
+said so, in a notice reading "waiting for you can be missed", which understates
+it into an edge case. The fix for the complaint is two clicks that nobody
+finds: behind a gear, under a heading about hooks, which is a word for a thing
+you already know exists.
+
+So: **a first-run tour**, and two of its five steps do something. One installs
+the reporters for Claude Code, Codex and opencode -- three buttons and three
+answers, because they are three mechanisms in three files that fail separately.
+One offers the rest of Claude Code's settings, every key named before the
+button. The other three are the smallest orientation that makes those two make
+sense. It is dismissed on the server, not in localStorage: the panel is opened
+from a laptop and a phone and a wall, and a tour that has been read is read.
+
+The tour gets its own length budget in `i18n.prose.test.ts`, and it is still a
+budget. That rule exists because the panel used to argue with the person using
+it; a tour is the one surface where explaining is the content, and one written
+in forty-character fragments is a worse tour rather than a more disciplined one.
+
+**Every command starts through a login shell now.** tmux execs a `new-session`
+command with the environment the *server* was started in -- under systemd, a
+PATH of `/usr/bin:/bin` and nothing the person's shell would have added. nvm,
+asdf, mise, pyenv and rustup all work by putting a shim directory on PATH from
+a file the shell reads, so `claude` was either not found or was a different
+build than the one the same command finds in a terminal two feet away. The tell
+was that a pane with *no* command already worked, because that is tmux's
+default shell: a scratch terminal and an agent session had two different
+environments and the scratch terminal was the correct one.
+
+The shell is tmux's own `default-shell`, so a wrapped command and a bare pane
+agree by construction. It is read in the same invocation as `start-server`,
+because a server with no sessions exits immediately under tmux's default
+`exit-empty` and a separate `show-option` found no server again -- which made
+the *first* session after a boot the one that went unwrapped.
+
+`exec` is not tidiness: without it the shell stays the pane's process and
+`pane_current_command` reports the shell forever. And that is where this bit
+back. `stateIsGuessed` read `pane_current_command`, which is a fact about this
+instant, and for the moment between the shell starting and its exec the
+foreground process *is* the shell. `SessionRunsAnAgent` reads the launch argv
+first -- what somebody asked to run, stored once, unchanged by a poll -- and
+still counts the current command, so an agent started by hand inside a scratch
+shell is seen.
+
+**A restart button**, which is a button rather than advice to find a terminal
+because of the one property this whole architecture is built on. It works by
+exiting: 143, because systemd's units declare `SuccessExitStatus=143` so it is
+logged as a clean stop and `Restart=always` brings it back, and launchd's
+`KeepAlive` only restarts on a non-zero exit -- one number satisfies both,
+where 0 satisfies only systemd. It goes through the same orderly shutdown as
+SIGTERM, so the last capture of every pane still happens.
+
+Asking "is anything supervising this" took two goes, both found by pressing the
+button. INVOCATION_ID alone is wrong: systemd sets it for every unit and it is
+*inherited*, so a panel started by hand from a terminal inside a user session
+concluded a service manager was watching, and the first browser run of the new
+settings page stopped the panel for good. Testing for pid 1 is also wrong: a
+systemd **user** unit's parent is that account's own `systemd --user`, and the
+user unit is the install this project recommends wherever there is no root --
+so the fix for the first bug answered 409 to the most common installation there
+is. Both parents count now, and the variables are demoted to naming which.
+
+**The environment file, as fields**, with the restart underneath it. The writer
+preserves the file rather than regenerating it: a live assignment is replaced in
+place, a commented example is uncommented in place so it stays under the
+paragraph that explains it, and emptying a value comments the line out rather
+than deleting it. Two keys are not on the list and that is the point of having
+one -- `CLOUDFLARE_API_TOKEN` is a credential, and `VIBEPANEL_TMUX_SOCKET` is
+red line 1. The response carries what the process is running with as well as
+what is on disk, because a file edited an hour ago and never applied looks
+exactly like one in force. That comparison counted an unset key as a
+difference, and the file ships with most of its variables commented out, so
+every fresh panel opened this block already telling its owner to restart.
+
+**A note that belongs to no project**, reached by pressing the notes tab you
+are already on. Its own table, because `notes.project_id` cascades from
+`projects`. And that toggle broke three checks that pressed the tab twice to be
+sure, which is how `selectTab()` came to exist.
+
+**The sign-in and first-run screens** are rebuilt around one shell, and
+first-run is visibly a different moment: two numbered steps on a rail, both
+live, so a refused password does not cost you the token.
+
+Four things the browser found that reading had not:
+
+- `.vp-safe-bottom` set `padding-bottom` and styles.css is emitted after
+  Tailwind's utilities, so `py-1.5 vp-safe-bottom` silently lost its bottom
+  half -- and `env()` is 0px on hardware with no inset. The mobile key bar has
+  been flush against the bottom edge of the screen on every phone without a
+  notch, and nothing said so, because the class is named for the thing it was
+  doing right.
+- `first-run-check` had no HOME of its own and now drives a step that writes
+  hooks, so running it edited the developer's own Claude Code configuration.
+- `tls-check` had stopped reading the certificate row entirely: it looks for
+  `settings-status`, which moved under the "This panel" rail item when the
+  dialog was split into groups, and reported "could not open the settings
+  dialog" as a WARN ever since.
+- render-check's fake agent was a symlink to `sleep`. A multi-call coreutils
+  build reads argv[0], does not recognise "claude", and exits immediately.

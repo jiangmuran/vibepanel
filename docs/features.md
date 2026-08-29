@@ -44,6 +44,11 @@ Left alone, the panel reads the output stream: recent bytes mean *working*, a
 terminal bell means *waiting*, a pane back at a shell prompt means *done*. A
 silent session is never called finished.
 
+Which means **done is a state the guess cannot reach**. A finished agent has
+not exited -- it is sitting at its own prompt waiting for you -- so what the
+panel sees is a running process, and the session stays blue until you look. The
+first-run tour opens on this for a reason.
+
 **Settings → State reporting** has a button for Claude Code, one for Codex and
 one for opencode. It installs a hook into the agent's own configuration, showing
 what it will write and backing up the file first. The hook reads two environment
@@ -69,7 +74,10 @@ in [docs/api.md](api.md).
 ## The side panel
 
 Two tabs per project — **Files** and **Notes** — over a dock that is the same on
-both.
+both. Pressing **Notes** while you are already on it switches to a note that
+belongs to no project, and pressing it again goes back. The global one opens
+with no project selected, which is where you write down what you are about to
+go and do.
 
 - **Files** browses and downloads. Dragging onto the tree or onto the terminal
   uploads; the file lands next to the session and its absolute path is typed at
@@ -264,6 +272,21 @@ in shape, and the header always carries the time of the last reading and how
 long ago that was. A board that has quietly frozen otherwise looks like a quiet
 machine.
 
+## The first run
+
+A panel with no account prints a one-time token; you paste it, choose a
+password, and the tour opens.
+
+Five steps, and two of them do something. It installs state reporting for
+Claude Code, Codex and opencode -- three separate mechanisms in three separate
+files -- and it offers the rest of Claude Code's settings: session mirroring,
+Remote Control, the commit and pull-request attribution, the billing header.
+Every key is printed with the value on disk beside the value that would replace
+it, and the file is copied before anything is written.
+
+It is put away for good on the server rather than in the browser, so reading it
+on a laptop settles it for the phone as well.
+
 ## Restarts, reboots and upgrades
 
 ```sh
@@ -309,6 +332,25 @@ diverged; and an older binary refuses a database a newer one has migrated,
 naming both versions rather than opening it and dropping columns.
 
 [docs/runbook.md](runbook.md) is organised by symptom for everything else.
+
+## Settings that live in a file
+
+**Settings → This panel** edits the service's environment file: the address,
+the domain, TLS and its certificates, ACME, and who is allowed to reach the
+panel at all. It writes the same file the installer wrote, keeping every
+comment and commented-out example where it was, and copies it first.
+
+These take effect on the next start, so the restart button is the next block
+down. It stops the panel and lets the service manager bring a new one back --
+which costs the connection and nothing else, because tmux owns the sessions. On
+a machine where nothing would restart it, the button says so instead of
+stopping.
+
+Two settings are shown and not editable. `CLOUDFLARE_API_TOKEN` is a
+credential, so the page never receives it. `VIBEPANEL_TMUX_SOCKET` is the one
+that keeps the panel away from your own tmux: a panel pointed somewhere else
+cannot see its own sessions, and the ones it was managing keep running with
+nothing attached to them.
 
 ## On a network
 
