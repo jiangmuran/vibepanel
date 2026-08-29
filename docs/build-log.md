@@ -17174,3 +17174,34 @@ The last two were run together, once, because each costs a twenty-minute
 browser pass. Both reported, and the second dragged a thirty-second timeout
 behind it — the desktop settings block asks for the hooks and the dialog was
 somewhere else.
+
+### The docs, through the humanizer
+
+The owner installed [Humanizer-zh](https://github.com/op7418/Humanizer-zh), a
+checklist of the patterns that mark text as LLM-written, and asked for every
+document to go through it. `scripts/lib/doc-scan.py` turns the checklist into a
+measurement so a pass reports numbers rather than an impression.
+
+**The scanner was wrong on its first run, in the direction that matters.** It
+counted bare `—`, and the Chinese dash is two of that character — so every
+Chinese file scored at twice its real figure, and the figure being doubled was
+not an em-dash at all. `——` is ordinary punctuation in Chinese, not the imported
+punchy dash the skill warns about. `docs/roadmap.md` came top of the whole table
+at 377 per 1000 lines and is 48.7; `docs/features.zh-CN.md` read 34 and is 0.
+Both numbers had already been sent to the agents working on those files.
+
+With that fixed, the worst file in the repository was **`AGENTS.md`**: 22
+em-dashes in 214 lines, 102.8 per 1000. Two remain, both inside table cells
+where the dash separates items in a list rather than setting up a reveal. The
+diff is nineteen lines changed for nineteen — every edit was a punctuation
+choice, no sentence was deleted, all eight red lines are intact.
+
+`not only for the enum` in red line 3 stays: it means "not merely", which is a
+qualifier and not the rhetorical parallelism the skill is about. The sixteen ✅
+in `docs/roadmap.md` stay too: they are the checklist's data, not decoration on
+a heading.
+
+**`docs/build-log.md` is deliberately out of scope.** 1,736 em-dashes and 88 AI
+words is the worst absolute score anywhere, and it is 17,000 lines of a record
+written as it happened. Editing the prose of an account of what happened, after
+the fact, to read better is not a thing this file should have done to it.

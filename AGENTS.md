@@ -44,18 +44,18 @@ Each of these exists because the alternative broke something real.
    update; and the settings page reports hooks as installed because it reads the
    agent's configuration file rather than whether anything ever arrived. The
    result is no error anywhere, a settings page saying it is fine, and every
-   session quietly back on the heuristic — the same symptom the runbook records
+   session quietly back on the heuristic. The runbook records that same symptom
    for a panel bound to one interface, from an unrelated cause.
 
-   This used to say the TypeScript was generated. It never was — there was no
-   generator and no generated file — so the rule protected nothing while
+   This used to say the TypeScript was generated. It never was: there was no
+   generator and no generated file, so the rule protected nothing while
    reading as though it did.
 
    The same file is now pinned field by field, not only for the enum:
    `TestTypeScriptRowsMatchWhatIsSent` marshals `Session`, `Project`, `Note`,
    `Todo` and `AuditEntry` and compares the keys against the interfaces in
-   `wire.ts`. The drift it catches is silent in the direction that matters —
-   the data arrives from `JSON.parse` cast to the interface, so a field the
+   `wire.ts`. The drift it catches is silent in the direction that matters,
+   because the data arrives from `JSON.parse` cast to the interface: a field the
    server has stopped sending is still declared, still type-checks, and is
    `undefined` at runtime.
 
@@ -77,13 +77,13 @@ Each of these exists because the alternative broke something real.
 
 8. **A read-only share token is narrowed by its route, never by a flag.**
    `registerShareRoutes` mounts exactly one `GET` below `requireShareToken`,
-   and `share_links` is a table `currentUser` does not consult — which is what
+   and `share_links` is a table `currentUser` does not consult. That is what
    makes a share token presented as a cookie or a `Bearer` header an unknown
    string that every authenticated route already answers 401 to.
 
    Two ways to undo that, and both look like ordinary edits. Adding a second
    route under `/api/share/{token}` widens the capability by one line. Teaching
-   `currentUser` about `share_links` — to "reuse the auth path" — turns every
+   `currentUser` about `share_links`, to "reuse the auth path", turns every
    handler in the panel into one that has to check a `readOnly` flag, and the
    handler that forgets is the one written next.
 
@@ -97,7 +97,7 @@ Each of these exists because the alternative broke something real.
    was "I should not have to walk to the wall and log in to change the layout".
    The obvious answer is a `PATCH` here, one line, obviously correct in review.
    The right answer was that the person who wants to change it is not at the
-   screen — they are on a laptop, signed in — so the board is edited through
+   screen. They are on a laptop, signed in, so the board is edited through
    `PATCH /api/settings/shares/{id}` and the wall picks it up on its next poll,
    because every poll re-reads the row. The whole live-update feature cost this
    file nothing. If the next request sounds like it needs a write here, ask
@@ -105,7 +105,7 @@ Each of these exists because the alternative broke something real.
 
    Two things a viewer *does* send, on the query string of that one GET: an
    opaque per-tab id and its viewport, for the owner's "how many screens have
-   this open". They are recorded in process memory and never read back — nothing
+   this open". They are recorded in process memory and never read back, and nothing
    a viewer sends decides anything the response carries, and
    `TestWhatAViewerSaysAboutItselfCannotChangeTheDashboard` is what says so.
 
@@ -122,14 +122,14 @@ Each of these exists because the alternative broke something real.
      `TestTheActivityReadAsksForATimestampAndNothingElse` pins the argument
      list rather than trusting the parser.
    - It can cause **one outbound request**, to github.com, and four things must
-     be true at once — a pull-request widget on the board, a project-scoped
-     link, `names` mode, and a token in the environment — behind a cache that
+     be true at once (a pull-request widget on the board, a project-scoped
+     link, `names` mode, and a token in the environment) behind a cache that
      refreshes at most once per repository per five minutes and stops entirely
      when nobody is looking. `internal/git/warm.go` is where that is enforced;
      the thing that may not be added to it is a ticker.
 
    Neither may be read on the request goroutine. A wall polls every two seconds
-   forever, so a `git log` on that path is a fork per project per poll — the
+   forever, so a `git log` on that path is a fork per project per poll, and the
    poll takes what the background refresh has already produced and reports its
    age, and "not counted yet" is a distinct answer from zero.
 
@@ -138,13 +138,13 @@ Each of these exists because the alternative broke something real.
 - **Comments explain why, and what breaks otherwise.** Not what the line does.
   If a line looks arbitrary, the comment should say which failure produced it.
 - **Go**: `chi` for routing. No gin/echo/fiber. `CGO_ENABLED=0` must keep
-  working — that rules out any dependency needing cgo, including mattn/sqlite3.
+  working, which rules out any dependency needing cgo, including mattn/sqlite3.
 - **Frontend**: React + Vite + TypeScript `strict` + Tailwind v4 + `lucide-react`.
-  No component library, no state library — `useState`/`useReducer` plus fetch and
+  No component library, no state library: `useState`/`useReducer` plus fetch and
   one WebSocket. npm and `package-lock.json`. ESLint flat config, no Prettier.
   Two-space indent, single quotes.
 - **Tests**: Go standard `testing`; `vitest` on the frontend. The tmux wrapper
-  is tested against a real tmux on a throwaway socket, not a mock — the bugs
+  is tested against a real tmux on a throwaway socket rather than a mock. The bugs
   worth catching there are tmux's, and a mock reproduces none of them.
 
 - **The browser checks are where most of the bugs have been found.** `make
@@ -167,8 +167,8 @@ Each of these exists because the alternative broke something real.
   structural. A change that only passes `check` has not been looked at.
 - **Every one of those builds from the working tree, so none of them can tell
   you whether what you *committed* works.** They were not the same thing: HEAD
-  did not compile for some time — a caller committed, the method it calls left
-  untracked — while every check passed. `make head-check` builds a clean
+  did not compile for some time, a caller committed with the method it calls
+  left untracked, while every check passed. `make head-check` builds a clean
   worktree at HEAD and runs the fast gate in it, which is what somebody cloning
   the repository gets. It takes a ref, so `scripts/head-check.sh <branch>`
   works too.
@@ -181,14 +181,14 @@ Each of these exists because the alternative broke something real.
   verify it against `SHA256SUMS` and hand over. `deploy/install.sh` installs
   from an unpacked archive and knows about tmux, services and everything else;
   it is bash, and bash 3.2, because macOS still ships that one. Neither may
-  grow a `--password <value>` flag — see `cmd/vibepanel/account.go` for why.
+  grow a `--password <value>` flag. `cmd/vibepanel/account.go` says why.
 
   Both of them speak English and 简体中文, and each holds its strings in one
   `case` between `strings: begin` and `strings: end`, behind `m <key>`. Add a
   key there and nowhere else, with both languages filled in: `make
   install-check` walks every arm in both files and fails on an empty side, on a
   pair whose substitutions disagree, and on a key nothing defines. What is in
-  the table is what a person reads while deciding something — the questions, the
+  the table is what a person reads while deciding something: the questions, the
   plan, the errors that say what to do next, the summary, `--help`. The `verb +
   path` trace lines during the install are deliberately still English; the
   build-log entry "An installer that speaks Chinese" says why. Substitutions are
