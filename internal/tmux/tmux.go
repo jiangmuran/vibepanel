@@ -148,6 +148,21 @@ func (c *Client) Paste(ctx context.Context, name, text string) error {
 	return err
 }
 
+// LoadBuffer puts text in the socket's paste buffer without pasting it.
+//
+// The difference from Paste is who decides when it lands. Paste is the panel
+// typing for you; this is the panel filling the clipboard so that whatever is
+// in the pane can take it when it wants to -- prefix-] in tmux, or an agent
+// that reads the buffer.
+//
+// Named, and the same name every time, so it replaces rather than stacks: a
+// paste buffer that grows a new entry per screenshot is a stack somebody has to
+// dig through.
+func (c *Client) LoadBuffer(ctx context.Context, text string) error {
+	_, err := c.runStdin(ctx, text, "load-buffer", "-b", "vibepanel-clip", "-")
+	return err
+}
+
 // runStdin is run with something on the command's standard input.
 func (c *Client) runStdin(ctx context.Context, stdin string, rest ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, c.Bin, c.args(rest...)...)

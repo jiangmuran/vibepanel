@@ -36,6 +36,7 @@ func (s *Server) registerPanelRoutes(r chi.Router) {
 	r.Get("/projects/{id}/preview/render", s.handleRenderPreview)
 	r.Post("/projects/{id}/upload", s.handleUpload)
 	r.Post("/projects/{id}/mkdir", s.handleProjectMkdir)
+	r.Post("/clipboard", s.handleClipboard)
 	r.Get("/projects/{id}/notes", s.handleGetNote)
 	r.Put("/projects/{id}/notes", s.handlePutNote)
 	// The note that belongs to no project. Its own pair of routes rather than
@@ -395,10 +396,27 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreErr(w, err)
 		return
 	}
-	dir, err := browse.Resolve(p.Path, r.URL.Query().Get("path"))
-	if err != nil {
-		writeBrowseErr(w, err)
-		return
+	// `?dest=panel` writes outside the project.
+	//
+	// A screenshot pasted into a terminal used to land in the session's working
+	// directory, which for an agent session is a git repository -- so pasting a
+	// picture at somebody dirtied their tree, and the file was still there
+	// afterwards. 「粘贴图片不要直接粘贴到项目根目录啊」. The panel keeps its
+	// own directory for these; the project stays the *other* option, because
+	// dragging a file into the tree still means "put it here".
+	dir := ""
+	if r.URL.Query().Get("dest") == "panel" {
+		dir = filepath.Join(s.Cfg.DataDir, "pasted")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	} else {
+		dir, err = browse.Resolve(p.Path, r.URL.Query().Get("path"))
+		if err != nil {
+			writeBrowseErr(w, err)
+			return
+		}
 	}
 	if info, serr := os.Stat(dir); serr != nil || !info.IsDir() {
 		writeErr(w, http.StatusBadRequest, "upload target is not a directory")
@@ -802,6 +820,33 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 type mkdirRequest struct {
 	Path string `json:"path"`
 	Name string `json:"name"`
+}
+
+// handleClipboard puts text in the tmux paste buffer.
+//
+// One buffer for the socket, which is what tmux has: this is the panel filling
+// the clipboard so whatever is in a pane can take it -- prefix-] in tmux, or an
+// agent that reads the buffer -- rather than the panel typing for you. Typing
+// is `Paste`, and it is a different thing that already exists.
+//
+// Bounded, because it goes on a command's standard input and the buffer is
+// shared with everything else on the socket. A path is a few hundred bytes.
+func (s *Server) handleClipboard(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Text string `json:"text"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if len(req.Text) > 64*1024 {
+		writeErr(w, http.StatusRequestEntityTooLarge, "too much for a paste buffer")
+		return
+	}
+	if err := s.Tmux.LoadBuffer(r.Context(), req.Text); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // handleProjectMkdir makes a directory inside a project.

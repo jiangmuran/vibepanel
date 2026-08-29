@@ -344,12 +344,15 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   // a poll raced a dismissal is worse than a tour that needs a reload to show
   // up on a second browser.
   const [showTour, setShowTour] = useState(false)
+  const [paste, setPaste] = useState({ dir: 'panel', then: 'type' })
   useEffect(() => {
     let gone = false
     api
       .settings()
       .then((s) => {
-        if (!gone) setShowTour(!s.tourDone)
+        if (gone) return
+        setShowTour(!s.tourDone)
+        setPaste({ dir: s.pasteDir, then: s.pasteThen })
       })
       // A settings read that fails is a panel with bigger problems than a
       // missing tour, and every one of them is already reported elsewhere.
@@ -597,7 +600,11 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         params: { n: files.length },
       })
       try {
-        const { paths } = await api.upload(currentProject.id, rel, files)
+        // Where it lands, and what happens to the path, are settings. Read at
+        // the moment of the paste rather than held: they change in a dialog
+        // this component does not re-render for.
+        const dest = paste.dir === 'session' ? undefined : ('panel' as const)
+        const { paths } = await api.upload(currentProject.id, rel, files, dest)
         // Quoted only when it needs to be: a shell-quoted path that did not
         // need quoting is noise at the prompt, and an unquoted one with a
         // space in it is a bug the user finds after pressing enter.
@@ -614,7 +621,16 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         // reaches the *screen* goes through safeText for the same reason; this
         // was the one place a filename's bytes reached a shell unexamined.
         const typed = paths.map(shellQuote).join(' ')
-        sendToCurrent(typed + ' ')
+        if (paste.then !== 'buffer') {
+          sendToCurrent(typed + ' ')
+        }
+        if (paste.then !== 'type') {
+          // The tmux paste buffer, so whatever is in the pane can take the
+          // path when it wants it rather than finding it already typed.
+          // Failing is not worth a toast on top of the success one: the file
+          // is uploaded either way and its path is in the message below.
+          void api.setClipboard(paths.join(' ')).catch(() => {})
+        }
         // Taken back rather than left to expire: "uploading…" sitting above
         // "uploaded" for another three seconds is the panel disagreeing with
         // itself about something that has already finished.
@@ -635,7 +651,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         })
       }
     },
-    [current, currentProject, sendToCurrent],
+    [current, currentProject, sendToCurrent, paste],
   )
 
   // Pasting a file anywhere in the panel uploads it into the current session.

@@ -8,6 +8,7 @@ import { copyTextInGesture } from '../../clipboard'
 import { LaunchProfiles } from '../LaunchProfiles'
 import { Row, Section } from './parts'
 import { TuneClaude } from './TuneClaude'
+import { PasteSettings } from './PasteSettings'
 
 /**
  * What a session is started with, and how the panel learns what it is doing.
@@ -24,6 +25,7 @@ export function SessionsGroup() {
       </Section>
       <HooksSection />
       <TuneClaude />
+      <PasteSettings />
     </>
   )
 }

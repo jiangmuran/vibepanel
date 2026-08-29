@@ -517,12 +517,27 @@ see looks like.
 ### `GET /api/projects/{id}/notes`
 ### `PUT /api/projects/{id}/notes`
 ### `POST /api/projects/{id}/mkdir`
+### `POST /api/clipboard`
+### `PUT /api/settings/paste`
 ### `GET /api/notes`
 ### `PUT /api/notes`
 ### `GET /api/projects/{id}/todos`
 ### `POST /api/projects/{id}/todos`
 ### `PATCH /api/todos/{todoID}`
 ### `DELETE /api/todos/{todoID}`
+
+`POST /api/clipboard` takes `{"text": "..."}` and puts it in the tmux paste
+buffer for this socket, without pasting it anywhere. That is the panel filling
+the clipboard so a pane can take it when it wants to -- `prefix ]` in tmux, or
+an agent that reads the buffer. Typing text into a pane is a different thing
+and goes through the websocket.
+
+`PUT /api/settings/paste` takes `{"dir": "panel"|"session", "then":
+"type"|"buffer"|"both"}` and decides where a screenshot pasted into a terminal
+lands, and what happens to its path. `dir` defaults to `panel`, which is a
+directory the panel owns: a picture pasted at an agent used to land in the
+session's working directory, which for an agent session is a git repository.
+`GET /api/settings` carries both as `pasteDir` and `pasteThen`.
 
 `POST /api/projects/{id}/mkdir` takes `{"path": "sub/dir", "name": "new"}` and
 makes one directory inside the project. Same helper and same refusals as the

@@ -603,6 +603,17 @@ const DICT = {
     en: 'not editable here: a panel on another socket cannot see its own sessions',
   },
 
+  // Where a pasted screenshot goes.
+  'paste.title': { zh: '粘贴进终端的图片', en: 'Images pasted into a terminal' },
+  'paste.where': { zh: '文件放哪', en: 'Where the file goes' },
+  'paste.wherePanel': { zh: '面板自己的目录，不碰你的仓库', en: 'A directory the panel owns, not your repository' },
+  'paste.whereSession': { zh: '会话当前的工作目录', en: "The session's working directory" },
+  'paste.then': { zh: '然后做什么', en: 'And then' },
+  'paste.thenType': { zh: '把路径敲到提示符上', en: 'Type the path at the prompt' },
+  'paste.thenBuffer': { zh: '放进 tmux 粘贴缓冲区', en: 'Put the path in the tmux paste buffer' },
+  'paste.thenBoth': { zh: '两个都做', en: 'Both' },
+  'paste.saved': { zh: '已保存。', en: 'Saved.' },
+
   // Restarting the panel itself.
   'rst.title': { zh: '重启面板', en: 'Restart the panel' },
   'rst.what': {

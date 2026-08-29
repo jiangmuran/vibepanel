@@ -30,6 +30,7 @@ func (s *Server) registerSettingsRoutes(r chi.Router) {
 	r.Post("/settings/hooks", s.handleHooksInstall)
 	r.Post("/settings/restart", s.handleRestart)
 	r.Post("/settings/tour", s.handleTourDone)
+	r.Put("/settings/paste", s.handlePutPaste)
 	r.Get("/settings/env", s.handleGetEnv)
 	r.Put("/settings/env", s.handlePutEnv)
 	r.Get("/settings/tune", s.handleTuneStatus)
@@ -83,6 +84,12 @@ type settingsResponse struct {
 	PasskeyReason  string `json:"passkeyReason,omitempty"`
 	Username       string `json:"username"`
 
+	// Paste is where a screenshot pasted into a terminal lands, and what
+	// happens to its path afterwards. "panel" | "session", and
+	// "type" | "buffer" | "both".
+	PasteDir  string `json:"pasteDir"`
+	PasteThen string `json:"pasteThen"`
+
 	// TourDone is whether the first-run tour has been dismissed.
 	//
 	// On this payload rather than a route of its own, because the frontend
@@ -94,6 +101,29 @@ type settingsResponse struct {
 
 // tourKey is the settings row the first-run tour is remembered in.
 const tourKey = "tour.done"
+
+// Where a pasted screenshot goes, and what happens next.
+//
+// Defaults chosen from the complaint: the panel's own directory, not the
+// project, because a picture pasted at an agent used to dirty a git tree and
+// stay there. And typed at the prompt, which is what the panel did before and
+// is what most agents can act on -- the buffer is the other half of the same
+// answer for anybody whose agent reads it.
+const (
+	pasteDirKey  = "paste.dir"
+	pasteThenKey = "paste.then"
+	pasteDirDef  = "panel"
+	pasteThenDef = "type"
+)
+
+func oneOf(v string, allowed ...string) bool {
+	for _, a := range allowed {
+		if v == a {
+			return true
+		}
+	}
+	return false
+}
 
 // handleTourDone puts the first-run tour away for good.
 //
@@ -114,6 +144,35 @@ func (s *Server) handleTourDone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "done": value == "1"})
+}
+
+// handlePutPaste sets where a pasted screenshot goes.
+//
+// The values are checked here rather than trusted, because they decide a
+// directory to write into: an unknown one would fall through to whatever the
+// reader's default happens to be, which is a setting that silently does
+// something other than what the page shows.
+func (s *Server) handlePutPaste(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Dir  string `json:"dir"`
+		Then string `json:"then"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if !oneOf(req.Dir, "panel", "session") || !oneOf(req.Then, "type", "buffer", "both") {
+		writeErr(w, http.StatusBadRequest, "unknown paste setting")
+		return
+	}
+	if err := s.DB.SetSetting(r.Context(), pasteDirKey, req.Dir); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.DB.SetSetting(r.Context(), pasteThenKey, req.Then); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"dir": req.Dir, "then": req.Then})
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
@@ -149,9 +208,13 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	// reason to fail the whole page, and an unreadable settings row simply
 	// means the tour has not been dismissed.
 	tour, _ := s.DB.GetSetting(r.Context(), tourKey, "")
+	pdir, _ := s.DB.GetSetting(r.Context(), pasteDirKey, pasteDirDef)
+	pthen, _ := s.DB.GetSetting(r.Context(), pasteThenKey, pasteThenDef)
 
 	out := settingsResponse{
-		TourDone: tour == "1",
+		TourDone:  tour == "1",
+		PasteDir:  pdir,
+		PasteThen: pthen,
 
 		Version: version.Version, Commit: version.Commit, Built: version.Date,
 		Go:     runtime.Version(),

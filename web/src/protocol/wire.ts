@@ -544,6 +544,10 @@ export interface SettingsInfo {
   username: string
   /** Whether the first-run tour has been put away. */
   tourDone: boolean
+  /** Where a screenshot pasted into a terminal lands: "panel" | "session". */
+  pasteDir: string
+  /** What happens to its path: "type" | "buffer" | "both". */
+  pasteThen: string
 }
 
 /** Which agent an install request is about. The server accepts these two and

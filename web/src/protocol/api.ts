@@ -236,6 +236,16 @@ export const api = {
       body: JSON.stringify({ values }),
     }),
 
+  /** Puts text in the tmux paste buffer without pasting it anywhere. */
+  setClipboard: (text: string) =>
+    request<{ ok: boolean }>('/api/clipboard', { method: 'POST', body: JSON.stringify({ text }) }),
+
+  savePaste: (dir: string, then: string) =>
+    request<{ dir: string; then: string }>('/api/settings/paste', {
+      method: 'PUT',
+      body: JSON.stringify({ dir, then }),
+    }),
+
   tourDone: () => request<{ ok: boolean }>('/api/settings/tour', { method: 'POST' }),
   /** Puts it back, for the button in the settings page. */
   tourAgain: () =>
@@ -571,11 +581,18 @@ export const api = {
     request<GitHubResult>(`/api/projects/${projectId}/git/github`, { method: 'POST' }),
 
   /** Returns the absolute paths the files landed at, ready to type. */
-  upload: async (projectId: string, path: string, files: File[]) => {
+  /**
+   * `dest: 'panel'` writes into a directory the panel owns instead of into the
+   * project. That is where a pasted screenshot goes by default: the session's
+   * working directory is a git repository, and a picture pasted at an agent
+   * should not dirty it.
+   */
+  upload: async (projectId: string, path: string, files: File[], dest?: 'panel') => {
     const form = new FormData()
     for (const f of files) form.append('file', f, f.name)
     const res = await fetch(
-      `/api/projects/${projectId}/upload?path=${encodeURIComponent(path)}`,
+      `/api/projects/${projectId}/upload?path=${encodeURIComponent(path)}` +
+        (dest ? `&dest=${dest}` : ''),
       { method: 'POST', body: form },
     )
     if (!res.ok) throw await failure(res)

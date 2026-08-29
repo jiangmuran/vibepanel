@@ -60,6 +60,7 @@ export const SETTINGS_SECTIONS = [
   'profiles',
   'reporting',
   'tune',
+  'paste',
   'browser',
   'webhooks',
   'shares',
@@ -90,6 +91,9 @@ export const SECTION_GROUP: Record<SettingsSection, SettingsGroup> = {
   // directory and the question "what is the panel allowed to write into my
   // agent's configuration" is one question, not two.
   tune: 'sessions',
+  // Where a screenshot pasted into a terminal goes: about what a session
+  // does, and next to the other things that write outside the panel.
+  paste: 'sessions',
   browser: 'notify',
   webhooks: 'notify',
   shares: 'sharing',
