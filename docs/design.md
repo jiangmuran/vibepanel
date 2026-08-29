@@ -5,7 +5,7 @@ outside, and each of them cost something to learn. `docs/build-log.md` has the
 chronological version with the failures attached; this is the shorter argument,
 ordered by how much of the product depends on it.
 
-`AGENTS.md` states the same ground as red lines — rules for anyone changing the
+`AGENTS.md` states the same ground as red lines: rules for anyone changing the
 code. This page is the reasoning behind them, for anyone deciding whether to
 trust the thing.
 
@@ -36,9 +36,9 @@ This is the property everything else is arranged around.
 
 The panel runs `tmux attach` as a client, exactly the way you would. It never
 forks an agent itself, so no agent is ever a child of the Go process. Stop the
-panel, `kill -9` the panel, replace its binary, reboot its container — the tmux
-server and every process under it carry on, because nothing about their
-lifetime ran through the program you just stopped.
+panel, `kill -9` the panel, replace its binary, reboot its container; the tmux
+server and every process under it carry on, because nothing about their lifetime
+ran through the program you just stopped.
 
 Systemd nearly took it away through the deployment rather than the code. tmux's
 server is started by the panel and daemonises, but cgroup membership does not
@@ -67,7 +67,7 @@ a system unit with User= and the same  ->  the process reads -500
 ```
 
 Lowering `oom_score_adj` needs `CAP_SYS_RESOURCE`, which a user manager does not
-have, and `systemd-analyze verify` accepts the directive either way — a setting
+have, and `systemd-analyze verify` accepts the directive either way: a setting
 that looks applied, passes its own check and does nothing. So the shipped user
 unit omits it entirely and uses the knobs that do work unprivileged
 (`CPUWeight`, `IOWeight`, `ManagedOOMPreference`), and
@@ -109,7 +109,7 @@ tmux client at all.
 
 An agent that is thinking, waiting on a slow tool call, or writing somewhere
 other than the screen produces no output for as long as it likes. Reporting that
-as finished is the panel giving a confident wrong answer to the only question it
+as finished is the panel giving a confident wrong answer to the question it
 exists to answer.
 
 So silence is never promoted to *done*. Without a hook installed the heuristic
@@ -142,9 +142,11 @@ screenshot on the server is almost always to hand it to the agent. So an upload
 lands next to the session and types its absolute path at the prompt, ready to
 press enter on. The path being ready is the feature; the transfer is the detail.
 
-Preview sniffs the file's magic bytes rather than trusting its name, and refuses
-SVG on purpose — an SVG is a document that can run scripts, and rendering one on
-the panel's own origin would run it there.
+Preview sniffs the file's magic bytes rather than trusting its name, and the
+image list refuses SVG on purpose: an SVG is a document that can run scripts,
+and rendering one on the panel's own origin would run it there. Drawing HTML and
+SVG came later and is a separate route, which serves them into a frame with an
+opaque origin, no scripts and a policy that allows it no network.
 
 ## A read-only share token is narrowed by its route, never by a flag
 
@@ -165,7 +167,7 @@ two screens cannot be correlated and neither carries the panel's real ids.
 
 The surface reads working trees now, and the same argument was applied twice
 more rather than relaxed. What it asks git for is `--shortstat` and a commit
-timestamp — so filenames, subjects, authors and shas cannot leak, because they
+timestamp, so filenames, subjects, authors and shas cannot leak, because they
 are never read, and the *argument list* is what a test pins rather than the
 parser. The one outbound request a wall can cause needs four independent
 decisions by a signed-in owner and is bounded by a cache that stops the moment
@@ -189,7 +191,7 @@ It is a **flow** log: a row says a session left one state for another, having
 been in the first for so many seconds. It does not say how many sessions were
 waiting at two o'clock. Reconstructing a stock from a flow needs a starting
 census and every event since, and one dropped write makes the reconstruction
-wrong in a way nothing can detect — on a screen with nobody standing at it. So
+wrong in a way nothing can detect, on a screen with nobody standing at it. So
 the queue is reported as a duration ("how long did things sit") rather than as a
 depth, because that is a flow and is true.
 
@@ -224,7 +226,7 @@ Three format facts had to be verified rather than assumed, and each changes the
 answer. Claude writes one line per content block and every line carries the same
 `usage` object: one real 89 MB transcript holds 13,869 usage-bearing lines for
 6,563 actual requests, and summing them reports 14.1M output tokens where the
-truth is 5.95M — an over-count of 2.37×, in the direction that flatters.
+truth is 5.95M: an over-count of 2.37×, in the direction that flatters.
 Duplicates come in two shapes, adjacent and exactly 1,787 usage-lines apart (a
 session restore replays its history into the same file), so the ingest cursor is
 per-file rather than a byte offset; a sliding window catches the first shape and
@@ -253,7 +255,7 @@ it.
 
 The product is not allowed to blur that. The restored pane carries a banner
 between the archived scrollback and the new process saying so, and the session
-keeps a `restored` mark afterwards — because the banner scrolls away and the fact
+keeps a `restored` mark afterwards, because the banner scrolls away and the fact
 does not. The API documentation says the same thing in the same words.
 
 Restore is offered, never automatic, unless you asked for it on a particular
@@ -263,7 +265,7 @@ list to click through.
 ## Small decisions that keep being questioned
 
 **Per-session CPU is a share of the whole machine, not top's.** top means "one
-core saturated" by 100%, which is more informative in isolation — but the machine
+core saturated" by 100%, which is more informative in isolation, but the machine
 meter is an inch above this list on the same panel, and a session reading 310%
 beside a machine reading 31% invites exactly one wrong conclusion. `cores` is in
 the payload for anyone who wants to convert.
