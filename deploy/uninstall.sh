@@ -243,7 +243,19 @@ fi
 # contradicting the line above it.
 if [ -x "$BIN" ] && { [ -f "$UNIT" ] || [ -f "$SYSUNIT" ] || [ -f "$PLIST" ]; }; then
   "$BIN" service uninstall --yes 2>&1 | sed 's/^/       /' || true
-  did "service uninstalled"
+  # Looked at, not taken on trust -- the same reason the hooks are counted
+  # afterwards. A binary older than the fix removed the *system* unit with
+  # os.Remove, which is a permission error on root's file, and this printed
+  # "service uninstalled" over the top of a unit that was still there and
+  # still enabled.
+  if [ -f "$UNIT" ] || [ -f "$SYSUNIT" ] || [ -f "$PLIST" ]; then
+    echo "[FAIL] the unit file is still there:"
+    for u in "$UNIT" "$SYSUNIT" "$PLIST"; do [ -f "$u" ] && echo "         $u"; done
+    echo "       Remove it yourself, then: sudo systemctl daemon-reload"
+    UNIT_LEFT=yes
+  else
+    did "service uninstalled"
+  fi
 fi
 
 # Anything still serving, which is the case this whole repository is about: the
@@ -396,6 +408,9 @@ echo "── done ──"
 echo "Left alone: your own tmux, zellij, ttyd, and everything under ~/projects."
 if [ "${HOOKS_LEFT:-no}" = yes ]; then
   echo "STILL THERE: the hooks in the three agent configs. See the FAIL above."
+fi
+if [ "${UNIT_LEFT:-no}" = yes ]; then
+  echo "STILL THERE: the service unit. See the FAIL above."
 fi
 if [ -n "${ARCHIVE:-}" ]; then
   echo "The data is in $ARCHIVE if you want it back."

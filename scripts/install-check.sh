@@ -1762,6 +1762,30 @@ tmux -L "$OTHER" kill-server 2>/dev/null || true
 grep -q vibepanel-report "$HOME_DIR/.claude/settings.json" 2>/dev/null \
   && fail "the claude hooks are still there" || ok "the hooks are gone"
 
+echo "==> uninstall: a unit that did not go is caught by looking too"
+teardown_home real
+# A binary that reports success and leaves the unit: `service uninstall` from
+# before the system branch used `sudo rm -f` did exactly this, because
+# os.Remove on root's /etc/systemd/system/vibepanel.service is a permission
+# error from a command that has already stopped the service.
+mkdir -p "$HOME_DIR/.config/systemd/user"
+: > "$HOME_DIR/.config/systemd/user/vibepanel.service"
+cat > "$HOME_DIR/.local/bin/vibepanel" <<EOF
+#!/bin/sh
+if [ "\$1" = hook ] && [ "\$2" = remove ]; then
+  rm -f "$HOME_DIR/.config/opencode/plugin/vibepanel.js"
+  printf '{"model":"opus"}\n' > "$HOME_DIR/.claude/settings.json"
+  : > "$HOME_DIR/.codex/config.toml"
+fi
+exit 0
+EOF
+chmod +x "$HOME_DIR/.local/bin/vibepanel"
+uninst "$HOME_DIR" "vpuninst$$e" --yes --purge
+has "$LOG" "the unit file is still there" \
+  && ok "it says the unit is still installed" \
+  || fail "it reported the service uninstalled and left the unit: $(tail -4 "$LOG")"
+rm -f "$HOME_DIR/.config/systemd/user/vibepanel.service"
+
 echo "==> uninstall: a binary that cannot remove hooks is caught by looking"
 teardown_home deaf
 TD_SOCK2="vpuninst$$c"

@@ -17643,3 +17643,11 @@ not a missing progress bar.
 One thing in the report was not a bug: the installer did not ask about Claude
 Code because the release being installed was v1.0.1 and that question is newer
 than the tag.
+
+A postscript, from tearing that machine down again: `uninstall.sh` printed
+`[ok] service uninstalled` while `/etc/systemd/system/vibepanel.service` was
+still on disk and still enabled. Same shape as the hooks, one section further
+down -- `"$BIN" service uninstall --yes || true` followed by an unconditional
+success line, run against a binary that predated the `sudo rm -f` fix. The unit
+files are checked afterwards now, and a survivor is a FAIL that names the path
+and says what to run.
