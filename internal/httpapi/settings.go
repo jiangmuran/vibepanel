@@ -30,6 +30,8 @@ func (s *Server) registerSettingsRoutes(r chi.Router) {
 	r.Post("/settings/hooks", s.handleHooksInstall)
 	r.Post("/settings/restart", s.handleRestart)
 	r.Post("/settings/tour", s.handleTourDone)
+	r.Get("/settings/env", s.handleGetEnv)
+	r.Put("/settings/env", s.handlePutEnv)
 	r.Get("/settings/tune", s.handleTuneStatus)
 	r.Post("/settings/tune", s.handleTuneApply)
 	r.Delete("/settings/hooks", s.handleHooksUninstall)

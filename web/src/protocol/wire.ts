@@ -1391,3 +1391,16 @@ export interface RestartResult {
   supervisor?: string
   reason?: string
 }
+
+/** The service's environment file, as the settings page edits it. */
+export interface EnvSettings {
+  path: string
+  /** The editable keys, in the order to draw them. From the server so the page
+   *  and the PUT cannot disagree about what is accepted. */
+  keys: string[]
+  values: Record<string, string>
+  /** What this process is running with, which is not the same as the file. */
+  live: Record<string, string>
+  /** Reported, never editable: red line 1. */
+  socket: string
+}

@@ -1,3 +1,4 @@
+import { EnvSettings } from './EnvSettings'
 import { RestartPanel } from './RestartPanel'
 import type { SettingsInfo } from '../../protocol/wire'
 import { t } from '../../i18n'
@@ -116,6 +117,7 @@ export function PanelGroup({ info }: { info: SettingsInfo | null }) {
           </div>
         </Section>
       )}
+      <EnvSettings />
       <RestartPanel />
     </>
   )

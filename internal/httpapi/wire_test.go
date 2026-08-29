@@ -313,6 +313,7 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		// question and one GROUP BY.
 		"hooks.tuned":             true,
 		"panel.restarted":         true,
+		"env.changed":             true,
 		"hook.rejected":           true,
 		"login":                   true,
 		"login.failed":            true,

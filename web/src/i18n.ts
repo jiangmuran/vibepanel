@@ -585,6 +585,23 @@ const DICT = {
   'tune.applied': { zh: '改了 {n} 条。', en: 'Changed {n}.' },
   'tune.backup': { zh: '先备份 {p}，其他内容不动', en: 'copies {p} first; nothing else in it changes' },
 
+  // The service's environment file, as fields.
+  'env.title': { zh: '网络与访问', en: 'Network and access' },
+  'env.what': {
+    zh: '这些写在服务的环境文件里，下次启动生效。',
+    en: 'These live in the service\'s environment file and take effect on the next start.',
+  },
+  'env.save': { zh: '保存到文件', en: 'Save to the file' },
+  'env.backup': { zh: '先备份，注释和其他行都不动', en: 'copied first; comments and other lines are left alone' },
+  'env.pending': {
+    zh: '文件已改，但面板还跑在旧设置上。下面点重启。',
+    en: 'The file has changed and the panel is still running the old settings. Restart below.',
+  },
+  'env.socketFixed': {
+    zh: '不在这里改：换了它面板就看不见自己的会话',
+    en: 'not editable here: a panel on another socket cannot see its own sessions',
+  },
+
   // Restarting the panel itself.
   'rst.title': { zh: '重启面板', en: 'Restart the panel' },
   'rst.what': {

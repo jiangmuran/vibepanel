@@ -30,6 +30,7 @@ import type {
   UpdateResult,
   TuneStatus,
   RestartResult,
+  EnvSettings,
 } from './wire'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -228,6 +229,13 @@ export const api = {
 
   /** Puts the first-run tour away, on the server: it is read once per person,
    *  not once per browser. */
+  envSettings: () => request<EnvSettings>('/api/settings/env'),
+  saveEnvSettings: (values: Record<string, string>) =>
+    request<EnvSettings>('/api/settings/env', {
+      method: 'PUT',
+      body: JSON.stringify({ values }),
+    }),
+
   tourDone: () => request<{ ok: boolean }>('/api/settings/tour', { method: 'POST' }),
 
   /** Which agent's configuration to edit. The server refuses anything else

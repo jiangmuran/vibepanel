@@ -561,11 +561,26 @@ element, not a path.
 ### `DELETE /api/settings/hooks`
 ### `POST /api/settings/restart`
 ### `POST /api/settings/tour`
+### `GET /api/settings/env`
+### `PUT /api/settings/env`
 ### `GET /api/settings/tune`
 ### `POST /api/settings/tune`
 ### `GET /api/settings/tokens`
 ### `POST /api/settings/tokens`
 ### `DELETE /api/settings/tokens/{tokenID}`
+
+`GET /api/settings/env` reads the service's environment file -- the editable
+keys only, so a response never carries `CLOUDFLARE_API_TOKEN`. It also returns
+`live`, which is what *this process* is running with: a file edited an hour ago
+and never applied looks identical to one that is in force, and that difference
+is the reason there is a restart button next to it. `PUT` writes the same keys
+and refuses any other, copying the file beside itself first and leaving every
+comment, blank line and commented-out example exactly where it was. Emptying a
+value comments the assignment out rather than deleting the line.
+
+`VIBEPANEL_TMUX_SOCKET` is reported and not editable. Red line 1: a panel
+pointed at another socket cannot see its own sessions, and the ones it was
+managing keep running with nothing attached to them.
 
 `POST /api/settings/tour` puts the first-run tour away. `GET /api/settings`
 carries `tourDone` -- on that payload rather than a route of its own, because

@@ -69,6 +69,7 @@ export const SETTINGS_SECTIONS = [
   'activity',
   'update',
   'status',
+  'env',
   'restart',
 ] as const
 
@@ -97,6 +98,9 @@ export const SECTION_GROUP: Record<SettingsSection, SettingsGroup> = {
   activity: 'account',
   update: 'panel',
   status: 'panel',
+  // Above the restart button on purpose: these take effect on the next start,
+  // and the two controls are one sentence.
+  env: 'panel',
   restart: 'panel',
 }
 
