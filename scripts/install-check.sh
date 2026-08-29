@@ -1560,6 +1560,123 @@ else
   kill "$HTTPD" 2>/dev/null; HTTPD=""
 fi
 
+# ── deploy/uninstall.sh ───────────────────────────────────────────────────
+#
+# The teardown kills every session on a tmux socket and deletes a data
+# directory, so the blast radius is the thing under test and not the happy
+# path. Four bugs came out of running it once by hand -- a `set -o pipefail`
+# that made every dead socket look alive, a glob that missed half the test
+# sockets, a success line printed over a binary that had silently done nothing,
+# and a `pgrep -f` that matched the shell running it.
+
+uninst() { # uninst <home> <socket> [args...]
+  local h="$1" sock="$2"; shift 2
+  ( HOME="$h" \
+    VIBEPANEL_TMUX_SOCKET="$sock" \
+    VIBEPANEL_DATA_DIR="$h/.local/share/vibepanel" \
+    VIBEPANEL_BIN="$h/.local/bin/vibepanel" \
+    VIBEPANEL_ENV_FILE="$h/.config/vibepanel.env" \
+    "$REPO/deploy/uninstall.sh" "$@" >"$LOG" 2>&1 )
+  RC=$?
+}
+
+# A home with the shape a real install leaves, and a binary that removes hooks.
+teardown_home() { # teardown_home <"real"|"deaf">
+  newhome
+  mkdir -p "$HOME_DIR/.local/bin" "$HOME_DIR/.local/share/vibepanel/hooks" \
+           "$HOME_DIR/.claude" "$HOME_DIR/.codex" "$HOME_DIR/.config/opencode/plugin"
+  TD_REPORT="$HOME_DIR/.local/share/vibepanel/hooks/vibepanel-report.sh"
+  : > "$TD_REPORT"
+  printf '{"model":"opus","hooks":{"Stop":[{"hooks":[{"command":"%s done"}]}]}}\n' \
+    "$TD_REPORT" > "$HOME_DIR/.claude/settings.json"
+  printf 'notify = ["%s", "waiting"]\n' "$TD_REPORT" > "$HOME_DIR/.codex/config.toml"
+  : > "$HOME_DIR/.config/opencode/plugin/vibepanel.js"
+  echo x > "$HOME_DIR/.config/vibepanel.env"
+  if [ "$1" = real ]; then
+    # Removes the hooks, the way the real `vibepanel hook remove` does.
+    cat > "$HOME_DIR/.local/bin/vibepanel" <<EOF
+#!/bin/sh
+if [ "\$1" = hook ] && [ "\$2" = remove ]; then
+  rm -f "$HOME_DIR/.config/opencode/plugin/vibepanel.js"
+  printf '{"model":"opus"}\n' > "$HOME_DIR/.claude/settings.json"
+  : > "$HOME_DIR/.codex/config.toml"
+fi
+exit 0
+EOF
+  else
+    # A binary from before `hook remove`: takes the argument, does nothing,
+    # exits 0. This is the one that has to be caught by looking at the files.
+    printf '#!/bin/sh\nexit 0\n' > "$HOME_DIR/.local/bin/vibepanel"
+  fi
+  chmod +x "$HOME_DIR/.local/bin/vibepanel"
+}
+
+echo "==> uninstall: the dry run changes nothing"
+teardown_home real
+TD_SOCK="vpuninst$$a"
+tmux -L "$TD_SOCK" new-session -d -s vp_one 'sleep 120'
+uninst "$HOME_DIR" "$TD_SOCK"
+[ $RC -eq 0 ] && ok "exits 0" || fail "exited $RC"
+has "$LOG" "Nothing has been done" && ok "it says so" || fail "no such line"
+has "$LOG" "vp_one" && ok "it names the session it would kill" || fail "the session list was not printed"
+tmux -L "$TD_SOCK" has-session -t =vp_one 2>/dev/null \
+  && ok "the session is still running" || fail "a dry run killed a session"
+[ -e "$HOME_DIR/.local/bin/vibepanel" ] && ok "the binary is still there" || fail "a dry run deleted it"
+
+echo "==> uninstall: it refuses a socket it must not touch"
+for bad in "" default; do
+  uninst "$HOME_DIR" "$bad" --yes
+  [ $RC -eq 2 ] && ok "refuses socket '${bad:-<empty>}' with its own status" \
+    || fail "socket '${bad:-<empty>}' exited $RC, not 2"
+done
+tmux -L "$TD_SOCK" has-session -t =vp_one 2>/dev/null \
+  && ok "and killed nothing on the way" || fail "a refused run still killed the session"
+
+echo "==> uninstall: it kills its own socket and no other"
+OTHER="vpuninst$$b"
+tmux -L "$OTHER" new-session -d -s not_ours 'sleep 120'
+uninst "$HOME_DIR" "$TD_SOCK" --yes --purge
+[ $RC -eq 0 ] && ok "exits 0" || fail "exited $RC: $(tail -3 "$LOG")"
+tmux -L "$TD_SOCK" has-session 2>/dev/null \
+  && fail "the panel's own socket survived" || ok "the panel's sessions are gone"
+tmux -L "$OTHER" has-session -t =not_ours 2>/dev/null \
+  && ok "the other socket is untouched" || fail "it killed a socket that was not its own"
+tmux -L "$OTHER" kill-server 2>/dev/null || true
+[ -d "$HOME_DIR/.local/share/vibepanel" ] && fail "the data directory is still there" \
+  || ok "the data directory is gone"
+[ -e "$HOME_DIR/.config/vibepanel.env" ] && fail "the env file is still there" \
+  || ok "the env file is gone"
+grep -q vibepanel-report "$HOME_DIR/.claude/settings.json" 2>/dev/null \
+  && fail "the claude hooks are still there" || ok "the hooks are gone"
+
+echo "==> uninstall: a binary that cannot remove hooks is caught by looking"
+teardown_home deaf
+TD_SOCK2="vpuninst$$c"
+tmux -L "$TD_SOCK2" new-session -d -s vp_two 'sleep 120'
+uninst "$HOME_DIR" "$TD_SOCK2" --yes --purge
+has "$LOG" "still there" && ok "it says the hooks are still installed" \
+  || fail "it accepted an exit status of 0 as proof: $(grep -c . "$LOG") lines, $(tail -2 "$LOG")"
+[ -d "$HOME_DIR/.local/share/vibepanel" ] \
+  && ok "and kept the data directory the hooks point into" \
+  || fail "it deleted the reporter out from under hooks that still call it"
+tmux -L "$TD_SOCK2" kill-server 2>/dev/null || true
+
+echo "==> uninstall: backups are kept unless --purge"
+teardown_home real
+: > "$HOME_DIR/vibepanel-data-20200101-000000.tar.gz"
+mkdir -p "$HOME_DIR/vibepanel-backups"
+uninst "$HOME_DIR" "vpuninst$$d" --yes
+[ -e "$HOME_DIR/vibepanel-data-20200101-000000.tar.gz" ] \
+  && ok "an old archive survives a plain run" || fail "it deleted a backup nobody asked it to"
+[ -d "$HOME_DIR/vibepanel-backups" ] && ok "so does the backup directory" \
+  || fail "the backup directory was removed without --purge"
+has "$LOG" "--purge removes" && ok "and it says how to remove them" || fail "it did not mention them"
+uninst "$HOME_DIR" "vpuninst$$d" --yes --purge
+[ -e "$HOME_DIR/vibepanel-data-20200101-000000.tar.gz" ] \
+  && fail "--purge left the archive" || ok "--purge removes it"
+[ -d "$HOME_DIR/vibepanel-backups" ] && fail "--purge left the backup directory" \
+  || ok "and the backup directory"
+
 echo
 if [ "$FAILS" -eq 0 ]; then echo "=== install check: 0 FAIL ==="; else echo "=== install check: $FAILS FAIL ==="; fi
 exit "$FAILS"

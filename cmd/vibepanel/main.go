@@ -689,6 +689,18 @@ func cmdSession(args []string) error {
 // silently is a tool people stop trusting. The panel's settings page will offer
 // to apply this, showing exactly what it would write.
 func cmdHook(args []string) error {
+	// `hook remove` takes the three of them back out.
+	//
+	// The settings page has always been able to do this and the CLI never
+	// could, which is exactly backwards: the times you want the hooks gone are
+	// the times the panel is not running to offer it -- it will not start, it
+	// has been uninstalled, or the reporter is posting to an address that no
+	// longer answers. It needs no database, only the data directory the script
+	// lives under, so it does not open the app.
+	if len(args) > 0 && args[0] == "remove" {
+		return hookRemove(args[1:])
+	}
+
 	ctx := context.Background()
 	a, err := openApp(ctx, args)
 	if err != nil {
@@ -725,6 +737,60 @@ not affect agents you start from an ordinary terminal.
 %s
 
 `, hooks.ClaudeSettings(script), hooks.CodexNotify(script))
+	return nil
+}
+
+// hookRemove takes the panel's hooks out of all three agents' configuration.
+//
+// Every one of them is reported, including the ones that were not there. "Not
+// installed" and "removed" are different facts about somebody's machine, and a
+// teardown that prints only what it touched leaves you wondering about the rest.
+//
+// A failure on one does not stop the others. They are three separate files
+// owned by three separate tools, and an unreadable ~/.codex/config.toml is no
+// reason to leave the Claude Code hooks in place.
+func hookRemove(args []string) error {
+	cfg, err := config.Load(args, os.Stderr)
+	if err != nil {
+		return err
+	}
+	script, err := hooks.InstallScript(filepath.Join(cfg.DataDir, "hooks"))
+	if err != nil {
+		return err
+	}
+
+	failed := 0
+	say := func(what string, err error) {
+		if err != nil {
+			fmt.Printf("[FAIL] %-12s %v\n", what, err)
+			failed++
+			return
+		}
+		fmt.Printf("[ok  ] %-12s hooks removed\n", what)
+	}
+
+	st, err := hooks.UninstallClaude(script)
+	say("claude", err)
+	if err == nil && st.Installed {
+		fmt.Printf("       claude       still reports %d event(s); something else in that file points at %s\n",
+			len(st.Events), script)
+	}
+	_, err = hooks.UninstallCodex(script)
+	say("codex", err)
+	say("opencode", hooks.UninstallOpencode())
+
+	// The script itself last, and only when nothing still refers to it.
+	if failed == 0 {
+		if err := os.Remove(script); err != nil && !os.IsNotExist(err) {
+			fmt.Printf("[FAIL] %-12s %v\n", "reporter", err)
+			failed++
+		} else {
+			fmt.Printf("[ok  ] %-12s %s\n", "reporter", script)
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("hook remove: %d of them failed", failed)
+	}
 	return nil
 }
 

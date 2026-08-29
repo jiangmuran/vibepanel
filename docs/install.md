@@ -213,6 +213,36 @@ vibepanel service status | start | stop | restart | logs | token | upgrade | uni
 One command whichever way the panel runs. `logs` takes `-n <lines>` and `-f`;
 `upgrade` and `uninstall` take `--yes` and `--dry-run`.
 
+`service uninstall` stops the panel, removes the unit and removes the binary.
+It leaves the data and every running session alone, because those are the two
+things you usually want back.
+
+## Removing all of it
+
+`deploy/uninstall.sh` is the other end: the service, the sessions, the hooks
+written into Claude Code, Codex and opencode, the data directory and the
+binary.
+
+```sh
+./deploy/uninstall.sh          # list what would go; change nothing
+./deploy/uninstall.sh --yes    # do it, copying the database out first
+```
+
+It prints every session by name before killing it, and it names the things it
+is not touching — your own tmux, zellij, ttyd — because sitting beside those
+without disturbing them is the point of the socket this project runs on.
+
+`--purge` skips the copy and removes the older backups too. `--keep-data`
+leaves the data directory. `--dev-leftovers` also clears the sockets and
+servers this repository's own tests leave behind, which a normal install never
+has.
+
+Whether the hooks are gone is checked by reading the three files afterwards,
+not by the exit status: a binary older than `vibepanel hook remove` treats
+`remove` as a stray word and exits 0 having done nothing. If any are left the
+script says so and keeps the data directory, so the reporter those hooks call
+is still there.
+
 ## Upgrading
 
 **Settings → Updates** fetches the newest release from GitHub, verifies it

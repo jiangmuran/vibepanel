@@ -17491,3 +17491,68 @@ meant to decline it. It also meant the check behaved differently on a machine
 with `claude` installed than on one without. `VIBEPANEL_CLAUDE_BIN` defaults to
 `none` in the harness for that reason, and six blocks drive the branch
 deliberately.
+
+## A teardown, and the four bugs that came out of running it once
+
+`deploy/uninstall.sh` takes the panel off a machine: the service, the sessions,
+the hooks in three other tools' configuration, the data and the binary. It
+exists because `vibepanel service uninstall` deliberately keeps the data and
+the sessions, which is right for an upgrade and wrong for "I want this gone".
+
+It kills every session on a tmux socket, so the dry run is the default and the
+sessions are printed by name first. It also prints what it is *not* touching --
+ttyd, zellij, your own default socket -- because sitting beside those is the
+premise of the whole project and a teardown is where that gets tested for real.
+
+Writing it was uneventful. Running it once found four things, and none of them
+would have been found by reading it.
+
+**`set -o pipefail` made every dead socket look alive.** The check was
+`tmux -L "$name" list-sessions 2>&1 | grep -q "no server running"`. Against a
+dead socket tmux exits 1, grep matches and exits 0, and pipefail hands the
+pipeline tmux's 1 -- so the answer is "alive" no matter what grep found. It
+tested correctly by hand every time, because an interactive shell has no
+pipefail. Fourteen dead sockets sat there while the script reported nothing to
+do. The output is captured into a variable and matched with `case` now.
+
+**The glob wanted a hyphen the test helpers do not all write.**
+`vp[a-z0-9]*-*` matches `vpscroll-2174185` and not `vpprobe1` or
+`vpalt624372`.
+
+**A success line printed over a binary that had done nothing.** `hook remove`
+did not exist until this change, and a binary from before it treats `remove` as
+a stray argument, does the install path, and exits 0. `if "$BIN" hook remove;
+then did "hooks removed"` is therefore always true. The exit status cannot
+answer this question at all; the script counts the reporter's path in the three
+files afterwards instead, and when any survive it says so and keeps the data
+directory, because hooks pointing at a deleted reporter make every agent on the
+machine run a missing file on every prompt -- silently, since the reporter
+suppresses its own failures on purpose.
+
+**`pgrep -f` matched the shell running it.** A `-f` pattern is matched against
+whole command lines including the one belonging to whatever invoked the script,
+so a wrapper whose `-c` argument mentions `vibepanel serve` is a match, and
+`pkill` ends it. This happened four times to the session writing the file, once
+inside an hour, each time as an exit status of 144 and nothing else. The pids
+are read, the process's own ancestors are walked up to init, and anything in
+that chain is skipped.
+
+Two smaller things. `${VIBEPANEL_TMUX_SOCKET:-vibepanel}` falls back to the
+default on an *empty* value, which meant the "refusing: the socket is empty"
+guard under it could never run -- `-` instead of `:-`, so an explicitly empty
+value stays empty and hits the refusal. And `[ "$X" = none ] && X=` exits the
+script under `set -e` whenever the test is false, which is the common case; the
+same shape had already been written into `deploy/install.sh` an hour earlier.
+
+Servers whose socket is not in the socket directory are a separate sweep. The
+Go tests point `TMUX_TMPDIR` at their own `t.TempDir()`, so what they leave
+behind is invisible to anything scanning `/tmp/tmux-$(id -u)`. Six were running
+on the machine this was written on, between two and four days old. The pattern
+requires both a `-L` naming one of this project's sockets and a `-f` config
+under `/tmp`: an ordinary tmux has neither, and the panel's real server has its
+config in the data directory.
+
+`scripts/install-check.sh` drives twenty-three assertions over it, and the ones
+worth having are about the blast radius: a second socket, created beside the
+panel's, has to still be there afterwards. Mutating the kill to reach one more
+socket turns exactly that line red and leaves every other assertion green.
