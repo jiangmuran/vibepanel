@@ -33,7 +33,7 @@ ok() { echo "[ ok ] $*"; }
 cleanup() {
   [ -n "${HTTPD:-}" ] && kill "$HTTPD" 2>/dev/null
   [ -n "${MIRRORD:-}" ] && kill "$MIRRORD" 2>/dev/null
-  rm -rf "$WORK"
+  echo "WORK kept: $WORK" >&2
 }
 trap cleanup EXIT
 

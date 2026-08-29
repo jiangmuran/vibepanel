@@ -76,10 +76,35 @@ KillMode=process
 #
 # What is worth keeping is the part that does not fight the job:
 NoNewPrivileges=yes
-ProtectKernelTunables=yes
 ProtectControlGroups=yes
-RestrictSUIDSGID=yes
-RestrictRealtime=yes
+
+# And none of the seccomp ones, on either unit. That is the rule now, and it is
+# not caution -- it is measured on the machine this was written on.
+#
+# `KillMode=process` means the tmux server outlives the panel process, and it
+# also means the tmux server *starts inside this unit*: same cgroup, same
+# seccomp filter. So does every agent in every session, and every command
+# anybody types into one. A filter written to confine a Go web server ends up
+# applied to whatever the person at the keyboard runs.
+#
+# What that cost, before anyone noticed: `tar -xzf` of any archive with a
+# subdirectory in it, inside any session the panel had created.
+#
+#   tar: deploy: Cannot mkdir: Function not implemented
+#
+# ENOSYS, not EPERM, because systemd's filters reject syscalls that the
+# libseccomp they were built against does not know -- and this box runs Linux
+# 7.0 against libseccomp 2.6. Three of the five directives that were here
+# reproduced it (ProtectClock, ProtectKernelModules, RestrictSUIDSGID) and the
+# other two install filters of their own, so they are the same hazard waiting
+# for a tool that uses a syscall one version newer. A panel for running coding
+# agents cannot break tar.
+#
+# Verified by bisection with `systemd-run --user -p <directive>=yes tar -xzf`,
+# and by the same extraction succeeding in a unit with none of them.
+#
+# NoNewPrivileges and ProtectControlGroups stay: measured at zero seccomp
+# filters, and neither is inherited as a syscall rule.
 
 # Not ProtectClock, and not ProtectKernelModules. They are the two on that list
 # that a *user* manager cannot apply, and applying them does not fail softly:
