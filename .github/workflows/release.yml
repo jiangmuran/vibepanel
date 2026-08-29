@@ -1,0 +1,108 @@
+# Cut a release when a tag is pushed.
+#
+# The one-liner in both READMEs asks GitHub for the latest release and
+# downloads the archive named in it. Before this workflow that release was
+# built and uploaded by hand from a laptop, which means the thing everybody
+# installs came out of one unreproducible working tree — and the first release
+# went up two days after the tag because nobody remembered.
+#
+# Everything here is what `scripts/build-release.sh` already did locally. The
+# script is not reimplemented in YAML: it is the same script, so a release built
+# here and one built by hand are the same bytes, and a change to how archives
+# are made is one edit rather than two that drift.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  # So a tag that failed for an unrelated reason can be re-cut without moving
+  # it. Deleting and re-pushing a tag changes what `v1.0.1` means to anyone who
+  # already fetched it.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (must already exist)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          # The version is `git describe`, so the tag has to be reachable and
+          # so does everything it describes. A shallow clone gives `v1.0.1-0-g…`
+          # or nothing at all.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: tmux
+        run: sudo apt-get update && sudo apt-get install -y tmux && tmux -V
+
+      - name: install frontend deps
+        run: npm ci
+        working-directory: web
+
+      # The gate, before anything is published rather than after.
+      #
+      # `check` already runs on every push to main, and a tag points at a commit
+      # that has been through it — but a tag can be pushed at any commit, and
+      # the one thing worse than no release is a broken one that the installer
+      # is pointing everybody at.
+      - name: vet, gofmt, eslint, Go tests, frontend units
+        run: make check
+
+      - name: build the archives
+        run: sh scripts/build-release.sh "${{ inputs.tag || github.ref_name }}"
+
+      # What the bootstrap installer verifies against. Written by the build
+      # script; listed here so a change that stops producing it fails loudly
+      # instead of publishing archives nothing can check.
+      - name: show what will be published
+        run: |
+          ls -l dist/
+          cat dist/SHA256SUMS
+
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          # --notes-from-tag, so the release text is the annotated tag's own
+          # message. A tag written carefully and a release page written again
+          # from scratch are two descriptions of one thing, and they drift.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.tar.gz dist/SHA256SUMS --clobber
+          else
+            gh release create "$TAG" dist/*.tar.gz dist/SHA256SUMS \
+              --title "$TAG" --notes-from-tag --verify-tag
+          fi
+
+      # The install path, end to end, against what was just published.
+      #
+      # Not a smoke test of the archive: `release-check` already unpacks one
+      # locally. This is the half that only exists once a release is public --
+      # the bootstrap asking GitHub for the latest tag, downloading the archive
+      # named in it, and refusing it if SHA256SUMS disagrees. That is the path
+      # every reader of the README takes and the one nothing else covers.
+      - name: install what was published, from a throwaway HOME
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          HOME_DIR="$(mktemp -d)"
+          HOME="$HOME_DIR" sh install.sh --version "$TAG" --yes --no-enable --user
+          "$HOME_DIR/.local/bin/vibepanel" version
