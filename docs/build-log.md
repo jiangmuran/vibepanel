@@ -17174,3 +17174,108 @@ The last two were run together, once, because each costs a twenty-minute
 browser pass. Both reported, and the second dragged a thirty-second timeout
 behind it — the desktop settings block asks for the hooks and the dialog was
 somewhere else.
+
+## The three reference pages, read one dash at a time
+
+The READMEs went through the humanizer first; `docs/api.md`, `docs/runbook.md`
+and `docs/install.md` are the rest of what a stranger reads. 98, 52 and 14
+em-dashes going in, 44, 33 and 9 coming out, and the number is the least
+interesting thing about the pass.
+
+`scripts/lib/doc-scan.py` counts `—` and cannot see which kind it found. Two
+kinds turned up, in roughly equal numbers in `api.md`, and only one of them is
+the tell:
+
+- A **pair** of dashes is a parenthesis somebody chose over brackets, and it is
+  doing work no other punctuation does — `changes` is capped at 100, `sessions`
+  lists only the project's sessions sitting on a different commit than the
+  project root — worktrees, in practice — because six sessions in one directory
+  are six identical rows. Every one of those stayed.
+- A **single** dash before the last clause of a sentence is the tell. It sets up
+  a reveal that the sentence did not need, and nine times in ten the sentence
+  already wanted a colon, a comma or a full stop. Those are what it got.
+
+That split is the whole rule, and it is why the counts stopped where they did
+rather than at zero.
+
+### What came out that was not punctuation
+
+Four sentences that restated the one before them. "The list below is therefore
+complete rather than merely current", after two clauses that had just said the
+build fails in both directions. "The two credentials are independent on
+purpose", after a sentence demonstrating exactly that. `trend` being "short
+after a restart" and then, past a dash, "the honest line after a restart starts
+now rather than having a hole in it" — one fact, said twice, with the dash
+carrying the second copy.
+
+One quotable line, which is its own smell: the repository section had `branch`
+being the field the panel joins to a session's local branch — "is the branch
+this agent is on green" is the question the whole network half exists for. The
+question is real and the quotation marks were the flourish.
+
+One chain of appositives that had stopped tracking itself. The lock used to
+read "the editor unlocks, refetches and edits, which is two acts, which is the
+whole of what a lock is": three verbs called two acts, and two `which is`
+clauses in a row. It now says unlocking and editing are two separate requests.
+
+And one wry line that had eaten its own meaning. On the audit log trimming only
+at startup, "the bound arrived exactly when nobody needed it" — which reads
+well and is backwards, because at startup after three months the table is at
+its largest. What is true is that a bound applying only at startup is no bound
+at all on a panel meant to run for months, so that is what it says.
+
+### The rule of three survived, the counting did not
+
+Every three-item list in the three files was checked for whether it is three
+because there are three things. All of them were: three preview limits with
+three different status codes, three ways `LoopbackURL()` changes under a
+session, three situations where `service token` finds nothing, three causes for
+a binary that installs and will not run. Nothing was padded to three and
+nothing was cut to two.
+
+What did go is the *number in the sentence*. "Three things about `repo` are
+worth building against" is a rhetorical setup for a bulleted list the reader can
+count, and the bullets also carried bold openers — **It is never fresh.** and
+two more — which is the inline-heading list the guide names. The heading is now
+"What to know before building against `repo`" and the bullets open in plain
+prose. The two bold terms left in the WebSocket section stay: **Binary frames**
+and **Text frames** are the names of the two frame types, not headings over
+paragraphs.
+
+### Two things that were wrong
+
+`docs/runbook.md` told a reader that tmux outliving the panel "is what
+`KillMode=process` **above** is about". The `KillMode` section is 110 lines
+**below** it, and there is nothing above but `doctor`'s output table.
+
+"Three different things make that fail and they are indistinguishable
+afterwards", over two bullets. The count is right — `deploy/install.sh` says the
+same three in `err.exec`: `noexec`, an SELinux or AppArmor label, and the wrong
+architecture — but the runbook groups the first two under `Permission denied`
+and the third under `Exec format error`, so a reader counts two and stops
+trusting the sentence. It now says three causes share two messages between them.
+
+### What was deliberately left
+
+The `doctor` table at the top of the runbook keeps its five dashes. Those cells
+already carry semicolons and commas, and a dash is the only mark left that
+separates a reading from what it means without adding a third level of comma.
+
+Reasoning stayed wherever it changes what somebody does — why `--mirror`
+weakens the checksum, why the share surface has exactly one `GET`, why
+`KillMode=mixed` is not the cautious choice, why `git log --shortstat` rather
+than `--numstat`. That is the material `README.md` was told to move *into* these
+files; deleting it here would only move it nowhere.
+
+This log is not in scope and its 1,718 dashes are the reason the rule above
+needed writing down: the build log's job is why, and `— which is …` is the shape
+of a reason. A reference page's job is what, and the same shape there is a
+narrator.
+
+### Checked
+
+`TestTheAPIDocCoversEveryRoute` passes, and no `METHOD /path` heading was
+touched — the diff has no `+#` or `-#` line in it at all. Every markdown link
+and anchor in the three files was resolved against the headings on disk,
+including the one cross-reference made in prose rather than as a link ("the
+'database will not open' section below", which is below). `make check` green.

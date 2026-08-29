@@ -4,9 +4,9 @@ Everything the panel's own frontend does, an agent can do. This is that
 interface, written down so it can be depended on.
 
 `docs/api.md` is checked against the router by
-`TestTheAPIDocCoversEveryRoute` — an endpoint that exists and is not on this
+`TestTheAPIDocCoversEveryRoute`: an endpoint that exists and is not on this
 page fails the build, and so does a line here for a route that has been
-removed. The list below is therefore complete rather than merely current.
+removed.
 
 ## Getting in
 
@@ -23,7 +23,7 @@ curl -sX POST https://panel.example:8443/api/settings/tokens \
 # {"token":"pOsC…","id":"…","prefix":"pOsC7x2p","name":"deploy bot"}
 ```
 
-The response is the only time the token is readable — the database keeps a
+The response is the only time the token is readable. The database keeps a
 SHA-256 of it, so a leaked backup does not hand over live credentials, and
 there is no "show it again".
 
@@ -37,8 +37,7 @@ Tokens do not expire, which is the point: an agent left running for a fortnight
 should not stop working because a session TTL passed. Revoke one at a time from
 the settings page or with `DELETE /api/settings/tokens/{id}`; revocation takes
 effect on the next request. Changing your password signs out every browser and
-leaves tokens alone, and revoking a token leaves your password alone — the two
-credentials are independent on purpose.
+leaves tokens alone, and revoking a token leaves your password alone.
 
 A token carries exactly the authority of the account that made it. There are no
 scopes, and pretending otherwise with a `scope` field nobody enforces would be
@@ -60,7 +59,7 @@ worse than saying so.
 
 ### `GET /api/health`
 
-Open — no credential needed. What a monitor should watch.
+Open, no credential needed. What a monitor should watch.
 
 ```json
 {"ok": true, "version": "v0.4.0", "commit": "a1b2c3d", "tmuxVersion": "3.6",
@@ -89,7 +88,7 @@ socket pushes, so the shapes are identical.
 
 CPU, memory, swap, disk and load. `cpuPercent` is `null` until there are two
 samples to difference, and `cpuReadable` is `false` where there is no
-`/proc/stat` at all — a machine that cannot be measured says so rather than
+`/proc/stat` at all. A machine that cannot be measured says so rather than
 reporting zero.
 
 ### `GET /api/usage`
@@ -102,7 +101,7 @@ What each session's process tree is costing right now, keyed by session id:
 ```
 
 `cpuPercent` is a share of the **whole machine**, the same denominator
-`/api/system` uses — not top's, where 100% means one core. Both numbers appear
+`/api/system` uses, not top's, where 100% means one core. Both numbers appear
 within an inch of each other in the UI, and a session reading "310%" beside a
 machine reading "31%" invites exactly one wrong conclusion. `cores` is there to
 convert if you want the other convention.
@@ -110,7 +109,7 @@ convert if you want the other convention.
 `rss` sums the resident set across the tree and so double-counts pages shared
 with forked children; it is an over-estimate, like every tree total. `procs` is
 how many processes were found, which is what says whether the reading means
-anything — 1 is a bare shell.
+anything: 1 is a bare shell.
 
 A session whose pane has gone is **absent** rather than zero, because zero is a
 real reading. `readable` is `false` where there is no `/proc` to walk.
@@ -169,7 +168,7 @@ from character counts anywhere in this.
 vibepanel session id and there is no mapping between them: neither agent
 publishes the id of the transcript it is writing, so the honest unit is the
 agent's own session. `cwd` is what ties a session to a project, matched by
-directory containment — `/home/me/api-v2` is not inside `/home/me/api`.
+directory containment: `/home/me/api-v2` is not inside `/home/me/api`.
 
 `found: false` in `sources` means that agent contributed nothing **because
 nothing could be read**, with `problem` saying why. That is not the same claim as
@@ -177,7 +176,7 @@ zero spend and must not be rendered as one. `skipped` counts records the reader
 could not use, so a non-zero value makes every total below it a lower bound.
 
 `scannedAt` is zero until the first pass over the transcripts has finished.
-Until then there is no answer yet — which is also not zero. A `GET` starts a
+Until then there is no answer yet, which is also not zero. A `GET` starts a
 pass in the background when the last one is more than 30 seconds old, and never
 blocks on it.
 
@@ -187,7 +186,7 @@ part and is split here; Claude's does not and is not.
 
 `days` is the range for `byDay`, `total`, `byTool`, `projects` and `sessions`,
 clamped to 1–3660 and defaulting to 30. `heatmap` is always the last 371 days
-(53 whole weeks) and `byMonth` is always every month — a range control should
+(53 whole weeks) and `byMonth` is always every month. A range control should
 not be able to make a year grid into a broken one. `project` is a project id,
 never a path; `tool` is `claude` or `codex`. An unknown value of either is a
 400 rather than an empty chart.
@@ -218,8 +217,8 @@ counts and timestamps out of those files and nothing else leaves the machine.
 
 `POST /api/projects` takes `{"path": "...", "name": "..."}`; a leading `~` is
 expanded and the name defaults to the directory's base. `PATCH` accepts `name`
-and `pinned`. `DELETE` kills every session in the project and then removes it —
-it does not touch the directory.
+and `pinned`. `DELETE` kills every session in the project and then removes it.
+It does not touch the directory.
 
 `reorder` takes `{"ids": [...]}` in the order you want and switches the panel to
 manual ordering.
@@ -231,14 +230,14 @@ symlinks included.
 `preview` is `download` with a ceiling and an opinion. It answers with the
 bytes, and says what it decided they are in `X-Preview-Kind`: `text`, `image` or
 `pdf`. For an image or a PDF, `X-Preview-Type` carries the media type it
-matched, from a short whitelist — that header is what the caller should build a
+matched, from a short whitelist. That header is what the caller should build a
 `Blob` from, because the response itself is still `application/octet-stream`
 with `nosniff` and an `attachment` disposition. Nothing a project contains is
 ever offered to a browser as something to render on the panel's origin.
 
 The kind comes from the leading bytes, never from the extension: a `Makefile` is
 text and a `notes.txt` holding a tarball is not. SVG is deliberately read as
-text rather than drawn — it is a document with scripting in it.
+text rather than drawn: it is a document with scripting in it.
 
 Three limits, and each answers differently:
 
@@ -258,7 +257,7 @@ graceful shutdown with it.
 
 A text response also carries `X-Preview-Markup: html` or `svg` when a *second*
 endpoint would draw the file as a page. The bytes in that response are
-unchanged by it — still an attachment, still `application/octet-stream`.
+unchanged by it: still an attachment, still `application/octet-stream`.
 
 `preview/render` is that second endpoint, and it is a separate route rather than
 a flag for the same reason a share token is narrowed by its route: exactly one
@@ -347,7 +346,7 @@ curl -sX POST .../api/sessions/restore -H "Authorization: Bearer $TOKEN" \
 ```
 
 `ids` is required and there is no "all" flag. It answers `200` with one result
-per id even when some failed — after a reboot the ordinary failure is a single
+per id even when some failed. After a reboot the ordinary failure is a single
 project directory that was pruned while the machine was off, and refusing the
 whole batch over it would leave twenty-three sessions dead to report one.
 
@@ -362,7 +361,7 @@ build on this should say so where a person will read it.
 
 The scrollback is captured every 30 seconds for sessions that have produced
 output, bounded to the last 2,000 lines and 256 KiB, and once more for every
-session when the panel shuts down — so an orderly reboot loses nothing and a
+session when the panel shuts down, so an orderly reboot loses nothing and a
 power cut loses at most half a minute. `scrollbackAt` on a session row is when
 its archive was taken, or `0` when there is none.
 
@@ -376,7 +375,7 @@ it *with*, and the same agent pointed at Anthropic, at a company proxy and at a
 self-hosted gateway is three configurations differing only in a base URL.
 
 There is no "API host" field. Which variable carries the endpoint is the agent's
-decision — `ANTHROPIC_BASE_URL` for claude, `OPENAI_BASE_URL` for codex, and for
+decision: `ANTHROPIC_BASE_URL` for claude, `OPENAI_BASE_URL` for codex, and for
 opencode nothing at all, because its endpoint is chosen per provider in its own
 configuration. A field would need that mapping to stay right for every release
 of somebody else's tool, and the day it was wrong the panel would set a variable
@@ -416,7 +415,7 @@ empty value is not passed to the process**. That last rule is deliberate: `FOO=`
 and "FOO unset" are different to a program, and the common mistake is a
 half-filled form rather than somebody wanting an empty variable.
 
-`PATCH` replaces the whole profile — name, command and variables together.
+`PATCH` replaces the whole profile: name, command and variables together.
 There is no partial edit, because the field somebody would omit is `env`, and
 "leave it alone" is how a rename keeps a key the user thought they had removed.
 
@@ -425,12 +424,12 @@ gives `"value": ""` and `"hasValue": true`. Sending a secret back with an empty
 value keeps the stored one, which is what stops a rename wiping every key; any
 other value replaces it. Matching is by name, so renaming a secret variable in
 the same request that saves it clears the value. Nothing about this encrypts
-anything — the value is plaintext in the panel's SQLite file, and the settings
+anything. The value is plaintext in the panel's SQLite file, and the settings
 page says so. It is not in the argv, so it is not in `ps`, and it is not in the
 audit log, which records profile names only.
 
 **What is refused, and what is not.** A variable name must match
-`[A-Za-z_][A-Za-z0-9_]*` — tmux accepts an empty name, a name with no `=` and a
+`[A-Za-z_][A-Za-z0-9_]*`: tmux accepts an empty name, a name with no `=` and a
 name containing a newline, and all three produce a session that looks configured
 and is not. A value may not contain a line break. A name starting `VIBEPANEL_`
 is refused outright: those are how a session's hooks find the panel and
@@ -454,7 +453,7 @@ Creating, editing and removing are audited as `profile.created`,
 ### `POST /api/projects/{id}/git/github`
 
 `GET .../git` reads the project's working tree. No network, no credential, no
-configuration — it is the half that always works, and it is what the panel polls
+configuration. It is the half that always works, and it is what the panel polls
 while the tab is open:
 
 ```json
@@ -475,7 +474,7 @@ repository gets `200` and a panel that says so in a line.
 The answer may be up to three seconds old. Reads of one working tree are cached
 for that long and requests arriving during a read wait for it rather than
 starting another, so several tabs on one project are one `git status` and not
-several — see `internal/git/cache.go`. The window is shorter than the tab's own
+several (see `internal/git/cache.go`). The window is shorter than the tab's own
 five-second poll, so a single viewer never sees the same numbers twice.
 
 `changes` is capped at 100 entries; the four counts above it are always exact.
@@ -491,7 +490,7 @@ it is read from the environment at the moment of the request.
 
 `POST .../git/github` is the only outbound request in the panel besides the
 update check, and it is a `POST` for that reason rather than because it changes
-anything — a `GET` is something a browser re-issues on its own. One press, one
+anything: a `GET` is something a browser re-issues on its own. One press, one
 GraphQL query to `api.github.com`, twenty open pull requests newest first:
 
 ```json
@@ -503,13 +502,13 @@ GraphQL query to `api.github.com`, twenty open pull requests newest first:
 ```
 
 `branch` is the head branch, and it is the field the panel joins to a session's
-local branch — "is the branch this agent is on green" is the question the whole
-network half exists for. `review` and `checks` are GitHub's own rollups,
+local branch. Whether the branch an agent is on is green is the question the
+whole network half exists for. `review` and `checks` are GitHub's own rollups,
 lowercased; either can be empty, which means no review is required and no checks
 ran, not that something failed.
 
 `400` with no request made: no token, or a remote that is not on `github.com`.
-`502` when GitHub answered and the answer was not usable — including a `200`
+`502` when GitHub answered and the answer was not usable, including a `200`
 carrying a GraphQL `errors` array, which is what a repository the token cannot
 see looks like.
 
@@ -529,7 +528,7 @@ anything wants.
 
 Note the asymmetry, because it is the thing to get wrong: you **read** `rev` and
 you **send it back as** `baseRev`. They are different names for the same number
-because they are different claims — one is "this is the revision", the other is
+because they are different claims: one is "this is the revision", the other is
 "this is the revision I was looking at". The server rejects an unknown field, so
 sending `rev` gets a `400` naming it rather than an unconditional write.
 
@@ -543,7 +542,7 @@ timestamp.
 
 Directories only, rooted at the home directory, for choosing where a project
 should live. `mkdir` takes `{"path": "...", "name": "..."}` where `name` is one
-element — not a path.
+element, not a path.
 
 ## Settings
 
@@ -566,7 +565,7 @@ request has always meant) or `?agent=codex`. Anything else is a `400`: the value
 decides which file in the user's home directory gets edited, so an unrecognised
 one has to be refused rather than resolved to whichever agent is first in the
 code. Claude's four events are merged into `~/.claude/settings.json`; Codex's one
-`notify` line goes into `~/.codex/config.toml`, above the first table — a
+`notify` line goes into `~/.codex/config.toml`, above the first table: a
 top-level key appended to the end of that file would belong to the last table in
 it and Codex would never read it.
 
@@ -581,14 +580,14 @@ which leaves out the case that matters: the laptop is shut. A webhook is an
 outbound HTTP request the panel makes when a session changes state.
 
 One mechanism, not a list of providers. `{"method","url","headers","body"}`
-with `{state}`, `{session}`, `{project}`, `{url}` and `{time}` substituted —
-which is Bark, ntfy, Gotify, ServerChan, PushPlus, Slack, Discord and a shell
+with `{state}`, `{session}`, `{project}`, `{url}` and `{time}` substituted.
+That covers Bark, ntfy, Gotify, ServerChan, PushPlus, Slack, Discord and a shell
 script behind a reverse proxy, without a case per service.
 
 Two escapes, chosen by where the placeholder is. In a URL a session called
 `fix a&b` arrives percent-encoded, or everything after the ampersand becomes a
 different query parameter. In a body it arrives JSON-escaped, or a title with a
-quote in it produces a body the destination rejects — and agent titles contain
+quote in it produces a body the destination rejects, and agent titles contain
 quotes constantly.
 
 `states` is which transitions fire it; empty means `waiting` only, which is the
@@ -615,8 +614,9 @@ box is a normal state, not a broken one.
 against the `SHA256SUMS` published in the same release, unpacks the binary,
 moves the running one aside to `<path>.old`, renames the new one into place, and
 then asks systemd to restart the unit. It answers before restarting, with
-`{"installed", "previous", "restarting", "restartWhy"}` — `restarting: false`
-and a reason when the panel was started by hand and cannot bring itself back.
+`{"installed", "previous", "restarting", "restartWhy"}`. `restarting` is
+`false`, with a reason, when the panel was started by hand and cannot bring
+itself back.
 
 **The version is not a parameter.** A request cannot name what to install; the
 panel installs the latest release or refuses with `409`. The interesting case
@@ -625,7 +625,7 @@ this panel to run something else.
 
 What the checksum buys: it detects a corrupt or truncated download. It does not
 defend against a compromised release, because the sums come from the same
-release as the archive — the same trust anyone gets from `curl | tar`. What
+release as the archive, the same trust anyone gets from `curl | tar`. What
 makes it defensible is that the repository is compiled into the binary rather
 than configurable, so an update cannot be aimed somewhere else by a setting.
 
@@ -638,7 +638,7 @@ A share link is a capability: a long random token in a URL that opens a
 dashboard at `/share/<token>` on a second screen, and reaches nothing else at
 all.
 
-What that dashboard *shows* is a **board** — an arrangement chosen when the link
+What that dashboard *shows* is a **board**: an arrangement chosen when the link
 is made, stored with it, and sent back with every reading. A board is data, not
 code: an ordered list of widgets, each naming a kind from a fixed registry with
 options that are enums or bounded numbers. There is no widget that names a
@@ -657,7 +657,7 @@ Five things are decided when a link is created, and two of them are permanent:
 
 The first three can be changed later because none of them can disclose anything
 the link did not already carry. The other two can, and by then the URL is in an
-email or typed into a television — so a different mode or a different scope
+email or typed into a television, so a different mode or a different scope
 means a different link, which somebody has to hand out on purpose.
 
 ### Editing a screen you are not standing in front of
@@ -683,20 +683,20 @@ titles and project names, read out of its own database. A remark is not the
 panel's; it is a sentence the owner wrote to the person in front of the screen,
 with the effect visible to them. `name` has always been sent in both modes for
 the same reason, and a remark suppressed under `counts` would be a label its
-author cannot see on the wall they labelled — which they would then put in
+author cannot see on the wall they labelled, which they would then put in
 `name`, which is disclosed anyway.
 
 `locked` fixes a board. It is enforced on the server: a `PATCH` to a locked link
 answers `409` unless it is the one that unlocks it, and an unlocking `PATCH`
-changes nothing else — the editor unlocks, refetches and edits, which is two
-acts, which is the whole of what a lock is. What it guards against is not an
-attacker; it is a wall a customer is sitting in front of being rearranged from
-an editor left open on the wrong row.
+changes nothing else. Unlocking and editing are two separate requests, which is
+the whole of what the lock is. What it guards against is not an attacker; it is
+a wall a customer is sitting in front of being rearranged from an editor left
+open on the wrong row.
 
 `viewers` on each listed link is how many screens had it open a moment ago,
 counted from the polls they were already making. It is not a column: a wall
 polls every two seconds forever, and a stored count would be that many writes
-for a number that is true for two seconds — and one that must read zero again
+for a number that is true for two seconds, and one that must read zero again
 after a restart, which a row would not. A viewer that is unplugged needs no
 cleanup, because nothing is held open to notice dying: its entry simply stops
 being refreshed and ages out within fifteen seconds. Viewers are **not** told
@@ -730,7 +730,7 @@ seconds from now, `0` for a link that does not expire, and at most a year.
 
 `preset` names a starting arrangement and `board` is an explicit one; `board`
 wins, and a request with neither gets the default board. An unknown preset or an
-unknown widget kind is a `400` rather than a fallback — see the catalogue below.
+unknown widget kind is a `400` rather than a fallback; see the catalogue below.
 
 `scope` is `""` (the whole panel, the default), `project` or `session`, with
 `scopeId` naming which. It is checked against the rows that exist: a scope
@@ -802,7 +802,7 @@ and a composed wall on a television.
 one a wall needs: a screen where every tile is the same size is a dashboard, not
 a display, and hierarchy comes from the size ratio between a hero and the
 texture around it. A board's `fill` stretches the rows to the height of the
-screen rather than letting them flow down it — nobody is going to scroll a
+screen rather than letting them flow down it. Nobody is going to scroll a
 television.
 
 A board also carries `density`, 1–3, which is **how much each widget says** and
@@ -874,7 +874,7 @@ handler reads.
 are `null`, unless a widget on the board asks for them. A board can only ever subtract: the sections a dashboard
 may carry are a fixed set, a widget chooses among them, and no arrangement of
 widgets produces a field that is not in the list. `null` and a zeroed object are
-different facts — the first is "this board does not show it", and the second has
+different facts: the first is "this board does not show it", and the second has
 a `readable` flag of its own to tell "nothing was spent" from "nothing has been
 counted yet".
 
@@ -891,31 +891,30 @@ are local days and a phone abroad must not decide which square is today.
 sampled every ten seconds, for the widgets that draw a line rather than a
 number: `{"every": 10, "points": [{"at", "cpu", "memory", "load", "tokens"}]}`.
 `cpu` is `null` where `/proc` could not be read, which is a different fact from
-zero. It is kept in this process's memory and never stored, so it is short after
-a restart or on a screen that has just been switched on — the honest line after
-a restart starts now rather than having a hole in it. It is filled by the polls
-that draw it: a panel nobody is watching does no work for a graph nobody is
-looking at.
+zero. It is kept in this process's memory and never stored, so on a screen that
+has just been switched on, or after a restart, the line starts now rather than
+having a hole in it. It is filled by the polls that draw it: a panel nobody is
+watching does no work for a graph nobody is looking at.
 
 `spend.allTime` is every token recorded within the link's scope, summed from the
 months already in hand. Each bucket in `days`, `months` and `heatmap` carries
 `input`, `output`, `cacheRead` and `cacheWrite` as well as `total`, which is
-what a stacked bar is drawn from — the same tokens the totals already disclose,
+what a stacked bar is drawn from: the same tokens the totals already disclose,
 cut the same way.
 
-`todos` is counts only — `open`, `done`, `closedToday`, and the same per project.
+`todos` is counts only: `open`, `done`, `closedToday`, and the same per project.
 The items themselves are never sent, at either `detail`. A todo line says what
 somebody is about to do about a customer, a bug or a date; it is closer to a
 note than to a session title.
 
-`flow` and `feed` come out of the session-event log — one append-only row per
+`flow` and `feed` come out of the session-event log: one append-only row per
 state transition, written where the poller already notices one. Before it the
 panel kept state and no history, so every widget with a time axis on this
 surface degraded to a single current number and a board of trends was
 unbuildable. `flow` is `{"every", "since", "windowDays", "today", "window",
 "buckets": [{"at", "started", "waited", "finished", "waitSeconds",
 "waitEnded"}]}`; `feed` is the same transitions in the order they happened, each
-carrying the per-link pseudonyms, the state and the time — no new fact reaches
+carrying the per-link pseudonyms, the state and the time. No new fact reaches
 the wire because a board asked for a feed.
 
 It is a **flow**, not a stock: a bucket counts transitions that happened in it,
@@ -934,21 +933,21 @@ repositories. `{"readable", "ageSeconds", "repos", "projects", "windowDays",
 `{"commits", "added", "removed", "files"}`.
 
 This replaced `counts.doneToday` and the checklist figure as the headline
-numbers a board offers, and the reason is that both of those are *self-reported*:
-a todo is ticked because somebody remembered to tick it, and a session reaches
-`done` because an agent's hook said so — a session left running all day never
-says it at all. They measure whether the panel was told something. Commits and
-changed lines are things that exist now and did not this morning, and anybody
-can check them against the repository. `counts.doneToday` is still sent and is
-still a real event; it is simply not a measure of output.
+numbers a board offers, because both of those are *self-reported*: a todo is
+ticked because somebody remembered to tick it, and a session reaches `done`
+because an agent's hook said so; a session left running all day never says it at
+all. They measure whether the panel was told something. Commits and changed
+lines are things that exist now and did not this morning, and anybody can check
+them against the repository. `counts.doneToday` is still sent and is still a
+real event; it is simply not a measure of output.
 
 Added and removed lines are two numbers and never a net one: +1200/−800 is a
 different day from +400/−0 and a net figure is identical in both, hiding a
 refactor completely. They are labelled as *change*, not as productivity.
 
-Three things about `repo` are worth building against:
+What to know before building against `repo`:
 
-- **It is never fresh.** A wall polls every two seconds; `git log` is not a
+- It is never fresh. A wall polls every two seconds; `git log` is not a
   two-second question and a GitHub round trip certainly is not. So the poll
   reads whatever a background refresh has already produced and reports its
   `ageSeconds`; the first poll for a repository comes back with
@@ -956,13 +955,13 @@ Three things about `repo` are worth building against:
   today". A working tree is re-read at most every 90 seconds, a repository's
   pull requests at most every 5 minutes, shared across every viewer of every
   link, and not at all once nobody is looking.
-- **`prs` is the only outbound request a wall can cause, and four things have to
-  be true at once**, none of them a default: the board carries a pull-request
+- `prs` is the only outbound request a wall can cause, and four things have to
+  be true at once, none of them a default: the board carries a pull-request
   widget, the link is scoped to one project, `detail` is `names`, and a token is
   in the panel's environment. It is counts and rollups — `open`, `draft`,
   `green`, `red`, `pending`, `approved`, `changesRequested`, `mergedToday` — and
   never a title, a number, an author, a branch or a URL.
-- **Uncommitted work is invisible to all of it.** An agent that has been editing
+- Uncommitted work is invisible to all of it. An agent that has been editing
   for an hour without committing produces zero commits and zero lines here; the
   `dirty` count on `byProject` is the only sign of it.
 
@@ -971,11 +970,11 @@ rather than a parsing convenience: `--numstat` would carry every changed
 filename through the panel on its way to a wall, and asking for `%s` would carry
 the commit messages. A commit *count* is a number; a commit *subject* is prose
 from inside somebody's repository. So no path, no filename, no branch name, no
-sha, no author and no subject appears here at either `detail` — only the project
+sha, no author and no subject appears here at either `detail`, only the project
 names, which follow `names` exactly like every other group on this dashboard.
 
 `scopeRepoOwner` and `scopeRepoName` are the scoped project's repository, and
-they are the one thing on this surface that reads a working tree — one
+they are the one thing on this surface that reads a working tree: one
 `git remote get-url`, behind the same cache the repository tab uses. Both are
 empty unless **all** of: the link is scoped to a project, `detail` is `names`,
 and the remote is a `github.com` one this panel is willing to link to. They are
@@ -984,7 +983,7 @@ two parsed halves and never a URL, so a viewer can build
 project's path are never sent, at either `detail`.
 
 The narrowing is the disclosure decision, not a styling one. A repository is a
-public, resolvable name that also names the organisation — under `counts` the
+public, resolvable name that also names the organisation. Under `counts` the
 board sends no names at all, so a repository link there would identify the
 customer more precisely than the project path that mode exists to withhold. A
 session-scoped link's `scopeName` is a session title, and hanging a repository
@@ -1005,7 +1004,7 @@ two walls cannot be joined into one picture of the panel.
 
 Under `detail: "counts"` the `name` fields are empty strings and the page
 numbers the groups and rows instead. Under `detail: "names"` they carry the
-session title and the project name — still no paths.
+session title and the project name, still no paths.
 
 `kind` is `agent`, `shell` or `other`, which is what makes a wall readable
 without quoting the command. `measured` is `false` when the sampler found no
@@ -1015,12 +1014,12 @@ entirely: they are session rows with a parent, and listing them reports two rows
 for one job.
 
 `at` is when the server took the reading, and the dashboard counts up from it.
-That is the field to use if you build your own display — a page that has
+That is the field to use if you build your own display: a page that has
 silently frozen looks exactly like a quiet system, and the numbers themselves
 cannot tell you which you are looking at.
 
 Answers are `Cache-Control: no-store`. `401` means the link was revoked, has
-expired, or never existed — one answer for all three, and rejected attempts are
+expired, or never existed: one answer for all three. Rejected attempts are
 audited as `share.rejected`, gated to one row per source per minute. `403` is
 the `--allow-from` allowlist, which applies here exactly as it does to the
 panel: a share link must not be a way around it.
@@ -1044,7 +1043,7 @@ Browser flows. A program wanting in should use a token instead of any of these.
 `GET /api/auth/state` is open and answers `{"configured", "authenticated",
 "username", "passkeysUsable", "passkeyReason"}`. It returns `503` rather than
 "not signed in" when the database cannot be read, because a client that treats
-those as the same thing signs the user out during a storage fault — into a login
+those as the same thing signs the user out during a storage fault, into a login
 form that reads the same database.
 
 ## Hooks
@@ -1108,7 +1107,7 @@ the poller's path — are the two that must not exist.
 
 ## What is not here
 
-There is no way to attach to a session's terminal over plain HTTP — that is the
+There is no way to attach to a session's terminal over plain HTTP: that is the
 WebSocket's job, and a polling shim would be a worse version of it. There is no
 API for the setup token; it is printed to the panel's own log on first run and
 consumed once.
