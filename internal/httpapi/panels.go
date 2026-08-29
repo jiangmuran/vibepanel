@@ -35,6 +35,7 @@ func (s *Server) registerPanelRoutes(r chi.Router) {
 	// produce an inline text/html response out of a project directory.
 	r.Get("/projects/{id}/preview/render", s.handleRenderPreview)
 	r.Post("/projects/{id}/upload", s.handleUpload)
+	r.Post("/projects/{id}/mkdir", s.handleProjectMkdir)
 	r.Get("/projects/{id}/notes", s.handleGetNote)
 	r.Put("/projects/{id}/notes", s.handlePutNote)
 	// The note that belongs to no project. Its own pair of routes rather than
@@ -801,6 +802,34 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 type mkdirRequest struct {
 	Path string `json:"path"`
 	Name string `json:"name"`
+}
+
+// handleProjectMkdir makes a directory inside a project.
+//
+// The directory picker has been able to do this since it existed, against the
+// home directory; the file tree could not, against the project it is showing.
+// Same helper, same refusals -- `browse.Mkdir` is where the name is checked and
+// the root is enforced -- so the only new thing here is which root.
+func (s *Server) handleProjectMkdir(w http.ResponseWriter, r *http.Request) {
+	var req mkdirRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	p, err := s.DB.GetProject(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	created, err := browse.Mkdir(p.Path, req.Path, strings.TrimSpace(req.Name))
+	if err != nil {
+		if os.IsExist(err) {
+			writeErr(w, http.StatusConflict, req.Name+" already exists")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"path": created})
 }
 
 func (s *Server) handleBrowseMkdir(w http.ResponseWriter, r *http.Request) {

@@ -1,5 +1,6 @@
 import { EnvSettings } from './EnvSettings'
 import { RestartPanel } from './RestartPanel'
+import { TourAgain } from './TourAgain'
 import type { SettingsInfo } from '../../protocol/wire'
 import { t } from '../../i18n'
 import { safeText } from '../text'
@@ -119,6 +120,7 @@ export function PanelGroup({ info }: { info: SettingsInfo | null }) {
       )}
       <EnvSettings />
       <RestartPanel />
+      <TourAgain />
     </>
   )
 }

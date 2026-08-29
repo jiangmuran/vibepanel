@@ -222,8 +222,34 @@ export function Sidebar(props: SidebarProps) {
   // it is a thing that can be read.
   const rank = {
     head: overlay ? 'text-vp-lg' : 'text-vp-md',
-    group: overlay ? 'text-vp-base' : 'text-vp-sm',
+    // A project's name is the heading over its sessions and was set one step
+    // *below* them -- grey, small, tracked out -- so the thing you scan for
+    // read as weaker than the rows under it. 「字太小」, with a screenshot of a
+    // drawer where the only large text was the sessions.
+    group: overlay ? 'text-vp-md' : 'text-vp-base',
     row: overlay ? 'text-vp-md' : 'text-vp-base',
+  }
+
+  // How much room a project with no sessions takes.
+  //
+  // Measured before changing it: 63px in the drawer and 44px docked, for one
+  // line of text -- so ten projects filled a phone and most of what was on
+  // screen was gap. 「间距太宽 ... 很多项目的时候 不明显 而且多了很不友好」.
+  //
+  // The floor is the touch target, not the type: the grip, the new-terminal
+  // button and the remove button are all `.vp-tap`, which is 44px under a
+  // coarse pointer, so the header row cannot usefully go below that on a phone
+  // and there is no reason for it to be taller. Padding comes off the row and
+  // the gap between groups, and nothing comes off the buttons.
+  const pack = {
+    section: overlay ? 'mb-1' : 'mb-1.5',
+    header: overlay ? 'px-2 py-0' : 'px-2 py-0.5',
+    // Indented, and that is the hierarchy. Once the project's name stopped
+    // being smaller and greyer than its sessions, the two read as one flat
+    // list: same size, same colour, same left edge, and the only difference a
+    // state glyph. The indent says which belongs to which and costs no height,
+    // which is the whole point of it rather than more space between groups.
+    row: overlay ? 'ml-4 px-2 py-1.5' : 'ml-3 px-2 py-1',
   }
 
   // The overlay covers the terminal and must be opaque.
@@ -293,7 +319,7 @@ export function Sidebar(props: SidebarProps) {
             key={p.id}
             ref={(el) => drag.register(p.id, el)}
             data-testid="project-group"
-            className={`mb-3 transition-opacity duration-200 ease-vp ${
+            className={`${pack.section} transition-opacity duration-200 ease-vp ${
               drag.draggingId === p.id ? 'opacity-40' : ''
             }`}
           >
@@ -303,7 +329,7 @@ export function Sidebar(props: SidebarProps) {
             {drag.overIndex === index && drag.draggingId !== null && (
               <div className="mx-2 mb-1 h-0.5 rounded-full bg-accent" />
             )}
-            <div className="group flex items-center gap-1 px-2 py-1">
+            <div className={`group flex items-center gap-1 ${pack.header}`}>
               <span
                 {...drag.handleProps(p.id)}
                 data-testid="project-grip"
@@ -315,7 +341,10 @@ export function Sidebar(props: SidebarProps) {
               <InlineName
                 value={projectLabel(p)}
                 onCommit={(next) => props.onRenameProject(p, next)}
-                className={`${rank.group} font-semibold tracking-wide text-ink-2`}
+                // `text-ink`, and no extra tracking. It is a heading; the
+                // sessions under it are the detail. Tracking also widens CJK
+                // names for nothing, and this panel has them.
+                className={`${rank.group} min-w-0 flex-1 truncate font-semibold text-ink`}
                 title={p.path}
               />
               <button
@@ -355,7 +384,7 @@ export function Sidebar(props: SidebarProps) {
                   // scale check waited on "any terminal has content", which is
                   // true of the one that was already on screen.
                   data-session-id={s.id}
-                  className={`group flex cursor-pointer items-center gap-2 rounded-vp px-2 py-1.5 transition-colors duration-200 ease-vp ${
+                  className={`group flex cursor-pointer items-center gap-2 rounded-vp ${pack.row} transition-colors duration-200 ease-vp ${
                     isSelected ? 'bg-surface-2' : 'hover:bg-surface-2'
                   }`}
                   onClick={() => props.onSelect(s.id)}

@@ -101,11 +101,19 @@ const tourKey = "tour.done"
 // shown it again from the settings page, and an endpoint that toggles is an
 // endpoint that gets called with the wrong value.
 func (s *Server) handleTourDone(w http.ResponseWriter, r *http.Request) {
-	if err := s.DB.SetSetting(r.Context(), tourKey, "1"); err != nil {
+	// `?again=1` puts it back. Not a toggle: an endpoint that flips gets called
+	// with the wrong value by whoever calls it twice, and these are two
+	// deliberate actions -- closing it, and asking for it again from the
+	// settings page.
+	value := "1"
+	if r.URL.Query().Get("again") == "1" {
+		value = ""
+	}
+	if err := s.DB.SetSetting(r.Context(), tourKey, value); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "done": value == "1"})
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {

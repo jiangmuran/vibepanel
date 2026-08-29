@@ -240,6 +240,7 @@ const DICT = {
   'files.download': { zh: '下载', en: 'Download' },
   'files.empty': { zh: '这个目录是空的', en: 'Nothing here' },
   'files.escapes': { zh: '指向项目之外', en: 'points outside the project' },
+  'files.newFolder': { zh: '新建目录，叫什么？', en: 'New directory, called what?' },
   'files.count': { zh: '{n} 项', en: '{n} items' },
   'files.modified': { zh: '改动时间', en: 'Modified' },
 
@@ -1285,6 +1286,11 @@ const DICT = {
   'tour.on': { zh: '已开启', en: 'on' },
   'tour.turnOn': { zh: '开启', en: 'Turn on' },
 
+  'tour.again': { zh: '再看一遍', en: 'Show it again' },
+  'tour.againWhat': {
+    zh: '五步里有两步是真的在做事：装状态上报，和 Claude Code 的其他设置。',
+    en: 'Two of the five steps do something: state reporting, and Claude Code\'s other settings.',
+  },
   'tour.introH': { zh: '进程归 tmux，不归这个面板', en: 'tmux owns the processes, not this panel' },
   'tour.intro1': {
     zh: '每个会话都是一个 tmux 会话。关掉浏览器、重启面板、升级版本，里面的 agent 照样在跑。',

@@ -516,12 +516,18 @@ see looks like.
 
 ### `GET /api/projects/{id}/notes`
 ### `PUT /api/projects/{id}/notes`
+### `POST /api/projects/{id}/mkdir`
 ### `GET /api/notes`
 ### `PUT /api/notes`
 ### `GET /api/projects/{id}/todos`
 ### `POST /api/projects/{id}/todos`
 ### `PATCH /api/todos/{todoID}`
 ### `DELETE /api/todos/{todoID}`
+
+`POST /api/projects/{id}/mkdir` takes `{"path": "sub/dir", "name": "new"}` and
+makes one directory inside the project. Same helper and same refusals as the
+directory picker's `/api/browse/mkdir`; the only difference is which root the
+name is resolved against.
 
 `/api/notes` with no project is the one note that belongs to none of them --
 the same body, the same revision rule, the same `409`. It has its own pair of

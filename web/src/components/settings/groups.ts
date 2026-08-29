@@ -71,6 +71,7 @@ export const SETTINGS_SECTIONS = [
   'status',
   'env',
   'restart',
+  'tour',
 ] as const
 
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]
@@ -102,6 +103,7 @@ export const SECTION_GROUP: Record<SettingsSection, SettingsGroup> = {
   // and the two controls are one sentence.
   env: 'panel',
   restart: 'panel',
+  tour: 'panel',
 }
 
 export function groupOf(section: SettingsSection): SettingsGroup {

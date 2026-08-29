@@ -237,6 +237,9 @@ export const api = {
     }),
 
   tourDone: () => request<{ ok: boolean }>('/api/settings/tour', { method: 'POST' }),
+  /** Puts it back, for the button in the settings page. */
+  tourAgain: () =>
+    request<{ ok: boolean }>('/api/settings/tour?again=1', { method: 'POST' }),
 
   /** Which agent's configuration to edit. The server refuses anything else
    *  rather than guessing, because the answer decides which file in the user's
@@ -626,6 +629,17 @@ export const api = {
     const type = blobTypeFor(kind, res.headers.get('X-Preview-Type'))
     return { kind, blob: new Blob([await res.arrayBuffer()], { type }) }
   },
+
+  /** One directory inside a project. `path` is where, `name` is what.
+   *
+   *  Not `mkdir`: that name is taken by the directory picker's, against the
+   *  home directory. Two keys with one name in this object is the later one
+   *  winning silently, which is what happened. */
+  projectMkdir: (projectId: string, path: string, name: string) =>
+    request<{ path: string }>(`/api/projects/${projectId}/mkdir`, {
+      method: 'POST',
+      body: JSON.stringify({ path, name }),
+    }),
 
   files: (projectId: string, path = '') =>
     request<FileListing>(`/api/projects/${projectId}/files?path=${encodeURIComponent(path)}`),

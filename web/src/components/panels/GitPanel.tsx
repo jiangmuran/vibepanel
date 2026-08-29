@@ -411,12 +411,23 @@ export function GitPanel({ projectId, sessions }: { projectId: string; sessions:
         <div className="mt-3 border-t border-hairline pt-2">
           <h3 className="mb-1.5 text-vp-xs text-ink-2">{t('git.recent')}</h3>
           {info.commits.map((c) => (
-            <div key={c.sha} data-testid="git-commit" className="mb-1 flex items-baseline gap-1.5 text-vp-xs">
-              <span className="tabular shrink-0 font-mono text-ink-2">{c.sha.slice(0, 7)}</span>
-              <span className="min-w-0 flex-1 truncate text-ink" title={safeText(c.subject)}>
+            // The subject gets the whole width and the sha and the age go
+            // under it.
+            //
+            // All three were one flex row with the subject truncated between
+            // them, in a panel a few hundred pixels wide -- so a commit message
+            // was three or four words and an ellipsis, which is not enough to
+            // tell two commits apart. 「git message显示不全」. Two lines rather
+            // than unlimited: a list of recent commits is for scanning, and a
+            // four-line paragraph in it stops being a list.
+            <div key={c.sha} data-testid="git-commit" className="mb-1.5 text-vp-xs">
+              <p className="line-clamp-2 leading-snug text-ink" title={safeText(c.subject)}>
                 {safeText(c.subject)}
-              </span>
-              <Ago when={c.when} now={now} />
+              </p>
+              <div className="flex items-baseline gap-1.5 text-ink-2">
+                <span className="tabular shrink-0 font-mono">{c.sha.slice(0, 7)}</span>
+                <Ago when={c.when} now={now} />
+              </div>
             </div>
           ))}
         </div>

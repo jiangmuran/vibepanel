@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronLeft, Download, File, Folder, RefreshCw, Upload } from 'lucide-react'
+import { ChevronLeft, Download, File, Folder, FolderPlus, RefreshCw, Upload } from 'lucide-react'
 import { safeText } from '../text'
 
 import { api } from '../../protocol/api'
@@ -49,6 +49,8 @@ export function FileTree({
   const [reloads, setReloads] = useState(0)
   const [dropping, setDropping] = useState(false)
   const [note, setNote] = useState('')
+  const [making, setMaking] = useState(false)
+  const [newName, setNewName] = useState('')
   const [previewing, setPreviewing] = useState<FileEntry | null>(null)
   // One clock for the whole listing, set when the listing lands. A Date.now()
   // in the body is a value that changes without the component being told —
@@ -216,6 +218,23 @@ export function FileTree({
             e.target.value = ''
           }}
         />
+        {/* Making a directory, which the tree could not do and the directory
+            picker has been able to do since it existed -- against the home
+            directory, not against the project you are looking at.
+            
+            An inline field rather than window.prompt: the browser's dialogs are
+            the operating system's chrome in the operating system's language,
+            and no-raw-dialogs.test.ts is what says so. */}
+        <button
+          type="button"
+          data-testid="file-mkdir"
+          onClick={() => setMaking((v) => !v)}
+          aria-pressed={making}
+          title={t('files.newFolder')}
+          className="vp-control"
+        >
+          <FolderPlus size={12} />
+        </button>
         <button
           type="button"
           data-testid="file-refresh"
@@ -226,6 +245,44 @@ export function FileTree({
           <RefreshCw size={12} />
         </button>
       </div>
+
+      {making && (
+        <form
+          className="flex items-center gap-1 px-3 py-1"
+          onSubmit={(e) => {
+            e.preventDefault()
+            const trimmed = newName.trim()
+            if (trimmed === '') return
+            api
+              .projectMkdir(projectId, path, trimmed)
+              .then(() => {
+                setNote('')
+                setNewName('')
+                setMaking(false)
+                setReloads((n) => n + 1)
+              })
+              // The server's message, which tells "already exists" from "that
+              // is not a name" -- the two a person can act on.
+              .catch((err: unknown) => setNote(err instanceof Error ? err.message : String(err)))
+          }}
+        >
+          <input
+            autoFocus
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setMaking(false)
+                setNewName('')
+              }
+            }}
+            placeholder={t('files.newFolder')}
+            data-testid="file-mkdir-name"
+            spellCheck={false}
+            className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface-2 px-2 py-1 text-vp-sm text-ink outline-none focus:border-accent"
+          />
+        </form>
+      )}
 
       {note && (
         <p data-testid="file-note" className="px-3 py-1 text-vp-sm text-ink-2">
