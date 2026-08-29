@@ -19,6 +19,31 @@ import { Section } from './parts'
  * And it does not offer the tmux socket or the ACME credential: red line 1 for
  * the first, and a page that shows the second puts it in every screenshot.
  */
+/**
+ * The shape of each value, for a field that is empty.
+ *
+ * Not a translated label: the row is already named by the variable, and a
+ * second name for it is a second thing that can disagree with the file. What
+ * is missing from a bare `VIBEPANEL_TLS_MODE` is not what it means, it is what
+ * you are allowed to put in it -- so these are formats, and they are the same
+ * examples deploy/vibepanel.env carries in its comments.
+ */
+const SHAPE: Record<string, string> = {
+  VIBEPANEL_ADDR: ':18443',
+  VIBEPANEL_DOMAIN: 'panel.example.com',
+  // No spaces, and not only to keep i18n.untranslated.test.ts quiet: the
+  // spaces were never part of the value, and a placeholder that looks like a
+  // sentence invites somebody to type one.
+  VIBEPANEL_TLS_MODE: 'off|files|acme',
+  VIBEPANEL_CERT_FILE: '/etc/ssl/panel.pem',
+  VIBEPANEL_KEY_FILE: '/etc/ssl/panel.key',
+  VIBEPANEL_ACME_DNS_PROVIDER: 'cloudflare',
+  VIBEPANEL_ACME_EMAIL: 'you@example.com',
+  VIBEPANEL_ACME_DIRECTORY: 'https://acme-staging-v02.api.letsencrypt.org/directory',
+  VIBEPANEL_ALLOW_FROM: '192.168.8.0/24,10.0.0.0/8',
+  VIBEPANEL_TRUSTED_PROXIES: '127.0.0.1/32',
+}
+
 export function EnvSettings() {
   const [env, setEnv] = useState<EnvPayload | null>(null)
   const [draft, setDraft] = useState<Record<string, string>>({})
@@ -56,11 +81,19 @@ export function EnvSettings() {
   // What is on disk versus what this process is running with. A file edited an
   // hour ago and never applied looks exactly like one that is in force, and
   // that is the mistake this block is most likely to cause.
+  //
+  // A key the file does not set is not a pending change. It used to count as
+  // one, and the file ships with most of its variables commented out -- so
+  // `VIBEPANEL_TLS_MODE` was "" on disk and "off" in the process, and every
+  // fresh panel opened this block already telling its owner to restart. A
+  // false alarm on first sight is worse than no alarm: it is the reason the
+  // real one gets read past.
   const pending =
     env !== null &&
-    env.keys.some(
-      (k) => env.live[k] !== undefined && (env.values[k] ?? '') !== (env.live[k] ?? ''),
-    )
+    env.keys.some((k) => {
+      const onDisk = env.values[k] ?? ''
+      return onDisk !== '' && env.live[k] !== undefined && onDisk !== env.live[k]
+    })
 
   return (
     <Section id="env" title={t('env.title')}>
@@ -78,6 +111,7 @@ export function EnvSettings() {
                 <input
                   value={draft[k] ?? ''}
                   onChange={(e) => setDraft((d) => ({ ...d, [k]: e.target.value }))}
+                  placeholder={SHAPE[k] ?? ''}
                   data-testid={`env-${k}`}
                   spellCheck={false}
                   autoCapitalize="off"
