@@ -232,7 +232,10 @@ It prints every session by name before killing it, and it names the things it
 is not touching — your own tmux, zellij, ttyd — because sitting beside those
 without disturbing them is the point of the socket this project runs on.
 
-`--purge` skips the copy and removes the older backups too. `--keep-data`
+`--purge` skips the copy and removes the older backups too, but keeps the
+newest data archive: that one takes `--purge-archives`, because it is usually
+the last copy of the database and `--purge` gets typed while thinking about
+something else. `--keep-data`
 leaves the data directory. `--dev-leftovers` also clears the sockets and
 servers this repository's own tests leave behind, which a normal install never
 has.

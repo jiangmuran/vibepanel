@@ -1671,11 +1671,30 @@ uninst "$HOME_DIR" "vpuninst$$d" --yes
 [ -d "$HOME_DIR/vibepanel-backups" ] && ok "so does the backup directory" \
   || fail "the backup directory was removed without --purge"
 has "$LOG" "--purge removes" && ok "and it says how to remove them" || fail "it did not mention them"
+# Two archives, so "the newest one" is a distinguishable thing rather than the
+# only one.
+: > "$HOME_DIR/vibepanel-data-20991231-235959.tar.gz"
 uninst "$HOME_DIR" "vpuninst$$d" --yes --purge
 [ -e "$HOME_DIR/vibepanel-data-20200101-000000.tar.gz" ] \
-  && fail "--purge left the archive" || ok "--purge removes it"
+  && fail "--purge left the old archive" || ok "--purge removes the old archive"
 [ -d "$HOME_DIR/vibepanel-backups" ] && fail "--purge left the backup directory" \
   || ok "and the backup directory"
+
+# The newest one survives --purge, and takes a word of its own.
+#
+# --purge and --dev-leftovers are unrelated, and passing both to clear a few
+# sockets deleted the archive an earlier run had written -- the only remaining
+# copy of that database. The flags did what they said; the last copy of
+# somebody's data should not be one word away while they are thinking about
+# sockets.
+[ -e "$HOME_DIR/vibepanel-data-20991231-235959.tar.gz" ] \
+  && ok "--purge keeps the newest archive" \
+  || fail "--purge deleted the last copy of the database"
+has "$LOG" "purge-archives removes that one" \
+  && ok "and says which word removes it" || fail "it kept it silently"
+uninst "$HOME_DIR" "vpuninst$$d" --yes --purge-archives
+[ -e "$HOME_DIR/vibepanel-data-20991231-235959.tar.gz" ] \
+  && fail "--purge-archives left it" || ok "--purge-archives removes it"
 
 echo
 if [ "$FAILS" -eq 0 ]; then echo "=== install check: 0 FAIL ==="; else echo "=== install check: $FAILS FAIL ==="; fi

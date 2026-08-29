@@ -17556,3 +17556,13 @@ config in the data directory.
 worth having are about the blast radius: a second socket, created beside the
 panel's, has to still be there afterwards. Mutating the kill to reach one more
 socket turns exactly that line red and leaves every other assertion green.
+
+Then the script's author lost a database to it. `--purge` and `--dev-leftovers`
+are unrelated -- one removes backups, the other unlinks dead test sockets --
+and running both to clear seven sockets deleted the archive the earlier run had
+written twenty minutes before, which was the only remaining copy of that
+database. The flags did exactly what they say. What was wrong is that the last
+copy of somebody's data sat one word away from gone while the person typing was
+thinking about sockets, so the newest `vibepanel-data-*.tar.gz` now survives
+`--purge` and needs `--purge-archives`, and the closing summary names the file
+it kept.

@@ -31,19 +31,22 @@ ENV_FILE="${VIBEPANEL_ENV_FILE:-$HOME/.config/vibepanel.env}"
 
 GO=no
 PURGE=no
+PURGE_ARCHIVES=no
 KEEP_DATA=no
 LEFTOVERS=no
 for a in "$@"; do
   case "$a" in
     -y|--yes) GO=yes ;;
     --purge) PURGE=yes ;;
+    --purge-archives) PURGE=yes; PURGE_ARCHIVES=yes ;;
     --keep-data) KEEP_DATA=yes ;;
     --dev-leftovers) LEFTOVERS=yes ;;
     -h|--help)
       sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
       echo
       echo "  -y, --yes         actually do it"
-      echo "      --purge       do not copy the database out first"
+      echo "      --purge       do not copy the database out first; remove older backups"
+      echo "      --purge-archives  ...and the newest data archive, which --purge keeps"
       echo "      --keep-data   leave $DATA alone"
       echo "      --dev-leftovers  also unlink dead test sockets from this repo's test runs"
       exit 0 ;;
@@ -129,13 +132,29 @@ say "socket" "$SOCKET  ($N session(s))"
 # installer takes before it edits somebody's agent config, and any stray
 # `vibepanel.*` next to the installed binary. None of these are found by
 # removing $DATA, and all of them are this project's.
+# The newest data archive is not in this list.
+#
+# `--purge` and `--dev-leftovers` are unrelated -- one deletes backups, the
+# other unlinks dead test sockets -- and passing both to clear some sockets
+# deleted the archive the earlier run had just written, which was the only
+# remaining copy of that database. The flags did exactly what they say. The
+# problem is that the last copy of somebody's data is one word away from gone
+# while they are thinking about something else, so it takes its own word:
+# --purge-archives.
+newest_archive() {
+  ls -t "$HOME"/vibepanel-data-*.tar.gz 2>/dev/null | head -1
+}
+
 leftover_files() {
-  local f
+  local f keep
+  keep="$(newest_archive)"
+  [ "$PURGE_ARCHIVES" = yes ] && keep=
   for f in "$HOME/vibepanel-backups" "$HOME"/vibepanel-data-*.tar.gz \
            "$HOME"/.claude/settings.json.vibepanel-backup-* \
            "$HOME"/.codex/config.toml.vibepanel-backup-* \
            "$BIN".*; do
     [ -e "$f" ] || continue
+    [ -n "$keep" ] && [ "$f" = "$keep" ] && continue
     printf '%s\n' "$f"
   done
 }
@@ -383,4 +402,8 @@ if [ -n "${ARCHIVE:-}" ]; then
 fi
 if [ "$PURGE" != yes ] && [ -n "$(leftover_files || true)" ]; then
   echo "Older backups are still in your home directory; --purge removes those too."
+fi
+if [ "$PURGE_ARCHIVES" != yes ] && [ -n "$(newest_archive)" ]; then
+  echo "Kept: $(newest_archive) -- the newest copy of the database."
+  echo "      --purge-archives removes that one as well."
 fi
