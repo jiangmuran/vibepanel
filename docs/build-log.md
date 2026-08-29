@@ -17019,3 +17019,33 @@ project and a sparkline with a shape rather than a flat line.
 **The bottom strip's session ran `exec sh` after printing.** A shell draws a
 prompt, and whatever repaints after that left the strip black in every
 screenshot. It sleeps instead.
+
+### 572 lines is a manual, not a README
+
+「我觉得你整篇 readme 就太啰嗦了」, after the humanizer skill was installed and
+pointed at it.
+
+The skill's own patterns were mostly already gone — the previous rewrite had
+taken second-person narration from 70 to 2 and cut every word on its AI
+vocabulary list. What it had not touched was length. `## Features` was **341 of
+the 572 lines**, and one subsection of it, "Screens for other people", was 108.
+A reader deciding whether to keep reading was being handed a manual.
+
+It moved to `docs/features.md` and `docs/features.zh-CN.md` whole. The flag
+table went to `docs/install.md`, which is where install detail already lives —
+and the sentence pointing there was written before the table had been moved,
+which a check of every flag caught before it shipped as the seventh untrue claim
+in this file's history.
+
+**572 → 209**, and the Chinese one 462 → 183.
+
+Four things the skill found that the length cut did not:
+
+- **Three `It is not…` clauses in a row**, which is rule of three and negative
+  parallelism at once. Two clauses now, and the second carries its own reason.
+- **Five short declaratives of the same length** opening "What it is". One
+  sentence with a colon and a list, then a short one, then a shorter one.
+- **Nine bullets of identical shape** in "What it does" — `**Bold claim.**` then
+  two sentences, nine times. Three of them changed shape.
+- **Em-dashes: 23 → 1**, and the one left is inside a code comment. The Chinese
+  went 25 → 1 the same way.

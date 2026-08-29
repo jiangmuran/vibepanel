@@ -200,3 +200,31 @@ scheduled check, no heartbeat, no telemetry.
 Or unpack the new archive and run `./deploy/install.sh` again. It keeps the unit
 already installed and restarts it. Either way the sessions keep running — see
 [runbook.md](runbook.md) for what to check when one does not.
+
+## Flags
+
+Every one has a `VIBEPANEL_<UPPER_SNAKE>` environment equivalent, and the flag
+wins. A `VIBEPANEL_*` variable nothing reads is reported at startup and by
+`vibepanel doctor` rather than ignored, so a renamed setting is loud instead of
+silently doing nothing.
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--data-dir` | `~/.local/share/vibepanel` | database, tmux config, ACME state |
+| `--addr` | `:8443` | listen address |
+| `--domain` | — | public hostname; also the WebAuthn Relying Party ID |
+| `--tls` | `off` | `off`, `files` or `acme` |
+| `--tls-cert` / `--tls-key` | — | for `--tls files`; reloaded when the files change |
+| `--acme-dns` | — | DNS-01 provider for `--tls acme` (`cloudflare`) |
+| `--acme-email` | — | contact address for the CA |
+| `--acme-directory` | Let's Encrypt | point at a staging endpoint while testing |
+| `--allow-from` | — | CIDRs allowed to reach the panel; empty means all |
+| `--trusted-proxies` | — | CIDRs whose `X-Forwarded-For` may be believed |
+| `--tmux-socket` | `vibepanel` | keep it dedicated to stay isolated |
+| `--static-dir` | — | serve the frontend from disk instead of the embedded build |
+
+`vibepanel doctor` runs fifteen checks and does not stop at the first failure:
+tmux and its version, the data directory, a running panel, the hook endpoint,
+the database and a real write to it, disk, the tmux server and its config,
+socket isolation, installed agent hooks, hook URLs and tokens that live sessions
+still hold, passkeys, and unread `VIBEPANEL_*` variables.
