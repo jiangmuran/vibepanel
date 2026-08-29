@@ -207,8 +207,8 @@ func (c *Client) EnsureServer(ctx context.Context) error {
 	if c.ServerRunning(ctx) {
 		return nil
 	}
-	if _, err := c.run(ctx, "start-server"); err != nil {
-		return fmt.Errorf("tmux: start server: %w", err)
+	if err := c.startServerWithProfile(ctx); err != nil {
+		return err
 	}
 	// Stamp what the server was started with.
 	//
@@ -356,92 +356,136 @@ func (c *Client) Create(ctx context.Context, o CreateOptions) error {
 	for _, kv := range o.Env {
 		argv = append(argv, "-e", kv)
 	}
+	// The server first, and through a login shell, which is where a session
+	// gets the environment the person actually has. See EnsureServer.
+	if err := c.EnsureServer(ctx); err != nil {
+		return err
+	}
 	if len(o.Command) > 0 {
-		argv = append(argv, c.throughLoginShell(ctx, o.Command)...)
+		argv = append(argv, o.Command...)
 	}
 	_, err := c.run(ctx, argv...)
 	return err
 }
 
-// throughLoginShell wraps an argv so it starts the way the person's own
-// terminal would start it.
+// startServerWithProfile starts the server through a login shell.
 //
-// tmux execs a command given to `new-session` directly, with the *server's*
-// environment. The server is started by the panel, so under systemd that
-// environment is the unit's: a PATH of /usr/bin:/bin and nothing else. None of
-// the person's shell configuration has run.
+// tmux would start it with the environment the *panel* was started in. Under
+// systemd that is the unit's: a PATH of /usr/bin:/bin and nothing the person's
+// shell configuration would have added -- and every session on this server
+// inherits it.
 //
-// What that costs is everything a version manager does. nvm, asdf, mise, pyenv,
-// rbenv and rustup all work by putting a shim directory on PATH from a file the
-// shell reads, so `claude` is either not found at all or is a different build
-// than the one the same command finds in a terminal two feet away. Anything
-// exported from .profile is missing too -- API base URLs, proxies, locale.
+// What that costs is everything a version manager does. nvm, asdf, mise, pyenv
+// and rustup all work by putting a shim directory on PATH from a file the shell
+// reads, so `claude` was either not found at all or was a different build than
+// the one the same command finds in a terminal two feet away. Anything exported
+// from .profile is missing too: API base URLs, proxies, locale.
 //
-// A pane with *no* command already gets the login shell, because that is what
-// tmux runs by default. So without this, a scratch terminal and a session
-// running an agent had two different environments on the same machine, and the
-// scratch terminal was the one that worked.
+// Here rather than per command, and that is the whole point. Wrapping each
+// session's argv in `sh -lc 'exec ...'` also works, and it was tried, and it
+// costs two things this does not. The pane's foreground process is the wrapping
+// shell until it reaches its `exec`, so `pane_current_command` reports "bash"
+// for a session created to run claude -- which is the name the session is given
+// on screen and an input to the state heuristic, and it was caught by a CI
+// runner slow enough to poll inside that window. And the argv has to survive
+// being rendered into a command string and read back, which is a quoting
+// problem that only has to be got wrong once.
 //
-// The shell is tmux's own `default-shell` rather than $SHELL, so a wrapped
-// command and a bare pane agree by construction: whatever a scratch terminal
-// gets, this gets.
+// A server started once, from a login shell, has neither: every pane inherits
+// the environment, and every pane runs its command directly.
 //
-// `exec` matters and is not tidiness. Without it the shell stays as the pane's
-// process for the life of the session, and `pane_current_command` -- which the
-// state heuristic reads to tell "an agent is running" from "a prompt is
-// waiting" -- reports the shell forever.
-func (c *Client) throughLoginShell(ctx context.Context, command []string) []string {
-	sh := c.loginShell(ctx)
+// The environment is fixed at server start, so editing a profile takes effect
+// on the next server -- which means after every session has gone. That is the
+// same trade tmux itself already makes with its config.
+func (c *Client) startServerWithProfile(ctx context.Context) error {
+	sh := loginShell()
 	if sh == "" {
-		return command
+		// Nothing to load a profile with. Start it the way tmux would.
+		if _, err := c.run(ctx, "start-server"); err != nil {
+			return fmt.Errorf("tmux: start server: %w", err)
+		}
+		return nil
 	}
-	return []string{sh, "-l", "-c", "exec " + shellJoin(command)}
+	line := shellJoin(append([]string{c.Bin}, c.args("start-server")...))
+	if _, err := c.runDirect(ctx, sh, "-l", "-c", line); err == nil {
+		return nil
+	}
+	// A profile that fails is the person's business and not a reason to refuse
+	// them a panel.
+	if _, err := c.run(ctx, "start-server"); err != nil {
+		return fmt.Errorf("tmux: start server: %w", err)
+	}
+	return nil
 }
 
-// loginShell is what tmux would start for a pane with no command, or "" when
-// that cannot be used as one.
-//
-// tmux resolves this from the passwd entry or $SHELL and exposes it as a global
-// option, which makes it the one answer guaranteed to match a bare pane.
-//
-// The empty return is the important half. An account whose shell is
-// /usr/sbin/nologin or /bin/false has no shell to wrap anything in, and
-// wrapping would turn every session into a process that exits immediately --
-// strictly worse than the environment problem this exists to fix.
-func (c *Client) loginShell(ctx context.Context) string {
-	out, err := c.run(ctx, "show-option", "-gv", "default-shell")
-	if err != nil {
-		// No server yet, which is the *first* session after a boot -- the one
-		// case this has to get right, because a panel that wraps every session
-		// except the first has two environments again, and which one you get
-		// depends on the order you happened to start things in.
-		//
-		// One invocation, not `start-server` and then a second call: a server
-		// with no sessions exits immediately under tmux's default
-		// `exit-empty`, so by the time a separate `show-option` ran there was
-		// no server again. Inside a single command list it is still there.
-		out, err = c.run(ctx, "start-server", ";", "show-option", "-gv", "default-shell")
-		if err != nil {
-			return ""
+// runDirect runs something that is not tmux.
+func (c *Client) runDirect(ctx context.Context, name string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
 		}
+		return "", fmt.Errorf("%s: %s", name, msg)
 	}
-	sh := strings.TrimSpace(out)
-	if sh == "" || !filepath.IsAbs(sh) {
-		return ""
+	return stdout.String(), nil
+}
+
+// loginShell is the shell whose profile should be loaded, or "".
+//
+// $SHELL first, because that is what the person's session says they use, then
+// the passwd entry, which is what tmux itself falls back to. An account whose
+// shell is nologin or false has no profile worth loading and no shell to load
+// it with; the caller starts the server without one.
+func loginShell() string {
+	sh := os.Getenv("SHELL")
+	if !usableShell(sh) {
+		sh = passwdShell()
 	}
-	switch filepath.Base(sh) {
-	case "nologin", "false", "true":
+	if !usableShell(sh) {
 		return ""
 	}
 	return sh
 }
 
+func usableShell(sh string) bool {
+	if sh == "" || !filepath.IsAbs(sh) {
+		return false
+	}
+	switch filepath.Base(sh) {
+	case "nologin", "false", "true":
+		return false
+	}
+	return true
+}
+
+// passwdShell is field seven of this account's line in /etc/passwd.
+//
+// Read rather than looked up through cgo: CGO_ENABLED=0 is a hard requirement
+// here, and os/user's pure-Go path does not expose the shell at all.
+func passwdShell() string {
+	b, err := os.ReadFile("/etc/passwd")
+	if err != nil {
+		return ""
+	}
+	want := strconv.Itoa(os.Getuid())
+	for _, line := range strings.Split(string(b), "\n") {
+		f := strings.Split(line, ":")
+		if len(f) >= 7 && f[2] == want {
+			return strings.TrimSpace(f[6])
+		}
+	}
+	return ""
+}
+
 // shellJoin renders an argv as one string a shell will split back the same way.
 //
 // Single quotes, because inside them a shell interprets nothing at all; the
-// only character that needs handling is the single quote itself, which is
-// closed, escaped and reopened. Anything less is a session name or a path with
-// a space in it running as two commands.
+// only character needing handling is the single quote itself, which is closed,
+// escaped and reopened. The socket name and the config path go through here.
 func shellJoin(argv []string) string {
 	var b strings.Builder
 	for i, a := range argv {

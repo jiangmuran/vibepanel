@@ -17721,7 +17721,7 @@ budget. That rule exists because the panel used to argue with the person using
 it; a tour is the one surface where explaining is the content, and one written
 in forty-character fragments is a worse tour rather than a more disciplined one.
 
-**Every command starts through a login shell now.** tmux execs a `new-session`
+**The tmux server starts through a login shell now.** tmux execs a `new-session`
 command with the environment the *server* was started in -- under systemd, a
 PATH of `/usr/bin:/bin` and nothing the person's shell would have added. nvm,
 asdf, mise, pyenv and rustup all work by putting a shim directory on PATH from
@@ -17731,20 +17731,26 @@ was that a pane with *no* command already worked, because that is tmux's
 default shell: a scratch terminal and an agent session had two different
 environments and the scratch terminal was the correct one.
 
-The shell is tmux's own `default-shell`, so a wrapped command and a bare pane
-agree by construction. It is read in the same invocation as `start-server`,
-because a server with no sessions exits immediately under tmux's default
-`exit-empty` and a separate `show-option` found no server again -- which made
-the *first* session after a boot the one that went unwrapped.
+The first version of this wrapped each session's argv instead: `sh -lc 'exec
+…'`. It works, and it cost two things the server-level fix does not.
 
-`exec` is not tidiness: without it the shell stays the pane's process and
-`pane_current_command` reports the shell forever. And that is where this bit
-back. `stateIsGuessed` read `pane_current_command`, which is a fact about this
-instant, and for the moment between the shell starting and its exec the
-foreground process *is* the shell. `SessionRunsAnAgent` reads the launch argv
-first -- what somebody asked to run, stored once, unchanged by a poll -- and
-still counts the current command, so an agent started by hand inside a scratch
-shell is seen.
+The pane's foreground process is the wrapping shell until it reaches its
+`exec`, so `pane_current_command` reports "bash" for a session created to run
+claude -- which is the name the session is given on screen and an input to the
+state heuristic. That measured 0.00s here and was caught twice by CI runners
+slow enough to poll inside the window: once as a session named "bash", once as
+`stateIsGuessed` deciding no agent was running. And the argv has to survive
+being rendered into a command string and read back, which is a quoting problem
+that only has to be got wrong once.
+
+Starting the server once, from a login shell, has neither: every pane inherits
+the environment and every pane runs its command directly. The environment is
+then fixed until the server restarts, which is the same trade tmux already
+makes with its own config.
+
+`SessionRunsAnAgent` stayed, because it fixes something older: `stateIsGuessed`
+read only `pane_current_command`, so an agent started by hand inside a scratch
+shell was invisible to it, and opencode was never in the list at all.
 
 **A restart button**, which is a button rather than advice to find a terminal
 because of the one property this whole architecture is built on. It works by

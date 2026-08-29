@@ -839,45 +839,6 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 
 // stateIsGuessed reports whether an agent is running with nothing reporting
 // its state.
-// runtimeCommand is the name to store for what is in the pane.
-//
-// Almost always `current`, which is what tmux reports. The exception is the
-// moment after a session starts: every command is launched through a login
-// shell (see internal/tmux), so until that shell reaches its `exec` the
-// foreground process is the shell, and a poll landing there writes "bash" into
-// a row that was created to run claude.
-//
-// Safe because of the `exec`. A wrapped command replaces the shell rather than
-// being its child, so when it exits the pane's process is gone and the pane
-// closes -- there is no "the agent finished and left a shell behind" state for
-// this to hide. A shell in the pane of a session launched with something else
-// means that something else has not started yet.
-//
-// Sessions launched *as* a shell are untouched: they have nothing more
-// specific to fall back to, which is the same test.
-func runtimeCommand(row store.Session, current string) string {
-	if current == "" || !session.IsShellCommand(current) {
-		return current
-	}
-	launched := launchedProgram(row.LaunchCommand)
-	if launched == "" || session.IsShellCommand(launched) {
-		return current
-	}
-	return launched
-}
-
-// launchedProgram is the basename of the program a session was created with.
-func launchedProgram(argv []string) string {
-	if len(argv) == 0 {
-		return ""
-	}
-	p := argv[0]
-	if i := strings.LastIndexByte(p, '/'); i >= 0 {
-		p = p[i+1:]
-	}
-	return p
-}
-
 func (s *Server) stateIsGuessed(sessions []store.Session) bool {
 	var agent bool
 	for _, sess := range sessions {
@@ -1698,8 +1659,7 @@ func (s *Server) Reconcile(ctx context.Context) error {
 			}
 			continue
 		}
-		if err := s.DB.UpdateSessionRuntime(ctx, row.ID, info.Path,
-			runtimeCommand(row, info.Command)); err != nil {
+		if err := s.DB.UpdateSessionRuntime(ctx, row.ID, info.Path, info.Command); err != nil {
 			s.Log.Warn("reconcile runtime", "session", row.ID, "err", err)
 		}
 		// A bell that rang while the panel was down is still latched, because
@@ -1972,8 +1932,7 @@ func (s *Server) pollOnce(ctx context.Context) error {
 		// convention these two lines break; it is those two needing it for their
 		// own reasons. The guard is left off deliberately. If SQLite ever stops
 		// eliding these the test above fails, and then it is worth adding.
-		if err := s.DB.UpdateSessionRuntime(ctx, row.ID, info.Path,
-			runtimeCommand(row, info.Command)); err != nil {
+		if err := s.DB.UpdateSessionRuntime(ctx, row.ID, info.Path, info.Command); err != nil {
 			return err
 		}
 		// The title the PTY saw, which is where a tmux-aware program's OSC

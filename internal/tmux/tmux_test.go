@@ -1362,24 +1362,23 @@ func TestRespawnKeepsTheSessionEnvironment(t *testing.T) {
 	}
 }
 
-// A session's command starts with the person's shell configuration loaded.
+// A session's command runs with the person's shell configuration loaded.
 //
-// tmux execs a `new-session` command directly, with the environment the
-// *server* was started in. Under systemd that is the unit's: PATH is
-// /usr/bin:/bin and nothing the person's shell would have added is there. So
+// tmux starts its server with the environment the panel was started in. Under
+// systemd that is the unit's: PATH is /usr/bin:/bin and nothing the person's
+// shell would have added, and every session on that server inherits it. So
 // nvm, asdf, mise, pyenv and rustup -- all of which work by putting a shim
 // directory on PATH from a file the shell reads -- were invisible, and `claude`
-// was either not found or was a different build than the one the same command
-// finds in a terminal on the same machine.
+// was either not found or a different build than the one the same command finds
+// in a terminal on the same machine.
 //
-// The tell was that a pane with *no* command already worked, because that is
-// tmux's default shell. A scratch terminal and an agent session had two
-// different environments and the scratch terminal was the correct one.
+// The server is started through a login shell now, once. This asks a session
+// what it can see.
 //
 // The marker goes in four files because which one a login shell reads is the
 // shell's business: bash takes .bash_profile and falls back to .profile, sh and
 // dash take .profile, zsh takes .zprofile and .zshrc.
-func TestASessionsCommandSeesTheLoginEnvironment(t *testing.T) {
+func TestASessionSeesTheLoginEnvironment(t *testing.T) {
 	c := newTestClient(t)
 	ctx := context.Background()
 
@@ -1396,10 +1395,8 @@ func TestASessionsCommandSeesTheLoginEnvironment(t *testing.T) {
 	name := "vp_loginenv"
 	if err := c.Create(ctx, CreateOptions{
 		Name: name, Dir: home,
-		// `sh -c` and not a bare command, so this reads the environment it was
-		// given rather than needing a fixture binary. The wrapping is still
-		// under test: without it this sh runs with the server's environment
-		// and writes an empty line.
+		// `sh -c` so this reads the environment it was given rather than
+		// needing a fixture binary.
 		Command: []string{"sh", "-c", "printf '%s' \"${VP_FROM_PROFILE:-MISSING}\" > " + out + "; sleep 5"},
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -1416,60 +1413,54 @@ func TestASessionsCommandSeesTheLoginEnvironment(t *testing.T) {
 	}
 	if string(got) != "yes" {
 		t.Errorf("the command saw VP_FROM_PROFILE=%q, want \"yes\"\n"+
-			"the login shell's configuration did not run before it", string(got))
+			"the login shell's configuration did not run before the server started", string(got))
 	}
 }
 
-// The argv survives the wrapping exactly, including the parts a shell would
-// otherwise treat as syntax.
+// And the pane reports the command, not a shell that started it.
 //
-// This is the half that is a security property rather than a convenience: the
-// wrapping builds a single command *string* for `sh -c`, so an argument
-// containing a semicolon, a `$` or a quote is one word if it is quoted
-// correctly and a second command if it is not. Session titles and project
-// paths come from people.
-func TestTheWrappedArgvIsNotReinterpreted(t *testing.T) {
+// This is what the per-command wrapper cost and the reason it is not used: for
+// the moment between such a shell starting and its `exec`, the pane's
+// foreground process is the shell, and `pane_current_command` is the session's
+// name on screen and an input to the state heuristic.
+func TestThePaneReportsTheCommandItWasGiven(t *testing.T) {
 	c := newTestClient(t)
 	ctx := context.Background()
 	dir := t.TempDir()
-	out := filepath.Join(dir, "argv")
 
-	// A writer that prints its own arguments, one per line.
-	script := filepath.Join(dir, "echoargs")
-	if err := os.WriteFile(script,
-		[]byte("#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > \""+out+"\"\nsleep 5\n"),
-		0o755); err != nil {
+	// Linked to python3: `pane_current_command` is the name a process was
+	// exec'd as, and python3 does not care what it is called. sleep does -- a
+	// multi-call coreutils build reads argv[0] and refuses.
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("no python3")
+	}
+	link := filepath.Join(dir, "claude")
+	if err := os.Symlink(py, link); err != nil {
 		t.Fatal(err)
 	}
 
-	want := []string{"it's", "a b", "$HOME; touch /tmp/vp-should-not-exist", "*", "back\\slash"}
-	name := "vp_argv"
+	name := "vp_panename"
 	if err := c.Create(ctx, CreateOptions{
 		Name: name, Dir: dir,
-		Command: append([]string{script}, want...),
+		Command: []string{link, "-c", "import time; time.sleep(30)"},
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	t.Cleanup(func() { _ = c.Kill(ctx, name) })
 
-	var lines []string
-	for i := 0; i < 60; i++ {
-		if b, err := os.ReadFile(out); err == nil && len(b) > 0 {
-			lines = strings.Split(strings.TrimRight(string(b), "\n"), "\n")
-			break
-		}
+	var got string
+	for i := 0; i < 40; i++ {
 		time.Sleep(100 * time.Millisecond)
-	}
-	if len(lines) != len(want) {
-		t.Fatalf("got %d arguments, want %d: %q", len(lines), len(want), lines)
-	}
-	for i := range want {
-		if lines[i] != want[i] {
-			t.Errorf("argument %d = %q, want %q", i, lines[i], want[i])
+		out, err := c.run(ctx, "display-message", "-p", "-t", target(name), "#{pane_current_command}")
+		if err == nil {
+			got = strings.TrimSpace(out)
+			if got == "claude" {
+				break
+			}
 		}
 	}
-	if _, err := os.Stat("/tmp/vp-should-not-exist"); err == nil {
-		os.Remove("/tmp/vp-should-not-exist")
-		t.Error("the argument ran as a command; the quoting is broken")
+	if got != "claude" {
+		t.Errorf("pane_current_command = %q, want \"claude\"", got)
 	}
 }
