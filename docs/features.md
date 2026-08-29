@@ -1,7 +1,7 @@
 # Features
 
-What each part of the panel does, at the length that needs. The README has the
-short version; this is where it was moved when that page became a manual.
+What each part of the panel does, at whatever length that takes. The README has
+the short version; this is where it was moved when that page became a manual.
 
 Links here are relative to `docs/`.
 
@@ -157,24 +157,27 @@ back the endpoint as well as the command.
 terminal, no write path, no file browser, and no way to make a second link from
 the first.
 
-The dashboard draws a **board**, chosen when the link is made.
-Thirty starting points, grouped by the screen they were composed for:
+The dashboard draws a **board**, chosen when the link is made. Thirty
+starting points, grouped by the screen they were composed for:
 
 | | |
 |---|---|
 | a phone | one column, three things, four seconds standing up |
-| a laptop | overview · does anything need me · the waiting queue · everything at once · only the machine · what has gone wrong · cost against output · where it went · per project · which model is working · what today cost |
-| a screen on a wall | four numbers and a clock · one number filling the screen · how busy it is · three pages that cycle · **what it is spending, live** · every session as a tile · **for a client** · **what got built** · **sitting in front of it** · the year as a grid of days |
+| a laptop | overview · does anything need me · the waiting queue · what is waiting on an answer · how today went · everything at once · only the machine · what has gone wrong · cost against output · pull requests · for your boss · where it went · per project · which model is working · what today cost |
+| a screen on a wall | every session as a tile · three numbers and a clock · one number filling the screen · how busy it is · three pages that cycle · **what it is spending, live** · **sitting in front of it** · **what got built** · **for a client** · **for leadership** · the year as a grid of days |
 | a 4K wall | **the room screen** · **for leadership** · a corridor screen |
 
 Three of those are named for the room. **The room screen** is the 4K one: what
 got built today at headline size, the number of agents waiting for a person
-beside it, what it cost against what came out on one time axis under both, and a
-feed. Five things, because a screen read across a room carries five to nine
-before it is noise. **Sitting in front of it** is the same board at the highest
-density, for the same screen read from the desk it sits on. **For a client** scopes itself to
-one project and turns names off, because the failure there is a customer reading
-another customer's project name off the screen they are sat in front of.
+beside it, what it cost against what came out on one time axis under both, a
+feed, and a strip of every session's state along the bottom. Five tiles, at the
+lowest density, because a screen read across a room carries five to nine things
+before it is noise. **Sitting in front of it** is the same room read from the
+chair in front of the screen: eight tiles at the highest density instead of
+five at the lowest. **For a client** scopes itself to one project and turns
+names off, because the failure there is a customer reading another customer's
+project name off the screen they are sat in front of. Two of the thirty are
+both called *for leadership*: one composed for a wall, one for a 4K one.
 
 A template is a starting point, not a mode, and it is **arranged by dragging
 it**. The preview of the wall *is* the editor: pick a tile up and drop it where
@@ -192,19 +195,19 @@ the furniture a composed screen needs — a spacer, a rule, a section heading, a
 the screen's own name.
 
 The grid is **twelve columns wide and four rows tall**, so a widget can be a
-third of a wall or three times the height of the tiles beside it. That ratio is
-where hierarchy comes from: a screen where every tile is the same size is a
-dashboard, not a display. A board can also be set to **fill** the screen rather
-than flow down it — nobody is going to scroll a television.
+third of a wall or three times the height of the tiles beside it. A screen where
+every tile is the same size gives a reader nowhere to look first. A board can
+also be set to **fill** the screen rather than flow down it, since nobody is
+going to scroll a television.
 
 Two more settings, and they are two different questions:
 
 - **How large** everything is drawn follows the screen and needs no setting. A
   4K television shows the same composition *bigger*, not more columns of smaller
   type; a phone gets the same board collapsed to one column.
-- **How much** is on screen is the board's **density**, in three steps. The same
-  wall can be a headline legible from the door and a working dashboard read
-  from the chair in front of it, without rebuilding it.
+- **How much** is on screen is the board's **density**, in three steps. It is
+  the axis **the room screen** and **sitting in front of it** differ on, and it
+  changes without rebuilding the board.
 
 **Changing a wall does not mean walking to it.** The board is edited from the
 settings page on a laptop and the screen follows within two seconds, with nobody
@@ -240,23 +243,26 @@ finished, and how long things sat before somebody got to them — hour by hour, 
 day by day. And a feed of what just happened, which is the thing on a wall that
 moves.
 
-The two halves on one time axis — what it cost beside what came out — is the
-board worth pointing a television at, and it is a template of its own.
-
 A link is scoped to the whole panel, one project or one session, and the server
-enforces that from the link's own row. Detail is either **counts and states**,
-which shows shapes and numbers and no text at all, or **names as well**, which
-adds session titles and project names. Neither ever sends a path, a working
-directory, a command line, a hostname or the panel's own ids. The board, the
-remark and the lock can
-be changed later; the detail level and the scope cannot, because by then the URL
-is in somebody's email and widening what it discloses is a change nobody holding
-it would see.
+enforces that from the link's own row. Delete the project a link was scoped to
+and the link shows nothing, rather than falling back to the whole panel. Detail
+is either **counts and states**, the default, which shows shapes and numbers and
+no text at all, or **names as well**, which adds session titles and project
+names. Neither ever sends a path, a working directory, a command line, a
+hostname or the panel's own ids. The board, the remark and the lock can be
+changed later; the detail level and the scope cannot, because by then the URL is
+in somebody's email and widening what it discloses is a change nobody holding it
+would see.
 
 The link is a credential: anyone holding it can watch. The panel stores only a
 hash, so creation is the only time it can be read. Links are revoked
 individually, can be given an expiry, and their creation and revocation are in
 the audit log.
+
+The dashboard says *live*, *reconnecting* or *disconnected* in words as well as
+in shape, and the header always carries the time of the last reading and how
+long ago that was. A board that has quietly frozen otherwise looks like a quiet
+machine.
 
 ## Restarts, reboots and upgrades
 

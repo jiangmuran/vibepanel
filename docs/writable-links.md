@@ -18,7 +18,7 @@ r.Route("/share/{token}", func(r chi.Router) {
 
 `requireShareToken` resolves the token against `share_links` and nothing else,
 and `currentUser` never consults `share_links`. So a share token presented as a
-cookie or as a `Bearer` header is not a credential — it is an unknown string,
+cookie or as a `Bearer` header is not a credential; it is an unknown string,
 and every authenticated route in the panel already answers `401` to it. Red line
 8 in `AGENTS.md` is that sentence.
 
@@ -41,7 +41,7 @@ the argument, and it does not get weaker because the feature would be useful.
    panel would be executing something on behalf of a URL.
 5. **Terminal input.** A URL that is a shell on somebody's machine.
 
-(4) and (5) are refusals at any setting. Not "off by default" — there should be
+(4) and (5) are refusals at any setting. Not "off by default": there should be
 no setting that turns them on, because a bearer token in a URL is a credential
 that ends up in chat logs, screenshots, browser history, a television's
 "recently visited", and the referer header of anything the page links to. A
@@ -78,22 +78,19 @@ than to that todo. That is the same mechanism `shareID` already provides, run
 backwards, and it is the part that needs a test before it needs an
 implementation.
 
-**Scope is mandatory.** A writable link with no scope is a writable link to the
-whole panel, which nobody would ask for on purpose. `scope` should be
-`NOT NULL` and non-empty on that table.
+**Scope and expiry are both mandatory.** A writable link with no scope is a
+writable link to the whole panel, which nobody would ask for on purpose, so
+`scope` is `NOT NULL` and non-empty on that table. The read-only link offers an
+expiry of "never" because a monitor on a desk is a real case; a writable link
+has no such case, because it is for a piece of work that ends. Thirty days is a
+defensible cap, and the default should be days.
 
-**Expiry is mandatory, and short.** The read-only link offers "never" because a
-monitor on a desk is a real case. A writable link has no such case: it is for a
-piece of work that ends. Thirty days is a defensible cap; the default should be
-days, not months.
-
-**Revocation has to be visible.** The settings page should show, per link, when
-it was last used and what it last wrote — a writable credential nobody can audit
-is one nobody will revoke, because they will not know it is still in use.
-
-**Everything it does is audited**, with the link's own name in the row:
-`collab.note`, `collab.todo`, `collab.state`. Every one of them on the explicit
-list in `TestEveryAuditEventIsAccountedFor`.
+**Everything it does is audited, and the audit is visible.** Rows carry the
+link's own name — `collab.note`, `collab.todo`, `collab.state` — and every one
+of them is on the explicit list in `TestEveryAuditEventIsAccountedFor`. The
+settings page shows, per link, when it was last used and what it last wrote,
+because a writable credential nobody can audit is one nobody will revoke: they
+will not know it is still in use.
 
 **A separate front-end root**, the way `/share/<token>` already is. Not the
 panel with buttons enabled: the panel's shell fetches state, opens the socket

@@ -17309,3 +17309,107 @@ touched — the diff has no `+#` or `-#` line in it at all. Every markdown link
 and anchor in the three files was resolved against the headings on disk,
 including the one cross-reference made in prose rather than as a link ("the
 'database will not open' section below", which is below). `make check` green.
+## The other five documents
+
+The READMEs went through the humanizer skill. `docs/plugins.md`,
+`docs/design.md`, `docs/writable-links.md`, `docs/features.md` and
+`docs/features.zh-CN.md` had not.
+
+`scripts/lib/doc-scan.py` counts the skill's patterns per file, and it put
+`plugins.md` at thirty times the AI-word density of anything else here. All
+seven hits are the word **harness**, which is what the person asking for the
+feature called it; the list is English prose vocabulary and this is a domain
+noun. That number was noise. The file was still the worst one.
+
+What is actually wrong with it is that it is the only document in the set that
+argues a case rather than describing something that exists, and the argument is
+what invited the staging. A conclusion in a blockquote, introduced by "so nobody
+has to read to the end for it". Four numbered sections each closing on a bolded
+verdict alone on its line — **Already covered. Not a plugin.** / **Refused.** —
+which is a formula by the second one. Sixteen bullets opening `**Bold claim.**`.
+"Neither is a middle." "Here is the real gap." "The only wrong thing to do about
+it is to be quiet."
+
+None of the reasoning went. The file exists so that nobody rebuilds the case in
+six months, and cutting the argument would have been the one edit that ruins it.
+The scaffolding went: the verdicts folded into the paragraphs above them, bold
+bullets 16 → 4, em-dashes 16 → 7.
+
+One claim in it was wrong on the way past: section 2 said
+`POST /api/settings/webhooks` fires the outbound request. The route is a `PUT`,
+and the only `POST` under that path is `/test`. Nothing in the argument turned
+on it, which is how it survived a document that is otherwise careful.
+
+The four bold bullets left are the rejected runtimes — Go's `plugin`, WASM,
+goja, Lua — where the bold is a name rather than a label restating the sentence
+after it. The same reading kept `features.md`'s five: **Files**, **Notes** and
+**The dock** are what the tabs are called.
+
+`design.md` and `writable-links.md` wanted the dash pass and not much else. Nine
+single em-dashes standing before a reveal became a colon, a semicolon or a
+comma; the paired parenthetical ones stayed, because that is ordinary English
+and always was. `writable-links.md` had seven paragraphs in a row opening
+`**Claim.**`, two pairs of which were one claim twice — *Scope is mandatory* /
+*Expiry is mandatory, and short*, then *Revocation has to be visible* /
+*Everything it does is audited*. Five now.
+
+### The Chinese file was never 34 em-dashes
+
+The scanner counted bare `—`, and `——` is two of them. Every Chinese file scored
+about double, and the thing being doubled is ordinary Chinese punctuation rather
+than the imported dash the skill is warning about. `features.zh-CN.md` reads 0
+em-dashes and 17 `——`, not 34, and `roadmap.md` was never the worst file in the
+repository. The scanner reports the two separately now, and nothing was removed
+from the Chinese page on that pattern.
+
+### Six figures in features.md that were not true
+
+Both `features` pages are labelled "written by AI" in the READMEs, and the share
+section is where that showed. Not padding so much as confidence: every one of
+these reads as a fact and none of them was checked against
+`internal/store/presets.go`.
+
+| said | is |
+|---|---|
+| "Thirty starting points" | thirty, and the correction that said twenty-nine was itself wrong |
+| eleven templates in the laptop row | fourteen; `answer`, `today`, `shipping` and `boss` were missing |
+| "what today cost" among them | not a preset — `board.preset.spendToday` is a label with nothing behind it |
+| ten in the wall row | eleven; `leadership` was missing |
+| "four numbers and a clock" for `glance` | three numbers, a clock and a state strip |
+| "*Sitting in front of it* is the same board at the highest density" | a different board: eight tiles against the room screen's five |
+
+Two of the thirty are both called *for leadership*, one composed for a wall
+and one for a 4K one. The page says that out loud rather than inventing a second
+name for one of them.
+
+The Chinese page carried the same table and the same two errors in it, and two
+facts the English page did not: that **只有数量** is the default detail level,
+and that a link scoped to a deleted project shows nothing rather than falling
+back to the whole panel. Both are true — `handleCreateShare` defaults to
+`ShareCounts`, and the scope lookup comes back missing — so they went into the
+English page rather than out of the Chinese one. The connection state
+(*live* / *reconnecting* / *disconnected*) went the same direction.
+
+`design.md` said preview "refuses SVG on purpose". Still true of the image list,
+and no longer the whole story: HTML and SVG are drawn by a separate route into a
+frame with an opaque origin, no scripts and `default-src 'none'`. One sentence
+added, because otherwise the file contradicts `features.md`.
+
+### The scanner is a proxy
+
+`features.md`'s one "emoji" is the ✓ in the state table, which is red line 4.
+The five bold bullets in each `features` page are the names of tabs. The seven
+AI words in `plugins.md` are one domain noun seven times. None of them moved,
+and the table below is worse for it in three places.
+
+| file | lines | em-dash | AI words | bold bullets |
+|---|---|---|---|---|
+| `docs/plugins.md` | 228 → 218 | 16 → 7 | 7 → 7 | 16 → 4 |
+| `docs/design.md` | 294 → 296 | 19 → 10 | 0 | 0 |
+| `docs/writable-links.md` | 126 → 123 | 11 → 10 | 0 | 0 |
+| `docs/features.md` | 349 → 355 | 15 → 12 | 0 | 5 |
+| `docs/features.zh-CN.md` | 272 → 271 | 0, and always was | 0 | 5 |
+
+`features.md` came out six lines longer than it went in. The four corrections to
+the template table cost more lines than the rhetoric was using, which is the
+answer to what the length of that page was for.

@@ -1,6 +1,12 @@
 import io, re, sys, glob
 
-AI_WORDS = r"\b(moreover|furthermore|crucial|pivotal|robust|seamless|leverage|delve|underscore|underscores|landscape|testament|showcase|showcases|vibrant|comprehensive|empower|foster|fostering|intricate|myriad|realm|tapestry|holistic|paradigm|synergy|elevate|unlock|harness|meticulous|nuanced|multifaceted)\b"
+# "harness" was in this list and every hit in the repository was the noun:
+# a test harness, and the harness a coding agent runs inside. Ranked
+# plugins.md worst in the corpus at 32 per thousand, all seven of them that
+# one word, which sent a documentation pass looking for prose that was not
+# there. A detector whose top result is always the same false positive gets
+# read past, so it is out.
+AI_WORDS = r"\b(moreover|furthermore|crucial|pivotal|robust|seamless|leverage|delve|underscore|underscores|landscape|testament|showcase|showcases|vibrant|comprehensive|empower|foster|fostering|intricate|myriad|realm|tapestry|holistic|paradigm|synergy|elevate|unlock|meticulous|nuanced|multifaceted)\b"
 NEG_PAR  = r"\b(not just|not only|isn't just|is not just|isn't merely|rather than merely)\b"
 HEDGE    = r"\b(it is worth noting|it should be noted|it is important to note|in order to|due to the fact that|at this point in time)\b"
 ING_TAIL = r", (?:ensuring|highlighting|showcasing|reflecting|emphasising|emphasizing|underscoring|demonstrating|contributing|fostering|solidifying|cementing) "
