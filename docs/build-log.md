@@ -16972,3 +16972,22 @@ ordered, distinct and after midnight whatever the clock says. The mutation that
 proves it is anchoring them three hours before now instead: red at 00:59, and
 the first attempt at that mutation did not compile, which counted as zero
 failures until it was looked at.
+
+### A 16px label floating in a 56px pill
+
+「手机端左边的 tab 字号和单 tab 容器大小严重不对称」. Measured in the phone
+drawer: session row **271×56**, font-size 16px, padding 6px 8px. The coarse-
+pointer floor grows a row to 44px for a thumb and does nothing to the type
+inside it, so every row in the drawer was a small label lost in a large target.
+
+The rule is the relationship, not four numbers: **where a control was made
+bigger for a finger, what it says grows with it.** One step on each of the
+sidebar's three ranks — heading, group, row — so the ladder moves and the
+hierarchy survives. Only in the overlay: the desktop rail did not grow, and the
+same component on a wide tablet keeps the density it was designed at.
+
+Chosen in the component rather than by remapping the type tokens in CSS, which
+was the first attempt. `--text-vp-sm` and friends are literals in `@theme`,
+which inlines them into every utility it generates, so a descendant redefining
+one changes nothing — the same trap that made the wall scale inert twice today.
+A ternary is duller and it is a thing that can be read.

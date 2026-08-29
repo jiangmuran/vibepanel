@@ -207,6 +207,25 @@ export function Sidebar(props: SidebarProps) {
   }
 
   // A docked sidebar sits on the flat page background, so it can be frosted.
+  // One step up on every rank, in the drawer only.
+  //
+  // A coarse pointer grows a row to 44px for a thumb and does nothing to the
+  // type inside it, so the phone drawer was a 16px label floating in a 56px
+  // pill -- measured, session row 271x56, and the reported 「字号和单 tab 容器
+  // 大小严重不对称」. The rule is the relationship rather than four numbers:
+  // where a control was made bigger for a finger, what it says grows with it.
+  //
+  // Chosen here rather than by remapping the type tokens in CSS. Those are
+  // literals in `@theme`, which inlines them into every utility it generates,
+  // so a descendant redefining `--text-vp-base` changes nothing at all -- the
+  // same trap that made the wall scale inert, twice. A ternary is duller and
+  // it is a thing that can be read.
+  const rank = {
+    head: overlay ? 'text-vp-lg' : 'text-vp-md',
+    group: overlay ? 'text-vp-base' : 'text-vp-sm',
+    row: overlay ? 'text-vp-md' : 'text-vp-base',
+  }
+
   // The overlay covers the terminal and must be opaque.
   const shell = overlay
     ? 'absolute inset-y-0 left-0 z-20 w-72 border-r border-hairline shadow-2xl vp-solid'
@@ -223,7 +242,7 @@ export function Sidebar(props: SidebarProps) {
         >
           <ChevronLeft size={15} />
         </button>
-        <span className="text-vp-md font-semibold tracking-tight">{t('app.projects')}</span>
+        <span className={`${rank.head} font-semibold tracking-tight`}>{t('app.projects')}</span>
         {/* Two views of the same projects, and switching between them costs
             nothing now. This used to be one button that erased the
             arrangement and then removed itself, so there was no way back and
@@ -296,7 +315,7 @@ export function Sidebar(props: SidebarProps) {
               <InlineName
                 value={projectLabel(p)}
                 onCommit={(next) => props.onRenameProject(p, next)}
-                className="text-vp-sm font-semibold tracking-wide text-ink-2"
+                className={`${rank.group} font-semibold tracking-wide text-ink-2`}
                 title={p.path}
               />
               <button
@@ -350,7 +369,7 @@ export function Sidebar(props: SidebarProps) {
                   <InlineName
                     value={props.labels.get(s.id) ?? sessionLabel(s)}
                     onCommit={(next) => props.onRenameSession(s, next)}
-                    className="flex-1 text-vp-base"
+                    className={`flex-1 ${rank.row}`}
                   />
                   {/* The glyph says "gone" and this says how. A shape cannot
                       carry an exit code, and 3 vs 0 is the difference between
