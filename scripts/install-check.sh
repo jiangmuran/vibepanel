@@ -1762,6 +1762,39 @@ tmux -L "$OTHER" kill-server 2>/dev/null || true
 grep -q vibepanel-report "$HOME_DIR/.claude/settings.json" 2>/dev/null \
   && fail "the claude hooks are still there" || ok "the hooks are gone"
 
+echo "==> uninstall: a server with no sessions is killed, not just unlinked"
+# The panel's own tmux config sets `exit-empty off`, so a server with nothing
+# in it stays running. `has-session` answers that with a failure, so the guard
+# that only killed when there were sessions skipped it -- and the next line
+# unlinked the socket, leaving a tmux server alive that nothing can reach. One
+# was found doing that an hour and a half after the install it belonged to.
+teardown_home real
+TD_EMPTY="vpuninst$$f"
+TD_CONF="$WORK/empty.conf"
+printf 'set -s exit-empty off\n' > "$TD_CONF"
+tmux -L "$TD_EMPTY" -f "$TD_CONF" new-session -d -s gone 'true'
+sleep 1
+tmux -L "$TD_EMPTY" kill-session -t =gone 2>/dev/null || true
+sleep 1
+if tmux -L "$TD_EMPTY" list-sessions 2>&1 | grep -q "no server running"; then
+  echo "[--  ] this tmux does not keep an empty server; the case cannot be built here"
+  rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$TD_EMPTY"
+else
+  ok "an empty server stays up, which is what the panel's config asks for"
+  uninst "$HOME_DIR" "$TD_EMPTY" --yes --purge
+  sleep 1
+  # `ps` into a variable and then matched, not piped into grep. The two run
+  # concurrently, so grep's own command line -- which contains the socket name
+  # -- shows up in ps's output and the assertion matches itself. It did, and
+  # reported a bug that had already been fixed.
+  LIVE="$(ps -eo args= 2>/dev/null || true)"
+  case "$LIVE" in
+    *"-L $TD_EMPTY"*) fail "the server is still running with its socket gone" ;;
+    *) ok "the server was killed, not orphaned" ;;
+  esac
+  rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$TD_EMPTY"
+fi
+
 echo "==> uninstall: a unit that did not go is caught by looking too"
 teardown_home real
 # A binary that reports success and leaves the unit: `service uninstall` from

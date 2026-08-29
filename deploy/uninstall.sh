@@ -288,11 +288,17 @@ if pgrep -f "vibepanel serve" >/dev/null 2>&1; then
   did "stopped the running panel"
 fi
 
-# The sessions. `-L "$SOCKET"` and nothing else, and only if that server is
-# actually up -- `kill-server` against a socket with no server is an error
-# message people read as a failure of the uninstall.
-if tmux -L "$SOCKET" has-session 2>/dev/null || [ "$N" != 0 ]; then
-  tmux -L "$SOCKET" kill-server 2>/dev/null || true
+# The sessions. `-L "$SOCKET"` and nothing else.
+#
+# Always attempted, not only when there are sessions to kill. A server with
+# zero sessions answers `has-session` with a failure and is still a running
+# process, so the guarded version skipped it and the line below then unlinked
+# its socket -- leaving a tmux server alive with no way to reach it. One was
+# found doing exactly that, an hour and a half after the install it belonged
+# to. `kill-server` against a dead socket only prints, and that goes to
+# /dev/null.
+tmux -L "$SOCKET" kill-server 2>/dev/null || true
+if [ "$N" != 0 ]; then
   did "killed the tmux server on socket '$SOCKET' ($N session(s))"
 fi
 rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$SOCKET"
@@ -378,8 +384,11 @@ if [ "$LEFTOVERS" = yes ]; then
   # Both halves of the pattern are required: a `-L` naming one of this
   # project's sockets *and* a `-f` config under /tmp. An ordinary tmux has
   # neither, and a person's own server has no temp-directory config file.
+  # `-f` under /tmp *or* under the panel's own data directory. The tests use a
+  # t.TempDir(); the panel uses $DATA/tmux/tmux.conf, and a server of its own
+  # left running with its socket already gone is the case that turned up.
   orphans="$(ps -eo pid=,args= 2>/dev/null \
-    | grep -E "tmux +-L +(vibepanel|vp)[A-Za-z0-9_-]* +-f +/tmp/" \
+    | grep -E "tmux +-L +(vibepanel|vp)[A-Za-z0-9_-]* +-f +(/tmp/|$DATA/)" \
     | grep -v grep || true)"
   if [ -n "$orphans" ]; then
     echo "       and these servers, whose socket is in their own temp directory:"

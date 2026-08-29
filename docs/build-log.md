@@ -17676,3 +17676,21 @@ was written.
 The literal `8443` still appears throughout the tests and in comments, and that
 is right: those are arbitrary addresses exercising a parser, not statements
 about the default. Rewriting them would say the parser cares.
+
+A last one out of tearing that machine down: a tmux server was still running an
+hour and a half after the install it belonged to, with its socket already gone.
+
+`kill-server` was guarded by "are there sessions". The panel's own tmux config
+sets `set -s exit-empty off`, so a server with nothing in it stays up on
+purpose -- and `has-session` answers that with a failure. So the guard skipped
+it, the next line unlinked the socket, and what was left was a live tmux server
+nothing could reach: not by name, because the socket was gone, and not by the
+`--dev-leftovers` sweep, which required the config to be under /tmp and this
+one's was in the data directory. It is killed unconditionally now; against a
+dead socket `kill-server` only prints, and that goes to /dev/null.
+
+The test for it failed against the fixed script, because
+`ps -eo args= | grep -q -- "-L $sock"` matches grep's own command line -- the
+two sides of a pipe run at the same time, so `ps` sees the `grep`. Fifth time
+this shape has cost something today, and the first time it reported a bug that
+was already fixed rather than killing the shell.
