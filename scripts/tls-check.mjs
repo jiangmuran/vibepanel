@@ -183,6 +183,15 @@ try {
   await page.locator('[data-testid="auth-submit"]').click()
   await page.waitForSelector('[data-testid="sidebar"]', { timeout: 20000 })
 
+  // The first-run tour is a modal over the whole panel, and everything below
+  // this clicks. Dismissed through the page's own session rather than through
+  // the dialog: what this check is about is on the other side of it, and
+  // driving a dialog it does not test is a step that can fail for its own
+  // reasons. first-run-check is the one that drives it.
+  await page.evaluate(() => fetch('/api/settings/tour', { method: 'POST' }))
+  await page.reload()
+  await page.waitForSelector('[data-testid="sidebar"]', { timeout: 20000 })
+
   // Secure on the cookie is the reason for doing any of this over TLS: a
   // session that opens a terminal must not be sent in the clear.
   const cookies = await ctx.cookies()
@@ -252,7 +261,16 @@ try {
   // so the date is on the page they actually open.
   await page.locator('[data-testid="settings-open"], header button[title*="Settings" i]')
     .first().click().catch(() => {})
-  await sleep(1500)
+  await sleep(1000)
+  // And then the rail item it is under.
+  //
+  // The dialog opens on Sessions and the certificate is a fact about the
+  // installation, so it lives under "This panel". Without this the row is
+  // simply not rendered, and this check reported "could not open the settings
+  // dialog" and carried on -- a warning that reads like a flake and was a
+  // check that had stopped running.
+  await page.locator('[data-testid="settings-group-panel"]').click().catch(() => {})
+  await sleep(1200)
   const statusText = await page
     .locator('[data-testid="settings-status"]')
     .innerText()
