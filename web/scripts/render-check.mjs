@@ -3346,6 +3346,16 @@ try {
 
     // Dropping onto the terminal. DataTransfer has to be built in the page —
     // Playwright cannot hand a real one across the boundary.
+    // Where a file handed to the *terminal* goes is a setting, and its
+    // default is a directory the panel owns: a screenshot pasted at an
+    // agent used to dirty the session's git tree. This block is about the
+    // path reaching the prompt, so it pins the setting to the project and
+    // looks there. The default is checked on its own further down.
+    await authed('/api/settings/paste', {
+      method: 'PUT',
+      body: JSON.stringify({ dir: 'session', then: 'type' }),
+    })
+
     const dropped = await page.evaluateHandle(() => {
       const dt = new DataTransfer()
       dt.items.add(new File(['DROPPED_FILE_BODY'], 'dropped-note.txt', { type: 'text/plain' }))
@@ -3392,12 +3402,49 @@ try {
     // same journey for people who took a screenshot rather than saved one,
     // which on every desktop is the faster half.
     rmSync(join(projRoot, 'pasted.png'), { force: true })
+
+    // And the default, which is the reason any of this is a setting: a file
+    // handed to the terminal does not land in the repository. 「粘贴图片不要直
+    // 接粘贴到项目根目录啊」 -- it used to go into the session's working
+    // directory, which for an agent session is a git tree.
+    await authed('/api/settings/paste', {
+      method: 'PUT',
+      body: JSON.stringify({ dir: 'panel', then: 'type' }),
+    })
+    await page.evaluate(() => {
+      const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+      const dt = new DataTransfer()
+      dt.items.add(new File([bytes], 'kept-out.png', { type: 'image/png' }))
+      const target = document.querySelector('.xterm-screen') ?? document.body
+      target.dispatchEvent(new ClipboardEvent('paste', {
+        clipboardData: dt,
+        bubbles: true,
+        cancelable: true,
+      }))
+    })
+    await sleep(3000)
+    const afterDefault = await (await authed(`/api/projects/${proj.id}/files?path=`)).json()
+    if ((afterDefault.entries ?? []).some((e) => e.name === 'kept-out.png')) {
+      note('FAIL', 'files',
+        'with the default setting a pasted image still landed in the project directory')
+      rmSync(join(projRoot, 'kept-out.png'), { force: true })
+    } else {
+      note('PASS', 'files', 'a pasted image stays out of the project by default')
+    }
     await page.locator('.xterm-screen').first().click()
     // Built and dispatched inside the page rather than through Playwright's
     // dispatchEvent, which does not carry a DataTransfer across the boundary as
     // `clipboardData`. The first version of this check did, and reported the
     // feature broken while it worked -- a fixture failure wearing a product
     // failure's clothes.
+    // Set again here rather than relying on the one above the drop. The
+    // precondition belongs next to the assertion that needs it: this section
+    // is long, it writes this setting twice, and a check that depends on where
+    // it sits in a file is one that breaks when something moves.
+    await authed('/api/settings/paste', {
+      method: 'PUT',
+      body: JSON.stringify({ dir: 'session', then: 'type' }),
+    })
     await page.evaluate(() => {
       const bytes = Uint8Array.from(atob(
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -3422,8 +3469,10 @@ try {
     }
     const pastedLanded = await (await authed(`/api/projects/${proj.id}/files?path=`)).json()
     if (!(pastedLanded.entries ?? []).some((e) => e.name === 'pasted.png')) {
+      const cfgNow = await (await authed('/api/settings')).json().catch(() => ({}))
       note('FAIL', 'files',
-        'an image pasted into the terminal did not reach the project directory')
+        'an image pasted into the terminal did not reach the project directory ' +
+        `(pasteDir=${cfgNow.pasteDir}, entries=${JSON.stringify((pastedLanded.entries ?? []).map((e) => e.name))})`)
     } else if (!pastedPath.replace(/\s/g, '').includes('pasted.png')) {
       note('FAIL', 'files',
         'a pasted image was uploaded and its path never reached the prompt, so the one thing ' +

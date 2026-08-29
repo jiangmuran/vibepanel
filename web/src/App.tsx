@@ -600,10 +600,15 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         params: { n: files.length },
       })
       try {
-        // Where it lands, and what happens to the path, are settings. Read at
-        // the moment of the paste rather than held: they change in a dialog
-        // this component does not re-render for.
-        const dest = paste.dir === 'session' ? undefined : ('panel' as const)
+        // Where it lands, and what happens to the path, are read now rather
+        // than held from startup: they are changed in a dialog this component
+        // does not re-render for, and a setting that needs a reload to take
+        // effect is a setting people believe is broken. One small GET before an
+        // upload of an actual file costs nothing worth measuring.
+        const cfg = await api.settings().catch(() => null)
+        const dir = cfg?.pasteDir ?? paste.dir
+        const then = cfg?.pasteThen ?? paste.then
+        const dest = dir === 'session' ? undefined : ('panel' as const)
         const { paths } = await api.upload(currentProject.id, rel, files, dest)
         // Quoted only when it needs to be: a shell-quoted path that did not
         // need quoting is noise at the prompt, and an unquoted one with a
@@ -621,10 +626,10 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         // reaches the *screen* goes through safeText for the same reason; this
         // was the one place a filename's bytes reached a shell unexamined.
         const typed = paths.map(shellQuote).join(' ')
-        if (paste.then !== 'buffer') {
+        if (then !== 'buffer') {
           sendToCurrent(typed + ' ')
         }
-        if (paste.then !== 'type') {
+        if (then !== 'type') {
           // The tmux paste buffer, so whatever is in the pane can take the
           // path when it wants it rather than finding it already typed.
           // Failing is not worth a toast on top of the success one: the file
