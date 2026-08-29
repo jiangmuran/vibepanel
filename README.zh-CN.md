@@ -82,7 +82,7 @@ vibepanel service status | start | stop | restart | logs | token | upgrade | uni
 ```sh
 TOKEN=…   # 设置 → API 令牌
 
-curl -sX POST https://panel.example.com:8443/api/sessions \
+curl -sX POST https://panel.example.com:18443/api/sessions \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"projectId":"…","title":"billing","command":["claude"]}'
 ```

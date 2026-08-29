@@ -23,7 +23,7 @@ services:
     container_name: vibepanel
     restart: unless-stopped
     ports:
-      - "${VIBEPANEL_PORT:-8443}:8443"
+      - "${VIBEPANEL_PORT:-18443}:18443"
     env_file:
       - .env
     volumes:
@@ -35,4 +35,4 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - VIBEPANEL_DATA_DIR=/data
-      - VIBEPANEL_ADDR=:8443
+      - VIBEPANEL_ADDR=:18443

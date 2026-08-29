@@ -173,7 +173,7 @@ anything and rejects the flag.
 ## The first account
 
 The panel prints a one-time setup token on first start. Open
-`http://<host>:8443`, paste it, choose a password. The endpoint closes for good
+`http://<host>:18443`, paste it, choose a password. The endpoint closes for good
 once an account exists.
 
 `vibepanel service token` finds the token again if the console output is gone.
@@ -269,7 +269,7 @@ silently doing nothing.
 | Flag | Default | Notes |
 |---|---|---|
 | `--data-dir` | `~/.local/share/vibepanel` | database, tmux config, ACME state |
-| `--addr` | `:8443` | listen address |
+| `--addr` | `:18443` | listen address |
 | `--domain` | — | public hostname; also the WebAuthn Relying Party ID |
 | `--tls` | `off` | `off`, `files` or `acme` |
 | `--tls-cert` / `--tls-key` | — | for `--tls files`; reloaded when the files change |

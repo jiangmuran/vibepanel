@@ -41,7 +41,7 @@ type Config struct {
 	// DataDir holds the database, the generated tmux config and ACME state.
 	DataDir string
 
-	// Addr is the listen address, e.g. ":8443" or "127.0.0.1:8443".
+	// Addr is the listen address, e.g. ":18443" or "127.0.0.1:18443".
 	Addr string
 
 	// Domain is the public hostname. It doubles as the WebAuthn Relying Party
@@ -87,11 +87,25 @@ type Config struct {
 	UnknownEnv []string
 }
 
+// DefaultPort is the port the panel listens on when nothing says otherwise.
+//
+// 18443 rather than 8443. The low one is crowded -- it is the conventional
+// second HTTPS port, and the machine this was first installed on already had a
+// TLS proxy sitting on it, so the panel bound, failed, and was restarted every
+// few seconds. A default that collides on an ordinary developer's box is a
+// default that costs everybody the same twenty minutes.
+//
+// Three files state it and this is the one they are checked against:
+// deploy/install.sh's fallback when there is no env file, and the
+// VIBEPANEL_ADDR line in deploy/vibepanel.env. TestTheInstallerAgreesAboutThePort
+// is what stops them drifting.
+const DefaultPort = 18443
+
 // Default returns the configuration used when nothing is specified.
 func Default() Config {
 	return Config{
 		DataDir:    defaultDataDir(),
-		Addr:       ":8443",
+		Addr:       fmt.Sprintf(":%d", DefaultPort),
 		TLSMode:    TLSOff,
 		TmuxSocket: "vibepanel",
 	}
@@ -317,7 +331,7 @@ func (c Config) BindHost() string {
 // and the form you type your password into, unencrypted on an interface other
 // people can reach.
 //
-// The defaults make this the out-of-the-box state: `:8443` is every interface,
+// The defaults make this the out-of-the-box state: `:18443` is every interface,
 // and `--tls off` is the default mode. Nothing said so. The banner prints
 // `url http://…`, and one letter is the whole warning — easy to read past on
 // the run where you also copy the setup token.
@@ -383,7 +397,7 @@ func (c Config) PublicURL() string {
 func (c Config) LoopbackURL() string {
 	port := c.Port()
 	if port == 0 {
-		port = 8443
+		port = DefaultPort
 	}
 	scheme := "http"
 	if c.TLSMode != TLSOff {

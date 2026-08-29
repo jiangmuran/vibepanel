@@ -17,7 +17,7 @@ the password and keeping a jar. Use an API token instead.
 Make one in **Settings → API tokens**, or:
 
 ```sh
-curl -sX POST https://panel.example:8443/api/settings/tokens \
+curl -sX POST https://panel.example:18443/api/settings/tokens \
   -b cookies.txt -H 'Content-Type: application/json' \
   -d '{"name":"deploy bot"}'
 # {"token":"pOsC…","id":"…","prefix":"pOsC7x2p","name":"deploy bot"}
@@ -712,7 +712,7 @@ Making one needs the ordinary session; a share token cannot mint another, which
 is what stops one leaked link becoming a supply of them.
 
 ```sh
-curl -sX POST https://panel.example:8443/api/settings/shares \
+curl -sX POST https://panel.example:18443/api/settings/shares \
   -b cookies.txt -H 'Content-Type: application/json' \
   -d '{"name":"wall display","detail":"counts","expiresIn":604800,"preset":"attention"}'
 # {"token":"Jq4…","id":"…","prefix":"Jq4x9m2v","detail":"counts","scope":"",

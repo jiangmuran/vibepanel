@@ -263,8 +263,8 @@ not whether anything ever reached the panel.
 Ask `doctor` first. Two of its lines are about exactly this, and between them
 they cover both ways it happens:
 
-    [ok  ] hook endpoint      http://127.0.0.1:8443/api/health answers
-    [ok  ] hook url           4 of 4 session(s) post to http://127.0.0.1:8443
+    [ok  ] hook endpoint      http://127.0.0.1:18443/api/health answers
+    [ok  ] hook url           4 of 4 session(s) post to http://127.0.0.1:18443
 
 **`hook endpoint` failing** means nothing is listening where this configuration
 says the panel is. Either it is not running there, or `doctor` is not being run
@@ -282,8 +282,8 @@ every report from them is refused for as long as they live.
 **`hook url` failing** is the one that catches people, and it has nothing to do
 with the address being wrong *now*:
 
-    [FAIL] hook url           3 of 5 session(s) still post to http://10.0.0.4:8443,
-                              not http://127.0.0.1:8443
+    [FAIL] hook url           3 of 5 session(s) still post to http://10.0.0.4:18443,
+                              not http://127.0.0.1:18443
 
 `VIBEPANEL_URL` is injected into a session's environment when the session is
 created, and tmux's `set-environment` reaches only panes started after it. A
@@ -311,7 +311,7 @@ Restart the sessions after any of those. The processes in them do not survive
 that, which is the cost, and there is no other way to give a live session a new
 environment.
 
-A note on what this is *not*. Binding one interface -- `--addr 192.168.8.20:8443`
+A note on what this is *not*. Binding one interface -- `--addr 192.168.8.20:18443`
 -- does not break hooks on its own. `LoopbackURL()` follows the bound address, so
 the sessions are told `192.168.8.20` too and reach it perfectly well. This
 runbook said otherwise until it was measured.

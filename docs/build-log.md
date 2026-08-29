@@ -17651,3 +17651,28 @@ down -- `"$BIN" service uninstall --yes || true` followed by an unconditional
 success line, run against a binary that predated the `sudo rm -f` fix. The unit
 files are checked afterwards now, and a survivor is a FAIL that names the path
 and says what to run.
+
+## The default port moves to 18443
+
+8443 is the conventional second HTTPS port, which is exactly why it was a bad
+default: the first machine this was installed on already had a TLS proxy
+sitting on it, so the panel bound, failed, and was restarted every few seconds
+under `Restart=always`. A default that collides on an ordinary developer's box
+costs everybody the same twenty minutes.
+
+Four files state it and none of them imports the others:
+`internal/config.DefaultPort`, `deploy/install.sh`'s fallback for when there is
+no env file yet, the `VIBEPANEL_ADDR` line in `deploy/vibepanel.env`, and
+`deploy/docker-compose.yml`. Drift is quiet in the worst direction -- the
+installer checks one port for a conflict, the panel binds another, and nothing
+warns, which is the failure this change is about, arrived at from the other
+side. `TestTheInstallerAgreesAboutThePort` reads all four.
+
+`TestTheDocsNameThePortThePanelUses` is the other half: documentation naming
+the old port sends a reader to a page that is not there on the install they
+just did. It skips the build log, which records what was true when each entry
+was written.
+
+The literal `8443` still appears throughout the tests and in comments, and that
+is right: those are arbitrary addresses exercising a parser, not statements
+about the default. Rewriting them would say the parser cares.

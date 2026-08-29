@@ -1627,7 +1627,10 @@ fi
 # panel would start, fail to bind, and be restarted by systemd every three
 # seconds -- a unit that looks active in `systemctl status` for the first two
 # seconds of each cycle.
-PORT=8443
+# The same number as internal/config.DefaultPort, checked against it by
+# TestTheInstallerAgreesAboutThePort. This is only the fallback: an env file
+# that names a port wins, which is the line below.
+PORT=18443
 if [ -e "$ENV_FILE" ]; then
   ADDR="$(grep -E '^[[:space:]]*VIBEPANEL_ADDR=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d ' "' || true)"
   case "$ADDR" in *:*) P="${ADDR##*:}"; if [ -n "$P" ]; then PORT="$P"; fi ;; esac

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -334,8 +335,9 @@ func TestHookURLFollowsTheBindAddress(t *testing.T) {
 		{"under tls", ":8443", TLSFiles, "https://127.0.0.1:8443"},
 		// An IPv6 literal needs brackets or the URL is unparseable.
 		{"ipv6", "[fd00::1]:8443", TLSOff, "http://[fd00::1]:8443"},
-		// No usable port: fall back rather than emitting ":0".
-		{"no port", "nonsense", TLSOff, "http://127.0.0.1:8443"},
+		// No usable port: fall back rather than emitting ":0". Built from
+		// the constant, not written out, so moving the default is one edit.
+		{"no port", "nonsense", TLSOff, fmt.Sprintf("http://127.0.0.1:%d", DefaultPort)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := Config{Addr: tc.addr, TLSMode: tc.tls}
@@ -347,11 +349,11 @@ func TestHookURLFollowsTheBindAddress(t *testing.T) {
 }
 
 func TestPlaintextOnANetworkIsNoticed(t *testing.T) {
-	// The defaults put the panel in this state: `:8443` is every interface and
+	// The defaults put the panel in this state: `:18443` is every interface and
 	// `off` is the default TLS mode, so out of the box a terminal and a
 	// password form are served unencrypted to anything that can route to this
 	// machine. The only thing that said so was one letter in
-	// `url http://…:8443`, on the same screen as the setup token.
+	// `url http://…:18443`, on the same screen as the setup token.
 	//
 	// Loopback is exempt because that is genuinely private, and a name that is
 	// not "localhost" is not: it is something this machine answers to.

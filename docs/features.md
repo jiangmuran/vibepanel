@@ -312,7 +312,7 @@ naming both versions rather than opening it and dropping columns.
 
 ## On a network
 
-The panel listens on `:8443`, on every interface, and is built to face the
+The panel listens on `:18443`, on every interface, and is built to face the
 public internet.
 
 Everything needs a credential, including the WebSocket, which is the terminal.

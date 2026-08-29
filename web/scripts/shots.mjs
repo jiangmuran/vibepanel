@@ -258,7 +258,7 @@ try {
   writeFileSync(transcriptFile, transcript)
   const logFile = join(scriptDir, 'log')
   writeFileSync(logFile, [
-    `${D}12:04:31${R} serve  listening on 127.0.0.1:8443 ${D}tls=off${R}`,
+    `${D}12:04:31${R} serve  listening on 127.0.0.1:18443 ${D}tls=off${R}`,
     `${D}12:04:31${R} tmux   socket vibepanel ${D}3.6${R}  ${G}6 sessions adopted${R}`,
     `${D}12:07:02${R} ws     client attached ${D}session=vp_a3f1 130x46${R}`,
     `${D}12:07:19${R} hook   ${C}vp_a3f1${R} -> ${Y}waiting${R}`,

@@ -360,8 +360,8 @@ else
     DATA="$WORK/container-data"
     mkdir -p "$DATA" && chmod 777 "$DATA"
     PORT=18499
-    CID="$(docker run -d --rm -p "$PORT:8443" \
-      -e VIBEPANEL_ADDR=0.0.0.0:8443 -e VIBEPANEL_DOMAIN=localhost \
+    CID="$(docker run -d --rm -p "$PORT:18443" \
+      -e VIBEPANEL_ADDR=0.0.0.0:18443 -e VIBEPANEL_DOMAIN=localhost \
       -v "$DATA:/data" "$IMG" 2>"$WORK/docker-run.log" || true)"
     if [ -z "$CID" ]; then
       fail "the image would not start: $(tail -3 "$WORK/docker-run.log" | tr '\n' ' ')"
