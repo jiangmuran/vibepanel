@@ -83,9 +83,22 @@ function NotRead({ w, label }: { w: ShareWidget; label: string }) {
   )
 }
 
-/** How old a background-refreshed figure is, as a line under it. */
+/**
+ * How old a background-refreshed figure is -- and only once it is old.
+ *
+ * The same rule as the panel's own spend footer, and it was broken the same
+ * way: a wall showing 「read 3s ago」 under every figure is the board narrating
+ * its own housekeeping to somebody standing three metres away who came for the
+ * number. Freshness is worth a line when the figure is *behind*; the rest of
+ * the time it is noise on every render, forever.
+ *
+ * The threshold is the refresh interval, so "old" means "a refresh has been
+ * missed" rather than a duration somebody picked.
+ */
+const FRESH_SECONDS = 90
+
 function agedLine(seconds: number): string | undefined {
-  if (seconds < 0) return undefined
+  if (seconds < 0 || seconds <= FRESH_SECONDS) return undefined
   return t('dash.readAgo', { d: duration(seconds) })
 }
 

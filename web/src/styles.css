@@ -1333,6 +1333,7 @@ body {
     gap: 1rem;
     grid-auto-rows: minmax(6rem, auto);
   }
+
 }
 
 /* ── one screen, drawn bigger ────────────────────────────────────────────
@@ -1423,6 +1424,48 @@ body {
   aspect-ratio: 16 / 9;
 }
 
+/* A figure is sized against the tile it is in, not against the window.
+ *
+ * The viewport scale below gets the *page* right and leaves the tiles wrong.
+ * Measured on a 4K wall: the type grew 1.63x while the tiles grew 4x in area,
+ * so 「22 Commits today」 at 91px inside a 2500x780 card is about three per cent
+ * ink. Bigger screen, same composition, emptier cards -- which is the reported
+ * 「缩放炸的炸」 and is not fixed by raising the clamp, because the clamp does
+ * not know how big the card is.
+ *
+ * A container query does. Each tile becomes a query container and redefines the
+ * base unit from its own size, so one number in a hero card is enormous and the
+ * same widget in a one-row strip is not -- from the same markup, with none of
+ * the ninety-eight call sites changed.
+ *
+ * Two rules, because `container-type: size` needs a definite size on *both*
+ * axes and a tile in a flowing board has a height that depends on its content.
+ * Declaring `size` there makes the height not depend on the content, the
+ * content not fit, and the tile collapse. So a flowing board queries width
+ * only, and a filled board -- whose rows are `1fr` and therefore definite --
+ * queries the smaller side.
+ *
+ * `cqmin`, not `cqh`: a wide short strip should not shout, and a narrow tall
+ * column should not overflow. The smaller side is the one that constrains the
+ * text either way.
+ *
+ * And the three sizes are redefined here as well as the unit. That is not
+ * belt-and-braces, it is the whole mechanism -- see the note at the scale for
+ * why a custom property declared on :root arrives here already resolved. */
+.vp-board > section {
+  container-type: inline-size;
+  --vp-wall: clamp(13px, 1.1cqw, 34px);
+  --vp-text-xl: calc(1.375 * var(--vp-wall));
+  --vp-text-2xl: calc(2.25 * var(--vp-wall));
+  --vp-text-3xl: calc(3.5 * var(--vp-wall));
+}
+
+.vp-board[data-fill='true'] > section {
+  container-type: size;
+  --vp-wall: clamp(13px, 6.5cqmin, 48px);
+}
+
+
 /* A board that was drawn to occupy a screen rather than flow down one.
 
    The rows share the height instead of taking their content's, which is the
@@ -1434,6 +1477,43 @@ body {
   height: 100%;
   grid-auto-rows: minmax(0, 1fr);
 }
+
+/* A phone cannot show a wall, and forcing it to try breaks the tiles.
+ *
+ * `fill` divides the height between the rows, which is right for a screen
+ * nobody will scroll and wrong for the one device that is only ever scrolled:
+ * five rows in 844px is 150px a row, and with `container-type: size` a tile's
+ * height stops depending on its content -- so the content does not shrink to
+ * fit, it *overflows*. Measured at 390x844: a figure drawn over the tile's own
+ * label, two more below the card's background, and the bottom strip past the
+ * end of the page.
+ *
+ * So the board flows here whatever the link says, and the tile goes back to
+ * being a width-only container like every other flowing board.
+ *
+ * Below the two rules it overrides, and that is not tidiness: the first
+ * attempt put it in the media block a hundred lines *above* them, where it has
+ * the same specificity and loses on source order. It changed nothing and the
+ * phone looked identical. */
+@media (max-width: 640px) {
+  /* The class is doubled to raise specificity, not by accident.
+   *
+   * Written first at equal specificity and placed after the rule it overrides,
+   * which is how CSS is supposed to settle it -- and the bundler emitted the
+   * media block *before* that rule anyway, so `grid-auto-rows: minmax(0, 1fr)`
+   * won and the phone was byte-identical. Source order is not something to
+   * depend on downstream of a minifier that is allowed to reorder. */
+  .vp-board.vp-board[data-fill='true'] {
+    height: auto;
+    grid-auto-rows: minmax(6rem, auto);
+  }
+
+  .vp-board.vp-board[data-fill='true'] > section {
+    container-type: inline-size;
+    --vp-wall: clamp(13px, 1.1cqw, 34px);
+  }
+}
+
 
 /* xterm sizes itself against the element it is given; without an explicit
    height it collapses and renders a single row. */

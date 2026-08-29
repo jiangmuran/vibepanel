@@ -16912,3 +16912,63 @@ emptiness was the tiles, not the grid.
 2500×780 is about 3% ink. Sizing a figure against its own tile needs container
 queries (`container-type: size` on the tile, figures in `cqmin`), which is a
 mechanism change rather than a number change.
+
+### A figure sized against the window, in a tile sized against the grid
+
+The viewport scale got the page right and left the tiles wrong: at 4K the type
+grew 1.63× while the tiles grew 4× in area, so 「22 Commits today」 at 91px
+inside a 2500×780 card is about three per cent ink. Raising the clamp does not
+fix that, because the clamp does not know how big the card is.
+
+A container query does. Each tile is now a query container and redefines the
+base unit from its own size, so one figure in a hero card is enormous and the
+same widget in a one-row strip is not — from the same markup, with none of the
+ninety-eight call sites touched.
+
+Two rules, because `container-type: size` needs a definite size on **both** axes
+and a tile in a flowing board has a height that depends on its content.
+Declaring `size` there makes the height stop depending on the content, the
+content not fit, and the tile overflow. So a flowing board queries width only.
+
+**And a phone is a flowing board whatever the link says.** `fill` divides the
+height between rows, which is right for a screen nobody will scroll and wrong
+for the one device that is only ever scrolled: five rows in 844px is 150px a
+row, and with `container-type: size` the content does not shrink to fit, it
+spills. Measured at 390×844: a figure drawn over its own tile's label, two more
+below the card's background, the bottom strip past the end of the page.
+
+**That override took three attempts and the last two are the lesson.** Written
+first inside the existing `max-width: 640px` block — a hundred lines *above* the
+rule it overrides, same specificity, loses on source order, changed nothing.
+Moved to sit after that rule — and the bundler emitted the media block *before*
+it anyway, so it still lost and the phone was byte-identical both times. Source
+order is not something to depend on downstream of a minifier that may reorder.
+The class is doubled now, which settles it by specificity.
+
+Also: `groupName` printed a group's id when it had no name, and a project's id
+on a share board is a per-link pseudonym — so a board in `counts` mode, where
+every name is withheld by design, labelled four bars `6e3e6771653812e2`. Not a
+disclosure: the pseudonym is exactly what it is for, and checking that took
+reading `shareID` rather than trusting the screen. But it is a wall of hex where
+a name should be, beside a session grid on the same screen numbering its own
+groups correctly. A tool's id *is* a name — claude, codex — so that case stays.
+
+And the board narrated its own scan in two more places, the same rule as the
+spend footer: 「read 3s ago」 under every figure and a timestamp under a live
+rate. Both appear only once the reading is behind, and the threshold is the
+refresh interval so "old" means "a refresh was missed" rather than a number
+somebody picked.
+
+### A test that failed every night between midnight and two
+
+`TestTheDayIsDrawnFromTheEventLog` seeded events at `now-2h`, `now-1h`,
+`now-1m` and asserted all three were **today**. Between 00:00 and 02:00 the
+first two are yesterday. It passed every working day and failed every night,
+which is the shape of a bug nobody meets until they are working at 00:47 — as
+happened here.
+
+The three points now divide however much of today has elapsed, so they are
+ordered, distinct and after midnight whatever the clock says. The mutation that
+proves it is anchoring them three hours before now instead: red at 00:59, and
+the first attempt at that mutation did not compile, which counted as zero
+failures until it was looked at.

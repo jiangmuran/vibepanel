@@ -287,7 +287,16 @@ function groupName(g: ShareSpendGroup, by: string, index: number): string {
   // panel has never been told about. It is named as what it is rather than
   // numbered as though it were a project.
   if (by === 'project' && !g.id) return t('dash.outsideProjects')
-  if (g.id) return safeText(g.id)
+  // The id is only a name where it is a name.
+  //
+  // A tool's id is the agent -- claude, codex -- which is one of a fixed set
+  // and reads as a label. A project's is a per-link pseudonym, and this read
+  // `if (g.id) return g.id` for all of them: on a board in counts mode, where
+  // every name is withheld by design, four bars were labelled
+  // `6e3e6771653812e2`. Not a disclosure -- the pseudonym is exactly what it is
+  // for -- but a wall of hex where a name should be, next to a session grid on
+  // the same screen numbering its own groups correctly.
+  if (g.id && (by === 'tool' || by === 'model')) return safeText(g.id)
   return t('dash.group', { n: index + 1 })
 }
 

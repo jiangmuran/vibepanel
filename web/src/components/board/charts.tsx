@@ -151,9 +151,23 @@ export function TokenBurn({ w, data }: { w: ShareWidget; data: ShareDashboard })
             />
           </div>
         )}
-        <span className="truncate text-vp-xl text-ink-3">
-          {t('dash.spendAt', { time: new Date(spend.scannedAt * 1000).toLocaleTimeString() })}
-        </span>
+        {/* Only once the reading is behind.
+         *
+         * This is a live rate on a wall; a timestamp under it on every render
+         * is the board reporting a scan it just finished rather than the
+         * figure somebody is standing there to read. Ninety seconds is the
+         * refresh interval, so the line appears when a refresh has been
+         * missed -- which is exactly when the rate above stops being a rate.
+         *
+         * Against , the server's own reading time, rather than
+         * Date.now(): a clock read in a render body is impure, react-hooks
+         * catches it, and the payload already carries the moment this data is
+         * true as of. */}
+        {data.at - spend.scannedAt > 90 && (
+          <span className="truncate text-vp-xl text-ink-3">
+            {t('dash.spendAt', { time: new Date(spend.scannedAt * 1000).toLocaleTimeString() })}
+          </span>
+        )}
       </div>
     </Tile>
   )

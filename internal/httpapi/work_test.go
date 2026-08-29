@@ -597,13 +597,27 @@ func TestTheDayIsDrawnFromTheEventLog(t *testing.T) {
 	sess := postJSON[store.Session](t, ts, "/api/sessions",
 		`{"projectId":"`+project.ID+`","title":"rotate the production keys","command":[]}`)
 
+	// Inside today by construction, not by subtracting hours from now.
+	//
+	// This read now-2h, now-1h, now-1m and then asserted all three were
+	// "today". Between midnight and 02:00 the first two are yesterday, so the
+	// test failed every night for two hours and passed every day -- which is
+	// the shape of a bug nobody sees until they are working at 00:47.
+	//
+	// The three points divide however much of today has elapsed, so they are
+	// ordered, distinct and after midnight whatever the clock says. ForSeconds
+	// is the recorded duration and does not move with them.
 	now := time.Now()
+	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	step := now.Sub(midnight) / 4
+	at := func(n int) int64 { return midnight.Add(time.Duration(n) * step).Unix() }
+
 	for _, ev := range []store.SessionEvent{
-		{At: now.Add(-2 * time.Hour).Unix(), SessionID: sess.ID, ProjectID: project.ID,
+		{At: at(1), SessionID: sess.ID, ProjectID: project.ID,
 			From: session.StateWorking, To: session.StateWaiting},
-		{At: now.Add(-time.Hour).Unix(), SessionID: sess.ID, ProjectID: project.ID,
+		{At: at(2), SessionID: sess.ID, ProjectID: project.ID,
 			From: session.StateWaiting, To: session.StateWorking, ForSeconds: 3600},
-		{At: now.Add(-time.Minute).Unix(), SessionID: sess.ID, ProjectID: project.ID,
+		{At: at(3), SessionID: sess.ID, ProjectID: project.ID,
 			From: session.StateWorking, To: session.StateDone, ForSeconds: 60},
 	} {
 		if err := srv.DB.RecordSessionEvent(ctx, ev); err != nil {
