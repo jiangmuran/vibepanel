@@ -618,6 +618,12 @@ export interface UpdateCheck {
    * not a broken one, so this arrives with 200 rather than as an error.
    */
   unreachable?: string
+  /**
+   * Set when this panel cannot replace its own binary — a system install owns
+   * it as root — and carries the command that can. Present means the update
+   * button must not be offered: it would download and then fail.
+   */
+  byHand?: string
 }
 
 /** What `POST /api/update` answers, before it restarts. */

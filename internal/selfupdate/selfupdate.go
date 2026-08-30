@@ -333,6 +333,48 @@ func binaryFromArchive(archive []byte) ([]byte, error) {
 	return nil, errors.New("selfupdate: no vibepanel binary in the archive")
 }
 
+// ErrNotWritable means the running binary cannot be replaced where it is.
+var ErrNotWritable = errors.New("selfupdate: this binary is in a directory it cannot write to")
+
+// Installable reports whether an update could be applied at all.
+//
+// Asked before the download rather than discovered after it. A system install
+// puts the binary in /usr/local/bin, owned by root, and the panel runs as the
+// user -- so the swap fails with
+//
+//	open /usr/local/bin/.vibepanel-update-2717682195: permission denied
+//
+// after a seven-megabyte download, as a raw errno, on a page whose button said
+// "install". The capability is knowable up front and the answer does not
+// change while somebody reads it.
+//
+// Probed by writing, not by reading mode bits. The mode is not the answer: a
+// read-only mount, an ACL, an immutable flag and a full disk all present as a
+// writable directory and fail at the same call this is standing in for.
+func Installable() error {
+	self, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("selfupdate: finding this binary: %w", err)
+	}
+	self, err = filepath.EvalSymlinks(self)
+	if err != nil {
+		return fmt.Errorf("selfupdate: resolving %s: %w", self, err)
+	}
+	return installableAt(self)
+}
+
+func installableAt(self string) error {
+	dir := filepath.Dir(self)
+	f, err := os.CreateTemp(dir, ".vibepanel-update-probe-*")
+	if err != nil {
+		return fmt.Errorf("%w: %s", ErrNotWritable, dir)
+	}
+	name := f.Name()
+	_ = f.Close()
+	_ = os.Remove(name)
+	return nil
+}
+
 // Install writes the new binary over the running one.
 //
 // Rename, not truncate-and-write. A running program's file cannot be rewritten

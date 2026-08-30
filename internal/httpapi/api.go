@@ -46,6 +46,13 @@ type Server struct {
 	Detector *session.Detector
 	Sampler  *sysmon.Sampler
 
+	// installable answers whether this binary can be replaced in place. A
+	// field so a test can force the answer: the real one asks about the
+	// running executable, which in a test is the test binary in a writable
+	// temp directory, so the interesting branch is unreachable otherwise.
+	// Nil means the real check.
+	installable func() error
+
 	// zone caches the configured time zone. Not a field to set: read it with
 	// s.loc(ctx), which resolves the setting the first time and remembers.
 	zone zoneCache

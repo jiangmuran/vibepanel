@@ -74,7 +74,10 @@ export function UpdateSection() {
     return t('upd.available', { v: found.version, cur: found.current })
   }
 
-  const canApply = Boolean(found?.newer && found.asset)
+  // Not offered when the panel cannot replace its own binary. A system
+  // install owns it as root, so the button would download seven megabytes and
+  // then fail on a temp file -- which is exactly what it did.
+  const canApply = Boolean(found?.newer && found.asset && !found.byHand)
 
   return (
     <div data-testid="update-section">
@@ -104,6 +107,16 @@ export function UpdateSection() {
         )}
       </div>
 
+      {found?.byHand && found.newer && (
+        <p
+          className="mt-2 text-vp-sm leading-relaxed break-all text-ink-2"
+          data-testid="update-by-hand"
+        >
+          {/* The server's sentence, which names the command. Shown as it
+              arrived: it contains a path this side does not know. */}
+          {safeText(found.byHand)}
+        </p>
+      )}
       {found && (
         <p className="mt-2 text-vp-sm leading-relaxed text-ink-2" data-testid="update-status">
           {safeText(status() ?? '')}

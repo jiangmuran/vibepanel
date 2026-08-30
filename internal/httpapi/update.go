@@ -38,7 +38,17 @@ func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, rel)
+	// Whether pressing the button could work, answered here rather than
+	// discovered after the download. A system install cannot replace its own
+	// binary, and a page that offers to do it anyway is a page that lies.
+	out := map[string]any{
+		"version": rel.Version, "newer": rel.Newer, "current": rel.Current,
+		"url": rel.URL, "notes": rel.Notes, "asset": rel.Asset,
+	}
+	if err := s.canInstall(); err != nil {
+		out["byHand"] = updateByHand(err)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // handleUpdateApply downloads, verifies and installs, then asks the service
@@ -49,6 +59,19 @@ func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 // interesting case is not a mistake, it is somebody who has a session cookie
 // and would like this panel to run something else.
 func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
+	// First, before the network and before the download.
+	//
+	// A system install puts the binary under /usr/local/bin owned by root and
+	// runs the panel as the user, so the swap cannot work -- and it used to
+	// find that out after fetching seven megabytes, reporting the raw
+	// `permission denied` on a temp file nobody had heard of. Whether this
+	// process can replace its own binary does not depend on what GitHub says,
+	// so it is not worth a round trip to find out.
+	if err := s.canInstall(); err != nil {
+		writeErr(w, http.StatusConflict, updateByHand(err))
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 
@@ -138,4 +161,30 @@ func restartCommand() (*exec.Cmd, error) {
 		return exec.Command(systemctl, "restart", "vibepanel"), nil
 	}
 	return nil, errors.New("this looks like a system unit, and restarting it needs root: run `sudo systemctl restart vibepanel`")
+}
+
+// canInstall is Installable, or whatever a test put in its place.
+func (s *Server) canInstall() error {
+	if s.installable != nil {
+		return s.installable()
+	}
+	return selfupdate.Installable()
+}
+
+// updateByHand turns "cannot write there" into the command that can.
+//
+// One sentence and one command. The panel deliberately does not try to become
+// root: a web console that can escalate is a different program with a
+// different threat model, and the whole point of the system unit dropping to
+// User= is that this process is not privileged.
+func updateByHand(err error) string {
+	if !errors.Is(err, selfupdate.ErrNotWritable) {
+		return err.Error()
+	}
+	self, _ := os.Executable()
+	if self == "" {
+		self = "vibepanel"
+	}
+	return "this panel cannot replace its own binary: " + err.Error() +
+		". Update it from a shell instead: sudo " + self + " service upgrade"
 }

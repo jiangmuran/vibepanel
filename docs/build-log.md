@@ -18287,3 +18287,34 @@ overflowing, so that number is 0 whether it is on one line or three. It counts
 keys per line now. Not "must be one line": wrapping at 320 is deliberate and
 documented. What is forbidden is a line with one key on it, which is what was
 reported and what the mutation reproduces.
+
+## An update button that could not update
+
+    selfupdate: open /usr/local/bin/.vibepanel-update-2717682195: permission denied
+
+After the download. A system install puts the binary under `/usr/local/bin`
+owned by root and runs the panel as the user, so replacing it in place cannot
+work — and the panel offered a button that said "install", fetched seven
+megabytes, and reported a raw errno on a temp file nobody had heard of.
+
+Whether this process can replace its own binary does not depend on what GitHub
+says, so it is asked first, before the network. The check endpoint carries the
+same answer as `byHand`, so the page stops offering the button and prints the
+command that works instead. The panel does not try to become root: a web
+console that can escalate is a different program, and the whole point of the
+system unit dropping to `User=` is that this process is not privileged.
+
+Two things worth recording about the guards, because one of them is weaker than
+it looks:
+
+- The handler branch was unreachable from a test — the real probe asks about
+  the running executable, which under `go test` is the test binary in a
+  writable temp directory. It is behind a field on `Server` now, and both
+  mutations (removing the check from apply, removing it from the check
+  response) go red.
+- `installableAt` probes by *writing*, because a read-only mount, an ACL and a
+  full disk all present as a writable directory and fail at the same call a
+  mode check would have approved. On an ordinary filesystem as an ordinary user
+  the two agree, so swapping the probe for a mode check leaves the test green —
+  verified by doing it. The comment says so rather than implying coverage that
+  is not there.

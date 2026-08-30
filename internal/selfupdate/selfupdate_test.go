@@ -272,3 +272,73 @@ func TestTheAssetNameMatchesWhatTheReleaseScriptBuilds(t *testing.T) {
 		t.Errorf("AssetName(%q) = %q, AssetName(%q) = %q: one release, one archive", "1.2.0", bare, "v1.2.0", AssetName("v1.2.0"))
 	}
 }
+
+// A binary in a directory it cannot write to says so before downloading
+// anything.
+//
+// The system install puts it in /usr/local/bin owned by root and runs the
+// panel as the user, so the swap cannot work. It used to find that out after
+// fetching the archive, and reported the raw errno from a temp file nobody had
+// heard of:
+//
+//	open /usr/local/bin/.vibepanel-update-2717682195: permission denied
+//
+// What this pins is the answer, not the technique. `installableAt` probes by
+// writing, because the mode is not the answer -- a read-only mount, an ACL and
+// a full disk all present as a writable directory and fail at the same call --
+// but on an ordinary filesystem as an ordinary user the two agree, so
+// replacing the probe with a mode check leaves this test green. Verified by
+// doing it. The write probe stays because it is right, not because anything
+// here would catch its removal.
+func TestABinaryItCannotReplaceIsRefusedBeforeTheDownload(t *testing.T) {
+	if os.Geteuid() == 0 {
+		// root can write anywhere, so there is nothing to observe.
+		t.Skip("running as root")
+	}
+	dir := t.TempDir()
+	self := filepath.Join(dir, "vibepanel")
+	if err := os.WriteFile(self, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := installableAt(self); err != nil {
+		t.Fatalf("a writable directory reported %v", err)
+	}
+
+	// The shape of a system install: the binary is there and the directory is
+	// not writable by this account.
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	err := installableAt(self)
+	if err == nil {
+		t.Fatal("a read-only directory reported that an update could be installed")
+	}
+	if !errors.Is(err, ErrNotWritable) {
+		t.Errorf("err = %v, want it to wrap ErrNotWritable so the handler can name the command", err)
+	}
+	// And the message says where, because "permission denied" without a path
+	// is what made the original report unactionable.
+	if !strings.Contains(err.Error(), dir) {
+		t.Errorf("err = %q, want it to name %s", err, dir)
+	}
+
+	// The probe leaves nothing behind in the writable case.
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := installableAt(self); err != nil {
+		t.Fatal(err)
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range ents {
+		if strings.HasPrefix(e.Name(), ".vibepanel-update-probe") {
+			t.Errorf("the probe left %s behind", e.Name())
+		}
+	}
+}
