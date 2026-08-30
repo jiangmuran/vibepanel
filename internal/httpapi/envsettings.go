@@ -49,6 +49,7 @@ func (s *Server) handleGetEnv(w http.ResponseWriter, r *http.Request) {
 		Live: map[string]string{
 			"VIBEPANEL_ADDR":            s.Cfg.Addr,
 			"VIBEPANEL_DOMAIN":          s.Cfg.Domain,
+			"VIBEPANEL_PUBLIC_ORIGINS":  strings.Join(s.Cfg.PublicOrigins, ","),
 			"VIBEPANEL_TLS_MODE":        string(s.Cfg.TLSMode),
 			"VIBEPANEL_CERT_FILE":       s.Cfg.CertFile,
 			"VIBEPANEL_KEY_FILE":        s.Cfg.KeyFile,

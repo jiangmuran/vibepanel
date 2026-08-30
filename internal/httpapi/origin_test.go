@@ -185,3 +185,113 @@ func TestAWriteFromAnotherOriginIsRefused(t *testing.T) {
 		t.Errorf("a cross-origin GET: got %d, want 200", res3.StatusCode)
 	}
 }
+
+// Behind a TLS-terminating proxy, a write must not be refused for the scheme.
+//
+// This is the shape that broke a real deployment: nginx terminates TLS and
+// forwards to the panel over plaintext loopback, so the browser sends
+// `Origin: https://panel.example.com` while the panel sees a plain HTTP
+// request. Comparing the two literally makes every POST a cross-origin write,
+// and the panel answers 403 to everything that changes anything -- 「无法创建
+// 底部终端」, with a bare 403 in the console and nothing saying why.
+//
+// The panel cannot infer its own public address behind an arbitrary proxy, so
+// it is told: the configured domain is trusted as an origin, and a proxy the
+// operator has listed may say so with X-Forwarded-Proto.
+func TestAWriteThroughATlsTerminatingProxyIsAllowed(t *testing.T) {
+	ts, srv := newTestServer(t)
+	srv.Cfg.Domain = "panel.example.com"
+
+	body := `{"name":"through the proxy","path":"/tmp"}`
+
+	// What nginx sends: the public Host, and the browser's https Origin.
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/projects", strings.NewReader(body))
+	req.Host = "panel.example.com"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://panel.example.com")
+	req.AddCookie(&http.Cookie{Name: "vibepanel_session", Value: sessionToken(t, ts)})
+	res, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode == http.StatusForbidden {
+		b, _ := io.ReadAll(res.Body)
+		t.Errorf("a write through a TLS-terminating proxy: 403 %s", strings.TrimSpace(string(b)))
+	}
+
+	// And a page on another host is still refused. The point of the above is
+	// to trust one more origin, not to stop checking.
+	req2, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/projects", strings.NewReader(body))
+	req2.Host = "panel.example.com"
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("Origin", "https://panel.example.com.evil.test")
+	req2.AddCookie(&http.Cookie{Name: "vibepanel_session", Value: sessionToken(t, ts)})
+	res2, err := ts.Client().Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res2.Body.Close()
+	if res2.StatusCode != http.StatusForbidden {
+		t.Errorf("a lookalike host was accepted: %d", res2.StatusCode)
+	}
+}
+
+// The writes that recover a misconfiguration must not be the ones it blocks.
+//
+// This is the failure that made the origin check worth rewriting rather than
+// tuning. Behind nginx every write was refused, and three of the things a
+// person then tried are themselves writes: saving the settings that would fix
+// it, marking the first-run tour as read, and opening a terminal. So the panel
+// re-showed the wizard on every refresh, refused to save the setting named in
+// its own error message, and could not create a session -- with a bare 403 in
+// the console.
+//
+// A control that locks the operator out of the setting that would fix it is
+// not a control.
+func TestThePanelCanStillBeConfiguredThroughAProxy(t *testing.T) {
+	ts, _ := newTestServer(t)
+	token := sessionToken(t, ts)
+
+	// Exactly what nginx sends: the public Host, and the browser's https
+	// Origin for the same name. No VIBEPANEL_DOMAIN, no VIBEPANEL_PUBLIC_ORIGINS
+	// -- an operator who has not configured anything yet is the whole point.
+	proxied := func(method, path, body string) *http.Response {
+		t.Helper()
+		var r io.Reader
+		if body != "" {
+			r = strings.NewReader(body)
+		}
+		req, err := http.NewRequest(method, ts.URL+path, r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Host = "panel.example.com"
+		req.Header.Set("Origin", "https://panel.example.com")
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: "vibepanel_session", Value: token})
+		res, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+
+	for _, c := range []struct {
+		what, method, path, body string
+	}{
+		{"mark the tour as read", http.MethodPost, "/api/settings/tour", ""},
+		{"save the settings", http.MethodPut, "/api/settings/env", `{"values":{"VIBEPANEL_DOMAIN":"panel.example.com"}}`},
+		{"create a session", http.MethodPost, "/api/sessions", `{"projectId":"nope"}`},
+	} {
+		res := proxied(c.method, c.path, c.body)
+		b, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		// Not asserting success -- the session create has no project and the
+		// env write may have nowhere to write. Asserting that the *origin* is
+		// not what stopped it.
+		if res.StatusCode == http.StatusForbidden {
+			t.Errorf("%s through a proxy: 403 %s", c.what, strings.TrimSpace(string(b)))
+		}
+	}
+}

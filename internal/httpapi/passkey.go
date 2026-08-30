@@ -145,15 +145,27 @@ func (u *webAuthnUser) WebAuthnCredentials() []webauthn.Credential { return u.cr
 // Built per request rather than cached because the domain is what defines the
 // Relying Party ID, and getting a stale one wrong means every registered
 // passkey silently stops working.
-func (s *Server) webAuthn() (*webauthn.WebAuthn, error) {
+func (s *Server) webAuthn(r *http.Request) (*webauthn.WebAuthn, error) {
 	if !s.Cfg.PasskeysUsable() {
 		return nil, errors.New("passkeys are not available with this configuration")
 	}
-	origin := s.Cfg.PublicURL()
+	// Every origin this panel can legitimately be browsed at, not just the one
+	// it would build for itself.
+	//
+	// go-webauthn compares the ceremony's origin exactly, port included. With
+	// a proxy in front, the origin the browser sends is `https://panel` while
+	// `PublicURL()` said `http://panel:18443`, so every registration and every
+	// sign-in failed on the server side -- and the sign-in failure counts
+	// against the login throttle, so a misconfigured origin looks like a bad
+	// key and then locks the account out.
+	origins := s.publicOrigins(r)
+	if u := s.Cfg.PublicURL(); u != "" {
+		origins = append(origins, u)
+	}
 	return webauthn.New(&webauthn.Config{
 		RPID:          s.Cfg.Domain,
 		RPDisplayName: "vibepanel",
-		RPOrigins:     []string{origin},
+		RPOrigins:     origins,
 	})
 }
 
@@ -218,7 +230,7 @@ func (s *Server) handlePasskeyRegisterBegin(w http.ResponseWriter, r *http.Reque
 		writeErr(w, http.StatusUnauthorized, "sign in required")
 		return
 	}
-	wa, err := s.webAuthn()
+	wa, err := s.webAuthn(r)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -285,7 +297,7 @@ func (s *Server) handlePasskeyRegisterFinish(w http.ResponseWriter, r *http.Requ
 		name = string(r[:64])
 	}
 
-	wa, err := s.webAuthn()
+	wa, err := s.webAuthn(r)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -324,7 +336,7 @@ func (s *Server) handlePasskeyRegisterFinish(w http.ResponseWriter, r *http.Requ
 // ─── sign-in ──────────────────────────────────────────────────────────────
 
 func (s *Server) handlePasskeyLoginBegin(w http.ResponseWriter, r *http.Request) {
-	wa, err := s.webAuthn()
+	wa, err := s.webAuthn(r)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -362,7 +374,7 @@ func (s *Server) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusBadRequest, "no sign-in in progress")
 		return
 	}
-	wa, err := s.webAuthn()
+	wa, err := s.webAuthn(r)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

@@ -98,10 +98,17 @@ func (s *Server) RequireAuth(next http.Handler) http.Handler {
 		// handler. SameSite=Strict does not cover this: for a cookie, another
 		// port on this host is the same site, so a page served there can POST
 		// here with the session cookie attached.
-		if crossOriginWrite(r, s.requestOrigin(r)) {
+		if allowed := s.publicOrigins(r); crossOriginWrite(r, allowed) {
 			s.auditFromOutside(ctx, "blocked", "", s.clientIP(r),
-				"a write from "+r.Header.Get("Origin"))
-			writeErr(w, http.StatusForbidden, "not allowed from that origin")
+				"a write from "+r.Header.Get("Origin")+"; this panel answers to "+strings.Join(allowed, " "))
+			// The message names both sides. A bare 403 in a browser console is
+			// what a reverse proxy in front of this looked like from the
+			// outside, and it took a person reporting 「无法创建底部终端」 to
+			// find out: nginx terminates TLS, so the browser is on https and
+			// the panel sees http, and every write looked cross-origin.
+			writeErr(w, http.StatusForbidden,
+				"this panel answers to "+strings.Join(allowed, ", ")+", and that request came from "+
+					r.Header.Get("Origin")+". Set VIBEPANEL_DOMAIN, or add it to VIBEPANEL_PUBLIC_ORIGINS.")
 			return
 		}
 

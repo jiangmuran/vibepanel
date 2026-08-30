@@ -32,6 +32,8 @@ import { Section } from './parts'
 const SHAPE: Record<string, string> = {
   VIBEPANEL_ADDR: ':18443',
   VIBEPANEL_DOMAIN: 'panel.example.com',
+  VIBEPANEL_PUBLIC_PORT: '443',
+  VIBEPANEL_PUBLIC_ORIGINS: 'https://panel.example.com',
   // No spaces, and not only to keep i18n.untranslated.test.ts quiet: the
   // spaces were never part of the value, and a placeholder that looks like a
   // sentence invites somebody to type one.
@@ -56,6 +58,8 @@ const SHAPE: Record<string, string> = {
 const LABEL: Record<string, Key> = {
   VIBEPANEL_ADDR: 'env.lblAddr',
   VIBEPANEL_DOMAIN: 'env.lblDomain',
+  VIBEPANEL_PUBLIC_PORT: 'env.lblPublicPort',
+  VIBEPANEL_PUBLIC_ORIGINS: 'env.lblPublicOrigins',
   VIBEPANEL_TLS_MODE: 'env.lblTlsMode',
   VIBEPANEL_CERT_FILE: 'env.lblCert',
   VIBEPANEL_KEY_FILE: 'env.lblKey',
@@ -69,6 +73,8 @@ const LABEL: Record<string, Key> = {
 /** The one line under a field that changes what somebody types into it. */
 const NOTE: Record<string, Key> = {
   VIBEPANEL_DOMAIN: 'env.domainAlso',
+  VIBEPANEL_PUBLIC_PORT: 'env.publicPortWhy',
+  VIBEPANEL_PUBLIC_ORIGINS: 'env.publicOriginsWhy',
   VIBEPANEL_ALLOW_FROM: 'env.allowAll',
 }
 
@@ -88,7 +94,15 @@ const TLS_MODES: [string, Key][] = [
  * somebody fill in a cert path while the mode said acme.
  */
 const GROUPS: { title: Key; fields: string[] }[] = [
-  { title: 'env.grpReach', fields: ['VIBEPANEL_ADDR', 'VIBEPANEL_DOMAIN'] },
+  {
+    title: 'env.grpReach',
+    fields: [
+      'VIBEPANEL_ADDR',
+      'VIBEPANEL_DOMAIN',
+      'VIBEPANEL_PUBLIC_PORT',
+      'VIBEPANEL_PUBLIC_ORIGINS',
+    ],
+  },
   {
     title: 'env.grpTls',
     fields: [

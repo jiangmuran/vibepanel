@@ -18,7 +18,17 @@ func TestPasskeysUsable(t *testing.T) {
 	}{
 		{"domain with TLS", "panel.example.com", TLSACME, true},
 		{"domain with cert files", "panel.example.com", TLSFiles, true},
-		{"domain without TLS", "panel.example.com", TLSOff, false},
+		// A real name with the panel's own TLS off is usable, and this line
+		// used to say the opposite. It was wrong for the commonest deployment
+		// there is: a proxy terminating TLS in front and forwarding over
+		// plaintext, where the browser is on https and this process has
+		// TLSMode off. The panel disabled a feature that worked.
+		//
+		// The secure-context requirement did not go away -- it moved to the
+		// only party that can answer it. Outside a secure context the browser
+		// does not expose window.PublicKeyCredential, so the button is
+		// disabled and says so, whatever this returns.
+		{"domain without TLS, which a proxy may be terminating", "panel.example.com", TLSOff, true},
 		{"localhost without TLS is a secure context", "localhost", TLSOff, true},
 		{"IPv4 is never a valid RP ID", "192.168.8.4", TLSFiles, false},
 		{"IPv6 is never a valid RP ID", "::1", TLSFiles, false},

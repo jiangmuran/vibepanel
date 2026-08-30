@@ -18064,3 +18064,62 @@ Both languages, because the English had the same register — "One minute,
 first", "Let the agents report their own state". The per-key rows in
 `internal/hooks/tune.go` were already this way and were left alone; they are
 the model the rest of it now follows.
+
+## The origin check bricked a deployment behind nginx
+
+Reported as 「无法创建底部终端」 with a 403 in the console, then 「我也无法修改
+安全设置」, then 「每次刷新都会弹出新手教程」. Three symptoms, one cause, and the
+cause was the cross-origin write check shipped the day before.
+
+nginx terminates TLS and forwards over plaintext loopback, so the browser is on
+`https://panel.example.com` while the panel sees a plain HTTP request. The
+check compared whole origins, the schemes differed, and every state-changing
+request was refused. Creating a session is a write. **Saving the settings is a
+write. Marking the tour as read is a write.** So the panel refused to save the
+setting named in its own error message, and re-showed the first-run wizard on
+every refresh, forever.
+
+That is worse than the hole it closes. A control that locks the operator out of
+the setting that would fix it is not a control.
+
+The fix needs no configuration: compare **host and port, never scheme**. Both
+halves come from the same place — the browser fills in `Host` from the URL bar
+and `Origin` from the URL bar — so an attacker on another host still differs in
+both, and the port stays in the comparison because a neighbouring service on
+another port is exactly what `SameSite` does not keep out. The only party that
+rewrites the scheme between those two is a proxy in front, so comparing schemes
+refuses the operator rather than the attacker.
+
+`VIBEPANEL_PUBLIC_ORIGINS` remains for what host comparison cannot reach: a
+proxy that does not forward `Host` at all. The 403 now names both sides and the
+variable to set.
+
+Mutation testing caught a second thing on the way past. The first attempt kept
+a host comparison inside the allow-list loop as well, so deleting the primary
+rule changed nothing and no test went red — one rule with two implementations
+and no coverage of either. The loop compares whole origins only now, and
+deleting the host rule fails three assertions.
+
+## Passkeys decided by the panel's TLS mode, which is not what the browser is on
+
+Same deployment, same cause. `PasskeysUsable` required `TLSMode != off`, and
+behind a terminating proxy that is `off` while the browser is on https — so the
+panel disabled a feature that worked. 「你是否支持passkey要通过实际请求协议来看」.
+
+The secure-context requirement is real and is not the server's to answer. Only
+the browser knows its own scheme, and it already refuses: outside a secure
+context `window.PublicKeyCredential` does not exist. So the server now checks
+only what the server knows — whether there is a name that can be a Relying
+Party ID — and the browser shows `pk.insecure` when it is the browser refusing.
+The login page also shows a reason when the *browser* is the blocker, which it
+never did: the button simply was not there.
+
+`RPOrigins` had the same bug and a nastier tail. go-webauthn compares the
+ceremony origin exactly, port included, so behind a proxy every sign-in failed
+server-side — and a failed passkey sign-in counts against the per-IP login
+throttle, so a misconfigured origin looks like a bad key and then locks the
+account out. It is built from the same origin set now.
+
+`VIBEPANEL_PUBLIC_PORT` covers 「我里外端口号不一样的」: the port people browse
+to, when a proxy listens on one and forwards to another. Empty means the same
+as the listen port.

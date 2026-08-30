@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Check, ChevronLeft, ChevronRight, Circle, Triangle, X } from 'lucide-react'
 
 import { api } from '../protocol/api'
+import { showToast } from './toasts'
 import type { HookStatus, TuneStatus } from '../protocol/wire'
 import { t, getLang, useLang } from '../i18n'
 
@@ -31,10 +32,15 @@ export function Tour({ onDone }: { onDone: () => void }) {
   const last = step === steps.length - 1
 
   const finish = () => {
-    // Fire and forget on purpose. The tour has been read whether or not the
-    // write lands, and a modal that refuses to close because a settings row
-    // could not be written is worse than seeing it once more.
-    void api.tourDone().catch(() => {})
+    // The close does not wait for the write: a modal that refuses to close
+    // because a settings row could not be written is worse than seeing it once
+    // more.
+    //
+    // But the failure is said out loud, which it was not. The catch was empty,
+    // so when every write was being refused with a 403 the tour closed, failed
+    // to record itself, and came back on the next refresh -- forever, with
+    // nothing on screen connecting the two. 「每次刷新都会弹出新手教程」.
+    void api.tourDone().catch(() => showToast({ kind: 'error', key: 'tour.notSaved' }))
     onDone()
   }
 

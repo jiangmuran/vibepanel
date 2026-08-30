@@ -9,22 +9,11 @@ import {
 } from '../../protocol/webauthn'
 import type { Passkey } from '../../protocol/wire'
 import { t } from '../../i18n'
-import type { Key } from '../../i18n'
 import { askConfirm, askText } from '../ask'
 import { passkeyLabel } from '../label'
 import { showToast } from '../toasts'
+import { blockerKey } from './passkeyReason'
 import { Section } from './parts'
-
-/** The server sends a code; this is which sentence it means.
- *
- *  A table rather than a switch: `return 'pk.no-tls'` reads to the
- *  untranslated-string scanner exactly like a literal about to be rendered,
- *  and it is right to be suspicious of one. */
-const BLOCKER: Record<string, Key> = {
-  'no-domain': 'pk.no-domain',
-  'ip-domain': 'pk.ip-domain',
-  'no-tls': 'pk.no-tls',
-}
 
 export function PasskeysSection({ blocker, rpID }: { blocker: string; rpID: string }) {
   const [keys, setKeys] = useState<Passkey[]>([])
@@ -100,12 +89,25 @@ export function PasskeysSection({ blocker, rpID }: { blocker: string; rpID: stri
       <p className="mb-3 text-vp-base leading-relaxed text-ink-2">
         {t('set.passkeysWhy')}
       </p>
+      {blocker === '' && !passkeysSupported() && (
+        <div
+          data-testid="passkey-insecure"
+          className="mb-3 rounded-vp border border-hairline bg-surface-2 px-3 py-2 text-vp-base leading-relaxed text-ink-2"
+        >
+          {/* The server no longer decides this. It cannot: with a proxy
+              terminating TLS in front, its own TLS mode says nothing about
+              what the browser is on. Outside a secure context the browser does
+              not expose PublicKeyCredential at all, which is both the reason
+              and the way to detect it. */}
+          <p className="text-ink">{t('pk.insecure')}</p>
+        </div>
+      )}
       {blocker !== '' && (
         <div
           data-testid="passkey-blocked"
           className="mb-3 rounded-vp border border-hairline bg-surface-2 px-3 py-2 text-vp-base leading-relaxed text-ink-2"
         >
-          <p className="text-ink">{t(BLOCKER[blocker] ?? 'pk.no-domain')}</p>
+          <p className="text-ink">{t(blockerKey(blocker))}</p>
           <p className="mt-1">{t('pk.where')}</p>
         </div>
       )}

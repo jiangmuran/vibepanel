@@ -22,6 +22,7 @@ import {
   passkeysSupported,
 } from '../protocol/webauthn'
 import type { AuthState } from '../protocol/wire'
+import { blockerKey } from './settings/passkeyReason'
 
 /**
  * Stands between a stranger and the machine.
@@ -315,6 +316,11 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const passkeyOffered = !setup && state.passkeysUsable && passkeysSupported()
+  // Why not, when it is not offered. The browser's reason comes first: the
+  // server can report a perfectly good configuration while this particular
+  // page is on plain http, and it used to say nothing at all in that case --
+  // the button simply was not there.
+  const reasonKey = !passkeysSupported() ? 'pk.insecure' : blockerKey(state.passkeyReason)
 
   const signInWithPasskey = async () => {
     setBusy(true)
@@ -508,14 +514,14 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
           {busy ? t('auth.working') : setup ? t('auth.create') : t('auth.signIn')}
         </button>
 
-        {!setup && !state.passkeysUsable && (
+        {!setup && !passkeyOffered && (
           <p
             className="mt-4 flex items-start gap-2 border-t border-hairline pt-4 text-vp-sm leading-relaxed text-ink-2"
             data-testid="passkey-note"
           >
             <Info size={13} className="mt-px shrink-0" />
             <span className="min-w-0">
-              {t('auth.noPasskeys', { why: state.passkeyReason ?? t('auth.notSupported') })}
+              {t('auth.noPasskeys', { why: t(reasonKey) })}
             </span>
           </p>
         )}

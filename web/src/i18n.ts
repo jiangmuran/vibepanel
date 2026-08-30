@@ -164,6 +164,13 @@ const DICT = {
   'env.lblDomain': { zh: '域名', en: 'Domain' },
   'env.domainAlso': { zh: '也是 passkey 的 Relying Party ID', en: 'Also the passkey relying party ID.' },
   'env.lblTlsMode': { zh: '方式', en: 'How' },
+  'env.lblPublicPort': { zh: '外部端口', en: 'Public port' },
+  'env.publicPortWhy': { zh: '留空表示与监听端口相同', en: 'Empty means the same as the listen port.' },
+  'env.lblPublicOrigins': { zh: '其他外部地址', en: 'Other public addresses' },
+  'env.publicOriginsWhy': {
+    zh: '反向代理未转发 Host 时填写，逗号分隔',
+    en: 'For a proxy that does not forward Host. Comma separated.',
+  },
   'env.lblCert': { zh: '证书文件', en: 'Certificate file' },
   'env.lblKey': { zh: '私钥文件', en: 'Key file' },
   'env.lblProvider': { zh: 'DNS 服务商', en: 'DNS provider' },
@@ -187,9 +194,14 @@ const DICT = {
     zh: 'IP 地址不能当 Relying Party ID，得用域名',
     en: 'an IP address cannot be a Relying Party ID; it has to be a name',
   },
-  'pk.no-tls': {
+  // Not sent by the server any more: whether the connection is secure is the
+  // browser's to answer, and behind nginx the panel's own TLS mode says
+  // nothing about it. This is what the *frontend* shows when
+  // window.PublicKeyCredential is missing, which is exactly the non-secure
+  // case.
+  'pk.insecure': {
     zh: 'passkey 需要 HTTPS（localhost 除外）',
-    en: 'a passkey needs HTTPS, or localhost',
+    en: 'A passkey needs HTTPS, or localhost.',
   },
   'pk.where': {
     zh: '在「本机 → 网络与访问」里设 VIBEPANEL_DOMAIN',
@@ -1351,6 +1363,7 @@ const DICT = {
   // the state reporters and offer the Claude Code settings -- and the rest is
   // the orientation that makes those two make sense.
   'tour.title': { zh: '首次使用', en: 'First run' },
+  'tour.notSaved': { zh: '没记住，下次还会显示', en: 'Not saved; it will show again.' },
   'tour.step': { zh: '第 {n} / {of} 步', en: 'Step {n} of {of}' },
   'tour.back': { zh: '上一步', en: 'Back' },
   'tour.next': { zh: '下一步', en: 'Next' },

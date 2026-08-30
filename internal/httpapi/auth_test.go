@@ -356,7 +356,12 @@ func TestAuthStateDescribesPasskeyAvailability(t *testing.T) {
 	}{
 		{"", config.TLSOff, "no-domain"},
 		{"192.168.8.4", config.TLSACME, "ip-domain"},
-		{"panel.example.com", config.TLSOff, "no-tls"},
+		// TLS off and a real name is usable, and that is the change: nginx
+		// terminating TLS means the panel's own TLSMode says nothing about
+		// what the browser is on. The secure-context requirement is the
+		// browser's to enforce and it does -- window.PublicKeyCredential does
+		// not exist outside one.
+		{"panel.example.com", config.TLSOff, ""},
 		{"panel.example.com", config.TLSACME, ""},
 		{"localhost", config.TLSOff, ""},
 	} {

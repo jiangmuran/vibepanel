@@ -71,6 +71,28 @@ type Config struct {
 	// Used during development; empty means use the embedded build.
 	StaticDir string
 
+	// PublicOrigins lists extra `scheme://host[:port]` values a browser may
+	// legitimately be on, for the case the panel cannot work out for itself.
+	//
+	// Behind a TLS-terminating proxy the request arrives as plain HTTP on
+	// loopback while the browser is on https://<public name>, so a
+	// state-changing request looks cross-origin and is refused. The configured
+	// domain covers the ordinary case; this covers a second name, a different
+	// public port, or anything else in front that the panel never sees.
+	//
+	// Not a way to switch the check off: each entry is one more origin that
+	// may write, named by whoever runs the panel.
+	PublicOrigins []string
+
+	// PublicPort is the port people reach the panel on, when that is not the
+	// port it listens on. Zero means they are the same.
+	//
+	// A proxy in front listens on 443 and forwards to 18443, so every URL the
+	// panel builds for itself -- the one it prints at startup, and the WebAuthn
+	// origin a passkey ceremony is checked against -- names a port nobody
+	// browses to. 「我里外端口号不一样的」.
+	PublicPort int
+
 	// TrustedProxies lists CIDRs whose X-Forwarded-For header is believed.
 	// Empty means trust nobody, which is correct when the panel is the edge.
 	TrustedProxies []string
@@ -183,6 +205,20 @@ func (c *Config) envOverlay() {
 			c.TrustedProxies = splitAndTrim(v)
 		}
 	}
+	for _, key := range []string{"VIBEPANEL_PUBLIC_PORT"} {
+		seen[key] = true
+		if v, ok := os.LookupEnv(key); ok && strings.TrimSpace(v) != "" {
+			if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+				c.PublicPort = n
+			}
+		}
+	}
+	for _, key := range []string{"VIBEPANEL_PUBLIC_ORIGINS"} {
+		seen[key] = true
+		if v, ok := os.LookupEnv(key); ok && v != "" {
+			c.PublicOrigins = splitAndTrim(v)
+		}
+	}
 	for _, key := range []string{"VIBEPANEL_ALLOW_FROM"} {
 		seen[key] = true
 		if v, ok := os.LookupEnv(key); ok && v != "" {
@@ -269,13 +305,20 @@ func (c Config) PasskeyBlocker() string {
 	if net.ParseIP(c.Domain) != nil {
 		return "ip-domain"
 	}
-	// localhost is the one origin browsers treat as secure over plain HTTP.
-	if c.Domain == "localhost" {
-		return ""
-	}
-	if c.TLSMode == TLSOff {
-		return "no-tls"
-	}
+	// Deliberately no TLS check.
+	//
+	// It had one, and it was wrong for the deployment this panel is most often
+	// in: nginx terminates TLS and forwards over plaintext, so `TLSMode` is
+	// `off` while the browser is on https -- and the panel disabled passkeys
+	// for a setup where they work perfectly. 「我可能通过nginx配置了https 你是否
+	// 支持passkey要通过实际请求协议来看」.
+	//
+	// The secure-context requirement is real and is not the server's to
+	// answer. Only the browser knows what scheme it is on, and it already
+	// refuses: outside a secure context `window.PublicKeyCredential` does not
+	// exist, so the frontend disables the button and says why. What is left
+	// here is the part only the server knows -- whether there is a name that
+	// can be a Relying Party ID.
 	return ""
 }
 
@@ -397,6 +440,15 @@ func (c Config) PlaintextOnANetwork() bool {
 
 // PublicURL renders the address a user should open. Best-effort: it is used in
 // log lines and the setup message, never for anything security-sensitive.
+// PublicPortOr is the port to name in a URL: the public one when it differs,
+// otherwise the one being listened on.
+func (c Config) PublicPortOr() int {
+	if c.PublicPort > 0 {
+		return c.PublicPort
+	}
+	return c.Port()
+}
+
 func (c Config) PublicURL() string {
 	scheme := "http"
 	if c.TLSMode != TLSOff {
@@ -406,7 +458,7 @@ func (c Config) PublicURL() string {
 	if host == "" {
 		host = "localhost"
 	}
-	port := c.Port()
+	port := c.PublicPortOr()
 	if (scheme == "https" && port == 443) || (scheme == "http" && port == 80) {
 		return scheme + "://" + host
 	}
