@@ -18046,3 +18046,21 @@ one that could not be added.
 And underneath both: a notification fires on the transition *into* `waiting`,
 which without the reporters installed is a state the heuristic almost never
 reaches. Same root as 「都跑完了为什么状态还是蓝色」.
+
+## The panel arguing with the reader, one more time
+
+「这种类似的很啰嗦的话不适合出现在设置/引导」, about the wizard's own copy —
+「先花一分钟」 as a heading, 「决定哪些东西离开这台机器，以及 agent 往你 git
+历史里写什么」 as a description, 「进程归 tmux，不归这个面板」 as a section
+title.
+
+Every one of those is a sentence explaining a decision to somebody who has not
+asked to have it explained, which is the same note as 「面板是产品，不是给我的
+汇报」 arriving in a place nobody had gone back and reread. A heading is a name,
+not an opening line: 首次使用, 状态上报, 进程由 tmux 托管. A description says
+what the setting does: 限制 Claude Code 上传的数据，并控制写入 git 记录的内容.
+
+Both languages, because the English had the same register — "One minute,
+first", "Let the agents report their own state". The per-key rows in
+`internal/hooks/tune.go` were already this way and were left alone; they are
+the model the rest of it now follows.

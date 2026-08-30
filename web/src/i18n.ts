@@ -628,8 +628,8 @@ const DICT = {
   'tune.title': { zh: 'Claude Code 配置', en: 'Claude Code settings' },
   'tune.loading': { zh: '正在读取…', en: 'reading…' },
   'tune.what': {
-    zh: '决定哪些东西离开这台机器，以及 agent 往你 git 历史里写什么。',
-    en: 'What leaves this machine, and what the agent writes into your git history.',
+    zh: '限制 Claude Code 上传的数据，并控制写入 git 记录的内容',
+    en: 'Limit what Claude Code uploads, and what it writes into your git history.',
   },
   'tune.already': { zh: '已经是这样', en: 'already set' },
   'tune.would': { zh: '会改这一条', en: 'would change' },
@@ -690,10 +690,10 @@ const DICT = {
   // "waiting" and nothing else. Saying so on the page is cheaper than the
   // runbook section that exists because nobody knew.
   'set.codexOneEvent': {
-    zh: 'Codex 只有一个 notify，只能上报“等你处理”。',
-    en: 'Codex has one notify command, so it only reports waiting.',
+    zh: 'Codex 仅有一个 notify，只能上报「等你处理」',
+    en: 'Codex has a single notify command, so it reports waiting only.',
   },
-  'set.showWrites': { zh: '看看会写什么', en: 'Show what it writes' },
+  'set.showWrites': { zh: '查看写入内容', en: 'Show what it writes' },
   'set.remove': { zh: '移除', en: 'Remove' },
   'set.password': { zh: '密码', en: 'Password' },
   'set.passwordWhy': {
@@ -1350,54 +1350,54 @@ const DICT = {
   // The first-run tour. Two of its five steps do something -- they install
   // the state reporters and offer the Claude Code settings -- and the rest is
   // the orientation that makes those two make sense.
-  'tour.title': { zh: '先花一分钟', en: 'One minute, first' },
+  'tour.title': { zh: '首次使用', en: 'First run' },
   'tour.step': { zh: '第 {n} / {of} 步', en: 'Step {n} of {of}' },
   'tour.back': { zh: '上一步', en: 'Back' },
   'tour.next': { zh: '下一步', en: 'Next' },
-  'tour.done': { zh: '开始用', en: 'Start' },
+  'tour.done': { zh: '开始使用', en: 'Start' },
   'tour.skip': { zh: '跳过，不再显示', en: 'Skip, and do not show again' },
   'tour.on': { zh: '已开启', en: 'on' },
   'tour.turnOn': { zh: '开启', en: 'Turn on' },
 
   'tour.again': { zh: '再看一遍', en: 'Show it again' },
   'tour.againWhat': {
-    zh: '五步里有两步是真的在做事：装状态上报，和 Claude Code 的其他设置。',
-    en: 'Two of the five steps do something: state reporting, and Claude Code\'s other settings.',
+    zh: '其中两步会实际改动配置：状态上报，和 Claude Code 的其他设置',
+    en: 'Two of the five steps change something: state reporting, and Claude Code\'s other settings.',
   },
-  'tour.introH': { zh: '进程归 tmux，不归这个面板', en: 'tmux owns the processes, not this panel' },
+  'tour.introH': { zh: '进程由 tmux 托管', en: 'Processes are held by tmux' },
   'tour.intro1': {
-    zh: '每个会话都是一个 tmux 会话。关掉浏览器、重启面板、升级版本，里面的 agent 照样在跑。',
-    en: 'Every session is a tmux session. Close the browser, restart the panel, upgrade it — the agent inside keeps running.',
+    zh: '会话由 tmux 托管。关闭浏览器、重启或升级面板，agent 不受影响',
+    en: 'Sessions are held by tmux. Closing the browser or restarting the panel does not affect them.',
   },
   'tour.intro2': {
-    zh: '左边是会话，中间是终端，右边是文件和笔记。会话按状态排序，等你处理的排最前。',
-    en: 'Sessions on the left, the terminal in the middle, files and notes on the right. Sessions sort by state, and the ones waiting for you come first.',
+    zh: '左侧为会话，中间为终端，右侧为文件与笔记。会话按状态排序，待处理的在前',
+    en: 'Sessions on the left, the terminal in the middle, files and notes on the right, sorted by state.',
   },
 
-  'tour.hooksH': { zh: '让 agent 自己报状态', en: 'Let the agents report their own state' },
+  'tour.hooksH': { zh: '状态上报', en: 'State reporting' },
   'tour.hooks1': {
-    zh: '不开这个，面板只能看见「有个进程在跑」。agent 做完了进程还在，所以会一直是蓝的。',
-    en: 'Without this the panel sees a running process and nothing else. A finished agent is still a running process, so it stays blue.',
+    zh: '未启用时面板只能看到进程是否存在；agent 结束后进程仍在，状态不会变',
+    en: 'Without it the panel only sees whether a process exists; a finished agent still has one.',
   },
   'tour.hooks2': {
-    zh: '开启会往对应工具的配置文件里加几行，先备份，随时可以在设置里撤掉。',
-    en: 'Turning it on adds a few lines to that tool\'s own configuration file. It is backed up first, and the settings page removes it again.',
+    zh: '会向该工具的配置文件写入数行，写入前备份，可在设置中移除',
+    en: 'It writes a few lines into that tool\'s configuration file, after backing it up. Removable in settings.',
   },
   'tour.hooksExisting': {
-    zh: '开启前就开着的会话还是靠猜。在里面输入 /hooks，或者重启那个 agent。',
-    en: 'Sessions that were already open stay guessed. Run /hooks inside them, or restart the agent.',
+    zh: '启用前已存在的会话仍为推测状态，可执行 /hooks 或重启 agent',
+    en: 'Sessions opened before this stay guessed. Run /hooks in them, or restart the agent.',
   },
 
   'tour.tuneH': { zh: 'Claude Code 的其他设置', en: 'The rest of Claude Code\'s settings' },
   'tour.tune1': {
-    zh: '同一个文件里，还有几条决定什么东西离开这台机器、agent 往 git 历史里写什么。',
-    en: 'The same file has a few more: what leaves this machine, and what the agent writes into your git history.',
+    zh: '同一份配置里还有几项：数据上传，以及写入 git 记录的内容',
+    en: 'The same file has more: data upload, and what is written into your git history.',
   },
 
-  'tour.projectH': { zh: '加一个项目', en: 'Add a project' },
+  'tour.projectH': { zh: '添加项目', en: 'Add a project' },
   'tour.project1': {
-    zh: '项目就是一个目录。左上角的加号选目录，然后在里面开会话。',
-    en: 'A project is a directory. The plus at the top left picks one, and sessions are started inside it.',
+    zh: '项目对应一个目录。用左上角的加号选择目录，并在其中创建会话',
+    en: 'A project is a directory. The plus at the top left selects one; sessions are created inside it.',
   },
   'tour.project2': {
     zh: '每个会话可以选一个启动方式：claude、codex、opencode，或者就是一个 shell。',
