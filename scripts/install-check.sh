@@ -1099,17 +1099,23 @@ echo "==> a unit file it did not write is not overwritten"
 newhome
 ROOT_OVERRIDE=none
 mkdir -p "$(dirname "$(USRU)")"
-printf '[Unit]\nDescription=somebody else vibepanel\n[Service]\nExecStart=/usr/bin/true\n' > "$(USRU)"
+# The marker has to be a string the shipped unit cannot contain, and once was
+# not: a comment in deploy/vibepanel.service picked up the words "somebody
+# else" and this block started failing on a file that had been replaced
+# correctly. Three assertions passed, the log showed the install, and the
+# sentinel was the only thing wrong. Uppercase and hyphenated, so prose cannot
+# collide with it again.
+printf '[Unit]\nDescription=NOT-WRITTEN-BY-THE-VIBEPANEL-INSTALLER\n[Service]\nExecStart=/usr/bin/true\n' > "$(USRU)"
 run --yes
 [ $RC -eq 3 ] && ok "refuses, with the refusal exit code" || fail "exited $RC, not 3"
-grep -q "somebody else" "$(USRU)" && ok "the file is untouched" \
+grep -q "NOT-WRITTEN-BY-THE-VIBEPANEL-INSTALLER" "$(USRU)" && ok "the file is untouched" \
   || fail "it overwrote a unit it did not write"
 has "$LOG" "was not written by this installer" && ok "it says why it stopped" \
   || fail "no explanation: $(tail -5 "$LOG" | tr '\n' ' ')"
 has "$LOG" ".bak" && ok "and what to do about it" || fail "no way forward"
 printf 'y\nn\ny\n' > "$WORK/answers"
 run --stdin "$WORK/answers" --interactive --user
-grep -q "somebody else" "$(USRU)" && fail "agreeing did not replace it" \
+grep -q "NOT-WRITTEN-BY-THE-VIBEPANEL-INSTALLER" "$(USRU)" && fail "agreeing did not replace it" \
   || ok "agreeing replaces it"
 
 echo "==> it says whether this is an install, a reinstall or an upgrade"

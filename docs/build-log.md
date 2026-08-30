@@ -18202,3 +18202,41 @@ The notifications step says the thing that is easy to leave out and then gets
 reported as a bug: a browser notification is raised by the page, so a phone
 that has frozen the tab hears nothing, and the webhook is the mechanism that
 reaches one which is not looking.
+
+## The last thing the installer prints
+
+「安装成功后信息也特别乱」, and it was: a column of `label:  value` lines the eye
+slides off, ending with a command to run to get the token. What matters after
+an install is two facts, so they go in a rectangle and everything else stays
+outside it.
+
+The token is fetched rather than described. The service is up by the time the
+summary prints and `vibepanel service token` is exactly the command that was
+being recommended, so the installer runs it — best effort, because a journal
+that has not flushed or a sudo that asks again both end in an empty string, and
+the box then names the command instead. An installer that fails at its last
+line over a nicety is worse than one that prints a command.
+
+Aligning the right edge is the whole difficulty, and it is why `vp_cols`
+exists. `wc -m` needs a UTF-8 `LC_CTYPE` and this script runs on whatever the
+machine has; a container with `LANG` unset counts characters as bytes and every
+line comes out ragged. Bytes minus continuation bytes is the character count,
+and each CJK character is three bytes and two columns, so adding the count of
+them back gives the width.
+
+## A test sentinel that prose walked into
+
+`install-check` writes a unit file with `Description=somebody else vibepanel`,
+installs over it, and greps for the marker to prove it was replaced. It started
+failing — and the log showed the replacement happening, three assertions
+passing around it, and the file on disk being the new one.
+
+The words "somebody else" had appeared in a comment in
+`deploy/vibepanel.service`, added a few hours earlier for an unrelated reason.
+The sentinel was the only thing wrong.
+
+Reported as pre-existing on the first look, which was wrong twice over: `git
+stash` was used to test that, and the offending line was already committed, so
+stashing changed nothing and appeared to confirm it. The marker is
+`NOT-WRITTEN-BY-THE-VIBEPANEL-INSTALLER` now — uppercase and hyphenated, so no
+sentence can wander into it again.

@@ -815,6 +815,18 @@ machine and what the agent writes into your git history:'
     open.login)
       MS_EN='open  %1$s  and log in as %2$s.'
       MS_ZH='打开  %1$s  ，用 %2$s 登录。' ;;
+    box.open)
+      MS_EN='1  open   %1$s'
+      MS_ZH='1  打开   %1$s' ;;
+    box.login)
+      MS_EN='2  log in as %1$s'
+      MS_ZH='2  用 %1$s 登录' ;;
+    box.token)
+      MS_EN='2  token  %1$s'
+      MS_ZH='2  令牌   %1$s' ;;
+    box.tokencmd)
+      MS_EN='2  token  %1$s token'
+      MS_ZH='2  令牌   %1$s token' ;;
     token.head)
       MS_EN='the one-time setup token:'
       MS_ZH='一次性的 setup token：' ;;
@@ -921,6 +933,57 @@ m() {
 }
 # The same thing on stderr, which is where every error in this script goes.
 me() { m "$@" >&2; }
+
+# ── the box ───────────────────────────────────────────────────────────────
+#
+# The last thing this script prints is the only part most people read, and it
+# was a column of `label:  value` lines that the eye slides off -- 「安装成功后
+# 信息也特别乱」. What matters is two facts and one command, so they go in a
+# rectangle and everything else stays outside it.
+
+# vp_cols is the display width of a string.
+#
+# Counted from bytes rather than with `wc -m`, because `wc -m` needs a UTF-8
+# LC_CTYPE and this runs on whatever the machine has -- a minimal container
+# with LANG unset counts characters as bytes and every line comes out ragged.
+#
+# Bytes minus continuation bytes is the character count, and each CJK character
+# is three bytes and two columns, so adding the number of them back gives the
+# width. That holds for everything the box is allowed to contain, which is why
+# vp_box refuses anything else.
+vp_cols() {
+  local bytes cont
+  bytes=$(printf '%s' "$1" | LC_ALL=C wc -c | tr -d ' ')
+  cont=$(printf '%s' "$1" | LC_ALL=C tr -dc '\200-\277' | LC_ALL=C wc -c | tr -d ' ')
+  printf '%s' $(( (bytes - cont) + cont / 2 ))
+}
+
+vp_rule() {
+  local n="$1" out= i=0
+  while [ "$i" -lt "$n" ]; do out="$out─"; i=$((i + 1)); done
+  printf '%s' "$out"
+}
+
+# vp_box draws its stdin inside a rectangle.
+#
+# The right edge is aligned, which is the whole reason vp_cols exists: a box
+# whose closing bars do not line up looks more broken than no box at all.
+vp_box() {
+  local line w max=0 i=0
+  local lines=()
+  while IFS= read -r line; do
+    lines[$i]="$line"
+    i=$((i + 1))
+    w=$(vp_cols "$line")
+    [ "$w" -gt "$max" ] && max="$w"
+  done
+  printf '  ┌%s┐\n' "$(vp_rule $((max + 4)))"
+  for line in "${lines[@]}"; do
+    w=$(vp_cols "$line")
+    printf '  │  %s%*s  │\n' "$line" "$((max - w))" ""
+  done
+  printf '  └%s┘\n' "$(vp_rule $((max + 4)))"
+}
 
 case "${VIBEPANEL_PLATFORM:-$(uname -s)}" in
   [Dd]arwin) PLATFORM=darwin ;;
@@ -2064,12 +2127,42 @@ case "$STARTED" in
     m state.started
     echo
     if [ "$ACCOUNT_MADE" = yes ]; then
-      m open.login "http://$HOST:$PORT" "$ACCT_USER"
+      {
+        m box.open "http://$HOST:$PORT"
+        m box.login "$ACCT_USER"
+      } | vp_box
     else
-      m token.head
-      m token.cmd "$VPCTL" "$JOURNAL"
+      # Fetched, not described.
+      #
+      # This used to print the command that prints the token, so the first
+      # thing anybody did after a successful install was run a second command
+      # and read a wall of log. The service is up by the time we are here and
+      # `service token` is exactly that command, so the installer runs it.
+      #
+      # Best effort on purpose: a journal that has not flushed, a system with
+      # no journal at all, or a sudo that asks again all end with an empty
+      # string, and the box then says where to get it instead. An installer
+      # that fails at the last line over a nicety is worse than one that
+      # prints a command.
+      TOKEN="$("$BIN_DIR/vibepanel" service token 2>/dev/null | tr -d '[:space:]')"
+      if [ -n "$TOKEN" ]; then
+        {
+          m box.open "http://$HOST:$PORT"
+          m box.token "$TOKEN"
+        } | vp_box
+      else
+        {
+          m box.open "http://$HOST:$PORT"
+          m box.tokencmd "$VPCTL"
+        } | vp_box
+      fi
+      # Below the box, not in it. The box holds the two things to do; this is
+      # what that command runs underneath, which matters when it does not work
+      # -- a system unit whose journal needs sudo, or a machine with no journal
+      # at all. Keeping it inside would put a second command in a rectangle
+      # whose whole point is that there are two lines in it.
       echo
-      m token.thenopen "http://$HOST:$PORT"
+      m token.cmd "$VPCTL" "$JOURNAL"
     fi
     ;;
   failed)

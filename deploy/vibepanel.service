@@ -151,7 +151,7 @@ KillMode=process
 
 # Not UMask=0077 either, and for the same reason: it is inherited, so every
 # file every agent created came out 600 and every directory 700. A shared
-# checkout, `python -m http.server`, a build step running as somebody else —
+# checkout, `python -m http.server`, a build step under another account —
 # all quietly wrong, with nothing to point at.
 #
 # What that line was protecting is the database, which holds password hashes
