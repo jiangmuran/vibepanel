@@ -339,9 +339,22 @@ export function BoardEditor({
   const spec = current ? catalogue.widgets.find((s) => s.kind === current.kind) : undefined
 
   return (
+    // `@container` on the root, so every `@` variant below asks how wide this
+    // editor is rather than how wide the browser is.
+    //
+    // `lg:` asks about the window, and this editor is inside a modal whose
+    // body is a fraction of it: on a 1600px desktop the old two-column rule
+    // fired against 540px of actual space, which put a 208px canvas next to a
+    // 320px palette -- the thing being arranged smaller than the list of
+    // things to drag onto it. The dialog is wider for this group now
+    // (settings/groups.ts), but the split still has to follow the space this
+    // component *has*: it is also rendered inside each link's edit panel,
+    // which is narrower again, and inside a browser window somebody has made
+    // narrow, which the dialog's own max-width says nothing about.
     <div
       ref={rootRef}
       data-testid="board-editor"
+      className="@container"
       onPointerMove={onMove}
       onPointerUp={onUp}
       onPointerCancel={() => {
@@ -350,8 +363,8 @@ export function BoardEditor({
       }}
       onKeyDown={onKeyDown}
     >
-      <div className="grid gap-3 lg:grid-cols-[1fr_20rem]">
-        <div>
+      <div className="grid gap-4 @3xl:grid-cols-[minmax(0,1fr)_20rem]">
+        <div className="min-w-0">
           <BoardCanvas
             board={board}
             data={preview}
@@ -373,7 +386,11 @@ export function BoardEditor({
             {linkID === '' && ` · ${t('board.newLink')}`}
           </p>
 
-          <div className="mt-2 flex flex-wrap items-center gap-2">
+          {/* `gap-x-4`, not `gap-2`. Each of these is a label with its control
+              1.5 units away, so at a uniform 2 the space inside a field and
+              the space between two fields were the same, and the row read as
+              "Fill the screen Density | Normal | Rotate pages | Never". */}
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
             {/* A checkbox, because this is a setting and not an action.
                 It was a `.vp-control` with `aria-pressed`, which is transparent
                 with no border: off, it was text sitting above two fields and
@@ -489,7 +506,14 @@ export function BoardEditor({
                     <Trash2 size={13} />
                   </button>
                 </div>
-                <div className="flex flex-wrap items-center gap-1">
+                {/* Every one of these is labelled, and the gap is wide enough
+                    that a label belongs to the select after it rather than to
+                    the one before. This was a row of up to seven bare
+                    dropdowns reading "Tokens per hour", "By project", "7/12",
+                    "2 rows" -- values with nothing saying what they set, which
+                    is the shape the whole editor was replaced for. `title` is
+                    not a label: it needs a pointer a phone does not have. */}
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                   {spec.metrics && (
                     <Choice
                       testid="widget-metric"
@@ -541,111 +565,134 @@ export function BoardEditor({
                     />
                   )}
                   {spec.days && (
-                    <select
-                      value={current.days ?? 30}
-                      onChange={(e) =>
-                        setWidget(selected!, { ...current, days: Number(e.target.value) })
-                      }
-                      title={t('board.days')}
-                      data-testid="widget-days"
-                      className={SELECT}
-                    >
-                      {DAY_RANGES.filter((d) => d <= catalogue.maxDays).map((d) => (
-                        <option key={d} value={d}>
-                          {t('dash.lastDays', { n: d })}
-                        </option>
-                      ))}
-                    </select>
+                    <label className={FIELD}>
+                      {t('board.days')}
+                      <select
+                        value={current.days ?? 30}
+                        onChange={(e) =>
+                          setWidget(selected!, { ...current, days: Number(e.target.value) })
+                        }
+                        data-testid="widget-days"
+                        className={SELECT}
+                      >
+                        {DAY_RANGES.filter((d) => d <= catalogue.maxDays).map((d) => (
+                          <option key={d} value={d}>
+                            {t('dash.lastDays', { n: d })}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                   )}
                   {spec.rotate && (
-                    <select
-                      value={current.rotate ?? 0}
-                      onChange={(e) =>
-                        setWidget(selected!, { ...current, rotate: Number(e.target.value) })
-                      }
-                      title={t('board.rotateList')}
-                      data-testid="widget-rotate"
-                      className={SELECT}
-                    >
-                      {ROTATIONS.map((s) => (
-                        <option key={s} value={s}>
-                          {s === 0 ? t('board.rotateNever') : t('board.rotateEvery', { n: s })}
-                        </option>
-                      ))}
-                    </select>
+                    <label className={FIELD}>
+                      {t('board.rotateList')}
+                      <select
+                        value={current.rotate ?? 0}
+                        onChange={(e) =>
+                          setWidget(selected!, { ...current, rotate: Number(e.target.value) })
+                        }
+                        data-testid="widget-rotate"
+                        className={SELECT}
+                      >
+                        {ROTATIONS.map((s) => (
+                          <option key={s} value={s}>
+                            {s === 0 ? t('board.rotateNever') : t('board.rotateEvery', { n: s })}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                   )}
                   {spec.text && (
-                    <input
-                      value={current.text ?? ''}
-                      maxLength={catalogue.maxCaption}
-                      onChange={(e) => setWidget(selected!, { ...current, text: e.target.value })}
-                      placeholder={t('board.caption')}
-                      data-testid="widget-text"
-                      className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface px-2 py-1 text-vp-base text-ink outline-none focus:border-accent"
-                    />
+                    <label className={`${FIELD} w-full`}>
+                      {t('board.caption')}
+                      <input
+                        value={current.text ?? ''}
+                        maxLength={catalogue.maxCaption}
+                        onChange={(e) => setWidget(selected!, { ...current, text: e.target.value })}
+                        placeholder={t('board.caption')}
+                        data-testid="widget-text"
+                        className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface px-2 py-1 text-vp-base text-ink outline-none focus:border-accent"
+                      />
+                    </label>
                   )}
                   {/* Width and height are dragged on the canvas; the selects
                       stay because a drag is not reachable from a keyboard and
                       because an exact twelfth is easier to pick than to aim at. */}
-                  <select
-                    value={current.span}
-                    onChange={(e) =>
-                      setWidget(selected!, { ...current, span: Number(e.target.value) })
-                    }
-                    title={t('board.width')}
-                    data-testid="widget-span"
-                    className={SELECT}
-                  >
-                    {catalogue.steps
-                      .filter((n) => n >= 1 && n <= catalogue.maxSpan)
-                      .map((n) => (
-                        <option key={n} value={n}>
-                          {t('board.widthOf', { n })}
-                        </option>
-                      ))}
-                  </select>
-                  <select
-                    value={current.height ?? 1}
-                    onChange={(e) =>
-                      setWidget(selected!, { ...current, height: Number(e.target.value) })
-                    }
-                    title={t('board.height')}
-                    data-testid="widget-height"
-                    className={SELECT}
-                  >
-                    {Array.from({ length: Math.max(1, catalogue.maxRows) }, (_, i) => i + 1).map(
-                      (n) => (
-                        <option key={n} value={n}>
-                          {t('board.heightOf', { n })}
-                        </option>
-                      ),
-                    )}
-                  </select>
-                  {board.rotate > 0 && (
+                  <label className={FIELD}>
+                    {t('board.width')}
                     <select
-                      value={current.page ?? 0}
+                      value={current.span}
                       onChange={(e) =>
-                        setWidget(selected!, { ...current, page: Number(e.target.value) })
+                        setWidget(selected!, { ...current, span: Number(e.target.value) })
                       }
-                      title={t('board.page')}
-                      data-testid="widget-page"
+                      data-testid="widget-span"
                       className={SELECT}
                     >
-                      {Array.from({ length: Math.min(pages + 1, 12) }, (_, n) => (
-                        <option key={n} value={n}>
-                          {t('board.pageOf', { n: n + 1 })}
-                        </option>
-                      ))}
+                      {catalogue.steps
+                        .filter((n) => n >= 1 && n <= catalogue.maxSpan)
+                        .map((n) => (
+                          <option key={n} value={n}>
+                            {t('board.widthOf', { n })}
+                          </option>
+                        ))}
                     </select>
+                  </label>
+                  <label className={FIELD}>
+                    {t('board.height')}
+                    <select
+                      value={current.height ?? 1}
+                      onChange={(e) =>
+                        setWidget(selected!, { ...current, height: Number(e.target.value) })
+                      }
+                      data-testid="widget-height"
+                      className={SELECT}
+                    >
+                      {Array.from({ length: Math.max(1, catalogue.maxRows) }, (_, i) => i + 1).map(
+                        (n) => (
+                          <option key={n} value={n}>
+                            {t('board.heightOf', { n })}
+                          </option>
+                        ),
+                      )}
+                    </select>
+                  </label>
+                  {board.rotate > 0 && (
+                    <label className={FIELD}>
+                      {t('board.page')}
+                      <select
+                        value={current.page ?? 0}
+                        onChange={(e) =>
+                          setWidget(selected!, { ...current, page: Number(e.target.value) })
+                        }
+                        data-testid="widget-page"
+                        className={SELECT}
+                      >
+                        {Array.from({ length: Math.min(pages + 1, 12) }, (_, n) => (
+                          <option key={n} value={n}>
+                            {t('board.pageOf', { n: n + 1 })}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                   )}
                 </div>
               </div>
             )}
           </div>
 
-          <div className="mt-3">
-            <BoardGallery catalogue={catalogue} current={board.preset} onPick={onPreset} />
-          </div>
+        </div>
+
+        {/* The gallery, across both columns and below them.
+
+            It used to be the third block in the 20rem column, under the
+            palette and the inspector -- two dozen cards two-up in a narrow
+            strip, which ran about 1400px long beside a canvas 400px tall and
+            left the left half of this editor empty for the whole of it. Full
+            width it is six-up and four rows, and it reads as what it is: the
+            other way to start, under the thing you are arranging, rather than
+            an appendix to the widget library. */}
+        <div className="@3xl:col-span-2">
+          <BoardGallery catalogue={catalogue} current={board.preset} onPick={onPreset} />
         </div>
       </div>
       {board.widgets.length === 0 && (
@@ -673,19 +720,21 @@ function Choice({
   onPick: (value: string) => void
 }) {
   return (
-    <select
-      value={value}
-      onChange={(e) => onPick(e.target.value)}
-      title={title}
-      data-testid={testid}
-      className={SELECT}
-    >
-      {options.map((o) => (
-        <option key={o} value={o}>
-          {label(o, o)}
-        </option>
-      ))}
-    </select>
+    <label className={FIELD}>
+      {title}
+      <select
+        value={value}
+        onChange={(e) => onPick(e.target.value)}
+        data-testid={testid}
+        className={SELECT}
+      >
+        {options.map((o) => (
+          <option key={o} value={o}>
+            {label(o, o)}
+          </option>
+        ))}
+      </select>
+    </label>
   )
 }
 

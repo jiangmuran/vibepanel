@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 
-import type { ShareBoard, ShareDashboard } from '../protocol/wire'
+import type { ShareBoard, ShareDashboard, ShareWidget } from '../protocol/wire'
 import { t } from '../i18n'
 import { Widget } from './board/render'
+import { Sketch } from './board/sketch'
+import { Tile } from './board/Tile'
 import { forViewport } from './board/viewer'
 import { DensityProvider } from './board/density'
 import { pageWidgets } from './board/edit'
@@ -166,7 +168,11 @@ export function BoardCanvas({
                     is what lets one component serve both the wall, where it
                     places itself, and the canvas, where the slot places it. */}
                 <div className="pointer-events-none h-full [&>section]:h-full">
-                  {data && <Widget w={forViewport(w, INNER_WIDTH)} data={data} now={now} />}
+                  {data ? (
+                    <Widget w={forViewport(w, INNER_WIDTH)} data={data} now={now} />
+                  ) : (
+                    <Ghost w={forViewport(w, INNER_WIDTH)} />
+                  )}
                 </div>
 
                 {/* The grab surface. A button rather than a div so it is
@@ -228,6 +234,42 @@ export function BoardCanvas({
         </DensityProvider>
       </div>
     </div>
+  )
+}
+
+/**
+ * A tile with nothing to draw yet.
+ *
+ * Two comments in this repository said "the canvas still draws the
+ * arrangement, because the rectangles are the board" — and it did not. A board
+ * being *created* has no link, so it has no preview, so `data` was null and
+ * every tile rendered nothing at all: six widgets on screen as an empty black
+ * rectangle with invisible drag handles over it. The one place where the whole
+ * point is to compose a layout before anything exists was the one place that
+ * showed no layout.
+ *
+ * The same wireframe the palette entry was dragged from, at the size the tile
+ * actually is, so what you are moving looks like what you picked up. Not
+ * invented sample data: `board/preview.ts` says why numbers that will not be
+ * the real ones are worse than no numbers.
+ */
+function Ghost({ w }: { w: ShareWidget }) {
+  return (
+    // Through `Tile`, not a div that looks like one. The frame, the hairline,
+    // the padding and the heading size are what make a wall of tiles line up,
+    // and a ghost drawn with its own approximation of them composes a layout
+    // that is not the one being made. The `span`/`height` it sets on itself
+    // are inert here -- the slot wrapper is the grid item -- which is the same
+    // thing that lets a real widget serve both surfaces.
+    <Tile
+      label={kindLabel(w.kind, w.kind)}
+      span={w.span}
+      height={w.height}
+      testid="canvas-ghost"
+      kind={w.kind}
+    >
+      <Sketch kind={w.kind} className="h-full w-full opacity-60" />
+    </Tile>
   )
 }
 

@@ -1337,6 +1337,15 @@ const DICT = {
   'share.scopeGone': { zh: '指向的东西没了', en: 'what it pointed at is gone' },
   'share.untitled': { zh: '未命名', en: 'untitled' },
 
+  // The field names above the two forms. Short, because they sit over the
+  // control rather than inside it -- `share.name`, `share.remark` and
+  // `share.scope` are the longer prompts, and a prompt that has to be read
+  // before you can name the field is a placeholder, which is what these
+  // replaced.
+  'share.nameLabel': { zh: '名字', en: 'Name' },
+  'share.remarkLabel': { zh: '屏幕名', en: 'Screen name' },
+  'share.scopeLabel': { zh: '范围', en: 'About' },
+
   // The first-run tour. Two of its five steps do something -- they install
   // the state reporters and offer the Claude Code settings -- and the rest is
   // the orientation that makes those two make sense.

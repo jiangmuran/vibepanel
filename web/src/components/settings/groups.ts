@@ -48,6 +48,27 @@ export const GROUP_TITLE: Record<SettingsGroup, Key> = {
 }
 
 /**
+ * How much width a group is given, because one of them is not a form.
+ *
+ * Four of the five are label/value lines and a handful of controls: they read
+ * badly past about seventy characters, which is what `max-w-3xl` is. Sharing
+ * holds the board editor, which is a canvas you drag onto with a library
+ * beside it — and at 3xl the arithmetic came out at a 208px canvas next to a
+ * 320px palette, so the thing being arranged was smaller than the list of
+ * things to put on it, and every link's row overflowed the body sideways.
+ *
+ * A record rather than a set, so a sixth group is a type error here until
+ * somebody decides which of the two it is.
+ */
+export const GROUP_WIDTH: Record<SettingsGroup, 'reading' | 'canvas'> = {
+  sessions: 'reading',
+  notify: 'reading',
+  sharing: 'canvas',
+  account: 'reading',
+  panel: 'reading',
+}
+
+/**
  * Every block the dialog can show, by the name a caller asks for it by.
  *
  * Nothing outside this file names a *group*. The sidebar's "states are being

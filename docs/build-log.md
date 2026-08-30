@@ -17892,6 +17892,61 @@ Because the fix ships *in* the release the old build cannot see, v1.2.0 has to
 be upgraded with the installer one-liner once. After that the panel can update
 itself.
 
+## The sharing page, measured against the wrong thing
+
+「设置 -> 共享 排版乱、生成出来的东西不好看、错位」. All three, and they were
+three symptoms of one mistake plus one thing that was never drawn at all.
+
+Every layout rule on that page was a viewport breakpoint — `sm:`, `lg:` — and
+every one of them was inside a modal whose body is a third of the window. The
+two disagree by a factor of three, so the rules fired in the wrong places at
+every size the panel has ever been:
+
+- `lg:grid-cols-[1fr_20rem]` on the board editor is true on any laptop. Applied
+  to the 540px the dialog actually gives it, that is a **208px canvas beside a
+  320px palette**: the thing being arranged smaller than the list of things to
+  drag onto it, with the wall drawn at a quarter of a quarter inside it.
+- the create form was five controls and a button in one `flex-wrap`. The two
+  `flex-1` text inputs gave their width to three `shrink-0` selects, so "给它起
+  个名字" was a 90px box showing four characters of its own placeholder while
+  the scope select was 570px. Then the row wrapped between the expiry and the
+  button, leaving the primary action alone on a line with nothing to say what
+  it applied to.
+- each link's row was eleven things in one line, nine of them `shrink-0`. That
+  adds up to more than this body is wide, and `overflow-y: auto` computes
+  `overflow-x` to `auto` behind it — so the settings page **scrolled sideways**,
+  and pressing the pencil scrolled the whole dialog right to bring the button
+  into view. Every field also started at a different x on every row, because
+  each one's width came from its own text. That is the 错位.
+
+The fix is container queries throughout, the dialog widened for this one group,
+the form turned into labelled fields in a grid, and the row split into a line
+you press and a line that describes, which wraps. `board/layout.test.ts` fails
+on a viewport breakpoint anywhere in the four files, and render-check now
+measures `scrollWidth - clientWidth` on the settings body at three widths —
+the generic overflow scan cannot see this one, because the body *is* a scroller
+and a row that outgrows it sideways is "reachable".
+
+### The rectangles that were not there
+
+Two comments in the repository said "the canvas still draws the arrangement,
+because the rectangles are the board", about a board being created. It did not.
+A board with no link has no preview, so `data` was null, so `{data && <Widget>}`
+rendered nothing for every tile: six widgets on screen as an **empty black
+rectangle** with invisible drag handles over it. The one surface whose entire
+job is composing a layout before anything exists was the one showing no layout,
+and nobody had photographed it — `shots.mjs` never opened this page.
+
+Tiles now fall back to the same wireframe their palette entry was dragged from,
+drawn through the real `Tile`, so the frame, the padding and the heading size
+are the ones the composition will actually have. Not invented sample data:
+`board/preview.ts` already says why numbers that will not be the real ones are
+worse than no numbers.
+
+`shots.mjs` photographs the sharing page now, in both themes and on a phone,
+with three links seeded — one of them with a name long enough to break the row.
+"The UI is ugly" is not actionable from source, and this page is the proof: the
+JSX said `lg:grid-cols-[1fr_20rem]`, which reads as correct.
 ## A settings page that was a dotfile with a browser around it
 
 Two asks in the same breath: 「我的passkey绑定和登陆呢」 and 「把env的大部分设置

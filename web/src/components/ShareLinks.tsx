@@ -74,6 +74,30 @@ const SAVE_AFTER_MS = 700
  *  minutes ago is the one number on this page nobody would think to distrust. */
 const LIST_MS = 5000
 
+/** Every field in this page's two forms, so they are one width and one shape. */
+const INPUT =
+  'w-full min-w-0 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent'
+
+/** A control with its name above it, filling one cell of the grid. */
+function Field({
+  label,
+  htmlFor,
+  children,
+}: {
+  label: string
+  htmlFor: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="min-w-0">
+      <label htmlFor={htmlFor} className="mb-1 block text-vp-sm text-ink-3">
+        {label}
+      </label>
+      {children}
+    </div>
+  )
+}
+
 function shareURL(token: string): string {
   return `${location.origin}/share/${token}`
 }
@@ -279,7 +303,11 @@ export function ShareLinks() {
   }
 
   return (
-    <div data-testid="share-links">
+    // A container, and everything inside it measures against this rather than
+    // against the window. The board editor is the reason -- see BoardEditor --
+    // but the form below had the same bug in miniature: `sm:` is true at 640px
+    // of *browser*, which is the width at which this panel has about 340px.
+    <div data-testid="share-links" className="@container">
       <p className="mb-2 text-vp-base leading-relaxed text-ink-2">{t('share.why')}</p>
 
       {error && (
@@ -333,82 +361,113 @@ export function ShareLinks() {
         </div>
       ) : (
         <div className="mb-3">
-          <div className="mb-2 flex flex-wrap items-center gap-2">
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void create()
-              }}
-              placeholder={t('share.name')}
-              data-testid="share-name"
-              className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent"
-            />
-            <input
-              value={remark}
-              maxLength={catalogue?.maxRemark ?? 80}
-              onChange={(e) => setRemark(e.target.value)}
-              placeholder={t('share.remark')}
-              title={t('share.remarkWhy')}
-              data-testid="share-remark"
-              className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent"
-            />
-            <select
-              value={target}
-              onChange={(e) => setTarget(e.target.value)}
-              title={t('share.scope')}
-              data-testid="share-scope"
-              className="shrink-0 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent"
-            >
-              <option value="">{t('share.scopeWhole')}</option>
-              {projects.map((p) => (
-                <option key={p.id} value={`project:${p.id}`}>
-                  {t('share.scopeProject', { name: safeText(p.name) })}
-                </option>
-              ))}
-              {sessions
-                .filter((s) => s.parentSessionId === null)
-                .map((s) => (
-                  <option key={s.id} value={`session:${s.id}`}>
-                    {t('share.scopeSession', {
-                      name: safeText(s.title || t('share.untitled')),
-                    })}
+          {/* A grid of labelled fields, not a row that wraps.
+
+              It was five controls and a button in one `flex-wrap`, and the
+              arithmetic went the wrong way at every width: the two `flex-1`
+              text inputs gave up their space to three `shrink-0` selects, so
+              at the width this panel actually has, "What is it for" was a
+              90px box showing four truncated characters while the scope
+              select was 570px wide. Then the row wrapped between the expiry
+              and the button, which put the primary action on a line of its
+              own with nothing to say what it applied to.
+
+              Labels above rather than placeholders inside, for the reason
+              written on the density control in BoardEditor: a placeholder is
+              gone as soon as there is a value, `title` needs a pointer that a
+              phone does not have, and a truncated placeholder is a control
+              nobody can name. */}
+          <div className="mb-2 grid grid-cols-1 gap-x-3 gap-y-2 @md:grid-cols-2 @3xl:grid-cols-3">
+            <Field label={t('share.nameLabel')} htmlFor="share-name">
+              <input
+                id="share-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void create()
+                }}
+                placeholder={t('share.name')}
+                data-testid="share-name"
+                className={INPUT}
+              />
+            </Field>
+            <Field label={t('share.remarkLabel')} htmlFor="share-remark">
+              <input
+                id="share-remark"
+                value={remark}
+                maxLength={catalogue?.maxRemark ?? 80}
+                onChange={(e) => setRemark(e.target.value)}
+                placeholder={t('share.remark')}
+                data-testid="share-remark"
+                className={INPUT}
+              />
+            </Field>
+            <Field label={t('share.scopeLabel')} htmlFor="share-scope">
+              <select
+                id="share-scope"
+                value={target}
+                onChange={(e) => setTarget(e.target.value)}
+                data-testid="share-scope"
+                className={INPUT}
+              >
+                <option value="">{t('share.scopeWhole')}</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={`project:${p.id}`}>
+                    {t('share.scopeProject', { name: safeText(p.name) })}
                   </option>
                 ))}
-            </select>
-            <select
-              value={detail}
-              onChange={(e) => setDetail(e.target.value as ShareDetail)}
-              title={t('share.shows')}
-              data-testid="share-detail"
-              className="shrink-0 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent"
-            >
-              <option value="counts">{t('share.detailCounts')}</option>
-              <option value="names">{t('share.detailNames')}</option>
-            </select>
-            <select
-              value={expiresIn}
-              onChange={(e) => setExpiresIn(Number(e.target.value))}
-              title={t('share.expiry')}
-              data-testid="share-expiry"
-              className="shrink-0 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent"
-            >
-              {EXPIRIES.map((choice) => (
-                <option key={choice.seconds} value={choice.seconds}>
-                  {t(choice.label)}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={() => void create()}
-              disabled={!board || board.widgets.length === 0}
-              data-testid="share-create"
-              className="shrink-0 rounded-vp px-3 py-1.5 text-vp-base"
-              style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
-            >
-              {t('share.create')}
-            </button>
+                {sessions
+                  .filter((s) => s.parentSessionId === null)
+                  .map((s) => (
+                    <option key={s.id} value={`session:${s.id}`}>
+                      {t('share.scopeSession', {
+                        name: safeText(s.title || t('share.untitled')),
+                      })}
+                    </option>
+                  ))}
+              </select>
+            </Field>
+            <Field label={t('share.shows')} htmlFor="share-detail">
+              <select
+                id="share-detail"
+                value={detail}
+                onChange={(e) => setDetail(e.target.value as ShareDetail)}
+                data-testid="share-detail"
+                className={INPUT}
+              >
+                <option value="counts">{t('share.detailCounts')}</option>
+                <option value="names">{t('share.detailNames')}</option>
+              </select>
+            </Field>
+            <Field label={t('share.expiry')} htmlFor="share-expiry">
+              <select
+                id="share-expiry"
+                value={expiresIn}
+                onChange={(e) => setExpiresIn(Number(e.target.value))}
+                data-testid="share-expiry"
+                className={INPUT}
+              >
+                {EXPIRIES.map((choice) => (
+                  <option key={choice.seconds} value={choice.seconds}>
+                    {t(choice.label)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {/* Bottom-aligned in its cell, so it sits on the baseline of the
+                last row of fields rather than level with their labels. */}
+            <div className="flex items-end">
+              <button
+                type="button"
+                onClick={() => void create()}
+                disabled={!board || board.widgets.length === 0}
+                data-testid="share-create"
+                className="vp-press w-full rounded-vp px-3 py-1.5 text-vp-base @md:w-auto"
+                style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+              >
+                {t('share.create')}
+              </button>
+            </div>
           </div>
 
           {catalogue && board && (
@@ -446,52 +505,53 @@ export function ShareLinks() {
       ) : (
         links.map((link) => (
           <div key={link.id} data-testid="share-row-wrap">
+            {/* Two lines, and the second one wraps.
+
+                This was eleven things in one `flex` line: a name, a remark,
+                the prefix, the viewer count, the scope, the board, the detail
+                mode, the expiry and three buttons. Nine of them were
+                `shrink-0`, which adds up to more than this panel is wide at
+                any size it has ever had -- so the row overflowed the dialog
+                sideways, `overflow-y: auto` on the body computed `overflow-x`
+                to `auto` behind it, and pressing the pencil scrolled the
+                whole settings page right to bring the button into view. The
+                fields also started at a different x on every row, because
+                each one's width came from its own text.
+
+                So: what identifies the link and what you press on the first
+                line, with the actions ending at the right margin on every
+                row; everything that describes it on a second line that is
+                allowed to wrap. Nothing here is `shrink-0` except the
+                buttons. */}
             <div
               data-testid="share-row"
-              className="flex items-center gap-2 border-t border-hairline py-2 text-vp-base first:border-t-0"
+              className="border-t border-hairline py-2 text-vp-base first:border-t-0"
             >
-              <MonitorSmartphone size={13} className="shrink-0 text-ink-2" />
-              <span className="min-w-0 flex-1 truncate text-ink">{safeText(link.name)}</span>
-              {link.remark !== '' && (
+              <div className="flex items-center gap-2">
+                <MonitorSmartphone size={13} className="shrink-0 text-ink-2" />
+                <span className="min-w-0 flex-1 truncate text-ink">{safeText(link.name)}</span>
+                {/* How many screens have this open. An icon and a count, never a
+                    colour: this is the number that decides whether the wall you
+                    are about to rearrange is on at all.
+
+                    On the first line rather than with the rest of the facts,
+                    because it is the one that decides whether to touch the
+                    board at all -- and it is the only one that changes while
+                    you are looking at the page. */}
                 <span
-                  className="min-w-0 shrink truncate text-vp-sm text-ink-2"
-                  data-testid="share-row-remark"
+                  className="flex shrink-0 items-center gap-1 text-vp-sm text-ink-2"
+                  data-testid="share-row-viewers"
+                  data-viewers={link.viewers}
                 >
-                  {safeText(link.remark)}
+                  {link.viewers > 0 ? (
+                    <>
+                      <Monitor size={12} />
+                      {t('share.viewers', { n: link.viewers })}
+                    </>
+                  ) : (
+                    <span className="text-ink-3">{t('share.noViewers')}</span>
+                  )}
                 </span>
-              )}
-              <code className="shrink-0 font-mono text-vp-sm text-ink-2">{link.prefix}…</code>
-              {/* How many screens have this open. An icon and a count, never a
-                  colour: this is the number that decides whether the wall you
-                  are about to rearrange is on at all. */}
-              <span
-                className="flex w-28 shrink-0 items-center justify-end gap-1 text-vp-sm text-ink-2"
-                data-testid="share-row-viewers"
-                data-viewers={link.viewers}
-              >
-                {link.viewers > 0 ? (
-                  <>
-                    <Monitor size={12} />
-                    {t('share.viewers', { n: link.viewers })}
-                  </>
-                ) : (
-                  <span className="text-ink-3">{t('share.noViewers')}</span>
-                )}
-              </span>
-              <span className="shrink-0 truncate text-vp-sm text-ink-2" data-testid="share-row-scope">
-                {scopeLabel(link)}
-              </span>
-              <span className="shrink-0 text-vp-sm text-ink-2" data-testid="share-row-board">
-                {link.board.preset ? presetLabel(link.board.preset) : ''}
-              </span>
-              <span className="shrink-0 text-vp-sm text-ink-2">{detailLabel(link.detail)}</span>
-              <span className="w-28 shrink-0 text-right text-vp-sm text-ink-2">
-                {link.expiresAt === 0
-                  ? t('share.noExpiry')
-                  : t('share.expiresOn', {
-                      date: new Date(link.expiresAt * 1000).toLocaleDateString(),
-                    })}
-              </span>
               {/* Red line 4: an open padlock and a closed one, plus the word in
                   the title. A locked row is not distinguished by a tint. */}
               <button
@@ -556,6 +616,31 @@ export function ShareLinks() {
                   <Trash2 size={13} />
                 </button>
               )}
+              </div>
+
+              {/* Everything the link *is*, indented under its name. Separated
+                  by space rather than by a middot chain, so a fact that wraps
+                  does not leave a dot at the end of a line. */}
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-5 text-vp-sm text-ink-2">
+                <code className="font-mono text-ink-3">{link.prefix}…</code>
+                <span data-testid="share-row-scope">{scopeLabel(link)}</span>
+                {link.board.preset !== '' && (
+                  <span data-testid="share-row-board">{presetLabel(link.board.preset)}</span>
+                )}
+                <span>{detailLabel(link.detail)}</span>
+                <span>
+                  {link.expiresAt === 0
+                    ? t('share.noExpiry')
+                    : t('share.expiresOn', {
+                        date: new Date(link.expiresAt * 1000).toLocaleDateString(),
+                      })}
+                </span>
+                {link.remark !== '' && (
+                  <span className="min-w-0 truncate text-ink-3" data-testid="share-row-remark">
+                    {safeText(link.remark)}
+                  </span>
+                )}
+              </div>
             </div>
 
             {editing?.id === link.id && catalogue && (
@@ -563,37 +648,54 @@ export function ShareLinks() {
                 className="mb-2 rounded-vp border border-hairline bg-surface-2 p-3"
                 data-testid="share-edit-panel"
               >
-                <div className="mb-2 flex flex-wrap items-center gap-2">
-                  <input
-                    value={editing.name}
-                    onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-                    placeholder={t('share.name')}
-                    data-testid="share-edit-name"
-                    className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent"
-                  />
-                  <input
-                    value={editing.remark}
-                    maxLength={catalogue.maxRemark}
-                    onChange={(e) => setEditing({ ...editing, remark: e.target.value })}
-                    placeholder={t('share.remark')}
-                    title={t('share.remarkWhy')}
-                    data-testid="share-edit-remark"
-                    className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent"
-                  />
+                {/* The same two fields as the form above, labelled the same
+                    way and in the same grid, because they are the same two
+                    fields. */}
+                <div className="mb-3 grid grid-cols-1 gap-x-3 gap-y-2 @md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+                  <Field label={t('share.nameLabel')} htmlFor="share-edit-name">
+                    <input
+                      id="share-edit-name"
+                      value={editing.name}
+                      onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                      placeholder={t('share.name')}
+                      data-testid="share-edit-name"
+                      className={INPUT}
+                    />
+                  </Field>
+                  <Field label={t('share.remarkLabel')} htmlFor="share-edit-remark">
+                    <input
+                      id="share-edit-remark"
+                      value={editing.remark}
+                      maxLength={catalogue.maxRemark}
+                      onChange={(e) => setEditing({ ...editing, remark: e.target.value })}
+                      placeholder={t('share.remark')}
+                      data-testid="share-edit-remark"
+                      className={INPUT}
+                    />
+                  </Field>
                   {/* Two words, and no save button. The wall is the preview;
                       a button on a thing you are watching change is a second
                       source of truth, and the one that gets forgotten. */}
-                  <span className="shrink-0 text-vp-sm text-ink-3" data-testid="share-edit-status">
-                    {saving ? t('board.saving') : t('board.live')}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setEditing(null)}
-                    data-testid="share-edit-cancel"
-                    className="vp-press shrink-0 rounded-vp px-2 py-1.5 text-vp-base text-ink-2"
-                  >
-                    {t('board.cancel')}
-                  </button>
+                  {/* The pair sits at the bottom of its cell so it lines up
+                      with the two inputs, and its own two things are centred
+                      on each other -- bottom-aligning a small word against a
+                      padded button staggers them by the difference in their
+                      line heights. */}
+                  <div className="flex items-end">
+                    <div className="flex w-full items-center justify-end gap-2 py-1.5">
+                      <span className="text-vp-sm text-ink-3" data-testid="share-edit-status">
+                        {saving ? t('board.saving') : t('board.live')}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setEditing(null)}
+                        data-testid="share-edit-cancel"
+                        className="vp-press rounded-vp px-2 py-1 text-vp-base text-ink-2"
+                      >
+                        {t('board.cancel')}
+                      </button>
+                    </div>
+                  </div>
                 </div>
                 {/* One surface, not two. The picture of the wall used to sit
                     beside a list of dropdowns; it is the thing you arrange

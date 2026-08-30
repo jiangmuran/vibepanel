@@ -41,7 +41,10 @@ export function useBoardPreview(linkID: string): Preview {
     // A link that does not exist yet has nothing to preview. Nothing is set
     // here -- the state is already null on the first render, and a setState in
     // an effect body is the cascading render the lint refuses. The canvas still
-    // draws the arrangement, because the rectangles are the board.
+    // draws the arrangement: `BoardCanvas`'s `Ghost` puts the widget's own
+    // wireframe in every tile when there is no payload. It did not, for as
+    // long as this comment has been here, and the surface where a board is
+    // *composed* was a black rectangle with invisible handles on it.
     if (linkID === '') return
     let cancelled = false
     let timer = 0
