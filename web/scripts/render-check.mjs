@@ -4135,6 +4135,25 @@ try {
       if ((await nameField.count()) === 0) {
         note('FAIL', 'board', 'the settings page offers no way to make a share link')
       } else {
+        // The board of a link that does not exist yet.
+        //
+        // There is no preview to draw -- a preview needs a link -- and for as
+        // long as this editor existed that meant the canvas rendered nothing
+        // at all: six widgets on screen as an empty black rectangle with
+        // invisible drag handles over it, on the one surface whose whole job
+        // is composing a layout before anything exists. Two source comments
+        // said "the rectangles are the board" while there were no rectangles.
+        {
+          const slots = await page.locator('[data-slot-index]').count()
+          const ghosts = await page.locator('[data-testid="canvas-ghost"]').count()
+          if (slots === 0) {
+            note('FAIL', 'board', 'the new-link canvas drew no slots for a board that has widgets')
+          } else if (ghosts !== slots) {
+            note('FAIL', 'board',
+              `a board with no preview drew ${ghosts} of ${slots} tiles; the rest are invisible`)
+          }
+        }
+
         await nameField.fill('render-check wall')
         await page.locator('[data-testid="share-create"]').click()
         let row = false
@@ -4299,6 +4318,38 @@ try {
           }
         }
       }
+
+      // Nothing on this page is wider than the page.
+      //
+      // The overflow scan two hundred lines up does not see this one: the body
+      // *is* a scroller, so a row that outgrows it sideways is "reachable" and
+      // reported as fine. It was not fine. Each link's row was nine `shrink-0`
+      // fields in one line — a prefix, a viewer count, a scope, a board name, a
+      // detail mode, an expiry and three buttons — which adds up to more than
+      // this body has ever been wide, and `overflow-y: auto` computes
+      // `overflow-x` to `auto` behind it. So the settings dialog scrolled
+      // sideways, and pressing the pencil scrolled the whole page right to
+      // bring the button into view.
+      //
+      // Asked at three widths, because the row that fits a desktop is not the
+      // row that fits the phone this panel is read on at 2am.
+      for (const [w, h] of [[1440, 900], [1024, 800], [390, 844]]) {
+        await page.setViewportSize({ width: w, height: h })
+        await sleep(700)
+        const over = await page.evaluate(() => {
+          const body = document.querySelector('[data-testid="settings-body"]')
+          return body ? body.scrollWidth - body.clientWidth : -1
+        })
+        if (over < 0) {
+          note('FAIL', 'board', `the settings body was not on screen at ${w}px`)
+        } else if (over > 1) {
+          note('FAIL', 'board', `the sharing page is ${over}px wider than the dialog at ${w}px`)
+        } else {
+          note('PASS', 'board', `the sharing page fits the dialog at ${w}px`)
+        }
+      }
+      await page.setViewportSize({ width: 1440, height: 900 })
+      await sleep(700)
     }
 
     // Naming the passkey is the panel's own field now, not window.prompt. The

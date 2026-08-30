@@ -301,6 +301,37 @@ try {
   for (const t of ['把右栏排版重做', '简体中文', 'PWA 通知']) {
     await authed(`/api/projects/${proj.id}/todos`, { method: 'POST', body: JSON.stringify({ text: t }) })
   }
+
+  // Share links, so the sharing page below is photographed with rows in it.
+  //
+  // An empty one is a photograph of a form, and the form was never the part
+  // that was wrong: what needed looking at was three rows of a list whose
+  // fields started at a different x on every row and ran off the side of the
+  // dialog. Three, with a long name and a remark, because one short row fits
+  // anything.
+  {
+    const cat = await (await authed('/api/settings/shares/catalogue')).json()
+    const preset = cat.presets[0]
+    const board = {
+      grid: cat.maxSpan,
+      preset: preset.id,
+      rotate: preset.rotate,
+      fill: preset.fill,
+      density: preset.density,
+      widgets: [...preset.widgets],
+    }
+    const links = [
+      { name: '走廊电视', remark: '三楼靠窗那台', detail: 'counts', expiresIn: 0, scope: '', scopeId: '' },
+      { name: '给客户看的那块', remark: '会议室', detail: 'names', expiresIn: 604800, scope: 'project', scopeId: proj.id },
+      { name: '一个长得过分的名字，用来看它会不会把这一行挤爆', remark: '', detail: 'counts', expiresIn: 2592000, scope: '', scopeId: '' },
+    ]
+    for (const link of links) {
+      await authed('/api/settings/shares', {
+        method: 'POST',
+        body: JSON.stringify({ ...link, board, locked: false }),
+      })
+    }
+  }
   await sleep(2500)
 
   browser = await chromium.launch({ headless: true })
@@ -361,6 +392,17 @@ try {
     if (theme === 'dark' && locale === 'zh-CN') {
       await page.locator('[data-testid="settings-open"]').click().catch(() => {})
       await shoot(page, 'settings')
+      // Sharing, which is the largest surface in this dialog and was the one
+      // nothing photographed. Twice: the page as it opens, and with a link's
+      // board editor unfolded under its row, which is where the canvas, the
+      // widget library and the template gallery are all on screen at once.
+      await page.locator('[data-testid="settings-group-sharing"]').click().catch(() => {})
+      await sleep(900)
+      await shoot(page, 'settings-sharing')
+      await page.locator('[data-testid="share-edit"]').first().click().catch(() => {})
+      await sleep(1200)
+      await shoot(page, 'settings-sharing-editing')
+      await page.locator('[data-testid="share-edit-cancel"]').click().catch(() => {})
       await page.locator('[data-testid="settings-close"]').click().catch(() => {})
       await sleep(400)
       // The picker. By testid, because the three guesses this used to make were
@@ -392,6 +434,14 @@ try {
     const page = await ctx.newPage()
     await login(page)
     await shoot(page, name)
+    // And the sharing page on a phone, which is where its form was worst: five
+    // controls wrapping one per line with nothing but a truncated placeholder
+    // saying what any of them set.
+    await page.locator('[data-testid="settings-open"]').first().click().catch(() => {})
+    await sleep(600)
+    await page.locator('[data-testid="settings-group-sharing"]').click().catch(() => {})
+    await sleep(900)
+    await shoot(page, `${name}-sharing`)
     await ctx.close()
   }
 

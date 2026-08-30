@@ -12,6 +12,7 @@ import { SessionsGroup } from './settings/SessionsGroup'
 import { SharingGroup } from './settings/SharingGroup'
 import {
   GROUP_TITLE,
+  GROUP_WIDTH,
   SETTINGS_GROUPS,
   groupFromKey,
   groupOf,
@@ -126,7 +127,13 @@ export function Settings({ openAt, onClose }: { openAt: SettingsSection; onClose
         role="dialog"
         aria-modal="true"
         aria-label={t('settings.title')}
-        className="vp-panel-in flex max-h-full w-full max-w-3xl flex-col rounded-vp-lg border border-hairline bg-surface shadow-xl"
+        // The width follows the group. Whole classes rather than an
+        // interpolated `max-w-${…}`: Tailwind scans this file as text, and a
+        // class it never sees written out is a class it never emits.
+        // groups.ts says why sharing is the one that is different.
+        className={`vp-panel-in flex max-h-full w-full flex-col rounded-vp-lg border border-hairline bg-surface shadow-xl ${
+          GROUP_WIDTH[group] === 'canvas' ? 'max-w-6xl' : 'max-w-3xl'
+        }`}
       >
         {/* The language switch is in the header rather than in a group, and it
             is the one control here that is about the reading rather than about

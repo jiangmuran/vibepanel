@@ -143,6 +143,15 @@ Each of these exists because the alternative broke something real.
   No component library, no state library: `useState`/`useReducer` plus fetch and
   one WebSocket. npm and `package-lock.json`. ESLint flat config, no Prettier.
   Two-space indent, single quotes.
+
+  **Inside a panel or a dialog, a responsive variant is a container query**
+  (`@container` plus `@3xl:`), never `sm:`/`lg:`. The settings modal's body is
+  about a third of the window, so a `lg:` rule there fires roughly a thousand
+  pixels early: the board editor's `lg:grid-cols-[1fr_20rem]` split 540px of
+  real space into a 208px canvas beside a 320px palette on every desktop, and
+  the whole sharing page was 「排版乱、错位」 from that one mistake repeated.
+  `components/board/layout.test.ts` fails on a viewport breakpoint anywhere in
+  the four files that draw it.
 - **Tests**: Go standard `testing`; `vitest` on the frontend. The tmux wrapper
   is tested against a real tmux on a throwaway socket rather than a mock. The bugs
   worth catching there are tmux's, and a mock reproduces none of them.

@@ -1,6 +1,7 @@
 import type { ShareCatalogue, SharePreset, ShareWidgetSpec } from '../protocol/wire'
 import { t } from '../i18n'
 import { kindLabel, presetLabel, presetWhy, screenLabel } from './board/labels'
+import { Sketch } from './board/sketch'
 
 /**
  * The widget library, and the template gallery beside it.
@@ -24,166 +25,6 @@ import { kindLabel, presetLabel, presetWhy, screenLabel } from './board/labels'
  * by which table it came from — because "which of thirty-seven do I want" is a
  * question nobody can answer and "what am I trying to see" is one everybody can.
  */
-
-/**
- * What a kind's picture looks like, by what it says rather than by what it
- * reads.
- *
- * A `switch` with a default, like the renderer's, and for the same reason: the
- * catalogue is served by the server, so a build of this frontend can be handed
- * a kind it has never heard of. It gets the neutral picture rather than none,
- * because a palette entry with no picture reads as broken.
- */
-type Shape = 'figure' | 'chart' | 'series' | 'list' | 'grid' | 'meter' | 'rule' | 'text'
-
-function shapeOf(kind: string): Shape {
-  switch (kind) {
-    case 'bignumber':
-    case 'attention':
-    case 'output':
-    case 'odometer':
-    case 'spendtotals':
-    case 'spendrate':
-    case 'spendcompare':
-    case 'kinds':
-    case 'prs':
-    case 'states':
-    case 'clock':
-    case 'datetime':
-    case 'uptime':
-    case 'health':
-      return 'figure'
-    case 'machinearea':
-    case 'tokenburn':
-    case 'sparkline':
-      return 'chart'
-    case 'spendbars':
-    case 'spendstack':
-    case 'codechurn':
-    case 'spentmade':
-    case 'flow':
-    case 'waits':
-      return 'series'
-    case 'sessionlist':
-    case 'cputop':
-    case 'exits':
-    case 'busiest':
-    case 'todos':
-    case 'projects':
-    case 'timeline':
-    case 'spendsplit':
-    case 'repoprojects':
-    case 'feed':
-      return 'list'
-    case 'sessiongrid':
-    case 'spendheatmap':
-      return 'grid'
-    case 'machine':
-    case 'gauge':
-    case 'statebar':
-    case 'nowstrip':
-      return 'meter'
-    case 'rule':
-    case 'spacer':
-      return 'rule'
-    case 'caption':
-    case 'heading':
-    case 'remark':
-      return 'text'
-    default:
-      return 'figure'
-  }
-}
-
-/** The wireframe for one shape, in a unit box the caller stretches. */
-function Sketch({ shape }: { shape: Shape }) {
-  const ink = 'var(--vp-ink-3)'
-  const accent = 'var(--vp-accent)'
-  return (
-    <svg
-      viewBox="0 0 60 28"
-      preserveAspectRatio="none"
-      className="h-7 w-full"
-      aria-hidden="true"
-      data-testid="palette-sketch"
-      data-shape={shape}
-    >
-      {shape === 'figure' && (
-        <>
-          <rect x="4" y="5" width="26" height="12" rx="2" fill={accent} opacity="0.7" />
-          <rect x="4" y="20" width="18" height="3" rx="1.5" fill={ink} opacity="0.5" />
-        </>
-      )}
-      {shape === 'chart' && (
-        <polyline
-          points="4,22 14,14 24,17 34,8 44,12 56,5"
-          fill="none"
-          stroke={accent}
-          strokeWidth="2.5"
-          strokeLinejoin="round"
-        />
-      )}
-      {shape === 'series' &&
-        [6, 14, 22, 30, 38, 46].map((x, i) => (
-          <rect
-            key={x}
-            x={x}
-            y={24 - [8, 14, 6, 18, 11, 20][i]}
-            width="6"
-            height={[8, 14, 6, 18, 11, 20][i]}
-            rx="1"
-            fill={accent}
-            opacity="0.75"
-          />
-        ))}
-      {shape === 'list' &&
-        [4, 11, 18].map((y, i) => (
-          <g key={y}>
-            <rect x="4" y={y} width="16" height="4" rx="2" fill={ink} opacity="0.5" />
-            <rect
-              x="24"
-              y={y}
-              width={[30, 20, 12][i]}
-              height="4"
-              rx="2"
-              fill={accent}
-              opacity="0.7"
-            />
-          </g>
-        ))}
-      {shape === 'grid' &&
-        [0, 1, 2, 3].flatMap((c) =>
-          [0, 1].map((r) => (
-            <rect
-              key={`${c}-${r}`}
-              x={4 + c * 14}
-              y={5 + r * 11}
-              width="11"
-              height="8"
-              rx="1.5"
-              fill={accent}
-              opacity={0.35 + ((c + r) % 3) * 0.2}
-            />
-          )),
-        )}
-      {shape === 'meter' && (
-        <>
-          <rect x="4" y="8" width="52" height="5" rx="2.5" fill={ink} opacity="0.35" />
-          <rect x="4" y="8" width="34" height="5" rx="2.5" fill={accent} />
-          <rect x="4" y="18" width="52" height="5" rx="2.5" fill={ink} opacity="0.35" />
-          <rect x="4" y="18" width="18" height="5" rx="2.5" fill={accent} opacity="0.7" />
-        </>
-      )}
-      {shape === 'rule' && <rect x="4" y="13" width="52" height="2" rx="1" fill={ink} opacity="0.5" />}
-      {shape === 'text' && (
-        <>
-          <rect x="4" y="7" width="40" height="5" rx="2.5" fill={ink} opacity="0.6" />
-          <rect x="4" y="16" width="26" height="4" rx="2" fill={ink} opacity="0.35" />
-        </>
-      )}
-    </svg>
-  )
-}
 
 /**
  * The widget library. One press starts a drag onto the canvas; releasing over
@@ -211,7 +52,17 @@ export function BoardPalette({
           </span>
         )}
       </div>
-      <div className="grid max-h-64 grid-cols-2 gap-1 overflow-y-auto pr-1 sm:grid-cols-3">
+      {/* A box with a border, and it scrolls inside it.
+
+          The scroller is not new; the border is. Thirty-seven entries do not
+          fit anywhere sensible, so the list has always been cut off — but cut
+          off against the background it read as a row of tiles chopped in half
+          by a bug. Inside a frame, the same cut says "there is more here".
+          `@sm` rather than `sm`: this is a 20rem column inside a modal, and
+          the browser being 640px wide says nothing about it. The column count
+          goes back *down* at `@3xl` because that is where the editor splits
+          in two and this stops being the full width of it. */}
+      <div className="grid max-h-64 grid-cols-2 gap-1 overflow-y-auto rounded-vp border border-hairline p-1 @sm:grid-cols-3 @xl:grid-cols-4 @3xl:grid-cols-3">
         {catalogue.widgets.map((spec) => (
           <button
             key={spec.kind}
@@ -226,7 +77,7 @@ export function BoardPalette({
             }}
             className="vp-press flex cursor-grab flex-col gap-1 rounded-vp border border-hairline bg-surface-2 p-2 text-left disabled:cursor-default disabled:opacity-50"
           >
-            <Sketch shape={shapeOf(spec.kind)} />
+            <Sketch kind={spec.kind} />
             {/* Two lines, not one. Three columns of these at the width the
                 settings panel gives them is about eleven characters a line,
                 and single-line truncation turned the library into "One big
@@ -270,7 +121,11 @@ export function BoardGallery({
         return (
           <div key={screen} className="mb-3">
             <div className="mb-1 text-vp-sm text-ink-3">{screenLabel(screen)}</div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {/* Six-up where there is room. The gallery spans the whole editor
+                now rather than sitting in the 20rem column, and two dozen
+                cards three-up in that column was a strip long enough to bury
+                everything else on the page. */}
+            <div className="grid grid-cols-2 gap-2 @md:grid-cols-3 @2xl:grid-cols-4 @4xl:grid-cols-6">
               {presets.map((p) => (
                 <button
                   key={p.id}

@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-import { SETTINGS_GROUPS, SETTINGS_SECTIONS, groupOf, sectionsIn } from './groups'
+import { GROUP_WIDTH, SETTINGS_GROUPS, SETTINGS_SECTIONS, groupOf, sectionsIn } from './groups'
 import type { SettingsGroup, SettingsSection } from './groups'
 
 /**
@@ -117,5 +117,37 @@ describe('what opens the dialog', () => {
       .not.toBeNull()
     expect(handler![1]).toContain("setSettingsAt('reporting')")
     expect(groupOf('reporting')).toBe('sessions')
+  })
+})
+
+/**
+ * How wide the dialog opens, and why exactly one group is different.
+ *
+ * The width used to be one class on the panel — `max-w-3xl`, which is a
+ * reading measure and right for four of the five groups. It is wrong for the
+ * fifth by enough to break it: the board editor inside Sharing is a canvas you
+ * drag onto with a library beside it, and at 3xl the split came out as a 208px
+ * canvas next to a 320px palette, with every link's row overflowing the body
+ * sideways underneath it.
+ *
+ * What this pins is that the width is *decided by the group* rather than
+ * written once in the JSX, and that the decision still says what it said. Both
+ * halves matter: a later edit that hardcodes either class puts every group
+ * back on one width, and nothing on screen says which one is wrong until
+ * somebody opens the one that is.
+ */
+describe('how wide the dialog opens', () => {
+  it('takes its width from the group rather than from one class', () => {
+    expect(DIALOG).toContain('GROUP_WIDTH[group]')
+    // Written out as whole class names, both of them: Tailwind scans this file
+    // as text and an interpolated `max-w-${…}` is a class it never emits.
+    const widths = new Set([...DIALOG.matchAll(/max-w-([\w-]+)/g)].map((m) => m[1]))
+    expect(widths).toEqual(new Set(['6xl', '3xl']))
+  })
+
+  it('gives the canvas to sharing and to nothing else', () => {
+    for (const group of SETTINGS_GROUPS) {
+      expect(GROUP_WIDTH[group] === 'canvas', group).toBe(group === 'sharing')
+    }
   })
 })
