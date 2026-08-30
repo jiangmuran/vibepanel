@@ -185,16 +185,19 @@ func (s *Server) handleTokenUsage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The panel's clock, not the process's. These have to agree with the day
+	// labels the ingest writes or "today" names a bucket that does not exist.
+	loc := s.loc(r.Context())
 	now := time.Now()
-	today := now.Format("2006-01-02")
-	from := now.AddDate(0, 0, -(days - 1)).Format("2006-01-02")
+	today := dayIn(loc, now)
+	from := dayShift(loc, now, -(days - 1))
 
 	ranged := store.UsageFilter{From: from, To: today, Tool: tool, CWDPrefix: cwdPrefix}
 	// The heatmap is deliberately not narrowed by the range control. It is the
 	// "how has this year gone" view, and a 53-week grid holding seven days of
 	// data is not a smaller version of that -- it is a broken one.
 	yearly := store.UsageFilter{
-		From:      now.AddDate(0, 0, -(heatmapDays - 1)).Format("2006-01-02"),
+		From:      dayShift(loc, now, -(heatmapDays - 1)),
 		To:        today,
 		Tool:      tool,
 		CWDPrefix: cwdPrefix,

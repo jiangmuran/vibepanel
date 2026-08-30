@@ -46,6 +46,10 @@ type Server struct {
 	Detector *session.Detector
 	Sampler  *sysmon.Sampler
 
+	// zone caches the configured time zone. Not a field to set: read it with
+	// s.loc(ctx), which resolves the setting the first time and remembers.
+	zone zoneCache
+
 	// Restart asks the process to stop and be brought back by whatever
 	// supervises it. Nil in tests and in the admin CLI, which is also what the
 	// handler reports to somebody running the panel from a terminal: nothing

@@ -18123,3 +18123,52 @@ account out. It is built from the same origin set now.
 `VIBEPANEL_PUBLIC_PORT` covers 「我里外端口号不一样的」: the port people browse
 to, when a proxy listens on one and forwards to another. Empty means the same
 as the listen port.
+
+## A time zone setting, and the trap under it
+
+Asked for as a small thing: 「用量统计和其他面板上按天算的东西 可以在设置里面手动
+设置时区」. It is not a display preference. A usage record's day is decided when
+the transcript is read and written into `usage_daily.day` as a `YYYY-MM-DD`
+string, and every query afterwards is a string comparison — so the zone is the
+boundary the buckets are cut on, and changing it cannot re-label what is
+already there. Changing it drops the scan cursor instead, and the next pass
+re-reads every transcript. Seconds of disk, once, at a moment somebody chose.
+
+Underneath was a bug that predates the setting. `usage.Scanner.Loc` decides
+which day a record lands in, has existed since the feature was written, and was
+**never set** — so production bucketed in the process's zone. The query side
+computed "today" separately, from a bare `time.Now()`. Two independent answers
+to one question, agreeing only because both happened to be `time.Local`. Set
+one without the other and nothing reports anything: the query names a bucket
+the ingest never writes, so the heatmap's last square and the "today" row go
+empty, forever, with no error in any log.
+
+They read one setting now. What took three attempts was proving it:
+
+- The first test compared the two at `time.Now()` across five zones and passed
+  with the query side put back on the process clock. At most times of day every
+  zone agrees on the date, so it proved nothing for sixteen hours out of
+  twenty-four. It compares `dayIn(loc, at)` against the ingest at instants
+  chosen to separate zones now, and asserts that they *are* separated.
+- A regex for `time.Now().Format(...)` missed the real spelling, which is
+  `now := time.Now()` on one line and `now.Format(...)` on another. So the
+  invariant is structural instead: `dayLayout` is written in exactly one file
+  and every label comes through `dayIn` / `dayShift` / `dayParse`, all of which
+  take the zone as an argument. `TestOnlyThisFileNamesTheDayLayout` is the
+  guard, and it catches the mutation the regex could not.
+
+`internal/tz` embeds the zone database. `CGO_ENABLED=0` already means no libc
+lookup, so `LoadLocation` reads `/usr/share/zoneinfo` — which a scratch
+container does not have, and the whole distribution story is a static binary on
+a machine you know nothing about. The test hides the system database with
+`ZONEINFO` before loading, because without that it passes whether or not
+`time/tzdata` is imported.
+
+Only the offset goes to a browser, never the name. A page that wants to show
+the panel's day rather than the viewer's needs the offset and nothing else, and
+an IANA name is a location fact about the owner — the same reason red line 8
+refuses the hostname.
+
+Verified in a browser at a moment when it could be seen: setting
+`Pacific/Midway` moved the panel's day from 2026-08-30 to 2026-08-29, which is
+Midway's real date.

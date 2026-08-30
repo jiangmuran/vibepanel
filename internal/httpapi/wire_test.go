@@ -338,6 +338,7 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"update.installed":        true,
 		"webhooks.changed":        true,
 		"setup.rejected":          true,
+		"timezone.changed":        true,
 		"session.origin":          true,
 	}
 

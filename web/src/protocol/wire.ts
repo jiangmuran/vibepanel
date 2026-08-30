@@ -548,6 +548,10 @@ export interface SettingsInfo {
   pasteDir: string
   /** What happens to its path: "type" | "buffer" | "both". */
   pasteThen: string
+  /** What the panel calls a day. Empty means the machine's own zone. */
+  timezone?: string
+  timezoneOffset?: number
+  panelDay?: string
 }
 
 /** Which agent an install request is about. The server accepts these two and

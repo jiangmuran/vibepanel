@@ -1,4 +1,5 @@
 import { EnvSettings } from './EnvSettings'
+import { TimeZone } from './TimeZone'
 import { RestartPanel } from './RestartPanel'
 import { TourAgain } from './TourAgain'
 import type { SettingsInfo } from '../../protocol/wire'
@@ -118,6 +119,7 @@ export function PanelGroup({ info }: { info: SettingsInfo | null }) {
           </div>
         </Section>
       )}
+      <TimeZone info={info} />
       <EnvSettings />
       <RestartPanel />
       <TourAgain />

@@ -78,6 +78,7 @@ export const GROUP_WIDTH: Record<SettingsGroup, 'reading' | 'canvas'> = {
  * section moves, and moving sections is the whole content of this change.
  */
 export const SETTINGS_SECTIONS = [
+  'timezone',
   'profiles',
   'reporting',
   'tune',
@@ -126,6 +127,7 @@ export const SECTION_GROUP: Record<SettingsSection, SettingsGroup> = {
   status: 'panel',
   // Above the restart button on purpose: these take effect on the next start,
   // and the two controls are one sentence.
+  timezone: 'panel',
   env: 'panel',
   restart: 'panel',
   tour: 'panel',

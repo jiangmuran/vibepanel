@@ -156,6 +156,22 @@ const DICT = {
   // The three reasons the server can give, as codes rather than as sentences:
   // it sends `passkeyReason` and both the login page and the settings page
   // translate it. It used to send English prose straight into a Chinese page.
+  'tzone.title': { zh: '时区', en: 'Time zone' },
+  'tzone.what': {
+    zh: '决定用量统计里「今天」从几点开始',
+    en: 'Where the day starts for every per-day number.',
+  },
+  'tzone.machine': { zh: '这台机器的时区', en: "the machine's own zone" },
+  'tzone.save': { zh: '保存', en: 'Save' },
+  'tzone.useBrowser': { zh: '用这个浏览器的：{zone}', en: "Use this browser's: {zone}" },
+  'tzone.todayIs': { zh: '面板认为今天是 {day}', en: 'The panel calls today {day}.' },
+  'tzone.rescan': {
+    zh: '改动后会重读一遍历史记录',
+    en: 'Changing it re-reads the transcript history.',
+  },
+  'tzone.saved': { zh: '已保存', en: 'Saved.' },
+  'tzone.rebuilding': { zh: '已保存，正在重算历史', en: 'Saved; rebuilding the history.' },
+  'tzone.failed': { zh: '没保存成功', en: 'Not saved.' },
   'env.grpReach': { zh: '怎么访问', en: 'How people reach it' },
   'env.grpTls': { zh: '证书', en: 'Certificate' },
   'env.grpAccess': { zh: '谁能连', en: 'Who may connect' },

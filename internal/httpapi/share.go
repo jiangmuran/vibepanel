@@ -910,7 +910,7 @@ func (s *Server) buildShareDashboard(ctx context.Context, link store.ShareLink,
 	}
 	// Today, on the server's clock. The browser's would put "closed today" and
 	// "finished today" on a different day for a reader in another timezone.
-	dayStart := startOfLocalDay(time.Now())
+	dayStart := s.startOfDay(ctx)
 
 	usage := s.shareUsage(ctx, sessions, out.UsageReadable)
 
@@ -1392,11 +1392,14 @@ func (s *Server) spendNow(ctx context.Context, projects []store.Project,
 	}
 	snap.readable, snap.scannedAt = true, pass.At.Unix()
 
-	now := time.Now()
-	snap.date = now.Format("2006-01-02")
+	// The panel's clock. `date` is compared against the day labels the usage
+	// ingest writes, so if these two disagree the spend tile reports zero for
+	// a day that has numbers in it.
+	now := s.nowIn(ctx)
+	snap.date = dayIn(s.loc(ctx), now)
 	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	snap.hoursToday = now.Sub(midnight).Hours()
-	from := now.AddDate(0, 0, -(shareSpendHistoryDays - 1)).Format("2006-01-02")
+	from := dayShift(s.loc(ctx), now, -(shareSpendHistoryDays - 1))
 
 	history := store.UsageFilter{From: from, To: snap.date, CWDPrefix: cwdPrefix}
 	days, err := s.DB.UsageByDay(ctx, history)
@@ -1420,7 +1423,7 @@ func (s *Server) spendNow(ctx context.Context, projects []store.Project,
 	}
 
 	window := store.UsageFilter{
-		From:      now.AddDate(0, 0, -(shareSpendWindowDays - 1)).Format("2006-01-02"),
+		From:      dayShift(s.loc(ctx), now, -(shareSpendWindowDays - 1)),
 		To:        snap.date,
 		CWDPrefix: cwdPrefix,
 	}
@@ -1502,10 +1505,10 @@ func (s *Server) shareSpendFor(ctx context.Context, projects []store.Project, se
 
 	month, lastMonth := "", ""
 	yesterday := ""
-	if d, err := time.Parse("2006-01-02", snap.date); err == nil {
+	if d, err := dayParse(snap.date); err == nil {
 		month = snap.date[:7]
 		lastMonth = d.AddDate(0, -1, 0).Format("2006-01")
-		yesterday = d.AddDate(0, 0, -1).Format("2006-01-02")
+		yesterday = dayIn(time.UTC, d.AddDate(0, 0, -1))
 	}
 	windowFrom := spendDaysFrom(snap.date, shareSpendWindowDays)
 
@@ -1636,11 +1639,11 @@ func spendDaysFrom(today string, n int) string {
 	if today == "" || n <= 0 {
 		return ""
 	}
-	d, err := time.Parse("2006-01-02", today)
+	d, err := dayParse(today)
 	if err != nil {
 		return ""
 	}
-	return d.AddDate(0, 0, -(n - 1)).Format("2006-01-02")
+	return dayIn(time.UTC, d.AddDate(0, 0, -(n-1)))
 }
 
 // shareKind summarises what is running in a pane without quoting it.

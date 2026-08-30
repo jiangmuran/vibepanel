@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"github.com/jiangmuran/vibepanel/internal/tz"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -31,6 +32,7 @@ func (s *Server) registerSettingsRoutes(r chi.Router) {
 	r.Post("/settings/restart", s.handleRestart)
 	r.Post("/settings/tour", s.handleTourDone)
 	r.Put("/settings/paste", s.handlePutPaste)
+	r.Put("/settings/timezone", s.handlePutTimeZone)
 	r.Get("/settings/env", s.handleGetEnv)
 	r.Put("/settings/env", s.handlePutEnv)
 	r.Get("/settings/tune", s.handleTuneStatus)
@@ -83,6 +85,18 @@ type settingsResponse struct {
 	PasskeysUsable bool   `json:"passkeysUsable"`
 	PasskeyReason  string `json:"passkeyReason,omitempty"`
 	Username       string `json:"username"`
+
+	// TimeZone is what the panel calls a day. Empty means the machine's own.
+	//
+	// The offset goes with it because a page that wants to show the panel's
+	// day rather than the viewer's needs one, and a name is a location fact
+	// about the owner -- the same reason red line 8 refuses the hostname.
+	TimeZone       string `json:"timezone"`
+	TimeZoneOffset int    `json:"timezoneOffset"`
+	// PanelDay is today on the panel's clock, which is the string every usage
+	// query is keyed by. Shown so somebody choosing a zone can see the answer
+	// change rather than trusting that it did.
+	PanelDay string `json:"panelDay"`
 
 	// Paste is where a screenshot pasted into a terminal lands, and what
 	// happens to its path afterwards. "panel" | "session", and
@@ -246,6 +260,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	// somebody went looking for a feature that was on screen the whole time
 	// on a machine configured differently.
 	out.PasskeyReason = s.Cfg.PasskeyBlocker()
+	out.TimeZone, _ = s.DB.GetSetting(r.Context(), TimeZoneKey, "")
+	out.TimeZoneOffset = zoneOffsetMinutes(s.loc(r.Context()))
+	out.PanelDay = s.today(r.Context())
 	if u, ok := currentUserFrom(r); ok {
 		out.Username = u.Username
 	}
@@ -466,4 +483,83 @@ func hookTarget(agent string, st hooks.Status) string {
 	default:
 		return st.SettingsPath
 	}
+}
+
+// handlePutTimeZone sets the zone every day boundary in the panel is measured
+// in, and rebuilds the usage history in it.
+//
+// The rebuild is the whole reason this is not a two-line setter. A record's day
+// is decided when the transcript is read and written into `usage_daily.day` as
+// a `YYYY-MM-DD` string; every query afterwards is a string comparison. So
+// changing the zone does not re-label anything on its own -- it leaves a table
+// bucketed by yesterday's rule and a "today" computed by today's, which is a
+// heatmap missing its last square and a spend tile reading zero on a day with
+// numbers in it, with no error anywhere.
+//
+// Dropping the scan cursor is what fixes that: the next pass re-reads every
+// transcript. It costs seconds of disk on a machine with a year of history,
+// once, at a moment somebody chose.
+func (s *Server) handlePutTimeZone(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Zone string `json:"zone"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	name := strings.TrimSpace(req.Zone)
+	// Refused rather than stored and quietly ignored. A setting that shows one
+	// thing and does another is the failure this whole file avoids.
+	if !tz.Valid(name) {
+		writeErr(w, http.StatusBadRequest, "not a time zone this build knows: "+name)
+		return
+	}
+
+	ctx := r.Context()
+	before, _ := s.DB.GetSetting(ctx, TimeZoneKey, "")
+	if err := s.DB.SetSetting(ctx, TimeZoneKey, name); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.zone.forget()
+
+	rebuilt := int64(0)
+	if before != name {
+		n, err := s.DB.ForgetEveryUsageFile(ctx)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		rebuilt = n
+		if s.Tokens != nil {
+			// The scanner writes the labels, so it has to be told too. This is
+			// the pair that was already wrong before anybody changed a zone:
+			// Scanner.Loc existed and was never set, while the query side used
+			// the process clock, so the two could disagree with nothing to say
+			// so.
+			if loc, err := tz.Load(name); err == nil && s.Tokens.Scanner != nil {
+				s.Tokens.Scanner.Loc = loc
+			}
+			s.Tokens.Ensure(true)
+		}
+	}
+	if u, ok := currentUserFrom(r); ok {
+		s.audit(ctx, "timezone.changed", u.Username, s.clientIP(r), name)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"zone":     name,
+		"rebuilt":  rebuilt,
+		"offset":   zoneOffsetMinutes(s.loc(ctx)),
+		"nowLabel": s.today(ctx),
+	})
+}
+
+// zoneOffsetMinutes is how far the panel's clock is from UTC right now.
+//
+// Minutes rather than a name, and this is the only zone fact that goes to a
+// browser. Red line 8 refuses the hostname on the share surface because it
+// says where the owner is; an IANA name says the same thing more precisely. An
+// offset is what a page needs to render the panel's day rather than its own.
+func zoneOffsetMinutes(loc *time.Location) int {
+	_, off := time.Now().In(loc).Zone()
+	return off / 60
 }

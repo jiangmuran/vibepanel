@@ -460,3 +460,30 @@ func (d *DB) UsageByTool(ctx context.Context, f UsageFilter) (map[string]UsageTo
 	}
 	return out, fileRows.Err()
 }
+
+// ForgetEveryUsageFile drops the whole scan cursor, so the next pass re-reads
+// every transcript.
+//
+// Named apart from ForgetUsageFiles above, which removes the rows for
+// transcripts that are gone from disk. These two do the opposite thing to the
+// same table -- one is housekeeping, this one is a deliberate rebuild -- and
+// the compiler catching the collision is the only reason they are not one
+// function with a subtle argument.
+//
+// Used when the time zone changes, and only then. The day a record belongs to
+// is decided at ingest and written into usage_daily.day as a string; every
+// query afterwards is a string comparison. So a new zone does not re-label
+// history -- it has to be read again.
+//
+// usage_daily is not deleted here. It cascades: its `path` references
+// usage_files with ON DELETE CASCADE, so removing the cursor removes the rows
+// that were derived from it, in one statement and one transaction. Deleting
+// both by hand would be two statements that can disagree, and the half-done
+// state is a panel reporting zero usage forever.
+func (d *DB) ForgetEveryUsageFile(ctx context.Context) (int64, error) {
+	res, err := d.sql.ExecContext(ctx, `DELETE FROM usage_files`)
+	if err != nil {
+		return 0, fmt.Errorf("store: forget usage files: %w", err)
+	}
+	return res.RowsAffected()
+}

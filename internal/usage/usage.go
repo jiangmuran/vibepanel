@@ -674,3 +674,17 @@ func (s *Scanner) ReadFile(tool Tool, path string) File {
 	f.Skipped = res.skipped
 	return f
 }
+
+// DayForTest is the day label this scanner would write for a timestamp.
+//
+// Exported for one test, and it is worth the export. The label a transcript
+// record lands under and the label a query asks for are produced by different
+// packages -- this one at ingest, internal/httpapi at query time -- and when
+// they disagree nothing reports it: the query names a bucket that was never
+// written, so the heatmap's last square and the "today" row go quietly empty.
+// TestTheIngestAndTheQueryAgreeOnToday compares them, and it cannot without
+// being able to ask this side what it would write.
+func DayForTest(s *Scanner, at time.Time) string {
+	day, _ := localDay(at.Format(time.RFC3339), s.loc())
+	return day
+}

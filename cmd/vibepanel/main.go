@@ -32,6 +32,7 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/sysmon"
 	"github.com/jiangmuran/vibepanel/internal/tlsmgr"
 	"github.com/jiangmuran/vibepanel/internal/tmux"
+	"github.com/jiangmuran/vibepanel/internal/tz"
 	"github.com/jiangmuran/vibepanel/internal/usage"
 	"github.com/jiangmuran/vibepanel/internal/version"
 	"github.com/jiangmuran/vibepanel/internal/webui"
@@ -236,8 +237,27 @@ func cmdServe(args []string) error {
 	// different user with no transcripts, and the panel says so on screen
 	// rather than reporting zero.
 	if home, herr := os.UserHomeDir(); herr == nil {
+		scanner := usage.DefaultScanner(home)
+		// The zone the day labels are written in, which has to be the same one
+		// the queries ask about.
+		//
+		// Scanner.Loc has existed since this was built and was never set, so
+		// production always bucketed in the process's own zone -- and `today`
+		// on the query side was computed separately, with a bare time.Now().
+		// Setting one without the other is silent: the queries name a bucket
+		// the ingest never writes, so the heatmap's last square and the
+		// "today" row go empty and nothing reports an error. They are read
+		// from the same setting now, and TestTheIngestAndTheQueryAgreeOnToday
+		// is what says so.
+		if name, err := a.db.GetSetting(ctx, httpapi.TimeZoneKey, ""); err == nil {
+			if loc, lerr := tz.Load(name); lerr == nil {
+				scanner.Loc = loc
+			} else {
+				logger.Warn("time zone setting could not be loaded", "name", name, "err", lerr)
+			}
+		}
 		srv.Tokens = &usage.Ingester{
-			Scanner: usage.DefaultScanner(home),
+			Scanner: scanner,
 			DB:      a.db,
 			Log:     logger,
 		}

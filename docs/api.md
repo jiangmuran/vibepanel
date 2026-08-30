@@ -519,6 +519,7 @@ see looks like.
 ### `POST /api/projects/{id}/mkdir`
 ### `POST /api/clipboard`
 ### `PUT /api/settings/paste`
+### `PUT /api/settings/timezone`
 ### `GET /api/notes`
 ### `PUT /api/notes`
 ### `GET /api/projects/{id}/todos`
@@ -538,6 +539,25 @@ lands, and what happens to its path. `dir` defaults to `panel`, which is a
 directory the panel owns: a picture pasted at an agent used to land in the
 session's working directory, which for an agent session is a git repository.
 `GET /api/settings` carries both as `pasteDir` and `pasteThen`.
+
+`PUT /api/settings/timezone` takes `{"zone": "Asia/Shanghai"}` -- an IANA name,
+or `""` for the machine's own zone -- and decides where the day starts for
+every per-day number in the panel. An unknown name is a 400 rather than a
+stored value that quietly does nothing.
+
+It is not only a label. A usage record's day is decided when the transcript is
+read and written into `usage_daily.day` as a string, and every query afterwards
+is a string comparison, so a new zone cannot re-label what is already there.
+Changing it therefore drops the scan cursor and the next pass re-reads every
+transcript; the response says how many files that was as `rebuilt`, and
+`rebuilt: 0` means the zone was already what you asked for. `GET /api/settings`
+carries the setting back as `timezone`, with `timezoneOffset` in minutes and
+`panelDay` -- the label the usage tables are currently keyed by.
+
+The offset is there because a page that wants to show the panel's day rather
+than the viewer's needs one, and the offset is all it needs: an IANA name is a
+location fact about the owner, which is the same reason the share surface
+refuses the hostname.
 
 `POST /api/projects/{id}/mkdir` takes `{"path": "sub/dir", "name": "new"}` and
 makes one directory inside the project. Same helper and same refusals as the

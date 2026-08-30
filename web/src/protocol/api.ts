@@ -230,6 +230,11 @@ export const api = {
   /** Puts the first-run tour away, on the server: it is read once per person,
    *  not once per browser. */
   envSettings: () => request<EnvSettings>('/api/settings/env'),
+  setTimeZone: (zone: string) =>
+    request<{ zone: string; rebuilt: number; offset: number; nowLabel: string }>(
+      '/api/settings/timezone',
+      { method: 'PUT', body: JSON.stringify({ zone }) },
+    ),
   saveEnvSettings: (values: Record<string, string>) =>
     request<EnvSettings>('/api/settings/env', {
       method: 'PUT',

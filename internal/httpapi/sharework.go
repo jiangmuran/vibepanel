@@ -190,15 +190,15 @@ func (s *Server) shareRepoWork(ctx context.Context, projects []store.Project, se
 		AgeSeconds: -1, WindowDays: days,
 		Days: []shareRepoDay{}, ByProject: []shareRepoProject{},
 	}
-	today := time.Now().Format("2006-01-02")
+	today := s.today(ctx)
 	byDay := map[string]*shareRepoDay{}
 	if needs[store.NeedRepoDays] {
 		// The frame is built before anything is read, so a day nothing happened
 		// on is a zero column rather than a missing one. A series drawn only
 		// from the days with commits in them has no weekends in it.
-		start := time.Now().AddDate(0, 0, -(days - 1))
+		start := s.nowIn(ctx).AddDate(0, 0, -(days - 1))
 		for i := 0; i < days; i++ {
-			label := start.AddDate(0, 0, i).Format("2006-01-02")
+			label := dayShift(s.loc(ctx), start, i)
 			out.Days = append(out.Days, shareRepoDay{Label: label})
 		}
 		for i := range out.Days {
