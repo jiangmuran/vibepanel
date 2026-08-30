@@ -80,6 +80,24 @@ export function Webhooks() {
   }, [])
 
   const save = async (next: Webhook[]) => {
+    // Refused here rather than by the server, which answers 400 "a webhook
+    // needs a URL" -- true, and it does not say which of five rows, and it
+    // arrives as a red toast over a form the person was in the middle of.
+    //
+    // There is always such a row while somebody is filling one in: the custom
+    // preset is empty by definition, because choosing the option that says you
+    // will type the URL yourself and being given one is worse than nothing.
+    // Before this, pressing "custom" *saved* immediately and so failed
+    // immediately, every time, and nothing was added.
+    const blank = next.findIndex((w) => w.url.trim() === '')
+    if (blank !== -1) {
+      showToast({
+        kind: 'error',
+        key: 'wh.needsUrl',
+        detail: next[blank].name.trim() || String(blank + 1),
+      })
+      return
+    }
     setBusy(true)
     try {
       setList(await api.saveWebhooks(next))
@@ -193,7 +211,10 @@ export function Webhooks() {
             key={p.key}
             type="button"
             disabled={busy}
-            onClick={() => void save([...list, { ...p.make(), id: '' }])}
+            // Added to the page, not to the server. A new row has nothing in
+            // it yet -- the custom one has nothing in it on purpose -- and the
+            // Save button below is what persists the list.
+            onClick={() => setList((l) => [...l, { ...p.make(), id: '' }])}
             data-testid="webhook-add"
             className="vp-press flex items-center gap-1 rounded-vp border border-hairline px-2 py-1 text-vp-sm text-ink-2 hover:text-ink disabled:opacity-50"
           >

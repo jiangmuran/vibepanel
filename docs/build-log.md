@@ -18015,3 +18015,34 @@ monospace face also has and break the column alignment.
 
 Shift+Tab joined the key bar, on the row that never scrolls. It is `CSI Z`, no
 phone keyboard produces it, and Claude Code cycles its permission mode with it.
+
+## The one webhook preset that could never be added
+
+「点添加自定义web hook会报错」, and it did, every time, for the same reason it
+was reported rather than caught: the add button POSTed the whole list the
+moment it was pressed, and the custom preset is empty by definition. The server
+answered 400 "a webhook needs a URL" — correctly — and nothing was added. The
+three named presets ship with a `YOUR_KEY` placeholder in the URL, so they
+saved fine and the button looked like it worked.
+
+Adding a row is a change to the page now, not to the server; the Save button
+below it is what persists the list, which is what it was already for. And an
+empty URL is refused in the client with a sentence, rather than by a 400
+landing on top of the form the person is in the middle of filling in.
+
+Nothing in `render-check` had ever opened this page. It does now, and the check
+fails in exactly the reported shape — 0 rows before, 0 rows after, and a
+complaint — when the add button is put back the way it was.
+
+## Why a phone with notifications on hears nothing
+
+Not a bug, and worth writing down because it will be asked again. A browser
+notification is raised by the page, so the page has to be running to notice the
+transition — a phone that has frozen the tab notices nothing, and there is
+nothing the panel can do about that from inside the tab. The mechanism that
+reaches a phone which is not looking at the panel is the webhook, which is the
+one that could not be added.
+
+And underneath both: a notification fires on the transition *into* `waiting`,
+which without the reporters installed is a state the heuristic almost never
+reaches. Same root as 「都跑完了为什么状态还是蓝色」.

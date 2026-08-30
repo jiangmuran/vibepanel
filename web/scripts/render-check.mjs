@@ -3995,6 +3995,57 @@ try {
       note('FAIL', 'settings', `the hook snippet is not valid JSON: ${JSON.stringify(snippet.slice(0, 200))}`)
     }
 
+    // ── webhooks ───────────────────────────────────────────────────────────
+    //
+    // Adding a custom one. It is empty by definition -- choosing the option
+    // that says you will type the URL yourself and being handed one is worse
+    // than nothing -- and the button used to POST the list the moment it was
+    // pressed, so the server answered 400 "a webhook needs a URL" and nothing
+    // was ever added. 「点添加自定义web hook会报错」, every time, and nothing
+    // here had ever opened this page.
+    await page.locator('[data-testid="settings-group-notify"]').click()
+    await sleep(700)
+    const addButtons = page.locator('[data-testid="webhook-add"]')
+    const addCount = await addButtons.count()
+    if (addCount === 0) {
+      note('FAIL', 'webhooks', 'no way to add a webhook on the notifications group')
+    } else {
+      const rowsBefore = await page.locator('[data-testid="webhook-row"]').count()
+      // The last preset is the custom one: the only one with no URL in it.
+      await addButtons.nth(addCount - 1).click()
+      await sleep(600)
+      const rowsAfter = await page.locator('[data-testid="webhook-row"]').count()
+      const toastText = await page
+        .locator('[data-testid="toast"]')
+        .allInnerTexts()
+        .catch(() => [])
+      if (rowsAfter !== rowsBefore + 1) {
+        note('FAIL', 'webhooks',
+          `adding a custom webhook went from ${rowsBefore} rows to ${rowsAfter}` +
+          (toastText.length ? `, saying: ${JSON.stringify(toastText.join(' / '))}` : ''))
+      } else if (toastText.some((x) => /error|失败|URL|地址/i.test(x))) {
+        note('FAIL', 'webhooks',
+          `the row was added and it complained anyway: ${JSON.stringify(toastText.join(' / '))}`)
+      } else {
+        note('PASS', 'webhooks', 'a custom webhook can be added and is not saved empty')
+      }
+      // And saving it while it is still empty is refused in words, not by a
+      // 400 landing on top of the form.
+      const saveBtn = page.locator('[data-testid="webhook-save"]')
+      if (await saveBtn.isVisible().catch(() => false)) {
+        await saveBtn.click()
+        await sleep(700)
+        const said = await page.locator('[data-testid="toast"]').allInnerTexts().catch(() => [])
+        if (said.length === 0) {
+          note('FAIL', 'webhooks', 'saving a webhook with no URL said nothing at all')
+        } else {
+          note('PASS', 'webhooks', `saving an empty one is refused: ${JSON.stringify(said.join(' / '))}`)
+        }
+      }
+    }
+    await page.locator('[data-testid="settings-group-sessions"]').click()
+    await sleep(600)
+
     const installBtn = page.locator('[data-testid="hooks-install"]')
     if (await installBtn.isVisible().catch(() => false)) {
       await installBtn.click()

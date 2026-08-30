@@ -566,6 +566,7 @@ const DICT = {
   'wh.testOk': { zh: '发出去了', en: 'Sent' },
   'wh.testFailed': { zh: '没发出去', en: 'Not sent' },
   'wh.saveFailed': { zh: '没保存上', en: 'Not saved' },
+  'wh.needsUrl': { zh: '有个 webhook 还没填地址', en: 'A webhook has no URL yet.' },
   'wh.placeholder': { zh: '还有 YOUR_ 没替换成你自己的 key。', en: 'A YOUR_ placeholder is still there instead of your key.' },
   'wh.presetBark': { zh: 'Bark', en: 'Bark' },
   'wh.presetNtfy': { zh: 'ntfy', en: 'ntfy' },
