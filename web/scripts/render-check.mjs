@@ -3056,6 +3056,35 @@ try {
             } else {
               note('PASS', 'mobile', `a finger scrolled back from TOUCH_${before} to TOUCH_${after}`)
             }
+
+            // And the CSS that makes the gesture above work on a real phone,
+            // which this check cannot otherwise see.
+            //
+            // attachTouchSelection waits for the finger to pass a slop
+            // threshold before deciding the drag is a scroll and calling
+            // preventDefault. A real browser has by then handed the gesture to
+            // the compositor: every touchmove after that is cancelable:false,
+            // preventDefault does nothing, and the terminal does not move.
+            // Synthesised touches go straight to the main thread and stay
+            // cancelable forever, so the drag above passes either way. It
+            // shipped broken and was found by hand.
+            // The host xterm was mounted into, which is the element the
+            // touch handlers are attached to.
+            const touchAction = await touch
+              .evaluate(() => {
+                const x = document.querySelector('.xterm')
+                const host = x?.parentElement
+                return host ? getComputedStyle(host).touchAction : 'no terminal'
+              })
+              .catch(() => 'unreadable')
+            if (touchAction !== 'none') {
+              note('FAIL', 'mobile',
+                `the terminal declares touch-action: ${touchAction}. It has to be none, or the ` +
+                'browser claims the vertical pan before the scroll handler decides and dragging ' +
+                'does nothing on a phone -- which this check cannot reproduce with synthetic touches.')
+            } else {
+              note('PASS', 'mobile', 'the terminal leaves the vertical pan to the scroll handler')
+            }
             await touch.screenshot({ path: join(SHOTS, 'touch-scrollback.png') })
           }
         }

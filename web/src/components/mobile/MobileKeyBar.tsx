@@ -85,6 +85,10 @@ export function MobileKeyBar({ onSend }: { onSend: (bytes: string) => void }) {
         </Key>
         <Key label="esc" onPress={key('escape')} wide />
         <Key label="tab" onPress={key('tab')} wide />
+        {/* On the primary row rather than the scrolling one: the agents this
+            panel is for bind it, and a key that scrolls out of sight is a key
+            that is not there. */}
+        <Key label="⇧tab" onPress={key('shiftTab')} wide title={t('key.shiftTab')} />
         <Key label="ctrl" onPress={() => setCtrl((v) => !v)} active={ctrl} wide
           title={t('key.sticky')} />
         <Key label="alt" onPress={() => setAlt((v) => !v)} active={alt} wide

@@ -530,7 +530,30 @@ export function TerminalView({
       data-fullscreen={fullscreen ? 'true' : undefined}
       className={`relative overflow-hidden ${className ?? ''}`}
     >
-      <div ref={hostRef} className="h-full w-full" />
+      {/* touch-action: none wherever the drag-to-scroll handler is attached,
+          and without it that handler does nothing on a real phone.
+       *
+       * attachTouchSelection waits for the finger to move past a slop
+       * threshold before deciding the gesture is a scroll and calling
+       * preventDefault. By then the browser has already handed the gesture to
+       * the compositor: every touchmove after that is `cancelable: false` and
+       * preventDefault is ignored, so the terminal never scrolls and the page
+       * sometimes moves instead.
+       *
+       * This is invisible to the render check, and that is not the check's
+       * fault. Synthesised touch events go straight to the main thread and are
+       * cancelable for as long as anybody wants, so the drag passes there and
+       * fails in a hand. 「手机端无法滚动终端」 is how it was found.
+       *
+       * `none` rather than `pan-x`: nothing here is a native horizontal
+       * scroller. The key bar is a separate strip and keeps its own pan-x, and
+       * touch-action does not stop events reaching a JS handler on an
+       * ancestor -- it only says what the browser may pan by itself. */}
+      <div
+        ref={hostRef}
+        className="h-full w-full"
+        style={touchSelect ? { touchAction: 'none' } : undefined}
+      />
       {offerControl && (
         <button
           type="button"

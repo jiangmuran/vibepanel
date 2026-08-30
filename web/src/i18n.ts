@@ -237,6 +237,7 @@ const DICT = {
   'key.interrupt': { zh: '中断 (Ctrl-C)', en: 'Interrupt (Ctrl-C)' },
   'key.enter': { zh: '回车', en: 'Enter' },
   'key.sticky': { zh: '作用于下一个按键', en: 'Applies to the next key' },
+  'key.shiftTab': { zh: '很多 agent 用它切换模式', en: 'Agents bind this to cycle modes.' },
   'key.up': { zh: '上', en: 'Up' },
   'key.down': { zh: '下', en: 'Down' },
   'key.left': { zh: '左', en: 'Left' },

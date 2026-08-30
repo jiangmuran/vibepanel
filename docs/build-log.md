@@ -17932,3 +17932,31 @@ it. Found by looking at a screenshot of a real README rather than by a test.
 `safeBody` keeps tab and newline, normalises CRLF instead of putting a box at
 the end of every line, and still removes the bidi overrides, which lie about
 the order of a paragraph exactly as they do about a filename.
+
+## Three things a phone does that a headless browser does not
+
+「手机端无法滚动终端」 — and the render check has passed a drag-to-scroll
+assertion the whole time.
+
+Both are true. `attachTouchSelection` waits for the finger to move past a slop
+threshold before deciding the gesture is a scroll and calling `preventDefault`.
+By then a real browser has handed the gesture to the compositor: every
+`touchmove` after that arrives with `cancelable: false`, `preventDefault` does
+nothing, and the terminal never moves. Synthesised touches go straight to the
+main thread and stay cancelable for as long as anybody wants, so the same code
+passes in Playwright and fails in a hand.
+
+The fix is `touch-action: none` on the terminal host, so the browser never
+starts a vertical pan of its own and the handler is the only thing deciding.
+The check now reads the computed style as well as performing the drag, which is
+the only part of this it can actually see.
+
+「渲染终端的 emoji 好像有的缺失字库」 — the mono stack ended in the generic
+`monospace`, which on a phone resolves to a family with no emoji coverage, so
+the browser fell through to a last-resort face and drew tofu. Agent output is
+full of ✅ ⚠️ 🔴. The emoji faces are named now, and named *after* the CJK ones:
+they are proportional, and one earlier in the list would claim a codepoint a
+monospace face also has and break the column alignment.
+
+Shift+Tab joined the key bar, on the row that never scrolls. It is `CSI Z`, no
+phone keyboard produces it, and Claude Code cycles its permission mode with it.

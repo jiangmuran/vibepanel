@@ -258,7 +258,19 @@
   --font-mono: 'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, Consolas,
     'Liberation Mono', 'Sarasa Mono SC', 'Noto Sans Mono CJK SC',
     'Source Han Mono SC', 'WenQuanYi Zen Hei Mono', 'PingFang SC',
-    'Microsoft YaHei', NSimSun, monospace;
+    'Microsoft YaHei', NSimSun,
+    /* The emoji faces, last and deliberately named.
+       Agent output is full of them — ✅ ⚠️ 🔴 in every status line an agent
+       prints — and none of the monospace faces above has a single one. The
+       generic `monospace` that used to end this list resolves, on a phone, to
+       a family with no emoji coverage either, so the browser fell all the way
+       through to a last-resort face and drew tofu. 「手机端渲染终端的 emoji
+       好像有的缺失字库」.
+       After the CJK faces, never before: these are proportional, and putting
+       one earlier would let it claim a codepoint a monospace face also has and
+       break the column alignment the render check measures. */
+    'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji',
+    'Segoe UI Symbol', monospace;
 
   /* The type scale.
      Nine sizes were in use across the components -- 9, 10, 10.5, 11, 11.5, 12,

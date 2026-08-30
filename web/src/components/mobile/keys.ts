@@ -8,6 +8,12 @@
 export const KEY_SEQUENCES = {
   escape: '\x1b',
   tab: '\t',
+  // Shift+Tab is CSI Z, "cursor backward tabulation", and it is not something
+  // a phone keyboard can produce at all. It earns a key here because the
+  // agents this panel exists for bind it: Claude Code cycles its permission
+  // mode with it, and a reader on a phone who cannot send it is locked out of
+  // half the conversation.
+  shiftTab: '\x1b[Z',
   enter: '\r',
   backspace: '\x7f',
   up: '\x1b[A',
