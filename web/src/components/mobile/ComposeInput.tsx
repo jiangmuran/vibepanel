@@ -12,11 +12,9 @@ import { t, useLang } from '../../i18n'
  */
 export function ComposeInput({
   sessionId,
-  onSend,
   onPaste,
 }: {
   sessionId: string
-  onSend: (text: string) => void
   onPaste: (text: string, submit: boolean) => void
 }) {
   useLang()
@@ -26,7 +24,7 @@ export function ComposeInput({
   // What is in the box belongs to the session it was typed for.
   //
   // This component is rendered by position, not keyed, so switching session
-  // left the text sitting there while onSend quietly re-pointed at the new
+  // left the text sitting there while the send target quietly re-pointed at the new
   // one: compose a command for alpha, glance at bravo, tap Send, and it runs
   // in bravo. Measured, not theorised — `echo MEANT_FOR_ALPHA` executed in
   // bravo and never reached alpha. In a panel whose whole purpose is a lot of
@@ -71,11 +69,20 @@ export function ComposeInput({
     // airtight" for exactly that reason. What the check pins is the half this
     // file is responsible for -- routing a block with newlines down the paste
     // road instead of typing it.
-    if (text.includes('\n')) {
-      onPaste(text, newline)
-    } else {
-      onSend(newline ? text + '\r' : text)
-    }
+    // Everything goes down the paste road, not only what has a newline in it.
+    //
+    // The two roads differ in a way the sender cannot see and the agent can:
+    // the paste road writes the text, and then writes the carriage return as a
+    // *separate* write, while this branch used to append it and send one.
+    // Claude Code and Codex are both Ink applications, and Ink reads a burst
+    // that ends in CR as a paste -- so the return became a newline inside the
+    // prompt and the message sat there unsent. 「点击发送按钮不会发送消息 只会
+    // 换行」, on both agents.
+    //
+    // So there is one road now. It was two because a single line looked like
+    // it did not need the paste machinery, which is true of the bracketing and
+    // false of the part that matters.
+    onPaste(text, newline)
     setDrafts((d) => {
       const next = { ...d }
       delete next[sessionId]

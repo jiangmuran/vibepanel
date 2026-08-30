@@ -1268,8 +1268,8 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         {current && narrow && (
           <>
             <SelectionCopy selection={selection} />
-            <ComposeInput sessionId={current.id} onSend={sendToCurrent} onPaste={pasteToCurrent} />
-            <MobileKeyBar onSend={sendToCurrent} />
+            <ComposeInput sessionId={current.id} onPaste={pasteToCurrent} />
+            <MobileKeyBar onSend={sendToCurrent} onPaste={pasteToCurrent} />
           </>
         )}
 

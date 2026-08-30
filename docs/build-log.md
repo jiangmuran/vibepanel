@@ -18240,3 +18240,50 @@ stash` was used to test that, and the offending line was already committed, so
 stashing changed nothing and appeared to confirm it. The marker is
 `NOT-WRITTEN-BY-THE-VIBEPANEL-INSTALLER` now — uppercase and hyphenated, so no
 sentence can wander into it again.
+
+## Send did not send, on both agents
+
+「点击发送按钮不会发送消息 只会换行」. The composer had two roads and they
+differed in a way the sender cannot see and the agent can: text with a newline
+in it went down the paste road, which writes the text and *then* writes the
+carriage return as a separate write; everything else went down `writeText` with
+the return appended, one write.
+
+Claude Code and Codex are both Ink applications, and Ink reads a burst ending
+in CR as a paste — so the return became a newline inside the prompt and the
+message sat there unsent. The `y` and `n` keys on the mobile bar had it too;
+they were `sendRaw('y\r')`.
+
+There is one road now. It was two because a single line looks like it does not
+need the paste machinery, which is true of the bracketing and false of the part
+that mattered.
+
+## Claude could not be scrolled and Codex could
+
+Same gesture, same code, and the difference was one clause: the drag was
+claimed only `&& term.buffer.active.baseY !== 0`. A full-screen TUI has no
+scrollback — the alternate screen is one screen — so over Claude Code the
+handler declined, the browser took the gesture, and pulled to refresh over the
+top of it. Codex leaves its output in the normal buffer, so it had scrollback,
+so it scrolled. One report described both halves of the same line.
+
+A drag over a terminal with no history has to do nothing, visibly, rather than
+reload the page. `claimsVerticalDrag` is now given no way to ask about the
+buffer — the guard is its signature — and the scroll itself checks `baseY`
+afterwards.
+
+## A ninth key, and the row the comment said would not take one
+
+Adding Shift+Tab put nine keys on the row that must never hide anything, and
+its own comment already said eight come to 380px on a 320px phone. It wrapped
+and left a single `alt` alone on the second line: 「第二航之后一个alt 就很诡异」.
+
+`alt` moved to the scrolling row. That is a judgement rather than a symmetry —
+`^C` has a key of its own and `ctrl` is what the remaining combinations are
+typed with, so `alt` is the one an agent conversation almost never needs.
+
+The check measured `scrollWidth - clientWidth`, and the row *wraps* rather than
+overflowing, so that number is 0 whether it is on one line or three. It counts
+keys per line now. Not "must be one line": wrapping at 320 is deliberate and
+documented. What is forbidden is a line with one key on it, which is what was
+reported and what the mutation reproduces.

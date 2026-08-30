@@ -69,6 +69,24 @@ export function cellAt(
  * and twos: truncating each event on its own throws most of the movement away
  * and the terminal crawls behind the finger.
  */
+/**
+ * Whether a drag has become a scroll.
+ *
+ * Deliberately given no way to ask whether there is anything to scroll. That
+ * used to be part of the same condition -- `&& term.buffer.active.baseY !== 0`
+ * -- and it meant a full-screen agent, which has no scrollback because the
+ * alternate screen is one screen, handed the gesture back to the browser,
+ * which pulled to refresh over the top of it. Codex kept its output in the
+ * normal buffer and scrolled fine, so the report arrived as "Claude cannot be
+ * scrolled but Codex can", which is one line of code seen from outside.
+ *
+ * Claiming and doing nothing is the correct behaviour over a terminal with no
+ * history: the page must not move under a finger that is trying to read.
+ */
+export function claimsVerticalDrag(dx: number, dy: number, slop: number): boolean {
+  return dy > slop && dy > dx
+}
+
 export function dragRows(dy: number, rowHeight: number, carried: number) {
   if (!(rowHeight > 0)) return { rows: 0, carry: carried }
   const total = carried + dy / rowHeight
@@ -175,11 +193,20 @@ export function attachTouchSelection(host: HTMLElement, term: Terminal): () => v
       const dx = Math.abs(t.clientX - startPoint.x)
       const dy = Math.abs(t.clientY - startPoint.y)
       if (!scrolling) {
-        // Take the gesture only once it is clearly vertical and there is
-        // something behind the screen to show. Claiming every drag would eat
-        // the horizontal swipe that changes view, and preventing the default
-        // on a terminal with no scrollback stops the page moving for nothing.
-        if (dy <= SLOP_PX || dy <= dx || term.buffer.active.baseY === 0) return
+        // Clearly vertical, and that is the whole condition. Not "and there is
+        // scrollback", which is what it used to say.
+        //
+        // A full-screen TUI has no scrollback -- the alternate screen is one
+        // screen -- so `baseY === 0` while Claude Code is drawing, and the
+        // gesture was handed back to the browser, which pulled to refresh over
+        // the top of it. Codex leaves its output in the normal buffer, so it
+        // had scrollback, so it scrolled: 「手机端还是无法滑动Claude code但是
+        // codex正常 Claude滑动后会出现刷新的加载条」, one report describing both
+        // halves of the same line.
+        //
+        // The horizontal swipe is still safe: `dy > dx` is what protects it,
+        // and that was never the part doing the work here.
+        if (!claimsVerticalDrag(dx, dy, SLOP_PX)) return
         scrolling = true
       }
 
@@ -188,7 +215,10 @@ export function attachTouchSelection(host: HTMLElement, term: Terminal): () => v
       const step = dragRows(t.clientY - lastY, rowHeight, carried)
       carried = step.carry
       lastY = t.clientY
-      if (step.rows !== 0) {
+      // Scroll only if there is anywhere to go. The gesture is claimed either
+      // way -- a drag over a full-screen agent has to do nothing, visibly,
+      // rather than reload the page.
+      if (step.rows !== 0 && term.buffer.active.baseY > 0) {
         // Down reveals what came before, which is which way every list on a
         // phone moves.
         term.scrollLines(-step.rows)

@@ -1570,6 +1570,19 @@ body {
   overflow: hidden;
 }
 
+/* The terminal keeps every touch gesture that starts inside it.
+ *
+ * touch-action is set on the host in Terminal.tsx and the effective value for
+ * a gesture is the intersection down the ancestor chain, so this is belt and
+ * braces rather than the load-bearing rule. overscroll-behavior is not: a drag
+ * that reaches the end of a scrollable area chains to the document, and on a
+ * phone the document's answer to a downward chain is to reload the page. That
+ * is what appeared over a full-screen agent -- 「滑动后会出现刷新的加载条」. */
+.xterm .xterm-viewport,
+.xterm .xterm-screen {
+  overscroll-behavior: contain;
+}
+
 /* And then reserve the width deterministically.
    The fit addon subtracts the terminal element's horizontal padding when it
    proposes columns, so this is the one measurement that does not depend on how

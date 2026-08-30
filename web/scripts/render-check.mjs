@@ -2831,9 +2831,32 @@ try {
 
       const m = await p2.evaluate(() => {
         const row = document.querySelector('[data-testid="key-row-primary"]')
+        // How many lines the row actually occupies.
+        //
+        // Not scrollWidth: the row wraps rather than overflowing, so the
+        // overflow measurement below is 0 whether it is on one line or three.
+        // That is why a ninth key shipped and put a single `alt` alone on a
+        // second line -- 「第二航之后一个alt 就很诡异」 -- with every assertion
+        // here green. Distinct offsetTop is the thing that was not being
+        // looked at.
+        const keys = row ? [...row.children] : []
+        // Keys per line, not just how many lines.
+        //
+        // Wrapping at 320 is deliberate and documented -- eight keys at the
+        // 44px a thumb needs come to 380px -- so "more than one line" is the
+        // wrong thing to forbid. What is wrong is a line with one key on it,
+        // which is what a ninth key produced: eight and then a lone `alt`,
+        // read as a broken layout rather than a second row.
+        const perLine = {}
+        for (const k of keys) perLine[k.offsetTop] = (perLine[k.offsetTop] ?? 0) + 1
+        const counts = Object.values(perLine)
         return {
           layout: document.querySelector('[data-layout]')?.getAttribute('data-layout') ?? null,
           hidden: row ? row.scrollWidth - row.clientWidth : null,
+          keys: keys.length,
+          lines: counts.length,
+          orphan: counts.length > 1 && counts.some((n) => n < 2),
+          counts,
           compose: !!document.querySelector('[data-testid="compose-input"]'),
           bar: !!document.querySelector('[data-testid="key-bar"]'),
         }
@@ -2853,6 +2876,18 @@ try {
         note('FAIL', 'mobile',
           `at ${shape.name} the primary key row hides ${m.hidden}px of keys, and the page does ` +
           'not scroll, so they cannot be pressed')
+      } else if (m.orphan) {
+        // Wrapping is not hiding, and it is still wrong. The row is the keys
+        // an agent conversation needs; a stray one alone on a second line
+        // reads as a broken layout rather than as a design, and every key
+        // added to this row costs 44px of a screen that has to show a
+        // terminal.
+        note('FAIL', 'mobile',
+          `at ${shape.name} the primary key row wraps to ${JSON.stringify(m.counts)} keys per line. ` +
+          'A line with one key on it reads as a broken layout; move one to the secondary row.')
+      } else {
+        note('PASS', 'mobile',
+          `${m.keys} primary keys at ${shape.name}, ${JSON.stringify(m.counts)} per line`)
       }
       await scanUnreachable(p2, `a ${shape.name} phone`)
       await scanTapTargets(p2, `a ${shape.name} phone`)

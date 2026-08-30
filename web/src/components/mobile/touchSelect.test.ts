@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cellAt, selectionRun, dragRows } from './touchSelect'
+import { cellAt, claimsVerticalDrag, selectionRun, dragRows } from './touchSelect'
 
 describe('selectionRun', () => {
   it('reads left to right on one line', () => {
@@ -69,5 +69,34 @@ describe('dragRows', () => {
     // by zero here would scroll the buffer to one end and stay there.
     expect(dragRows(100, 0, 0)).toEqual({ rows: 0, carry: 0 })
     expect(dragRows(100, Number.NaN, 0.5)).toEqual({ rows: 0, carry: 0.5 })
+  })
+})
+
+describe('claimsVerticalDrag', () => {
+  // The bug this exists to prevent: the condition also asked whether there was
+  // scrollback, so over a full-screen agent the gesture went to the browser and
+  // the browser reloaded the page. The function is not given the buffer, so it
+  // cannot ask again.
+  it('claims a clearly vertical drag', () => {
+    expect(claimsVerticalDrag(2, 40, 8)).toBe(true)
+  })
+
+  it('leaves a horizontal drag alone, which is how views are switched', () => {
+    expect(claimsVerticalDrag(60, 20, 8)).toBe(false)
+    // Equal is not vertical: a diagonal belongs to whoever wants it more.
+    expect(claimsVerticalDrag(30, 30, 8)).toBe(false)
+  })
+
+  it('leaves a tap alone', () => {
+    expect(claimsVerticalDrag(0, 3, 8)).toBe(false)
+    expect(claimsVerticalDrag(0, 8, 8)).toBe(false)
+  })
+
+  it('takes no argument that could describe the scrollback', () => {
+    // The guard is the signature. If somebody adds a third meaning to this,
+    // the arity changes and this fails -- which is the point, because the
+    // failure it prevents is invisible: a gesture that quietly does nothing
+    // until the page reloads.
+    expect(claimsVerticalDrag.length).toBe(3)
   })
 })

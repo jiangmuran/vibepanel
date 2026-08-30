@@ -14,7 +14,20 @@ import { t, useLang } from '../../i18n'
  * needs and a phone cannot produce: Escape, Tab, Ctrl, arrows, and the
  * one-character answers that are most of what anybody types from a phone.
  */
-export function MobileKeyBar({ onSend }: { onSend: (bytes: string) => void }) {
+export function MobileKeyBar({
+  onSend,
+  onPaste,
+}: {
+  onSend: (bytes: string) => void
+  /** For the answers that end in a return.
+   *
+   *  `onSend` writes its bytes in one go, and an Ink application -- which both
+   *  Claude Code and Codex are -- reads a burst ending in CR as a paste and
+   *  turns the return into a newline. So `y` arrived in the prompt and was
+   *  never submitted. The paste road writes the text and the return
+   *  separately, which is what makes it land as an answer. */
+  onPaste: (text: string, submit: boolean) => void
+}) {
   useLang()
   // Sticky modifiers: tap, then tap the key it applies to. Holding two places
   // at once is not a gesture a thumb can make.
@@ -78,8 +91,8 @@ export function MobileKeyBar({ onSend }: { onSend: (bytes: string) => void }) {
             wrong trade even if it had worked. */}
         <Key label="^C" onPress={() => sendRaw(withCtrl('c'))} wide
           title={t('key.interrupt')} />
-        <Key label="y" onPress={() => sendRaw('y\r')} wide />
-        <Key label="n" onPress={() => sendRaw('n\r')} wide />
+        <Key label="y" onPress={() => onPaste('y', true)} wide />
+        <Key label="n" onPress={() => onPaste('n', true)} wide />
         <Key label="enter" onPress={key('enter')} title={t('key.enter')}>
           <CornerDownLeft size={13} />
         </Key>
@@ -91,8 +104,6 @@ export function MobileKeyBar({ onSend }: { onSend: (bytes: string) => void }) {
         <Key label="⇧tab" onPress={key('shiftTab')} wide title={t('key.shiftTab')} />
         <Key label="ctrl" onPress={() => setCtrl((v) => !v)} active={ctrl} wide
           title={t('key.sticky')} />
-        <Key label="alt" onPress={() => setAlt((v) => !v)} active={alt} wide
-          title={t('key.sticky')} />
       </div>
 
       {/* Everything else. This one may scroll: losing sight of "~" costs far
@@ -102,6 +113,17 @@ export function MobileKeyBar({ onSend }: { onSend: (bytes: string) => void }) {
         className="flex items-center gap-1 overflow-x-auto"
         style={{ touchAction: 'pan-x' }}
       >
+        {/* alt lives here and ctrl does not, which is a judgement rather than
+            a symmetry. Adding ⇧tab above made nine keys, and eight was already
+            the number that overflowed a 320px phone -- the row wrapped and put
+            a single `alt` alone on a second line, which reads as broken:
+            「第二航之后一个alt 就很诡异」. Something had to come down, and alt is
+            the one an agent conversation almost never needs: ^C has a key of
+            its own, and ctrl is what the remaining combinations are typed
+            with. TestThePrimaryKeyRowFitsOnOneLine is what stops the next key
+            being added on top. */}
+        <Key label="alt" onPress={() => setAlt((v) => !v)} active={alt} wide
+          title={t('key.sticky')} />
         <Key label="up" onPress={key('up')} title={t('key.up')}><ArrowUp size={13} /></Key>
         <Key label="down" onPress={key('down')} title={t('key.down')}><ArrowDown size={13} /></Key>
         <Key label="left" onPress={key('left')} title={t('key.left')}><ArrowLeft size={13} /></Key>
