@@ -154,13 +154,37 @@ func TestFileTransfer(t *testing.T) {
 		}
 	})
 
-	t.Run("never overwrites", func(t *testing.T) {
-		// An agent may be reading the file this would replace. Refusing is the
-		// only safe answer; the caller renames.
+	t.Run("never overwrites, and renames rather than refusing", func(t *testing.T) {
+		// An agent may be reading the file this would replace, so it is never
+		// replaced. That much has not changed and is the whole point.
+		//
+		// What changed is the answer to a collision. This used to be a 409,
+		// and the fix offered to the person was to rename a file they never
+		// named: pasting a screenshot at an agent produces `image.png` every
+		// time, from every operating system, so the second paste of a session
+		// always failed. 「粘贴文件不应当以文件重复为由报错 应该自动加-1 -2」.
 		res := upload("sub", "notes.txt", "clobbered")
 		defer res.Body.Close()
-		if res.StatusCode != http.StatusConflict {
-			t.Errorf("status %d, want 409", res.StatusCode)
+		if res.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(res.Body)
+			t.Fatalf("status %d, want 200: %s", res.StatusCode, strings.TrimSpace(string(body)))
+		}
+		var out struct {
+			Paths []string `json:"paths"`
+		}
+		if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		if len(out.Paths) != 1 || filepath.Base(out.Paths[0]) != "notes-1.txt" {
+			t.Errorf("landed at %v, want one path ending notes-1.txt", out.Paths)
+		}
+		// The response has to name the file that was actually written: the
+		// path is what gets typed at the agent, and a path to a file that does
+		// not exist is worse than the refusal it replaced.
+		if len(out.Paths) == 1 {
+			if b, err := os.ReadFile(out.Paths[0]); err != nil || string(b) != "clobbered" {
+				t.Errorf("the reported path does not hold the upload: %v %q", err, b)
+			}
 		}
 		got, _ := os.ReadFile(filepath.Join(root, "sub", "notes.txt"))
 		if string(got) != "hello from disk" {

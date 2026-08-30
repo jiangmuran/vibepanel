@@ -45,14 +45,14 @@ interface Props {
    */
   touchSelect?: boolean
   /**
-   * A full-screen program is drawing in this pane, so scrollback is not offered.
+   * A full-screen program is drawing in this pane -- tmux's `#{alternate_on}`.
    *
-   * Dragging the scrollbar during a TUI lands the reader in whatever was on
-   * screen before the agent started, and the live repaints go on happening
-   * somewhere they cannot see until new output snaps the view back. Every
-   * terminal that can see the alternate screen behaves this way; this one has
-   * to be told, because tmux composes the alternate screen away before the
-   * bytes get here.
+   * It opens the view at the live screen and nothing more. It used to *pin* it
+   * there, which is what stopped anybody reading Claude Code's own history:
+   * Claude sets alternate_on and Codex does not, so one agent could be
+   * scrolled back and the other could not, on the same panel, with the same
+   * gesture. The history was never missing -- 2011 lines of it, measured, in
+   * tmux's normal buffer behind the alternate screen.
    */
   fullscreen?: boolean
   /** Fires with the selected text, or '' when the selection is dropped. */
@@ -384,27 +384,37 @@ export function TerminalView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [socket, sessionId, readOnly, touchSelect])
 
-  // While a full-screen program is drawing, do not offer the scrollback.
+  // While a full-screen program is drawing, the scrollback is still yours.
   //
-  // The reader was landing in whatever was on screen before the agent started,
-  // and the live repaints went on happening off-screen until new output snapped
-  // the view back -- "滚动条一滑就滑到在执行 claude 之前的记录了". Every terminal
-  // that can see the alternate screen behaves this way already; this one cannot
-  // see it, because tmux composes the alternate screen away before the bytes
-  // arrive, so the panel is told instead.
+  // This used to snap every scroll straight back to the bottom, and the
+  // original reason was real: scrolling up inside a running agent landed the
+  // reader in whatever was on screen *before* it started -- 「滚动条一滑就滑到
+  // 在执行 claude 之前的记录了」.
   //
-  // Snapping back rather than freezing the scroll: a wheel event that does
-  // nothing at all reads as a hung page, and the app itself usually wants the
-  // wheel anyway -- it has mouse reporting on, which is why the touchpad
-  // already behaves correctly inside the TUI.
+  // The cure was worse. `fullscreen` is tmux's `#{alternate_on}`, and Claude
+  // Code sets it while Codex does not, so the panel forcibly pinned one agent
+  // to its last screen and left the other alone. Measured on a live panel,
+  // which is how this was finally settled:
+  //
+  //   claude  alt=1  history_size=2011
+  //   codex   alt=0  history_size=1984
+  //
+  // The history is there. It is in tmux's normal buffer, behind the alternate
+  // screen, and the manager primes the ring with it at attach -- so the only
+  // thing between a reader and 2011 lines of their own conversation was this
+  // effect. 「tui理论上Claude有历史啊 可以看Claude的历史」, and there was.
+  //
+  // What stays is the part that was actually needed: come back to the live
+  // screen when the reader does something that means they are back. Typing is
+  // that signal, and xterm already scrolls to the bottom on input. Arriving
+  // output is not: a repaint pulling the view out from under somebody reading
+  // is the same rudeness in the other direction.
   useEffect(() => {
     const term = termRef.current
     if (!term || !fullscreen) return
+    // Start at the live screen. Opening a session and finding it scrolled into
+    // history is its own kind of wrong.
     term.scrollToBottom()
-    const sub = term.onScroll(() => {
-      if (term.buffer.active.viewportY !== term.buffer.active.baseY) term.scrollToBottom()
-    })
-    return () => sub.dispose()
   }, [fullscreen])
 
   // Repaint the palette in place when the theme changes.

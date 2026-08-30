@@ -462,16 +462,9 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		// is one element inside an already-validated directory. A symlink
 		// sitting at that name does not help an attacker either, because
 		// O_EXCL refuses to open anything that already exists.
-		target := filepath.Join(dir, base)
-		// O_EXCL: an upload must never quietly replace a file an agent is
-		// working on. The caller renames and retries instead.
-		f, oerr := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		f, target, oerr := createUnique(dir, base)
 		if oerr != nil {
 			part.Close()
-			if os.IsExist(oerr) {
-				writeErr(w, http.StatusConflict, base+" already exists")
-				return
-			}
 			writeErr(w, http.StatusInternalServerError, oerr.Error())
 			return
 		}
@@ -497,6 +490,48 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// would map over it. Nothing sends such a request today, which is the only
 	// reason this has not been seen.
 	writeJSON(w, http.StatusOK, map[string]any{"paths": emptyIfNil(written)})
+}
+
+// createUnique opens a new file in dir, adding -1, -2, ... until the name is
+// free.
+//
+// O_EXCL every time, which is the part that must not be lost: an upload may
+// never quietly replace a file an agent is working on, and the check-then-open
+// version of this has a window between the two where it can. Each attempt is
+// atomic; a collision is a retry rather than a race.
+//
+// Refusing was the old answer -- 409 `screenshot.png already exists` -- and it
+// is the wrong one for what this is actually for. Pasting a screenshot at an
+// agent produces `image.png` every single time, from every operating system,
+// so the second paste of a session always failed and the fix offered to the
+// person was to go and rename a file they never chose the name of.
+//
+// The suffix goes before the extension, because `image-1.png` is a picture and
+// `image.png-1` is not. A name with no extension gets the suffix at the end.
+func createUnique(dir, base string) (*os.File, string, error) {
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	for i := 0; ; i++ {
+		name := base
+		if i > 0 {
+			name = fmt.Sprintf("%s-%d%s", stem, i, ext)
+		}
+		target := filepath.Join(dir, name)
+		f, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err == nil {
+			return f, target, nil
+		}
+		if !os.IsExist(err) {
+			return nil, "", err
+		}
+		// A bound, because this loop is driven by what is on disk and the disk
+		// is not this package's to trust. A directory holding a thousand
+		// `image-N.png` is somebody's mistake, not a reason to sit in a loop
+		// stat-ing forever.
+		if i >= 999 {
+			return nil, "", fmt.Errorf("%s: too many files with this name already", base)
+		}
+	}
 }
 
 // asciiFilename is the legacy half of Content-Disposition: printable ASCII

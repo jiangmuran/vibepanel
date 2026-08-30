@@ -18318,3 +18318,52 @@ it looks:
   the two agree, so swapping the probe for a mode check leaves the test green —
   verified by doing it. The comment says so rather than implying coverage that
   is not there.
+
+## The history was there the whole time
+
+「还是无法滚动 同时tui理论上Claude有历史啊」 — and the correction in the second
+half is the one that mattered. Measured on the live panel rather than reasoned
+about:
+
+    claude  alt=1  history_size=2011
+    codex   alt=0  history_size=1984
+
+So the earlier explanation was wrong. It is not that a full-screen agent has no
+history; Claude Code has two thousand lines of it, sitting in tmux's normal
+buffer behind the alternate screen, and the manager already primes the ring
+with it at attach.
+
+What stood between a reader and those lines was this panel. `fullscreen` is
+tmux's `#{alternate_on}`, and an effect pinned any such session to the bottom —
+`onScroll` → `scrollToBottom`, every time. Claude sets `alternate_on` and Codex
+does not, which is the whole of "Claude cannot be scrolled and Codex can": one
+flag, two agents, same gesture.
+
+The original reason was real — scrolling up inside a running agent used to land
+in whatever was on screen before it started — but pinning was the wrong cure,
+and it was applied to the one agent this panel is most used with. What stays is
+opening at the live screen. Coming back to it is xterm's own behaviour on
+input, which is the right signal: typing means you are back, and arriving
+output does not, because pulling the view out from under somebody reading is
+the same rudeness in the other direction.
+
+Two wrong explanations were shipped for this before the right one, both from
+reasoning about tmux rather than asking it. `list-panes -F '#{alternate_on}
+#{history_size}'` answered it in one command.
+
+## A screenshot pasted twice
+
+`409 image.png already exists`, and the fix offered to the person was to rename
+a file they never named: every operating system calls a pasted screenshot
+`image.png`, so the second paste of any session failed.
+
+The refusal existed for a good reason — an agent may be reading the file an
+upload would replace — and that reason survives untouched. What changed is the
+answer to a collision: `-1`, `-2`, up to a bound, with `O_EXCL` on every
+attempt, so each try is atomic and a collision is a retry rather than a race.
+The suffix goes before the extension, because `image-1.png` is a picture and
+`image.png-1` is not.
+
+The response reports the name that was written, not the one that was asked for.
+That path is what gets typed at the agent, and a path to a file that does not
+exist would be worse than the refusal it replaced.
