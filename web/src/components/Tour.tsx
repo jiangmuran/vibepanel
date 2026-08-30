@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react'
 import { Check, ChevronLeft, ChevronRight, Circle, Triangle, X } from 'lucide-react'
 
 import { api } from '../protocol/api'
+import { requestNotifyPermission } from '../notify'
 import { showToast } from './toasts'
 import type { HookStatus, TuneStatus } from '../protocol/wire'
+import type { SettingsSection } from './settings/groups'
 import { t, getLang, useLang } from '../i18n'
 
 /**
@@ -24,10 +26,20 @@ import { t, getLang, useLang } from '../i18n'
  * in localStorage: the panel is opened from a laptop and a phone and a wall,
  * and a tour that has been read is read.
  */
-export function Tour({ onDone }: { onDone: () => void }) {
+export function Tour({
+  onDone,
+  onOpenSettings,
+}: {
+  onDone: () => void
+  /** Where a step hands off to. Every action the tour offers has a home in the
+   *  settings dialog, and the tour is the short version of it rather than a
+   *  second place to configure the same thing -- somebody who skipped the tour
+   *  must not have to find it again. TourStepsHaveASettingsHome is the guard. */
+  onOpenSettings: (section: SettingsSection) => void
+}) {
   useLang()
   const [step, setStep] = useState(0)
-  const steps = [Intro, Reporting, TuneStep, FirstProject, WhereTheRestIs]
+  const steps = [Intro, Reporting, TuneStep, Notifications, Encryption, FirstProject, WhereTheRestIs]
   const Body = steps[step]
   const last = step === steps.length - 1
 
@@ -78,7 +90,7 @@ export function Tour({ onDone }: { onDone: () => void }) {
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          <Body />
+          <Body onOpenSettings={onOpenSettings} />
         </div>
 
         <footer className="flex items-center gap-3 border-t border-hairline px-5 py-3">
@@ -155,7 +167,7 @@ function Intro() {
  * so three buttons and three answers rather than one "install everything" that
  * half-succeeds and reports nothing.
  */
-function Reporting() {
+function Reporting({ onOpenSettings }: StepProps) {
   const [st, setSt] = useState<HookStatus | null>(null)
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
@@ -225,13 +237,14 @@ function Reporting() {
       {st && (
         <p className="mt-3 text-vp-sm text-ink-3">{t('tour.hooksExisting')}</p>
       )}
+      <More to="reporting" onOpenSettings={onOpenSettings} />
       {err && <p className="mt-2 text-vp-sm text-state-crashed">{err}</p>}
     </>
   )
 }
 
 /** The rest of Claude Code's settings file, with every key named first. */
-function TuneStep() {
+function TuneStep({ onOpenSettings }: StepProps) {
   const [st, setSt] = useState<TuneStatus | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -283,6 +296,101 @@ function TuneStep() {
         </>
       )}
       {err && <p className="mt-2 text-vp-sm text-state-crashed">{err}</p>}
+      <More to="tune" onOpenSettings={onOpenSettings} />
+    </>
+  )
+}
+
+/** What every step is handed. Steps that need nothing ignore it; the array
+ *  they live in has one type either way. */
+type StepProps = { onOpenSettings: (s: SettingsSection) => void }
+
+/** Where a step sends somebody who wants the full version. */
+function More({ to, onOpenSettings }: { to: SettingsSection; onOpenSettings: (s: SettingsSection) => void }) {
+  return (
+    <button
+      type="button"
+      data-testid={`tour-to-${to}`}
+      data-tour-settings={to}
+      onClick={() => onOpenSettings(to)}
+      className="vp-press mt-3 rounded-vp border border-hairline px-3 py-1.5 text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+    >
+      {t('tour.inSettings')}
+    </button>
+  )
+}
+
+/**
+ * Being told when an agent wants you.
+ *
+ * The permission has to be asked for from a gesture, so it is asked for here
+ * rather than announced -- a step that says "you can turn on notifications"
+ * and leaves you to find the switch is a step that does nothing.
+ *
+ * The second line is the part that is easy to leave out and then gets reported
+ * as a bug. A browser notification is raised by this page, so the page has to
+ * be running to notice; a phone that has frozen the tab hears nothing, and
+ * there is nothing the panel can do about that from inside the tab. The
+ * webhook is the mechanism that reaches a phone which is not looking.
+ */
+function Notifications({ onOpenSettings }: StepProps) {
+  const [perm, setPerm] = useState(
+    typeof Notification === 'undefined' ? 'denied' : Notification.permission,
+  )
+  return (
+    <>
+      <H>{t('tour.notifyH')}</H>
+      <P>{t('tour.notify1')}</P>
+      <P>{t('tour.notify2')}</P>
+      {perm === 'granted' ? (
+        <p className="mt-3 flex items-center gap-2 text-vp-base text-state-done">
+          <Check size={14} /> {t('tour.on')}
+        </p>
+      ) : (
+        <button
+          type="button"
+          data-testid="tour-notify-on"
+          disabled={typeof Notification === 'undefined'}
+          onClick={() => void requestNotifyPermission().then(setPerm)}
+          className="vp-press mt-3 rounded-vp px-3 py-1.5 text-vp-base font-medium disabled:opacity-50"
+          style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+        >
+          {t('tour.turnOn')}
+        </button>
+      )}
+      <More to="webhooks" onOpenSettings={onOpenSettings} />
+    </>
+  )
+}
+
+/**
+ * Whether the connection is encrypted, answered by the connection.
+ *
+ * `location.protocol` and not the panel's own TLS mode. Behind a proxy that
+ * terminates TLS the panel is serving plaintext and the browser is on https,
+ * and a step that read the server's setting would tell somebody with a
+ * perfectly good deployment to go and fix it. This is the same rule the
+ * passkey check had to learn.
+ */
+function Encryption({ onOpenSettings }: StepProps) {
+  const secure = typeof window === 'undefined' || window.location.protocol === 'https:'
+  return (
+    <>
+      <H>{t('tour.tlsH')}</H>
+      {secure ? (
+        <>
+          <p className="flex items-center gap-2 text-vp-base text-state-done">
+            <Check size={14} /> {t('tour.tlsOn')}
+          </p>
+          <P>{t('tour.tlsOnWhy')}</P>
+        </>
+      ) : (
+        <>
+          <P>{t('tour.tlsOff')}</P>
+          <P>{t('tour.tlsHow')}</P>
+          <More to="env" onOpenSettings={onOpenSettings} />
+        </>
+      )}
     </>
   )
 }

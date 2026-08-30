@@ -18172,3 +18172,33 @@ refuses the hostname.
 Verified in a browser at a moment when it could be seen: setting
 `Pacific/Midway` moved the panel's day from 2026-08-30 to 2026-08-29, which is
 Midway's real date.
+
+## The tour may not offer anything the settings page does not
+
+Two steps were asked for — turn on notifications, and whether the connection is
+encrypted — and then the rule that matters more than either: 「这些都要放进设置
+里面」.
+
+A wizard is the short version of the settings page, not a second place to
+configure the same things. It is the one surface designed to be seen once, and
+somebody who pressed 「跳过，不再显示」 on their first day still has to be able
+to find every switch it offered. So each step that does something now carries a
+button into the section that owns it, and
+`components/tour.settings.test.ts` is what keeps that true.
+
+The guard caught one the moment it was written: the Claude-settings step
+applies changes and had no way back to the section that owns them. The hooks
+step was the same and was not caught, because the first version keyed on a
+testid prefix the step did not use — a detector narrow enough to pass while the
+rule was broken. It reads every `tour-*` testid now, and both mutations go red.
+
+The encryption step reads `location.protocol`, not the panel's TLS mode. Behind
+a proxy that terminates TLS the panel serves plaintext while the browser is on
+https, and a step reading the server's setting would tell somebody with a
+perfectly good deployment to go and fix it. That is the rule the passkey check
+had to learn a day earlier, applied before it could be got wrong again.
+
+The notifications step says the thing that is easy to leave out and then gets
+reported as a bug: a browser notification is raised by the page, so a phone
+that has frozen the tab hears nothing, and the webhook is the mechanism that
+reaches one which is not looking.

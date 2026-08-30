@@ -1325,7 +1325,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           out. */}
       {/* Before the settings dialog in the tree so it stacks above one, which
           only happens if somebody opens settings from the tour. */}
-      {showTour && <Tour onDone={() => setShowTour(false)} />}
+      {showTour && <Tour onDone={() => setShowTour(false)} onOpenSettings={setSettingsAt} />}
 
       {settingsAt && (
         <Settings

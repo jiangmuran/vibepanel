@@ -1393,6 +1393,30 @@ const DICT = {
     zh: '其中两步会实际改动配置：状态上报，和 Claude Code 的其他设置',
     en: 'Two of the five steps change something: state reporting, and Claude Code\'s other settings.',
   },
+  'tour.inSettings': { zh: '在设置里继续', en: 'Continue in settings' },
+  'tour.notifyH': { zh: '有事找你的时候', en: 'When an agent wants you' },
+  'tour.notify1': {
+    zh: 'agent 需要确认时，这个浏览器会弹一条通知',
+    en: 'This browser raises a notification when an agent needs an answer.',
+  },
+  'tour.notify2': {
+    zh: '手机锁屏后页面会被冻结，那时要靠 webhook',
+    en: 'A phone freezes the tab, and then only a webhook reaches you.',
+  },
+  'tour.tlsH': { zh: '连接加密', en: 'Encryption' },
+  'tour.tlsOn': { zh: '这个连接已加密', en: 'This connection is encrypted.' },
+  'tour.tlsOnWhy': {
+    zh: '按浏览器实际用的协议判断，不看面板自己的设置',
+    en: "Judged by the browser's own protocol, not the panel's setting.",
+  },
+  'tour.tlsOff': {
+    zh: '现在是明文。同网络里的人能看到你输入的内容',
+    en: 'This is plaintext. Anyone on the network can read what you type.',
+  },
+  'tour.tlsHow': {
+    zh: '面板可以自己签证书，也可以由前面的反代来做',
+    en: 'The panel can get its own certificate, or a proxy in front can.',
+  },
   'tour.introH': { zh: '进程由 tmux 托管', en: 'Processes are held by tmux' },
   'tour.intro1': {
     zh: '会话由 tmux 托管。关闭浏览器、重启或升级面板，agent 不受影响',
