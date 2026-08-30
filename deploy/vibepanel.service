@@ -74,37 +74,55 @@ KillMode=process
 # home directory. Locking that down does not make the panel safer; it makes it
 # useless, and the first thing anyone would do is delete these lines.
 #
-# What is worth keeping is the part that does not fight the job:
-NoNewPrivileges=yes
-ProtectControlGroups=yes
-
-# And none of the seccomp ones, on either unit. That is the rule now, and it is
-# not caution -- it is measured on the machine this was written on.
+# That is now the whole rule rather than an exception to one: **this unit
+# confines nothing a shell can notice.**
 #
-# `KillMode=process` means the tmux server outlives the panel process, and it
-# also means the tmux server *starts inside this unit*: same cgroup, same
-# seccomp filter. So does every agent in every session, and every command
-# anybody types into one. A filter written to confine a Go web server ends up
-# applied to whatever the person at the keyboard runs.
+# `KillMode=process` means the tmux server outlives the panel, and it also
+# means the tmux server *starts inside this unit*: same cgroup, same
+# namespaces, same no-new-privileges bit. So does every agent in every session,
+# and every command anybody types into one. Whatever this unit does to confine
+# a Go web server, it does to whatever the person at the keyboard runs — who
+# did not ask for it and, in one of the cases below, cannot undo it.
 #
-# What that cost, before anyone noticed: `tar -xzf` of any archive with a
-# subdirectory in it, inside any session the panel had created.
+# Three outages, each found by a person rather than by a test:
 #
-#   tar: deploy: Cannot mkdir: Function not implemented
+#   ProtectClock / ProtectKernelModules / RestrictSUIDSGID
 #
-# ENOSYS, not EPERM, because systemd's filters reject syscalls that the
-# libseccomp they were built against does not know -- and this box runs Linux
-# 7.0 against libseccomp 2.6. Three of the five directives that were here
-# reproduced it (ProtectClock, ProtectKernelModules, RestrictSUIDSGID) and the
-# other two install filters of their own, so they are the same hazard waiting
-# for a tool that uses a syscall one version newer. A panel for running coding
-# agents cannot break tar.
+#     tar: deploy: Cannot mkdir: Function not implemented
 #
-# Verified by bisection with `systemd-run --user -p <directive>=yes tar -xzf`,
-# and by the same extraction succeeding in a unit with none of them.
+#   ENOSYS, not EPERM: systemd implements these with seccomp, and such a filter
+#   rejects syscalls the libseccomp it was built against does not know. This
+#   box runs Linux 7.0 against libseccomp 2.6, so `tar -xzf` of any archive
+#   with a subdirectory in it failed in every session the panel had created.
+#   Bisected with `systemd-run --user -p <directive>=yes tar -xzf`, and
+#   confirmed by the same extraction succeeding in a unit with none of them.
 #
-# NoNewPrivileges and ProtectControlGroups stay: measured at zero seccomp
-# filters, and neither is inherited as a syscall rule.
+#   NoNewPrivileges=yes
+#
+#     sudo: The "no new privileges" flag is set, which prevents sudo from
+#     running as root.
+#
+#   Inherited by every descendant and impossible to drop once set, so no
+#   session the panel opened could use sudo, su, pkexec, newgrp, or any setuid
+#   or file-capability binary — `ping` included. The comment that used to be
+#   here kept this one on the grounds that it installs no seccomp filter. True,
+#   and beside the point: it is not a syscall rule, it is a permanent property
+#   of the process tree.
+#
+#   ProtectControlGroups=yes
+#
+#   Not reported by anyone; removed with the others instead of waiting for it.
+#   It mounts /sys/fs/cgroup read-only in a namespace every session inherits,
+#   which is where rootless podman and anything else driving cgroupfs by hand
+#   writes. It protected nothing: this process never touches cgroups.
+#
+# TestNothingInEitherUnitConfinesWhatAShellDoes is what keeps this true, and it
+# carries the same list with the same reasons, because the next person to add
+# one of these will have a good reason and needs to know what it costs.
+#
+# What remains below — MemoryAccounting, OOMPolicy, the weights — is about the
+# machine surviving a runaway agent rather than about confining one, and a
+# session cannot tell it is there.
 
 # Not ProtectClock, and not ProtectKernelModules. They are the two on that list
 # that a *user* manager cannot apply, and applying them does not fail softly:
@@ -131,8 +149,18 @@ ProtectControlGroups=yes
 # adding another; the list above is what was tested, one directive at a time,
 # in a real unit file under a real user manager.
 
-# The database holds password hashes and passkey material.
-UMask=0077
+# Not UMask=0077 either, and for the same reason: it is inherited, so every
+# file every agent created came out 600 and every directory 700. A shared
+# checkout, `python -m http.server`, a build step running as somebody else —
+# all quietly wrong, with nothing to point at.
+#
+# What that line was protecting is the database, which holds password hashes
+# and passkey material. That belongs to the database: store.Open chmods it and
+# its -wal and -shm to 0600 and the data directory to 0700 on every open, so
+# the mode is a property of the file rather than of whichever umask the process
+# happened to start with. TestTheDatabaseIsNotReadableByOthers keeps it true,
+# and it is now true for `vibepanel serve` run by hand as well — which the
+# unit's UMask never covered.
 
 # Memory accounting so a runaway session is visible and bounded, rather than
 # taking the machine into swap and dragging everything down with it. Tune to

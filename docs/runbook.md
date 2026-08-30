@@ -27,6 +27,7 @@ failure. A machine with three problems used to take three runs to find them.
 | `hook url` | sessions still posting to an address the panel no longer serves, because a session's environment is fixed when it is created |
 | `hook token` | sessions holding a token the panel no longer accepts. The token is created once and never rotated, so this means the row holding it went away — a restored database, or the setting cleared |
 | `passkeys` | `--` and the reason when the configuration cannot support them; password login is unaffected |
+| `confinement` | `warn` when this process runs with `no_new_privs`. Every session inherits it and no session can drop it, so `sudo` reports "the \"no new privileges\" flag is set" and `su`, `pkexec` and every setuid binary fail. The shipped units no longer set `NoNewPrivileges`; a unit installed before that still does, and upgrading the binary does not rewrite it |
 | `environment` | `VIBEPANEL_*` variables that are set and never read — a misspelled `VIBEPANEL_TLS` once meant plaintext on a public port |
 
 `--` is "works, but not here", never a failure. It is used where saying FAIL

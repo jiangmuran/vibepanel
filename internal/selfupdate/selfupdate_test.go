@@ -13,6 +13,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -211,3 +213,62 @@ func releaseServerNamed(t *testing.T, tag, asset string, archive []byte, sum str
 }
 
 var _ = strings.TrimSpace
+
+// TestTheAssetNameMatchesWhatTheReleaseScriptBuilds pins the updater's idea of
+// an archive name to the shell that actually produces one.
+//
+// The rest of this file is not able to catch that drift. The fake release
+// server names its asset with AssetName and writes its SHA256SUMS line with
+// AssetName, so the suite asserts the checker agrees with itself and stays
+// green for any convention, including one nothing else in the repository uses.
+// That is what happened: the panel asked github for
+// vibepanel_1.2.0_linux_amd64.tar.gz for four releases while every archive
+// ever published was named vibepanel_v1.2.0_linux_amd64.tar.gz, and the only
+// symptom was "has no archive for this platform" on a release that had one.
+//
+// So this reads the script instead of a constant, and it reads the two lines
+// that decide the name together: the `name=` assignment and the `tar -czf`
+// that appends the suffix. A rename in either is a failure here.
+func TestTheAssetNameMatchesWhatTheReleaseScriptBuilds(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-release.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(b)
+
+	name := regexp.MustCompile(`(?m)^\s*name="([^"]+)"`).FindStringSubmatch(script)
+	if name == nil {
+		t.Fatal("scripts/build-release.sh no longer has a name=\"...\" line; this test cannot see what it builds")
+	}
+	tarLine := regexp.MustCompile(`(?m)^\s*tar -czf "dist/([^"]+)"`).FindStringSubmatch(script)
+	if tarLine == nil {
+		t.Fatal("scripts/build-release.sh no longer has a tar -czf \"dist/...\" line")
+	}
+	if tarLine[1] != "${name}.tar.gz" {
+		t.Fatalf("the archive is no longer ${name}.tar.gz but %q; AssetName has to follow", tarLine[1])
+	}
+
+	// The script's own substitutions, with the values a v1.2.0 linux/amd64
+	// build would have. VERSION is the tag verbatim, which is why it has a v.
+	shell := strings.NewReplacer(
+		"${VERSION}", "v1.2.0",
+		"${os}", "linux",
+		"${arch}", "amd64",
+	)
+	want := shell.Replace(name[1]) + ".tar.gz"
+	if strings.Contains(want, "${") {
+		t.Fatalf("the name template has a substitution this test does not know: %q", want)
+	}
+
+	got := AssetName("v1.2.0")
+	got = strings.Replace(got, "_"+runtime.GOOS+"_"+runtime.GOARCH+".", "_linux_amd64.", 1)
+	if got != want {
+		t.Errorf("AssetName builds %q; scripts/build-release.sh publishes %q", got, want)
+	}
+
+	// And the same for a version handed over without the v, which is what a
+	// development build stamped from git describe looks like.
+	if bare := AssetName("1.2.0"); bare != AssetName("v1.2.0") {
+		t.Errorf("AssetName(%q) = %q, AssetName(%q) = %q: one release, one archive", "1.2.0", bare, "v1.2.0", AssetName("v1.2.0"))
+	}
+}

@@ -82,18 +82,23 @@ type AuthSession struct {
 	LastSeenAt int64  `json:"lastSeenAt"`
 	UserAgent  string `json:"userAgent"`
 	IP         string `json:"ip"`
+
+	// Origin is the scheme://host:port this sign-in was made at, and the only
+	// one it works at. Empty means a row created before sessions were bound,
+	// which BindAuthSessionOrigin fills in on first use.
+	Origin string `json:"origin"`
 }
 
 // CreateAuthSession records a sign-in.
 //
 // The token is stored hashed, never in the clear: a database that leaks should
 // not hand over live sessions along with it.
-func (d *DB) CreateAuthSession(ctx context.Context, tokenHash []byte, userID string, ttl time.Duration, userAgent, ip string) error {
+func (d *DB) CreateAuthSession(ctx context.Context, tokenHash []byte, userID string, ttl time.Duration, userAgent, ip, origin string) error {
 	n := now()
 	_, err := d.sql.ExecContext(ctx, `
-		INSERT INTO auth_sessions (token_hash, user_id, created_at, expires_at, last_seen_at, user_agent, ip)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		tokenHash, userID, n, time.Now().Add(ttl).Unix(), n, userAgent, ip)
+		INSERT INTO auth_sessions (token_hash, user_id, created_at, expires_at, last_seen_at, user_agent, ip, origin)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		tokenHash, userID, n, time.Now().Add(ttl).Unix(), n, userAgent, ip, origin)
 	if err != nil {
 		return fmt.Errorf("store: create auth session: %w", err)
 	}
@@ -105,10 +110,10 @@ func (d *DB) CreateAuthSession(ctx context.Context, tokenHash []byte, userID str
 func (d *DB) AuthSessionByToken(ctx context.Context, tokenHash []byte) (AuthSession, error) {
 	var s AuthSession
 	err := d.sql.QueryRowContext(ctx, `
-		SELECT user_id, created_at, expires_at, last_seen_at, user_agent, ip
+		SELECT user_id, created_at, expires_at, last_seen_at, user_agent, ip, origin
 		FROM auth_sessions WHERE token_hash = ? AND expires_at > ?`,
 		tokenHash, now()).
-		Scan(&s.UserID, &s.CreatedAt, &s.ExpiresAt, &s.LastSeenAt, &s.UserAgent, &s.IP)
+		Scan(&s.UserID, &s.CreatedAt, &s.ExpiresAt, &s.LastSeenAt, &s.UserAgent, &s.IP, &s.Origin)
 	if err == sql.ErrNoRows {
 		return AuthSession{}, ErrNotFound
 	}
@@ -116,6 +121,22 @@ func (d *DB) AuthSessionByToken(ctx context.Context, tokenHash []byte) (AuthSess
 		return AuthSession{}, fmt.Errorf("store: auth session: %w", err)
 	}
 	return s, nil
+}
+
+// BindAuthSessionOrigin records the origin a session may be used at, but only
+// while it has none.
+//
+// The empty-string test in the WHERE clause is the whole safety of this: two
+// requests arriving together from two origins cannot both bind, and the second
+// is then a mismatch and refused. Without it the row could be re-bound by
+// whoever asked last, which is the hole this column exists to close.
+func (d *DB) BindAuthSessionOrigin(ctx context.Context, tokenHash []byte, origin string) error {
+	_, err := d.sql.ExecContext(ctx,
+		`UPDATE auth_sessions SET origin = ? WHERE token_hash = ? AND origin = ''`, origin, tokenHash)
+	if err != nil {
+		return fmt.Errorf("store: bind auth session origin: %w", err)
+	}
+	return nil
 }
 
 // TouchAuthSession records that a session was used.

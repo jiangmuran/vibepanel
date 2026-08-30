@@ -338,6 +338,7 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"update.installed":        true,
 		"webhooks.changed":        true,
 		"setup.rejected":          true,
+		"session.origin":          true,
 	}
 
 	files, err := filepath.Glob("*.go")

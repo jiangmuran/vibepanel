@@ -9,6 +9,9 @@ import { safeText } from '../text'
 import { t, useLang } from '../../i18n'
 import { countLines, formatBytes, tooBigToPreview, PREVIEW_MAX_BYTES } from './preview'
 import { canRender, sandboxFor } from './render'
+import { isMarkdown } from './markdown'
+import { shouldHighlight } from './highlight'
+import { Code, Markdown } from './Rendered'
 
 /** What is on screen: a preview, the reason there is not one, or the wait. */
 type View =
@@ -194,6 +197,33 @@ export function FilePreview({
           </object>
         )
       case 'text': {
+        // Markdown, laid out, and code with its keywords and strings apart.
+        //
+        // Both are the panel drawing React elements from the file's text --
+        // never an HTML string, never `dangerouslySetInnerHTML`. That is the
+        // same line the sandboxed iframe below draws for a project's *own*
+        // HTML, and the reasoning is in markdown.ts: this origin holds a
+        // session cookie that is a writable terminal.
+        if (!source && isMarkdown(entry.name)) {
+          return (
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div className="min-h-0 flex-1 overflow-auto">
+                <Markdown text={view.text} />
+              </div>
+              <TextFooter view={view} />
+            </div>
+          )
+        }
+        if (!source && shouldHighlight(entry.name)) {
+          return (
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div className="min-h-0 flex-1 overflow-auto p-2">
+                <Code code={view.text} name={entry.name} />
+              </div>
+              <TextFooter view={view} />
+            </div>
+          )
+        }
         if (canRender(view.markup) && !source) {
           return (
             <div className="flex min-h-0 flex-1 flex-col">
@@ -247,7 +277,6 @@ export function FilePreview({
             </div>
           )
         }
-        const lines = countLines(view.text)
         return (
           <div className="flex min-h-0 flex-1 flex-col">
             {/* Wrapped, not scrolled sideways. Two scroll directions in one box
@@ -261,20 +290,7 @@ export function FilePreview({
             >
               {safeText(view.text)}
             </pre>
-            <div className="flex shrink-0 items-center gap-2 border-t border-hairline px-3 py-1.5 text-vp-xs text-ink-2">
-              <span className="tabular shrink-0">
-                {lines === 0
-                  ? t('preview.empty')
-                  : lines === 1
-                    ? t('preview.oneLine')
-                    : t('preview.lines', { n: lines.toLocaleString() })}
-              </span>
-              {view.truncated && (
-                <span data-testid="preview-truncated" className="min-w-0 flex-1">
-                  {t('preview.truncated', { n: lines.toLocaleString() })}
-                </span>
-              )}
-            </div>
+            <TextFooter view={view} />
           </div>
         )
       }
@@ -312,7 +328,8 @@ export function FilePreview({
               control included, so the control that says "show me the file
               instead" has to sit outside the frame and be visible without
               scrolling or hovering. */}
-          {view.kind === 'text' && canRender(view.markup) && (
+          {view.kind === 'text' &&
+            (canRender(view.markup) || isMarkdown(entry.name) || shouldHighlight(entry.name)) && (
             // `.vp-segmented` and `.vp-tab`, the same track the side panel's
             // tabs sit in. This is a choice between two views of one thing,
             // which is what that vocabulary is for, and a hand-written copy of
@@ -360,5 +377,32 @@ export function FilePreview({
       </div>
     </div>,
     document.body,
+  )
+}
+
+/**
+ * The line count under a text preview, and whether it was cut short.
+ *
+ * Extracted when markdown and highlighted code became two more views of the
+ * same text: three copies of one footer is three places for the truncation
+ * notice to be forgotten in, and the notice is the one that matters.
+ */
+function TextFooter({ view }: { view: { text: string; truncated: boolean } }) {
+  const lines = countLines(view.text)
+  return (
+    <div className="flex shrink-0 items-center gap-2 border-t border-hairline px-3 py-1.5 text-vp-xs text-ink-2">
+      <span className="tabular shrink-0">
+        {lines === 0
+          ? t('preview.empty')
+          : lines === 1
+            ? t('preview.oneLine')
+            : t('preview.lines', { n: lines.toLocaleString() })}
+      </span>
+      {view.truncated && (
+        <span data-testid="preview-truncated" className="min-w-0 flex-1">
+          {t('preview.truncated', { n: lines.toLocaleString() })}
+        </span>
+      )}
+    </div>
   )
 }

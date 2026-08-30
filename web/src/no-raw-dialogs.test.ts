@@ -58,7 +58,15 @@ const CALLS = [
 describe('the panel asks its own questions', () => {
   // Its own name, because the patterns above are written out below in the
   // failure message and this file would otherwise be the only offender.
-  const files = sources(SRC).filter((f) => basename(f) !== 'no-raw-dialogs.test.ts')
+  // Every test file, not just this one.
+  //
+  // The rule is about what the panel does to a person in front of it, and a
+  // test does not ship. The narrower version -- skip only this file -- meant no
+  // test anywhere could contain the string `alert(`, which is exactly what a
+  // test proving `javascript:alert(1)` is refused has to contain. A check that
+  // will not let a test name the thing it defends against prevents its own kind
+  // of test from being written.
+  const files = sources(SRC).filter((f) => !/\.test\.tsx?$/.test(basename(f)))
 
   it('finds the sources at all', () => {
     // A scanner that walks the wrong directory reports no violations, which is

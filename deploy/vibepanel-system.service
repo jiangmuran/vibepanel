@@ -69,37 +69,52 @@ ManagedOOMPreference=avoid
 CPUWeight=200
 IOWeight=200
 
-NoNewPrivileges=yes
-ProtectControlGroups=yes
-
-# And none of the seccomp ones, on either unit. That is the rule now, and it is
-# not caution -- it is measured on the machine this was written on.
+# No sandboxing, on this unit or the user one, and that is the rule rather
+# than a list of exceptions to it: **the unit confines nothing a shell can
+# notice.**
 #
-# `KillMode=process` means the tmux server outlives the panel process, and it
-# also means the tmux server *starts inside this unit*: same cgroup, same
-# seccomp filter. So does every agent in every session, and every command
-# anybody types into one. A filter written to confine a Go web server ends up
-# applied to whatever the person at the keyboard runs.
+# `KillMode=process` means the tmux server outlives the panel, and it also
+# means the tmux server *starts inside this unit*: same cgroup, same
+# namespaces, same no-new-privileges bit. So does every agent in every session,
+# and every command anybody types into one. Whatever confines the Go web server
+# confines whatever the person at the keyboard runs.
 #
-# What that cost, before anyone noticed: `tar -xzf` of any archive with a
-# subdirectory in it, inside any session the panel had created.
+# Three outages, each found by a person rather than by a test:
 #
-#   tar: deploy: Cannot mkdir: Function not implemented
+#   ProtectClock / ProtectKernelModules / RestrictSUIDSGID
 #
-# ENOSYS, not EPERM, because systemd's filters reject syscalls that the
-# libseccomp they were built against does not know -- and this box runs Linux
-# 7.0 against libseccomp 2.6. Three of the five directives that were here
-# reproduced it (ProtectClock, ProtectKernelModules, RestrictSUIDSGID) and the
-# other two install filters of their own, so they are the same hazard waiting
-# for a tool that uses a syscall one version newer. A panel for running coding
-# agents cannot break tar.
+#     tar: deploy: Cannot mkdir: Function not implemented
 #
-# Verified by bisection with `systemd-run --user -p <directive>=yes tar -xzf`,
-# and by the same extraction succeeding in a unit with none of them.
+#   ENOSYS, not EPERM: systemd implements these with seccomp, and such a filter
+#   rejects syscalls the libseccomp it was built against does not know (Linux
+#   7.0 against libseccomp 2.6 here). `tar -xzf` of any archive with a
+#   subdirectory failed in every session the panel had created. Bisected with
+#   `systemd-run --user -p <directive>=yes tar -xzf`.
 #
-# NoNewPrivileges and ProtectControlGroups stay: measured at zero seccomp
-# filters, and neither is inherited as a syscall rule.
-UMask=0077
+#   NoNewPrivileges=yes
+#
+#     sudo: The "no new privileges" flag is set, which prevents sudo from
+#     running as root.
+#
+#   Inherited by every descendant and impossible to drop once set: no session
+#   could use sudo, su, pkexec, newgrp, or any setuid or file-capability
+#   binary. It was kept here on the grounds that it installs no seccomp filter,
+#   which is true and beside the point — it is a permanent property of the
+#   process tree, not a syscall rule. It costs more on this unit than on the
+#   user one, because a system unit is where somebody would most want it; the
+#   answer is that this unit drops to User= before running anything, and the
+#   thing it would protect against is the same person's own sudo.
+#
+#   ProtectControlGroups=yes
+#
+#   Removed with the others rather than waiting for the report. It mounts
+#   /sys/fs/cgroup read-only in a namespace every session inherits, which is
+#   where rootless podman and anything else driving cgroupfs by hand writes.
+#
+# Not UMask=0077 either: inherited, so every file every agent wrote came out
+# 600. The database it was protecting now sets its own mode — store.Open chmods
+# it and its -wal and -shm to 0600 and the data directory to 0700 on every
+# open, which also covers `vibepanel serve` run by hand.
 
 MemoryAccounting=yes
 MemoryHigh=20G

@@ -112,8 +112,22 @@ func (c *Client) api() string {
 }
 
 // AssetName is the archive this build would install.
+//
+// The `v` is put back rather than left alone, because the two strings this has
+// to sit between disagree about it. A release tag is `v1.2.0` and that is what
+// the API hands back in `tag_name`, but a build stamped from `git describe` on
+// a branch, or `--version` typed by a person, is as likely to be `1.2.0`.
+// Normalising to exactly one leading `v` is what `scripts/build-release.sh`
+// produces, since it interpolates the tag verbatim.
+//
+// It stripped the `v` instead until v1.2.0, so the panel looked for
+// `vibepanel_1.2.0_linux_amd64.tar.gz`, found nothing, and reported the
+// release as having no archive for the platform it was running on -- for every
+// platform, every release. The test suite named its fixtures with this same
+// function and so agreed with the bug; TestTheAssetNameMatchesWhatTheRelease
+// ScriptBuilds is what pins it to the script instead.
 func AssetName(version string) string {
-	return fmt.Sprintf("vibepanel_%s_%s_%s.tar.gz", strings.TrimPrefix(version, "v"), runtime.GOOS, runtime.GOARCH)
+	return fmt.Sprintf("vibepanel_v%s_%s_%s.tar.gz", strings.TrimPrefix(version, "v"), runtime.GOOS, runtime.GOARCH)
 }
 
 // Latest asks what the newest release is.

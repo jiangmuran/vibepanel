@@ -11,6 +11,8 @@ import (
 	"database/sql"
 	_ "embed"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -644,6 +646,29 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+
+	// A sign-in is now bound to the origin it was made at.
+	//
+	// Cookies are not scoped by port and, for SameSite, a different port and a
+	// different scheme are the same site. So a session cookie issued by the
+	// panel on :18443 was sent by the browser to anything else on that host --
+	// and, the other way round, a page served by anything else on that host
+	// could drive the panel as the signed-in user. On a machine that is also
+	// running a ttyd on :7681 that is not theoretical, and the capability at
+	// the end of it is a shell.
+	//
+	// Existing rows get '', which means "not bound yet" rather than "bound to
+	// nothing": the next request to present one records the origin it arrived
+	// at and the row is bound from then on. Rejecting them instead would have
+	// signed everybody out on upgrade to close a hole they were not being
+	// attacked through.
+	func(tx *sql.Tx) error {
+		if _, err := tx.Exec(
+			`ALTER TABLE auth_sessions ADD COLUMN origin TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add auth_sessions.origin: %w", err)
+		}
+		return nil
+	},
 }
 
 // scanner is *sql.Row and *sql.Rows both, so one scan function serves a
@@ -695,7 +720,36 @@ func Open(ctx context.Context, path string) (*DB, error) {
 		sqlDB.Close()
 		return nil, err
 	}
+	restrict(path)
 	return db, nil
+}
+
+// restrict makes the database unreadable by anybody else.
+//
+// This used to be `UMask=0077` in the service unit, which worked and also
+// applied to every file every agent in every session ever created, because the
+// tmux server starts inside the unit and a umask is inherited. Removing it
+// from there means the database has to say so itself -- and it now says so for
+// `vibepanel serve` started by hand as well, which the unit never covered.
+//
+// Best effort on purpose. A database on a filesystem with no Unix modes behind
+// it, or one owned by somebody else, is not a reason to refuse to start: the
+// panel would be refusing to run over a permission it cannot set, on a file it
+// has already opened successfully.
+//
+// The -wal and -shm matter as much as the database. They are created by SQLite
+// with the process umask when WAL mode is entered, and a -wal holds committed
+// pages: readable -wal, readable password hashes.
+func restrict(path string) {
+	_ = os.Chmod(path, 0o600)
+	_ = os.Chmod(path+"-wal", 0o600)
+	_ = os.Chmod(path+"-shm", 0o600)
+	// The directory too: a mode-700 database in a mode-755 directory is fine,
+	// but the directory also holds backups written by `--purge` and whatever
+	// else lands beside it.
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		_ = os.Chmod(dir, 0o700)
+	}
 }
 
 // Close releases the pool.

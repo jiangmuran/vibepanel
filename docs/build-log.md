@@ -17807,3 +17807,87 @@ Four things the browser found that reading had not:
   dialog" as a WARN ever since.
 - render-check's fake agent was a symlink to `sleep`. A multi-call coreutils
   build reads argv[0], does not recognise "claude", and exits immediately.
+
+## A login that followed the cookie to the next port
+
+Reported as a question: 「为啥我换个端口 换个协议访问登录态还在」. The answer is
+that cookies have never been scoped by port, and for `SameSite` a different
+port and a different scheme on the same host are the *same site*. So the
+panel's session cookie was sent to everything else on the machine, and — the
+direction that matters — a page served by anything else on the machine could
+issue writes to the panel with the cookie attached and the browser would send
+it. On a host that is also running a ttyd on `:7681`, the capability at the end
+of that is a shell.
+
+Two changes, because one of them is not enough on its own.
+
+`auth_sessions` gained an `origin` column (migration 19): a sign-in records the
+`scheme://host:port` it was made at and is refused anywhere else. Rows from
+before the column are bound where they are next presented rather than rejected,
+because signing the whole userbase out on upgrade to close a hole nobody was
+being attacked through is the kind of fix that gets a release rolled back. The
+`origin = ''` in `BindAuthSessionOrigin`'s `WHERE` is what stops two
+simultaneous requests from two origins both binding.
+
+And `RequireAuth` now refuses a state-changing request whose `Origin` header is
+another page. That is the half `SameSite=Strict` does not cover, and it is the
+one that actually stops the co-located-service case; the binding is what makes
+the answer to the original question be "no, it does not follow".
+
+The tests for this passed with the binding deleted. `req.Host` overridden means
+the client's cookie jar attaches nothing, so every request arrived
+unauthenticated and every assertion for a 401 was satisfied for the wrong
+reason. Mutation testing is the only reason that was found, and `asHost` now
+attaches the cookie by hand so no request in the file can be silently
+anonymous.
+
+## sudo, in a panel whose whole job is running commands
+
+    sudo: The "no new privileges" flag is set, which prevents sudo from
+    running as root.
+
+Third time in this shape. `KillMode=process` puts the tmux server inside the
+unit and leaves it there, so anything the unit does to confine a Go web server
+is done to every agent and every command anybody types. The seccomp directives
+went for breaking `tar`; `NoNewPrivileges` went for this, and it is worse than
+the seccomp ones because the bit cannot be dropped once set — `sudo`, `su`,
+`pkexec`, `newgrp` and `ping` were all simply gone from every terminal the
+panel opened. The comment defending it said it installs no seccomp filter,
+which is true and beside the point.
+
+`ProtectControlGroups` went with it, unreported, on the same reasoning.
+`UMask=0077` too: inherited, so every file every agent created came out 600 and
+every directory 700. What it was protecting is the database, and that is now
+`store.Open` chmodding the file, its `-wal`, its `-shm` and the data directory —
+which also covers `vibepanel serve` started by hand, something the unit's
+setting never did.
+
+The rule that replaces case-by-case judgement, and the guard that holds it:
+**the unit confines nothing a shell can notice.**
+`TestNothingInEitherUnitConfinesWhatAShellDoes` carries the list with a reason
+per entry, because the next person to add one will have a good reason.
+
+A unit already on somebody's machine still has all of this, and upgrading the
+binary does not rewrite it — so `doctor` reads `/proc/self/status` and says so.
+It fired on the first run, in the session this was written in.
+
+## An update check that could never find its own release
+
+    v1.2.0 has no archive for this platform
+
+`selfupdate.AssetName` stripped the leading `v` from the version, so the panel
+asked github for `vibepanel_1.2.0_linux_amd64.tar.gz`. Every archive ever
+published is `vibepanel_v1.2.0_linux_amd64.tar.gz`: `scripts/build-release.sh`
+interpolates the tag verbatim, and `install.sh` — which works — takes the name
+from `tag_name` the same way. So the in-panel updater had never found a release
+on any platform.
+
+The tests agreed with the bug because they were written against the same
+function: the fake release server named its asset with `AssetName` and wrote
+its `SHA256SUMS` line with `AssetName`, so the suite asserted the checker agreed
+with itself. `TestTheAssetNameMatchesWhatTheReleaseScriptBuilds` reads the
+`name=` and `tar -czf` lines out of the shell script instead.
+
+Because the fix ships *in* the release the old build cannot see, v1.2.0 has to
+be upgraded with the installer one-liner once. After that the panel can update
+itself.

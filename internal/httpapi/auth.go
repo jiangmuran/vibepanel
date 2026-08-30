@@ -94,6 +94,17 @@ func (s *Server) RequireAuth(next http.Handler) http.Handler {
 			return
 		}
 
+		// A write whose Origin is somewhere else, refused before it reaches a
+		// handler. SameSite=Strict does not cover this: for a cookie, another
+		// port on this host is the same site, so a page served there can POST
+		// here with the session cookie attached.
+		if crossOriginWrite(r, s.requestOrigin(r)) {
+			s.auditFromOutside(ctx, "blocked", "", s.clientIP(r),
+				"a write from "+r.Header.Get("Origin"))
+			writeErr(w, http.StatusForbidden, "not allowed from that origin")
+			return
+		}
+
 		user, ok, uerr := s.currentUser(r)
 		if uerr != nil {
 			// Not 401: the session may be perfectly good and the panel simply
@@ -226,6 +237,29 @@ func (s *Server) currentUser(r *http.Request) (store.User, bool, error) {
 	if err != nil {
 		return store.User{}, false, err
 	}
+
+	// The origin this sign-in was made at, and the only one it works at.
+	//
+	// A row with no origin predates the binding. It is bound to wherever it is
+	// first presented rather than rejected, because signing everybody out on
+	// upgrade to close a hole nobody was being attacked through is the sort of
+	// fix that gets a release rolled back.
+	here := s.requestOrigin(r)
+	switch {
+	case sess.Origin == "":
+		if err := s.DB.BindAuthSessionOrigin(ctx, hash, here); err != nil {
+			s.Log.Debug("bind auth session origin", "err", err)
+		}
+	case !sameOrigin(sess.Origin, here):
+		// Not an error to the caller: an unrecognised cookie is exactly what
+		// this is, and saying "wrong origin" tells whoever sent it what to try
+		// next. It is audited, because from the owner's side it means either a
+		// second address they have forgotten about or somebody else's page.
+		s.auditFromOutside(ctx, "session.origin", "", s.clientIP(r),
+			"a session issued at "+sess.Origin+" was presented at "+here)
+		return store.User{}, false, nil
+	}
+
 	user, err := s.DB.UserByID(ctx, sess.UserID)
 	if errors.Is(err, store.ErrNotFound) {
 		return store.User{}, false, nil
@@ -461,8 +495,11 @@ func (s *Server) issueSession(w http.ResponseWriter, r *http.Request, user store
 		writeErr(w, http.StatusInternalServerError, "could not create a session")
 		return
 	}
+	// Bound to the origin it was made at. A cookie is not scoped by port and,
+	// for SameSite, a different port is the same site, so an unbound session
+	// was one anything else on this machine could drive.
 	err = s.DB.CreateAuthSession(r.Context(), auth.HashToken(token), user.ID,
-		auth.SessionTTL, r.UserAgent(), s.clientIP(r))
+		auth.SessionTTL, r.UserAgent(), s.clientIP(r), s.requestOrigin(r))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not create a session")
 		return

@@ -1282,6 +1282,31 @@ func cmdDoctor(args []string) error {
 		fmt.Printf("[--  ] passkeys           disabled; password login only\n")
 		fmt.Printf("       needs --domain with a hostname plus TLS, or localhost\n")
 	}
+	// What this process is confined by, because every session inherits it.
+	//
+	// The unit files no longer set any of this, but a unit already installed
+	// on somebody's machine does, and upgrading the binary does not rewrite
+	// it. The symptom is one a person hits an hour later, inside a session,
+	// with nothing pointing back here:
+	//
+	//	sudo: The "no new privileges" flag is set
+	//
+	// The panel can read its own bit, so it says so rather than leaving
+	// somebody to work out why sudo stopped existing.
+	switch nnp, known := noNewPrivs(); {
+	case !known:
+		// Not a failure and not even a warning: no /proc means macOS, and
+		// there is nothing to report rather than something unknown.
+	case nnp:
+		fmt.Printf("[warn] confinement        no_new_privs is set on this process\n")
+		fmt.Printf("       every session inherits it and cannot drop it: sudo, su, pkexec and\n")
+		fmt.Printf("       every setuid binary fail inside the panel's terminals\n")
+		fmt.Printf("       the shipped units no longer set NoNewPrivileges; an installed one\n")
+		fmt.Printf("       predates that. Reinstall it, or delete the line and daemon-reload\n")
+	default:
+		fmt.Printf("[ok  ] confinement        nothing inherited that a session would notice\n")
+	}
+
 	if len(cfg.UnknownEnv) == 0 {
 		fmt.Printf("[ok  ] environment        no unrecognised VIBEPANEL_* variables\n")
 	} else {
@@ -1393,4 +1418,27 @@ func killSessionTree(ctx context.Context, db *store.DB, tm *tmux.Client, s store
 		}
 	}
 	return nil
+}
+
+// noNewPrivs reports the process's no_new_privs bit, and whether it could be
+// read at all.
+//
+// Read from /proc rather than through prctl, because that keeps CGO_ENABLED=0
+// and the syscall package out of it and because the failure mode is the one
+// wanted: no /proc means macOS, where there is no such bit and nothing to say.
+func noNewPrivs() (set bool, known bool) {
+	b, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return false, false
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		rest, found := strings.CutPrefix(line, "NoNewPrivs:")
+		if !found {
+			continue
+		}
+		return strings.TrimSpace(rest) == "1", true
+	}
+	// The field has existed since Linux 3.5. Missing means something has
+	// changed about /proc, and "unknown" is the honest answer.
+	return false, false
 }

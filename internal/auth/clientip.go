@@ -79,3 +79,17 @@ func Allowed(remote string, allow []*net.IPNet) bool {
 	}
 	return inAny(ip, allow)
 }
+
+// FromTrustedProxy reports whether the immediate peer is one the operator
+// listed, and so whether its X-Forwarded-* headers mean anything.
+//
+// Separate from ClientIP because the scheme needs the same decision and got it
+// wrong on its own the first time: an X-Forwarded-Proto believed from anybody
+// lets a client choose which half of a binding it lands in.
+func FromTrustedProxy(r *http.Request, trustedProxies []*net.IPNet) bool {
+	if len(trustedProxies) == 0 {
+		return false
+	}
+	ip := net.ParseIP(hostOnly(r.RemoteAddr))
+	return ip != nil && inAny(ip, trustedProxies)
+}

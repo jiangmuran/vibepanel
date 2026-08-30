@@ -7,11 +7,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -736,10 +739,10 @@ func TestPurgingExpiredSignInsKeepsTheLiveOnes(t *testing.T) {
 	}
 	live := []byte("live-token-hash")
 	dead := []byte("dead-token-hash")
-	if err := db.CreateAuthSession(ctx, live, u.ID, time.Hour, "browser", "127.0.0.1"); err != nil {
+	if err := db.CreateAuthSession(ctx, live, u.ID, time.Hour, "browser", "127.0.0.1", "http://localhost:1"); err != nil {
 		t.Fatalf("CreateAuthSession live: %v", err)
 	}
-	if err := db.CreateAuthSession(ctx, dead, u.ID, -time.Hour, "browser", "127.0.0.1"); err != nil {
+	if err := db.CreateAuthSession(ctx, dead, u.ID, -time.Hour, "browser", "127.0.0.1", "http://localhost:1"); err != nil {
 		t.Fatalf("CreateAuthSession expired: %v", err)
 	}
 
@@ -1065,4 +1068,68 @@ func tableCount(t *testing.T, db *DB, name string) int {
 		t.Fatalf("look for %s: %v", name, err)
 	}
 	return n
+}
+
+// The database is not readable by anybody else, whatever umask the process
+// started with.
+//
+// This was `UMask=0077` in the service unit until it turned out that a umask
+// is inherited: the tmux server starts inside the unit, so every file every
+// agent in every session created came out 600 too. The mode belongs to the
+// database, not to the process, and it has to hold for `vibepanel serve` run
+// by hand -- which the unit's setting never covered.
+//
+// The -wal is checked as well and is the one worth checking. It is created by
+// SQLite rather than by this package, it holds committed pages, and a readable
+// -wal is readable password hashes.
+func TestTheDatabaseIsNotReadableByOthers(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no Unix modes")
+	}
+	// A permissive umask, which is what a login shell has. Without the chmod
+	// the database comes out 0644 here.
+	old := syscall.Umask(0o022)
+	defer syscall.Umask(old)
+
+	dir := filepath.Join(t.TempDir(), "data")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "vibepanel.db")
+
+	ctx := t.Context()
+	db, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+
+	// Something that forces a write, so the -wal exists to be checked.
+	if _, err := db.CreateUser(ctx, "u1", "tester", "hash"); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	for _, c := range []struct {
+		path string
+		want os.FileMode
+	}{
+		{path, 0o600},
+		{path + "-wal", 0o600},
+		{dir, 0o700},
+	} {
+		fi, err := os.Stat(c.path)
+		if err != nil {
+			// A -shm or -wal may legitimately not exist yet on some builds;
+			// the database and the directory always do.
+			if os.IsNotExist(err) && strings.Contains(c.path, "-") {
+				continue
+			}
+			t.Errorf("stat %s: %v", c.path, err)
+			continue
+		}
+		if got := fi.Mode().Perm(); got != c.want {
+			t.Errorf("%s is mode %04o, want %04o -- anybody on this machine can read it",
+				filepath.Base(c.path), got, c.want)
+		}
+	}
 }
