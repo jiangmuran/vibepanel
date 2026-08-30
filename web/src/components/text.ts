@@ -60,3 +60,33 @@ const DECEPTIVE =
 export function safeText(s: string): string {
   return s.replace(DECEPTIVE, '\uFFFD')
 }
+
+/**
+ * The same neutralisation for a document rather than a name.
+ *
+ * `safeText` is for one line -- a filename, a session title -- where a tab or
+ * a newline in the middle of it is itself the trick, and turning both into
+ * U+FFFD is correct. Running it over a file's *contents* is not: it replaced
+ * every tab in every indented line and every newline inside a paragraph with a
+ * black diamond, which is what the markdown preview shipped doing.
+ *
+ * So tab and newline survive here and nothing else in C0 does. A lone carriage
+ * return is normalised rather than replaced, because a CRLF file is ordinary
+ * and a box at the end of every line is not; what is left after that is a bare
+ * CR, which overwrites a line rather than ending one and has no business in a
+ * document.
+ *
+ * The bidi overrides still go. They lie about the order of the text in a
+ * paragraph exactly as they do in a filename.
+ */
+export function safeBody(s: string): string {
+  return s.replace(/\r\n?/g, '\n').replace(DECEPTIVE_BODY, '\uFFFD')
+}
+
+// DECEPTIVE, with \t (U+0009) and \n (U+000A) cut out of the C0 range. Written
+// with escapes for the same reason DECEPTIVE is: these bytes are invisible in
+// an editor and in a diff, which is the property both exist to defeat.
+const DECEPTIVE_BODY =
+  // The control characters are the subject here, the same as above.
+  // eslint-disable-next-line no-control-regex
+  /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u00AD\u202A-\u202E\u2066-\u2069\u200E\u200F\u200B\u2060\uFEFF\u061C]/g

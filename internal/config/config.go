@@ -248,19 +248,35 @@ func (c Config) RestoreDir() string { return filepath.Join(c.DataDir, "restore")
 // PasskeysUsable reports whether WebAuthn registration can succeed with this
 // configuration. The login page uses it to explain why the passkey button is
 // disabled rather than letting the browser fail with an opaque error.
-func (c Config) PasskeysUsable() bool {
+func (c Config) PasskeysUsable() bool { return c.PasskeyBlocker() == "" }
+
+// PasskeyBlocker names what is stopping passkeys, or "" if nothing is.
+//
+// A code rather than a sentence, because the sentence has to be written twice
+// -- the login page and the settings page both say it -- and in two languages.
+// It used to be an English string built in the handler and interpolated into a
+// Chinese UI.
+//
+// The three are worth distinguishing. "No domain at all" is the common one and
+// the fix is one field; "the domain is an IP" is a fix nothing in the panel can
+// do for you, because a Relying Party ID has to be a name; "TLS is off" is a
+// working configuration that just cannot carry a passkey.
+func (c Config) PasskeyBlocker() string {
 	if c.Domain == "" {
-		return false
+		return "no-domain"
 	}
 	// An IP address is never a valid Relying Party ID.
 	if net.ParseIP(c.Domain) != nil {
-		return false
+		return "ip-domain"
 	}
 	// localhost is the one origin browsers treat as secure over plain HTTP.
 	if c.Domain == "localhost" {
-		return true
+		return ""
 	}
-	return c.TLSMode != TLSOff
+	if c.TLSMode == TLSOff {
+		return "no-tls"
+	}
+	return ""
 }
 
 // Validate checks for combinations that cannot work, so the process fails at

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { safeText } from './text'
+import { safeText, safeBody } from './text'
 
 // The characters under test are written as escapes throughout: a test whose
 // subject is invisible in a diff cannot be reviewed.
@@ -51,5 +51,33 @@ describe('safeText', () => {
     for (const s of ['README.md', '重构认证流程', 'hotfix', 'a-b_c.1', 'naïve', 'Ω.txt']) {
       expect(safeText(s)).toBe(s)
     }
+  })
+})
+
+describe('safeBody', () => {
+  // The two characters a document is made of. safeText replaces both, which is
+  // right for a filename and is what the markdown preview shipped applying to
+  // file contents: every indented line and every wrapped paragraph came out
+  // with a black diamond in it.
+  it('keeps the tabs and newlines a file is made of', () => {
+    expect(safeBody('a\tb')).toBe('a\tb')
+    expect(safeBody('one\ntwo')).toBe('one\ntwo')
+    expect(safeBody('\tif x {\n\t\treturn\n\t}')).toBe('\tif x {\n\t\treturn\n\t}')
+  })
+
+  it('still removes what safeText removes', () => {
+    // A bidi override lies about the order of a paragraph exactly as it lies
+    // about the order of a filename.
+    expect(safeBody('report\u202Efdp.exe')).toBe('report\uFFFDfdp.exe')
+    expect(safeBody('a\u0000b')).toBe('a\uFFFDb')
+    expect(safeBody('a\u200Bb')).toBe('a\uFFFDb')
+    // Vertical tab and form feed are not what a document is made of.
+    expect(safeBody('a\u000Bb')).toBe('a\uFFFDb')
+  })
+
+  it('normalises CRLF instead of putting a box at the end of every line', () => {
+    expect(safeBody('one\r\ntwo\r\n')).toBe('one\ntwo\n')
+    // An old-Mac line ending is a line ending, not an overwrite.
+    expect(safeBody('one\rtwo')).toBe('one\ntwo')
   })
 })

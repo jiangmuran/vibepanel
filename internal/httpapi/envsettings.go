@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/jiangmuran/vibepanel/internal/config"
@@ -23,6 +24,12 @@ type envResponse struct {
 	// tmux socket cannot see its own sessions, and the ones it was managing
 	// keep running with nothing attached to them.
 	Socket string `json:"socket"`
+
+	// Secrets is which write-only settings have a value, and never what the
+	// value is. A response that carried an ACME credential would put it in
+	// every browser cache and every screenshot of this page.
+	Secrets   []string        `json:"secrets"`
+	SecretSet map[string]bool `json:"secretSet"`
 }
 
 func (s *Server) handleGetEnv(w http.ResponseWriter, r *http.Request) {
@@ -48,10 +55,19 @@ func (s *Server) handleGetEnv(w http.ResponseWriter, r *http.Request) {
 			"VIBEPANEL_ALLOW_FROM":      strings.Join(s.Cfg.AllowFrom, ","),
 			"VIBEPANEL_TRUSTED_PROXIES": strings.Join(s.Cfg.TrustedProxies, ","),
 		},
-		Socket: s.Cfg.TmuxSocket,
+		Socket:    s.Cfg.TmuxSocket,
+		Secrets:   config.SecretEnv,
+		SecretSet: map[string]bool{},
 	}
 	for _, k := range config.EditableEnv {
 		out.Values[k] = values[k]
+	}
+	// Presence, never the value. The environment is checked as well as the
+	// file, because a token exported by the unit rather than written here is
+	// still a token that is set, and reporting it as missing sends somebody to
+	// paste a working credential in again.
+	for _, k := range config.SecretEnv {
+		out.SecretSet[k] = values[k] != "" || os.Getenv(k) != ""
 	}
 	writeJSON(w, http.StatusOK, out)
 }

@@ -241,9 +241,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	if s.Auth != nil {
 		out.AllowAll = len(s.Auth.Allow) == 0
 	}
-	if !out.PasskeysUsable {
-		out.PasskeyReason = "needs a hostname in --domain plus TLS, or localhost"
-	}
+	// Same code the login page gets, and the settings page now shows the
+	// passkey section either way: hiding it when it cannot work is why
+	// somebody went looking for a feature that was on screen the whole time
+	// on a machine configured differently.
+	out.PasskeyReason = s.Cfg.PasskeyBlocker()
 	if u, ok := currentUserFrom(r); ok {
 		out.Username = u.Username
 	}

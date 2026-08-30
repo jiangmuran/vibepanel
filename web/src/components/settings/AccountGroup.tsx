@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { api } from '../../protocol/api'
-import type { AuditEntry } from '../../protocol/wire'
+import type { AuditEntry, SettingsInfo } from '../../protocol/wire'
 import { t } from '../../i18n'
 import { ApiTokens } from '../ApiTokens'
 import { PasskeysSection } from './Passkeys'
@@ -17,11 +17,17 @@ import { Section } from './parts'
  * answers is "has anybody else been in here", which is the question you are
  * already asking when you came to change a password.
  */
-export function AccountGroup({ passkeysUsable }: { passkeysUsable: boolean }) {
+export function AccountGroup({ info }: { info: SettingsInfo | null }) {
   return (
     <>
       <PasswordSection />
-      {passkeysUsable && <PasskeysSection />}
+      {/* Always rendered, usable or not.
+        *
+        * It used to be `{passkeysUsable && ...}`, so a panel with no domain
+        * configured had no passkey section at all and nothing saying why —
+        * which is a feature somebody goes looking for, does not find, and
+        * reports as missing. The reason is one line and it names the setting. */}
+      <PasskeysSection blocker={info?.passkeyReason ?? ''} rpID={info?.domain ?? ''} />
       <Section id="tokens" title={t('tok.title')}>
         <ApiTokens />
       </Section>

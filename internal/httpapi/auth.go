@@ -309,16 +309,9 @@ func (s *Server) handleAuthState(w http.ResponseWriter, r *http.Request) {
 		Configured:     n > 0,
 		PasskeysUsable: s.Cfg.PasskeysUsable(),
 	}
-	if !state.PasskeysUsable {
-		switch {
-		case s.Cfg.Domain == "":
-			state.PasskeyReason = "no --domain is set; WebAuthn needs a hostname"
-		case net.ParseIP(s.Cfg.Domain) != nil:
-			state.PasskeyReason = "an IP address cannot be a WebAuthn Relying Party ID"
-		default:
-			state.PasskeyReason = "passkeys need HTTPS, or localhost"
-		}
-	}
+	// A code, translated by whoever displays it. This was three English
+	// sentences built here and interpolated into a Chinese login page.
+	state.PasskeyReason = s.Cfg.PasskeyBlocker()
 	// currentUser has three outcomes, and the third one matters here more than
 	// anywhere else. This endpoint is what App.tsx asks after the socket has been
 	// down four seconds, precisely to tell "the session ended" from "the network

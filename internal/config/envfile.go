@@ -52,13 +52,38 @@ var EditableEnv = []string{
 	"VIBEPANEL_TRUSTED_PROXIES",
 }
 
+// SecretEnv is the settings that can be *written* from the panel and never
+// read back out of it.
+//
+// CLOUDFLARE_API_TOKEN is the whole list. Leaving it out of EditableEnv kept it
+// off the screen, and also meant the one TLS mode the panel recommends could
+// not be configured from the panel at all: somebody who chose ACME during the
+// install and then rotated the token had to find the file and edit it.
+//
+// Write-only is the shape that gives both. The response says whether a value
+// is present, never what it is, so it is not in a screenshot, not in a browser
+// cache and not in the response somebody pastes into an issue.
+var SecretEnv = []string{
+	"CLOUDFLARE_API_TOKEN",
+}
+
+// Secret reports whether a key is write-only.
+func Secret(key string) bool {
+	for _, k := range SecretEnv {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
+
 func editable(key string) bool {
 	for _, k := range EditableEnv {
 		if k == key {
 			return true
 		}
 	}
-	return false
+	return Secret(key)
 }
 
 // ReadEnvFile returns the assignments in the file, ignoring commented ones.

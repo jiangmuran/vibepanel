@@ -245,7 +245,7 @@ export function Settings({ openAt, onClose }: { openAt: SettingsSection; onClose
             {group === 'sessions' && <SessionsGroup />}
             {group === 'notify' && <NotificationsGroup />}
             {group === 'sharing' && <SharingGroup />}
-            {group === 'account' && <AccountGroup passkeysUsable={info?.passkeysUsable ?? false} />}
+            {group === 'account' && <AccountGroup info={info} />}
             {group === 'panel' && <PanelGroup info={info} />}
           </div>
         </div>

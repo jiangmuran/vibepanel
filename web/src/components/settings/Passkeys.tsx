@@ -9,12 +9,24 @@ import {
 } from '../../protocol/webauthn'
 import type { Passkey } from '../../protocol/wire'
 import { t } from '../../i18n'
+import type { Key } from '../../i18n'
 import { askConfirm, askText } from '../ask'
 import { passkeyLabel } from '../label'
 import { showToast } from '../toasts'
 import { Section } from './parts'
 
-export function PasskeysSection() {
+/** The server sends a code; this is which sentence it means.
+ *
+ *  A table rather than a switch: `return 'pk.no-tls'` reads to the
+ *  untranslated-string scanner exactly like a literal about to be rendered,
+ *  and it is right to be suspicious of one. */
+const BLOCKER: Record<string, Key> = {
+  'no-domain': 'pk.no-domain',
+  'ip-domain': 'pk.ip-domain',
+  'no-tls': 'pk.no-tls',
+}
+
+export function PasskeysSection({ blocker, rpID }: { blocker: string; rpID: string }) {
   const [keys, setKeys] = useState<Passkey[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -74,11 +86,43 @@ export function PasskeysSection() {
     }
   }
 
+  // The browser refuses a ceremony whose Relying Party ID is not a suffix of
+  // the page's own host, and it refuses it with a DOMException that says
+  // "registrable domain suffix" -- which is true, and is not what somebody
+  // wants to read. The panel knows both halves, so it can say which two names
+  // disagree before anybody presses anything.
+  const host = typeof window === 'undefined' ? '' : window.location.hostname
+  const mismatch =
+    blocker === '' && rpID !== '' && host !== '' && host !== rpID && !host.endsWith('.' + rpID)
+
   return (
     <Section id="passkeys" title={t('set.passkeys')}>
       <p className="mb-3 text-vp-base leading-relaxed text-ink-2">
         {t('set.passkeysWhy')}
       </p>
+      {blocker !== '' && (
+        <div
+          data-testid="passkey-blocked"
+          className="mb-3 rounded-vp border border-hairline bg-surface-2 px-3 py-2 text-vp-base leading-relaxed text-ink-2"
+        >
+          <p className="text-ink">{t(BLOCKER[blocker] ?? 'pk.no-domain')}</p>
+          <p className="mt-1">{t('pk.where')}</p>
+        </div>
+      )}
+      {blocker === '' && rpID !== '' && (
+        <p className="mb-3 text-vp-sm text-ink-3">
+          {t('pk.rpid')} <span className="font-mono text-ink-2">{rpID}</span>
+        </p>
+      )}
+      {mismatch && (
+        <p
+          data-testid="passkey-mismatch"
+          className="mb-3 text-vp-base leading-relaxed"
+          style={{ color: 'var(--vp-state-waiting)' }}
+        >
+          {t('pk.hostMismatch', { host, rpid: rpID })}
+        </p>
+      )}
       {error && (
         <p className="mb-2 text-vp-base" style={{ color: 'var(--vp-state-waiting)' }}>
           {error}
@@ -94,7 +138,9 @@ export function PasskeysSection() {
           <Fingerprint size={12} className="shrink-0 text-ink-2" />
           <span className="min-w-0 flex-1 truncate text-vp-base text-ink">{passkeyLabel(k)}</span>
           <span className="shrink-0 text-vp-xs text-ink-2">
-            {k.lastUsedAt ? `used ${new Date(k.lastUsedAt * 1000).toLocaleDateString()}` : 'never used'}
+            {k.lastUsedAt
+              ? t('pk.used', { when: new Date(k.lastUsedAt * 1000).toLocaleDateString() })
+              : t('pk.neverUsed')}
           </span>
           <button
             type="button"
@@ -127,14 +173,14 @@ export function PasskeysSection() {
       ))}
       <button
         type="button"
-        disabled={busy || !passkeysSupported()}
+        disabled={busy || blocker !== '' || !passkeysSupported()}
         onClick={() => void add()}
         data-testid="passkey-add"
         className="mt-3 flex items-center gap-1.5 rounded-vp px-3 py-1.5 text-vp-base font-medium disabled:opacity-50"
         style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
       >
         <Plus size={13} />
-        {busy ? 'Waiting for your device…' : 'Add a passkey'}
+        {busy ? t('pk.waiting') : t('pk.add')}
       </button>
     </Section>
   )

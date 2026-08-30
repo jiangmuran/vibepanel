@@ -121,15 +121,23 @@ func TestPatchAppendsWhatIsNotThere(t *testing.T) {
 	}
 }
 
-// Only the listed keys, and the two that are deliberately not on the list.
+// Only the listed keys, and the two that are on no list for different reasons.
 //
-// CLOUDFLARE_API_TOKEN is a credential and a page that shows it puts it in
-// every screenshot of that page. VIBEPANEL_TMUX_SOCKET is red line 1: a panel
-// pointed at another socket cannot see its own sessions, and the ones it was
-// managing keep running with nothing attached.
+// VIBEPANEL_TMUX_SOCKET is red line 1: a panel pointed at another socket
+// cannot see its own sessions, and the ones it was managing keep running with
+// nothing attached. It is refused outright.
+//
+// CLOUDFLARE_API_TOKEN used to be refused too, on the grounds that a page
+// showing it puts an ACME credential in every screenshot. That reason is
+// right, and refusing the *write* was the wrong answer to it: it also meant
+// the one TLS mode the panel recommends could not be configured from the
+// panel, so somebody rotating a token had to go and find the file. It is
+// write-only now -- settable, and never in a response -- so what this test
+// pins is that it stays out of EditableEnv, which is the list the settings
+// page renders values from.
 func TestPatchRefusesWhatIsNotEditable(t *testing.T) {
 	p := write(t, shipped)
-	for _, k := range []string{"CLOUDFLARE_API_TOKEN", "VIBEPANEL_TMUX_SOCKET", "PATH"} {
+	for _, k := range []string{"VIBEPANEL_TMUX_SOCKET", "PATH"} {
 		if err := PatchEnvFile(p, map[string]string{k: "x"}); err == nil {
 			t.Errorf("%s was accepted", k)
 		}
@@ -137,6 +145,29 @@ func TestPatchRefusesWhatIsNotEditable(t *testing.T) {
 	body, _ := os.ReadFile(p)
 	if string(body) != shipped {
 		t.Errorf("a refused write changed the file anyway:\n%s", body)
+	}
+}
+
+func TestTheAcmeTokenIsWritableAndNeverListed(t *testing.T) {
+	p := write(t, shipped)
+	if err := PatchEnvFile(p, map[string]string{"CLOUDFLARE_API_TOKEN": "cf-token"}); err != nil {
+		t.Fatalf("a write-only setting could not be written: %v", err)
+	}
+	body, _ := os.ReadFile(p)
+	if !strings.Contains(string(body), "CLOUDFLARE_API_TOKEN=cf-token") {
+		t.Errorf("the token is not in the file:\n%s", body)
+	}
+
+	// Not in the list the settings page renders values from. Adding it there
+	// is one line and would put an ACME credential in every screenshot of that
+	// page; TestTheAcmeTokenIsNeverInTheResponse is the other half of this.
+	for _, k := range EditableEnv {
+		if k == "CLOUDFLARE_API_TOKEN" {
+			t.Error("CLOUDFLARE_API_TOKEN is in EditableEnv; its value will be sent to the browser")
+		}
+	}
+	if !Secret("CLOUDFLARE_API_TOKEN") {
+		t.Error("Secret() no longer knows the token is write-only")
 	}
 }
 

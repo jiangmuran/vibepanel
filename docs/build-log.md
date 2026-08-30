@@ -17891,3 +17891,44 @@ with itself. `TestTheAssetNameMatchesWhatTheReleaseScriptBuilds` reads the
 Because the fix ships *in* the release the old build cannot see, v1.2.0 has to
 be upgraded with the installer one-liner once. After that the panel can update
 itself.
+
+## A settings page that was a dotfile with a browser around it
+
+Two asks in the same breath: 「我的passkey绑定和登陆呢」 and 「把env的大部分设置
+都挪到面板上的设置」.
+
+The passkeys were on screen the whole time — on a machine configured
+differently. `AccountGroup` rendered the section as `{passkeysUsable && …}`, so
+a panel with no domain had no passkey section and nothing saying why. It is
+always rendered now, with the reason and the setting to change. The reason
+itself was three English sentences built in the handler and interpolated into a
+Chinese page; the server sends a code (`no-domain`, `ip-domain`, `no-tls`) and
+each page translates it. The section also prints the relying party ID and says
+so when the page's own host is not a suffix of it, because the browser's answer
+to that is a DOMException about registrable domain suffixes.
+
+The env block was every editable variable in one column in whatever order the
+server sent them, which put the ACME directory between the key file and the
+allowlist. It is three groups now — how people reach it, the certificate, who
+may connect — with a label beside each variable rather than instead of it, and
+the certificate mode as a segmented control that shows only the fields the
+chosen mode reads. Five certificate fields on screen at once is what let
+somebody fill in a cert path while the mode said `acme`.
+
+`CLOUDFLARE_API_TOKEN` is now settable and still never readable.
+Keeping it out of `EditableEnv` kept it out of every screenshot and also meant
+the one TLS mode the panel recommends could not be configured from the panel at
+all. Write-only is what gives both: the response says whether a value is
+present, never what it is.
+
+## Every tab and every wrapped line rendered as a black diamond
+
+`safeText` replaces every C0 control with U+FFFD, which is right for a filename
+— a newline in the middle of one is the trick, not the content — and wrong for
+the contents of a file, which is what the new markdown preview was passing to
+it. Every indented line and every soft-wrapped paragraph came out with a box in
+it. Found by looking at a screenshot of a real README rather than by a test.
+
+`safeBody` keeps tab and newline, normalises CRLF instead of putting a box at
+the end of every line, and still removes the bidi overrides, which lie about
+the order of a paragraph exactly as they do about a filename.

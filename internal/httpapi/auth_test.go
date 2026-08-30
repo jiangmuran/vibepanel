@@ -18,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/jiangmuran/vibepanel/internal/auth"
+	"github.com/jiangmuran/vibepanel/internal/config"
 	"github.com/jiangmuran/vibepanel/internal/store"
 )
 
@@ -337,8 +338,42 @@ func TestAuthStateDescribesPasskeyAvailability(t *testing.T) {
 	if state.PasskeysUsable {
 		t.Error("passkeys reported usable with an IP address as the domain")
 	}
-	if !strings.Contains(state.PasskeyReason, "IP address") {
-		t.Errorf("reason = %q, want it to mention the IP address", state.PasskeyReason)
+	// A code, not a sentence: the sentence is written once per language in
+	// web/src/i18n.ts, and the three reasons are distinguished because the fix
+	// for each is different. This used to be English prose built in the
+	// handler and interpolated into a Chinese login page.
+	if state.PasskeyReason != "ip-domain" {
+		t.Errorf("reason = %q, want %q", state.PasskeyReason, "ip-domain")
+	}
+
+	// Each cause has its own code, and each is spelled the way the frontend
+	// spells it. A code the dictionary does not have falls back to the wrong
+	// sentence with nothing to say it went wrong.
+	for _, c := range []struct {
+		domain string
+		tls    config.TLSMode
+		want   string
+	}{
+		{"", config.TLSOff, "no-domain"},
+		{"192.168.8.4", config.TLSACME, "ip-domain"},
+		{"panel.example.com", config.TLSOff, "no-tls"},
+		{"panel.example.com", config.TLSACME, ""},
+		{"localhost", config.TLSOff, ""},
+	} {
+		srv.Cfg.Domain, srv.Cfg.TLSMode = c.domain, c.tls
+		res, err := ts.Client().Get(ts.URL + "/api/auth/state")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var st authState
+		json.NewDecoder(res.Body).Decode(&st) //nolint:errcheck
+		res.Body.Close()
+		if st.PasskeyReason != c.want {
+			t.Errorf("domain %q tls %v: reason = %q, want %q", c.domain, c.tls, st.PasskeyReason, c.want)
+		}
+		if st.PasskeysUsable != (c.want == "") {
+			t.Errorf("domain %q tls %v: usable = %v with reason %q", c.domain, c.tls, st.PasskeysUsable, st.PasskeyReason)
+		}
 	}
 }
 

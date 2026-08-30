@@ -4,7 +4,7 @@ import type { Tok } from './highlight'
 import { highlightLines, langOf, shouldHighlight } from './highlight'
 import type { Block, Inline } from './markdown'
 import { parseMarkdown } from './markdown'
-import { safeText } from '../text'
+import { safeBody } from '../text'
 
 /**
  * A markdown document, and highlighted code, as React elements.
@@ -14,10 +14,15 @@ import { safeText } from '../text'
  * markdown.ts. Nothing here ever builds an HTML string, so there is nothing
  * for a document out of somebody's repository to be injected into.
  *
- * Everything still goes through `safeText`, which is the same treatment every
- * other name and path in the panel gets: a bidi override or a stray control
- * character in a README is a line that reads as something other than what it
- * says, and that is true whether or not it can execute.
+ * Everything still goes through `safeBody`, which is what every other name and
+ * path in the panel gets minus the two characters a document is made of: a
+ * bidi override or a stray control character in a README is a line that reads
+ * as something other than what it says, whether or not it can execute.
+ *
+ * `safeText`, the one the file tree uses, is the wrong one here and shipped
+ * that way. It replaces every C0 control, which for a name is right and for a
+ * body means every tab in every indented line and every newline inside a
+ * paragraph came out as a black diamond.
  */
 
 function inline(kids: Inline[], keyBase = ''): JSX.Element[] {
@@ -25,7 +30,7 @@ function inline(kids: Inline[], keyBase = ''): JSX.Element[] {
     const k = `${keyBase}${i}`
     switch (n.t) {
       case 'text':
-        return <span key={k}>{safeText(n.v)}</span>
+        return <span key={k}>{safeBody(n.v)}</span>
       case 'code':
         return (
           // The project's own radius and its own type scale, not Tailwind's
@@ -33,7 +38,7 @@ function inline(kids: Inline[], keyBase = ''): JSX.Element[] {
           // is right to: a design system with an escape hatch beside it is two
           // design systems.
           <code key={k} className="rounded-vp bg-surface-2 px-1 py-0.5 font-mono text-vp-sm text-ink">
-            {safeText(n.v)}
+            {safeBody(n.v)}
           </code>
         )
       case 'strong':
@@ -212,7 +217,7 @@ export function Code({ code, lang, name }: { code: string; lang?: string; name?:
               <td className="px-3 whitespace-pre-wrap break-words text-ink">
                 {l.map((tok, j) => (
                   <span key={j} className={tone(tok.k)}>
-                    {safeText(tok.v)}
+                    {safeBody(tok.v)}
                   </span>
                 ))}
               </td>

@@ -1407,4 +1407,7 @@ export interface EnvSettings {
   live: Record<string, string>
   /** Reported, never editable: red line 1. */
   socket: string
+  /** Which write-only settings have a value. Never the value itself. */
+  secrets?: string[]
+  secretSet?: Record<string, boolean>
 }
