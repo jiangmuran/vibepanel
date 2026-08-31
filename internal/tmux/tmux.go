@@ -402,17 +402,29 @@ func (c *Client) Create(ctx context.Context, o CreateOptions) error {
 // found". Every agent installed anywhere but /usr/bin was unlaunchable, and
 // the panel exists to launch agents.
 //
-// `exec` is a guarantee, not a hope. Wrapping without it can make
-// `pane_current_command` report the shell for every session, which is what the
-// state detector reads to tell an agent from a shell -- that is how an earlier
-// attempt at this was caught, twice, by the browser checks.
+// A shell and not `-e`, which was tried first and does not work: tmux builds a
+// pane's PATH itself and ignores the session environment for it. Measured --
+// `new-session -e PATH=/marker` and the pane still reported the client's PATH.
+// PATH is the one variable this is about, so there is no version of this that
+// avoids running a shell.
+//
+// `exec` in front, because the shell must not stay: `pane_current_command` is
+// what the state detector reads to tell an agent from a shell, and a wrapper
+// that lingers reports the shell forever. With `exec` it reports the shell only
+// until the exec happens.
+//
+// That window is real and it is why the first attempt at this failed CI:
+// `Reconcile` read a pane on a slower machine while it was still `bash`. The
+// contract was already written down -- Info.Command says it is eventually
+// consistent and must be polled rather than cached -- and the wrapper makes
+// the inconsistent window slightly longer rather than introducing one. Nothing
+// in the panel classifies a session by that field alone: SessionRunsAnAgent
+// takes the launch argv, which is what was asked for and never a shell.
 //
 // Measured honestly: bash optimises `bash -c '<one simple command>'` into an
-// exec by itself, so for `claude` with no arguments the word changes nothing
-// and removing it fails no test here. It stops mattering the moment the
-// command is not a single simple one -- a profile with a pipe or a redirection
-// in it -- and other shells make no such promise. Written down because a test
-// cannot tell the two apart and somebody will otherwise delete it as noise.
+// exec on its own, so for `claude` with no arguments the word changes nothing
+// and no test here goes red without it. It matters for a profile with a pipe
+// in it, and for shells that make no such promise.
 //
 // A machine with no usable login shell gets the argv unwrapped, which is what
 // it did before this existed.

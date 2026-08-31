@@ -1480,16 +1480,16 @@ func TestThePaneReportsTheCommandItWasGiven(t *testing.T) {
 // dialog gave `Pane is dead (status 127)`. Every agent installed anywhere but
 // /usr/bin was unlaunchable.
 //
-// The second half is the trap in the fix: wrapping can make
-// `pane_current_command` report the shell for every session, which is what the
-// state detector reads to tell an agent from a shell. An earlier attempt at
-// this was caught by the browser checks, twice.
+// The second half is the trap in the fix, and it caught the first attempt.
+// Wrapping the command in a login shell also works -- and makes the pane *be*
+// the shell until it reaches its exec, so `pane_current_command` reads "bash"
+// for as long as that takes. That is what the state detector uses to tell an
+// agent from a shell. It passed here and failed in CI, where a slower machine
+// was still in the shell when a reconcile read the pane.
 //
-// This test pins the outcome and not the mechanism. bash optimises
-// `bash -c '<one simple command>'` into an exec on its own, so deleting the
-// explicit `exec` from launchArgv leaves this green -- verified by doing it.
-// The word still belongs there, for a command that is not a single simple one
-// and for shells that make no such promise.
+// So the environment is handed to tmux with `-e` and the pane execs the
+// command directly. This asserts both halves: the environment arrives, and the
+// pane says what it is running from the first moment it can.
 func TestALaunchedCommandGetsTheLoginShellsEnvironment(t *testing.T) {
 	c := newTestClient(t)
 	ctx := context.Background()

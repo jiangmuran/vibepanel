@@ -316,12 +316,38 @@ func TestSessionSurvivesServerRestart(t *testing.T) {
 	if err := srv.Reconcile(ctx); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	rec, err := srv.DB.GetSession(ctx, sess.ID)
-	if err != nil {
-		t.Fatalf("GetSession: %v", err)
+	// Polled, because pane_current_command is eventually consistent and says
+	// so: Info.Command's own comment is "never cache the first reading as a
+	// session's identity -- poll for it".
+	//
+	// There are two transient answers now, not one. "tmux" is the pane before
+	// its fork has exec'd at all; "bash" is the login shell a launched command
+	// runs through, between its start and its exec. That shell is what gives a
+	// session the environment the person has -- without it, an agent installed
+	// anywhere but /usr/bin dies with status 127 -- and tmux offers no way to
+	// set a pane's PATH without one.
+	//
+	// This read once and accepted only the first transient, so the wrapper
+	// turned it red on CI while passing locally. What it should assert is the
+	// property that matters: the pane settles on the command that was asked
+	// for.
+	var rec store.Session
+	for i := 0; i < 50; i++ {
+		var gerr error
+		rec, gerr = srv.DB.GetSession(ctx, sess.ID)
+		if gerr != nil {
+			t.Fatalf("GetSession: %v", gerr)
+		}
+		if rec.Command == "sleep" {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+		if rerr := srv.Reconcile(ctx); rerr != nil {
+			t.Fatalf("Reconcile: %v", rerr)
+		}
 	}
-	if rec.Command != "sleep" && rec.Command != "tmux" {
-		t.Errorf("command after reconcile = %q, want the live command", rec.Command)
+	if rec.Command != "sleep" {
+		t.Errorf("command after reconcile settled on %q, want %q", rec.Command, "sleep")
 	}
 }
 
