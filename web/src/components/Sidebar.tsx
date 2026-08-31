@@ -242,15 +242,36 @@ export function Sidebar(props: SidebarProps) {
   // and there is no reason for it to be taller. Padding comes off the row and
   // the gap between groups, and nothing comes off the buttons.
   const pack = {
-    section: overlay ? 'mb-1' : 'mb-1.5',
+    // Space *between* groups, none inside one. A project and its sessions are
+    // one thing; the gap that says so has to be bigger than the gap between
+    // two sessions, and it used to be the same.
+    section: overlay ? 'mb-1 mt-3 first:mt-0' : 'mb-1 mt-2.5 first:mt-0',
     header: overlay ? 'px-2 py-0' : 'px-2 py-0.5',
     // Indented, and that is the hierarchy. Once the project's name stopped
     // being smaller and greyer than its sessions, the two read as one flat
     // list: same size, same colour, same left edge, and the only difference a
     // state glyph. The indent says which belongs to which and costs no height,
     // which is the whole point of it rather than more space between groups.
-    row: overlay ? 'ml-4 px-2 py-1.5' : 'ml-3 px-2 py-1',
+    // py-0.5 docked: the row's height is set by the 28px control boxes in it,
+    // not by the text, so padding on top of them is pure air. 「太松散了」.
+    row: overlay ? 'px-2 py-1' : 'px-2 py-0.5',
+    // The connector. Once the project's name stopped being smaller and greyer
+    // than its sessions -- correctly, it is what you scan for -- the two read
+    // as one flat list of identical rows. A rule down the left of a project's
+    // sessions says which belong to which, and costs no height at all, which
+    // more space between groups would.
+    kids: overlay ? 'ml-4 border-l border-hairline pl-1' : 'ml-3 border-l border-hairline pl-1',
   }
+
+  // On a touch screen the row controls live on the selected row only.
+  //
+  // They cannot be small there -- every button is 44px, which the render check
+  // measures -- so pin and kill on every row set the height of every row, and
+  // a phone showed six sessions where it had room for a dozen. Selecting first
+  // and acting second is one more tap and it is how every list on a phone
+  // works; it also gives the row you are on something to be, which is the
+  // other half of 「没有层次感」.
+  const rowControls = (isSelected: boolean) => !overlay || isSelected
 
   // The overlay covers the terminal and must be opaque.
   const shell = overlay
@@ -372,6 +393,7 @@ export function Sidebar(props: SidebarProps) {
               </button>
             </div>
 
+            <div className={(byProject.get(p.id) ?? []).length > 0 ? pack.kids : ''}>
             {(byProject.get(p.id) ?? []).map((s) => {
               const isLive = props.live.includes(s.id)
               const isSelected = props.selected === s.id
@@ -442,6 +464,7 @@ export function Sidebar(props: SidebarProps) {
                       <RotateCcw size={12} />
                     </button>
                   )}
+                  {(rowControls(isSelected) || s.pinned) && (
                   <button
                     type="button"
                     onClick={(e) => {
@@ -460,6 +483,8 @@ export function Sidebar(props: SidebarProps) {
                   >
                     {s.pinned ? <PinOff size={12} /> : <Pin size={12} />}
                   </button>
+                  )}
+                  {rowControls(isSelected) && (
                   <button
                     type="button"
                     onClick={(e) => {
@@ -472,9 +497,11 @@ export function Sidebar(props: SidebarProps) {
                   >
                     <X size={12} />
                   </button>
+                  )}
                 </div>
               )
             })}
+            </div>
           </section>
         ))}
         {drag.overIndex === projects.length && drag.draggingId !== null && (

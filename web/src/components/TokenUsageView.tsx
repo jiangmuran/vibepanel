@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, RefreshCw, X } from 'lucide-react'
 
 import { api } from '../protocol/api'
-import type { Project, TokenUsage, UsageTotals } from '../protocol/wire'
+import type { Project, TokenUsage } from '../protocol/wire'
 import { t, useLang } from '../i18n'
 import { safeText } from './text'
 import { compact, exact, monthLabels, totalOf, weeks } from './panels/tokens'
@@ -253,85 +253,35 @@ function Body({ data, days }: { data: TokenUsage; days: number }) {
       {skipped > 0 && <Warning text={t('spend.lowerBound', { n: exact(skipped) })} />}
       {data.passError !== '' && <Warning text={t('spend.passError', { why: data.passError })} />}
 
-      <Totals label={t('spend.rangeDays', { n: days })} totals={data.total} />
-      <Heatmap data={data} />
+      <Headline data={data} days={days} />
 
-      <div className="mt-6 grid gap-6 md:grid-cols-2">
-        <Section title={t('spend.tools')}>
-          <table className="w-full text-vp-base">
-            <tbody>
-              {data.byTool.map((row) => (
-                <tr key={row.tool} className="border-b border-hairline last:border-0">
-                  <td className="py-1 pr-2 text-ink">{row.tool}</td>
-                  <td className="py-1 pr-2 text-right text-vp-sm text-ink-3">
-                    {t('spend.filesRead', { n: row.files })}
-                  </td>
-                  <Cell value={row.files === 0 ? null : totalOf(row)} />
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Section>
-
-        <Section title={t('spend.projects')}>
-          {data.projects.length === 0 ? (
-            <Empty />
-          ) : (
-            <table className="w-full text-vp-base">
-              <tbody>
-                {data.projects.map((p) => (
-                  <tr key={p.id || 'outside'} className="border-b border-hairline last:border-0">
-                    <td className="max-w-0 truncate py-1 pr-2 text-ink" title={safeText(p.path)}>
-                      {p.id === '' ? t('spend.outsideProjects') : safeText(p.name)}
-                    </td>
-                    <Cell value={totalOf(p)} />
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </Section>
-
-        <Section title={t('spend.month')}>
-          {data.byMonth.length === 0 ? (
-            <Empty />
-          ) : (
-            <table className="w-full text-vp-base">
-              <tbody>
-                {[...data.byMonth].reverse().map((m) => (
-                  <tr key={m.day} className="border-b border-hairline last:border-0">
-                    <td className="tabular py-1 pr-2 text-ink">{m.day}</td>
-                    <td className="tabular py-1 pr-2 text-right text-vp-sm text-ink-3">
-                      {exact(m.requests)}
-                    </td>
-                    <Cell value={totalOf(m)} />
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </Section>
-
-        <Section title={t('spend.day')}>
-          {data.byDay.length === 0 ? (
-            <Empty />
-          ) : (
-            <table className="w-full text-vp-base">
-              <tbody>
-                {[...data.byDay].reverse().map((d) => (
-                  <tr key={d.day} className="border-b border-hairline last:border-0">
-                    <td className="tabular py-1 pr-2 text-ink">{d.day}</td>
-                    <td className="tabular py-1 pr-2 text-right text-vp-sm text-ink-3">
-                      {exact(d.requests)}
-                    </td>
-                    <Cell value={totalOf(d)} />
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </Section>
+      <div className="mt-6 grid gap-6 @3xl:grid-cols-2">
+        <Ranking
+          title={t('spend.whereItWent')}
+          rows={data.projects.map((p) => ({
+            key: p.id || '\u0000none',
+            label: p.name || t('spend.notInAProject'),
+            hint: p.id ? p.path : '',
+            value: totalOf(p),
+          }))}
+        />
+        <Ranking
+          title={t('spend.whatSpentIt')}
+          rows={data.byModel.map((m) => ({
+            key: m.model,
+            label: m.model || t('spend.unknownModel'),
+            hint: '',
+            value: totalOf(m),
+          }))}
+        />
       </div>
+
+      {/* The year grid, only when a year is being asked about.
+        *
+        * It is the largest thing on the page and it was always on. Five weeks
+        * of history in a 53-week frame is eleven twelfths blank dots, above
+        * the numbers somebody actually came for. */}
+      {days >= 365 && <Heatmap data={data} />}
 
       <Section title={t('spend.sessions')}>
         <p className="mb-2 text-vp-sm leading-relaxed text-ink-3">{t('spend.agentSessionNote')}</p>
@@ -390,39 +340,153 @@ function Body({ data, days }: { data: TokenUsage; days: number }) {
   )
 }
 
-/** The four columns, spelled out, so "input" is never read as "everything". */
-function Totals({ label, totals }: { label: string; totals: UsageTotals }) {
-  const parts: [string, number][] = [
-    [t('spend.input'), totals.input],
-    [t('spend.output'), totals.output],
-    [t('spend.cacheRead'), totals.cacheRead],
-    [t('spend.cacheWrite'), totals.cacheWrite],
-    [t('spend.requests'), totals.requests],
-  ]
+/**
+ * What the board is for, in one line: is today unusual?
+ *
+ * The old top of this page was a single 32.7B, which answers nothing. A number
+ * that size is only readable against something, and the only baseline that
+ * needs no price table is the period's own daily average -- so "today 237M,
+ * daily average 1.09B, 0.22x" says in three numbers what a thirty-row table
+ * said in thirty.
+ */
+function Headline({ data, days }: { data: TokenUsage; days: number }) {
+  const total = totalOf(data.total)
+  const today = data.byDay.find((d) => d.day === data.today)
+  const todayTotal = today ? totalOf(today) : 0
+  // Divided by the days that have numbers, not by the width of the window: a
+  // panel installed a week ago has 30 days of window and 7 of history, and
+  // dividing by 30 would report it as spending a quarter of what it spends.
+  const observed = data.byDay.length || 1
+  const average = total / observed
+  const ratio = average > 0 ? todayTotal / average : 0
+
   return (
-    <div
-      className="rounded-vp border border-hairline bg-surface-2 p-3"
-      data-testid="token-totals"
-    >
-      <div className="mb-2 flex items-baseline justify-between gap-2">
-        <span className="text-vp-sm text-ink-2">{label}</span>
-        <span className="tabular text-vp-lg text-ink" title={exact(totalOf(totals))}>
-          {compact(totalOf(totals))}
-        </span>
-      </div>
-      <div className="flex flex-wrap gap-x-5 gap-y-1">
-        {parts.map(([name, value]) => (
-          <span key={name} className="text-vp-sm text-ink-2">
-            {name}{' '}
-            <span className="tabular text-ink" title={exact(value)}>
-              {compact(value)}
-            </span>
+    <div className="rounded-vp border border-hairline bg-surface-2 px-4 py-3">
+      <div className="flex flex-wrap items-baseline gap-x-8 gap-y-2">
+        <Figure label={t('spend.today')} value={todayTotal} big />
+        <Figure label={t('spend.perDay')} value={Math.round(average)} />
+        {average > 0 && (
+          <span className="text-vp-base text-ink-2" data-testid="spend-ratio">
+            {t('spend.timesAverage', { x: ratio >= 10 ? ratio.toFixed(0) : ratio.toFixed(2) })}
           </span>
-        ))}
+        )}
       </div>
+      <Trend data={data} />
+      <p className="mt-2 text-vp-sm text-ink-3" data-testid="spend-summary">
+        {t('spend.summaryLine', {
+          n: String(days),
+          total: compact(total),
+          requests: exact(data.total.requests),
+          each: compact(Math.round(data.total.requests ? total / data.total.requests : 0)),
+        })}
+      </p>
     </div>
   )
 }
+
+function Figure({ label, value, big }: { label: string; value: number; big?: boolean }) {
+  return (
+    <span className="flex items-baseline gap-2">
+      <span className="text-vp-sm text-ink-2">{label}</span>
+      <span
+        className={`tabular text-ink ${big ? 'text-vp-xl font-semibold' : 'text-vp-lg'}`}
+        title={exact(value)}
+      >
+        {compact(value)}
+      </span>
+    </span>
+  )
+}
+
+/** The range, as one row of bars. Replaces a thirty-row table of the same
+ *  numbers, which is the same data read one line at a time. */
+function Trend({ data }: { data: TokenUsage }) {
+  const rows = data.byDay
+  const peak = rows.reduce((m, d) => Math.max(m, totalOf(d)), 0)
+  if (rows.length === 0 || peak === 0) return null
+  return (
+    <div className="mt-3 flex h-12 items-end gap-px" data-testid="spend-trend">
+      {rows.map((d) => {
+        const v = totalOf(d)
+        return (
+          <span
+            key={d.day}
+            title={`${d.day} · ${compact(v)}`}
+            className="min-w-px flex-1"
+            style={{
+              height: `${Math.max(2, (v / peak) * 100)}%`,
+              background: v === 0 ? 'var(--vp-hairline)' : 'var(--vp-accent)',
+              opacity: v === 0 ? 1 : 0.55 + 0.45 * (v / peak),
+            }}
+          />
+        )
+      })}
+    </div>
+  )
+}
+
+/**
+ * A ranked list with a bar per row.
+ *
+ * Two of these answer the two questions a table of five sections could not:
+ * where it went, and what spent it. A share is the point, so the bar is the
+ * share and the number is beside it -- reading 26.3B against 6.0B in a column
+ * is arithmetic somebody has to do.
+ */
+function Ranking({
+  title,
+  rows,
+}: {
+  title: string
+  rows: { key: string; label: string; hint: string; value: number }[]
+}) {
+  const shown = rows.filter((r) => r.value > 0).sort((a, b) => b.value - a.value)
+  const total = shown.reduce((n, r) => n + r.value, 0)
+  return (
+    <Section title={title}>
+      {shown.length === 0 ? (
+        <Empty />
+      ) : (
+        <div className="flex flex-col gap-2" data-testid="spend-ranking">
+          {shown.slice(0, 8).map((r) => {
+            const share = total > 0 ? r.value / total : 0
+            return (
+              <div key={r.key} data-testid="spend-rank-row">
+                <div className="flex items-baseline gap-2">
+                  {/* The name takes the slack and the numbers do not: a value
+                      column that floats with the length of the label is a
+                      column of digits nobody can compare down. */}
+                  <span
+                    className="min-w-0 flex-1 truncate text-vp-base text-ink"
+                    title={safeText(r.hint || r.label)}
+                  >
+                    {safeText(r.label)}
+                  </span>
+                  <span
+                    className="tabular w-16 shrink-0 text-right text-vp-base text-ink"
+                    title={exact(r.value)}
+                  >
+                    {compact(r.value)}
+                  </span>
+                  <span className="tabular w-10 shrink-0 text-right text-vp-sm text-ink-3">
+                    {Math.round(share * 100)}%
+                  </span>
+                </div>
+                <div className="mt-1 h-1 rounded-full bg-surface-2">
+                  <div
+                    className="h-1 rounded-full"
+                    style={{ width: `${Math.max(1, share * 100)}%`, background: 'var(--vp-accent)' }}
+                  />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </Section>
+  )
+}
+
 
 /**
  * The year grid.

@@ -18407,3 +18407,59 @@ reads it; the owner's own full-screen board did not, so it could tell you that
 `claude` spent 29.3B and not that almost all of it was one model. Two tools is
 not a breakdown. It is on `/api/token-usage` now, which is the first half of
 reworking that board.
+
+## The usage board, rebuilt around a question
+
+The old one was a 32.7B, a 53-week heatmap, and five tables of the same numbers
+sliced differently — tools, projects, months, days, sessions. Every section had
+equal weight, so the reader had to work out which one answered them. 「用量全屏
+面板仍然很乱」.
+
+Looked at with real data before touching it, which is what settled the shape:
+
+    30 days      32.7B, 96.6k requests
+    heatmap      five weeks of history in a 53-week frame — 11/12 blank
+    by project   80% "not in any project"
+    by model     not in the payload at all
+
+The last line is the interesting one. `UsageByModel` has existed since the rows
+were first written and only the shared wall board read it, so the owner's own
+board could say `claude` spent 29.3B and not that `claude-opus-5` was 87% of
+it. Two tools is not a breakdown; six models an order of magnitude apart is.
+
+What it is now: one headline that answers "is today unusual" — today, the daily
+average, and the ratio, which needs no price table — over a bar per day of the
+range. Then two rankings side by side, where it went and what spent it, each a
+share with a bar, because reading 26.3B against 6.0B in a column is arithmetic
+the reader should not be doing. Sessions stay as the drill-down.
+
+Deleted: the day table (the same data as the trend, one line at a time), the
+month section (a heading over two numbers), and the heatmap at every range —
+it appears at 365 days, where it earns the space.
+
+The average divides by the days that *have* numbers rather than by the width of
+the window. A panel installed a week ago has thirty days of window and seven of
+history, and dividing by thirty would report it as spending a quarter of what
+it spends.
+
+## A sidebar with no hierarchy
+
+「不够好看 没有层次感 而且感觉太松散了」, on both phone and desktop, and the
+three complaints turned out to be one cause seen three ways.
+
+Every row carried a pin and a kill button. A `.vp-control` is 28px and a tap
+target on a phone is 44, so those buttons — not the text — set the height of
+every row in the list. Sixteen rows of a project tree filled 650px, and thirty
+two icons competed with the twelve names somebody was actually reading.
+
+On a touch screen the row controls are on the selected row only. Selecting
+first and acting second is one more tap, it is how every list on a phone works,
+and it gives the current row something to be — which is the other half of "no
+hierarchy". On a desktop they were already hover-revealed; the row padding
+above them is gone, so a row is 32px rather than 36.
+
+The hierarchy itself is a rule down the left of a project's sessions. The
+project's name cannot go back to being smaller and greyer than its rows — that
+was the previous complaint, 「字太小」 — so the grouping had to come from
+somewhere that costs no height, and space between groups costs height on the
+screen where it is scarcest.
