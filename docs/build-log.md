@@ -18484,3 +18484,38 @@ and watching it fail rather than hang.
 A stray `web/pasted-2.png` went in with that commit too — a screenshot the
 render check pastes into a project to prove the upload path works, caught by
 `git add -A`. Removed, and the pattern is in `.gitignore` now.
+
+## Wrapping everything to fix one thing
+
+The login-shell wrapper for launched commands went in for `claude` in
+`~/.local/bin`, and it was applied to every command. Two release gates rejected
+that, both on `TestACrashedSessionIsNotReportedAsDone`, and both times the
+first instinct was that the test was wrong.
+
+It was not. A wrapper is not free: it puts a shell between tmux and the
+command, which shows up as `pane_current_command` reading as the shell until
+the exec, and as an exit status that has to travel through another process.
+`bash`, `sleep` and `codex` in `/usr/bin` were never broken, and wrapping them
+was a change to working code made to fix a different case.
+
+The predicate is `exec.LookPath`, and it is exact rather than approximate: it
+searches this process's PATH, and this process's PATH is *what the pane gets* —
+that is the entire bug. So "the panel can find it" and "the pane can find it"
+are the same question, and when the answer is yes there is nothing to fix.
+
+What is not covered by a test, and is written down instead: an end-to-end
+launch of something only the login shell can find. Arranging it means putting a
+directory on the login PATH, which means editing the developer's own profile,
+and a test may not do that. That end was checked by hand — a panel started with
+the unit's PATH, launching the Claude profile, reaching a running agent instead
+of status 127.
+
+Two wrong diagnoses on the way, both from reasoning instead of measuring, which
+is now the second entry in this log saying so. The first blamed the test for
+reading two tmux fields too early; the settled-wait it produced is a real
+improvement and did not fix the failure. The second was an `env -i`
+reproduction that looked like the CI failure and was a different one entirely —
+five tests in `internal/tmux` fail under `env -i`, so it proved nothing about
+CI. The control that settled it was running the same test with and without the
+wrapper in the same environment: identical failures, so the wrapper was not the
+cause there either.

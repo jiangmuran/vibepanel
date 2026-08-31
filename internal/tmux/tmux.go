@@ -429,6 +429,26 @@ func (c *Client) Create(ctx context.Context, o CreateOptions) error {
 // A machine with no usable login shell gets the argv unwrapped, which is what
 // it did before this existed.
 func launchArgv(command []string) []string {
+	if len(command) == 0 {
+		return command
+	}
+	// Nothing to fix, so nothing to wrap.
+	//
+	// LookPath searches *this process's* PATH, and this process's PATH is
+	// exactly what the pane gets -- that is the whole bug. So "the panel can
+	// find it" and "the pane can find it" are the same question, and when the
+	// answer is yes the shell buys nothing and costs the two things a wrapper
+	// costs: a window where pane_current_command reads as the shell, and a
+	// second process between tmux and the command whose exit status has to
+	// pass through it.
+	//
+	// It matters because almost everything is already reachable. `bash`,
+	// `sleep`, `codex` in /usr/bin -- all of them behaved perfectly before
+	// this function existed, and wrapping them was a change to code that was
+	// not broken. `claude` in ~/.local/bin is the case this is for.
+	if _, err := exec.LookPath(command[0]); err == nil {
+		return command
+	}
 	sh := loginShell()
 	if sh == "" {
 		return command

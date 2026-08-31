@@ -1465,80 +1465,85 @@ func TestThePaneReportsTheCommandItWasGiven(t *testing.T) {
 	}
 }
 
-// A launched command runs with the environment the person actually has, and
-// still reports itself as the command.
+// A command the panel cannot find is launched through a login shell; one it
+// can find is launched directly.
 //
-// tmux seeds a new session's environment from the *client*, and the panel's
-// client runs under systemd with the unit's PATH. Starting the server through
-// a login shell therefore fixes the server and does nothing for the panes it
-// creates -- measured on a real panel, which is the only way this was settled:
+// The bug: tmux seeds a new session's environment from the *client*, and the
+// client is the panel -- under systemd, with the unit's PATH. Measured on a
+// real panel:
 //
 //	tmux server global PATH  /home/jmr/.cargo/bin:/home/jmr/.local/bin:/usr/...
 //	the pane's own PATH      /usr/local/bin:/usr/bin:/bin
 //
-// `claude` lives in ~/.local/bin, so choosing Claude Code in the new-terminal
-// dialog gave `Pane is dead (status 127)`. Every agent installed anywhere but
-// /usr/bin was unlaunchable.
+// So starting the server through a login shell fixes the server and does
+// nothing for the panes it creates. `claude` lives in ~/.local/bin and could
+// not be launched at all: `Pane is dead (status 127)`.
 //
-// The second half is the trap in the fix, and it caught the first attempt.
-// Wrapping the command in a login shell also works -- and makes the pane *be*
-// the shell until it reaches its exec, so `pane_current_command` reads "bash"
-// for as long as that takes. That is what the state detector uses to tell an
-// agent from a shell. It passed here and failed in CI, where a slower machine
-// was still in the shell when a reconcile read the pane.
+// The predicate is LookPath, and it is exact rather than approximate: it
+// searches this process's PATH, and this process's PATH is what the pane gets.
+// "The panel can find it" and "the pane can find it" are the same question.
 //
-// So the environment is handed to tmux with `-e` and the pane execs the
-// command directly. This asserts both halves: the environment arrives, and the
-// pane says what it is running from the first moment it can.
-func TestALaunchedCommandGetsTheLoginShellsEnvironment(t *testing.T) {
-	c := newTestClient(t)
-	ctx := context.Background()
-
+// Wrapping only when the answer is no matters because almost everything is
+// already reachable, and a wrapper is not free -- it puts a shell between tmux
+// and the command, which shows up as `pane_current_command` reading as the
+// shell until the exec, and as an exit status that has to pass through another
+// process. Wrapping `bash` and `sleep`, which were never broken, is how the
+// first version of this fix turned the release gate red.
+//
+// What is *not* covered here: an end-to-end launch of something only the login
+// shell can find. Arranging that means putting a directory on the login PATH,
+// which means editing the developer's own shell profile, and a test may not do
+// that. The end of that path was checked by hand instead -- a panel started
+// with the unit's PATH, launching the Claude profile, reaching a running agent
+// rather than status 127.
+func TestOnlyAnUnfindableCommandIsWrapped(t *testing.T) {
 	if loginShell() == "" {
 		t.Skip("no usable login shell on this machine")
 	}
-	// A login shell almost always adds something to PATH; if it does not, this
-	// machine cannot tell the two apart and the test would pass either way.
-	starved := "/usr/bin:/bin"
-	t.Setenv("PATH", starved)
-	out, err := exec.Command(loginShell(), "-l", "-c", "printf %s \"$PATH\"").Output()
-	if err != nil || string(out) == starved {
-		t.Skip("the login shell here does not change PATH; nothing to observe")
+
+	// On PATH: handed to tmux exactly as given.
+	for _, argv := range [][]string{{"sh"}, {"sh", "-c", "echo hi"}, {"/bin/sh", "-c", "echo hi"}} {
+		got := launchArgv(argv)
+		if len(got) != len(argv) || got[0] != argv[0] {
+			t.Errorf("launchArgv(%q) = %q; a command the pane can already find needs no shell", argv, got)
+		}
 	}
 
-	dir := t.TempDir()
-	probe := filepath.Join(dir, "path.txt")
-	name := "vp_env_probe"
-	if err := c.Create(ctx, CreateOptions{
-		Name: name,
-		Dir:  dir,
-		// sleep keeps the pane alive long enough to be asked what it is.
-		Command: []string{"sh", "-c", "printf %s \"$PATH\" > " + probe + "; sleep 30"},
-	}); err != nil {
+	// Not on PATH: through a login shell, and with exec, so the shell does not
+	// stay in front of the command.
+	missing := []string{"vibepanel-no-such-command-9f3a", "--flag"}
+	got := launchArgv(missing)
+	if len(got) != 4 || got[0] != loginShell() || got[1] != "-l" || got[2] != "-c" {
+		t.Fatalf("launchArgv(%q) = %q, want a login shell -l -c", missing, got)
+	}
+	if !strings.HasPrefix(got[3], "exec ") {
+		t.Errorf("the wrapper does not exec: %q. Without it the shell stays and "+
+			"pane_current_command reports the shell, which is what the state detector "+
+			"reads to tell an agent from a shell.", got[3])
+	}
+	// The arguments survive quoting. A profile is argv, not a string, and a
+	// wrapper that loses `--flag` launches a different program.
+	if !strings.Contains(got[3], "--flag") {
+		t.Errorf("the wrapper dropped an argument: %q", got[3])
+	}
+}
+
+// A launched command still reports itself, not the shell.
+//
+// pane_current_command is what the state detector reads to tell an agent from
+// a shell, and it is the field a wrapper is most likely to break.
+func TestALaunchedCommandReportsItsOwnName(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+
+	name := "vp_cmd_name"
+	if err := c.Create(ctx, CreateOptions{Name: name, Command: []string{"sleep", "30"}}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	defer c.Kill(context.Background(), name) //nolint:errcheck
 
-	var got []byte
-	for i := 0; i < 40; i++ {
-		if b, rerr := os.ReadFile(probe); rerr == nil && len(b) > 0 {
-			got = b
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	if len(got) == 0 {
-		t.Fatal("the pane never wrote its PATH; it probably died")
-	}
-	if string(got) == starved {
-		t.Errorf("the pane got the client's PATH (%s). A command installed anywhere else "+
-			"cannot be launched, which is `Pane is dead (status 127)`.", starved)
-	}
-
-	// And the pane still says what it is running. `sh` here, because that is
-	// the command; what must not appear is the login shell wrapping it.
 	// Polled: for roughly 200ms after Create the pane still reads "tmux",
-	// because its fork has not exec'd yet. Info's own comment says so.
+	// because its fork has not exec'd yet. Info.Command's own comment says so.
 	cmd := ""
 	for i := 0; i < 40; i++ {
 		infos, lerr := c.List(ctx)
@@ -1550,13 +1555,12 @@ func TestALaunchedCommandGetsTheLoginShellsEnvironment(t *testing.T) {
 				cmd = in.Command
 			}
 		}
-		if cmd != "" && cmd != "tmux" {
+		if cmd == "sleep" {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if cmd != "sh" {
-		t.Errorf("pane_current_command = %q, want %q. The wrapper has to exec, or every "+
-			"session reports the shell and the state detector cannot tell an agent from one.", cmd, "sh")
+	if cmd != "sleep" {
+		t.Errorf("pane_current_command = %q, want %q", cmd, "sleep")
 	}
 }
