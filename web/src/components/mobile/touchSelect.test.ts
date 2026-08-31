@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cellAt, claimsVerticalDrag, selectionRun, dragRows } from './touchSelect'
+import { cellAt, claimsVerticalDrag, selectionRun, dragRows, scrollAction, wheelReport } from './touchSelect'
 
 describe('selectionRun', () => {
   it('reads left to right on one line', () => {
@@ -98,5 +98,68 @@ describe('claimsVerticalDrag', () => {
     // failure it prevents is invisible: a gesture that quietly does nothing
     // until the page reloads.
     expect(claimsVerticalDrag.length).toBe(3)
+  })
+})
+
+describe('wheelReport', () => {
+  // A pane with mouse reporting on wants the wheel itself. Dragging on a phone
+  // used to scroll xterm's own buffer instead, behind the application's back,
+  // so a full-screen agent stayed put while the terminal slid up to whatever
+  // was in the normal buffer before it started -- raw output from hours
+  // earlier. Measured with tmux, which is what settled it:
+  //
+  //   claude  alt=1 sgr=1 any=1
+  //   codex   alt=0 sgr=0 any=0
+  //
+  // and that is why it was only ever reported about Claude.
+  it('encodes a wheel press in SGR form', () => {
+    // 64 is wheel-up, 65 wheel-down, and both are presses with no release.
+    expect(wheelReport(true, 0, 0)).toBe('\x1b[<64;1;1M')
+    expect(wheelReport(false, 0, 0)).toBe('\x1b[<65;1;1M')
+  })
+
+  it('sends one-based coordinates', () => {
+    // Cells are zero-based in the panel and one-based on the wire. An
+    // off-by-one here puts the pointer in the wrong cell, which for a TUI that
+    // scrolls the pane under the cursor is the wrong pane.
+    expect(wheelReport(true, 11, 4)).toBe('\x1b[<64;12;5M')
+  })
+
+  it('is a press, not a drag report', () => {
+    // 32 added to the button is motion; a wheel event that claims to be motion
+    // makes an application think the pointer is being dragged across it.
+    for (const s of [wheelReport(true, 0, 0), wheelReport(false, 3, 3)]) {
+      expect(s).not.toMatch(/<(9[6-9]|1\d\d);/)
+    }
+  })
+})
+
+describe('scrollAction', () => {
+  it('gives the wheel to an application that asked for it', () => {
+    // Claude Code turns on SGR mouse reporting; Codex does not. Measured with
+    // tmux on a live panel, which is what settled a bug reported three
+    // different ways:
+    //
+    //   claude  alt=1 sgr=1 any=1
+    //   codex   alt=0 sgr=0 any=0
+    //
+    // With reporting on, scrolling xterm's buffer slides the terminal behind
+    // the application to whatever was in the normal buffer before it started.
+    for (const mode of ['x10', 'vt200', 'drag', 'any']) {
+      expect(scrollAction(mode, 0)).toBe('wheel')
+      // Even with scrollback available: it still belongs to the application.
+      expect(scrollAction(mode, 500)).toBe('wheel')
+    }
+  })
+
+  it('scrolls the buffer when nobody is listening', () => {
+    expect(scrollAction('none', 500)).toBe('buffer')
+  })
+
+  it('does nothing when there is nothing to scroll and nobody to tell', () => {
+    // The gesture is still claimed by the caller. A drag over a full-screen
+    // agent with no scrollback must do nothing visibly rather than hand the
+    // browser a pull-to-refresh.
+    expect(scrollAction('none', 0)).toBe('none')
   })
 })

@@ -101,7 +101,64 @@ export function dragRows(dy: number, rowHeight: number, carried: number) {
  * it is what gets measured, because that is the box the character grid
  * actually occupies.
  */
-export function attachTouchSelection(host: HTMLElement, term: Terminal): () => void {
+/**
+ * Wheel events, as the application asked to receive them.
+ *
+ * A pane with mouse reporting on wants the wheel itself: that is how a desktop
+ * scrolls Claude Code, and it is why the same session reads normally there and
+ * wrongly on a phone. Dragging on a phone called `term.scrollLines`, which
+ * scrolls xterm's *own* buffer behind the application's back -- so a
+ * full-screen agent stayed put while the terminal underneath it slid up to
+ * whatever was in the normal buffer before the agent started. Raw output from
+ * hours earlier, which is what「向上滑动会出现一大堆HTML」was.
+ *
+ * Measured with tmux rather than guessed at:
+ *
+ *	claude  alt=1 sgr=1 any=1    <- reporting on
+ *	codex   alt=0 sgr=0 any=0    <- off
+ *	bash    alt=0 sgr=0 any=0    <- off
+ *
+ * which is also why it was only ever reported about Claude.
+ *
+ * SGR encoding only. The panel does not implement the older X10 and UTF-8
+ * schemes because it does not have to guess: `mouseTrackingMode` says whether
+ * reporting is on at all, and every application that asks for it in this
+ * decade asks for 1006 alongside. If one does not, the drag falls through to
+ * scrolling the buffer, which is what it did before and is not worse.
+ */
+/**
+ * Who a drag belongs to.
+ *
+ * `wheel` — the application asked for mouse reporting, so it wants the wheel
+ * and scrolls its own view with it. That is what a desktop already does, and
+ * doing anything else on a phone is why the same session read normally there
+ * and wrongly here.
+ *
+ * `buffer` — nobody is listening, so this is the terminal's own scrollback.
+ *
+ * `none` — nothing to scroll and nobody to tell. The gesture is still claimed
+ * by the caller, because a drag over a full-screen agent has to do nothing
+ * visibly rather than let the browser reload the page.
+ *
+ * A function of two values so it can be tested: the branch it replaces could
+ * be deleted without failing anything, which is how the wrong half shipped.
+ */
+export function scrollAction(mouseTracking: string, baseY: number): 'wheel' | 'buffer' | 'none' {
+  if (mouseTracking !== 'none') return 'wheel'
+  return baseY > 0 ? 'buffer' : 'none'
+}
+
+export function wheelReport(up: boolean, col: number, row: number): string {
+  // 64 is wheel-up, 65 wheel-down; both are press events with no release.
+  // Columns and rows are 1-based on the wire.
+  return `\x1b[<${up ? 64 : 65};${col + 1};${row + 1}M`
+}
+
+export function attachTouchSelection(
+  host: HTMLElement,
+  term: Terminal,
+  send?: (data: string) => void,
+): () => void {
   let holdTimer: number | undefined
   let anchor: Cell | null = null
   let selecting = false
@@ -215,13 +272,25 @@ export function attachTouchSelection(host: HTMLElement, term: Terminal): () => v
       const step = dragRows(t.clientY - lastY, rowHeight, carried)
       carried = step.carry
       lastY = t.clientY
-      // Scroll only if there is anywhere to go. The gesture is claimed either
-      // way -- a drag over a full-screen agent has to do nothing, visibly,
-      // rather than reload the page.
-      if (step.rows !== 0 && term.buffer.active.baseY > 0) {
-        // Down reveals what came before, which is which way every list on a
-        // phone moves.
-        term.scrollLines(-step.rows)
+      if (step.rows !== 0) {
+        const action = scrollAction(term.modes.mouseTrackingMode, term.buffer.active.baseY)
+        if (action === 'wheel' && send) {
+          // The application's scroll, not the terminal's. Down reveals what
+          // came before, which is wheel-up, which is which way every list on a
+          // phone moves.
+          const up = step.rows > 0
+          const n = Math.min(Math.abs(step.rows), 10)
+          const cell = cellFor(t)
+          for (let i = 0; i < n; i++) {
+            send(wheelReport(up, cell?.col ?? 0, cell?.row ?? 0))
+          }
+        } else if (action === 'buffer') {
+          // Nobody is listening for the wheel, so this is the terminal's own
+          // scrollback. Only when there is somewhere to go: the gesture is
+          // claimed either way, because a drag over a full-screen agent has to
+          // do nothing visibly rather than let the browser reload the page.
+          term.scrollLines(-step.rows)
+        }
       }
       // Non-passive for this: without it the page scrolls under the finger as
       // well and the whole shell slides around.

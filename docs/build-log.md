@@ -18519,3 +18519,41 @@ five tests in `internal/tmux` fail under `env -i`, so it proved nothing about
 CI. The control that settled it was running the same test with and without the
 wrapper in the same environment: identical failures, so the wrapper was not the
 cause there either.
+
+## Two different scrolls, and only one of them was the terminal's
+
+「向上滑动会出现一大堆HTML」, only on a phone, only in Claude Code, and the same
+session read normally on a desktop. Three days of that report and two wrong
+explanations from me — the first blamed the scrollback for containing HTML
+somebody had printed, which the desktop check disproved in one line: if it were
+in the buffer, both would show it.
+
+The answer came from the person reporting it: 「可能一个是Claude code实现的滚动
+一个是终端层面的滚动？」 Measured with tmux immediately afterwards:
+
+    claude  alt=1 sgr=1 any=1     <- mouse reporting on
+    codex   alt=0 sgr=0 any=0
+    bash    alt=0 sgr=0 any=0
+
+Claude Code turns on SGR mouse reporting. So a wheel on a desktop is *reported
+to Claude Code*, which scrolls its own conversation — which is why the desktop
+looks right. The touch handler called `term.scrollLines`, which scrolls xterm's
+own buffer behind the application's back: the full-screen agent stayed put and
+the terminal underneath slid up to the normal buffer from before it started.
+Raw output from hours earlier. Not leaked, not injected, and not the panel's —
+just content nobody should have been able to reach that way.
+
+It also explains the shape of every earlier report. Only Claude, because only
+Claude asks for the wheel. Only a phone, because only the phone has a handler
+that scrolls the buffer directly. And "Claude cannot be scrolled and Codex
+can", from the same one line, a week earlier.
+
+A drag now goes wherever the wheel would: `scrollAction` asks
+`mouseTrackingMode`, and a pane that wants the wheel gets SGR wheel reports
+sent to the pty, not a local scroll. The decision is a pure function because
+the version inlined in the handler could be deleted without failing anything —
+which is how the wrong half shipped in the first place.
+
+The reports have to reach the pty directly rather than through `term.input()`:
+a phone's terminal is `disableStdin`, since typing goes through the compose
+box, and a wheel report is not typing.

@@ -364,7 +364,16 @@ export function TerminalView({
     }
     host.addEventListener('paste', onPaste, true)
 
-    const detachTouch = touchSelect ? attachTouchSelection(host, term) : undefined
+    // The send callback, and it cannot go through xterm.
+    //
+    // On a phone the terminal is `disableStdin`, so `term.input()` emits
+    // nothing -- typing goes through the compose box instead. A wheel report
+    // is not typing, though: it is the application asking to be told about the
+    // pointer, and it has to reach the pty the same way keystrokes from a
+    // desktop do.
+    const detachTouch = touchSelect
+      ? attachTouchSelection(host, term, (data) => socket.write(sessionId, encoder.encode(data)))
+      : undefined
 
     return () => {
       liveTerminals.delete(sessionId)
