@@ -349,6 +349,15 @@ export interface TokenUsageTool {
   problem: string
 }
 
+export interface TokenUsageModel {
+  model: string
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+  requests: number
+}
+
 export interface TokenUsageProject {
   /** Empty for the catch-all row: work done outside every known project. */
   id: string
@@ -402,6 +411,9 @@ export interface TokenUsage {
   /** Always every month there has been. */
   byMonth: UsageDay[]
   byTool: TokenUsageTool[]
+  /** A row per model, biggest first. The axis that maps onto money: two tools
+   *  is not a breakdown, and five models an order of magnitude apart is. */
+  byModel: TokenUsageModel[]
   projects: TokenUsageProject[]
   sessions: TokenUsageSession[]
   sessionCount: number

@@ -98,12 +98,18 @@ type tokenUsageResponse struct {
 	To    string `json:"to"`
 	Days  int    `json:"days"`
 
-	Total    store.UsageTotals       `json:"total"`
-	ByDay    []store.UsageDay        `json:"byDay"`
-	Heatmap  []store.UsageDay        `json:"heatmap"`
-	ByMonth  []store.UsageDay        `json:"byMonth"`
-	ByTool   []store.UsageToolTotals `json:"byTool"`
-	Projects []tokenUsageProject     `json:"projects"`
+	Total   store.UsageTotals       `json:"total"`
+	ByDay   []store.UsageDay        `json:"byDay"`
+	Heatmap []store.UsageDay        `json:"heatmap"`
+	ByMonth []store.UsageDay        `json:"byMonth"`
+	ByTool  []store.UsageToolTotals `json:"byTool"`
+	// ByModel is the axis that maps onto money. The column has been written
+	// since the first pass and only the share board ever read it, so the
+	// owner's own panel could tell you that "claude" spent 29B and not that
+	// almost all of it was one model. Two tools is not a breakdown; five
+	// models an order of magnitude apart is.
+	ByModel  []store.UsageModel  `json:"byModel"`
+	Projects []tokenUsageProject `json:"projects"`
 
 	Sessions     []tokenUsageSession `json:"sessions"`
 	SessionCount int                 `json:"sessionCount"`
@@ -232,6 +238,10 @@ func (s *Server) handleTokenUsage(w http.ResponseWriter, r *http.Request) {
 		out.Total.Requests += d.Requests
 	}
 
+	if out.ByModel, err = s.DB.UsageByModel(ctx, ranged); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	byTool, err := s.DB.UsageByTool(ctx, ranged)
 	if err != nil {
 		s.writeStoreErr(w, err)

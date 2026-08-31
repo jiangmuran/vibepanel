@@ -26,6 +26,7 @@ const usage = (over: Partial<TokenUsage> = {}): TokenUsage => ({
   heatmap: [],
   byMonth: [],
   byTool: [],
+  byModel: [],
   projects: [],
   sessions: [],
   sessionCount: 0,

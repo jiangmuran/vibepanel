@@ -18367,3 +18367,43 @@ The suffix goes before the extension, because `image-1.png` is a picture and
 The response reports the name that was written, not the one that was asked for.
 That path is what gets typed at the agent, and a path to a file that does not
 exist would be worse than the refusal it replaced.
+
+## Pane is dead (status 127)
+
+Choosing Claude Code in the new-terminal dialog. 127 is "command not found",
+and `claude` is very much installed — so the question was whose PATH the pane
+was using. Measured, in a panel started the way systemd starts one:
+
+    tmux server global PATH  /home/jmr/.cargo/bin:/home/jmr/.local/bin:/usr/...
+    the pane's own PATH      /usr/local/bin:/usr/bin:/bin
+
+tmux seeds a new session's environment from the **client**, and the client is
+the panel — under systemd, with the unit's PATH. So `EnsureServer` starting the
+server through a login shell fixed the server and did nothing for the panes it
+creates, which is not what its comment implied. Every agent installed anywhere
+but `/usr/bin` was unlaunchable, on the panel whose purpose is launching
+agents.
+
+The reason nobody had hit it: every working agent session in this database was
+started as a plain shell with the agent typed into it by hand. The launch
+profiles had never successfully launched anything.
+
+`launchArgv` wraps the command in a login shell. `exec` in front, because
+wrapping is exactly what made `pane_current_command` report the shell for every
+session once before — that is what the state detector reads to tell an agent
+from a shell, and the browser checks caught it twice.
+
+Both halves are mutation-tested and only one of them goes red. Removing the
+wrapper fails the new test five ways; removing the `exec` fails nothing,
+because bash optimises `bash -c '<one simple command>'` into an exec on its
+own. The word still belongs there — for a profile with a pipe in it, and for
+shells that make no such promise — and both the code and the test now say that
+rather than implying coverage that is not there.
+
+## The model breakdown the panel had and never showed
+
+`UsageByModel` has existed since the rows were first written. The share board
+reads it; the owner's own full-screen board did not, so it could tell you that
+`claude` spent 29.3B and not that almost all of it was one model. Two tools is
+not a breakdown. It is on `/api/token-usage` now, which is the first half of
+reworking that board.

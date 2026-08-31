@@ -377,10 +377,51 @@ func (c *Client) Create(ctx context.Context, o CreateOptions) error {
 		return err
 	}
 	if len(o.Command) > 0 {
-		argv = append(argv, o.Command...)
+		argv = append(argv, launchArgv(o.Command)...)
 	}
 	_, err := c.run(ctx, argv...)
 	return err
+}
+
+// launchArgv wraps a session's command in a login shell.
+//
+// Not belt and braces on top of EnsureServer: measured, the two are different
+// environments and only this one reaches the pane.
+//
+//	tmux server global PATH  /home/jmr/.cargo/bin:/home/jmr/.local/bin:/usr/...
+//	the pane's own PATH      /usr/local/bin:/usr/bin:/bin
+//
+// tmux seeds a new session's environment from the *client*, and the client
+// here is the panel -- under systemd, with the unit's PATH. So starting the
+// server through a login shell fixes the server and does nothing for the panes
+// it creates, which is not what the comment on EnsureServer used to imply.
+//
+// What that cost: `claude` lives in ~/.local/bin, which is on the server's PATH
+// and not on the unit's, so choosing Claude Code in the new-terminal dialog
+// gave `Pane is dead (status 127)` -- 127 being the shell's "command not
+// found". Every agent installed anywhere but /usr/bin was unlaunchable, and
+// the panel exists to launch agents.
+//
+// `exec` is a guarantee, not a hope. Wrapping without it can make
+// `pane_current_command` report the shell for every session, which is what the
+// state detector reads to tell an agent from a shell -- that is how an earlier
+// attempt at this was caught, twice, by the browser checks.
+//
+// Measured honestly: bash optimises `bash -c '<one simple command>'` into an
+// exec by itself, so for `claude` with no arguments the word changes nothing
+// and removing it fails no test here. It stops mattering the moment the
+// command is not a single simple one -- a profile with a pipe or a redirection
+// in it -- and other shells make no such promise. Written down because a test
+// cannot tell the two apart and somebody will otherwise delete it as noise.
+//
+// A machine with no usable login shell gets the argv unwrapped, which is what
+// it did before this existed.
+func launchArgv(command []string) []string {
+	sh := loginShell()
+	if sh == "" {
+		return command
+	}
+	return []string{sh, "-l", "-c", "exec " + shellJoin(command)}
 }
 
 // startServerWithProfile starts the server through a login shell.
