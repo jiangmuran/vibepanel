@@ -1417,8 +1417,22 @@ func TestACrashedSessionIsNotReportedAsDone(t *testing.T) {
 		t.Fatalf("session %s missing from the snapshot", id)
 		return store.Session{}
 	}
-	// The poller decides this, so it has to be waited for rather than read once.
-	waitExit := func(id string, want bool) store.Session {
+	// The poller decides this, so it has to be waited for rather than read
+	// once -- and `settled` is why there are two conditions rather than one.
+	//
+	// `Exited` and `ExitStatus` come from two tmux fields read by the same
+	// poll, and a pane can be seen dead in one poll and carry its status in
+	// the next: pane_dead_status is empty for a pane that was killed rather
+	// than exited, and empty reads as 0. So "exited, status 0" is both a
+	// legitimate clean exit and a reading taken half a beat early, and this
+	// test cannot tell them apart from one sample.
+	//
+	// It read once and failed in CI on a slower machine, reporting `exit
+	// status = 0, want 3` for a script whose only job is to exit 3. Fifteen
+	// runs here never reproduced it. The deadline is still what fails the
+	// test, so a status that never settles is still a failure rather than a
+	// hang.
+	waitExit := func(id string, want bool, settled func(store.Session) bool) store.Session {
 		t.Helper()
 		deadline := time.Now().Add(15 * time.Second)
 		var got store.Session
@@ -1426,7 +1440,7 @@ func TestACrashedSessionIsNotReportedAsDone(t *testing.T) {
 			if err := srv.pollOnce(ctx); err != nil {
 				t.Fatalf("poll: %v", err)
 			}
-			if got = find(id); got.Exited == want {
+			if got = find(id); got.Exited == want && (settled == nil || settled(got)) {
 				return got
 			}
 			time.Sleep(200 * time.Millisecond)
@@ -1436,7 +1450,7 @@ func TestACrashedSessionIsNotReportedAsDone(t *testing.T) {
 		return got
 	}
 
-	dead := waitExit(crashed.ID, true)
+	dead := waitExit(crashed.ID, true, func(s store.Session) bool { return s.ExitStatus != 0 })
 	if dead.ExitStatus != 3 {
 		t.Errorf("exit status = %d, want 3 — without it a crash cannot be told from a clean exit",
 			dead.ExitStatus)
@@ -1459,7 +1473,7 @@ func TestACrashedSessionIsNotReportedAsDone(t *testing.T) {
 	if again := find(crashed.ID); again.Exited {
 		t.Error("the session still claimed to be dead right after being restarted")
 	}
-	if back := waitExit(crashed.ID, false); back.ExitStatus != 0 {
+	if back := waitExit(crashed.ID, false, nil); back.ExitStatus != 0 {
 		t.Errorf("exit status = %d after a successful restart, want 0", back.ExitStatus)
 	}
 }

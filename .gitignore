@@ -32,3 +32,8 @@
 # Claude Code session state — a lock file with a pid in it, swept in by a
 # bulk commit. Nothing here belongs to the project.
 /.claude/
+
+# Screenshots the render checks paste into a project to prove the upload path
+# works. They land in whatever directory the check pointed at, and one of them
+# reached a commit.
+web/pasted-*.png

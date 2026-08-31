@@ -18463,3 +18463,24 @@ project's name cannot go back to being smaller and greyer than its rows — that
 was the previous complaint, 「字太小」 — so the grouping had to come from
 somewhere that costs no height, and space between groups costs height on the
 screen where it is scarcest.
+
+## A test that read two fields as if they arrived together
+
+The v1.2.8 release gate failed on `TestACrashedSessionIsNotReportedAsDone`:
+`exit status = 0, want 3`, for a script whose only job is to exit 3. Fifteen
+runs here never reproduced it, and the tagged commit touched only the
+frontend — so it is a race the login-shell wrapper widened rather than
+anything that commit did.
+
+`Exited` and `ExitStatus` come from two tmux fields, and `pane_dead_status` is
+empty for a pane that was killed rather than exited — empty reads as 0. So
+"exited, status 0" is both a legitimate clean exit and a reading taken half a
+beat early, and one sample cannot tell them apart. The test took one sample.
+
+It waits for the status to settle now, with the same deadline, so a status that
+never settles is still a failure. Verified by making the predicate unsatisfiable
+and watching it fail rather than hang.
+
+A stray `web/pasted-2.png` went in with that commit too — a screenshot the
+render check pastes into a project to prove the upload path works, caught by
+`git add -A`. Removed, and the pattern is in `.gitignore` now.
