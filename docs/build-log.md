@@ -18557,3 +18557,31 @@ which is how the wrong half shipped in the first place.
 The reports have to reach the pty directly rather than through `term.input()`:
 a phone's terminal is `disableStdin`, since typing goes through the compose
 box, and a wheel report is not typing.
+
+## Proving the wheel fix, and a check that was not worth keeping
+
+v1.2.9 shipped the wheel-report fix without an end-to-end proof, so it got one
+afterwards. Driven against a real panel on a phone viewport, with a pane that
+had turned mouse reporting on:
+
+    pane mouse_any_flag: 1
+    xterm modes:         mouse="any"
+    drag -> pty:         14 wheel reports, e.g. [<65;25;35M
+
+Measured at the pty with `capture-pane` rather than in the browser, because the
+question is whether the bytes arrived and the far end is the only place that
+can answer it.
+
+The same assertion was written into `render-check` and then taken out again.
+It borrowed the phone section's session, turned on mouse reporting and left
+`cat -v` running in it, and the runs after it were less stable — an auth
+teardown failing, a `page.goto` refused, once eight failures with nothing to do
+with the change. A check that makes other checks fail is worse than no check:
+this codebase already has the comment about a flaky check teaching people to
+re-run until green, and adding one to prove a fix that is already proven is a
+bad trade.
+
+What it would take to keep it is its own session, created and killed by the
+check, so it cannot poison anything it borrowed. That is worth doing next time
+this surface changes; it was not worth destabilising the suite for a fix with a
+measurement behind it.
