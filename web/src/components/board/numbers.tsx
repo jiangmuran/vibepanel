@@ -35,7 +35,11 @@ function Headline({
   return (
     <div className="flex min-w-0 flex-col justify-center" data-testid={testid}>
       <span
-        className="tabular truncate text-vp-3xl font-semibold"
+        // Clipped on one axis, not two. `truncate` is overflow:hidden on both,
+        // and this line-height (1.1) is shorter than the font's own content
+        // box, so a figure had its ascender and descender shaved off -- worst
+        // on a television, where the type is largest and the shave is widest.
+        className="tabular overflow-x-hidden text-ellipsis whitespace-nowrap text-vp-3xl font-semibold"
         style={{ color: tone ?? 'var(--vp-ink)' }}
         data-testid="headline-value"
       >

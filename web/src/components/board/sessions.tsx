@@ -85,7 +85,21 @@ export function SessionGrid({ w, data, now }: { w: ShareWidget; data: ShareDashb
       ) : (
         <div
           className="grid gap-3"
-          style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(clamp(150px, 11vw, 260px), 1fr))' }}
+          style={{
+            // A card is a number of *characters* wide, not a number of pixels.
+            //
+            // It used to be `clamp(150px, 11vw, 260px)` while the type inside
+            // came from `--vp-wall`, which the tile computes from its own box.
+            // Two unrelated bases: on a 1080p wall the name rendered at around
+            // 48px inside a 260px card, so every session read "cla…", "co…",
+            // "—…" — nine cards that cannot be told apart, on a screen whose
+            // entire job is telling them apart.
+            //
+            // Tying the track to the same unit keeps the ratio fixed: however
+            // large the type gets, the card grows with it. `auto-fill` still
+            // decides how many fit.
+            gridTemplateColumns: CARD_TRACKS,
+          }}
         >
           {shown.map((row) => {
             const since = row.stateChangedAt > 0 ? now - row.stateChangedAt : 0
@@ -121,21 +135,44 @@ export function SessionGrid({ w, data, now }: { w: ShareWidget; data: ShareDashb
   )
 }
 
+/** The grid track for a session card.
+ *
+ *  A `const` rather than an inline style value because the untranslated-string
+ *  scanner reads a long object-literal value as English prose -- which is the
+ *  right instinct, and this is CSS. */
+const CARD_TRACKS = 'repeat(auto-fill, minmax(min(100%, calc(9 * var(--vp-wall, 1rem))), 1fr))'
+
 /** One session as a row: the dense view, for somebody at a desk. */
 function Row({ row, index, now }: { row: ShareSession; index: number; now: number }) {
   const since = row.stateChangedAt > 0 ? now - row.stateChangedAt : 0
   const pct = Math.max(0, Math.min(100, row.cpuPercent))
   return (
     <div
-      className="flex items-center gap-4 border-t border-hairline py-3 first:border-t-0"
+      // @container, and the row's own width is what decides. A board tile can
+      // be twelve columns on a television or the whole of a 320px phone, and
+      // the viewport says nothing about which.
+      className="@container flex items-center gap-2 border-t border-hairline py-3 first:border-t-0 @md:gap-4"
       data-testid="dash-session"
       data-state={row.exited ? 'exited' : row.state}
     >
       <StateDot state={row.state} size={22} exited={row.exited} exitStatus={row.exitStatus} />
       <span className="min-w-0 flex-1 truncate text-vp-xl text-ink">{rowName(row, index)}</span>
-      <span className="shrink-0 text-vp-xl text-ink-3">{kindLabel(row.kind)}</span>
+      {/* The two that go first when there is no room.
+        *
+        * Every column here but the name is shrink-0, so they add up to a fixed
+        * width and the name -- the only flexible one -- absorbs the whole
+        * deficit. On a 320px phone that summed to about 360px of columns in a
+        * 318px box: the name collapsed to three characters and the memory
+        * figure still hung off the right edge. That was the reported
+        * "4.6 MiB" overflow.
+        *
+        * These two are the ones to lose. The kind is already carried by the
+        * name for every agent session, and how long it has been in this state
+        * is the least urgent of the four numbers -- the state dot beside the
+        * name already says *what* it is doing. */}
+      <span className="hidden shrink-0 text-vp-xl text-ink-3 @md:inline">{kindLabel(row.kind)}</span>
       {since > 0 && (
-        <span className="tabular shrink-0 text-vp-xl text-ink-2">
+        <span className="tabular hidden shrink-0 text-vp-xl text-ink-2 @sm:inline">
           {t('dash.forTime', { d: duration(since) })}
         </span>
       )}
@@ -198,7 +235,13 @@ export function SessionList({ w, data, now }: { w: ShareWidget; data: ShareDashb
       {rows.length === 0 ? (
         <Empty text={t('dash.nothing')} />
       ) : (
-        groups.map((g) => (
+        // Scrolls itself rather than growing past its tile.
+        //
+        // The tile clips now, so a list longer than its box would simply lose
+        // its tail with nothing to say so. At MaxDensity this list asks for
+        // 1.8x the rows, which is exactly when it does not fit.
+        <div className="min-h-0 flex-1 overflow-y-auto" data-testid="sessionlist-scroll">
+        {groups.map((g) => (
           <section key={g.key} className="mb-5 last:mb-0" data-testid="dash-group">
             {g.heading && (
               <h3 className="mb-1 truncate text-vp-xl font-medium text-ink-3">{g.heading}</h3>
@@ -207,7 +250,8 @@ export function SessionList({ w, data, now }: { w: ShareWidget; data: ShareDashb
               <Row key={row.id} row={row} index={data.sessions.indexOf(row)} now={now} />
             ))}
           </section>
-        ))
+        ))}
+        </div>
       )}
     </Tile>
   )

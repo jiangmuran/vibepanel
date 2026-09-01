@@ -130,13 +130,13 @@ export function TokenBurn({ w, data }: { w: ShareWidget; data: ShareDashboard })
   return (
     <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-tokenburn" plain>
       <div className="flex h-full min-h-0 flex-col justify-center" data-testid="tokenburn">
-        <span className="tabular truncate text-vp-3xl font-semibold text-ink">
+        <span className="tabular overflow-x-hidden text-ellipsis whitespace-nowrap text-vp-3xl font-semibold text-ink">
           {compact(spend.today.total)}
         </span>
         <span className="truncate text-vp-xl text-ink-2">
           {t('board.metric.tokensToday')} · {exact(spend.today.total)}
         </span>
-        <span className="tabular truncate text-vp-2xl font-semibold text-ink-2">
+        <span className="tabular overflow-x-hidden text-ellipsis whitespace-nowrap text-vp-2xl font-semibold text-ink-2">
           {perMinute === null
             ? `${compact(fallback)} · ${t('dash.perHourToday')}`
             : `${compact(perMinute)} · ${t('dash.perMinute')}`}
@@ -212,7 +212,7 @@ export function Odometer({ w, data }: { w: ShareWidget; data: ShareDashboard }) 
     <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-odometer" plain>
       {spend?.readable ? (
         <div className="flex min-w-0 flex-col justify-center" data-testid="odometer">
-          <span className="tabular truncate text-vp-3xl font-semibold text-ink">
+          <span className="tabular overflow-x-hidden text-ellipsis whitespace-nowrap text-vp-3xl font-semibold text-ink">
             {compact(spend.allTime.total)}
           </span>
           <span className="truncate text-vp-xl text-ink-2">{t('dash.allTime')}</span>

@@ -311,8 +311,17 @@ export function Dashboard({ token }: { token: string }) {
     // It is computed by this browser from its own width and is not the viewport
     // this page reports to the server, which nothing reads back.
     <div className="vp-wall flex h-full min-h-0 flex-col bg-bg text-ink" data-testid="dashboard">
-      <header className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-hairline px-8 py-5">
-        <h1 className="min-w-0 flex-1 truncate text-vp-2xl font-semibold text-ink">
+      <header className="@container flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-hairline px-8 py-5">
+        {/* The board's name owns a line of its own until there is room to
+          * share one.
+          *
+          * Everything else in this header is `shrink-0` -- the scope, the
+          * repository, 「只读看板」, the connection glyph at 40px and 「实时」 at
+          * text-vp-2xl -- so the title was the only thing that could give, and
+          * on a 320px phone it gave everything: "overview" rendered as "o.".
+          * A board whose name is two characters is a board you cannot tell
+          * from the next one. */}
+        <h1 className="min-w-0 basis-full truncate text-vp-2xl font-semibold text-ink @2xl:flex-1 @2xl:basis-auto">
           {safeText(data.name)}
         </h1>
         {/* What this link is about, when it is about one thing. A scoped board

@@ -140,9 +140,30 @@ export function Gauge({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
 
   return (
     <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-gauge" label={metricLabel(metric, metric)}>
-      <div className="flex flex-col items-center">
-        <div className="relative w-full" style={{ maxWidth: '13rem' }}>
-          <svg viewBox="0 0 100 100" className="w-full" role="img" aria-label={metricLabel(metric, metric)}>
+      <div className="flex min-h-0 flex-1 flex-col items-center">
+        {/* Capped in the board's own unit, and by the room actually left.
+          *
+          * 13rem is 208px on every screen, so on a television the dial was a
+          * small circle in a large card and on a phone it was 208px of dial
+          * above a list nobody could see. `--vp-wall` fixes that half.
+          *
+          * The other half is height. The dial is square, so its width decides
+          * its height, and a tile whose caption sits under it had that caption
+          * pushed out of the box -- visible as "0 / 9" sliced in half at the
+          * tile's bottom edge once tiles started clipping. `min-h-0` plus a
+          * height cap lets the dial give way to the line beneath it, which is
+          * the one that carries the actual numbers. */}
+        <div
+          className="relative min-h-0 w-full flex-1"
+          style={{ maxWidth: 'min(calc(13 * var(--vp-wall, 1rem)), 100%)' }}
+        >
+          <svg
+            viewBox="0 0 100 100"
+            className="mx-auto h-full max-h-full w-auto max-w-full"
+            preserveAspectRatio="xMidYMid meet"
+            role="img"
+            aria-label={metricLabel(metric, metric)}
+          >
             <circle
               cx="50"
               cy="50"

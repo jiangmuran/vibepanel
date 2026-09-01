@@ -415,10 +415,23 @@ export function Flow({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
   const top = flow.buckets.reduce((n, b) => Math.max(n, b.started + b.waited + b.finished), 0)
   return (
     <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-flow" label={label}>
-      {flow.buckets.length === 0 ? (
+      {/* `top === 0` is empty too, and it is the common one.
+        *
+        * Buckets exist for every hour of the window whether or not anything
+        * happened in them, so a quiet day is a full array of zeroes: every
+        * column drew at 0% and the strip was 144px of blank inside a labelled
+        * tile, which reads as a broken chart rather than as a quiet day. */}
+      {flow.buckets.length === 0 || top === 0 ? (
         <Empty text={t('dash.emptyWidget')} />
       ) : (
-        <div className="flex items-end gap-1" style={{ height: '9rem' }} data-testid="flow-bars">
+        <div
+          className="flex items-end gap-1"
+          // Scaled with the board's own type unit rather than a fixed rem: on
+          // a television the strip was the same 144px as on a laptop, beside
+          // numbers three times the size.
+          style={{ height: 'calc(9 * var(--vp-wall, 1rem))' }}
+          data-testid="flow-bars"
+        >
           {flow.buckets.map((b) => (
             <FlowColumn key={b.at} bucket={b} top={top} />
           ))}
@@ -533,7 +546,7 @@ export function Feed({ w, data, now }: { w: ShareWidget; data: ShareDashboard; n
       {shown.length === 0 ? (
         <Empty text={t('dash.feedQuiet')} />
       ) : (
-        <ul className="flex flex-col gap-2" data-testid="feed-rows">
+        <ul className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto" data-testid="feed-rows">
           {shown.map((e, i) => (
             <li
               key={`${e.at}-${e.sessionId}-${i}`}

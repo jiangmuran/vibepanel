@@ -197,11 +197,16 @@ export function Timeline({ w, data, now }: { w: ShareWidget; data: ShareDashboar
           {rows.slice(0, rowsAt(density, 12)).map((row, i) => (
             <div key={row.id} className="flex items-center gap-3" data-testid="timeline-row">
               <StateDot state={row.state} size={18} />
-              <span className="w-40 min-w-0 shrink-0 truncate text-vp-xl text-ink-2">
+              {/* A share of the row, not 160px of it.
+                * `w-40` and the `w-20` below are fixed columns, so in a 260px
+                * tile on a small phone they left the bar between them no width
+                * at all -- a timeline with a name, a number, and nothing that
+                * makes it a timeline. */}
+              <span className="min-w-0 max-w-[45%] shrink basis-[45%] truncate text-vp-xl text-ink-2">
                 {row.name ? safeText(row.name) : t('dash.row', { n: i + 1 })}
               </span>
               <div
-                className="h-3 min-w-0 flex-1 overflow-hidden rounded-full"
+                className="h-3 min-w-[4rem] flex-1 overflow-hidden rounded-full"
                 style={{ background: 'var(--vp-surface-2)' }}
               >
                 <div
@@ -212,7 +217,7 @@ export function Timeline({ w, data, now }: { w: ShareWidget; data: ShareDashboar
                   }}
                 />
               </div>
-              <span className="tabular w-20 shrink-0 text-right text-vp-xl text-ink-3">
+              <span className="tabular w-auto min-w-[4ch] shrink-0 text-right text-vp-xl text-ink-3">
                 {duration(dwell(row, now))}
               </span>
             </div>
@@ -314,6 +319,10 @@ export function DateTime({ w }: { w: ShareWidget }) {
  * board may be locked and the label may not be.
  */
 export function RemarkTile({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
+  // Nothing to say, so nothing to occupy. An unset remark drew an empty tile
+  // that took its full span -- about 300px of black above the clock on a
+  // portrait board -- because a widget with no content is still a widget.
+  if (data.remark.trim() === '') return null
   return (
     <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-remark" plain>
       <span className="truncate text-vp-2xl font-semibold text-ink-2" data-testid="remark-tile">

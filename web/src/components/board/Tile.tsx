@@ -58,10 +58,18 @@ export function Tile({
       data-testid={testid}
       data-widget={kind}
       data-height={rows}
+      // `overflow-hidden` on the section as well as on the body below.
+      //
+      // The body's clip stops a widget escaping its own box; this stops a
+      // *tile* escaping its grid cell, which is the same failure one level up.
+      // On a fill board the row height is `minmax(0, 1fr)` and the section is
+      // `container-type: size`, so a tile whose content wants more simply
+      // painted over the tile beneath it -- and over its own heading, because
+      // the body is centred and escapes from both ends at once.
       className={
         plain
-          ? 'flex min-w-0 flex-col justify-center'
-          : 'flex min-w-0 flex-col rounded-vp-lg border border-hairline bg-surface p-5'
+          ? 'flex min-w-0 flex-col justify-center overflow-hidden'
+          : 'flex min-w-0 flex-col overflow-hidden rounded-vp-lg border border-hairline bg-surface p-5'
       }
       style={{ gridColumn: `span ${span}`, gridRow: `span ${rows}` }}
     >
@@ -81,7 +89,22 @@ export function Tile({
        * Children that want the whole box still get it: a chart inside here is
        * `h-full`, and `min-h-0` keeps a list that overflows scrollable rather
        * than pushing the row past the viewport. */}
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col justify-center">{children}</div>
+      {/* `overflow-hidden`, and it is the one line holding the grid together.
+        *
+        * `min-h-0` lets a child *scroll* if the child asked to; it does not
+        * stop one that did not. On a fill board the section is
+        * `container-type: size`, so its height is definite and anything taller
+        * simply painted outside it -- and because this box is `justify-center`
+        * it escaped from both ends at once, over the tile's own heading above
+        * and over the tile below. Three widgets at a time were illegible on
+        * the denser boards, and it read as tiles drawn on top of each other
+        * rather than as one widget being too tall.
+        *
+        * A widget that legitimately has more rows than fit is the list's
+        * problem to solve, and the lists scroll. */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col justify-center overflow-hidden">
+        {children}
+      </div>
     </section>
   )
 }

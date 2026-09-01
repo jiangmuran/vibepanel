@@ -18622,3 +18622,54 @@ side. `MemoryHigh`, `CPUQuota`, `TasksMax` and the IO bandwidth caps are all in
 If the panel itself ever needs bounding, the place is the panel: `GOMEMLIMIT`
 bounds its heap and cannot touch what it hosts. Nothing measured says it needs
 one — it sits at about half a gigabyte.
+
+## Every board template, on every screen it is put on
+
+Thirty read-only presets rendered at seven real sizes — a 1080p television, a
+2560 wall, a laptop, an iPad in portrait, two phones and a portrait kiosk — and
+measured rather than eyeballed: page overflow, elements past the viewport edge,
+text clipped with no ellipsis and no scroll, sub-9px type, and overlapping text
+boxes. 210 renders, and the harness reads the *rendered* page, so it catches
+what a unit test about class names cannot.
+
+The measurements were only half of it. Two audits read the screenshots as well,
+because "technically inside its box" and "readable at three metres" are
+different questions and only one of them is a number.
+
+Six root causes, and five of the six were one mistake in different clothes: **a
+fixed dimension inside a widget whose type scales with `--vp-wall`.**
+
+- **A tile never clipped.** `min-h-0` lets a child scroll if it asked to; it
+  does not stop one that did not. On a fill board the section is
+  `container-type: size`, so the height is definite and an over-tall widget
+  painted straight out of it — and because the body is `justify-center`, out of
+  *both* ends at once, over the tile's own heading above and the tile below.
+  Three widgets at a time were illegible on the denser boards. Both branches of
+  `Tile` clip now, and the two lists that legitimately outgrow their tile
+  scroll.
+- **Session cards were sized in `vw` and lettered in `--vp-wall`.** Two
+  unrelated bases: on a 1080p wall every card read `cla…`, `co…`, `—…` — nine
+  cards that cannot be told apart on a screen whose only job is telling them
+  apart. The track is `9 * var(--vp-wall)` now, so the card grows with its own
+  type.
+- **The dense session row had six `shrink-0` columns.** They summed to about
+  360px inside a 318px phone, so the name — the one flexible column — absorbed
+  the whole deficit, collapsed, and the memory figure still hung off the edge.
+  That was the reported "4.6 MiB". The row is a container now and drops the
+  kind and the dwell time before it drops the name.
+- **The gauge was 13rem wide and square**, so on a television it was a small
+  circle in a large card, and once tiles clipped, its own caption was sliced in
+  half at the bottom edge. Capped in `--vp-wall` and by the room left.
+- **The timeline's name and duration columns were `w-40` and `w-20`**, which in
+  a 260px tile left the bar zero width: a timeline with no line in it.
+- **`truncate` clips both axes**, and `--text-vp-3xl--line-height: 1.1` is
+  shorter than the font's content box, so big figures had their ascenders
+  shaved. Horizontal clipping only.
+
+Two more that were simply wrong rather than mis-scaled: an unset remark drew a
+full-span tile of nothing, and a flow strip whose buckets are all zero drew
+144px of blank instead of saying the day was quiet — the empty branch tested
+the array's length, and a quiet day is a full array of zeroes.
+
+`deskwall` and `made` still have overlaps at the denser sizes and are not fixed
+here.
