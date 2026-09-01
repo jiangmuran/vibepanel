@@ -135,20 +135,29 @@ describe('wheelReport', () => {
 })
 
 describe('scrollAction', () => {
-  it('gives the wheel to an application that asked for it', () => {
+  it('gives the wheel to an application that asked for it, when that is all there is', () => {
     // Claude Code turns on SGR mouse reporting; Codex does not. Measured with
     // tmux on a live panel, which is what settled a bug reported three
     // different ways:
     //
     //   claude  alt=1 sgr=1 any=1
     //   codex   alt=0 sgr=0 any=0
-    //
-    // With reporting on, scrolling xterm's buffer slides the terminal behind
-    // the application to whatever was in the normal buffer before it started.
     for (const mode of ['x10', 'vt200', 'drag', 'any']) {
       expect(scrollAction(mode, 0)).toBe('wheel')
-      // Even with scrollback available: it still belongs to the application.
-      expect(scrollAction(mode, 500)).toBe('wheel')
+    }
+  })
+
+  it('prefers scrollback the application cannot take back', () => {
+    // The reordering, and the reason for it. An application that asked for the
+    // wheel does not keep what the wheel gives it: Claude Code follows its own
+    // output, so a session doing real work was measured back at the tail
+    // within one second of being scrolled 25 notches up, while an idle pane
+    // held the same scroll for ten.
+    //
+    // Reverse these two lines and a busy session becomes unscrollable while a
+    // quiet one still works, which is how it shipped.
+    for (const mode of ['x10', 'vt200', 'drag', 'any']) {
+      expect(scrollAction(mode, 500)).toBe('buffer')
     }
   })
 

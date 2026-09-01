@@ -129,23 +129,44 @@ export function dragRows(dy: number, rowHeight: number, carried: number) {
 /**
  * Who a drag belongs to.
  *
- * `wheel` — the application asked for mouse reporting, so it wants the wheel
- * and scrolls its own view with it. That is what a desktop already does, and
- * doing anything else on a phone is why the same session read normally there
- * and wrongly here.
+ * `buffer` — this terminal has scrollback of its own, so the drag moves it.
  *
- * `buffer` — nobody is listening, so this is the terminal's own scrollback.
+ * `wheel` — there is no scrollback and the application asked for mouse
+ * reporting, so it is the only thing that can answer the gesture.
  *
  * `none` — nothing to scroll and nobody to tell. The gesture is still claimed
  * by the caller, because a drag over a full-screen agent has to do nothing
  * visibly rather than let the browser reload the page.
  *
+ * The order of those two is the whole function, and it used to be the other
+ * way round.
+ *
+ * Asking the application first sounds right: it wants the wheel, so give it
+ * the wheel. It is wrong because the application does not keep what it is
+ * given. Claude Code follows its own output, and a session doing real work
+ * redraws continuously — measured on a live pane driving five background
+ * agents, the view was back at the tail **within one second** of being
+ * scrolled 25 notches up, while an idle pane in the same panel held the same
+ * scroll for ten. So the gesture worked, the reports arrived, the application
+ * scrolled, and the person swiping saw nothing move. The busier the session,
+ * the more certainly it failed, which is the opposite of what anybody wants.
+ *
+ * The scrollback it was passing over is real, and it exists precisely so this
+ * can work: `vibepanel.conf` takes `smcup`/`rmcup` and `indn` out of the
+ * client's terminfo so a full-screen application's output lands in the primary
+ * buffer line by line instead of being painted over. Measured in a browser
+ * against a full-screen mouse-tracking app, `baseY` is 269, not 0. Nothing the
+ * application does can take those lines back.
+ *
+ * `wheel` is kept for the case the reordering leaves behind: a session with no
+ * history yet, where the application's own view is all there is.
+ *
  * A function of two values so it can be tested: the branch it replaces could
  * be deleted without failing anything, which is how the wrong half shipped.
  */
 export function scrollAction(mouseTracking: string, baseY: number): 'wheel' | 'buffer' | 'none' {
-  if (mouseTracking !== 'none') return 'wheel'
-  return baseY > 0 ? 'buffer' : 'none'
+  if (baseY > 0) return 'buffer'
+  return mouseTracking !== 'none' ? 'wheel' : 'none'
 }
 
 export function wheelReport(up: boolean, col: number, row: number): string {
