@@ -18,6 +18,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/jiangmuran/vibepanel/internal/auth"
+	"github.com/jiangmuran/vibepanel/internal/git"
 	"github.com/jiangmuran/vibepanel/internal/store"
 )
 
@@ -330,7 +331,7 @@ func TestTheDashboardNeverCarriesAPathACommandOrARealID(t *testing.T) {
 // rather than the remote string, so the viewer's browser can build one URL and
 // nothing else.
 func TestARepositoryIsNamedOnlyOnAProjectBoardThatAlreadyNamesThings(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, srv := newTestServer(t)
 
 	dir := t.TempDir()
 	repoAtRemote(t, dir, "https://github.com/acme-holdings/payroll.git")
@@ -343,6 +344,13 @@ func TestARepositoryIsNamedOnlyOnAProjectBoardThatAlreadyNamesThings(t *testing.
 	repoAtRemote(t, other, "git@gitlab.example.com:acme/secret.git")
 	elsewhere := postJSON[store.Project](t, ts, "/api/projects",
 		`{"path":"`+other+`","name":"Elsewhere"}`)
+
+	// The remote is read in the background now -- the poll never runs a process
+	// -- so every assertion below has to be made against a warm entry that has
+	// landed. Without this wait the refusals pass on a server that had simply
+	// not read anything yet, which is a disclosure test checking nothing.
+	warmRemote(t, srv, dir)
+	warmRemote(t, srv, other)
 
 	read := func(t *testing.T, body string) (shareDashboard, string) {
 		t.Helper()
@@ -421,8 +429,10 @@ func TestARepositoryIsNamedOnlyOnAProjectBoardThatAlreadyNamesThings(t *testing.
 	})
 
 	t.Run("a directory that is not a checkout", func(t *testing.T) {
+		bare := t.TempDir()
 		plain := postJSON[store.Project](t, ts, "/api/projects",
-			`{"path":"`+t.TempDir()+`","name":"Plain"}`)
+			`{"path":"`+bare+`","name":"Plain"}`)
+		warmRemote(t, srv, bare)
 		got, _ := read(t, `{"name":"wall","detail":"names","scope":"project","scopeId":"`+
 			plain.ID+`"}`)
 		if got.ScopeRepoOwner != "" || got.ScopeRepoName != "" {
@@ -430,6 +440,143 @@ func TestARepositoryIsNamedOnlyOnAProjectBoardThatAlreadyNamesThings(t *testing.
 				got.ScopeRepoOwner, got.ScopeRepoName)
 		}
 	})
+}
+
+// warmRemote waits until the background read of one directory's origin has
+// landed, which is what a second poll of a wall would find.
+func warmRemote(t *testing.T, srv *Server, dir string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := srv.Git.Remote(dir); ok {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("the warm cache never read the origin of %s", dir)
+}
+
+// countingGit puts a `git` on PATH that records every invocation and the
+// directory it ran in.
+//
+// A shim rather than a counter inside internal/git, because what is being
+// asserted is that a *process* was not started, and only the process itself can
+// say that.
+func countingGit(t *testing.T) func() []string {
+	t.Helper()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "invocations")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\t%s\\n' \"$(pwd -P)\" \"$*\" >> " + log + "\n" +
+		"for a in \"$@\"; do\n" +
+		"  if [ \"$a\" = get-url ]; then\n" +
+		"    echo https://github.com/acme-holdings/payroll.git\n" +
+		"    exit 0\n" +
+		"  fi\n" +
+		"done\n" +
+		"exit 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return func() []string {
+		b, err := os.ReadFile(log)
+		if err != nil {
+			return nil
+		}
+		return strings.Split(strings.TrimSpace(string(b)), "\n")
+	}
+}
+
+// A wall's poll starts no process, whatever it asks the working tree for.
+//
+// Red line 8, and the half of it that is easiest to undo by accident: the
+// obvious way to put a repository's name on a board is s.Git.Read, which is the
+// *foreground* cache with a three-second TTL, and it runs three subprocesses.
+// Against a screen polling every two seconds forever that is a fork per project
+// per poll, and one of the three is
+// `git log --format=%H%x00%an%x00%at%x00%s` -- author names and commit subjects
+// pulled through this process to arrive at two words that were already in the
+// remote URL. Counts and a repository name are all this surface may read.
+func TestAWallsPollNeverRunsGit(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dir := t.TempDir()
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+dir+`","name":"Acme payroll"}`)
+
+	ran := countingGit(t)
+	// No foreground caching at all, so a read on the request goroutine cannot
+	// hide behind the three-second TTL and pass on a fast suite. The warm cache
+	// keeps its own TTL, which is the thing under test.
+	srv.Git = git.Cache{TTL: -1}
+
+	link := newShare(t, ts, `{"name":"wall","detail":"names","scope":"project","scopeId":"`+
+		project.ID+`","board":{"widgets":[{"kind":"machine"}]}}`)
+	const polls = 6
+	for i := 0; i < polls; i++ {
+		res, raw := shareGET(t, ts, link.Token)
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("dashboard = %d: %s", res.StatusCode, raw)
+		}
+	}
+
+	// Matched against the resolved path: the shim reports `pwd -P`, and t.TempDir
+	// hands out a path under a /tmp that is a symlink on macOS.
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	here := []string{}
+	for _, line := range ran() {
+		if at, args, found := strings.Cut(line, "\t"); found && at == real {
+			here = append(here, args)
+		}
+	}
+	for _, args := range here {
+		for _, forbidden := range []string{" log ", " status "} {
+			if strings.Contains(args+" ", forbidden) {
+				t.Errorf("the poll ran `git%s`, which carries commit subjects, author "+
+					"names and every changed path through this process for a repository "+
+					"name: %s", forbidden, args)
+			}
+		}
+	}
+	// One background read of the origin, shared by every poll. Two is the TTL
+	// having expired mid-test; six is a fork per poll and the bug.
+	if len(here) > 2 {
+		t.Errorf("%d polls started %d git processes:\n  %s", polls, len(here),
+			strings.Join(here, "\n  "))
+	}
+}
+
+// A board whose only spend series is `spentmade` still gets one.
+//
+// The section is computed because board.Needs said the board wants it, and the
+// *width* of it was then decided by a second list that had never heard of the
+// widget. Nothing matched, the widest was zero, and the day array came back
+// empty -- so newsroom, deskwall and the spentmade preset all render "nothing
+// to show" forever, with a spend total beside them that is not zero.
+func TestABoardWhoseOnlySpendSeriesIsSpentMadeGetsIt(t *testing.T) {
+	ts, srv := newTestServer(t)
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"Acme"}`)
+	seedUsage(t, srv, project.Path, 4242)
+
+	link := newShare(t, ts,
+		`{"name":"wall","board":{"widgets":[{"kind":"spentmade"}]}}`)
+	_, body := shareGET(t, ts, link.Token)
+	got := decodeDashboard(t, body)
+	if got.Spend == nil {
+		t.Fatal("a board with a spend series carries no spend section at all")
+	}
+	if !got.Spend.Readable || got.Spend.Today.Total == 0 {
+		t.Fatalf("nothing was counted, so this test would pass on any server: "+
+			"readable=%v today=%d", got.Spend.Readable, got.Spend.Today.Total)
+	}
+	if len(got.Spend.Days) == 0 {
+		t.Errorf("the board draws a day series and was sent none, while its own totals "+
+			"say %d tokens were spent today", got.Spend.Today.Total)
+	}
 }
 
 // The row ids are per link, and are not the panel's.

@@ -906,7 +906,7 @@ func (s *Server) buildShareDashboard(ctx context.Context, link store.ShareLink,
 	}
 	if named {
 		out.ScopeName = scope.name
-		out.ScopeRepoOwner, out.ScopeRepoName = s.shareRepoFor(ctx, scope)
+		out.ScopeRepoOwner, out.ScopeRepoName = s.shareRepoFor(scope)
 	}
 	// Today, on the server's clock. The browser's would put "closed today" and
 	// "finished today" on a different day for a reader in another timezone.
@@ -1050,7 +1050,7 @@ func (s *Server) buildShareDashboard(ctx context.Context, link store.ShareLink,
 		}
 		trend := shareTrend{Every: int(trendSampleEvery / time.Second),
 			Points: []shareTrendPoint{}}
-		for _, pt := range s.observeTrend(scope.cwd, time.Now(),
+		for _, pt := range s.observeTrend(trendKey(scope, out.Spend != nil), time.Now(),
 			trendFrom(time.Now(), sample, today)) {
 			p := shareTrendPoint{At: pt.at, Memory: pt.memory, Load: pt.load, Tokens: pt.tokens}
 			if pt.cpu >= 0 {
@@ -1186,10 +1186,19 @@ func resolveScope(link store.ShareLink, projects []store.Project,
 // shareRepoFor is the scoped project's repository, as owner and name.
 //
 // Empty for everything that is not a project-scoped link, for a directory that
-// is not a checkout, for a repository nobody has pushed, and for any remote
-// internal/git will not vouch for as github.com. Four ways to get nothing, and
+// is not a checkout, for a repository nobody has pushed, for any remote
+// internal/git will not vouch for as github.com, and for the first poll after a
+// restart, while the background read is still out. Five ways to get nothing, and
 // the page renders the project's name alone for all of them -- which is what a
 // project without a repository should look like.
+//
+// The warm cache, never Cache.Read, and that is red line 8 rather than a
+// performance note. Read runs `git status`, `git log` and `git remote` on this
+// goroutine; a wall polls every two seconds forever, so the version of this that
+// called it was forking three processes a poll per link, and one of the three
+// asked for `%an` and `%s` -- author names and commit subjects -- to arrive at
+// two words that are already in the remote URL. Counts and the two halves of a
+// repository name are the only things this surface reads out of a working tree.
 //
 // The parse is not repeated here. Remote.GitHub() is the one place in this
 // product allowed to decide what a remote string means, and a second answer to
@@ -1197,15 +1206,15 @@ func resolveScope(link store.ShareLink, projects []store.Project,
 //
 // Called only under `named`, which is what keeps a counts-mode board from
 // reading a working tree at all.
-func (s *Server) shareRepoFor(ctx context.Context, scope scopeOf) (string, string) {
+func (s *Server) shareRepoFor(scope scopeOf) (string, string) {
 	if scope.kind != store.ShareProject || scope.missing || scope.cwd == "" {
 		return "", ""
 	}
-	snap, err := s.Git.Read(ctx, scope.cwd, 0)
-	if err != nil || !snap.HasRemote || !snap.Remote.GitHub() {
+	remote, ready := s.Git.Remote(scope.cwd)
+	if !ready || !remote.GitHub() {
 		return "", ""
 	}
-	return snap.Remote.Owner, snap.Remote.Name
+	return remote.Owner, remote.Name
 }
 
 // startOfLocalDay is midnight this morning, on the server's clock, in unix
@@ -1611,10 +1620,19 @@ func addDay(into *shareSpendTotals, d store.UsageDay) {
 // A list rather than a single name, because "which widgets draw days" and
 // "which widgets need the days section" are the same question asked in two
 // places -- board.Needs answers the second from the registry, and this answers
-// the first. A kind missing from here still gets its section; it just gets it
-// cut to the default window, which is a chart that quietly shows a fortnight
-// when its author asked for a year.
-var daySeriesKinds = map[string]bool{"spendbars": true, "sparkline": true, "spendstack": true}
+// the first. A kind missing from here gets its section cut to the default
+// window, which is a chart that quietly shows a fortnight when its author asked
+// for a year.
+//
+// `spentmade` was missing from here and that was not the fortnight: with no kind
+// matching, the widest was 0, spendDaysFrom returns "" for that, and the
+// section's day array stayed empty on every board whose only spend series is
+// this widget -- newsroom, deskwall and the spentmade preset all render Empty
+// forever, however much was spent. The fallback below is what makes the
+// paragraph above true rather than only intended.
+var daySeriesKinds = map[string]bool{
+	"spendbars": true, "sparkline": true, "spendstack": true, "spentmade": true,
+}
 
 // boardSpendDays is the widest day range any series widget on a board asked for.
 func boardSpendDays(board store.Board) int {
@@ -1630,6 +1648,13 @@ func boardSpendDays(board store.Board) int {
 		if days > widest {
 			widest = days
 		}
+	}
+	if widest == 0 {
+		// Nothing matched, and the caller has already decided the board needs
+		// the day series -- board.Needs said so from the registry. The default
+		// window rather than zero, exactly as boardDaysFor next door does: zero
+		// here is an empty array on a board that asked for a chart.
+		widest = shareSpendWindowDays
 	}
 	return widest
 }

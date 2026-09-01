@@ -147,6 +147,83 @@ func TestKillingASessionKillsItsScratchTerminals(t *testing.T) {
 	}
 }
 
+// A title typed on the command line is the operator's, and the poller leaves
+// it alone.
+//
+// `--title` went into the row with no source, CreateSession defaults that to
+// 'auto', and the poller's SetSessionTitle(..., TitleAuto) is gated on 'auto'
+// — so within one two-second tick the name somebody chose was replaced by
+// whatever #{pane_current_command} says, and there was no way to get it back
+// except renaming the session in the browser. The HTTP path never had this: it
+// follows its insert with TitleManual.
+//
+// The tick is replayed rather than waited for: what the poller does to a title
+// is one call, and running a panel here to watch it happen would test the
+// timer instead of the row.
+//
+// Mutation run: dropping `TitleSource: titleSource` from the CreateSession call
+// fails this at "the poller overwrote it", with title "sleep".
+func TestACLITitleIsNotOverwrittenByTheNextPoll(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	socket := "vibepanel-test-" + strconv.Itoa(os.Getpid()) + "-clititle"
+	t.Setenv("VIBEPANEL_DATA_DIR", dir)
+	t.Setenv("VIBEPANEL_TMUX_SOCKET", socket)
+	// The session `session new` starts is a real one on a throwaway socket, and
+	// it has to be taken down again. Red line 1.
+	tm := tmux.New(socket, filepath.Join(dir, "tmux"))
+	if bin := os.Getenv("TEST_TMUX_BIN"); bin != "" {
+		tm.Bin = bin
+	}
+	t.Cleanup(func() {
+		_ = tm.KillServer(context.Background())
+		_ = os.Remove(tm.SocketPath())
+	})
+
+	db, err := store.Open(ctx, config.Config{DataDir: dir}.DBPath())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	proj, err := db.CreateProject(ctx, "p_cli", "cli", t.TempDir())
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	if err := cmdSession([]string{
+		"new", "--project", proj.ID, "--title", "billing fix", "--", "sleep", "300",
+	}); err != nil {
+		t.Fatalf("session new: %v", err)
+	}
+
+	rows, err := db.ListSessions(ctx)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("ListSessions = %d rows, %v", len(rows), err)
+	}
+	row := rows[0]
+	if row.TitleSource != store.TitleManual {
+		t.Errorf("title_source is %q for a title the operator typed; anything but %q "+
+			"leaves it open to the poller", row.TitleSource, store.TitleManual)
+	}
+
+	// One poll tick, exactly as internal/httpapi's poller makes it.
+	if err := db.SetSessionTitle(ctx, row.ID, "sleep", store.TitleAuto); err != nil {
+		t.Fatalf("set title: %v", err)
+	}
+	after, err := db.GetSession(ctx, row.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if after.Title != "billing fix" {
+		t.Errorf("the poller overwrote it: title is %q, and the name the operator gave "+
+			"this session is gone for good", after.Title)
+	}
+}
+
 // Every line doctor can print has a row in the runbook.
 //
 // The runbook's table is the only place that says what a failure *means*, and

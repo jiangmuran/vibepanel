@@ -175,13 +175,18 @@ func (c *Cache) warmTTL() time.Duration {
 	return WarmTTL
 }
 
-// activityKey names one window of one working tree.
+// activityKey names one window of one working tree, on one calendar.
 //
 // The days are in the key because a board asking for a week and one asking for
 // a month are two different reads, and folding them onto one entry would mean
 // whichever screen polled last decided what the other one saw.
-func activityKey(dir string, days int) string {
-	return "activity\x00" + dir + "\x00" + strconv.Itoa(days)
+//
+// The zone is in it for the same reason and one more: the day labels in the
+// answer are built in it, so an entry read under the machine's zone would go on
+// being served for ninety seconds after somebody set the panel's -- which is
+// the settings page appearing to do nothing.
+func activityKey(dir string, days int, loc *time.Location) string {
+	return "activity\x00" + dir + "\x00" + strconv.Itoa(days) + "\x00" + loc.String()
 }
 
 // RepoSnapshot is one working tree as a wall may know it.
@@ -201,10 +206,16 @@ type RepoSnapshot struct {
 //
 // `ok` is false until the first read has finished, which is what the payload
 // carries as "not counted yet". Nothing here waits: see the top of this file.
-func (c *Cache) Repo(dir string, days int) (RepoSnapshot, bool, int64) {
-	key := activityKey(dir, days)
+//
+// loc is the panel's configured zone, not the machine's, and it is a parameter
+// because this package has no way to ask. Everything the caller compares these
+// day labels against -- its day frame, its "is this today" -- is on the panel's
+// calendar, so a read taken on time.Local files a commit made seconds ago under
+// yesterday and reports zero for today whenever the two are on different dates.
+func (c *Cache) Repo(dir string, days int, loc *time.Location) (RepoSnapshot, bool, int64) {
+	key := activityKey(dir, days, loc)
 	v, ok := c.warm(key, c.warmTTL(), func(ctx context.Context) (any, error) {
-		act, err := ReadActivity(ctx, dir, days, time.Now())
+		act, err := ReadActivity(ctx, dir, days, time.Now().In(loc))
 		if err != nil {
 			// Not a repository is an answer rather than a failure, and it has
 			// to be *cached* as one: an error would leave the entry cold and
@@ -229,6 +240,46 @@ func (c *Cache) Repo(dir string, days int) (RepoSnapshot, bool, int64) {
 
 func errorsNotARepo(err error) bool {
 	return err == ErrNotARepo || notARepo(err)
+}
+
+// Remote is one working tree's origin, from the warm cache.
+//
+// Its own key rather than a projection of Cache.Read, and that is the whole
+// point of it existing. Read is the *foreground* cache: it runs three processes
+// on the caller's goroutine, and one of them is
+// `git log --format=%H%x00%an%x00%at%x00%s`. A wall asking "what is this
+// project's repository called" through Read was therefore forking three
+// processes per poll, forever, and pulling every recent commit's subject and
+// author name into this process to arrive at two words that are already in the
+// remote URL. This is one `git remote get-url origin`, on a goroutine of its
+// own, at most once per directory per WarmTTL.
+//
+// `ok` is false until the first read has finished, so the first poll after a
+// restart names no repository and the next one does -- which looks the same on
+// screen as the four other ways a project has no repository to name.
+func (c *Cache) Remote(dir string) (Remote, bool) {
+	v, ok := c.warm("remote\x00"+dir, c.warmTTL(), func(ctx context.Context) (any, error) {
+		remote, has, err := ReadRemote(ctx, dir)
+		if err != nil {
+			// Not a repository is an answer rather than a failure and has to be
+			// cached as one, exactly as it is for Repo: an error leaves the
+			// entry cold, and `tried` is then the only thing between a
+			// directory that will never be a checkout and a process started for
+			// it on every poll.
+			if errorsNotARepo(err) {
+				return Remote{}, nil
+			}
+			return nil, err
+		}
+		if !has {
+			// A repository nobody has pushed. An ordinary state, and it must be
+			// cached for the same reason.
+			return Remote{}, nil
+		}
+		return remote, nil
+	})
+	r, _ := v.(Remote)
+	return r, ok
 }
 
 // PRSummary is what a wall may know about a repository's pull requests.

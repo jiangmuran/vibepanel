@@ -48,22 +48,7 @@ func NewACME(ctx context.Context, o ACMEOptions) (*tls.Config, error) {
 		return nil, err
 	}
 
-	cache := certmagic.NewCache(certmagic.CacheOptions{
-		GetConfigForCert: func(certmagic.Certificate) (*certmagic.Config, error) {
-			return certmagic.NewDefault(), nil
-		},
-	})
-	cfg := certmagic.New(cache, certmagic.Config{
-		Storage: &certmagic.FileStorage{Path: o.StorageDir},
-		Logger:  nil,
-	})
-	issuer := certmagic.NewACMEIssuer(cfg, certmagic.ACMEIssuer{
-		CA:          caEndpoint(o.Directory),
-		Email:       o.Email,
-		Agreed:      true,
-		DNS01Solver: solver,
-	})
-	cfg.Issuers = []certmagic.Issuer{issuer}
+	_, cfg := newManaged(o, solver)
 
 	// Synchronous: a panel that starts, listens, and only then discovers it
 	// has no certificate would greet its first visitor with a handshake error
@@ -81,6 +66,40 @@ func NewACME(ctx context.Context, o ACMEOptions) (*tls.Config, error) {
 	// HTTP/1.1 and HTTP/2 and nothing else.
 	tlsCfg.NextProtos = []string{"h2", "http/1.1"}
 	return tlsCfg, nil
+}
+
+// newManaged builds the certificate cache and the config that maintains what
+// is in it.
+//
+// The callback has to hand back this config, and it used to return
+// certmagic.NewDefault(). certmagic asks it for the config that manages each
+// cached certificate on every maintenance tick and refuses any config bound to
+// a different cache; a default one is bound to certmagic's package-level cache
+// -- with certmagic's own storage, and no issuers, so neither the panel's
+// StorageDir nor the DNS-01 solver below is in it. Maintenance then logged
+// "unable to get configuration to manage certificate; unable to renew" and
+// moved on, in a process nothing else complains in, and the certificate the
+// panel obtained at startup was renewed by restarting the panel and by nothing
+// else: at day 90 every browser gets an expired certificate.
+func newManaged(o ACMEOptions, solver *certmagic.DNS01Solver) (*certmagic.Cache, *certmagic.Config) {
+	var cfg *certmagic.Config
+	cache := certmagic.NewCache(certmagic.CacheOptions{
+		GetConfigForCert: func(certmagic.Certificate) (*certmagic.Config, error) {
+			return cfg, nil
+		},
+	})
+	cfg = certmagic.New(cache, certmagic.Config{
+		Storage: &certmagic.FileStorage{Path: o.StorageDir},
+		Logger:  nil,
+	})
+	issuer := certmagic.NewACMEIssuer(cfg, certmagic.ACMEIssuer{
+		CA:          caEndpoint(o.Directory),
+		Email:       o.Email,
+		Agreed:      true,
+		DNS01Solver: solver,
+	})
+	cfg.Issuers = []certmagic.Issuer{issuer}
+	return cache, cfg
 }
 
 func caEndpoint(directory string) string {

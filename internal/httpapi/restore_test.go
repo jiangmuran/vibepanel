@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -142,6 +144,73 @@ func TestRestoringRunsTheCommandTheSessionWasCreatedWith(t *testing.T) {
 	if got := getSession(t, srv, sess.ID); got.RestoredAt == 0 {
 		t.Error("restoredAt was not set, so nothing in the UI can say this process is new")
 	}
+}
+
+// A restore finds a command that only the login shell can find.
+//
+// This is the case the panel exists for: `claude` lives in ~/.local/bin or
+// behind an nvm/mise shim, and the pane inherits the *panel's* PATH, which
+// under a systemd unit is /usr/bin:/bin. tmux.LaunchArgv is what notices and
+// runs it as `$SHELL -l -c 'exec …'`, so creating the session works. Restoring
+// it handed Create `/bin/sh -c <script> … <argv>` instead, and LaunchArgv,
+// asked about /bin/sh, found /bin/sh and wrapped nothing: the agent ran under a
+// *non-login* shell with the panel's PATH and the pane died with status 127.
+// Reboot, and the session that had been running for a week could not be brought
+// back — nor restarted, because respawn re-runs the same wrapper.
+//
+// The unfindable command is arranged inside the test's own tree, with a
+// stand-in for the person's login shell that puts a directory on PATH the way a
+// profile does. Nothing here writes to the developer's shell configuration.
+//
+// Mutation run: restoring `tmux.LaunchArgv(rec.LaunchCommand)` to a bare
+// `rec.LaunchCommand...` fails this at the second waitForPane, with
+// `vibepanel-restore: 3: exec: vpagent: not found` and `Pane is dead (status
+// 127)` in the capture.
+func TestARestoredSessionFindsWhatOnlyTheLoginShellCanFind(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+
+	// After newTestServer, on purpose: the tmux server is already up, started
+	// with the real shell, so the only thing this stand-in changes is the
+	// environment of the panes created below. A server whose own PATH carried
+	// the directory would hide the bug rather than test it.
+	home := t.TempDir()
+	bin := filepath.Join(home, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agent := filepath.Join(bin, "vpagent")
+	if err := os.WriteFile(agent, []byte("#!/bin/sh\nprintf 'VP_AGENT_MARKER\\n'\nexec cat\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shell := filepath.Join(home, "fakelogin")
+	script := "#!/bin/sh\nPATH=\"" + bin + ":$PATH\"\nexport PATH\n" +
+		"[ \"$1\" = -l ] && shift\nexec /bin/sh \"$@\"\n"
+	if err := os.WriteFile(shell, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SHELL", shell)
+
+	if _, err := exec.LookPath("vpagent"); err == nil {
+		t.Fatal("vpagent is on this process's PATH, so the pane can find it too and " +
+			"there is nothing here for a login shell to fix")
+	}
+
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"restore-path"}`)
+	sess := postJSON[store.Session](t, ts, "/api/sessions", newSessionBody(t, project.ID, "vpagent"))
+	waitForPane(t, srv, sess.TmuxName, "VP_AGENT_MARKER")
+
+	simulateReboot(t, srv)
+	if err := srv.Reconcile(ctx); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	res := restorePost(t, ts, []string{sess.ID})
+	if len(res) != 1 || !res[0].OK {
+		t.Fatalf("restore said %+v", res)
+	}
+
+	waitForPane(t, srv, sess.TmuxName, "VP_AGENT_MARKER")
 }
 
 // The scrollback comes back, and it says out loud that it is old.

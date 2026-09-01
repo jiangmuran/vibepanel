@@ -58,6 +58,13 @@ stub_version() { # stub_version <version string>
 #!/bin/sh
 echo "\$*" >> "$WORK/binary.log"
 [ "\$1" = version ] && echo "vibepanel $1"
+# The one subcommand that is allowed to fail. \`service token\` exits 1 whenever
+# there is no token to find -- a journal that has not flushed, a panel that
+# already has an account, a macOS log file launchd has not created yet -- and
+# the installer reads it at the very end of a successful install. With every
+# subcommand exiting 0 that branch was unreachable here, and the installer died
+# on it under set -e.
+[ "\$1 \${2:-}" = "service token" ] && [ -e "$WORK/no-token" ] && exit 1
 exit 0
 EOF
   chmod +x "$REL/vibepanel"
@@ -196,7 +203,7 @@ newhome() {
   : > "$WORK/root.log"
   : > "$WORK/pkg.log"
   rm -f "$WORK/unit-is-active" "$WORK/agent-is-loaded" \
-        "$WORK/pkg-installs-tmux" "$WORK/pkg-tmux-version"
+        "$WORK/pkg-installs-tmux" "$WORK/pkg-tmux-version" "$WORK/no-token"
   rm -rf "$WORK/pkgbin"
   # Reset to "an ordinary Linux machine with root and a working tmux". Every
   # block that wants something else says so straight after calling this, and
@@ -265,7 +272,7 @@ run() {
       XDG_RUNTIME_DIR="$XDG_OVERRIDE" \
       VIBEPANEL_ROOT_CMD="$ROOT_OVERRIDE" \
       VIBEPANEL_CLAUDE_BIN="$CLAUDE_OVERRIDE" \
-      ${SUDO_OVERRIDE:+VIBEPANEL_SUDO="$SUDO_OVERRIDE"} \
+      VIBEPANEL_SUDO="$SUDO_OVERRIDE" \
       ./deploy/install.sh $lang "$@" <"$input" >"$LOG" 2>&1 )
   RC=$?
 }
@@ -714,6 +721,24 @@ run --yes --system
 [ -f "$(SYSU)" ] && fail "it wrote to /etc without root" || ok "no system unit"
 has "$LOG" "root is not available here" && ok "it says plainly why" \
   || fail "it fell back silently: $(tail -5 "$LOG" | tr '\n' ' ')"
+# And the binary is where the unit that was just written looks for it.
+#
+# This block used to stop at "a user unit exists", which the broken version
+# passed: --system set BIN_DIR to /usr/local/bin before the no-root fallback
+# turned KIND back into `user`, and nothing put it back. The unit said
+# %h/.local/bin and the binary was in /usr/local/bin -- 203/EXEC on every start
+# where that directory happens to be writable, and a bare `install: Permission
+# denied` mid-run on a real machine, where it is root's.
+#
+# Read out of the unit rather than written out again here, so this asserts the
+# two halves agree rather than asserting each against the same constant twice.
+EXEC="$(sed -n 's/^ExecStart=\([^ ]*\).*/\1/p' "$(USRU)" | head -1)"
+EXEC="${EXEC/\%h/$HOME_DIR}"
+[ -x "$EXEC" ] && ok "the binary is at the path the unit names ($EXEC)" \
+  || fail "the unit says $EXEC and nothing is there; the binary went to $(find "$HOME_DIR" -name vibepanel -type f | tr '\n' ' ')"
+[ -e "$HOME_DIR/root/usr/local/bin/vibepanel" ] \
+  && fail "it also put a binary in the system directory it had just given up on" \
+  || ok "and nothing was left in /usr/local/bin"
 
 echo "==> no root, and a system unit in the way"
 newhome
@@ -909,6 +934,28 @@ else
   echo "[--  ] no script(1) here; the terminal detection was not exercised"
 fi
 
+# ── the harness's own sudo override ───────────────────────────────────────
+#
+# SUDO_OVERRIDE existed, was reset by newhome, and was never once set to
+# anything, so nothing here had ever taken this branch. It could not have
+# worked: run() passed it as `${SUDO_OVERRIDE:+VIBEPANEL_SUDO="$SUDO_OVERRIDE"}`,
+# and a word produced by expansion is not an assignment word -- bash takes it as
+# the command name. Every run in that block would have died with
+# `VIBEPANEL_SUDO=...: No such file or directory` and rc=127, and 127 with an
+# empty log reads like an installer bug rather than a harness one.
+#
+# The assertion is about the harness, not the installer: whatever else changes,
+# a check that sets this must still be able to run.
+echo "==> the harness can hand the installer a sudo of its own"
+newhome
+SUDO_OVERRIDE="$FAKESUDO"
+run --yes --system
+SUDO_OVERRIDE=
+[ "$RC" = 0 ] && ok "a run with a sudo override still starts" \
+  || fail "rc=$RC with SUDO_OVERRIDE set: $(head -3 "$LOG" | tr '\n' ' ')"
+[ -f "$(SYSU)" ] && ok "and installs what it was asked for" \
+  || fail "nothing was installed"
+
 # ── sudo that wants a password ────────────────────────────────────────────
 #
 # Every `script` here is wrapped in `timeout`. A pty block that waits for an
@@ -1074,6 +1121,21 @@ has "$LOG" "no service manager here" && ok "it says there is no service manager"
   || fail "it installed silently: $(tail -6 "$LOG" | tr '\n' ' ')"
 has "$LOG" "vibepanel serve" && ok "and how to start it by hand" \
   || fail "it left them with nothing to run"
+
+echo "==> no systemd but root available: the binary is still the account's own"
+# The third fallback, and the one with root in play. The kind is `system` until
+# this line turns it into `none`, and the binary used to follow the kind it had
+# before that -- /usr/local/bin, then installed without as_root, which on a real
+# machine is `install: Permission denied` after the plan has been printed.
+newhome
+INIT_OVERRIDE="$WORK/there-is-no-systemd-here"
+run --yes
+[ $RC -eq 0 ] && ok "exits 0" || { fail "exited $RC"; sed 's/^/       /' "$LOG"; }
+[ -x "$HOME_DIR/.local/bin/vibepanel" ] && ok "the binary is in the account's own bin" \
+  || fail "it went to $(find "$HOME_DIR" -name vibepanel -type f | tr '\n' ' ')"
+has "$LOG" "$HOME_DIR/.local/bin/vibepanel serve" \
+  && ok "and that is the path it tells them to run" \
+  || fail "it named a path nothing was installed to: $(tail -6 "$LOG" | tr '\n' ' ')"
 
 echo "==> no session bus: the unit is installed and the limitation is said"
 newhome
@@ -1753,6 +1815,25 @@ run --yes --user --enable
 has "$LOG" "is not running" && fail "a healthy start was reported as a failure" \
   || ok "a start that worked is not reported as one that did not"
 
+echo "==> a start with no token to show still finishes the summary"
+# The installer fetches the token itself rather than telling somebody to go and
+# run a second command. Fetching it is a nicety; the summary under it is not.
+#
+# `service token` exits 1 when there is nothing to find, and with `set -euo
+# pipefail` and no `|| true` that status came back through the pipe and ended
+# the script on the last useful line of a successful install -- no box, no URL,
+# no `afterwards:`, no PATH note, and exit 1 over a panel that was installed and
+# running. The comment above that line already promised this behaviour.
+newhome
+: > "$WORK/no-token"
+run --yes --user --enable
+[ $RC -eq 0 ] && ok "exits 0" || { fail "exited $RC after installing and starting"; sed 's/^/       /' "$LOG"; }
+has "$LOG" "token  " && ok "the box says where to get the token instead" \
+  || fail "no token line at all: $(tail -6 "$LOG" | tr '\n' ' ')"
+has "$LOG" "afterwards:" && ok "and the summary runs to the end" \
+  || fail "the summary stopped where the token would have been: $(tail -4 "$LOG" | tr '\n' ' ')"
+rm -f "$WORK/no-token"
+
 # ── deploy/uninstall.sh ───────────────────────────────────────────────────
 #
 # The teardown kills every session on a tmux socket and deletes a data
@@ -1762,12 +1843,22 @@ has "$LOG" "is not running" && fail "a healthy start was reported as a failure" 
 # sockets, a success line printed over a binary that had silently done nothing,
 # and a `pgrep -f` that matched the shell running it.
 
+UNINST_BIN=""
 uninst() { # uninst <home> <socket> [args...]
   local h="$1" sock="$2"; shift 2
+  # DESTDIR on every run, never inherited: without it $SYSUNIT below is the real
+  # /etc/systemd/system/vibepanel.service, which on a developer's machine is
+  # somebody's own panel and would be what these cases reason about.
+  #
+  # VIBEPANEL_BIN carries UNINST_BIN, which a case may set to nothing. Empty is
+  # how uninstall.sh is told "work it out yourself", and working it out -- from
+  # the unit's ExecStart rather than from ~/.local/bin -- is the thing under
+  # test, so a block that hard-codes the answer cannot see it.
   ( HOME="$h" \
     VIBEPANEL_TMUX_SOCKET="$sock" \
     VIBEPANEL_DATA_DIR="$h/.local/share/vibepanel" \
-    VIBEPANEL_BIN="$h/.local/bin/vibepanel" \
+    VIBEPANEL_DESTDIR="$h/root" \
+    VIBEPANEL_BIN="$UNINST_BIN" \
     VIBEPANEL_ENV_FILE="$h/.config/vibepanel.env" \
     "$REPO/deploy/uninstall.sh" "$@" >"$LOG" 2>&1 )
   RC=$?
@@ -1802,6 +1893,7 @@ EOF
     printf '#!/bin/sh\nexit 0\n' > "$HOME_DIR/.local/bin/vibepanel"
   fi
   chmod +x "$HOME_DIR/.local/bin/vibepanel"
+  UNINST_BIN="$HOME_DIR/.local/bin/vibepanel"
 }
 
 echo "==> uninstall: the dry run changes nothing"
@@ -1899,6 +1991,110 @@ has "$LOG" "the unit file is still there" \
   || fail "it reported the service uninstalled and left the unit: $(tail -4 "$LOG")"
 rm -f "$HOME_DIR/.config/systemd/user/vibepanel.service"
 
+echo "==> uninstall: a system install is not looked for in ~/.local/bin"
+# deploy/install.sh puts the binary in /usr/local/bin whenever root is
+# available, which is its recommended default. uninstall.sh guessed
+# ~/.local/bin, found nothing there, and both destructive steps are gated on
+# finding it -- so `hook remove` and `service uninstall` were skipped, the unit
+# stayed installed and enabled, and $DATA went anyway, taking the reporter
+# script three agent configs still pointed at. "── done ──", no FAIL, exit 0.
+teardown_home real
+mkdir -p "$HOME_DIR/root/usr/local/bin" "$HOME_DIR/root/etc/systemd/system"
+printf 'ExecStart=%s/root/usr/local/bin/vibepanel serve\n' "$HOME_DIR" \
+  > "$HOME_DIR/root/etc/systemd/system/vibepanel.service"
+# What the real binary does: `hook remove` edits the three configs, and
+# `service uninstall` takes the unit and itself with it.
+cat > "$HOME_DIR/root/usr/local/bin/vibepanel" <<EOF
+#!/bin/sh
+echo "\$*" >> "$WORK/binary.log"
+if [ "\$1" = hook ] && [ "\$2" = remove ]; then
+  rm -f "$HOME_DIR/.config/opencode/plugin/vibepanel.js"
+  printf '{"model":"opus"}\n' > "$HOME_DIR/.claude/settings.json"
+  : > "$HOME_DIR/.codex/config.toml"
+fi
+if [ "\$1" = service ] && [ "\$2" = uninstall ]; then
+  rm -f "$HOME_DIR/root/etc/systemd/system/vibepanel.service"
+  rm -f "$HOME_DIR/root/usr/local/bin/vibepanel"
+fi
+exit 0
+EOF
+chmod +x "$HOME_DIR/root/usr/local/bin/vibepanel"
+rm -f "$HOME_DIR/.local/bin/vibepanel"
+UNINST_BIN=
+uninst "$HOME_DIR" "vpuninst$$g" --yes --purge
+[ $RC -eq 0 ] && ok "exits 0" || fail "exited $RC: $(tail -3 "$LOG")"
+has "$WORK/binary.log" "hook remove" \
+  && ok "it found the binary the unit names and asked it to remove the hooks" \
+  || fail "it never ran the binary: $(tr '\n' ' ' < "$WORK/binary.log")"
+grep -q vibepanel-report "$HOME_DIR/.claude/settings.json" 2>/dev/null \
+  && fail "the hooks still point at a reporter this run deleted" \
+  || ok "the hooks are gone"
+has "$WORK/binary.log" "service uninstall" \
+  && ok "and to remove the service" || fail "the service was never uninstalled"
+[ -f "$HOME_DIR/root/etc/systemd/system/vibepanel.service" ] \
+  && fail "the system unit is still installed and enabled" || ok "the system unit is gone"
+[ -e "$HOME_DIR/root/usr/local/bin/vibepanel" ] \
+  && fail "the binary is still in /usr/local/bin" || ok "and so is the binary"
+
+echo "==> uninstall: no binary anywhere keeps the data the hooks point into"
+# The other half of the same rule. With nothing to run `hook remove` with, the
+# reporter script must outlive this run -- a hook left pointing at a missing
+# file is silent, because the reporter suppresses its own failures on purpose.
+# And a unit left behind is enabled with Restart=always, so it is a panel that
+# comes back at the next boot over a data directory this run removed.
+teardown_home real
+mkdir -p "$HOME_DIR/.config/systemd/user"
+: > "$HOME_DIR/.config/systemd/user/vibepanel.service"
+rm -f "$HOME_DIR/.local/bin/vibepanel"
+UNINST_BIN=
+uninst "$HOME_DIR" "vpuninst$$h" --yes --purge
+[ $RC -eq 0 ] && ok "exits 0" || fail "exited $RC: $(tail -3 "$LOG")"
+has "$LOG" "the hooks are still there" && ok "it says so instead of reporting success" \
+  || fail "it removed nothing and said nothing: $(tail -4 "$LOG" | tr '\n' ' ')"
+has "$LOG" "the service is still installed" && ok "and that the unit is still there" \
+  || fail "it left an enabled unit silently: $(tail -4 "$LOG" | tr '\n' ' ')"
+has "$LOG" "STILL THERE" && ok "and the summary repeats both" \
+  || fail "the FAILs never reached the summary"
+[ -d "$HOME_DIR/.local/share/vibepanel" ] \
+  && ok "and kept the data directory the hooks point into" \
+  || fail "it deleted the reporter out from under hooks that still call it"
+rm -f "$HOME_DIR/.config/systemd/user/vibepanel.service"
+
+echo "==> uninstall: a binary it cannot remove is said, not fatal"
+# The system binary is root's, and this script is not run with sudo. `rm -f` on
+# it fails, and a bare one under `set -e` ends the run two lines before the
+# summary that would have said what was left behind -- which is the only place
+# any of it is written down.
+teardown_home real
+mkdir -p "$HOME_DIR/root/usr/local/bin" "$HOME_DIR/root/etc/systemd/system"
+printf 'ExecStart=%s/root/usr/local/bin/vibepanel serve\n' "$HOME_DIR" \
+  > "$HOME_DIR/root/etc/systemd/system/vibepanel.service"
+# A binary that removes the hooks and nothing else, so the unit and the file
+# both survive `service uninstall` the way root's do without sudo.
+cat > "$HOME_DIR/root/usr/local/bin/vibepanel" <<EOF
+#!/bin/sh
+if [ "\$1" = hook ] && [ "\$2" = remove ]; then
+  rm -f "$HOME_DIR/.config/opencode/plugin/vibepanel.js"
+  printf '{"model":"opus"}\n' > "$HOME_DIR/.claude/settings.json"
+  : > "$HOME_DIR/.codex/config.toml"
+fi
+exit 0
+EOF
+chmod +x "$HOME_DIR/root/usr/local/bin/vibepanel"
+rm -f "$HOME_DIR/.local/bin/vibepanel"
+chmod 555 "$HOME_DIR/root/usr/local/bin"
+UNINST_BIN=
+uninst "$HOME_DIR" "vpuninst$$i" --yes --purge
+chmod 755 "$HOME_DIR/root/usr/local/bin"
+[ $RC -eq 0 ] && ok "exits 0" || fail "exited $RC: $(tail -3 "$LOG")"
+# Matched on the command it prints, not on "needs root": the line listing what
+# is here says that too, about the unit, and this passed against the old script
+# on a machine that happened to have a real /etc/systemd/system unit.
+has "$LOG" "sudo rm -f" && ok "it says which file needs root, and how" \
+  || fail "the binary could not be removed and nothing said so: $(tail -4 "$LOG" | tr '\n' ' ')"
+has "$LOG" "── done ──" && ok "and the summary is still printed" \
+  || fail "the run stopped on the failed rm: $(tail -3 "$LOG" | tr '\n' ' ')"
+
 echo "==> uninstall: a binary that cannot remove hooks is caught by looking"
 teardown_home deaf
 TD_SOCK2="vpuninst$$c"
@@ -1945,6 +2141,34 @@ has "$LOG" "purge-archives removes that one" \
 uninst "$HOME_DIR" "vpuninst$$d" --yes --purge-archives
 [ -e "$HOME_DIR/vibepanel-data-20991231-235959.tar.gz" ] \
   && fail "--purge-archives left it" || ok "--purge-archives removes it"
+
+
+# ── deploy/docker-compose.yml ─────────────────────────────────────────────
+#
+# Not an installer, but it is the third way docs/install.md tells somebody to
+# start this thing, and it is checked nowhere else that runs shell over the
+# files in deploy/.
+echo "==> compose: it does not require a file the repository does not ship"
+# `env_file:` is mandatory in Compose unless the entry says otherwise, and
+# `.env` is in .gitignore with nothing in the repository, the docs or the
+# Makefile creating one. The command at docs/install.md's compose section
+# aborted on a clean clone before doing anything: "env file .../deploy/.env not
+# found". The shipped template is deploy/vibepanel.env, under another name.
+COMPOSE="$REPO/deploy/docker-compose.yml"
+grep -qE '^[[:space:]]*-[[:space:]]*\.env[[:space:]]*$' "$COMPOSE" \
+  && fail "env_file names .env as a plain entry, which Compose requires; nothing ships one" \
+  || ok "no env_file entry demands a file that is not in the repository"
+# And asked of Compose itself where there is one, because the rule above is a
+# guess about a parser this check does not contain.
+if docker compose version >/dev/null 2>&1; then
+  if docker compose -f "$COMPOSE" config >"$WORK/compose.log" 2>&1; then
+    ok "docker compose reads it on a clean checkout"
+  else
+    fail "docker compose refuses it: $(head -2 "$WORK/compose.log" | tr '\n' ' ')"
+  fi
+else
+  echo "[--  ] no docker compose here; the parser's own opinion was not asked"
+fi
 
 echo
 if [ "$FAILS" -eq 0 ]; then echo "=== install check: 0 FAIL ==="; else echo "=== install check: $FAILS FAIL ==="; fi

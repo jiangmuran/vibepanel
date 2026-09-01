@@ -270,13 +270,29 @@ func trendFrom(now time.Time, sample sysmon.Sample, tokens int64) trendPoint {
 	return p
 }
 
-// observeTrend records a point for one scope and returns that scope's ring.
+// trendKey names the ring a board's points belong in.
 //
-// Keyed by the scope's directory, exactly as the spend cache is, because the
-// token half of a point is that scope's total: a link scoped to one project
-// must not draw the panel's line. The machine half is the same for every scope
-// and is duplicated rather than shared, which is four floats per scope and not
-// worth a second structure to avoid.
+// Everything that decides the token half of a point, and nothing else. The
+// directory alone -- which is what this was -- collapsed three different token
+// series onto one ring:
+//
+//   - A board with no spend section contributes a zero token total, because
+//     there is nothing to ask. Sharing a ring with a board that has one means
+//     the burn widget sees the day's running total arrive, vanish and arrive
+//     again, and draws the whole day as a fresh burst every other sample.
+//   - A scoped link whose project has been deleted has an empty cwd, exactly
+//     like a whole-panel link, and its spend section is deliberately empty.
+//     Sharing the whole panel's ring would put the whole panel's token line on
+//     a board that was narrowed to one project -- a disclosure, not a glitch.
+//
+// The machine half is the same for every scope and is duplicated across rings
+// rather than shared, which is four floats per scope and not worth a second
+// structure to avoid.
+func trendKey(scope scopeOf, spend bool) string {
+	return string(scope.kind) + "\x00" + scope.cwd + "\x00" + strconv.FormatBool(spend)
+}
+
+// observeTrend records a point for one scope and returns that scope's ring.
 func (s *Server) observeTrend(key string, now time.Time, p trendPoint) []trendPoint {
 	s.trendMu.Lock()
 	defer s.trendMu.Unlock()

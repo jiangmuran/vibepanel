@@ -25,6 +25,10 @@ type oscScanner struct {
 	// reads it as "the agent wants a human".
 	bell bool
 
+	// skipping means a sequence too long to keep is being thrown away, and
+	// runs until its terminator. See feed.
+	skipping bool
+
 	clipboard []string
 	titles    []string
 }
@@ -48,6 +52,33 @@ func (s *oscScanner) feed(chunk []byte) {
 
 	consumed := 0
 	for i := 0; i < len(buf); i++ {
+		if s.skipping {
+			// Discarding an over-long sequence: its payload is not content and
+			// its terminator is not a bell. See where skipping is set.
+			if buf[i] == 0x07 {
+				s.skipping = false
+				consumed = i + 1
+				continue
+			}
+			if buf[i] != 0x1b {
+				consumed = i + 1
+				continue
+			}
+			if i+1 >= len(buf) {
+				// Could be an ST split across reads; one byte is cheap to keep.
+				s.pending = append([]byte(nil), buf[i:]...)
+				return
+			}
+			if buf[i+1] == '\\' {
+				s.skipping = false
+				i++
+				consumed = i + 1
+				continue
+			}
+			// An ESC that is not ST abandons the sequence, the same reading
+			// parseOSC uses; scan this byte normally, it may start the next one.
+			s.skipping = false
+		}
 		if buf[i] == 0x07 {
 			// A BEL that terminates an OSC sequence is handled inside the OSC
 			// branch below and never reaches here, so anything left is a real
@@ -69,8 +100,18 @@ func (s *oscScanner) feed(chunk []byte) {
 				s.pending = append([]byte(nil), buf[i:]...)
 				return
 			}
-			// Too long to be anything we handle; drop it and move on rather
-			// than growing without bound.
+			// Too long to be anything we handle; drop it rather than growing
+			// without bound — but keep dropping until its terminator, instead
+			// of rescanning the payload as ordinary bytes.
+			//
+			// Rescanning meant the sequence's own BEL arrived at the plain-bell
+			// branch above and raised the one signal this panel exists to make
+			// trustworthy. Measured through real tmux: a 100 KiB OSC 52 copy
+			// (codex sends its clipboard through tmux's DCS passthrough) gave
+			// bells=1, clipboardEvents=0 — somebody pressing copy read as an
+			// agent asking for a human, orange triangle, sorted to the top,
+			// webhook fired.
+			s.skipping = true
 			consumed = i + 1
 			continue
 		}

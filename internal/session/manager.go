@@ -426,7 +426,19 @@ func (m *Manager) Attach(ctx context.Context, sessionID, tmuxName string, cols, 
 	if m.detachedWhileAttaching[sessionID] {
 		delete(m.detachedWhileAttaching, sessionID)
 		m.mu.Unlock()
-		l.close()
+		// closeInternal(false), not close(): `go m.pump(l)` is below and has
+		// not run, so waiting on l.pumped is waiting for a channel nobody will
+		// ever close. It cost the full pumpDrain — measured 2.0056s — with the
+		// attaching claim still held, because releaseAttach is a defer that
+		// runs after this returns, so every other Attach for this session
+		// queued behind a wait that had nothing to wait for. Same mistake as
+		// the one closeFromPump exists for.
+		l.closeInternal(false)
+		// And reap it here. The only cmd.Wait is pump's deferred cleanup,
+		// which never runs for a Live torn down before its pump started, so the
+		// tmux client that closeInternal's timer kills two seconds later stayed
+		// a zombie child of the panel for the life of the process.
+		go func() { _ = l.cmd.Wait() }()
 		return nil, ErrNotAttached
 	}
 	m.live[sessionID] = l
@@ -758,11 +770,43 @@ func (l *Live) Unsubscribe(sub *Subscriber) {
 	// The cost is that a lone remaining viewer keeps scaling until it taps
 	// "take control" once. That is a deliberate, visible action rather than a
 	// surprise.
-	if l.controller == sub.ClientID {
-		l.controller = ""
-		l.lastController = sub.ClientID
-		l.lastControllerAt = l.now()
+	l.releaseControlLocked(sub)
+}
+
+// releaseControlLocked gives the grid up when the subscriber that just went
+// away was holding it — unless another connection of the same viewer still is.
+//
+// Both halves of that sentence are a bug that happened.
+//
+// Ownership is keyed on the browser's client id, which survives a reconnect in
+// sessionStorage, and one WebSocket is one Subscriber. A socket that dies
+// half-open is reconnected in half a second and resubscribes under the same
+// client id, and the reap of the old one lands minutes later — so comparing
+// the client id alone took the grid away from the connection that had replaced
+// it. Nothing broadcasts a size after that, so the viewer went on being told it
+// was the controller: it kept fitting its own terminal and publishing a size
+// the server silently discarded, and was never offered the button that would
+// have fixed it. "Duplicate tab" copies sessionStorage and does the same thing
+// without any network trouble at all.
+//
+// And it has to run here rather than only in Unsubscribe, because
+// broadcastLocked drops a viewer that cannot keep up by deleting it from
+// l.subs — after which the Unsubscribe from the socket's own teardown finds
+// nothing and returns early. The grid stayed owned by a client that was gone,
+// with no departure timestamped, so the controllerGrace path below could never
+// run and every later viewer was passive forever.
+func (l *Live) releaseControlLocked(sub *Subscriber) {
+	if l.controller != sub.ClientID {
+		return
 	}
+	for other := range l.subs { // sub is already gone from the map
+		if other.ClientID == sub.ClientID {
+			return
+		}
+	}
+	l.controller = ""
+	l.lastController = sub.ClientID
+	l.lastControllerAt = l.now()
 }
 
 // broadcast delivers an event to every viewer, dropping any that is too far
@@ -785,6 +829,7 @@ func (l *Live) broadcastLocked(ev Event) {
 			sub.dropped.Store(true)
 			delete(l.subs, sub)
 			close(sub.Events)
+			l.releaseControlLocked(sub)
 		}
 	}
 }

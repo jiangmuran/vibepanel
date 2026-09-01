@@ -114,10 +114,10 @@ type Server struct {
 	Tokens *usage.Ingester
 
 	// hookToken authenticates state reports from agent hooks. Cached after the
-	// first read so the hot path does not hit the database.
-	tokenOnce  sync.Once
-	hookToken  string
-	tokenError error
+	// first read that succeeds so the hot path does not hit the database; see
+	// HookToken for why the failures are deliberately not cached.
+	tokenMu   sync.Mutex
+	hookToken string
 
 	// lastSnapshot is the most recent state payload that was broadcast. The
 	// poller compares against it so that a tick where nothing changed sends
@@ -614,10 +614,37 @@ func (s *Server) HookToken(ctx context.Context) (string, error) {
 	// The memo stays here — every hook report checks the token, so this is on
 	// a hot path — but the value itself is the store's, because the admin CLI
 	// needs the same one when it creates a session.
-	s.tokenOnce.Do(func() {
-		s.hookToken, s.tokenError = s.DB.HookToken(ctx)
-	})
-	return s.hookToken, s.tokenError
+	s.tokenMu.Lock()
+	defer s.tokenMu.Unlock()
+	if s.hookToken != "" {
+		return s.hookToken, nil
+	}
+	// Only a success is remembered, and the read is detached from whoever asked.
+	//
+	// This was a sync.Once over `s.hookToken, s.tokenError = ...`, which
+	// memoises the *error* too: one failed first call disabled state reporting
+	// for the life of the process. The first call is whichever hook report or
+	// session creation happens to arrive first, and report.sh runs `curl
+	// --max-time 2`, so a panel that has not answered within two seconds -- a
+	// restart, with RestoreState and the usage ingest queued in front of one
+	// SQLite writer, while surviving sessions fire hooks at it -- has the
+	// request's context cancelled under it and poisons the memo.
+	//
+	// Every direction of that is silent, which is what red line 3 is about:
+	// handleHookState answers 500 and report.sh swallows it by design, hookEnv
+	// falls back to an empty token so every session created afterwards launches
+	// without VIBEPANEL_TOKEN and reports nothing for its whole life, and the
+	// settings page still says hooks are installed because it reads the agent's
+	// configuration file rather than whether anything ever arrived. Only a
+	// restart cleared it.
+	read, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	token, err := s.DB.HookToken(read)
+	if err != nil {
+		return "", err
+	}
+	s.hookToken = token
+	return token, nil
 }
 
 type hookStateRequest struct {
@@ -691,6 +718,27 @@ func (s *Server) handleHookState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.notifyState()
+	if st != prev.State {
+		// The webhook has to be sent from here, and it was not.
+		//
+		// fireWebhooks had one call site: the poller, guarded by "the state is
+		// not what the row says". By the time the poller looks, this handler
+		// has already written the row *and* told the detector, so the two
+		// agree, the guard is false and nothing is sent. So a session on the
+		// heuristic notified you when it started waiting, and a session whose
+		// agent has the reporter the settings page asks you to install -- the
+		// accurate path, the one that fires on Claude Code's Notification
+		// event -- notified nobody. The webhook is the panel's only outbound
+		// notification; notifyState reaches browsers that are already looking.
+		//
+		// On the transition, like the poller: firing on "is waiting" would send
+		// one per report for as long as somebody is away from their desk.
+		//
+		// WithoutCancel because report.sh runs `curl --max-time 2` and this is
+		// no longer the caller's errand: a hook report the panel answered a
+		// moment too slowly should still ring the phone it was about.
+		s.fireWebhooks(context.WithoutCancel(ctx), prev, string(st))
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -916,11 +964,16 @@ func (s *Server) hooksAreInstalled() bool {
 	installed := false
 	if script, err := s.scriptPath(); err == nil {
 		if st, ierr := hooks.Inspect(script); ierr == nil {
-			// Either agent counts. This read only Claude's, so a machine where
+			// Any agent counts. This read only Claude's, so a machine where
 			// Codex was the one wired up was told to install hooks it already
 			// had -- and the notice offering the remedy is the panel's own
 			// admission that it is guessing, which it was not.
-			installed = st.Installed || st.CodexInstalled
+			//
+			// Then opencode was added to hooks.Status and this line was not,
+			// so the same sentence was true again for a third agent. Anything
+			// added to Status has to be added here too; the guard walks the
+			// install functions rather than naming two of them.
+			installed = st.Installed || st.CodexInstalled || st.OpencodeInstalled
 		}
 	}
 	s.hookInstalled, s.hookCheckedAt = installed, time.Now()
@@ -1969,8 +2022,22 @@ func (s *Server) pollOnce(ctx context.Context) error {
 		}
 		if s.Detector != nil {
 			st, src := s.Detector.Evaluate(row.ID, session.Observation{
-				Dead:      info.Dead,
-				ShellOnly: session.IsShellCommand(info.Command),
+				Dead: info.Dead,
+				// The launch argv as well as the pane's current command, for
+				// the reason SessionRunsAnAgent gives: the panel starts a
+				// command it cannot find on PATH through a login shell, so
+				// until that shell execs, `pane_current_command` is the shell.
+				// The detector has no grace for a young session -- shell and
+				// no other evidence falls straight through to "done" -- so a
+				// session launching `claude` from ~/.local/bin under a profile
+				// that takes a moment showed a green check, sorted as
+				// finished, and fired a "session finished" webhook, then
+				// flipped back to working on the next tick and fired again.
+				// Measured at 1.5s against a two-second poll, so a tick lands
+				// inside it. The notice at stateIsGuessed already asked both
+				// questions; the path that decides the glyph asked one.
+				ShellOnly: session.IsShellCommand(info.Command) &&
+					!session.SessionRunsAnAgent(row.LaunchCommand, info.Command),
 			}, now)
 			if st != row.State || src != row.StateSource {
 				// setSessionState rather than the store's: it is what records

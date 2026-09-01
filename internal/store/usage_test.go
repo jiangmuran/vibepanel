@@ -126,6 +126,37 @@ func TestAWildcardInAProjectPathIsNotAWildcard(t *testing.T) {
 	}
 }
 
+// A project path with a non-ASCII character in it still matches the work done
+// below it.
+//
+// SQLite's substr() counts characters, Go's len() counts bytes, and the two
+// only agree while every byte is ASCII. Passing the byte length asked for more
+// characters than the prefix has, so the comparison was false for every row
+// inside the directory and only the project root itself -- matched by the
+// separate `cwd = ?` clause -- survived. The reading that reaches a wall is
+// then a confident zero, which is the one answer this surface exists to
+// refuse.
+func TestANonASCIIProjectPathMatchesItsSubdirectories(t *testing.T) {
+	db := openTest(t)
+	ctx := context.Background()
+
+	put(t, db, "/t/a.jsonl", "claude", row("2026-08-20", "s1", "/home/me/项目/api", "opus", 1, 1))
+	put(t, db, "/t/b.jsonl", "claude", row("2026-08-20", "s2", "/home/me/项目/api/web", "opus", 10, 20))
+	put(t, db, "/t/c.jsonl", "claude", row("2026-08-20", "s3", "/home/me/项目/other", "opus", 100, 200))
+
+	days, err := db.UsageByDay(ctx, UsageFilter{CWDPrefix: "/home/me/项目/api"})
+	if err != nil {
+		t.Fatalf("by day: %v", err)
+	}
+	if len(days) != 1 {
+		t.Fatalf("got %d days, want 1", len(days))
+	}
+	if days[0].Output != 21 {
+		t.Errorf("output %d, want 21 (the project and its subdirectory, not the sibling)",
+			days[0].Output)
+	}
+}
+
 // Months are cut from the local-zone day string, never re-parsed as a date.
 //
 // strftime('%Y-%m', day) would have SQLite read the string as a UTC date and

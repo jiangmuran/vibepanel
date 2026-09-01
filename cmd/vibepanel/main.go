@@ -639,9 +639,23 @@ func cmdSession(args []string) error {
 			return fmt.Errorf("session new: %w", err)
 		}
 
+		// A title someone typed is theirs, and the poller may not take it back.
+		//
+		// CreateSession defaults an unset source to 'auto', and the poller's
+		// SetSessionTitle(..., TitleAuto) is gated on exactly that — so one
+		// two-second tick later `--title "billing fix"` had become "node", or
+		// the project directory's basename, permanently. The HTTP path says
+		// TitleManual right after its insert; this is the same asymmetry that
+		// made this path miss the hook token and the launch argv.
+		titleSource := store.TitleAuto
+		if *title != "" {
+			titleSource = store.TitleManual
+		}
+
 		s, err := a.db.CreateSession(ctx, store.Session{
 			ID: sid, ProjectID: p.ID, TmuxName: tmuxName,
-			Title: *title, CWD: p.Path, Cols: *cols, Rows: *rows,
+			Title: *title, TitleSource: titleSource,
+			CWD: p.Path, Cols: *cols, Rows: *rows,
 			State: sessionpkg.StateWorking,
 			// The same argv that was just handed to tmux. Without it a session
 			// made from the CLI is one the panel cannot rebuild after a reboot

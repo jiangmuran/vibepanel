@@ -180,6 +180,25 @@ function writeStored(key: string, value: string | null) {
   }
 }
 
+/**
+ * Which session the panel shows, once a snapshot has landed.
+ *
+ * Only the sessions the sidebar offers. Scratch terminals arrive in the same
+ * list with a parent set, and the server's ordering has no parent predicate in
+ * it, so `sessions[0]` is a scratch terminal whenever one sorts first — a
+ * bottom pane that rang the bell is `waiting` and sorts ahead of everything, and
+ * in a browser with nothing remembered that is the very first thing selected.
+ * The panel draws `mainSessions.find(...)`, which can never match a child, so
+ * the header and the terminal area both say "no session" while the sidebar
+ * lists everything. It sticks, too: the id is a real session, so every later
+ * snapshot keeps it, and it is written to localStorage for the next visit.
+ */
+export function nextSelection(sessions: Session[], cur: string | null): string | null {
+  const mains = sessions.filter((s) => !s.parentSessionId)
+  if (cur && mains.some((s) => s.id === cur)) return cur
+  return mains[0]?.id ?? null
+}
+
 export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => void }) {
   useLang()
   const socket = useMemo(() => new PanelSocket(), [])
@@ -301,10 +320,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     // whether this window is the one being looked at, and only the browser
     // knows that.
     notifyOnWaiting(next.sessions, document.hasFocus())
-    setSelected((cur) => {
-      if (cur && next.sessions.some((s) => s.id === cur)) return cur
-      return next.sessions[0]?.id ?? null
-    })
+    setSelected((cur) => nextSelection(next.sessions, cur))
   }, [])
 
   // Pushed updates are the primary path.

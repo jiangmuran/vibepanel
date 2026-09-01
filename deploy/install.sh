@@ -1585,30 +1585,6 @@ elif [ -z "$KIND" ]; then
   fi
 fi
 
-# ── where the binary goes, now that the kind is known ─────────────────────
-#
-# A system unit whose ExecStart points into one account's home is not a system
-# service. It breaks when that home is on an encrypted or network filesystem
-# that is not mounted at boot, and `sudo vibepanel` -- which is what the
-# summary tells people to type, and what anybody with a system unit reaches for
-# -- fails with `command not found`, because ~/.local/bin is not on root's
-# PATH. That was reported from a real install, along with everything downstream
-# of it.
-#
-# So: /usr/local/bin for the system unit, ~/.local/bin for the user unit. The
-# user unit's ExecStart is `%h/.local/bin/vibepanel`, which systemd expands per
-# account and is right as it is.
-if [ "$KIND" = system ]; then
-  BIN_DIR="$DESTDIR/usr/local/bin"
-fi
-
-# The writability check again, for the directory actually chosen. The earlier
-# one ran before the kind was known and could only ask about $HOME.
-if [ -e "$BIN_DIR" ] && [ ! -w "$BIN_DIR" ] && [ "$KIND" != system ]; then
-  me pre.bindirro "$BIN_DIR"
-  exit 1
-fi
-
 # ── never both ────────────────────────────────────────────────────────────
 #
 # A user unit and a system unit are two panels with the same data directory on
@@ -1670,6 +1646,43 @@ if [ "$SERVICE_MGR" = no ]; then
 fi
 if [ "$KIND" = agent ] && [ ! -f "$PLIST_SRC" ]; then
   me err.noplist "$MAC_LABEL"
+  exit 1
+fi
+
+# ── where the binary goes, now that the kind is settled ───────────────────
+#
+# A system unit whose ExecStart points into one account's home is not a system
+# service. It breaks when that home is on an encrypted or network filesystem
+# that is not mounted at boot, and `sudo vibepanel` -- which is what the
+# summary tells people to type, and what anybody with a system unit reaches for
+# -- fails with `command not found`, because ~/.local/bin is not on root's
+# PATH. That was reported from a real install, along with everything downstream
+# of it.
+#
+# So: /usr/local/bin for the system unit, ~/.local/bin for everything else. The
+# user unit's ExecStart is `%h/.local/bin/vibepanel`, which systemd expands per
+# account and is right as it is.
+#
+# Below the fallbacks, and both arms of the `if`, because this used to sit above
+# them and only ever set the system path. A `--system` run that fell back to the
+# user unit -- no root, or a release archive with no vibepanel-system.service --
+# kept BIN_DIR at /usr/local/bin and wrote a user unit pointing at
+# ~/.local/bin: on a machine where /usr/local/bin is root's, a bare `install:
+# Permission denied` after the plan had been printed, and where it happens to be
+# writable, a unit that fails 203/EXEC on every start forever.
+if [ "$KIND" = system ]; then
+  BIN_DIR="$DESTDIR/usr/local/bin"
+else
+  BIN_DIR="$HOME/.local/bin"
+fi
+
+# The writability check again, for the directory actually chosen. The earlier
+# one ran before the kind was known and could only ask about $HOME.
+#
+# The system directory is exempt: it is root's, this account is not meant to be
+# able to write it, and every write to it goes through as_root.
+if [ "$KIND" != system ] && [ -e "$BIN_DIR" ] && [ ! -w "$BIN_DIR" ]; then
+  me pre.bindirro "$BIN_DIR"
   exit 1
 fi
 
@@ -2144,7 +2157,13 @@ case "$STARTED" in
       # string, and the box then says where to get it instead. An installer
       # that fails at the last line over a nicety is worse than one that
       # prints a command.
-      TOKEN="$("$BIN_DIR/vibepanel" service token 2>/dev/null | tr -d '[:space:]')"
+      # `|| true` is what makes the paragraph above true: `service token`
+      # exits 1 when there is no token to find -- an unflushed journal, a panel
+      # that already has an account, a log file launchd has not created yet --
+      # and under `set -euo pipefail` that ended the installer here, after
+      # "started just now" and before the box, the URL, the token line and both
+      # notes. A successful install that stops mid-summary and exits 1.
+      TOKEN="$("$BIN_DIR/vibepanel" service token 2>/dev/null | tr -d '[:space:]' || true)"
       if [ -n "$TOKEN" ]; then
         {
           m box.open "http://$HOST:$PORT"

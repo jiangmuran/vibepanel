@@ -99,6 +99,52 @@ func (in *Ingester) Ensure(force bool) bool {
 	return true
 }
 
+// Rezone changes the zone the day labels are written in and re-reads every
+// transcript under the new one. It returns how many cursor rows it dropped.
+//
+// The zone and the cursor are one change, and neither may move while a pass is
+// walking -- which is why this waits rather than taking an argument to Ensure.
+// The settings handler used to do both from the request goroutine. Writing
+// Scanner.Loc there is an unsynchronised write to a location a running pass
+// reads for every record it buckets, and the race detector says so. Dropping
+// the cursor there is worse and outlives the race: a pass that started before
+// the delete is holding a snapshot of the cursor taken before it, so it goes
+// on writing rows in the old zone *together with* the cursors that make them
+// look current -- and every later pass then skips exactly those transcripts.
+// Their labels stay in the zone the user just left, permanently, while the
+// response reports the rebuild as done.
+//
+// The wait is honest rather than unfortunate: somebody changed a setting once,
+// and a pass is seconds at worst.
+func (in *Ingester) Rezone(ctx context.Context, loc *time.Location) (int64, error) {
+	in.mu.Lock()
+	for in.running {
+		in.mu.Unlock()
+		time.Sleep(5 * time.Millisecond)
+		in.mu.Lock()
+	}
+	// Held across the wipe so that no pass can start on half of it. It is also
+	// what orders the write below against every pass that comes after: they
+	// are all started under this mutex, so there is a happens-before edge and
+	// no pass ever reads the zone while it is being changed.
+	in.running = true
+	if in.Scanner != nil {
+		in.Scanner.Loc = loc
+	}
+	in.mu.Unlock()
+
+	n, err := in.DB.ForgetEveryUsageFile(ctx)
+
+	in.mu.Lock()
+	in.running = false
+	in.mu.Unlock()
+	if err != nil {
+		return 0, err
+	}
+	in.Ensure(true)
+	return n, nil
+}
+
 // run performs one pass and returns what it found.
 func (in *Ingester) run(ctx context.Context) Pass {
 	started := time.Now()
@@ -112,18 +158,22 @@ func (in *Ingester) run(ctx context.Context) Pass {
 		return p
 	}
 
-	// Everything the last pass knew about. Whatever is still in here when the
-	// walk finishes is a transcript that has been deleted, and its rows go too.
-	gone := make(map[string]struct{}, len(stamps))
-	for path := range stamps {
-		gone[path] = struct{}{}
+	// Everything the last pass knew about, and which agent's root it was found
+	// under. Whatever is still in here when the walk finishes is a transcript
+	// that has been deleted, and its rows go too -- but only for a root this
+	// pass actually managed to enumerate.
+	gone := make(map[string]string, len(stamps))
+	for path, s := range stamps {
+		gone[path] = s.Tool
 	}
+	enumerated := make(map[string]bool, len(Tools))
 
 	for _, tool := range Tools {
 		paths, src, err := in.Scanner.Walk(tool)
 		if err != nil {
 			src.Problem = err.Error()
 		}
+		enumerated[string(tool)] = src.Complete
 		for _, ref := range paths {
 			path := ref.Path
 			delete(gone, path)
@@ -164,7 +214,17 @@ func (in *Ingester) run(ctx context.Context) Pass {
 
 	if len(gone) > 0 {
 		paths := make([]string, 0, len(gone))
-		for path := range gone {
+		for path, tool := range gone {
+			// "I could not look" is not "the files are gone". A walk that did
+			// not enumerate its root returns an empty list, and sweeping on
+			// that deletes the cursor and every rolled-up day for the agent in
+			// one transaction -- so a remount, an agent updating itself or a
+			// chmod on one subdirectory would have the panel reporting zero
+			// and re-reading the whole corpus from cold afterwards. Unknown is
+			// not zero, here as everywhere else in this package.
+			if !enumerated[tool] {
+				continue
+			}
 			paths = append(paths, path)
 		}
 		sort.Strings(paths)

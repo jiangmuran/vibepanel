@@ -17,6 +17,12 @@ import (
 type UsageStamp struct {
 	Size       int64
 	ModifiedAt int64
+	// Tool is which agent's root this file was found under. Carried so that
+	// the pass can sweep the transcripts of the roots it actually managed to
+	// enumerate and leave the others alone; without it the only choice is to
+	// forget everything the walk did not see, and a root that was momentarily
+	// unreadable takes every rollup for that agent with it.
+	Tool string
 }
 
 // UsageFile is one transcript's contribution, as it goes into the database.
@@ -46,7 +52,7 @@ type UsageRow struct {
 
 // UsageStamps returns every transcript the last pass recorded.
 func (d *DB) UsageStamps(ctx context.Context) (map[string]UsageStamp, error) {
-	rows, err := d.sql.QueryContext(ctx, `SELECT path, size, modified_at FROM usage_files`)
+	rows, err := d.sql.QueryContext(ctx, `SELECT path, size, modified_at, tool FROM usage_files`)
 	if err != nil {
 		return nil, fmt.Errorf("store: list usage files: %w", err)
 	}
@@ -56,7 +62,7 @@ func (d *DB) UsageStamps(ctx context.Context) (map[string]UsageStamp, error) {
 	for rows.Next() {
 		var p string
 		var s UsageStamp
-		if err := rows.Scan(&p, &s.Size, &s.ModifiedAt); err != nil {
+		if err := rows.Scan(&p, &s.Size, &s.ModifiedAt, &s.Tool); err != nil {
 			return nil, fmt.Errorf("store: scan usage file: %w", err)
 		}
 		out[p] = s
@@ -176,8 +182,14 @@ func (f UsageFilter) where() (string, []any) {
 	if f.CWDPrefix != "" {
 		p := strings.TrimSuffix(f.CWDPrefix, "/")
 		under := p + "/"
-		clauses = append(clauses, "(cwd = ? OR substr(cwd, 1, ?) = ?)")
-		args = append(args, p, len(under), under)
+		// length(?) rather than Go's len(): substr() counts characters and Go
+		// counts bytes, so any non-ASCII character in the path asked for more
+		// characters than the prefix has and the comparison was false for
+		// every row *below* the directory. A project under /home/me/项目
+		// reported the root's own spend and nothing else -- a confident zero
+		// on a wall, from a filter that looked right in ASCII tests.
+		clauses = append(clauses, "(cwd = ? OR substr(cwd, 1, length(?)) = ?)")
+		args = append(args, p, under, under)
 	}
 	if len(clauses) == 0 {
 		return "", nil

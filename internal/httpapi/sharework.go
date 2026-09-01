@@ -215,7 +215,7 @@ func (s *Server) shareRepoWork(ctx context.Context, projects []store.Project, se
 			break
 		}
 		out.Projects++
-		snap, ready, age := s.Git.Repo(p.Path, days)
+		snap, ready, age := s.Git.Repo(p.Path, days, s.loc(ctx))
 		if !ready {
 			// Nothing read yet for this project. Counted in Projects so the
 			// widget can say how many it is still waiting on, and left out of
@@ -309,16 +309,19 @@ func (s *Server) sharePRsFor(projects []store.Project, named bool, scope scopeOf
 	if token == "" {
 		return out
 	}
-	// The remote through the ordinary cache, which is a read of a file in
-	// .git and is what the repository tab already does. Remote.GitHub() is the
-	// one place allowed to decide what a remote string means.
-	snap, err := s.Git.Read(context.Background(), scope.cwd, 0)
-	if err != nil || !snap.HasRemote || !snap.Remote.GitHub() {
+	// The remote through the *warm* cache, never Cache.Read. Read runs status,
+	// log and remote on this goroutine, so the version of this line that used it
+	// was three processes per poll for a repository name -- and one of the three
+	// was the log with subjects and author names in its format string, which is
+	// the disclosure red line 8 refuses at both detail settings. Remote.GitHub()
+	// is still the one place allowed to decide what a remote string means.
+	remote, haveRemote := s.Git.Remote(scope.cwd)
+	if !haveRemote || !remote.GitHub() {
 		return out
 	}
 	client := s.GitHub
 	client.Token = token
-	sum, ready, age := s.Git.PRs(client, snap.Remote.Owner, snap.Remote.Name, dayStart)
+	sum, ready, age := s.Git.PRs(client, remote.Owner, remote.Name, dayStart)
 	if !ready {
 		return out
 	}

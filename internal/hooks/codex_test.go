@@ -268,6 +268,55 @@ func TestUninstallCodexRemovesOnlyOurs(t *testing.T) {
 	}
 }
 
+// Install over somebody else's notify, then uninstall: the file has to be what
+// it was.
+//
+// The install takes Codex's one slot and keeps the old line as a comment under
+// its banner. Removing only our own line left that comment there for good — the
+// user's notifier stopped running, `codexInstalled` correctly said false, and
+// the settings page said not installed, so nothing on screen or in the file
+// admitted that anything had been taken. TestUninstallCodexRemovesOnlyOurs
+// covers uninstall without an install before it, which is the case that already
+// worked.
+func TestInstallThenUninstallGivesBackTheNotifyItTook(t *testing.T) {
+	for _, tc := range []struct{ name, doc string }{
+		{"one line", `model = "gpt-5.6"
+notify = ["/home/jmr/bin/my-own-notifier.sh"]
+
+[tui]
+theme = "dark"
+`},
+		{"array across lines", `model = "gpt-5.6"
+notify = [
+  "/home/jmr/bin/my-own-notifier.sh",
+  "--quiet",
+]
+
+[tui]
+theme = "dark"
+`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withFakeHome(t)
+			writeCodexConfig(t, tc.doc)
+			if _, err := InstallCodex(codexScript); err != nil {
+				t.Fatalf("InstallCodex: %v", err)
+			}
+			st, err := UninstallCodex(codexScript)
+			if err != nil {
+				t.Fatalf("UninstallCodex: %v", err)
+			}
+			if st.CodexInstalled {
+				t.Error("still reported as installed after removal")
+			}
+			if body := readFile(t, codexPath(t)); body != tc.doc {
+				t.Errorf("the round trip did not give the file back:\n--- want ---\n%s"+
+					"--- got ---\n%s", tc.doc, body)
+			}
+		})
+	}
+}
+
 func TestUninstallCodexWithNoConfigAtAll(t *testing.T) {
 	withFakeHome(t)
 	st, err := UninstallCodex(codexScript)

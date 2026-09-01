@@ -3060,3 +3060,292 @@ func tmuxVersionFor(t *testing.T, srv *Server) string {
 	}
 	return v
 }
+
+// One failed read of the hook token may not decide the rest of the process.
+//
+// The memo was a sync.Once over `s.hookToken, s.tokenError = ...`, which
+// remembers the error as well as the value: whichever call happened to be first
+// -- a hook report, or the session creation that reads the token into the new
+// session's environment -- got to disable state reporting permanently if it
+// failed once. Everything downstream of that is silent (report.sh swallows its
+// own failures, and the settings page reports hooks as installed because it
+// reads the agent's config file), so the only symptom is every session back on
+// the heuristic until somebody restarts the panel. Red line 3.
+func TestATransientFailureDoesNotDisableTheHookTokenForever(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	// A closed database stands in for the transient failures this has to
+	// survive: busy, locked, a full disk. What matters is only that the first
+	// read fails and the next one would work.
+	broken, err := store.Open(ctx, config.Config{DataDir: dir}.DBPath())
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	broken.Close()
+
+	srv := &Server{DB: broken, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if _, err := srv.HookToken(ctx); err == nil {
+		t.Fatal("the first read was supposed to fail; this test is checking nothing")
+	}
+
+	db, err := store.Open(ctx, config.Config{DataDir: dir}.DBPath())
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer db.Close()
+	srv.DB = db
+
+	token, err := srv.HookToken(ctx)
+	if err != nil || token == "" {
+		t.Fatalf("HookToken = %q, %v; one failure disabled hook reporting for the "+
+			"life of the process", token, err)
+	}
+}
+
+// A hook report whose client has already hung up may not decide it either.
+//
+// report.sh runs `curl --max-time 2`, so any report the panel does not answer
+// within two seconds is aborted and net/http cancels the handler's context. That
+// is what a restart looks like from the outside: the surviving sessions fire
+// hooks while RestoreState and the usage ingest are queued in front of one
+// SQLite writer. The read is the panel's own errand, not the caller's, so it
+// runs on a context the caller cannot cancel.
+func TestAHookReportFromAGoneClientDoesNotPoisonTheToken(t *testing.T) {
+	_, srv := newTestServer(t)
+
+	gone, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodPost, "/api/hook/state",
+		strings.NewReader(`{"sessionId":"nope","state":"waiting"}`)).WithContext(gone)
+	req.Header.Set("Content-Type", "application/json")
+	srv.Routes().ServeHTTP(httptest.NewRecorder(), req)
+
+	token, err := srv.HookToken(context.Background())
+	if err != nil || token == "" {
+		t.Fatalf("HookToken = %q, %v after an aborted report; every later report "+
+			"answers 500 and every new session launches with no token", token, err)
+	}
+}
+
+// Every agent the hooks package can install counts as "reporting is on".
+//
+// TestEitherAgentCountsAsHooksInstalled walks Claude and Codex, and was written
+// when there were two. opencode was added to hooks.Status afterwards and
+// hooksAreInstalled was not updated, so a machine wired up through opencode --
+// plugin in place, states arriving from it -- was told across the top of the
+// sidebar that its states were guesses and to turn on reporting it already had.
+// That is the second time the same line has been wrong about the same thing, so
+// this walks the install functions rather than naming the agents.
+func TestEveryAgentTheHooksPackageKnowsCountsAsInstalled(t *testing.T) {
+	for _, agent := range []struct {
+		name               string
+		install, uninstall func(script string) error
+	}{
+		{"claude",
+			func(s string) error { _, err := hooks.InstallClaude(s); return err },
+			func(s string) error { _, err := hooks.UninstallClaude(s); return err }},
+		{"codex",
+			func(s string) error { _, err := hooks.InstallCodex(s); return err },
+			func(s string) error { _, err := hooks.UninstallCodex(s); return err }},
+		{"opencode",
+			func(string) error { return hooks.InstallOpencode() },
+			func(string) error { return hooks.UninstallOpencode() }},
+	} {
+		t.Run(agent.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			s := &Server{Cfg: config.Config{DataDir: t.TempDir()}}
+			if s.hooksAreInstalled() {
+				t.Fatal("reported installed with no configuration at all")
+			}
+			script, err := s.scriptPath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := agent.install(script); err != nil {
+				t.Fatalf("install: %v", err)
+			}
+			s.forgetHookStatus()
+			if !s.hooksAreInstalled() {
+				t.Errorf("%s is wired up and the panel still says the states are "+
+					"guessed, so the sidebar asks for reporting that is already on",
+					agent.name)
+			}
+			if err := agent.uninstall(script); err != nil {
+				t.Fatalf("uninstall: %v", err)
+			}
+			s.forgetHookStatus()
+			if s.hooksAreInstalled() {
+				t.Errorf("still reported installed after removing %s's hook", agent.name)
+			}
+		})
+	}
+}
+
+// A session still inside its login shell is not a finished one.
+//
+// The panel wraps a command it cannot find on PATH -- `claude` in ~/.local/bin
+// under systemd, or any version manager's shim -- in `<login shell> -l -c 'exec
+// …'`, so for as long as the profile takes to source, `pane_current_command` is
+// the shell. The poller fed that to the detector on its own, and the detector
+// has no grace for a young session: shell, no bell, no hook report, and it
+// returns done. The first poll after creation lands inside that window on any
+// machine whose profile is slower than a tick, and the session shows a green
+// check, sorts as finished and fires a "finished" webhook before flipping back
+// to working on the next tick and firing again.
+func TestASessionStillInsideItsLoginShellIsNotReadAsFinished(t *testing.T) {
+	// A login shell that takes its time before exec'ing what it was handed,
+	// which is what sourcing nvm or conda looks like. Named bash because that
+	// is the answer the detector has to survive.
+	//
+	// Only the session's own command waits: the tmux server is started through
+	// $SHELL as well, and delaying that just makes the test take two minutes.
+	dir := t.TempDir()
+	sh := filepath.Join(dir, "bash")
+	const profile = `#!/bin/sh
+while [ "$1" = "-l" ]; do shift; done
+[ "$1" = "-c" ] && shift
+case "$1" in *claude*) sleep 3 ;; esac
+exec /bin/sh -c "$1"
+`
+	if err := os.WriteFile(sh, []byte(profile), 0o755); err != nil {
+		t.Fatalf("write shell: %v", err)
+	}
+	t.Setenv("SHELL", sh)
+
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"wrapped"}`)
+	// Deliberately not on PATH, which is what makes tmux.LaunchArgv wrap it.
+	// The basename is still the agent that was asked for, and that is the fact
+	// the row keeps.
+	agent := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["`+dir+`/nowhere/claude"]}`)
+	// The control: an ordinary shell session, which really is a scratch
+	// terminal and must keep reading as done.
+	shell := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["bash"]}`)
+
+	if err := srv.pollOnce(ctx); err != nil {
+		t.Fatalf("pollOnce: %v", err)
+	}
+
+	row, err := srv.DB.GetSession(ctx, agent.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if !session.IsShellCommand(row.Command) {
+		t.Skipf("the pane already reports %q, so this machine has no window to "+
+			"catch and the test would pass for the wrong reason", row.Command)
+	}
+	if row.State == session.StateDone {
+		t.Errorf("a session launching %v read as done while its pane was still "+
+			"%q -- a green check, a finished sort and a webhook, on a session "+
+			"that has not started yet", row.LaunchCommand, row.Command)
+	}
+
+	ctrl, err := srv.DB.GetSession(ctx, shell.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if ctrl.State != session.StateDone {
+		t.Errorf("the control shell session read %q, want %q: the fix must not "+
+			"make every shell look busy", ctrl.State, session.StateDone)
+	}
+}
+
+// The webhook fires on a state an agent reported through its own hook.
+//
+// fireWebhooks had one call site -- the poller, guarded by "the state is not
+// what the row says" -- and the hook handler writes the row and tells the
+// detector before the poller ever looks, so that guard was false and nothing
+// was sent. The panel notified you about a session it was *guessing* about and
+// said nothing about one whose agent had the reporter the settings page asks
+// you to install. The webhook is the only outbound notification there is.
+func TestAHookReportedWaitingFiresTheWebhook(t *testing.T) {
+	var hits atomic.Int64
+	dest := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		hits.Add(1)
+	}))
+	defer dest.Close()
+
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"hooked"}`)
+	sess := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
+
+	put, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/settings/webhooks",
+		strings.NewReader(`[{"name":"phone","method":"GET","url":"`+dest.URL+
+			`/x?s={state}","states":["waiting"],"enabled":true}]`))
+	put.Header.Set("Content-Type", "application/json")
+	res, err := ts.Client().Do(put)
+	if err != nil {
+		t.Fatalf("put webhooks: %v", err)
+	}
+	res.Body.Close()
+
+	token, err := srv.HookToken(ctx)
+	if err != nil {
+		t.Fatalf("HookToken: %v", err)
+	}
+	report := func(state string) {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/hook/state",
+			strings.NewReader(`{"sessionId":"`+sess.ID+`","state":"`+state+`"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		res, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatalf("hook report: %v", err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusNoContent {
+			t.Fatalf("hook report: status %d", res.StatusCode)
+		}
+	}
+	// The send is in a goroutine and never waited for, which is what keeps a
+	// slow destination out of the panel's own path.
+	settle := func() int64 {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) && hits.Load() == 0 {
+			time.Sleep(10 * time.Millisecond)
+		}
+		time.Sleep(100 * time.Millisecond)
+		return hits.Load()
+	}
+
+	report("waiting")
+	row, err := srv.DB.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if row.State != session.StateWaiting || row.StateSource != session.SourceHook {
+		t.Fatalf("state = %q from %q, want waiting from hook", row.State, row.StateSource)
+	}
+	if n := settle(); n != 1 {
+		t.Fatalf("webhook hits = %d, want 1: an agent asked for a human and "+
+			"nothing left the panel", n)
+	}
+
+	// A second report of the same state is not a transition. Claude Code's
+	// Notification event fires more than once while somebody is away from their
+	// desk, and a phone that buzzes on each is a phone that gets muted.
+	report("waiting")
+	time.Sleep(150 * time.Millisecond)
+	if n := hits.Load(); n != 1 {
+		t.Errorf("webhook hits = %d after a repeat of the same state, want 1", n)
+	}
+
+	// And the poller must not send it again on the next tick.
+	if err := srv.pollOnce(ctx); err != nil {
+		t.Fatalf("pollOnce: %v", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	if n := hits.Load(); n != 1 {
+		t.Errorf("webhook hits = %d after a poll, want 1", n)
+	}
+}

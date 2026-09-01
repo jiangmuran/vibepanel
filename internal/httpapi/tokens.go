@@ -213,6 +213,13 @@ func (s *Server) handleTokenUsage(w http.ResponseWriter, r *http.Request) {
 	out := tokenUsageResponse{
 		Today: today, From: from, To: today, Days: days,
 		SessionLimit: usage.SessionLimit(),
+		// An empty list, not nil. Until the first pass finishes there is
+		// nothing to append here, and a nil slice marshals as JSON null while
+		// the browser's interface declares an array -- so the value that
+		// arrives during the seconds after a restart type-checks and then
+		// throws on .filter(), taking the whole console with it. Every other
+		// list in this response is initialised for the same reason.
+		Sources: []tokenUsageSource{},
 	}
 
 	if out.ByDay, err = s.DB.UsageByDay(ctx, ranged); err != nil {

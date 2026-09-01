@@ -144,7 +144,21 @@ func errText(err error) string {
 // stops the panel and leaves the tmux server and every agent under it alone.
 // Without that line this would be a button that kills everybody's work.
 func restartCommand() (*exec.Cmd, error) {
-	if _, ok := os.LookupEnv("INVOCATION_ID"); !ok {
+	return restartCommandFor(supervisorName())
+}
+
+// restartCommandFor turns "who supervises this" into the command that asks it.
+//
+// The question is asked once, by supervisorName, and this used to ask it again
+// from `INVOCATION_ID` alone -- which restart.go was fixed twice for. That
+// variable is inherited by everything a unit spawns, so a panel built and
+// started by hand from a pane of a vibepanel session answered "systemd" here
+// while handleRestart answered 409 unsupervised for the same process: the page
+// said the panel was restarting and it never was, and on a machine that does
+// have a unit, `systemctl --user restart vibepanel` went and restarted a
+// different, production panel that nobody had updated.
+func restartCommandFor(supervisor string) (*exec.Cmd, error) {
+	if supervisor != "systemd" {
 		return nil, errors.New("not running under systemd, so the new binary starts the next time you start it yourself")
 	}
 	systemctl, err := exec.LookPath("systemctl")

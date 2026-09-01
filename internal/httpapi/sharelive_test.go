@@ -490,3 +490,95 @@ func TestTheTrendArrivesOnlyForABoardThatDrawsOne(t *testing.T) {
 		t.Error("the first poll of a board with a line drew nothing at all")
 	}
 }
+
+// One ring per token series, not one ring per directory.
+//
+// The token half of a point is the spend section's total, and a board with no
+// spend section contributes a zero because there is nothing to ask. Two
+// whole-panel links both keyed on the empty directory therefore shared a ring:
+// the machine board stamped zeros into the one the burn board reads, and
+// TokenBurn -- which draws differences between consecutive points -- rendered
+// the day's whole running total as a fresh burst every other sample and a rate
+// per minute larger than the day.
+func TestABoardWithNoSpendCannotZeroAnothersTokenLine(t *testing.T) {
+	ts, srv := newTestServer(t)
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"Acme"}`)
+	seedUsage(t, srv, project.Path, 6000000)
+
+	machine := newShare(t, ts,
+		`{"name":"m","board":{"widgets":[{"kind":"machinearea","by":"cpu"}]}}`)
+	burn := newShare(t, ts, `{"name":"b","board":{"widgets":[{"kind":"tokenburn"}]}}`)
+
+	// The machine board first, which is the whole trigger: its poll lands the
+	// only point trendSampleEvery will allow for the next ten seconds, so the
+	// burn board's own reading is dropped and it reads back the zero.
+	shareGET(t, ts, machine.Token)
+
+	_, body := shareGET(t, ts, burn.Token)
+	got := decodeDashboard(t, body)
+	if got.Spend == nil || got.Spend.Today.Total == 0 {
+		t.Fatal("nothing was counted, so this test would pass on any server")
+	}
+	if got.Trend == nil || len(got.Trend.Points) == 0 {
+		t.Fatal("a board with a burn widget carries no trend at all")
+	}
+	for i, p := range got.Trend.Points {
+		if p.Tokens != got.Spend.Today.Total {
+			t.Fatalf("trend point %d carries %d tokens while the same response's spend "+
+				"section says %d were spent today; the point was written by another "+
+				"board that has no spend section", i, p.Tokens, got.Spend.Today.Total)
+		}
+	}
+}
+
+// A scoped link whose project is gone does not read the whole panel's line.
+//
+// The same defect wearing the other face, and this one is a disclosure rather
+// than a wrong shape. `cwd` is empty for a whole-panel link *and* for a scoped
+// link whose target has been deleted, so keying the ring on the directory alone
+// put the panel's token history on a board that was deliberately narrowed to one
+// project -- while its own spend section, which does check `kind`, correctly
+// reported nothing.
+func TestALinkWhoseProjectIsGoneDoesNotReadThePanelsTokenLine(t *testing.T) {
+	ts, srv := newTestServer(t)
+	doomed := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"doomed"}`)
+	other := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"still here"}`)
+	seedUsage(t, srv, other.Path, 6000000)
+
+	whole := newShare(t, ts, `{"name":"w","board":{"widgets":[{"kind":"tokenburn"}]}}`)
+	scoped := newShare(t, ts, `{"name":"s","scope":"project","scopeId":"`+doomed.ID+
+		`","board":{"widgets":[{"kind":"tokenburn"}]}}`)
+
+	req, err := http.NewRequest(http.MethodDelete, ts.URL+"/api/projects/"+doomed.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+
+	// The whole-panel board polls first and puts the panel's real total in its
+	// ring.
+	first := decodeDashboard(t, shareGETAs(t, ts, whole.Token, "aa11", 800, 600))
+	if first.Spend == nil || first.Spend.Today.Total == 0 {
+		t.Fatal("nothing was counted, so this test would pass on any server")
+	}
+
+	_, body := shareGET(t, ts, scoped.Token)
+	got := decodeDashboard(t, body)
+	if got.Trend == nil {
+		t.Fatal("a board with a burn widget carries no trend at all")
+	}
+	for i, p := range got.Trend.Points {
+		if p.Tokens != 0 {
+			t.Fatalf("a link scoped to a deleted project drew %d tokens at point %d; the "+
+				"whole panel's line has been read into a board narrowed to one project",
+				p.Tokens, i)
+		}
+	}
+}

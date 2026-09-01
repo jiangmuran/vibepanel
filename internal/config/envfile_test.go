@@ -148,6 +148,38 @@ func TestPatchRefusesWhatIsNotEditable(t *testing.T) {
 	}
 }
 
+// The key allowlist is only an allowlist while a value is one line.
+//
+// It was not: the value went into the file verbatim, so
+// `VIBEPANEL_DOMAIN=panel.example.com\nVIBEPANEL_TMUX_SOCKET=default` wrote
+// both assignments and ReadEnvFile handed the second one back. That is red
+// line 1 reached through the settings page -- the panel restarts on somebody
+// else's socket, sees their weeks-old sessions and loses its own -- and the
+// same shape sets VIBEPANEL_ADDR or VIBEPANEL_ALLOW_FROM. The refusal is here
+// rather than in the handler because this is what owns the file format.
+func TestPatchRefusesALineBreakInAValue(t *testing.T) {
+	for _, v := range []string{
+		"panel.example.com\nVIBEPANEL_TMUX_SOCKET=default",
+		"panel.example.com\rVIBEPANEL_TMUX_SOCKET=default",
+	} {
+		p := write(t, shipped)
+		if err := PatchEnvFile(p, map[string]string{"VIBEPANEL_DOMAIN": v}); err == nil {
+			t.Errorf("%q was accepted", v)
+		}
+		body, _ := os.ReadFile(p)
+		if string(body) != shipped {
+			t.Errorf("a refused write changed the file anyway:\n%s", body)
+		}
+		got, err := ReadEnvFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s := got["VIBEPANEL_TMUX_SOCKET"]; s != "" {
+			t.Errorf("the tmux socket was set to %q from a text box", s)
+		}
+	}
+}
+
 func TestTheAcmeTokenIsWritableAndNeverListed(t *testing.T) {
 	p := write(t, shipped)
 	if err := PatchEnvFile(p, map[string]string{"CLOUDFLARE_API_TOKEN": "cf-token"}); err != nil {

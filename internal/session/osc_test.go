@@ -352,3 +352,42 @@ func TestOSC777OnlyTheNotification(t *testing.T) {
 		t.Error("a 777 notification did not raise attention")
 	}
 }
+
+func TestASequenceTooLongToKeepDoesNotRingItsOwnTerminator(t *testing.T) {
+	// An OSC past maxPending is abandoned, which is the memory bound
+	// TestUnterminatedOSCDoesNotGrowForever exists for. Abandoning it back into
+	// ordinary scanning meant its terminator was read as an application bell:
+	// through real tmux, a 100 KiB OSC 52 copy produced one bell and no
+	// clipboard event, so pressing copy in an agent read as the agent asking
+	// for a human -- orange triangle, sorted to the top, webhook fired. Losing
+	// the payload is the deliberate part; ringing is not.
+	for _, tc := range []struct {
+		name       string
+		terminator string
+	}{
+		{"BEL", "\x07"},
+		{"ST", "\x1b\\"},
+	} {
+		s := newOSCScanner()
+		payload := "\x1b]52;c;" + strings.Repeat("A", maxPending*2) + tc.terminator
+		// Fed in PTY-sized reads, because that is the only way the sequence
+		// ever crosses the bound.
+		for i := 0; i < len(payload); i += 4096 {
+			end := i + 4096
+			if end > len(payload) {
+				end = len(payload)
+			}
+			s.feed([]byte(payload[i:end]))
+		}
+		if bell, _, _ := s.drain(); bell {
+			t.Errorf("%s: a copy too big to keep rang the bell", tc.name)
+		}
+
+		// And the scanner comes back: the next real bell must still arrive, or
+		// one big copy deafens the session for good.
+		s.feed([]byte("some output\x07"))
+		if bell, _, _ := s.drain(); !bell {
+			t.Errorf("%s: a real bell after the abandoned sequence was swallowed", tc.name)
+		}
+	}
+}

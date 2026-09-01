@@ -1655,3 +1655,187 @@ func TestALoneViewerGetsTheGridEvenAfterSomebodyElseHeldIt(t *testing.T) {
 		t.Errorf("grid = %dx%d after the lone viewer resized, want 100x40", cols, rows)
 	}
 }
+
+func TestAViewerDroppedForFallingBehindGivesUpTheGrid(t *testing.T) {
+	// The grid owner's phone locks while the session is producing output, its
+	// queue fills, and the broadcaster cuts it loose -- which deletes it from
+	// l.subs, so the Unsubscribe that the socket's teardown runs afterwards
+	// finds nothing and returns before it can release anything.
+	//
+	// The session was then owned by a client that had gone, with its departure
+	// never timestamped, so the grace period below could never expire: every
+	// later viewer, at any later time, was told it was passive, left scaling a
+	// grid nobody held and offered a "take control" button it had no reason to
+	// think it needed. The ordinary unsubscribe of the same viewer did the
+	// right thing; only the drop did not.
+	live := attachedFor(t, "vp_arb_drop")
+
+	desktop, _ := live.Subscribe("desktop")
+	if got := live.Controller(); got != "desktop" {
+		t.Fatalf("controller = %q, want %q", got, "desktop")
+	}
+	for i := 0; i < subscriberQueue+8; i++ {
+		live.broadcast(Event{Kind: EventOutput, Data: []byte("x")})
+	}
+	if !desktop.Dropped() {
+		t.Fatalf("the viewer was not dropped after %d events; the test cannot "+
+			"reach the path it is about", subscriberQueue+8)
+	}
+	live.Unsubscribe(desktop) // what ws.Conn.deregister does, and by now a no-op
+
+	if got := live.Controller(); got != "" {
+		t.Fatalf("controller = %q after the viewer holding it was dropped", got)
+	}
+
+	live.mu.Lock()
+	if live.lastControllerAt.IsZero() {
+		live.mu.Unlock()
+		t.Fatal("the departure was never timestamped, so the grace period can never expire")
+	}
+	left := live.lastControllerAt
+	live.now = func() time.Time { return left.Add(controllerGrace + time.Second) }
+	live.mu.Unlock()
+
+	// Long past the grace period, whoever is actually here gets the session.
+	phone, _ := live.Subscribe("phone")
+	defer live.Unsubscribe(phone)
+	if got := live.Controller(); got != "phone" {
+		t.Errorf("controller = %q, want %q: the tab that owned the grid was dropped "+
+			"and never came back, and the only viewer left is still passive", got, "phone")
+	}
+}
+
+func TestReapingADeadSocketKeepsTheGridWithTheNewConnection(t *testing.T) {
+	// Ownership is the browser's client id, which survives a reconnect in
+	// sessionStorage, and there is one Subscriber per WebSocket. A socket that
+	// dies half-open -- NAT rebinding, a wedged proxy -- is reconnected in half
+	// a second, while the old Conn is still blocked in Read and its teardown
+	// lands minutes later. Releasing on the client id alone let that teardown
+	// strip control from the connection that had replaced it.
+	//
+	// Nothing broadcasts a size afterwards, so the viewer was never told: its
+	// terminal kept fitting itself and publishing a grid the server silently
+	// discarded, and no "take control" button was offered, until the page was
+	// reloaded. "Duplicate tab" copies sessionStorage and does the same thing
+	// with a perfectly healthy network.
+	live := attachedFor(t, "vp_arb_reconnect")
+
+	dead, _ := live.Subscribe("tabX")
+	fresh, _ := live.Subscribe("tabX")
+	defer live.Unsubscribe(fresh)
+
+	live.Unsubscribe(dead)
+
+	if got := live.Controller(); got != "tabX" {
+		t.Fatalf("controller = %q after the viewer's own dead socket was reaped, want %q",
+			got, "tabX")
+	}
+	// It still drives the session, which is the part the viewer can see.
+	if err := live.Resize("tabX", 80, 24); err != nil {
+		t.Fatalf("Resize: %v", err)
+	}
+	if cols, rows := live.Size(); cols != 80 || rows != 24 {
+		t.Errorf("grid = %dx%d after the reconnected viewer resized, want 80x24", cols, rows)
+	}
+}
+
+func TestDetachDuringAttachDoesNotWaitForAPumpThatNeverStarted(t *testing.T) {
+	// Same window as TestDetachDuringAttachWins, which asserts only that the
+	// session is gone. Two things it does not measure, and both were wrong.
+	//
+	// The teardown called close(), which waits on l.pumped -- and `go m.pump(l)`
+	// is further down and never ran, so nothing would ever close that channel
+	// and the wait ran to the full pumpDrain. Measured 2.0056s, spent with the
+	// attaching claim still held, because releaseAttach is a defer that runs
+	// after it: every other Attach for the session queues behind a wait that
+	// has nothing to wait for, and the caller is often the poller, which stalls
+	// its whole tick for every other session.
+	//
+	// And the process: the only cmd.Wait is pump's deferred cleanup, so the
+	// tmux client that closeInternal's timer kills two seconds later was never
+	// reaped and stayed a zombie child of the panel for the life of it.
+	ctx := context.Background()
+	tm := newTestTmux(t)
+	const name = "vp_dda_slow"
+	if err := tm.Create(ctx, tmux.CreateOptions{
+		Name: name, Dir: t.TempDir(), Width: 80, Height: 24,
+		Command: []string{"sleep", "60"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	m := NewManager(tm, 64<<10)
+	defer m.DetachAll()
+
+	var took time.Duration
+	reproduced := false
+	for i := 0; i < 5 && !reproduced; i++ {
+		done := make(chan time.Duration, 1)
+		go func() {
+			start := time.Now()
+			_, _ = m.Attach(ctx, "s1", name, 80, 24)
+			done <- time.Since(start)
+		}()
+
+		for w := 0; w < 2000; w++ {
+			m.mu.Lock()
+			_, building := m.attaching["s1"]
+			_, live := m.live["s1"]
+			m.mu.Unlock()
+			if building && !live {
+				reproduced = true
+				break
+			}
+			if live {
+				break // too slow: it finished before we looked
+			}
+			time.Sleep(time.Millisecond)
+		}
+		m.Detach("s1")
+		took = <-done
+	}
+	if !reproduced {
+		t.Skip("never caught an Attach between its claim and its install")
+	}
+
+	if took >= pumpDrain/2 {
+		t.Errorf("an Attach that lost to a Detach took %v; there is no pump to wait for "+
+			"on that path, and the session's attach claim is held for all of it", took)
+	}
+
+	// The tmux client is killed two seconds after the teardown; give it that
+	// and a margin, then require that somebody reaped it.
+	if pids, ok := zombieChildren(); ok {
+		deadline := time.Now().Add(10 * time.Second)
+		for len(pids) > 0 && time.Now().Before(deadline) {
+			time.Sleep(200 * time.Millisecond)
+			pids, _ = zombieChildren()
+		}
+		if len(pids) > 0 {
+			t.Errorf("tmux client(s) %v are still zombie children of this process: "+
+				"a Live torn down before its pump started is never Wait()ed for", pids)
+		}
+	}
+}
+
+// zombieChildren lists this process's unreaped children. Linux only; ok is
+// false anywhere /proc does not answer, and the caller skips that assertion.
+func zombieChildren() (pids []string, ok bool) {
+	ents, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil, false
+	}
+	me := strconv.Itoa(os.Getpid())
+	for _, e := range ents {
+		b, err := os.ReadFile("/proc/" + e.Name() + "/stat")
+		if err != nil {
+			continue
+		}
+		// pid, (comm), state, ppid — comm can contain spaces, but not for the
+		// processes this is about.
+		f := strings.Fields(string(b))
+		if len(f) > 3 && f[2] == "Z" && f[3] == me {
+			pids = append(pids, e.Name()+" "+f[1])
+		}
+	}
+	return pids, true
+}

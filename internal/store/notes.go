@@ -56,37 +56,56 @@ var ErrNoteStale = errors.New("store: note changed elsewhere")
 // the collision this guards against — one person typing while another saves —
 // happens well inside a second. A check that cannot see the case it exists for
 // is worse than no check, because it reads as protection.
+//
+// The precondition is in the WHERE clause rather than in a SELECT above the
+// write, and that is the difference between reporting a conflict and reporting
+// a lock. A SELECT then an INSERT inside one plain transaction takes a read
+// snapshot first and then has to upgrade it, and SQLite runs no busy handler
+// for an upgrade inside an open read transaction -- so the DSN's busy_timeout,
+// which turns every other collision in this package into a wait, does not
+// apply on this one path. Two tabs saving together lost that race about half
+// the time and the loser got SQLITE_BUSY, which internal/httpapi does not
+// recognise as a conflict: HTTP 500 and a driver string in the notes panel
+// instead of the conflict the revision counter exists to offer.
 func (d *DB) SetNoteIfUnchanged(ctx context.Context, projectID, content string, baseRev int64) (Note, error) {
-	tx, err := d.sql.BeginTx(ctx, nil)
+	now := now()
+	rev := baseRev + 1
+	res, err := d.sql.ExecContext(ctx, `
+		UPDATE notes SET content_md = ?, updated_at = ?, rev = ?
+		WHERE project_id = ? AND rev = ?`,
+		content, now, rev, projectID, baseRev)
 	if err != nil {
 		return Note{}, fmt.Errorf("store: set note: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
-
-	var current int64
-	err = tx.QueryRowContext(ctx,
-		`SELECT rev FROM notes WHERE project_id = ?`, projectID).Scan(&current)
-	if err != nil && err != sql.ErrNoRows {
+	n, err := res.RowsAffected()
+	if err != nil {
 		return Note{}, fmt.Errorf("store: set note: %w", err)
 	}
-	if current != baseRev {
+	if n > 0 {
+		return Note{ProjectID: projectID, Content: content, UpdatedAt: now, Rev: rev}, nil
+	}
+
+	// Nothing was updated: either the note has moved on, or there is no row at
+	// all. Only a caller who loaded nothing may create one, and DO NOTHING is
+	// what makes the two writers who both loaded nothing resolve into one
+	// winner and one conflict rather than one winner and one lock error.
+	if baseRev != 0 {
 		return Note{}, ErrNoteStale
 	}
-
-	now := now()
-	rev := baseRev + 1
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO notes (project_id, content_md, updated_at, rev) VALUES (?, ?, ?, ?)
-		ON CONFLICT(project_id) DO UPDATE SET content_md = excluded.content_md,
-		                                      updated_at = excluded.updated_at,
-		                                      rev = excluded.rev`,
-		projectID, content, now, rev); err != nil {
+	res, err = d.sql.ExecContext(ctx, `
+		INSERT INTO notes (project_id, content_md, updated_at, rev) VALUES (?, ?, ?, 1)
+		ON CONFLICT(project_id) DO NOTHING`,
+		projectID, content, now)
+	if err != nil {
 		return Note{}, fmt.Errorf("store: set note: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
+	if n, err = res.RowsAffected(); err != nil {
 		return Note{}, fmt.Errorf("store: set note: %w", err)
 	}
-	return Note{ProjectID: projectID, Content: content, UpdatedAt: now, Rev: rev}, nil
+	if n == 0 {
+		return Note{}, ErrNoteStale
+	}
+	return Note{ProjectID: projectID, Content: content, UpdatedAt: now, Rev: 1}, nil
 }
 
 // SetNote writes a project's note unconditionally.

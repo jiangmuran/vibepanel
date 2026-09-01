@@ -176,6 +176,10 @@ func InspectTune() (TuneStatus, error) {
 // summary is for: a list saying every row already agrees, printed after making
 // them agree, tells nobody what happened.
 func ApplyTune() (TuneStatus, error) {
+	// InspectTune reads the same file this then writes, so the read and the
+	// write are one cycle and the lock covers both -- see editMu.
+	editMu.Lock()
+	defer editMu.Unlock()
 	st, err := InspectTune()
 	if err != nil {
 		return st, err

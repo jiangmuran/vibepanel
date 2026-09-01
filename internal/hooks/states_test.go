@@ -151,3 +151,31 @@ func TestTheSnippetPromisesNothingTheInstallerWillNotWrite(t *testing.T) {
 		t.Errorf("the snippet shows %d events and the map has %d", len(found), len(events))
 	}
 }
+
+// A data directory with a space in it, which is the case shellWord exists for.
+//
+// TestTheSnippetPromisesNothingTheInstallerWillNotWrite builds its own
+// expectation as `script + " " + state`, so it agreed with a snippet that
+// interpolated the raw path and could not see this: ClaudeSettings had its own
+// fmt.Sprintf while the installer went through command(). The page showed an
+// unquoted command and pressing install wrote a quoted one — two different
+// commands, and the snippet's whole job is the promise that they are the same.
+//
+// ~/Library/Application Support is the ordinary macOS data directory, so this
+// is not an exotic path.
+func TestTheSnippetQuotesThePathTheInstallerQuotes(t *testing.T) {
+	const script = "/Users/jo/Library/Application Support/vibepanel/report.sh"
+	snippet := ClaudeSettings(script)
+
+	if strings.Contains(snippet, `"command": "`+script+` `) {
+		t.Errorf("the snippet shows the path unquoted, so what the page displays is not what "+
+			"the installer merges:\n%s", snippet)
+	}
+	for event, state := range events {
+		want := `"command": "` + command(script, state) + `"`
+		if !strings.Contains(snippet, want) {
+			t.Errorf("the %q entry does not carry %s; the page and the installer disagree "+
+				"about the command", event, want)
+		}
+	}
+}

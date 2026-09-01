@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -54,6 +57,58 @@ func TestSettingsSaysWhenTheRunningTmuxConfigIsStale(t *testing.T) {
 	}
 	if unknown.TmuxConfigStale {
 		t.Error("a server with no stamp is reported as stale, which is a claim nobody can make")
+	}
+}
+
+// The zone change goes through the ingester, and nothing here assigns the
+// scanner's zone by hand.
+//
+// Structural, in the shape of TestOnlyThisFileNamesTheDayLayout in zone_test.go
+// and for the same reason: what this is guarding against cannot be seen from
+// the outside. `s.Tokens.Scanner.Loc = loc` on the request goroutine is a data
+// race against a pass that reads it for every record it buckets -- but the
+// handler is full of database calls, and their internal locking orders the two
+// goroutines often enough that `-race` on an end-to-end request is quiet most
+// of the time. internal/usage's TestTheZoneCannotChangeUnderARunningPass
+// catches the race itself; this catches the line that reintroduces it, which
+// is the one somebody writes again while "just setting the zone here too".
+//
+// Ingester.Rezone waits for a running pass before touching either the zone or
+// the cursor, and says why.
+func TestNothingHereSetsTheScannerZoneByHand(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := 0
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		src, rerr := os.ReadFile(f)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		checked++
+		if strings.Contains(string(src), "Scanner.Loc =") {
+			t.Errorf("%s assigns Scanner.Loc directly. Use Ingester.Rezone: a pass reads "+
+				"that field on a background goroutine for every record it buckets, and a "+
+				"write from a request goroutine races it and leaves the transcripts that "+
+				"pass touches labelled in the zone the user just left.", f)
+		}
+	}
+	if checked < 5 {
+		t.Fatalf("only read %d files; this test has stopped looking at the package", checked)
+	}
+	// And the handler really does still change the zone, or the sweep above
+	// passes by finding nothing anywhere.
+	settings, err := os.ReadFile("settings.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(settings), "Rezone(") {
+		t.Fatal("settings.go no longer changes the zone through the ingester; " +
+			"this test is checking nothing")
 	}
 }
 

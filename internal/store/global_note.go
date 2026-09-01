@@ -42,37 +42,54 @@ func (d *DB) GetGlobalNote(ctx context.Context) (Note, error) {
 // in whoever is looking at that project, and this one is reachable from every
 // screen, so two tabs holding it is the ordinary case rather than the unlucky
 // one.
+//
+// The precondition is in the WHERE clause for the reason SetNoteIfUnchanged
+// spells out: a SELECT then a write inside one transaction has to upgrade a
+// read snapshot, SQLite runs no busy handler for that upgrade, and the loser of
+// two simultaneous saves got SQLITE_BUSY — which internal/httpapi does not
+// recognise as a conflict, so the notes panel showed a driver string and an
+// HTTP 500 instead of the conflict the revision counter exists to offer. This
+// one is reachable from every screen, so it hits that race more often than the
+// project note does, not less.
 func (d *DB) SetGlobalNoteIfUnchanged(ctx context.Context, content string, baseRev int64) (Note, error) {
-	tx, err := d.sql.BeginTx(ctx, nil)
+	now := now()
+	rev := baseRev + 1
+	res, err := d.sql.ExecContext(ctx, `
+		UPDATE global_note SET content_md = ?, updated_at = ?, rev = ?
+		WHERE id = ? AND rev = ?`,
+		content, now, rev, globalNoteID, baseRev)
 	if err != nil {
 		return Note{}, fmt.Errorf("store: set global note: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
-
-	var current int64
-	err = tx.QueryRowContext(ctx,
-		`SELECT rev FROM global_note WHERE id = ?`, globalNoteID).Scan(&current)
-	if err != nil && err != sql.ErrNoRows {
+	n, err := res.RowsAffected()
+	if err != nil {
 		return Note{}, fmt.Errorf("store: set global note: %w", err)
 	}
-	if current != baseRev {
+	if n > 0 {
+		return Note{ProjectID: GlobalNoteID, Content: content, UpdatedAt: now, Rev: rev}, nil
+	}
+
+	// Nothing was updated: either the note has moved on, or there is no row at
+	// all. Only a caller who loaded nothing may create one, and DO NOTHING is
+	// what makes the two writers who both loaded nothing resolve into one
+	// winner and one conflict rather than one winner and one lock error.
+	if baseRev != 0 {
 		return Note{}, ErrNoteStale
 	}
-
-	now := now()
-	rev := baseRev + 1
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO global_note (id, content_md, updated_at, rev) VALUES (?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET content_md = excluded.content_md,
-		                              updated_at = excluded.updated_at,
-		                              rev        = excluded.rev`,
-		globalNoteID, content, now, rev); err != nil {
+	res, err = d.sql.ExecContext(ctx, `
+		INSERT INTO global_note (id, content_md, updated_at, rev) VALUES (?, ?, ?, 1)
+		ON CONFLICT(id) DO NOTHING`,
+		globalNoteID, content, now)
+	if err != nil {
 		return Note{}, fmt.Errorf("store: set global note: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
+	if n, err = res.RowsAffected(); err != nil {
 		return Note{}, fmt.Errorf("store: set global note: %w", err)
 	}
-	return Note{ProjectID: GlobalNoteID, Content: content, UpdatedAt: now, Rev: rev}, nil
+	if n == 0 {
+		return Note{}, ErrNoteStale
+	}
+	return Note{ProjectID: GlobalNoteID, Content: content, UpdatedAt: now, Rev: 1}, nil
 }
 
 // SetGlobalNote writes it unconditionally, still advancing the revision.

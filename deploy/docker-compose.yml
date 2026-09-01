@@ -25,7 +25,12 @@ services:
     ports:
       - "${VIBEPANEL_PORT:-18443}:18443"
     env_file:
-      - .env
+      # Optional on purpose. This file is gitignored and nothing ships one, so
+      # a mandatory env_file made `compose up -d` on a clean clone abort before
+      # it did anything -- and the settings this file needs are all in the
+      # `environment:` block below. Copy vibepanel.env here to add the rest.
+      - path: .env
+        required: false
     volumes:
       # The database, the tmux config and any ACME state.
       - ./data:/data

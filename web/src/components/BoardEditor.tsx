@@ -66,6 +66,18 @@ const SELECT =
 /** A select with its name beside it, wrapping as one piece. */
 const FIELD = 'flex shrink-0 items-center gap-1.5 text-vp-sm text-ink-3'
 
+/** What the press recorded, so the drag that follows can be arithmetic. */
+type Press = {
+  x: number
+  y: number
+  index: number
+  span: number
+  /** The tile's height in rows when the press landed. */
+  height: number
+  /** One row of the board in pixels, measured when the press landed. */
+  row: number
+}
+
 /** What is being dragged, and where it would land. */
 type Drag =
   | { kind: 'move'; index: number; gap: number | null }
@@ -116,13 +128,7 @@ export function BoardEditor({
   // setSelected from the pointerdown just before it -- a flick is exactly when
   // those two land together -- and reading the state there loses the first
   // frames of the drag.
-  const press = useRef<{
-    x: number
-    y: number
-    index: number
-    span: number
-    height: number
-  } | null>(null)
+  const press = useRef<Press | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
 
   const setDrag = useCallback((next: Drag | null) => {
@@ -175,7 +181,15 @@ export function BoardEditor({
     if (e.button !== 0) return
     e.currentTarget.setPointerCapture(e.pointerId)
     const w = board.widgets[index]
-    press.current = { x: e.clientX, y: e.clientY, index, span: w?.span ?? 1, height: w?.height ?? 1 }
+    const tile = tileOf(rootRef.current, index)?.getBoundingClientRect() ?? null
+    press.current = {
+      x: e.clientX,
+      y: e.clientY,
+      index,
+      span: w?.span ?? 1,
+      height: w?.height ?? 1,
+      row: tile ? tile.height / Math.max(1, w?.height ?? 1) : 0,
+    }
     setSelected(index)
     if (gesture === 'move') {
       // Not a drag yet. A threshold, so a plain press selects and only a real
@@ -189,7 +203,9 @@ export function BoardEditor({
   const onGrabSpec = (e: React.PointerEvent, spec: ShareWidgetSpec) => {
     if (e.button !== 0) return
     e.currentTarget.setPointerCapture(e.pointerId)
-    press.current = { x: e.clientX, y: e.clientY, index: -1, span: spec.span, height: 1 }
+    // No row unit: a height drag starts on a tile's own handle, never on the
+    // palette, so nothing here ever reads it.
+    press.current = { x: e.clientX, y: e.clientY, index: -1, span: spec.span, height: 1, row: 0 }
     setDrag({ kind: 'add', spec, gap: null })
   }
 
@@ -218,11 +234,14 @@ export function BoardEditor({
       return
     }
     if (current?.kind === 'height') {
+      // Nothing measured at the press means no unit to snap to, and snapHeight
+      // answers that with one row -- so the tile would collapse on the first
+      // move rather than stay where it is.
+      if (from.row <= 0) return
       const el = tileOf(rootRef.current, current.index)
       if (!el) return
       const r = el.getBoundingClientRect()
-      const one = r.height / Math.max(1, from.height)
-      const next = snapHeight(e.clientY - r.top, one, catalogue.maxRows)
+      const next = heightDrag(e.clientY, r, from, catalogue.maxRows)
       const w = board.widgets[current.index]
       if (w && (w.height ?? 1) !== next) setWidget(current.index, { ...w, height: next })
       return
@@ -273,6 +292,7 @@ export function BoardEditor({
    * resize it.
    */
   const onKeyDown = (e: React.KeyboardEvent) => {
+    if (fromFormControl(e.target)) return
     if (selected === null) return
     const w = board.widgets[selected]
     if (!w) return
@@ -746,6 +766,44 @@ function densityKey(n: number, max: number): 'board.densitySpare' | 'board.densi
   if (n <= 1) return 'board.densitySpare'
   if (n >= max) return 'board.densityDense'
   return 'board.densityNormal'
+}
+
+/**
+ * How many rows tall a drag of a tile's bottom edge has reached.
+ *
+ * The unit is `press.row`, measured once when the press landed, and that is the
+ * whole reason this is a function rather than two lines in the move handler.
+ * `tile` is re-read from the DOM on every move, so its height already contains
+ * whatever this drag committed a moment ago; dividing it by the height the
+ * press started at — `press.height`, which does not move — gives a unit wrong
+ * by exactly that factor. The tile then flips between two row counts under a
+ * pointer that is holding still (1, 2, 1, 2 at 165px down a one-row tile), and
+ * releasing in the same place twice gives two different answers.
+ */
+export function heightDrag(
+  y: number,
+  tile: { top: number; height: number },
+  press: Press,
+  maxRows: number,
+): number {
+  return snapHeight(y - tile.top, press.row, maxRows)
+}
+
+/** The controls the board's own keys must keep their hands off. */
+const FORM_CONTROLS = 'input, select, textarea, [contenteditable]'
+
+/**
+ * Whether a key was typed into a control rather than aimed at the canvas.
+ *
+ * The inspector's caption field and its seven selects are inside the element
+ * the board's `onKeyDown` is on, and the inspector is only there while a widget
+ * is selected — which is exactly when those keys are live. So without this,
+ * Backspace to fix a typo in a caption deleted the widget instead, and
+ * ArrowDown on the Height select reordered the board and left the value where
+ * it was: the arrows `preventDefault` here, so the select never sees them.
+ */
+export function fromFormControl(target: unknown): boolean {
+  return (target as Element | null)?.closest(FORM_CONTROLS) != null
 }
 
 function tileOf(root: HTMLElement | null, index: number): HTMLElement | null {

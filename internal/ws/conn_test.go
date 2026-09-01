@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -400,4 +401,84 @@ func TestAnEventIsNotDroppedByASnapshot(t *testing.T) {
 	if events, _ = c.takePending(); len(events) != 1 {
 		t.Errorf("the same event after a drain came back %d times, want 1", len(events))
 	}
+}
+
+// A big paste fails as a paste, and never as the whole page.
+//
+// One socket carries every terminal, the state stream and the notifications,
+// and coder/websocket answers a message over its read limit by closing the
+// connection. At the library default of 32 KiB that made an ordinary paste --
+// a build log, a diff, a file dump into an agent -- fatal to the page:
+// measured at 32769 bytes in one frame, every terminal reset and replayed its
+// ring, and the pasted text never reached the pty.
+//
+// Two halves, and the second is the one with no library behind it: a message
+// that really is too big has to be refused *and* drained, or the next read
+// starts in the middle of a frame and the connection dies anyway, one message
+// later and from a distance.
+func TestAnOversizedMessageCostsThatMessageAndNotTheSocket(t *testing.T) {
+	h := &Handler{
+		Manager:         session.NewManager(nil, 1<<10),
+		Resolve:         stubResolver{},
+		StillAuthorized: func(*http.Request) bool { return true },
+	}
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	c, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.CloseNow()
+
+	// Short per-read deadline, so that a socket that has been closed under us
+	// fails as that sentence rather than as the test's own timeout.
+	read := func(what string) ServerMessage {
+		t.Helper()
+		rctx, rcancel := context.WithTimeout(ctx, 5*time.Second)
+		defer rcancel()
+		_, data, rerr := c.Read(rctx)
+		if rerr != nil {
+			t.Fatalf("the connection did not answer after %s: %v", what, rerr)
+		}
+		var msg ServerMessage
+		if uerr := json.Unmarshal(data, &msg); uerr != nil {
+			t.Fatalf("unmarshal %q: %v", data, uerr)
+		}
+		return msg
+	}
+	alive := func(what string) {
+		t.Helper()
+		if werr := c.Write(ctx, websocket.MessageText, []byte(`{"t":"ping"}`)); werr != nil {
+			t.Fatalf("write ping after %s: %v", what, werr)
+		}
+		if msg := read(what); msg.Type != MsgPong {
+			t.Fatalf("after %s the connection answered ping with %q, not pong", what, msg.Type)
+		}
+	}
+
+	// Positive control. Without it, a connection that answers nothing at all
+	// would look like one surviving everything below.
+	alive("a healthy start")
+
+	// A real paste: 40 KB is a short build log, and it was fatal.
+	if werr := c.Write(ctx, websocket.MessageBinary,
+		EncodeData(1, bytes.Repeat([]byte("x"), 40<<10))); werr != nil {
+		t.Fatalf("write a 40KB frame: %v", werr)
+	}
+	alive("a 40KB paste")
+
+	// Past the bound. Refused, said out loud, and drained -- and the ping
+	// after it is what proves the drain, because an undrained message leaves
+	// the next read starting mid-frame.
+	if werr := c.Write(ctx, websocket.MessageBinary,
+		EncodeData(1, bytes.Repeat([]byte("x"), maxInboundMessage+1))); werr != nil {
+		t.Fatalf("write an oversized frame: %v", werr)
+	}
+	if msg := read("an oversized frame"); msg.Type != MsgError {
+		t.Errorf("an oversized message was answered with %q, not an error; it vanished silently", msg.Type)
+	}
+	alive("an oversized frame")
 }
