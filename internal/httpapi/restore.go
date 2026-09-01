@@ -347,8 +347,21 @@ func (s *Server) restoreSession(ctx context.Context, rec store.Session) error {
 	// kept them — falls back to a login shell, and the UI says so before the
 	// user presses anything, because a shell started under the name of an agent
 	// is a lie the panel would otherwise be telling.
+	//
+	// Through tmux.LaunchArgv, and that is not decoration. Create asks it
+	// whether the pane will be able to find the command — the pane inherits the
+	// panel's PATH, so under a systemd unit `claude` in ~/.local/bin is not
+	// findable and the launch is wrapped in `$SHELL -l -c 'exec …'`. Handing
+	// Create the whole `/bin/sh -c <script> …` line instead answers that
+	// question about /bin/sh, which is always findable, and the agent behind it
+	// is left to a non-login shell that cannot see it: an agent that launched
+	// fine comes back dead with status 127, and the restart button re-runs the
+	// same wrapper and dies again. Resolving the recorded argv here rather than
+	// running the whole script through a login shell keeps the shell out of the
+	// panes that never needed one, where it would show up as
+	// pane_current_command.
 	argv := append([]string{"/bin/sh", "-c", restoreScript, "vibepanel-restore", path},
-		rec.LaunchCommand...)
+		tmux.LaunchArgv(rec.LaunchCommand)...)
 
 	// The profile's environment comes back with the session, looked up again
 	// rather than copied onto the row when it was created. A session that was

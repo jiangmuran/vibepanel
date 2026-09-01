@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -661,6 +662,123 @@ func TestPasteIsBracketedOnlyForPanesThatAskedForIt(t *testing.T) {
 		if !strings.Contains(got[name], "please refactor the auth flow") {
 			t.Errorf("%s never received the text at all:\n%s", name, got[name])
 		}
+	}
+}
+
+// Two people pasting at once put their own text in their own pane.
+//
+// A paste is two tmux commands — load-buffer, then paste-buffer — and the
+// buffer they name lives on the socket, not in this call. Nothing above here
+// serialises them: Manager.Paste takes no lock and every WebSocket connection
+// reads in its own goroutine, so a phone and a desktop are two goroutines
+// sharing one Client. With one constant buffer name the second load-buffer
+// lands between the first pair, the first pane receives the second person's
+// prompt, and the second paste fails with "no buffer" because the first one's
+// `-d` has already taken it.
+//
+// Rounds rather than one shot, because the losing interleaving is a race and a
+// single attempt proves nothing either way.
+func TestConcurrentPastesDoNotShareABuffer(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+
+	// `stty -echo -icanon min 1 time 0` for the same reason as the bracketed
+	// paste test above: in canonical mode the driver holds a line until a
+	// newline arrives, and the capture then reads half a paste.
+	const paneA = "vp_paste_a"
+	const paneB = "vp_paste_b"
+	for _, name := range []string{paneA, paneB} {
+		if err := c.Create(ctx, CreateOptions{
+			Name: name, Dir: t.TempDir(), Width: 80, Height: 24,
+			Command: []string{"sh", "-c", "stty -echo -icanon min 1 time 0; exec cat"},
+		}); err != nil {
+			t.Fatalf("Create %s: %v", name, err)
+		}
+	}
+	time.Sleep(700 * time.Millisecond)
+
+	const rounds = 12
+	var mu sync.Mutex
+	var failures []string
+	for i := 0; i < rounds; i++ {
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for _, p := range []struct{ name, marker string }{
+			{paneA, fmt.Sprintf("VP-A-%02d", i)},
+			{paneB, fmt.Sprintf("VP-B-%02d", i)},
+		} {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				if err := c.Paste(ctx, p.name, p.marker+"\n"); err != nil {
+					mu.Lock()
+					failures = append(failures, fmt.Sprintf("Paste %s %s: %v", p.name, p.marker, err))
+					mu.Unlock()
+				}
+			}()
+		}
+		close(start)
+		wg.Wait()
+	}
+	time.Sleep(700 * time.Millisecond)
+
+	if len(failures) > 0 {
+		t.Errorf("%d of %d pastes failed outright; the other paste deleted the buffer "+
+			"this one was about to read:\n  %s", len(failures), rounds*2,
+			strings.Join(failures, "\n  "))
+	}
+
+	for _, p := range []struct{ name, mine, theirs string }{
+		{paneA, "VP-A-", "VP-B-"},
+		{paneB, "VP-B-", "VP-A-"},
+	} {
+		out, err := c.Capture(ctx, p.name)
+		if err != nil {
+			t.Fatalf("Capture %s: %v", p.name, err)
+		}
+		if strings.Contains(out, p.theirs) {
+			t.Errorf("%s received the other session's text — somebody's prompt went to the "+
+				"wrong agent:\n%s", p.name, out)
+		}
+		if got := strings.Count(out, p.mine); got != rounds {
+			t.Errorf("%s has %d of its own %d pastes; the rest went somewhere else:\n%s",
+				p.name, got, rounds, out)
+		}
+	}
+}
+
+// A paste that could not be delivered takes its text off the socket with it.
+//
+// `-d` deletes the buffer, but only when paste-buffer succeeds, and the name is
+// now this call's own rather than one the next paste overwrites. So a pane that
+// went away between the two commands would leave somebody's prompt in the
+// socket's buffer list — one entry per failure, readable by anything else
+// running on it, for as long as the server lives.
+func TestAFailedPasteLeavesNoBufferBehind(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+
+	// A session, so that the server is up and load-buffer is the command that
+	// succeeds while paste-buffer is the one that fails.
+	if err := c.Create(ctx, CreateOptions{
+		Name: "vp_paste_live", Dir: t.TempDir(), Width: 80, Height: 24,
+		Command: []string{"sleep", "300"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	const secret = "VP-UNDELIVERED-PROMPT"
+	if err := c.Paste(ctx, "vp_paste_gone", secret); err == nil {
+		t.Fatal("pasting into a session that does not exist reported success")
+	}
+
+	out, err := c.run(ctx, "list-buffers", "-F", "#{buffer_name}: #{buffer_sample}")
+	if err != nil {
+		t.Fatalf("list-buffers: %v", err)
+	}
+	if strings.Contains(out, secret) || strings.Contains(out, "vibepanel-paste") {
+		t.Errorf("the undelivered text is still on the socket:\n%s", out)
 	}
 }
 
@@ -1503,18 +1621,18 @@ func TestOnlyAnUnfindableCommandIsWrapped(t *testing.T) {
 
 	// On PATH: handed to tmux exactly as given.
 	for _, argv := range [][]string{{"sh"}, {"sh", "-c", "echo hi"}, {"/bin/sh", "-c", "echo hi"}} {
-		got := launchArgv(argv)
+		got := LaunchArgv(argv)
 		if len(got) != len(argv) || got[0] != argv[0] {
-			t.Errorf("launchArgv(%q) = %q; a command the pane can already find needs no shell", argv, got)
+			t.Errorf("LaunchArgv(%q) = %q; a command the pane can already find needs no shell", argv, got)
 		}
 	}
 
 	// Not on PATH: through a login shell, and with exec, so the shell does not
 	// stay in front of the command.
 	missing := []string{"vibepanel-no-such-command-9f3a", "--flag"}
-	got := launchArgv(missing)
+	got := LaunchArgv(missing)
 	if len(got) != 4 || got[0] != loginShell() || got[1] != "-l" || got[2] != "-c" {
-		t.Fatalf("launchArgv(%q) = %q, want a login shell -l -c", missing, got)
+		t.Fatalf("LaunchArgv(%q) = %q, want a login shell -l -c", missing, got)
 	}
 	if !strings.HasPrefix(got[3], "exec ") {
 		t.Errorf("the wrapper does not exec: %q. Without it the shell stays and "+

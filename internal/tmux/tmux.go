@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 // Config is the tmux configuration the panel runs its server with. See the
@@ -140,13 +141,33 @@ func sessionTarget(name string) string { return "=" + name }
 // `-d` deletes the buffer afterwards: the text is somebody's prompt, and the
 // paste buffer is shared with anything else on this socket.
 func (c *Client) Paste(ctx context.Context, name, text string) error {
-	const buf = "vibepanel-paste"
+	buf := fmt.Sprintf("vibepanel-paste-%d-%d", os.Getpid(), pasteSeq.Add(1))
 	if _, err := c.runStdin(ctx, text, "load-buffer", "-b", buf, "-"); err != nil {
 		return err
 	}
-	_, err := c.run(ctx, "paste-buffer", "-d", "-p", "-b", buf, "-t", target(name))
-	return err
+	if _, err := c.run(ctx, "paste-buffer", "-d", "-p", "-b", buf, "-t", target(name)); err != nil {
+		// `-d` only deletes on success, and the name is nobody else's, so a
+		// pane that went away between the two commands would leave somebody's
+		// prompt sitting in the socket's buffer list — one entry per failure,
+		// visible to anything else on this socket.
+		_, _ = c.run(context.WithoutCancel(ctx), "delete-buffer", "-b", buf)
+		return err
+	}
+	return nil
 }
+
+// pasteSeq names each paste's buffer after itself.
+//
+// One constant name was the first version and it loses text. A paste is two
+// tmux commands against a namespace shared by the whole socket, and nothing
+// above this serialises them: Manager.Paste takes no lock and every WebSocket
+// connection reads in its own goroutine, so a phone and a desktop pasting into
+// two different sessions within a few milliseconds interleave. Measured on a
+// throwaway socket: B's load-buffer lands between A's two commands, A's pane
+// receives B's text, and B's paste fails outright with "no buffer" because A's
+// `-d` has already taken it. The pid is in there because two panels can share
+// a socket.
+var pasteSeq atomic.Uint64
 
 // LoadBuffer puts text in the socket's paste buffer without pasting it.
 //
@@ -377,13 +398,13 @@ func (c *Client) Create(ctx context.Context, o CreateOptions) error {
 		return err
 	}
 	if len(o.Command) > 0 {
-		argv = append(argv, launchArgv(o.Command)...)
+		argv = append(argv, LaunchArgv(o.Command)...)
 	}
 	_, err := c.run(ctx, argv...)
 	return err
 }
 
-// launchArgv wraps a session's command in a login shell.
+// LaunchArgv wraps a session's command in a login shell.
 //
 // Not belt and braces on top of EnsureServer: measured, the two are different
 // environments and only this one reaches the pane.
@@ -428,7 +449,14 @@ func (c *Client) Create(ctx context.Context, o CreateOptions) error {
 //
 // A machine with no usable login shell gets the argv unwrapped, which is what
 // it did before this existed.
-func launchArgv(command []string) []string {
+//
+// Exported because Create is not the only place a session's command is
+// started. A restore rebuilds the pane as `/bin/sh -c <script> … <argv>`, and a
+// caller that hands that whole thing to Create gets it back unwrapped -- the
+// shell in front is findable, the agent behind it is not -- so a session that
+// launched fine comes back dead with status 127. The restore path resolves the
+// recorded argv through here first, so both paths ask the same question.
+func LaunchArgv(command []string) []string {
 	if len(command) == 0 {
 		return command
 	}
