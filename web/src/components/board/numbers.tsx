@@ -365,10 +365,24 @@ export function Clock({ w }: { w: ShareWidget }) {
   }, [])
   return (
     <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-clock" plain>
-      <div className="tabular text-vp-3xl font-semibold text-ink" data-testid="dash-clock">
+      {/* Tight leading and an explicit gap, because tiles clip now.
+        *
+        * A display figure at 3xl carries about a tenth of its size in leading
+        * above and below, which is space a one-row tile does not have to give:
+        * the block fits, but with nothing left over. Setting the leading and
+        * putting the gap back by hand is the same look with the slack under
+        * this file's control rather than the font's. `truncate` is for the
+        * date, which is a locale string and can be much longer than the one
+        * this was designed against. */}
+      <div
+        className="tabular text-vp-3xl font-semibold leading-none text-ink"
+        data-testid="dash-clock"
+      >
         {now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
       </div>
-      <div className="text-vp-xl text-ink-2">{now.toLocaleDateString()}</div>
+      <div className="mt-1 truncate text-vp-xl leading-none text-ink-2">
+        {now.toLocaleDateString()}
+      </div>
     </Tile>
   )
 }
