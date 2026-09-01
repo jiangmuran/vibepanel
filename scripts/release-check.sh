@@ -286,11 +286,25 @@ echo "==> the management command, against what the install just wrote"
 # binary, on the real files the real installer produced, resolves to the same
 # thing. --dry-run so nothing is started, stopped or restarted on the machine
 # running this.
-SVC="$(HOME="$WORK/home" "$DIR/vibepanel" service --dry-run status 2>&1)"
+#
+# VIBEPANEL_DESTDIR as well as HOME, and it is the difference between a check
+# and a check that only passes somewhere. `service` resolves the system unit
+# first -- deliberately, because that is the order the installer resolves an
+# ambiguous re-run in -- so on a machine that actually runs the panel as a
+# system service it found /etc/systemd/system/vibepanel.service, answered
+# `sudo systemctl status vibepanel`, and both assertions below failed for a
+# reason that has nothing to do with the release. That is the worst kind of red:
+# it fires on exactly the machines where somebody is most likely to shrug at it,
+# and the next real failure here is the one they shrug at too.
+#
+# $WORK/root has no system unit because the install above had no root and wrote
+# a user one, which is the state these two lines are asserting about.
+SVCENV=(HOME="$WORK/home" VIBEPANEL_DESTDIR="$WORK/root")
+SVC="$(env "${SVCENV[@]}" "$DIR/vibepanel" service --dry-run status 2>&1)"
 echo "$SVC" | grep -q "systemctl --user status vibepanel" \
   && ok "it resolves the installed user unit: $SVC" \
   || fail "vibepanel service did not find the unit the installer wrote: $SVC"
-SVCU="$(HOME="$WORK/home" "$DIR/vibepanel" service --dry-run uninstall 2>&1)"
+SVCU="$(env "${SVCENV[@]}" "$DIR/vibepanel" service --dry-run uninstall 2>&1)"
 echo "$SVCU" | grep -q "$WORK/home/.config/systemd/user/vibepanel.service" \
   && ok "uninstall names the unit file it would remove" \
   || fail "uninstall does not name the right file: $SVCU"
