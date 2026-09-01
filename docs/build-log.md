@@ -18557,3 +18557,162 @@ which is how the wrong half shipped in the first place.
 The reports have to reach the pty directly rather than through `term.input()`:
 a phone's terminal is `disableStdin`, since typing goes through the compose
 box, and a wheel report is not typing.
+
+## Forty bugs found by fanning out, and the four the fan-out could not touch
+
+A deliberate sweep rather than a report from a user: many agents, each given one
+lens on the tree, looping until nothing new came back, and every candidate put
+in front of three independent skeptics before anybody was told about it. Two
+runs, 410 agents, about 23 million tokens. What came out was 40 distinct
+defects, and the interesting part of this entry is not the list.
+
+### The verification is the whole design
+
+A finder that reads code and reports what looks wrong produces mostly noise, and
+noise here is expensive: every plausible-sounding non-bug costs a person the
+same read the real one would have. So nothing reached a summary on one agent's
+say-so. Each candidate went to three verifiers with different jobs — one told to
+*refute* it and to assume a guard exists until the code says otherwise, one told
+to *reproduce* it by running something, and one told to judge it against this
+repository's own stated rules, because a great deal of what looks wrong here is
+deliberate and written down (report.sh suppressing its own failures; the English
+trace lines in the installer; the share surface restating fields instead of
+embedding them). Two of three had to fail to refute.
+
+The rates say it worked and also say how much it was needed. Round one passed 22
+of 24; round two passed 11 of 24. Better than half of what a competent reader
+"found" in the second round did not survive contact with someone trying to kill
+it.
+
+### Where it stopped, which is not where it converged
+
+The loop was written to stop after two consecutive rounds with nothing new, and
+it printed exactly that. It is not true. Rounds three and four returned nothing
+because all thirty of their finders died on a session limit, and a round of
+failures is indistinguishable from a round of silence to a counter that only
+looks at how many findings came back. The `enum-drift` lens — the one pointed at
+red line 3, the four places the state enum has to agree — never ran successfully
+in any round of either pass; something in its prompt tripped a safety classifier
+every time. And 40 candidates were dropped unverified, twenty per round, because
+verification was capped at the top 24 by severity.
+
+So: 40 confirmed, an unknown number behind them, and the one lens aimed at the
+rule this file says is the easiest to break silently is still unexamined. The
+sweep was worth running and it did not finish.
+
+### The four that were found by not being allowed to fix them
+
+The fixing was also fanned out, one agent per bundle of files, with the file
+lists made disjoint so nine agents could edit one worktree without clobbering
+each other. Each was told: if your fix needs a file you do not own, do not touch
+it — describe it.
+
+That constraint is what produced the best findings of the day. Four agents
+reported a bug they could see and could not reach, and every one of them was the
+*same defect as the one they had just fixed*, sitting in a file on the other side
+of the partition:
+
+- `internal/store/global_note.go` had the identical `SELECT`-then-write inside
+  one deferred transaction that `SetNoteIfUnchanged` had just been cured of.
+  SQLite runs no busy handler for a lock upgrade inside an open read
+  transaction, so the loser of two simultaneous saves got `SQLITE_BUSY` rather
+  than `ErrNoteStale` — an HTTP 500 and a driver string in the notes panel
+  instead of the conflict the revision counter exists to offer. The global note
+  is reachable from every screen, so it meets that race *more* often than the
+  project note it was copied from.
+- `internal/httpapi/passkey.go` kept deciding its cookie's `Secure` flag from
+  `TLSMode` after the session cookie stopped doing so. `config.PasskeyBlocker`
+  three files away already carries a comment about exactly this deployment —
+  it stopped disabling passkeys when `TLSMode` is `off`, because nginx
+  terminates TLS in front and the browser is on https — so the code already knew
+  the answer and this cookie still asked the wrong question.
+- `hooks.ClaudeSettings` built the settings-page snippet with its own
+  `fmt.Sprintf` while the installer went through `command()`. Once `command()`
+  learned to quote, a data directory with a space showed one command on the page
+  and wrote a different one to the file, which is the single promise that
+  snippet exists to make. `~/Library/Application Support` is the ordinary macOS
+  data directory, so this is not an exotic path.
+- `scripts/install-check.sh`'s `run()` passed the sudo override as
+  `${SUDO_OVERRIDE:+VIBEPANEL_SUDO="$SUDO_OVERRIDE"}`. A word produced by
+  expansion is not an assignment word; bash takes it as the command name. The
+  branch had never been taken — `SUDO_OVERRIDE` is set to empty by `newhome` and
+  was never once set to anything else — so the trap sat there waiting for the
+  first person to use the variable, who would have got `rc=127` and a log
+  reading like an installer bug.
+
+None of these is a bug the partition created. They are bugs the partition
+*surfaced*, because an agent that cannot reach across a boundary has to write
+down what it sees on the other side, and an agent that can just fixes it and
+says nothing. Worth remembering the next time the ownership split looks like
+pure overhead.
+
+### What the forty were, in one paragraph each area
+
+The installer had three criticals in it. The `system` → `user` fallback left
+`BIN_DIR` at `/usr/local/bin` while writing a user unit pointing at
+`~/.local/bin`, so an unattended upgrade either died on a bare
+`install: Permission denied` with no installer message at all, or "succeeded"
+into a unit that fails 203/EXEC forever. `scripts/install-check.sh` drove that
+exact case and asserted only that the unit file existed — never that anything
+was at the path the unit named. An unguarded `service token` pipeline under
+`set -euo pipefail` killed the run after a successful install, eating the
+summary. `deploy/uninstall.sh` looked for the binary only in `~/.local/bin`, so
+a system install came away half-removed.
+
+`internal/httpapi/api.go`'s `HookToken` memoised its *error* along with its
+value, so one cancelled request context or one transient DB read disabled hook
+state reporting for the life of the process — and that is precisely the failure
+shape red line 3 is about: nothing errors, the settings page still reports hooks
+installed because it reads the agent's config file rather than whether anything
+arrived, and every session quietly falls back to the heuristic. Beside it, a
+state an agent reported *through its own hook* never fired a webhook, so the
+accurate path was the silent one.
+
+ACME certificates were never renewed. `GetConfigForCert` returned
+`certmagic.NewDefault()` — a config bound to certmagic's default cache, default
+storage and default issuers — instead of the `cfg` built four lines below it
+with this panel's storage directory and its DNS-01 solver. Silent for about
+sixty days, which is the worst possible interval for a bug to be silent for.
+
+The share surface forked `git status`, `git log` and `git remote` on the request
+goroutine, and asked that log for subject, author and sha. A wall polls every
+two seconds forever. Red line 8 says counts are the only thing that may leak
+because counts are the only thing asked for; that read asked for considerably
+more, on a fork per project per poll. It now takes what the background refresh
+has already produced and reports its age, and "not counted yet" stays a distinct
+answer from zero.
+
+The rest, briefly: restoring a session hid the recorded command behind a
+non-login `/bin/sh -c`, so an agent that launched fine came back dead with 127
+(the login-shell wrap `launchArgv` exists for was applied on create and never
+recorded); a >32 KiB paste killed the whole page's multiplexed WebSocket at the
+library's default read limit; argon2id at 64 MiB ran before the login throttle
+could see the attempt; a newline in an env value written through the settings
+page could append arbitrary assignments, `VIBEPANEL_TMUX_SOCKET` among them,
+which is red line 1's own front door; `/api/token-usage` sent `"sources":null`
+during its first pass to a browser that calls `.filter()` on it; a controller
+dropped for falling behind never released the grid; an OSC sequence over 64 KiB
+had its terminating BEL re-read as an application bell, so a large clipboard
+copy announced itself as an agent asking for a person.
+
+### What is still open
+
+Not fixed, and not because they are hard:
+
+- The webhook fan-out belongs in `setSessionState` in `internal/httpapi/events.go`,
+  next to `noteTransition`, rather than at two call sites in `api.go`. That
+  file's own header argues it is the single funnel every state writer goes
+  through, and a second call site in `api.go` is exactly what it exists to stop.
+- `editMu` around `~/.claude/settings.json` is in-process only. `vibepanel tune
+  --apply` from a shell while the panel serves an install is still a race, much
+  narrower now that the two cannot share a temp file. Closing it wants the flock
+  pattern in `internal/config/lock.go`, on the settings path, in both processes.
+- `internal/hooks/opencode.go` writes its plugin file without `editMu`. It
+  writes a whole file rather than read-modify-writing somebody else's, so it is
+  not the same bug, but nobody has audited its temp-file name for the same
+  collision.
+- `PanelSocket.write` still sends a paste as one frame, so a paste over 4 MiB is
+  now refused with an error frame rather than delivered. Better than closing the
+  socket, which is what it did before; chunking would be better still.
+- And the sweep itself: two of its four rounds, forty of its candidates and one
+  of its fifteen lenses were never actually run.
