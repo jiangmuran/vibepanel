@@ -51,9 +51,9 @@ type Activity struct {
 	Insertions int
 	Deletions  int
 	Files      int
-	// Days is one entry per local day in the window, oldest first, including
-	// the days nothing happened on. A series drawn from only the days with
-	// commits in them is a series with no weekends in it.
+	// Days is one entry per day of the caller's calendar in the window, oldest
+	// first, including the days nothing happened on. A series drawn from only
+	// the days with commits in them is a series with no weekends in it.
 	Days []ActivityDay
 	// Truncated says the log hit maxActivityCommits, so the figures are a floor
 	// rather than a total. A number that has silently stopped counting is the
@@ -61,11 +61,14 @@ type Activity struct {
 	Truncated bool
 }
 
-// ActivityDay is one local day of it.
+// ActivityDay is one day of it.
 type ActivityDay struct {
-	// Day is "2006-01-02" on the *server's* clock, the same convention the
-	// token rollups use. A browser in another timezone must not decide for
-	// itself which column is today.
+	// Day is "2006-01-02" in the zone `now` carries, which is the panel's
+	// configured one and the same convention the token rollups use. A browser
+	// in another timezone must not decide for itself which column is today --
+	// and neither must the machine: labelling these on time.Local while the
+	// caller compares them against a configured zone put a commit made seconds
+	// ago in yesterday's column and reported "0 commits today".
 	Day        string
 	Commits    int
 	Insertions int
@@ -95,9 +98,11 @@ const maxActivityDays = 371
 
 // ReadActivity counts the commits and changed lines of the last `days` days.
 //
-// `days` is counted in local days ending at `now`, so "1" is today rather than
+// `days` is counted in whole days ending at `now`, so "1" is today rather than
 // the last twenty-four hours — which is what somebody looking at a wall in the
-// afternoon means by "today".
+// afternoon means by "today". The days are the ones `now`'s own zone is on:
+// the caller decides which calendar this is measured against, because the
+// panel's configured zone and the machine's are allowed to disagree.
 func ReadActivity(ctx context.Context, dir string, days int, now time.Time) (Activity, error) {
 	if days < 1 {
 		days = 1
@@ -130,11 +135,12 @@ func ReadActivity(ctx context.Context, dir string, days int, now time.Time) (Act
 		}
 		return Activity{}, err
 	}
-	parseActivity(string(raw), &out)
+	parseActivity(string(raw), &out, start.Location())
 	return out, nil
 }
 
-// dayFrame is every local day in the window, oldest first, all zero.
+// dayFrame is every day in the window, oldest first, all zero, on start's
+// calendar.
 func dayFrame(start time.Time, days int) []ActivityDay {
 	out := make([]ActivityDay, days)
 	for i := 0; i < days; i++ {
@@ -151,7 +157,12 @@ func dayFrame(start time.Time, days int) []ActivityDay {
 // and a commit that only inserted or only deleted -- git omits the clause it has
 // nothing to say about, so a parser splitting on commas by position reports the
 // deletions of a pure insertion as its insertions.
-func parseActivity(text string, out *Activity) {
+//
+// `loc` is the calendar the frame was built on and is passed in rather than
+// taken from time.Local: every label produced here is looked up in that frame,
+// so a commit labelled in the machine's zone while the frame is in the panel's
+// falls out of the day series and the day it belongs to reads zero.
+func parseActivity(text string, out *Activity, loc *time.Location) {
 	index := map[string]int{}
 	for i, d := range out.Days {
 		index[d.Day] = i
@@ -170,7 +181,7 @@ func parseActivity(text string, out *Activity) {
 				return
 			}
 			day = -1
-			if i, ok := index[time.Unix(ts, 0).Format("2006-01-02")]; ok {
+			if i, ok := index[time.Unix(ts, 0).In(loc).Format("2006-01-02")]; ok {
 				day = i
 				out.Days[i].Commits++
 			}

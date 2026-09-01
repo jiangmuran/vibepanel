@@ -54,7 +54,7 @@ func TestACommitWithNoDiffDoesNotStealTheNextOnesLines(t *testing.T) {
 	text := itoa(day.Unix()) + "\n" +
 		itoa(yesterday) + "\n 2 files changed, 5 insertions(+)\n" +
 		itoa(outside) + "\n 4 files changed, 900 insertions(+)\n"
-	parseActivity(text, &out)
+	parseActivity(text, &out, time.Local)
 
 	if out.Commits != 3 {
 		t.Fatalf("counted %d commits, want 3", out.Commits)
@@ -218,12 +218,12 @@ func TestADirectoryThatIsNotARepositoryIsAnAnswer(t *testing.T) {
 	}
 	c := &Cache{WarmFor: time.Hour}
 	dir := t.TempDir()
-	if _, ok, _ := c.Repo(dir, 7); ok {
+	if _, ok, _ := c.Repo(dir, 7, time.Local); ok {
 		t.Fatal("a cold key answered before anything had been read")
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if snap, ok, _ := c.Repo(dir, 7); ok {
+		if snap, ok, _ := c.Repo(dir, 7, time.Local); ok {
 			if snap.Repo {
 				t.Fatal("a temporary directory reported itself as a working tree")
 			}
@@ -286,6 +286,58 @@ func TestAWarmReadNeverRunsOnTheCallersGoroutine(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("the refresh never produced an answer")
+}
+
+// The day labels are on the caller's calendar, not the machine's.
+//
+// The panel's zone is a setting and the machine's is not, and everything on the
+// other side of this call -- the day frame a share board builds, its "is this
+// today" -- is on the panel's. The version that read time.Now() and formatted
+// with time.Local filed a commit made seconds ago under yesterday and reported
+// "0 commits today" beside a spend tile that had the same afternoon right, with
+// nothing anywhere saying the two had been measured on different clocks.
+func TestTheActivityWindowIsOnTheCallersCalendar(t *testing.T) {
+	dir := oneCommitRepo(t)
+	now := time.Now()
+	// A zone deliberately on yesterday's date right now, so the two calendars
+	// disagree whatever time the suite runs at. Picking a real zone name would
+	// pass for most of the day and mean nothing.
+	_, off := now.Zone()
+	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	elsewhere := time.FixedZone("elsewhere",
+		off-(int(now.Sub(midnight)/time.Second)+3600))
+
+	want := now.In(elsewhere).Format("2006-01-02")
+	if want == now.Format("2006-01-02") {
+		t.Fatal("the two zones are on the same date; this test is checking nothing")
+	}
+
+	c := &Cache{WarmFor: time.Hour}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		snap, ok, _ := c.Repo(dir, 7, elsewhere)
+		if !ok {
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		if !snap.Repo {
+			t.Fatal("a repository reported itself as not a working tree")
+		}
+		last := len(snap.Activity.Days) - 1
+		if last < 0 || snap.Activity.Days[last].Day != want {
+			t.Fatalf("the last column is %q, want the caller's today %q",
+				snap.Activity.Days[last].Day, want)
+		}
+		// And the commit is *in* it. The frame and the per-commit label are two
+		// separate formats, and fixing only the frame moves the whole series
+		// along by a column while today still reads zero.
+		if got := snap.Activity.Days[last].Commits; got != 1 {
+			t.Fatalf("the caller's today %s has %d commits, want 1 -- the commit has been "+
+				"labelled on the machine's clock and has fallen out of the frame", want, got)
+		}
+		return
+	}
+	t.Fatal("the warm cache never produced an answer")
 }
 
 func itoa(n int64) string {
