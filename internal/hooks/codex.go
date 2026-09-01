@@ -31,6 +31,8 @@ func CodexConfigPath() (string, error) {
 // the button, and rewriting a file to make no change to it still moves its
 // mtime and still leaves a backup recording an edit that never happened.
 func InstallCodex(scriptPath string) (Status, error) {
+	editMu.Lock()
+	defer editMu.Unlock()
 	path, err := CodexConfigPath()
 	if err != nil {
 		return Status{}, err
@@ -62,6 +64,8 @@ func InstallCodex(scriptPath string) (Status, error) {
 // Codex has one notify slot, so "remove ours" and "remove whatever is there"
 // are the same keystroke from the settings page and very much not the same act.
 func UninstallCodex(scriptPath string) (Status, error) {
+	editMu.Lock()
+	defer editMu.Unlock()
 	path, err := CodexConfigPath()
 	if err != nil {
 		return Status{}, err
@@ -102,6 +106,14 @@ func codexInstalled(path string) bool {
 
 // ─── editing ──────────────────────────────────────────────────────────────
 
+// codexReplacedBanner marks the notify our install took the slot from.
+//
+// One constant rather than a literal in each place, because the install writes
+// it and the uninstall reads it to give the line back: two spellings that drift
+// apart leave the user's own notifier commented out for good, with the settings
+// page correctly saying nothing of ours is installed.
+const codexReplacedBanner = "# replaced by vibepanel:"
+
 // withCodexNotify returns the document with our notify line in it.
 func withCodexNotify(doc, scriptPath string) string {
 	want := CodexNotify(scriptPath)
@@ -115,7 +127,7 @@ func withCodexNotify(doc, scriptPath string) string {
 			// user wrote, and a backup beside the file is not where anyone
 			// looks. Keep the old line where it was, commented, so what
 			// happened is legible in the file itself.
-			replacement = append([]string{"# replaced by vibepanel:"}, replacement...)
+			replacement = append([]string{codexReplacedBanner}, replacement...)
 			for _, old := range lines[start:end] {
 				replacement = append(replacement, "# "+old)
 			}
@@ -161,9 +173,59 @@ func withoutCodexNotify(doc string) string {
 	if !ok || !containsMarker(strings.Join(lines[start:end], "\n")) {
 		return doc
 	}
+	// Give the slot back to whoever had it before we took it.
+	//
+	// Removing only our own line left the commented original under the banner
+	// for good: `codexInstalled` says false, the settings page says not
+	// installed, the file reads as though it were the user's again -- and their
+	// notifier never runs again, with nothing anywhere saying why. An install
+	// that cannot be undone is worse than one that refuses the slot.
+	restored, drop := replacedNotify(lines, start, end)
+	if drop > 0 {
+		start-- // the banner, immediately above our line
+		end += drop
+	}
 	out := append([]string{}, lines[:start]...)
+	out = append(out, restored...)
 	out = append(out, lines[end:]...)
 	return strings.Join(out, "\n")
+}
+
+// replacedNotify finds the notify withCodexNotify parked under its banner and
+// returns it uncommented, with the number of commented lines it occupies.
+//
+// The shape has to be exactly the one the install writes -- banner immediately
+// above our span, a commented `notify` assignment immediately below it -- and
+// the assignment is read with notifySpan's own rules, so a multi-line array
+// comes back whole. Anything else is somebody's own comment and is left where
+// it is: this runs on a file the panel does not own, and uncommenting a line a
+// person wrote is the same class of surprise as deleting one.
+func replacedNotify(lines []string, start, end int) ([]string, int) {
+	if start == 0 || strings.TrimSpace(lines[start-1]) != codexReplacedBanner {
+		return nil, 0
+	}
+	var out []string
+	depth := 0
+	for i := end; i < len(lines); i++ {
+		body, ok := strings.CutPrefix(lines[i], "# ")
+		if !ok {
+			break
+		}
+		if len(out) == 0 {
+			key, value, found := strings.Cut(strings.TrimSpace(body), "=")
+			if !found || strings.TrimSpace(key) != "notify" {
+				return nil, 0
+			}
+			depth = bracketDepth(value)
+		} else {
+			depth += bracketDepth(body)
+		}
+		out = append(out, body)
+		if depth <= 0 {
+			return out, len(out)
+		}
+	}
+	return nil, 0
 }
 
 // notifySpan finds the top-level `notify` assignment, as a [start, end) range.
@@ -242,19 +304,36 @@ func writeFileLike(path string, b []byte) error {
 	if info, err := os.Stat(path); err == nil {
 		mode = info.Mode().Perm()
 	}
-	tmp := path + ".vibepanel.tmp"
-	if err := os.WriteFile(tmp, b, mode); err != nil {
-		return fmt.Errorf("hooks: write %s: %w", tmp, err)
+	// A name nobody else can be holding, rather than the fixed
+	// `<path>.vibepanel.tmp` this used. Two writers of one file were staging
+	// through the same temp path, so what got renamed over the user's settings
+	// was a splice of two encodings — a file the agent will not start on. editMu
+	// makes that impossible inside this process; the unique name is what covers
+	// the admin CLI running at the same time, and a leftover from a crash that
+	// nothing will rename over the real file.
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".vibepanel-*.tmp")
+	if err != nil {
+		return fmt.Errorf("hooks: stage %s: %w", path, err)
 	}
-	// WriteFile only applies the mode when it creates the file, so a leftover
-	// temp file from an earlier crash would keep its own — and get renamed over
-	// the real one, taking its permissions with it.
-	if err := os.Chmod(tmp, mode); err != nil {
-		os.Remove(tmp) //nolint:errcheck
-		return fmt.Errorf("hooks: set mode on %s: %w", tmp, err)
+	name := tmp.Name()
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()     //nolint:errcheck
+		os.Remove(name) //nolint:errcheck
+		return fmt.Errorf("hooks: write %s: %w", name, err)
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp) //nolint:errcheck
+	if err := tmp.Close(); err != nil {
+		os.Remove(name) //nolint:errcheck
+		return fmt.Errorf("hooks: write %s: %w", name, err)
+	}
+	// CreateTemp makes the file 0600 whatever the target had, so the mode is put
+	// back here — otherwise a rename would quietly tighten the permissions on
+	// somebody's dotfile.
+	if err := os.Chmod(name, mode); err != nil {
+		os.Remove(name) //nolint:errcheck
+		return fmt.Errorf("hooks: set mode on %s: %w", name, err)
+	}
+	if err := os.Rename(name, path); err != nil {
+		os.Remove(name) //nolint:errcheck
 		return fmt.Errorf("hooks: replace %s: %w", path, err)
 	}
 	return nil

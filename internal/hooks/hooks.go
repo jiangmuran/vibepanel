@@ -75,15 +75,21 @@ func InstallScript(dir string) (string, error) {
 // The four events map onto the three states the panel shows. Notification is
 // the one that matters: it is what Claude Code emits when it has stopped and
 // wants a person.
+//
+// The command goes through the same command() the installer writes, rather than
+// a %s of its own. Building it twice meant a data directory with a space in it
+// showed an unquoted command here and got a quoted one written to the file, and
+// this snippet's whole job is the promise that what you read is what gets
+// merged.
 func ClaudeSettings(script string) string {
 	entry := func(event, state string) string {
 		return fmt.Sprintf(`    "%s": [
       {
         "hooks": [
-          { "type": "command", "command": "%s %s" }
+          { "type": "command", "command": "%s" }
         ]
       }
-    ]`, event, script, state)
+    ]`, event, command(script, state))
 	}
 	return fmt.Sprintf(`{
   "hooks": {

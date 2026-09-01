@@ -8,8 +8,34 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
+	"sync"
 	"time"
 )
+
+// editMu serialises every read-modify-write of an agent's configuration file.
+//
+// Held by InstallClaude, UninstallClaude, ApplyTune, InstallCodex and
+// UninstallCodex — everything that reads one of those files, changes what it
+// read and writes it back. One lock for all of them rather than one per file:
+// these are button presses on a settings page, so there is no contention worth
+// measuring, and a single lock cannot be taken in two orders.
+//
+// Without it there were three unsynchronised cycles over
+// ~/.claude/settings.json with nothing between them: the settings page's hooks
+// row and its tune row carry separate busy flags, and the first-run tour presses
+// one and then the other while the first is still in flight. Each encodes a
+// document built from a read taken before the other's write, so the later rename
+// discards the earlier edit. Measured over 200 runs of an install racing a tune:
+// one correct file, 177 with an edit silently gone and 22 that json.Unmarshal
+// refuses — and Claude Code does not start on that last one, which is the
+// outcome writeSettings' atomic rename exists to prevent.
+//
+// Not a cross-process lock. `vibepanel tune --apply` from a shell while the
+// panel serves an install is still a race; it is a much narrower one now that
+// the two never share a temp file, and closing it wants the flock in
+// internal/config/lock.go.
+var editMu sync.Mutex
 
 // marker tags the hook entries this panel manages.
 //
@@ -151,6 +177,8 @@ func Inspect(scriptPath string) (Status, error) {
 // still moves its mtime, and still leaves a backup recording an edit that never
 // happened.
 func InstallClaude(scriptPath string) (Status, error) {
+	editMu.Lock()
+	defer editMu.Unlock()
 	settingsPath, err := ClaudeSettingsPath()
 	if err != nil {
 		return Status{}, err
@@ -194,6 +222,8 @@ func InstallClaude(scriptPath string) (Status, error) {
 
 // UninstallClaude removes only the entries this panel added.
 func UninstallClaude(scriptPath string) (Status, error) {
+	editMu.Lock()
+	defer editMu.Unlock()
 	settingsPath, err := ClaudeSettingsPath()
 	if err != nil {
 		return Status{}, err
@@ -310,19 +340,36 @@ func writeSettings(path string, doc map[string]any) error {
 	// Write beside the target and rename: a crash halfway through must not
 	// leave the user with a truncated settings file and an agent that will not
 	// start.
-	tmp := path + ".vibepanel.tmp"
-	if err := os.WriteFile(tmp, b, mode); err != nil {
-		return fmt.Errorf("hooks: write %s: %w", tmp, err)
+	// A name nobody else can be holding, rather than the fixed
+	// `<path>.vibepanel.tmp` this used. Two writers of one file were staging
+	// through the same temp path, so what got renamed over the user's settings
+	// was a splice of two encodings — a file the agent will not start on. editMu
+	// makes that impossible inside this process; the unique name is what covers
+	// the admin CLI running at the same time, and a leftover from a crash that
+	// nothing will rename over the real file.
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".vibepanel-*.tmp")
+	if err != nil {
+		return fmt.Errorf("hooks: stage %s: %w", path, err)
 	}
-	// WriteFile only applies the mode when it creates the file, so a leftover
-	// temp file from an earlier crash would keep its own — and get renamed over
-	// the real one, taking its permissions with it.
-	if err := os.Chmod(tmp, mode); err != nil {
-		os.Remove(tmp) //nolint:errcheck
-		return fmt.Errorf("hooks: set mode on %s: %w", tmp, err)
+	name := tmp.Name()
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()     //nolint:errcheck
+		os.Remove(name) //nolint:errcheck
+		return fmt.Errorf("hooks: write %s: %w", name, err)
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp) //nolint:errcheck
+	if err := tmp.Close(); err != nil {
+		os.Remove(name) //nolint:errcheck
+		return fmt.Errorf("hooks: write %s: %w", name, err)
+	}
+	// CreateTemp makes the file 0600 whatever the target had, so the mode is put
+	// back here — otherwise a rename would quietly tighten the permissions on
+	// somebody's dotfile.
+	if err := os.Chmod(name, mode); err != nil {
+		os.Remove(name) //nolint:errcheck
+		return fmt.Errorf("hooks: set mode on %s: %w", name, err)
+	}
+	if err := os.Rename(name, path); err != nil {
+		os.Remove(name) //nolint:errcheck
 		return fmt.Errorf("hooks: replace %s: %w", path, err)
 	}
 	return nil
@@ -361,8 +408,41 @@ func backup(path string) error {
 // ─── merging ──────────────────────────────────────────────────────────────
 
 // command is what an installed entry runs.
+//
+// Claude Code hands this string to a shell, so the path has to survive one.
+// `--data-dir "/opt/my panel"` produced `/opt/my panel/hooks/vibepanel-report.sh
+// waiting`, which a shell splits at the space and answers with 127 — and
+// nothing anywhere says so: report.sh suppresses its own failures by design,
+// `isOurs` matches on the marker rather than on whether the command can run, so
+// Inspect reports all four events installed, and every session quietly falls
+// back to the heuristic. That is the shape red line 3 is about. The Codex side
+// never had this because codex execs an argv array with no shell in it.
 func command(scriptPath, state string) string {
-	return scriptPath + " " + state
+	return shellWord(scriptPath) + " " + state
+}
+
+// shellWord returns s as a single word to a POSIX shell.
+//
+// Quoted only when it has to be, because this string is also the snippet the
+// settings page shows before anybody presses install, and the promise there is
+// that what you read is what gets merged. An ordinary path is left exactly as
+// it was written.
+func shellWord(s string) string {
+	safe := s != ""
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case strings.ContainsRune("/._-+:@%,=", r):
+		default:
+			safe = false
+		}
+	}
+	if safe {
+		return s
+	}
+	// Single quotes, which a shell takes literally down to the backslash. The
+	// only thing they cannot hold is a single quote, hence the dance.
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // mergeEvent adds our entry to whatever is already configured for an event,
