@@ -18832,3 +18832,99 @@ the array's length, and a quiet day is a full array of zeroes.
 
 `deskwall` and `made` still have overlaps at the denser sizes and are not fixed
 here.
+
+## The upgrade command the panel prints, which gave the panel away to root
+
+The panel refuses to replace its own binary when it cannot write the directory
+it lives in, and says so:
+
+    this panel cannot replace its own binary: /usr/local/bin
+    Update it from a shell instead: sudo /usr/local/bin/vibepanel service upgrade
+
+Running that emptied the panel. It came back on a database with nothing in it,
+under a tmux socket with no sessions on it, asking to set up a first account.
+
+Nothing was deleted. `service upgrade` hands over to the installer, the
+installer read `$USER` and `$HOME` to decide who the service runs as, and under
+`sudo` those are root's. `User=jmr` became `User=root`, `HOME=/home/jmr` became
+`HOME=/root`, and a panel running as root looks in `/root/.local/share` for its
+data and at `/tmp/tmux-0/vibepanel` for its sessions. Ten projects, fourteen
+sessions, ten notes, two share links and a passkey were all still on disk, four
+directories away, and every one of them invisible.
+
+The failure has no error in it anywhere. systemd started the unit; the unit was
+valid; the panel opened a database, found it empty, and did the correct thing
+with an empty database, which is to offer to create the first account. The only
+signal available to the person in front of it was that their work was gone.
+
+### Two rules, either of which alone would have stopped it
+
+`$SUDO_USER` is who asked. Under sudo the environment describes root and
+`$SUDO_USER` describes the person, and the person is the one whose home holds
+the data.
+
+An installed unit outranks the environment. This script already refuses to
+change the unit *kind* on a re-run, and the comment where `KIND` is decided
+gives the reason: "an upgrade that offers to change the unit kind is an upgrade
+that changes it for whoever pressed return without reading." Identity needed the
+same rule and did not have it. It needs it more, because a changed kind is
+visible in the summary and a changed identity looks exactly like data loss.
+
+Both are pinned, and both were checked by removing them and watching the check
+reproduce the original failure verbatim:
+
+    [FAIL] the re-run changed it to User=somebodyelse -- this is the bug
+    [FAIL] User= is User=root; root would own the data
+
+Moving the panel to another account is now `uninstall` followed by install,
+which says what it is doing.
+
+### The harness nearly wrote into a real home
+
+`home_of` resolves an account to its home directory, and `scripts/install-check.sh`
+runs on a developer's machine. A check running under `sudo` would have resolved
+a real account and installed into their actual home — the one thing that
+harness exists never to do. It takes `VIBEPANEL_HOME_OF` like every other probe
+in the file, for that reason and no other.
+
+## A swipe the application accepted and then threw away
+
+Reported as "the Textbook task cannot be scrolled", about one session among
+fourteen. Everything on the path measured correct, one piece at a time:
+
+- The gesture claimed the drag: 16 of 16 `touchmove` events cancelable and
+  `defaultPrevented`, in a real browser at 390x844 with touch.
+- `scrollAction` read `mouseTrackingMode = "any"` and took the `wheel` branch.
+- Sixteen wheel reports went out over the WebSocket for a 250px swipe and
+  arrived at the pane's pty as sixteen 12-byte reads, 33ms apart.
+- Written to a live Claude Code pane, wheel reports scroll it: two lines per
+  notch, back to back and at 33ms spacing alike.
+
+Every part worked and the result was nothing, which meant the wrong thing was
+being measured. The missing measurement was time. Scrolling an *idle* pane 25
+notches and looking ten seconds later, it was still where it was put. Doing the
+same to the reported session — five background agents, a redraw every 1.5
+seconds — put it back at the live tail in **under one second**.
+
+Claude Code follows its own output. The wheel scrolls it and the next redraw
+undoes that, so the busier the session the more certainly the gesture fails.
+The session that prompted the report was the busiest one on the machine.
+
+### The scrollback that was being stepped over
+
+`scrollAction` asked the application first and only fell back to the terminal's
+own buffer when nothing was listening. That ordering assumed a full-screen
+application leaves no scrollback, and on this panel it is not true: the whole
+point of taking `smcup`/`rmcup` and `indn` out of the client's terminfo is that
+a full-screen application's output lands in the primary buffer line by line.
+Measured in the browser against a full-screen mouse-tracking app, `baseY` is
+269. Those lines are the panel's, and no redraw can reclaim them.
+
+So the two branches are the other way round now: scrollback first, the wheel
+only when there is none. `wheel` still earns its place — a session with no
+history yet has nothing else to offer — and the reordering is one test, which
+fails if the lines are swapped back.
+
+The earlier entry above this one argued for handing the wheel to the
+application because a desktop does. That was right about the desktop and wrong
+about which of the two sources survives being read.
