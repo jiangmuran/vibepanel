@@ -26,8 +26,9 @@ set -euo pipefail
 # killed and the guard under this line can never run at all.
 SOCKET="${VIBEPANEL_TMUX_SOCKET-vibepanel}"
 DATA="${VIBEPANEL_DATA_DIR:-$HOME/.local/share/vibepanel}"
-BIN="${VIBEPANEL_BIN:-$HOME/.local/bin/vibepanel}"
 ENV_FILE="${VIBEPANEL_ENV_FILE:-$HOME/.config/vibepanel.env}"
+# BIN is resolved below, once the unit paths are known, because it is read out
+# of the unit rather than assumed. See the note there.
 
 GO=no
 PURGE=no
@@ -115,8 +116,40 @@ RUNNING=no
 if pgrep -f "vibepanel serve" >/dev/null 2>&1; then RUNNING=yes; fi
 
 UNIT="$HOME/.config/systemd/user/vibepanel.service"
-SYSUNIT="/etc/systemd/system/vibepanel.service"
+# The same test-only prefix deploy/install.sh and cmd/vibepanel/service.go take.
+# Without it nothing can drive the system-unit shape without writing to the
+# developer's own /etc, which is why that shape went unchecked here.
+SYSUNIT="${VIBEPANEL_DESTDIR:-}/etc/systemd/system/vibepanel.service"
 PLIST="$HOME/Library/LaunchAgents/io.github.jiangmuran.vibepanel.plist"
+
+# Where the binary is. Asked of the unit, not guessed.
+#
+# A system install puts it in /usr/local/bin and a user install in ~/.local/bin,
+# so a fixed ~/.local/bin finds nothing on the shape deploy/install.sh picks by
+# default. Both destructive steps below are gated on `[ -x "$BIN" ]`: `hook
+# remove` and `service uninstall` were skipped, the unit stayed installed and
+# enabled with Restart=always, and $DATA -- holding the reporter script three
+# agent configs still point at -- was deleted anyway, under a "── done ──" with
+# no FAIL in it and exit 0.
+#
+# cmd/vibepanel/service.go learned this already, and says it better: ExecStart
+# is a fact about this machine, and the defaults under it are only for a unit
+# that cannot be read.
+SYSBIN="${VIBEPANEL_DESTDIR:-}/usr/local/bin/vibepanel"
+BIN="${VIBEPANEL_BIN:-}"
+if [ -z "$BIN" ]; then
+  BIN="$HOME/.local/bin/vibepanel"
+  if [ -f "$SYSUNIT" ]; then
+    BIN="$SYSBIN"
+    EXEC="$(sed -n 's/^ExecStart=\([^ ]*\).*/\1/p' "$SYSUNIT" | head -1)"
+    case "$EXEC" in /*) BIN="$EXEC" ;; esac
+  elif [ ! -e "$BIN" ] && [ -x "$SYSBIN" ]; then
+    # No unit left to ask -- removed by hand, or by a half-finished earlier run
+    # -- and the binary a system install leaves is still sitting there. Finding
+    # it is what keeps the hooks from outliving the reporter script they call.
+    BIN="$SYSBIN"
+  fi
+fi
 
 echo "what is here:"
 [ "$RUNNING" = yes ] && say "running" "a vibepanel serve process" || say "running" "nothing"
@@ -225,6 +258,17 @@ if [ -x "$BIN" ] && [ "$HOOKS_BEFORE" != 0 ]; then
     echo "         ~/.config/opencode/plugin/vibepanel.js"
     HOOKS_LEFT=yes
   fi
+elif [ "$HOOKS_BEFORE" != 0 ]; then
+  # No binary, so nothing here can edit those three files -- and the removal of
+  # $DATA further down must not go ahead without them. The same ordering rule as
+  # above, reached from the other side: this used to be a silent skip, and a
+  # system install came out of it with three live hooks calling a reporter
+  # script this run had just deleted.
+  echo "[FAIL] no vibepanel binary was found, so the hooks are still there."
+  echo "       Take them out by hand:"
+  echo "         ~/.claude/settings.json, ~/.codex/config.toml,"
+  echo "         ~/.config/opencode/plugin/vibepanel.js"
+  HOOKS_LEFT=yes
 fi
 
 # The database, before anything kills the process holding it open. --purge
@@ -256,6 +300,14 @@ if [ -x "$BIN" ] && { [ -f "$UNIT" ] || [ -f "$SYSUNIT" ] || [ -f "$PLIST" ]; };
   else
     did "service uninstalled"
   fi
+elif [ -f "$UNIT" ] || [ -f "$SYSUNIT" ] || [ -f "$PLIST" ]; then
+  # A unit and no binary to run `service uninstall` with. Left enabled with
+  # Restart=always, it is a panel that comes back at the next boot over a data
+  # directory this run removed.
+  echo "[FAIL] no vibepanel binary was found, so the service is still installed:"
+  for u in "$UNIT" "$SYSUNIT" "$PLIST"; do [ -f "$u" ] && echo "         $u"; done
+  echo "       Remove it yourself, then: sudo systemctl daemon-reload"
+  UNIT_LEFT=yes
 fi
 
 # Anything still serving, which is the case this whole repository is about: the
@@ -321,9 +373,16 @@ if [ -e "$ENV_FILE" ]; then
   did "removed $ENV_FILE"
 fi
 # service uninstall removes the binary, but only when a service was installed.
+# Tried, not assumed: $BIN can now be /usr/local/bin/vibepanel, which is root's,
+# and a bare `rm -f` on it ends this script under `set -e` two lines before the
+# summary that would have said what was left behind.
 if [ -e "$BIN" ]; then
-  rm -f "$BIN"
-  did "removed $BIN"
+  if rm -f "$BIN" 2>/dev/null; then
+    did "removed $BIN"
+  else
+    echo "[FAIL] $BIN is still there; taking it out needs root:"
+    echo "         sudo rm -f $BIN"
+  fi
 fi
 
 # Dead sockets from this repository's own test runs, which a user never has.
