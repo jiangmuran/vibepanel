@@ -80,3 +80,43 @@ func TestAPanelThatCannotReplaceItsBinarySaysSoFirst(t *testing.T) {
 		t.Errorf("the refusal is still the raw temp-file error: %s", strings.TrimSpace(said))
 	}
 }
+
+// The updater and the restart button answer the same question, and this puts
+// the process in the case that told them apart.
+//
+// `INVOCATION_ID` is set by systemd on a unit and inherited by everything that
+// unit goes on to spawn, so a panel built and started by hand from a pane of a
+// vibepanel session has it. restart.go was fixed twice over exactly that, and
+// the parent is the decisive half; the updater kept the old test, so for one
+// process handleRestart answered 409 unsupervised while the updater reported
+// `restarting: true` and shelled out to `systemctl --user restart vibepanel` --
+// which, on a machine that does have a unit installed, restarts a different,
+// production panel and drops every browser and terminal on it, for an update
+// nobody applied to it.
+func TestTheUpdaterRestartsOnlyWhereTheButtonWould(t *testing.T) {
+	t.Setenv("INVOCATION_ID", "03636ea867064621b23c72f3d5c96b02")
+	t.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+	if who := supervisorName(); who != "" {
+		// A test binary's parent is the go tool or a shell, never a service
+		// manager -- unless this really is running under one, in which case
+		// there is nothing here to disagree about.
+		t.Skipf("this process really is supervised by %s", who)
+	}
+	if cmd, err := restartCommand(); err == nil {
+		t.Fatalf("the updater would run %q, while the restart button refuses this process as unsupervised", cmd.String())
+	}
+
+	// And the arms that do restart still do. The user unit is the install this
+	// project recommends wherever there is no root, so losing it here would
+	// leave all of those installing an update and never restarting into it.
+	cmd, err := restartCommandFor("systemd")
+	if err != nil {
+		t.Fatalf("a systemd user unit: %v", err)
+	}
+	if got := strings.Join(cmd.Args[1:], " "); got != "--user restart vibepanel" {
+		t.Errorf("a systemd user unit: %q, want `--user restart vibepanel`", got)
+	}
+	if _, err := restartCommandFor("launchd"); err == nil {
+		t.Error("launchd got a systemctl command")
+	}
+}
