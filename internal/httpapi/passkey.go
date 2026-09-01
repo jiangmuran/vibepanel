@@ -202,14 +202,22 @@ func (s *Server) registerPasskeyRoutes(r chi.Router) {
 	})
 }
 
-func (s *Server) setChallengeCookie(w http.ResponseWriter, key string) {
+// setChallengeCookie parks the key to a ceremony in flight in the browser.
+//
+// Secure is answered from the request for the same reason the session cookie's
+// is: behind the nginx/Caddy deployment this panel documents, TLSMode is "off"
+// while the browser is on https, so a cookie trusting TLSMode goes out with no
+// Secure flag and rides the next plain-http request to that hostname in clear.
+// Shorter-lived than the session token, but it is still the handle to an
+// authentication in progress.
+func (s *Server) setChallengeCookie(w http.ResponseWriter, r *http.Request, key string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     challengeCookie,
 		Value:    key,
 		Path:     "/api/auth",
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
-		Secure:   s.cookieSecure(),
+		Secure:   s.cookieSecureFor(r),
 		MaxAge:   int(challengeTTL / time.Second),
 	})
 }
@@ -258,7 +266,7 @@ func (s *Server) handlePasskeyRegisterBegin(w http.ResponseWriter, r *http.Reque
 		writeErr(w, challengeStatus(err), err.Error())
 		return
 	}
-	s.setChallengeCookie(w, key)
+	s.setChallengeCookie(w, r, key)
 	writeJSON(w, http.StatusOK, options)
 }
 
@@ -354,7 +362,7 @@ func (s *Server) handlePasskeyLoginBegin(w http.ResponseWriter, r *http.Request)
 		writeErr(w, challengeStatus(err), err.Error())
 		return
 	}
-	s.setChallengeCookie(w, key)
+	s.setChallengeCookie(w, r, key)
 	writeJSON(w, http.StatusOK, options)
 }
 

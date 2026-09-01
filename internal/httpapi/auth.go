@@ -20,6 +20,35 @@ type contextKey string
 
 const userContextKey contextKey = "vibepanel.user"
 
+// passwordSlots bounds how many password derivations run at once.
+//
+// One argon2id derivation holds 64 MiB for as long as it runs
+// (internal/auth/password.go), and nothing above this file bounds concurrency:
+// net/http gives a goroutine per connection and Routes() installs no limiter.
+// So a hundred connections POSTing to /api/auth/login together cost the
+// attacker a hundred sockets and this machine six gigabytes — a way to kill an
+// unauthenticated endpoint rather than a way to guess a password, which is not
+// what the throttle was built to stop.
+//
+// Four at a time is a quarter of a gigabyte, and the person this panel belongs
+// to signs in once. Waiting rather than refusing, because a 503 here is the
+// lockout the throttle's own comment declines to build: the burst would take
+// the owner's sign-in down with it. A waiting request costs a goroutine.
+var passwordSlots = make(chan struct{}, 4)
+
+// acquirePasswordSlot waits for a slot, and reports false if the caller hung up
+// before it got one.
+func acquirePasswordSlot(ctx context.Context) bool {
+	select {
+	case passwordSlots <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func releasePasswordSlot() { <-passwordSlots }
+
 // Auth is the server's authentication state.
 type Auth struct {
 	Throttle *auth.Throttle
@@ -74,12 +103,31 @@ func (s *Server) audit(ctx context.Context, event, username, ip, detail string) 
 	s.Log.Info("audit", "event", event, "user", username, "ip", ip, "detail", detail)
 }
 
-// cookieSecure reports whether the session cookie may carry the Secure flag.
+// cookieSecureFor reports whether a cookie may carry the Secure flag, asking
+// the request, which is the only place the answer actually is.
 //
 // Setting it unconditionally would break a plain-HTTP deployment entirely: the
 // browser would refuse to send the cookie back and every request would look
-// unauthenticated, with nothing on screen to explain why.
-func (s *Server) cookieSecure() bool { return s.Cfg.TLSMode != "off" && s.Cfg.TLSMode != "" }
+// unauthenticated, with nothing on screen to explain why. That is why this
+// used to read TLSMode, and reading TLSMode is wrong in the other direction:
+//
+// TLSMode describes this process's own listener, and behind the deployment
+// this panel documents — nginx or Caddy terminating TLS and forwarding
+// plaintext — TLSMode is "off" while the browser is on https. So a thirty-day
+// session cookie went out with no Secure flag, and cookies ignore scheme: the
+// next plain-http request to that hostname carries the token in clear. Typing
+// the name into the address bar is one (the redirect happens after the cookie
+// is on the wire, and SameSite=Strict does not suppress an address-bar
+// navigation); the other is in-product, because this panel exists to run
+// agents and an agent that starts a dev server on port 3000 of the same host
+// receives the panel's live session cookie.
+//
+// requestScheme is the decision issueSession already makes one line away when
+// it binds the session to its origin, and it believes X-Forwarded-Proto only
+// from a listed proxy for the same reason ClientIP does.
+func (s *Server) cookieSecureFor(r *http.Request) bool {
+	return requestScheme(r, s.trustedProxies()) == "https"
+}
 
 // ─── middleware ───────────────────────────────────────────────────────────
 
@@ -426,18 +474,38 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "not allowed from this address")
 		return
 	}
-	if s.Auth != nil {
-		if wait, blocked := s.Auth.Throttle.Delay(ip, time.Now()); blocked {
-			w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
-			writeErr(w, http.StatusTooManyRequests,
-				"too many attempts; try again in "+wait.Round(time.Second).String())
-			return
-		}
+	if s.throttled(w, ip) {
+		return
 	}
 
 	var req loginRequest
 	if !decode(w, r, &req) {
 		return
+	}
+
+	// Every path from here derives a key, so the queue is here rather than
+	// around each call: see passwordSlots.
+	if !acquirePasswordSlot(r.Context()) {
+		writeErr(w, http.StatusServiceUnavailable, "the panel is busy; try again")
+		return
+	}
+	defer releasePasswordSlot()
+
+	// Asked again on the far side of the queue, and then recorded *before* the
+	// derivation instead of after it.
+	//
+	// Delay only ever reads an entry that Fail creates, so recording the
+	// failure afterwards made this a check-then-act: a burst that arrived
+	// together all read failures==0, all passed, and all went on to spend
+	// 64 MiB each. Marking first means the first request of a burst is the
+	// only one that pays for it — the rest meet a throttle here, having done
+	// nothing but wait. A password that turns out to be right clears the mark
+	// through Throttle.Succeed below.
+	if s.throttled(w, ip) {
+		return
+	}
+	if s.Auth != nil {
+		s.Auth.Throttle.Fail(ip, time.Now())
 	}
 
 	user, err := s.DB.UserByName(ctx, req.Username)
@@ -446,7 +514,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		// user" and a slow "wrong password" tells an attacker which usernames
 		// exist.
 		auth.DummyVerify(req.Password)
-		s.failLogin(ctx, req.Username, ip, "unknown user")
+		s.auditLoginFailure(ctx, req.Username, ip, "unknown user")
 		writeErr(w, http.StatusUnauthorized, "wrong username or password")
 		return
 	}
@@ -455,7 +523,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.Log.Warn("password verify", "err", verr)
 	}
 	if !ok {
-		s.failLogin(ctx, req.Username, ip, "wrong password")
+		s.auditLoginFailure(ctx, req.Username, ip, "wrong password")
 		writeErr(w, http.StatusUnauthorized, "wrong username or password")
 		return
 	}
@@ -471,10 +539,38 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// throttled answers a source that has to wait, and reports whether it did.
+//
+// Asked twice by handleLogin, on either side of the derivation queue, which is
+// why it is a function rather than the block it used to be.
+func (s *Server) throttled(w http.ResponseWriter, ip string) bool {
+	if s.Auth == nil {
+		return false
+	}
+	wait, blocked := s.Auth.Throttle.Delay(ip, time.Now())
+	if !blocked {
+		return false
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
+	writeErr(w, http.StatusTooManyRequests,
+		"too many attempts; try again in "+wait.Round(time.Second).String())
+	return true
+}
+
+// failLogin records a failed sign-in: the throttle, then the audit trail.
+//
+// handleLogin does not come through here. It marks the throttle before it
+// spends a 64 MiB derivation rather than after, so it only wants the second
+// half; the passkey ceremony has no derivation to protect and still wants
+// both. Splitting them keeps the event name in one place.
 func (s *Server) failLogin(ctx context.Context, username, ip, detail string) {
 	if s.Auth != nil {
 		s.Auth.Throttle.Fail(ip, time.Now())
 	}
+	s.auditLoginFailure(ctx, username, ip, detail)
+}
+
+func (s *Server) auditLoginFailure(ctx context.Context, username, ip, detail string) {
 	s.audit(ctx, "login.failed", username, ip, detail)
 }
 
@@ -484,7 +580,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 			s.Log.Warn("delete auth session", "err", err)
 		}
 	}
-	auth.ClearCookie(w, s.cookieSecure())
+	auth.ClearCookie(w, s.cookieSecureFor(r))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -504,7 +600,7 @@ func (s *Server) issueSession(w http.ResponseWriter, r *http.Request, user store
 		writeErr(w, http.StatusInternalServerError, "could not create a session")
 		return
 	}
-	auth.SetCookie(w, token, s.cookieSecure())
+	auth.SetCookie(w, token, s.cookieSecureFor(r))
 }
 
 // validateCredentials delegates to internal/auth, which is where the rules
@@ -581,6 +677,14 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "malformed request")
 		return
 	}
+
+	// Two derivations below, the check and the new hash, at 64 MiB each. See
+	// passwordSlots: a session is not a licence to allocate gigabytes.
+	if !acquirePasswordSlot(r.Context()) {
+		writeErr(w, http.StatusServiceUnavailable, "the panel is busy; try again")
+		return
+	}
+	defer releasePasswordSlot()
 
 	okPass, err := auth.VerifyPassword(req.Current, user.PasswordHash)
 	if err != nil || !okPass {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -23,6 +24,27 @@ const writeTimeout = 10 * time.Second
 // pingInterval keeps idle connections alive through proxies and mobile NAT,
 // both of which drop quiet sockets after a minute or two.
 const pingInterval = 30 * time.Second
+
+// maxInboundMessage bounds one message from the browser.
+//
+// The library's default is 32 KiB, and this is one socket for the whole page:
+// every terminal, the state stream and the notifications ride on it. So a
+// paste of a build log or a diff — the ordinary way somebody feeds context to
+// an agent — did not fail as a paste, it closed the spine. Measured: 32769
+// bytes in one frame and every terminal on the page reset, replayed its ring,
+// and the pasted text never reached the pty.
+//
+// Four megabytes is past anything a person pastes by hand and small enough
+// that holding one in memory per connection is nothing.
+const maxInboundMessage = 4 << 20
+
+// readLimit is the size the *library* is still allowed to close over.
+//
+// Deliberately above maxInboundMessage: readMessage enforces our bound by
+// reading one byte past it and draining the rest, and it needs headroom to do
+// that. Something still sending at twice the bound has stopped being a browser
+// and the connection is the right thing to lose.
+const readLimit = 2 * maxInboundMessage
 
 // Resolver turns a session id into the tmux identity and size needed to attach.
 // The HTTP layer supplies it so this package does not depend on the store.
@@ -234,6 +256,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Accept has already written a response.
 		return
 	}
+	// Left at the library's 32 KiB, a paste closed the page's only socket. See
+	// maxInboundMessage.
+	c.SetReadLimit(readLimit)
 
 	conn := &Conn{
 		h:         h,
@@ -356,10 +381,46 @@ func (c *Conn) keepalive(ctx context.Context) {
 	}
 }
 
+// errMessageTooBig is one refused message, which is not the end of the
+// connection. See readMessage.
+var errMessageTooBig = errors.New("ws: message over the inbound limit")
+
+// readMessage reads one message, refusing an oversized one by itself.
+//
+// coder/websocket's own limit answers a message over it by closing the
+// connection with StatusMessageTooBig, and this connection carries the whole
+// page, so "too big" has to be sayable without taking every terminal with it.
+// One byte past the bound is read to detect it; the rest is drained, because
+// the message is still in the stream and the next Reader would otherwise start
+// in the middle of it.
+func (c *Conn) readMessage(ctx context.Context) (websocket.MessageType, []byte, error) {
+	typ, r, err := c.ws.Reader(ctx)
+	if err != nil {
+		return 0, nil, err
+	}
+	data, err := io.ReadAll(io.LimitReader(r, maxInboundMessage+1))
+	if err != nil {
+		return 0, nil, err
+	}
+	if len(data) > maxInboundMessage {
+		if _, err := io.Copy(io.Discard, r); err != nil {
+			return 0, nil, err
+		}
+		return typ, nil, errMessageTooBig
+	}
+	return typ, data, nil
+}
+
 // readLoop handles messages from the browser.
 func (c *Conn) readLoop(ctx context.Context) error {
 	for {
-		typ, data, err := c.ws.Read(ctx)
+		typ, data, err := c.readMessage(ctx)
+		if errors.Is(err, errMessageTooBig) {
+			// Said out loud rather than dropped: the paste vanished, and a
+			// terminal that silently ate one is worse than one that says so.
+			c.sendError("", "that message was too large to send at once")
+			continue
+		}
 		if err != nil {
 			return err
 		}

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -277,6 +278,69 @@ func TestRepeatedFailuresAreThrottled(t *testing.T) {
 	}
 }
 
+// A burst of simultaneous sign-ins costs a bounded number of derivations.
+//
+// argon2id here is 64 MiB for as long as it runs, and the throttle was
+// check-then-act: Delay only reads an entry that Fail creates, and Fail ran
+// after the derivation returned. So a hundred connections opened together all
+// read failures==0, all passed, and all allocated — one TCP connection each
+// for whoever is doing it, six gigabytes for the panel, from an endpoint that
+// requires no credential at all. The throttle exists to make guessing
+// expensive for the guesser.
+//
+// Sixteen at once, from one source, against a real listener. What the numbers
+// mean: at most cap(passwordSlots) may reach a derivation, and everything
+// behind them must be refused as throttled rather than queued into memory.
+func TestASignInBurstCannotMultiplyTheDerivation(t *testing.T) {
+	ts, _ := newTestServer(t)
+	client := anonymousClient(t)
+
+	const burst = 16
+	codes := make(chan int, burst)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < burst; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			res, err := client.Post(ts.URL+"/api/auth/login", "application/json",
+				strings.NewReader(`{"username":"tester","password":"nope"}`))
+			if err != nil {
+				codes <- 0
+				return
+			}
+			res.Body.Close()
+			codes <- res.StatusCode
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(codes)
+
+	tried, refused := 0, 0
+	for code := range codes {
+		switch code {
+		case http.StatusUnauthorized:
+			tried++
+		case http.StatusTooManyRequests:
+			refused++
+		default:
+			t.Errorf("a login answered %d, want 401 or 429", code)
+		}
+	}
+	// Positive control: all-429 would satisfy the bound below while meaning
+	// the endpoint had simply stopped working.
+	if tried == 0 {
+		t.Fatalf("none of %d attempts got as far as checking a password", burst)
+	}
+	if tried > cap(passwordSlots) {
+		t.Errorf("%d of %d simultaneous attempts each ran a 64 MiB derivation, "+
+			"want at most %d; the rest were refused %d times",
+			tried, burst, cap(passwordSlots), refused)
+	}
+}
+
 func TestUnknownUserAndWrongPasswordAreIndistinguishable(t *testing.T) {
 	ts, srv := newTestServer(t)
 	client := anonymousClient(t)
@@ -300,6 +364,78 @@ func TestUnknownUserAndWrongPasswordAreIndistinguishable(t *testing.T) {
 	if wrongPassword != noSuchUser {
 		t.Errorf("responses differ:\n  wrong password: %q\n  unknown user:   %q",
 			wrongPassword, noSuchUser)
+	}
+}
+
+// The session cookie carries Secure when the *browser* is on https.
+//
+// The flag was decided from TLSMode, which describes this process's listener,
+// and the deployment this panel documents is nginx or Caddy terminating TLS
+// and forwarding plaintext — TLSMode "off" while the browser is on https. The
+// thirty-day session cookie therefore went out without Secure, and cookies
+// ignore scheme: the next plain-http request to that hostname puts the token
+// on the wire in clear. Same file, one line apart, issueSession already asks
+// the request for its scheme in order to bind the session to an origin.
+//
+// Three cases, and the last two are why this cannot just be set always.
+func TestTheSessionCookieIsSecureWhenTheBrowserIs(t *testing.T) {
+	ts, srv := newTestServer(t)
+	nets, err := auth.ParseCIDRs([]string{"127.0.0.1/32", "::1/128"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The panel's own listener is plaintext in every case here, which is the
+	// whole point: it is not what decides this.
+	srv.Cfg.TLSMode = "off"
+
+	login := func(t *testing.T, proto string) *http.Cookie {
+		t.Helper()
+		srv.Auth.Throttle.Succeed("127.0.0.1")
+		req, rerr := http.NewRequest(http.MethodPost, ts.URL+"/api/auth/login",
+			strings.NewReader(`{"username":"tester","password":"a sufficiently long password"}`))
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if proto != "" {
+			req.Header.Set("X-Forwarded-Proto", proto)
+		}
+		res, perr := anonymousClient(t).Do(req)
+		if perr != nil {
+			t.Fatalf("login: %v", perr)
+		}
+		defer res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(res.Body)
+			t.Fatalf("login: %s: %s", res.Status, b)
+		}
+		for _, c := range res.Cookies() {
+			if c.Name == auth.CookieName {
+				return c
+			}
+		}
+		t.Fatal("no session cookie was set")
+		return nil
+	}
+
+	srv.Auth.TrustedProxies = nets
+	if c := login(t, "https"); !c.Secure {
+		t.Error("a proxy said the browser is on https and the session cookie went out without Secure; " +
+			"the next http request to that hostname carries the token in clear")
+	}
+
+	// Plain HTTP, no proxy. Secure here would break the deployment outright:
+	// the browser refuses to send the cookie back and every request looks
+	// unauthenticated, with nothing on screen saying why.
+	if c := login(t, ""); c.Secure {
+		t.Error("a plain-http sign-in got a Secure cookie, which the browser will never send back")
+	}
+
+	// And the header is believed from a proxy or not at all, the same rule
+	// ClientIP follows: anybody can set it.
+	srv.Auth.TrustedProxies = nil
+	if c := login(t, "https"); c.Secure {
+		t.Error("X-Forwarded-Proto was believed from an address that is not a configured proxy")
 	}
 }
 
@@ -670,5 +806,77 @@ func TestAStorageFaultDoesNotSignAnybodyOut(t *testing.T) {
 	}
 	if res.StatusCode != http.StatusServiceUnavailable {
 		t.Errorf("/api/auth/password answered %s for a storage fault, want 503", res.Status)
+	}
+}
+
+// The WebAuthn challenge cookie carries Secure on the same rule the session
+// cookie does, and for the same reason.
+//
+// This one kept the TLSMode answer after the session cookie stopped using it,
+// so behind the proxy deployment the panel documents, the handle to a sign-in
+// ceremony in flight went out with no Secure flag. config.PasskeyBlocker's own
+// comment is about exactly that deployment — it stopped disabling passkeys when
+// TLSMode is "off", because nginx terminates TLS in front — so the code already
+// knew the browser can be on https while TLSMode says otherwise, and this
+// cookie still asked TLSMode.
+//
+// Shorter-lived than the session token, three minutes rather than thirty days,
+// which is why the session cookie was fixed first and this one was missed.
+func TestTheChallengeCookieIsSecureWhenTheBrowserIs(t *testing.T) {
+	ts, srv := newTestServer(t)
+	nets, err := auth.ParseCIDRs([]string{"127.0.0.1/32", "::1/128"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A name rather than an address, which is all PasskeyBlocker asks for; the
+	// panel's own listener stays plaintext, because it is not what decides this.
+	srv.Cfg.Domain = "panel.example"
+	srv.Cfg.TLSMode = "off"
+
+	begin := func(t *testing.T, proto string) *http.Cookie {
+		t.Helper()
+		req, rerr := http.NewRequest(http.MethodPost,
+			ts.URL+"/api/auth/passkey/login/begin", strings.NewReader("{}"))
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if proto != "" {
+			req.Header.Set("X-Forwarded-Proto", proto)
+		}
+		res, perr := anonymousClient(t).Do(req)
+		if perr != nil {
+			t.Fatalf("login/begin: %v", perr)
+		}
+		defer res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(res.Body)
+			t.Fatalf("login/begin: %s: %s", res.Status, b)
+		}
+		for _, c := range res.Cookies() {
+			if c.Name == challengeCookie {
+				return c
+			}
+		}
+		t.Fatal("no challenge cookie was set")
+		return nil
+	}
+
+	srv.Auth.TrustedProxies = nets
+	if c := begin(t, "https"); !c.Secure {
+		t.Error("a proxy said the browser is on https and the challenge cookie went out without " +
+			"Secure; the next http request to that hostname carries the ceremony key in clear")
+	}
+
+	// Secure here would break the plaintext deployment outright: the browser
+	// never sends the cookie back, so login/finish can never find its challenge.
+	if c := begin(t, ""); c.Secure {
+		t.Error("a plain-http ceremony got a Secure cookie, which the browser will never send back")
+	}
+
+	// And the header is believed from a configured proxy or not at all.
+	srv.Auth.TrustedProxies = nil
+	if c := begin(t, "https"); c.Secure {
+		t.Error("X-Forwarded-Proto was believed from an address that is not a configured proxy")
 	}
 }

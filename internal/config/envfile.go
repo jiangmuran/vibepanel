@@ -149,9 +149,22 @@ func PatchEnvFile(path string, set map[string]string) error {
 	if path == "" {
 		return fmt.Errorf("config: no env file path")
 	}
-	for k := range set {
+	for k, v := range set {
 		if !editable(k) {
 			return fmt.Errorf("config: %s is not editable from here", k)
+		}
+		// A line break in a value is a second assignment, and the key
+		// allowlist above is the only thing keeping the two exclusions in
+		// EditableEnv's comment out of this file. A value of
+		// "panel.example.com\nVIBEPANEL_TMUX_SOCKET=default" wrote both lines,
+		// which is red line 1 reached through a text box: the panel comes back
+		// on somebody's own socket, sees their weeks-old sessions and cannot
+		// see its own. Refused here rather than in the handler because this is
+		// the function that owns the file format, and refused rather than
+		// escaped because `assignment` reads a line as one value up to its end
+		// and has no way to spell a newline back.
+		if strings.ContainsAny(v, "\n\r") {
+			return fmt.Errorf("config: %s cannot contain a line break", k)
 		}
 	}
 
