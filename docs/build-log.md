@@ -18585,3 +18585,40 @@ What it would take to keep it is its own session, created and killed by the
 check, so it cannot poison anything it borrowed. That is worth doing next time
 this surface changes; it was not worth destabilising the suite for a fix with a
 measurement behind it.
+
+## The panel throttled by the agents it exists to show
+
+Intermittent 502s from the proxy in front of the panel, while it was under
+load. The unit's own accounting said why:
+
+    Consumed 13min 41s CPU over 7min 39s wall,
+    20G memory peak, 3.1G memory swap peak
+
+20G was exactly `MemoryHigh`. And `MemoryHigh` is not a ceiling, it is a
+*sustained throttle*: the kernel holds the cgroup at that figure by reclaiming
+and swapping, for as long as the pressure lasts, and everything in the cgroup
+pays. Everything in the cgroup is — `KillMode=process` again — the tmux server,
+every agent, and every command anybody types. So an agent doing real work
+throttles the console that exists to show you the agent, and the console
+becomes unreachable exactly when there is something worth looking at.
+
+The load was mine: four subagents rendering board layouts in browsers, plus
+`go test -race`, all inside the panel's cgroup because this session runs in one
+of its tmux windows. The journal named them — `Found left-over process (go)`,
+`(vet)`, `(compile)`. But the load only revealed the setting; a person running
+a dozen agents reaches the same place.
+
+`MemoryHigh` is gone from both units. `MemoryMax` stays and is what the
+original reasoning was actually about: a hard ceiling so a runaway session
+cannot take the machine into swap, biting once, at the end, on the process that
+did it, with `OOMPolicy=continue` keeping that from taking the panel too.
+
+This is the fourth thing removed under the same rule, so the rule's guard grew
+a category. It used to list only what a shell can *do*; a shared throttle is
+something a shell can *feel*, which is the same problem seen from the other
+side. `MemoryHigh`, `CPUQuota`, `TasksMax` and the IO bandwidth caps are all in
+`TestNothingInEitherUnitConfinesWhatAShellDoes` now, each with what it costs.
+
+If the panel itself ever needs bounding, the place is the panel: `GOMEMLIMIT`
+bounds its heap and cannot touch what it hosts. Nothing measured says it needs
+one — it sits at about half a gigabyte.

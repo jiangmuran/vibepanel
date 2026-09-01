@@ -109,6 +109,17 @@ var inheritedConfinement = map[string]string{
 	"DynamicUser":         "a different user every start, and none of them owns the user's files",
 	"CapabilityBoundingSet": "the bounding set is inherited, so it caps what any setuid binary in " +
 		"a session can gain -- the same failure as NoNewPrivileges by a slower route",
+	"MemoryHigh": "a sustained throttle on the whole cgroup, which is every agent and the panel " +
+		"together: the kernel holds the group at that figure by reclaiming and swapping for as " +
+		"long as it takes, so an agent doing real work throttles the console that is meant to " +
+		"show it. Measured at 20G peak and 3.1G swap peak, with the proxy in front returning " +
+		"intermittent 502s. MemoryMax is the ceiling and stays; a ceiling is not a throttle",
+	"CPUQuota": "the same shape on the other axis -- a cap the whole cgroup shares, so the panel " +
+		"waits behind whatever an agent is compiling",
+	"TasksMax": "shared by every session, so one agent spawning workers stops the next session " +
+		"from starting and the panel from forking git",
+	"IOReadBandwidthMax":  "shared, so one agent reading a repository starves the rest",
+	"IOWriteBandwidthMax": "shared, so one agent writing starves the rest",
 }
 
 func TestNothingInEitherUnitConfinesWhatAShellDoes(t *testing.T) {

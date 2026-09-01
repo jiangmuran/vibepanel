@@ -116,8 +116,34 @@ IOWeight=200
 # it and its -wal and -shm to 0600 and the data directory to 0700 on every
 # open, which also covers `vibepanel serve` run by hand.
 
+# Not MemoryHigh, and this is the fourth entry on the list above rather than a
+# separate decision.
+#
+# MemoryHigh is a *sustained throttle*: the kernel keeps the cgroup at that
+# figure by reclaiming and swapping, indefinitely, and everything in the cgroup
+# pays. Everything in the cgroup is the tmux server, every agent, and every
+# command anybody types -- so an agent doing real work throttles the panel that
+# is meant to show you the agent. Measured, from the unit's own accounting:
+#
+#   Consumed 13min 41s CPU over 7min 39s wall,
+#   20G memory peak, 3.1G memory swap peak
+#
+# 20G is exactly the figure that was set here. The panel stopped answering in
+# time and the proxy in front of it returned intermittent 502s, which is a
+# console that becomes unreachable precisely when there is something worth
+# looking at.
+#
+# MemoryMax stays, and it is what the original reasoning was actually about: a
+# hard ceiling so a runaway session cannot take the machine into swap and drag
+# everything else down with it. It bites once, at the end, on the process that
+# did it -- OOMPolicy=continue below is what keeps that from taking the panel
+# with it. A ceiling is not a throttle.
+#
+# If the *panel* itself ever needs a limit of its own, the place for it is the
+# panel: GOMEMLIMIT in this unit's environment bounds its heap and cannot touch
+# anything it hosts. Nothing measured says it needs one -- it sits at about
+# half a gigabyte -- so there is none.
 MemoryAccounting=yes
-MemoryHigh=20G
 MemoryMax=26G
 # Do not stop the unit because something inside it was OOM-killed. The panel
 # and the tmux server are usually not the victim -- an agent is -- and taking
