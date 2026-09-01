@@ -316,3 +316,43 @@ func TestTheInnermostProjectWinsADirectory(t *testing.T) {
 		}
 	}
 }
+
+// The sources list is an array before anything has been read, never null.
+//
+// Every other list in this response is initialised, so this was the one field
+// that could arrive as JSON null -- and the browser parses the body straight
+// into an interface that declares it non-optional, so nothing type-checks the
+// difference: `data.sources.filter(...)` runs *above* the "still reading"
+// early return in both consumers, and the TypeError it throws is caught by the
+// boundary around the whole app. The window is the seconds after a restart,
+// which is exactly when somebody is looking.
+func TestTheSourcesListIsNeverNull(t *testing.T) {
+	ts, srv := newTestServer(t)
+
+	// A pass that bails before it walks anything, which is the state the very
+	// first request after a restart sees. Reachable here without racing the
+	// background pass, because a completed-but-empty pass leaves Sources nil
+	// the same way an unstarted one does.
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if p := srv.Tokens.RunNow(cancelled); p.Err == "" {
+		t.Fatalf("the pass was supposed to fail before it walked anything: %+v", p)
+	}
+
+	res, err := ts.Client().Get(ts.URL + "/api/token-usage")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer res.Body.Close() //nolint:errcheck // test
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if string(fields["sources"]) == "null" {
+		t.Fatalf("sources came back as null; the browser calls .filter() on it: %s", body)
+	}
+}

@@ -524,23 +524,31 @@ func (s *Server) handlePutTimeZone(w http.ResponseWriter, r *http.Request) {
 
 	rebuilt := int64(0)
 	if before != name {
-		n, err := s.DB.ForgetEveryUsageFile(ctx)
+		// The scanner writes the labels, so it has to be told too. This is the
+		// pair that was already wrong before anybody changed a zone:
+		// Scanner.Loc existed and was never set, while the query side used the
+		// process clock, so the two could disagree with nothing to say so.
+		//
+		// Through the ingester rather than by hand: the zone and the cursor
+		// are one change, and setting either from this goroutine while a pass
+		// is walking races it and leaves the transcripts that pass happens to
+		// touch labelled in the old zone for good. Ingester.Rezone says why in
+		// full. It waits for a running pass, which is a request that takes as
+		// long as the pass does -- rare, deliberate, and honest.
+		var (
+			n   int64
+			err error
+		)
+		if loc, lerr := tz.Load(name); lerr == nil && s.Tokens != nil {
+			n, err = s.Tokens.Rezone(ctx, loc)
+		} else {
+			n, err = s.DB.ForgetEveryUsageFile(ctx)
+		}
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		rebuilt = n
-		if s.Tokens != nil {
-			// The scanner writes the labels, so it has to be told too. This is
-			// the pair that was already wrong before anybody changed a zone:
-			// Scanner.Loc existed and was never set, while the query side used
-			// the process clock, so the two could disagree with nothing to say
-			// so.
-			if loc, err := tz.Load(name); err == nil && s.Tokens.Scanner != nil {
-				s.Tokens.Scanner.Loc = loc
-			}
-			s.Tokens.Ensure(true)
-		}
 	}
 	if u, ok := currentUserFrom(r); ok {
 		s.audit(ctx, "timezone.changed", u.Username, s.clientIP(r), name)

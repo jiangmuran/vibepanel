@@ -501,6 +501,13 @@ type Source struct {
 	// Skipped is records the reader could not use. Non-zero means the totals
 	// below it are a lower bound.
 	Skipped int `json:"skipped"`
+	// Complete is whether the walk enumerated the whole root. False means the
+	// list of files it returned is not evidence about what is on disk, so
+	// nothing may be forgotten on the strength of it -- a root that is
+	// momentarily missing otherwise reads as every transcript having been
+	// deleted. Not sent to the browser: Found and Problem are what the panel
+	// renders, and this is for the ingest.
+	Complete bool `json:"-"`
 }
 
 // Ref is a transcript the walk found, with the two numbers that decide whether
@@ -535,6 +542,11 @@ type Scanner struct {
 	CodexRoot  string
 	// Loc decides which day a timestamp belongs to. Nil means the server's
 	// local zone, which is the right default: the machine is the user's.
+	//
+	// Set here at construction, and afterwards only through Ingester.Rezone.
+	// A pass reads this from a background goroutine for every record it
+	// buckets, so a bare write from a request goroutine is a data race and
+	// leaves half the transcripts labelled in the old zone besides.
 	Loc *time.Location
 }
 
@@ -598,10 +610,14 @@ func (s *Scanner) Walk(tool Tool) ([]Ref, Source, error) {
 	src.Found = true
 
 	var out []Ref
+	complete := true
 	err = filepath.WalkDir(resolved, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			// A directory the panel's user cannot read is a gap in the
-			// numbers, not a reason to abandon the rest of the tree.
+			// numbers, not a reason to abandon the rest of the tree — but it
+			// does mean this walk is not a list of what exists, and the caller
+			// must not delete the rows for the files it did not get to.
+			complete = false
 			if d != nil && d.IsDir() {
 				return fs.SkipDir
 			}
@@ -628,7 +644,9 @@ func (s *Scanner) Walk(tool Tool) ([]Ref, Source, error) {
 	})
 	if err != nil {
 		src.Problem = err.Error()
+		complete = false
 	}
+	src.Complete = complete
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out, src, nil
 }

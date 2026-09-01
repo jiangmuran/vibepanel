@@ -125,6 +125,138 @@ func TestAPassForgetsTranscriptsThatHaveGone(t *testing.T) {
 	}
 }
 
+// A root the pass could not look at is not a root whose transcripts are gone.
+//
+// The sweep that forgets deleted transcripts was driven by "everything the
+// last pass knew about that this pass did not see", and a walk that could not
+// enumerate its root returns an empty list — so one moment of a missing
+// directory (a remount, an agent updating itself, a chmod on a subdirectory)
+// read as every transcript having been deleted and took every rolled-up day
+// with it, cascade and all. The panel then reports zero, which is the one
+// answer this package exists to refuse, and the whole corpus is re-read from
+// cold when the directory comes back.
+func TestARootThatCannotBeReadDoesNotForgetItsTranscripts(t *testing.T) {
+	root := t.TempDir()
+	writeTranscript(t, root, "a.jsonl",
+		claudeLine("2026-08-20T10:00:00.000Z", "s1", "/p", "m1", "r1", "opus", 1, 10, 0, 0)+"\n")
+	in, db := ingester(t, root)
+	ctx := context.Background()
+	in.RunNow(ctx)
+
+	// Moved away rather than emptied: the transcripts still exist, this pass
+	// just cannot see them.
+	away := filepath.Join(filepath.Dir(root), "moved-"+filepath.Base(root))
+	if err := os.Rename(root, away); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	in.RunNow(ctx)
+
+	days, err := db.UsageByDay(ctx, store.UsageFilter{})
+	if err != nil {
+		t.Fatalf("by day: %v", err)
+	}
+	if len(days) != 1 || days[0].Output != 10 {
+		t.Fatalf("got %+v, want the 10 output tokens already counted; a root that "+
+			"could not be read was treated as a root whose files were deleted", days)
+	}
+	stamps, err := db.UsageStamps(ctx)
+	if err != nil {
+		t.Fatalf("stamps: %v", err)
+	}
+	if len(stamps) != 1 {
+		t.Errorf("the cursor holds %d transcripts, want 1; the whole corpus will be "+
+			"re-read from cold when the directory comes back", len(stamps))
+	}
+
+	// And the sweep still works once the root is readable again.
+	if err := os.Rename(away, root); err != nil {
+		t.Fatalf("rename back: %v", err)
+	}
+	if err := os.Remove(filepath.Join(root, "a.jsonl")); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	in.RunNow(ctx)
+	if days, err = db.UsageByDay(ctx, store.UsageFilter{}); err != nil {
+		t.Fatalf("by day: %v", err)
+	}
+	if len(days) != 0 {
+		t.Errorf("got %+v, want nothing; a transcript deleted from a root that was "+
+			"read must still take its numbers with it", days)
+	}
+}
+
+// The zone is never changed underneath a pass that is walking.
+//
+// Run under -race, which is where this fails: the settings handler used to
+// assign Scanner.Loc from the request goroutine, and a pass reads it for every
+// record it buckets on a background one. The detector's own report of it named
+// Scanner.loc() at usage.go:550 against a bare write from the HTTP goroutine.
+//
+// The wipe in the same handler is the half that outlives the race: a pass that
+// started before it holds a snapshot of the cursor taken before it, so the
+// transcripts it goes on to read get rows in the old zone and cursors that
+// look current, and no later pass ever opens them again. Rezone waits for the
+// pass instead, which is why the labels below can be asserted at all.
+func TestTheZoneCannotChangeUnderARunningPass(t *testing.T) {
+	root := t.TempDir()
+	// 23:30 UTC is already the next day in Shanghai. Most of the day the two
+	// zones agree and a test using `now` would prove nothing.
+	const at = "2026-08-20T23:30:00.000Z"
+	// Enough transcripts that a pass is still walking when the zone changes;
+	// the whole failure is an overlap.
+	const files = 300
+	for i := 0; i < files; i++ {
+		writeTranscript(t, root, "s"+strconv.Itoa(i)+".jsonl",
+			claudeLine(at, "s"+strconv.Itoa(i), "/p", "m1", "r"+strconv.Itoa(i), "opus", 1, 1, 0, 0)+"\n")
+	}
+	in, db := ingester(t, root)
+	ctx := context.Background()
+	shanghai, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatalf("load zone: %v", err)
+	}
+
+	for i := 0; i < 8; i++ {
+		in.Ensure(true)
+		zone := time.UTC
+		if i%2 == 1 {
+			zone = shanghai
+		}
+		if _, err := in.Rezone(ctx, zone); err != nil {
+			t.Fatalf("rezone: %v", err)
+		}
+	}
+	for deadline := time.Now().Add(30 * time.Second); ; {
+		if _, running := in.Status(); !running {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("a pass is still running half a minute later")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	in.RunNow(ctx)
+
+	// The last zone set was Shanghai, and every transcript has to be labelled
+	// in it: one still carrying the UTC day is one that was read while the
+	// zone was being changed and will never be read again.
+	days, err := db.UsageByDay(ctx, store.UsageFilter{})
+	if err != nil {
+		t.Fatalf("by day: %v", err)
+	}
+	total := int64(0)
+	for _, d := range days {
+		if d.Day != "2026-08-21" {
+			t.Errorf("%d requests are labelled %s, which is the zone that was left behind",
+				d.Requests, d.Day)
+		}
+		total += d.Requests
+	}
+	if total != files {
+		t.Errorf("counted %d requests, want %d", total, files)
+	}
+}
+
 // An agent that is not installed reports as unread, not as zero.
 func TestAPassReportsAToolItCouldNotFind(t *testing.T) {
 	root := t.TempDir()
