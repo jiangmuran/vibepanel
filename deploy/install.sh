@@ -26,11 +26,8 @@ SRC="$(cd "$(dirname "$0")" && pwd)"
 BIN_SRC="$SRC/../vibepanel"
 [ -f "$BIN_SRC" ] || BIN_SRC="$SRC/../../vibepanel"
 
-# Set again once the unit kind is known: a system service does not put its
-# binary in one account's home. See the note where that happens.
-BIN_DIR="$HOME/.local/bin"
-ENV_FILE="$HOME/.config/vibepanel.env"
-WHO="${USER:-$(id -un)}"
+# BIN_DIR, ENV_FILE and WHO are derived from HOME, and HOME is not settled
+# until the identity block further down. They are set there.
 # Whether --tune-claude was said: yes, never, or unset (ask, when there is
 # somebody to ask and a claude to ask about).
 TUNE_CLAUDE_FLAG=
@@ -93,6 +90,73 @@ LAUNCHCTL="${VIBEPANEL_LAUNCHCTL:-launchctl}"
 TMUX_BIN="${VIBEPANEL_TMUX_BIN:-tmux}"
 PKG_RUNNER="${VIBEPANEL_PKG_RUNNER:-}"
 SUDO="${VIBEPANEL_SUDO:-sudo}"
+
+# ── who this runs as ──────────────────────────────────────────────────────
+#
+# Two ways this came out wrong, and the second one emptied a running panel.
+#
+# Under `sudo`, $USER and $HOME are root's. The panel prints
+# `sudo vibepanel service upgrade` itself when it cannot replace a binary in
+# /usr/local/bin, so the documented way to upgrade was also the way to hand the
+# install to root: User=jmr was rewritten to User=root, and the panel came back
+# on an empty database under /root with a tmux socket of its own. Ten projects,
+# fourteen sessions and a passkey, every one of them still on disk and none of
+# them visible. $SUDO_USER is who asked for it.
+#
+# The line below that is the stronger half. An installed unit has already
+# answered this question, and an upgrade is not the place to ask it again --
+# the same reason, word for word, that this script refuses to change the unit
+# *kind* on a re-run. Identity needs the rule more than kind does, because
+# getting it wrong is indistinguishable from data loss to the person it
+# happens to.
+#
+# Moving the panel to another account is `uninstall` and then install, which
+# says what it is doing, rather than a re-run that silently means it.
+home_of() { # home_of <user>
+  # Overridable for the same reason every other probe here is: without it,
+  # scripts/install-check.sh running under sudo would resolve a real account
+  # and write the developer's actual home, which is the one thing that harness
+  # exists to never do.
+  if [ -n "${VIBEPANEL_HOME_OF:-}" ]; then echo "$VIBEPANEL_HOME_OF"; return 0; fi
+  # getent is not on macOS. `eval echo ~user` is, and is bash 3.2.
+  if command -v getent >/dev/null 2>&1; then
+    getent passwd "$1" 2>/dev/null | cut -d: -f6
+  else
+    eval "echo ~$1"
+  fi
+}
+
+# Read back from the unit rather than remembered anywhere: the file on disk is
+# the only record of this that survives the process that wrote it.
+unit_field() { # unit_field <unit file> User|HOME
+  [ -f "$1" ] || return 0
+  case "$2" in
+    User) sed -n 's/^User=\(.*\)$/\1/p' "$1" | tail -1 ;;
+    HOME) sed -n 's/^Environment=HOME=\(.*\)$/\1/p' "$1" | tail -1 ;;
+  esac
+}
+
+IDENTITY_FROM=environment
+WHO="${USER:-$(id -un)}"
+if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
+  _h="$(home_of "$SUDO_USER" || true)"
+  # Only when the account resolves. An empty HOME here would put the data
+  # directory at the filesystem root and is worse than being wrong about root.
+  if [ -n "$_h" ]; then
+    WHO="$SUDO_USER"; HOME="$_h"; IDENTITY_FROM=sudo
+  fi
+fi
+_u="$(unit_field "$DESTDIR/etc/systemd/system/vibepanel.service" User || true)"
+_h="$(unit_field "$DESTDIR/etc/systemd/system/vibepanel.service" HOME || true)"
+if [ -n "$_u" ] && [ -n "$_h" ]; then
+  WHO="$_u"; HOME="$_h"; IDENTITY_FROM=unit
+fi
+export HOME
+
+# Set again once the unit kind is known: a system service does not put its
+# binary in one account's home. See the note where that happens.
+BIN_DIR="$HOME/.local/bin"
+ENV_FILE="$HOME/.config/vibepanel.env"
 
 # ── which language does this installer speak? ─────────────────────────────
 #
@@ -633,6 +697,12 @@ configured in it, and there is no copy anywhere.'
            with HOME=%2$s substituted in'
       MS_ZH='  安装     %1$s   (launchd LaunchAgent)
            其中 HOME=%2$s 会被替换进去' ;;
+    plan.identity.unit)
+      MS_EN='  keep     User=%1$s and HOME=%2$s   (what the installed unit already says)'
+      MS_ZH='  沿用     User=%1$s、HOME=%2$s   (已安装的 unit 里就是这么写的)' ;;
+    plan.identity.sudo)
+      MS_EN='  install  for %1$s, not root   (HOME=%2$s; sudo says who asked)'
+      MS_ZH='  安装给   %1$s，不是 root   (HOME=%2$s；sudo 里记着是谁发起的)' ;;
     plan.unit.none)
       MS_EN='  install  no service: %1$s'
       MS_ZH='  安装     不装服务：%1$s' ;;
@@ -1836,6 +1906,13 @@ case "$KIND" in
   system) m plan.unit.system "$SYSTEM_UNIT" "$WHO" "$HOME" ;;
   agent)  m plan.unit.agent "$PLIST" "$HOME" ;;
   none)   m plan.unit.none "$SERVICE_WHY" ;;
+esac
+# Said on the plan, which is the last screen before anything is written. The
+# whole point of the identity block is that this is not re-decided silently, so
+# it has to be visible where every other decision is.
+case "$IDENTITY_FROM" in
+  unit) m plan.identity.unit "$WHO" "$HOME" ;;
+  sudo) m plan.identity.sudo "$WHO" "$HOME" ;;
 esac
 if [ -e "$ENV_FILE" ]; then
   m plan.env.keep "$ENV_FILE"

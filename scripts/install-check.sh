@@ -211,6 +211,12 @@ newhome() {
   # assertion about the no-root path pass for a run that had root all along.
   ROOT_OVERRIDE="$ROOTCMD"
   SUDO_OVERRIDE=
+  # Who the installer thinks is running it. Empty is "this account in its own
+  # sandbox home", which is what every block but the sudo one wants.
+  AS_HOME_OVERRIDE=
+  AS_USER_OVERRIDE=
+  SUDO_USER_OVERRIDE=
+  HOMEOF_OVERRIDE=
   rm -f "$WORK/sudo-refuses" "$WORK/sudo.log"
   # `--lang en` on every run unless a block clears it.
   #
@@ -259,7 +265,10 @@ run() {
   # what LC_ALL / LC_MESSAGES / LANG do are all unattended -- adding --lang to
   # those would be the harness overruling the thing under test.
   case " $* " in *" --interactive "*) lang="$LANGFLAG" ;; esac
-  ( cd "$REL" && HOME="$HOME_DIR" \
+  ( cd "$REL" && HOME="${AS_HOME_OVERRIDE:-$HOME_DIR}" \
+      USER="${AS_USER_OVERRIDE:-${USER:-$(id -un)}}" \
+      SUDO_USER="$SUDO_USER_OVERRIDE" \
+      VIBEPANEL_HOME_OF="$HOMEOF_OVERRIDE" \
       LC_ALL="$LC_OVERRIDE" LC_MESSAGES="$LCM_OVERRIDE" LANG="$LANG_OVERRIDE" \
       VIBEPANEL_DESTDIR="$HOME_DIR/root" \
       VIBEPANEL_SYSTEMCTL="$SCTL" \
@@ -566,6 +575,67 @@ else
   fail "no system unit was written"
 fi
 [ -f "$(USRU)" ] && fail "it installed the user unit as well" || ok "no user unit alongside it"
+
+# ── who the panel runs as, on a re-run ────────────────────────────────────
+#
+# The order this happened in: the panel could not replace its own binary in
+# /usr/local/bin, so it printed `sudo vibepanel service upgrade`. That command
+# -- the panel's own instruction -- rewrote User=jmr to User=root, because the
+# installer read $USER and $HOME and under sudo those are root's. The panel
+# came back on an empty database under /root with a tmux socket of its own. Ten
+# projects, fourteen sessions and a passkey were still on disk and none of them
+# were visible, and nothing errored anywhere.
+#
+# Two rules, and either one alone would have prevented it, which is why both
+# are pinned: sudo says who asked, and an installed unit outranks both.
+echo "==> an upgrade keeps the account the installed unit already names"
+newhome
+run --yes --system --enable
+U="$(SYSU)"
+grep -qx "User=${USER:-$(id -un)}" "$U" \
+  || fail "setup: the first install did not write the User= this case rewrites"
+# Exactly what sudo presents: root's USER and HOME, SUDO_USER naming the
+# person, and -- the part that made it silent -- a home that is not theirs.
+AS_USER_OVERRIDE=root
+AS_HOME_OVERRIDE="$WORK/roothome$CASE"
+SUDO_USER_OVERRIDE=somebodyelse
+HOMEOF_OVERRIDE="$WORK/somebodyelse$CASE"
+mkdir -p "$AS_HOME_OVERRIDE" "$HOMEOF_OVERRIDE"
+run --yes
+[ $RC -eq 0 ] && ok "the re-run exits 0" || { fail "exited $RC"; sed 's/^/       /' "$LOG"; }
+grep -qx "User=${USER:-$(id -un)}" "$U" \
+  && ok "User= is still the account whose data this is" \
+  || fail "the re-run changed it to $(grep '^User=' "$U") -- this is the bug"
+grep -qx "Environment=HOME=$HOME_DIR" "$U" \
+  && ok "and HOME= still points at that account's home" \
+  || fail "the re-run changed HOME= to $(grep '^Environment=HOME=' "$U")"
+has "$LOG" "what the installed unit already says" \
+  && ok "and the plan says it kept them, rather than keeping them quietly" \
+  || fail "it kept the identity but never said so"
+
+echo "==> a first install under sudo belongs to whoever typed sudo"
+newhome
+AS_USER_OVERRIDE=root
+AS_HOME_OVERRIDE="$WORK/roothome$CASE"
+SUDO_USER_OVERRIDE=somebodyelse
+HOMEOF_OVERRIDE="$HOME_DIR"
+mkdir -p "$AS_HOME_OVERRIDE"
+run --yes --system --enable
+[ $RC -eq 0 ] && ok "exits 0" || { fail "exited $RC"; sed 's/^/       /' "$LOG"; }
+U="$(SYSU)"
+if [ -f "$U" ]; then
+  grep -qx "User=somebodyelse" "$U" \
+    && ok "User= is the account sudo came from, not root" \
+    || fail "User= is $(grep '^User=' "$U"); root would own the data"
+  grep -qx "Environment=HOME=$HOME_DIR" "$U" \
+    && ok "and HOME= is that account's home, not /root" \
+    || fail "HOME= is $(grep '^Environment=HOME=' "$U")"
+  has "$LOG" "sudo says who asked" \
+    && ok "and it says so on the plan" \
+    || fail "it installed for somebody the summary never named"
+else
+  fail "no system unit was written"
+fi
 has "$WORK/systemctl.log" "daemon-reload" && ok "it reloaded the system manager" \
   || fail "no daemon-reload: $(cat "$WORK/systemctl.log")"
 grep -q -- "^enable --now vibepanel$" "$WORK/systemctl.log" \
