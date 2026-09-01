@@ -546,3 +546,45 @@ func TestASessionKnowsItIsRunningAnAgent(t *testing.T) {
 		}
 	}
 }
+
+func TestABellAfterAManualOverrideIsHeard(t *testing.T) {
+	// The click is sticky, not permanent. Advanced needs a line feed that was
+	// not a repaint, so an agent sitting in its TUI never advances the screen,
+	// and nothing but a hook report could expire the override -- while an agent
+	// with hooks installed is exactly the one that does not need the bell. A
+	// session somebody marked done therefore rang for a human all afternoon
+	// while the panel went on answering done, which sorts to the bottom.
+	d := NewDetector()
+	d.Observe("s", Signals{Bytes: 10, Visible: true, Bell: true}, at(0))
+	d.SetManual("s", StateDone, at(time.Second))
+	for i := 1; i <= 300; i++ {
+		d.Observe("s", Signals{Bytes: 30, Visible: true}, at(time.Duration(i)*time.Second))
+	}
+	if st, src := d.Evaluate("s", Observation{}, at(305*time.Second)); st != StateDone || src != SourceManual {
+		t.Fatalf("state = %q from %q before the new bell, want %q from %q",
+			st, src, StateDone, SourceManual)
+	}
+
+	d.Observe("s", Signals{Bell: true}, at(600*time.Second))
+	st, src := d.Evaluate("s", Observation{}, at(601*time.Second))
+	if st != StateWaiting || src != SourceHeuristic {
+		t.Errorf("state = %q from %q after a bell rung ten minutes past the click, "+
+			"want %q from %q; the agent asked for a human and the panel withheld it",
+			st, src, StateWaiting, SourceHeuristic)
+	}
+}
+
+func TestATabCompletionBellDoesNotUndoAManualOverride(t *testing.T) {
+	// The other side of that rule, and why it is not simply "any bell". In a
+	// plain shell the bell is the line editor complaining about an ambiguous
+	// TAB, which is why it never raises waiting either. Forgetting what a
+	// person deliberately said because they pressed TAB would be worse than the
+	// stale state the rule above is fixing.
+	d := NewDetector()
+	d.SetManual("s", StateWaiting, at(0))
+	d.Observe("s", Signals{Bell: true}, at(time.Second))
+	st, src := d.Evaluate("s", Observation{ShellOnly: true}, at(2*time.Second))
+	if st != StateWaiting || src != SourceManual {
+		t.Errorf("state = %q from %q, want %q from %q", st, src, StateWaiting, SourceManual)
+	}
+}

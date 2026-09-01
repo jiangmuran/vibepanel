@@ -259,7 +259,24 @@ func (d *Detector) Evaluate(id string, obs Observation, now time.Time) (State, S
 	// redrawn where it stands never clears it. That is the trade the bell rule
 	// below already makes, on the same argument — a redraw is not the session
 	// doing something.
-	if t.manualState != "" && !t.lastAdvance.After(t.manualAt) {
+	//
+	// A bell rung since the click is the exception, and it has to be one.
+	//
+	// Report already treats a hook's "waiting for you" as fresh evidence and
+	// throws the override away; a bell is the same statement from an agent
+	// with no hooks installed, which is the entire population this heuristic
+	// exists for. Without this the click was permanent rather than sticky:
+	// Advanced needs a line feed that was not a repaint, so an agent sitting in
+	// its TUI never advances the screen, and a session somebody marked done
+	// could ring all afternoon while the panel went on answering done — which
+	// sorts to the bottom, so nobody sees it either.
+	//
+	// Not from a plain shell, for the same reason the bell rule below excuses
+	// it there: that bell is the line editor complaining about TAB, and
+	// forgetting what a person deliberately said because they pressed TAB is
+	// worse than the stale state this is fixing.
+	rangSinceManual := !obs.ShellOnly && t.lastBell.After(t.manualAt)
+	if t.manualState != "" && !t.lastAdvance.After(t.manualAt) && !rangSinceManual {
 		return t.manualState, SourceManual
 	}
 
