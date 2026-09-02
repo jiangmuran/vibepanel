@@ -98,19 +98,31 @@ export function FileTree({
    * A screenshot on the clipboard, which is the case this exists for.
    *
    * On window rather than on the panel, because a div cannot receive a paste
-   * unless it holds focus, and nobody clicks a file list before pressing
-   * ctrl-V. The guard is what stops it stealing the terminal's: a paste is
-   * aimed at whatever has focus, so this takes it only when that is something
-   * inside this panel or nothing at all. With the terminal focused the event
-   * still passes through here, and the terminal's own handler — which uploads
-   * next to the session instead — is the one that must win.
+   * unless it holds focus, and a listener that needs a click on the file list
+   * first would never fire. So the element cannot select the event and the
+   * guard below has to.
+   *
+   * It takes the paste only when the target is inside this panel, and the
+   * panel is marked `data-vp-paste-own` so that App's handler stands down for
+   * exactly the same events. Two handlers, one predicate, opposite answers.
+   *
+   * `|| target === document.body` used to be part of that condition, and it is
+   * the bug this shape exists to prevent. Nothing focused means `e.target` is
+   * the body, which is where focus sits after almost every click — and it is
+   * also the precise case App's document handler was added for. So a paste
+   * with nothing focused was claimed by both and uploaded twice, once beside
+   * the session and once into the browsed directory. Reported as one paste
+   * producing two images.
+   *
+   * A paste aimed at nothing belongs to the session, not to whichever panel
+   * happens to be open: the session is what the person was working in.
    */
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       const root = rootRef.current
       const target = e.target as Node | null
       if (!root || !target) return
-      if (!root.contains(target) && target !== document.body) return
+      if (!root.contains(target)) return
       const files = filesFrom(e.clipboardData)
       if (files.length === 0) return
       // Only now: preventing the default for a text paste would break the
@@ -132,6 +144,7 @@ export function FileTree({
   return (
     <div
       ref={rootRef}
+      data-vp-paste-own=""
       data-testid="file-tree"
       // Focusable so a keyboard can reach the panel and paste into it, and
       // min-h-full so the drop target is the whole column rather than only the

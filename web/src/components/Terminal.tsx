@@ -13,7 +13,6 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import type { PanelSocket } from '../protocol/socket'
 import { terminalTheme } from './theme'
 import { t, useLang } from '../i18n'
-import { filesFrom } from './upload'
 
 /**
  * The smallest a passive viewer is allowed to shrink the text to.
@@ -67,7 +66,6 @@ interface Props {
    * this is the same journey for people who took a screenshot rather than saved
    * one, which on every desktop is the faster half.
    */
-  onPasteFiles?: (files: File[]) => void
   className?: string
   /**
    * Stops xterm capturing keystrokes.
@@ -112,7 +110,6 @@ export function TerminalView({
   fullscreen = false,
   onSelectionChange,
   onClipboard,
-  onPasteFiles,
 }: Props) {
   useLang()
   const hostRef = useRef<HTMLDivElement | null>(null)
@@ -130,11 +127,9 @@ export function TerminalView({
   // deps: a new callback identity must not rebuild the terminal.
   const onSelectionRef = useRef(onSelectionChange)
   const onClipboardRef = useRef(onClipboard)
-  const onPasteFilesRef = useRef(onPasteFiles)
   useEffect(() => {
     onSelectionRef.current = onSelectionChange
     onClipboardRef.current = onClipboard
-    onPasteFilesRef.current = onPasteFiles
   })
 
   // Terminal lifetime is tied to the session, never to the theme or to
@@ -348,22 +343,6 @@ export function TerminalView({
     }
     host.addEventListener('pointerup', copyOnSelect)
 
-    // A screenshot pasted into the terminal.
-    //
-    // Capture phase, because xterm's own handler is on the hidden textarea and
-    // would otherwise get there first. Only files are taken: text paste is
-    // xterm's job and it does it correctly, including asking the pane whether
-    // it wants bracketing.
-    const onPaste = (e: ClipboardEvent) => {
-      const files = filesFrom(e.clipboardData)
-      if (files.length === 0) return
-      // Only now: preventing the default for a text paste would break the
-      // ordinary case in order to serve the rare one.
-      e.preventDefault()
-      onPasteFilesRef.current?.(files)
-    }
-    host.addEventListener('paste', onPaste, true)
-
     // The send callback, and it cannot go through xterm.
     //
     // On a phone the terminal is `disableStdin`, so `term.input()` emits
@@ -379,7 +358,6 @@ export function TerminalView({
       liveTerminals.delete(sessionId)
       detachTouch?.()
       host.removeEventListener('pointerup', copyOnSelect)
-      host.removeEventListener('paste', onPaste, true)
       selSub.dispose()
       dataSub.dispose()
       binarySub.dispose()

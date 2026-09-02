@@ -20,7 +20,7 @@ import { chromium } from 'playwright'
 import { rows as screenRows } from './lib/screen.mjs'
 import { spawn, execSync } from 'node:child_process'
 import { createServer } from 'node:net'
-import { mkdtempSync, rmSync, mkdirSync, readFileSync, writeFileSync, existsSync, symlinkSync } from 'node:fs'
+import { mkdtempSync, rmSync, mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sweepStaleSockets } from './lib/stale.mjs'
@@ -3465,7 +3465,14 @@ try {
     // or the clipboard was empty. Dropping a file already worked; this is the
     // same journey for people who took a screenshot rather than saved one,
     // which on every desktop is the faster half.
-    rmSync(join(projRoot, 'pasted.png'), { force: true })
+    // Every name the upload could have chosen, not just the base one.
+    // `createUnique` appends -1, -2, so a run that uploaded twice left a
+    // pasted-1.png behind that the next run counted -- and the count is the
+    // assertion now. A check whose own leftovers fail it is worse than no
+    // check: it fails on a clean tree and passes nowhere.
+    for (const name of readdirSync(projRoot)) {
+      if (/^pasted(-\d+)?\.png$/.test(name)) rmSync(join(projRoot, name), { force: true })
+    }
 
     // And the default, which is the reason any of this is a setting: a file
     // handed to the terminal does not land in the repository. 「粘贴图片不要直
@@ -3532,7 +3539,22 @@ try {
       await sleep(400)
     }
     const pastedLanded = await (await authed(`/api/projects/${proj.id}/files?path=`)).json()
-    if (!(pastedLanded.entries ?? []).some((e) => e.name === 'pasted.png')) {
+    // Every file the one paste produced, not merely whether the name is
+    // present. `createUnique` appends -1, -2, so a screenshot uploaded twice
+    // lands as pasted.png *and* pasted-1.png, and `.some()` is satisfied by
+    // either -- which is exactly why this check passed for as long as the bug
+    // existed. Three handlers listened for one paste and two of them answered
+    // it: App's on document and Terminal's on the host with the terminal
+    // focused, App's and FileTree's with nothing focused. Reported as one
+    // paste producing two images.
+    const pastedFiles = (pastedLanded.entries ?? [])
+      .map((e) => e.name)
+      .filter((n) => /^pasted(-\d+)?\.png$/.test(n))
+    if (pastedFiles.length > 1) {
+      note('FAIL', 'files',
+        `one paste produced ${pastedFiles.length} files: ${JSON.stringify(pastedFiles.sort())} -- ` +
+        'more than one handler answered the same paste')
+    } else if (!(pastedLanded.entries ?? []).some((e) => e.name === 'pasted.png')) {
       const cfgNow = await (await authed('/api/settings')).json().catch(() => ({}))
       note('FAIL', 'files',
         'an image pasted into the terminal did not reach the project directory ' +
@@ -3542,7 +3564,7 @@ try {
         'a pasted image was uploaded and its path never reached the prompt, so the one thing ' +
         `the feature is for -- handing the agent a screenshot -- did not happen: ${JSON.stringify(pastedPath.slice(-160))}`)
     } else {
-      note('PASS', 'files', 'a pasted screenshot is uploaded and its path put at the prompt')
+      note('PASS', 'files', 'a pasted screenshot is uploaded once and its path put at the prompt')
     }
     rmSync(join(projRoot, 'pasted.png'), { force: true })
 

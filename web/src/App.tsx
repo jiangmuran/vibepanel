@@ -686,8 +686,17 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   //
   // On `document`, in the capture phase, and only for pastes that carry files:
   // a text paste is somebody's clipboard going into a text field and must be
-  // left entirely alone. The terminal's own listener stays, because when the
-  // terminal does have focus it should be the one to answer.
+  // left entirely alone.
+  //
+  // **This is the only file-paste listener in the panel, and that is the fix
+  // for the second bug rather than a tidy-up.** The terminal kept one of its
+  // own, on its host element, also in the capture phase -- and capture
+  // descends, so `document` ran first, uploaded, and then the event carried on
+  // down to the host and uploaded the same screenshot again. `preventDefault`
+  // does not stop propagation, and both paths ended in this same `uploadInto`.
+  // One paste, two files, every time the terminal happened to hold focus,
+  // which is most of the time. Two handlers for one gesture cannot be made
+  // safe by ordering them; there is one now.
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       // Both places, through one reader. A *pasted* screenshot on Chromium
@@ -1260,7 +1269,6 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               // The same road a dropped file takes: upload into the project,
               // then put the path on the command line. A screenshot is the
               // most common thing anyone pastes at an agent.
-              onPasteFiles={(files) => void uploadInto(files)}
               // Less on the right than the other three sides. That edge
               // already carries the scrollbar's reserved lane and, when the
               // side panel is open, a border a few pixels further out; 8px on

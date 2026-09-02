@@ -2,7 +2,9 @@
 /vibepanel
 /dist/
 /web/dist/
-/web/node_modules/
+# Any depth, not just web's. A vitest run started from the repository root
+# leaves a node_modules/.vite cache here, and `git add -A` committed it.
+node_modules/
 
 # tsc's incremental cache. Swept in by the bulk commit that added the
 # frontend, and rewritten by every `tsc -b` — so the tree was dirty after

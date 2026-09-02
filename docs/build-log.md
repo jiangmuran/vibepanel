@@ -18928,3 +18928,53 @@ fails if the lines are swapped back.
 The earlier entry above this one argued for handing the wheel to the
 application because a desktop does. That was right about the desktop and wrong
 about which of the two sources survives being read.
+
+## One paste, two images, and three handlers that were each correct
+
+Reported as 「粘贴一次会出来两张图片」. Three listeners answered the same
+gesture, and no two of them were the same mistake:
+
+    App.tsx        document, capture   uploads beside the session
+    Terminal.tsx   its host, capture   uploaded beside the session, identically
+    FileTree.tsx   window, bubble      uploads into the browsed directory
+
+With the terminal focused the first two both fired. Capture descends, so
+`document` ran first and the event carried on down to the host; `preventDefault`
+does not stop propagation, and both paths ended in the same `uploadInto`. With
+*nothing* focused — where focus sits after almost every click — the first and
+third both fired, because FileTree also claimed `e.target === document.body`,
+which is the exact case App's handler had been added for.
+
+Two independent doublings, one symptom, and each handler defensible on its own.
+That is what made it survive review: nothing is wrong at any single site.
+
+Terminal's was deleted, because it did what App's already did — one prop, one
+ref and one import went with it. The other two upload to genuinely different
+places and both are wanted, so they needed disjoint claims rather than an
+ordering. `data-vp-paste-own` is that, and it turned out to already exist: App
+had been checking for the attribute since the day it was written, and nothing
+in the panel had ever set it. FileTree sets it now and takes only pastes inside
+itself. A paste aimed at nothing belongs to the session, which is what the
+person was working in.
+
+`stopPropagation` in App would also have worked, and would have left the next
+person two handlers to reason about and a comment explaining which wins.
+
+### The check that watched it happen
+
+`render-check` already pasted a screenshot and asserted the path reached the
+prompt. It passed throughout, because it asked whether `pasted.png` was in the
+directory — and `createUnique` appends `-1`, so a paste uploaded twice satisfies
+`.some()` twice over. It counts now, and against the pre-fix tree it reports
+exactly what was reported by a person: `one paste produced 2 files:
+["pasted-1.png","pasted.png"]`.
+
+Its own cleanup had the same shape of bug and had to be fixed first: it removed
+`pasted.png` and left `pasted-1.png` behind, so the first run of the new
+assertion failed on ten leftovers from earlier runs rather than on anything in
+the tree. A check whose leftovers fail it is worse than no check.
+
+The remaining half — the body case, which needs the file panel open — is pinned
+by a source scan instead, in `web/src/one-paste-one-file.test.ts`: the set of
+paste registrations, the absence of the `document.body` claim, and both halves
+of the attribute. Putting any one of the four back turns it red.
