@@ -88,7 +88,28 @@ cat > "$SCTL" <<EOF
 #!/usr/bin/env bash
 echo "\$*" >> "$WORK/systemctl.log"
 case "\$*" in
-  *is-active*) [ -e "$WORK/unit-is-active" ] && exit 0 || exit 1 ;;
+  # Per kind, because the installer now asks whether the *other* kind starts
+  # anything before treating it as a conflict, and a single global marker
+  # cannot answer that: a user install would make the system unit look live.
+  *is-enabled*)
+    case "\$*" in
+      *--user*) [ -e "$WORK/enabled-user" ] && exit 0 || exit 1 ;;
+      *)        [ -e "$WORK/enabled-system" ] && exit 0 || exit 1 ;;
+    esac ;;
+  *is-active*)
+    # unit-is-active stays as a global override: several cases seed it by hand
+    # to mean "pretend something is already running", and they predate the
+    # per-kind markers by a long way.
+    [ -e "$WORK/unit-is-active" ] && exit 0
+    case "\$*" in
+      *--user*) [ -e "$WORK/active-user" ] && exit 0 || exit 1 ;;
+      *)        [ -e "$WORK/active-system" ] && exit 0 || exit 1 ;;
+    esac ;;
+  *disable*)
+    case "\$*" in
+      *--user*) rm -f "$WORK/enabled-user" "$WORK/active-user" ;;
+      *)        rm -f "$WORK/enabled-system" "$WORK/active-system" ;;
+    esac ;;
   # A start makes the unit active, the way a real one does. The installer now
   # checks that it actually came up -- `enable --now` returning 0 only means
   # systemd took the job, and a panel whose port is taken fails a moment later
@@ -97,7 +118,17 @@ case "\$*" in
   #
   # unit-refuses-to-start is how the failing side is driven.
   *enable\ --now*|*\ start*|*restart*)
-    [ -e "$WORK/unit-refuses-to-start" ] || : > "$WORK/unit-is-active" ;;
+    case "\$*" in
+      *--user*) : > "$WORK/enabled-user" ;;
+      *)        : > "$WORK/enabled-system" ;;
+    esac
+    if [ ! -e "$WORK/unit-refuses-to-start" ]; then
+      : > "$WORK/unit-is-active"
+      case "\$*" in
+        *--user*) : > "$WORK/active-user" ;;
+        *)        : > "$WORK/active-system" ;;
+      esac
+    fi ;;
 esac
 exit 0
 EOF
@@ -202,7 +233,9 @@ newhome() {
   : > "$WORK/launchctl.log"
   : > "$WORK/root.log"
   : > "$WORK/pkg.log"
-  rm -f "$WORK/unit-is-active" "$WORK/agent-is-loaded" \
+  rm -f "$WORK/enabled-user" "$WORK/enabled-system" \
+    "$WORK/active-user" "$WORK/active-system" \
+    "$WORK/unit-is-active" "$WORK/agent-is-loaded" \
         "$WORK/pkg-installs-tmux" "$WORK/pkg-tmux-version" "$WORK/no-token"
   rm -rf "$WORK/pkgbin"
   # Reset to "an ordinary Linux machine with root and a working tmux". Every
@@ -761,6 +794,43 @@ run --yes --user
 run --yes --user --migrate
 [ -f "$(USRU)" ] && [ ! -f "$(SYSU)" ] && ok "migrating back removes the system unit" \
   || fail "after migrating back: user=$([ -f "$(USRU)" ] && echo yes || echo no) system=$([ -f "$(SYSU)" ] && echo yes || echo no)"
+
+# ── an upgrade is not a switch ────────────────────────────────────────────
+#
+# Reported from a real machine: the system unit enabled and active, a stale
+# user unit file beside it, and `vibepanel service upgrade` -- the command the
+# panel prints when it cannot replace its own binary -- stopping with exit 3
+# and "you asked for the system one". Nobody had asked; the kind was derived
+# from the installed unit. The panel's only upgrade path was a dead end.
+echo "==> a bare upgrade is not blocked by the other kind's unit file"
+newhome
+run --yes --user                       # a user install, asked for by name
+run --yes --system --migrate           # the system one is now the live one
+[ -f "$(SYSU)" ] || fail "setup: no system unit to upgrade"
+cp "$(SYSU)" "$(USRU)"                 # a stale user unit, left behind
+run --yes                              # ...and a bare upgrade over the top
+[ $RC -eq 0 ] && ok "the upgrade proceeds" \
+  || { fail "exited $RC with the other kind's file present"; sed 's/^/       /' "$LOG"; }
+[ -f "$(SYSU)" ] && ok "it upgraded the kind that was installed" \
+  || fail "the upgrade changed the unit kind"
+# Named, not deleted. There is no way to tell a leftover from a unit installed
+# a second ago with --no-enable, and the cost of guessing is somebody's service.
+[ -f "$(USRU)" ] && ok "it removed nothing" \
+  || fail "a bare upgrade deleted a unit nobody asked it to touch"
+has "$LOG" "leaves it alone" && ok "it says the other one is there" \
+  || fail "it upgraded past a second unit without a word: $(tail -20 "$LOG" | tr '\n' ' ')"
+has "$LOG" "$(USRU)" && ok "and names the file to remove" \
+  || fail "the note does not say which file"
+
+echo "==> asking for the other kind still refuses"
+# The case the rule exists for, and the one that must stay loud: this is a
+# switch, not an upgrade.
+newhome
+run --yes --user
+run --yes --system
+[ $RC -eq 3 ] && ok "refuses when a kind is asked for" \
+  || fail "exited $RC, not 3 -- the two-panels-one-database check is gone"
+[ -f "$(USRU)" ] && ok "and changed nothing" || fail "it removed the user unit"
 
 echo "==> an upgrade of a system install stays a system install"
 # Nothing on the command line says which kind this is, and getting it wrong

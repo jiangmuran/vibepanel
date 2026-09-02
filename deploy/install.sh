@@ -589,6 +589,14 @@ database, which does not fail loudly -- it loses writes.'
       MS_ZH='这里已经装了 %1$s 服务，而你要的是 %2$s 的那个。两个同时在，
 就是两个面板共用一个 tmux socket 和一个数据库；它不会大声报错 ——
 它会丢写入。' ;;
+    conflict.leftover)
+      MS_EN='note: a %1$s unit is installed too, and this upgrade leaves it alone.
+      Two of them running share one database and lose writes, so remove
+      whichever you do not use:
+        %2$s'
+      MS_ZH='提示：还装着一个 %1$s unit，这次升级不动它。
+      两个同时跑会共用一个数据库、丢写入，所以把不用的那个删掉：
+        %2$s' ;;
     conflict.ask)
       MS_EN='  remove the %1$s service and install the %2$s one?'
       MS_ZH='  删掉 %1$s 服务，改装 %2$s 的那个？' ;;
@@ -1089,6 +1097,9 @@ INTERACTIVE=auto
 ENABLE=auto        # auto: ask, or restart a unit that is already running
 KIND=              # user | system | agent; empty means "decide below"
 MIGRATE=no
+# Did anybody ask for a kind, or was it read off what is already installed?
+# The conflict rule turns on this. See it for why.
+ASKED_KIND=no
 DO_TMUX=auto       # auto | no  -- --skip-tmux is the only way to say no
 ASKED_SYSTEM=no    # was --system typed? macOS has to answer that, not ignore it
 
@@ -1119,8 +1130,8 @@ while [ $# -gt 0 ]; do
     --interactive) INTERACTIVE=yes ;;
     --enable) ENABLE=yes ;;
     --no-enable) ENABLE=no ;;
-    --user) KIND=user ;;
-    --system) KIND=system; ASKED_SYSTEM=yes ;;
+    --user) KIND=user; ASKED_KIND=yes ;;
+    --system) KIND=system; ASKED_SYSTEM=yes; ASKED_KIND=yes ;;
     --migrate) MIGRATE=yes ;;
     --skip-tmux) DO_TMUX=no ;;
     # Off unless said, including under --yes. See the section it controls.
@@ -1261,6 +1272,9 @@ as_root() {
 #
 # Polled rather than slept once, because a clean start is instant and only a
 # failing one needs the seconds.
+sctl_user() { "$SYSTEMCTL" --user "$@"; }
+sctl_sys() { as_root "$SYSTEMCTL" "$@"; }
+
 FAILED_WHY=
 svc_settled() { # svc_settled <user|system>
   local i
@@ -1664,6 +1678,36 @@ CONFLICT=no
 if [ "$KIND" = system ] && [ "$HAVE_USER_UNIT" = yes ]; then CONFLICT=user; fi
 if [ "$KIND" = user ] && [ "$HAVE_SYSTEM_UNIT" = yes ]; then CONFLICT=system; fi
 
+# An upgrade is not a switch, and only a switch can conflict.
+#
+# The refusal below is for somebody moving from one kind to the other, where
+# stopping is right: two units mean two panels on one tmux socket and one
+# database, and that does not fail loudly, it loses writes.
+#
+# A bare re-run is not that. KIND was read off whatever is already installed,
+# two blocks up, precisely so an upgrade would not re-answer the question --
+# and then this refused it for the answer it had just read. Measured on a real
+# machine: the system unit enabled and active, a stale user unit file beside
+# it, and `vibepanel service upgrade` -- the command the panel itself prints
+# when it cannot replace its own binary -- stopping with exit 3 and "you asked
+# for the system one". Nobody had asked. The panel's only upgrade path was a
+# dead end and the way out was a flag nobody would guess.
+#
+# So it is a conflict only when a kind was asked for. On a bare re-run nothing
+# is removed: the other file is named, with the command that removes it.
+#
+#   Deleting it was tried first, gated on it being neither enabled nor active.
+#   install-check refuted that within the minute: an unattended `--yes` install
+#   does not enable anything, so a unit written seconds ago looks exactly like
+#   one abandoned a month ago. No file state tells those apart, and the cost of
+#   guessing wrong is somebody's service.
+if [ "$CONFLICT" != no ] && [ "$ASKED_KIND" != yes ] && [ "$MIGRATE" != yes ]; then
+  echo
+  if [ "$CONFLICT" = user ]; then m conflict.leftover user "$USER_UNIT"
+  else m conflict.leftover system "$SYSTEM_UNIT"; fi
+  CONFLICT=no
+fi
+
 if [ "$CONFLICT" != no ] && [ "$MIGRATE" != yes ]; then
   echo
   m conflict.head "$CONFLICT" "$KIND"
@@ -1781,8 +1825,6 @@ fi
 # asked, the default: an upgrade that leaves the old binary running is the
 # failure docs/runbook.md has an entry for, so a running unit is restarted
 # without being asked. A stopped one is not started behind your back.
-sctl_user() { "$SYSTEMCTL" --user "$@"; }
-sctl_sys() { as_root "$SYSTEMCTL" "$@"; }
 lctl() { "$LAUNCHCTL" "$@"; }
 GUI="gui/$(id -u)"
 

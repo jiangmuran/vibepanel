@@ -19078,3 +19078,67 @@ That still was not enough: the assertions indexed buckets by day, `map[day]
 Bucket`, so a day with two buckets kept one. The user message has no model, so
 it landed in a bucket of its own and was invisible to every assertion. Summing
 per day rather than indexing by it is what made the filter load-bearing.
+
+## The upgrade command the panel prints, which could not run
+
+The panel cannot replace a binary in `/usr/local/bin` — it runs as an
+unprivileged account and a web console that can escalate is a different program
+with a different threat model. So it says so, and prints the one command that
+can: `sudo vibepanel service upgrade`. That part works as designed; the button
+is disabled rather than offered, and `byHand` carries the sentence.
+
+The command exited 3.
+
+    found an existing user service:   ~/.config/systemd/user/vibepanel.service
+    found an existing system service: /etc/systemd/system/vibepanel.service
+
+    there is already a user service installed, and you asked for the
+    system one. [...] nothing was changed.
+
+Nobody had asked for anything. `vibepanel service upgrade` runs `install.sh
+--yes` with no kind, and the kind is derived from whatever is installed two
+blocks earlier — deliberately, so that an upgrade does not re-answer a question
+the install already answered. The conflict check then refused it *for the answer
+it had just read*, and reported that as the person's own request.
+
+So the panel's only upgrade path was a dead end, and the way out was a flag
+nobody would guess.
+
+The rule is now that a conflict needs somebody to have asked: `--system` or
+`--user` sets `ASKED_KIND`, and only then does the other kind's unit stop
+anything. A bare re-run upgrades what is installed, names the other file and
+the command that removes it, and touches nothing.
+
+### The fix that was wrong first, and the check that said so in a minute
+
+The first version deleted the other unit when it was neither enabled nor
+active, on the reasoning that a unit which starts nothing is a leftover rather
+than a second panel. `make install-check` refuted it immediately: an unattended
+`--yes` install does not enable anything, so every one of its freshly written
+units looked exactly like an abandoned one, and nine cases went red as the
+installer deleted units it had just created.
+
+There is no file state that distinguishes a leftover from a unit installed a
+second ago. The cost of guessing is somebody's service, so the rule does not
+guess — it reports.
+
+A second thing was wrong in the same version and would not have shown up here
+at all: `unit_live` treated "cannot reach the manager" as "nothing is running".
+With no user bus — which is a normal state on a machine nobody has logged into —
+every user unit would have read as inert and been removed. Anything the caller
+acts on by deleting a file has to come back false for every way of not knowing.
+
+### Where the stale unit came from
+
+It was written by `make release-check` at 01:26 on the day it was found, into
+the developer's real home, by the harness that exists to never do that.
+
+The identity read-back added the day before makes the installer read `User=` and
+`HOME=` out of an installed unit, so that an upgrade cannot move the panel to
+another account. That read is `$DESTDIR/etc/systemd/system/vibepanel.service`,
+and this sub-check set `HOME` but not `VIBEPANEL_DESTDIR` — so it read the real
+`/etc`, found `HOME=/home/jmr`, and installed there instead of into `$WORK`.
+
+Setting `HOME` is not isolation once anything outside `HOME` is consulted. Both
+of that check's install runs now set `VIBEPANEL_DESTDIR` as the rest of the file
+already did.
