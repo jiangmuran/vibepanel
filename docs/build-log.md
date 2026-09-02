@@ -19195,3 +19195,47 @@ sidebar, which is not a failure anybody would report as a migration bug.
 
 `stripFor` is a function for the same reason `scrollAction` is one: a predicate
 inlined in a `useMemo` can be changed back without a single test noticing.
+
+## A screen that only ever moved forward by line feed
+
+「tab状态显示还是有点bug」, stale and wrong at the same time. One cause wearing
+two faces.
+
+`advanced()` decides whether a chunk moved the screen forward or merely redrew
+it where it stood, and it looked for a line feed that was not preceded by an
+erase-to-end-of-line. Measured against a live Claude session doing real work on
+this machine, captured with `tmux pipe-pane`:
+
+    12s of output:  8,979 bytes,  0 line feeds
+    14s of output: 18,547 bytes,  0 line feeds
+
+Zero, both times. A full-screen application owns the alternate screen and gets
+to the next row by moving the cursor there:
+
+    chart, graph, plot,\r\x1b[33C\x1b[1Bor data visualization
+
+Carriage return, cursor forward, cursor *down*. `\n` never appears, so this
+function answered false for every chunk any agent has ever produced and
+`lastAdvance` sat at its zero value for the life of every session.
+
+Three rules in the detector read it, and all three are the same question — has
+this session done something since? A manual state releasing, a hook state
+expiring, a bell being cleared. None could fire for an agent pane. A state set
+by hand was permanent. A hook that said "waiting for you" stood until another
+hook replaced it. The heuristic underneath, which is the part that watches what
+is actually happening, could never get a turn.
+
+CSI n B and CSI n E count now, as do the two-byte IND and NEL. The repaint
+exclusion is unchanged and applies to all of them: a line wiped and stepped
+over is a redraw, which is what stops an animation from clearing a bell.
+
+### What the measurement corrected
+
+The first read of this compared a ten-minute-old database snapshot against
+freshly captured bytes and concluded three sessions had inverted states. They
+had not; the poller had simply moved on between the two reads, and by the time
+they were read together all three were right. Comparing a stale snapshot with a
+live measurement is not a measurement.
+
+What survived that correction is the byte count, which is the whole finding: no
+line feeds in eighteen kilobytes of an agent working.

@@ -218,25 +218,79 @@ type Signals struct {
 // printing "reading file 12\r\n" -- is the screen actually moving. Measured on
 // the same tmux 3.4: eighteen chunks of spinner produce no advance, and
 // eighteen chunks of real output produce seventeen.
+// A line feed is not the only way a screen moves forward.
+//
+// Measured, on this panel, against a live Claude session doing real work:
+// 8,979 bytes in twelve seconds and 18,547 in fourteen, with **zero** line
+// feeds in either. A full-screen application owns the alternate screen and
+// gets to the next row by moving the cursor there, so the shape is
+//
+//	\r ESC[33C ESC[1B
+//
+// -- carriage return, cursor forward, cursor *down*. `\n` never appears, so
+// this function answered false for every chunk any agent ever produced, and
+// `lastAdvance` stayed at its zero value for the life of the session.
+//
+// Three rules in the detector read it, and all three of them are "has this
+// session done something since": a manual state released, a hook state
+// expiring, a bell being cleared. None of them could ever fire for a Claude
+// pane. A state somebody set by hand was permanent; a hook that said "waiting
+// for you" stood until another hook replaced it. Reported as 「tab状态显示还是
+// 有点bug」, stale and wrong at the same time, which is one cause wearing two
+// faces.
+//
+// So CSI n B (cursor down) and CSI n E (next line) count, as do the two-byte
+// IND and NEL. The repaint exclusion is unchanged and now applies to all of
+// them: an erase-to-end-of-line immediately before the move means the line was
+// wiped and left, which is a redraw rather than progress -- that is what keeps
+// an animation from clearing a bell, and it is the reason this is a function
+// with a table of cases rather than a condition inline in the pump.
 func advanced(chunk []byte) bool {
-	for i, b := range chunk {
-		if b != '\n' {
+	for i := 0; i < len(chunk); i++ {
+		var before int // index just past the end of whatever precedes the move
+		switch {
+		case chunk[i] == '\n':
+			before = i
+			if before > 0 && chunk[before-1] == '\r' {
+				before--
+			}
+		case chunk[i] == 0x1b && i+1 < len(chunk) && (chunk[i+1] == 'D' || chunk[i+1] == 'E'):
+			// IND and NEL: the two-byte spellings of a line feed.
+			before = i
+		case chunk[i] == 0x1b && i+1 < len(chunk) && chunk[i+1] == '[':
+			// CSI n B (cursor down) and CSI n E (cursor next line). See below.
+			j := i + 2
+			for j < len(chunk) && chunk[j] >= '0' && chunk[j] <= '9' {
+				j++
+			}
+			if j >= len(chunk) || (chunk[j] != 'B' && chunk[j] != 'E') {
+				continue
+			}
+			before = i
+			if before > 0 && chunk[before-1] == '\r' {
+				before--
+			}
+			i = j
+		default:
 			continue
 		}
-		j := i
-		if j > 0 && chunk[j-1] == '\r' {
-			j--
-		}
-		// ESC [ K, and the ESC [ 0 K spelling of the same thing.
-		if j >= 3 && chunk[j-1] == 'K' && chunk[j-2] == '[' && chunk[j-3] == 0x1b {
-			continue
-		}
-		if j >= 4 && chunk[j-1] == 'K' && chunk[j-2] == '0' && chunk[j-3] == '[' && chunk[j-4] == 0x1b {
+		if erasedAt(chunk, before) {
 			continue
 		}
 		return true
 	}
 	return false
+}
+
+// erasedAt reports whether an erase-to-end-of-line ends at n.
+//
+// ESC [ K and the ESC [ 0 K spelling of the same thing. A line that was wiped
+// and then left is a repaint, not progress.
+func erasedAt(chunk []byte, n int) bool {
+	if n >= 3 && chunk[n-1] == 'K' && chunk[n-2] == '[' && chunk[n-3] == 0x1b {
+		return true
+	}
+	return n >= 4 && chunk[n-1] == 'K' && chunk[n-2] == '0' && chunk[n-3] == '[' && chunk[n-4] == 0x1b
 }
 
 // Manager owns every live attachment.
