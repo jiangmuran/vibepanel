@@ -215,7 +215,17 @@ if [ -x "$DIR/deploy/install.sh" ]; then
   # enable it. `none` is the documented way to say "root is not available
   # here", and it makes this check exercise exactly the branch it is asserting
   # about: the no-root default.
-  ( cd "$DIR" && HOME="$WORK/home" VIBEPANEL_ROOT_CMD=none \
+  #
+  # VIBEPANEL_DESTDIR, and it is not belt-and-braces. The installer reads the
+  # identity of an already-installed system unit back out of the file, because
+  # an upgrade must not re-answer a question the install already answered --
+  # and with no DESTDIR that read goes to the real
+  # /etc/systemd/system/vibepanel.service. On a machine where the developer
+  # runs the panel there is one, so the installer found a system service,
+  # refused to change kind, and exited 3 before writing anything: nine
+  # failures, none of them about the archive. HOME alone is not isolation once
+  # anything outside HOME is consulted.
+  ( cd "$DIR" && HOME="$WORK/home" VIBEPANEL_DESTDIR="$WORK/destdir" VIBEPANEL_ROOT_CMD=none \
       ./deploy/install.sh --yes --no-enable >"$WORK/install.log" 2>&1 )
   RC=$?
   sed 's/^/       /' "$WORK/install.log"
@@ -245,7 +255,9 @@ if [ -x "$DIR/deploy/install.sh" ]; then
   # An edited env file must survive a reinstall — it holds the domain and any
   # ACME credentials.
   echo "VIBEPANEL_DOMAIN=edited.example" > "$WORK/home/.config/vibepanel.env"
-  ( cd "$DIR" && HOME="$WORK/home" VIBEPANEL_ROOT_CMD=none \
+  # The same DESTDIR as the first run: a reinstall that sees a different world
+  # from the install is not a reinstall.
+  ( cd "$DIR" && HOME="$WORK/home" VIBEPANEL_DESTDIR="$WORK/destdir" VIBEPANEL_ROOT_CMD=none \
       ./deploy/install.sh --yes --no-enable >/dev/null 2>&1 ) || true
   grep -q "edited.example" "$WORK/home/.config/vibepanel.env" \
     && ok "reinstalling keeps an edited env file" \

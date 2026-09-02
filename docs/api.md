@@ -180,9 +180,10 @@ Until then there is no answer yet, which is also not zero. A `GET` starts a
 pass in the background when the last one is more than 30 seconds old, and never
 blocks on it.
 
-Counts are normalised across the two agents: `input` is what was sent **fresh**,
-with cache reads in `cacheRead`. Codex's own `input_tokens` includes its cached
-part and is split here; Claude's does not and is not.
+Counts are normalised across the three agents: `input` is what was sent
+**fresh**, with cache reads in `cacheRead`. Codex's own `input_tokens` includes
+its cached part and is split here; Claude's and opencode's do not and are not.
+opencode reports reasoning tokens separately and they are folded into `output`.
 
 `days` is the range for `byDay`, `total`, `byTool`, `projects` and `sessions`,
 clamped to 1–3660 and defaulting to 30. `heatmap` is always the last 371 days

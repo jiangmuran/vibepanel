@@ -1573,7 +1573,6 @@ const DICT = {
   },
     'spend.agentSessionNote': { zh: '按 agent 自己的会话统计。', en: "Counted by the agent's own sessions." },
   'spend.sourceMissing': { zh: '{tool}：不知道（{why}）', en: '{tool}: unknown ({why})' },
-  'spend.sourceNotRead': { zh: '{tool} 装了，但不计入。', en: '{tool} is installed and not counted.' },
   'spend.sourceRead': { zh: '{tool}：读了 {files} 个文件', en: '{tool}: {files} files read' },
   'spend.lowerBound': {
     zh: '{n} 条记录读不出来，下面是下限。',

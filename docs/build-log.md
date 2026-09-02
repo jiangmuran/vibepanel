@@ -19010,23 +19010,71 @@ share and both the segment and the row say, on hover, what the total is made
 of. Naming the unit is the panel's job; arguing about which unit is right is
 not.
 
-### The third agent
+### The third agent, and a directory listing that was taken for a look
 
 `internal/session/detect.go` and the settings endpoint both say the panel starts
 claude, codex or opencode. The scanner had two roots. So opencode's spend was
 neither ingested nor reportable — and `toolShares` divides by the sum of the
 tools it knows, so the bar filled to 100% between the other two no matter what
-else had been run. The gap could not be seen in the one place it mattered.
+else had been run.
 
-No reader was written, because there is nothing here to verify one against: the
-opencode install on this machine keeps only `migration` and `session_diff`, with
-no token ledger under it. A parser written against a guess at somebody else's
-format is worse than a stated gap — it produces numbers, and nobody can tell
-they are wrong.
+The first attempt at this reported the gap instead of closing it, on the
+grounds that there was nothing to write a reader against: the opencode
+directory here held `migration` and `session_diff` and no token ledger. That
+was wrong, and wrong in the way the runbook keeps warning about. The ledger was
+in the same directory the whole time — `opencode.db`, 2.2 GB — and listing a
+directory is not reading it. 「你可以读一下 opencode 的源代码 开源的」.
 
-So opencode is listed and declared unread. `Walk` resolves the root first, so a
-machine without opencode gets "not found" like any other absent agent and is
-told nothing about a gap it does not have; a machine with one gets "not read",
-which the browser maps to a translated line of its own rather than dropping the
-server's English into the middle of a Chinese page. That distinction is the
-reason "not found" has always been two words.
+What it holds, taken from opencode's own aggregation in its binary rather than
+inferred from a sample:
+
+    total = input + output + reasoning + cache.read + cache.write
+
+All five disjoint. The one that had to be got right is `input`: opencode's
+excludes the cached part — measured, 109 fresh against 8,192 cache read on the
+same message — which is Anthropic's convention and the *opposite* of Codex's,
+where the cached tokens are inside `input_tokens` and the reader subtracts them.
+Applying Codex's rule here would have failed nowhere and reported about a
+quarter of the spend. `reasoning` is its own field and folds into output, which
+is both the honest place for it and what keeps the invariant the Codex reader is
+already pinned to: what the panel reports is what the agent itself wrote down.
+
+    opencode's binary contains two summations of these fields and one of them
+    omits reasoning. The one followed here agrees with the `total` stored on
+    every message, which is the figure a person can check.
+
+A query rather than a scan, and the (size, mtime) cursor is unchanged: the
+2.2 GB is almost entirely the `part` table, which is tool output. There are
+3,722 messages in it, and selecting the assistant rows takes 172 ms through the
+driver the panel already links. So the database is one path that gets re-read
+whole when it moves, which is what every other transcript already is.
+
+Read-only and `query_only`, and deliberately *not* `immutable`: that flag skips
+the WAL, which is where a running opencode's most recent work is — 174 MB of it
+here — and the reader would have reported a stale answer as a current one.
+
+Every column is named. This database also holds `account.access_token`,
+`account.refresh_token` and `credential.value`, and a `SELECT *` across the join
+would put somebody's OAuth tokens in the panel's memory for no reason. The test
+fixture defines only `message` and `session`, so a query that reaches for a
+third table fails against the schema rather than succeeding quietly.
+
+Verified against the real database before it was believed: 992,765,068 tokens,
+which is what opencode's own `SUM(tokens.total)` says, to the token. A full pass
+now reads 1,625 files across three agents in 6.4 s, and the share that had been
+82/18 is 80.3 / 17.3 / **2.4** — the missing part being exactly the agent that
+could not appear in it.
+
+### Two tests that were green for the wrong reason
+
+Both found by mutation and worth recording, because both are the shape that
+survives review.
+
+Deleting the `role = 'assistant'` filter changed nothing. The fixture's user
+message carried no tokens, so it was dropped by the zero-total branch instead —
+the filter was doing nothing the test could see. It carries 14,000 tokens now.
+
+That still was not enough: the assertions indexed buckets by day, `map[day]
+Bucket`, so a day with two buckets kept one. The user message has no model, so
+it landed in a bucket of its own and was invisible to every assertion. Summing
+per day rather than indexing by it is what made the filter load-bearing.

@@ -41,45 +41,17 @@ import (
 type Tool string
 
 const (
-	ToolClaude Tool = "claude"
-	ToolCodex  Tool = "codex"
-	// ToolOpencode is listed and deliberately not read. See noReader.
+	ToolClaude   Tool = "claude"
+	ToolCodex    Tool = "codex"
 	ToolOpencode Tool = "opencode"
 )
-
-// noReader is why a known agent contributes nothing, when the reason is the
-// panel and not the machine.
-//
-// The panel launches three agents -- internal/session/detect.go and the
-// settings endpoint both say claude, codex or opencode -- and reads the
-// transcripts of two. That gap used to be invisible in the one place it
-// matters: `toolShares` divides by the sum of the tools it knows, so the bar
-// filled to 100% between claude and codex whatever else had been run, and
-// every reading of it was of a whole that was not whole.
-//
-// Not a parser, because there is nothing here to verify one against: the
-// opencode install on the machine this was written on keeps only `migration`
-// and `session_diff`, with no token ledger anywhere under it. A reader written
-// against a guess at somebody else's format is a worse answer than a stated
-// gap -- it would produce numbers, and nobody could tell they were wrong.
-//
-// "not read" rather than a sentence: it is a code the browser maps to its own
-// translated line. A reason built here would arrive as English in the middle
-// of a Chinese page, which is what "not found" already does and is the reason
-// that one is two words.
-func noReader(tool Tool) string {
-	if tool == ToolOpencode {
-		return "not read"
-	}
-	return ""
-}
 
 // Tools is every source this package knows how to read, in display order.
 var Tools = []Tool{ToolClaude, ToolCodex, ToolOpencode}
 
 // Counts is one normalised reading, in tokens.
 //
-// The two agents count input differently and the difference is not cosmetic:
+// The agents count input differently and the difference is not cosmetic:
 // Claude reports `input_tokens` *excluding* what was served from cache, while
 // Codex reports `input_tokens` *including* it and gives the cached part
 // separately. Adding the two raw fields into one column makes Codex look like
@@ -89,6 +61,10 @@ var Tools = []Tool{ToolClaude, ToolCodex, ToolOpencode}
 //
 // So everything here is normalised to Claude's split — Input is what was
 // actually sent fresh — and the subtraction happens once, in readCodex.
+// opencode is on Claude's side of that split and needs no subtraction, which
+// is the one thing about it that could have been got wrong without anything
+// failing. It also counts reasoning separately, and readOpencode folds that
+// into Output: it is the model producing rather than the cost of asking.
 type Counts struct {
 	Input      int64 `json:"input"`
 	Output     int64 `json:"output"`
@@ -466,6 +442,11 @@ func eachLine(r io.Reader, skipped *int, fn func([]byte)) error {
 }
 
 // localDay turns an RFC 3339 timestamp into a YYYY-MM-DD in loc.
+// dayFormat is how a Day is written, in one place. Bucket.Day is compared
+// against the SQL rows and against the day strings the API takes, so a second
+// spelling of it is a whole tool's history landing in no range at all.
+const dayFormat = "2006-01-02"
+
 func localDay(ts string, loc *time.Location) (string, bool) {
 	if ts == "" {
 		return "", false
@@ -474,7 +455,7 @@ func localDay(ts string, loc *time.Location) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	return t.In(loc).Format("2006-01-02"), true
+	return t.In(loc).Format(dayFormat), true
 }
 
 func add(agg map[key]*Bucket, k key, cwd string, c Counts) {
@@ -569,8 +550,7 @@ type File struct {
 type Scanner struct {
 	ClaudeRoot string
 	CodexRoot  string
-	// OpencodeRoot is probed and never read: its only job is to decide whether
-	// the panel says "not counted" or stays quiet. See noReader.
+	// OpencodeRoot holds one database rather than a tree. See readOpencode.
 	OpencodeRoot string
 	// Loc decides which day a timestamp belongs to. Nil means the server's
 	// local zone, which is the right default: the machine is the user's.
@@ -587,8 +567,7 @@ func DefaultScanner(home string) *Scanner {
 	return &Scanner{
 		ClaudeRoot: filepath.Join(home, ".claude", "projects"),
 		CodexRoot:  filepath.Join(home, ".codex", "sessions"),
-		// Where opencode keeps its state, probed only to decide whether the
-		// panel mentions it at all. Nothing under here is opened.
+		// Where opencode keeps its state; the ledger is one file inside it.
 		OpencodeRoot: filepath.Join(home, ".local", "share", "opencode"),
 	}
 }
@@ -627,6 +606,24 @@ func (s *Scanner) Roots() map[Tool]string {
 // Nothing read here is ever sent to a browser. The counts leave, the file
 // contents do not, and that is the difference between a usage panel and a
 // remote reader for somebody's private conversations.
+// statOne turns a single expected file into the list a walk returns.
+//
+// A missing database is a Source that says so rather than an empty read: "this
+// agent has no ledger here" and "this agent spent nothing" are different
+// claims, and only one of them is ever true.
+func statOne(path string, src *Source) ([]Ref, Source, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		src.Found = false
+		src.Problem = "no " + filepath.Base(path)
+		return nil, *src, nil
+	}
+	src.Files = 1
+	src.Bytes = info.Size()
+	src.Complete = true
+	return []Ref{{Path: path, Size: info.Size(), ModifiedAt: info.ModTime().Unix()}}, *src, nil
+}
+
 func (s *Scanner) Walk(tool Tool) ([]Ref, Source, error) {
 	root := s.Roots()[tool]
 	src := Source{Tool: tool, Root: root}
@@ -646,13 +643,14 @@ func (s *Scanner) Walk(tool Tool) ([]Ref, Source, error) {
 		return nil, src, nil
 	}
 	src.Root = resolved
-	// Resolved first, so a machine without opencode says "not found" like any
-	// other absent agent rather than announcing a gap nobody has.
-	if why := noReader(tool); why != "" {
-		src.Problem = why
-		return nil, src, nil
-	}
 	src.Found = true
+
+	// opencode keeps one database rather than a tree of transcripts, so the
+	// walk is a stat. Everything downstream is unchanged: it is one path with
+	// a size and an mtime, and the cursor skips it when it has not moved.
+	if tool == ToolOpencode {
+		return statOne(filepath.Join(resolved, dbFile), &src)
+	}
 
 	var out []Ref
 	complete := true
@@ -711,6 +709,19 @@ func (s *Scanner) ReadFile(tool Tool, path string) File {
 	}
 	f.Size = info.Size()
 	f.ModifiedAt = info.ModTime().Unix()
+
+	// Before the open, because this one is a database and not a stream. Reading
+	// it through an *os.File would mean holding 2 GB open to hand a driver a
+	// path it is going to open itself.
+	if tool == ToolOpencode {
+		res, rerr := readOpencode(path, s.loc())
+		if rerr != nil {
+			f.Problem = rerr.Error()
+			return f
+		}
+		f.Buckets, f.Skipped = res.buckets, res.skipped
+		return f
+	}
 
 	fh, err := os.Open(path)
 	if err != nil {
