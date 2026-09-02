@@ -125,6 +125,15 @@ export function TokenUsage({
                     key={tool.tool}
                     data-testid="token-tool"
                     className="flex items-baseline justify-between gap-2 py-[1px] text-vp-xs"
+                    // The same composition the bar's segments carry. `requests
+                    // · total` beside it are two of the three readings that
+                    // disagree; this is where the third one is.
+                    title={t('spend.toolTitle', {
+                      tool: tool.tool,
+                      total: exact(totalOf(tool)),
+                      output: exact(tool.output),
+                      cache: exact(tool.cacheRead),
+                    })}
                   >
                     <span className="flex min-w-0 items-baseline gap-1">
                       {/* A tool that could not be read fully is marked, not
@@ -188,12 +197,23 @@ export function TokenUsage({
           panel cannot make. */}
       <p className="mt-2 text-vp-xs leading-relaxed text-ink-2">{t('spend.whose')}</p>
 
-      {missing.map((s) => (
-        <Warning
-          key={s.tool}
-          text={t('spend.sourceMissing', { tool: s.tool, why: s.problem || '?' })}
-        />
-      ))}
+      {/* Two reasons an agent contributes nothing, and they are not the same
+          thing to say. "not found" is the machine's answer -- the agent is not
+          installed -- and the reason is the server's own English word, fine
+          inside a parenthesis. "not read" is the panel's answer: the agent is
+          here, it has been used, and this panel has no reader for its ledger.
+          That one gets a sentence of its own in the reader's language, because
+          it is the panel admitting a gap rather than reporting one. */}
+      {missing.map((s) =>
+        s.problem === 'not read' ? (
+          <Warning key={s.tool} text={t('spend.sourceNotRead', { tool: safeText(s.tool) })} />
+        ) : (
+          <Warning
+            key={s.tool}
+            text={t('spend.sourceMissing', { tool: safeText(s.tool), why: s.problem || '?' })}
+          />
+        ),
+      )}
       {skipped > 0 && <Warning text={t('spend.lowerBound', { n: exact(skipped) })} />}
       {data.passError !== '' && <Warning text={t('spend.passError', { why: data.passError })} />}
 

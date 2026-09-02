@@ -18978,3 +18978,55 @@ The remaining half — the body case, which needs the file panel open — is pin
 by a source scan instead, in `web/src/one-paste-one-file.test.ts`: the set of
 paste registrations, the absence of the `document.body` claim, and both halves
 of the attribute. Putting any one of the four back turns it red.
+
+## Three readings of the same ratio, and an agent that was in none of them
+
+「检查统计的 Claude 和 codex 比例计算有没有问题」. The arithmetic was right, and
+verified rather than read:
+
+- Codex's differencing reproduces Codex's own `total_token_usage` on all 142
+  rollouts on this machine, per file, to the token. 54 of them hold more than
+  one `session_meta` and `prev` is never reset across one — measured, the
+  counter continues rather than restarting, so there were 0 decreases and 0
+  discrepancies. The reset branch is for something that has still never happened.
+- Claude's dedupe by `message.id + requestId` removes 47% of the lines it sees
+  (177,911 assistant records carrying 93,790 distinct keys). Across 1,482
+  transcripts there are **0** keys that appear in more than one file, so the
+  per-file `seen` map is sufficient and a global one would buy nothing.
+- A re-read replaces rather than accumulates: `DELETE FROM usage_daily WHERE
+  path = ?` and the reinsert are one transaction, so a dozen agents appending at
+  once cannot double-count.
+
+What is not right is what the share bar is read as. Cache reads are **99.0%** of
+claude's total here and **96.0%** of codex's, so 82/18 by billed tokens is very
+largely a comparison of how much context each agent re-read. The same two
+agents are 73/27 by output, 64/36 by requests, and 0.1/99.9 by fresh input —
+that last one because Anthropic reports only the uncached remainder (2.5 tokens
+per request across 95,455 of them) while Codex re-sends about 5,000.
+
+The bar keeps billed tokens: it is each vendor's own accounting rather than the
+panel's choice of what counts as work. But the composition now travels with the
+share and both the segment and the row say, on hover, what the total is made
+of. Naming the unit is the panel's job; arguing about which unit is right is
+not.
+
+### The third agent
+
+`internal/session/detect.go` and the settings endpoint both say the panel starts
+claude, codex or opencode. The scanner had two roots. So opencode's spend was
+neither ingested nor reportable — and `toolShares` divides by the sum of the
+tools it knows, so the bar filled to 100% between the other two no matter what
+else had been run. The gap could not be seen in the one place it mattered.
+
+No reader was written, because there is nothing here to verify one against: the
+opencode install on this machine keeps only `migration` and `session_diff`, with
+no token ledger under it. A parser written against a guess at somebody else's
+format is worse than a stated gap — it produces numbers, and nobody can tell
+they are wrong.
+
+So opencode is listed and declared unread. `Walk` resolves the root first, so a
+machine without opencode gets "not found" like any other absent agent and is
+told nothing about a gap it does not have; a machine with one gets "not read",
+which the browser maps to a translated line of its own rather than dropping the
+server's English into the middle of a Chinese page. That distinction is the
+reason "not found" has always been two words.

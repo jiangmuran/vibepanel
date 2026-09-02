@@ -398,3 +398,69 @@ func TestIngestPassCost(t *testing.T) {
 	t.Logf("one %.0f MB transcript changed: %d/%d files read in %v",
 		float64(biggest.Size)/(1<<20), one.Read, one.Seen, one.Duration.Round(time.Millisecond))
 }
+
+// TestOpencodeIsDeclaredAndNotRead pins the gap rather than the reader.
+//
+// The panel starts three agents and reads two. That was invisible where it
+// mattered: the share bar divides by the sum of the tools it knows, so it fills
+// to 100% between claude and codex no matter what else ran, and there is no
+// gap in the picture to notice. Listing opencode with a stated reason is the
+// whole fix -- if a reader is written later, this test is what says the reason
+// has to go with it.
+func TestOpencodeIsDeclaredAndNotRead(t *testing.T) {
+	var listed bool
+	for _, tool := range Tools {
+		if tool == ToolOpencode {
+			listed = true
+		}
+	}
+	if !listed {
+		t.Fatal("opencode is not in Tools, so the API cannot report it at all")
+	}
+
+	home := t.TempDir()
+	s := DefaultScanner(home)
+	root := s.Roots()[ToolOpencode]
+	if root == "" {
+		t.Fatal("no opencode root, so an installed opencode cannot be noticed")
+	}
+
+	// Absent: the ordinary answer, the same one any uninstalled agent gets. A
+	// machine with no opencode must not be told about a gap it does not have.
+	refs, src, err := s.Walk(ToolOpencode)
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if src.Found || src.Problem != "not found" || len(refs) != 0 {
+		t.Fatalf("absent opencode: found=%v problem=%q refs=%d, want false/not found/0",
+			src.Found, src.Problem, len(refs))
+	}
+
+	// Present: says it is not read, and still returns nothing to ingest.
+	if err := os.MkdirAll(filepath.Join(root, "storage"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "storage", "a.jsonl"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	refs, src, err = s.Walk(ToolOpencode)
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if src.Problem != "not read" {
+		t.Fatalf("installed opencode: problem=%q, want %q", src.Problem, "not read")
+	}
+	if src.Found {
+		t.Fatal("installed opencode reported as read; the browser would show it as a source")
+	}
+	if len(refs) != 0 {
+		t.Fatalf("opencode returned %d files to ingest; there is no reader for them", len(refs))
+	}
+
+	// And the two that are read are unaffected by any of it.
+	for _, tool := range []Tool{ToolClaude, ToolCodex} {
+		if noReader(tool) != "" {
+			t.Fatalf("%s reports as unread", tool)
+		}
+	}
+}

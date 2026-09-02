@@ -94,6 +94,9 @@ export interface ToolShare {
   total: number
   /** 0-1 of everything the tools spent between them. */
   share: number
+  /** What the total is made of. See the note on `share` below. */
+  output: number
+  cacheRead: number
 }
 
 /**
@@ -110,10 +113,21 @@ export interface ToolShare {
  * them is a lower bound — and a bar whose segments do not fill it, with
  * nothing explaining the gap, reads as a rendering fault rather than as
  * missing data.
+ *
+ * `output` and `cacheRead` come along because the share alone is read as
+ * something it is not. Measured on the machine this was written on, over
+ * 33.7B tokens for claude and 7.3B for codex: cache reads are 99.0% and 96.0%
+ * of those totals. So a bar reading 82/18 is very largely a comparison of how
+ * much context each agent re-read, and the same two agents are 73/27 by output
+ * and 64/36 by requests. Every one of those is a true statement about tokens
+ * and they are not the same statement, so the composition travels with the
+ * share and the tooltip says which is which. The bar keeps billed tokens: it
+ * is the one figure that is each vendor's own accounting rather than the
+ * panel's choice of what counts as work.
  */
 export function toolShares(data: TokenUsage): ToolShare[] {
   const rows = data.byTool
-    .map((t) => ({ tool: t.tool, total: totalOf(t) }))
+    .map((t) => ({ tool: t.tool, total: totalOf(t), output: t.output, cacheRead: t.cacheRead }))
     .filter((t) => t.total > 0)
     .sort((a, b) => b.total - a.total)
   const sum = rows.reduce((n, r) => n + r.total, 0)

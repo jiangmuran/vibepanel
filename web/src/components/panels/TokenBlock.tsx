@@ -13,6 +13,25 @@ import {
   toolShares,
   windowTotal,
 } from './spend'
+import type { ToolShare } from './spend'
+
+/**
+ * What one segment of the share bar is made of.
+ *
+ * On hover rather than on the bar, because the bar has room for a proportion
+ * and nothing else. What it buys is that the proportion can be checked: the
+ * total is 96-99% cache reads on the machine this was written on, so 82/18 by
+ * tokens is 73/27 by output, and somebody comparing two agents deserves to
+ * find that out without exporting anything.
+ */
+function toolTitle(x: ToolShare): string {
+  return t('spend.toolTitle', {
+    tool: x.tool,
+    total: exact(x.total),
+    output: exact(x.output),
+    cache: exact(x.cacheRead),
+  })
+}
 
 /**
  * What the agents are costing, in the height of about six lines.
@@ -228,7 +247,7 @@ const TOOL_TONES = [
 //
 // Nothing here depends on colour alone (red line 4): every segment is named in
 // the legend, and its width is the figure.
-function ToolBar({ tools }: { tools: { tool: string; total: number; share: number }[] }) {
+function ToolBar({ tools }: { tools: ToolShare[] }) {
   return (
     <div className="mt-2 flex items-center gap-2" data-testid="token-tools">
       {/* The bar and its legend on one line.
@@ -244,7 +263,7 @@ function ToolBar({ tools }: { tools: { tool: string; total: number; share: numbe
           <span
             key={x.tool}
             data-testid="token-tool-seg"
-            title={`${x.tool} · ${exact(x.total)}`}
+            title={toolTitle(x)}
             className="overflow-hidden"
             style={{
               width: `${x.share * 100}%`,

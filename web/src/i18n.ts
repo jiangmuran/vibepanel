@@ -1533,6 +1533,10 @@ const DICT = {
   'spend.sessions': { zh: '按会话', en: 'By session' },
   'spend.projects': { zh: '按项目', en: 'By project' },
   'spend.tools': { zh: '按工具', en: 'By tool' },
+  'spend.toolTitle': {
+    zh: '{tool}：合计 {total}，输出 {output}，缓存读取 {cache}',
+    en: '{tool}: {total} total, {output} output, {cache} cache read',
+  },
   'spend.heatmap': { zh: '近一年', en: 'The last 12 months' },
   'spend.less': { zh: '少', en: 'Less' },
   'spend.more': { zh: '多', en: 'More' },
@@ -1569,6 +1573,7 @@ const DICT = {
   },
     'spend.agentSessionNote': { zh: '按 agent 自己的会话统计。', en: "Counted by the agent's own sessions." },
   'spend.sourceMissing': { zh: '{tool}：不知道（{why}）', en: '{tool}: unknown ({why})' },
+  'spend.sourceNotRead': { zh: '{tool} 装了，但不计入。', en: '{tool} is installed and not counted.' },
   'spend.sourceRead': { zh: '{tool}：读了 {files} 个文件', en: '{tool}: {files} files read' },
   'spend.lowerBound': {
     zh: '{n} 条记录读不出来，下面是下限。',

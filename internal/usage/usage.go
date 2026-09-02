@@ -43,10 +43,39 @@ type Tool string
 const (
 	ToolClaude Tool = "claude"
 	ToolCodex  Tool = "codex"
+	// ToolOpencode is listed and deliberately not read. See noReader.
+	ToolOpencode Tool = "opencode"
 )
 
+// noReader is why a known agent contributes nothing, when the reason is the
+// panel and not the machine.
+//
+// The panel launches three agents -- internal/session/detect.go and the
+// settings endpoint both say claude, codex or opencode -- and reads the
+// transcripts of two. That gap used to be invisible in the one place it
+// matters: `toolShares` divides by the sum of the tools it knows, so the bar
+// filled to 100% between claude and codex whatever else had been run, and
+// every reading of it was of a whole that was not whole.
+//
+// Not a parser, because there is nothing here to verify one against: the
+// opencode install on the machine this was written on keeps only `migration`
+// and `session_diff`, with no token ledger anywhere under it. A reader written
+// against a guess at somebody else's format is a worse answer than a stated
+// gap -- it would produce numbers, and nobody could tell they were wrong.
+//
+// "not read" rather than a sentence: it is a code the browser maps to its own
+// translated line. A reason built here would arrive as English in the middle
+// of a Chinese page, which is what "not found" already does and is the reason
+// that one is two words.
+func noReader(tool Tool) string {
+	if tool == ToolOpencode {
+		return "not read"
+	}
+	return ""
+}
+
 // Tools is every source this package knows how to read, in display order.
-var Tools = []Tool{ToolClaude, ToolCodex}
+var Tools = []Tool{ToolClaude, ToolCodex, ToolOpencode}
 
 // Counts is one normalised reading, in tokens.
 //
@@ -540,6 +569,9 @@ type File struct {
 type Scanner struct {
 	ClaudeRoot string
 	CodexRoot  string
+	// OpencodeRoot is probed and never read: its only job is to decide whether
+	// the panel says "not counted" or stays quiet. See noReader.
+	OpencodeRoot string
 	// Loc decides which day a timestamp belongs to. Nil means the server's
 	// local zone, which is the right default: the machine is the user's.
 	//
@@ -555,6 +587,9 @@ func DefaultScanner(home string) *Scanner {
 	return &Scanner{
 		ClaudeRoot: filepath.Join(home, ".claude", "projects"),
 		CodexRoot:  filepath.Join(home, ".codex", "sessions"),
+		// Where opencode keeps its state, probed only to decide whether the
+		// panel mentions it at all. Nothing under here is opened.
+		OpencodeRoot: filepath.Join(home, ".local", "share", "opencode"),
 	}
 }
 
@@ -568,7 +603,11 @@ func (s *Scanner) loc() *time.Location {
 // Roots pairs each tool with the directory it would be read from, whether or
 // not that directory exists.
 func (s *Scanner) Roots() map[Tool]string {
-	return map[Tool]string{ToolClaude: s.ClaudeRoot, ToolCodex: s.CodexRoot}
+	return map[Tool]string{
+		ToolClaude:   s.ClaudeRoot,
+		ToolCodex:    s.CodexRoot,
+		ToolOpencode: s.OpencodeRoot,
+	}
 }
 
 // Walk lists every transcript under one tool's root.
@@ -607,6 +646,12 @@ func (s *Scanner) Walk(tool Tool) ([]Ref, Source, error) {
 		return nil, src, nil
 	}
 	src.Root = resolved
+	// Resolved first, so a machine without opencode says "not found" like any
+	// other absent agent rather than announcing a gap nobody has.
+	if why := noReader(tool); why != "" {
+		src.Problem = why
+		return nil, src, nil
+	}
 	src.Found = true
 
 	var out []Ref
