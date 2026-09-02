@@ -669,6 +669,43 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+
+	// A scratch terminal belongs to the project, not to a session.
+	//
+	// 「下方term跟随项目走吧 别跟随session走」. The strip under the terminal was
+	// scoped to whichever main session was selected, so switching from one
+	// agent to another in the same project put a different set of shells on
+	// screen -- and the shells are where somebody keeps a `git log`, a build
+	// and a tail of the same repository. They follow the work, and the work is
+	// the project.
+	//
+	// A flag rather than a re-pointed parent. `parent_session_id` is
+	// `REFERENCES sessions(id) ON DELETE CASCADE`, and that cascade is the
+	// reason this cannot be done by changing the query alone: with the strip
+	// scoped to the project, deleting one agent would silently take the
+	// project's terminals with it. Closing a session must not close a shell
+	// that was never under it.
+	//
+	// The column goes rather than being left NULL. A dead foreign key with a
+	// cascade on it is a loaded gun for whoever writes the next feature that
+	// finds a use for a "parent" column, and this is exactly the kind of thing
+	// nobody reads a migration to discover. Its index has to go first: SQLite
+	// refuses to drop an indexed column.
+	func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`ALTER TABLE sessions ADD COLUMN scratch INTEGER NOT NULL DEFAULT 0`,
+			`UPDATE sessions SET scratch = 1 WHERE parent_session_id IS NOT NULL`,
+			`DROP INDEX IF EXISTS idx_sessions_parent`,
+			`ALTER TABLE sessions DROP COLUMN parent_session_id`,
+			`CREATE INDEX IF NOT EXISTS idx_sessions_scratch
+			     ON sessions(project_id, scratch)`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	},
 }
 
 // scanner is *sql.Row and *sql.Rows both, so one scan function serves a

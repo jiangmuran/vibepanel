@@ -417,7 +417,7 @@ export function ShareLinks() {
                   </option>
                 ))}
                 {sessions
-                  .filter((s) => s.parentSessionId === null)
+                  .filter((s) => !s.scratch)
                   .map((s) => (
                     <option key={s.id} value={`session:${s.id}`}>
                       {t('share.scopeSession', {

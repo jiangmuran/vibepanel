@@ -1022,38 +1022,60 @@ func TestScratchTerminalInheritsTheParentDirectory(t *testing.T) {
 	// Opening a shell next to an agent and landing somewhere else is the kind
 	// of small wrongness that makes a panel feel untrustworthy.
 	child := postJSON[store.Session](t, ts, "/api/sessions",
-		`{"projectId":"`+project.ID+`","parentSessionId":"`+parent.ID+`","command":[]}`)
+		`{"projectId":"`+project.ID+`","scratch":true,"nearSessionId":"`+parent.ID+`","command":[]}`)
 	if child.CWD != sub {
-		t.Errorf("scratch terminal cwd = %q, want the parent's %q", child.CWD, sub)
+		t.Errorf("scratch terminal cwd = %q, want the agent's %q", child.CWD, sub)
 	}
-	if child.ParentID == nil || *child.ParentID != parent.ID {
-		t.Errorf("parent = %v, want %q", child.ParentID, parent.ID)
+	if !child.Scratch {
+		t.Error("the new session is not in the strip")
+	}
+
+	// The two are separate questions now. A session started *near* another one
+	// without asking for the strip is an ordinary session that happens to begin
+	// in the right directory, and conflating them is what made the strip
+	// change every time the selected agent did.
+	near := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","nearSessionId":"`+parent.ID+`","command":[]}`)
+	if near.CWD != sub {
+		t.Errorf("nearSessionId cwd = %q, want %q", near.CWD, sub)
+	}
+	if near.Scratch {
+		t.Error("nearSessionId alone put a session in the strip")
 	}
 }
 
-func TestScratchTerminalsCannotNest(t *testing.T) {
+// A shell opened where another shell is, which used to be refused.
+//
+// Nesting was rejected because "the terminals belonging to this session" was
+// ambiguous once a scratch terminal could have its own. Nothing belongs to a
+// session any more, so there is no ambiguity and nothing to reject: asking for
+// a new shell in the directory the current shell is sitting in is an ordinary
+// request, and it was answered with a 400.
+func TestAScratchTerminalCanStartWhereAnotherOneIs(t *testing.T) {
 	ts, _ := newTestServer(t)
 	project := postJSON[store.Project](t, ts, "/api/projects",
 		`{"path":"`+t.TempDir()+`","name":"nest"}`)
-	parent := postJSON[store.Session](t, ts, "/api/sessions",
+	agent := postJSON[store.Session](t, ts, "/api/sessions",
 		`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
-	child := postJSON[store.Session](t, ts, "/api/sessions",
-		`{"projectId":"`+project.ID+`","parentSessionId":"`+parent.ID+`","command":["sleep","60"]}`)
+	first := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","scratch":true,"nearSessionId":"`+agent.ID+`","command":["sleep","60"]}`)
 
-	// A tab strip of tab strips is not a thing anyone asked for, and allowing
-	// it would make "the terminals belonging to this session" ambiguous.
-	res, err := ts.Client().Post(ts.URL+"/api/sessions", "application/json",
-		strings.NewReader(`{"projectId":"`+project.ID+`","parentSessionId":"`+child.ID+`","command":[]}`))
-	if err != nil {
-		t.Fatalf("POST: %v", err)
+	second := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","scratch":true,"nearSessionId":"`+first.ID+`","command":[]}`)
+	if !second.Scratch {
+		t.Error("the second shell is not in the strip")
 	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", res.StatusCode)
+	if second.CWD != first.CWD {
+		t.Errorf("cwd = %q, want the shell it was opened beside: %q", second.CWD, first.CWD)
 	}
 }
 
-func TestDeletingASessionTakesItsTerminalsWithIt(t *testing.T) {
+// Closing an agent leaves the project's terminals running.
+//
+// The inverse of what this asserted, and the inversion is the point. The strip
+// held a build and a `git log` for the repository, and deleting the agent you
+// happened to open them from took them with it.
+func TestDeletingASessionLeavesTheProjectsTerminals(t *testing.T) {
 	ts, srv := newTestServer(t)
 	ctx := context.Background()
 	project := postJSON[store.Project](t, ts, "/api/projects",
@@ -1061,7 +1083,7 @@ func TestDeletingASessionTakesItsTerminalsWithIt(t *testing.T) {
 	parent := postJSON[store.Session](t, ts, "/api/sessions",
 		`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
 	child := postJSON[store.Session](t, ts, "/api/sessions",
-		`{"projectId":"`+project.ID+`","parentSessionId":"`+parent.ID+`","command":["sleep","60"]}`)
+		`{"projectId":"`+project.ID+`","scratch":true,"nearSessionId":"`+parent.ID+`","command":["sleep","60"]}`)
 
 	req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/sessions/"+parent.ID, nil)
 	res, err := ts.Client().Do(req)
@@ -1073,13 +1095,13 @@ func TestDeletingASessionTakesItsTerminalsWithIt(t *testing.T) {
 		t.Fatalf("status = %d, want 204", res.StatusCode)
 	}
 
-	// The row cascades away in SQLite, but the tmux session does not. Leaving
-	// it behind is a process nothing in the UI can ever reach again.
-	if ok, _ := srv.Tmux.Has(ctx, child.TmuxName); ok {
-		t.Error("the scratch terminal's tmux session survived its parent")
+	// Both halves: no cascade in SQLite, and no teardown in tmux. Either one
+	// alone would empty the strip.
+	if ok, _ := srv.Tmux.Has(ctx, child.TmuxName); !ok {
+		t.Error("the terminal's tmux session was killed with an agent it does not belong to")
 	}
-	if _, err := srv.DB.GetSession(ctx, child.ID); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("child row survived: %v", err)
+	if _, err := srv.DB.GetSession(ctx, child.ID); err != nil {
+		t.Errorf("the terminal's row went with the agent: %v", err)
 	}
 }
 
@@ -1094,15 +1116,15 @@ func TestChildTerminalsKeepTheirOrder(t *testing.T) {
 	var want []string
 	for i := 0; i < 3; i++ {
 		c := postJSON[store.Session](t, ts, "/api/sessions",
-			`{"projectId":"`+project.ID+`","parentSessionId":"`+parent.ID+`","command":["sleep","60"]}`)
+			`{"projectId":"`+project.ID+`","scratch":true,"nearSessionId":"`+parent.ID+`","command":["sleep","60"]}`)
 		want = append(want, c.ID)
 	}
 
 	// These are tabs in a strip. A tab strip that reorders itself while you
 	// are using it is hostile, so they order by creation and not by state.
-	kids, err := srv.DB.ListChildSessions(ctx, parent.ID)
+	kids, err := srv.DB.ListScratchSessions(ctx, project.ID)
 	if err != nil {
-		t.Fatalf("ListChildSessions: %v", err)
+		t.Fatalf("ListScratchSessions: %v", err)
 	}
 	got := make([]string, len(kids))
 	for i, k := range kids {
@@ -1129,7 +1151,7 @@ func TestScratchTerminalsAreNotAllNamedAfterTheirDirectory(t *testing.T) {
 	var kids []store.Session
 	for i := 0; i < 2; i++ {
 		kids = append(kids, postJSON[store.Session](t, ts, "/api/sessions",
-			`{"projectId":"`+project.ID+`","parentSessionId":"`+parent.ID+`","command":[]}`))
+			`{"projectId":"`+project.ID+`","scratch":true,"nearSessionId":"`+parent.ID+`","command":[]}`))
 	}
 	for i := 0; i < 4; i++ {
 		if err := srv.pollOnce(ctx); err != nil {
@@ -2122,7 +2144,7 @@ func TestAScratchTerminalFallsBackToTheProjectRoot(t *testing.T) {
 	}
 
 	child := postJSON[store.Session](t, ts, "/api/sessions",
-		`{"projectId":"`+project.ID+`","parentSessionId":"`+parent.ID+`","command":["sleep","60"]}`)
+		`{"projectId":"`+project.ID+`","scratch":true,"nearSessionId":"`+parent.ID+`","command":["sleep","60"]}`)
 	if child.CWD != root {
 		t.Errorf("a scratch terminal whose parent's directory had gone opened in %q, want the "+
 			"project root %q", child.CWD, root)
@@ -2710,10 +2732,12 @@ func TestADeleteFinishesEvenIfTheTabIsClosed(t *testing.T) {
 		`{"path":"`+t.TempDir()+`","name":"test"}`)
 	parent := postJSON[store.Session](t, ts, "/api/sessions",
 		`{"projectId":"`+project.ID+`","command":["sleep","300"]}`)
-	// A scratch terminal under it, so the loop has more than one turn to be
-	// cancelled in the middle of.
+	// A scratch terminal in the same project. It is not deleted with the agent
+	// -- the strip belongs to the project -- and it is here so the project
+	// delete below, which does loop, has more than one turn to be cancelled in
+	// the middle of.
 	child := postJSON[store.Session](t, ts, "/api/sessions",
-		`{"projectId":"`+project.ID+`","parentSessionId":"`+parent.ID+`","command":["sleep","300"]}`)
+		`{"projectId":"`+project.ID+`","scratch":true,"nearSessionId":"`+parent.ID+`","command":["sleep","300"]}`)
 
 	// Positive control: both are really there before anything is deleted.
 	live, err := srv.Tmux.List(ctx)
@@ -2741,14 +2765,21 @@ func TestADeleteFinishesEvenIfTheTabIsClosed(t *testing.T) {
 		t.Fatalf("list after: %v", err)
 	}
 	still := []string{}
+	gone := true
 	for _, i := range live {
-		if i.Name == parent.TmuxName || i.Name == child.TmuxName {
+		if i.Name == parent.TmuxName {
 			still = append(still, i.Name)
+		}
+		if i.Name == child.TmuxName {
+			gone = false
 		}
 	}
 	if len(still) != 0 {
 		t.Errorf("%v survived a delete whose request context was cancelled; the panel has "+
 			"forgotten them and tmux has not, which is a process nothing can reach", still)
+	}
+	if gone {
+		t.Error("the project's scratch terminal was killed with the agent above it")
 	}
 	if _, err := srv.DB.GetSession(ctx, parent.ID); err == nil {
 		t.Error("the row survived the delete, so the panel will show a session whose tmux " +

@@ -915,14 +915,13 @@ func (s *Server) buildShareDashboard(ctx context.Context, link store.ShareLink,
 	usage := s.shareUsage(ctx, sessions, out.UsageReadable)
 
 	// Bottom terminals are left out, and that is a content decision rather than
-	// a privacy one: they are scratch shells opened under a session, so a wall
-	// showing them reports two rows for one task and counts a shell sitting at
-	// a prompt as something that is "done". What they cost is still on screen,
-	// in the machine meters above.
+	// a privacy one: they are scratch shells in the project's strip, so a wall
+	// showing them counts a shell sitting at a prompt as something that is
+	// "done". What they cost is still on screen, in the machine meters above.
 	byProject := map[string]*shareProject{}
 	order := []string{}
 	for _, row := range sessions {
-		if row.ParentID != nil {
+		if row.Scratch {
 			continue
 		}
 		if !scope.covers(row) {

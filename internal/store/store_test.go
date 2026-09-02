@@ -330,22 +330,22 @@ func TestMigrationUpgradesAnExistingDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)
 	}
-	if s.ParentID != nil {
-		t.Errorf("existing session gained a parent: %v", s.ParentID)
+	if s.Scratch {
+		t.Error("an existing session came back through the upgrade as a scratch terminal")
 	}
 
 	// And the new column works on the upgraded database.
 	if _, err := db.CreateSession(ctx, Session{
-		ID: "s2", ProjectID: "p1", TmuxName: "vp_s2", ParentID: strptr("s1"),
+		ID: "s2", ProjectID: "p1", TmuxName: "vp_s2", Scratch: true,
 	}); err != nil {
-		t.Fatalf("CreateSession with a parent: %v", err)
+		t.Fatalf("CreateSession scratch: %v", err)
 	}
-	kids, err := db.ListChildSessions(ctx, "s1")
+	kids, err := db.ListScratchSessions(ctx, "p1")
 	if err != nil {
-		t.Fatalf("ListChildSessions: %v", err)
+		t.Fatalf("ListScratchSessions: %v", err)
 	}
 	if len(kids) != 1 || kids[0].ID != "s2" {
-		t.Errorf("children = %+v, want one", kids)
+		t.Errorf("scratch = %+v, want one", kids)
 	}
 }
 
@@ -1131,5 +1131,105 @@ func TestTheDatabaseIsNotReadableByOthers(t *testing.T) {
 			t.Errorf("%s is mode %04o, want %04o -- anybody on this machine can read it",
 				filepath.Base(c.path), got, c.want)
 		}
+	}
+}
+
+// TestExistingBottomTerminalsSurviveTheMove pins the backfill.
+//
+// Somebody upgrading has scratch terminals already, and they exist in the
+// database as `parent_session_id IS NOT NULL`. If the migration adds the flag
+// without setting it, every one of those rows becomes an ordinary session: the
+// strip comes up empty and three shells appear in the sidebar, which is not a
+// failure anybody would report as a migration bug.
+//
+// The seed goes in at the version just before the change rather than at v1.
+// TestMigrationUpgradesAnExistingDatabase starts at v1, where the parent column
+// does not exist yet, so there is nothing there to convert -- and deleting the
+// backfill from the migration leaves it green.
+func TestExistingBottomTerminalsSurviveTheMove(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "old.db")
+
+	raw, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)")
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	tx, err := raw.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	// Every migration except the last, which is the one under test.
+	prior := len(migrations) - 1
+	for i := 0; i < prior; i++ {
+		if err := migrations[i](tx); err != nil {
+			t.Fatalf("apply migration %d: %v", i+1, err)
+		}
+	}
+	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", prior)); err != nil {
+		t.Fatalf("set version: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	for _, stmt := range []string{
+		`INSERT INTO projects (id, name, path, last_active_at, created_at)
+		     VALUES ('p1','Keep','/tmp',1,1)`,
+		`INSERT INTO sessions (id, project_id, tmux_name, created_at)
+		     VALUES ('s_agent','p1','vp_agent',1)`,
+		`INSERT INTO sessions (id, project_id, tmux_name, created_at, parent_session_id)
+		     VALUES ('s_shell','p1','vp_shell',2,'s_agent')`,
+	} {
+		if _, err := raw.Exec(stmt); err != nil {
+			t.Fatalf("seed %q: %v", stmt, err)
+		}
+	}
+	raw.Close()
+
+	db, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+
+	shell, err := db.GetSession(ctx, "s_shell")
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if !shell.Scratch {
+		t.Error("a bottom terminal came through the upgrade as an ordinary session; " +
+			"it has moved from the strip into the sidebar")
+	}
+	agent, err := db.GetSession(ctx, "s_agent")
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if agent.Scratch {
+		t.Error("an ordinary session came through the upgrade as a scratch terminal")
+	}
+
+	// And it is in the project's strip, which is the thing the flag is for.
+	strip, err := db.ListScratchSessions(ctx, "p1")
+	if err != nil {
+		t.Fatalf("ListScratchSessions: %v", err)
+	}
+	if len(strip) != 1 || strip[0].ID != "s_shell" {
+		t.Errorf("strip = %+v, want the one terminal", strip)
+	}
+
+	// The column it was read from is gone, so nothing can grow a cascade on it
+	// again. Asking for it must fail.
+	if _, err := db.GetSession(ctx, "s_agent"); err != nil {
+		t.Fatalf("sanity: %v", err)
+	}
+	var n int
+	if err := db.sql.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'parent_session_id'`,
+	).Scan(&n); err != nil {
+		t.Fatalf("table_info: %v", err)
+	}
+	if n != 0 {
+		t.Error("parent_session_id is still on the table; it is a dead foreign key " +
+			"with ON DELETE CASCADE, which is a trap for the next person who finds it")
 	}
 }

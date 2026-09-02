@@ -1235,9 +1235,20 @@ type createSessionRequest struct {
 	Cols      int      `json:"cols"`
 	Rows      int      `json:"rows"`
 
-	// ParentSessionID makes this a scratch terminal under a main session,
-	// starting in whatever directory that session is currently in.
-	ParentSessionID string `json:"parentSessionId"`
+	// Scratch puts this in the project's terminal strip instead of the
+	// sidebar. Scoped to the project: the strip does not change when the
+	// selected agent does.
+	Scratch bool `json:"scratch"`
+
+	// NearSessionID starts it in whatever directory that session is currently
+	// in, rather than at the project root.
+	//
+	// Separate from Scratch, because they stopped being the same question when
+	// the strip became the project's. Opening a shell beside an agent that has
+	// cd'd into a worktree, and landing somewhere else, is the kind of small
+	// wrongness that makes a panel feel untrustworthy -- and that is true
+	// whichever list the new session lands in.
+	NearSessionID string `json:"nearSessionId"`
 
 	// LaunchProfileID names the profile to start with: its argv, and its
 	// environment.
@@ -1268,30 +1279,26 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		req.Rows = 32
 	}
 
-	// A scratch terminal starts where its parent currently is, not where the
-	// project root is. Opening a shell next to an agent that has cd'd into a
-	// worktree, and landing somewhere else, is the kind of small wrongness
-	// that makes a panel feel untrustworthy.
+	// Where it starts. See NearSessionID.
+	//
+	// Nesting is not checked any more and there is nothing to check: a scratch
+	// terminal is scratch because of its flag, not because of what it was
+	// opened beside, so "open another shell where this shell is" is an
+	// ordinary thing to ask for rather than a structure to reject.
 	dir := p.Path
-	var parent *string
-	if req.ParentSessionID != "" {
-		parentRec, perr := s.DB.GetSession(ctx, req.ParentSessionID)
+	if req.NearSessionID != "" {
+		near, perr := s.DB.GetSession(ctx, req.NearSessionID)
 		if perr != nil {
 			s.writeStoreErr(w, perr)
 			return
 		}
-		if parentRec.ParentID != nil {
-			writeErr(w, http.StatusBadRequest, "a scratch terminal cannot have scratch terminals of its own")
+		if near.ProjectID != p.ID {
+			writeErr(w, http.StatusBadRequest, "that session belongs to a different project")
 			return
 		}
-		if parentRec.ProjectID != p.ID {
-			writeErr(w, http.StatusBadRequest, "parent session belongs to a different project")
-			return
+		if near.CWD != "" {
+			dir = near.CWD
 		}
-		if parentRec.CWD != "" {
-			dir = parentRec.CWD
-		}
-		parent = &req.ParentSessionID
 	}
 
 	// tmux falls back to $HOME when -c names a directory that is not there, and
@@ -1358,7 +1365,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	rec, err := s.DB.CreateSession(ctx, store.Session{
 		ID: sid, ProjectID: p.ID, TmuxName: tmuxName,
 		Title: req.Title, CWD: dir, Cols: req.Cols, Rows: req.Rows,
-		State: session.StateWorking, ParentID: parent,
+		State: session.StateWorking, Scratch: req.Scratch,
 		// The argv as asked for, which is the only version of it that can be
 		// run again. Everything the poller writes into `command` after this is
 		// a name for what happens to be in the pane right now.
@@ -1605,18 +1612,14 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreErr(w, err)
 		return
 	}
-	// Children cascade away in the database, but their tmux sessions do not.
-	// Deleting the row first would leave processes nothing in the UI can reach.
-	children, err := s.DB.ListChildSessions(opCtx, sid)
-	if err != nil {
-		s.writeStoreErr(w, err)
+	// Just this one. Scratch terminals used to hang off a session and be torn
+	// down with it; they belong to the project now, so closing an agent must
+	// leave the project's shells alone -- the build and the `git log` in them
+	// were never about that agent. The project's own delete is what takes
+	// them, and it already walks every session it owns.
+	if err := s.tearDownSession(opCtx, rec.ID, rec.TmuxName); err != nil {
+		writeErr(w, http.StatusInternalServerError, "kill "+rec.TmuxName+": "+err.Error())
 		return
-	}
-	for _, child := range append(children, rec) {
-		if err := s.tearDownSession(opCtx, child.ID, child.TmuxName); err != nil {
-			writeErr(w, http.StatusInternalServerError, "kill "+child.TmuxName+": "+err.Error())
-			return
-		}
 	}
 	if err := s.DB.DeleteSession(opCtx, sid); err != nil {
 		s.writeStoreErr(w, err)
@@ -2006,7 +2009,7 @@ func (s *Server) pollOnce(ctx context.Context) error {
 		if live != nil {
 			ptyTitle = live.Title()
 		}
-		if title := deriveTitle(info, ptyTitle, row.ParentID != nil); title != "" {
+		if title := deriveTitle(info, ptyTitle, row.Scratch); title != "" {
 			// SetSessionTitle with TitleAuto is a no-op once the user has
 			// renamed the tab, so this cannot stomp a manual name.
 			if err := s.DB.SetSessionTitle(ctx, row.ID, title, store.TitleAuto); err != nil {

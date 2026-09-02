@@ -190,13 +190,15 @@ export interface Session {
   exitStatus: number
 
   /**
-   * Set for a scratch terminal opened under a main session.
+   * Set for a terminal in the project's strip rather than a session in the
+   * sidebar.
    *
-   * Bottom terminals are ordinary sessions with a parent rather than their own
-   * kind of thing, so they arrive in the same list and get state, replay and
-   * naming without a second implementation of each.
+   * These are ordinary sessions rather than their own kind of thing, so they
+   * arrive in the same list and get state, replay and naming without a second
+   * implementation of each. They belong to `projectId`: the strip does not
+   * change when the selected agent does.
    */
-  parentSessionId: string | null
+  scratch: boolean
 }
 
 export interface PanelState {

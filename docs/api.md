@@ -306,7 +306,11 @@ curl -sX POST .../api/sessions -H "Authorization: Bearer $TOKEN" \
 ```
 
 `command` is an argv. Omit it for a shell in the project directory.
-`parentSessionId` makes the new session a scratch terminal under another one.
+`scratch` puts the new session in the project's terminal strip instead of the
+sidebar; it belongs to the project, so the strip does not change with the
+selected session. `nearSessionId` starts it in that session's current
+directory rather than at the project root, which is a separate question --
+either can be given without the other.
 
 `launchProfileId` names a launch profile, and is what the panel's own picker
 sends: the profile supplies both the argv and the environment. An explicit

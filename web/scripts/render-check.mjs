@@ -1703,7 +1703,7 @@ try {
       if (!marked) {
         const st = await (await authed('/api/state')).json()
         const kids = (st.sessions ?? [])
-          .filter((x) => x.parentSessionId)
+          .filter((x) => x.scratch)
           .map((x) => ({ title: x.title, exited: x.exited, status: x.exitStatus, state: x.state }))
         const html = await lastTab.innerHTML().catch(() => '?')
         note('FAIL', 'bottom',
@@ -1712,21 +1712,31 @@ try {
           `${JSON.stringify(html.slice(0, 200))}`)
       }
 
-      // Switching the main session must swap the strip, not carry it across.
+      // Switching the main session must NOT swap the strip.
+      //
+      // 「下方term跟随项目走吧 别跟随session走」. This asserted the opposite for
+      // as long as it existed, and it was the behaviour rather than the check
+      // that was wrong: the strip holds a build and a `git log` for the
+      // repository, and moving between two agents in one project replaced the
+      // whole set. htop and the shell are in the same project.
+      const before = await page.locator('[data-testid="bottom-tab"]').count()
       const otherRow = page.locator('[data-testid="session-row"]', { hasText: 'htop' }).first()
-      if (await otherRow.isVisible().catch(() => false)) {
+      if (before > 0 && (await otherRow.isVisible().catch(() => false))) {
         await otherRow.click()
         await sleep(1500)
-        const carried = await page.locator('[data-testid="bottom-tab"]').count()
-        if (carried !== 0) {
+        const after = await page.locator('[data-testid="bottom-tab"]').count()
+        if (after !== before) {
           note('FAIL', 'bottom',
-            `switching sessions carried ${carried} terminal tab(s) from the previous one`)
+            `switching to another session in the same project changed the strip from ` +
+            `${before} tab(s) to ${after}`)
+        } else {
+          note('PASS', 'bottom', `the strip survived a session switch (${after} tab(s))`)
         }
-        // And switching back brings it back.
+        // And it is still there on the way back.
         await page.locator('[data-testid="session-row"]', { hasText: 'scratchpad' }).first().click()
         await sleep(1500)
-        if ((await page.locator('[data-testid="bottom-tab"]').count()) === 0) {
-          note('FAIL', 'bottom', 'the terminal did not come back when switching back')
+        if ((await page.locator('[data-testid="bottom-tab"]').count()) !== before) {
+          note('FAIL', 'bottom', 'the strip changed on the way back to the first session')
         }
       }
     }

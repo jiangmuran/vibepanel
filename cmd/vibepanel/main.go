@@ -737,7 +737,7 @@ func cmdSession(args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := killSessionTree(ctx, a.db, a.tmux, s); err != nil {
+		if err := killSession(ctx, a.tmux, s); err != nil {
 			return err
 		}
 		if err := a.db.DeleteSession(ctx, s.ID); err != nil {
@@ -1428,28 +1428,22 @@ func profileID(p *store.LaunchProfile) string {
 	return p.ID
 }
 
-// killSessionTree kills a session's tmux session and those of the scratch
-// terminals under it.
+// killSession kills one session's tmux session, and only that one.
 //
-// The children first, then the parent: the caller deletes the row next and the
-// child rows cascade away with it, so a child whose tmux session outlived this
-// call is a process nothing in the panel can reach again. handleDeleteSession
-// has always done this; the CLI killed one session and left the rest running,
-// which the panel then reported at every startup as "tmux sessions on our
-// socket with no database row" without saying who made them.
+// It used to take the scratch terminals with it, because they hung off the
+// session and their rows cascaded away with its own. They belong to the
+// project now, so closing an agent leaves the project's shells running -- the
+// build and the `git log` in them were never about that agent.
 //
-// Kept as a function rather than four lines in the switch so that the test can
-// reach it. The two paths drifting apart is the shape that has cost this
-// project more than any single bug.
-func killSessionTree(ctx context.Context, db *store.DB, tm *tmux.Client, s store.Session) error {
-	children, err := db.ListChildSessions(ctx, s.ID)
-	if err != nil {
-		return err
-	}
-	for _, c := range append(children, s) {
-		if err := tm.Kill(ctx, c.TmuxName); err != nil {
-			return fmt.Errorf("kill %s: %w", c.TmuxName, err)
-		}
+// Kept as a function rather than two lines in the switch so that the test can
+// reach it, and so that it stays the same call the HTTP handler makes. The two
+// paths drifting apart is the shape that has cost this project more than any
+// single bug: the CLI once killed one session and left the rest running, which
+// the panel then reported at every startup as "tmux sessions on our socket
+// with no database row" without saying who made them.
+func killSession(ctx context.Context, tm *tmux.Client, s store.Session) error {
+	if err := tm.Kill(ctx, s.TmuxName); err != nil {
+		return fmt.Errorf("kill %s: %w", s.TmuxName, err)
 	}
 	return nil
 }

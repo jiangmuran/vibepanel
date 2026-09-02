@@ -194,9 +194,31 @@ function writeStored(key: string, value: string | null) {
  * snapshot keeps it, and it is written to localStorage for the next visit.
  */
 export function nextSelection(sessions: Session[], cur: string | null): string | null {
-  const mains = sessions.filter((s) => !s.parentSessionId)
+  const mains = sessions.filter((s) => !s.scratch)
   if (cur && mains.some((s) => s.id === cur)) return cur
   return mains[0]?.id ?? null
+}
+
+/**
+ * The terminals in the strip, for one project.
+ *
+ * 「下方term跟随项目走吧 别跟随session走」. These hold a build, a `git log` and a
+ * tail of the same repository, and scoping them to the selected session swapped
+ * the whole strip every time you moved between two agents in one project.
+ *
+ * A function rather than a filter inlined in the component, for the same reason
+ * `scrollAction` is one: a predicate buried in a `useMemo` can be changed back
+ * without a single test noticing. The project id is passed rather than the
+ * session so that the signature itself says what the strip is keyed on.
+ *
+ * Creation order never changes, which is the only property a tab strip needs.
+ * Ties by id so the result is total.
+ */
+export function stripFor(sessions: Session[], projectId: string | null): Session[] {
+  if (!projectId) return []
+  return sessions
+    .filter((s) => s.scratch && s.projectId === projectId)
+    .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
 }
 
 export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => void }) {
@@ -454,10 +476,10 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   const systemDark = useMediaQuery('(prefers-color-scheme: dark)')
   const themeKey = `${theme}:${systemDark}`
 
-  // Scratch terminals are ordinary sessions with a parent, so they arrive in
+  // Scratch terminals are ordinary sessions carrying a flag, so they arrive in
   // the same list and are separated here rather than by a second query.
   const mainSessions = useMemo(
-    () => state.sessions.filter((s) => !s.parentSessionId),
+    () => state.sessions.filter((s) => !s.scratch),
     [state.sessions],
   )
   const current = mainSessions.find((s) => s.id === selected) ?? null
@@ -489,12 +511,12 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   //
   // Creation order never changes, which is the only property a tab strip
   // needs. Ties by id so the result is total.
+  // The dependency is `current?.projectId`, not `current`: selecting a
+  // different agent in the same project must not rebuild this array, or the
+  // tab strip flickers for a change that did not happen.
   const bottomTerminals = useMemo(
-    () =>
-      (current ? state.sessions.filter((s) => s.parentSessionId === current.id) : []).sort(
-        (a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id),
-      ),
-    [state.sessions, current],
+    () => stripFor(state.sessions, current?.projectId ?? null),
+    [state.sessions, current?.projectId],
   )
 
   // Has the panel underneath this tab been replaced?
@@ -774,7 +796,12 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   const newBottomTerminal = () => {
     if (!current) return
     if (!bottomOpen) setBottomOpen(true)
-    void guard(() => api.createSession(current.projectId, [], { parentSessionId: current.id }))
+    // scratch says which list it lands in; nearSessionId only says where it
+    // starts. They were one field, and they stopped being one question when
+    // the strip became the project's.
+    void guard(() =>
+      api.createSession(current.projectId, [], { scratch: true, nearSessionId: current.id }),
+    )
   }
 
   // Removing a project kills every session in it, which is the part nobody
@@ -1304,7 +1331,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             // a terminal belonging to something you are no longer looking at.
             key={current.id}
             socket={socket}
-            parent={current}
+            near={current}
             terminals={bottomTerminals}
             themeKey={themeKey}
             height={bottomHeight}

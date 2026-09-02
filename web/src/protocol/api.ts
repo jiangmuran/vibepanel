@@ -455,7 +455,7 @@ export const api = {
   createSession: (
     projectId: string,
     command: string[],
-    opts: { title?: string; parentSessionId?: string; launchProfileId?: string } = {},
+    opts: { title?: string; scratch?: boolean; nearSessionId?: string; launchProfileId?: string } = {},
   ) =>
     request<Session>('/api/sessions', {
       method: 'POST',
@@ -466,7 +466,8 @@ export const api = {
         // the picker would have given it.
         command,
         title: opts.title ?? '',
-        parentSessionId: opts.parentSessionId ?? '',
+        scratch: opts.scratch ?? false,
+        nearSessionId: opts.nearSessionId ?? '',
         launchProfileId: opts.launchProfileId ?? '',
       }),
     }),

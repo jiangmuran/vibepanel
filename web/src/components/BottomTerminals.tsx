@@ -14,8 +14,13 @@ import { t as tr, useLang } from '../i18n'
 
 interface Props {
   socket: PanelSocket
-  /** The main session these terminals belong to. */
-  parent: Session
+  /**
+   * The selected session, which is where a new terminal would start.
+   *
+   * Not what these terminals belong to -- that is the project. This is only
+   * the answer to "in which directory", and the button says so.
+   */
+  near: Session
   terminals: Session[]
   themeKey: string
   height: number
@@ -27,23 +32,27 @@ interface Props {
 }
 
 /**
- * Scratch terminals belonging to the session above them.
+ * The project's scratch terminals.
  *
- * They follow the main session rather than being a global set: a terminal
- * opened while working on one project should not still be sitting there,
- * pointing at the wrong directory, when you switch to another. New ones start
- * in whatever directory the session above is currently in.
+ * They follow the project, not the selected session: these hold a build, a
+ * `git log` and a tail of the same repository, and scoping them to one agent
+ * meant switching agents swapped the whole strip for a different one. Switching
+ * *projects* still changes it, which is the part that was right -- a terminal
+ * opened in one repository should not be sitting there, pointing at the wrong
+ * directory, when you move to another.
+ *
+ * A new one starts in whatever directory the selected session is currently in.
  */
 export function BottomTerminals(props: Props) {
   useLang()
-  const { socket, parent, terminals, themeKey, height } = props
+  const { socket, near, terminals, themeKey, height } = props
   const [activeId, setActiveId] = useState<string | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const dragFrom = useRef<{ y: number; height: number } | null>(null)
   const [dragging, setDragging] = useState(false)
 
   // The active tab is derived rather than stored, so a terminal closing or the
-  // parent changing cannot leave a selection pointing at nothing.
+  // the terminals list changing cannot leave a selection pointing at nothing.
   const active = terminals.find((t) => t.id === activeId) ?? terminals[0] ?? null
 
   /** The height the strip and the main terminal are dividing between them. */
@@ -214,7 +223,7 @@ export function BottomTerminals(props: Props) {
               // template literal in English with the raw cwd in the middle,
               // so it was both untranslated and unsanitised.
               title={
-                parent.cwd ? tr('bottom.newIn', { dir: safeText(parent.cwd) }) : tr('bottom.new')
+                near.cwd ? tr('bottom.newIn', { dir: safeText(near.cwd) }) : tr('bottom.new')
               }
               className="vp-control"
             >

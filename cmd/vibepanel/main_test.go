@@ -65,19 +65,20 @@ func TestTheHelpTextDescribesEachCommand(t *testing.T) {
 	}
 }
 
-// A session's scratch terminals must die with it.
+// A session's scratch terminals must survive it.
 //
-// The database cascades the child rows away, and tmux knows nothing about that
-// cascade. Kill only the parent's tmux session and the children keep running on
-// the panel's socket with no row left pointing at them: nothing in the UI can
-// reach them, and they hold a pane until the machine restarts. The panel says
-// so at startup — "tmux sessions on our socket with no database row" — which is
-// a report, not a repair.
+// The inverse of what this test used to assert, and the inversion is the
+// feature: scratch terminals hung off a session, their rows cascaded away with
+// it, so both delete paths killed their tmux sessions too. They belong to the
+// project now. Closing an agent has to leave the project's shells running --
+// the build and the `git log` in them were never about that agent, and
+// 「下方term跟随项目走吧」 is worth nothing if the strip empties when you close
+// the session you happened to open it from.
 //
-// This is the shape that has cost this project repeatedly: two paths doing the
-// same thing, one of them updated. handleDeleteSession has listed the children
-// and killed them for as long as it has existed, and said why in a comment.
-func TestKillingASessionKillsItsScratchTerminals(t *testing.T) {
+// Still tested through the CLI's own function rather than the handler's,
+// because two paths doing the same thing with one of them updated is the shape
+// that has cost this project repeatedly -- and this change edited both.
+func TestKillingASessionLeavesTheProjectsTerminals(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
 	}
@@ -109,7 +110,7 @@ func TestKillingASessionKillsItsScratchTerminals(t *testing.T) {
 		t.Fatalf("create project: %v", err)
 	}
 
-	mk := func(id, name string, parent *string) store.Session {
+	mk := func(id, name string, scratch bool) store.Session {
 		t.Helper()
 		if err := tm.Create(ctx, tmux.CreateOptions{
 			Name: name, Dir: proj.Path,
@@ -119,7 +120,7 @@ func TestKillingASessionKillsItsScratchTerminals(t *testing.T) {
 			t.Fatalf("tmux create %s: %v", name, err)
 		}
 		row, err := db.CreateSession(ctx, store.Session{
-			ID: id, ProjectID: proj.ID, TmuxName: name, Title: id, ParentID: parent,
+			ID: id, ProjectID: proj.ID, TmuxName: name, Title: id, Scratch: scratch,
 		})
 		if err != nil {
 			t.Fatalf("create session row %s: %v", id, err)
@@ -127,23 +128,40 @@ func TestKillingASessionKillsItsScratchTerminals(t *testing.T) {
 		return row
 	}
 
-	parent := mk("s_parent", "vp_parent", nil)
-	mk("s_child_a", "vp_child_a", &parent.ID)
-	mk("s_child_b", "vp_child_b", &parent.ID)
+	agent := mk("s_agent", "vp_agent", false)
+	mk("s_shell_a", "vp_shell_a", true)
+	mk("s_shell_b", "vp_shell_b", true)
 
-	if err := killSessionTree(ctx, db, tm, parent); err != nil {
-		t.Fatalf("killSessionTree: %v", err)
+	if err := killSession(ctx, tm, agent); err != nil {
+		t.Fatalf("killSession: %v", err)
 	}
 
-	for _, name := range []string{"vp_parent", "vp_child_a", "vp_child_b"} {
+	alive, err := tm.Has(ctx, "vp_agent")
+	if err != nil {
+		t.Fatalf("Has(vp_agent): %v", err)
+	}
+	if alive {
+		t.Error("vp_agent is still running after its session was killed; its row is " +
+			"about to go and nothing will be able to reach it")
+	}
+	for _, name := range []string{"vp_shell_a", "vp_shell_b"} {
 		alive, err := tm.Has(ctx, name)
 		if err != nil {
 			t.Fatalf("Has(%s): %v", name, err)
 		}
-		if alive {
-			t.Errorf("%s is still running after its session was killed; "+
-				"its row is about to cascade away and nothing will be able to reach it", name)
+		if !alive {
+			t.Errorf("%s was killed with an agent it does not belong to; "+
+				"the strip belongs to the project", name)
 		}
+	}
+	// And the rows are still there: nothing cascades any more, so the strip is
+	// the same strip after the agent above it is gone.
+	left, err := db.ListScratchSessions(ctx, proj.ID)
+	if err != nil {
+		t.Fatalf("ListScratchSessions: %v", err)
+	}
+	if len(left) != 2 {
+		t.Errorf("scratch rows after the delete = %d, want 2", len(left))
 	}
 }
 

@@ -814,7 +814,7 @@ func TestTheDashboardLeavesScratchTerminalsOut(t *testing.T) {
 	parent := postJSON[store.Session](t, ts, "/api/sessions",
 		`{"projectId":"`+project.ID+`","command":[]}`)
 	postJSON[store.Session](t, ts, "/api/sessions",
-		`{"projectId":"`+project.ID+`","parentSessionId":"`+parent.ID+`","command":[]}`)
+		`{"projectId":"`+project.ID+`","scratch":true,"nearSessionId":"`+parent.ID+`","command":[]}`)
 
 	link := newShare(t, ts, `{"name":"wall"}`)
 	_, body := shareGET(t, ts, link.Token)

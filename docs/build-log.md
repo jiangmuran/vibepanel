@@ -19142,3 +19142,56 @@ and this sub-check set `HOME` but not `VIBEPANEL_DESTDIR` — so it read the rea
 Setting `HOME` is not isolation once anything outside `HOME` is consulted. Both
 of that check's install runs now set `VIBEPANEL_DESTDIR` as the rest of the file
 already did.
+
+## The terminal strip follows the project
+
+「下方term跟随项目走吧 别跟随session走」. The strip under the main pane was
+filtered by the selected session's id, so moving between two agents in one
+project replaced the whole set. What people keep in there is a build, a `git
+log` and a tail of the same repository — those belong to the work, and the work
+is the project.
+
+The filter was the small half. The other half is that scratch terminals *hung
+off* a session: `parent_session_id REFERENCES sessions(id) ON DELETE CASCADE`,
+and both delete paths listed the children and killed their tmux sessions too.
+Scoping the display to the project while leaving that in place would mean
+closing one agent silently took the project's shells with it — a worse bug than
+the one being fixed, and a quieter one.
+
+So the column goes and a `scratch` flag replaces it. The migration backfills
+from `parent_session_id IS NOT NULL` before dropping it, and its index has to go
+first because SQLite will not drop an indexed column.
+
+Leaving the column NULL would have been less work and is the wrong shape: a dead
+foreign key with a cascade on it is a loaded gun for whoever writes the next
+feature that wants a "parent", and nobody reads a migration to find that out.
+
+### Two questions that had been one field
+
+`parentSessionId` on the create request meant both "put this in the strip" and
+"start it where that session is". Those stop being the same question once the
+strip belongs to the project, so they are `scratch` and `nearSessionId` now.
+Either can be given without the other, and the nesting check went with the
+split: a scratch terminal is scratch because of its flag, not because of what
+it was opened beside, so "open another shell where this shell is" is an
+ordinary request that used to be answered with a 400.
+
+### Three tests that asserted the opposite
+
+`TestKillingASessionKillsItsScratchTerminals`,
+`TestDeletingASessionTakesItsTerminalsWithIt` and one arm of `render-check` all
+pinned the old rule, correctly and on purpose. Inverting them is the change,
+and the browser one now reads `the strip survived a session switch (2 tab(s))`
+against a real panel.
+
+The migration's backfill was *not* covered, and mutation testing is what said
+so: deleting `UPDATE sessions SET scratch = 1 WHERE parent_session_id IS NOT
+NULL` left every test green. `TestMigrationUpgradesAnExistingDatabase` seeds at
+v1, where the parent column does not exist yet, so there was nothing there to
+convert. The new test seeds at the version immediately before this change,
+which is the only version that can exercise it — and without it, everybody's
+existing bottom terminals would have come back as ordinary sessions in the
+sidebar, which is not a failure anybody would report as a migration bug.
+
+`stripFor` is a function for the same reason `scrollAction` is one: a predicate
+inlined in a `useMemo` can be changed back without a single test noticing.

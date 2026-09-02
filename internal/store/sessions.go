@@ -116,12 +116,14 @@ type Session struct {
 	CreatedAt  int64  `json:"createdAt"`
 	ArchivedAt *int64 `json:"archivedAt"`
 
-	// ParentID is set for a scratch terminal opened under a main session.
+	// Scratch marks a terminal in the strip under the main pane.
 	//
-	// Bottom terminals are ordinary sessions with a parent rather than their
-	// own kind of thing, so they get attaching, replay, state detection and
-	// naming without a parallel implementation of each.
-	ParentID *string `json:"parentSessionId"`
+	// These are ordinary sessions rather than their own kind of thing, so they
+	// get attaching, replay, state detection and naming without a parallel
+	// implementation of each. What makes one is this flag and its project --
+	// it used to be a parent session, and the strip changed under you every
+	// time you switched agents inside one project.
+	Scratch bool `json:"scratch"`
 }
 
 // CreateSession inserts a session row. The tmux session itself is created by
@@ -145,11 +147,6 @@ func (d *DB) CreateSession(ctx context.Context, s Session) (Session, error) {
 	s.CreatedAt = now()
 	s.StateChangedAt = s.CreatedAt
 
-	var parent any
-	if s.ParentID != nil {
-		parent = *s.ParentID
-	}
-
 	// Always recorded from here on, including the empty argv. A caller that
 	// creates a session at all knows what it asked for, so "not recorded" is
 	// reserved for rows written before this column existed — and a restore
@@ -164,11 +161,11 @@ func (d *DB) CreateSession(ctx context.Context, s Session) (Session, error) {
 	_, err = d.sql.ExecContext(ctx, `
 		INSERT INTO sessions
 			(id, project_id, tmux_name, title, title_source, state, state_source,
-			 state_changed_at, cwd, command, cols, rows, created_at, parent_session_id,
+			 state_changed_at, cwd, command, cols, rows, created_at, scratch,
 			 launch_command, launch_profile_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		s.ID, s.ProjectID, s.TmuxName, s.Title, s.TitleSource, s.State, s.StateSource,
-		s.StateChangedAt, s.CWD, s.Command, s.Cols, s.Rows, s.CreatedAt, parent,
+		s.StateChangedAt, s.CWD, s.Command, s.Cols, s.Rows, s.CreatedAt, s.Scratch,
 		string(launch), s.LaunchProfileID)
 	if err != nil {
 		return Session{}, fmt.Errorf("store: insert session: %w", err)
@@ -195,7 +192,7 @@ func emptyIfNil(v []string) []string {
 // The blob itself is deliberately not in this list — see ScrollbackAt.
 const sessionColumns = `s.id, s.project_id, s.tmux_name, s.title, s.title_source, s.state,
 	s.state_source, s.state_changed_at, s.pinned, s.sort_index, s.cwd, s.command, s.cols,
-	s.rows, s.last_output_at, s.created_at, s.archived_at, s.parent_session_id, s.exited,
+	s.rows, s.last_output_at, s.created_at, s.archived_at, s.scratch, s.exited,
 	s.exit_status, s.launch_command, s.launch_profile_id, s.restore_on_boot, s.restored_at,
 	COALESCE(sb.captured_at, 0)`
 
@@ -206,12 +203,11 @@ func scanSession(sc interface{ Scan(...any) error }) (Session, error) {
 	var s Session
 	var sortIdx sql.NullInt64
 	var archived sql.NullInt64
-	var parent sql.NullString
 	var launch string
 	err := sc.Scan(&s.ID, &s.ProjectID, &s.TmuxName, &s.Title, &s.TitleSource,
 		&s.State, &s.StateSource, &s.StateChangedAt, &s.Pinned, &sortIdx,
 		&s.CWD, &s.Command, &s.Cols, &s.Rows, &s.LastOutputAt, &s.CreatedAt, &archived,
-		&parent, &s.Exited, &s.ExitStatus, &launch, &s.LaunchProfileID, &s.RestoreOnBoot,
+		&s.Scratch, &s.Exited, &s.ExitStatus, &launch, &s.LaunchProfileID, &s.RestoreOnBoot,
 		&s.RestoredAt, &s.ScrollbackAt)
 	if err != nil {
 		return Session{}, err
@@ -222,9 +218,6 @@ func scanSession(sc interface{ Scan(...any) error }) (Session, error) {
 	}
 	if archived.Valid {
 		s.ArchivedAt = &archived.Int64
-	}
-	if parent.Valid {
-		s.ParentID = &parent.String
 	}
 	// A row written before v9 has '' here, which is not JSON and must not be
 	// reported as an empty argv: an empty argv is a login shell, and a session
@@ -245,25 +238,28 @@ func scanSession(sc interface{ Scan(...any) error }) (Session, error) {
 	return s, nil
 }
 
-// ListChildSessions returns the scratch terminals under a session, oldest
-// first.
+// ListScratchSessions returns a project's scratch terminals, oldest first.
 //
 // Ordered by creation rather than by state: these are tabs in a strip, and a
 // tab strip that reorders itself while you are using it is hostile.
-func (d *DB) ListChildSessions(ctx context.Context, parentID string) ([]Session, error) {
+//
+// By project, not by session. The strip holds the shells somebody keeps a
+// build and a `git log` in, and those belong to the repository rather than to
+// whichever agent happens to be selected above them.
+func (d *DB) ListScratchSessions(ctx context.Context, projectID string) ([]Session, error) {
 	rows, err := d.sql.QueryContext(ctx, fmt.Sprintf(`
 		SELECT %s %s
-		WHERE s.parent_session_id = ?
-		ORDER BY s.sort_index ASC, s.created_at ASC`, sessionColumns, sessionFrom), parentID)
+		WHERE s.project_id = ? AND s.scratch = 1
+		ORDER BY s.sort_index ASC, s.created_at ASC`, sessionColumns, sessionFrom), projectID)
 	if err != nil {
-		return nil, fmt.Errorf("store: list child sessions: %w", err)
+		return nil, fmt.Errorf("store: list scratch sessions: %w", err)
 	}
 	defer rows.Close()
 	var out []Session
 	for rows.Next() {
 		s, err := scanSession(rows)
 		if err != nil {
-			return nil, fmt.Errorf("store: scan child session: %w", err)
+			return nil, fmt.Errorf("store: scan scratch session: %w", err)
 		}
 		out = append(out, s)
 	}
