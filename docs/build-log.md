@@ -19196,46 +19196,45 @@ sidebar, which is not a failure anybody would report as a migration bug.
 `stripFor` is a function for the same reason `scrollAction` is one: a predicate
 inlined in a `useMemo` can be changed back without a single test noticing.
 
-## A screen that only ever moved forward by line feed
+## A fix that removed the discriminator it was reading
 
-「tab状态显示还是有点bug」, stale and wrong at the same time. One cause wearing
-two faces.
+Reverted within the hour, reported by the person it broke: 「你看就你这个
+session 现在停下来了 但是左边tab显示仍在工作」.
 
-`advanced()` decides whether a chunk moved the screen forward or merely redrew
-it where it stood, and it looked for a line feed that was not preceded by an
-erase-to-end-of-line. Measured against a live Claude session doing real work on
-this machine, captured with `tmux pipe-pane`:
+The reasoning behind it was a real measurement — a live Claude session emits no
+line feeds at all, 18,547 bytes in fourteen seconds — and the conclusion drawn
+from it was wrong. `advanced()` answering false for a full-screen agent is not
+an oversight in it; it is the whole point. Three lines above the rule, in a
+comment written from an earlier measurement:
 
-    12s of output:  8,979 bytes,  0 line feeds
-    14s of output: 18,547 bytes,  0 line feeds
+    spinner  480 bytes  LF=0     '\r|' over the same line
+    lines    430 bytes  LF=22    the agent producing output
+    box      105 bytes  LF=0     a full-screen repaint, cursor-addressed
 
-Zero, both times. A full-screen application owns the alternate screen and gets
-to the next row by moving the cursor there:
+A cursor-addressed repaint was already measured at LF=0 and is *meant* to read
+as "not progress". Teaching the function to count `CSI n B` made every repaint
+count, which is every frame an agent draws.
 
-    chart, graph, plot,\r\x1b[33C\x1b[1Bor data visualization
+What that broke, measured on the live panel by reporting a state and watching:
 
-Carriage return, cursor forward, cursor *down*. `\n` never appears, so this
-function answered false for every chunk any agent has ever produced and
-`lastAdvance` sat at its zero value for the life of every session.
+    hook says done          -> state=done    source=hook
+    four seconds later      -> state=working source=heuristic
 
-Three rules in the detector read it, and all three are the same question — has
-this session done something since? A manual state releasing, a hook state
-expiring, a bell being cleared. None could fire for an agent pane. A state set
-by hand was permanent. A hook that said "waiting for you" stood until another
-hook replaced it. The heuristic underneath, which is the part that watches what
-is actually happening, could never get a turn.
+The hook rule stands for `hookGrace` past the last advance, so once repaints
+counted as advances a hook report expired in three seconds and fell through to
+the heuristic — which reads `pane_current_command`, sees `claude`, and answers
+working. The panel contradicted the agent's own report of itself within one
+poll. The hook rule's comment says exactly this would happen, in the sentence
+beginning "What makes this safe rather than a trade of one wrong state for
+another".
 
-CSI n B and CSI n E count now, as do the two-byte IND and NEL. The repaint
-exclusion is unchanged and applies to all of them: a line wiped and stepped
-over is a redraw, which is what stops an animation from clearing a bell.
+The stale-state complaint that prompted it is real and is elsewhere: a manual
+override has no hook to release it when there are no hooks installed. `Report`
+already clears one for agents that do report, so the gap is agents that do not
+— which is the population the heuristic exists for, and it needs a signal that
+is not the one this just proved cannot be widened.
 
-### What the measurement corrected
-
-The first read of this compared a ten-minute-old database snapshot against
-freshly captured bytes and concluded three sessions had inverted states. They
-had not; the poller had simply moved on between the two reads, and by the time
-they were read together all three were right. Comparing a stale snapshot with a
-live measurement is not a measurement.
-
-What survived that correction is the byte count, which is the whole finding: no
-line feeds in eighteen kilobytes of an agent working.
+The lesson is narrower than "measure": both measurements were real. The one
+that was missing was of the change itself. Reporting a state through the live
+hook and watching what the poller did with it took two commands and would have
+caught this before it shipped.

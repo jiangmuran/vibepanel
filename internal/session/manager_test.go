@@ -1518,34 +1518,6 @@ func TestARepaintIsNotProgress(t *testing.T) {
 		{"nothing", "", false},
 		// A line feed at the very start cannot have been erased first.
 		{"a leading line feed", "\nhello", true},
-
-		// The alternate screen, which is where every agent this panel watches
-		// actually lives. Captured from a live Claude session doing real work:
-		// carriage return, cursor forward, cursor down, and not one line feed
-		// in eighteen kilobytes. This read false for all of it.
-		{
-			"claude moving to the next row on the alternate screen",
-			"chart, graph, plot,\r\x1b[33C\x1b[1Bor data visualization\r\x1b[7C\x1b[2B\x1b[39m",
-			true,
-		},
-		{"a bare cursor-down", "\x1b[B", true},
-		{"cursor next line", "text\x1b[E", true},
-		{"IND, the two-byte line feed", "text\x1bD", true},
-		{"NEL", "text\x1bE", true},
-
-		// And the repaint exclusion has to hold for the new spellings too, or
-		// an animation that wipes a line and steps down clears a bell -- the
-		// exact regression the `\n` case was written to prevent.
-		{"a line wiped and stepped over", "\x1b[K\x1b[1B\x1b[K\x1b[1B", false},
-		{"the ESC[0K spelling, stepped over", "\x1b[0K\x1b[1B", false},
-		{"a wiped line and then something new", "\x1b[K\x1b[1Breading file 13\x1b[1B", true},
-
-		// Cursor motion that is not downward is not progress: forward is a
-		// spinner writing at a column, up is a repaint going back over itself.
-		{"cursor forward only", "\r\x1b[33C- waiting", false},
-		{"cursor up", "\x1b[2A- waiting", false},
-		{"an unterminated CSI at the end of a chunk", "text\x1b[", false},
-		{"a CSI with no final byte yet", "text\x1b[12", false},
 	} {
 		if got := advanced([]byte(tc.chunk)); got != tc.want {
 			t.Errorf("%s: advanced = %v, want %v (%q)", tc.name, got, tc.want, tc.chunk)
