@@ -37,14 +37,6 @@ const (
 	// the first for sampling reasons silently widened the second, which is how
 	// a session that had resumed work went on showing a triangle.
 	bellGrace = 2 * time.Second
-
-	// hookGrace — how long a hook report outranks subsequent output.
-	//
-	// A "waiting for you" notification is emitted at the same instant the
-	// prompt is drawn, so the output that immediately follows it is the
-	// prompt itself, not the agent resuming work. Without this the state
-	// flips back to working a few milliseconds after the hook fired.
-	hookGrace = 3 * time.Second
 )
 
 // Observation is what the detector has been told about one session.
@@ -309,7 +301,33 @@ func (d *Detector) Evaluate(id string, obs Observation, now time.Time) (State, S
 	// the agent says otherwise, or the screen actually moves", which is what it
 	// was trying to express. The manual rule above has no such backstop, which
 	// is why stickiness is a real cost there and only a phrasing here.
-	if t.hookState != "" && t.lastAdvance.Sub(t.hookAt) < hookGrace {
+	//
+	// The grace is gone, and the argument above is what removes it. Measured on
+	// a live panel, twice, before and after an unrelated change to `advanced()`:
+	//
+	//     hook says done      -> state=done    source=hook
+	//     six seconds later   -> state=working source=heuristic
+	//
+	// An agent's TUI is alive, so the screen advances continuously and any
+	// finite grace is spent immediately. What the report fell through to is the
+	// heuristic at the bottom of this function, which reads the foreground
+	// process, sees `claude`, and answers working -- so the panel contradicted
+	// the agent's own report of itself within one poll. 「你看就你这个 session
+	// 现在停下来了 但是左边tab显示仍在工作」.
+	//
+	// A timer was never the right shape for this. The paragraph above already
+	// says why it does not need one: hookState is non-empty only when hooks are
+	// installed, and an agent with hooks installed reports every transition --
+	// UserPromptSubmit and PreToolUse arrive the moment it starts again. The
+	// report is superseded by the next report, which is the only thing that
+	// knows better.
+	//
+	// Two things can make it stale anyway, and both are facts rather than
+	// timers. A dead pane is handled at the top of this function. The other is
+	// the agent no longer being there: if the foreground process is back to a
+	// plain shell then whatever it last said about itself is over, and the
+	// fall-through below is the honest answer.
+	if t.hookState != "" && !obs.ShellOnly {
 		return t.hookState, SourceHook
 	}
 

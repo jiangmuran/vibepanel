@@ -19238,3 +19238,54 @@ The lesson is narrower than "measure": both measurements were real. The one
 that was missing was of the change itself. Reporting a state through the live
 hook and watching what the poller did with it took two commands and would have
 caught this before it shipped.
+
+## A hook report with a three-second shelf life
+
+「你看就你这个 session 现在停下来了 但是左边tab显示仍在工作」. The agent said it
+had stopped, the panel had been told, and the panel said otherwise anyway.
+
+Measured on the live panel by reporting a state through the real hook script and
+watching the row:
+
+    hook says done          -> state=done    source=hook
+    six seconds later       -> state=working source=heuristic
+
+A hook report outranked the heuristic for `hookGrace` past the last screen
+advance, three seconds. An agent's TUI is alive, so the screen advances
+continuously and any finite grace is spent immediately. What it fell through to
+is the rule at the bottom of `Evaluate`, which reads the foreground process,
+sees `claude`, and answers working — correctly, as a guess, which is exactly why
+the report it replaced had to outrank it.
+
+The grace is gone. The paragraph above it already said why it did not need one:
+`hookState` is non-empty only when hooks are installed, and an agent with hooks
+installed reports every transition — `UserPromptSubmit` and `PreToolUse` arrive
+the moment it starts again. A report is superseded by the next report, which is
+the only thing that knows better.
+
+Two things end one without another arriving, and both are facts rather than
+timers. A dead pane, handled at the top of the function. And the agent no longer
+being there: if the foreground process is back to a plain shell then whatever it
+last announced is over, and the heuristic's "a shell has nothing running" is the
+honest answer. Without that, a killed agent's last "working" would stand on an
+idle shell forever.
+
+### The wrong stream
+
+The attempt before this one read the same symptom, measured the wrong thing, and
+shipped. It captured an agent's output with `tmux pipe-pane` — 18,547 bytes with
+no line feeds — and concluded that `advanced()` could never fire for a
+full-screen agent.
+
+`pipe-pane` taps the pane's own output. The detector reads the **tmux client
+PTY**, which is tmux rendering the whole screen to its client, and that stream
+scrolls with line feeds like any terminal. Two different streams; only one of
+them is the one the code reads.
+
+What settled it was not a better capture but the behaviour: the revert changed
+nothing, `done` still became `working` in six seconds, and a grace that expires
+can only expire if the thing it is measured against is moving.
+
+    Reporting a state through the live hook and watching what the poller did
+    with it is two commands. It would have caught the first attempt before it
+    shipped, and it is what found the real cause afterwards.

@@ -190,21 +190,55 @@ func TestHookHoldsThroughTheOutputItPredicts(t *testing.T) {
 	}
 }
 
-func TestOutputWellAfterAHookWins(t *testing.T) {
-	// The hook's lead is a grace period, not a lock. An agent that was told to
-	// carry on is working again, whatever it last announced.
-	//
-	// Advanced, and that is the whole content of the rule rather than a detail
-	// of the fixture: the grace is measured against a screen that moved forward,
-	// so that a spinner cannot end it. Without the flag this fixture is a
-	// redrawing TUI, which is TestAnAnimationDoesNotDiscardAHookReport and wants
-	// the opposite answer. The two together are the rule.
+// A hook report stands until the agent reports again.
+//
+// This asserted the opposite -- that output far enough past a hook took the
+// report back -- and the inversion is the fix. Measured on a live panel: a hook
+// saying done became working from the heuristic six seconds later, because an
+// agent's TUI advances the screen continuously and any finite grace is spent at
+// once. What it fell through to reads the foreground process, sees the agent
+// still running, and answers working, so the panel contradicted the agent's own
+// report of itself within one poll.
+//
+// The agent is the only thing that knows, and an agent with hooks installed
+// reports every transition. There is nothing for a timer to add.
+func TestAHookReportStandsUntilTheAgentSaysOtherwise(t *testing.T) {
 	d := NewDetector()
 	d.Report("s", StateDone, at(0))
-	d.Observe("s", Signals{Bytes: 400, Visible: true, Advanced: true}, at(hookGrace+time.Second))
-	st, src := d.Evaluate("s", Observation{}, at(hookGrace+time.Second+100*time.Millisecond))
-	if st != StateWorking || src != SourceHeuristic {
-		t.Errorf("state = %q from %q, want %q from %q", st, src, StateWorking, SourceHeuristic)
+
+	// A minute of an agent redrawing and scrolling. None of it is evidence
+	// about whether the agent finished; only the agent has that.
+	d.Observe("s", Signals{Bytes: 400, Visible: true, Advanced: true}, at(time.Minute))
+	if st, src := d.Evaluate("s", Observation{}, at(2*time.Minute)); st != StateDone || src != SourceHook {
+		t.Errorf("after a minute of output: %q from %q, want %q from %q",
+			st, src, StateDone, SourceHook)
+	}
+
+	// The next report is what supersedes it, which is how an agent that starts
+	// again says so: UserPromptSubmit and PreToolUse both report working.
+	d.Report("s", StateWorking, at(3*time.Minute))
+	if st, src := d.Evaluate("s", Observation{}, at(3*time.Minute)); st != StateWorking || src != SourceHook {
+		t.Errorf("after a newer report: %q from %q, want %q from %q",
+			st, src, StateWorking, SourceHook)
+	}
+}
+
+// The one fact that ends a hook report without another one: the agent is gone.
+//
+// Not a timer either. If the foreground process is back to a plain shell then
+// whatever it last announced about itself is over, and the heuristic's answer
+// -- a shell has nothing running, so done -- is the honest one. Without this a
+// killed agent's last "working" would stand on an idle shell forever.
+func TestAHookReportEndsWhenTheAgentDoes(t *testing.T) {
+	d := NewDetector()
+	d.Report("s", StateWorking, at(0))
+	if st, _ := d.Evaluate("s", Observation{}, at(time.Second)); st != StateWorking {
+		t.Fatalf("state = %q, want the report to hold while the agent is there", st)
+	}
+	st, src := d.Evaluate("s", Observation{ShellOnly: true}, at(2*time.Second))
+	if st != StateDone || src != SourceHeuristic {
+		t.Errorf("back at a shell: %q from %q, want %q from %q",
+			st, src, StateDone, SourceHeuristic)
 	}
 }
 
