@@ -61,6 +61,26 @@ export function loadTheme(): ThemeChoice {
   return 'system'
 }
 
+/**
+ * Keep `<meta name="theme-color">` on the theme the panel is actually showing.
+ *
+ * index.html ships one fixed dark value, which is right until somebody picks
+ * the other theme. iOS paints the chrome around a home-screen PWA with it, so a
+ * light panel sat under a near-black bar and a dark one under a pale bar --
+ * the mirror of the white edge along the bottom that `color-scheme` fixes in
+ * styles.css, and the same cause: something outside this stylesheet deciding
+ * for itself which theme the page is in.
+ *
+ * Read from the computed token rather than repeating the hex here. Two
+ * spellings of a colour are two colours the first time one of them is edited.
+ */
+function paintChrome() {
+  const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+  if (!meta) return
+  const bg = getComputedStyle(document.documentElement).getPropertyValue('--vp-bg').trim()
+  if (bg) meta.content = bg
+}
+
 export function applyTheme(choice: ThemeChoice) {
   const root = document.documentElement
   if (choice === 'system') {
@@ -68,9 +88,26 @@ export function applyTheme(choice: ThemeChoice) {
   } else {
     root.dataset.theme = choice
   }
+  paintChrome()
   try {
     localStorage.setItem(STORAGE_KEY, choice)
   } catch {
     /* private mode: the choice simply does not persist */
   }
+}
+
+/**
+ * Follow the system while the choice is "system".
+ *
+ * Without this the bar keeps whichever colour it had when the page loaded, and
+ * a device that switches to dark at sunset gets a pale bar over a dark panel
+ * until the next reload. Registered once, at startup; the listener is cheap and
+ * lives as long as the page.
+ */
+export function watchSystemTheme() {
+  const mq = window.matchMedia('(prefers-color-scheme: dark)')
+  mq.addEventListener('change', () => {
+    if (loadTheme() === 'system') paintChrome()
+  })
+  paintChrome()
 }

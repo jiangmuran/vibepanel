@@ -87,14 +87,72 @@ describe('theme blocks', () => {
     expect(themeBlocks().length).toBeGreaterThanOrEqual(2)
   })
 
+  /*
+   * One property that is not a token and belongs in a theme block anyway.
+   *
+   * `color-scheme` is the theme, told to the browser. It decides what the UA
+   * paints where this stylesheet paints nothing: form controls, scrollbars, the
+   * overscroll iOS rubber-bands into, and the safe area under a home-screen
+   * PWA's home indicator. Leaving it out is not a missing nicety -- it is the
+   * page and the browser disagreeing about which theme is on, and the panel
+   * shipped with them disagreeing in all six combinations of system and forced
+   * theme, measured.
+   *
+   * It cannot live outside these blocks: its whole content is which theme is
+   * current, which is what these blocks are. And it cannot cause the failure
+   * the rule guards against -- that is a *component* styled in one theme and
+   * not the other, and this is a root-level declaration with no component to
+   * drift from.
+   *
+   * Named rather than pattern-matched. An exception list with one entry costs a
+   * line to extend and a reason to justify, which is the point.
+   */
+  const allowed = new Set(['color-scheme'])
+
   it('declare only custom properties', () => {
     for (const block of themeBlocks()) {
-      const offenders = declaredProperties(block.body).filter((p) => !p.startsWith('--'))
+      const offenders = declaredProperties(block.body)
+        .filter((p) => !p.startsWith('--'))
+        .filter((p) => !allowed.has(p))
       expect(
         offenders,
         `${block.label} declares component styles (${offenders.join(', ')}); a rule that ` +
           'exists in one theme and not the other is how white-on-white happens',
       ).toEqual([])
+    }
+  })
+
+  /*
+   * And it has to be in every one of them.
+   *
+   * Three blocks cover four states, and the one that broke is the pair that
+   * disagree: a panel forced dark on a device whose system is light. The page
+   * followed [data-theme] and the browser followed prefers-color-scheme, so the
+   * app was dark and everything around it was white -- reported from an iPad as
+   * a white edge along the bottom of a black panel in PWA mode.
+   *
+   * Deleting it from any single block puts one of those four states back.
+   */
+  it('tell the browser which theme is on', () => {
+    // The base :root as well, which themeBlocks() does not return -- it looks
+    // for the *overrides*, and the light theme is the thing being overridden.
+    // That block is the answer for the fourth state: a panel forced light on a
+    // device whose system is dark, where the media query is excluded by its own
+    // `:not([data-theme='light'])` and nothing else would say so.
+    const base = stripped.match(/:root\s*\{[\s\S]*?\n\}/)?.[0] ?? ''
+    expect(base, 'no :root block found, so the check below proves nothing').not.toBe('')
+    expect(
+      declaredProperties(base),
+      'the base :root does not set color-scheme, so a panel forced light on a ' +
+        'dark system leaves the browser painting dark around it',
+    ).toContain('color-scheme')
+
+    for (const block of themeBlocks()) {
+      expect(
+        declaredProperties(block.body),
+        `${block.label} does not set color-scheme, so the browser paints the ` +
+          'scrollbars, the form controls and a PWA safe area in the other theme',
+      ).toContain('color-scheme')
     }
   })
 })

@@ -19289,3 +19289,79 @@ can only expire if the thing it is measured against is moving.
     Reporting a state through the live hook and watching what the poller did
     with it is two commands. It would have caught the first attempt before it
     shipped, and it is what found the real cause afterwards.
+
+## A tablet is the desktop layout in somebody's hands
+
+`NARROW_QUERY` is `(max-width: 767px)`, so an iPad — 820 css pixels in portrait
+— gets the full three-column layout. That is right; it has the room. What comes
+with it is a finger, and several things had been built for a mouse without ever
+asking which one they had. Reported in two messages from an iPad.
+
+**The sidebar rows.** `(pointer: coarse)` puts a 44px floor under every button,
+so the rows grew and the type did not: 「左侧选择tab还是框太大字太小」. The
+larger type already existed — the phone drawer uses it — and was keyed to the
+*layout* rather than to the pointer. A tablet is the one combination that wanted
+one and not the other.
+
+**The panel tabs.** A five-pixel drag threshold is a mouse that did not move; a
+fingertip rocks eight to twelve on an ordinary tap, so every tap lit up every
+landing place on the screen. 「右侧tab超级容易触发拖动」. Ten now, on
+`e.pointerType`, which is the same figure `SLOP_PX` and `LONG_PRESS_SLOP`
+already use — read off the event rather than guessed from the viewport, so a
+tablet with a mouse attached still gets the mouse value.
+
+**Attaching a file.** 「ipad和手机端无法上传图片」, and there was no road at all:
+a phone cannot drop, iOS does not hand a pasted image to a page that is not an
+editable field, and the only file chooser in the panel lives in the side panel,
+which a narrow layout does not render. The compose bar has one now. Not
+`capture` — that forces the camera and hides the photo library, and what is
+being attached is nearly always a screenshot that already exists.
+
+**The strip's remount.** `key={current.id}` on `BottomTerminals` was correct
+when the strip belonged to a session and was the one thing still throwing it
+away on every switch once it belonged to the project. Found while reading past
+it for something else, which is the usual way.
+
+### The white edge, which was the browser and the page disagreeing
+
+「用 pwa 模式打开下黑色模式，底下有白边」. `color-scheme` was set nowhere in the
+stylesheet — only `<meta name="color-scheme" content="light dark">`, which lets
+the UA choose from `prefers-color-scheme`, the *system* setting, while every
+colour in the file follows `[data-theme]`. Force the panel dark on a device
+whose system is light and the two disagree.
+
+Nowhere is that visible on a desktop, because the canvas is covered. In a
+home-screen PWA it is: `viewport-fit=cover` and a translucent status bar mean
+the safe area under the home indicator is the UA's to paint, and it painted it
+white under a black panel.
+
+Measured in a browser across all six combinations of system and forced theme,
+before and after:
+
+    before:  color-scheme=normal   in all six
+    after:   correct               in all six
+
+`normal` is the UA saying it was never told. It also decides scrollbars, form
+controls and the overscroll iOS rubber-bands into, all of which had the same
+split.
+
+`theme-color` is the mirror of it, and was a fixed dark hex — so a *light* panel
+sat under a near-black bar. It follows the computed `--vp-bg` now, updated when
+the theme is applied and when the system flips under a "system" choice.
+
+The theme-block guard had to learn one exception. `color-scheme` is not a custom
+property, and the rule is that theme blocks declare only tokens — for a good
+reason, which does not reach this: that rule is about a *component* styled in
+one theme and not the other, and this is a root declaration with no component to
+drift from. It is named in a one-entry allow list, and a second test now requires
+it in every block, base `:root` included, because the state that broke is the
+pair that disagree.
+
+### No orientation preference
+
+The manifest said `"orientation": "any"`, which is not a neutral default: it is
+the app telling the platform that every orientation is acceptable, which is
+precisely what somebody who has locked their tablet to landscape did not ask
+for. The key is gone. 「我锁定了横屏，但是它仍然可以被翻转为竖屏」 — iOS ignores
+manifest orientation outright, so this cannot be the whole story there, but
+declaring a preference the panel does not have is wrong whoever reads it.

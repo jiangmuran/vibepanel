@@ -880,6 +880,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           selected={selected}
           expanded={narrow ? true : docked}
           overlay={showOverlay}
+          touch={coarsePointer}
           onToggle={() => (narrow ? setDrawerOpen(false) : setDocked((v) => !v))}
           onSelect={selectSession}
           onAddProject={addProject}
@@ -1319,17 +1320,24 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         {current && narrow && (
           <>
             <SelectionCopy selection={selection} />
-            <ComposeInput sessionId={current.id} onPaste={pasteToCurrent} />
+            <ComposeInput
+              sessionId={current.id}
+              onPaste={pasteToCurrent}
+              // The same road a dropped or pasted file takes: into the project,
+              // then the path on the command line.
+              onFiles={(files) => void uploadInto(files)}
+            />
             <MobileKeyBar onSend={sendToCurrent} onPaste={pasteToCurrent} />
           </>
         )}
 
         {current && !narrow && bottomHeight > 0 && (
           <BottomTerminals
-            // Remount per parent: each main session has its own set of tabs,
-            // and carrying the previous one's active tab across a switch shows
-            // a terminal belonging to something you are no longer looking at.
-            key={current.id}
+            // Remount per *project*, not per session. It was per session, to
+            // stop a switch carrying the previous one's active tab across --
+            // and once the strip became the project's, that remount was the
+            // one thing still throwing it away on every switch.
+            key={current.projectId}
             socket={socket}
             near={current}
             terminals={bottomTerminals}

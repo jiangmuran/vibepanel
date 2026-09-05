@@ -37,6 +37,16 @@ export interface SidebarProps {
   expanded: boolean
   /** Overlay mode: the sidebar floats above the content instead of taking a column. */
   overlay: boolean
+  /**
+   * The pointer is a finger, which decides the *type* and nothing else.
+   *
+   * Separate from `overlay`, which decides the layout. A tablet gets the docked
+   * sidebar -- it has the room -- and a finger, so every row picks up the 44px
+   * touch floor from styles.css while the type stayed at the density a mouse
+   * reads from two feet away. 「左侧选择tab还是框太大字太小」: the boxes were
+   * right and the text in them was not.
+   */
+  touch: boolean
   onToggle: () => void
   onSelect: (id: string) => void
   onAddProject: () => void
@@ -123,7 +133,7 @@ function initials(name: string): string {
 
 export function Sidebar(props: SidebarProps) {
   useLang()
-  const { projects, sessions, expanded, overlay } = props
+  const { projects, sessions, expanded, overlay, touch } = props
 
   const projectIds = useMemo(() => projects.map((p) => p.id), [projects])
   const drag = useDragList(projectIds, props.onReorderProjects)
@@ -220,14 +230,17 @@ export function Sidebar(props: SidebarProps) {
   // so a descendant redefining `--text-vp-base` changes nothing at all -- the
   // same trap that made the wall scale inert, twice. A ternary is duller and
   // it is a thing that can be read.
+  // Bigger type for a finger, whichever layout it is in. The drawer already
+  // had it; the docked sidebar on a tablet is the case that was missed.
+  const big = overlay || touch
   const rank = {
-    head: overlay ? 'text-vp-lg' : 'text-vp-md',
+    head: big ? 'text-vp-lg' : 'text-vp-md',
     // A project's name is the heading over its sessions and was set one step
     // *below* them -- grey, small, tracked out -- so the thing you scan for
     // read as weaker than the rows under it. 「字太小」, with a screenshot of a
     // drawer where the only large text was the sessions.
-    group: overlay ? 'text-vp-md' : 'text-vp-base',
-    row: overlay ? 'text-vp-md' : 'text-vp-base',
+    group: big ? 'text-vp-md' : 'text-vp-base',
+    row: big ? 'text-vp-md' : 'text-vp-base',
   }
 
   // How much room a project with no sessions takes.

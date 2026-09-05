@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { CornerDownLeft, Send } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { CornerDownLeft, ImagePlus, Send } from 'lucide-react'
 import { t, useLang } from '../../i18n'
 
 /**
@@ -13,11 +13,28 @@ import { t, useLang } from '../../i18n'
 export function ComposeInput({
   sessionId,
   onPaste,
+  onFiles,
 }: {
   sessionId: string
   onPaste: (text: string, submit: boolean) => void
+  /**
+   * Attach files, which on a phone has no other road.
+   *
+   * Everywhere else an image reaches the panel by being pasted or dropped, and
+   * a phone can do neither: there is no drop, and iOS does not deliver an image
+   * on the clipboard to a `paste` handler on a page that is not an editable
+   * field. The file panel's own chooser exists but is in the side panel, which
+   * a narrow layout does not show. So handing an agent a screenshot -- the
+   * single most common thing anybody wants to do from a phone -- was possible
+   * on a desktop only. 「ipad和手机端无法上传图片」.
+   *
+   * A file input is what makes it work: iOS answers one with Photo Library,
+   * Take Photo and Files, which is every source a screenshot can come from.
+   */
+  onFiles: (files: File[]) => void
 }) {
   useLang()
+  const chooser = useRef<HTMLInputElement | null>(null)
   const [text, setText] = useState('')
   const [newline, setNewline] = useState(true)
 
@@ -121,6 +138,31 @@ export function ComposeInput({
         // look like what will arrive.
         className="max-h-24 min-h-8 flex-1 resize-none rounded-vp border border-hairline bg-surface px-2 py-1.5 font-mono text-vp-md text-ink outline-none placeholder:font-sans placeholder:text-ink-2 focus:border-accent"
       />
+      <input
+        ref={chooser}
+        type="file"
+        multiple
+        // Not `capture`: that forces the camera and hides the photo library,
+        // and the thing being attached is almost always a screenshot that
+        // already exists.
+        accept="image/*,application/pdf,text/*"
+        data-testid="compose-file"
+        className="hidden"
+        onChange={(e) => {
+          onFiles([...(e.target.files ?? [])])
+          // Cleared so the same file can be chosen twice running.
+          e.target.value = ''
+        }}
+      />
+      <button
+        type="button"
+        onClick={() => chooser.current?.click()}
+        title={t('compose.attach')}
+        data-testid="compose-attach"
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-vp border border-hairline text-ink-2 transition-colors duration-150 ease-vp"
+      >
+        <ImagePlus size={13} />
+      </button>
       <button
         type="button"
         onClick={() => setNewline((v) => !v)}

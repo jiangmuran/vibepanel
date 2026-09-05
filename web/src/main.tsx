@@ -5,9 +5,14 @@ import { App } from './App'
 import { AuthGate } from './components/AuthGate'
 import { Dashboard } from './components/Dashboard'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { watchSystemTheme } from './components/theme'
 
 const root = document.getElementById('root')
 if (!root) throw new Error('missing #root')
+
+// Before the first render: the meta tag ships one fixed colour, and on a
+// home-screen PWA that colour is the chrome around the whole app.
+watchSystemTheme()
 
 // The service worker is what makes this installable and what shows a
 // notification on Android, where `new Notification()` is refused outright. It

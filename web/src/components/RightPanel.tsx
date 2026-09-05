@@ -104,8 +104,23 @@ interface Props {
   onOpenTokens: () => void
 }
 
-/** Pixels of movement before a press on a tab becomes a drag. */
+/** Pixels of movement before a press on a tab becomes a drag.
+ *
+ * Two values, because a mouse and a finger do not hold still to the same
+ * tolerance. Five pixels is a mouse that did not move; a fingertip rocks eight
+ * to twelve on an ordinary tap, so on a tablet every tap on a tab lit up every
+ * landing place on the screen. 「右侧tab超级容易触发拖动」.
+ *
+ * Ten is what the rest of the panel already uses for the same judgement --
+ * SLOP_PX in touchSelect.ts, LONG_PRESS_SLOP in InlineName.tsx -- and a third
+ * number for the same question is a third number to get wrong.
+ */
 const DRAG_THRESHOLD = 5
+const TOUCH_DRAG_THRESHOLD = 10
+
+function dragThreshold(pointerType: string): number {
+  return pointerType === 'touch' || pointerType === 'pen' ? TOUCH_DRAG_THRESHOLD : DRAG_THRESHOLD
+}
 
 interface DragState {
   tab: PanelTab
@@ -313,8 +328,9 @@ export function RightPanel(props: Props) {
       // A threshold, so a plain click on a tab is a plain click. Capturing on
       // pointerdown and calling that a drag paints every landing place on the
       // screen for the length of a mouse press.
-      const moved = Math.abs(e.clientX - from.x) > DRAG_THRESHOLD ||
-        Math.abs(e.clientY - from.y) > DRAG_THRESHOLD
+      const slop = dragThreshold(e.pointerType)
+      const moved = Math.abs(e.clientX - from.x) > slop ||
+        Math.abs(e.clientY - from.y) > slop
       if (!moved && !dragLive.current) return
       const found = targetAt(e.clientX, e.clientY)
       setDrag({ tab: from.tab, target: found?.target ?? null, over: found?.over ?? null })

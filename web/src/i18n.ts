@@ -491,6 +491,7 @@ const DICT = {
   'project.remove': { zh: '把这个项目从面板移除', en: 'Remove this project from the panel' },
   'project.orderManual': { zh: '回到你排好的顺序', en: 'Back to the order you arranged' },
   'compose.placeholder': { zh: '输入命令…', en: 'Type a command…' },
+  'compose.attach': { zh: '选图片或文件', en: 'Pick an image or a file' },
   'compose.send': { zh: '发送', en: 'Send' },
   'settings.title': { zh: '设置', en: 'Settings' },
   'settings.close': { zh: '关闭', en: 'Close' },
