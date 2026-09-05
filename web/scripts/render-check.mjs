@@ -1549,52 +1549,54 @@ browser = await chromium.launch({ headless: true })
         }
       }
 
-      // ...and it has to keep saying it, for every session, not only the one
-      // that happened to be selected when the panel loaded.
+      // ...and it says the same thing whatever is selected.
       //
-      // 「左下角的项目信息只在选择左侧第一个tab时生效」. Checked once, on one
-      // session, so a mark that never updated read exactly like one that did.
+      // This slot was the *current* project and its remote, so it changed with
+      // the selection and carried a link only for projects that happen to be
+      // GitHub checkouts -- six of eleven on the machine it was reported from
+      // had no origin at all. 「左下角应当始终显示vibepanel的项目信息」: the
+      // corner is the panel's own attribution. Which project you are in is
+      // already answered by the heading the session sits under and by the
+      // header above the terminal; this was the third answer and the only one
+      // that could come back empty.
+      //
+      // Still checked across projects, because the failure being replaced was
+      // the opposite one: a value that is meant to be constant has to be shown
+      // to be constant somewhere it previously was not.
       const rows = page.locator('[data-testid="session-row"]')
       const n = Math.min(await rows.count(), 5)
       const seen = []
       for (let i = 0; i < n; i++) {
         await rows.nth(i).click()
         await sleep(700)
-        const txt = (await mark.textContent().catch(() => '')) ?? ''
-        seen.push(txt.trim())
+        seen.push(((await mark.textContent().catch(() => '')) ?? '').trim())
       }
-      const blank = seen.filter((x) => x === '').length
-      if (blank > 0) {
-        note('FAIL', 'panel/project',
-          `the sidebar's project mark was empty for ${blank} of ${n} sessions: ` +
-          JSON.stringify(seen))
-      }
-
-      // The case the loop above cannot reach on its own: a session in the
-      // *other* project. Those rows all belong to one, so a mark stuck on the
-      // first project still matched every one of them.
       const other = page.locator('[data-testid="session-row"]', { hasText: 'second-shell' }).first()
       if (await other.isVisible().catch(() => false)) {
         await other.click()
         await sleep(900)
-        const there = ((await mark.textContent().catch(() => '')) ?? '').trim()
-        if (!there.includes('zzz-second')) {
-          note('FAIL', 'panel/project',
-            `switching to a session in another project left the mark on the old one: ` +
-            `${JSON.stringify(there)}`)
-        } else {
-          note('PASS', 'panel/project', 'the mark follows the session into another project')
-        }
-        // And back, so a mark that updates once is not mistaken for one that
-        // updates.
-        await rows.first().click()
-        await sleep(900)
-        const back = ((await mark.textContent().catch(() => '')) ?? '').trim()
-        if (back.includes('zzz-second')) {
-          note('FAIL', 'panel/project', 'the mark stayed on the second project on the way back')
-        }
+        seen.push(((await mark.textContent().catch(() => '')) ?? '').trim())
       } else {
-        note('FAIL', 'panel/project', 'no session in the second project, so the mark was never switched')
+        note('FAIL', 'panel/project', 'no session in the second project, so nothing crossed a project')
+      }
+      // Put the selection back where it was found.
+      //
+      // Everything below this point runs against whatever session is selected,
+      // and the loop above ends on one in the *second* project -- so the
+      // bottom-terminal check saw an empty strip and the notes check an empty
+      // note, and both reported it as the panel's fault. A check that leaves
+      // the app in a different state than it found it is a check that breaks
+      // the next one.
+      await page.locator('[data-testid="session-row"]', { hasText: 'scratchpad' }).first().click()
+      await sleep(900)
+
+      const distinct = [...new Set(seen)]
+      if (distinct.length !== 1 || !distinct[0].includes('vibepanel')) {
+        note('FAIL', 'panel/project',
+          `the corner does not always say vibepanel: ${JSON.stringify(distinct)}`)
+      } else {
+        note('PASS', 'panel/project',
+          `the corner says ${JSON.stringify(distinct[0])} for every session, across projects`)
       }
     }
 

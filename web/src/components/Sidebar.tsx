@@ -75,18 +75,23 @@ export interface SidebarProps {
   stateGuessed: boolean
   hooksInstalled: boolean
   onOpenSettings: () => void
+}
 
-  /**
-   * The project the panel is currently on, and its remote if it has a
-   * linkable one.
-   *
-   * Passed in rather than read here. The sidebar lists every project and
-   * reading a remote per row would be one subprocess per project per render;
-   * the foot of the column is about the one you are in, so App reads one
-   * remote when the selection changes and hands it down. See useProjectRemote.
-   */
-  current: Project | null
-  currentRemote: GitRemote | null
+/**
+ * This panel, and where its source is.
+ *
+ * Constants rather than a fetch: the corner they fill is an attribution to the
+ * software, not a reading of anything, so there is nothing to poll and nothing
+ * that can come back empty. `ProjectMark` renders it exactly as it rendered a
+ * project, which is the point -- the slot did not change shape, only what it is
+ * about.
+ */
+const PANEL_NAME = 'vibepanel'
+const PANEL_REPO: GitRemote = {
+  url: 'https://github.com/jiangmuran/vibepanel',
+  host: 'github.com',
+  owner: 'jiangmuran',
+  name: 'vibepanel',
 }
 
 
@@ -522,21 +527,26 @@ export function Sidebar(props: SidebarProps) {
         )}
       </nav>
 
-      {/* Which project you are in, at the bottom-left of the panel, where the
-          eye goes when it wants to know where it is: 「面板左下角等等地方 都加上
-          GitHub链接和项目名」.
-
-          Below the session list rather than above it, because the list is the
-          thing you navigate and this is the thing you check. Hidden in the
-          collapsed rail — a 48px column has room for a glyph and not for two
-          names — and hidden with no project, where there is nothing to say. */}
-      {props.expanded && props.current && (
+      {/* What this software is, at the bottom-left, always.
+          
+          「面板左下角等等地方 都加上GitHub链接和项目名」 was read as *your*
+          project and its remote, so the corner changed with the selection and
+          showed a link only for the projects that happen to be GitHub
+          checkouts -- six of eleven on the machine it was reported from had no
+          origin at all. 「左下角应当始终显示vibepanel的项目信息」: the slot is
+          the panel's own attribution, not a second copy of where you are.
+          
+          Which project you are in is already answered twice over, by the
+          heading the session sits under and by the header above the terminal.
+          This was the third answer and the only one that could be blank.
+          
+          Static, because it is a fact about this source tree rather than about
+          anything the panel is looking at -- so there is nothing to fetch, and
+          nothing that can come back empty. Hidden in the collapsed rail: a 48px
+          column has room for a glyph and not for two names. */}
+      {props.expanded && (
         <div className="shrink-0 border-t border-hairline px-3 py-1.5">
-          <ProjectMark
-            testid="sidebar-project"
-            name={projectLabel(props.current)}
-            remote={props.currentRemote}
-          />
+          <ProjectMark testid="sidebar-project" name={PANEL_NAME} remote={PANEL_REPO} />
         </div>
       )}
 

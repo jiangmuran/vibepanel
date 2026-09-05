@@ -19390,3 +19390,42 @@ The remote parser was checked against all five real URLs, `.git` suffix and
 bare, and answers correctly for every one. So if a project that *is* a GitHub
 checkout shows no link, that is a different bug from the one this looked for,
 and the thing to ask is whether the *name* disappears too or only the link.
+
+## The corner belongs to the panel, not to the project
+
+「左下角应当始终显示vibepanel的项目信息」, after three rounds of reading it as
+something else.
+
+The original request was 「面板左下角等等地方 都加上GitHub链接和项目名」, and
+"项目" was read as *your* project. So the corner followed the selection and
+carried a repository link only for the projects that happen to be GitHub
+checkouts — six of eleven on the machine it was reported from have no origin at
+all, and the one that does sorts first. From the seat, "it only works on the
+first tab" and "it only works for checkouts" are the same observation.
+
+It is the panel's own attribution: what this software is and where its source
+is, static, always. Which project you are in was already answered twice — by
+the heading the session sits under and by the header above the terminal — and
+this was the third answer and the only one that could come back empty.
+
+Two rounds of questions did not settle it and a reproduction did: a throwaway
+panel on a copy of the reported machine's database (credentials stripped), its
+own port and its own tmux socket, driven at an iPad viewport. Every row switched
+the mark correctly, which is what finally made it clear that the complaint was
+about what the corner is *for* rather than about it being broken.
+
+### Two harness faults found on the way
+
+`render-check` asserted the mark once, on whichever session happened to be
+selected, so a corner that never updated read exactly like one that did.
+
+And the loop that replaced it left the selection on a session in the *second*
+project, so the bottom-terminal check saw an empty strip and the notes check an
+empty note — both reported as the panel's fault. A check that leaves the app in
+a different state than it found it breaks the next one. It puts the selection
+back now.
+
+Worse than either: `make render-check` was run four times against a bundle that
+had failed to build, because the grep for `[FAIL]` matched nothing and nothing
+looked at the exit status. `tsc -b` had been failing on a missing field the
+whole time. Zero failures and zero checks look identical through a grep.
