@@ -511,13 +511,25 @@ try {
   await mkSession(['sh', '-c', "sleep 1; printf 'needs you\\a'; exec sleep 300"])
 
   // A second project, so ordering can be exercised.
-  await authed('/api/projects', {
+  const second = await (await authed('/api/projects', {
     method: 'POST',
     body: JSON.stringify({ path: DATA, name: 'zzz-second' }),
+  })).json()
+  // ...with a session of its own, so that switching *project* is reachable from
+  // the sidebar. Without one, every session row belongs to the same project and
+  // a mark that never updates looks exactly like one that does.
+  await authed('/api/sessions', {
+    method: 'POST',
+    body: JSON.stringify({ projectId: second.id, command: ['sh', '-c', 'exec sh'], title: 'second-shell' }),
   })
   await sleep(2500) // let the poller derive titles
 
-  browser = await chromium.launch({ headless: true })
+  const VIEWPORT = (() => {
+  const m = /^(\d+)x(\d+)$/.exec(process.env.VP_VIEWPORT ?? '')
+  return m ? { width: Number(m[1]), height: Number(m[2]) } : { width: 1440, height: 900 }
+})()
+
+browser = await chromium.launch({ headless: true })
   // clipboard-write so the OSC 52 path can be checked on its happy path; the
   // refused case gets its own context below, without it.
   const ctx = await browser.newContext({
@@ -533,7 +545,12 @@ try {
     //
     // The worker itself is covered separately, below.
     serviceWorkers: 'block',
-    viewport: { width: 1440, height: 900 },
+    // Overridable, because three of the last bugs came from a tablet and the
+    // only thing separating a tablet from this is the number below:
+    //   VP_VIEWPORT=820x1180 make render-check
+    // A tablet is not narrow -- NARROW_QUERY is 767px -- so it gets this whole
+    // layout, and every check here is one a finger can also fail.
+    viewport: VIEWPORT,
     permissions: ['clipboard-read', 'clipboard-write'],
   })
   const page = await ctx.newPage()
@@ -1530,6 +1547,54 @@ try {
           note('FAIL', 'panel/project',
             `the repository link is not a github.com project URL: ${JSON.stringify(href)}`)
         }
+      }
+
+      // ...and it has to keep saying it, for every session, not only the one
+      // that happened to be selected when the panel loaded.
+      //
+      // 「左下角的项目信息只在选择左侧第一个tab时生效」. Checked once, on one
+      // session, so a mark that never updated read exactly like one that did.
+      const rows = page.locator('[data-testid="session-row"]')
+      const n = Math.min(await rows.count(), 5)
+      const seen = []
+      for (let i = 0; i < n; i++) {
+        await rows.nth(i).click()
+        await sleep(700)
+        const txt = (await mark.textContent().catch(() => '')) ?? ''
+        seen.push(txt.trim())
+      }
+      const blank = seen.filter((x) => x === '').length
+      if (blank > 0) {
+        note('FAIL', 'panel/project',
+          `the sidebar's project mark was empty for ${blank} of ${n} sessions: ` +
+          JSON.stringify(seen))
+      }
+
+      // The case the loop above cannot reach on its own: a session in the
+      // *other* project. Those rows all belong to one, so a mark stuck on the
+      // first project still matched every one of them.
+      const other = page.locator('[data-testid="session-row"]', { hasText: 'second-shell' }).first()
+      if (await other.isVisible().catch(() => false)) {
+        await other.click()
+        await sleep(900)
+        const there = ((await mark.textContent().catch(() => '')) ?? '').trim()
+        if (!there.includes('zzz-second')) {
+          note('FAIL', 'panel/project',
+            `switching to a session in another project left the mark on the old one: ` +
+            `${JSON.stringify(there)}`)
+        } else {
+          note('PASS', 'panel/project', 'the mark follows the session into another project')
+        }
+        // And back, so a mark that updates once is not mistaken for one that
+        // updates.
+        await rows.first().click()
+        await sleep(900)
+        const back = ((await mark.textContent().catch(() => '')) ?? '').trim()
+        if (back.includes('zzz-second')) {
+          note('FAIL', 'panel/project', 'the mark stayed on the second project on the way back')
+        }
+      } else {
+        note('FAIL', 'panel/project', 'no session in the second project, so the mark was never switched')
       }
     }
 

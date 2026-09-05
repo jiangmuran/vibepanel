@@ -19365,3 +19365,28 @@ precisely what somebody who has locked their tablet to landscape did not ask
 for. The key is gone. 「我锁定了横屏，但是它仍然可以被翻转为竖屏」 — iOS ignores
 manifest orientation outright, so this cannot be the whole story there, but
 declaring a preference the panel does not have is wrong whoever reads it.
+
+### The project mark, which could not be reproduced
+
+「左下角的项目信息只在选择左侧第一个tab时生效」. It was not reproduced, and the
+checks written to reproduce it are worth more than the fix would have been.
+
+`render-check` already asserted the mark, once, on whichever session happened to
+be selected — so a mark that never updated read exactly like one that did. It
+now clicks every session row, and then a session in a *second* project, and
+then back. All three pass, at 1440x900 and at 820x1180.
+
+The viewport is overridable for that reason: `VP_VIEWPORT=820x1180 make
+render-check`. Three of the last four reports came from a tablet, and the only
+thing separating a tablet from the desktop layout is that number.
+
+What the mark actually does is show the project's name always and its repository
+link only when the project has a github.com origin. Measured against the eleven
+projects on the machine it was reported from: six have no origin at all, and
+`vibepanel` — the one with a link — sorts first. From the seat, "only the first
+tab" and "only the ones that are checkouts" look identical.
+
+The remote parser was checked against all five real URLs, `.git` suffix and
+bare, and answers correctly for every one. So if a project that *is* a GitHub
+checkout shows no link, that is a different bug from the one this looked for,
+and the thing to ask is whether the *name* disappears too or only the link.
