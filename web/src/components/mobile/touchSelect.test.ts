@@ -148,17 +148,24 @@ describe('scrollAction', () => {
     }
   })
 
-  it('prefers scrollback the application cannot take back', () => {
-    // The reordering, and the reason for it. An application that asked for the
-    // wheel does not keep what the wheel gives it: Claude Code follows its own
-    // output, so a session doing real work was measured back at the tail
-    // within one second of being scrolled 25 notches up, while an idle pane
-    // held the same scroll for ten.
+  it('still gives it the wheel when there is scrollback as well', () => {
+    // The case that was reversed, and the reversal is what produced
+    // 「往上滑直接变成 html」.
     //
-    // Reverse these two lines and a busy session becomes unscrollable while a
-    // quiet one still works, which is how it shipped.
+    // The argument for preferring scrollback was measured and true as far as it
+    // went: Claude Code follows its own output, so a busy session was back at
+    // the tail within a second of being scrolled up, while an idle one held.
+    // What it missed is that for a full-screen application the panel's
+    // scrollback is not a record of anything -- vibepanel.conf takes
+    // smcup/rmcup out of the terminfo so the frames land in the primary buffer,
+    // and what piles up there is half-drawn frames and the escapes between
+    // them. Scrolling into it shows torn markup.
+    //
+    // 「你要把这个滑动传递给那个里面的进程本身」. If the application snaps back
+    // to the tail, that is its answer; the panel does not get to substitute a
+    // better-looking one out of a buffer that does not mean anything.
     for (const mode of ['x10', 'vt200', 'drag', 'any']) {
-      expect(scrollAction(mode, 500)).toBe('buffer')
+      expect(scrollAction(mode, 500)).toBe('wheel')
     }
   })
 

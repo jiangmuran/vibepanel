@@ -19608,3 +19608,53 @@ named no presets": the second server exits, the first answers the health probe,
 and every request goes to a panel with different data. Two before/after
 comparisons were run against that and both measured nothing before the cause was
 noticed. It refuses to start now.
+
+## The swipe belongs to the process
+
+「往上滑直接变成 html」, again, and this time caused by the fix for the previous
+report of it. 「你要把这个滑动传递给那个里面的进程本身，让进程来处理这个滑动，
+在它如果是全屏应用的情况下」.
+
+`scrollAction` had been reversed to prefer the terminal's own scrollback over
+sending wheel reports. The reasoning was measured and, as far as it went, true:
+Claude Code follows its own output, so a busy session was back at the tail
+within a second of being scrolled up while an idle one held. Wheel reports were
+being accepted and then undone, and scrollback looked like the more reliable
+half.
+
+It is not a more reliable half. For a full-screen application the panel's
+scrollback is not a record of anything. `vibepanel.conf` takes `smcup`/`rmcup`
+out of the client's terminfo so that such an application's output lands in the
+primary buffer line by line — deliberately, so that a phone has something to
+scroll at all — and what accumulates there is a stack of half-drawn frames and
+the escape sequences between them. Scrolling into it shows torn markup, which is
+what "变成 html" is.
+
+So the order is the one it started with, and the reason is not "the application
+wants the wheel". It is that the application is the only thing that knows what
+is above the current view. If it chooses to snap back to the tail, that is its
+answer, and the panel does not get to substitute a better-looking one out of a
+buffer that does not mean anything.
+
+### Proved at the pty this time
+
+Three reports of the same symptom and three explanations, two of them wrong, and
+what settled it every time was a measurement rather than an argument. So the
+browser check now covers the half that was never covered.
+
+Everything that existed dragged on a *shell*, which is the `buffer` path. The
+path that keeps breaking is `wheel`. The pane turns on SGR mouse reporting and
+echoes what it receives through `cat -v`, so a wheel report arrives on screen as
+a readable `^[[<65;...M`:
+
+    [PASS] mobile: a swipe reached the application as ^[[<65;51;29M
+
+Reordering the two lines turns it red, with the pane's own prompt in the message.
+
+Two things had to be got right for it to mean anything. The view is scrolled
+back by the check above it, so the live tail where `cat -v` echoes is off
+screen — the first version read three old `TOUCH_` lines and called the feature
+broken. It reloads, because `Terminal.tsx` scrolls to the bottom on mount and
+the debug hook returns rows and deliberately cannot write. And the pane is put
+back afterwards: `C-c`, then the modes off, or every check after it is looking
+at a terminal in raw mode.

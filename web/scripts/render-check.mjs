@@ -3169,6 +3169,77 @@ browser = await chromium.launch({ headless: true })
               note('PASS', 'mobile', `a finger scrolled back from TOUCH_${before} to TOUCH_${after}`)
             }
 
+            // The other half of the same gesture: a full-screen application
+            // gets the swipe itself.
+            //
+            // Everything above drags on a shell, which is the `buffer` path.
+            // The path that broke is `wheel`, and it broke by being ordered
+            // behind `buffer`: a swipe scrolled the panel's own buffer instead
+            // of telling the application, and for a full-screen app that
+            // buffer holds half-drawn frames rather than a transcript.
+            // 「往上滑直接变成 html」.
+            //
+            // Proved at the pty, not in the browser. The pane turns on SGR
+            // mouse reporting and echoes what it receives through `cat -v`, so
+            // a wheel report lands on screen as a readable ^[[<65;...M. If the
+            // panel had scrolled its own buffer, nothing would reach the
+            // process and nothing would appear.
+            {
+              execSync(
+                `tmux -L ${SOCKET} send-keys -t '=${sess.tmuxName}:' ` +
+                `"printf '\\033[?1006h\\033[?1003h'; cat -v" Enter`)
+              await sleep(1200)
+              // Reload first. The drag above left this view scrolled back, so
+              // the live tail -- where `cat -v` is echoing -- is off screen,
+              // and the first version of this check read three old TOUCH_ lines
+              // and called the feature broken. Terminal.tsx scrolls to the
+              // bottom on mount, which is the only handle there is: the debug
+              // hook returns rows and deliberately cannot write.
+              await touch.reload({ waitUntil: 'networkidle' })
+              await sleep(3000)
+              const wbox = await touch.locator('.xterm-screen').boundingBox()
+              if (!wbox) {
+                note('WARN', 'mobile', 'no terminal after reload; the wheel path is unchecked')
+              } else {
+                const cdp3 = await touchCtx.newCDPSession(touch)
+                const wx = wbox.x + wbox.width / 2
+                const wy = wbox.y + wbox.height - 80
+                const wpt = (y) => ({ touchPoints: [{ x: wx, y, radiusX: 8, radiusY: 8, force: 1, id: 1 }] })
+                await cdp3.send('Input.dispatchTouchEvent', { type: 'touchStart', ...wpt(wy) })
+                for (let i = 1; i <= 24; i++) {
+                  await cdp3.send('Input.dispatchTouchEvent', { type: 'touchMove', ...wpt(wy - i * 12) })
+                  await sleep(8)
+                }
+                await cdp3.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+
+                let sawWheel = ''
+                for (let i = 0; i < 16; i++) {
+                  await sleep(300)
+                  const text = (await screenRows(touch)).map((r) => r.trim()).join(' ')
+                  // ^[[< then a button number; 64 and 65 are wheel up and down.
+                  const hit = /\^\[\[<6[45];\d+;\d+M/.exec(text)
+                  if (hit) { sawWheel = hit[0]; break }
+                }
+                if (sawWheel) {
+                  note('PASS', 'mobile', `a swipe reached the application as ${sawWheel}`)
+                } else {
+                  const tail = (await screenRows(touch)).map((r) => r.trim()).filter((r) => r).slice(-3)
+                  note('FAIL', 'mobile',
+                    'a swipe over a mouse-reporting pane sent it nothing, so the panel kept ' +
+                    'the gesture; for a full-screen app its buffer is half-drawn frames. ' +
+                    `Screen tail: ${JSON.stringify(tail.join(' | ').slice(0, 160))}`)
+                }
+              }
+              // Put the pane back, or every check after this is looking at one
+              // in raw mode with mouse reporting on.
+              execSync(`tmux -L ${SOCKET} send-keys -t '=${sess.tmuxName}:' C-c`)
+              await sleep(300)
+              execSync(
+                `tmux -L ${SOCKET} send-keys -t '=${sess.tmuxName}:' ` +
+                `"printf '\\033[?1003l\\033[?1006l'" Enter`)
+              await sleep(500)
+            }
+
             // And the CSS that makes the gesture above work on a real phone,
             // which this check cannot otherwise see.
             //

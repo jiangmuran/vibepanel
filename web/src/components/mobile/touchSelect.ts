@@ -144,44 +144,46 @@ export function dragRows(dy: number, rowHeight: number, carried: number) {
 /**
  * Who a drag belongs to.
  *
- * `buffer` — this terminal has scrollback of its own, so the drag moves it.
+ * `wheel` — an application asked for mouse reporting, so it owns the view and
+ * the gesture is its business. This comes first, and the order is the whole
+ * function.
  *
- * `wheel` — there is no scrollback and the application asked for mouse
- * reporting, so it is the only thing that can answer the gesture.
+ * `buffer` — nobody is listening, so this is the terminal's own scrollback and
+ * the panel scrolls it.
  *
  * `none` — nothing to scroll and nobody to tell. The gesture is still claimed
  * by the caller, because a drag over a full-screen agent has to do nothing
  * visibly rather than let the browser reload the page.
  *
- * The order of those two is the whole function, and it used to be the other
- * way round.
+ * ---
  *
- * Asking the application first sounds right: it wants the wheel, so give it
- * the wheel. It is wrong because the application does not keep what it is
- * given. Claude Code follows its own output, and a session doing real work
- * redraws continuously — measured on a live pane driving five background
- * agents, the view was back at the tail **within one second** of being
- * scrolled 25 notches up, while an idle pane in the same panel held the same
- * scroll for ten. So the gesture worked, the reports arrived, the application
- * scrolled, and the person swiping saw nothing move. The busier the session,
- * the more certainly it failed, which is the opposite of what anybody wants.
+ * This was reversed once, to put `buffer` first, and the reversal is what
+ * produced 「往上滑直接变成 html」. The reasoning behind it was that Claude Code
+ * follows its own output — measured, and true — so wheel reports were being
+ * accepted and then undone by the next redraw, and scrollback seemed like the
+ * more reliable half.
  *
- * The scrollback it was passing over is real, and it exists precisely so this
- * can work: `vibepanel.conf` takes `smcup`/`rmcup` and `indn` out of the
- * client's terminfo so a full-screen application's output lands in the primary
- * buffer line by line instead of being painted over. Measured in a browser
- * against a full-screen mouse-tracking app, `baseY` is 269, not 0. Nothing the
- * application does can take those lines back.
+ * It is not a more reliable half, because for a full-screen application the
+ * panel's scrollback is not a record of anything. `vibepanel.conf` takes
+ * `smcup`/`rmcup` out of the client's terminfo so that such an application's
+ * output lands in the primary buffer line by line — deliberately, so a phone
+ * has something to scroll at all. What accumulates there is a stack of
+ * half-drawn frames and the escape sequences between them, not a transcript.
+ * Scrolling into it shows torn markup, which is exactly what was reported.
  *
- * `wheel` is kept for the case the reordering leaves behind: a session with no
- * history yet, where the application's own view is all there is.
+ * So the rule is the one that was there first, and the reason it is right is
+ * not "the application wants the wheel" but 「你要把这个滑动传递给那个里面的进程
+ * 本身，让进程来处理这个滑动」: the application is the only thing that knows
+ * what is above the current view. If it chooses to snap back to the tail, that
+ * is its answer and the panel does not get to substitute a better-looking one
+ * out of a buffer that does not mean anything.
  *
- * A function of two values so it can be tested: the branch it replaces could
- * be deleted without failing anything, which is how the wrong half shipped.
+ * A function of two values so it can be tested: the branch it replaces could be
+ * deleted without failing anything, which is how the wrong half shipped.
  */
 export function scrollAction(mouseTracking: string, baseY: number): 'wheel' | 'buffer' | 'none' {
-  if (baseY > 0) return 'buffer'
-  return mouseTracking !== 'none' ? 'wheel' : 'none'
+  if (mouseTracking !== 'none') return 'wheel'
+  return baseY > 0 ? 'buffer' : 'none'
 }
 
 export function wheelReport(up: boolean, col: number, row: number): string {
