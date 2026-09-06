@@ -984,6 +984,8 @@ const DICT = {
   'dash.heatmapMore': { zh: '多', en: 'more' },
   'dash.heatmapDay': { zh: '{date}：{n} token', en: '{date}: {n} tokens' },
   'dash.uptimeLabel': { zh: '已运行', en: 'Uptime' },
+  'dash.fullscreen': { zh: '全屏', en: 'Full screen' },
+  'dash.exitFullscreen': { zh: '退出全屏', en: 'Leave full screen' },
   'dash.noSwap': { zh: '没有交换区', en: 'No swap' },
   'dash.closedToday': { zh: '今天完成 {n} 条', en: '{n} closed today' },
   'dash.perHourToday': { zh: '今天平均每小时', en: 'per hour today' },

@@ -19510,3 +19510,45 @@ zero once there is no free space.
 height is definite. It is `flex-1` inside a column, which is definite until it
 is not — a short panel, a narrow layout — and then the constraint silently does
 nothing at all.
+
+## A full-screen button, and two things a board cut in half
+
+「没有全屏按钮」. A share link is opened on a television, a wall panel and a
+tablet propped on a desk, and on every one of those the browser's own furniture
+is the only thing on screen that is not the board. There was no way to be rid of
+it.
+
+Feature-detected and hidden when the answer is no, which is a phone running iOS
+— there is no element fullscreen there at all, and a control that does nothing
+is worse than no control: the reader cannot tell a missing feature from a broken
+button. Safari still spells it `webkitRequestFullscreen`, so checking only the
+standard name would have hidden the button on an iPad, which is the device this
+was reported from.
+
+### A truncated number is a wrong number
+
+`make board-check` found three, all at iPad landscape and none of them visible
+at 1920.
+
+The wall clock was `text-vp-3xl truncate`, and a tile on a tablet is 264px wide:
+"02:00 AM" overflowed by 55px and rendered as "02:00…", which reads as a clock
+that has stopped rather than one that has been styled. The length is not the
+panel's to choose — the browser formats in the reader's locale, and a
+twelve-hour clock is three characters longer than a twenty-four-hour one, so the
+same board is fine in Berlin and cut in Chicago. Nobody developing it would see
+that.
+
+So the size gives way and the reading survives. `clockStep` is a function of the
+string because the string is the only thing that decides it.
+
+The other two were 「能读到进程」 truncated by six pixels into 「能读到进…」 — a
+health line that cannot be read. That one is prose rather than a figure, and the
+tile is a short list in a tall box, so it wraps now: a second line costs nothing
+it was using.
+
+### The finding has to name the element
+
+"truncated: 12:55 AM" sent the reader to `Clock` in `numbers.tsx`, which has no
+ellipsis on it anywhere. The element was `DateTime` in `wall.tsx`. Finding that
+out took longer than the fix, so the check reports the test id, the first few
+classes and the overflow in pixels.

@@ -5,6 +5,7 @@ import { api, UnauthorizedError } from '../protocol/api'
 import type { ShareDashboard } from '../protocol/wire'
 import { t, useLang } from '../i18n'
 import { Widget } from './board/render'
+import { FullscreenButton } from './board/Fullscreen'
 import { agoText, clockText, duration } from './board/format'
 import { forViewport, viewerID } from './board/viewer'
 import { DensityProvider } from './board/density'
@@ -396,6 +397,9 @@ export function Dashboard({ token }: { token: string }) {
             {t('dash.expiresIn', { when: duration(Math.max(0, data.expiresAt - now)) })}
           </span>
         )}
+        {/* Last in the header, and the only control on the whole page: a
+            read-only board has nothing else to press. */}
+        <FullscreenButton />
       </header>
 
       {/* A band rather than a tinted dot. The whole point is that a frozen

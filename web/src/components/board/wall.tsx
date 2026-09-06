@@ -266,7 +266,12 @@ export function Health({ w, data, now }: { w: ShareWidget; data: ShareDashboard;
               >
                 {l.ok ? '✓' : '▲'}
               </span>
-              <span className="truncate text-vp-xl text-ink-2">{l.label}</span>
+              {/* Wraps rather than truncates. This is prose, not a figure, and
+                  it lost six pixels on a tablet -- so 「能读到进程」 became
+                  「能读到进…」, which is a health line that cannot be read.
+                  There is room below it: the tile is a short list in a tall
+                  box, and a second line costs nothing it was using. */}
+              <span className="min-w-0 text-vp-xl text-ink-2">{l.label}</span>
             </span>
             <span className="tabular shrink-0 text-vp-xl text-ink-3">
               {l.note ?? (l.ok ? t('dash.healthOk') : t('dash.healthNot'))}
@@ -286,17 +291,40 @@ export function Health({ w, data, now }: { w: ShareWidget; data: ShareDashboard;
  * under the time rather than beside it and both are formatted by the browser,
  * which knows the reader's language and the server does not.
  */
+/**
+ * How big the time can be without being cut.
+ *
+ * A truncated number is not a styled number, it is a wrong one: "02:00 AM" cut
+ * to "02:00…" reads as a clock that has broken. And the length is not the
+ * panel's to choose -- the browser formats the time in the reader's locale, and
+ * a twelve-hour one is eight characters where a twenty-four-hour one is five.
+ * Measured on a tablet: 3xl at eight characters overflowed its tile by 55px.
+ *
+ * So the size gives way and the reading survives. A function of the string,
+ * because the string is the only thing that decides it and a test can hold one.
+ *
+ * Six is where a 3xl figure stops fitting the narrowest tile a wall preset
+ * builds -- four across a 1180px screen. Anything the browser hands back that
+ * is longer than a bare `HH:MM` takes the step down.
+ */
+export function clockStep(time: string): string {
+  return time.length > 6 ? 'text-vp-2xl' : 'text-vp-3xl'
+}
+
 export function DateTime({ w }: { w: ShareWidget }) {
   const [at, setAt] = useState(() => new Date())
   useEffect(() => {
     const timer = window.setInterval(() => setAt(new Date()), 1000)
     return () => clearInterval(timer)
   }, [])
+  const time = at.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
   return (
     <Tile kind={w.kind} span={w.span} height={w.height} testid="widget-datetime" plain>
       <div className="flex min-w-0 flex-col justify-center" data-testid="datetime">
-        <span className="tabular truncate text-vp-3xl font-semibold text-ink">
-          {at.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+        {/* `truncate` stays as the last resort, but the step above it is what
+            keeps it from being reached. See clockStep. */}
+        <span className={`tabular truncate font-semibold text-ink ${clockStep(time)}`}>
+          {time}
         </span>
         <span className="truncate text-vp-xl text-ink-2">
           {at.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}

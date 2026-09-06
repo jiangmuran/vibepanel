@@ -194,7 +194,13 @@ try {
             clipped.push(`cut off vertically by ${overY}px: ${JSON.stringify(text.slice(0, 30))}`)
           }
           if (cs.overflowX === 'hidden' && cs.textOverflow === 'ellipsis' && overX > 2) {
-            clipped.push(`truncated: ${JSON.stringify(text.slice(0, 30))}`)
+            // Which element, not just which words. "truncated: 12:55 AM" sent
+            // the reader to a component that turned out not to be the one with
+            // the ellipsis on it, and finding that out took longer than the fix.
+            const id = el.dataset.testid ?? el.tagName.toLowerCase()
+            clipped.push(
+              `truncated by ${overX}px: ${JSON.stringify(text.slice(0, 30))} ` +
+              `[${id} .${(el.className || '(no class)').toString().split(/\s+/).slice(0, 4).join('.')}]`)
           }
           // Only for something that was laid out in the first place. An
           // element with no box of its own is `display:none`, a rotating
