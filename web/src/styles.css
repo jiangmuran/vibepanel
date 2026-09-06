@@ -1507,9 +1507,57 @@ body {
   --vp-text-3xl: calc(3.5 * var(--vp-wall));
 }
 
+/* One board, one type size -- give or take a third.
+ *
+ * Each tile sized itself from `6.5cqmin`, its own shorter side, and nothing
+ * tied the tiles to each other. On a tablet that put a 1116x123 strip on the
+ * 13px floor beside a 1116x549 block at 32.9: the same board, at the same
+ * viewing distance, in two different type sizes. Measured by `make
+ * board-check`, which is also the only way this was ever going to be noticed --
+ * 「有的地方满有的地方空」 is what it looks like and a ratio is what it is.
+ *
+ * So the board computes a unit of its own from its own size, and a tile may
+ * depart from it by up to a third in either direction. A tile still gets a say,
+ * because a short strip genuinely cannot hold what a tall block can; it no
+ * longer gets the whole say.
+ *
+ * 3.2cqmin against the board where a tile uses 6.5: the board's shorter side is
+ * roughly twice a tile's, so the two land in the same place on a screen laid
+ * out the way the presets expect, and the band only bites where they diverge.
+ *
+ * The 13px floor and 48px ceiling stay on the board's own unit rather than on
+ * each tile, which is what stops the band from being computed against a value
+ * that was itself clamped. */
+/* Registered, and that is the whole mechanism rather than a formality.
+ *
+ * An unregistered custom property inherits as an *unresolved token stream*, so
+ * `3.2cqmin` declared on the board is re-resolved inside every tile against
+ * that tile's own container. The board computed 22.1px and the tiles read
+ * 9.1px from the same declaration -- 0.7 x the 13px floor, because in a
+ * 1116x123 strip `3.2cqmin` is 3.9px. The band was being computed against a
+ * different number in each tile, which is the thing it exists to prevent.
+ *
+ * `syntax: '<length>'` makes it compute where it is declared and inherit as a
+ * length. The initial value is the base unit from :root, so a browser that
+ * does not know @property gets the old behaviour rather than a broken one. */
+@property --vp-board-unit {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 16px;
+}
+
+.vp-board[data-fill='true'] {
+  container-type: size;
+  --vp-board-unit: clamp(13px, 3.2cqmin, 48px);
+}
+
 .vp-board[data-fill='true'] > section {
   container-type: size;
-  --vp-wall: clamp(13px, 6.5cqmin, 48px);
+  --vp-wall: clamp(
+    calc(0.7 * var(--vp-board-unit)),
+    6.5cqmin,
+    calc(1.3 * var(--vp-board-unit))
+  );
 }
 
 

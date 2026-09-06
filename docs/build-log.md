@@ -19552,3 +19552,59 @@ it was using.
 ellipsis on it anywhere. The element was `DateTime` in `wall.tsx`. Finding that
 out took longer than the fix, so the check reports the test id, the first few
 classes and the overflow in pixels.
+
+## One board, one type size — give or take a third
+
+「有的地方满有的地方空」, and the number behind it: on a tablet, `wall` rendered
+a 1116x123 strip at **13.0px** beside a 1116x549 block at **32.9px**. The same
+board, at the same viewing distance, in two type sizes.
+
+Each tile sized itself from `6.5cqmin` — its own shorter side — and nothing tied
+the tiles to one another. A short strip and a tall block are genuinely different
+boxes, so the rule was not wrong so much as unbounded.
+
+The board computes a unit of its own now, and a tile may depart from it by up to
+a third either way. A tile still gets a say; it no longer gets the whole say.
+
+### The property has to be registered, and that is the mechanism
+
+The first attempt made it *worse*: tiles came out at 9.1px, below the floor.
+
+An unregistered custom property inherits as an **unresolved token stream**, so
+`--vp-board-unit: clamp(13px, 3.2cqmin, 48px)` declared on the board was
+re-resolved inside every tile against that tile's own container. The board
+computed 22.1px and the tiles read 9.1 — which is 0.7 x 13, the floor, because
+`3.2cqmin` in a 1116x123 strip is 3.9px. The band was being computed against a
+different number in each tile, which is the one thing it exists to prevent.
+
+`@property { syntax: '<length>' }` makes it compute where it is declared and
+inherit as a length. `initial-value: 16px` is the base unit from `:root`, so a
+browser that does not know `@property` gets the old behaviour rather than a
+broken one.
+
+### Measured, across every preset and every screen
+
+    spread failures    before  19
+                       after   10
+
+Every tablet case is gone, and so is every filled board at 4K — `wall` was 3.2x
+there and `atrium` 3.7x. The ten that remain are all boards declared *not* to
+fill, which this rule does not touch: they flow down a page rather than occupy a
+screen, and their tiles are not in the same relationship. That is a separate
+question and it is now a measured one.
+
+The type also went *up* where it had been pinned: `glance` on a tablet was
+13.0-17.2 and is a uniform 18.4, which is the other half of 「没有自动适配」.
+
+### Two harness faults, both of which made it measure nothing
+
+`getPropertyValue('--vp-wall')` returns the token stream, so `parseFloat` gave
+NaN, every tile was dropped as unmeasured, and the spread check had reported
+nothing at all since the hour it was written. It appends a probe sized in the
+variable now, which is the only way to make the browser resolve it.
+
+And two of these cannot share a port. The way that failed was "the catalogue
+named no presets": the second server exits, the first answers the health probe,
+and every request goes to a panel with different data. Two before/after
+comparisons were run against that and both measured nothing before the cause was
+noticed. It refuses to start now.

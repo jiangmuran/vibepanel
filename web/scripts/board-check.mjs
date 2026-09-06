@@ -81,6 +81,19 @@ const work = mkdtempSync(join(tmpdir(), 'vpboard-'))
 const shots = join(work, 'shots')
 mkdirSync(shots, { recursive: true })
 
+// Refuse to start on top of another run.
+//
+// Two of these cannot share a port, and the way that failed was "the catalogue
+// named no presets" -- the new server exits, the old one answers the health
+// probe, and every request goes to a panel with different data. Two
+// before/after comparisons were run against it and both measured nothing at
+// all before the cause was noticed.
+const busy = await fetch(`${BASE}/api/health`).then(() => true).catch(() => false)
+if (busy) {
+  console.error(`something is already answering on ${BASE}. Another board-check?`)
+  process.exit(2)
+}
+
 let server
 try {
   server = spawn(BIN, ['serve', '-addr', `127.0.0.1:${PORT}`, '-data-dir', work,
@@ -167,10 +180,39 @@ try {
 
         const board = document.querySelector('.vp-board')
         const fill = board?.getAttribute('data-fill') === 'true'
+        const probeIn = (el) => {
+          if (!el) return 0
+          const probe = document.createElement('span')
+          probe.style.cssText = 'position:absolute;visibility:hidden;font-size:var(--vp-board-unit)'
+          el.appendChild(probe)
+          const px = parseFloat(getComputedStyle(probe).fontSize) || 0
+          probe.remove()
+          return px
+        }
+        const boardBox = board?.getBoundingClientRect()
+        const boardUnit = probeIn(board)
         const sections = [...document.querySelectorAll('.vp-board > section')]
+        // Resolve --vp-wall by measuring something sized in it.
+        //
+        // `getPropertyValue('--vp-wall')` hands back the token stream --
+        // literally "clamp(13px, 6.5cqmin, 48px)" -- because a custom property
+        // is not resolved to a used value unless it was registered with
+        // @property. parseFloat of that is NaN, the tile was dropped as
+        // unmeasured, and the spread check silently measured nothing at all
+        // for as long as it existed. A probe element sized in the variable is
+        // the only thing that makes the browser compute it.
+        const resolve = (el) => {
+          const probe = document.createElement('span')
+          probe.style.cssText = 'position:absolute;visibility:hidden;font-size:var(--vp-wall)'
+          el.appendChild(probe)
+          const px = parseFloat(getComputedStyle(probe).fontSize) || 0
+          probe.remove()
+          return px
+        }
+
         const tiles = sections.map((el) => {
           const r = el.getBoundingClientRect()
-          const unit = parseFloat(getComputedStyle(el).getPropertyValue('--vp-wall')) || 0
+          const unit = resolve(el)
           // How much of the tile the content actually occupies, vertically.
           let top = Infinity, bottom = -Infinity
           for (const c of el.querySelectorAll('*')) {
@@ -217,7 +259,8 @@ try {
           }
         }
         return {
-          fill, tiles, clipped,
+          fill, tiles, clipped, boardUnit,
+          boardW: Math.round(boardBox?.width ?? 0), boardH: Math.round(boardBox?.height ?? 0),
           docH: document.documentElement.scrollHeight,
           vpH: window.innerHeight,
         }
@@ -238,6 +281,10 @@ try {
       m.clipped = m.clipped.filter((c) => stable.has(c))
 
       const where = `${id}/${sn}`
+      if (process.env.VP_BOARD_DEBUG) {
+        console.log(`   board ${m.boardW}x${m.boardH} unit=${m.boardUnit.toFixed(1)} ` +
+          `tiles=${m.tiles.map((t) => `${t.w}x${t.h}@${t.unit.toFixed(1)}`).join(' ')}`)
+      }
       const units = m.tiles.map((t) => t.unit).filter((u) => u > 0)
       if (units.length > 1) {
         const lo = Math.min(...units), hi = Math.max(...units)
