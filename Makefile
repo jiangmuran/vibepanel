@@ -62,6 +62,10 @@ first-run-check: build ## The setup wizard and the first project, in a browser
 render-check: build   ## Drive the real binary with a real browser
 	cd web && npm run check:render
 
+.PHONY: board-check
+board-check: build    ## Every board preset on every screen one gets put on
+	cd web && npm run check:board
+
 .PHONY: stress-check
 stress-check: build   ## Wide characters, full-screen programs, floods, dropouts
 	cd web && npm run check:stress

@@ -19429,3 +19429,44 @@ Worse than either: `make render-check` was run four times against a bundle that
 had failed to build, because the grep for `[FAIL]` matched nothing and nothing
 looked at the exit status. `tsc -b` had been failing on a missing field the
 whole time. Zero failures and zero checks look identical through a grep.
+
+## The board sweep, in the repository this time
+
+A scratch file once rendered every board preset at seven viewports and found
+more than forty layout defects. It was never committed. The temporary directory
+holding it was cleared between sessions, and the next report from a tablet —
+「分享链接放到ipad上还是有点别扭 没有自动适配 没有全屏按钮 有的地方满有的地方
+空」 — arrived with nothing to run.
+
+`make board-check` now. It starts the real binary on its own port and its own
+tmux socket, creates a share link per preset from the server's own catalogue —
+so a preset added to `presets.go` and not to a list here is exactly the one
+nobody looked at — and measures four things at every viewport.
+
+What the first run found, at iPad landscape alone, is why the numbers matter
+more than a screenshot review: within one board the per-tile type scale ranged
+from **13px to 35.7px**. `.vp-board[data-fill] > section` computes it from
+`6.5cqmin`, the tile's *shorter* side, so a 1116x123 strip lands on the floor
+beside a 1116x549 block at 35.7. That is 「有的地方满有的地方空」 as a ratio, and
+no amount of looking at pictures produces it.
+
+### Three checks that discriminate and one that does not
+
+The first run reported 60 failures. Twenty-seven were elements with no box at
+all — `display:none`, a rotating board's off-turn panel, a branch that chose not
+to render — which is not content hidden by a container too small for it. Fixed
+by requiring an element to have been laid out before asking whether it was
+clipped away.
+
+Boards also animate in, so a single reading catches whatever was mid-flight. It
+measures twice now and keeps only what both agree on.
+
+That still left "clipped away entirely" reporting thirteen elements in a board
+that a screenshot shows as correctly laid out, so it is a WARN rather than a
+FAIL until it is understood. A check nobody trusts is a check everybody learns
+to skip past, and the two that *are* pinned to what the browser itself reports
+as overflowing — truncation, and vertical cut-off scaled to the type — agree
+with the screenshots and stay failures.
+
+Three real defects survive at iPad landscape: the clock truncated to "12:55…"
+on `glance`, and "Processes readable" truncated on `machine` and `health`.
