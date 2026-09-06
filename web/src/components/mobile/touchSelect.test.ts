@@ -1,5 +1,6 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { cellAt, claimsVerticalDrag, selectionRun, dragRows, scrollAction, wheelReport } from './touchSelect'
+import { cellAt, claimsVerticalDrag, selectionRun, dragRows, scrollAction, wheelReport, WHEEL_NOTCH_ROWS } from './touchSelect'
 
 describe('selectionRun', () => {
   it('reads left to right on one line', () => {
@@ -170,5 +171,65 @@ describe('scrollAction', () => {
     // agent with no scrollback must do nothing visibly rather than hand the
     // browser a pull-to-refresh.
     expect(scrollAction('none', 0)).toBe('none')
+  })
+})
+
+describe('a wheel notch is not a line', () => {
+  /*
+   * A terminal application moves about three lines per wheel notch. Sending one
+   * notch per row of finger travel therefore scrolls roughly three times as far
+   * as the finger went, and only on the wheel path -- the scrollback path calls
+   * `term.scrollLines`, which takes lines and is already one-to-one. So the
+   * same swipe moved at two different speeds depending on what was running in
+   * the pane. 「触摸屏滑动claude全屏显示 的会直接划拉远」.
+   *
+   * The conversion is `dragRows` against a notch-sized row, so this is a test
+   * of the ratio rather than of a second implementation.
+   */
+  const ROW = 18
+
+  it('takes three rows of travel to make one notch', () => {
+    expect(WHEEL_NOTCH_ROWS).toBe(3)
+    const notch = dragRows(3 * ROW, ROW * WHEEL_NOTCH_ROWS, 0)
+    expect(notch.rows).toBe(1)
+  })
+
+  it('moves the application as far as the finger, not three times as far', () => {
+    // Ten rows of finger travel. One notch per row would ask the application
+    // for thirty lines.
+    const rows = dragRows(10 * ROW, ROW, 0).rows
+    const notches = dragRows(10 * ROW, ROW * WHEEL_NOTCH_ROWS, 0).rows
+    expect(rows).toBe(10)
+    // Within one notch: the remainder is carried into the next move rather
+    // than dropped, so a single reading is short by up to two rows.
+    expect(Math.abs(notches * WHEEL_NOTCH_ROWS - rows)).toBeLessThan(WHEEL_NOTCH_ROWS)
+  })
+
+  // The ratio and the wiring are two things, and only one of them is a number.
+  //
+  // With the constant pinned and the call site free, changing
+  // `rowHeight * WHEEL_NOTCH_ROWS` back to `rowHeight` passed every test above:
+  // the conversion exists, is correct, and is not used. That is the shape this
+  // suite has now been caught by three times.
+  it('actually converts the gesture at the call site', () => {
+    const src = readFileSync(new URL('./touchSelect.ts', import.meta.url), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/^\s*\/\/.*$/gm, ' ')
+    expect(src).toMatch(/dragRows\(dyPx, rowHeight \* WHEEL_NOTCH_ROWS, notchCarried\)/)
+    // And the wheel path reads the notch count, not the row count.
+    expect(src).toMatch(/const up = notch\.rows > 0/)
+    expect(src).toMatch(/Math\.abs\(notch\.rows\)/)
+  })
+
+  it('carries the remainder, so slow travel still arrives', () => {
+    // Two thirds of a notch, then another two thirds: one notch, not zero.
+    let carry = 0
+    let total = 0
+    for (let i = 0; i < 2; i++) {
+      const step = dragRows(2 * ROW, ROW * WHEEL_NOTCH_ROWS, carry)
+      carry = step.carry
+      total += step.rows
+    }
+    expect(total).toBe(1)
   })
 })

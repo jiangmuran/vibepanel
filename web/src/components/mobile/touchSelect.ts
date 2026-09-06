@@ -17,6 +17,21 @@ import type { Terminal } from '@xterm/xterm'
 
 /** Movement that turns a press into a scroll rather than a selection. */
 const SLOP_PX = 10
+
+/**
+ * Rows of finger travel per wheel notch.
+ *
+ * A wheel *event* is not a line. Terminal applications move about three lines
+ * per notch -- that is the convention every one of them follows -- so sending
+ * one notch per row of finger movement scrolls roughly three times as far as
+ * the finger went. 「触摸屏滑动claude全屏显示 的会直接划拉远」.
+ *
+ * It only shows up on the wheel path, which is a full-screen application, and
+ * not on the scrollback path, where `term.scrollLines` takes actual lines and
+ * is already one-to-one. So the two halves of the same gesture moved at
+ * different speeds depending on what was running in the pane.
+ */
+export const WHEEL_NOTCH_ROWS = 3
 /** How long a finger must stay put. Long enough not to fire while scrolling. */
 export const HOLD_MS = 450
 
@@ -186,6 +201,8 @@ export function attachTouchSelection(
   let startPoint: { x: number; y: number } | null = null
   let lastY = 0
   let carried = 0
+  // The wheel path consumes the gesture three times slower; see WHEEL_NOTCH_ROWS.
+  let notchCarried = 0
   let scrolling = false
 
   // The screen, not the rows.
@@ -229,6 +246,7 @@ export function attachTouchSelection(
     startPoint = { x: t.clientX, y: t.clientY }
     lastY = t.clientY
     carried = 0
+    notchCarried = 0
     scrolling = false
     // A tap outside an existing selection dismisses it, the way tapping away
     // from selected text does everywhere else.
@@ -290,22 +308,29 @@ export function attachTouchSelection(
 
       const box = rowsBox()
       const rowHeight = box && term.rows > 0 ? box.height / term.rows : 0
-      const step = dragRows(t.clientY - lastY, rowHeight, carried)
+      const dyPx = t.clientY - lastY
+      const step = dragRows(dyPx, rowHeight, carried)
+      // The same arithmetic against a taller step: a notch is three rows, so
+      // `dragRows` counts notches when handed a notch-sized row. Its own carry,
+      // because the two paths consume the gesture at different rates and one
+      // remainder cannot serve both.
+      const notch = dragRows(dyPx, rowHeight * WHEEL_NOTCH_ROWS, notchCarried)
       carried = step.carry
+      notchCarried = notch.carry
       lastY = t.clientY
-      if (step.rows !== 0) {
+      {
         const action = scrollAction(term.modes.mouseTrackingMode, term.buffer.active.baseY)
-        if (action === 'wheel' && send) {
+        if (action === 'wheel' && send && notch.rows !== 0) {
           // The application's scroll, not the terminal's. Down reveals what
           // came before, which is wheel-up, which is which way every list on a
           // phone moves.
-          const up = step.rows > 0
-          const n = Math.min(Math.abs(step.rows), 10)
+          const up = notch.rows > 0
+          const n = Math.min(Math.abs(notch.rows), 10)
           const cell = cellFor(t)
           for (let i = 0; i < n; i++) {
             send(wheelReport(up, cell?.col ?? 0, cell?.row ?? 0))
           }
-        } else if (action === 'buffer') {
+        } else if (action === 'buffer' && step.rows !== 0) {
           // Nobody is listening for the wheel, so this is the terminal's own
           // scrollback. Only when there is somewhere to go: the gesture is
           // claimed either way, because a drag over a full-screen agent has to
@@ -331,6 +356,7 @@ export function attachTouchSelection(
     startPoint = null
     scrolling = false
     carried = 0
+    notchCarried = 0
     // selecting stays true until the next touch so that lifting the finger
     // leaves the selection on screen with the copy bar over it.
   }

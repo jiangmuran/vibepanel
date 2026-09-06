@@ -19470,3 +19470,43 @@ with the screenshots and stay failures.
 
 Three real defects survive at iPad landscape: the clock truncated to "12:55…"
 on `glance`, and "Processes readable" truncated on `machine` and `health`.
+
+## Two gestures that went further than the finger
+
+### A wheel notch is not a line
+
+「触摸屏滑动claude全屏显示 的会直接划拉远」. The drag sent one wheel report per
+row of finger travel, and a terminal application moves about three lines per
+notch — so a swipe scrolled roughly three times as far as the finger went.
+
+Only on the wheel path, which is a full-screen application. The scrollback path
+calls `term.scrollLines`, which takes lines and was already one-to-one, so the
+same gesture moved at two different speeds depending on what happened to be
+running in the pane.
+
+The conversion is `dragRows` handed a notch-sized row, which makes it the same
+arithmetic rather than a second implementation of it, with its own carry — the
+two paths consume the gesture at different rates and one remainder cannot serve
+both.
+
+The constant was pinned and the wiring was not: changing the call site back to
+`rowHeight` passed every test of the ratio. The conversion existed, was correct,
+and was unused. That is the third time in this suite, so the call site is
+scanned now too.
+
+### The beginning of a picture, which could not be reached
+
+「图片预览有bug 没法看到开头」. The preview centred the image with
+`items-center justify-center` on a scroll container, and flex centring
+distributes overflow to *both* sides — so the top and left of an oversized image
+sit at negative offsets, and a scroll container cannot scroll to a negative
+offset. Not off-screen: unreachable.
+
+`m-auto` on the image instead. The two centre identically while the picture
+fits and behave oppositely when it does not, because auto margins resolve to
+zero once there is no free space.
+
+`max-h-full` was what had been preventing this, and only while the container's
+height is definite. It is `flex-1` inside a column, which is definite until it
+is not — a short panel, a narrow layout — and then the constraint silently does
+nothing at all.

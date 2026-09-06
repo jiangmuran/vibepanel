@@ -173,12 +173,29 @@ export function FilePreview({
         return cannotShow(t('preview.none', { size: formatBytes(entry.size) }))
       case 'image':
         return (
-          <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-surface-2 p-3">
+          // `m-auto` on the image, not `items-center` on the box.
+          //
+          // They centre identically while the picture fits, and behave
+          // oppositely when it does not. Flex centring distributes the overflow
+          // to *both* sides, so the top and left of an oversized image sit at
+          // negative offsets -- and a scroll container cannot scroll to a
+          // negative offset, so that part of the picture is not merely
+          // off-screen, it is unreachable. 「图片预览有bug 没法看到开头」.
+          //
+          // Auto margins resolve to zero once there is no free space, so the
+          // image starts at the top-left of the scrollable area and every part
+          // of it can be reached.
+          //
+          // `max-h-full` was doing the work of preventing this and only while
+          // the container's height is definite. It is `flex-1` inside a column,
+          // which is definite until it is not -- a short panel, a narrow
+          // layout -- and then the constraint silently does nothing.
+          <div className="flex min-h-0 flex-1 overflow-auto bg-surface-2 p-3">
             <img
               src={view.url}
               alt={t('preview.imageAlt', { name: safeText(entry.name) })}
               data-testid="preview-image"
-              className="max-h-full max-w-full object-contain"
+              className="m-auto max-h-full max-w-full object-contain"
             />
           </div>
         )
