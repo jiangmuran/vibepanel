@@ -20458,3 +20458,71 @@ looking. The old message said the same six words for both.
 
 Then confirmed against the condition that broke it rather than against an idle
 machine: `restart-check` and `render-check` together, 0 FAIL each.
+
+## The name in the URL bar, ratified by the person holding the token
+
+「如果初始化的时候访问的 url 不在这个列表和另外一个环境变量，那么就问用户要不要
+添加」. The failure it is about is one this log already records from the other
+end: nginx's default `proxy_pass` sets Host to the upstream, so the panel sees
+`Host: 127.0.0.1:18443` while the browser is on `https://panel.example.com`,
+every write looks cross-origin, and the answer was a bare 403 that took
+somebody reporting 「无法创建底部终端」 to explain.
+
+What makes it worth a feature rather than a better error message is *when* it
+lands. The origin check lives in `RequireAuth`, and `/api/auth/setup` is an
+open route — so setup succeeds, and the first write **after signing in** is
+refused. By then the one-time token has scrolled off a terminal somewhere and
+the person is looking at a panel that will not let them create a session.
+
+So it is asked at setup, while they are still holding the token, and the
+credential is the token and nothing else.
+
+### Why not an endpoint you can call once you are signed in
+
+That was the obvious shape and it hands back the thing it guards.
+
+After setup the credential would be the session cookie, and `SameSite=Strict`
+does not stop a page on another **port** of the same host — which is the whole
+reason `crossOriginWrite` compares ports and the whole reason it exists. This
+machine has a ttyd on `:7681`. A page served there, opened by somebody signed
+into the panel, could POST to an authenticated approve endpoint with the cookie
+attached and add its own origin to the allowlist. The one-time token has no
+such problem: it is printed to the server's console, no page can read it, and
+it stops existing the moment there is an account.
+
+`TestTheOriginDoorClosesWithSetup` is what says the door shuts.
+
+### The value is not in the request
+
+`trustOrigin` is a boolean. The origin comes from the request's own `Origin`
+header. To whoever holds the token those are the same request; to the person
+reading the dialog they are not, because a body field lets what was shown and
+what was stored disagree, and the dialog is the only place anybody looks.
+
+The first test for that was worthless and passed against a deliberately broken
+build that read the origin straight out of the body. It posted an origin in the
+body and asserted a 400 — and got one, from `DisallowUnknownFields` reacting to
+the *other* junk in the probe, never reaching the question. Where a value comes
+from is a property of the code and no request can see it, so it reads the
+source: `setupRequest` may hold no string field but the three credentials, and
+the ratification block may not mention `req.Origin`. Both halves go red under
+a build that declares the field and prefers it.
+
+### Two smaller things the same afternoon found
+
+`approvedOrigins` was a pointer, and nil in every server nothing had updated.
+`add` returned false on nil without complaining, so the feature was a no-op
+that three of its four tests still passed. It is held by value now: the zero
+value is a working empty list and no constructor has to remember it.
+
+And the settings page would have lied. `Live` means "what this process is
+actually running with", so an origin ratified in the wizard belongs in
+`VIBEPANEL_PUBLIC_ORIGINS` there — leaving it out would have that page tell the
+reader the panel does not answer to the name they typed to reach it.
+
+The dialog itself has no browser check, and that is written down in
+`authOrigin.test.ts` rather than left to be discovered: reaching it needs Host
+and Origin to disagree, a browser will not let a page set Host, and a real
+proxy in the harness is a larger piece of work than the dialog. The wiring is
+pinned by reading the source, which catches it going missing and cannot catch
+it looking wrong.

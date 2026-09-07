@@ -44,16 +44,28 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // throwing a parse error that hides what actually happened.
     let message = `${res.status} ${res.statusText}`
     let setupRequired = false
+    let needsTrust = ''
+    let answersTo: string[] = []
     try {
-      const body = (await res.json()) as { error?: string; setupRequired?: boolean }
+      const body = (await res.json()) as {
+        error?: string
+        setupRequired?: boolean
+        originNeedsTrust?: string
+        panelAnswersTo?: string[]
+      }
       if (body.error) message = body.error
       setupRequired = body.setupRequired === true
+      needsTrust = body.originNeedsTrust ?? ''
+      answersTo = body.panelAnswersTo ?? []
     } catch {
       /* non-JSON error body */
     }
     // Distinguished so the shell can return to the sign-in screen rather than
     // showing a permission error inside a panel the user cannot use.
     if (res.status === 401) throw new UnauthorizedError(message, setupRequired)
+    // Distinguished for the same reason: it is a question, not a failure, and
+    // the only thing that can answer it is the person at the wizard.
+    if (needsTrust) throw new OriginNotTrustedError(message, needsTrust, answersTo)
     throw new Error(message)
   }
   if (res.status === 204) {
@@ -153,6 +165,26 @@ export class ConflictError extends Error {
 }
 
 /** Thrown when the server says the caller is not signed in. */
+/**
+ * Finishing setup would leave this browser unable to write anything.
+ *
+ * The panel sees a different name than the one in the URL bar -- nginx's
+ * default `proxy_pass` sets Host to the upstream -- so the origin check would
+ * refuse the first write after signing in. The server refuses the setup
+ * instead, while the person is still holding the one-time token, and names
+ * both sides so they can decide.
+ */
+export class OriginNotTrustedError extends Error {
+  readonly origin: string
+  readonly answersTo: string[]
+  constructor(message: string, origin: string, answersTo: string[]) {
+    super(message)
+    this.name = 'OriginNotTrustedError'
+    this.origin = origin
+    this.answersTo = answersTo
+  }
+}
+
 export class UnauthorizedError extends Error {
   readonly setupRequired: boolean
   constructor(message: string, setupRequired: boolean) {
@@ -180,10 +212,12 @@ function notePath(projectId: string): string {
 export const api = {
   authState: () => request<AuthState>('/api/auth/state'),
 
-  setup: (token: string, username: string, password: string) =>
+  // trustOrigin ratifies the origin this request is sent from, and carries no
+  // value: the server reads it from the Origin header. See handleSetup.
+  setup: (token: string, username: string, password: string, trustOrigin = false) =>
     request<AuthState>('/api/auth/setup', {
       method: 'POST',
-      body: JSON.stringify({ token, username, password }),
+      body: JSON.stringify({ token, username, password, trustOrigin }),
     }),
 
   login: (username: string, password: string) =>

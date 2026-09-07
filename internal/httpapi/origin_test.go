@@ -1,10 +1,12 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 
@@ -293,5 +295,186 @@ func TestThePanelCanStillBeConfiguredThroughAProxy(t *testing.T) {
 		if res.StatusCode == http.StatusForbidden {
 			t.Errorf("%s through a proxy: 403 %s", c.what, strings.TrimSpace(string(b)))
 		}
+	}
+}
+
+// ─── the origin a browser is actually on, ratified while setting up ───────
+//
+// The failure this exists for: nginx's default `proxy_pass` sets Host to the
+// upstream, so the panel sees `Host: 127.0.0.1:18443` while the browser is on
+// `https://panel.example.com`. The origin check lives in RequireAuth and
+// /api/auth/setup does not go through it, so setup succeeds and then the first
+// write after signing in is a bare 403 -- by which time the person is no
+// longer at the console reading the setup token.
+
+// proxiedSetup posts a setup the way a Host-dropping proxy delivers it.
+func proxiedSetup(t *testing.T, ts *httptest.Server, body string) (*http.Response, []byte) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/auth/setup", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = "127.0.0.1:18443"
+	req.Header.Set("Origin", "https://panel.example.com")
+	req.Header.Set("Content-Type", "application/json")
+	res, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(res.Body)
+	res.Body.Close() //nolint:errcheck // test
+	return res, b
+}
+
+// TestSetupAsksBeforeItLocksTheBrowserOut.
+func TestSetupAsksBeforeItLocksTheBrowserOut(t *testing.T) {
+	ts, _ := newUnconfiguredServer(t)
+
+	res, b := proxiedSetup(t, ts,
+		`{"token":"test-setup-token","username":"owner","password":"a sufficiently long password"}`)
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("setup through a Host-dropping proxy = %d, want 409: %s", res.StatusCode, b)
+	}
+	var refusal setupOriginRefusal
+	if err := json.Unmarshal(b, &refusal); err != nil {
+		t.Fatalf("refusal is not JSON: %v: %s", err, b)
+	}
+	// Named, because a dialog that cannot say which origin it is about is a
+	// dialog nobody can answer.
+	if refusal.NeedsTrust != "https://panel.example.com" {
+		t.Errorf("the refusal names %q, want the browser's own origin", refusal.NeedsTrust)
+	}
+	if len(refusal.AnswersTo) == 0 {
+		t.Errorf("the refusal does not say what the panel thinks it is called: %s", b)
+	}
+}
+
+// TestRatifyingTheOriginMakesTheNextWriteWork, which is the whole point: the
+// wizard is not asking a question with no consequence.
+func TestRatifyingTheOriginMakesTheNextWriteWork(t *testing.T) {
+	ts, srv := newUnconfiguredServer(t)
+
+	res, b := proxiedSetup(t, ts,
+		`{"token":"test-setup-token","username":"owner","password":"a sufficiently long password","trustOrigin":true}`)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("setup with trustOrigin = %d, want 201: %s", res.StatusCode, b)
+	}
+
+	// The session the setup issued, delivered the same proxied way.
+	var token string
+	for _, c := range res.Cookies() {
+		if c.Name == "vibepanel_session" {
+			token = c.Value
+		}
+	}
+	if token == "" {
+		t.Fatal("setup issued no session cookie")
+	}
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/settings/tour", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = "127.0.0.1:18443"
+	req.Header.Set("Origin", "https://panel.example.com")
+	req.AddCookie(&http.Cookie{Name: "vibepanel_session", Value: token})
+	wres, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wb, _ := io.ReadAll(wres.Body)
+	wres.Body.Close() //nolint:errcheck // test
+	if wres.StatusCode == http.StatusForbidden {
+		t.Errorf("the first write after ratifying the origin was still refused: %s", wb)
+	}
+	if got := srv.Auth.Approved.all(); len(got) != 1 || got[0] != "https://panel.example.com" {
+		t.Errorf("approved origins = %v, want exactly the browser's own", got)
+	}
+}
+
+// TestTheRatifiedOriginCannotBeChosenByTheRequestBody.
+//
+// The confirmation is a boolean, and the value comes from the request's own
+// Origin header. That is the difference between "yes, this name is mine" and
+// "add whatever this JSON says" -- the same request to whoever holds the
+// token, and not the same at all to the person reading the dialog, because a
+// body field lets what was shown and what was stored disagree, and the dialog
+// is the only place anybody looks.
+//
+// Read out of the source, which is unusual here and is the only thing that
+// works. The first version of this test posted an origin in the body and
+// asserted a 400, and it passed against a deliberately broken build that read
+// the origin straight out of the body: `decode` calls DisallowUnknownFields,
+// so the 400 came from the *other* junk fields in the probe and the assertion
+// never reached the question. Where a value comes from is a property of the
+// code, and no request can see it.
+func TestTheRatifiedOriginCannotBeChosenByTheRequestBody(t *testing.T) {
+	src, err := os.ReadFile("auth.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := string(src)
+
+	i := strings.Index(code, "type setupRequest struct {")
+	if i < 0 {
+		t.Fatal("setupRequest is gone; this test is checking nothing")
+	}
+	body := code[i:]
+	body = body[:strings.Index(body, "\n}")]
+	// Every string field here is something a caller chooses. Token, Username
+	// and Password are the three that are meant to be, and each of them is
+	// checked or hashed before it reaches anything. A fourth would be a value
+	// somebody's browser sent arriving somewhere that treats it as configured.
+	for _, line := range strings.Split(body, "\n") {
+		// Comments first. The prose above these fields says the word "string"
+		// while explaining why there is not another one, and matching that is
+		// how this test failed on its own documentation.
+		if line = strings.TrimSpace(line); strings.HasPrefix(line, "//") {
+			continue
+		}
+		if !strings.Contains(line, "string ") && !strings.Contains(line, "string`") {
+			continue
+		}
+		name := strings.Fields(strings.TrimSpace(line))
+		if len(name) == 0 {
+			continue
+		}
+		switch name[0] {
+		case "Token", "Username", "Password":
+		default:
+			t.Errorf("setupRequest has a string field %q. If it names an origin, the "+
+				"allowlist is chosen by a request body rather than by the browser that "+
+				"sent it, and the dialog and the stored value can disagree.", name[0])
+		}
+	}
+
+	// And the value that is stored is the header's, verbatim.
+	if !strings.Contains(code, `origin := strings.ToLower(strings.TrimSuffix(r.Header.Get("Origin"), "/"))`) {
+		t.Error("the ratified origin no longer comes from the request's own Origin header")
+	}
+	trust := code[strings.Index(code, "if allowed := s.publicOrigins(r); crossOriginWrite"):]
+	trust = trust[:strings.Index(trust, "hash, err :=")]
+	if strings.Contains(trust, "req.Origin") || strings.Contains(trust, "req.PublicOrigins") {
+		t.Error("the ratification reads an origin out of the request body")
+	}
+}
+
+// TestTheOriginDoorClosesWithSetup.
+//
+// The one-time token is the only credential that can add an origin, and it
+// stops existing once there is an account. After that this is a settings edit
+// by somebody signed in, which is the point: a session cookie must never be
+// enough. SameSite=Strict does not stop a page on another *port* of the same
+// host -- that is precisely what the origin check exists for -- so an
+// authenticated approve endpoint would hand back the thing it guards.
+func TestTheOriginDoorClosesWithSetup(t *testing.T) {
+	ts, srv := newTestServer(t) // setup already ran
+
+	res, b := proxiedSetup(t, ts,
+		`{"token":"test-setup-token","username":"second","password":"a sufficiently long password","trustOrigin":true}`)
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("a second setup = %d, want 409: %s", res.StatusCode, b)
+	}
+	if got := srv.Auth.Approved.all(); len(got) != 0 {
+		t.Errorf("a setup on a configured panel still trusted %v", got)
 	}
 }

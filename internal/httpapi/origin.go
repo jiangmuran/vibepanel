@@ -1,13 +1,57 @@
 package httpapi
 
 import (
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/jiangmuran/vibepanel/internal/auth"
+	"github.com/jiangmuran/vibepanel/internal/config"
 )
+
+// approvedOrigins holds origins ratified during setup, on top of the
+// configured ones.
+//
+// A separate list under its own lock rather than appending to
+// Cfg.PublicOrigins, because Cfg is a plain value read from every request
+// goroutine and writing a field of it while they read is a race the detector
+// catches -- correctly. This is written at most once, in the minutes before
+// there is an account, and read on every request, which is what RWMutex is
+// shaped for.
+//
+// Held by value, so the zero value is a working empty list and no constructor
+// has to remember it. As a pointer it was nil in every server nothing had
+// updated, `add` returned false on it without complaint, and the whole feature
+// was a no-op that three of its four tests still passed.
+type approvedOrigins struct {
+	mu   sync.RWMutex
+	list []string
+}
+
+func (a *approvedOrigins) all() []string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return append([]string(nil), a.list...)
+}
+
+// add records one origin, and reports whether it was new.
+func (a *approvedOrigins) add(origin string) bool {
+	if origin == "" {
+		return false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, o := range a.list {
+		if sameOrigin(o, origin) {
+			return false
+		}
+	}
+	a.list = append(a.list, origin)
+	return true
+}
 
 // requestOrigin is the `scheme://host:port` the browser thinks it is talking
 // to, which is what a sign-in is bound to.
@@ -108,6 +152,13 @@ func (s *Server) publicOrigins(r *http.Request) []string {
 			out = append(out, o)
 		}
 	}
+	// Ratified at setup by whoever held the one-time token. Same standing as
+	// the variable above -- one more origin that may write, named by the person
+	// who runs the panel -- and it is written into that variable as well, so a
+	// restart reaches this loop through Cfg and not through here.
+	if s.Auth != nil {
+		out = append(out, s.Auth.Approved.all()...)
+	}
 	return out
 }
 
@@ -189,4 +240,60 @@ func hostOfOrigin(origin string) string {
 		return ""
 	}
 	return strings.ToLower(u.Host)
+}
+
+// persistPublicOrigin appends one origin to VIBEPANEL_PUBLIC_ORIGINS on disk.
+//
+// Best effort, and deliberately not an error the caller can fail on. The
+// account has been created by the time this runs, the origin is already live
+// in this process, and refusing the setup because a file under /etc is
+// read-only would take a working panel away from somebody over a detail they
+// can fix later on the settings page. It is logged loudly enough to find.
+//
+// Reads the file rather than trusting Cfg.PublicOrigins, because the file may
+// have been edited since this process started and rewriting it from stale
+// memory would drop whatever was added in between.
+func persistPublicOrigin(origin string, live []string, log *slog.Logger) {
+	path := config.EnvFilePath()
+	if path == "" {
+		log.Warn("cannot record the trusted origin: no env file path",
+			"origin", origin, "note", "it works until the next restart")
+		return
+	}
+	values, err := config.ReadEnvFile(path)
+	if err != nil {
+		log.Warn("cannot read the env file to record the trusted origin",
+			"origin", origin, "path", path, "err", err)
+		return
+	}
+	existing := values["VIBEPANEL_PUBLIC_ORIGINS"]
+	if existing == "" {
+		// Nothing on disk yet, but this process may have been started with the
+		// variable exported by the unit rather than written in the file. Carry
+		// those across or writing the file would narrow the list.
+		existing = strings.Join(live, ",")
+	}
+	for _, o := range strings.Split(existing, ",") {
+		if sameOrigin(strings.TrimSpace(o), origin) {
+			return
+		}
+	}
+	if existing != "" {
+		existing += ","
+	}
+	if err := config.PatchEnvFile(path, map[string]string{
+		"VIBEPANEL_PUBLIC_ORIGINS": existing + origin,
+	}); err != nil {
+		log.Warn("cannot record the trusted origin",
+			"origin", origin, "path", path, "err", err,
+			"note", "it works until the next restart")
+	}
+}
+
+// approvedOrigins is the setup-ratified list, or nothing if there is no Auth.
+func (s *Server) approvedOrigins() []string {
+	if s.Auth == nil {
+		return nil
+	}
+	return s.Auth.Approved.all()
 }

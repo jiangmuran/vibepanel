@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   AlertTriangle,
+  ShieldAlert,
   ChevronRight,
   Eye,
   EyeOff,
@@ -15,7 +16,7 @@ import {
 } from 'lucide-react'
 
 import { setLang, t, useLang } from '../i18n'
-import { api } from '../protocol/api'
+import { api, OriginNotTrustedError } from '../protocol/api'
 import {
   decodeRequestOptions,
   encodeAssertion,
@@ -314,6 +315,11 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
   const [password, setPassword] = useState('')
   const [reveal, setReveal] = useState(false)
   const [busy, setBusy] = useState(false)
+  // The origin the server refused to finish setup under, or null. Held rather
+  // than acted on: the panel cannot tell this browser's name from an
+  // attacker's, so the only thing that can answer is the person holding the
+  // one-time token.
+  const [askOrigin, setAskOrigin] = useState<OriginNotTrustedError | null>(null)
   const [error, setError] = useState<string | null>(null)
   const passkeyOffered = !setup && state.passkeysUsable && passkeysSupported()
   // Why not, when it is not offered. The browser's reason comes first: the
@@ -350,13 +356,34 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
     }
   }
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const runSetup = async (trustOrigin: boolean) => {
     setBusy(true)
     setError(null)
     try {
-      if (setup) await api.setup(token.trim(), username.trim(), password)
-      else await api.login(username.trim(), password)
+      await api.setup(token.trim(), username.trim(), password, trustOrigin)
+      setPassword('')
+      setAskOrigin(null)
+      onDone()
+    } catch (err) {
+      // Not an error on the way to the screen: a question, and the form is
+      // kept exactly as it is so answering it costs nothing typed twice.
+      if (err instanceof OriginNotTrustedError) setAskOrigin(err)
+      else setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (setup) {
+      await runSetup(false)
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      await api.login(username.trim(), password)
       setPassword('')
       onDone()
     } catch (err) {
@@ -405,6 +432,63 @@ function AuthForm({ state, onDone }: { state: AuthState; onDone: () => void }) {
       />
     </Field>
   )
+
+  if (askOrigin) {
+    return (
+      <Shell wide={setup}>
+        <div
+          data-testid="origin-trust"
+          className="rounded-vp-lg border border-hairline bg-surface p-5 shadow-xl"
+        >
+          <div className="flex items-start gap-3">
+            <span className="mt-0.5 text-ink-2">
+              <ShieldAlert size={18} />
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-vp-base font-semibold text-ink">{t('auth.originTitle')}</h2>
+              <p className="mt-1 text-vp-sm leading-relaxed text-ink-2">{t('auth.originBody')}</p>
+            </div>
+          </div>
+          {/* The two names, as data rather than inside a sentence: the whole
+              decision is comparing them, and a person cannot compare two
+              things they have to pick out of prose. */}
+          <dl className="mt-4 space-y-2 text-vp-sm">
+            <div className="flex flex-wrap items-baseline gap-x-2">
+              <dt className="shrink-0 text-ink-3">{t('auth.originYouAreOn')}</dt>
+              <dd className="min-w-0 break-all font-mono text-ink" data-testid="origin-browser">
+                {askOrigin.origin}
+              </dd>
+            </div>
+            <div className="flex flex-wrap items-baseline gap-x-2">
+              <dt className="shrink-0 text-ink-3">{t('auth.originPanelThinks')}</dt>
+              <dd className="min-w-0 break-all font-mono text-ink-2">
+                {askOrigin.answersTo.join(', ')}
+              </dd>
+            </div>
+          </dl>
+          <div className="mt-5 flex gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void runSetup(true)}
+              data-testid="origin-trust-add"
+              className="vp-press flex items-center justify-center gap-2 rounded-vp bg-accent px-4 py-2.5 text-vp-md font-medium text-accent-ink shadow-sm disabled:opacity-50"
+            >
+              {busy ? t('auth.working') : t('auth.originAdd')}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setAskOrigin(null)}
+              className="vp-press rounded-vp border border-hairline bg-surface-2 px-4 py-2.5 text-vp-md font-medium text-ink-2 disabled:opacity-50"
+            >
+              {t('auth.originCancel')}
+            </button>
+          </div>
+        </div>
+      </Shell>
+    )
+  }
 
   return (
     <Shell wide={setup}>

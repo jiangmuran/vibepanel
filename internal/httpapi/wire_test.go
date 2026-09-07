@@ -338,8 +338,15 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"update.installed":        true,
 		"webhooks.changed":        true,
 		"setup.rejected":          true,
-		"timezone.changed":        true,
-		"session.origin":          true,
+		// Written when somebody finishing setup ratifies the name their
+		// browser is on. `origin.` rather than `setup.`, even though it can
+		// only happen during setup: the question an operator brings to this
+		// row is "which names may write to my panel", and the answer has to
+		// group with whatever else ever changes that -- not with the two rows
+		// about whether an account got created.
+		"origin.trusted":   true,
+		"timezone.changed": true,
+		"session.origin":   true,
 	}
 
 	files, err := filepath.Glob("*.go")

@@ -53,6 +53,11 @@ func releasePasswordSlot() { <-passwordSlots }
 type Auth struct {
 	Throttle *auth.Throttle
 
+	// Approved is the origins ratified during setup. See approvedOrigins, and
+	// handleSetup for why the one-time token is the only credential that can
+	// add to it. A value, so the zero Auth already has a working empty list.
+	Approved approvedOrigins
+
 	// SetupToken is printed at startup while no account exists, and is the only
 	// thing that authorises creating the first one. Without it, anyone who
 	// reached the panel before its owner did would own it.
@@ -404,6 +409,24 @@ type setupRequest struct {
 	Token    string `json:"token"`
 	Username string `json:"username"`
 	Password string `json:"password"`
+
+	// TrustOrigin ratifies the origin this very request came from, and carries
+	// no value of its own: the origin is read from the request's own Origin
+	// header. A field naming an origin would let the holder of the token write
+	// any string into the allowlist, and -- worse -- would let the dialog the
+	// person confirmed and the value that got stored disagree.
+	TrustOrigin bool `json:"trustOrigin"`
+}
+
+// setupOriginRefusal is the answer when finishing setup would leave this
+// browser unable to write anything.
+type setupOriginRefusal struct {
+	Error string `json:"error"`
+	// NeedsTrust is the origin the browser is actually on.
+	NeedsTrust string `json:"originNeedsTrust"`
+	// AnswersTo is what the panel currently believes it is called, so the
+	// person deciding can see both halves rather than one.
+	AnswersTo []string `json:"panelAnswersTo"`
 }
 
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
@@ -473,6 +496,42 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	if err := validateCredentials(req.Username, req.Password); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	// Would this browser be locked out the moment it signs in?
+	//
+	// The origin check lives in RequireAuth, and /api/auth/setup does not go
+	// through it -- so a proxy that does not forward Host lets setup succeed
+	// and then refuses the *first write after signing in*, by which time
+	// nobody is at the console any more. That is not hypothetical: it is the
+	// nginx default, which sets Host to the upstream, and it took somebody
+	// reporting 「无法创建底部终端」 to find it the first time.
+	//
+	// Asked with the same function the middleware will ask with, on this same
+	// request. A second implementation of "is this cross-origin" is how a
+	// guard ends up with two answers and no test that either is right, which
+	// crossOriginWrite's own comment records having happened once already.
+	if allowed := s.publicOrigins(r); crossOriginWrite(r, allowed) {
+		origin := strings.ToLower(strings.TrimSuffix(r.Header.Get("Origin"), "/"))
+		if !req.TrustOrigin {
+			// Refused rather than trusted quietly. The person holding the
+			// token is the only one who can say that this name is theirs, and
+			// the panel has no way to tell it from an attacker's.
+			writeJSON(w, http.StatusConflict, setupOriginRefusal{
+				Error: "this panel answers to " + strings.Join(allowed, ", ") +
+					", so a browser on " + origin + " will be refused every write after signing in",
+				NeedsTrust: origin,
+				AnswersTo:  allowed,
+			})
+			return
+		}
+		if s.Auth.Approved.add(origin) {
+			s.audit(ctx, "origin.trusted", req.Username, ip, origin)
+			// Written to the file as well as held here, so it survives a
+			// restart and shows up where an operator already looks for it. The
+			// in-memory copy is what makes the next request work without one.
+			persistPublicOrigin(origin, s.Cfg.PublicOrigins, s.Log)
+		}
 	}
 
 	hash, err := auth.HashPassword(req.Password)
