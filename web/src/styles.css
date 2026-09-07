@@ -377,6 +377,22 @@ body,
   height: 100%;
 }
 
+/* The canvas, painted explicitly rather than by propagation.
+ *
+ * A body background propagates to the canvas when `html` has none, which is
+ * true here and is why this was never needed on a desktop. It is one
+ * indirection too many on a phone or tablet, where the browser paints regions
+ * the document does not cover -- the overscroll a finger rubber-bands into, the
+ * strip behind a toolbar that has scrolled away, the safe area under a home
+ * indicator -- and reports of white edges in a dark panel have now come from
+ * three different devices.
+ *
+ * `color-scheme` is the other half and is set with the tokens; this is the half
+ * that does not depend on the browser having understood it. */
+html {
+  background: var(--vp-bg);
+}
+
 body {
   margin: 0;
   background: var(--vp-bg);

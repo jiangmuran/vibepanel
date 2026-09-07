@@ -27,6 +27,7 @@ import type { SettingsSection } from './components/settings/groups'
 import { TokenUsageView } from './components/TokenUsageView'
 import { MobileKeyBar } from './components/mobile/MobileKeyBar'
 import { ComposeInput } from './components/mobile/ComposeInput'
+import { TouchBar } from './components/mobile/TouchBar'
 import { SelectionCopy } from './components/mobile/SelectionCopy'
 import {
   defaultLayout,
@@ -1331,6 +1332,16 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           </>
         )}
 
+        {/* A touchscreen that is not a phone: the desktop layout, plus the
+            two controls it assumes a keyboard and a mouse provide. */}
+        {current && !narrow && coarsePointer && (
+          <TouchBar
+            onSend={sendToCurrent}
+            onPaste={pasteToCurrent}
+            onFiles={(files) => void uploadInto(files)}
+          />
+        )}
+
         {current && !narrow && bottomHeight > 0 && (
           <BottomTerminals
             // Remount per *project*, not per session. It was per session, to
@@ -1340,6 +1351,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             key={current.projectId}
             socket={socket}
             near={current}
+            touchSelect={narrow || coarsePointer}
             terminals={bottomTerminals}
             themeKey={themeKey}
             height={bottomHeight}

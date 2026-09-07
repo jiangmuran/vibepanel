@@ -19788,3 +19788,59 @@ value is compared now.
 
 That is what mutation testing is for, and it is the only way a test which passes
 for the wrong reason is ever found.
+
+## A tablet is a touchscreen with a desktop layout, again
+
+Three reports from an iPad, one cause: 820 css pixels is not `narrow`, so a
+tablet gets the desktop layout, which assumes a keyboard and a mouse.
+
+「iPad 端没法摁 ESC」 — there was no Escape anywhere on the screen, which for an
+agent that asks yes-or-no questions is most of the product. 「没法上传图片」 —
+the file chooser is in the side panel, and the compose box that carries one is
+`narrow`-only. `TouchBar` carries both now, collapsed by default: a tablet often
+has a real keyboard attached, and eighteen soft keys permanently across the
+bottom of a screen that does not need them is worse than the missing Escape was.
+Attaching is not behind the toggle, or one hidden thing has been traded for
+another.
+
+「没有办法滚动底下的小终端」 — the main pane was given `touchSelect` and the
+strip was not, so the gesture was never attached to it. A finger does not stop
+being a finger halfway down the window.
+
+### A loader that could not load
+
+「在 PWA 模式下加载资源的时候，不会弹出咱们的加载动画，只会把那个 logo 放在屏幕
+上」. `#root` was empty. In a browser tab that gap is a white flash nobody
+mentions; installed to a home screen it is the whole experience, because the
+platform takes its splash away the moment the document exists — long before the
+bundle has parsed — and what was left was the icon on an empty page.
+
+Inline markup with inline colours, because the stylesheet is one of the things
+being waited for: a loader that needs `styles.css` cannot cover the time before
+`styles.css`. Those two hex values are the only place `--vp-bg` is written
+twice, and the alternative is a loader that flashes white on a dark device,
+which is the thing it exists to prevent.
+
+### The canvas, painted rather than inherited
+
+`body`'s background propagates to the canvas when `html` has none, which is true
+here and is why this never showed on a desktop. It is one indirection too many
+on a handheld, where the browser paints regions the document does not cover: the
+overscroll a finger rubber-bands into, the strip behind a toolbar that has
+scrolled away, the safe area under a home indicator. White edges in a dark panel
+have now been reported from three devices. `html` carries the token directly.
+
+Measured before and after on a phone viewport: `html` was `rgba(0, 0, 0, 0)`
+and is now the theme's background in both schemes.
+
+### A comment stripper that ate the file
+
+Three test files strip comments before scanning, so that a rule is not defeated
+by the prose explaining it. The expression was `/\*[\s\S]*?\*\//g`, which finds
+`/*` inside a string literal just as happily as at the start of a comment — and
+`accept="image/*,application/pdf,text/*"` opens one that never closes. It cut
+`TouchBar.tsx` to a fifth of itself, so every assertion in that block was running
+against a string with the code missing from it.
+
+It only strips comments that own their line now, which is how every comment in
+this project is written, and which a `/*` inside an attribute never does.

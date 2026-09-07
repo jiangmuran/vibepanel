@@ -36,8 +36,19 @@ const read = (rel: string) => readFileSync(ROOT + rel, 'utf8')
  * time in this suite that a scan failed on its own explanation.
  */
 const code = (rel: string) =>
+    // Only comments that own their line.
+    //
+    // The previous version was `/\*[\s\S]*?\*\//g`, which finds `/*` inside a
+    // string literal just as happily as at the start of a comment --
+    // `accept="image/*,application/pdf,text/*"` opens one that never closes, and
+    // it ate TouchBar.tsx down to a fifth of itself. Every assertion in that
+    // block was then running against a string with the code missing from it,
+    // and passing or failing for reasons unrelated to the source.
+    //
+    // A comment in this project always starts its own line, so requiring that
+    // is enough, and a `/*` inside an attribute never does.
   read(rel)
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/^[ \t]*\{?\/\*[\s\S]*?\*\/\}?[ \t]*$/gm, ' ')
     .replace(/^\s*\/\/.*$/gm, ' ')
 
 describe('a finger on the desktop layout', () => {
@@ -95,5 +106,54 @@ describe('the installed app', () => {
   it('states no orientation preference', () => {
     const m = JSON.parse(readFileSync(ROOT + '../public/manifest.webmanifest', 'utf8'))
     expect(Object.keys(m)).not.toContain('orientation')
+  })
+})
+
+describe('a touchscreen that is not a phone', () => {
+  /*
+   * A tablet is 820 css pixels, so it is not `narrow`, so it gets the desktop
+   * layout -- which assumes a keyboard and a mouse. It has neither.
+   * 「iPad 端没法摁 ESC，没法上传图片」 and 「没有办法滚动底下的小终端」: three
+   * separate things, one cause, and none of them reachable by the phone checks
+   * because a phone is `narrow` and gets all three already.
+   *
+   * Source scans, for the same reason as the block above: these are wire-ups
+   * whose absence shows only on hardware this suite does not have.
+   */
+  it('gives a tablet the keys and the attach button', () => {
+    const app = read('App.tsx')
+    // Not `narrow` -- that is the phone, which has its own bar already -- and
+    // gated on the pointer rather than on a width, which is the one question
+    // the device can actually answer.
+    expect(app).toMatch(/\{current && !narrow && coarsePointer && \(/)
+    expect(app).toMatch(/<TouchBar/)
+  })
+
+  it('collapses the keys and leaves attaching one press', () => {
+    const bar = code('components/mobile/TouchBar.tsx')
+    // 「可以折叠或者藏在二级菜单里」. Closed by default: a tablet often has a
+    // real keyboard attached, and eighteen soft keys permanently across the
+    // bottom of a screen that does not need them is worse than the missing
+    // Escape was.
+    expect(bar).toMatch(/useState\(false\)/)
+    // Rendered, not hidden with a class: a collapsed bar that is still in the
+    // tree is eighteen focusable controls a screen reader walks through.
+    expect(bar).toMatch(/\{open && <MobileKeyBar/)
+    // Attaching does not go behind the toggle, or one hidden thing has been
+    // traded for another.
+    expect(bar).toMatch(/data-testid="touchbar-attach"/)
+    expect(bar).toMatch(/type="file"/)
+  })
+
+  it('lets a finger scroll the bottom terminal too', () => {
+    // The main pane got the gesture and the strip did not, so the small
+    // terminal could not be scrolled at all on a touchscreen.
+    // Both call sites, counted rather than matched as a pair: they are sixty
+    // lines apart and a window wide enough to span them would also match one
+    // occurrence twice.
+    const app = read('App.tsx')
+    const wired = app.match(/touchSelect=\{narrow \|\| coarsePointer\}/g) ?? []
+    expect(wired.length, 'the main pane and the bottom strip both need it').toBe(2)
+    expect(code('components/BottomTerminals.tsx')).toMatch(/touchSelect=\{props\.touchSelect\}/)
   })
 })

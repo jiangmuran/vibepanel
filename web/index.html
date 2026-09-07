@@ -11,6 +11,44 @@
     <meta name="theme-color" content="#0d0d10" />
     <link rel="apple-touch-icon" href="/icon-180.png" />
     <title>vibepanel</title>
+    <style>
+      .vp-boot {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #e8eaed;
+      }
+      .vp-boot-dot {
+        width: 2.5rem;
+        height: 2.5rem;
+        border-radius: 999px;
+        border: 3px solid rgb(0 0 0 / 0.12);
+        border-top-color: #007aff;
+        animation: vp-boot-spin 900ms linear infinite;
+      }
+      @keyframes vp-boot-spin {
+        to { transform: rotate(360deg); }
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme='light']) .vp-boot { background: #0d0d10; }
+        :root:not([data-theme='light']) .vp-boot-dot {
+          border-color: rgb(255 255 255 / 0.14);
+          border-top-color: #0a84ff;
+        }
+      }
+      :root[data-theme='dark'] .vp-boot { background: #0d0d10; }
+      :root[data-theme='dark'] .vp-boot-dot {
+        border-color: rgb(255 255 255 / 0.14);
+        border-top-color: #0a84ff;
+      }
+      /* Somebody who asked for no motion gets a dot rather than nothing: the
+         point is "something is happening", and a still ring says that too. */
+      @media (prefers-reduced-motion: reduce) {
+        .vp-boot-dot { animation: none; }
+      }
+    </style>
     <script>
       // Applied before first paint. Reading the stored theme in React instead
       // would show one frame of the wrong palette on every load — the flash is
@@ -22,7 +60,30 @@
     </script>
   </head>
   <body>
-    <div id="root"></div>
+    <!-- What is on screen before any of this has loaded.
+      
+         In a browser tab the gap is a white flash nobody mentions. Installed to
+         a home screen it is the whole experience: the platform paints its
+         splash from the manifest -- background colour, icon, name -- and then
+         takes it away the moment the document exists, which is long before the
+         bundle has parsed. What was left was the icon sitting on an empty
+         page. 「在 PWA 模式下加载资源的时候，不会弹出咱们的加载动画，只会把那个
+         logo 放在屏幕上」.
+      
+         Inline, and with its own colours, because the stylesheet is one of the
+         things being waited for: a loader that needs styles.css cannot cover
+         the time before styles.css. The two values are --vp-bg from the light
+         and dark palettes, and they are the only place in the project those
+         are written twice -- the alternative is a loader that flashes white on
+         a dark device, which is what this is for.
+      
+         React replaces the contents of #root on mount, so it needs no removing.
+      -->
+    <div id="root">
+      <div class="vp-boot" role="status" aria-label="Loading">
+        <div class="vp-boot-dot"></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

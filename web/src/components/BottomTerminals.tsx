@@ -29,6 +29,15 @@ interface Props {
   onNew: () => void
   onClose: (s: Session) => void
   onRename: (s: Session, title: string) => void
+  /**
+   * Attach the touch gesture to this terminal too.
+   *
+   * The main pane got it and the strip did not, so on a tablet the bottom
+   * terminal could not be scrolled at all: 「没有办法滚动底下的小终端」. It is
+   * the same prop the main one takes, passed from the same place, because a
+   * finger does not stop being a finger halfway down the window.
+   */
+  touchSelect?: boolean
 }
 
 /**
@@ -257,6 +266,7 @@ export function BottomTerminals(props: Props) {
             socket={socket}
             sessionId={active.id}
             themeKey={themeKey}
+            touchSelect={props.touchSelect}
             className="h-full w-full px-2 py-1"
           />
         ) : (
