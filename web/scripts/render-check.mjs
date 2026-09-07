@@ -3377,6 +3377,54 @@ browser = await chromium.launch({ headless: true })
     await plainCtx.close()
   }
 
+  // ── ctrl+V, which the terminal was eating ────────────────────────────────
+  //
+  // xterm maps ctrl+letter to a control character and cancels the event, so
+  // ctrl+V became `\x16`, the browser never fired `paste`, and the only way
+  // to get text into a session was the right-click menu. `\x16` then reached
+  // the pane, where for Claude Code and Codex ctrl+V means "paste an image
+  // from the clipboard" -- so the agent read *the panel host's* clipboard and
+  // answered `Failed to paste image: clipboard unavailable: ... X11 server
+  // connection timed out`, on a machine that has no X server and whose
+  // clipboard was never the one being asked about. 「我按下 ctrl v 是在粘贴图
+  // 片，而我实际上是文字剪贴板，只有右键再点击粘贴是粘贴」.
+  //
+  // A real key press rather than a ClipboardEvent built in the page: what
+  // broke was the keydown being cancelled before the browser could act on it,
+  // and an event dispatched by hand skips that path entirely -- it would pass
+  // against the bug it is here for.
+  if (shellSession) {
+    const marker = 'PASTED_BY_CTRL_V'
+    await page.locator('[data-testid="session-row"]', { hasText: 'scratchpad' }).first().click()
+    await sleep(800)
+    await page.evaluate((m) => navigator.clipboard.writeText(m), marker)
+    await page.locator('.xterm-screen').first().click()
+    await page.keyboard.press('Control+v')
+    let pasted = ''
+    for (let i = 0; i < 15; i++) {
+      pasted = await screenText(page)
+      if (pasted.includes(marker)) break
+      await sleep(300)
+    }
+    if (!pasted.includes(marker)) {
+      note('FAIL', 'clipboard',
+        'ctrl+V put nothing at the prompt, so the keystroke is still going to the pane as ^V ' +
+        'rather than being left to the browser -- which is what makes an agent try to read the ' +
+        `panel host's clipboard. Screen tail: ` +
+        JSON.stringify(pasted.replace(/\s+/g, ' ').trim().slice(-160)))
+    } else {
+      // Said out loud, because the alternative reading of a silent section is
+      // that it did not run: this block is skipped when there is no shell
+      // session, and a skip and a pass would look identical in the summary.
+      note('PASS', 'clipboard', 'ctrl+V pastes the browser clipboard into the session')
+    }
+    // Leave the prompt as it was found. ^C rather than Enter: running whatever
+    // the clipboard happened to hold is not this check's business, and the
+    // sections after it type at this same session.
+    await page.keyboard.press('Control+c')
+    await sleep(400)
+  }
+
   // ── two viewers, one note ────────────────────────────────────────────────
   // "open it in many places and they stay in sync" was the first thing asked
   // for, and it was true of sessions and false of the notepad: a note written
