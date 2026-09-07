@@ -984,10 +984,23 @@ body {
   padding: 0.125rem;
 }
 
+/* A tab is as wide as what is in it.
+ *
+ * `flex: 1 1 0` divides the track between the tabs, which is the segmented
+ * control look and is right when they carry labels. They do not carry labels
+ * once the panel is narrow -- and on a tablet, where every button also picks up
+ * the 44px touch floor, two icon-only tabs became two large empty rectangles
+ * splitting the width between them. 「右边 tab 两个选择，它上下占满了好像有点奇
+ * 怪」.
+ *
+ * Hugging instead: the pills sit together at the left of the groove, the tap
+ * target keeps its height, and the space they were filling goes back to the
+ * row. A tab that does have a label still grows, because the label is what
+ * needs the room. */
 .vp-segmented > .vp-tab {
   position: relative;
   z-index: 1;
-  flex: 1 1 0;
+  flex: 0 1 auto;
   min-width: 0;
   justify-content: center;
 }

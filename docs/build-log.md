@@ -19844,3 +19844,39 @@ against a string with the code missing from it.
 
 It only strips comments that own their line now, which is how every comment in
 this project is written, and which a `/*` inside an attribute never does.
+
+## Two buttons do not need a row of their own
+
+「你没有必要单开一个横杠吧... 单开一条有点浪费空间」. The tablet's Escape and
+attach controls shipped as a full-width bar, which costs a line of terminal on
+the device that has the least of it.
+
+The session header already carries a control cluster — the panel toggle,
+settings, the theme, sign-out — and two more belong in it. The keys themselves
+still need room, so they are a separate panel under the terminal, rendered only
+while the toggle is on. The split is what lets the toggle live where there is
+space for a button and the thing it toggles live where there is space for
+eighteen.
+
+## A tab is as wide as what is in it
+
+「右边 tab 两个选择，它上下占满了好像有点奇怪」.
+
+`.vp-segmented > .vp-tab` was `flex: 1 1 0`, which divides the track between the
+tabs. That is the segmented-control look and it is right when they carry labels.
+They stop carrying labels once the panel is narrow — and on a tablet, where
+every button also picks up the 44px touch floor, two icon-only tabs became two
+large empty rectangles splitting the width between them.
+
+Measured at 1180x820 after: 26x44 each, sitting together at the left of the
+groove, with the width they were filling given back to the row.
+
+### The measurement that was of the wrong element
+
+The first reading said 64x44 and 57x44, which looked like a fix. It was the
+*language switcher* — also a `.vp-segmented` — because the script's login had
+silently failed and the page was still the sign-in screen. The selector was
+`input[type=text]`; the field is `[data-testid="auth-username"]`.
+
+A screenshot is what caught it, which is the argument for taking one even when
+the numbers look right.

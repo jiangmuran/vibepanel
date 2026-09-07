@@ -27,7 +27,7 @@ import type { SettingsSection } from './components/settings/groups'
 import { TokenUsageView } from './components/TokenUsageView'
 import { MobileKeyBar } from './components/mobile/MobileKeyBar'
 import { ComposeInput } from './components/mobile/ComposeInput'
-import { TouchBar } from './components/mobile/TouchBar'
+import { TouchControls, TouchKeys } from './components/mobile/TouchControls'
 import { SelectionCopy } from './components/mobile/SelectionCopy'
 import {
   defaultLayout,
@@ -230,6 +230,10 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   // press-and-hold selection to the layout breakpoint would leave it with no
   // way to copy at all.
   const coarsePointer = useMediaQuery('(pointer: coarse)')
+  // Off until asked for. A tablet often has a real keyboard attached, and
+  // eighteen soft keys permanently across the bottom of a screen that does not
+  // need them is worse than the missing Escape was.
+  const [touchKeys, setTouchKeys] = useState(false)
 
   const [status, setStatus] = useState<SocketStatus>('closed')
   const [state, setState] = useState<PanelState>({
@@ -1060,6 +1064,15 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
                 <PanelRight size={15} />
               </button>
             )}
+            {/* A touchscreen that is not a phone gets the two things the
+                desktop layout assumes a keyboard and a mouse provide. */}
+            {!narrow && coarsePointer && (
+              <TouchControls
+                open={touchKeys}
+                onToggle={() => setTouchKeys((v) => !v)}
+                onFiles={(files) => void uploadInto(files)}
+              />
+            )}
             <button
               type="button"
               data-testid="settings-open"
@@ -1332,14 +1345,11 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           </>
         )}
 
-        {/* A touchscreen that is not a phone: the desktop layout, plus the
-            two controls it assumes a keyboard and a mouse provide. */}
-        {current && !narrow && coarsePointer && (
-          <TouchBar
-            onSend={sendToCurrent}
-            onPaste={pasteToCurrent}
-            onFiles={(files) => void uploadInto(files)}
-          />
+        {/* The keys themselves, under the terminal, only while they are on.
+            The toggle that opens them lives in the header: two buttons in a
+            cluster that already exists, rather than a row of their own. */}
+        {current && !narrow && coarsePointer && touchKeys && (
+          <TouchKeys onSend={sendToCurrent} onPaste={pasteToCurrent} />
         )}
 
         {current && !narrow && bottomHeight > 0 && (

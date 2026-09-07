@@ -122,26 +122,32 @@ describe('a touchscreen that is not a phone', () => {
    */
   it('gives a tablet the keys and the attach button', () => {
     const app = read('App.tsx')
-    // Not `narrow` -- that is the phone, which has its own bar already -- and
-    // gated on the pointer rather than on a width, which is the one question
-    // the device can actually answer.
-    expect(app).toMatch(/\{current && !narrow && coarsePointer && \(/)
-    expect(app).toMatch(/<TouchBar/)
+    // Gated on the pointer rather than on a width, which is the one question
+    // the device can actually answer, and not on `narrow` -- that is the
+    // phone, which has its own bar already.
+    expect(app).toMatch(/!narrow && coarsePointer && \(\s*<TouchControls/)
+    expect(app).toMatch(/!narrow && coarsePointer && touchKeys && \(/)
   })
 
-  it('collapses the keys and leaves attaching one press', () => {
-    const bar = code('components/mobile/TouchBar.tsx')
-    // 「可以折叠或者藏在二级菜单里」. Closed by default: a tablet often has a
-    // real keyboard attached, and eighteen soft keys permanently across the
-    // bottom of a screen that does not need them is worse than the missing
-    // Escape was.
-    expect(bar).toMatch(/useState\(false\)/)
-    // Rendered, not hidden with a class: a collapsed bar that is still in the
-    // tree is eighteen focusable controls a screen reader walks through.
-    expect(bar).toMatch(/\{open && <MobileKeyBar/)
+  it('puts them in the row that already exists', () => {
+    // 「你没有必要单开一个横杠吧... 单开一条有点浪费空间」. A full-width row for
+    // two buttons costs a line of terminal on the device with the least of it,
+    // so the toggle and the attach button join the header's control cluster
+    // and only the keys themselves take space, and only while open.
+    const app = code('App.tsx')
+    const header = app.slice(app.indexOf('data-testid="right-show"'))
+    expect(header.slice(0, header.indexOf('sign-out'))).toContain('<TouchControls')
+  })
+
+  it('leaves the keys off until asked, and attaching one press', () => {
+    // Closed by default: a tablet often has a real keyboard attached, and
+    // eighteen soft keys permanently across the bottom of a screen that does
+    // not need them is worse than the missing Escape was.
+    expect(code('App.tsx')).toMatch(/const \[touchKeys, setTouchKeys\] = useState\(false\)/)
+    const bar = code('components/mobile/TouchControls.tsx')
     // Attaching does not go behind the toggle, or one hidden thing has been
     // traded for another.
-    expect(bar).toMatch(/data-testid="touchbar-attach"/)
+    expect(bar).toMatch(/data-testid="touch-attach"/)
     expect(bar).toMatch(/type="file"/)
   })
 
