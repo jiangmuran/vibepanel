@@ -19844,3 +19844,78 @@ against a string with the code missing from it.
 
 It only strips comments that own their line now, which is how every comment in
 this project is written, and which a `/*` inside an attribute never does.
+
+## Ctrl+V was a keystroke, and it belonged to the clipboard
+
+「我按下 ctrl v 是在粘贴图片，而我实际上是文字剪贴板，只有右键再点击粘贴是粘贴」,
+with the agent's own answer attached:
+
+```
+Failed to paste image: clipboard unavailable: Unknown error while interacting
+with the clipboard: X11 server connection timed out because it was unreachable
+```
+
+Two things had to be true at once for that message to appear, and only one of
+them is in this repository.
+
+**xterm cancels ctrl+letter.** `evaluateKeyboardEvent` turns keyCode 86 into
+`String.fromCharCode(86 - 64)` — `\x16` — and `_keyDown` finishes with
+`this.cancel(event, true)`, which is `preventDefault` plus `stopPropagation`.
+A cancelled keydown has no default action, and the browser's paste *is* the
+default action, so `paste` was never fired at xterm's hidden textarea at all.
+The right-click menu reaches that same textarea by another road, which is
+exactly why one of them worked and the other did not — and why this reads as a
+clipboard fault when nothing about the clipboard is involved.
+
+Measured before anything was changed, against a real Chromium and a real
+xterm on a throwaway page: `onData` saw one control character on ctrl+V, and
+`["CTRL_V_PASTE_OK"]` with the handler attached.
+
+**And `\x16` means something to an agent.** Claude Code and Codex both read
+ctrl+V as "paste an image from the clipboard", and both go looking for that
+clipboard on the machine they are running on. A panel host is headless, so the
+lookup waits for an X server that is not there and times out. The clipboard
+holding the text is on the laptop in front of the person, several networks
+away. Nothing on the agent's side can reach it: the keyboard and the process
+are on different machines here by construction, which is the premise of the
+whole project.
+
+So `\x16` out of a browser tab cannot mean what the agent takes it to mean, and
+the panel stops sending it. `attachCustomKeyEventHandler` answers false for
+that one chord, xterm leaves the event uncancelled, the browser performs its
+own paste into the textarea, and xterm brackets it the way it brackets a
+right-click paste. `pasteKey.ts` holds the rule and the reasoning; `Terminal.tsx`
+holds one line.
+
+**Not `navigator.clipboard.readText()`,** which is the obvious other way to
+write this. It needs a secure origin and a permission, and this panel is served
+over plain http on a LAN more often than not — `clipboard.ts` exists because of
+that. Handing the keystroke back to the browser needs neither.
+
+**What it costs, said out loud:** a literal ^V can no longer be typed into a
+session. Blockwise-visual in vim and quoted-insert in readline are unreachable
+from the panel now. One of the two meanings of this key had to win, and the
+other one is somebody's clipboard.
+
+Three conditions in the rule are load-bearing, and each has a case in
+`pasteKey.test.ts` rather than being left to be rediscovered: only `keydown`,
+because xterm calls the handler for keyup as well and answering there skips the
+refocus it does on that path; `!altKey`, because AltGr is ctrl+alt on Windows
+and Linux and a layout that types a character there would have it swallowed;
+and `key` rather than `code`, because the browser pastes for the key that
+*produces* v, so matching on the physical position would claim ctrl+W on Dvorak.
+
+**One thing followed from it.** With ctrl+V reaching the browser, pasting a
+screenshot at a terminal is an ordinary key press rather than a menu, and that
+path goes through xterm too: the document-level file-paste handler in `App.tsx`
+calls `preventDefault`, which does not stop propagation, so xterm read
+`text/plain` off an image-only clipboard, got `''`, and sent the pane an empty
+bracketed paste — two escape sequences typed at an agent for every picture. It
+stops the event now, which it can safely do because the two file-paste
+listeners were already made disjoint by `data-vp-paste-own` (see "One paste,
+one file").
+
+`render-check` presses the real key: text on the clipboard, `Control+v` at a
+shell session, the text read back off the screen. A `ClipboardEvent` built in
+the page would have passed against the bug — what broke was the keydown being
+cancelled, and a synthetic paste never goes near that.

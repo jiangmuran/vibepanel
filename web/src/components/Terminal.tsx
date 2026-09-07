@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { attachTouchSelection } from './mobile/touchSelect'
 import { liveTerminals } from './terminals'
 import { copyText, copyTextInGesture } from '../clipboard'
+import { isBrowserPaste } from './pasteKey'
 import { rendererPreference } from './renderer'
 import { Terminal as Xterm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -56,16 +57,6 @@ interface Props {
   fullscreen?: boolean
   /** Fires with the selected text, or '' when the selection is dropped. */
   onSelectionChange?: (text: string) => void
-  /**
-   * Files pasted into the terminal, which for a coding agent means a
-   * screenshot.
-   *
-   * xterm's own paste handling is for text, so an image landed nowhere at all:
-   * ctrl-V did nothing and there was no way to tell whether the panel had
-   * ignored it or the clipboard was empty. Dropping a file already worked --
-   * this is the same journey for people who took a screenshot rather than saved
-   * one, which on every desktop is the faster half.
-   */
   className?: string
   /**
    * Stops xterm capturing keystrokes.
@@ -221,6 +212,13 @@ export function TerminalView({
         // that blocks it. The DOM renderer is already in place.
       }
     }
+    // ctrl+V is the browser's, and returning false is what gives it back:
+    // xterm leaves the event uncancelled, so the default action runs and the
+    // hidden textarea receives a real `paste`. Sending `\x16` instead is what
+    // made an agent try to read the panel host's X11 clipboard; `pasteKey.ts`
+    // has the whole of it.
+    term.attachCustomKeyEventHandler((e) => !isBrowserPaste(e))
+
     termRef.current = term
     fitRef.current = fit
 

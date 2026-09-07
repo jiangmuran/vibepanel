@@ -735,6 +735,13 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
       const target = e.target as HTMLElement | null
       if (target?.closest('[data-vp-paste-own]')) return
       e.preventDefault()
+      // And stop it reaching xterm, which listens for `paste` on its own
+      // textarea. There is no text in a screenshot, so xterm would read `''`
+      // and send the pane an empty bracketed paste -- `\x1b[200~\x1b[201~`
+      // typed at an agent for every picture. It never showed while ctrl+V was
+      // being eaten as a keystroke; now that the browser delivers the paste,
+      // this is the ordinary path for pasting a screenshot.
+      e.stopPropagation()
       void uploadInto(files)
     }
     document.addEventListener('paste', onPaste, true)
