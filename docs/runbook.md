@@ -521,14 +521,20 @@ with what agents print.
 **The panel** is not flat with session count, whatever an earlier version of
 this page claimed. It attaches to *every* session rather than only the one being
 watched, because state detection reads the byte stream, and each attachment
-costs a replay buffer of up to 2 MiB (`session.DefaultRingSize`), a PTY, and a
-goroutine. Twenty-four sessions is therefore tens of megabytes of panel before
-anything has gone wrong. Buffers fill as output arrives rather than being
-allocated up front, so an idle panel sits well below that ceiling.
+costs a replay buffer of up to 512 KiB (`session.DefaultRingSize`), a PTY, and a
+goroutine. Buffers fill as output arrives rather than being allocated up front,
+so an idle panel sits well below that ceiling.
 
-If the panel's own memory is far above roughly 2 MiB per live session,
+That buffer was 2 MiB, and the number is a latency budget rather than a memory
+one: it is what goes down the socket every time somebody clicks a session, and
+`session.DefaultRingSize` says what it cost. Raising it back is the same
+decision either way — see that comment before you do.
+
+If the panel's own memory is far above roughly 1 MiB per live session,
 something is retaining more than it should; `scripts/scale-check.mjs` measures
-exactly this and fails past 3 MiB per session.
+exactly this. Its ceiling is still 3 MiB per session, which was 2 MiB of buffer
+plus slack and is now loose enough to miss a regression back to the old size.
+Tightening it wants a run of that check rather than an edit.
 
 It also refuses to pass when it cannot measure. `rssMiB` returns NaN where
 there is no `/proc`, and every comparison against NaN is false, so the check

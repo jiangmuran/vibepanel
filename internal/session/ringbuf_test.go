@@ -199,3 +199,30 @@ func TestRingBufferConcurrentWriters(t *testing.T) {
 	}
 	<-done
 }
+
+// TestTheReplayIsSmallEnoughToClickThrough is a tripwire on one number.
+//
+// DefaultRingSize does not read like a latency budget, and that is exactly how
+// it came to be one. Snapshot is its only reader, Subscribe is Snapshot's only
+// caller, and the panel resubscribes every time somebody selects a session --
+// each session gets its own xterm, so switching tears the old one down and
+// replays the new one from scratch. So this constant is the number of bytes a
+// person waits for on every click, and Attach primes the buffer full on the
+// first tick, so it is not "up to" anything: it is what gets sent.
+//
+// Measured against the real binary over a 20 Mbit link, two agents in one
+// project: 2 MiB put the session on screen in 5.5 seconds. Nothing in the Go
+// tests or in `make check` can see that -- the browser checks run on the
+// loopback, where the same replay is under a second.
+//
+// Raising this is allowed. Raising it without knowing that it is a latency
+// change is what this stands in front of.
+func TestTheReplayIsSmallEnoughToClickThrough(t *testing.T) {
+	const budget = 512 << 10
+	if DefaultRingSize > budget {
+		t.Errorf("DefaultRingSize is %d bytes; every session switch sends all of it to the "+
+			"browser, and %d is the measured ceiling for a click that feels immediate on a "+
+			"link that is not the loopback. Raise the budget deliberately, with a "+
+			"measurement, or leave the buffer where it is.", DefaultRingSize, budget)
+	}
+}

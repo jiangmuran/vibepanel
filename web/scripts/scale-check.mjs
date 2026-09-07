@@ -5,7 +5,7 @@
 //
 // The panel attaches to every session, not only the one being watched, so that
 // state detection works for the ones you are not looking at. That decision has
-// a cost per session — a tmux client, a PTY pump, a 2 MiB replay buffer — and
+// a cost per session — a tmux client, a PTY pump, a 512 KiB replay buffer — and
 // it was reasoned about rather than measured. This measures it, at the load the
 // panel is actually used at: the setup that prompted the project runs 17 agents.
 //
@@ -297,8 +297,13 @@ try {
     `server RSS ${baseline.toFixed(0)} MiB → ${loaded.toFixed(0)} MiB ` +
     `(${((loaded - baseline) / COUNT).toFixed(1)} MiB per session)`,
   )
-  // The replay buffer is 2 MiB per session, but it is allocated as it fills, so
-  // idle sessions should cost far less than that.
+  // The replay buffer is 512 KiB per session, but it is allocated as it fills,
+  // so idle sessions should cost far less than that.
+  //
+  // The ceiling below is 3 MiB and predates the buffer shrinking from 2 MiB to
+  // 512 KiB, so it no longer sits just above the expected cost: a regression
+  // that put the old buffer back would pass. Left as it is rather than guessed
+  // at, because the right number is the one this check reports on a real run.
   //
   // The validity check comes first for the same reason as above: rssMiB returns
   // NaN when /proc is unavailable, and every comparison against NaN is false,
@@ -309,7 +314,7 @@ try {
   } else if (loaded - baseline > COUNT * 3) {
     note('FAIL', 'scale',
       `${COUNT} idle sessions cost ${(loaded - baseline).toFixed(0)} MiB, more than the ` +
-      '2 MiB replay buffer each; something is retaining more than it should')
+      '512 KiB replay buffer each; something is retaining more than it should')
   }
 
   browser = await chromium.launch({ headless: true })

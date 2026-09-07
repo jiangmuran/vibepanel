@@ -20042,3 +20042,116 @@ scans `Terminal.tsx` too, and both mutations were watched — removing the call,
 and dropping the `!` that is the whole of the fix, since
 `attachCustomKeyEventHandler((e) => isBrowserPaste(e))` type-checks, reads
 almost the same and sends `\x16` again.
+
+## Two Claude Code sessions in one project, and neither list would hold still
+
+Reported together and unrelated in cause: the two sessions swapped places in
+the sidebar continuously, and clicking one took long enough to notice.
+
+### The sidebar swapped because "most recent output" is a coin toss
+
+`listSessions` ordered by `pinned`, state weight, manual position,
+`last_output_at DESC`, `created_at DESC`. Two agents in one project share the
+first three, so the tie fell to the fourth — and the fourth is written by the
+PTY pump at one-second resolution, debounced to one write per session per
+second, each session on whatever phase its own output happens to land on.
+
+So for part of every second one of the pair holds the newer stamp and overtakes
+the other, and for the rest of it they are equal and fall back to age. Nothing
+about either session changed. Sampled either side of each stamp across ten
+seconds, with nothing running but two `printf` loops:
+
+```
+ab ba ab ba ab ba ab ba ab ba ab ba ab ba ab ba ab ba ab ba
+```
+
+**It was also broadcasting.** The poller compares the serialised snapshot with
+the last one and pushes only on a difference, and the *array order* is part of
+the serialisation. `lastOutputAt` was taken off the wire for exactly this
+reason once already ("Every tick was a broadcast"); the field left and the
+ordering it drives stayed, so a busy pair went on making every other tick
+differ — from their positions rather than from their contents.
+
+The term is now a bucket counted back from now, sixty seconds wide. Two
+sessions that are both printing are both in bucket zero and hold still; one
+silent for an hour is still ranked below one that printed a moment ago, which
+is what the term was for. Counted back from *now* rather than bucketing
+`last_output_at` itself: an absolute bucket lets the pair separate for up to a
+second whenever a wall-clock minute rolls over between their two stamps, and
+"both printed recently" is the property that should not have a boundary in it.
+
+`TestABusySessionDoesNotOvertakeItsNeighbour` samples the twenty orderings
+above and fails on any change; `TestALongSilentSessionSinksBelowABusyOne` is
+the other half, so that the fix cannot be quietly turned into a deletion of the
+term. Reverting the SQL reproduces `ab ba ab ba` in the first test.
+
+And then in a browser, because a store test cannot say that the *sidebar* is
+what moves. Two agents in one project, the real binary, the sidebar's row order
+read every 500 ms for a minute:
+
+```
+HEAD      order changed 10 times in 60s     a|b b|a a|b b|a ...
+fixed     order changed  0 times in 60s
+```
+
+The first attempt at this measured one change in forty seconds and nearly got
+written down as "barely reproducible". The fault was the instrument: both fake
+agents printed on `sleep 1`, and a metronome does not drift against a
+one-second debounce — so the phase that decides the whole defect was held still
+by the thing meant to exercise it. Given cadences that are not whole seconds
+(0.7 and 1.1) it alternates continuously, which is what was reported. A second
+run of the same check counted 18 rather than 10; the number is a function of
+how the two phases drift past each other, and only "zero" is a stable one.
+
+### Clicking a session sent two megabytes, every time
+
+`Live.Subscribe` returns `ring.Snapshot()` — the whole ring — and
+`DefaultRingSize` was 2 MiB. Three facts turn that into a click cost rather
+than a memory one:
+
+- `Snapshot` has no other caller, and `Subscribe` is its only one.
+- `Attach` primes the ring from `capture-pane`, which on a pane holding tmux's
+  20,000 lines is ~1.6 MB measured at 130 columns. The buffer is therefore full
+  from the first tick; "up to 2 MiB" is "2 MiB".
+- The panel gives each session its own xterm (`key={current.id}` in `App.tsx`,
+  deliberately — one instance reused across sessions would bleed output between
+  them). Selecting a session tears the previous one down and replays the new one
+  from nothing, so this is paid on every switch, not once per page.
+
+Measured against the real binary, real tmux and a real browser, two agents in
+one project, throttled to 20 Mbit and 40 ms — an ordinary home link, and
+generous for a phone:
+
+```
+                       replay          on screen
+2 MiB     switch      1758 KiB          2577 ms
+          switch back 1754 KiB          2935 ms
+512 KiB   switch       512 KiB           836 ms
+          switch back  512 KiB           794 ms
+```
+
+On the loopback the same switch is under a second, which is why none of the
+browser checks could see it: they all run against 127.0.0.1.
+
+512 KiB is roughly two thousand lines of an agent's coloured output. tmux still
+holds the authoritative 20,000, and `CaptureLines` already reads them with a
+bound, so what was given up is browser-side scrollback that was being paid for
+on every click and read almost never.
+
+**One number, not two.** A separate replay bound over a larger ring would have
+left memory nothing could reach, since `Snapshot` is the only reader. So the
+ring *is* the replay, and `TestTheReplayIsSmallEnoughToClickThrough` stands in
+front of it — not to forbid raising it, but because nothing about the name
+`DefaultRingSize` says that raising it is a latency change.
+
+### Measured and not taken
+
+`Attach` primes the ring with `CaptureHistory`, which is `capture-pane -S -`
+with no bound: 1,576,914 bytes in 118 ms for a full history, of which a 512 KiB
+ring keeps a third. `CaptureLines` exists and takes a bound, but it has no
+`-E -1`, so swapping to it would replay the visible screen twice — the thing
+that flag is there to prevent. A bounded `CaptureHistory` is a change to the
+`Backend` interface and therefore to the guest link as well, and it buys
+attach-time rather than click-time: the poller attaches every session in the
+background, so a person only meets this path by clicking a session in the
+seconds after a restart. Left alone, written down.
