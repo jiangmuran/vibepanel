@@ -484,6 +484,18 @@ export const api = {
 
   deleteSession: (id: string) => request<void>(`/api/sessions/${id}`, { method: 'DELETE' }),
 
+  /**
+   * A directory served as a page.
+   *
+   * The response is the only time the token is readable, so the caller has to
+   * do something with it there and then -- the database keeps a hash.
+   */
+  createPreview: (projectId: string, path: string, name: string, expiresIn: number) =>
+    request<{ id: string; token: string; name: string; root: string; expiresAt: number }>(
+      '/api/settings/previews',
+      { method: 'POST', body: JSON.stringify({ projectId, path, name, expiresIn }) },
+    ),
+
   restartSession: (id: string) =>
     request<void>(`/api/sessions/${id}/restart`, { method: 'POST' }),
 

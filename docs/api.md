@@ -795,6 +795,52 @@ being refreshed and ages out within fifteen seconds. Viewers are **not** told
 the count; it is a fact about other people holding the same URL, and a link that
 says nothing about who holds it should not start.
 
+## Directory previews
+
+A directory served as a page, so that something an agent just built can be
+looked at without a download and a local server. The link renders `index.html`
+if there is one, lists the directory if there is not, and resolves relative
+assets — which is the whole reason it is a directory and not a file.
+
+```sh
+curl -sX POST https://panel.example:18443/api/settings/previews \
+  -b cookies.txt -H 'Content-Type: application/json' \
+  -d '{"root":"/home/me/projects/site/dist","name":"site","expiresIn":86400}'
+# {"id":"…","token":"Xk9…","prefix":"Xk9x2m4v","name":"site",
+#  "root":"/home/me/projects/site/dist","createdAt":…,"expiresAt":…}
+```
+
+The URL to open is `https://<panel>/preview/<token>/`, and the response is the
+only time the token is readable — the database keeps a SHA-256, exactly as it
+does for a share link.
+
+**The token is the authority, not your session.** That is not the original
+design and it is not a shortcut: the preview is served with `Content-Security-
+Policy: sandbox`, which puts the page in an opaque origin so it cannot read the
+session cookie or call this API with it — and an opaque origin also cannot
+*send* the cookie, so a preview that required a session could not load its own
+stylesheet. Measured, in a browser: the page rendered and every asset came back
+`ERR_BLOCKED_BY_ORB`. Creating a link needs a signed-in session; using one needs
+the link.
+
+So treat a preview URL as you would a share link: it is readable by whoever
+holds it until it expires or is revoked. It is confined to one directory —
+symlinks out are resolved and refused — it cannot reach any other route, and it
+is served `no-referrer` and `noindex` so it does not leak on its own.
+
+`expiresIn` is seconds from now, `0` for a link that does not expire, at most a
+year. `root` must be a directory that exists; it is resolved once, at creation,
+and stored resolved, so a symlink swapped afterwards cannot change what the link
+serves.
+
+### `GET /api/settings/previews`
+### `POST /api/settings/previews`
+### `DELETE /api/settings/previews/{id}`
+
+List, create and revoke. The listing includes expired links, because "this link
+has expired" is what the page showing them has to be able to say, and never
+includes a token.
+
 ### `GET /api/settings/shares`
 ### `POST /api/settings/shares`
 ### `PATCH /api/settings/shares/{shareID}`

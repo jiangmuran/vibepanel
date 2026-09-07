@@ -362,6 +362,9 @@ func (s *Server) Routes() http.Handler {
 			r.Use(s.RequireAuth)
 
 			r.Get("/state", s.handleState)
+			r.Get("/settings/previews", s.handleListPreviews)
+			r.Post("/settings/previews", s.handleCreatePreview)
+			r.Delete("/settings/previews/{id}", s.handleDeletePreview)
 
 			r.Post("/projects", s.handleCreateProject)
 			r.Post("/projects/reorder", s.handleReorderProjects)
@@ -430,6 +433,14 @@ func (s *Server) Routes() http.Handler {
 		// still accepting keystrokes.
 		StillAuthorized: s.stillAuthorized,
 	})
+
+	// Outside /api, because this is a link somebody opens in a browser rather
+	// than an endpoint a client calls -- and before the SPA's catch-all, or
+	// the catch-all would answer it with the panel's own index.html.
+	//
+	// The token in the path is the capability, for a reason measured rather
+	// than chosen: see the note in preview.go.
+	s.registerPreviewRoutes(r)
 
 	r.Handle("/*", webui.Handler(s.Cfg.StaticDir))
 	return r

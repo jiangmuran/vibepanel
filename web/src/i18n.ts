@@ -320,6 +320,8 @@ const DICT = {
   'files.download': { zh: '下载', en: 'Download' },
   'files.empty': { zh: '这个目录是空的', en: 'Nothing here' },
   'files.escapes': { zh: '指向项目之外', en: 'points outside the project' },
+  'files.preview': { zh: '把这个目录当网页打开', en: 'Serve this directory as a page' },
+  'files.previewCopied': { zh: '预览链接已复制', en: 'Preview link copied' },
   'files.newFolder': { zh: '新建目录，叫什么？', en: 'New directory, called what?' },
   'files.count': { zh: '{n} 项', en: '{n} items' },
   'files.modified': { zh: '改动时间', en: 'Modified' },

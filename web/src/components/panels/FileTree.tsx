@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronLeft, Download, File, Folder, FolderPlus, RefreshCw, Upload } from 'lucide-react'
+import { ChevronLeft, Download, ExternalLink, File, Folder, FolderPlus, RefreshCw, Upload } from 'lucide-react'
 import { safeText } from '../text'
 
 import { api } from '../../protocol/api'
@@ -9,6 +9,7 @@ import type { PanelDensity } from '../chrome'
 import { filesFrom, uploadFiles } from '../upload'
 import { FilePreview } from './FilePreview'
 import { RepoLine } from './RepoLine'
+import { copyTextInGesture } from '../../clipboard'
 import { formatAgo } from './ago'
 import { formatBytes } from './preview'
 
@@ -247,6 +248,46 @@ export function FileTree({
           className="vp-control"
         >
           <FolderPlus size={12} />
+        </button>
+        {/* This directory, as a page.
+            
+            The one control that produces a URL rather than changing something,
+            so it copies the link and says so rather than navigating: a preview
+            is usually wanted on the *other* screen -- a phone, a second
+            monitor -- and a panel that took over this tab would be the wrong
+            answer to 「方便我去预览」.
+            
+            A day's expiry, not forever. The token is the authority (see
+            docs/api.md), so a link that never expires is a capability with no
+            end, made with one press, for a directory somebody has since
+            forgotten about. */}
+        <button
+          type="button"
+          data-testid="file-preview"
+          onClick={() => {
+            void api
+              .createPreview(projectId, path, path.split('/').pop() || 'preview', 86400)
+              .then((made) => {
+                const url = `${window.location.origin}/preview/${made.token}/`
+                // Through clipboard.ts, which is the only module allowed to
+                // touch navigator.clipboard -- there is a test for that, and it
+                // caught this line written the other way.
+                copyTextInGesture(url, (ok) => {
+                  if (ok) {
+                    setNote(t('files.previewCopied'))
+                    return
+                  }
+                  // A clipboard the browser refused. The link is useless if it
+                  // only ever existed inside a toast, so it opens instead.
+                  window.open(url, '_blank', 'noopener,noreferrer')
+                })
+              })
+              .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+          }}
+          title={t('files.preview')}
+          className="vp-control"
+        >
+          <ExternalLink size={12} />
         </button>
         <button
           type="button"

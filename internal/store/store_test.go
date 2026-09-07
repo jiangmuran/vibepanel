@@ -1158,8 +1158,14 @@ func TestExistingBottomTerminalsSurviveTheMove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	// Every migration except the last, which is the one under test.
-	prior := len(migrations) - 1
+	// Everything before the scratch-terminal migration, which is the one under
+	// test. A fixed index rather than `len(migrations) - 1`: that meant "the
+	// last one" and was right exactly until the next migration was added, at
+	// which point this seeded a database that had already dropped the column it
+	// then tried to insert into. Migrations are positional and never
+	// renumbered, so the number is stable.
+	const scratchMigration = 19 // v20
+	prior := scratchMigration
 	for i := 0; i < prior; i++ {
 		if err := migrations[i](tx); err != nil {
 			t.Fatalf("apply migration %d: %v", i+1, err)

@@ -19880,3 +19880,81 @@ silently failed and the page was still the sign-in screen. The selector was
 
 A screenshot is what caught it, which is the argument for taking one even when
 the numbers look right.
+
+## A directory served as a page
+
+「在文件管理里可以将任何一个目录作为 Python 的 simple server ... 点一个链接就进
+去了」. The point is that the assets resolve: a single-file download cannot
+render a page an agent wrote, because the page asks for its stylesheet and its
+script by relative path.
+
+The person asking named the two risks, and both turned out to be the design
+rather than a detail.
+
+### The cookie, and the thing that could not be had both ways
+
+Serving somebody's HTML from the panel's own origin means it runs *as* the
+panel: `fetch('/api/sessions')` with the session cookie attached, or
+`document.cookie` outright, and the capability at the end of that is a terminal.
+Only one port is open, so a second origin was not available.
+
+`Content-Security-Policy: sandbox` is what makes it safe on one origin — it
+applies the iframe sandbox to a *top-level* document, so the page loads into an
+opaque origin. Measured in a browser: `window.origin` is `"null"`,
+`document.cookie` throws `SecurityError`, `localStorage` throws, and
+`fetch('/api/state')` is blocked.
+
+The first version also required a signed-in session. It did not work, and the
+way it failed is the whole design:
+
+    rendered        PREVIEW_INDEX_OK
+    css applied     rgb(0, 0, 0)            the stylesheet did not load
+    app.js          (did not run)
+    blocked         style.css :: ERR_BLOCKED_BY_ORB
+
+An opaque origin makes the document's own asset requests cross-origin, SameSite
+keeps the cookie off them, the route answers 401 with a JSON body, and the
+browser reports that as ORB rather than as the 401 it is. **The sandbox that
+stops the page stealing the session is the same thing that stops it proving it
+has one.** So the token is the authority, as a share link's is — creating one
+needs a session, using one needs the link. With that change, both halves hold at
+once: the page renders, `rgb(1, 2, 3)`, `APPJS_RAN`, and the origin is still
+`null` with the cookie still throwing.
+
+### `'self'` is the wrong spelling
+
+The obvious policy is `default-src 'self'`, and it forbids exactly what this
+exists to allow: an opaque origin matches no source expression, so `'self'`
+blocks the document's own stylesheet. The panel's origin is named explicitly
+instead — the same set of requests, written the only way that works, and still
+no wildcard, so a preview holding `<img src="https://someone/?leak">` makes no
+request.
+
+`frame-ancestors 'self'` stays as it is, and a first version of the test failed
+on it: that directive is about who may embed this, and the embedder is the
+panel, whose origin is not opaque.
+
+### The path, and what a 200 was really answering
+
+`browse.Resolve` is the existing containment primitive — it resolves symlinks on
+both ends and refuses anything landing outside. Probed with `..`, `%2e%2e`,
+`..%2f` and a symlink to `/etc`: all 404, and `root:x` never appears.
+
+The first probe reported two of those as **200**, which read as a traversal
+hole. It was curl normalising `../` out of the URL before sending, so the
+request never reached the handler and the SPA's catch-all answered with the
+panel's own index.html. `--path-as-is` is the difference between testing the
+server and testing the client, and the Go test uses `URL.Opaque` for the same
+reason.
+
+### What it discloses
+
+The listing names files relative to the root and never the root itself: a
+preview link is a capability over one directory and should not also say where
+that directory lives on the machine. An unknown token and a missing file answer
+the same 404, so probing cannot tell them apart.
+
+`X-Content-Type-Options` and `Referrer-Policy` are *not* set by this handler —
+`securityHeaders` already sets both on every response, and a second place
+setting the same header is a second place to get it wrong. That was noticed by
+mutation: removing them changed nothing.

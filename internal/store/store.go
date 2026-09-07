@@ -706,6 +706,44 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+
+	// v21: a directory served as a page, for previewing what an agent built.
+	//
+	// 「在文件管理里可以将任何一个目录作为 Python 的 simple server」. A link,
+	// made while signed in, that renders the HTML in a directory with its
+	// relative assets working — so a page an agent just wrote is one click away
+	// rather than a download and a local server.
+	//
+	// The token is stored as a hash, the same as `share_links` and API tokens:
+	// the value is readable once, at creation, and a copy of this database is
+	// not a set of working links.
+	//
+	// `root` is an absolute directory. It is not a project id, because the
+	// thing being previewed is often a build output that sits beside a project
+	// rather than inside one — and because a link that survives its project's
+	// deletion is a link that serves a directory nobody is looking after. It
+	// cascades from the user instead, which is the account that vouched for it.
+	func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`CREATE TABLE IF NOT EXISTS preview_links (
+			     id          TEXT PRIMARY KEY,
+			     token_hash  BLOB NOT NULL UNIQUE,
+			     prefix      TEXT NOT NULL,
+			     name        TEXT NOT NULL,
+			     root        TEXT NOT NULL,
+			     user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			     created_at  INTEGER NOT NULL,
+			     expires_at  INTEGER NOT NULL DEFAULT 0,
+			     last_used_at INTEGER NOT NULL DEFAULT 0
+			 )`,
+			`CREATE INDEX IF NOT EXISTS idx_preview_links_user ON preview_links(user_id)`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	},
 }
 
 // scanner is *sql.Row and *sql.Rows both, so one scan function serves a

@@ -50,6 +50,22 @@ var openRoutes = map[string]string{
 	"/api/auth/state":                "tells the sign-in page which doors exist; it is what a stranger needs",
 	"/api/auth/passkey/login/begin":  "signing in with a passkey, before there is a session to require",
 	"/api/auth/passkey/login/finish": "the other half of the same",
+	// A directory preview, and the reason is measured rather than chosen.
+	//
+	// The page is served with `Content-Security-Policy: sandbox`, which is what
+	// stops it reading the panel's session cookie or calling this API with it.
+	// An opaque origin also cannot *send* the cookie, so a preview that
+	// required a session could not load its own stylesheet: in a browser the
+	// document rendered and every asset came back ERR_BLOCKED_BY_ORB. The
+	// sandbox that protects the session is the same thing that prevents the
+	// page proving it has one.
+	//
+	// So the token in the path is the capability, as a share link's is. Unlike
+	// the share route below, the walk cannot rely on "anything" being rejected
+	// as a token *and* a session, because there is no session check to fall
+	// back on -- which is exactly why this needs saying here.
+	"/preview/{token}/":  "the token in the path is the capability; see preview.go",
+	"/preview/{token}/*": "the same route, with a path under it",
 }
 
 // `/api/share/{token}/dashboard` is deliberately NOT in the list above, and the
