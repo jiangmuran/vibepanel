@@ -13,6 +13,8 @@ import {
 } from './dirpicker'
 
 const HOME = '/home/u'
+/** What the server roots the listing at now: everything on the machine. */
+const ROOT = '/'
 
 /**
  * The two ends of this control that a unit test cannot render.
@@ -59,22 +61,25 @@ describe('the handles the browser checks hold on to', () => {
 })
 
 describe('crumbs', () => {
-  it('starts at the root even when there is nothing below it', () => {
-    expect(crumbs('')).toEqual([{ label: '~', path: '' }])
+  // `/`, not `~`. The crumb bar is the ladder out of wherever the picker
+  // opened, and one that begins at home can show nothing above home -- which
+  // is the whole of the machine for anybody whose repositories are not in it.
+  it('starts at the filesystem root even when there is nothing below it', () => {
+    expect(crumbs('')).toEqual([{ label: '/', path: '' }])
   })
 
   it('gives every level somewhere to click back to', () => {
-    expect(crumbs('projects/vibepanel/web')).toEqual([
-      { label: '~', path: '' },
-      { label: 'projects', path: 'projects' },
-      { label: 'vibepanel', path: 'projects/vibepanel' },
-      { label: 'web', path: 'projects/vibepanel/web' },
+    expect(crumbs('home/u/projects')).toEqual([
+      { label: '/', path: '' },
+      { label: 'home', path: 'home' },
+      { label: 'u', path: 'home/u' },
+      { label: 'projects', path: 'home/u/projects' },
     ])
   })
 
   it('is not confused by a trailing or doubled separator', () => {
     expect(crumbs('a//b/')).toEqual([
-      { label: '~', path: '' },
+      { label: '/', path: '' },
       { label: 'a', path: 'a' },
       { label: 'b', path: 'a/b' },
     ])
@@ -116,35 +121,46 @@ describe('insideRoot', () => {
 })
 
 describe('classifyInput', () => {
+  // Two arguments where there was one, and that is the fix: the root is the
+  // filesystem, home is where `~` points. They were the same value, which is
+  // what made everywhere-but-home unreachable.
+  const read = (raw: string, root = ROOT, home = HOME) => classifyInput(raw, root, home)
+
   it('reads ordinary text as a filter', () => {
-    expect(classifyInput('  vibe ', HOME)).toEqual({ kind: 'filter', query: 'vibe' })
+    expect(read('  vibe ')).toEqual({ kind: 'filter', query: 'vibe' })
   })
 
   it('reads an empty box as a filter that matches everything', () => {
-    expect(classifyInput('', HOME)).toEqual({ kind: 'filter', query: '' })
+    expect(read('')).toEqual({ kind: 'filter', query: '' })
   })
 
-  it('reads a leading slash as a place, outside the root', () => {
-    expect(classifyInput('/srv/thing', HOME)).toEqual({
+  it('reads a leading slash as a place, and every place is now reachable', () => {
+    // This used to answer `inside: null` -- outside the root, unlistable, take
+    // it or leave it. A project on /srv is ordinary and there is no longer any
+    // reason the picker cannot simply show it.
+    expect(read('/srv/thing')).toEqual({
       kind: 'path',
       abs: '/srv/thing',
-      inside: null,
+      inside: 'srv/thing',
     })
   })
 
-  it('expands ~ to the root the server actually gave us', () => {
-    expect(classifyInput('~', HOME)).toEqual({ kind: 'path', abs: HOME, inside: '' })
-    expect(classifyInput('~/projects/x', HOME)).toEqual({
+  it('expands ~ to home rather than to the root', () => {
+    // Against the root, `~/projects` normalises to `/projects` -- a real
+    // directory somewhere else entirely, substituted with nothing on screen to
+    // say a substitution happened.
+    expect(read('~')).toEqual({ kind: 'path', abs: HOME, inside: 'home/u' })
+    expect(read('~/projects/x')).toEqual({
       kind: 'path',
       abs: '/home/u/projects/x',
-      inside: 'projects/x',
+      inside: 'home/u/projects/x',
     })
   })
 
   it('leaves another account’s home for the server to refuse', () => {
     // `~someone` is a shell's notation for a home the browser has no way to
     // look up. Guessing would be worse than being told no.
-    expect(classifyInput('~someone/x', HOME)).toEqual({
+    expect(read('~someone/x')).toEqual({
       kind: 'path',
       abs: '~someone/x',
       inside: null,
@@ -152,10 +168,10 @@ describe('classifyInput', () => {
   })
 
   it('does not expand ~ before the server has said where home is', () => {
-    // The root arrives with the first listing. Expanding against an empty one
+    // Home arrives with the first listing. Expanding against an empty one
     // silently turns `~/projects` into `/projects`, which is a real directory
     // somewhere else.
-    expect(classifyInput('~/projects', '')).toEqual({
+    expect(read('~/projects', ROOT, '')).toEqual({
       kind: 'path',
       abs: '~/projects',
       inside: null,
@@ -163,17 +179,26 @@ describe('classifyInput', () => {
   })
 
   it('collapses . and .. before deciding where the path is', () => {
-    // Without this, `~/projects/../../etc` is "inside the root" by string
-    // prefix, and the picker offers to walk into somewhere it cannot list.
-    expect(classifyInput('~/projects/../../etc', HOME)).toEqual({
+    expect(read('~/projects/../../etc')).toEqual({
       kind: 'path',
       abs: '/home/etc',
-      inside: null,
+      inside: 'home/etc',
     })
-    expect(classifyInput('/home/u/./a//b/', HOME)).toEqual({
+    expect(read('/home/u/./a//b/')).toEqual({
       kind: 'path',
       abs: '/home/u/a/b',
-      inside: 'a/b',
+      inside: 'home/u/a/b',
+    })
+  })
+
+  // The root is still a parameter rather than a hardcoded '/', so a confined
+  // one still confines. This is what `inside: null` is for, and it is the
+  // difference between "take this path as typed" and "go and look".
+  it('still reports a path outside a confined root as outside it', () => {
+    expect(read('/srv/thing', HOME)).toEqual({
+      kind: 'path',
+      abs: '/srv/thing',
+      inside: null,
     })
   })
 })
@@ -303,10 +328,11 @@ describe('resolveKey', () => {
       expect(at({ ...path, key: 'Enter', navigable: true })).toEqual({ do: 'go' })
     })
 
-    it('takes it as it is when it is outside the root', () => {
-      // A project under /srv or /opt is ordinary. The server roots the listing
-      // at home, so there is nothing to show -- which is a reason to accept the
-      // path, not a reason to refuse it.
+    it('takes it as it is when there is nowhere to go', () => {
+      // Now that the root is the filesystem, this is `~someone/x` and the
+      // moment before the first listing lands -- paths that resolve to no
+      // place the picker can show. Accepting what was typed is the only honest
+      // answer left; refusing it would be guessing on the server's behalf.
       expect(at({ ...path, key: 'Enter', navigable: false })).toEqual({ do: 'use' })
     })
 

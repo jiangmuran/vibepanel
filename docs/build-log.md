@@ -19746,3 +19746,72 @@ tiles together, so a 1180px tile sat on the 13px floor beside a 2500px
 neighbour at 27.5px on the same 4K page. Every board has a unit now; only the
 reference differs. A flowing board is a page and bands against the page unit;
 a filled board is a screen and bands against the screen.
+
+## A directory picker that could not leave the home directory
+
+「为什么我的只能识别 root 文件夹下的文件和文件夹，我无法打开根目录」. The panel
+was running as root, so the picker opened on `/root` and that was the whole of
+the machine as far as it was concerned. Every repository on the box was
+somewhere else.
+
+One line caused it: `browseRoot()` returned `os.UserHomeDir()`, and that value
+was doing two unrelated jobs. It was where the picker *opens*, which is a good
+answer — you land among your own projects rather than on `/boot` and `/proc` —
+and it was also the root that `browse.Resolve` contains everything to, which is
+a bad one. Nothing here is a security boundary and the comment above it said so
+plainly: this endpoint sits behind the same session as a writable terminal, so
+anyone through that door can read the disk anyway. It was a boundary on noise
+that had quietly become a boundary on capability.
+
+The stated way out was the text field beside the picker, and it is a bad way
+out. It takes a path you already know by heart, which is exactly what somebody
+opening a directory picker does not have.
+
+So the two jobs are two values. The root is the filesystem; home is the first
+screen and what a typed `~` expands to, and it now travels on the wire as its
+own `home` field. The noise argument survives intact, because it was only ever
+about the first screen.
+
+### Two things that had to change with it
+
+**The crumb bar starts at `/`.** It began at `~`, which is fine as a label and
+useless as a ladder: a bar rooted at home cannot show you anything above home,
+which is the entire filesystem for anybody whose repositories are not in it.
+Every ancestor is one click now. `~` still means home in the field, which is
+where the shorthand is worth having.
+
+**The field navigates and the button takes.** The confirm button used to follow
+the field — "Go here" for a path under the root, "Use this path" for one
+outside it. That rule was coherent only while most paths were *outside* the
+root and therefore unreachable. With everything reachable it would have made
+the button a second Enter and left "use what I typed" with nothing to trigger
+it: you would have had to walk to a directory you had already named in full.
+
+### The bug underneath, which would have made all of it fail silently
+
+`within()` appended a separator before comparing, so the root `/` became the
+prefix `//` and no path on the machine starts with that. Rooting the picker at
+the filesystem made `Resolve` refuse the filesystem. The HTTP change was three
+correct lines and the picker listed nothing at all.
+
+The separator has to be there — `/home/u` is a string prefix of `/home/user2`,
+and that trap is the reason the function exists — so it is appended only when
+the root does not already end in one. `TestASiblingSharingAPrefixIsOutside`
+pins both halves, on `within` directly: `Resolve` cleans its second argument
+against `/` and joins it under the root, so an absolute path handed to a
+confined root lands inside it by design and can never demonstrate the trap.
+
+### The seam that is easy to get wrong
+
+An absent `path` parameter means home; a present-and-empty one means `/`. They
+are different requests and `Get()` answers `""` to both, so the handler asks
+`Has()`. Get that wrong and everyone who clicks the first crumb is sent back to
+their home directory instead of to the root — which looks exactly like the bug
+that was just fixed. `TestBrowseOpensAtHomeAndCanLeaveIt` covers all three
+cases, and `api.browse()` takes an optional argument rather than defaulting to
+`''` for the same reason.
+
+`first-run-check` now asserts that typing a path outside HOME *arrives* there,
+rather than that it was accepted. Accepting a typed path never needed the
+picker to work, so the old assertion would have passed against the bug.
+

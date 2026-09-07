@@ -818,32 +818,59 @@ func (s *Server) handleDeleteTodo(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// browseRoot is where the directory picker starts.
+// browseRoot is how far the directory picker may climb; browseHome is where it
+// starts. They used to be one thing, the home directory, and the two ideas are
+// not the same.
 //
-// The home directory, not "/". Everything the panel is for lives under it, a
-// picker rooted at the filesystem makes the first screen a list of /boot and
-// /proc, and Resolve's containment then means something a reader can hold in
-// their head: nothing this endpoint returns is outside your own home.
+// Rooting the containment at home also made home the only place that existed.
+// A panel running as root saw /root and nothing else, so a repository on
+// /srv, /opt or a mounted volume -- which is where repositories on a server
+// usually are -- could not be reached by the control whose entire job is
+// reaching one. The stated way out was the text field beside the picker, and
+// it is a poor one: it wants a path you already know by heart, which is
+// exactly what somebody opening a directory picker does not have.
 //
-// It is not a security boundary and is not offered as one -- this endpoint is
-// behind the same session as a writable terminal, and anyone through that door
-// can read the disk anyway. It is a boundary on *noise*. Paths outside it are
-// reached with the text field beside the picker.
-func browseRoot() (string, error) { return os.UserHomeDir() }
+// So the root is the filesystem and home is only the first screen. The old
+// comment's argument -- that a picker rooted at the filesystem opens on /boot
+// and /proc -- was about that first screen, and it still holds: nobody lands
+// there, they land where they live and climb out if they need to.
+//
+// Neither is a security boundary and neither was ever offered as one. This
+// endpoint is behind the same session as a writable terminal, and anyone
+// through that door can read the disk anyway.
+func browseRoot() string { return string(filepath.Separator) }
+
+func browseHome() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		// Home now decides the first screen and what a typed `~` means, and
+		// nothing else. A machine that cannot say where home is is a reason to
+		// open at "/", not a reason for the picker to answer 500 and be
+		// unusable -- which is what it did while home was also the root.
+		return browseRoot()
+	}
+	return home
+}
 
 func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
-	root, err := browseRoot()
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "no home directory to browse")
-		return
+	root, home := browseRoot(), browseHome()
+	// An absent `path` means "wherever this user lives", which is a different
+	// request from an empty one: with the root at "/", an empty path is the
+	// filesystem root, and that is where the first crumb goes. Has() is what
+	// tells them apart -- Get() answers "" to both.
+	q := r.URL.Query()
+	path := q.Get("path")
+	if !q.Has("path") {
+		path = home
 	}
-	listing, err := browse.Dirs(root, r.URL.Query().Get("path"))
+	listing, err := browse.Dirs(root, path)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"root":      root,
+		"home":      home,
 		"path":      listing.Path,
 		"parent":    listing.Parent,
 		"entries":   emptyIfNil(listing.Entries),
@@ -917,11 +944,7 @@ func (s *Server) handleBrowseMkdir(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	root, err := browseRoot()
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "no home directory to write in")
-		return
-	}
+	root := browseRoot()
 	created, err := browse.Mkdir(root, req.Path, strings.TrimSpace(req.Name))
 	if err != nil {
 		// The two that a person can act on, told apart. "already exists" is a

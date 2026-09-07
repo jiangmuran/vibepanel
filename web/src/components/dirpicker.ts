@@ -8,17 +8,25 @@
  * is how the answers drifted -- `Home` moved a caret in one mode and a
  * selection in the other, and nothing said which.
  *
- * The root is passed in rather than assumed. The server roots the listing at
- * the home directory, so `~` is a real place with a real absolute path, and
- * every "is this inside" question below is asked against that path rather than
- * against the tilde, which is a rendering of it.
+ * The root and home are both passed in rather than assumed, and they are two
+ * things. The server roots the listing at the filesystem, so every place on
+ * the machine is reachable; home is only where the picker opens and what `~`
+ * expands to. They were one value, and one value is what made a project
+ * outside the home directory impossible to browse to.
  */
 
-/** The `~` the crumb bar starts with. A symbol, so it is not translated. */
-export const ROOT_CRUMB = '~'
+/**
+ * The crumb bar's first segment. A symbol, so it is not translated.
+ *
+ * `/`, not `~`. The crumbs are the ladder out: every ancestor of where you are
+ * is one click, up to and including the filesystem root, and a bar that begins
+ * at home cannot show you anything above it. `~` still means home, in the
+ * field, which is where the shorthand is worth having.
+ */
+export const ROOT_CRUMB = '/'
 
 export interface Crumb {
-  /** What to draw: `~` for the root, then one directory name per level. */
+  /** What to draw: `/` for the root, then one directory name per level. */
   label: string
   /** Where clicking it goes -- a path relative to the root, `''` being it. */
   path: string
@@ -109,20 +117,22 @@ export type Typed =
       inside: string | null
     }
 
-export function classifyInput(raw: string, root: string): Typed {
+export function classifyInput(raw: string, root: string, home: string): Typed {
   const text = raw.trim()
   if (!text) return { kind: 'filter', query: '' }
   if (text.startsWith('~')) {
-    // `~` and `~/x` are the root. `~someone` is another account's home to a
-    // shell, and this picker has no way to find out where that is -- it is
-    // still a path, and refusing it here would be guessing on the server's
-    // behalf, so it goes out as typed and comes back refused with a reason.
-    // Nothing to expand it to yet: the first listing is what tells the browser
-    // where home is. Expanding against an empty root would turn `~/projects`
-    // into `/projects` -- a real path, somewhere else entirely, offered with no
-    // sign that a substitution had happened.
-    if ((text === '~' || text.startsWith('~/')) && root !== '') {
-      const abs = normalize(`${bareRoot(root)}/${text.slice(1)}`)
+    // `~` and `~/x` are home -- home, not the root, which is the filesystem
+    // and would turn `~/projects` into `/projects`, a real directory somewhere
+    // else entirely, substituted with nothing on screen to say so.
+    //
+    // `~someone` is another account's home to a shell, and this picker has no
+    // way to find out where that is -- it is still a path, and refusing it
+    // here would be guessing on the server's behalf, so it goes out as typed
+    // and comes back refused with a reason. The same for an empty home: the
+    // first listing is what says where it is, and until then there is nothing
+    // honest to expand against.
+    if ((text === '~' || text.startsWith('~/')) && home !== '') {
+      const abs = normalize(`${bareRoot(home)}/${text.slice(1)}`)
       return { kind: 'path', abs, inside: insideRoot(abs, root) }
     }
     return { kind: 'path', abs: text, inside: null }

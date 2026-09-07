@@ -387,11 +387,14 @@ const DICT = {
   'dir.noMatch': { zh: '这里没有叫「{q}」的目录', en: 'Nothing here is called “{q}”' },
   'dir.createNamed': { zh: '新建「{name}」', en: 'Create “{name}”' },
   'dir.willGo': { zh: '回车进这个目录', en: 'Enter goes here' },
+  // Shown when the typed path is one the picker cannot resolve to a place --
+  // `~someone`, whose home only a shell knows. It used to say "outside home,
+  // so it cannot be listed", which was the truth while home was also the root
+  // and is a lie now that every directory on the machine can be listed.
   'dir.willUse': {
-    zh: '在主目录之外，列不出里面有什么 —— 回车直接用这个路径',
-    en: 'Outside home, so it cannot be listed — Enter takes it as it is',
+    zh: '解析不出这是哪里 —— 回车按原样使用这个路径',
+    en: 'Cannot tell where this is — Enter takes the path as typed',
   },
-  'dir.goHere': { zh: '进入', en: 'Go here' },
   'dir.usePath': { zh: '用这个路径', en: 'Use this path' },
   'dir.cancel': { zh: '取消', en: 'Cancel' },
   'dir.use': { zh: '使用这个目录', en: 'Use this directory' },

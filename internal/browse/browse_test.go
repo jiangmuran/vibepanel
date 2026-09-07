@@ -454,3 +454,87 @@ func TestMkdirRefusesAnythingButAName(t *testing.T) {
 		t.Error("a name containing .. created a directory outside the root")
 	}
 }
+
+// The filesystem root contains everything, which is what "/" means.
+//
+// It did not. within() appended a separator to the root before comparing, so
+// the root "/" became the prefix "//" and no path on the machine started with
+// it: Resolve refused every request, and a picker rooted at the filesystem
+// answered "outside the project" for the filesystem. Found while making the
+// directory picker able to leave the home directory -- the change was three
+// lines in the HTTP layer and every one of them was correct, and the picker
+// listed nothing at all.
+func TestTheFilesystemRootContainsEverything(t *testing.T) {
+	// A real absolute path rather than a fabricated one: Resolve calls
+	// EvalSymlinks, so the path has to exist to say anything.
+	deep := setup(t)
+	real, err := filepath.EvalSymlinks(deep)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Resolve("/", real)
+	if err != nil {
+		t.Fatalf("Resolve(/, %q) = %v, want the path back: nothing is outside the filesystem", real, err)
+	}
+	if got != real {
+		t.Errorf("Resolve(/, %q) = %q", real, got)
+	}
+
+	// And the listing that goes with it: the path it reports is relative to
+	// "/", which is what the picker's crumb bar walks back up.
+	l, err := Dirs("/", real)
+	if err != nil {
+		t.Fatalf("Dirs(/, %q): %v", real, err)
+	}
+	if want := strings.TrimPrefix(filepath.ToSlash(real), "/"); l.Path != want {
+		t.Errorf("listing path %q, want %q", l.Path, want)
+	}
+	if l.Parent == nil {
+		t.Error("a directory below / has no parent to climb to")
+	}
+}
+
+// Climbing to the top stops there rather than erroring.
+func TestTheRootItselfIsListableAndHasNoParent(t *testing.T) {
+	l, err := Dirs("/", "")
+	if err != nil {
+		t.Fatalf("Dirs(/, \"\"): %v", err)
+	}
+	if l.Path != "" {
+		t.Errorf("the root lists as %q, want the empty path", l.Path)
+	}
+	if l.Parent != nil {
+		t.Errorf("the root has a parent: %q", *l.Parent)
+	}
+	if len(l.Entries) == 0 {
+		t.Error("no directories under /, which cannot be true on any machine this runs on")
+	}
+}
+
+// The property the rewrite of within() must not have lost: /home/u is a string
+// prefix of /home/user2, and a separator is the only thing that says so.
+//
+// Tested on within directly rather than through Resolve, because Resolve
+// cleans its second argument against "/" and joins it under the root -- an
+// absolute path handed to a confined root lands *inside* it by design, so it
+// can never demonstrate this.
+func TestASiblingSharingAPrefixIsOutside(t *testing.T) {
+	for _, tc := range []struct {
+		root, path string
+		want       bool
+	}{
+		{"/home/u", "/home/u", true},
+		{"/home/u", "/home/u/projects", true},
+		{"/home/u", "/home/user2", false},
+		{"/home/u", "/home/user2/x", false},
+		// The case the appended separator got wrong.
+		{"/", "/", true},
+		{"/", "/srv", true},
+		{"/", "/home/u/projects", true},
+	} {
+		if got := within(tc.root, tc.path); got != tc.want {
+			t.Errorf("within(%q, %q) = %v, want %v", tc.root, tc.path, got, tc.want)
+		}
+	}
+}

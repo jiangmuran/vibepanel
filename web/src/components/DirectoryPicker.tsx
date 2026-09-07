@@ -45,13 +45,18 @@ import {
  * anybody came here to read. It is on the element as an aria-label, where it
  * is worth something to a screen reader and nothing to the layout.
  *
- * Rooted at the home directory, and the reason is noise rather than security:
- * this endpoint sits behind the same session as a writable terminal, so it
- * defends nothing that is not already open. What it does is make the first
- * screen a list of your projects instead of /boot and /proc. A project under
- * /srv or /opt is ordinary, so the way out is not an escape hatch at the
- * bottom -- it is the same field, which says in words which of the two things
- * Enter is about to do with what you typed.
+ * It *opens* at the home directory and is rooted at the filesystem, which for
+ * a while was one thing: home was the root, so a project under /srv, /opt or a
+ * mounted volume -- ordinary, and on a server the normal case -- was somewhere
+ * this control could not go. The answer offered was to type the path in full
+ * from memory, into a picker whose reason for existing is that you do not have
+ * it in memory. Now the crumb bar begins at `/` and every ancestor is one
+ * click, and the first screen is still where you live rather than /boot and
+ * /proc, because opening somewhere and being unable to leave it are separate
+ * decisions that had been made as one.
+ *
+ * The field is still the fast way, and it still says in words which of the two
+ * things Enter is about to do with what you typed.
  *
  * The decisions -- what the text means, which rows survive it, what each key
  * does -- are in dirpicker.ts, where they are pinned by tests. What is left
@@ -138,7 +143,10 @@ export function DirectoryPicker({
   // what is actually true.
   useEffect(() => {
     let cancelled = false
-    api.browse('').then(
+    // No argument, which is not the same as `''`. The picker opens at home and
+    // only the server knows where that is; `''` is the filesystem root, and
+    // opening there is the /boot-and-/proc first screen nobody wants.
+    api.browse().then(
       (l) => {
         if (cancelled) return
         setListing(l)
@@ -213,7 +221,8 @@ export function DirectoryPicker({
   }
 
   const root = listing?.root ?? ''
-  const typed = classifyInput(text, root)
+  const home = listing?.home ?? ''
+  const typed = classifyInput(text, root, home)
   const all: readonly FileEntry[] = listing?.entries ?? []
   // In path mode the list is left alone: it is the place you are still
   // standing in, and the crumbs above it are the context for what you type.
@@ -285,17 +294,24 @@ export function DirectoryPicker({
   }
 
   /**
-   * What the button on the right does, which is what Enter does to a path.
+   * What the button on the right does: take a directory. Always.
    *
-   * In filter mode it is the dialog's default action -- take the directory
-   * being listed -- because there Enter belongs to the list. In path mode it
-   * follows the field, and its label says which of the two: a picker whose
-   * confirm button silently takes a typed path instead of the visible one is
-   * the invisible mode this rebuild exists to remove.
+   * The field navigates and the button takes, and the two are no longer the
+   * same control wearing two hats. It used to follow the field -- "Go here"
+   * for a path under the root, "Use this path" for one outside it -- which was
+   * coherent only while most paths were outside the root and therefore
+   * unreachable. Now every path is reachable, so that rule would have made the
+   * button a second Enter and left "use what I typed" with nothing to trigger
+   * it: you would have had to walk to a directory you had already named in
+   * full.
+   *
+   * The label still says which directory, and `title` carries the path itself.
+   * A confirm button that silently takes a typed path instead of the visible
+   * one is the invisible mode this dialog was rebuilt to remove, and a label
+   * is what keeps it out.
    */
-  const primary: Act = navigable ? { do: 'go' } : { do: 'use' }
-  const primaryLabel =
-    typed.kind !== 'path' ? t('dir.use') : navigable ? t('dir.goHere') : t('dir.usePath')
+  const primary: Act = { do: 'use' }
+  const primaryLabel = typed.kind === 'path' ? t('dir.usePath') : t('dir.use')
 
   const startCreate = () => {
     setError(null)
