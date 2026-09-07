@@ -19958,3 +19958,63 @@ the same 404, so probing cannot tell them apart.
 `securityHeaders` already sets both on every response, and a second place
 setting the same header is a second place to get it wrong. That was noticed by
 mutation: removing them changed nothing.
+
+## Two Claude Code sessions in one project, and neither list would hold still
+
+Reported together and unrelated in cause: the two sessions swapped places in
+the sidebar continuously, and clicking one took long enough to notice.
+
+### The sidebar swapped because "most recent output" is a coin toss
+
+`listSessions` ordered by `pinned`, state weight, manual position,
+`last_output_at DESC`, `created_at DESC`. Two agents in one project share the
+first three, so the tie fell to the fourth — and the fourth is written by the
+PTY pump at one-second resolution, debounced to one write per session per
+second, each session on whatever phase its own output happens to land on.
+
+So for part of every second one of the pair holds the newer stamp and overtakes
+the other, and for the rest of it they are equal and fall back to age. Nothing
+about either session changed. Sampled either side of each stamp across ten
+seconds, with nothing running but two `printf` loops:
+
+```
+ab ba ab ba ab ba ab ba ab ba ab ba ab ba ab ba ab ba ab ba
+```
+
+**It was also broadcasting.** The poller compares the serialised snapshot with
+the last one and pushes only on a difference, and the *array order* is part of
+the serialisation. `lastOutputAt` was taken off the wire for exactly this
+reason once already ("Every tick was a broadcast"); the field left and the
+ordering it drives stayed, so a busy pair went on making every other tick
+differ — from their positions rather than from their contents.
+
+The term is now a bucket counted back from now, sixty seconds wide. Two
+sessions that are both printing are both in bucket zero and hold still; one
+silent for an hour is still ranked below one that printed a moment ago, which
+is what the term was for. Counted back from *now* rather than bucketing
+`last_output_at` itself: an absolute bucket lets the pair separate for up to a
+second whenever a wall-clock minute rolls over between their two stamps, and
+"both printed recently" is the property that should not have a boundary in it.
+
+`TestABusySessionDoesNotOvertakeItsNeighbour` samples the twenty orderings
+above and fails on any change; `TestALongSilentSessionSinksBelowABusyOne` is
+the other half, so that the fix cannot be quietly turned into a deletion of the
+term. Reverting the SQL reproduces `ab ba ab ba` in the first test.
+
+And then in a browser, because a store test cannot say that the *sidebar* is
+what moves. Two agents in one project, the real binary, the sidebar's row order
+read every 500 ms for a minute:
+
+```
+HEAD      order changed 10 times in 60s     a|b b|a a|b b|a ...
+fixed     order changed  0 times in 60s
+```
+
+The first attempt at this measured one change in forty seconds and nearly got
+written down as "barely reproducible". The fault was the instrument: both fake
+agents printed on `sleep 1`, and a metronome does not drift against a
+one-second debounce — so the phase that decides the whole defect was held still
+by the thing meant to exercise it. Given cadences that are not whole seconds
+(0.7 and 1.1) it alternates continuously, which is what was reported. A second
+run of the same check counted 18 rather than 10; the number is a function of
+how the two phases drift past each other, and only "zero" is a stable one.

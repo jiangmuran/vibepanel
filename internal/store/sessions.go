@@ -266,12 +266,40 @@ func (d *DB) ListScratchSessions(ctx context.Context, projectID string) ([]Sessi
 	return out, rows.Err()
 }
 
+// quietBucket is how coarsely "how long since this printed" is ranked.
+//
+// The sidebar is read by a person, so its order may only change when the
+// answer a person would give changes. "Which of these printed most recently"
+// is not such an answer when both of them are printing: the panel stamps
+// last_output_at at most once a second per session (see the pump's debounce),
+// each session on its own phase, so two agents both producing output take it
+// in turns to hold the newer second.
+//
+// That was the whole of the reported defect. Two Claude Code sessions in one
+// project, both working, both printing: identical state, no manual position,
+// so the tie fell to last_output_at DESC and the pair swapped places roughly
+// once a second, forever. Reproduced in TestABusySessionDoesNotOvertakeItsNeighbour
+// as `ab ba ab ba` across ten seconds with nothing else changing. The poller
+// then broadcasts, because the *array order* differs even though no field
+// does, so every viewer redraws the sidebar into the new order.
+//
+// A minute is the grain because it is the grain of the answer: two sessions
+// that both printed within the last minute are equally alive and should hold
+// still, while one silent for an hour belongs below one that printed a moment
+// ago. Measured against the clock rather than against each other -- an
+// absolute bucket (last_output_at / 60) would still let the pair separate for
+// up to a second whenever a wall-clock minute rolled over between their two
+// stamps; a bucket counted back from now puts everything that printed
+// recently in bucket zero, and two sessions that are both printing are always
+// both in it.
+const quietBucket = 60
+
 // ListSessions returns every session in display order.
 //
 // Order: pinned first, then by state urgency (waiting before working before
-// done), then manual position, then most recent output. The state ranking is
-// expressed as a CASE rather than a join so it cannot disagree with
-// session.State.SortWeight — the test asserts the two match.
+// done), then manual position, then how long it has been quiet, then age. The
+// state ranking is expressed as a CASE rather than a join so it cannot
+// disagree with session.State.SortWeight — the test asserts the two match.
 func (d *DB) ListSessions(ctx context.Context) ([]Session, error) {
 	return d.listSessions(ctx, "", nil)
 }
@@ -289,8 +317,12 @@ func (d *DB) listSessions(ctx context.Context, where string, args []any) ([]Sess
 		         CASE s.state WHEN 'waiting' THEN 0 WHEN 'working' THEN 1 WHEN 'done' THEN 2 ELSE 3 END,
 		         CASE WHEN s.sort_index IS NULL THEN 1 ELSE 0 END,
 		         s.sort_index ASC,
-		         s.last_output_at DESC,
-		         s.created_at DESC`, sessionColumns, sessionFrom, where)
+		         (? - s.last_output_at) / %d ASC,
+		         s.created_at DESC`, sessionColumns, sessionFrom, where, quietBucket)
+
+	// Bound rather than computed in SQL, so a test can hold the clock still and
+	// so there is one definition of "now" for the whole statement.
+	args = append(append([]any(nil), args...), now())
 
 	rows, err := d.sql.QueryContext(ctx, q, args...)
 	if err != nil {
