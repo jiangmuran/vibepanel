@@ -19658,3 +19658,36 @@ broken. It reloads, because `Terminal.tsx` scrolls to the bottom on mount and
 the debug hook returns rows and deliberately cannot write. And the pane is put
 back afterwards: `C-c`, then the modes off, or every check after it is looking
 at a terminal in raw mode.
+
+## One commit, one message
+
+「语音输入法好像有的时候会粘贴两遍，尤其是那种可能带转写、自动总结或者转发的」.
+
+`send` reads the text out of React state and clears it with `setText('')`, which
+does not take effect until the next render. So two commits arriving before that
+both read the same string and both send it — and a keyboard that transcribes and
+then commits a summary produces exactly that shape: two submissions of the same
+text with nothing typed in between.
+
+Compared by content rather than latched on a timer. The two arrive some hundreds
+of milliseconds apart, and any window short enough to be safe against a real
+second message is too short to catch them. The record is cleared on every change
+to the box, so sending the same command twice on purpose still works — it
+requires typing it again, which is a change.
+
+The `Enter` guard picked up `keyCode === 229` while it was open, which
+`ConfirmDialog` and `DirectoryPicker` have both checked for as long as they have
+existed and this one never did. 229 is "the IME is handling this", and the
+keyboards that report it *without* setting `isComposing` are the dictation ones
+— the same family.
+
+### The fourth time the wiring was not tested
+
+Deleting the guard from `send` and leaving the predicate in place passed every
+test of the predicate. So did removing the line that clears the record.
+
+That is the fourth time in this suite, and always the same shape: a decision
+extracted into a pure function so it can be tested, and a call site nothing
+tests. The extraction is what makes it testable and also what makes it
+skippable. The other three are the paste listeners, the tablet's `touch` prop
+and the wheel-notch conversion; all four now scan the call site as well.

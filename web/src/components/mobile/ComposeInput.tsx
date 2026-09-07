@@ -3,6 +3,29 @@ import { CornerDownLeft, ImagePlus, Send } from 'lucide-react'
 import { t, useLang } from '../../i18n'
 
 /**
+ * Whether this submission is a new one.
+ *
+ * `send` reads `text` out of state and clears it with `setText('')`, which does
+ * not take effect until React re-renders — so two commits arriving before that
+ * both read the same string and both send it. 「语音输入法好像有的时候会粘贴两
+ * 遍，尤其是那种可能带转写、自动总结或者转发的」: a keyboard that transcribes
+ * and then commits a summary produces exactly that shape, two submissions of
+ * the same text with nothing typed in between.
+ *
+ * Compared by content rather than latched on a timer, because the two arrive
+ * some hundreds of milliseconds apart and any timer short enough to be safe is
+ * too short to catch them. `last` is cleared whenever the box changes, so
+ * sending the same words twice on purpose still works: it requires typing them
+ * again, which is a change.
+ *
+ * A function of two strings so it can be tested. The alternative is a
+ * condition inside a component that nothing renders in this suite.
+ */
+export function isNewSubmission(text: string, last: string): boolean {
+  return text !== '' && text !== last
+}
+
+/**
  * A box you type into, that sends when you are done.
  *
  * Typing straight into a terminal is unusable on a phone with an input method:
@@ -35,6 +58,9 @@ export function ComposeInput({
 }) {
   useLang()
   const chooser = useRef<HTMLInputElement | null>(null)
+  // The last thing actually sent, so a second commit of it is dropped. Cleared
+  // on every change to the box. See isNewSubmission.
+  const lastSent = useRef('')
   const [text, setText] = useState('')
   const [newline, setNewline] = useState(true)
 
@@ -65,7 +91,8 @@ export function ComposeInput({
   }
 
   const send = () => {
-    if (!text) return
+    if (!isNewSubmission(text, lastSent.current)) return
+    lastSent.current = text
     // A block with line breaks in it is a paste, not typing.
     //
     // Written into the PTY byte by byte it is indistinguishable from someone
@@ -115,7 +142,12 @@ export function ComposeInput({
     >
       <textarea
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => {
+          // Any edit makes the next submission a new one, including retyping
+          // the same words on purpose.
+          lastSent.current = ''
+          setText(e.target.value)
+        }}
         onKeyDown={(e) => {
           // Enter sends; Shift-Enter is a newline inside the message, for the
           // rare multi-line paste.
@@ -126,7 +158,13 @@ export function ComposeInput({
           // — so without this guard, picking the first word of a Chinese
           // sentence sends it. The component built to keep an IME away from the
           // terminal was firing on the IME's own confirm key.
-          if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+          // keyCode 229 as well as isComposing, which is what the rest of the
+          // panel checks (ConfirmDialog, DirectoryPicker) and this one did not.
+          // 229 is the "the IME is handling this" keycode, and the keyboards
+          // that report it without setting isComposing are the transcription
+          // and dictation ones -- the same family as the double-send above.
+          if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
+          if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault()
             send()
           }
