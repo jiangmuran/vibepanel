@@ -31,7 +31,14 @@ import { join } from 'node:path'
 // clean up — thirteen of its sockets were sitting in /tmp when that was
 // noticed. Pinned by harness.test.ts, because a hand-kept mirror of a list
 // that lives somewhere else is the drift this project keeps paying for.
-const HARNESS_SOCKET = /^vp(firstrun|render|stress|restart|scale|tls|clip|probe|check|release|shots)-(\d+)$/
+//
+// `board` arrived the same way and from the opposite direction: board-check
+// used one fixed socket name, `vp-board-check`, which does not have a pid in
+// it and so could never match this at all. Nothing swept it, and a stale one
+// was sitting in /tmp. Giving it a pid to make the checks safe to run at the
+// same time is what made it sweepable, and harness.test.ts failed the moment
+// the prefix existed and this line did not know it.
+const HARNESS_SOCKET = /^vp(firstrun|render|stress|restart|scale|tls|clip|probe|check|release|shots|board)-(\d+)$/
 
 export function sweepStaleSockets(log = () => {}) {
   const dir = join(process.env.TMUX_TMPDIR || '/tmp', `tmux-${process.getuid()}`)

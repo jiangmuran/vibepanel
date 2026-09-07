@@ -158,7 +158,7 @@ Each of these exists because the alternative broke something real.
 
 - **The browser checks are where most of the bugs have been found.** `make
   check` is the fast gate and never starts a browser; `make verify` runs
-  everything and takes about twenty minutes. In between:
+  everything, two at a time, in about twenty minutes. In between:
 
   | | |
   |---|---|
@@ -168,12 +168,30 @@ Each of these exists because the alternative broke something real.
   | `make stress-check` | wide characters, full-screen programs, scrollback, floods, dropped sockets |
   | `make restart-check` | kill the backend; the sessions and the login must outlive it |
   | `make scale-check` | two dozen sessions: snapshot size, sidebar reachability, poller |
+  | `make board-check` | every share-board preset on every screen one gets put on: scale spread, clipping, empty tiles |
   | `make tls-check` | its own TLS: wss, the Secure cookie, swapping a certificate |
   | `make release-check` | build the archives and run one from a throwaway HOME |
   | `make install-check` | both installers down every branch: the one-liner against a local HTTP server (checksums, platforms, a tampered archive), then `deploy/install.sh` — tmux missing/old, six package managers, Linux and macOS, user unit and system unit, root and no root, no systemd at all, the refusal to install both, and the first account |
 
   Run the one that covers what you touched, and `verify` before anything
   structural. A change that only passes `check` has not been looked at.
+
+  **`verify` runs them concurrently, and two is the measured number rather than
+  a timid one.** It is one `make -j` invocation because seven of these depend
+  on `build` and `web` is `.PHONY`: separate `make` processes would be separate
+  vite builds writing `internal/webui/dist` while the binaries they produced
+  were being served out of it. `release-check` is excluded from that invocation
+  entirely — `build-release.sh` runs `npm ci`, which deletes `node_modules`
+  from under anything holding a playwright — so it goes last, alone. At eight,
+  every browser check failed: these wait on budgets tuned against an idle
+  machine, and this box also runs the panel under test, whose cgroup was at
+  19.5 GiB of a 26 GiB max. Raise it with `VERIFY_JOBS` on a machine that is
+  not also somebody's panel; there is little to gain, because 18 of the 20
+  minutes are one check.
+
+  **Do not edit tracked source while a check is running.** `assertFreshBuild`
+  refuses rather than measuring the previous build, which is right and is also
+  a wasted twenty minutes.
 - **Every one of those builds from the working tree, so none of them can tell
   you whether what you *committed* works.** They were not the same thing: HEAD
   did not compile for some time, a caller committed with the method it calls

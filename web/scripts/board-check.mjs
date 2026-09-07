@@ -34,13 +34,28 @@
 //      VP_BOARD_PRESETS=glance,wall node ...   (some presets)
 
 import { chromium } from 'playwright'
+import { createServer } from 'node:net'
 import { spawn, execSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const BIN = join(process.cwd(), '..', 'vibepanel')
-const PORT = 18996
+// From the kernel rather than picked, like every other check here. It used to
+// be a constant, and a constant is the one thing that stops these running at
+// the same time as each other: `make verify` now starts eleven of them at once,
+// and two things wanting 18996 is not a collision anybody would read correctly
+// -- the second one gets the first one's panel, drives it, and reports on a
+// board it did not create.
+const PORT = await new Promise((resolve, reject) => {
+  const probe = createServer()
+  probe.once('error', reject)
+  probe.listen(0, '127.0.0.1', () => {
+    const { port } = probe.address()
+    probe.close(() => resolve(port))
+  })
+})
+const SOCKET = `vpboard-${process.pid}`
 const BASE = `http://127.0.0.1:${PORT}`
 
 /** The screens a board actually gets put on, and why each is in the list. */
@@ -97,7 +112,7 @@ if (busy) {
 let server
 try {
   server = spawn(BIN, ['serve', '-addr', `127.0.0.1:${PORT}`, '-data-dir', work,
-    '-tmux-socket', 'vp-board-check'], { stdio: ['ignore', 'pipe', 'pipe'] })
+    '-tmux-socket', SOCKET], { stdio: ['ignore', 'pipe', 'pipe'] })
   let log = ''
   server.stdout.on('data', (d) => { log += d })
   server.stderr.on('data', (d) => { log += d })
@@ -338,7 +353,7 @@ try {
   await browser.close()
 } finally {
   if (server) server.kill()
-  try { execSync('tmux -L vp-board-check kill-server', { stdio: 'ignore' }) } catch { /* none started */ }
+  try { execSync(`tmux -L ${SOCKET} kill-server`, { stdio: 'ignore' }) } catch { /* none started */ }
 }
 
 const fails = findings.filter((f) => f.sev === 'FAIL').length

@@ -20264,3 +20264,107 @@ tripwire, so it now says so and sits where a real run puts it: 0.54 MiB per
 session measured, 1.5 MiB the ceiling. The buffer's own guard is
 `TestTheReplayIsSmallEnoughToClickThrough`, which measures it as the latency
 budget it actually is.
+
+## Twelve checks, two at a time
+
+`make verify` ran its targets one after another and spent most of that asleep:
+a browser check's wall clock goes on animations, polls, floods and a two-second
+settle, not on a CPU. Forty-five minutes of a sixteen core machine mostly idle.
+
+They overlap now. The two things that made that unsafe were both about the
+working tree rather than about load, and the number of them that run at once
+turned out to be about neither.
+
+`web` is `.PHONY`, so every `make <something>-check` rebuilds the frontend into
+`internal/webui/dist`. Seven targets depend on `build`, so seven `make`
+processes would be seven vite builds writing that directory while the binaries
+they had just produced were being served out of it. The fix is not a scheduler:
+it is *one* `make -j` invocation, because making a shared prerequisite exactly
+once and having its dependents wait for it is the thing make is for. A worker
+pool in bash calling `make render-check` and `make scale-check` side by side
+would have reintroduced the race in the act of avoiding it. Checked on a stub
+rather than assumed: a `web` target that appends a line to a file ran once
+across eight concurrent dependents.
+
+`release-check` cannot be in that invocation at all. It calls
+`build-release.sh`, which runs `npm ci` in `web/` — and `npm ci` *deletes*
+`node_modules` before reinstalling it. Anything holding a playwright or an
+eslint out of that directory at that moment loses it mid-run. So it owns the
+tree, and it goes last, alone.
+
+### The number, which was wrong twice
+
+Eight, from cores bounded by `MemAvailable` at a couple of GiB per browser
+check. Every browser check went red — render-check 8 FAIL, board-check dead
+before it printed a line — and the suite was "finished" in five and a half
+minutes. Two separate things were wrong with that reasoning.
+
+These checks wait on budgets tuned against an idle machine. render-check's
+mobile scroll samples the top row twenty times at 250 ms, and its own comment
+says that budget was widened so it would not "fail one run in five".
+Oversubscribe the box and all twenty samples land mid-repaint, and the message
+is `never readable` rather than a wrong number, which is the check saying so
+correctly.
+
+And a memory reading at t=0 is not a budget. This machine runs the panel it is
+testing: a service whose cgroup sat at 19.5 GiB of a 26 GiB max while the suite
+ran. The reading said 21 GiB free because that service had just restarted, and
+it grows back into it. Eight browser checks on top of that took the machine far
+enough into memory pressure that **the real panel restarted underneath the
+run**. Its tmux server was twenty-three hours old and eleven sessions came
+through it untouched, which is red line 2 doing precisely the job it exists for
+— but a suite that restarts the thing it is testing is not one anybody runs
+twice.
+
+At four the wall clock was 17m45s and two assertions failed. Both were the same
+cause: the mobile scroll above, and restart-check reading a belled session as
+`working`, which alone on a quiet machine is 0 FAIL. At two, nothing failed.
+
+Two costs almost nothing against four, because 18 of those 20 minutes are
+inside render-check and it does not go faster for having company. The floor is
+one long check, not the number of slots, which is also why there is no point
+reaching past it. `VERIFY_JOBS` raises it on a machine that is not also
+somebody's panel.
+
+`-l` is the dynamic half and it is make's own: `-j` says how many may run, `-l`
+says not to start another while the load average is already at the core count.
+It makes make print `Nothing to be done for 'x-check'` after a recipe that ran
+perfectly well, which is an alarming thing to read in a gate whose whole
+subject is checks that did not run. Measured before believing either reading:
+at `-l 0.1` against a machine already at load 4, all eight targets' recipes
+still ran. It defers jobs; it does not drop them.
+
+### And the guard the concurrency needed
+
+Serially, a check that did not run was a check that was not reached, and the
+failure above it was on the screen. Running eleven at once, "did not run" stops
+being self-evident: a scheduling mistake, a target quietly skipped, a script
+that dies before its first line of output — all three look exactly like a clean
+run, because what is missing is output. That is this file's own subject turned
+on the file itself, and it is a new risk that parallelism introduced.
+
+So every target now has to have reported. Each one ends with `=== <name> check:
+…`, `check` alone prints nothing and says so in one place, and a target with no
+line and no failure fails the run. Missing *and* failed stays ordinary: it died
+before it got that far, and the failure is already named.
+
+Mutation, because the whole point is that this is invisible: a stub target that
+exits 0 and prints nothing passes the old script, which ends on `all checks
+passed, with no warnings: every section ran`.
+
+`board-check` had the one fixed port left in the tree, 18996, from being written
+in an afternoon when nothing ran beside it. A constant is precisely what stops
+these running at the same time as each other, and the collision would not have
+read as one: the second process gets the first one's panel, drives it, and
+reports on a board it did not create. It asks the kernel for a port now, like
+its six siblings, and its tmux socket carries its pid.
+
+Giving it a pid is what made `harness.test.ts` fail, and the failure was the
+useful half. The stale-socket sweeper decides what it may kill from the socket
+name, `harness.test.ts` reads every prefix the check scripts actually build and
+asserts the sweeper covers each, and `vpboard` was not in the pattern. What
+that had been hiding is the other direction: the old name, `vp-board-check`,
+has no pid in it and so could never match the sweeper at all. Nothing had ever
+swept board-check, and a stale one was sitting in `/tmp` while this was being
+written. The prefix that had no leaks to clean up was the one whose leaks
+nothing could clean up.
