@@ -186,6 +186,7 @@ export class PanelSocket {
           sessionId: stream.sessionId,
           cols: stream.cols,
           rows: stream.rows,
+          dark: this.dark(),
         })
       }
       this.startPing()
@@ -274,6 +275,7 @@ export class PanelSocket {
           sessionId: stream.sessionId,
           cols: stream.cols,
           rows: stream.rows,
+          dark: this.dark(),
         })
         break
       }
@@ -366,10 +368,43 @@ export class PanelSocket {
     }
   }
 
+  /**
+   * Which way round the page's palette is, read at the moment it is asked.
+   *
+   * From the computed token rather than from the stored choice, because
+   * "system" is not a value -- it is a deferral to the device, and the answer
+   * is whatever `prefers-color-scheme` resolved to. Reading the colour the page
+   * is actually painted in gets all three cases with one expression.
+   */
+  private dark(): boolean {
+    const bg = getComputedStyle(document.documentElement)
+      .getPropertyValue('--vp-bg')
+      .trim()
+    const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(bg)
+    if (!m) return true
+    const [r, g, b] = [m[1], m[2], m[3]].map((h) => parseInt(h, 16))
+    // Rec. 601 luma, which is enough to answer "is this a dark background".
+    return 0.299 * r + 0.587 * g + 0.114 * b < 128
+  }
+
+  /**
+   * Tell every watched session which theme the viewer is in.
+   *
+   * Called when the theme changes. An application that has already asked will
+   * not ask again, so this does not repaint anything that is already running --
+   * it is for the next one, and for anything watching mode 2031.
+   */
+  reportScheme() {
+    const dark = this.dark()
+    for (const sessionId of this.streams.keys()) {
+      this.send({ t: 'scheme', sessionId, dark })
+    }
+  }
+
   subscribe(sessionId: string, cols: number, rows: number, handlers: StreamHandlers) {
     const stream: Stream = { sessionId, handlers, ref: null, cols, rows, confirmed: false }
     this.streams.set(sessionId, stream)
-    this.send({ t: 'subscribe', sessionId, cols, rows })
+    this.send({ t: 'subscribe', sessionId, cols, rows, dark: this.dark() })
   }
 
   unsubscribe(sessionId: string) {

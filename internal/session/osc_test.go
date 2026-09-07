@@ -191,7 +191,7 @@ func TestTerminalQueryReplies(t *testing.T) {
 	// tmux wait five seconds and then re-initialise every session at once.
 	attach := "\x1b[?1049h\x1b[?2031h\x1b[?996n\x1b(B\x1b[m\x1b[1;1H\x1b[1;32r" +
 		"\x1b[c\x1b[>c\x1b[>q\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b[1;1H"
-	reply := string(terminalQueryReplies([]byte(attach), 120, 32))
+	reply := string(terminalQueryReplies([]byte(attach), 120, 32, true))
 
 	for _, want := range []string{
 		"\x1b[?1;2c",       // DA1
@@ -206,7 +206,7 @@ func TestTerminalQueryReplies(t *testing.T) {
 		}
 	}
 
-	sizes := string(terminalQueryReplies([]byte("\x1b[18t\x1b[14t"), 120, 32))
+	sizes := string(terminalQueryReplies([]byte("\x1b[18t\x1b[14t"), 120, 32, true))
 	if !strings.Contains(sizes, "\x1b[8;32;120t") {
 		t.Errorf("character size answer missing from %q", sizes)
 	}
@@ -224,7 +224,7 @@ func TestOrdinaryOutputProducesNoReplies(t *testing.T) {
 		"\x1b[2J\x1b[H",
 		"a c > q 10;? 18t 14t", // the letters, not the sequences
 	} {
-		if got := terminalQueryReplies([]byte(in), 80, 24); len(got) != 0 {
+		if got := terminalQueryReplies([]byte(in), 80, 24, true); len(got) != 0 {
 			t.Errorf("terminalQueryReplies(%q) = %q, want nothing", in, got)
 		}
 	}
@@ -389,5 +389,61 @@ func TestASequenceTooLongToKeepDoesNotRingItsOwnTerminator(t *testing.T) {
 		if bell, _, _ := s.drain(); !bell {
 			t.Errorf("%s: a real bell after the abandoned sequence was swallowed", tc.name)
 		}
+	}
+}
+
+// TestTheSchemeReplyFollowsTheViewer pins the half that was a constant.
+//
+// The three colour answers were hardcoded to a dark terminal, on the reasoning
+// that only tmux asks and only to pick a default. Codex asks and draws itself
+// for the answer, so on a light panel it drew a black input box with black text
+// in it: 「白色背景下，Codex 的输入框是纯黑色的，文字也是黑色的」.
+//
+// An application that asks is going to act on what it is told, which makes a
+// plausible constant worse than silence: silence leaves it guessing, and a
+// wrong answer makes it confident.
+func TestTheSchemeReplyFollowsTheViewer(t *testing.T) {
+	ask := "\x1b[?996n\x1b]11;?\x1b\\\x1b]10;?\x1b\\"
+
+	dark := string(terminalQueryReplies([]byte(ask), 80, 24, true))
+	light := string(terminalQueryReplies([]byte(ask), 80, 24, false))
+
+	// DECRPM-style scheme report: 1 is dark, 2 is light.
+	if !strings.Contains(dark, "\x1b[?997;1n") {
+		t.Errorf("dark viewer was not told dark: %q", dark)
+	}
+	if !strings.Contains(light, "\x1b[?997;2n") {
+		t.Errorf("light viewer was not told light: %q", light)
+	}
+
+	// And the background colour has to move with it, because an application
+	// that trusts OSC 11 rather than the scheme report gets the same answer
+	// either way otherwise. Compared as "not the same" rather than against a
+	// literal: the exact palette is the browser's and may be retuned, and a
+	// test that pins the hex would fail on a change that is not a bug.
+	// The OSC 11 value alone. Returning everything after it compared the
+	// *foreground* answer as well, which also moves with the theme -- so the
+	// two differed for the wrong reason and hardcoding the background back to
+	// black still passed. Found by mutation, which is the only way a test that
+	// passes for the wrong reason is ever found.
+	bg := func(reply string) string {
+		i := strings.Index(reply, "\x1b]11;")
+		if i < 0 {
+			return ""
+		}
+		rest := reply[i+len("\x1b]11;"):]
+		if end := strings.Index(rest, "\x1b"); end >= 0 {
+			return rest[:end]
+		}
+		return rest
+	}
+	if bg(dark) == "" || bg(light) == "" {
+		t.Fatalf("a background answer is missing: dark=%q light=%q", dark, light)
+	}
+	if bg(dark) == bg(light) {
+		t.Errorf("both viewers were told the same background: %q", bg(dark))
+	}
+	if !strings.Contains(dark, "\x1b]10;") || !strings.Contains(light, "\x1b]10;") {
+		t.Error("a foreground answer is missing")
 	}
 }

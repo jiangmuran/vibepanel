@@ -82,6 +82,22 @@ type Live struct {
 
 	cols, rows int
 
+	// dark is what this session's terminal answers when an application asks
+	// what colour its background is.
+	//
+	// It has to be answered, and it has to be answered *correctly*: the reply
+	// used to be a hardcoded black with a hardcoded "scheme: dark", on the
+	// reasoning that only tmux asks and only to pick a default. Codex asks too,
+	// and draws its input box for the terminal it was told about -- so on a
+	// light panel it drew a black box, and the text in it was black as well.
+	// 「白色背景下，Codex 的输入框是纯黑色的，文字也是黑色的」.
+	//
+	// The palette itself lives in the browser and there is no way for the
+	// server to know it; the browser sends this. Guarded by the same lock as
+	// the grid, because it arrives from a viewer's goroutine and is read on the
+	// pump's.
+	dark bool
+
 	// controller is the ClientID whose viewport currently defines the grid.
 	// Empty means nobody owns it right now.
 	controller string
@@ -535,7 +551,7 @@ func (m *Manager) pump(l *Live) {
 
 			// Writing to the PTY stays outside the lock: it is I/O, and the
 			// only thing on the other end of it is tmux.
-			if reply := terminalQueryReplies(chunk, cols, rows); len(reply) > 0 {
+			if reply := terminalQueryReplies(chunk, cols, rows, l.Dark()); len(reply) > 0 {
 				if debugChunks {
 					fmt.Fprintf(os.Stderr, "[reply] %s %s %q\n",
 						time.Now().Format("15:04:05.000"), l.TmuxName, reply)
@@ -569,6 +585,25 @@ func (m *Manager) pump(l *Live) {
 			return
 		}
 	}
+}
+
+// SetScheme records which way round the viewer's palette is.
+//
+// Last writer wins, and that is the same answer the grid gives when two viewers
+// disagree: there is one terminal and it has one background. A viewer on the
+// other theme sees an application drawn for this one, which is the pre-existing
+// situation for everybody rather than a new one for somebody.
+func (l *Live) SetScheme(dark bool) {
+	l.mu.Lock()
+	l.dark = dark
+	l.mu.Unlock()
+}
+
+// Dark reports the recorded scheme.
+func (l *Live) Dark() bool {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.dark
 }
 
 // Title returns the last OSC 0/2 title seen on this session's PTY.

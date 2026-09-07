@@ -51,7 +51,7 @@ export function decodeData(
 }
 
 export interface ClientMessage {
-  t: 'subscribe' | 'unsubscribe' | 'resize' | 'takeControl' | 'ping' | 'paste'
+  t: 'subscribe' | 'unsubscribe' | 'resize' | 'takeControl' | 'ping' | 'paste' | 'scheme'
   sessionId?: string
   cols?: number
   rows?: number
@@ -59,6 +59,15 @@ export interface ClientMessage {
   text?: string
   /** MsgPaste only: send a carriage return once the paste has landed. */
   submit?: boolean
+  /**
+   * Which way round this viewer's palette is.
+   *
+   * Sent with every subscribe and again whenever the theme changes. An
+   * application in the pane asks the terminal what colour it is -- Codex does,
+   * once, at startup -- and draws itself accordingly, so the server needs the
+   * answer before the pane has a chance to ask.
+   */
+  dark?: boolean
 }
 
 export interface ServerMessage {

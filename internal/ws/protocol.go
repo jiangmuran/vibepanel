@@ -86,6 +86,12 @@ type ClientMessage struct {
 	// a paste is not keystrokes and does not travel as them.
 	Text string `json:"text,omitempty"`
 
+	// Dark carries a MsgScheme body, and rides along on MsgSubscribe so the
+	// answer is right before an application has a chance to ask. A pointer
+	// because "the viewer did not say" and "the viewer said light" are
+	// different, and only the first should leave the recorded value alone.
+	Dark *bool `json:"dark,omitempty"`
+
 	// Submit asks for a carriage return after the paste.
 	//
 	// Server-side because the two travel by different roads — the paste
@@ -123,6 +129,11 @@ const (
 
 	// MsgTakeControl claims the grid for this viewer and applies its size.
 	MsgTakeControl = "takeControl"
+
+	// MsgScheme tells a session which way round the viewer's palette is, so
+	// that an application asking the terminal what colour it is gets an answer
+	// that matches what the person is looking at. See Live.dark.
+	MsgScheme = "scheme"
 
 	// MsgPing keeps intermediaries from closing an idle connection. Mobile
 	// networks and reverse proxies both do this on quiet sockets.
@@ -206,6 +217,6 @@ var (
 	}
 	AllClientMessages = []string{
 		MsgSubscribe, MsgUnsubscribe, MsgResize, MsgTakeControl, MsgPing,
-		MsgPaste,
+		MsgPaste, MsgScheme,
 	}
 )

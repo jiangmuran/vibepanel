@@ -465,7 +465,16 @@ func (c *Conn) handleControl(ctx context.Context, msg ClientMessage) {
 	case MsgSubscribe:
 		if err := c.subscribe(ctx, msg.SessionID, msg.Cols, msg.Rows); err != nil {
 			c.sendError(msg.SessionID, err.Error())
+			return
 		}
+		// Before anything in the pane has had a chance to ask. An application
+		// queries the terminal's colours once, at startup, and acts on the
+		// answer for the rest of its life -- so an answer that arrives after
+		// the question is the same as no answer.
+		c.applyScheme(msg.SessionID, msg.Dark)
+
+	case MsgScheme:
+		c.applyScheme(msg.SessionID, msg.Dark)
 
 	case MsgUnsubscribe:
 		c.unsubscribe(msg.SessionID)
@@ -660,6 +669,25 @@ func (c *Conn) deregister(s *stream) {
 	// already removed and closed it; needed for the ordinary end-of-session
 	// case so the attachment does not keep a reference to a dead viewer.
 	s.live.Unsubscribe(s.sub)
+}
+
+// applyScheme records which way round the viewer's palette is.
+//
+// Only for a session this connection is watching, the same rule input and paste
+// follow: the session id arrives from the client and nothing else here checks
+// it. A message with no `dark` field leaves the recorded value alone, so an
+// older client cannot reset it by omission.
+func (c *Conn) applyScheme(sessionID string, dark *bool) {
+	if dark == nil {
+		return
+	}
+	c.mu.Lock()
+	s := c.byID[sessionID]
+	c.mu.Unlock()
+	if s == nil {
+		return
+	}
+	s.live.SetScheme(*dark)
 }
 
 func (c *Conn) unsubscribe(sessionID string) {

@@ -315,10 +315,16 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   // would set data-theme *after* TerminalView has already re-read the CSS
   // custom properties to rebuild the xterm palette — leaving the terminal, the
   // largest surface on the page, one theme behind on every switch.
-  const setTheme = useCallback((next: ThemeChoice) => {
-    applyTheme(next)
-    setThemeState(next)
-  }, [])
+  const setTheme = useCallback(
+    (next: ThemeChoice) => {
+      applyTheme(next)
+      setThemeState(next)
+      // After applyTheme, which stamps data-theme: the socket reads the palette
+      // back off the document, so it has to be the new one by the time it asks.
+      socket.reportScheme()
+    },
+    [socket],
+  )
 
   useEffect(() => {
     socket.connect()

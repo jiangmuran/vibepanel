@@ -270,7 +270,7 @@ const (
 // any viewer subscribes — and replayed scrollback is delivered with the
 // browser's responses suppressed. Two answers would be worse than none: the
 // second is delivered to the pane as if the user had typed it.
-func terminalQueryReplies(chunk []byte, cols, rows int) []byte {
+func terminalQueryReplies(chunk []byte, cols, rows int, dark bool) []byte {
 	var out []byte
 	add := func(s string) { out = append(out, s...) }
 
@@ -283,13 +283,44 @@ func terminalQueryReplies(chunk []byte, cols, rows int) []byte {
 		{"\x1b[>c", func() { add("\x1b[>0;276;0c") }},
 		// XTVERSION. The name is free-form and shows up in tmux's logs.
 		{"\x1b[>q", func() { add("\x1bP>|vibepanel\x1b\\") }},
-		// Foreground and background colour. The real palette lives in the
-		// browser and changes with the theme; these exist so tmux stops
-		// waiting, and it only uses them to decide light-versus-dark defaults.
-		{"\x1b]10;?\x1b\\", func() { add("\x1b]10;rgb:cccc/cccc/cccc\x1b\\") }},
-		{"\x1b]11;?\x1b\\", func() { add("\x1b]11;rgb:0000/0000/0000\x1b\\") }},
+		// Foreground and background colour, and which way round they are.
+		//
+		// These were a hardcoded light-grey-on-black and a hardcoded "dark",
+		// on the reasoning that only tmux asks and only to pick a default. It
+		// is not only tmux: Codex asks, and *draws itself* for the terminal it
+		// is told about. On a light panel it was told black, so it drew a black
+		// input box -- and the text inside it came out black as well.
+		// 「白色背景下，Codex 的输入框是纯黑色的，文字也是黑色的」.
+		//
+		// An application that asks this question is going to act on the answer,
+		// so a plausible-looking constant is worse than no reply at all: no
+		// reply leaves it guessing, and a wrong reply makes it confident.
+		//
+		// The exact palette still lives in the browser and the server cannot
+		// know it. What it can know is which way round, which is what every one
+		// of these answers is actually used for, and the browser sends it.
+		{"\x1b]10;?\x1b\\", func() {
+			if dark {
+				add("\x1b]10;rgb:cccc/cccc/cccc\x1b\\")
+			} else {
+				add("\x1b]10;rgb:2222/2222/2222\x1b\\")
+			}
+		}},
+		{"\x1b]11;?\x1b\\", func() {
+			if dark {
+				add("\x1b]11;rgb:0d0d/0d0d/1010\x1b\\")
+			} else {
+				add("\x1b]11;rgb:e8e8/eaea/eded\x1b\\")
+			}
+		}},
 		// Colour-scheme report: 1 is dark, 2 is light.
-		{"\x1b[?996n", func() { add("\x1b[?997;1n") }},
+		{"\x1b[?996n", func() {
+			if dark {
+				add("\x1b[?997;1n")
+			} else {
+				add("\x1b[?997;2n")
+			}
+		}},
 		// Text area size, in characters and in pixels.
 		{"\x1b[18t", func() { add(fmt.Sprintf("\x1b[8;%d;%dt", rows, cols)) }},
 		{"\x1b[14t", func() {

@@ -19746,3 +19746,45 @@ tiles together, so a 1180px tile sat on the 13px floor beside a 2500px
 neighbour at 27.5px on the same 4K page. Every board has a unit now; only the
 reference differs. A flowing board is a page and bands against the page unit;
 a filled board is a screen and bands against the screen.
+
+## An answer the panel had no business making up
+
+「白色背景下，Codex 的输入框是纯黑色的，文字也是黑色的」.
+
+An application can ask the terminal what colour it is — OSC 10 and 11 for the
+foreground and background, and mode 996 for which way round they are. The panel
+answered all three, and answered them with constants: light grey on black, and
+"scheme: dark", whatever theme the person was actually looking at.
+
+The comment beside them says why: they exist so tmux stops waiting, and tmux
+only uses them to pick a default. That was true of tmux and not of everything
+else. Codex asks the same question and *draws itself* for the answer, so on a
+light panel it drew the input box a full-screen dark application would want —
+black, with text chosen for black — on a white page.
+
+An application that asks this is going to act on it, which makes a
+plausible-looking constant worse than silence. Silence leaves it guessing;
+a wrong answer makes it confident.
+
+The exact palette is the browser's and the server cannot know it. What it can
+know is which way round, which is all any of these three answers is used for, so
+the browser sends it: with every subscribe, so it is recorded before anything in
+the pane has had a chance to ask, and again whenever the theme changes.
+
+Read off the computed `--vp-bg` rather than the stored choice, because "system"
+is not a value — it is a deferral to the device, and the answer is whatever
+`prefers-color-scheme` resolved to. Reading the colour the page is actually
+painted in answers all three cases with one expression.
+
+Last writer wins when two viewers disagree, which is the same answer the grid
+already gives: there is one terminal and it has one background.
+
+### A test that passed for the wrong reason
+
+The assertion that the two backgrounds differ compared everything after the
+OSC 11 marker — which includes the *foreground* answer, and that moves with the
+theme too. So hardcoding the background back to black still passed. Only the
+value is compared now.
+
+That is what mutation testing is for, and it is the only way a test which passes
+for the wrong reason is ever found.
