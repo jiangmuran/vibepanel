@@ -36,7 +36,15 @@ export function Tile({
   kind,
   plain,
 }: {
-  label?: string
+  /**
+   * The tile's heading, which may be a node.
+   *
+   * A node so that a compound heading can be a `Qualified` rather than a
+   * string with a separator in it: "Code, over time · Lines changed" written
+   * as one string truncates wherever the box ends, which on a narrow tile cuts
+   * the name rather than the qualifier.
+   */
+  label?: React.ReactNode
   span: number
   /** How many grid rows tall, or absent for one.
    *
@@ -74,8 +82,17 @@ export function Tile({
       style={{ gridColumn: `span ${span}`, gridRow: `span ${rows}` }}
     >
       {label && (
-        <h2 className="mb-3 truncate text-vp-xl font-medium text-ink-3" data-testid="tile-label">
-          {label}
+        <h2
+          // `overflow-hidden` here and the ellipsis on the child, not
+          // `truncate` here. With `truncate` on the heading the whole line was
+          // clipped at the box edge before the Qualified inside it could shed
+          // anything, so "Where it went · By model" still lost "By model" *and*
+          // part of "Where it went". A plain string label has no child to
+          // carry it, so it gets one.
+          className="mb-3 flex min-w-0 overflow-hidden text-vp-xl font-medium text-ink-3"
+          data-testid="tile-label"
+        >
+          {typeof label === 'string' ? <span className="truncate">{label}</span> : label}
         </h2>
       )}
       {/* Centred in the height it was given, not stacked at the top of it.
@@ -133,7 +150,22 @@ export function Bar({
   return (
     <div className="mb-3 last:mb-0" data-testid={testid}>
       <div className="mb-1 flex items-baseline justify-between gap-3">
-        <span className="min-w-0 truncate text-vp-xl text-ink">{label}</span>
+        {/* `data-vp-elides`: this one is *meant* to be cut.
+            
+            A ranking row is a name beside a figure, and the name is the only
+            thing that can give -- a model called
+            "claude-haiku-4-5-20251001" does not have a shorter honest form,
+            and its prefix identifies it. The figure beside it does not give,
+            which is what `shrink-0` says.
+            
+            The attribute is for board-check, which otherwise reports these as
+            defects forever. It marks intent rather than letting the check
+            guess from a class name, because "a truncated name is fine" and "a
+            truncated number is wrong" are not distinguishable from the
+            outside. */}
+        <span data-vp-elides className="min-w-0 truncate text-vp-xl text-ink">
+          {label}
+        </span>
         <span className="tabular shrink-0 text-vp-xl text-ink-2">{value}</span>
       </div>
       <div className="h-2 overflow-hidden rounded-full" style={{ background: 'var(--vp-surface-2)' }}>

@@ -19691,3 +19691,58 @@ extracted into a pure function so it can be tested, and a call site nothing
 tests. The extraction is what makes it testable and also what makes it
 skippable. The other three are the paste listeners, the tablet's `touch` prop
 and the wheel-notch conversion; all four now scan the call site as well.
+
+## The qualifier gives way, not the number
+
+Board tiles are full of `A · B`: "Code, over time · Lines changed",
+"42,617,061,632 · 155,819 requests", "152K · per minute". Written as one string
+with `truncate` on it, the browser cuts wherever the box ends, and on a narrow
+tile that means cutting the subject:
+
+    "42,617,061,632 · 155,819 Reque"   truncated by 245px
+    "152K · per minute"                truncated by 69px
+
+A number cut in the middle is not a shortened number, it is a different one, and
+nothing in the rendering says it was cut. `Qualified` makes the two parts two
+elements: the subject does not shrink, the qualifier does. A reader who loses
+"per minute" still has "152K"; one who loses "152K" has nothing.
+
+The heading needed the same treatment and did not get it at first. `truncate`
+stayed on the `<h2>`, so the whole line was clipped at the box edge before the
+`Qualified` inside it could shed anything, and "Where it went · By model" lost
+its qualifier *and* part of its subject. It is `overflow-hidden` there now with
+the ellipsis on the child.
+
+Two more were cut vertically rather than horizontally — a gauge's caption and a
+freshness line, squeezed inside their flex column and clipped by the tile. Both
+are `shrink-0` now: the dial is the glance and the caption is the answer, so
+when there is not room for both it is the dial that gives.
+
+### The check had to learn what a fix looks like
+
+After the change, twenty-three of the remaining failures read `"· per minute"`,
+`"· Lines changed"` — the qualifiers being shed, which is the feature working.
+Reported as failures, the fix for twenty-six truncations would have read as
+twenty-three new ones.
+
+So a truncated element whose text begins with the separator is a WARN. And a
+name in a ranking row says so with `data-vp-elides`, because a model called
+"claude-haiku-4-5-20251001" has no shorter honest form and its prefix identifies
+it — while a truncated *number* is always wrong. Those two are not
+distinguishable from the outside, and guessing from a class name is how a check
+starts lying.
+
+### Measured across every preset and every screen
+
+    46 FAIL  ->  0 FAIL
+
+    type sizes differ    10 -> 0
+    truncated by         32 -> 0
+    cut off vertically    4 -> 0
+
+The spreads went with the same fix applied to flowing boards: `.vp-board >
+section` sized itself from `1.1cqw` of its own width with nothing tying the
+tiles together, so a 1180px tile sat on the 13px floor beside a 2500px
+neighbour at 27.5px on the same 4K page. Every board has a unit now; only the
+reference differs. A flowing board is a page and bands against the page unit;
+a filled board is a screen and bands against the screen.

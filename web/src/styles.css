@@ -1499,9 +1499,45 @@ body {
  * And the three sizes are redefined here as well as the unit. That is not
  * belt-and-braces, it is the whole mechanism -- see the note at the scale for
  * why a custom property declared on :root arrives here already resolved. */
+/* Registered, and that is the whole mechanism rather than a formality.
+ *
+ * An unregistered custom property inherits as an *unresolved token stream*, so
+ * `3.2cqmin` declared on the board is re-resolved inside every tile against
+ * that tile's own container. The board computed 22.1px and the tiles read
+ * 9.1px from the same declaration -- 0.7 x the 13px floor, because in a
+ * 1116x123 strip `3.2cqmin` is 3.9px. The band was being computed against a
+ * different number in each tile, which is the thing it exists to prevent.
+ *
+ * `syntax: '<length>'` makes it compute where it is declared and inherit as a
+ * length. The initial value is the base unit from :root, so a browser that
+ * does not know @property gets the old behaviour rather than a broken one. */
+@property --vp-board-unit {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 16px;
+}
+
+/* Every board has a unit of its own; only the reference differs.
+ *
+ * A flowing board is a page, and its reference is the page unit `.vp-wall`
+ * already uses -- 100vw/120, capped at 26px, which is the size a flowing board
+ * was drawn at. A filled board is a screen, and its reference is the screen;
+ * see the override below.
+ *
+ * Both then band their tiles to within a third of it, and the band is the whole
+ * point: without one, a tile 1180px wide landed on the 13px floor beside a
+ * 2500px neighbour at 27.5px on the same 4K page. */
+.vp-board {
+  --vp-board-unit: clamp(13px, 100vw / 120, 26px);
+}
+
 .vp-board > section {
   container-type: inline-size;
-  --vp-wall: clamp(13px, 1.1cqw, 34px);
+  --vp-wall: clamp(
+    calc(0.7 * var(--vp-board-unit)),
+    1.1cqw,
+    calc(1.3 * var(--vp-board-unit))
+  );
   --vp-text-xl: calc(1.375 * var(--vp-wall));
   --vp-text-2xl: calc(2.25 * var(--vp-wall));
   --vp-text-3xl: calc(3.5 * var(--vp-wall));
@@ -1528,23 +1564,6 @@ body {
  * The 13px floor and 48px ceiling stay on the board's own unit rather than on
  * each tile, which is what stops the band from being computed against a value
  * that was itself clamped. */
-/* Registered, and that is the whole mechanism rather than a formality.
- *
- * An unregistered custom property inherits as an *unresolved token stream*, so
- * `3.2cqmin` declared on the board is re-resolved inside every tile against
- * that tile's own container. The board computed 22.1px and the tiles read
- * 9.1px from the same declaration -- 0.7 x the 13px floor, because in a
- * 1116x123 strip `3.2cqmin` is 3.9px. The band was being computed against a
- * different number in each tile, which is the thing it exists to prevent.
- *
- * `syntax: '<length>'` makes it compute where it is declared and inherit as a
- * length. The initial value is the base unit from :root, so a browser that
- * does not know @property gets the old behaviour rather than a broken one. */
-@property --vp-board-unit {
-  syntax: '<length>';
-  inherits: true;
-  initial-value: 16px;
-}
 
 .vp-board[data-fill='true'] {
   container-type: size;

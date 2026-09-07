@@ -8,6 +8,7 @@ import { t } from '../../i18n'
 import { StateDot } from '../StateDot'
 import { safeText } from '../text'
 import { Bar, Empty, Tile } from './Tile'
+import { Qualified } from './Qualified'
 import { bucketLabel, compact, duration, exact } from './format'
 import { byLabel } from './labels'
 import { DENSE, rows as rowsAt, showsDetail, useDensity } from './density'
@@ -75,7 +76,7 @@ function Figure({
  *  "Not counted yet" and "nothing happened today" are different facts about a
  *  repository and the first one is said out loud — the same distinction
  *  shareSpend.readable already makes about the transcripts. */
-function NotRead({ w, label }: { w: ShareWidget; label: string }) {
+function NotRead({ w, label }: { w: ShareWidget; label: React.ReactNode }) {
   return (
     <Tile kind={w.kind} span={w.span} height={w.height} testid={`widget-${w.kind}`} label={label}>
       <Empty text={t('dash.notRead')} />
@@ -167,7 +168,7 @@ export function Output({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
 export function CodeChurn({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
   const repo = data.repo
   const by = w.by ?? 'lines'
-  const label = `${t('board.kind.codechurn')} · ${byLabel(by, by)}`
+  const label = <Qualified subject={t('board.kind.codechurn')} qualifier={byLabel(by, by)} />
   if (!repo || !repo.readable) return <NotRead w={w} label={label} />
   const days = repo.days
   const top = days.reduce(
@@ -326,7 +327,7 @@ export function RepoProjects({ w, data }: { w: ShareWidget; data: ShareDashboard
   const repo = data.repo
   const by = w.by ?? 'lines'
   const density = useDensity()
-  const label = `${t('board.kind.repoprojects')} · ${byLabel(by, by)}`
+  const label = <Qualified subject={t('board.kind.repoprojects')} qualifier={byLabel(by, by)} />
   if (!repo?.readable) return <NotRead w={w} label={label} />
   const value = (p: (typeof repo.byProject)[number]) =>
     by === 'commits' ? p.window.commits : by === 'files' ? p.window.files : p.window.added + p.window.removed
@@ -410,7 +411,7 @@ export function PRs({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
 export function Flow({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
   const flow = data.flow
   const by = w.by ?? 'hour'
-  const label = `${t('board.kind.flow')} · ${byLabel(by, by)}`
+  const label = <Qualified subject={t('board.kind.flow')} qualifier={byLabel(by, by)} />
   if (!flow) return <NotRead w={w} label={label} />
   const top = flow.buckets.reduce((n, b) => Math.max(n, b.started + b.waited + b.finished), 0)
   return (
@@ -482,7 +483,7 @@ function FlowColumn({ bucket, top }: { bucket: ShareFlowBucket; top: number }) {
 export function Waits({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
   const flow = data.flow
   const by = w.by ?? 'hour'
-  const label = `${t('board.kind.waits')} · ${byLabel(by, by)}`
+  const label = <Qualified subject={t('board.kind.waits')} qualifier={byLabel(by, by)} />
   if (!flow) return <NotRead w={w} label={label} />
   const avg = (b: { waitSeconds: number; waitEnded: number }) =>
     b.waitEnded > 0 ? b.waitSeconds / b.waitEnded : 0

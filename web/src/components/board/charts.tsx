@@ -1,6 +1,7 @@
 import type { ShareDashboard, ShareSpendBucket, ShareWidget } from '../../protocol/wire'
 import { t } from '../../i18n'
 import { Empty, Tile } from './Tile'
+import { Qualified } from './Qualified'
 import { bucketLabel, compact, exact } from './format'
 import { byLabel } from './labels'
 import { Spark } from '../spark'
@@ -133,14 +134,16 @@ export function TokenBurn({ w, data }: { w: ShareWidget; data: ShareDashboard })
         <span className="tabular overflow-x-hidden text-ellipsis whitespace-nowrap text-vp-3xl font-semibold text-ink">
           {compact(spend.today.total)}
         </span>
-        <span className="truncate text-vp-xl text-ink-2">
-          {t('board.metric.tokensToday')} · {exact(spend.today.total)}
-        </span>
-        <span className="tabular overflow-x-hidden text-ellipsis whitespace-nowrap text-vp-2xl font-semibold text-ink-2">
-          {perMinute === null
-            ? `${compact(fallback)} · ${t('dash.perHourToday')}`
-            : `${compact(perMinute)} · ${t('dash.perMinute')}`}
-        </span>
+        <Qualified
+          className="text-vp-xl text-ink-2"
+          subject={t('board.metric.tokensToday')}
+          qualifier={<span className="tabular">{exact(spend.today.total)}</span>}
+        />
+        <Qualified
+          className="text-vp-2xl font-semibold text-ink-2"
+          subject={<span className="tabular">{compact(perMinute ?? fallback)}</span>}
+          qualifier={perMinute === null ? t('dash.perHourToday') : t('dash.perMinute')}
+        />
         {deltas.length >= 2 && (
           <div className="mt-2 min-h-12 flex-1">
             <Area
@@ -164,7 +167,7 @@ export function TokenBurn({ w, data }: { w: ShareWidget; data: ShareDashboard })
          * catches it, and the payload already carries the moment this data is
          * true as of. */}
         {data.at - spend.scannedAt > 90 && (
-          <span className="truncate text-vp-xl text-ink-3">
+          <span className="shrink-0 truncate text-vp-xl text-ink-3">
             {t('dash.spendAt', { time: new Date(spend.scannedAt * 1000).toLocaleTimeString() })}
           </span>
         )}
@@ -216,10 +219,15 @@ export function Odometer({ w, data }: { w: ShareWidget; data: ShareDashboard }) 
             {compact(spend.allTime.total)}
           </span>
           <span className="truncate text-vp-xl text-ink-2">{t('dash.allTime')}</span>
-          <span className="tabular truncate text-vp-xl text-ink-3">
-            {exact(spend.allTime.total)} · {exact(spend.allTime.requests)}{' '}
-            {t('board.metric.requestsToday')}
-          </span>
+          <Qualified
+            className="text-vp-xl text-ink-3"
+            subject={<span className="tabular">{exact(spend.allTime.total)}</span>}
+            qualifier={
+              <span className="tabular">
+                {exact(spend.allTime.requests)} {t('board.metric.requestsToday')}
+              </span>
+            }
+          />
         </div>
       ) : (
         <Empty text={t('dash.noSpendYet')} />

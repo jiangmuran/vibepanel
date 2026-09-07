@@ -10,6 +10,7 @@ import { t } from '../../i18n'
 import { rows as rowsAt, useDensity } from './density'
 import { safeText } from '../text'
 import { Bar, Empty, Tile } from './Tile'
+import { Qualified } from './Qualified'
 import { bucketLabel, compact, exact } from './format'
 import { byLabel } from './labels'
 
@@ -186,7 +187,7 @@ export function SpendCompare({ w, data }: { w: ShareWidget; data: ShareDashboard
           <Delta now={spend.today.total} before={spend.yesterday.total} />
         </div>
         <div className="text-vp-xl text-ink-2">
-          {t('dash.today')} · {t('dash.versusYesterday', { n: compact(spend.yesterday.total) })}
+          <Qualified subject={t('dash.today')} qualifier={t('dash.versusYesterday', { n: compact(spend.yesterday.total) })} />
         </div>
       </div>
       <div data-testid="compare-month">
@@ -197,7 +198,7 @@ export function SpendCompare({ w, data }: { w: ShareWidget; data: ShareDashboard
           <Delta now={spend.month.total} before={spend.lastMonth.total} />
         </div>
         <div className="text-vp-xl text-ink-2">
-          {t('dash.thisMonth')} · {t('dash.versusLastMonth', { n: compact(spend.lastMonth.total) })}
+          <Qualified subject={t('dash.thisMonth')} qualifier={t('dash.versusLastMonth', { n: compact(spend.lastMonth.total) })} />
         </div>
       </div>
     </Tile>
@@ -216,7 +217,7 @@ export function SpendBars({ w, data }: { w: ShareWidget; data: ShareDashboard })
       kind={w.kind}
       span={w.span} height={w.height}
       testid="widget-spendbars"
-      label={`${t('board.kind.spendbars')} · ${byLabel(by, by)}`}
+      label={<Qualified subject={t('board.kind.spendbars')} qualifier={byLabel(by, by)} />}
     >
       {buckets.length === 0 ? (
         <Empty text={t('dash.emptyWidget')} />
@@ -261,7 +262,7 @@ export function SpendSplit({ w, data }: { w: ShareWidget; data: ShareDashboard }
       kind={w.kind}
       span={w.span} height={w.height}
       testid="widget-spendsplit"
-      label={`${t('board.kind.spendsplit')} · ${byLabel(by, by)}`}
+      label={<Qualified subject={t('board.kind.spendsplit')} qualifier={byLabel(by, by)} />}
     >
       {groups.length === 0 ? (
         <Empty text={t('dash.emptyWidget')} />

@@ -195,7 +195,14 @@ export function Gauge({ w, data }: { w: ShareWidget; data: ShareDashboard }) {
             {meterText(value)}
           </span>
         </div>
-        <span className="tabular mt-1 truncate text-vp-xl text-ink-2">{detail}</span>
+        {/* `shrink-0`, so the dial gives way and not the figure.
+            
+            Both are in one flex column and the caption carries the actual
+            numbers -- "0 / 9", "12 GB of 32". Squeezed, it was clipped by the
+            tile's own overflow: measured as 10px off the bottom of "0 / 0" at
+            a phone size. The dial is the glance and this is the answer, so
+            when there is not room for both the dial is what shrinks. */}
+        <span className="tabular mt-1 shrink-0 truncate text-vp-xl text-ink-2">{detail}</span>
       </div>
     </Tile>
   )

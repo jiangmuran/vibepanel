@@ -239,9 +239,25 @@ try {
             // Which element, not just which words. "truncated: 12:55 AM" sent
             // the reader to a component that turned out not to be the one with
             // the ellipsis on it, and finding that out took longer than the fix.
+            // A qualifier giving way is the design, not a defect.
+            //
+            // `Qualified` splits "152K · per minute" into a subject that does
+            // not shrink and a qualifier that does, precisely so the number
+            // survives and the words after it are what get cut. Those come
+            // through here as a truncated element whose text starts with the
+            // separator, and reporting them as failures would mean the fix for
+            // twenty-six truncations read as twenty-six new ones.
+            // Two kinds of intended truncation. A qualifier shed by
+            // `Qualified` starts with the separator; a name in a ranking row
+            // says so with `data-vp-elides`, because "a truncated name is
+            // fine" and "a truncated number is wrong" cannot be told apart
+            // from the outside and guessing it from a class name is how a
+            // check starts lying.
+            const shedding = /^\s*·/.test(text) || el.hasAttribute('data-vp-elides')
             const id = el.dataset.testid ?? el.tagName.toLowerCase()
             clipped.push(
-              `truncated by ${overX}px: ${JSON.stringify(text.slice(0, 30))} ` +
+              `${shedding ? 'qualifier shed by' : 'truncated by'} ${overX}px: ` +
+              `${JSON.stringify(text.slice(0, 30))} ` +
               `[${id} .${(el.className || '(no class)').toString().split(/\s+/).slice(0, 4).join('.')}]`)
           }
           // Only for something that was laid out in the first place. An
@@ -304,7 +320,8 @@ try {
         // yet: it reported thirteen elements in a board that looks correct, so
         // until it is understood it is a lead rather than a verdict. A check
         // nobody trusts is a check everybody learns to skip past.
-        note(c.startsWith('clipped away entirely') ? 'WARN' : 'FAIL', where, c)
+        const bydesign = c.startsWith('clipped away entirely') || c.startsWith('qualifier shed by')
+        note(bydesign ? 'WARN' : 'FAIL', where, c)
       }
 
       const airy = m.tiles.filter((t) => t.h > 120 && t.used > 0 && t.used < 0.35)
