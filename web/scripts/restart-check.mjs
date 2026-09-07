@@ -301,21 +301,46 @@ try {
 
   boot()
   if (!await health()) throw new Error(`server did not come back:\n${serverLog}`)
-  // The panel re-attaches on its own timer; give it room before judging.
-  await sleep(6000)
-
   {
     const stateOf = async () => {
       const rows = (await (await authed('/api/state')).json()).sessions ?? []
       return rows.find((x) => x.id === asking.id) ?? {}
     }
-    const now = await stateOf()
-    if (now.state !== 'waiting') {
+
+    // Waited for, not sampled once at a fixed six seconds.
+    //
+    // The panel re-attaches on its own timer, and re-attaching *is output*:
+    // capture-pane replays the pane, the detector sees bytes, and 800 ms of
+    // "something is printing" reads as `working` until it goes quiet. On an
+    // idle machine that whole sequence is over before the first read -- traced
+    // at 500 ms intervals for twenty seconds, it was `waiting/heuristic` from
+    // 0.0s and never moved. Put this check beside seven others and the
+    // re-attach lands later, so the one sample at six seconds fell inside the
+    // window: it failed at -j4 and again at -j2, passed both times it ran
+    // alone, and each of those is ten minutes to find out.
+    //
+    // So: wait for the answer to arrive, then check it stayed. Both halves
+    // matter. Only waiting would pass on a state that flickered through
+    // `waiting` on its way somewhere else, which is a real thing the detector
+    // could do and is not what a person reading the sidebar would call
+    // working.
+    let now = {}
+    for (let i = 0; i < 30; i++) {
+      now = await stateOf()
+      if (now.state === 'waiting') break
+      await sleep(500)
+    }
+    const settled = now.state === 'waiting' ? await (async () => {
+      await sleep(1500)
+      return stateOf()
+    })() : now
+    if (settled.state !== 'waiting') {
       note('FAIL', 'persistence',
-        `the session that rang the bell reads as ${JSON.stringify(now.state)} after the restart, ` +
-        'not waiting. Its question is still on screen and the panel has stopped saying so.')
+        `the session that rang the bell reads as ${JSON.stringify(settled.state)} after the restart, ` +
+        `not waiting (it reached ${JSON.stringify(now.state)} first). Its question is still on ` +
+        'screen and the panel has stopped saying so.')
     } else {
-      note('PASS', 'persistence', `a waiting session is still waiting after the restart (from ${now.stateSource})`)
+      note('PASS', 'persistence', `a waiting session is still waiting after the restart (from ${settled.stateSource})`)
     }
   }
 

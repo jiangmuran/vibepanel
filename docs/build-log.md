@@ -20418,3 +20418,43 @@ not**. The test written for it asserted a status code, and a status code cannot
 tell "the counter was cleared" from "the window happened to have elapsed" —
 both are a 201. It asserts on `Throttle.Failures` now, which is the accessor
 whose doc comment already said it was for tests, and it goes red.
+
+## Six seconds was a guess, and it was the check that was wrong
+
+`verify` came back red on `restart-check`, on the one assertion that is the
+product's whole premise: a session that rang the bell still reads as `waiting`
+after the panel is killed and comes back. 「哪个 session 在等我」 is the reason
+this exists, so a real failure there is not a small one.
+
+It was not a real failure. It was a single sample at a fixed six seconds.
+
+Re-attaching *is output*. The panel reconnects on its own timer, `capture-pane`
+replays the pane, the detector sees bytes arriving, and "something printed
+within 800 ms" reads as `working` until it goes quiet again. On an idle machine
+that whole sequence is over before anything looks: traced at 500 ms intervals
+for twenty seconds, the session read `waiting/heuristic` from 0.0s and never
+moved once. Put the check beside seven others and the re-attach lands later, so
+the one sample fell inside the window — it failed at `-j4`, passed alone,
+failed again at `-j2`, passed alone again, and each of those answers costs ten
+minutes.
+
+That is the same shape as render-check's mobile scroll, whose comment says it
+plainly: a check that fails one run in five teaches people to run it again
+instead of looking. This one had taught exactly that, and it took making the
+suite concurrent to notice, because a flake that only fires under load never
+fires when you run it by hand.
+
+It waits for the answer now, up to fifteen seconds, and then checks that the
+answer stayed for another one and a half. Both halves are load-bearing: only
+waiting would pass on a state that flickered through `waiting` on its way
+somewhere else, which is a thing the detector can do and is not what a person
+reading the sidebar would call working.
+
+Mutation, with the `\a` taken out of the line the session prints so no bell
+ever rings: red, as it has to be. The new message earns its keep there too —
+`reads as "working" ... (it reached "working" first)` separates "never got
+there" from "got there and left", and those are two different places to go
+looking. The old message said the same six words for both.
+
+Then confirmed against the condition that broke it rather than against an idle
+machine: `restart-check` and `render-check` together, 0 FAIL each.
