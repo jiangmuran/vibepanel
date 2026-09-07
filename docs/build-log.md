@@ -20018,3 +20018,56 @@ by the thing meant to exercise it. Given cadences that are not whole seconds
 (0.7 and 1.1) it alternates continuously, which is what was reported. A second
 run of the same check counted 18 rather than 10; the number is a function of
 how the two phases drift past each other, and only "zero" is a stable one.
+
+### Clicking a session sent two megabytes, every time
+
+`Live.Subscribe` returns `ring.Snapshot()` — the whole ring — and
+`DefaultRingSize` was 2 MiB. Three facts turn that into a click cost rather
+than a memory one:
+
+- `Snapshot` has no other caller, and `Subscribe` is its only one.
+- `Attach` primes the ring from `capture-pane`, which on a pane holding tmux's
+  20,000 lines is ~1.6 MB measured at 130 columns. The buffer is therefore full
+  from the first tick; "up to 2 MiB" is "2 MiB".
+- The panel gives each session its own xterm (`key={current.id}` in `App.tsx`,
+  deliberately — one instance reused across sessions would bleed output between
+  them). Selecting a session tears the previous one down and replays the new one
+  from nothing, so this is paid on every switch, not once per page.
+
+Measured against the real binary, real tmux and a real browser, two agents in
+one project, throttled to 20 Mbit and 40 ms — an ordinary home link, and
+generous for a phone:
+
+```
+                       replay          on screen
+2 MiB     switch      1758 KiB          2577 ms
+          switch back 1754 KiB          2935 ms
+512 KiB   switch       512 KiB           836 ms
+          switch back  512 KiB           794 ms
+```
+
+On the loopback the same switch is under a second, which is why none of the
+browser checks could see it: they all run against 127.0.0.1.
+
+512 KiB is roughly two thousand lines of an agent's coloured output. tmux still
+holds the authoritative 20,000, and `CaptureLines` already reads them with a
+bound, so what was given up is browser-side scrollback that was being paid for
+on every click and read almost never.
+
+**One number, not two.** A separate replay bound over a larger ring would have
+left memory nothing could reach, since `Snapshot` is the only reader. So the
+ring *is* the replay, and `TestTheReplayIsSmallEnoughToClickThrough` stands in
+front of it — not to forbid raising it, but because nothing about the name
+`DefaultRingSize` says that raising it is a latency change.
+
+### Measured and not taken
+
+`Attach` primes the ring with `CaptureHistory`, which is `capture-pane -S -`
+with no bound: 1,576,914 bytes in 118 ms for a full history, of which a 512 KiB
+ring keeps a third. `CaptureLines` exists and takes a bound, but it has no
+`-E -1`, so swapping to it would replay the visible screen twice — the thing
+that flag is there to prevent. A bounded `CaptureHistory` is a change to the
+`Backend` interface and therefore to the guest link as well, and it buys
+attach-time rather than click-time: the poller attaches every session in the
+background, so a person only meets this path by clicking a session in the
+seconds after a restart. Left alone, written down.

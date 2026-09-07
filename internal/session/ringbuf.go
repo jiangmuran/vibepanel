@@ -4,11 +4,40 @@ import "sync"
 
 // DefaultRingSize is how much recent output each session keeps for replay.
 //
-// 2 MiB holds far more than a screen: it is scrollback for a browser that
-// reconnects. Bigger buffers cost memory times the number of live sessions
-// (this user runs ~15), and tmux already keeps the authoritative 20k-line
-// history that the cold path reads with capture-pane.
-const DefaultRingSize = 2 << 20
+// This is not a memory budget. It is *the number of bytes a person waits for
+// every time they click a session*, because Snapshot is the only thing that
+// ever reads this buffer and the whole of it goes down the socket on every
+// subscribe -- and the panel resubscribes on every switch, since each session
+// gets its own xterm (see the `key={current.id}` in App.tsx).
+//
+// It was 2 MiB, and it fills straight away: Attach primes it from capture-pane,
+// which on a pane holding tmux's 20,000 lines is 1,576,914 bytes measured at
+// 130 columns. So "up to 2 MiB" was the whole of it on any session that had
+// been running a while. Measured against the real binary, real tmux and a real
+// browser -- two agents in one project, the browser throttled to 20 Mbit and
+// 40 ms, which is an ordinary home link and generous for a phone:
+//
+//	                       replay          on screen
+//	2 MiB     switch      1758 KiB          2577 ms
+//	          switch back 1754 KiB          2935 ms
+//	512 KiB   switch       512 KiB           836 ms
+//	          switch back  512 KiB           794 ms
+//
+// That is the reported 「点进一个session要加载很久」. On the loopback the same
+// switch is under a second, which is why every browser check here missed it:
+// they all run against 127.0.0.1.
+//
+// 512 KiB is around two thousand lines of an agent's coloured output: far past
+// a screen, and past what anybody scrolls back through in a browser. tmux
+// still holds the authoritative 20,000 lines, and CaptureLines already reads
+// them with a bound, so nothing is lost permanently -- what is lost is
+// scrollback that was being paid for on every click and read almost never.
+//
+// One number rather than a separate replay bound, deliberately: Snapshot has
+// no other caller, so a ring larger than what is replayed would be memory
+// nothing can reach. Raising this again is raising the click cost; that is the
+// trade, and it is the only one this constant makes.
+const DefaultRingSize = 512 << 10
 
 // RingBuffer keeps the last N bytes a session produced, so a browser that
 // connects — or reconnects — sees what it missed instead of a blank terminal.
