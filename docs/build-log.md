@@ -20223,3 +20223,44 @@ cases, and `api.browse()` takes an optional argument rather than defaulting to
 rather than that it was accepted. Accepting a typed path never needed the
 picker to work, so the old assertion would have passed against the bug.
 
+
+## A fixture that the server had been refusing for weeks
+
+Merging the three branches meant running the checks they touched, and
+`scale-check` failed on something none of them had changed: `expected eight
+terminal tabs to test the strip with, saw 0`. Its own comment predicted this —
+「a fixture that did not build the state is not a check」 — and the cause was a
+rename this log already records. `parent_session_id` became the `scratch`
+column in migration v20, and three check scripts kept sending
+`parentSessionId`.
+
+The interesting part is what the server did about it. `decode` calls
+`DisallowUnknownFields`, so every one of those requests was refused with a 400.
+The sessions were never created. Nothing was silently accepted and nothing was
+silently wrong on the server — the refusal was correct, arrived immediately,
+and went nowhere, because `authed` returns the response and these scripts read
+it only when they want a value out of it.
+
+`authed` already threw on 404 and 405, with a comment saying that whatever the
+check concluded from such an answer was meaningless. 400 is the same failure
+wearing a different number, and it is the one that took weeks to find:
+404 means the route is gone, which someone notices, while 400 from strict
+decoding means *this exact request is not the one the server accepts*, which is
+precisely the shape of a fixture that has stopped building its state. It throws
+on 400 now, in all four scripts that have the helper.
+
+Two of the five sites were in `render-check`, which had been passing. It was
+not checking what it said it was: `!x.parentSessionId` is true of every session
+once the field is gone, so the mobile step picked an arbitrary session rather
+than a non-scratch one, and the deleted-project step built a project with no
+scratch terminal in it.
+
+The RSS ceiling in the same file was wrong for a different reason and had been
+since it was written. It read as a guard on the replay buffer — 3 MiB against a
+2 MiB ring — but the ring is allocated as it fills and these sessions are idle
+shells, so their buffers hold nothing and the number barely moved when the ring
+went to 512 KiB. It never measured what its comment claimed. It is a leak
+tripwire, so it now says so and sits where a real run puts it: 0.54 MiB per
+session measured, 1.5 MiB the ceiling. The buffer's own guard is
+`TestTheReplayIsSmallEnoughToClickThrough`, which measures it as the latency
+budget it actually is.

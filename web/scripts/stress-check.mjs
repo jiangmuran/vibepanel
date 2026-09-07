@@ -110,6 +110,22 @@ const authed = async (path, init = {}) => {
       'route and method, so whatever this check concluded from the answer was meaningless',
     )
   }
+  // 400 is the same failure wearing a different number, and it took longer to
+  // find. `decode` calls DisallowUnknownFields, so a request naming a field the
+  // server has renamed is refused outright -- and these scripts read the
+  // response only when they want a value out of it, so the refusal went
+  // nowhere. `parentSessionId` became `scratch` and three scripts kept sending
+  // the old name for weeks: the sessions were never created, the fixtures were
+  // not the state being checked, and everything downstream of them passed
+  // against nothing. Only scale-check noticed, and only because it counted the
+  // tabs it had asked for. Nothing here sends a bad body on purpose.
+  if (res.status === 400) {
+    throw new Error(
+      `${init.method ?? 'GET'} ${path} -> 400 ${await res.text()}; the server refused ` +
+      'this request, so the state this was building does not exist and nothing ' +
+      'measured after it means anything',
+    )
+  }
   return res
 }
 

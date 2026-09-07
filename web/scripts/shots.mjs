@@ -286,7 +286,7 @@ try {
   await mk(proj.id, ['sh', '-c', 'exec sh'], 'logs').then(() => {})
   await authed('/api/sessions', {
     method: 'POST',
-    body: JSON.stringify({ projectId: proj.id, parentSessionId: waiting.id, command: ['sh', '-c', `cat ${logFile}; exec sleep 3000`], title: 'logs' }),
+    body: JSON.stringify({ projectId: proj.id, scratch: true, nearSessionId: waiting.id, command: ['sh', '-c', `cat ${logFile}; exec sleep 3000`], title: 'logs' }),
   })
   await authed(`/api/projects/${proj.id}/notes`, {
     method: 'PUT',

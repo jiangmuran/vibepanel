@@ -130,6 +130,22 @@ const authed = async (path, init = {}) => {
       'route and method, so whatever this check concluded from the answer was meaningless',
     )
   }
+  // 400 is the same failure wearing a different number, and it took longer to
+  // find. `decode` calls DisallowUnknownFields, so a request naming a field the
+  // server has renamed is refused outright -- and these scripts read the
+  // response only when they want a value out of it, so the refusal went
+  // nowhere. `parentSessionId` became `scratch` and three scripts kept sending
+  // the old name for weeks: the sessions were never created, the fixtures were
+  // not the state being checked, and everything downstream of them passed
+  // against nothing. Only scale-check noticed, and only because it counted the
+  // tabs it had asked for. Nothing here sends a bad body on purpose.
+  if (res.status === 400) {
+    throw new Error(
+      `${init.method ?? 'GET'} ${path} -> 400 ${await res.text()}; the server refused ` +
+      'this request, so the state this was building does not exist and nothing ' +
+      'measured after it means anything',
+    )
+  }
   return res
 }
 
@@ -297,13 +313,22 @@ try {
     `server RSS ${baseline.toFixed(0)} MiB → ${loaded.toFixed(0)} MiB ` +
     `(${((loaded - baseline) / COUNT).toFixed(1)} MiB per session)`,
   )
-  // The replay buffer is 512 KiB per session, but it is allocated as it fills,
-  // so idle sessions should cost far less than that.
+  // What an idle session costs the server, which is not the same question as
+  // how big the replay buffer is.
   //
-  // The ceiling below is 3 MiB and predates the buffer shrinking from 2 MiB to
-  // 512 KiB, so it no longer sits just above the expected cost: a regression
-  // that put the old buffer back would pass. Left as it is rather than guessed
-  // at, because the right number is the one this check reports on a real run.
+  // The ceiling used to be 3 MiB with a comment about the 2 MiB buffer, and
+  // that reasoning never held: the ring is allocated as it fills, these
+  // sessions are idle shells, and their buffers hold almost nothing -- so this
+  // number barely moved when the buffer went from 2 MiB to 512 KiB, and a
+  // regression putting the old one back would pass here either way. The guard
+  // on the buffer's size is TestTheReplayIsSmallEnoughToClickThrough, which
+  // measures it as what it is, a latency budget.
+  //
+  // So this is a leak tripwire and nothing else. Measured on a real run at
+  // COUNT=24: 84 MiB → 97 MiB, 0.54 MiB per session. 1.5 MiB is a little under
+  // three times that -- room for Go's heap to sit wherever the collector
+  // leaves it, and far below what one retained snapshot or one un-freed pump
+  // per session would cost.
   //
   // The validity check comes first for the same reason as above: rssMiB returns
   // NaN when /proc is unavailable, and every comparison against NaN is false,
@@ -311,10 +336,11 @@ try {
   if (!Number.isFinite(baseline) || !Number.isFinite(loaded)) {
     note('WARN', 'scale',
       'could not read the server process memory, so the per-session cost was not checked')
-  } else if (loaded - baseline > COUNT * 3) {
+  } else if (loaded - baseline > COUNT * 1.5) {
     note('FAIL', 'scale',
-      `${COUNT} idle sessions cost ${(loaded - baseline).toFixed(0)} MiB, more than the ` +
-      '512 KiB replay buffer each; something is retaining more than it should')
+      `${COUNT} idle sessions cost ${(loaded - baseline).toFixed(0)} MiB, ` +
+      `${((loaded - baseline) / COUNT).toFixed(1)} MiB each against 0.54 measured; ` +
+      'something is retaining per session that did not use to')
   }
 
   browser = await chromium.launch({ headless: true })
@@ -502,13 +528,14 @@ try {
       body: JSON.stringify({ path: dir, name: `extra-project-${i}` }),
     })
   }
-  const first = snapshot.sessions.find((x) => !x.parentSessionId)
+  const first = snapshot.sessions.find((x) => !x.scratch)
   for (let i = 0; i < 8; i++) {
     await authed('/api/sessions', {
       method: 'POST',
       body: JSON.stringify({
         projectId: first.projectId,
-        parentSessionId: first.id,
+        scratch: true,
+        nearSessionId: first.id,
         command: ['sh', '-c', 'exec sh'],
       }),
     })
