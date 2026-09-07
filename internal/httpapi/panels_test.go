@@ -1,8 +1,13 @@
 package httpapi
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -74,4 +79,101 @@ func TestUniqueNamesWithoutAnExtension(t *testing.T) {
 	if filepath.Base(target) != "notes-1" {
 		t.Errorf("landed at %q, want notes-1", filepath.Base(target))
 	}
+}
+
+// The picker opens at home and can leave it.
+//
+// It could not. The browse root *was* the home directory, so containment and
+// "where to start" were one decision, and a panel running as root listed
+// /root and nothing else -- 「为什么我的只能识别root文件夹下的文件和文件夹，我
+// 无法打开根目录」. Every repository on a server lives somewhere else.
+//
+// The two are separate now, and the seam is the query parameter: absent means
+// home, present-and-empty means the filesystem root. Get() answers "" to both,
+// so the handler has to ask Has(), and getting that wrong sends everyone who
+// clicked the first crumb back to their home directory instead of to "/".
+func TestBrowseOpensAtHomeAndCanLeaveIt(t *testing.T) {
+	home := t.TempDir()
+	// Through EvalSymlinks because browse.Dirs reports its path relative to a
+	// resolved root, and /tmp is a symlink on more than one platform.
+	realHome, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(realHome, "projects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", realHome)
+
+	// Somewhere outside home entirely, which is the case that used to be
+	// unreachable by anything but typing the path from memory.
+	elsewhere, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(elsewhere, "repo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := &Server{}
+	get := func(t *testing.T, url string) map[string]any {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		srv.handleBrowse(rec, httptest.NewRequest(http.MethodGet, url, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d: %s", url, rec.Code, rec.Body.String())
+		}
+		var out map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("GET %s: %v", url, err)
+		}
+		return out
+	}
+	names := func(body map[string]any) []string {
+		var out []string
+		entries, _ := body["entries"].([]any)
+		for _, e := range entries {
+			if m, ok := e.(map[string]any); ok {
+				out = append(out, m["name"].(string))
+			}
+		}
+		return out
+	}
+
+	t.Run("no path opens at home", func(t *testing.T) {
+		body := get(t, "/api/browse")
+		if body["root"] != "/" {
+			t.Errorf("root = %v, want /: the picker is rooted at the filesystem now", body["root"])
+		}
+		if body["home"] != realHome {
+			t.Errorf("home = %v, want %q", body["home"], realHome)
+		}
+		// Relative to "/", which is what every path on this wire is.
+		if want := strings.TrimPrefix(realHome, "/"); body["path"] != want {
+			t.Errorf("path = %v, want %q", body["path"], want)
+		}
+		if got := names(body); len(got) != 1 || got[0] != "projects" {
+			t.Errorf("listed %v, want the home directory's contents", got)
+		}
+	})
+
+	t.Run("an empty path is the filesystem root", func(t *testing.T) {
+		body := get(t, "/api/browse?path=")
+		if body["path"] != "" {
+			t.Errorf("path = %v, want the empty path: ?path= is / and not home", body["path"])
+		}
+		if body["parent"] != nil {
+			t.Errorf("the root reports a parent: %v", body["parent"])
+		}
+		if len(names(body)) == 0 {
+			t.Error("nothing under /, which cannot be true on any machine this runs on")
+		}
+	})
+
+	t.Run("an absolute path outside home is listed", func(t *testing.T) {
+		body := get(t, "/api/browse?path="+url.QueryEscape(elsewhere))
+		if got := names(body); len(got) != 1 || got[0] != "repo" {
+			t.Errorf("listed %v, want the contents of %s", got, elsewhere)
+		}
+	})
 }

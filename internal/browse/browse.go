@@ -103,7 +103,15 @@ func within(root, path string) bool {
 	if path == root {
 		return true
 	}
-	return strings.HasPrefix(path, root+string(os.PathSeparator))
+	// The separator is what stops /home/u from containing /home/user2, so it
+	// has to be there -- but appending it blindly makes the filesystem root
+	// "//", which no path starts with. Rooting the picker at "/" then refused
+	// every path under it, which is every path there is.
+	prefix := root
+	if !strings.HasSuffix(prefix, string(os.PathSeparator)) {
+		prefix += string(os.PathSeparator)
+	}
+	return strings.HasPrefix(path, prefix)
 }
 
 // List returns the contents of a directory under root.

@@ -414,8 +414,18 @@ export const api = {
         `?v=${encodeURIComponent(viewer)}&w=${width}&h=${height}`,
     ),
 
-  browse: (path = '') =>
-    request<DirListing>(`/api/browse?path=${encodeURIComponent(path)}`),
+  /**
+   * List directories. No argument means home; `''` means the filesystem root.
+   *
+   * The two are different requests and the difference is the parameter being
+   * there at all, so the default cannot be `''`: that is the path the first
+   * crumb carries, and defaulting to it would send everyone who clicked `/`
+   * back to their home directory.
+   */
+  browse: (path?: string) =>
+    request<DirListing>(
+      path === undefined ? '/api/browse' : `/api/browse?path=${encodeURIComponent(path)}`,
+    ),
 
   mkdir: (path: string, name: string) =>
     request<{ path: string; abs: string }>('/api/browse/mkdir', {

@@ -488,8 +488,18 @@ export interface FileListing {
 
 /** A directory listing for the "where should this project live" picker. */
 export interface DirListing {
-  /** The absolute path the picker is rooted at, shown so "~" means something. */
+  /** The absolute path the picker is rooted at: the filesystem, so that
+   *  nothing on the machine is out of its reach. Still on the wire because
+   *  every other path in here is relative to it. */
   root: string
+  /**
+   * Where the picker opens, and what a typed `~` expands to.
+   *
+   * A separate field from `root`, which it used to be the same as -- and that
+   * is the whole bug: making home the root meant a project anywhere else could
+   * not be browsed to at all.
+   */
+  home: string
   path: string
   parent: string | null
   entries: FileEntry[]

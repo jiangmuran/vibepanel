@@ -214,16 +214,14 @@ try {
   if ((await page.locator('[data-testid="dir-picker"]').count()) === 0) {
     note('FAIL', 'project', 'clicking "Add project" opened no directory picker')
   } else {
-    // A path that does not exist, typed into the field, which is the way out
-    // of HOME and the only way to reach a bad path at all now.
+    // A path that does not exist, typed into the field.
     //
     // One field, at the top, with the breadcrumbs inside it to the left of the
     // caret: what you type decides which of the two things it is. A leading /
-    // or ~ is a place -- Enter goes there when it is under HOME and takes it as
-    // it is when it is not, which is this case -- and anything else filters
-    // what is on screen. The refusal lands under that same field rather than in
-    // a strip above the buttons, which is why the assertion below reads the
-    // body rather than one element.
+    // or ~ is a place and Enter goes there; anything else filters what is on
+    // screen. The refusal lands under that same field rather than in a strip
+    // above the buttons, which is why the assertion below reads the body
+    // rather than one element.
     const manual = page.locator('[data-testid="dir-search"]')
     await manual.fill(join(DATA, 'not-created-yet'))
     await manual.press('Enter')
@@ -236,10 +234,37 @@ try {
     }
     await page.screenshot({ path: join(SHOTS, 'bad-path.png') })
 
+    // A real directory, and deliberately not under HOME: DATA and FAKE_HOME are
+    // two different temporary directories.
+    //
+    // This is the case the picker could not do anything with for a while. The
+    // listing was rooted at the home directory, so a repository on /srv, /opt
+    // or a mounted volume -- which on a server is where repositories are -- was
+    // somewhere the control whose whole job is reaching a directory could not
+    // reach. 「为什么我的只能识别root文件夹下的文件和文件夹」. Enter goes there
+    // now, and the check that it *arrived* is the check that the fix is real:
+    // accepting a typed path never needed the picker to work.
     const real = join(DATA, 'work')
     mkdirSync(real, { recursive: true })
     await manual.fill(real)
     await manual.press('Enter')
+    await sleep(1500)
+    const crumbLabels = await page.locator('[data-testid="dir-crumbs"] button').allInnerTexts()
+    if (crumbLabels[0] !== '/') {
+      note('FAIL', 'project',
+        `the crumb bar starts at ${JSON.stringify(crumbLabels[0])} rather than "/", so there is ` +
+        'no way to click up out of wherever the picker opened')
+    }
+    if (!crumbLabels.includes('work')) {
+      note('FAIL', 'project',
+        `typing a directory outside HOME did not go there: the crumbs read ${crumbLabels.join(' / ')}. ` +
+        'A project outside the home directory is the normal case on a server')
+    }
+    await page.screenshot({ path: join(SHOTS, 'outside-home.png') })
+
+    // The field navigates and the button takes. Two controls, two jobs, both
+    // labelled -- the button used to be a second Enter for paths under HOME.
+    await page.locator('[data-testid="dir-confirm"]').click()
     await sleep(2500)
     if ((await page.locator('[data-testid="project-group"]').count()) === 0) {
       note('FAIL', 'project', 'a real directory was accepted but no project appeared in the sidebar')
