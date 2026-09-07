@@ -20368,3 +20368,53 @@ has no pid in it and so could never match the sweeper at all. Nothing had ever
 swept board-check, and a stale one was sitting in `/tmp` while this was being
 written. The prefix that had no leaks to clean up was the one whose leaks
 nothing could clean up.
+
+## The one door on the sign-in surface that nothing slowed down
+
+「给登录接口限速一下」. `/api/auth/login` already was, thoroughly, and the
+reading it takes to say so is worth writing down because three of the four
+things guarding it are not where you would look for them.
+
+There is `auth.Throttle`: exponential backoff per source, 500 ms doubling to a
+30 s cap, forgotten after fifteen minutes, and keyed on a /64 for IPv6 because
+the smallest allocation anybody is handed is a /64 and keying on the full
+address is keying on nothing. There is `passwordSlots`, four at a time, because
+one argon2id derivation holds 64 MiB and a hundred connections would otherwise
+cost this machine six gigabytes. There is `auth.Allowed` in front of both. And
+`Throttle.Fail` is marked *before* the derivation rather than after it, which
+is the difference between a rate limit and a check-then-act that a burst walks
+straight through — so every attempt counts, not only the ones that turn out to
+be wrong. That last one is what makes it a rate limit rather than a
+failure-counter.
+
+The passkey half is covered by a different mechanism and it holds up:
+`login/begin` allocates, so it is bounded by `maxChallenges`, measured at
+70,238 unauthenticated requests in 25 seconds before the cap existed.
+`login/finish` goes through the throttle.
+
+Which left `/api/auth/setup`, whose own comment said it plainly: "Reachable
+only while no account exists, which is exactly when nobody is watching the
+panel yet. Unauthenticated and unthrottled." The first sentence is the argument
+for the throttle. A panel with an owner has somebody who reads its audit log
+and notices; a panel in the minutes between `vibepanel serve` and the first
+sign-in has nobody at all, and what is being guessed at is not one account's
+password but the right to create the first one.
+
+Guessing the token is not the threat and this is not claimed as a fix for it —
+it is 32 bytes of crypto/rand. What the throttle buys is that trying costs
+something, and that the audit cooldown stops being the only thing between a
+stranger and an unbounded stream of requests at the endpoint that hands out
+ownership.
+
+`Succeed` on the far side of the compare is the half that is easy to leave out
+and the half this file argues for hardest: everything past the token belongs to
+the owner, so a username the rules reject or a password too short is theirs to
+correct, and the mark left by the truncated paste they made first must not be
+what makes them wait for it.
+
+Three mutations, and the third one is why this entry exists. Removing the
+throttle check goes red; not marking `Fail` goes red; deleting `Succeed` **did
+not**. The test written for it asserted a status code, and a status code cannot
+tell "the counter was cleared" from "the window happened to have elapsed" —
+both are a 201. It asserts on `Throttle.Failures` now, which is the accessor
+whose doc comment already said it was for tests, and it goes red.

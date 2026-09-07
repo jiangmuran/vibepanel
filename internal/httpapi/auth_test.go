@@ -896,3 +896,87 @@ func TestTheChallengeCookieIsSecureWhenTheBrowserIs(t *testing.T) {
 		t.Error("X-Forwarded-Proto was believed from an address that is not a configured proxy")
 	}
 }
+
+// TestGuessingTheSetupTokenIsThrottled.
+//
+// This endpoint hands out ownership of the panel, and it used to be the one
+// credential check on the whole surface that nothing slowed down. Its comment
+// said so and gave the reason as "reachable only while no account exists,
+// which is exactly when nobody is watching the panel yet" -- which is the
+// argument for the throttle rather than against it. A panel with an owner has
+// somebody who reads its audit log; a panel in the minutes between `serve` and
+// the first sign-in has nobody at all.
+func TestGuessingTheSetupTokenIsThrottled(t *testing.T) {
+	ts, _ := newUnconfiguredServer(t)
+	client := anonymousClient(t)
+
+	attempt := func(token string) int {
+		t.Helper()
+		res, err := client.Post(ts.URL+"/api/auth/setup", "application/json",
+			strings.NewReader(`{"token":"`+token+`","username":"squatter","password":"a sufficiently long password"}`))
+		if err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		defer res.Body.Close() //nolint:errcheck // test
+		return res.StatusCode
+	}
+
+	if code := attempt("wrong-one"); code != http.StatusUnauthorized {
+		t.Fatalf("first wrong token = %d, want 401", code)
+	}
+	if code := attempt("wrong-two"); code != http.StatusTooManyRequests {
+		t.Errorf("second wrong token = %d, want 429; guessing at the door that "+
+			"hands out ownership costs nothing", code)
+	}
+}
+
+// TestTheRightSetupTokenClearsWhatGuessingLeftBehind.
+//
+// Everything past the token compare belongs to the owner: they hold the token.
+// Somebody who pasted a truncated one first, then the whole one, has a failure
+// on the counter that nothing else will clear until Forget -- so the next
+// thing they get wrong, a username this rejects or a password too short,
+// starts from a doubled delay instead of the base one. The throttle would be
+// working against the one person it exists to protect.
+//
+// Asserted on the counter rather than on a status code, because a status code
+// cannot tell "cleared" apart from "the window happened to have elapsed": the
+// first version of this test passed with Succeed deleted, which is how the
+// line came to be checked at all.
+func TestTheRightSetupTokenClearsWhatGuessingLeftBehind(t *testing.T) {
+	ts, srv := newUnconfiguredServer(t)
+	client := anonymousClient(t)
+
+	post := func(body string) int {
+		t.Helper()
+		res, err := client.Post(ts.URL+"/api/auth/setup", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		defer res.Body.Close() //nolint:errcheck // test
+		return res.StatusCode
+	}
+	failures := func() int { return srv.Auth.Throttle.Failures("127.0.0.1") }
+
+	if code := post(`{"token":"truncated","username":"owner","password":"a sufficiently long password"}`); code != http.StatusUnauthorized {
+		t.Fatalf("a wrong token = %d, want 401", code)
+	}
+	if n := failures(); n != 1 {
+		t.Fatalf("after one wrong token the counter is %d, want 1", n)
+	}
+
+	// Past the base delay, or the next request never reaches the compare.
+	// Throttle.Base is 500ms and this is the first failure, so 500ms is the
+	// whole of the wait.
+	time.Sleep(700 * time.Millisecond)
+
+	// The real token, and a password the rules refuse: the request fails, and
+	// the *source* has still proved who it is.
+	if code := post(`{"token":"test-setup-token","username":"owner","password":"short"}`); code != http.StatusBadRequest {
+		t.Fatalf("the right token with a short password = %d, want 400", code)
+	}
+	if n := failures(); n != 0 {
+		t.Errorf("the right token left %d failures on the counter, want 0; the owner "+
+			"now waits twice as long for their own next typo", n)
+	}
+}

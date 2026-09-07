@@ -42,6 +42,35 @@ import (
 // database, and returns it behind a real HTTP listener.
 func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 	t.Helper()
+	ts, srv := newUnconfiguredServer(t)
+
+	// Every endpoint that matters requires a session, so the tests sign in
+	// once through the real setup flow rather than reaching past it.
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("cookiejar: %v", err)
+	}
+	ts.Client().Jar = jar
+	res, err := ts.Client().Post(ts.URL+"/api/auth/setup", "application/json",
+		strings.NewReader(`{"token":"test-setup-token","username":"tester","password":"a sufficiently long password"}`))
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(res.Body)
+		t.Fatalf("setup: %s: %s", res.Status, b)
+	}
+	return ts, srv
+}
+
+// newUnconfiguredServer is the same server with nobody owning it yet.
+//
+// The split exists because /api/auth/setup is only reachable while
+// CountUsers() is zero, so a test about that door cannot use a server that has
+// already walked through it.
+func newUnconfiguredServer(t *testing.T) (*httptest.Server, *Server) {
+	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
 	}
@@ -104,24 +133,6 @@ func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 	mgr.OnSignals = srv.HandleSignals
 	ts := httptest.NewServer(srv.Routes())
 	t.Cleanup(ts.Close)
-
-	// Every endpoint that matters requires a session, so the tests sign in
-	// once through the real setup flow rather than reaching past it.
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		t.Fatalf("cookiejar: %v", err)
-	}
-	ts.Client().Jar = jar
-	res, err := ts.Client().Post(ts.URL+"/api/auth/setup", "application/json",
-		strings.NewReader(`{"token":"test-setup-token","username":"tester","password":"a sufficiently long password"}`))
-	if err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusCreated {
-		b, _ := io.ReadAll(res.Body)
-		t.Fatalf("setup: %s: %s", res.Status, b)
-	}
 	return ts, srv
 }
 

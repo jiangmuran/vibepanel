@@ -410,6 +410,27 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	ip := s.clientIP(r)
 
+	// The same throttle as sign-in, and this endpoint has the better claim to
+	// it of the two.
+	//
+	// It used to say it was unthrottled because it is "reachable only while no
+	// account exists, which is exactly when nobody is watching the panel yet".
+	// That is the argument for throttling it. A panel with an owner has
+	// somebody who reads its audit log and notices; a panel in the minutes
+	// between `vibepanel serve` and the first sign-in has nobody at all, and
+	// what is being guessed at is not a password on one account but the right
+	// to create the first one.
+	//
+	// Guessing the token itself is not the threat -- it is 32 bytes of
+	// crypto/rand and this would still be running when the sun went out. What
+	// the throttle buys is that the cost of trying is not zero: a source that
+	// guesses wrong meets 500 ms, then a second, then thirty, and the audit
+	// cooldown stops being the only thing standing between a stranger and an
+	// unbounded stream of requests at an endpoint that hands out ownership.
+	if s.throttled(w, ip) {
+		return
+	}
+
 	n, err := s.DB.CountUsers(ctx)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -431,12 +452,23 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(req.Token), []byte(s.Auth.SetupToken)) != 1 {
-		// Reachable only while no account exists, which is exactly when nobody
-		// is watching the panel yet. Unauthenticated and unthrottled, like the
-		// allowlist refusal, so it is recorded the same way.
+		if s.Auth != nil {
+			s.Auth.Throttle.Fail(ip, time.Now())
+		}
+		// Recorded through auditFromOutside, like the allowlist refusal: this
+		// is a stranger, and a stranger must not be able to choose how many
+		// rows the audit table grows by.
 		s.auditFromOutside(ctx, "setup.rejected", req.Username, ip, "bad setup token")
 		writeErr(w, http.StatusUnauthorized, "bad setup token")
 		return
+	}
+	// Cleared here rather than at the end, because everything below this line
+	// is the owner: they hold the token. A rejected username or a password
+	// that is too short is theirs to correct, and making them wait thirty
+	// seconds to correct it would be the throttle working against the only
+	// person it exists to protect.
+	if s.Auth != nil {
+		s.Auth.Throttle.Succeed(ip)
 	}
 	if err := validateCredentials(req.Username, req.Password); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
