@@ -192,6 +192,13 @@ Each of these exists because the alternative broke something real.
   **Do not edit tracked source while a check is running.** `assertFreshBuild`
   refuses rather than measuring the previous build, which is right and is also
   a wasted twenty minutes.
+
+  **A frontend change needs `make build` before it is committed.** `make check`
+  runs `tsc -b` and eslint and vitest, none of which write
+  `internal/webui/dist` — so a commit made after a green `check` carries the
+  *previous* bundle, and every browser check still passes because they all
+  rebuild first. `head-check` is the only thing that looks, and it looks
+  nineteen minutes into `verify`.
 - **Every one of those builds from the working tree, so none of them can tell
   you whether what you *committed* works.** They were not the same thing: HEAD
   did not compile for some time, a caller committed with the method it calls
