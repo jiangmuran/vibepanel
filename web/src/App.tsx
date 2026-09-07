@@ -1416,6 +1416,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
       {restoreOpen && restorable.length > 0 && (
         <RestoreDialog
           sessions={restorable}
+          allSessions={state.sessions}
           projects={state.projects}
           profiles={profiles}
           labels={labels}

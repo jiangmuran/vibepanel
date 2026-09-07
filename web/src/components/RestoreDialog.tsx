@@ -5,6 +5,7 @@ import type { LaunchProfile, Project, Session } from '../protocol/wire'
 import { api } from '../protocol/api'
 import { projectLabel, sessionLabel } from './label'
 import { profileLabel, profileOf } from './profiles'
+import { restoreLaunch } from './resume'
 import { safeText } from './text'
 import { shellQuote } from '../shell'
 import { t, useLang } from '../i18n'
@@ -17,13 +18,22 @@ import { t, useLang } from '../i18n'
  * directory, so the thing the panel is about to do to somebody's machine is
  * readable rather than implied.
  *
- * It is also where the honest half lives. The scrollback comes back and the
- * command comes back; the agent does not. The warning is not dismissible and
- * is not a footnote — a restore that reads as "your work is back" is worse than
- * no restore, because somebody believes it.
+ * The argv it prints is the one that will run, which since agents began
+ * resuming is not always the one that was recorded: `claude` comes back as
+ * `claude --continue`, and a row that says otherwise would be this dialog
+ * failing at its only job. resume.ts holds that rule and says why it is
+ * written twice.
+ *
+ * It is also where the honest half lives, and the honest half got smaller
+ * rather than disappearing. The conversation comes back for the agents that
+ * keep one; the process does not, and neither does anything it had not
+ * finished. The warning is not dismissible and is not a footnote — a restore
+ * that reads as "your work is back" is worse than no restore, because somebody
+ * believes it.
  */
 export function RestoreDialog({
   sessions,
+  allSessions,
   projects,
   profiles,
   labels,
@@ -31,6 +41,14 @@ export function RestoreDialog({
   onDone,
 }: {
   sessions: Session[]
+  /**
+   * Every session the panel has, which is not the same list as `sessions`.
+   *
+   * Two agents resuming out of one directory would take the same conversation,
+   * and a session still *running* there is the one holding it. The claimants
+   * are therefore every session, not the restorable ones on show. resume.ts.
+   */
+  allSessions: Session[]
   projects: Project[]
   profiles: LaunchProfile[]
   labels: Map<string, string>
@@ -46,6 +64,11 @@ export function RestoreDialog({
     const p = projects.find((x) => x.id === id)
     return p ? projectLabel(p) : ''
   }
+
+  // Not the ticked ones, and not only the ones on show: unticking a row today
+  // does not stop it being restored tomorrow, and a session still running in
+  // that directory is already holding the conversation. resume.ts.
+  const candidates = allSessions.map((s) => ({ launchCommand: s.launchCommand, cwd: s.cwd }))
 
   const toggle = (id: string) => {
     setChosen((prev) => {
@@ -122,6 +145,7 @@ export function RestoreDialog({
         <div className="min-h-0 flex-1 overflow-y-auto">
           {sessions.map((s) => {
             const failure = failures.find((f) => f.id === s.id)
+            const plan = restoreLaunch({ launchCommand: s.launchCommand, cwd: s.cwd }, candidates)
             return (
               <div
                 key={s.id}
@@ -147,11 +171,11 @@ export function RestoreDialog({
                   {/* The whole point of the dialog: the argv, quoted the way a
                       shell would read it, and the directory it starts in. */}
                   <div className="mt-1 min-w-0 break-all font-mono text-vp-sm text-ink-2">
-                    {s.launchCommand.length > 0 ? (
+                    {plan ? (
                       <>
                         {t('restore.willRun')}{' '}
                         <span className="text-ink">
-                          {s.launchCommand.map((a) => shellQuote(a)).join(' ')}
+                          {plan.argv.map((a) => shellQuote(a)).join(' ')}
                         </span>
                       </>
                     ) : s.launchRecorded ? (
@@ -160,6 +184,21 @@ export function RestoreDialog({
                       t('restore.willRunShell')
                     )}
                   </div>
+                  {/* Which of the two things the command above does, in words.
+                      The flag is readable to somebody who knows the agent and
+                      invisible to everybody else, and this is the line the
+                      whole restore is judged on. */}
+                  {plan && (
+                    <div
+                      className="mt-0.5 text-vp-sm"
+                      data-testid="restore-resume"
+                      style={{ color: plan.resumed ? 'var(--vp-state-done)' : undefined }}
+                    >
+                      <span className={plan.resumed ? '' : 'text-ink-2'}>
+                        {plan.resumed ? t('restore.willResume') : t('restore.willStartCold')}
+                      </span>
+                    </div>
+                  )}
                   {/* The environment comes back from the profile rather than
                       from the row, so a profile deleted since is the one thing
                       a restore silently does less of. The session keeps the id,

@@ -836,12 +836,24 @@ const DICT = {
   // at all, because somebody believes it.
   'restore.title': { zh: '有会话没能活过这次重启', en: 'Sessions did not survive the restart' },
   'restore.body': {
-    zh: '{n} 个会话没能活过重启。可以按原来的命令和目录重建，并放回重启前的回滚记录。',
-    en: '{n} sessions did not survive the restart. They can be rebuilt with the command and directory they had, with the scrollback from before.',
+    zh: '{n} 个会话没能活过重启。可以按原来的命令和目录重建，放回回滚记录，agent 也会接着上一段对话。',
+    en: '{n} sessions did not survive the restart. They can be rebuilt with the command, the directory and the scrollback they had, and the agent picks its conversation back up.',
   },
+  // Rewritten when restoring learned to resume. It used to say the agent
+  // remembers nothing, which was true of every session then and is now true of
+  // some of them -- and a warning that overstates is one people stop reading.
+  // Each row says which of the two it is; this says what is true of both.
   'restore.warning': {
-    zh: '进程回不来。重跑命令启动的是一个全新的 agent，不记得之前的任何东西。',
-    en: 'The processes cannot come back. Re-running the command starts a new agent that remembers none of it.',
+    zh: '进程回不来，没做完的事情也不会接着做。',
+    en: 'The processes cannot come back, and nothing half-done comes back with them.',
+  },
+  'restore.willResume': {
+    zh: '接着这个目录里最近的一段对话',
+    en: 'picks up the most recent conversation in this directory',
+  },
+  'restore.willStartCold': {
+    zh: '全新开始，不记得之前的对话',
+    en: 'starts fresh, with no memory of the conversation',
   },
   'restore.open': { zh: '看看要恢复哪些', en: 'Choose what to restore' },
   'restore.later': { zh: '待会儿', en: 'Later' },

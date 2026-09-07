@@ -34,20 +34,29 @@ import (
 //   - the command, re-executed — see store.Session.LaunchCommand for why the
 //     column the panel already had could not do this;
 //   - the scrollback, as far back as scrollbackLines, put into the new pane's
-//     history so it is there to read and to scroll.
+//     history so it is there to read and to scroll;
+//   - the conversation, for the agents that keep one on disk. This list said
+//     it could not be, and that was two claims in a coat: the process's memory
+//     went with the power, and the provider's transcript did not. Both agents
+//     the panel launches will pick the most recent conversation in a directory
+//     back up when asked, and a restore already puts the session back in its
+//     own directory, so asking is all it takes. internal/session/resume.go is
+//     the whole of it.
 //
 // What is not restorable, at all, by anything:
 //
-//   - the process, and therefore the agent's context. An agent that was
-//     halfway through a refactor is gone. Re-running its command starts a new
-//     one that remembers nothing. There is no mechanism that could do
-//     otherwise: the state lived in a process's memory and in a provider's
-//     conversation, and neither survived the power going off.
+//   - the process. Its children, its unwritten buffers, the half-applied edit,
+//     the subagent that was running: gone, and no flag brings those back. An
+//     agent resumed mid-refactor comes back knowing what it was doing and not
+//     having done it.
 //
-// That second list is why the pane gets a banner and the row gets restoredAt.
-// A restore that silently starts a fresh agent under an old name, with the old
-// agent's output above it, is worse than no restore — somebody reads the screen
-// and believes the thing that wrote it is still there.
+// That second list is why the pane still gets a banner and the row still gets
+// restoredAt — and why the banner has two texts. A restore that silently starts
+// a fresh agent under an old name, with the old agent's output above it, is
+// worse than no restore, because somebody reads the screen and believes the
+// thing that wrote it is still there. A banner insisting the agent remembers
+// nothing when it has just resumed is the same error pointing the other way,
+// and it teaches people to scroll past the banner that matters.
 
 // scrollbackLines is how much of a pane's history is archived.
 //
@@ -132,7 +141,7 @@ exec "${SHELL:-/bin/sh}" -l
 // A reset first. The capture carries SGR sequences (`capture-pane -e`), and the
 // last line of it can leave the terminal bold, inverted or coloured; without
 // the reset the banner — and then the agent's first output — inherits it.
-func restoreBanner(capturedAt, restoredAt time.Time, hadScrollback, truncated bool) string {
+func restoreBanner(capturedAt, restoredAt time.Time, hadScrollback, truncated, resumed bool) string {
 	const rule = "────────────────────────────────────────────────────────────────────────"
 	var b strings.Builder
 	b.WriteString("\x1b[0m\r\n")
@@ -148,10 +157,25 @@ func restoreBanner(capturedAt, restoredAt time.Time, hadScrollback, truncated bo
 	}
 	// Bold via SGR, not asterisks. This is a terminal: `**new**` renders as
 	// four extra characters, which is what markdown habits do to a pane.
-	b.WriteString(fmt.Sprintf("  vibepanel 于 %s 重建了这个会话。下面是\x1b[1m新进程\x1b[0m，它不记得上面的任何内容。\r\n",
-		restoredAt.Format("2006-01-02 15:04:05")))
-	b.WriteString(fmt.Sprintf("  vibepanel restored this session at %s. The process below is new "+
-		"and remembers none of it.\r\n", restoredAt.Format("2006-01-02 15:04:05")))
+	//
+	// Two texts, because there are now two things that happen and telling
+	// somebody the wrong one is the failure this banner exists to prevent. The
+	// process is new either way -- that half never changed and is said in both
+	// -- but an agent restarted with its own resume flag is not an agent that
+	// remembers nothing, and a banner insisting otherwise teaches people to
+	// scroll past it.
+	when := restoredAt.Format("2006-01-02 15:04:05")
+	if resumed {
+		b.WriteString(fmt.Sprintf("  vibepanel 于 %s 重建了这个会话。下面是\x1b[1m新进程\x1b[0m，"+
+			"但它接回了这个目录里的上一段对话。\r\n", when))
+		b.WriteString(fmt.Sprintf("  vibepanel restored this session at %s. The process below is "+
+			"new, but it picked the conversation back up.\r\n", when))
+	} else {
+		b.WriteString(fmt.Sprintf("  vibepanel 于 %s 重建了这个会话。下面是\x1b[1m新进程\x1b[0m，"+
+			"它不记得上面的任何内容。\r\n", when))
+		b.WriteString(fmt.Sprintf("  vibepanel restored this session at %s. The process below is new "+
+			"and remembers none of it.\r\n", when))
+	}
 	b.WriteString(rule + "\r\n")
 	return b.String()
 }
@@ -326,6 +350,12 @@ func (s *Server) restoreSession(ctx context.Context, rec store.Session) error {
 	// The banner goes in the file rather than being printed by the script so
 	// that the timestamps are formatted in Go, where formatting them does not
 	// mean interpolating text into a shell command.
+	// What will actually run, which is not always what was recorded: an agent
+	// that can pick its conversation back up is started with the flag that does
+	// it. Decided before the banner is written, because the banner says which
+	// of the two happened.
+	launch, resumed := s.restoreLaunch(ctx, rec, dir)
+
 	sb, sberr := s.DB.GetScrollback(ctx, rec.ID)
 	hadScrollback := sberr == nil && len(sb.Content) > 0
 	if sberr != nil && !errors.Is(sberr, store.ErrNotFound) {
@@ -336,7 +366,7 @@ func (s *Server) restoreSession(ctx context.Context, rec store.Session) error {
 		payload = append(payload, sb.Content...)
 	}
 	payload = append(payload,
-		restoreBanner(time.Unix(sb.CapturedAt, 0), now, hadScrollback, sb.Truncated)...)
+		restoreBanner(time.Unix(sb.CapturedAt, 0), now, hadScrollback, sb.Truncated, resumed)...)
 
 	path, err := s.writeRestoreFile(rec.ID, payload)
 	if err != nil {
@@ -361,7 +391,7 @@ func (s *Server) restoreSession(ctx context.Context, rec store.Session) error {
 	// panes that never needed one, where it would show up as
 	// pane_current_command.
 	argv := append([]string{"/bin/sh", "-c", restoreScript, "vibepanel-restore", path},
-		tmux.LaunchArgv(rec.LaunchCommand)...)
+		tmux.LaunchArgv(launch)...)
 
 	// The profile's environment comes back with the session, looked up again
 	// rather than copied onto the row when it was created. A session that was
@@ -408,6 +438,73 @@ func (s *Server) restoreSession(ctx context.Context, rec store.Session) error {
 		s.Log.Debug("attach restored session", "session", rec.ID, "err", aerr)
 	}
 	return nil
+}
+
+// restoreLaunch decides what a restored session actually runs.
+//
+// The recorded argv, unless the agent behind it can pick its own conversation
+// back up -- see internal/session/resume.go for which two can, why opencode is
+// not among them, and what "resume" does and does not recover.
+//
+// Refused when two sessions would resume out of the same directory. Both agents
+// resume *the most recent conversation here*, so a pair of them is not two
+// conversations coming back, it is one conversation coming back twice with
+// nothing on either screen to say so. A cold start is the better of those,
+// because a cold start is visibly a cold start.
+//
+// Every session counts as a claimant, not only the restorable ones, and the
+// first version of this got that wrong in a way only a test caught. Restoring a
+// batch marks each row live as it goes, so counting restorable rows meant the
+// first of a pair came back cold and the second -- now the only dead one left
+// -- came back resumed, onto the conversation the first had just taken. The
+// stable set is also the correct one: a session still running in that directory
+// is holding the most recent conversation in it, so resuming a dead sibling
+// there would attach to the live one's transcript rather than to its own.
+//
+// What it cannot see is a session deleted from the panel whose transcript is
+// still on the agent's disk. Nothing in the database points at it, and this is
+// the one case where "the most recent conversation here" can still be somebody
+// else's.
+//
+// The candidate set is read here rather than passed in, which costs one
+// ListSessions per restored session. That is one local SELECT against a restore
+// that is already spending a tmux new-session and a file write on this row, and
+// the alternative is a parameter that four call sites -- including two in
+// tests -- have to remember to build correctly. The wrong answer here is a
+// silently shared conversation; the cheap, hard-to-misuse version is worth the
+// query.
+func (s *Server) restoreLaunch(ctx context.Context, rec store.Session, dir string) ([]string, bool) {
+	resumed, ok := session.ResumeArgv(rec.LaunchCommand)
+	if !ok {
+		return rec.LaunchCommand, false
+	}
+	// Coming back somewhere else is not coming back. restoreDir falls back to
+	// the project's path when the recorded directory has been deleted, and
+	// "the most recent conversation in this directory" then names either
+	// nothing or some other session's work. It also keeps the key below
+	// honest: every row that shares this CWD is a row whose CWD exists.
+	if dir != rec.CWD {
+		return rec.LaunchCommand, false
+	}
+	rows, err := s.DB.ListSessions(ctx)
+	if err != nil {
+		// Not knowing what else is on the machine is not knowing whether this
+		// is ambiguous, and the safe answer to that is the honest cold start.
+		s.Log.Warn("restore: list sessions to check for a shared conversation",
+			"session", rec.ID, "err", err)
+		return rec.LaunchCommand, false
+	}
+	candidates := make([]session.ResumeCandidate, 0, len(rows))
+	for _, row := range rows {
+		candidates = append(candidates, session.ResumeCandidate{
+			Launch: row.LaunchCommand,
+			CWD:    row.CWD,
+		})
+	}
+	if session.ResumeIsAmbiguous(candidates, session.ResumeProgram(rec.LaunchCommand), rec.CWD) {
+		return rec.LaunchCommand, false
+	}
+	return resumed, true
 }
 
 // restoreDir decides where a restored session starts.
@@ -513,7 +610,7 @@ func (s *Server) RestoreFlagged(ctx context.Context) {
 	if restored > 0 {
 		s.Log.Info("restored sessions marked restore-on-boot",
 			"sessions", restored,
-			"note", "the processes are new; the agents remember nothing")
+			"note", "the processes are new; an agent that can resume was started with the flag that does it")
 	}
 	if waiting > 0 {
 		s.Log.Info("sessions whose tmux session is gone and can be restored",

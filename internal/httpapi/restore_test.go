@@ -559,3 +559,178 @@ func truncate(s string) string {
 	}
 	return s
 }
+
+// fakeAgent writes a script that answers to `claude` and reports its arguments.
+//
+// Named claude on disk, because session.ResumeArgv reads the basename of the
+// recorded argv -- which is the only thing that decides whether a restore
+// resumes. A real claude is not installed on the machines this suite runs on,
+// and one that was would want an API key and a network.
+//
+// It prints its arguments and then blocks on cat, so the pane stays alive to be
+// captured the way a real agent's would.
+func fakeAgent(t *testing.T, name string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, name)
+	script := "#!/bin/sh\nprintf 'VP_AGENT_ARGS:[%s]\\n' \"$*\"\nexec cat\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// A restored agent comes back with its conversation, not as a stranger.
+//
+// The premise the restore dialog stated for a long time -- "re-running the
+// command starts a new agent that remembers none of it" -- was two claims in
+// one. The process's memory did go with the power. The provider's transcript
+// did not, and both agents the panel launches will pick the most recent
+// conversation in a directory back up when asked. A restore already puts the
+// session back in its own directory, so asking is the whole fix.
+//
+// Mutation run: making restoreLaunch always decline fails this after the
+// 20-second pane wait, with `VP_AGENT_ARGS:[]` in the capture. Swapping
+// `launch` back for `rec.LaunchCommand` in the argv does not compile, which is
+// its own kind of protection and is not the one being claimed here.
+func TestARestoredAgentIsAskedToContinueItsConversation(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+
+	agent := fakeAgent(t, "claude")
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"resume"}`)
+	sess := postJSON[store.Session](t, ts, "/api/sessions",
+		newSessionBody(t, project.ID, agent))
+
+	// Launched as itself: nothing is added on the way in, only on the way back.
+	out := waitForPane(t, srv, sess.TmuxName, "VP_AGENT_ARGS:")
+	if !strings.Contains(out, "VP_AGENT_ARGS:[]") {
+		t.Fatalf("creating a session added arguments of its own:\n%s", out)
+	}
+
+	simulateReboot(t, srv)
+	if err := srv.Reconcile(ctx); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if res := restorePost(t, ts, []string{sess.ID}); len(res) != 1 || !res[0].OK {
+		t.Fatalf("restore said %+v", res)
+	}
+
+	out = waitForPane(t, srv, sess.TmuxName, "VP_AGENT_ARGS:[--continue]")
+	if !strings.Contains(out, "VP_AGENT_ARGS:[--continue]") {
+		t.Fatalf("the restored agent was not asked to continue:\n%s", out)
+	}
+	// And the pane says which of the two things happened, because a banner
+	// insisting the agent remembers nothing is exactly as wrong as one
+	// insisting the process survived.
+	if !strings.Contains(out, "picked the conversation back up") {
+		t.Errorf("the banner still tells the reader the agent remembers nothing:\n%s", out)
+	}
+}
+
+// Two agents restored into one directory do not both resume.
+//
+// `claude --continue` and `codex resume --last` both mean "the most recent
+// conversation *here*". Two of them in one directory is not two conversations
+// coming back; it is one conversation coming back twice, with nothing on either
+// screen to say so -- and this panel's whole premise is many agents at once, so
+// this is a normal Tuesday rather than an edge case. A cold start is the better
+// of the two, because a cold start is visibly a cold start.
+//
+// Mutation run: deleting the ResumeIsAmbiguous check in restoreLaunch fails
+// this -- both panes come back holding [--continue].
+func TestTwoAgentsInOneDirectoryComeBackCold(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+
+	agent := fakeAgent(t, "claude")
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"shared"}`)
+	first := postJSON[store.Session](t, ts, "/api/sessions",
+		newSessionBody(t, project.ID, agent))
+	second := postJSON[store.Session](t, ts, "/api/sessions",
+		newSessionBody(t, project.ID, agent))
+	if first.CWD != second.CWD {
+		t.Fatalf("the two sessions are not in one directory: %q and %q", first.CWD, second.CWD)
+	}
+	waitForPane(t, srv, first.TmuxName, "VP_AGENT_ARGS:")
+	waitForPane(t, srv, second.TmuxName, "VP_AGENT_ARGS:")
+
+	simulateReboot(t, srv)
+	if err := srv.Reconcile(ctx); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if res := restorePost(t, ts, []string{first.ID, second.ID}); len(res) != 2 {
+		t.Fatalf("restore said %+v", res)
+	}
+
+	for _, s := range []store.Session{first, second} {
+		out := waitForPane(t, srv, s.TmuxName, "VP_AGENT_ARGS:")
+		if strings.Contains(out, "--continue") {
+			t.Errorf("%s resumed a conversation it shares with another session:\n%s",
+				s.TmuxName, out)
+		}
+		if !strings.Contains(out, "remembers none of it") {
+			t.Errorf("%s came back cold and the banner did not say so:\n%s", s.TmuxName, out)
+		}
+	}
+}
+
+// A session that cannot come back where it was does not resume.
+//
+// restoreDir falls back to the project's directory when the recorded one has
+// been deleted -- that is deliberate, and it is why a pruned worktree does not
+// make a session unrestorable. But "the most recent conversation here" then
+// names a conversation belonging to whatever else has run in the project
+// directory, or none at all, and starting an agent on somebody else's
+// transcript is a worse outcome than starting it on none.
+//
+// Mutation run: deleting the `dir != rec.CWD` guard in restoreLaunch fails this.
+func TestASessionThatComesBackSomewhereElseDoesNotResume(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+
+	agent := fakeAgent(t, "claude")
+	root := t.TempDir()
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+root+`","name":"pruned"}`)
+
+	worktree := filepath.Join(root, "worktree")
+	if err := os.Mkdir(worktree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sess := postJSON[store.Session](t, ts, "/api/sessions",
+		newSessionBody(t, project.ID, agent))
+	waitForPane(t, srv, sess.TmuxName, "VP_AGENT_ARGS:")
+
+	// Through UpdateSessionRuntime, which is the poller's own path: a session
+	// that starts at the project root and is `cd`'d into a worktree is recorded
+	// exactly this way. Sessions cannot be created with a directory of their
+	// own, so writing the row is the only way to arrange the state a real one
+	// reaches by being used.
+	if err := srv.DB.UpdateSessionRuntime(ctx, sess.ID, worktree, "sh"); err != nil {
+		t.Fatal(err)
+	}
+	if got := getSession(t, srv, sess.ID).CWD; got != worktree {
+		t.Fatalf("the session's directory is %s, not %s", got, worktree)
+	}
+
+	simulateReboot(t, srv)
+	if err := srv.Reconcile(ctx); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	// The worktree is pruned while the machine is off, which is the whole point
+	// of restoreDir's fallback.
+	if err := os.RemoveAll(worktree); err != nil {
+		t.Fatal(err)
+	}
+	if res := restorePost(t, ts, []string{sess.ID}); len(res) != 1 || !res[0].OK {
+		t.Fatalf("restore said %+v", res)
+	}
+
+	out := waitForPane(t, srv, sess.TmuxName, "VP_AGENT_ARGS:")
+	if strings.Contains(out, "--continue") {
+		t.Errorf("an agent restored into a different directory was told to continue:\n%s", out)
+	}
+}

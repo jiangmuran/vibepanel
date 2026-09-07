@@ -19746,3 +19746,102 @@ tiles together, so a 1180px tile sat on the 13px floor beside a 2500px
 neighbour at 27.5px on the same 4K page. Every board has a unit now; only the
 reference differs. A flowing board is a page and bands against the page unit;
 a filled board is a screen and bands against the screen.
+
+## The restore said the agent remembers nothing, and it was half wrong
+
+「重启的时候会有一个『进程回不来。重跑命令启动的是一个全新的 agent，不记得之前的
+任何东西。』，但是能直接 resume 就好了」.
+
+The sentence was written when it was true of everything, and it had two claims
+inside it. The process's memory went with the power — that half is still true
+and always will be. The provider's transcript did not go anywhere, and both
+agents this panel knows how to launch will pick the most recent conversation in
+a directory back up when asked:
+
+    claude --continue      "Continue the most recent conversation in the
+                            current directory"
+    codex resume --last    "continue the most recent"; the picker it replaces
+                            filters by cwd unless --all is passed
+
+A restore already puts a session back in its own directory — `restoreDir`
+refuses rather than falling back to `$HOME`, and has since an agent came back
+filed under a project it was not in — so "the most recent conversation here" is
+the conversation that was on that screen when the machine went down. Asking for
+it is the whole fix.
+
+Measured rather than read: a conversation in a throwaway directory told to
+remember 4712, the process ended, a fresh one started with `--continue` in the
+same directory, and the number came back. Both agents were also checked with
+nothing to resume, in a real tmux pane, because an agent that *errors* when
+there is no conversation would turn every first restore into a dead pane.
+Neither does: `claude --continue` starts a normal conversation and `codex resume
+--last` goes to its ordinary startup. No fallback is needed, and the restore
+script keeps its single `exec`.
+
+### opencode is deliberately not in the table
+
+The panel launches it and reports its state, and it is the obvious third entry.
+Nothing here has been verified against it, and the cost of a wrong guess is a
+pane that dies at startup on somebody's machine. `store.builtinProfiles` refuses
+to guess opencode's environment variables in the same words.
+
+### Two agents in one directory would resume the same conversation
+
+Both flags mean "the most recent conversation *here*". Two sessions restored
+into one directory is not two conversations coming back; it is one conversation
+coming back twice, with nothing on either screen to say so — and this panel's
+premise is many agents at once, so that is a normal Tuesday rather than an edge
+case. Neither of them resumes. A cold start is the better of the two because a
+cold start is visibly a cold start.
+
+The claimants are **every** session in that directory, not the restorable ones,
+and the first version got that wrong in a way only the test caught. Restoring a
+batch marks each row live as it goes, so counting dead rows meant the first of a
+pair came back cold and the second — by then the only dead one left — came back
+resumed, onto the conversation the first had just taken. The stable set is also
+the correct one: a session still *running* there is holding the most recent
+conversation, so a dead sibling resuming would attach to the live one's
+transcript.
+
+What it cannot see is a session deleted from the panel whose transcript is still
+on the agent's disk. Nothing in the database points at it.
+
+### A session that comes back somewhere else does not resume
+
+`restoreDir` falls back to the project's directory when the recorded one has
+been deleted, which is what keeps a pruned worktree restorable. "The most recent
+conversation here" then names a conversation belonging to whatever else has run
+in the project directory, or none at all. Starting an agent on somebody else's
+transcript is worse than starting it on none, so that case is a cold start too.
+
+### The rule is written twice, and pinned
+
+`internal/session/resume.go` decides, because the server is what runs it.
+`web/src/components/resume.ts` mirrors it, because the restore dialog's entire
+justification is that it prints the argv before launching two dozen agents on
+somebody's machine — and printing `claude` while running `claude --continue`
+is that dialog failing at its only job.
+
+Two implementations of one rule is the drift red line 3 is about, so
+`resume.test.ts` reads `resume.go` as text: the `case "x":` arms of its switch
+are the list of agents, and a browser that resumes one Go does not — or misses
+one Go has — fails. Verified by adding an `opencode` arm to the Go and watching
+it go red with the agent named in the message.
+
+One rule is the server's alone and is not mirrored: the same-directory check
+above needs a `stat`, and a browser cannot stat the server's disk. The
+divergence is one-way — a row that says it will resume and comes back cold,
+never the reverse — and the banner in the pane is what says which happened.
+
+### The banner has two texts now
+
+A banner insisting the agent remembers nothing when it has just resumed is
+exactly as wrong as one insisting the process survived, and it is worse in one
+way: it teaches people to scroll past the banner, which is the thing that has to
+be read on the day it says the other one.
+
+`restore.warning` in the dictionary lost its second sentence rather than
+gaining one. Each row now says which of the two things it will do, so the
+warning only has to carry what is true of both — and 「把他妈类似这种描述从产品里
+删掉」 is a lesson `i18n.prose.test.ts` enforces at 38 characters, which the
+first draft of that string failed by two lines.
