@@ -534,16 +534,30 @@ export const api = {
    * The response is the only time the token is readable, so the caller has to
    * do something with it there and then -- the database keeps a hash.
    */
-  createPreview: (
-    projectId: string,
-    path: string,
-    name: string,
-    expiresIn: number,
-    // Whether the served page may load scripts, styles, fonts and images from
-    // other origins. Off is the policy that makes a link safe to hand out; on
-    // is what a page that pulls three.js off a CDN needs. See dirPreviewCSP.
-    allowExternal = false,
-  ) =>
+  /**
+   * `address` is the whole of the visibility model, and it is worth being
+   * blunt about why there is not more to it: a preview cannot require a
+   * session. It is served into an opaque origin, an opaque origin does not
+   * send the cookie, and the version that asked for one rendered the page with
+   * every asset it wanted blocked. So the only thing between a stranger and a
+   * preview is how hard the address is to guess -- empty for 32 bytes of
+   * random, a word for "anyone who knows it".
+   */
+  createPreview: (req: {
+    projectId: string
+    path: string
+    name: string
+    /** Seconds from now; 0 never expires. */
+    expiresIn: number
+    /** Empty for a random one. */
+    address?: string
+    /**
+     * Whether the served page may load scripts, styles, fonts and images from
+     * other origins. Off is the policy that makes a link safe to hand out; on
+     * is what a page that pulls three.js off a CDN needs. See dirPreviewCSP.
+     */
+    allowExternal?: boolean
+  }) =>
     request<{
       id: string
       token: string
@@ -551,10 +565,7 @@ export const api = {
       root: string
       expiresAt: number
       allowExternal: boolean
-    }>('/api/settings/previews', {
-      method: 'POST',
-      body: JSON.stringify({ projectId, path, name, expiresIn, allowExternal }),
-    }),
+    }>('/api/settings/previews', { method: 'POST', body: JSON.stringify(req) }),
 
   restartSession: (id: string) =>
     request<void>(`/api/sessions/${id}/restart`, { method: 'POST' }),

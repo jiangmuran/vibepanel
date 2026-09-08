@@ -5,7 +5,16 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
+
+// ErrPreviewNameTaken is a chosen preview address that already exists.
+//
+// A distinct error and not ErrNotFound's opposite number, because the person
+// who sees it has to be told to pick another word rather than that something
+// went wrong. The uniqueness is the database's -- token_hash is UNIQUE -- so
+// two people choosing the same address at the same moment cannot both win.
+var ErrPreviewNameTaken = errors.New("store: that preview address is taken")
 
 // PreviewLink is a directory served as a page.
 //
@@ -50,6 +59,12 @@ func (d *DB) CreatePreviewLink(
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, tokenHash, prefix, name, root, userID, p.CreatedAt, expiresAt, allowExternal)
 	if err != nil {
+		// modernc's driver spells it in the message; there is no code to
+		// compare against without importing the driver here, which this
+		// package does not do anywhere else.
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return PreviewLink{}, ErrPreviewNameTaken
+		}
 		return PreviewLink{}, fmt.Errorf("store: create preview link: %w", err)
 	}
 	return p, nil

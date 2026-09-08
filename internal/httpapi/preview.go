@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -184,6 +185,43 @@ func dirPreviewCSP(origin string, external bool) string {
 		"form-action " + self + "; " +
 		"frame-ancestors 'self'; " +
 		"sandbox allow-scripts allow-forms allow-popups allow-modals"
+}
+
+// previewAddress is what a chosen preview address may be made of.
+//
+// Lower case, digits and dashes, and it may not begin or end with one. Not a
+// stylistic rule: the value lands in a URL path segment, and the three things
+// this refuses are the three that stop it being one -- a slash makes it two
+// segments, a dot lets `.` and `..` through, and per-cent lets a caller
+// re-encode either of them past `browse.Resolve`. Case is folded because a
+// person typing an address off a screen does not reproduce it, and two
+// addresses that differ only in case are one address to everybody except the
+// database.
+var previewAddress = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,62})[a-z0-9]$`)
+
+// previewToken is the secret a preview link is opened with.
+//
+// Chosen or generated, and the difference is the entire visibility model. A
+// generated one is 32 bytes of crypto/rand and is not going to be guessed; a
+// chosen one is a word, which is what "anyone can open this" looks like when
+// the thing that cannot be done is requiring a session. Nothing else about the
+// link changes: the same lookup, the same confinement to one directory, the
+// same sandbox.
+//
+// The floor of three characters is not a security claim -- nothing in this
+// length is -- it is there so that a single letter cannot be typed by accident
+// into a field whose placeholder is empty.
+func previewToken(address string) (string, error) {
+	address = strings.ToLower(strings.TrimSpace(address))
+	if address == "" {
+		return auth.NewToken()
+	}
+	if !previewAddress.MatchString(address) {
+		return "", errors.New(
+			"a preview address is 3 to 64 characters of a-z, 0-9 and dashes, " +
+				"and does not start or end with a dash")
+	}
+	return address, nil
 }
 
 func (s *Server) registerPreviewRoutes(r chi.Router) {
@@ -397,6 +435,17 @@ type createPreviewRequest struct {
 	Name      string `json:"name"`
 	// ExpiresIn is seconds from now; 0 for a link that does not expire.
 	ExpiresIn int64 `json:"expiresIn"`
+	// Address is a name the owner chose instead of a random token.
+	//
+	// It is the whole of what "visible to everyone" means here, and saying it
+	// that way is the point: a preview cannot be gated on a session, because
+	// the sandbox gives the document an opaque origin and an opaque origin
+	// does not send the cookie -- measured, in a browser, with the page
+	// rendering and every asset it asked for coming back blocked. So the only
+	// thing standing between a stranger and a preview is how hard the address
+	// is to guess, and this is the field that decides that. A random token is
+	// 32 bytes; a word is a word.
+	Address string `json:"address"`
 	// AllowExternal lets the page load scripts, styles, fonts and images from
 	// other origins. Named on the link rather than settable afterwards: it
 	// changes what a token already handed out can do, and a capability that
@@ -450,18 +499,37 @@ func (s *Server) handleCreatePreview(w http.ResponseWriter, r *http.Request) {
 		expires = time.Now().Unix() + req.ExpiresIn
 	}
 
-	token, terr := auth.NewToken()
+	token, terr := previewToken(req.Address)
 	if terr != nil {
-		writeErr(w, http.StatusInternalServerError, terr.Error())
+		writeErr(w, http.StatusBadRequest, terr.Error())
 		return
 	}
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = filepath.Base(root)
 	}
+	// Clamped, and it used to be `token[:8]`. A generated token is 43
+	// characters so that read fine until an address could be chosen: `my-demo`
+	// is seven, and the slice panicked inside an authenticated handler. The
+	// prefix exists so a row is recognisable in a list without the token being
+	// readable from it, and for a chosen address there is nothing to withhold
+	// anyway -- the whole point of one is that it is the address.
+	prefix := token
+	if len(prefix) > 8 {
+		prefix = prefix[:8]
+	}
 	link, cerr := s.DB.CreatePreviewLink(ctx, id.New(), auth.HashToken(token),
-		token[:8], name, root, u.ID, expires, req.AllowExternal)
+		prefix, name, root, u.ID, expires, req.AllowExternal)
 	if cerr != nil {
+		if errors.Is(cerr, store.ErrPreviewNameTaken) {
+			// 409 and the address back, so the form can say which word to
+			// change rather than making somebody re-read what they typed.
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":   "that preview address is already in use",
+				"address": token,
+			})
+			return
+		}
 		s.writeStoreErr(w, cerr)
 		return
 	}

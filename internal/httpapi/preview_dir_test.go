@@ -330,3 +330,76 @@ func clauseOf(csp, directive string) string {
 	}
 	return c
 }
+
+// TestAChosenPreviewAddressCannotLeaveItsSegment.
+//
+// The address a person types becomes a URL path segment, so the characters it
+// refuses are not a house style: a slash makes it two segments, a dot lets `.`
+// and `..` in, and a per-cent lets a caller re-encode either of those past the
+// place that resolves them. The regexp is the only thing between a text field
+// and a path, and every one of these is a way somebody would try.
+func TestAChosenPreviewAddressCannotLeaveItsSegment(t *testing.T) {
+	for _, bad := range []string{
+		"a/b", "..", "../etc", "a.b", "a%2fb", "a%2e%2e", "a b", "ab\n",
+		"-lead", "trail-", "ab", "", // too short, and empty means "generate one"
+		strings.Repeat("a", 65),
+	} {
+		got, err := previewToken(bad)
+		if bad == "" {
+			// Empty is the ordinary case: no address asked for, so a random
+			// token. It has to be long, or "visible to everyone" is the
+			// default rather than a choice.
+			if err != nil || len(got) < 40 {
+				t.Errorf("an empty address gave %q, %v; want a long random token", got, err)
+			}
+			continue
+		}
+		if err == nil {
+			t.Errorf("previewToken(%q) was accepted as %q", bad, got)
+		}
+	}
+	for _, ok := range []string{"demo", "my-demo", "a1-b2-c3", "x2y", strings.Repeat("a", 64)} {
+		if got, err := previewToken(ok); err != nil || got != ok {
+			t.Errorf("previewToken(%q) = %q, %v; want it kept", ok, got, err)
+		}
+	}
+	// Folded, because a person reading an address off a screen does not
+	// reproduce its case, and two that differ only in case are one address to
+	// everybody except the database.
+	if got, _ := previewToken("My-Demo"); got != "my-demo" {
+		t.Errorf("case was not folded: %q", got)
+	}
+}
+
+// TestAChosenAddressOpensThePreview, end to end, and the collision after it.
+func TestAChosenAddressOpensThePreview(t *testing.T) {
+	ts, _ := newTestServer(t)
+	root := t.TempDir()
+	write(t, filepath.Join(root, "index.html"), "<h1>NAMED</h1>")
+
+	made := postJSON[struct {
+		Token string `json:"token"`
+	}](t, ts, "/api/settings/previews",
+		`{"root":`+strconv.Quote(root)+`,"name":"probe","address":"my-demo","expiresIn":0}`)
+	if made.Token != "my-demo" {
+		t.Fatalf("token = %q, want the address that was asked for", made.Token)
+	}
+	body, code := getRaw(t, ts, "/preview/my-demo/")
+	if code != http.StatusOK || !strings.Contains(body, "NAMED") {
+		t.Errorf("the named preview answered %d: %s", code, body)
+	}
+
+	// The same word again, from the same account. The uniqueness is the
+	// database's, so this is the answer whoever loses the race gets.
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/settings/previews",
+		strings.NewReader(`{"root":`+strconv.Quote(root)+`,"name":"again","address":"my-demo"}`))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close() //nolint:errcheck // test
+	if res.StatusCode != http.StatusConflict {
+		t.Errorf("a second link on the same address = %d, want 409", res.StatusCode)
+	}
+}

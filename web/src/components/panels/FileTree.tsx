@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronLeft, Download, ExternalLink, File, Folder, FolderPlus, RefreshCw, Upload } from 'lucide-react'
+import {
+  ChevronLeft,
+  Download,
+  ExternalLink,
+  File,
+  Folder,
+  FolderPlus,
+  RefreshCw,
+  Settings2,
+  Upload,
+} from 'lucide-react'
 import { safeText } from '../text'
 
 import { api } from '../../protocol/api'
@@ -54,6 +64,13 @@ export function FileTree({
   // Closed on every path change, or the menu for one directory stays open over
   // the next one and the link it makes is not the directory on screen.
   const [previewMenu, setPreviewMenu] = useState(false)
+  // The advanced form, or null. Held here rather than in the menu so that
+  // closing the menu to open it does not take the form with it.
+  const [previewForm, setPreviewForm] = useState<null | {
+    address: string
+    expiresIn: number
+    allowExternal: boolean
+  }>(null)
   const [newName, setNewName] = useState('')
   const [previewing, setPreviewing] = useState<FileEntry | null>(null)
   // One clock for the whole listing, set when the listing lands. A Date.now()
@@ -149,9 +166,14 @@ export function FileTree({
   // difference between them is the flag, which is the point: everything about
   // making the link -- the expiry, the name, the clipboard fallback -- is one
   // decision made once.
-  const makePreview = (allowExternal: boolean) =>
+  const makePreview = (opts: { expiresIn: number; address?: string; allowExternal?: boolean }) =>
     api
-      .createPreview(projectId, path, path.split('/').pop() || 'preview', 86400, allowExternal)
+      .createPreview({
+        projectId,
+        path,
+        name: path.split('/').pop() || 'preview',
+        ...opts,
+      })
       .then((made) => {
         const url = `${window.location.origin}/preview/${made.token}/`
         // Through clipboard.ts, which is the only module allowed to touch
@@ -323,7 +345,7 @@ export function FileTree({
                   data-testid={external ? 'file-preview-external' : 'file-preview-sealed'}
                   onClick={() => {
                     setPreviewMenu(false)
-                    void makePreview(external)
+                    void makePreview({ expiresIn: 86400, allowExternal: external })
                   }}
                   className="vp-press flex w-full flex-col items-start gap-0.5 rounded-md px-2 py-1.5 text-left text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
                 >
@@ -335,6 +357,19 @@ export function FileTree({
                   </span>
                 </button>
               ))}
+              <button
+                type="button"
+                role="menuitem"
+                data-testid="file-preview-advanced"
+                onClick={() => {
+                  setPreviewMenu(false)
+                  setPreviewForm({ address: '', expiresIn: 86400, allowExternal: false })
+                }}
+                className="vp-press flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+              >
+                <Settings2 size={13} className="shrink-0" />
+                <span className="truncate">{t('files.previewAdvanced')}</span>
+              </button>
             </div>
           )}
         </div>
@@ -384,6 +419,92 @@ export function FileTree({
             spellCheck={false}
             className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface-2 px-2 py-1 text-vp-sm text-ink outline-none focus:border-accent"
           />
+        </form>
+      )}
+
+      {/* The advanced form.
+          
+          Three fields and no more, because there are only three things about a
+          preview that anybody can choose. What is *not* here is a "who can see
+          it" list with "only me" on it: a preview cannot require a session --
+          the sandbox gives it an opaque origin and an opaque origin does not
+          send the cookie -- so the address is the visibility, and the field
+          says that in as many words rather than offering a control that would
+          have to lie. */}
+      {previewForm && (
+        <form
+          data-testid="file-preview-form"
+          onSubmit={(e) => {
+            e.preventDefault()
+            const f = previewForm
+            setPreviewForm(null)
+            void makePreview({
+              expiresIn: f.expiresIn,
+              address: f.address.trim(),
+              allowExternal: f.allowExternal,
+            })
+          }}
+          className="flex flex-col gap-2 border-b border-hairline px-3 py-2"
+        >
+          <label className="flex flex-col gap-1">
+            <span className="text-vp-sm text-ink-2">{t('files.previewAddress')}</span>
+            <input
+              value={previewForm.address}
+              onChange={(e) => setPreviewForm({ ...previewForm, address: e.target.value })}
+              placeholder={t('files.previewAddressAuto')}
+              data-testid="file-preview-address"
+              className="rounded-vp border border-hairline bg-surface-2 px-2 py-1 text-vp-sm text-ink outline-none focus:border-accent"
+            />
+            <span className="text-vp-sm text-ink-3">{t('files.previewAddressWhy')}</span>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-vp-sm text-ink-2">{t('files.previewExpiry')}</span>
+            <select
+              value={previewForm.expiresIn}
+              onChange={(e) =>
+                setPreviewForm({ ...previewForm, expiresIn: Number(e.target.value) })
+              }
+              data-testid="file-preview-expiry"
+              className="rounded-vp border border-hairline bg-surface-2 px-2 py-1 text-vp-sm text-ink outline-none focus:border-accent"
+            >
+              <option value={3600}>{t('files.previewHour')}</option>
+              <option value={86400}>{t('files.previewDay')}</option>
+              <option value={604800}>{t('files.previewWeek')}</option>
+              <option value={0}>{t('files.previewNever')}</option>
+            </select>
+          </label>
+          <label className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              checked={previewForm.allowExternal}
+              onChange={(e) =>
+                setPreviewForm({ ...previewForm, allowExternal: e.target.checked })
+              }
+              data-testid="file-preview-allow-external"
+              className="mt-0.5"
+            />
+            <span className="min-w-0">
+              <span className="block text-vp-sm text-ink-2">{t('files.previewExternal')}</span>
+              <span className="block text-vp-sm text-ink-3">{t('files.previewExternalWhy')}</span>
+            </span>
+          </label>
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              data-testid="file-preview-create"
+              className="vp-press rounded-vp px-3 py-1 text-vp-sm"
+              style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+            >
+              {t('files.previewCreate')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setPreviewForm(null)}
+              className="vp-press rounded-vp border border-hairline px-3 py-1 text-vp-sm text-ink-2"
+            >
+              {t('files.previewCancel')}
+            </button>
+          </div>
         </form>
       )}
 

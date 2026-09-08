@@ -20705,3 +20705,33 @@ says so out loud rather than leaving it to be discovered, and pins the wiring by
 reading the source: which item passes which flag, and that the menu closes
 before the link is made, since a menu left open over the next directory makes a
 link for a path that is no longer on screen.
+
+### An address, an expiry, and the visibility that could not be offered
+
+「可以自定义可见范围、有效期之类的」. The expiry was already there and only the
+UI withheld it — the server has read `expiresIn: 0` as "never" since the first
+version. Visibility needed saying out loud rather than building.
+
+A preview **cannot** be gated on a session. It is served into an opaque origin,
+an opaque origin does not send the cookie, and the version that required one
+rendered the page with every asset it asked for coming back blocked — measured,
+in a browser, and recorded above. So a "who can see this" list with 「仅自己」 on
+it would be a control that has to lie. What is actually adjustable is how hard
+the address is to guess:
+
+	empty     32 bytes of crypto/rand, 43 characters
+	a word    whoever knows it, which is what "public" means here
+
+That is one field, and the line under it says what choosing a word costs rather
+than leaving it to be inferred.
+
+The characters it refuses are not a house style. The value becomes a URL path
+segment, so a slash makes it two segments, a dot lets `.` and `..` in, and a
+per-cent lets a caller re-encode either past `browse.Resolve`. The test walks
+all three plus the shapes somebody would actually try, and a mutation that
+loosens the pattern by one character goes red.
+
+Writing the test found a panic. `token[:8]` built the row's prefix, which is
+fine for a 43-character random token and is a slice out of range for `my-demo`
+— inside an authenticated handler, reachable by anyone signed in who types a
+short address. Clamped, and the mutation that puts it back panics again.
