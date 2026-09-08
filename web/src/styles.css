@@ -577,6 +577,12 @@ body {
 }
 
 @media (pointer: coarse) {
+  :root {
+    --vp-chrome-h: 3.5rem;
+  }
+}
+
+@media (pointer: coarse) {
   .vp-tap {
     display: inline-flex;
     align-items: center;
@@ -1003,6 +1009,16 @@ body {
   flex: 0 1 auto;
   min-width: 0;
   justify-content: center;
+}
+
+/* Square under a finger, and it has to live here rather than beside the rest
+   of the touch rules: the `min-width: 0` above has the same specificity, and a
+   coarse-pointer block six hundred lines earlier loses to it on source order
+   alone. Measured 26x44 before this -- a sliver, which is 「压缩到很小了」. */
+@media (pointer: coarse) {
+  .vp-segmented > .vp-tab {
+    min-width: 2.75rem;
+  }
 }
 
 /* Until the marker has been measured the selected tab wears the lift itself —

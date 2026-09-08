@@ -129,3 +129,37 @@ func TestNothingUnderWebIsPartOfThisModule(t *testing.T) {
 		}
 	}
 }
+
+// TestTheManifestIsServedAsAManifest.
+//
+// `.webmanifest` is not in Go's MIME table, so ServeContent sniffs the body
+// and answers `text/plain; charset=utf-8`. Nothing about that looks wrong from
+// the server side -- 200, valid JSON, the right bytes -- and it costs the
+// whole file: a browser that will not parse the manifest does not install a
+// web app, "add to home screen" leaves a bookmark, and a bookmark gets none of
+// `theme_color`, `background_color` or `display: standalone`.
+//
+// That is 「上下仍然有白边」, reported three times against a panel whose own
+// surfaces measure dark in every one of the six theme states. The bars are
+// drawn by the browser, from a file it declined to read.
+func TestTheManifestIsServedAsAManifest(t *testing.T) {
+	h := Handler("")
+	for _, tc := range []struct{ path, want string }{
+		{"/manifest.webmanifest", "application/manifest+json"},
+		// The neighbours, so a change here that reaches for a broader brush
+		// has to notice it is repainting these too.
+		{"/icon.svg", "image/svg+xml"},
+		{"/icon-192.png", "image/png"},
+	} {
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s: status %d", tc.path, rec.Code)
+			continue
+		}
+		if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, tc.want) {
+			t.Errorf("%s: Content-Type %q, want %q", tc.path, got, tc.want)
+		}
+	}
+}

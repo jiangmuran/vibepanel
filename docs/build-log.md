@@ -20526,3 +20526,73 @@ and Origin to disagree, a browser will not let a page set Host, and a real
 proxy in the harness is a larger piece of work than the dialog. The wiring is
 pinned by reading the source, which catches it going missing and cannot catch
 it looking wrong.
+
+## The tabs, the wrong axis, and a manifest nobody could read
+
+Two reports on one screenshot, and the first one is a correction I had earned.
+
+### 上下, not 左右
+
+「右边 tab 两个选择，它上下占满了好像有点奇怪」 was answered by changing
+`.vp-segmented > .vp-tab` from `flex: 1 1 0` to `flex: 0 1 auto` — a rule about
+*width*, written under a comment that quotes the complaint about *height*. The
+follow-up says so plainly: 「我让你改的是上下的间距，不是左右的那个间距」, and
+「不仅没有间距，而且也被压缩到很小了」.
+
+Measured against the real binary at 1600x1068, with and without a touch
+pointer:
+
+	              header   track   air above/below   tab
+	desktop         40      32          4 / 4       26x28
+	tablet          48      48          0 / 0       26x44
+
+`@media (pointer: coarse) { button { min-height: 2.75rem } }` takes the tab from
+28 to 44, the track to 48, and `.vp-chrome`'s `min-height: 2.5rem` lets the
+header grow to meet it — so the groove ends up exactly as tall as the row it
+sits in and the air is gone. That is the whole of 「上下占满了」, and the flex
+change never touched it.
+
+It never touched the width either. Reverting to `flex: 1 1 0` and measuring
+again gives 26x44 and a 56px track, identical: the track is a shrink-to-fit
+flex item with two icon children, so how the children flex inside it changes
+nothing. The change was in the wrong axis *and* a no-op in the axis it was in.
+
+So: `--vp-chrome-h` becomes 3.5rem under a coarse pointer, which is the same
+arithmetic the desktop value is documented with — the control plus six pixels
+of air, 44 + 12 = 56 — and the pills get `min-width: 2.75rem` so two icons are
+two squares rather than two 26px slivers. Desktop is untouched at every
+measurement. The min-width has to live beside the base rule rather than with
+the other touch rules six hundred lines earlier: `min-width: 0` there has the
+same specificity and wins on source order, which is why the first attempt
+measured no change at all.
+
+### The measurement that was measuring nothing
+
+The first three runs of that probe all reported identical numbers, including
+for a variant that should plainly have differed. The binary embeds the
+frontend, so `npm run build` updates `internal/webui/dist` on disk and changes
+nothing about what is being served. `assertFreshBuild` exists for exactly this
+and the throwaway probe did not call it. It does now, and the numbers moved on
+the next run.
+
+### 上下仍然有白边, for the third time
+
+Everything the panel paints measures dark in all six theme states, which is
+what the previous two attempts established and why they did not help. The bars
+in the screenshot are Android's, and in a standalone web app they are drawn by
+the browser from the manifest.
+
+	/manifest.webmanifest  200  text/plain; charset=utf-8
+
+`.webmanifest` is not in Go's MIME table, so `http.ServeContent` sniffed the
+body. Nothing about that looks wrong from this side — 200, valid JSON, the
+right bytes, and every check that fetches it passes. What it costs is the whole
+file: a browser that will not parse a manifest does not install a web app, "add
+to home screen" leaves a bookmark, and a bookmark gets none of `theme_color`,
+`background_color` or `display: standalone`.
+
+Stated as what it is rather than as a fix: this is a real defect on the exact
+path, found by asking the running server instead of reading the stylesheet
+again. Whether it is *the* cause of the white bars on that particular tablet
+cannot be settled from here — an already-installed copy keeps the manifest it
+was installed with, so it wants reinstalling before the answer means anything.

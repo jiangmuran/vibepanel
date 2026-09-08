@@ -137,6 +137,22 @@ func (h spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setCacheHeaders(w, name)
+	// `.webmanifest` is not in Go's MIME table, so ServeContent falls through
+	// to content sniffing and answers `text/plain; charset=utf-8`. Measured
+	// against the real binary, which is the only way this shows up at all: the
+	// file is served, it is valid JSON, and every check that fetches it gets a
+	// 200.
+	//
+	// What it costs is the whole of the manifest. A browser that will not read
+	// it does not install a web app -- "add to home screen" makes a bookmark
+	// instead -- and a bookmark gets none of `theme_color`, `background_color`
+	// or `display: standalone`. That is 「上下仍然有白边」 reported three times
+	// against a panel whose own surfaces all measure dark in every theme
+	// state, because the bars in question are drawn by the browser from a file
+	// it declined to parse.
+	if strings.HasSuffix(name, ".webmanifest") {
+		w.Header().Set("Content-Type", "application/manifest+json")
+	}
 	http.ServeContent(w, r, name, st.ModTime(), rs)
 }
 
