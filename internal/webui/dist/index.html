@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
     <meta name="color-scheme" content="light dark" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <!-- The same thing in the spelling that is not vendor-prefixed. Chrome
+         warns that the apple- one is deprecated and reads this instead; Safari
+         reads the one above. Both, because both are still consulted, and a
+         page that only carries the legacy name is one browser away from being
+         a bookmark rather than an installed app. -->
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <link rel="manifest" href="/manifest.webmanifest" />
@@ -58,8 +64,8 @@
         if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t
       } catch (e) { /* private mode: fall through to the system preference */ }
     </script>
-    <script type="module" crossorigin src="/assets/index-B2tt6jS1.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-XpaBEsVj.css">
+    <script type="module" crossorigin src="/assets/index-C_eDt8uz.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-Cb5O5POQ.css">
   </head>
   <body>
     <!-- What is on screen before any of this has loaded.

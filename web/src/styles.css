@@ -576,9 +576,13 @@ body {
   }
 }
 
+/* A chrome row holds a 36px tab in a 40px groove, and the four pixels of air
+   above and below are the same four the desktop row has. 40 would leave none:
+   `.vp-chrome` is a min-height, so the row grows to whatever is in it and the
+   groove ends up flush with both edges, which is 「上下没有间距」. */
 @media (pointer: coarse) {
   :root {
-    --vp-chrome-h: 3.5rem;
+    --vp-chrome-h: 3rem;
   }
 }
 
@@ -1006,18 +1010,43 @@ body {
 .vp-segmented > .vp-tab {
   position: relative;
   z-index: 1;
-  flex: 0 1 auto;
+  flex: 1 1 0;
   min-width: 0;
   justify-content: center;
 }
 
-/* Square under a finger, and it has to live here rather than beside the rest
-   of the touch rules: the `min-width: 0` above has the same specificity, and a
-   coarse-pointer block six hundred lines earlier loses to it on source order
-   alone. Measured 26x44 before this -- a sliver, which is 「压缩到很小了」. */
+/* Under a finger the strip spans its row and the pills are shorter, which is
+   the third answer to one complaint and the first one aimed at the right axis.
+ *
+ * 「右上角那两个选项卡按钮应该占据整个右上红色横条的长度... 把上下高度稍微调低
+ * 一点... 同时留出右边三个点和大于号那两个按钮的位置」.
+ *
+ * Two separate things had to move. The track hugged its content because it is
+ * a flex item with neither grow nor a width, so it was as wide as two icons no
+ * matter what the tabs inside it did -- which is why changing them from
+ * `flex: 1 1 0` to `flex: 0 1 auto` and back measured the same 56px both
+ * times. And the pills were 44 tall because of the coarse-pointer button
+ * floor, which took the track to 48 and the header with it.
+ *
+ * So the track grows and the floor is overridden for these two, down to 36.
+ * That is not a smaller target: a tab that spans half the panel is far more
+ * area than the 44x44 square it replaces, and the floor's own comment says the
+ * rule is about targets that are small in *both* directions.
+ *
+ * The rules live here rather than with the other touch rules six hundred lines
+ * earlier because `min-width: 0` and the base height above have the same
+ * specificity and win on source order -- the first attempt at this measured no
+ * change at all for exactly that reason.
+ *
+ * `.vp-segmented-fill` and not `.vp-segmented`: the same track draws the
+ * settings language switch and the TLS mode picker, and those are chips beside
+ * a label rather than a strip that owns its row. */
 @media (pointer: coarse) {
+  .vp-segmented-fill {
+    flex-grow: 1;
+  }
   .vp-segmented > .vp-tab {
-    min-width: 2.75rem;
+    min-height: 2.25rem;
   }
 }
 

@@ -20596,3 +20596,62 @@ path, found by asking the running server instead of reading the stylesheet
 again. Whether it is *the* cause of the white bars on that particular tablet
 cannot be settled from here — an already-installed copy keeps the manifest it
 was installed with, so it wants reinstalling before the answer means anything.
+
+## The third answer to one complaint, and the first aimed at the right thing
+
+「右上角那两个选项卡按钮应该占据整个右上红色横条的长度... 把上下高度稍微调低一
+点... 同时留出右边三个点和大于号那两个按钮的位置」.
+
+Three attempts, and the shape of the mistake is the same each time: a
+measurement would have settled it in two minutes and I read the stylesheet
+instead.
+
+	              header  track  air     tabs
+	first         48      48     0 / 0   26x44   the report
+	second        56      48     4 / 4   44x44   square, and still hugging left
+	now           48      40     4 / 4   93x36   spans the row, shorter
+
+The width was never about the tabs. `.vp-segmented` is a flex item with
+neither `grow` nor a width, so it is as wide as its content no matter how the
+children flex inside it — which is why changing them from `flex: 1 1 0` to
+`flex: 0 1 auto` and back measured the same 56px both times, and why the
+second attempt's `min-width` made two squares that still sat in the corner.
+The track has to grow. The height was never about the track either: the
+coarse-pointer button floor takes a tab to 44, and everything above it follows.
+
+So `.vp-segmented-fill` grows under a coarse pointer, and these two tabs
+override the floor down to 36. That is not a smaller target — a tab spanning
+half the panel is far more area than the 44x44 square it replaces, and the
+floor's own comment says the rule is about targets small in *both* directions.
+`--vp-chrome-h` comes back down to 3rem: 36 in a 40px groove with the same four
+pixels of air the desktop row has.
+
+The class is `.vp-segmented-fill` rather than `.vp-segmented` because the same
+track draws the settings language switch and the TLS mode picker, and those are
+chips beside a label rather than a strip that owns its row.
+
+### And the white bands are not the page
+
+Measured rather than reasoned about, finally: every edge, every theme state,
+including the one that matters (the OS says light, the panel is set to dark).
+
+	theme-color=#0d0d10  html=rgb(13,13,16)  color-scheme=dark
+	top    L/M/R  aside/header  rgba(23,23,27,0.78)
+	bottom L/M/R  rgba(23,23,27,0.78) / rgb(13,13,16)
+
+Walking up from `elementFromPoint` at each corner until something has a
+non-transparent background, in all three states. Nothing the page paints is
+light. The bands are browser or system chrome, and every lever a page has over
+those is already set: `theme-color` synced to the token, `viewport-fit=cover`,
+`color-scheme` pinned in all three theme blocks, a manifest with both colours —
+now served with a type a browser will read.
+
+`mobile-web-app-capable` is added here as the un-prefixed spelling of the meta
+next to it, which is correct and is *not* claimed as a fix: a page carrying only
+the vendor-prefixed name is one browser away from being a bookmark rather than
+an installed app, and a bookmark gets none of the colours.
+
+What is still unknown is which device and which mode the bands are on. The
+screenshot is Android Chrome; the report says iPad. Those are two different
+mechanisms with two different fixes, and guessing between them is what the last
+three rounds were.

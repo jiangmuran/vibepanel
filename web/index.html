@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
     <meta name="color-scheme" content="light dark" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <!-- The same thing in the spelling that is not vendor-prefixed. Chrome
+         warns that the apple- one is deprecated and reads this instead; Safari
+         reads the one above. Both, because both are still consulted, and a
+         page that only carries the legacy name is one browser away from being
+         a bookmark rather than an installed app. -->
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <link rel="manifest" href="/manifest.webmanifest" />

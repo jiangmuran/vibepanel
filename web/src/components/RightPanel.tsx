@@ -763,7 +763,7 @@ function Pane(props: PaneProps) {
           aria-orientation="horizontal"
           data-solo={solo}
           data-marker={marker ? 'on' : 'off'}
-          className="vp-segmented min-w-0 shrink"
+          className="vp-segmented vp-segmented-fill min-w-0 shrink"
         >
           {marker && (
             <span
