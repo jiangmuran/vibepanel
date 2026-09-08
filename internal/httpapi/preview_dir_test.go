@@ -169,7 +169,7 @@ func TestAPreviewIsSandboxedOnEveryResponse(t *testing.T) {
 // allow. Naming the origin is the same set of requests, written the only way
 // that works, and it still refuses every other host.
 func TestTheDirectoryCSPNamesTheOriginRatherThanSelf(t *testing.T) {
-	csp := dirPreviewCSP("https://panel.example:18443")
+	csp := dirPreviewCSP("https://panel.example:18443", false)
 	// The *fetch* directives only. `frame-ancestors 'self'` is correct and
 	// stays: that one is about who may embed this, and "this" is embedded by
 	// the panel, whose origin is not opaque. Asserting against the whole string
@@ -198,7 +198,7 @@ func TestTheDirectoryCSPNamesTheOriginRatherThanSelf(t *testing.T) {
 		t.Errorf("a wildcard source would let a preview phone home: %q", csp)
 	}
 	// With no origin to name, nothing loads rather than everything.
-	if none := dirPreviewCSP(""); !strings.Contains(none, "default-src 'none'") {
+	if none := dirPreviewCSP("", false); !strings.Contains(none, "default-src 'none'") {
 		t.Errorf("an unknown origin should forbid rather than allow: %q", none)
 	}
 }
@@ -251,4 +251,82 @@ func write(t *testing.T, path, body string) {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestAPreviewMayReachACDNOnlyWhenTheLinkSaidSo.
+//
+// The default policy is the one that makes a preview safe to click, and it is
+// also why a page an agent just wrote renders blank: three.js from cdnjs, a
+// font from Google, and a console full of refusals. 「预览的时候好像会报错好多」.
+//
+// So the widening is per link and off unless asked for. What stays put either
+// way is the half that protects the *panel* rather than the directory: the
+// sandbox, the opaque origin it produces, base-uri and frame-ancestors. A link
+// setting must not be able to reach those, which is what the second half of
+// this checks.
+func TestAPreviewMayReachACDNOnlyWhenTheLinkSaidSo(t *testing.T) {
+	const origin = "https://panel.example:18443"
+	closed := dirPreviewCSP(origin, false)
+	open := dirPreviewCSP(origin, true)
+
+	for _, d := range []string{"script-src", "style-src", "font-src", "img-src"} {
+		if wildcard(closed, d) {
+			t.Errorf("%s reaches the network with the link switched off: %q", d, clauseOf(closed, d))
+		}
+		if !wildcard(open, d) {
+			t.Errorf("%s still cannot load a CDN with the link switched on: %q", d, clauseOf(open, d))
+		}
+	}
+	// Not widened, in either mode. connect-src is the obvious exfiltration road
+	// and closing it is cheap; it is not what makes this safe, and the comment
+	// on dirPreviewCSP says so rather than letting a reader assume otherwise.
+	for _, csp := range []string{closed, open} {
+		if !strings.Contains(csp, "connect-src 'none'") {
+			t.Errorf("connect-src is open: %q", csp)
+		}
+		if !strings.Contains(csp, "base-uri 'none'") {
+			t.Errorf("base-uri is open: %q", csp)
+		}
+		if !strings.Contains(csp, "sandbox allow-scripts") || strings.Contains(csp, "allow-same-origin") {
+			t.Errorf("the sandbox moved: %q", csp)
+		}
+		if !strings.Contains(csp, "frame-ancestors 'self'") {
+			t.Errorf("frame-ancestors moved: %q", csp)
+		}
+	}
+	// form-action names the panel's own origin in both, never https: -- a form
+	// that may post anywhere is a page that may send the directory somewhere
+	// with no script at all.
+	if wildcard(open, "form-action") {
+		t.Errorf("form-action widened with the rest: %q", clauseOf(open, "form-action"))
+	}
+}
+
+// wildcard reports whether a directive carries the bare `https:` scheme source
+// -- "anywhere over TLS" -- as opposed to naming an origin.
+//
+// By token and not by substring, which is how the first version of this test
+// failed on its own subject: the panel's origin *is* `https://panel...`, so
+// `strings.Contains(clause, "https:")` was true of every clause in both modes
+// and the test reported the closed policy as open.
+func wildcard(csp, directive string) bool {
+	for _, f := range strings.Fields(clauseOf(csp, directive)) {
+		if f == "https:" {
+			return true
+		}
+	}
+	return false
+}
+
+// clauseOf pulls one directive out of a policy.
+func clauseOf(csp, directive string) string {
+	i := strings.Index(csp, directive+" ")
+	if i < 0 {
+		return ""
+	}
+	c := csp[i:]
+	if j := strings.Index(c, ";"); j >= 0 {
+		c = c[:j]
+	}
+	return c
 }

@@ -534,11 +534,27 @@ export const api = {
    * The response is the only time the token is readable, so the caller has to
    * do something with it there and then -- the database keeps a hash.
    */
-  createPreview: (projectId: string, path: string, name: string, expiresIn: number) =>
-    request<{ id: string; token: string; name: string; root: string; expiresAt: number }>(
-      '/api/settings/previews',
-      { method: 'POST', body: JSON.stringify({ projectId, path, name, expiresIn }) },
-    ),
+  createPreview: (
+    projectId: string,
+    path: string,
+    name: string,
+    expiresIn: number,
+    // Whether the served page may load scripts, styles, fonts and images from
+    // other origins. Off is the policy that makes a link safe to hand out; on
+    // is what a page that pulls three.js off a CDN needs. See dirPreviewCSP.
+    allowExternal = false,
+  ) =>
+    request<{
+      id: string
+      token: string
+      name: string
+      root: string
+      expiresAt: number
+      allowExternal: boolean
+    }>('/api/settings/previews', {
+      method: 'POST',
+      body: JSON.stringify({ projectId, path, name, expiresIn, allowExternal }),
+    }),
 
   restartSession: (id: string) =>
     request<void>(`/api/sessions/${id}/restart`, { method: 'POST' }),

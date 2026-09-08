@@ -22,27 +22,33 @@ type PreviewLink struct {
 	ID string `json:"id"`
 	// Prefix is the first few characters of the token, so a row can be
 	// recognised in a list without the token being readable from it.
-	Prefix     string `json:"prefix"`
-	Name       string `json:"name"`
-	Root       string `json:"root"`
-	CreatedAt  int64  `json:"createdAt"`
-	ExpiresAt  int64  `json:"expiresAt"`
-	LastUsedAt int64  `json:"lastUsedAt"`
+	Prefix string `json:"prefix"`
+	Name   string `json:"name"`
+	Root   string `json:"root"`
+	// AllowExternal lets the served page load scripts, styles, fonts and
+	// images from other origins. Off unless asked for; see the migration that
+	// added the column for what it costs.
+	AllowExternal bool  `json:"allowExternal"`
+	CreatedAt     int64 `json:"createdAt"`
+	ExpiresAt     int64 `json:"expiresAt"`
+	LastUsedAt    int64 `json:"lastUsedAt"`
 }
 
 // CreatePreviewLink stores a new link. The token itself is never stored; the
 // caller keeps the only readable copy and hands it over once.
 func (d *DB) CreatePreviewLink(
-	ctx context.Context, id string, tokenHash []byte, prefix, name, root, userID string, expiresAt int64,
+	ctx context.Context, id string, tokenHash []byte, prefix, name, root, userID string,
+	expiresAt int64, allowExternal bool,
 ) (PreviewLink, error) {
 	p := PreviewLink{
 		ID: id, Prefix: prefix, Name: name, Root: root,
-		CreatedAt: now(), ExpiresAt: expiresAt,
+		AllowExternal: allowExternal, CreatedAt: now(), ExpiresAt: expiresAt,
 	}
 	_, err := d.sql.ExecContext(ctx, `
-		INSERT INTO preview_links (id, token_hash, prefix, name, root, user_id, created_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, tokenHash, prefix, name, root, userID, p.CreatedAt, expiresAt)
+		INSERT INTO preview_links
+		  (id, token_hash, prefix, name, root, user_id, created_at, expires_at, allow_external)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, tokenHash, prefix, name, root, userID, p.CreatedAt, expiresAt, allowExternal)
 	if err != nil {
 		return PreviewLink{}, fmt.Errorf("store: create preview link: %w", err)
 	}
@@ -57,10 +63,11 @@ func (d *DB) CreatePreviewLink(
 func (d *DB) PreviewLinkByToken(ctx context.Context, tokenHash []byte) (PreviewLink, error) {
 	var p PreviewLink
 	err := d.sql.QueryRowContext(ctx, `
-		SELECT id, prefix, name, root, created_at, expires_at, last_used_at
+		SELECT id, prefix, name, root, created_at, expires_at, last_used_at, allow_external
 		FROM preview_links
 		WHERE token_hash = ? AND (expires_at = 0 OR expires_at > ?)`, tokenHash, now()).
-		Scan(&p.ID, &p.Prefix, &p.Name, &p.Root, &p.CreatedAt, &p.ExpiresAt, &p.LastUsedAt)
+		Scan(&p.ID, &p.Prefix, &p.Name, &p.Root, &p.CreatedAt, &p.ExpiresAt, &p.LastUsedAt,
+			&p.AllowExternal)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PreviewLink{}, ErrNotFound
 	}
@@ -77,7 +84,7 @@ func (d *DB) PreviewLinkByToken(ctx context.Context, tokenHash []byte) (PreviewL
 // leaves somebody wondering where their link went.
 func (d *DB) ListPreviewLinks(ctx context.Context, userID string) ([]PreviewLink, error) {
 	rows, err := d.sql.QueryContext(ctx, `
-		SELECT id, prefix, name, root, created_at, expires_at, last_used_at
+		SELECT id, prefix, name, root, created_at, expires_at, last_used_at, allow_external
 		FROM preview_links WHERE user_id = ? ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("store: list preview links: %w", err)
@@ -87,7 +94,7 @@ func (d *DB) ListPreviewLinks(ctx context.Context, userID string) ([]PreviewLink
 	for rows.Next() {
 		var p PreviewLink
 		if err := rows.Scan(&p.ID, &p.Prefix, &p.Name, &p.Root,
-			&p.CreatedAt, &p.ExpiresAt, &p.LastUsedAt); err != nil {
+			&p.CreatedAt, &p.ExpiresAt, &p.LastUsedAt, &p.AllowExternal); err != nil {
 			return nil, fmt.Errorf("store: scan preview link: %w", err)
 		}
 		out = append(out, p)

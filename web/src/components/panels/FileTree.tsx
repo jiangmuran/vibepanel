@@ -51,6 +51,9 @@ export function FileTree({
   const [dropping, setDropping] = useState(false)
   const [note, setNote] = useState('')
   const [making, setMaking] = useState(false)
+  // Closed on every path change, or the menu for one directory stays open over
+  // the next one and the link it makes is not the directory on screen.
+  const [previewMenu, setPreviewMenu] = useState(false)
   const [newName, setNewName] = useState('')
   const [previewing, setPreviewing] = useState<FileEntry | null>(null)
   // One clock for the whole listing, set when the listing lands. A Date.now()
@@ -141,6 +144,30 @@ export function FileTree({
     if (e.isDir) setPath(e.path)
     else setPreviewing(e)
   }
+
+  // Lifted out of the button because two menu items run it. The only
+  // difference between them is the flag, which is the point: everything about
+  // making the link -- the expiry, the name, the clipboard fallback -- is one
+  // decision made once.
+  const makePreview = (allowExternal: boolean) =>
+    api
+      .createPreview(projectId, path, path.split('/').pop() || 'preview', 86400, allowExternal)
+      .then((made) => {
+        const url = `${window.location.origin}/preview/${made.token}/`
+        // Through clipboard.ts, which is the only module allowed to touch
+        // navigator.clipboard -- there is a test for that, and it caught this
+        // line written the other way.
+        copyTextInGesture(url, (ok) => {
+          if (ok) {
+            setNote(t('files.previewCopied'))
+            return
+          }
+          // A clipboard the browser refused. The link is useless if it only
+          // ever existed inside a toast, so it opens instead.
+          window.open(url, '_blank', 'noopener,noreferrer')
+        })
+      })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
 
   return (
     <div
@@ -250,45 +277,67 @@ export function FileTree({
           <FolderPlus size={12} />
         </button>
         {/* This directory, as a page.
-            
+
             The one control that produces a URL rather than changing something,
             so it copies the link and says so rather than navigating: a preview
             is usually wanted on the *other* screen -- a phone, a second
             monitor -- and a panel that took over this tab would be the wrong
             answer to 「方便我去预览」.
-            
+
             A day's expiry, not forever. The token is the authority (see
             docs/api.md), so a link that never expires is a capability with no
             end, made with one press, for a directory somebody has since
-            forgotten about. */}
-        <button
-          type="button"
-          data-testid="file-preview"
-          onClick={() => {
-            void api
-              .createPreview(projectId, path, path.split('/').pop() || 'preview', 86400)
-              .then((made) => {
-                const url = `${window.location.origin}/preview/${made.token}/`
-                // Through clipboard.ts, which is the only module allowed to
-                // touch navigator.clipboard -- there is a test for that, and it
-                // caught this line written the other way.
-                copyTextInGesture(url, (ok) => {
-                  if (ok) {
-                    setNote(t('files.previewCopied'))
-                    return
-                  }
-                  // A clipboard the browser refused. The link is useless if it
-                  // only ever existed inside a toast, so it opens instead.
-                  window.open(url, '_blank', 'noopener,noreferrer')
-                })
-              })
-              .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-          }}
-          title={t('files.preview')}
-          className="vp-control"
-        >
-          <ExternalLink size={12} />
-        </button>
+            forgotten about.
+
+            Two items rather than one press, and the second one is why. The
+            policy a preview is served under forbids every outbound request,
+            which is what makes a link safe to hand out -- and it is also why a
+            page an agent just wrote renders blank: three.js off a CDN, a font
+            off Google, and a console full of refusals. 「预览的时候好像会报错
+            好多」. The choice is on the link because it is a real trade, and it
+            is a menu rather than a modifier key because a preview is opened on
+            a phone as often as on a desktop. */}
+        <div className="relative">
+          <button
+            type="button"
+            data-testid="file-preview"
+            aria-haspopup="menu"
+            aria-expanded={previewMenu}
+            onClick={() => setPreviewMenu((v) => !v)}
+            title={t('files.preview')}
+            className="vp-control"
+          >
+            <ExternalLink size={12} />
+          </button>
+          {previewMenu && (
+            <div
+              role="menu"
+              data-testid="file-preview-menu"
+              className="vp-panel-in absolute top-8 right-0 z-30 min-w-56 rounded-vp border border-hairline p-1 vp-solid"
+            >
+              {([false, true] as const).map((external) => (
+                <button
+                  key={String(external)}
+                  type="button"
+                  role="menuitem"
+                  data-testid={external ? 'file-preview-external' : 'file-preview-sealed'}
+                  onClick={() => {
+                    setPreviewMenu(false)
+                    void makePreview(external)
+                  }}
+                  className="vp-press flex w-full flex-col items-start gap-0.5 rounded-md px-2 py-1.5 text-left text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink"
+                >
+                  <span className="truncate">
+                    {external ? t('files.previewExternal') : t('files.previewSealed')}
+                  </span>
+                  <span className="text-vp-sm text-ink-3">
+                    {external ? t('files.previewExternalWhy') : t('files.previewSealedWhy')}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <button
           type="button"
           data-testid="file-refresh"

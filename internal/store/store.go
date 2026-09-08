@@ -744,6 +744,26 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+
+	// A preview may reach a CDN, if the person who made the link says so.
+	//
+	// The CSP forbids every outbound request, which is the promise that makes
+	// a preview safe to click -- and it is also why an agent-written page is
+	// usually broken in one: three.js from cdnjs, a font from Google, and the
+	// console fills with CSP refusals while the page renders blank. 「预览的
+	// 时候好像会报错好多」.
+	//
+	// Per link and off by default, because it is a real trade rather than a
+	// setting: a script fetched from anywhere can put anything in its own URL,
+	// so allowing one is allowing the page to send the directory somewhere.
+	// The person turning it on is the owner, looking at a directory they just
+	// picked; the default stays the safe one for every link they do not think
+	// about.
+	func(tx *sql.Tx) error {
+		_, err := tx.Exec(
+			`ALTER TABLE preview_links ADD COLUMN allow_external INTEGER NOT NULL DEFAULT 0`)
+		return err
+	},
 }
 
 // scanner is *sql.Row and *sql.Rows both, so one scan function serves a

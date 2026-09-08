@@ -142,7 +142,26 @@ const dirPreviewMaxAge = 0
 //   - `allow-same-origin` is never emitted, in any combination. With
 //     `allow-scripts` beside it the sandbox would be theatre, and the whole of
 //     the cookie defence is that those two never appear together.
-func dirPreviewCSP(origin string) string {
+//
+// dirPreviewCSP is the policy a previewed directory is served under.
+//
+// `external` widens the fetch directives to https:, and is off unless the
+// person who made the link asked for it. What it is for: a page an agent has
+// just written almost always pulls three.js off a CDN and a font off Google,
+// and under the default policy it renders blank with a console full of
+// refusals -- 「预览的时候好像会报错好多」.
+//
+// What it costs, stated rather than implied: a script fetched from anywhere
+// can carry anything in its own URL, so a page that may load one is a page
+// that may send the directory somewhere. `connect-src` stays 'none' either
+// way, which stops the obvious fetch/XHR/WebSocket road and not the clever
+// ones -- it is not the thing keeping this safe, and pretending otherwise
+// would be worse than the widening.
+//
+// The sandbox, the opaque origin, `base-uri 'none'` and `frame-ancestors` do
+// not move. Those are what stop a preview reaching the *panel*, and no link
+// setting touches them.
+func dirPreviewCSP(origin string, external bool) string {
 	self := origin
 	if self == "" {
 		// No origin to name means nothing may load rather than everything: a
@@ -150,12 +169,16 @@ func dirPreviewCSP(origin string) string {
 		// safe one.
 		self = "'none'"
 	}
-	return "default-src " + self + "; " +
-		"style-src " + self + " 'unsafe-inline'; " +
-		"script-src " + self + " 'unsafe-inline'; " +
-		"img-src " + self + " data: blob:; " +
-		"media-src " + self + " data: blob:; " +
-		"font-src " + self + " data:; " +
+	out := self
+	if external {
+		out = self + " https:"
+	}
+	return "default-src " + out + "; " +
+		"style-src " + out + " 'unsafe-inline'; " +
+		"script-src " + out + " 'unsafe-inline'; " +
+		"img-src " + out + " data: blob:; " +
+		"media-src " + out + " data: blob:; " +
+		"font-src " + out + " data:; " +
 		"connect-src 'none'; " +
 		"base-uri 'none'; " +
 		"form-action " + self + "; " +
@@ -203,7 +226,7 @@ func (s *Server) handleDirPreview(w http.ResponseWriter, r *http.Request) {
 	// Every response, not only the HTML ones. A stylesheet or a JSON file
 	// served without the sandbox is a document somebody can navigate to
 	// directly, and it would be the one that runs with the panel's origin.
-	w.Header().Set("Content-Security-Policy", dirPreviewCSP(s.requestOrigin(r)))
+	w.Header().Set("Content-Security-Policy", dirPreviewCSP(s.requestOrigin(r), link.AllowExternal))
 	// `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` are
 	// not set here: `securityHeaders` sets both on every response the panel
 	// makes, and this needs exactly what that already gives. Setting them again
@@ -374,6 +397,11 @@ type createPreviewRequest struct {
 	Name      string `json:"name"`
 	// ExpiresIn is seconds from now; 0 for a link that does not expire.
 	ExpiresIn int64 `json:"expiresIn"`
+	// AllowExternal lets the page load scripts, styles, fonts and images from
+	// other origins. Named on the link rather than settable afterwards: it
+	// changes what a token already handed out can do, and a capability that
+	// grows after it leaves is one nobody can reason about.
+	AllowExternal bool `json:"allowExternal"`
 }
 
 func (s *Server) handleCreatePreview(w http.ResponseWriter, r *http.Request) {
@@ -432,7 +460,7 @@ func (s *Server) handleCreatePreview(w http.ResponseWriter, r *http.Request) {
 		name = filepath.Base(root)
 	}
 	link, cerr := s.DB.CreatePreviewLink(ctx, id.New(), auth.HashToken(token),
-		token[:8], name, root, u.ID, expires)
+		token[:8], name, root, u.ID, expires, req.AllowExternal)
 	if cerr != nil {
 		s.writeStoreErr(w, cerr)
 		return
@@ -442,7 +470,8 @@ func (s *Server) handleCreatePreview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id": link.ID, "prefix": link.Prefix, "name": link.Name,
 		"root": link.Root, "createdAt": link.CreatedAt, "expiresAt": link.ExpiresAt,
-		"token": token,
+		"allowExternal": link.AllowExternal,
+		"token":         token,
 	})
 }
 
