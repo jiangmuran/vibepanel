@@ -326,6 +326,7 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"profile.created":         true,
 		"profile.deleted":         true,
 		"profile.updated":         true,
+		"profile.restored":        true,
 		"setup.completed":         true,
 		"share.created":           true,
 		"share.locked":            true,

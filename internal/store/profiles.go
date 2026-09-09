@@ -81,9 +81,18 @@ type LaunchProfile struct {
 	// Command is the argv, empty for the user's login shell.
 	Command []string `json:"command"`
 	// Env is the variables to start it with, in the order they are shown.
-	Env       []LaunchEnvVar `json:"env"`
-	CreatedAt int64          `json:"createdAt"`
-	UpdatedAt int64          `json:"updatedAt"`
+	Env []LaunchEnvVar `json:"env"`
+	// Overridden marks a built-in that has been edited: the row is what you
+	// see, the catalogue entry is what it came from, and deleting the row puts
+	// the original back.
+	//
+	// Sent so the settings page can say so. An edit that is invisible is the
+	// objection this feature had to answer -- the catalogue a release ships
+	// would stop being the catalogue people have, one panel at a time, with
+	// nothing on screen saying it had.
+	Overridden bool  `json:"overridden,omitempty"`
+	CreatedAt  int64 `json:"createdAt"`
+	UpdatedAt  int64 `json:"updatedAt"`
 }
 
 // The bounds. Every one of these is a refusal with a message rather than a
@@ -130,6 +139,10 @@ var builtinProfiles = []LaunchProfile{
 	{ID: BuiltinPrefix + "claude", Name: "Claude Code", Command: []string{"claude"}, Env: []LaunchEnvVar{
 		{Name: "ANTHROPIC_BASE_URL"},
 		{Name: "ANTHROPIC_AUTH_TOKEN", Secret: true},
+		// Asked for by name. Claude Code documents it, and an empty value is
+		// not passed to the process, so a profile that leaves it blank runs
+		// exactly as a bare terminal would.
+		{Name: "ANTHROPIC_MODEL"},
 	}},
 	{ID: BuiltinPrefix + "codex", Name: "Codex", Command: []string{"codex"}, Env: []LaunchEnvVar{
 		{Name: "OPENAI_BASE_URL"},
@@ -442,11 +455,40 @@ func (d *DB) ListLaunchProfiles(ctx context.Context) ([]LaunchProfile, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := BuiltinLaunchProfiles()
-	for _, p := range rows {
-		out = append(out, RedactLaunchProfile(p))
+	arr, err := d.GetLaunchArrangement(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return out, nil
+	hidden := make(map[string]bool, len(arr.Hidden))
+	for _, id := range arr.Hidden {
+		hidden[id] = true
+	}
+	// A row whose id is a built-in's id is an edit of that built-in, not a
+	// second profile beside it. Both would show, with the same name, and the
+	// picker would be the place that told you about it.
+	override := make(map[string]bool, len(rows))
+	for _, p := range rows {
+		if IsBuiltinLaunchProfile(p.ID) {
+			override[p.ID] = true
+		}
+	}
+
+	out := make([]LaunchProfile, 0, len(rows)+4)
+	for _, p := range BuiltinLaunchProfiles() {
+		if hidden[p.ID] || override[p.ID] {
+			continue
+		}
+		out = append(out, p)
+	}
+	for _, p := range rows {
+		if hidden[p.ID] {
+			continue
+		}
+		red := RedactLaunchProfile(p)
+		red.Overridden = IsBuiltinLaunchProfile(p.ID)
+		out = append(out, red)
+	}
+	return arrange(out, arr.Order), nil
 }
 
 func (d *DB) listLaunchRows(ctx context.Context) ([]LaunchProfile, error) {
@@ -568,4 +610,120 @@ func decodeLaunchEnv(s string) []LaunchEnvVar {
 		out = append(out, clean)
 	}
 	return out
+}
+
+// ─── arrangement: the order they are offered in, and the ones taken out ────
+
+// arrangementKey is where the settings row lives.
+const arrangementKey = "launch_profiles.arrangement"
+
+// LaunchArrangement is what the owner did to the list, as opposed to what is
+// in it.
+//
+// A settings row rather than a sort_index column, and the reason is that half
+// the list has no row to put a column on: the built-ins are a slice in this
+// file. An ordering that could only describe the user's own profiles would
+// leave the catalogue pinned above them forever, which is the arrangement the
+// person is trying to change.
+type LaunchArrangement struct {
+	// Order is profile ids, most-wanted first. Anything absent keeps its
+	// natural position after everything named here, so a release that adds a
+	// built-in does not have to be mentioned to appear.
+	Order []string `json:"order"`
+	// Hidden is built-ins the owner removed.
+	//
+	// Only built-ins are ever in here: a profile of their own is deleted by
+	// deleting its row. This is the answer to "a built-in profile cannot be
+	// removed", which was true and was not a good enough reason to keep
+	// offering somebody an agent they do not have installed.
+	Hidden []string `json:"hidden"`
+}
+
+// GetLaunchArrangement reads it, empty when nothing has been arranged.
+func (d *DB) GetLaunchArrangement(ctx context.Context) (LaunchArrangement, error) {
+	raw, err := d.GetSetting(ctx, arrangementKey, "")
+	if err != nil {
+		return LaunchArrangement{}, err
+	}
+	var a LaunchArrangement
+	if raw == "" {
+		return a, nil
+	}
+	if err := json.Unmarshal([]byte(raw), &a); err != nil {
+		// A row that will not parse is treated as no arrangement rather than
+		// as an error: the list is the session picker, and refusing to draw it
+		// because a preference is corrupt is the wrong trade by a wide margin.
+		return LaunchArrangement{}, nil
+	}
+	return a, nil
+}
+
+// SetLaunchArrangement writes it.
+func (d *DB) SetLaunchArrangement(ctx context.Context, a LaunchArrangement) error {
+	if a.Order == nil {
+		a.Order = []string{}
+	}
+	if a.Hidden == nil {
+		a.Hidden = []string{}
+	}
+	raw, err := json.Marshal(a)
+	if err != nil {
+		return fmt.Errorf("store: marshal arrangement: %w", err)
+	}
+	return d.SetSetting(ctx, arrangementKey, string(raw))
+}
+
+// arrange applies the owner's ordering to an assembled list.
+//
+// Named ids first, in the order given; everything else after them in the order
+// it arrived. Both halves matter: without the first the arrangement does
+// nothing, and without the second a built-in added by a release, or a profile
+// created since the last drag, would vanish from the picker rather than appear
+// at the end of it.
+func arrange(list []LaunchProfile, order []string) []LaunchProfile {
+	if len(order) == 0 {
+		return list
+	}
+	byID := make(map[string]LaunchProfile, len(list))
+	for _, p := range list {
+		byID[p.ID] = p
+	}
+	out := make([]LaunchProfile, 0, len(list))
+	placed := make(map[string]bool, len(order))
+	for _, id := range order {
+		if p, ok := byID[id]; ok && !placed[id] {
+			out = append(out, p)
+			placed[id] = true
+		}
+	}
+	for _, p := range list {
+		if !placed[p.ID] {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// UpsertLaunchProfile writes a row at an id the caller chose.
+//
+// Only for editing a built-in, which is why it is not the create path: every
+// other profile gets a generated id, and a caller that could name one could
+// collide with somebody else's.
+func (d *DB) UpsertLaunchProfile(ctx context.Context, id string, p LaunchProfile) error {
+	cmd, env, err := encodeLaunch(p)
+	if err != nil {
+		return err
+	}
+	n := now()
+	_, err = d.sql.ExecContext(ctx, `
+		INSERT INTO launch_profiles (id, name, command, env, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+		  name = excluded.name, command = excluded.command,
+		  env = excluded.env, updated_at = excluded.updated_at`,
+		id, p.Name, cmd, env, n, n)
+	if err != nil {
+		return fmt.Errorf("store: upsert launch profile: %w", err)
+	}
+	return nil
 }

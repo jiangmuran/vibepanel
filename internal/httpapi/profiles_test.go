@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -62,21 +63,62 @@ func TestAFreshPanelAlreadyOffersProfiles(t *testing.T) {
 	}
 }
 
-func TestABuiltinCannotBeEditedOrRemoved(t *testing.T) {
-	ts, _ := newTestServer(t)
-	// Copy-on-write here would mean the catalogue a release ships stops being
-	// the catalogue people have, one panel at a time, with nothing saying so.
+// TestABuiltinIsEditedInPlaceAndCanBeRestored.
+//
+// This was TestABuiltinCannotBeEditedOrRemoved, and both refusals were removed
+// on purpose: 「自带的几个 agent 没法删啊现在」, and reordering a list you cannot
+// take anything out of is arranging clutter.
+//
+// The reason the refusals gave was real and is answered rather than dropped --
+// copy-on-write would mean the catalogue a release ships stops being the
+// catalogue people have, one panel at a time, with nothing saying so. What
+// makes that acceptable now is that the override is visible (`overridden` on
+// the row, said on the settings page) and one action puts it back. What is
+// checked here is the part that would make it silent again: the count.
+func TestABuiltinIsEditedInPlaceAndCanBeRestored(t *testing.T) {
+	ts, srv := newTestServer(t)
+	before := len(listProfiles(t, ts))
+
 	code, body := send(t, ts, http.MethodPatch, "/api/launch-profiles/"+store.BuiltinShell,
 		`{"name":"mine","command":[],"env":[]}`)
-	if code != http.StatusBadRequest {
+	if code != http.StatusNoContent {
 		t.Fatalf("PATCH a built-in: %d %s", code, body)
 	}
+	// One row, not two. An override that appeared *beside* the catalogue entry
+	// would show the same profile twice and the picker is where you would find
+	// out.
+	if got := len(listProfiles(t, ts)); got != before {
+		t.Errorf("editing a built-in changed the count from %d to %d", before, got)
+	}
+
 	code, body = send(t, ts, http.MethodDelete, "/api/launch-profiles/"+store.BuiltinShell, "")
-	if code != http.StatusBadRequest {
+	if code != http.StatusNoContent {
 		t.Fatalf("DELETE a built-in: %d %s", code, body)
 	}
-	if len(listProfiles(t, ts)) != len(store.BuiltinLaunchProfiles()) {
-		t.Error("the catalogue changed")
+	if got := len(listProfiles(t, ts)); got != before-1 {
+		t.Errorf("after removing one, the list has %d, want %d", got, before-1)
+	}
+	// And the override row goes with it. Nothing on screen would show it
+	// staying -- hidden filters it out of the list either way -- but a row
+	// nobody can see still spends one of the sixty-four a picker is allowed,
+	// and the way that surfaces is somebody being told they have too many
+	// profiles while looking at fewer than they have.
+	if n, err := srv.DB.CountLaunchProfiles(context.Background()); err != nil || n != 0 {
+		t.Errorf("removing an edited built-in left %d rows (err %v), want none", n, err)
+	}
+
+	code, body = send(t, ts, http.MethodPost, "/api/launch-profiles/restore", `{}`)
+	if code != http.StatusNoContent {
+		t.Fatalf("restore: %d %s", code, body)
+	}
+	list := listProfiles(t, ts)
+	if len(list) != before {
+		t.Errorf("restore left %d profiles, want %d", len(list), before)
+	}
+	for _, p := range list {
+		if p.ID == store.BuiltinShell && p.Name == "mine" {
+			t.Error("restore put the list back but kept the edit")
+		}
 	}
 }
 
@@ -472,4 +514,150 @@ func TestAProfileWithNothingInItStillSendsArrays(t *testing.T) {
 		t.Error("no profile came back with an empty command, so the check " +
 			"above ran against nothing")
 	}
+}
+
+// ─── arranging the catalogue ───────────────────────────────────────────────
+
+func profileIDs(t *testing.T, ts *httptest.Server) []string {
+	t.Helper()
+	out := []string{}
+	for _, p := range listProfiles(t, ts) {
+		out = append(out, p.ID)
+	}
+	return out
+}
+
+// TestABuiltinCanBeTakenOutOfTheList.
+//
+// 「自带的几个 agent 没法删啊现在」. There is no row to delete -- the catalogue
+// is a slice in internal/store -- so it is hidden, and the thing that makes a
+// one-click delete safe is that /restore puts it back.
+func TestABuiltinCanBeTakenOutOfTheList(t *testing.T) {
+	ts, _ := newTestServer(t)
+	const codex = store.BuiltinPrefix + "codex"
+
+	if !slices.Contains(profileIDs(t, ts), codex) {
+		t.Fatal("codex is not in the catalogue to begin with")
+	}
+	if code, body := send(t, ts, http.MethodDelete, "/api/launch-profiles/"+codex, ""); code >= 300 {
+		t.Fatalf("hiding codex: %d %s", code, body)
+	}
+	if got := profileIDs(t, ts); slices.Contains(got, codex) {
+		t.Errorf("codex is still offered after being removed: %v", got)
+	}
+	if code, body := send(t, ts, http.MethodPost, "/api/launch-profiles/restore", `{}`); code >= 300 {
+		t.Fatalf("restore: %d %s", code, body)
+	}
+	if got := profileIDs(t, ts); !slices.Contains(got, codex) {
+		t.Errorf("restore did not put codex back: %v", got)
+	}
+}
+
+// TestEditingABuiltinKeepsItsIDAndSaysItWasEdited.
+//
+// The id has to survive: a session records the profile it was started with,
+// and turning an edit into a new profile with a new id would leave every
+// existing session pointing at something that is not there. `overridden` is
+// the other half -- the objection to allowing this at all was that the
+// catalogue a release ships would stop being the catalogue people have with
+// nothing on screen saying so, and this is the thing that says so.
+func TestEditingABuiltinKeepsItsIDAndSaysItWasEdited(t *testing.T) {
+	ts, _ := newTestServer(t)
+	const claude = store.BuiltinPrefix + "claude"
+
+	if code, body := send(t, ts, http.MethodPatch, "/api/launch-profiles/"+claude,
+		`{"name":"Claude via proxy","command":["claude"],"env":[{"name":"ANTHROPIC_BASE_URL","value":"http://proxy.internal"}]}`); code >= 300 {
+		t.Fatalf("editing the built-in: %d %s", code, body)
+	}
+
+	list := listProfiles(t, ts)
+	var seen int
+	for _, p := range list {
+		if p.ID != claude {
+			continue
+		}
+		seen++
+		if p.Name != "Claude via proxy" {
+			t.Errorf("name = %q, want the edit", p.Name)
+		}
+		if !p.Overridden {
+			t.Error("an edited built-in does not report itself as overridden")
+		}
+	}
+	// Exactly once. A row beside the catalogue entry rather than instead of it
+	// would show the same agent twice, and the picker would be where you found
+	// out.
+	if seen != 1 {
+		t.Errorf("the edited built-in appears %d times, want 1", seen)
+	}
+
+	// And putting it back is one action.
+	if code, body := send(t, ts, http.MethodPost, "/api/launch-profiles/restore", `{}`); code >= 300 {
+		t.Fatalf("restore: %d %s", code, body)
+	}
+	list = listProfiles(t, ts)
+	for _, p := range list {
+		if p.ID == claude && p.Name == "Claude via proxy" {
+			t.Error("restore left the edit in place")
+		}
+	}
+}
+
+// TestTheOrderIsTheOwnersAndSurvivesANewBuiltin.
+//
+// Both halves of `arrange`. Without the first the drag does nothing; without
+// the second a profile the arrangement has never heard of -- one a release
+// added, one created in another tab -- disappears from the picker instead of
+// arriving at the end of it.
+func TestTheOrderIsTheOwnersAndSurvivesANewBuiltin(t *testing.T) {
+	ts, _ := newTestServer(t)
+	all := profileIDs(t, ts)
+	if len(all) < 3 {
+		t.Fatalf("need three to reorder, have %v", all)
+	}
+	// Reversed, and deliberately naming only the first two: the rest have to
+	// still be there.
+	if code, body := send(t, ts, http.MethodPost, "/api/launch-profiles/reorder",
+		`{"ids":`+jsonList(all[2], all[0])+`}`); code >= 300 {
+		t.Fatalf("reorder: %d %s", code, body)
+	}
+
+	got := profileIDs(t, ts)
+	if len(got) != len(all) {
+		t.Fatalf("reordering changed the list from %v to %v", all, got)
+	}
+	if got[0] != all[2] || got[1] != all[0] {
+		t.Errorf("order = %v, want %s and %s first", got, all[2], all[0])
+	}
+	for _, id := range all {
+		if !slices.Contains(got, id) {
+			t.Errorf("%s fell out of the list: %v", id, got)
+		}
+	}
+}
+
+// TestAnUnknownBuiltinCannotBeHidden.
+//
+// `builtin:` is a prefix and an id off a URL is whatever somebody typed, so
+// the question the handlers have to ask is "is this in the catalogue" and not
+// "does it look like it might be". IsBuiltinLaunchProfile compares against the
+// catalogue, which is what makes this pass -- a second helper that only
+// checked the prefix was written here first, justified in a comment by a claim
+// about that function that was simply false, and would have been the two
+// implementations of one guard this package keeps warning about.
+func TestAnUnknownBuiltinCannotBeHidden(t *testing.T) {
+	ts, _ := newTestServer(t)
+	for _, path := range []string{
+		"/api/launch-profiles/" + store.BuiltinPrefix + "nope",
+		"/api/launch-profiles/" + store.BuiltinPrefix + "../../etc",
+	} {
+		if code, _ := send(t, ts, http.MethodDelete, path, ""); code != http.StatusNotFound {
+			t.Errorf("DELETE %s = %d, want 404", path, code)
+		}
+	}
+}
+
+func jsonList(ids ...string) string {
+	b, _ := json.Marshal(ids)
+	return string(b)
 }

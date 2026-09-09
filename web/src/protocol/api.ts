@@ -479,6 +479,16 @@ export const api = {
   deleteProject: (id: string) => request<void>(`/api/projects/${id}`, { method: 'DELETE' }),
 
   /** Writes an explicit project order, top first. */
+  reorderLaunchProfiles: (ids: string[]) =>
+    request<void>('/api/launch-profiles/reorder', {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    }),
+
+  /** Un-hides every built-in and drops every edit of one. Leaves your own alone. */
+  restoreLaunchProfiles: () =>
+    request<void>('/api/launch-profiles/restore', { method: 'POST', body: '{}' }),
+
   reorderProjects: (ids: string[]) =>
     request<void>('/api/projects/reorder', { method: 'POST', body: JSON.stringify({ ids }) }),
 

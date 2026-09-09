@@ -20735,3 +20735,80 @@ Writing the test found a panic. `token[:8]` built the row's prefix, which is
 fine for a 43-character random token and is a slice out of range for `my-demo`
 — inside an authenticated handler, reachable by anyone signed in who types a
 short address. Clamped, and the mutation that puts it back panics again.
+
+## The catalogue became a list you can arrange
+
+「允许拖拽排序/删除/编辑预设的几个 agent」, then 「自带的几个 agent 没法删啊现在」.
+Both refusals were real and each had a comment giving its reason, so the work
+was answering them rather than deleting them.
+
+**Ordering** is a settings row, not a `sort_index` column, because half the list
+has no row to put a column on — the built-ins are a slice in
+`internal/store/profiles.go`. An ordering that could only describe the user's
+own profiles would leave the catalogue pinned above them forever, which is the
+arrangement being complained about. Ids not named keep their natural position
+*after* the named ones, so a built-in a release adds appears at the end rather
+than vanishing; both halves have a mutation.
+
+**Removing a built-in** hides it, since there is no row to delete. The old
+refusal was "a built-in profile cannot be removed", which was true and is not a
+reason to keep offering somebody an agent they have not installed.
+
+**Editing one** writes a row at the built-in's own id. The refusal here had the
+better argument: copy-on-write would mean the catalogue a release ships stops
+being the catalogue people have, one panel at a time, with nothing on screen
+saying so. That is an argument against an *invisible* override rather than
+against the edit, so the row comes back marked `overridden`, the settings page
+says so, and one button puts everything back. The id staying the built-in's is
+the other half: a session records the profile it was started with, and turning
+an edit into a new id would leave every existing session pointing at nothing.
+
+Five mutations, and two of them were mine to find rather than the code's:
+
+- `arrange` keeping only the named ids — red.
+- an override listed *beside* the catalogue entry instead of replacing it —
+  red, twice, and it is the failure a reader would meet as the same agent
+  appearing twice in the picker.
+- `restore` leaving the override rows — red.
+- deleting a built-in leaving its override row — **green**, at first. Nothing
+  on screen shows it: hidden filters the row out either way. What it costs is
+  one of the sixty-four a picker is allowed, spent by a row nobody can see, and
+  the way that surfaces is being told there are too many profiles while looking
+  at fewer than there are. Asserted on `CountLaunchProfiles`, and red.
+- an unknown `builtin:` id being hidden — **green**, and for the best reason:
+  `IsBuiltinLaunchProfile` already compares against the catalogue. A second
+  helper had been written here to do that, justified in its own comment by the
+  claim that the existing one "only looks at the prefix", which is simply false.
+  It was two implementations of one guard, argued for out of a misreading, and
+  it is gone.
+
+### The variable names come from the catalogue, not from a table
+
+「如果执行脚本里面有 claude/codex 之类的，且点开了环境变量，就自动填充模版」.
+
+`store.builtinProfiles` already carries the names — `ANTHROPIC_BASE_URL`,
+`ANTHROPIC_AUTH_TOKEN`, and `ANTHROPIC_MODEL` now, which was asked for by name.
+The browser fetches that catalogue on every page load, so the template is read
+out of it rather than from a second copy on this side. Red line 3 is the list
+of what happens when two places describe one fact, and a mapping of agents to
+variable names is exactly that kind of fact.
+
+Matched on the basename of argv[0], because `claude --model x` and
+`/usr/local/bin/claude` are the same agent and both are what people type. It
+offers nothing for a shell, a build, or an agent the catalogue names no
+variables for: guessing one for opencode is what that catalogue's comment
+refuses to do, and it is refused here for the same reason. Nothing is read from
+the owner's own profiles either — a row that happens to run `claude` is a
+configuration, and reading names out of it would put somebody's choices into a
+new form.
+
+A button rather than a fill: opening the editor and finding three rows you did
+not add is the panel deciding something. It disappears once its names are
+there, and a hidden agent takes its template with it, which is the right way
+round.
+
+One mutation went green and stayed instructive: copying the catalogue entry
+wholesale instead of taking the name and the secret flag. The test could not
+see it, because the built-ins carry empty values — so the fixture now gives
+them values they do not have in practice, which is what a future built-in
+shipping a default, or a server that stopped redacting, would look like.

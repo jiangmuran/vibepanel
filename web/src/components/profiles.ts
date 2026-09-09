@@ -1,5 +1,5 @@
 import { tKey } from '../i18n'
-import type { LaunchProfile } from '../protocol/wire'
+import type { LaunchEnvVar, LaunchProfile } from '../protocol/wire'
 
 /** Mirrors store.BuiltinPrefix. */
 export const BUILTIN_PREFIX = 'builtin:'
@@ -63,4 +63,45 @@ export function envCount(p: LaunchProfile): number {
  */
 export function profileOf(profiles: LaunchProfile[], id: string): LaunchProfile | null {
   return profiles.find((p) => p.id === id) ?? null
+}
+
+/**
+ * The variables an agent reads, for a command somebody typed.
+ *
+ * Derived from the catalogue the server already sent rather than from a table
+ * on this side. That is the whole design of it: the names live in
+ * `store.builtinProfiles`, a second copy here would be a second thing to keep
+ * right, and red line 3 is a list of what happens when two places describe one
+ * fact. The picker fetches the catalogue on every page load anyway.
+ *
+ * Matched on the program alone -- the basename of argv[0] -- because
+ * `claude --model x` and `/usr/local/bin/claude` are the same agent and both
+ * are what people actually type. A profile whose command is a shell, a build
+ * or an agent this build has never heard of gets nothing, which is the honest
+ * answer: guessing a variable name for opencode is what the catalogue's own
+ * comment refuses to do, and it is refused here for the same reason.
+ *
+ * A hidden built-in is still in `all` for this purpose only if the server sent
+ * it, and it does not -- so removing Codex from the list also removes its
+ * template. That is the right way round: somebody who took an agent out of
+ * their panel is not the person who wants its variables offered.
+ */
+export function envTemplateFor(command: string[], all: LaunchProfile[]): LaunchEnvVar[] {
+  const program = basename(command[0] ?? '')
+  if (!program) return []
+  for (const p of all) {
+    if (!p.builtin || p.env.length === 0) continue
+    if (basename(p.command[0] ?? '') !== program) continue
+    // Names and the secret flag; never a value. An empty value is not passed
+    // to the process at all, so a form filled from this runs the agent exactly
+    // as a bare terminal would until somebody types something in.
+    return p.env.map((v) => ({ name: v.name, value: '', secret: v.secret, hasValue: false }))
+  }
+  return []
+}
+
+/** The last path segment, with no dependency on how the path is spelled. */
+function basename(argv0: string): string {
+  const cut = argv0.lastIndexOf('/')
+  return cut < 0 ? argv0 : argv0.slice(cut + 1)
 }

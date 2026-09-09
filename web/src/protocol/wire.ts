@@ -1274,6 +1274,13 @@ export interface LaunchProfile {
   id: string
   name: string
   builtin: boolean
+  /**
+   * A built-in that has been edited. The row is what you see, the catalogue
+   * entry is what it came from, and one action puts the original back --
+   * saying so is what keeps an override from being the silent drift that
+   * editing a built-in was refused over.
+   */
+  overridden?: boolean
   command: string[]
   env: LaunchEnvVar[]
   createdAt: number

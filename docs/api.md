@@ -390,6 +390,8 @@ nothing reads.
 ### `POST /api/launch-profiles`
 ### `PATCH /api/launch-profiles/{profileID}`
 ### `DELETE /api/launch-profiles/{profileID}`
+### `POST /api/launch-profiles/reorder`
+### `POST /api/launch-profiles/restore`
 
 ```sh
 curl -sX POST .../api/launch-profiles -H "Authorization: Bearer $TOKEN" \
