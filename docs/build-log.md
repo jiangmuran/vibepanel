@@ -20867,3 +20867,37 @@ that changes what it offers. So there is a raw handshake test that reads the
 negotiated `Sec-WebSocket-Extensions` off the wire, because the client type
 does not expose it. Four mutations: compression off, ring raised past the
 budget, mode disabled, and mode silently upgraded to ContextTakeover. All red.
+
+### And then: 「切换 tab 的时候要等两三秒才会显示内容」
+
+Same buffer, measured properly this time rather than argued about. A session
+printing 9,000 coloured lines, the DOM renderer (the slower one, so this is the
+pessimistic side), 20 Mbit and 40 ms:
+
+	                              replay    click -> content
+	512 KiB, no compression       512 KiB       626 ms      <- v1.8.0
+	2 MiB,   no compression       942 KiB      1128 ms
+	2 MiB,   compressed           978 KiB       530 ms      <- now
+
+Four times the scrollback and faster than what shipped. The two complaints
+really were one axis.
+
+Two things the same run settled that guesswork had wrong:
+
+  - **Parsing is not the bottleneck.** The worry when raising the ring was that
+    xterm would choke on a megabyte of escape sequences. On loopback, with the
+    DOM renderer, click to content is 115 ms. Compression does nothing for
+    parse time, so if that had been the cost the whole change would have been a
+    mistake.
+  - **Neither is the switch itself.** Tearing down an xterm, building another,
+    and resubscribing costs 70 ms on the same throttled link -- measured
+    against a session whose buffer is empty. Keeping terminals alive across
+    switches would buy that 70 ms and no more, which is worth knowing before
+    somebody builds it.
+
+What is left after those two is transfer, and it does not fully reconcile: 1 MB
+at 12.8:1 over 20 Mbit ought to be tens of milliseconds, not the ~350 the
+arithmetic leaves. Recorded as unexplained rather than rounded off. The
+comparison is clean and the direction is not in doubt; the residual is not
+attributed, and CDP throttling of WebSocket frames may be accounting the
+decompressed size.
