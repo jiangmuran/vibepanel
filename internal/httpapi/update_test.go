@@ -2,9 +2,11 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 
@@ -118,5 +120,123 @@ func TestTheUpdaterRestartsOnlyWhereTheButtonWould(t *testing.T) {
 	}
 	if _, err := restartCommandFor("launchd"); err == nil {
 		t.Error("launchd got a systemctl command")
+	}
+}
+
+// TestASuppliedSecretIsRefusedWhereItWouldNotBeUsed.
+//
+// Two directions, and the second is the one worth having.
+//
+// A panel that can write its own binary needs nothing typed, so a request that
+// carries something is refused rather than quietly having it ignored: a
+// credential sent for no reason is still a credential that travelled, and the
+// caller has to be told it was pointless so they stop sending it.
+//
+// And a panel that cannot write its binary, for a reason that is *not*
+// permissions -- a full disk, a read-only mount -- must not take one either.
+// Nothing typed would help, and spending it on a program that is going to fail
+// anyway is the worst of both.
+func TestASuppliedSecretIsRefusedWhereItWouldNotBeUsed(t *testing.T) {
+	ts, srv := newTestServer(t)
+
+	// Writable: nothing to authorise.
+	srv.installable = func() error { return nil }
+	code, body := send(t, ts, http.MethodPost, "/api/update", `{"password":"hunter2"}`)
+	if code != http.StatusBadRequest {
+		t.Errorf("a writable panel took a password: %d %s", code, body)
+	}
+	if strings.Contains(body, "hunter2") {
+		t.Errorf("the refusal echoed what was sent: %s", body)
+	}
+
+	// Not writable, but not a permissions problem either.
+	srv.installable = func() error { return errors.New("no space left on device") }
+	code, body = send(t, ts, http.MethodPost, "/api/update", `{"password":"hunter2"}`)
+	if code != http.StatusConflict {
+		t.Errorf("a full disk took a password: %d %s", code, body)
+	}
+	if strings.Contains(body, "hunter2") {
+		t.Errorf("the refusal echoed what was sent: %s", body)
+	}
+}
+
+// TestTheCheckOffersToAskOnlyWhenSomethingCanBeAsked.
+//
+// `elevate` is what decides whether the page shows a field or only a command,
+// and it is two facts and-ed together: the binary is unwritable *because of
+// permissions*, and the helper exists on this machine. Either one alone is a
+// field that cannot lead anywhere.
+func TestTheCheckOffersToAskOnlyWhenSomethingCanBeAsked(t *testing.T) {
+	ts, srv := newTestServer(t)
+
+	for _, tc := range []struct {
+		what string
+		err  error
+		want bool
+	}{
+		{"permissions", fmt.Errorf("%w: /usr/local/bin", selfupdate.ErrNotWritable), elevateAvailable()},
+		{"a full disk", errors.New("no space left on device"), false},
+	} {
+		srv.installable = func() error { return tc.err }
+		res, err := ts.Client().Get(ts.URL + "/api/update")
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(res.Body)
+		res.Body.Close() //nolint:errcheck // test
+		var out map[string]any
+		if err := json.Unmarshal(body, &out); err != nil {
+			t.Fatal(err)
+		}
+		if out["unreachable"] != nil {
+			t.Skip("no network on this runner, and the check says nothing about installing")
+		}
+		got, _ := out["elevate"].(bool)
+		if got != tc.want {
+			t.Errorf("%s: elevate = %v, want %v", tc.what, got, tc.want)
+		}
+	}
+}
+
+// TestNothingTypedReachesACommandLine.
+//
+// The one property that cannot be checked by making a request, so it is read
+// out of the source: what somebody types goes to the helper on stdin. On a
+// command line it would be visible to every account on the machine through
+// `ps`, and in the environment through /proc -- both of which are the whole
+// reason the field exists rather than telling people to run it themselves.
+func TestNothingTypedReachesACommandLine(t *testing.T) {
+	src, err := os.ReadFile("update.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := string(src)
+
+	i := strings.Index(code, "func (s *Server) applyElevated")
+	if i < 0 {
+		t.Fatal("applyElevated is gone; this test is checking nothing")
+	}
+	body := code[i:]
+	if j := strings.Index(body, "\n}\n"); j >= 0 {
+		body = body[:j]
+	}
+	if !strings.Contains(body, "Stdin = strings.NewReader(") {
+		t.Error("what is typed no longer goes in on stdin")
+	}
+	// Every exec built here, and none of them may carry it. `-S` is what makes
+	// the helper read stdin at all; without it the process waits on a terminal
+	// that is not there.
+	if !strings.Contains(body, `"-S"`) {
+		t.Error("the helper is not being told to read stdin")
+	}
+	for _, bad := range []string{"password)", "password,", "password +"} {
+		for _, line := range strings.Split(body, "\n") {
+			if !strings.Contains(line, "exec.Command") {
+				continue
+			}
+			if strings.Contains(line, bad) {
+				t.Errorf("a command line is being built with it: %s", strings.TrimSpace(line))
+			}
+		}
 	}
 }

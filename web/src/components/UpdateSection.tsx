@@ -24,6 +24,9 @@ export function UpdateSection() {
   useLang()
   const [found, setFound] = useState<UpdateCheck | null>(null)
   const [busy, setBusy] = useState<'' | 'check' | 'apply'>('')
+  // Held for as long as the form is open and no longer. Never put anywhere
+  // that outlives the page: not localStorage, not a URL, not a log.
+  const [secret, setSecret] = useState('')
 
   const check = async () => {
     setBusy('check')
@@ -36,7 +39,7 @@ export function UpdateSection() {
     }
   }
 
-  const apply = async () => {
+  const apply = async (secret?: string) => {
     if (!found?.version) return
     if (!(await askConfirm({
       title: t('upd.confirmTitle', { v: found.version }),
@@ -46,10 +49,16 @@ export function UpdateSection() {
     }))) return
     setBusy('apply')
     try {
-      const res = await api.applyUpdate()
+      const res = await api.applyUpdate(secret)
+      // Cleared on the way out and not in `finally`: a wrong one has to stay
+      // in the box, or correcting a typo means typing the whole thing again.
+      setSecret('')
       showToast({
         kind: 'success',
-        key: res.restarting ? 'upd.done' : 'upd.doneNoRestart',
+        // Authorised rather than installed. There is no version to report --
+        // the installer is running behind this and ends by restarting the
+        // unit -- so claiming one would be the page inventing a number.
+        key: res.elevated ? 'upd.elevated' : res.restarting ? 'upd.done' : 'upd.doneNoRestart',
         params: { v: res.installed, why: res.restartWhy },
       })
     } catch (e) {
@@ -107,13 +116,55 @@ export function UpdateSection() {
         )}
       </div>
 
+      {/* The panel cannot replace a binary it does not own, and it does not
+          hold the credential that could. What it can do is take one, typed
+          here, at a moment somebody chose, and spend it on one fixed command.
+
+          That is not the same as a console that can escalate, and the
+          difference is worth stating: anybody who can reach this page holds a
+          session on a panel whose purpose is running commands as this account,
+          and can type the same thing into a terminal in the next tab. What
+          this removes is a window switch. */}
+      {found?.byHand && found.newer && found.elevate && (
+        <form
+          data-testid="update-elevate"
+          onSubmit={(e) => {
+            e.preventDefault()
+            void apply(secret)
+          }}
+          className="mt-2 flex flex-wrap items-center gap-2"
+        >
+          <input
+            type="password"
+            value={secret}
+            onChange={(e) => setSecret(e.target.value)}
+            placeholder={t('upd.secretHint')}
+            autoComplete="current-password"
+            data-testid="update-secret"
+            className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent"
+          />
+          <button
+            type="submit"
+            disabled={busy !== '' || secret === ''}
+            data-testid="update-elevate-apply"
+            className="vp-press flex items-center gap-1.5 rounded-vp px-3 py-1.5 text-vp-base font-medium disabled:opacity-50"
+            style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+          >
+            <Download size={13} />
+            {busy === 'apply' ? t('upd.applying') : t('upd.apply')}
+          </button>
+        </form>
+      )}
       {found?.byHand && found.newer && (
         <p
           className="mt-2 text-vp-sm leading-relaxed break-all text-ink-2"
           data-testid="update-by-hand"
         >
-          {/* The server's sentence, which names the command. Shown as it
-              arrived: it contains a path this side does not know. */}
+          {/* The server's sentence, which names the command. Kept even when
+              the field above is offered: a machine where the credential is
+              refused still needs the shell to be a way through, and it is the
+              only line here that survives that. Shown as it arrived -- it
+              contains a path this side does not know. */}
           {safeText(found.byHand)}
         </p>
       )}

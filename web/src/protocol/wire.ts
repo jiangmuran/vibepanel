@@ -657,6 +657,15 @@ export interface UpdateCheck {
    * button must not be offered: it would download and then fail.
    */
   byHand?: string
+  /**
+   * Whether the page may offer to ask for the credential rather than only
+   * printing the command from `byHand`.
+   *
+   * Only that the helper program exists on the machine. Whether this account
+   * may use it, and whether what was typed is right, are that program's
+   * questions and it answers them a moment later.
+   */
+  elevate?: boolean
 }
 
 /** What `POST /api/update` answers, before it restarts. */
@@ -665,6 +674,13 @@ export interface UpdateResult {
   previous: string
   restarting: boolean
   restartWhy: string
+  /**
+   * Set when the upgrade was authorised rather than done in this process. The
+   * installer is running behind it and ends by restarting the unit, so there
+   * is no version to report yet -- `installed` is empty and the page waits for
+   * the panel to come back the way it does after any restart.
+   */
+  elevated?: boolean
 }
 
 // ── read-only share links ──────────────────────────────────────────────────

@@ -1,11 +1,13 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -47,6 +49,12 @@ func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.canInstall(); err != nil {
 		out["byHand"] = updateByHand(err)
+		// Whether the page may offer to ask for the credential instead of only
+		// printing the command. Only that the helper exists: whether this
+		// account may use it is that program's question, and it answers it a
+		// moment later. Reading /etc/sudoers here to guess would be a second
+		// implementation of something that already has a real one.
+		out["elevate"] = errors.Is(err, selfupdate.ErrNotWritable) && elevateAvailable()
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -67,8 +75,33 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 	// `permission denied` on a temp file nobody had heard of. Whether this
 	// process can replace its own binary does not depend on what GitHub says,
 	// so it is not worth a round trip to find out.
+	// The body carries a password only when one is needed, and it is read
+	// before anything else so that it is in memory for the shortest time this
+	// handler can arrange.
+	var req struct {
+		Password string `json:"password"`
+	}
+	if r.ContentLength > 0 {
+		if !decode(w, r, &req) {
+			return
+		}
+	}
+
 	if err := s.canInstall(); err != nil {
-		writeErr(w, http.StatusConflict, updateByHand(err))
+		// A password is refused when it would not be used. Sending one to a
+		// panel that can already write its own binary is a password sent for
+		// nothing, and the answer to that is to not accept it rather than to
+		// quietly ignore it.
+		if req.Password == "" || !errors.Is(err, selfupdate.ErrNotWritable) {
+			writeErr(w, http.StatusConflict, updateByHand(err))
+			return
+		}
+		s.applyElevated(w, r, req.Password)
+		return
+	}
+	if req.Password != "" {
+		writeErr(w, http.StatusBadRequest,
+			"this panel can replace its own binary; no password is needed and none was used")
 		return
 	}
 
@@ -201,4 +234,78 @@ func updateByHand(err error) string {
 	}
 	return "this panel cannot replace its own binary: " + err.Error() +
 		". Update it from a shell instead: sudo " + self + " service upgrade"
+}
+
+// ─── upgrading a root-owned binary, with a password typed once ─────────────
+
+// elevateAvailable reports whether the privileged path can even be offered.
+//
+// Only that sudo exists. Whether this account may use it, and whether the
+// password is right, are answered by sudo itself a moment later -- guessing
+// either from /etc/sudoers here would be a second implementation of a question
+// that has a real one.
+func elevateAvailable() bool {
+	_, err := exec.LookPath("sudo")
+	return err == nil
+}
+
+// applyElevated hands one typed password to sudo and lets the installer do the
+// rest.
+//
+// It answers before the upgrade finishes, and that is not laziness. `service
+// upgrade` ends by restarting the unit, which kills this process -- so a
+// handler that waited for it to return would be a request that never gets an
+// answer, on a page left guessing whether anything happened. The password is
+// checked first, synchronously, because "wrong password" is the one failure
+// worth reporting properly and the only one that happens before anything has
+// been changed.
+func (s *Server) applyElevated(w http.ResponseWriter, r *http.Request, password string) {
+	self, _ := os.Executable()
+	sudo, lookErr := exec.LookPath("sudo")
+	if lookErr != nil {
+		writeErr(w, http.StatusConflict, updateByHand(selfupdate.ErrNotWritable))
+		return
+	}
+
+	// Just the password, on stdin, and nothing started yet.
+	check := exec.CommandContext(r.Context(), sudo, "-S", "-p", "", "-v")
+	check.Stdin = strings.NewReader(password + "\n")
+	var why bytes.Buffer
+	check.Stderr = &why
+	if err := check.Run(); err != nil {
+		msg := strings.TrimSpace(why.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		// 401 rather than 500: this is a credential being refused, and the
+		// page needs to put the cursor back in the password box rather than
+		// tell somebody the panel is broken.
+		writeErr(w, http.StatusUnauthorized, msg)
+		return
+	}
+
+	name := ""
+	if u, ok, err := s.currentUser(r); ok && err == nil {
+		name = u.Username
+	}
+	// The event, never the password. The audit log is read on a settings page,
+	// printed into a journal and shipped to whatever collects journals.
+	s.audit(r.Context(), "update.elevated", name, s.clientIP(r), "")
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"elevated":   true,
+		"restarting": true,
+	})
+
+	// Detached from the request, whose context is cancelled the moment the
+	// response is written -- and this outlives the response on purpose.
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		time.Sleep(1500 * time.Millisecond)
+		run := exec.CommandContext(ctx, sudo, "-n", "--", self, "service", "upgrade")
+		if out, err := run.CombinedOutput(); err != nil {
+			s.Log.Error("elevated upgrade", "err", err, "out", string(out))
+		}
+	}()
 }

@@ -616,7 +616,17 @@ export const api = {
     request<WebhookTest>('/api/settings/webhooks/test', { method: 'POST', body: JSON.stringify(w) }),
 
   checkUpdate: () => request<UpdateCheck>('/api/update'),
-  applyUpdate: () => request<UpdateResult>('/api/update', { method: 'POST' }),
+  /**
+   * `secret` is only sent when the panel said it cannot replace its own binary
+   * and that a helper exists. It is spent on one fixed command and kept
+   * nowhere: not in a query string, not in a log, and not in this module
+   * beyond the call.
+   */
+  applyUpdate: (secret?: string) =>
+    request<UpdateResult>('/api/update', {
+      method: 'POST',
+      body: JSON.stringify(secret ? { password: secret } : {}),
+    }),
 
   /**
    * What the agents recorded spending. Not `usage` above, which is CPU and

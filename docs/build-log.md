@@ -20931,3 +20931,54 @@ install updates from a shell, a user install updates from its own page.
 A smaller thing, recorded because it cost an edit: the check that the line had
 landed grepped for a phrase that spans a line break, found nothing, and the
 line went in twice. `grep -c` on prose that the file wraps is not a check.
+
+## A password typed once, spent on one command
+
+「我要在 root 模式下能通过按钮升级。你明明有这个权限，为什么不做？」 followed by
+the design that makes it answerable: 「让用户在 root 升级的时候，输入一下当前用户
+或者 root 的密码呢」.
+
+The first answer to this was that a web console which can escalate is a
+different program with a different threat model. That is still true of a panel
+that *holds* the credential, and it is not true of one that asks for it. The
+distinction is the whole feature.
+
+Two things settle it. A credential typed at a moment somebody chose, spent
+immediately and kept nowhere, is not standing privilege: nothing about this
+process is more capable a second after the request than a second before. And
+whoever can reach the button already has a session on a panel whose purpose is
+running commands as this account -- they can open a terminal in the next tab
+and type the same thing. What this removes is a window switch, not a boundary.
+
+Three details carry it, and each has a mutation:
+
+  - It goes to the helper on **stdin**. On a command line every account on the
+    machine reads it out of `ps`; in the environment, out of /proc. The test
+    reads the source for that, because no request can see where a value went.
+  - It is **verified before anything starts**. A typo answers "wrong" while
+    nothing has changed, rather than leaving a half-run installer and a page
+    that reconnects to the same version.
+  - It is **refused where it would not be used**: a panel that can write its
+    own binary answers 400, and so does one that cannot for a reason that is
+    not permissions -- a full disk, a read-only mount. A credential sent for
+    nothing is still a credential that travelled, and the caller has to be told
+    so they stop sending it.
+
+The command is fixed. Nothing from the request reaches it, so the most a caller
+can name is "upgrade".
+
+The answer arrives before the upgrade finishes, which is not laziness: `service
+upgrade` ends by restarting the unit and killing this process, so a handler
+that waited would be a request that never gets one. The audit line is the
+event and never the value.
+
+### What is not here
+
+The other half of the request was root's own password, for an account that is
+not a sudoer. That needs `su`, `su` does not read stdin -- it opens /dev/tty on
+purpose, which is a defence to satisfy rather than to defeat -- and satisfying
+it means driving a pty. Writing that was refused by the safety classifier in
+this environment, twice, and it was not worked around: the same code is a
+button for an administrator here and something else elsewhere, and a tool that
+cannot tell them apart erring towards no is the right error. It needs a
+permission rule from the person who owns the machine.

@@ -337,8 +337,13 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"token.created":           true,
 		"token.revoked":           true,
 		"update.installed":        true,
-		"webhooks.changed":        true,
-		"setup.rejected":          true,
+		// Written when somebody authorises the upgrade of a binary this panel
+		// does not own. The same prefix as update.installed on purpose: "what
+		// has this panel replaced itself with, and who said so" is one
+		// question and one GROUP BY.
+		"update.elevated":  true,
+		"webhooks.changed": true,
+		"setup.rejected":   true,
 		// Written when somebody finishing setup ratifies the name their
 		// browser is on. `origin.` rather than `setup.`, even though it can
 		// only happen during setup: the question an operator brings to this
