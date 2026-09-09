@@ -249,8 +249,29 @@ func clientIDFrom(r *http.Request) string {
 // ServeHTTP upgrades the request and serves the connection until it closes.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		OriginPatterns:  h.OriginPatterns,
-		CompressionMode: websocket.CompressionDisabled,
+		OriginPatterns: h.OriginPatterns,
+		// permessage-deflate, and the mode matters more than the fact.
+		//
+		// What this is for is one message: the replay a browser gets when it
+		// selects a session. Measured on a real pane out of a real panel --
+		// 764 KB of a shell's history, escape sequences and all -- gzip gives
+		// 59 KB. Terminal output is the most repetitive thing on the wire and
+		// it compresses about thirteen to one.
+		//
+		// NoContextTakeover rather than ContextTakeover, for two reasons that
+		// point the same way. It only compresses messages over 512 bytes, so a
+		// keystroke echo -- three bytes, on the path where latency is the
+		// whole product -- is sent as it always was, with no deflate call in
+		// front of it. And it holds no sliding window per connection, so the
+		// cost is a pooled writer during a large write rather than 32 KB plus
+		// a 1.2 MB flate.Writer standing by on every open socket, of which
+		// this panel has one per tab per person.
+		//
+		// It also means each message compresses alone. A shared window across
+		// messages is what makes a compression side channel interesting, and
+		// there is no reason to have one here to save bytes on frames that are
+		// under the threshold anyway.
+		CompressionMode: websocket.CompressionNoContextTakeover,
 	})
 	if err != nil {
 		// Accept has already written a response.

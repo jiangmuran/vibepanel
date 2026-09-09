@@ -4,40 +4,34 @@ import "sync"
 
 // DefaultRingSize is how much recent output each session keeps for replay.
 //
-// This is not a memory budget. It is *the number of bytes a person waits for
-// every time they click a session*, because Snapshot is the only thing that
-// ever reads this buffer and the whole of it goes down the socket on every
-// subscribe -- and the panel resubscribes on every switch, since each session
-// gets its own xterm (see the `key={current.id}` in App.tsx).
+// This is not a memory budget. It is *what a person waits for every time they
+// click a session*, because Snapshot is the only thing that ever reads this
+// buffer and the whole of it goes down the socket on every subscribe -- and
+// the panel resubscribes on every switch, since each session gets its own
+// xterm (see the `key={current.id}` in App.tsx).
 //
-// It was 2 MiB, and it fills straight away: Attach primes it from capture-pane,
-// which on a pane holding tmux's 20,000 lines is 1,576,914 bytes measured at
-// 130 columns. So "up to 2 MiB" was the whole of it on any session that had
-// been running a while. Measured against the real binary, real tmux and a real
-// browser -- two agents in one project, the browser throttled to 20 Mbit and
-// 40 ms, which is an ordinary home link and generous for a phone:
+// It went 2 MiB -> 512 KiB and is back, and the round trip is the useful part.
 //
-//	                       replay          on screen
-//	2 MiB     switch      1758 KiB          2577 ms
-//	          switch back 1754 KiB          2935 ms
-//	512 KiB   switch       512 KiB           836 ms
-//	          switch back  512 KiB           794 ms
+// 2 MiB was 2.6 seconds to click a session over a 20 Mbit link, because it
+// went out uncompressed and the buffer is always full: Attach primes it from
+// capture-pane. 512 KiB fixed the wait and produced the next report --
+// 「有的时候 session 会感觉降级了一样，无法滚动，少渲染了好多东西」 -- which was
+// exactly the thing that had been traded away, seen from the other side.
 //
-// That is the reported 「点进一个session要加载很久」. On the loopback the same
-// switch is under a second, which is why every browser check here missed it:
-// they all run against 127.0.0.1.
+// Asked of the running panel rather than reasoned about. One of its shells:
 //
-// 512 KiB is around two thousand lines of an agent's coloured output: far past
-// a screen, and past what anybody scrolls back through in a browser. tmux
-// still holds the authoritative 20,000 lines, and CaptureLines already reads
-// them with a bound, so nothing is lost permanently -- what is lost is
-// scrollback that was being paid for on every click and read almost never.
+//	history_size 11,856   capture 764 KB   gzip -6  59 KB
 //
-// One number rather than a separate replay bound, deliberately: Snapshot has
-// no other caller, so a ring larger than what is replayed would be memory
-// nothing can reach. Raising this again is raising the click cost; that is the
-// trade, and it is the only one this constant makes.
-const DefaultRingSize = 512 << 10
+// Thirteen to one, because terminal output is the most repetitive thing on the
+// wire. So the socket compresses now (internal/ws/conn.go), and the choice
+// stops being between a fast click and a readable scrollback: 2 MiB of replay
+// costs a fraction of what 512 KiB cost uncompressed. That pane's entire
+// history fits inside this and arrives smaller than the truncated version did.
+//
+// Raising it further is raising the click cost again, thirteen times more
+// slowly than before but in the same direction. The number that matters is the
+// compressed one, and the test below is where the two are tied together.
+const DefaultRingSize = 2 << 20
 
 // RingBuffer keeps the last N bytes a session produced, so a browser that
 // connects — or reconnects — sees what it missed instead of a blank terminal.

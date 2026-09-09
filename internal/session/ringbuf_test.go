@@ -2,6 +2,8 @@ package session
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -200,29 +202,46 @@ func TestRingBufferConcurrentWriters(t *testing.T) {
 	<-done
 }
 
-// TestTheReplayIsSmallEnoughToClickThrough is a tripwire on one number.
+// TestTheReplayIsSmallEnoughToClickThrough is a tripwire on one number, and on
+// the thing that decides what that number costs.
 //
-// DefaultRingSize does not read like a latency budget, and that is exactly how
-// it came to be one. Snapshot is its only reader, Subscribe is Snapshot's only
-// caller, and the panel resubscribes every time somebody selects a session --
-// each session gets its own xterm, so switching tears the old one down and
-// replays the new one from scratch. So this constant is the number of bytes a
-// person waits for on every click, and Attach primes the buffer full on the
-// first tick, so it is not "up to" anything: it is what gets sent.
+// DefaultRingSize does not read like a latency budget, and that is how it came
+// to be one. Snapshot is its only reader, Subscribe is Snapshot's only caller,
+// and the panel resubscribes every time somebody selects a session -- so this
+// constant is the number of bytes a person waits for on every click, and
+// Attach primes the buffer full on the first tick, so it is not "up to"
+// anything: it is what gets sent.
 //
-// Measured against the real binary over a 20 Mbit link, two agents in one
-// project: 2 MiB put the session on screen in 5.5 seconds. Nothing in the Go
-// tests or in `make check` can see that -- the browser checks run on the
-// loopback, where the same replay is under a second.
+// The budget is 2 MiB *because the socket compresses*. Measured on a pane out
+// of a live panel: 764 KB of a shell's history goes to 59 KB with gzip, about
+// thirteen to one, which is what terminal output does. Uncompressed, 2 MiB was
+// 2.6 seconds over a 20 Mbit link and shrinking it to 512 KiB produced the
+// opposite complaint -- 「无法滚动，少渲染了好多东西」 -- because 512 KiB is six
+// per cent of that pane.
 //
-// Raising this is allowed. Raising it without knowing that it is a latency
-// change is what this stands in front of.
+// So the two are checked together. A build that raises the ring is fine; a
+// build that turns the compression off underneath it is the 2.6 seconds again,
+// and nothing else in the tree would say so.
 func TestTheReplayIsSmallEnoughToClickThrough(t *testing.T) {
-	const budget = 512 << 10
+	const budget = 2 << 20
 	if DefaultRingSize > budget {
 		t.Errorf("DefaultRingSize is %d bytes; every session switch sends all of it to the "+
-			"browser, and %d is the measured ceiling for a click that feels immediate on a "+
-			"link that is not the loopback. Raise the budget deliberately, with a "+
-			"measurement, or leave the buffer where it is.", DefaultRingSize, budget)
+			"browser, and %d is the ceiling for a click that feels immediate on a link that "+
+			"is not the loopback. Raise the budget deliberately, with a measurement.",
+			DefaultRingSize, budget)
+	}
+
+	// The other half. Read as text because internal/session must not import
+	// internal/ws to ask -- and because what is being pinned is a decision
+	// written in one line of another package, which is exactly the shape that
+	// gets changed by somebody who has not read this file.
+	src, err := os.ReadFile(filepath.Join("..", "ws", "conn.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), "CompressionMode: websocket.CompressionNoContextTakeover") {
+		t.Errorf("the socket no longer compresses, and this buffer is %d bytes on the "+
+			"strength of it doing so. Either put the compression back or bring the ring "+
+			"down to something that is bearable uncompressed.", DefaultRingSize)
 	}
 }

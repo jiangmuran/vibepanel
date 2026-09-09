@@ -20812,3 +20812,58 @@ wholesale instead of taking the name and the secret flag. The test could not
 see it, because the built-ins carry empty values — so the fixture now gives
 them values they do not have in practice, which is what a future built-in
 shipping a default, or a server that stopped redacting, would look like.
+
+## The socket compresses, so the trade stops existing
+
+「有的时候 session 会感觉降级了一样，无法滚动，少渲染了好多东西」. That is
+DefaultRingSize, and it is a report of the thing I traded away four commits
+earlier rather than a new fault.
+
+Asked of the running panel instead of reasoned about:
+
+	vp_76b6…  alt=0  history_size 11,856  history_bytes 8,272,911  bash
+	vp_de74…  alt=1  history_size    827  history_bytes   536,918  claude
+
+The ring was 512 KiB. That shell's rendered history is 764 KB, so selecting it
+replayed the last six per cent of it. At 2 MiB it had been a quarter, and 2 MiB
+was what produced the *first* complaint: 2.6 seconds to click a session over a
+20 Mbit link, because Attach primes the buffer full from capture-pane so it is
+never "up to" anything.
+
+Both complaints are correct and they point in opposite directions, which is
+usually the sign that the axis is wrong. It was:
+
+	capture     764,124 bytes
+	gzip -6      59,470 bytes      12.8 : 1
+
+Terminal output is the most repetitive thing on the wire. The socket had
+`CompressionDisabled` on it with no comment saying why -- the library's default,
+made explicit -- so every one of those bytes went out raw.
+
+`CompressionNoContextTakeover`, and the mode is the whole of the care here. It
+compresses only messages over 512 bytes, so a keystroke echo -- three bytes, on
+the one path where latency *is* the product -- gets no deflate call in front of
+it. It holds no sliding window per connection, so the cost is a pooled writer
+during a large write instead of 32 KB plus a 1.2 MB `flate.Writer` standing by
+on every open socket, of which this panel has one per tab per person. And each
+message compressing alone is what makes a shared-window side channel not a
+question worth having.
+
+So the ring goes back to 2 MiB and that pane's *entire* history now fits inside
+it and arrives smaller than the truncated version did.
+
+### Two guards, tied together
+
+The size is only affordable because of the compression, and those live in
+different packages, so the tripwire on `DefaultRingSize` now reads
+`internal/ws/conn.go` as text and fails if the mode is gone. A build that turns
+compression off underneath a 2 MiB ring is 2.6 seconds a click again and
+nothing else in the tree would have said so.
+
+And `CompressionNoContextTakeover` **falls back to Disabled when the peer does
+not offer the extension**, silently and correctly -- which is also a way for
+this to be switched off by a proxy that strips a header or a library upgrade
+that changes what it offers. So there is a raw handshake test that reads the
+negotiated `Sec-WebSocket-Extensions` off the wire, because the client type
+does not expose it. Four mutations: compression off, ring raised past the
+budget, mode disabled, and mode silently upgraded to ContextTakeover. All red.

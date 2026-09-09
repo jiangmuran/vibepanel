@@ -482,3 +482,61 @@ func TestAnOversizedMessageCostsThatMessageAndNotTheSocket(t *testing.T) {
 	}
 	alive("an oversized frame")
 }
+
+// TestTheSocketActuallyNegotiatesCompression.
+//
+// CompressionNoContextTakeover falls back to CompressionDisabled when the peer
+// does not offer permessage-deflate, silently and by design. That is the right
+// behaviour and it is also a way for this to be switched off by something that
+// is not a code change -- a proxy that strips the extension header, a library
+// upgrade that changes what it offers -- with nothing anywhere saying so.
+//
+// It matters because the replay buffer is 2 MiB on the strength of this: see
+// DefaultRingSize, which measured 2.6 seconds a click when the same bytes went
+// out uncompressed.
+//
+// A raw handshake rather than the library's client, because what is being
+// checked is the wire: the header the server sends back is the negotiation,
+// and the client type does not expose it.
+func TestTheSocketActuallyNegotiatesCompression(t *testing.T) {
+	h := &Handler{
+		Manager:         session.NewManager(nil, 1<<10),
+		Resolve:         stubResolver{},
+		StillAuthorized: func(*http.Request) bool { return true },
+	}
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	// What every browser offers.
+	req.Header.Set("Sec-WebSocket-Extensions", "permessage-deflate; client_max_window_bits")
+
+	res, err := srv.Client().Transport.RoundTrip(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close() //nolint:errcheck // test
+	if res.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("handshake: %s", res.Status)
+	}
+	got := res.Header.Get("Sec-WebSocket-Extensions")
+	if !strings.Contains(got, "permessage-deflate") {
+		t.Errorf("the server accepted the socket without compression: %q", got)
+	}
+	// No context takeover, in both directions. The mode is chosen for what it
+	// does *not* do -- hold a 32 KB window plus a 1.2 MB writer per open socket
+	// -- and a silent upgrade to ContextTakeover would cost that on every tab
+	// this panel has open.
+	for _, want := range []string{"client_no_context_takeover", "server_no_context_takeover"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("negotiated %q, missing %s", got, want)
+		}
+	}
+}
