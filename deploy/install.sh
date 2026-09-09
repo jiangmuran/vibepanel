@@ -556,11 +556,16 @@ the panel will print a one-time setup token at startup as it always did.'
      before anyone logs in, and it is the only one that can lower the
      OOM score: measured, a user unit asking for -500 gets 100, a
      system unit gets -500. Needs root once, to write one file.
+     Updating is a shell command, not a button: the binary lands in
+     /usr/local/bin and the panel runs unprivileged, so it cannot
+     replace it. The panel prints the command when there is a release.
 
   2) systemd *user* service
      Runs as you and needs no root at all. Starts at boot once
      lingering is on, which this will enable. Choose this on a shared
      machine, or if you would rather nothing of yours lived in /etc.
+     The binary is yours, under ~/.local/bin, so the panel can update
+     itself from its own page.
 '
       MS_ZH='面板要以哪种方式运行？
 
@@ -569,11 +574,15 @@ the panel will print a one-time setup token at startup as it always did.'
      之前就已经起来，而且只有它能把 OOM 分数调低：实测，用户级 unit
      写 -500 拿到的是 100，系统级 unit 拿到的才是 -500。
      只需要一次 root，用来写一个文件。
+     升级要在 shell 里敲一条命令，不是页面上的按钮：二进制装在
+     /usr/local/bin，而面板不带权限，改不了它。有新版本时面板会把
+     那条命令印出来。
 
   2) systemd *user* 服务
      以你的身份运行，完全不需要 root。开启 lingering 之后就会开机自启，
      本程序会替你开。共用的机器上，或者你不希望 /etc 里有你的东西时，
-     选这个。
+     选这个。二进制在 ~/.local/bin，是你自己的，所以面板能在页面里
+     升级自己。
 ' ;;
     kind.noroot)
       MS_EN='root is not available here (no sudo, or it would need a password and

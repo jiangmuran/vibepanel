@@ -20901,3 +20901,33 @@ arithmetic leaves. Recorded as unexplained rather than rounded off. The
 comparison is clean and the direction is not in doubt; the residual is not
 attributed, and CDP throttling of WebSocket frames may be accounting the
 decompressed size.
+
+## 「他们用 system 模式装上就不能升级了？？」
+
+Not quite, and the difference is worth being precise about because the first
+reading is a defect and the second is a design.
+
+They can upgrade. It is one command, the panel prints it verbatim when there is
+a release, and the panel does *not* offer a button that would fail:
+`selfupdate.Installable()` probes by writing rather than by reading mode bits,
+`handleUpdateStatus` puts the answer in `byHand`, and `UpdateSection` shows the
+command instead of an Install button. That was all built already, and it is
+right.
+
+What the panel will not do is become root. `updateByHand` says so in as many
+words -- a web console that can escalate is a different program with a
+different threat model, and the whole point of a system unit dropping to
+`User=` is that this process is not privileged. A one-click upgrade for a
+system install means giving the panel a path to root, and the honest place for
+that decision is an install-time question, not a quiet default.
+
+The actual defect was that nobody is told. The install menu lays out the
+trade-offs between the two units -- who it runs as, boot before login, the OOM
+score, root once -- and said nothing about updates, so somebody takes the
+recommended option and finds out weeks later, from an error, which is exactly
+how this was reported. Both arms say it now, in both languages: a system
+install updates from a shell, a user install updates from its own page.
+
+A smaller thing, recorded because it cost an edit: the check that the line had
+landed grepped for a phrase that spans a line break, found nothing, and the
+line went in twice. `grep -c` on prose that the file wraps is not a check.
