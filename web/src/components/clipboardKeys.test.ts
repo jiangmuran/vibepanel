@@ -1,16 +1,16 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-import { isBrowserPaste, type KeyPress } from './pasteKey'
+import { isBrowserCopy, isBrowserPaste, type KeyPress } from './clipboardKeys'
 
 /**
- * The rule about ctrl+V, without a browser.
+ * The rules about ctrl+V and ctrl+C, without a browser.
  *
- * What a browser run checks is that the paste arrives; `render-check.mjs` puts
- * text on the clipboard, presses the key and reads it off the screen. What it
- * cannot do cheaply is the *other* half -- every combination this must keep
- * its hands off, because each one of those is a keystroke that silently stops
- * reaching the pty if the condition is widened.
+ * What a browser run checks is that the clipboard arrives; `render-check.mjs`
+ * presses both keys at a real session and reads the result off the screen.
+ * What it cannot do cheaply is the *other* half -- every combination these
+ * must keep their hands off, because each one is a keystroke that silently
+ * stops reaching the pty if a condition is widened.
  */
 function press(over: Partial<KeyPress> = {}): KeyPress {
   return { type: 'keydown', key: 'v', ctrlKey: true, metaKey: false, altKey: false, ...over }
@@ -59,6 +59,42 @@ describe('ctrl+V belongs to the browser', () => {
   })
 })
 
+describe('ctrl+C is the chord, and never the whole condition', () => {
+  const copy = (over: Partial<KeyPress> = {}): KeyPress => press({ key: 'c', ...over })
+
+  it('is claimed with either copy modifier', () => {
+    expect(isBrowserCopy(copy())).toBe(true)
+    expect(isBrowserCopy(copy({ ctrlKey: false, metaKey: true }))).toBe(true)
+    expect(isBrowserCopy(copy({ key: 'C' }))).toBe(true)
+  })
+
+  it('is not claimed on the way back up', () => {
+    expect(isBrowserCopy(copy({ type: 'keyup' }))).toBe(false)
+  })
+
+  it('leaves AltGr alone', () => {
+    expect(isBrowserCopy(copy({ altKey: true }))).toBe(false)
+  })
+
+  it('leaves the other control characters alone', () => {
+    for (const key of ['v', 'd', 'z', 'l', 'r', 'u', 'w']) {
+      expect(isBrowserCopy(copy({ key }))).toBe(false)
+    }
+  })
+
+  it('leaves a plain c alone', () => {
+    expect(isBrowserCopy(copy({ ctrlKey: false }))).toBe(false)
+  })
+
+  it('says nothing about the selection, which is the caller’s half', () => {
+    // The predicate answers true for a ctrl+C pressed with nothing selected
+    // too -- and that press must still interrupt. Deciding here would mean
+    // this file needed a terminal; deciding in the caller is what the wiring
+    // block below pins.
+    expect(isBrowserCopy(copy())).toBe(true)
+  })
+})
+
 describe('and the terminal actually hands the key back', () => {
   /*
    * The predicate above is provable in node; the wiring is not, and only the
@@ -86,9 +122,30 @@ describe('and the terminal actually hands the key back', () => {
   })
 
   it('returns false for a paste, which is what leaves the event uncancelled', () => {
-    // The negation is the whole fix. `attachCustomKeyEventHandler((e) =>
-    // isBrowserPaste(e))` compiles, type-checks, reads almost the same, and
-    // restores the bug: true means xterm processes the key and sends \x16.
-    expect(code).toMatch(/attachCustomKeyEventHandler\(\s*\(e\)\s*=>\s*!isBrowserPaste\(e\)\s*\)/)
+    // The direction is the whole fix. `if (isBrowserPaste(e)) return true`
+    // compiles, type-checks, reads almost the same, and restores the bug:
+    // true means xterm processes the key and sends \x16.
+    expect(code).toMatch(/if\s*\(isBrowserPaste\(e\)\)\s*return false/)
+  })
+
+  it('takes ctrl+C only when something is selected', () => {
+    // Without the second half this is a terminal that cannot be interrupted.
+    // ^C is how a runaway agent is stopped, and the person pressing it is in a
+    // hurry; a copy that ate it would look like the panel had frozen.
+    expect(code).toMatch(/isBrowserCopy\(e\)\s*&&\s*term\.hasSelection\(\)/)
+  })
+
+  it('falls through to the interrupt when there was nothing to copy', () => {
+    // hasSelection() can be true for a selection whose text is empty. Copying
+    // nothing and swallowing the key is the same failure as above, arrived at
+    // from one step further in.
+    expect(code).toMatch(/if\s*\(!copySelection\(\)\)\s*return true/)
+  })
+
+  it('clears the selection in the same gesture', () => {
+    // So the next ctrl+C interrupts. Left in place, a selection on screen
+    // swallows every press after the first: the same text copied again and
+    // again while the agent it came from keeps running.
+    expect(code).toMatch(/term\.clearSelection\(\)/)
   })
 })
