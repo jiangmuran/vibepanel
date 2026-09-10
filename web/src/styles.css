@@ -1041,10 +1041,28 @@ body {
  * `.vp-segmented-fill` and not `.vp-segmented`: the same track draws the
  * settings language switch and the TLS mode picker, and those are chips beside
  * a label rather than a strip that owns its row. */
+/* The track spans its row on every device, and the gate that used to be here
+   was the bug.
+ *
+ * It was `@media (pointer: coarse)`, on the reasoning that this was a tablet
+ * problem. It is not: a tablet with a keyboard, a stylus device and anything
+ * in desktop-site mode all report `fine`, so the fix shipped and the report
+ * came back with the same screenshot -- two icons in the corner of a bar.
+ * 「右边咋还是这样」.
+ *
+ * The intent was never about pointers. Two icon tabs hugging the left of a bar
+ * they are the only content of look wrong at any size, which is what was asked
+ * about in the first place: 「应该占据整个右上红色横条的长度」. Width and
+ * balance are not things a pointer type can answer, and AGENTS.md says as much
+ * about the layout split generally -- judge by width, never by what the device
+ * claims to be.
+ *
+ * The height below stays gated, because that one really is about fingers. */
+.vp-segmented-fill {
+  flex-grow: 1;
+}
+
 @media (pointer: coarse) {
-  .vp-segmented-fill {
-    flex-grow: 1;
-  }
   .vp-segmented > .vp-tab {
     min-height: 2.25rem;
   }

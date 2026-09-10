@@ -20982,3 +20982,40 @@ this environment, twice, and it was not worked around: the same code is a
 button for an administrator here and something else elsewhere, and a tool that
 cannot tell them apart erring towards no is the right error. It needs a
 permission rule from the person who owns the machine.
+
+### 「右边咋还是这样」
+
+The tab strip spanning its row shipped in v1.9.0 and the report came back with
+the same screenshot it started from. Not a stale cache -- the service worker
+does not cache the shell, `index.html` is `no-cache`, and the assets are
+content-hashed -- and not a missing rule: the class was on the element and the
+declaration was in the bundle.
+
+It was inside `@media (pointer: coarse)`.
+
+A tablet with a keyboard, a stylus device and anything in desktop-site mode all
+report `fine`. The rule shipped, and never applied to the person who asked for
+it. Measured on both:
+
+	           track    tabs
+	coarse     190px   93x36
+	fine  was   56px   26x28
+	fine  now  190px   93x28
+
+The gate was mine and it was reasoning about the wrong thing. Two icon tabs
+hugging the left of a bar they are the only content of look wrong at any size,
+which is what was asked in the first place -- 「应该占据整个右上红色横条的长度」
+-- and neither width nor balance is a question a pointer type can answer.
+AGENTS.md says the same about the layout split generally: judge by width, never
+by what the device claims to be. The height stays gated, because that one
+really is about fingers.
+
+Third time on this element and a new way of being wrong each time: the first
+two changed the wrong axis, this one had the right axis behind a condition that
+was false where it mattered.
+
+`segmented.test.ts` counts braces from the top of the stylesheet and fails if
+`.vp-segmented-fill` is nested in anything. Crude, and it pins the property
+that matters: a rule inside any `@media` is a rule some device does not get,
+and this one is about balance rather than about hardware. Putting the gate back
+fails it with that sentence.
