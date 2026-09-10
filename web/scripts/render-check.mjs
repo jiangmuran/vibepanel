@@ -3441,6 +3441,84 @@ browser = await chromium.launch({ headless: true })
     await sleep(400)
   }
 
+  // ── ctrl+C, which was only ever the interrupt ────────────────────────────
+  //
+  // The other half of the same mistake, and the more dangerous one to fix.
+  // ctrl+C in a browser is copy; ctrl+C in a terminal is SIGINT. The panel
+  // copies on select, which taught people that a drag was enough -- and then
+  // the keystroke everybody presses after selecting stopped the agent they had
+  // selected from. 「现在复制的时候按下 ctrl c 会停止 Claude code」.
+  //
+  // So the assertion has two halves and the second one matters more: with a
+  // selection the key copies and the pane hears nothing, and with the
+  // selection gone the interrupt arrives exactly as before. A fix that only
+  // did the first half would be a terminal nobody can stop.
+  //
+  // `^C` on screen is the evidence, which is why this starts by clearing: the
+  // ctrl+V block above ends with an interrupt of its own, and its `^C` would
+  // answer this block's question for it.
+  if (shellSession) {
+    const marker = 'SELECT_THIS_LINE'
+    await page.locator('[data-testid="session-row"]', { hasText: 'scratchpad' }).first().click()
+    await sleep(600)
+    await page.locator('.xterm-screen').first().click()
+    await page.keyboard.type('clear')
+    await page.keyboard.press('Enter')
+    await sleep(600)
+    await page.keyboard.type(`echo ${marker}`)
+    await page.keyboard.press('Enter')
+    await sleep(900)
+
+    // A selection made the way a person makes one. xterm's selection model is
+    // driven by the mouse and is not the DOM's, so there is nothing to set
+    // from the page: it has to be dragged.
+    const box = await page.locator('.xterm-screen').first().boundingBox()
+    await page.mouse.move(box.x + 4, box.y + 3)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width * 0.6, box.y + 42, { steps: 12 })
+    await page.mouse.up()
+    await sleep(400)
+
+    const onSelect = await page.evaluate(() => navigator.clipboard.readText().catch(() => ''))
+    if (!onSelect.includes(marker)) {
+      // The drag selected nothing, so neither half below would mean anything.
+      note('WARN', 'clipboard', 'the drag selected nothing; ctrl+C was not measured')
+    } else {
+      // Overwritten so that what is read back after the key press can only
+      // have been put there by the key press. Copy-on-select has already run
+      // by now, and without this it would answer for ctrl+C.
+      await page.evaluate(() => navigator.clipboard.writeText('CLEARED_BEFORE_THE_KEY'))
+      await page.keyboard.press('Control+c')
+      await sleep(700)
+      const copied = await page.evaluate(() => navigator.clipboard.readText().catch(() => ''))
+      const afterCopy = await screenText(page)
+      if (!copied.includes(marker)) {
+        note('FAIL', 'clipboard',
+          `ctrl+C with a selection did not copy; the clipboard holds ${JSON.stringify(copied.slice(0, 60))}`)
+      }
+      if (afterCopy.includes('^C')) {
+        note('FAIL', 'clipboard',
+          'ctrl+C with a selection reached the pane as an interrupt: copying stops whatever ' +
+          'the session is running, which is the bug this block exists for')
+      }
+      // And the half that must not be lost. The selection was cleared by the
+      // copy, so this press is an ordinary interrupt -- pressed twice in a
+      // row, which is exactly how somebody who has just copied something stops
+      // an agent.
+      await page.keyboard.press('Control+c')
+      await sleep(700)
+      const afterInterrupt = await screenText(page)
+      if (!afterInterrupt.includes('^C')) {
+        note('FAIL', 'clipboard',
+          'a second ctrl+C did not interrupt the pane: the selection outlived the copy, so ' +
+          'every press after a drag copies again and the session cannot be stopped. Screen ' +
+          `tail: ${JSON.stringify(afterInterrupt.replace(/\s+/g, ' ').trim().slice(-160))}`)
+      } else if (!afterCopy.includes('^C') && copied.includes(marker)) {
+        note('PASS', 'clipboard', 'ctrl+C copies a selection, and interrupts once there is none')
+      }
+    }
+  }
+
   // ── two viewers, one note ────────────────────────────────────────────────
   // "open it in many places and they stay in sync" was the first thing asked
   // for, and it was true of sessions and false of the notepad: a note written

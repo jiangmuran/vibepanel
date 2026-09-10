@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { attachTouchSelection } from './mobile/touchSelect'
 import { liveTerminals } from './terminals'
 import { copyText, copyTextInGesture } from '../clipboard'
-import { isBrowserPaste } from './pasteKey'
+import { isBrowserCopy, isBrowserPaste } from './clipboardKeys'
 import { rendererPreference } from './renderer'
 import { Terminal as Xterm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -212,12 +212,52 @@ export function TerminalView({
         // that blocks it. The DOM renderer is already in place.
       }
     }
-    // ctrl+V is the browser's, and returning false is what gives it back:
-    // xterm leaves the event uncancelled, so the default action runs and the
-    // hidden textarea receives a real `paste`. Sending `\x16` instead is what
-    // made an agent try to read the panel host's X11 clipboard; `pasteKey.ts`
-    // has the whole of it.
-    term.attachCustomKeyEventHandler((e) => !isBrowserPaste(e))
+    /**
+     * The selection onto the clipboard, from inside whatever gesture is asking.
+     *
+     * Shared by the two things that copy -- finishing a drag, and ctrl+C --
+     * because they need the same three steps and one of them had already been
+     * got wrong once: `navigator.clipboard?.writeText(text).catch(...)`
+     * short-circuits the whole chain on a plain-http origin, so nothing
+     * reached the clipboard and nothing was offered either.
+     *
+     * Answers whether there was anything to copy. ctrl+C needs that: an empty
+     * selection must fall through to the interrupt rather than swallow it.
+     */
+    const copySelection = (): boolean => {
+      const text = term.getSelection()
+      if (!text) return false
+      copyTextInGesture(text, (ok) => {
+        if (!ok) onClipboardRef.current?.(text, false)
+      })
+      return true
+    }
+
+    // The two chords the browser owns. `clipboardKeys.ts` has the reasoning;
+    // what is here is the half that needs the terminal.
+    term.attachCustomKeyEventHandler((e) => {
+      // ctrl+V, unconditionally: returning false leaves the event uncancelled,
+      // so the browser's own paste lands in xterm's hidden textarea. Sending
+      // `\x16` instead is what made an agent go looking for an X11 clipboard
+      // on the panel host.
+      if (isBrowserPaste(e)) return false
+      // ctrl+C, only with something selected. Anything else is the interrupt,
+      // and the interrupt is not negotiable: it is how a runaway agent gets
+      // stopped, and the person pressing it is usually in a hurry.
+      if (isBrowserCopy(e) && term.hasSelection()) {
+        if (!copySelection()) return true
+        // Cleared in the same gesture, so the *next* ctrl+C interrupts. Left
+        // in place, a selection sitting on screen would swallow every
+        // subsequent press: copy the same text again, and again, while the
+        // agent it was copied from keeps running.
+        term.clearSelection()
+        // Ours, so the browser's own copy does not also run over a selection
+        // that no longer exists.
+        e.preventDefault()
+        return false
+      }
+      return true
+    })
 
     termRef.current = term
     fitRef.current = fit
@@ -324,20 +364,13 @@ export function TerminalView({
     // continuously while the pointer moves, so copying there would write to the
     // clipboard dozens of times per drag and leave whatever the last frame
     // happened to cover.
+    //
+    // Inside the pointerup that ended the selection, so the deprecated path in
+    // `copySelection` is allowed and a panel served over plain http can still
+    // copy.
     const copyOnSelect = () => {
       if (!term.hasSelection()) return
-      const text = term.getSelection()
-      if (!text) return
-      // Inside the pointerup that ended the selection, so the deprecated path
-      // is allowed and a panel served over plain http can still copy.
-      //
-      // This read `navigator.clipboard?.writeText(text).catch(...)`, and
-      // optional chaining short-circuits the whole chain: with no
-      // navigator.clipboard the expression was `undefined` and the catch never
-      // ran. Nothing reached the clipboard and nothing was offered.
-      copyTextInGesture(text, (ok) => {
-        if (!ok) onClipboardRef.current?.(text, false)
-      })
+      copySelection()
     }
     host.addEventListener('pointerup', copyOnSelect)
 

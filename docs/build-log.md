@@ -21019,3 +21019,68 @@ was false where it mattered.
 that matters: a rule inside any `@media` is a rule some device does not get,
 and this one is about balance rather than about hardware. Putting the gate back
 fails it with that sentence.
+## And ctrl+C, which is the interrupt right up until it is a copy
+
+The same mistake as ctrl+V, from the other side, and the dangerous one to fix.
+「现在复制的时候按下 ctrl c 会停止 Claude code」 — select the paragraph the
+agent just printed, press the key every other window on the machine copies
+with, and the agent stops.
+
+Nothing here was wrong on its own. xterm maps ctrl+letter to a control
+character, and `\x03` at a pane is SIGINT, which is correct and is the whole
+reason the key exists. What made it a bug is a decision this panel had already
+taken: **it copies on select.** That taught people that a drag is enough, so
+the keystroke that habitually follows a drag was aimed at a terminal that read
+it as "stop".
+
+The rule now: **ctrl+C copies when there is a selection, and interrupts when
+there is not.** It is what Windows Terminal does, and it is the only version of
+this that can be reasoned about at 2am.
+
+### The half that matters more is the one nothing asked for
+
+A fix that only made ctrl+C copy would be a terminal that cannot be
+interrupted. Two ways to arrive there, and both look finished:
+
+- **A selection that outlives the copy.** Copy, leave the selection on screen,
+  and every subsequent ctrl+C copies the same text again while the agent it
+  came from keeps running. `term.clearSelection()` in the same gesture is what
+  makes the *second* press an interrupt — which is exactly the sequence
+  somebody who has just copied something performs.
+- **An empty selection.** `hasSelection()` can be true with `getSelection()`
+  empty. Copying nothing and swallowing the key is the same failure, one step
+  further in, so `copySelection()` answers whether there was anything and the
+  handler falls through to the interrupt when there was not.
+
+`render-check` presses the key twice for that reason: with a selection, the
+clipboard must hold the text and `^C` must **not** be on screen; pressed again,
+`^C` must be. The block clears the screen first, because the ctrl+V block above
+it ends with an interrupt of its own and its `^C` would answer this block's
+question for it. The clipboard is overwritten with a sentinel between the drag
+and the key press, so what is read back can only have been put there by the key
+press — copy-on-select has already run by then and would otherwise answer for
+ctrl+C.
+
+### Not `navigator.clipboard`, again
+
+The copy goes through `copyTextInGesture`, the same path the drag uses: a
+keydown is a user gesture, so the `execCommand` fallback is allowed, and a
+panel on a LAN address over plain http — where `navigator.clipboard` does not
+exist at all — still copies. Measured on both origins: on `127.0.0.1` the
+clipboard reads back the selection; on the LAN address the fallback reports
+success and no byte reaches the pty. On both, a ctrl+C with nothing selected
+still sends `\x03`.
+
+### The wiring test earned its place a week early
+
+`pasteKey.ts` became `clipboardKeys.ts`, because it now holds both chords and
+the asymmetry between them is the interesting part: ctrl+V is taken
+unconditionally, ctrl+C only with a selection, and the file can only state the
+first half of the second rule because the selection belongs to the terminal.
+
+The source-scan block added when ctrl+V landed — the one that pins
+`attachCustomKeyEventHandler` against a regex, because the predicate is
+provable in node and the wiring is not — went red on the first run of this
+change, exactly as designed: the handler stopped being a one-line arrow. It
+pins four things now, and each is a way to have written this change and lost
+the interrupt.

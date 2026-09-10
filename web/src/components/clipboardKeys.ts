@@ -1,5 +1,12 @@
 /**
- * The one keystroke the terminal does not get to keep: ctrl+V.
+ * The two chords a browser owns, and the terminal does not: ctrl+V and ctrl+C.
+ *
+ * They are not symmetrical, and the difference is the whole of this file.
+ * ctrl+V is taken unconditionally, because `\x16` from a browser tab can never
+ * mean what the agent reads it as. ctrl+C is *the interrupt* and is taken only
+ * when there is a selection to copy -- a rule this file cannot state on its
+ * own, because only the terminal knows about the selection. `isBrowserCopy`
+ * answers about the chord; `Terminal.tsx` asks about the selection.
  *
  * A structure rather than a `KeyboardEvent`, for the reason `focus.ts` gives:
  * vitest runs these files in node, and a rule that can only be exercised
@@ -61,4 +68,32 @@ export function isBrowserPaste(e: KeyPress): boolean {
   if (e.type !== 'keydown') return false
   if (e.altKey || !(e.ctrlKey || e.metaKey)) return false
   return e.key === 'v' || e.key === 'V'
+}
+
+/**
+ * Is this the chord for copy?
+ *
+ * Answering yes is not enough to act: `\x03` is how anybody stops a runaway
+ * agent, a `tail -f`, a test run that will not end. The caller adds the other
+ * half of the condition -- something is selected -- and sends the interrupt
+ * whenever nothing is.
+ *
+ * That condition is what makes this safe, and it is also what makes it easy to
+ * take away by accident. A selection that survives the copy would make the
+ * *second* ctrl+C copy the same text again, which is a terminal that cannot be
+ * interrupted while a selection is on screen. `Terminal.tsx` clears it in the
+ * same gesture, and `render-check` presses the key twice for exactly that
+ * reason.
+ *
+ * Why a browser tab needs this at all, when ctrl+shift+C already copies:
+ * nobody presses ctrl+shift+C in a *browser*. Every other page on the machine
+ * copies with ctrl+C, and the panel's own copy-on-select had already taught
+ * people that selecting is enough -- so the keystroke that followed a
+ * selection was the one that stopped the agent they were reading. Reported as
+ * 「现在复制的时候按下 ctrl c 会停止 Claude code」.
+ */
+export function isBrowserCopy(e: KeyPress): boolean {
+  if (e.type !== 'keydown') return false
+  if (e.altKey || !(e.ctrlKey || e.metaKey)) return false
+  return e.key === 'c' || e.key === 'C'
 }
