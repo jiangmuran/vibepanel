@@ -1212,8 +1212,8 @@ state broadcasts, and panel notifications.
   big-endian. Type `0` is live output, `1` is replayed scrollback.
 - **Text frames** are JSON control messages with a `t` discriminator.
 
-From the client: `subscribe`, `unsubscribe`, `resize`, `takeControl`, `paste`,
-`ping`. From the server: `subscribed`, `size`, `title`, `clipboard`, `exit`,
+From the client: `subscribe`, `unsubscribe`, `resize`, `takeControl`,
+`visibility`, `paste`, `ping`. From the server: `subscribed`, `size`, `title`, `clipboard`, `exit`,
 `dropped`, `error`, `pong`, `state`, `panel`.
 
 The handshake takes the same credential as everything else. `Origin` must match

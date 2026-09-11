@@ -19,6 +19,20 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { assertFreshBuild } from './lib/fresh.mjs'
+
+/**
+ * The main terminal on screen.
+ *
+ * The most recently viewed sessions stay mounted and hidden, so `.xterm-screen`
+ * on its own matches one of those as soon as a check has switched session once:
+ * a strict locator refuses, and `.first()` clicks or measures a terminal nobody
+ * can see. The change that kept terminals mounted failed render-check on its
+ * first click for exactly that reason.
+ */
+const MAIN_SCREEN = '[data-testid="main-terminal"]:visible .xterm-screen'
+// Inside page.evaluate, where `:visible` does not exist, the same thing is
+// written `[data-testid="main-terminal"]:not(.hidden)`.
+
 const BIN = process.argv[2] ?? new URL('../../vibepanel', import.meta.url).pathname
 // Measuring a build that does not contain the change is the one failure that
 // looks exactly like a pass. See lib/fresh.mjs.
@@ -239,7 +253,7 @@ try {
   // in the else, so a failure to read the grid also silently disabled the two
   // measurements after it: they typed into a page with no focus in the
   // terminal and reported "output never arrived".
-  await page.locator('.xterm-screen').click()
+  await page.locator(MAIN_SCREEN).click()
   if (!Number.isFinite(cols) || cols < 20) {
     note('FAIL', 'wide', `could not read the grid size: ${JSON.stringify(grid)}`)
   } else {
@@ -304,7 +318,7 @@ try {
   await page.keyboard.press('Enter')
   await sleep(2000)
   const cells = await page.evaluate(() => {
-    const rows = [...document.querySelectorAll('.xterm-rows > div')]
+    const rows = [...document.querySelectorAll('[data-testid="main-terminal"]:not(.hidden) .xterm-rows > div')]
     const latin = rows.find((r) => (r.textContent ?? '').startsWith('MMMMMMMMMMMMMMMMMMMM|'))
     const cjk = rows.find((r) => (r.textContent ?? '').startsWith('\u4f60\u597d'))
     if (!latin || !cjk) return null
@@ -333,7 +347,7 @@ try {
   await mk(['sh', '-c', 'echo BEFORE_VIM; exec sh'], 'altscreen')
   await sleep(2500)
   await select('altscreen')
-  await page.locator('.xterm-screen').click()
+  await page.locator(MAIN_SCREEN).click()
   await page.keyboard.type('vim -u NONE -c "startinsert" /tmp/vpstress-alt.txt')
   await page.keyboard.press('Enter')
   await sleep(2500)
@@ -406,7 +420,7 @@ try {
     settled = now
   }
 
-  const box = await page.locator('.xterm-screen').boundingBox()
+  const box = await page.locator(MAIN_SCREEN).boundingBox()
   if (!box || !Number.isFinite(lineNo(settled))) {
     note('WARN', 'scrollback', `nothing to scroll: ${JSON.stringify(settled.slice(0, 40))}`)
   } else {
@@ -425,7 +439,7 @@ try {
       // it saw, or the next person re-derives it from nothing.
       const under = await page.evaluate(({ x, y }) => {
         const el = document.elementFromPoint(x, y)
-        const wrap = document.querySelector('.xterm')?.parentElement
+        const wrap = document.querySelector('[data-testid="main-terminal"]:not(.hidden) .xterm')?.parentElement
         return {
           hit: el ? `${el.tagName.toLowerCase()}.${el.className}`.slice(0, 80) : null,
           stack: document.elementsFromPoint(x, y).slice(0, 4)
@@ -452,7 +466,7 @@ try {
   await mk(['sh', '-c', 'exec sh'], 'flood')
   await sleep(2500)
   await select('flood')
-  await page.locator('.xterm-screen').click()
+  await page.locator(MAIN_SCREEN).click()
   const floodStart = Date.now()
   // Coloured, which it was not.
   //
@@ -548,7 +562,7 @@ try {
   // `return b`, three different floods -- plain text, two sequences a line,
   // eight sequences a line -- all passed. A check that cannot fail when the
   // function it guards is deleted is a decoration.
-  const termBox = await page.locator('.xterm-screen').first().boundingBox()
+  const termBox = await page.locator(MAIN_SCREEN).boundingBox()
   if (termBox) {
     await page.mouse.move(termBox.x + termBox.width / 2, termBox.y + termBox.height / 2)
     await page.mouse.wheel(0, -400000)

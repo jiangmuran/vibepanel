@@ -1330,7 +1330,15 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           )}
           {current ? (
             mounted.map((id) => (
-              <div key={id} className={id === current.id ? 'h-full w-full' : 'hidden'}>
+              <div
+                key={id}
+                data-testid="main-terminal"
+                // Not data-session-id: the terminal inside already carries that,
+                // and a second element answering to it would make every check
+                // that looks a terminal up by session ambiguous.
+                data-main-session={id}
+                className={id === current.id ? 'h-full w-full' : 'hidden'}
+              >
                 <TerminalView
                   socket={socket}
                   sessionId={id}

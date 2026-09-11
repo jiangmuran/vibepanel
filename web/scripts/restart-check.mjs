@@ -265,7 +265,7 @@ try {
   // cannot be mistaken for the output — a mistake this harness made once.
   const MARK = 'BEFORE' + '_THE_RESTART'
   const DEEP = 'DEEP' + '_HISTORY'
-  await page.locator('.xterm-helper-textarea').fill('')
+  await page.locator('[data-testid="main-terminal"]:visible .xterm-helper-textarea').fill('')
 
   // A hundred numbered lines first, so that after the restart there is
   // something *above* the visible screen to reach. The marker alone proves the
@@ -368,7 +368,7 @@ try {
   } else {
     // Healing the display is not enough — it has to accept input again.
     const AFTER = 'AFTER' + '_THE_RESTART'
-    await page.locator('.xterm-helper-textarea').click()
+    await page.locator('[data-testid="main-terminal"]:visible .xterm-helper-textarea').click()
     await page.keyboard.type(`echo ${AFTER.slice(0, 5)}"${AFTER.slice(5)}"\n`)
     if (!await waitFor(page, AFTER)) {
       note('FAIL', 'reconnect',

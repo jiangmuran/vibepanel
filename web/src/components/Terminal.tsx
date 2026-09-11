@@ -122,9 +122,16 @@ export function TerminalView({
   // deps: a new callback identity must not rebuild the terminal.
   const onSelectionRef = useRef(onSelectionChange)
   const onClipboardRef = useRef(onClipboard)
+  // Read at subscribe rather than being a dependency of the terminal: flipping
+  // it must not rebuild anything, which is the reason the terminal stays
+  // mounted. It still matters there, because changing readOnly or touchSelect
+  // resubscribes every mounted terminal, and a hidden one must not arrive as a
+  // viewer claiming the grid.
+  const hiddenRef = useRef(hidden)
   useEffect(() => {
     onSelectionRef.current = onSelectionChange
     onClipboardRef.current = onClipboard
+    hiddenRef.current = hidden
   })
 
   // Terminal lifetime is tied to the session, never to the theme or to
@@ -326,7 +333,7 @@ export function TerminalView({
         void copyText(text).then((ok) => onClipboardRef.current?.(text, ok))
       },
       onExit: () => onExit?.(),
-    })
+    }, hiddenRef.current)
 
     // Selection is reported from xterm's own event rather than the DOM's,
     // because the gesture drives xterm's selection model and never touches
@@ -424,6 +431,12 @@ export function TerminalView({
     if (termRef.current) termRef.current.options.theme = terminalTheme()
   }, [themeKey])
 
+  // The server decides who drives the grid from who is looking, and a terminal
+  // kept mounted off-screen is not looking. See PanelSocket.setHidden.
+  useEffect(() => {
+    socket.setHidden(sessionId, hidden)
+  }, [socket, sessionId, hidden])
+
   // A display:none canvas keeps stale pixels. Repaint after it becomes visible.
   useEffect(() => {
     if (hidden) return
@@ -449,6 +462,11 @@ export function TerminalView({
       if (!t || !f) return
       // Hidden terminals measure zero; publishing that size would reflow the
       // tmux pane for the viewer who is actually looking at it.
+      //
+      // From the window that hid this terminal the server would ignore it now:
+      // the visibility effect above runs first and gives the grid up. Not from
+      // a duplicated tab, which carries the same client id and so still holds
+      // the grid through its visible copy. render-check drives that case.
       if (hidden) return
 
       if (controllingRef.current) {

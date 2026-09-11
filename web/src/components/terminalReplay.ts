@@ -1,4 +1,4 @@
-/** A tiny ordered writer for terminal output received over WebSocket. */
+/** What TerminalReplay needs from xterm, so the ordering can be tested in node. */
 export interface ReplayTerminal {
   write(data: Uint8Array, callback: () => void): void
   reset(): void
@@ -35,22 +35,29 @@ export class TerminalReplay {
     private readonly cancel: Cancel = (handle) => cancelAnimationFrame(handle),
   ) {}
 
+  /**
+   * Whether the snapshot is still being put on screen.
+   *
+   * Queued chunks count as well as the one being parsed. In the frame between
+   * two of them nothing is parsing, but the terminal is still showing a screen
+   * from minutes ago, and input sent then answers something that is not there.
+   */
   get replaying(): boolean {
     return this.activeReplay || this.queue.some((job) => job.replay)
   }
 
   enqueue(data: Uint8Array, replay: boolean): void {
-    if (this.disposed) return
     this.queue.push({ data, replay })
     this.drain()
   }
 
   /** Drop queued output after a reconnect and reset before the next snapshot. */
   restart(): void {
-    if (this.disposed) return
     this.queue = []
     this.resetBeforeReplay = true
-    if (!this.active && this.yieldHandle !== null) {
+    // A yield still pending would hold the new snapshot back a frame, behind
+    // bytes that were just thrown away.
+    if (this.yieldHandle !== null) {
       this.cancel(this.yieldHandle)
       this.yieldHandle = null
     }
@@ -58,9 +65,7 @@ export class TerminalReplay {
 
   dispose(): void {
     this.disposed = true
-    this.queue = []
     if (this.yieldHandle !== null) this.cancel(this.yieldHandle)
-    this.yieldHandle = null
   }
 
   private drain(): void {
@@ -75,6 +80,8 @@ export class TerminalReplay {
       this.term.reset()
     }
     this.term.write(job.data, () => {
+      // The callback can arrive after dispose(), and nothing may be scheduled
+      // against a terminal that no longer exists.
       if (this.disposed) return
       this.active = false
       this.activeReplay = false

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { PanelSocket } from './socket'
-import type { ServerMessage } from './wire'
+import type { ClientMessage, ServerMessage } from './wire'
 
 /**
  * The frame the client used to drop on the floor.
@@ -75,5 +75,102 @@ describe('error frames', () => {
     deliver(sock, { t: 'error', message: 'two' })
 
     expect(calls).toBe(1)
+  })
+})
+
+/**
+ * A terminal kept mounted off-screen, as the server hears about it.
+ *
+ * The server decides who drives a session's grid from who is looking at it, so
+ * a hidden terminal has to say so, and has to go on saying so across every
+ * subscribe that follows: one that arrives without the flag is taken for a
+ * viewer arriving, and claims the grid.
+ */
+describe('hidden terminals', () => {
+  const handlers = { onData: () => {}, onSize: () => {} }
+
+  /** A socket that is open and records what it sends. */
+  function openSocket() {
+    const sock = newSocket()
+    ;(sock as unknown as { dark: () => boolean }).dark = () => false
+    const sent: ClientMessage[] = []
+    ;(sock as unknown as { ws: unknown }).ws = {
+      readyState: WebSocket.OPEN,
+      send: (s: string) => sent.push(JSON.parse(s) as ClientMessage),
+    }
+    return { sock, sent }
+  }
+
+  it('says once that a terminal went off-screen and once that it came back', () => {
+    const { sock, sent } = openSocket()
+    sock.subscribe('s1', 80, 24, handlers)
+    sock.setHidden('s1', false)
+    sock.setHidden('s1', true)
+    sock.setHidden('s1', true)
+    sock.setHidden('s1', false)
+
+    expect(sent.filter((m) => m.t === 'visibility')).toEqual([
+      { t: 'visibility', sessionId: 's1', hidden: true },
+      { t: 'visibility', sessionId: 's1', hidden: false },
+    ])
+  })
+
+  it('subscribes hidden when the terminal is mounted off-screen', () => {
+    const { sock, sent } = openSocket()
+    sock.subscribe('s1', 80, 24, handlers, true)
+
+    expect(sent).toEqual([expect.objectContaining({ t: 'subscribe', sessionId: 's1', hidden: true })])
+
+    // And it is remembered, not only sent: the next subscribe for this stream
+    // comes from the socket, which knows nothing else about the terminal.
+    sent.length = 0
+    deliver(sock, { t: 'dropped', sessionId: 's1' })
+    expect(sent).toEqual([expect.objectContaining({ t: 'subscribe', sessionId: 's1', hidden: true })])
+  })
+
+  it('resubscribes hidden after being cut off for falling behind', () => {
+    const { sock, sent } = openSocket()
+    sock.subscribe('s1', 80, 24, handlers)
+    sock.setHidden('s1', true)
+    sent.length = 0
+
+    deliver(sock, { t: 'dropped', sessionId: 's1' })
+
+    expect(sent).toEqual([expect.objectContaining({ t: 'subscribe', sessionId: 's1', hidden: true })])
+  })
+
+  it('resubscribes hidden after a reconnect', () => {
+    const sock = newSocket()
+    ;(sock as unknown as { dark: () => boolean }).dark = () => false
+    const g = globalThis as unknown as Record<string, unknown>
+    const realWebSocket = g.WebSocket
+    const sent: ClientMessage[] = []
+    class FakeWebSocket {
+      static OPEN = 1
+      readyState = 1
+      onopen: (() => void) | null = null
+      send(s: string) {
+        sent.push(JSON.parse(s) as ClientMessage)
+      }
+      close() {}
+    }
+    g.WebSocket = FakeWebSocket
+    g.location = { protocol: 'http:', host: 'panel.test' }
+    Object.assign(g.window as object, { setInterval: () => 0, clearInterval: () => {} })
+    try {
+      // Before the socket opens: neither of these reaches the wire, and the
+      // subscribe the open sends is the only thing that can carry the flag.
+      sock.subscribe('s1', 80, 24, handlers)
+      sock.setHidden('s1', true)
+      sock.connect()
+      ;(sock as unknown as { ws: FakeWebSocket }).ws.onopen?.()
+
+      expect(sent.filter((m) => m.t === 'subscribe')).toEqual([
+        expect.objectContaining({ sessionId: 's1', hidden: true }),
+      ])
+    } finally {
+      g.WebSocket = realWebSocket
+      delete g.location
+    }
   })
 })
