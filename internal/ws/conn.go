@@ -484,7 +484,7 @@ func (c *Conn) handleControl(ctx context.Context, msg ClientMessage) {
 		c.sendJSON(ServerMessage{Type: MsgPong})
 
 	case MsgSubscribe:
-		if err := c.subscribe(ctx, msg.SessionID, msg.Cols, msg.Rows); err != nil {
+		if err := c.subscribe(ctx, msg.SessionID, msg.Cols, msg.Rows, msg.Hidden); err != nil {
 			c.sendError(msg.SessionID, err.Error())
 			return
 		}
@@ -542,6 +542,26 @@ func (c *Conn) handleControl(ctx context.Context, msg ClientMessage) {
 			c.h.logger().Warn("persist size", "session", msg.SessionID, "err", rerr)
 		}
 
+	case MsgVisibility:
+		c.mu.Lock()
+		s := c.byID[msg.SessionID]
+		c.mu.Unlock()
+		if s == nil {
+			return
+		}
+		s.live.SetHidden(s.sub, msg.Hidden)
+		// Always answered, and to this viewer only. Nobody else's controlling
+		// flag can change here: hiding leaves the grid unowned and showing only
+		// claims an unowned one. This viewer's can change either way, and a
+		// terminal that still believes it drives the grid publishes sizes the
+		// server discards and is never offered the button that would fix it.
+		cols, rows := s.live.Size()
+		c.sendJSON(ServerMessage{
+			Type: MsgSize, SessionID: msg.SessionID, Ref: s.ref,
+			Cols: cols, Rows: rows,
+			Controlling: s.live.Controller() == c.clientID,
+		})
+
 	default:
 		// A type this server does not know.
 		//
@@ -564,7 +584,8 @@ func (c *Conn) handleControl(ctx context.Context, msg ClientMessage) {
 
 // subscribe attaches (if needed), registers a viewer and starts pumping its
 // events onto the socket.
-func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int) error {
+func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int, hidden bool) error {
+	subscribeStarted := time.Now()
 	if sessionID == "" {
 		return errors.New("subscribe: missing sessionId")
 	}
@@ -587,7 +608,12 @@ func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int) 
 	if err != nil {
 		return fmt.Errorf("subscribe: %w", err)
 	}
-	sub, replay := live.Subscribe(c.clientID)
+	attachedAt := time.Now()
+	subscribeAs := live.Subscribe
+	if hidden {
+		subscribeAs = live.SubscribeHidden
+	}
+	sub, replay := subscribeAs(c.clientID)
 
 	c.mu.Lock()
 	c.nextRef++
@@ -608,12 +634,51 @@ func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int) 
 	// Replay before any live event reaches the socket. Subscribe took the
 	// snapshot under the same lock that registered the subscriber, so the two
 	// join up exactly with nothing lost or repeated.
-	if len(replay) > 0 {
-		c.sendBinary(EncodeReplay(ref, replay))
+	replayStarted := time.Now()
+	frames := replayFrames(ref, replay)
+	var firstFrameMS int64
+	for i, frame := range frames {
+		c.sendBinary(frame)
+		if i == 0 {
+			// After the write rather than before it. Before it, this measured
+			// how long it took to reach the loop, which is zero whatever the
+			// network is doing.
+			firstFrameMS = time.Since(replayStarted).Milliseconds()
+		}
 	}
+	c.h.logger().Info("terminal subscribe",
+		"session", sessionID,
+		"hidden", hidden,
+		"attach_ms", attachedAt.Sub(subscribeStarted).Milliseconds(),
+		"replay_bytes", len(replay),
+		"replay_chunks", len(frames),
+		"replay_first_chunk_ms", firstFrameMS,
+		"replay_ms", time.Since(replayStarted).Milliseconds(),
+		"total_ms", time.Since(subscribeStarted).Milliseconds(),
+	)
 
 	go c.pumpStream(sctx, s)
 	return nil
+}
+
+// replayChunk bounds the payload of one replay frame.
+//
+// A snapshot is up to the ring's two megabytes, and a WebSocket message is
+// delivered whole or not at all: sent as one frame, a phone on a data
+// connection showed the panel around a blank terminal until the last byte of
+// it had arrived. In frames this size the start of the scrollback is parsed
+// and painted while the rest is still on the way.
+const replayChunk = 64 << 10
+
+// replayFrames is a snapshot as subscribe sends it: in order, every frame
+// marked as replay, none carrying more than replayChunk bytes.
+func replayFrames(ref uint32, replay []byte) [][]byte {
+	frames := make([][]byte, 0, (len(replay)+replayChunk-1)/replayChunk)
+	for start := 0; start < len(replay); start += replayChunk {
+		end := min(start+replayChunk, len(replay))
+		frames = append(frames, EncodeReplay(ref, replay[start:end]))
+	}
+	return frames
 }
 
 // pumpStream forwards one session's events to the browser.

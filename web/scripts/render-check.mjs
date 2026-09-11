@@ -32,6 +32,19 @@ import { findInvisibleFocus } from './lib/focus.mjs'
 import { findUnnamedControls } from './lib/names.mjs'
 import { assertFreshBuild } from './lib/fresh.mjs'
 
+/**
+ * The main terminal on screen.
+ *
+ * The most recently viewed sessions stay mounted and hidden, so `.xterm-screen`
+ * on its own matches one of those as soon as a check has switched session once:
+ * a strict locator refuses, and `.first()` clicks or measures a terminal nobody
+ * can see. The change that kept terminals mounted failed render-check on its
+ * first click for exactly that reason.
+ */
+const MAIN_SCREEN = '[data-testid="main-terminal"]:visible .xterm-screen'
+// Inside page.evaluate, where `:visible` does not exist, the same thing is
+// written `[data-testid="main-terminal"]:not(.hidden)`.
+
 const BIN = process.argv[2] ?? new URL('../../vibepanel', import.meta.url).pathname
 // Measuring a build that does not contain the change is the one failure that
 // looks exactly like a pass. See lib/fresh.mjs.
@@ -707,7 +720,7 @@ browser = await chromium.launch({ headless: true })
     // one thing missing — it is a run whose remaining results mean nothing.
     note('FAIL', 'ui', 'could not find the shell session row to select')
   }
-  await page.locator('.xterm-screen').click()
+  await page.locator(MAIN_SCREEN).click()
   await page.keyboard.type('echo BROWSER_TYPED_OK')
   await page.keyboard.press('Enter')
   // A line built out of several styling runs, read back as text.
@@ -738,7 +751,7 @@ browser = await chromium.launch({ headless: true })
     await sleep(300)
   }
   if (!styled) {
-    const raw = await page.locator('.xterm-screen').first().innerText().catch(() => '')
+    const raw = await page.locator(MAIN_SCREEN).innerText().catch(() => '')
     const near = raw.split('\n').find((r) => r.includes('STYLED')) ?? ''
     note('FAIL', 'term',
       'a line made of several styling runs does not read back as its own text. ' +
@@ -843,7 +856,7 @@ browser = await chromium.launch({ headless: true })
   // the rows skips it entirely — which is how a hard-coded black viewport
   // survived an earlier theme check unnoticed.
   const termLuminance = async () => page.evaluate(() => {
-    const el = document.querySelector('.xterm-viewport') ?? document.querySelector('.xterm')
+    const el = document.querySelector('[data-testid="main-terminal"]:not(.hidden) .xterm-viewport') ?? document.querySelector('.xterm')
     if (!el) return null
     let p = el
     while (p) {
@@ -908,7 +921,7 @@ browser = await chromium.launch({ headless: true })
   await scanCovered(page2, 'the passive viewer')
 
   await page.bringToFront()
-  await page.locator('.xterm-screen').click()
+  await page.locator(MAIN_SCREEN).click()
   await page.keyboard.type('echo SYNC_TO_SECOND_VIEWER')
   await page.keyboard.press('Enter')
   let synced = false
@@ -935,7 +948,7 @@ browser = await chromium.launch({ headless: true })
   await page2.setViewportSize({ width: 390, height: 844 })
   await sleep(1500)
   const legibility = await page2.evaluate(() => {
-    const screen = document.querySelector('.xterm-screen')
+    const screen = document.querySelector('[data-testid="main-terminal"]:not(.hidden) .xterm-screen')
     if (!screen) return null
     let el = screen
     let scale = 1
@@ -944,7 +957,7 @@ browser = await chromium.launch({ headless: true })
       if (t && t !== 'none') { scale = Number(/matrix\(([^,]+)/.exec(t)?.[1] ?? 1); break }
       el = el.parentElement
     }
-    const rows = document.querySelector('.xterm-rows')
+    const rows = screen.querySelector('.xterm-rows')
     const font = Number(getComputedStyle(rows ?? screen).fontSize.replace('px', ''))
     return { scale: Number(scale.toFixed(3)), font, effective: Number((font * scale).toFixed(2)) }
   })
@@ -990,6 +1003,121 @@ browser = await chromium.launch({ headless: true })
   if (before !== after) {
     note('FAIL', 'arbitration',
       `a passive viewer resizing its window moved the shared grid: ${before} -> ${after}`)
+  }
+
+  // ── a session switched away from stays mounted, and lets go of the grid ──
+  //
+  // The most recently viewed main terminals stay mounted, so switching back is
+  // a visibility change rather than a replay. Two things were wrong with that
+  // when it arrived, both measured against the real binary. A hidden terminal
+  // measured its display:none box and published it, and the session it had
+  // just left was reflowed to 11x6. And a terminal nobody could see went on
+  // holding the grid, so a viewer opening that session long afterwards was
+  // passive at a size nobody was using.
+  //
+  // The server decides the second from `visibility` messages, and the grace
+  // period that makes it observable is two minutes, so its rules are pinned in
+  // internal/session and internal/ws. What only a browser can say is that the
+  // messages are sent, and that a terminal back on screen drives the grid again.
+  {
+    const visibility = []
+    page.on('websocket', (ws) => ws.on('framesent', (f) => {
+      if (typeof f.payload !== 'string' || !f.payload.includes('"visibility"')) return
+      try { visibility.push(JSON.parse(f.payload)) } catch { /* not a control message */ }
+    }))
+    // A reload, so that the socket the listener sees is the one the page uses.
+    await page.bringToFront()
+    await page.reload({ waitUntil: 'networkidle' })
+    await sleep(3000)
+
+    const gridOf = async (id) => {
+      const s = (await (await authed('/api/state')).json()).sessions.find((x) => x.id === id)
+      return s ? `${s.cols}x${s.rows}` : null
+    }
+    const home = await page.locator('[data-testid="main-terminal"]:visible').first()
+      .getAttribute('data-main-session').catch(() => null)
+    const away = await page.locator('[data-testid="session-row"]').evaluateAll(
+      (rows, skip) => rows.map((r) => r.getAttribute('data-session-id')).find((id) => id && id !== skip) ?? null,
+      home,
+    )
+    if (!home || !away) {
+      note('FAIL', 'mounted', `no two sessions to switch between (on screen: ${home}, another: ${away})`)
+    } else {
+      const left = await gridOf(home)
+      await page.locator(`[data-testid="session-row"][data-session-id="${away}"]`).click()
+      await sleep(1800)
+
+      const kept = await page.locator(`[data-testid="main-terminal"][data-main-session="${home}"]`).count()
+      if (kept !== 1) {
+        note('FAIL', 'mounted',
+          `the terminal switched away from is not mounted (${kept}); switching back replays the whole buffer`)
+      }
+      const whileAway = await gridOf(home)
+      if (whileAway !== left) {
+        note('FAIL', 'mounted',
+          `switching away reflowed the session left behind, ${left} -> ${whileAway}: ` +
+          'the hidden terminal published the size of a display:none box')
+      }
+      if (!visibility.some((m) => m.sessionId === home && m.hidden === true)) {
+        note('FAIL', 'mounted',
+          'switching away sent no visibility message, so the server still counts the hidden ' +
+          'terminal as somebody looking and it keeps the grid')
+      }
+
+      await page.locator(`[data-testid="session-row"][data-session-id="${home}"]`).click()
+      await sleep(2500)
+      if (!visibility.some((m) => m.sessionId === home && m.hidden === false)) {
+        note('FAIL', 'mounted', 'switching back sent no visibility message')
+      }
+      // Driving the grid is only visible by moving it. A terminal that came back
+      // believing it is passive scales instead, and the grid stays put.
+      await page.setViewportSize({ width: VIEWPORT.width - 240, height: VIEWPORT.height - 160 })
+      await sleep(1800)
+      const resized = await gridOf(home)
+      await page.setViewportSize(VIEWPORT)
+      await sleep(1800)
+      if (resized === left) {
+        note('FAIL', 'mounted',
+          `back on the session it was driving, resizing the window left the grid at ${left}: ` +
+          'the terminal thinks it is a passive viewer of a grid nobody else holds')
+      } else if (kept === 1 && whileAway === left) {
+        note('PASS', 'mounted',
+          `a session switched away from stayed mounted at ${left}, and drove the grid (${resized}) when shown again`)
+      }
+
+      // The resize handler's `if (hidden) return`, which the window above no
+      // longer needs: its visibility message gives the grid up before the
+      // zero-sized box is published, and render-check stayed green with the
+      // guard removed. A duplicated tab is different. It carries the same client
+      // id in sessionStorage, so the server cannot tell it from the tab that is
+      // driving, and its hidden copy of the terminal publishing a display:none
+      // size reflows the session in front of the other one.
+      const clientId = await page.evaluate(() => sessionStorage.getItem('vibepanel.clientId'))
+      const dup = await ctx.newPage()
+      await dup.setViewportSize(VIEWPORT)
+      await dup.addInitScript((id) => sessionStorage.setItem('vibepanel.clientId', id), clientId)
+      await dup.goto(BASE, { waitUntil: 'networkidle' })
+      await sleep(2000)
+      await dup.locator(`[data-testid="session-row"][data-session-id="${home}"]`).click()
+      await sleep(1500)
+      const driven = await gridOf(home)
+      await dup.locator(`[data-testid="session-row"][data-session-id="${away}"]`).click()
+      await sleep(2000)
+      const afterDup = await gridOf(home)
+      // Back where the original is, before closing. The selection is kept in
+      // storage this context shares, so leaving the duplicate on another session
+      // made the reload check below come back to that one and report it.
+      await dup.locator(`[data-testid="session-row"][data-session-id="${home}"]`).click()
+      await sleep(1200)
+      await dup.close()
+      if (!clientId) {
+        note('FAIL', 'mounted', 'no client id in sessionStorage, so the duplicated tab was not a duplicate')
+      } else if (afterDup !== driven) {
+        note('FAIL', 'mounted',
+          `a duplicated tab switching away reflowed the session the original is showing, ${driven} -> ${afterDup}: ` +
+          'its hidden terminal published the size of a display:none box under the shared client id')
+      }
+    }
   }
 
   // ── reload keeps content ─────────────────────────────────────────────────
@@ -3414,7 +3542,7 @@ browser = await chromium.launch({ headless: true })
     await page.locator('[data-testid="session-row"]', { hasText: 'scratchpad' }).first().click()
     await sleep(800)
     await page.evaluate((m) => navigator.clipboard.writeText(m), marker)
-    await page.locator('.xterm-screen').first().click()
+    await page.locator(MAIN_SCREEN).click()
     await page.keyboard.press('Control+v')
     let pasted = ''
     for (let i = 0; i < 15; i++) {
@@ -3461,7 +3589,7 @@ browser = await chromium.launch({ headless: true })
     const marker = 'SELECT_THIS_LINE'
     await page.locator('[data-testid="session-row"]', { hasText: 'scratchpad' }).first().click()
     await sleep(600)
-    await page.locator('.xterm-screen').first().click()
+    await page.locator(MAIN_SCREEN).click()
     await page.keyboard.type('clear')
     await page.keyboard.press('Enter')
     await sleep(600)
@@ -3472,7 +3600,7 @@ browser = await chromium.launch({ headless: true })
     // A selection made the way a person makes one. xterm's selection model is
     // driven by the mouse and is not the DOM's, so there is nothing to set
     // from the page: it has to be dragged.
-    const box = await page.locator('.xterm-screen').first().boundingBox()
+    const box = await page.locator(MAIN_SCREEN).boundingBox()
     await page.mouse.move(box.x + 4, box.y + 3)
     await page.mouse.down()
     await page.mouse.move(box.x + box.width * 0.6, box.y + 42, { steps: 12 })
@@ -3716,7 +3844,7 @@ browser = await chromium.launch({ headless: true })
       return dt
     })
     const target = page.locator('[data-testid="drop-overlay"]')
-    const zone = page.locator('.xterm-screen').first()
+    const zone = page.locator(MAIN_SCREEN)
     await zone.dispatchEvent('dragover', { dataTransfer: dropped })
     await sleep(300)
     if (!(await target.isVisible().catch(() => false))) {
@@ -3776,7 +3904,7 @@ browser = await chromium.launch({ headless: true })
       const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
       const dt = new DataTransfer()
       dt.items.add(new File([bytes], 'kept-out.png', { type: 'image/png' }))
-      const target = document.querySelector('.xterm-screen') ?? document.body
+      const target = document.querySelector('[data-testid="main-terminal"]:not(.hidden) .xterm-screen') ?? document.body
       target.dispatchEvent(new ClipboardEvent('paste', {
         clipboardData: dt,
         bubbles: true,
@@ -3792,7 +3920,7 @@ browser = await chromium.launch({ headless: true })
     } else {
       note('PASS', 'files', 'a pasted image stays out of the project by default')
     }
-    await page.locator('.xterm-screen').first().click()
+    await page.locator(MAIN_SCREEN).click()
     // Built and dispatched inside the page rather than through Playwright's
     // dispatchEvent, which does not carry a DataTransfer across the boundary as
     // `clipboardData`. The first version of this check did, and reported the
@@ -3812,7 +3940,7 @@ browser = await chromium.launch({ headless: true })
       ), (c) => c.charCodeAt(0))
       const dt = new DataTransfer()
       dt.items.add(new File([bytes], 'pasted.png', { type: 'image/png' }))
-      const target = document.querySelector('.xterm-screen') ?? document.body
+      const target = document.querySelector('[data-testid="main-terminal"]:not(.hidden) .xterm-screen') ?? document.body
       target.dispatchEvent(new ClipboardEvent('paste', {
         clipboardData: dt,
         bubbles: true,

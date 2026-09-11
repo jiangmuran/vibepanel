@@ -99,6 +99,10 @@ type ClientMessage struct {
 	// client sending them one after another is racing them. Sending the return
 	// only once the paste has been accepted is the only ordering that holds.
 	Submit bool `json:"submit,omitempty"`
+
+	// Hidden rides on MsgSubscribe and MsgVisibility: the viewer is keeping
+	// this terminal mounted off-screen. See session.Live.SetHidden.
+	Hidden bool `json:"hidden,omitempty"`
 }
 
 // Client message types.
@@ -129,6 +133,13 @@ const (
 
 	// MsgTakeControl claims the grid for this viewer and applies its size.
 	MsgTakeControl = "takeControl"
+
+	// MsgVisibility says a subscribed terminal went off-screen or came back.
+	// Hiding gives the grid up the way unsubscribing does and showing claims
+	// it the way subscribing does; the stream keeps running either way. The
+	// server answers with MsgSize, because the viewer's belief about whether
+	// it is controlling may just have stopped being true.
+	MsgVisibility = "visibility"
 
 	// MsgScheme tells a session which way round the viewer's palette is, so
 	// that an application asking the terminal what colour it is gets an answer
@@ -217,6 +228,6 @@ var (
 	}
 	AllClientMessages = []string{
 		MsgSubscribe, MsgUnsubscribe, MsgResize, MsgTakeControl, MsgPing,
-		MsgPaste, MsgScheme,
+		MsgPaste, MsgScheme, MsgVisibility,
 	}
 )

@@ -221,6 +221,9 @@ export function stripFor(sessions: Session[], projectId: string | null): Session
     .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
 }
 
+/** How many recently viewed main terminals stay mounted. */
+const KEEP_TERMINALS = 3
+
 export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => void }) {
   useLang()
   const socket = useMemo(() => new PanelSocket(), [])
@@ -493,6 +496,30 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     [state.sessions],
   )
   const current = mainSessions.find((s) => s.id === selected) ?? null
+
+  // Switching used to tear down xterm and replay the whole ring buffer. Keep a
+  // small recency window mounted so returning to a session is a visibility
+  // change, not a network round trip and a cold terminal parse.
+  // A phone has less CPU and, unlike a desktop, usually only shows one pane;
+  // keeping three hidden xterms alive there makes the first visible paint
+  // compete with two off-screen renderers. One is enough on the narrow path.
+  const keepTerminals = narrow ? 1 : KEEP_TERMINALS
+  const [recent, setRecent] = useState<string[]>([])
+  const [seenSelected, setSeenSelected] = useState<string | null>(null)
+  if (selected !== seenSelected) {
+    setSeenSelected(selected)
+    setRecent((prev) => {
+      const live = prev.filter((id) => mainSessions.some((s) => s.id === id))
+      if (!selected) return live
+      return [selected, ...live.filter((id) => id !== selected)].slice(0, keepTerminals)
+    })
+  }
+  // Stable DOM order keeps WebGL canvases in place. Reordering live canvases
+  // can lose a context and present as an intermittent blank terminal.
+  const mounted = useMemo(
+    () => recent.slice(0, keepTerminals).filter((id) => mainSessions.some((s) => s.id === id)).sort(),
+    [recent, keepTerminals, mainSessions],
+  )
   const labels = useMemo(() => disambiguatedLabels(mainSessions), [mainSessions])
 
   // Sessions whose tmux session is gone, which after a reboot is all of them.
@@ -1302,29 +1329,30 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             </button>
           )}
           {current ? (
-            <TerminalView
-              // Remounting per session is deliberate: each needs its own xterm
-              // with its own scrollback, and reusing one would bleed output
-              // between sessions on every switch.
-              key={current.id}
-              socket={socket}
-              sessionId={current.id}
-              themeKey={themeKey}
-              readOnly={narrow}
-              touchSelect={narrow || coarsePointer}
-              fullscreen={state.fullscreen.includes(current.id)}
-              onSelectionChange={setSelection}
-              onClipboard={(text, ok) => setBlockedClip(ok ? '' : text)}
-              // The same road a dropped file takes: upload into the project,
-              // then put the path on the command line. A screenshot is the
-              // most common thing anyone pastes at an agent.
-              // Less on the right than the other three sides. That edge
-              // already carries the scrollbar's reserved lane and, when the
-              // side panel is open, a border a few pixels further out; 8px on
-              // top of both was the widest stretch of black in the window and
-              // it was next to the scrollbar rather than around the text.
-              className="h-full w-full py-2 pr-1 pl-2"
-            />
+            mounted.map((id) => (
+              <div
+                key={id}
+                data-testid="main-terminal"
+                // Not data-session-id: the terminal inside already carries that,
+                // and a second element answering to it would make every check
+                // that looks a terminal up by session ambiguous.
+                data-main-session={id}
+                className={id === current.id ? 'h-full w-full' : 'hidden'}
+              >
+                <TerminalView
+                  socket={socket}
+                  sessionId={id}
+                  hidden={id !== current.id}
+                  themeKey={themeKey}
+                  readOnly={narrow}
+                  touchSelect={narrow || coarsePointer}
+                  fullscreen={state.fullscreen.includes(id)}
+                  onSelectionChange={setSelection}
+                  onClipboard={(text, ok) => setBlockedClip(ok ? '' : text)}
+                  className="h-full w-full py-2 pr-1 pl-2"
+                />
+              </div>
+            ))
           ) : (
             <div className="flex h-full items-center justify-center px-6 text-center text-vp-md text-ink-2">
               {state.projects.length === 0

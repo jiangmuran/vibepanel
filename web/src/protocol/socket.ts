@@ -34,6 +34,12 @@ interface Stream {
    * terminal's contents instead of extending them.
    */
   confirmed: boolean
+  /**
+   * Mounted off-screen. Carried on every subscribe, the ones a reconnect sends
+   * included, so the server never takes a hidden terminal for a viewer
+   * arriving. See setHidden.
+   */
+  hidden: boolean
 }
 
 /** Connection state, for the UI to show honestly rather than pretending. */
@@ -187,6 +193,7 @@ export class PanelSocket {
           cols: stream.cols,
           rows: stream.rows,
           dark: this.dark(),
+          hidden: stream.hidden,
         })
       }
       this.startPing()
@@ -276,6 +283,7 @@ export class PanelSocket {
           cols: stream.cols,
           rows: stream.rows,
           dark: this.dark(),
+          hidden: stream.hidden,
         })
         break
       }
@@ -401,10 +409,10 @@ export class PanelSocket {
     }
   }
 
-  subscribe(sessionId: string, cols: number, rows: number, handlers: StreamHandlers) {
-    const stream: Stream = { sessionId, handlers, ref: null, cols, rows, confirmed: false }
+  subscribe(sessionId: string, cols: number, rows: number, handlers: StreamHandlers, hidden = false) {
+    const stream: Stream = { sessionId, handlers, ref: null, cols, rows, confirmed: false, hidden }
     this.streams.set(sessionId, stream)
-    this.send({ t: 'subscribe', sessionId, cols, rows, dark: this.dark() })
+    this.send({ t: 'subscribe', sessionId, cols, rows, dark: this.dark(), hidden })
   }
 
   unsubscribe(sessionId: string) {
@@ -455,6 +463,23 @@ export class PanelSocket {
     stream.cols = cols
     stream.rows = rows
     this.send({ t: takeControl ? 'takeControl' : 'resize', sessionId, cols, rows })
+  }
+
+  /**
+   * Tells the server a mounted terminal went off-screen or came back.
+   *
+   * The server decides who drives a session's grid from who is looking at it.
+   * Hiding gives the grid up the way closing the terminal used to, and showing
+   * claims it back under the same rule as subscribing; without this a desktop
+   * held the grid of every session it had merely visited. The answer is a
+   * `size` message, which is how the terminal learns whether it still
+   * controls. A value that has not changed sends nothing.
+   */
+  setHidden(sessionId: string, hidden: boolean) {
+    const stream = this.streams.get(sessionId)
+    if (!stream || stream.hidden === hidden) return
+    stream.hidden = hidden
+    this.send({ t: 'visibility', sessionId, hidden })
   }
 
   /**

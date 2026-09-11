@@ -51,8 +51,14 @@ export function decodeData(
 }
 
 export interface ClientMessage {
-  t: 'subscribe' | 'unsubscribe' | 'resize' | 'takeControl' | 'ping' | 'paste' | 'scheme'
+  t: 'subscribe' | 'unsubscribe' | 'resize' | 'takeControl' | 'ping' | 'paste' | 'scheme' | 'visibility'
   sessionId?: string
+  /**
+   * MsgSubscribe and MsgVisibility: this terminal is mounted off-screen, kept
+   * so that switching back to it is instant. A hidden terminal does not hold
+   * the grid.
+   */
+  hidden?: boolean
   cols?: number
   rows?: number
   /** MsgPaste only. Input otherwise travels as binary frames. */

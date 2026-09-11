@@ -62,6 +62,12 @@ type Subscriber struct {
 	// whether an incoming resize comes from the viewer that owns the grid.
 	ClientID string
 
+	// hidden is a viewer still subscribed and not being looked at: a terminal
+	// the browser keeps mounted off-screen so that switching back to it is
+	// instant. It keeps receiving output and does not hold the grid. Guarded by
+	// Live.mu. See SetHidden.
+	hidden bool
+
 	dropped atomic.Bool
 }
 
@@ -788,7 +794,23 @@ func (m *Manager) DetachAll() {
 // The snapshot is taken under the same lock that registers the subscriber, so
 // no output can slip between the two and be lost.
 func (l *Live) Subscribe(clientID string) (*Subscriber, []byte) {
-	sub := &Subscriber{Events: make(chan Event, subscriberQueue), ClientID: clientID}
+	return l.subscribe(clientID, false)
+}
+
+// SubscribeHidden is Subscribe for a viewer that starts off-screen. A browser
+// that reconnects resubscribes every terminal it has mounted, and only the one
+// on screen is arriving in the sense the claim below is about.
+//
+// It cannot be Subscribe followed by SetHidden. The claim clears the record of
+// who left and when, and the release after it would stamp a new departure, so
+// every reconnect would restart the grace period on a grid its owner walked
+// away from an hour ago.
+func (l *Live) SubscribeHidden(clientID string) (*Subscriber, []byte) {
+	return l.subscribe(clientID, true)
+}
+
+func (l *Live) subscribe(clientID string, hidden bool) (*Subscriber, []byte) {
+	sub := &Subscriber{Events: make(chan Event, subscriberQueue), ClientID: clientID, hidden: hidden}
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -820,11 +842,8 @@ func (l *Live) Subscribe(clientID string) (*Subscriber, []byte) {
 	// only viewer, and takes a 147-column agent view down to 46. Nobody was
 	// there to protect, and the harm happened anyway. Recency is the property
 	// that separates "reloading" from "gone".
-	stale := !l.lastControllerAt.IsZero() && l.now().Sub(l.lastControllerAt) >= controllerGrace
-	if l.controller == "" && (stale || l.lastController == "" || l.lastController == sub.ClientID) {
-		l.controller = sub.ClientID
-		l.lastController = ""
-		l.lastControllerAt = time.Time{}
+	if !hidden {
+		l.claimControlLocked(sub)
 	}
 	cols, rows := l.cols, l.rows
 
@@ -836,6 +855,18 @@ func (l *Live) Subscribe(clientID string) (*Subscriber, []byte) {
 	default:
 	}
 	return sub, replay
+}
+
+// claimControlLocked gives an unowned grid to a viewer that has just arrived,
+// under the rule described in subscribe: nobody has driven it, or it was this
+// viewer who did, or whoever did has been gone longer than controllerGrace.
+func (l *Live) claimControlLocked(sub *Subscriber) {
+	stale := !l.lastControllerAt.IsZero() && l.now().Sub(l.lastControllerAt) >= controllerGrace
+	if l.controller == "" && (stale || l.lastController == "" || l.lastController == sub.ClientID) {
+		l.controller = sub.ClientID
+		l.lastController = ""
+		l.lastControllerAt = time.Time{}
+	}
 }
 
 // Unsubscribe removes a viewer.
@@ -890,14 +921,46 @@ func (l *Live) releaseControlLocked(sub *Subscriber) {
 	if l.controller != sub.ClientID {
 		return
 	}
-	for other := range l.subs { // sub is already gone from the map
-		if other.ClientID == sub.ClientID {
+	for other := range l.subs { // sub is already gone from the map, or hidden
+		// A hidden connection of the same viewer is not somebody still driving
+		// the grid. It is the same browser keeping the terminal off-screen.
+		if other.ClientID == sub.ClientID && !other.hidden {
 			return
 		}
 	}
 	l.controller = ""
 	l.lastController = sub.ClientID
 	l.lastControllerAt = l.now()
+}
+
+// SetHidden records whether a viewer's terminal is on screen.
+//
+// The browser keeps a few recently viewed terminals mounted and subscribed, so
+// that switching back to one is a visibility change rather than a replay. That
+// made a subscription stop meaning "somebody is looking", which is exactly what
+// control is decided on. Measured before this existed: a desktop that had
+// merely visited a session held its grid indefinitely, and a viewer opening it
+// long after the grace period was still told it was passive, 144x46 frozen for
+// a terminal nobody could see, where the build before handed it over.
+//
+// So hiding is leaving and showing is arriving, under the same rules and with
+// the same freeze in between. The subscription is untouched: output keeps
+// flowing, which is the reason for keeping it.
+//
+// A value that has not changed does nothing. Repeating "I am on screen" is not
+// arriving, and a subscriber that has already gone cannot claim anything.
+func (l *Live) SetHidden(sub *Subscriber, hidden bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if _, ok := l.subs[sub]; !ok || sub.hidden == hidden {
+		return
+	}
+	sub.hidden = hidden
+	if hidden {
+		l.releaseControlLocked(sub)
+	} else {
+		l.claimControlLocked(sub)
+	}
 }
 
 // broadcast delivers an event to every viewer, dropping any that is too far

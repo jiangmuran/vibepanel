@@ -21156,3 +21156,98 @@ owner was told three times that this machine has password-less sudo and the
 field would accept anything. That was a timestamp cached by a `sudo` typed
 minutes earlier, and the mutation run had already shown sudo refusing a wrong
 password.
+
+## Mobile terminal replay without a blank first paint
+
+Switching sessions used to destroy the xterm instance and send the entire
+replay buffer before the browser could paint. That was mostly invisible on a
+desktop loopback, but on a phone data connection the panel chrome appeared
+while the terminal stayed blank until network transfer and xterm parsing both
+finished.
+
+The panel now keeps the three most recently viewed main terminals mounted on a
+desktop, and only the selected terminal on a narrow viewport. Returning to a
+recent session is therefore a visibility change rather than a new subscribe;
+hidden terminals skip zero-sized resize reports and refresh once visible so a
+retained renderer cannot show stale pixels.
+
+Cold replays are sent in 64 KiB WebSocket chunks. `TerminalReplay` serializes
+those writes and yields between replay chunks with `requestAnimationFrame`, so
+mobile browsers get paint opportunities without interleaving live output or
+changing byte order. The server logs attach, first-chunk, replay and total
+subscribe timings, which separates server write time from the browser's
+receive-and-render path during the next field test.
+
+The unit suite and the real `render-check` passed on the change as submitted,
+on desktop and mobile, including the ctrl+V path and mobile terminal scroll.
+
+### What review found: a terminal nobody can see held the grid
+
+Control is decided on who is subscribed, and keeping terminals mounted made a
+subscription stop meaning that anybody was looking. Measured with two browsers
+against the submitted build: desktop A drives a session at 144x46 and switches
+to another; 125 seconds later, past the two-minute grace period, viewer B opens
+the first one. B was passive, offered "take control", and the pane stayed
+144x46. The same steps on the build before gave B the grid at 58x21. All A had
+done was visit the session recently.
+
+The fix is a `visibility` message rather than unsubscribing, because
+unsubscribing is the replay the change exists to avoid. Hiding releases the
+grid under the rule for leaving (frozen, grace period starting) and showing
+claims it under the rule for arriving. Three details, each a way to get that
+wrong:
+
+- `subscribe` carries the flag. Subscribing and then saying `hidden` would
+  claim the grid and release it again, and the release stamps a new departure,
+  so every reconnect would restart the grace period on a grid its owner had
+  left an hour before.
+- The server answers `visibility` with `size`. A terminal hidden while it
+  controlled still believes it does, and shown again after somebody else took
+  the grid it would publish sizes the server discards and never be offered the
+  button. `releaseControlLocked` records that exact failure once already.
+- A hidden connection of the same client is not "the same viewer still
+  driving", which is what the duplicate-tab rule in `releaseControlLocked`
+  would otherwise conclude.
+
+The `if (hidden) return` in the resize handler was load-bearing on the change
+as submitted, although the dimension check beside it looks as if it covers the
+case: with it removed, the session a desktop had just switched away from was
+reflowed to 11x6. After the `visibility` fix the window that hid the terminal no
+longer needs it, because the grid has been given up by the time the zero-sized
+box goes out, and render-check stayed green with the guard removed. It still
+matters for a duplicated tab, which shares the client id and so still holds the
+grid through its visible copy while its own copy is hidden. render-check drives
+that case now. A guard no check can see being removed is the one that goes the
+next time somebody tidies the handler.
+
+The tests the change arrived with did not pin its guards. Of nine mutations of
+`TerminalReplay` six survived, among them the one that stops suppressing input
+in the frame between two replay chunks; the fake scheduler ignored `cancel`, so
+neither cancel could be seen to do anything. Sending the replay as one frame
+again left `go test ./internal/ws` green. After review, 16 frontend and 18
+server mutations, none surviving. Two survivors on the way there were real
+gaps: a reset flag never cleared would reset the terminal before every replay
+chunk, wiping the one before it, and a hidden subscribe that was sent but not
+remembered would arrive visible after the next reconnect. In the browser,
+removing the visibility effect fails render-check twice, and removing the
+resize guard fails the duplicated-tab check at 121x40 -> 11x6.
+
+The browser checks had assumed one main terminal, and on this machine the
+change as submitted did not get past render-check's first click:
+`locator('.xterm-screen')` is strict and matched the hidden terminal as well.
+The less visible half was `window.vibepanelScreen`, which answers an unnamed
+read only when there is exactly one terminal or a focused one. After a single
+session switch there never was exactly one, so every unnamed read would have
+come back empty. It counts only terminals on screen now, and the checks look
+the main terminal up as the visible `[data-testid="main-terminal"]`.
+
+Smaller things. The first-chunk timing was taken before the first write, so it
+measured reaching the loop and was always zero; it is taken after now. And
+while writing the end-to-end replay test: for 1500 printed lines the replay's
+plain-text lines ended at 1476. The last screenful is not in it verbatim, so
+the test looks for lines from the history.
+
+Not changed: `requestAnimationFrame` does not run in a background tab, so a
+reconnect while the tab is hidden holds the replay, and the live output queued
+behind it, until the tab is shown again. The ring is 2 MiB, 32 frames, about
+half a second to catch up.

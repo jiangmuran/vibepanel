@@ -33,7 +33,12 @@ declare global {
 if (typeof window !== 'undefined') {
   window.vibepanelScreen = (arg) => {
     const opts = typeof arg === 'string' ? { id: arg } : (arg ?? {})
-    const all = [...liveTerminals.values()]
+    // Only terminals on screen. The most recently viewed sessions stay mounted
+    // under display:none, and they are not what anybody means by "the
+    // terminal": counted here, the one-terminal case below never happened
+    // again after a single session switch, and every unnamed read came back
+    // empty. A hidden one is still there to be read by naming it.
+    const all = [...liveTerminals.values()].filter((t) => (t.element?.getClientRects().length ?? 0) > 0)
     // The focused one when nothing is named. A check that has just typed into a
     // terminal means *that* terminal, and the panel has several: a main one and
     // a row of scratch ones underneath. Picking the first in the map read the

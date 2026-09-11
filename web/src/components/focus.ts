@@ -106,9 +106,9 @@ const GIVE_UP_MS = 600
  * keyboard rather than on the panel.
  *
  * The second is why the check happens here rather than in the click handler.
- * The terminal for a session that was just selected does not exist yet: the
- * view is keyed by session id, so choosing another unmounts one xterm and a new
- * one registers itself a frame or two later. That gap is long enough to click
+ * The terminal for a session that was just selected may not exist yet: only the
+ * few most recently viewed stay mounted, so choosing any other mounts a new
+ * xterm, which registers itself a frame or two later. That gap is long enough to click
  * into the compose box -- and the activeElement at the moment of the click is
  * the tab that was clicked, not the field the person was typing in a moment
  * before. Asked at the click, the question has the wrong answer twice over.

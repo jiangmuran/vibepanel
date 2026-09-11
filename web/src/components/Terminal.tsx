@@ -4,6 +4,7 @@ import { liveTerminals } from './terminals'
 import { copyText, copyTextInGesture } from '../clipboard'
 import { isBrowserCopy, isBrowserPaste } from './clipboardKeys'
 import { rendererPreference } from './renderer'
+import { TerminalReplay } from './terminalReplay'
 import { Terminal as Xterm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
@@ -67,6 +68,8 @@ interface Props {
    * cannot work against a raw terminal.
    */
   readOnly?: boolean
+  /** Keep this terminal mounted off-screen so switching back is instant. */
+  hidden?: boolean
 }
 
 /**
@@ -97,6 +100,7 @@ export function TerminalView({
   onExit,
   className,
   readOnly = false,
+  hidden = false,
   touchSelect = false,
   fullscreen = false,
   onSelectionChange,
@@ -118,9 +122,16 @@ export function TerminalView({
   // deps: a new callback identity must not rebuild the terminal.
   const onSelectionRef = useRef(onSelectionChange)
   const onClipboardRef = useRef(onClipboard)
+  // Read at subscribe rather than being a dependency of the terminal: flipping
+  // it must not rebuild anything, which is the reason the terminal stays
+  // mounted. It still matters there, because changing readOnly or touchSelect
+  // resubscribes every mounted terminal, and a hidden one must not arrive as a
+  // viewer claiming the grid.
+  const hiddenRef = useRef(hidden)
   useEffect(() => {
     onSelectionRef.current = onSelectionChange
     onClipboardRef.current = onClipboard
+    hiddenRef.current = hidden
   })
 
   // Terminal lifetime is tied to the session, never to the theme or to
@@ -268,18 +279,16 @@ export function TerminalView({
     // back is an answer to a question that was asked minutes ago and has
     // already been answered. Letting it through types the reply at whatever
     // prompt the session is sitting at.
-    let replaying = false
-    // Set when the stream restarts, cleared by the snapshot that follows.
-    let replaceOnNextReplay = false
+    const replayQueue = new TerminalReplay(term)
 
     const dataSub = term.onData((data) => {
-      if (replaying) return
+      if (replayQueue.replaying) return
       socket.write(sessionId, encoder.encode(data))
     })
     // Binary input is what arrives for pasted bytes that are not valid UTF-16
     // text; without this branch those keystrokes vanish.
     const binarySub = term.onBinary((data) => {
-      if (replaying) return
+      if (replayQueue.replaying) return
       const bytes = new Uint8Array(data.length)
       for (let i = 0; i < data.length; i++) bytes[i] = data.charCodeAt(i) & 0xff
       socket.write(sessionId, bytes)
@@ -295,29 +304,10 @@ export function TerminalView({
       // buffer on a server that has just started), clearing here would blank a
       // terminal that still had something worth reading in it.
       onReset: () => {
-        replaceOnNextReplay = true
+        replayQueue.restart()
       },
       onData: (bytes, replay) => {
-        if (!replay) {
-          term.write(bytes)
-          return
-        }
-        // xterm generates its responses synchronously while parsing, so the
-        // flag has to span the whole write — and the reset, which restores
-        // modes the session never asked about — and is cleared from the parse
-        // callback rather than on the next line.
-        replaying = true
-        if (replaceOnNextReplay) {
-          replaceOnNextReplay = false
-          // reset() rather than clear(): the snapshot may enter the alternate
-          // screen or set modes of its own, and it has to be parsed against a
-          // terminal in a known state rather than whatever the previous stream
-          // left behind.
-          term.reset()
-        }
-        term.write(bytes, () => {
-          replaying = false
-        })
+        replayQueue.enqueue(bytes, replay)
       },
       onSize: (cols, rows, isControlling) => {
         controllingRef.current = isControlling
@@ -343,7 +333,7 @@ export function TerminalView({
         void copyText(text).then((ok) => onClipboardRef.current?.(text, ok))
       },
       onExit: () => onExit?.(),
-    })
+    }, hiddenRef.current)
 
     // Selection is reported from xterm's own event rather than the DOM's,
     // because the gesture drives xterm's selection model and never touches
@@ -392,6 +382,7 @@ export function TerminalView({
       selSub.dispose()
       dataSub.dispose()
       binarySub.dispose()
+      replayQueue.dispose()
       socket.unsubscribe(sessionId)
       term.dispose()
       termRef.current = null
@@ -440,6 +431,24 @@ export function TerminalView({
     if (termRef.current) termRef.current.options.theme = terminalTheme()
   }, [themeKey])
 
+  // The server decides who drives the grid from who is looking, and a terminal
+  // kept mounted off-screen is not looking. See PanelSocket.setHidden.
+  useEffect(() => {
+    socket.setHidden(sessionId, hidden)
+  }, [socket, sessionId, hidden])
+
+  // A display:none canvas keeps stale pixels. Repaint after it becomes visible.
+  useEffect(() => {
+    if (hidden) return
+    const term = termRef.current
+    if (!term) return
+    const frame = requestAnimationFrame(() => {
+      fitRef.current?.fit()
+      term.refresh(0, term.rows - 1)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [hidden])
+
   // Resize handling for both modes.
   useEffect(() => {
     const wrap = wrapRef.current
@@ -451,6 +460,14 @@ export function TerminalView({
       const t = termRef.current
       const f = fitRef.current
       if (!t || !f) return
+      // Hidden terminals measure zero; publishing that size would reflow the
+      // tmux pane for the viewer who is actually looking at it.
+      //
+      // From the window that hid this terminal the server would ignore it now:
+      // the visibility effect above runs first and gives the grid up. Not from
+      // a duplicated tab, which carries the same client id and so still holds
+      // the grid through its visible copy. render-check drives that case.
+      if (hidden) return
 
       if (controllingRef.current) {
         // We own the grid: fit to the container and publish the result.
@@ -517,7 +534,7 @@ export function TerminalView({
     const ro = new ResizeObserver(apply)
     ro.observe(wrap)
     return () => ro.disconnect()
-  }, [socket, sessionId, controlling, grid.cols, grid.rows])
+  }, [socket, sessionId, controlling, grid.cols, grid.rows, hidden])
 
   // Offer to take the grid only when this window would actually render a
   // different one. Two windows the same size see an identical picture, so a
