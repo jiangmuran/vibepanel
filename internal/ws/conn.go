@@ -708,6 +708,14 @@ func (c *Conn) applyScheme(sessionID string, dark *bool) {
 	if s == nil {
 		return
 	}
+	// Remembered for every session that attaches next, not only this one.
+	// Reconcile attaches all of them at startup, before any browser has said a
+	// word, and tmux asks its client for colours the moment it attaches -- so
+	// a session with nothing to go on answered "light", tmux cached it, and
+	// Codex drew its message box for a light terminal inside a dark one.
+	// 「codex 用户消息框的文字和背景颜色一样」, measured as a 222,224,227
+	// background under light-grey default text.
+	c.h.Manager.RememberScheme(*dark)
 	s.live.SetScheme(*dark)
 }
 

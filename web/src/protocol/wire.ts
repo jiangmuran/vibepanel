@@ -666,6 +666,12 @@ export interface UpdateCheck {
    * questions and it answers them a moment later.
    */
   elevate?: boolean
+  /**
+   * The machine account whose password sudo will ask for. Not the panel
+   * account: the field used to say "this account's password", which reads as
+   * the one you are signed into the page with.
+   */
+  elevateAs?: string
 }
 
 /** What `POST /api/update` answers, before it restarts. */

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/user"
 	"strings"
 	"time"
 
@@ -55,6 +56,12 @@ func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 		// moment later. Reading /etc/sudoers here to guess would be a second
 		// implementation of something that already has a real one.
 		out["elevate"] = errors.Is(err, selfupdate.ErrNotWritable) && elevateAvailable()
+		// Whose password sudo will want, by name. The field said "this
+		// account's password" and was read, reasonably, as the panel account
+		// the person is signed into on this page -- and sudo refused it.
+		if u, uerr := user.Current(); uerr == nil {
+			out["elevateAs"] = u.Username
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -267,20 +274,28 @@ func (s *Server) applyElevated(w http.ResponseWriter, r *http.Request, password 
 		return
 	}
 
-	// Just the password, on stdin, and nothing started yet.
-	check := exec.CommandContext(r.Context(), sudo, "-S", "-p", "", "-v")
+	// `-k` on both commands: the password is what authorises each one, never a
+	// timestamp left behind by the one before.
+	//
+	// This first verified with `-v` and then ran the upgrade with `-n`, which
+	// depended on sudo carrying a credential from one process to the next with
+	// no terminal attached. sudo-rs -- what this machine actually has -- keys
+	// that cache by terminal or by parent process, and whether it carries is
+	// not a thing to find out after the page has already said "upgrading".
+	//
+	// It also closes the quieter failure. With a live timestamp, `sudo -S`
+	// does not read stdin at all, and the password sits unread in the pipe for
+	// the command sudo runs to inherit. `-k` makes sudo read it every time, so
+	// the child is handed a pipe at EOF.
+	check := exec.CommandContext(r.Context(), sudo, "-k", "-S", "-p", "", "--", "true")
 	check.Stdin = strings.NewReader(password + "\n")
 	var why bytes.Buffer
 	check.Stderr = &why
 	if err := check.Run(); err != nil {
-		msg := strings.TrimSpace(why.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		// 401 rather than 500: this is a credential being refused, and the
-		// page needs to put the cursor back in the password box rather than
-		// tell somebody the panel is broken.
-		writeErr(w, http.StatusUnauthorized, msg)
+		// 403, not 401. The panel session is fine; it is this machine's
+		// password that was refused, and three places in the frontend read a
+		// 401 as "signed out".
+		writeErr(w, http.StatusForbidden, sudoSays(why.String(), err))
 		return
 	}
 
@@ -303,7 +318,10 @@ func (s *Server) applyElevated(w http.ResponseWriter, r *http.Request, password 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
 		time.Sleep(1500 * time.Millisecond)
-		run := exec.CommandContext(ctx, sudo, "-n", "--", self, "service", "upgrade")
+		// The same password again, read by sudo again. Held by this goroutine
+		// for the second and a half before it is used, and by nothing after.
+		run := exec.CommandContext(ctx, sudo, "-k", "-S", "-p", "", "--", self, "service", "upgrade")
+		run.Stdin = strings.NewReader(password + "\n")
 		if out, err := run.CombinedOutput(); err != nil {
 			s.Log.Error("elevated upgrade", "err", err, "out", string(out))
 		}

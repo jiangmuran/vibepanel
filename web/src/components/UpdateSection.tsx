@@ -138,7 +138,11 @@ export function UpdateSection() {
             type="password"
             value={secret}
             onChange={(e) => setSecret(e.target.value)}
-            placeholder={t('upd.secretHint')}
+            // Named, because "this account" was read as the panel account --
+            // the one the person is signed into on this very page -- and sudo
+            // wants the machine's. Both are reasonable readings of the same
+            // three words, so the field says whose.
+            placeholder={t('upd.secretHint', { user: found.elevateAs ?? '' })}
             autoComplete="current-password"
             data-testid="update-secret"
             className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent"

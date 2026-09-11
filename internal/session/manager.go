@@ -97,6 +97,11 @@ type Live struct {
 	// the grid, because it arrives from a viewer's goroutine and is read on the
 	// pump's.
 	dark bool
+	// schemeReports is whether tmux has turned on DEC mode 2031 for this
+	// client -- asked to be told, unprompted, when the palette changes. Set by
+	// the pump from what tmux writes; read by SetScheme, which sends nothing
+	// to a client that did not ask. See schemeReportsMode.
+	schemeReports bool
 
 	// controller is the ClientID whose viewport currently defines the grid.
 	// Empty means nobody owns it right now.
@@ -277,7 +282,28 @@ type Manager struct {
 
 	// Log, if set, receives non-fatal problems.
 	Log *slog.Logger
+
+	// lastDark is the scheme the most recent browser reported, for sessions
+	// that attach before any browser has reported anything about them.
+	//
+	// Without it a fresh Live answered "light", and that answer is not
+	// harmless: tmux asks its client for colours the moment it attaches,
+	// caches them, and hands them to every pane that asks later. Reconcile
+	// attaches every session at startup, ahead of any browser, so on a panel
+	// restart every session told tmux it was light -- and Codex, which asks
+	// once when it starts, drew its message box at 222,224,227 underneath
+	// light-grey default text. Measured on the live panel.
+	//
+	// Process memory, not the database. It is a guess until a browser speaks,
+	// and SetScheme sends tmux the correction the moment one does, so the cost
+	// of it being wrong after a restart is one query answered badly rather
+	// than a session stuck that way.
+	lastDark atomic.Bool
 }
+
+// RememberScheme records a browser's palette as the default for sessions that
+// attach before one reports.
+func (m *Manager) RememberScheme(dark bool) { m.lastDark.Store(dark) }
 
 func (m *Manager) logf(format string, args ...any) {
 	if m.Log != nil {
@@ -421,6 +447,9 @@ func (m *Manager) Attach(ctx context.Context, sessionID, tmuxName string, cols, 
 		pumped:         make(chan struct{}),
 		reconfiguredAt: time.Now(),
 		now:            time.Now,
+		// Before the pump starts, because the pump is what answers tmux's
+		// colour queries and it answers them on the first chunk. See lastDark.
+		dark: m.lastDark.Load(),
 	}
 
 	// Install, unless somebody asked for this session to go while it was being
@@ -551,6 +580,13 @@ func (m *Manager) pump(l *Live) {
 
 			// Writing to the PTY stays outside the lock: it is I/O, and the
 			// only thing on the other end of it is tmux.
+			// Whether tmux wants to hear about palette changes. Recorded before
+			// the replies below because the same attach burst carries both.
+			if on, seen := schemeReportsMode(chunk); seen {
+				l.mu.Lock()
+				l.schemeReports = on
+				l.mu.Unlock()
+			}
 			if reply := terminalQueryReplies(chunk, cols, rows, l.Dark()); len(reply) > 0 {
 				if debugChunks {
 					fmt.Fprintf(os.Stderr, "[reply] %s %s %q\n",
@@ -593,10 +629,30 @@ func (m *Manager) pump(l *Live) {
 // disagree: there is one terminal and it has one background. A viewer on the
 // other theme sees an application drawn for this one, which is the pre-existing
 // situation for everybody rather than a new one for somebody.
+//
+// A change is also sent to tmux, and only a change, and only to a client that
+// asked. tmux caches the colours it was told at attach and hands them to every
+// pane that queries later; the only way to correct that cache is the report a
+// terminal sends when its palette changes, which makes tmux ask again. Without
+// it a browser switching theme changed what the pump would answer and nobody
+// ever asked, so every agent started afterwards drew for the old palette.
+//
+// Only on a change, because this runs on every subscribe from every tab and
+// each report makes tmux query twice more. Only when tmux turned mode 2031 on,
+// because to a client that did not, the report is not a report: it is bytes on
+// stdin, and tmux types them into the focused pane.
 func (l *Live) SetScheme(dark bool) {
 	l.mu.Lock()
+	notify := l.dark != dark && l.schemeReports && !l.closed
 	l.dark = dark
+	ptmx := l.ptmx
 	l.mu.Unlock()
+	if !notify || ptmx == nil {
+		return
+	}
+	// Outside the lock, like Write: it is I/O, and tmux answers it by writing
+	// queries the pump has to take the lock to reply to.
+	_, _ = ptmx.Write(schemeReport(dark))
 }
 
 // Dark reports the recorded scheme.

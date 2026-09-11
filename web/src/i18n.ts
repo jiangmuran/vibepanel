@@ -662,7 +662,7 @@ const DICT = {
     en: 'Downloads, verifies and replaces the binary, then restarts the panel. **Your sessions are unaffected.**',
   },
   'upd.done': { zh: '已装上 {v}，正在重启面板…', en: 'Installed {v}; the panel is restarting…' },
-  'upd.secretHint': { zh: '当前账号的密码', en: 'This account’s password' },
+  'upd.secretHint': { zh: '{user} 的系统密码，不是面板密码', en: '{user}’s system password, not the panel’s' },
   'upd.elevated': {
     zh: '已授权，正在后台升级并重启面板…',
     en: 'Authorised; upgrading and restarting in the background…',

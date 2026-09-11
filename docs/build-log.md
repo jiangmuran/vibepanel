@@ -21084,3 +21084,75 @@ provable in node and the wiring is not — went red on the first run of this
 change, exactly as designed: the handler stopped being a one-line arrow. It
 pins four things now, and each is a way to have written this change and lost
 the interrupt.
+
+## Codex's message box, and a password field that did not say whose
+
+Two reports in one message: 「codex用户消息框的文字和背景颜色一样」, and an update
+that failed with `sudo: Authentication failed, try again.��sudo: Authentication
+required but not attempted`.
+
+### The panel was telling tmux it was light
+
+Codex painted its composer at `48;2;222;224;227` -- the panel's light background
+`#e8eaed` taken down about four per cent -- under default text that, in the dark
+theme, is light grey. It had been told it was in a light terminal. Read off the
+running panel: `tmux list-clients -F '#{client_theme}'` answered `light` for all
+six of its clients, on a panel being used in dark mode.
+
+Two causes, both measured against tmux 3.6 on a throwaway socket, with a script
+standing in for the panel's client:
+
+- tmux asks its client for OSC 10, OSC 11 and `?996n` the moment it attaches,
+  caches the answers, and gives them to every pane that asks later. `Live.dark`
+  was a zero value -- light -- until a browser reported, and Reconcile attaches
+  every session at startup before any browser has. A panel restart told tmux,
+  once and for good, that everything was light. The manager now remembers the
+  last scheme any browser reported, and a session attaches with it.
+- tmux also turns on DEC mode 2031 for its client: tell me, unprompted, when the
+  palette changes. After the client writes `\x1b[?997;1n` tmux asks for OSC 10
+  and 11 again straight away, and a pane that queries afterwards gets the new
+  background. The panel never sent it. A browser switching theme changed what
+  the pump would answer, and nothing ever asked. `SetScheme` sends it now -- on
+  a change only, because it runs on every subscribe from every tab, and only
+  when tmux turned 2031 on, because to a client that did not, the report is
+  bytes on stdin that tmux types into the focused pane.
+
+Every guard was watched red. The pipe test, when the report went to a client
+that had not asked. The real-tmux test, which reads `#{client_theme}` after a
+remembered scheme and after two switches: once with new sessions ignoring what
+was remembered, once with the pump never noticing 2031. And a source scan in
+`internal/ws` for the one line that does the remembering, which nothing else in
+the tree would miss.
+
+What this does not do: an agent that asked before the fix keeps what it was
+told. Codex asks once, when it starts, so a Codex already running keeps its
+light box until it is restarted.
+
+### Whose password
+
+The error was sudo refusing what was typed: the same two lines, byte for byte,
+that a deliberately wrong password produced in the mutation run for this field.
+The field said 「当前账号的密码」 on a page the person is signed into with a
+*panel* account, which is the obvious reading, and sudo wanted the machine's. It
+names the account now.
+
+Three smaller things from the same report:
+
+- The two black diamonds are `safeText` turning sudo-rs's two newlines into
+  U+FFFD. `sudoSays` keeps the first line, which is the answer; the second is
+  sudo describing an empty pipe.
+- The refusal was a 401, and three places in the frontend read a 401 as "signed
+  out". It is a 403.
+- The design no longer leans on sudo's credential cache. It verified with `-v`
+  and upgraded with `-n`, trusting a timestamp to carry between two processes
+  with no terminal. This machine's sudo is sudo-rs, which scopes that by terminal
+  or parent process, and there is no checking it without the owner's password.
+  Both commands are `-k -S` now, so sudo reads the password itself each time --
+  which also means it is never left unread in the pipe for the upgrade to
+  inherit, as it would have been under a live timestamp.
+
+A correction to what was said in the conversation rather than in the code: the
+owner was told three times that this machine has password-less sudo and the
+field would accept anything. That was a timestamp cached by a `sudo` typed
+minutes earlier, and the mutation run had already shown sudo refusing a wrong
+password.
