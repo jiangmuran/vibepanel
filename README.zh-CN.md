@@ -14,6 +14,13 @@
 
 </div>
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/hero-dark.png">
+    <img src="docs/images/hero-light.png" width="100%" alt="vibepanel：左边是项目和它们的 session，中间是正在干活的 agent 和下方的临时终端，右边是文件、token 用量和机器负载">
+  </picture>
+</p>
+
 ## 这是什么
 
 vibepanel 是一个针对高强度agent开发者打造的实用终端，采用前后端分离的架构，你的终端托管在拥有最低内存保证和高优先级的专用系统服务，确保不会因为OOM或应用层故障导致丢失会话。同时，我们的UI通过web访问，以便于你使用开发服务器并通过任何设备远程访问。
@@ -28,7 +35,23 @@ vibepanel 是一个针对高强度agent开发者打造的实用终端，采用�
 
 我可以很荣幸的向你保证，这个项目**不是AI Slop**，而是一个我高强度自用、真正顺手的终端，我希望这个项目能够节省你的时间并带给你快乐。这个项目目前处于初步开发阶段，欢迎你带着灵感和意见加入到我们的开发工作中。
 
-*这里等我找几个能放的项目截几张实机图，先欠着喵*
+<p align="center">
+  <img src="docs/images/share-templates.png" width="49%" alt="只读链接的看板模板">
+  <img src="docs/images/share-editor.png" width="49%" alt="编辑只读链接：名称、有效期和看板上的组件">
+</p>
+<p align="center"><sub>只读链接开箱即用，放显示器、投大屏都行</sub></p>
+
+<p align="center">
+  <img src="docs/images/mobile-session.png" width="36%" alt="手机上的 session，带输入框和按键栏">
+  <img src="docs/images/mobile-projects.png" width="36%" alt="手机上的项目和 session 列表">
+</p>
+<p align="center"><sub>手机端是专门设计的一套界面</sub></p>
+
+<p align="center">
+  <img src="docs/images/token-usage.png" width="68%" alt="按天、按项目、按模型统计的 token 消耗">
+  <img src="docs/images/monitor.png" width="28%" alt="机器负载，以及每个 session 占用了多少">
+</p>
+<p align="center"><sub>每个项目、每个模型花了多少 token，每个 session 占了多少机器</sub></p>
 
 
 
@@ -98,6 +121,10 @@ curl -sX POST https://panel.example.com:18443/api/sessions \
 - **网页是视图，不是状态。** 关掉它、在三个地方同时打开、命令跑到一半刷新，会话毫无察觉。
 - ***已完成*指进程退出了**，不是指会话安静了。
 - **颜色永远不是唯一的信息载体。**
+
+<p align="center">
+  <img src="docs/images/panel-crash-zh.png" width="80%" alt="网页只是个窗口；面板崩了、重启、升级，都只是连上去看，tmux 里的 agent 一个不少，还在跑">
+</p>
 
 
 ## 开发

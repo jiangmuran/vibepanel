@@ -15,6 +15,13 @@ once. Stable, private, quick, and good to look at.**
 
 </div>
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/hero-dark.png">
+    <img src="docs/images/hero-light.png" width="100%" alt="vibepanel: projects and their sessions on the left, an agent working in the middle with a scratch terminal under it, files, token usage and machine load on the right">
+  </picture>
+</p>
+
 ## What it is
 
 vibepanel is a working terminal for people who lean on agents hard. The front
@@ -54,7 +61,23 @@ every day and it is genuinely nice to use. I hope it saves you some time and
 that you enjoy it. It is early, so come and join in if you have ideas or
 complaints.
 
-*Screenshots of the real thing once I find projects I can show. I owe you.*
+<p align="center">
+  <img src="docs/images/share-templates.png" width="49%" alt="Board templates to start a read-only link from">
+  <img src="docs/images/share-editor.png" width="49%" alt="Building a read-only link: its name, how long it lasts, and the widgets on the board">
+</p>
+<p align="center"><sub>Read-only links for a monitor or a big screen, started from a template.</sub></p>
+
+<p align="center">
+  <img src="docs/images/mobile-session.png" width="36%" alt="A session on a phone, with the compose box and the key bar">
+  <img src="docs/images/mobile-projects.png" width="36%" alt="Projects and their sessions on a phone">
+</p>
+<p align="center"><sub>A separate interface built for phones.</sub></p>
+
+<p align="center">
+  <img src="docs/images/token-usage.png" width="68%" alt="Tokens spent by day, by project and by model">
+  <img src="docs/images/monitor.png" width="28%" alt="Machine load, and how much of it each session is using">
+</p>
+<p align="center"><sub>What every project and model has spent, and what every session is costing the machine.</sub></p>
 
 ## Who it is for
 
