@@ -565,6 +565,7 @@ func (c *Conn) handleControl(ctx context.Context, msg ClientMessage) {
 // subscribe attaches (if needed), registers a viewer and starts pumping its
 // events onto the socket.
 func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int) error {
+	subscribeStarted := time.Now()
 	if sessionID == "" {
 		return errors.New("subscribe: missing sessionId")
 	}
@@ -587,6 +588,7 @@ func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int) 
 	if err != nil {
 		return fmt.Errorf("subscribe: %w", err)
 	}
+	attachedAt := time.Now()
 	sub, replay := live.Subscribe(c.clientID)
 
 	c.mu.Lock()
@@ -608,9 +610,37 @@ func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int) 
 	// Replay before any live event reaches the socket. Subscribe took the
 	// snapshot under the same lock that registered the subscriber, so the two
 	// join up exactly with nothing lost or repeated.
+	firstChunkAt := time.Time{}
+	replayStarted := time.Now()
+	chunks := 0
 	if len(replay) > 0 {
-		c.sendBinary(EncodeReplay(ref, replay))
+		// A single multi-megabyte frame made mobile browsers keep the terminal
+		// blank until the entire replay had arrived and xterm had parsed it. Send
+		// bounded chunks so the browser can paint between frames while preserving
+		// byte order and the replay marker on every chunk.
+		const replayChunkSize = 64 << 10
+		for start := 0; start < len(replay); start += replayChunkSize {
+			end := min(start+replayChunkSize, len(replay))
+			chunks++
+			if firstChunkAt.IsZero() {
+				firstChunkAt = time.Now()
+			}
+			c.sendBinary(EncodeReplay(ref, replay[start:end]))
+		}
 	}
+	firstChunkMS := int64(0)
+	if !firstChunkAt.IsZero() {
+		firstChunkMS = firstChunkAt.Sub(replayStarted).Microseconds() / 1000
+	}
+	c.h.logger().Info("terminal subscribe",
+		"session", sessionID,
+		"attach_ms", attachedAt.Sub(subscribeStarted).Microseconds()/1000,
+		"replay_bytes", len(replay),
+		"replay_chunks", chunks,
+		"replay_first_chunk_ms", firstChunkMS,
+		"replay_ms", time.Since(replayStarted).Microseconds()/1000,
+		"total_ms", time.Since(subscribeStarted).Microseconds()/1000,
+	)
 
 	go c.pumpStream(sctx, s)
 	return nil

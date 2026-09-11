@@ -21084,3 +21084,28 @@ provable in node and the wiring is not — went red on the first run of this
 change, exactly as designed: the handler stopped being a one-line arrow. It
 pins four things now, and each is a way to have written this change and lost
 the interrupt.
+
+## Mobile terminal replay without a blank first paint
+
+Switching sessions used to destroy the xterm instance and send the entire
+replay buffer before the browser could paint. That was mostly invisible on a
+desktop loopback, but on a phone data connection the panel chrome appeared
+while the terminal stayed blank until network transfer and xterm parsing both
+finished.
+
+The panel now keeps the three most recently viewed main terminals mounted on a
+desktop, and only the selected terminal on a narrow viewport. Returning to a
+recent session is therefore a visibility change rather than a new subscribe;
+hidden terminals skip zero-sized resize reports and refresh once visible so a
+retained renderer cannot show stale pixels.
+
+Cold replays are sent in 64 KiB WebSocket chunks. `TerminalReplay` serializes
+those writes and yields between replay chunks with `requestAnimationFrame`, so
+mobile browsers get paint opportunities without interleaving live output or
+changing byte order. The server logs attach, first-chunk, replay and total
+subscribe timings, which separates server write time from the browser's
+receive-and-render path during the next field test.
+
+The unit suite passes 538 frontend tests and the full Go suite. The real
+`render-check` also passes on desktop and mobile, including the ctrl+V path and
+mobile terminal scroll checks.
