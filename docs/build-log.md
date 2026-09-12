@@ -21251,3 +21251,38 @@ Not changed: `requestAnimationFrame` does not run in a background tab, so a
 reconnect while the tab is hidden holds the replay, and the live output queued
 behind it, until the tab is shown again. The ring is 2 MiB, 32 frames, about
 half a second to catch up.
+
+## Three files nothing pointed at, and a diagnostic left switched on
+
+Release housekeeping, and the second half is the part worth writing down.
+
+`docs/images/panel-dark.png` and `panel-zh.png` were the staged captures from
+before the README carried real ones. Nothing embedded either: the only mentions
+left were prose -- a roadmap item saying the first was a version behind, and
+this log's own history. `image.png` sat in the repository root, committed by
+accident in 976b79c; every "image.png" in the code is the upload tests' string
+rather than that file. `panel-light.png` and `phone.png` stay, because
+`docs/features.md` and its Chinese twin embed both. Roadmap X8 asked for a
+fresh capture of the first; it is ticked off as deleted rather than retaken.
+
+The timings that came with the mobile replay work -- attach, first chunk, whole
+replay, total -- were logged at Info on every subscribe. They are what showed
+where the wait actually was, and leaving them on is a diagnostic still running
+after the thing it diagnosed was fixed.
+
+Two facts make that worse than it sounds, and both are recent. `main.go` builds
+the logger at `slog.LevelInfo` with nothing to change it, so there is no level
+to turn down. And terminals now stay mounted, so a subscribe is no longer what
+happens when somebody switches session: it happens for every mounted terminal
+on every page load, and for all of them again on every reconnect. A phone on a
+flaky link writes that line over and over for a question nobody is asking.
+
+Behind `VIBEPANEL_DEBUG_TIMING` now, which is the way this panel already asks
+for diagnostics -- `VIBEPANEL_DEBUG_CHUNKS` dumps PTY chunks the same way, and
+`internal/config` exempts the whole `VIBEPANEL_DEBUG_` prefix from the "nothing
+reads this variable" warning, so the gate needed registering nowhere.
+
+Not `slog.LevelDebug`: with a hardcoded Info handler that is not "off by
+default", it is unreachable without editing the source. Checked before
+touching it that nothing reads the line -- no check script greps for it, no
+test asserts on it -- so gating it breaks nothing.

@@ -646,16 +646,18 @@ func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int, 
 			firstFrameMS = time.Since(replayStarted).Milliseconds()
 		}
 	}
-	c.h.logger().Info("terminal subscribe",
-		"session", sessionID,
-		"hidden", hidden,
-		"attach_ms", attachedAt.Sub(subscribeStarted).Milliseconds(),
-		"replay_bytes", len(replay),
-		"replay_chunks", len(frames),
-		"replay_first_chunk_ms", firstFrameMS,
-		"replay_ms", time.Since(replayStarted).Milliseconds(),
-		"total_ms", time.Since(subscribeStarted).Milliseconds(),
-	)
+	if debugTiming {
+		c.h.logger().Info("terminal subscribe",
+			"session", sessionID,
+			"hidden", hidden,
+			"attach_ms", attachedAt.Sub(subscribeStarted).Milliseconds(),
+			"replay_bytes", len(replay),
+			"replay_chunks", len(frames),
+			"replay_first_chunk_ms", firstFrameMS,
+			"replay_ms", time.Since(replayStarted).Milliseconds(),
+			"total_ms", time.Since(subscribeStarted).Milliseconds(),
+		)
+	}
 
 	go c.pumpStream(sctx, s)
 	return nil
