@@ -488,5 +488,7 @@ Passkey + 密码 ✅ · 滑动复制 ✅
       字符串，布局修复路径靠它。迁移**没有删 v14**——迁移是按位置编号的，删一条等于把后面
       每一条都改号——而是新加了 v17 `DROP TABLE vnc_targets`：那张表的 `password` 列是**明文**
       存的，功能都没了还把别人的密码留在库里，那不叫收口。
-- [ ] **X8 `docs/images/panel-dark.png` 落后一个版本**，画的还是五个 tab 的侧栏。
-      重新截图是 `web/scripts/shots.mjs` 配一个新构建。
+- [x] **X8 `docs/images/panel-dark.png` 落后一个版本** — 文件删了，没有重新截。
+      README 现在用的是文章里那批实机图（`docs/images/hero-*.png` 等），
+      这张和 `panel-zh.png` 都没有任何地方再引用，连同根目录误传的 `image.png`
+      一起删。`docs/features*.md` 里还在用的 `panel-light.png`、`phone.png` 保留。
