@@ -21286,3 +21286,38 @@ Not `slog.LevelDebug`: with a hardcoded Info handler that is not "off by
 default", it is unreachable without editing the source. Checked before
 touching it that nothing reads the line -- no check script greps for it, no
 test asserts on it -- so gating it breaks nothing.
+
+## A test that only ran here, and three red pushes nobody looked at
+
+The release for v1.12.0 failed in CI, on a test written four commits earlier:
+
+	--- FAIL: TestTmuxIsToldWhichThemeTheBrowserIsOn
+	    a session attached after a browser reported dark: tmux says the client is "", want "dark"
+
+Empty, not "light". `#{client_theme}` arrived in tmux 3.6; the runner installs
+tmux from Ubuntu 24.04's archive, which is 3.4, and an unknown format expands
+to the empty string rather than failing. The witness this test leans on does
+not exist there.
+
+The worse half is the dates. `check.yml` had been failing on every push since
+the commit that added the test -- three of them -- and it went unnoticed
+because the local gate was green every time. `make verify` runs eleven checks
+against *this* machine, where tmux is 3.6, and says nothing about the one
+environment every other person's install is built in. A gate that only exists
+on the machine that wrote it is the same mistake as a test that only passes
+there, one level up.
+
+Skipped below 3.6, naming the version it found, rather than weakened: what the
+test proves needs tmux to have somewhere to report the answer, and the rule
+itself -- a change is sent, once, and only to a client that asked -- is checked
+with no tmux at all by the unit test above it. An unparseable version runs
+rather than skips, following `AtLeastMinimum`: a version string nobody
+recognises is likelier to be new than old, and failing loudly beats skipping
+silently.
+
+Watched both ways, because a skip that never fires is a test that quietly
+stopped running: with the threshold raised to 3.9 it skips and says
+`tmux 3.6 has no #{client_theme}`, and at 3.6 it runs and passes.
+
+`#{client_theme}` is used nowhere else -- checked before assuming one cause --
+so this was the whole of it.

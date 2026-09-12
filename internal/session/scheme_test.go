@@ -92,6 +92,28 @@ func TestASchemeChangeIsSentOnceAndOnlyToAClientThatAsked(t *testing.T) {
 func TestTmuxIsToldWhichThemeTheBrowserIsOn(t *testing.T) {
 	ctx := context.Background()
 	tm := newTestTmux(t)
+
+	// `#{client_theme}` arrived in tmux 3.6. On anything older it expands to
+	// the empty string rather than failing, so this test read "" and reported
+	// it as the panel having told tmux nothing -- which is what it did on
+	// every CI run from the commit that added it: the runner installs tmux
+	// from Ubuntu's archive, which is 3.4, and main was red for three pushes
+	// before anybody looked at the workflow rather than at `make verify`.
+	//
+	// Skipped rather than weakened: what it proves needs tmux to have somewhere
+	// to report the answer. The rule itself -- a change is sent, once, and only
+	// to a client that asked -- is checked without any tmux at all by
+	// TestASchemeChangeIsSentOnceAndOnlyToAClientThatAsked above.
+	//
+	// An unparseable version runs the test, following AtLeastMinimum: a
+	// version string nobody recognises is likelier to be new than old, and
+	// failing loudly is better than skipping silently.
+	if v, err := tm.Version(ctx); err == nil {
+		if major, minor, ok := tmux.ParseVersion(v); ok && (major < 3 || (major == 3 && minor < 6)) {
+			t.Skipf("tmux %s has no #{client_theme}; it arrived in 3.6", v)
+		}
+	}
+
 	const name = "vp_scheme"
 	if err := tm.Create(ctx, tmux.CreateOptions{
 		Name: name, Dir: t.TempDir(), Width: 100, Height: 30,
