@@ -52,6 +52,15 @@ func newTestClient(t *testing.T) *Client {
 }
 
 func TestEnsureServerLoadsConfig(t *testing.T) {
+	// tmux copies the environment it starts in into its global environment,
+	// so a COLORTERM in the shell running the tests satisfies the check at the
+	// end of this test with the panel doing nothing -- which is how it passed
+	// on every machine with a modern terminal while the call it pins could be
+	// deleted. Empty rather than unset: tmux carries `COLORTERM=`, and only the
+	// panel can turn that into truecolor. A login profile that exports it still
+	// wins, since the server starts through one; the running-server test below
+	// does not depend on either.
+	t.Setenv("COLORTERM", "")
 	c := newTestClient(t)
 	ctx := context.Background()
 
@@ -353,7 +362,54 @@ func TestEnvIsInjected(t *testing.T) {
 	}
 }
 
+// The path most installs are on: a panel upgraded onto a tmux server an older
+// panel started, which nothing will ever restart. advertiseTruecolor exists for
+// this case and was the one no test reached -- every other test starts a fresh
+// server, which the config line that used to sit beside the call also covered,
+// so deleting the call left everything green.
+//
+// Cleared on the server itself rather than through the environment, so this
+// means the same thing whatever the shell running it, or its login profile,
+// exports.
+func TestEnsureServerAdvertisesTruecolorToARunningServer(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	if err := c.EnsureServer(ctx); err != nil {
+		t.Fatalf("EnsureServer: %v", err)
+	}
+
+	// What a server started by v1.12.0 or earlier looks like.
+	if _, err := c.run(ctx, "set-environment", "-g", "-u", "COLORTERM"); err != nil {
+		t.Fatalf("set-environment -gu COLORTERM: %v", err)
+	}
+	if got, err := c.run(ctx, "show-environment", "-g", "COLORTERM"); err == nil && got == "COLORTERM=truecolor" {
+		t.Fatalf("precondition: COLORTERM is still %q after unsetting it", got)
+	}
+	if !c.ServerRunning(ctx) {
+		t.Fatal("precondition: the server must still be running, or this tests the fresh-start path")
+	}
+
+	if err := c.EnsureServer(ctx); err != nil {
+		t.Fatalf("EnsureServer on a running server: %v", err)
+	}
+	got, err := c.run(ctx, "show-environment", "-g", "COLORTERM")
+	if err != nil {
+		t.Fatalf("a running server was not given COLORTERM: %v", err)
+	}
+	if got != "COLORTERM=truecolor" {
+		t.Fatalf("COLORTERM on a running server = %q, want truecolor", got)
+	}
+}
+
+// What the variable is for: a program in a new pane can see it.
+//
+// On tmux 3.6 and later this cannot fail, because tmux gives panes
+// COLORTERM=truecolor itself -- measured with an empty config and nothing in
+// the environment. It bites on 3.4, where the bug was, which is what CI runs.
+// TestEnsureServerLoadsConfig and TestEnsureServerAdvertisesTruecolorToARunningServer
+// are the ones that pin the panel's own behaviour on any version.
 func TestTruecolorEnvironmentReachesNewPanes(t *testing.T) {
+	t.Setenv("COLORTERM", "")
 	c := newTestClient(t)
 	ctx := context.Background()
 	if err := c.EnsureServer(ctx); err != nil {

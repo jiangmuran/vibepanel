@@ -21330,9 +21330,73 @@ palette. Current Codex sessions on this machine had `TERM=tmux-256color`, no
 browser's light/dark scheme to tmux, so adding a global xterm contrast floor
 would have rewritten the colours of every terminal cell to rescue one hint.
 
-The narrower fix is to advertise the capability Codex is selecting against.
-The embedded tmux configuration sets `COLORTERM=truecolor`, and `EnsureServer`
-refreshes that global environment even when the existing tmux server survives a
-panel restart. New panes therefore choose their truecolor palette without
-touching the colours of existing output. `TestEnsureServerLoadsConfig` pins the
-live server environment so an upgrade cannot silently lose the marker.
+The narrower fix is to advertise the capability Codex is selecting against:
+`EnsureServer` puts `COLORTERM=truecolor` in the tmux server's global
+environment, including when an existing server survives a panel restart. New
+panes therefore choose their truecolor palette without touching the colours of
+existing output.
+
+(As first submitted this was also a line in `vibepanel.conf`, and a test said it
+pinned the live server environment. Both changed in review; see the next entry.)
+
+### Why I could not reproduce it, and what the tests were not testing
+
+The reviewer's machine never showed the dark box, and the reason is tmux, not
+the panel. tmux 3.6 gives panes `COLORTERM=truecolor` on its own -- measured on
+a throwaway socket with `-f /dev/null` and the variable removed from the
+environment, where the pane still printed `truecolor` and `show-environment -g`
+still said `unknown variable`. 3.4 does not, and 3.4 is Ubuntu 24.04's tmux and
+the one CI installs. So this is a bug for most people installing the panel and
+invisible on the machine it is developed on.
+
+Each part of the fix was then removed in turn, per the rule that a guard counts
+once it has gone red. From the reviewer's ordinary shell every combination
+passed, including removing all of it: that shell exports `COLORTERM=truecolor`,
+as most modern terminals do, and tmux copies the environment it starts in into
+its global environment, so the assertion found the value with the panel doing
+nothing. With the variable removed from the test run:
+
+| removed | server-environment test | pane test |
+|---|---|---|
+| nothing | pass | pass |
+| the config line | pass | pass |
+| both `set-environment` calls | pass | pass |
+| all three | fail | pass |
+
+Three findings, and what was done about each:
+
+- **The config line and the Go call hid each other.** Either could go with
+  nothing noticing, because a fresh server gets the value from both. The config
+  line went: the file is read once, at server start, and the panel never
+  restarts its server, so the running-server path -- where most installs are,
+  after an upgrade -- could only ever be served by the call.
+  `advertiseTruecolor` is that call, used on both paths, and its comment says
+  why it is not a config line so that nobody helpfully adds one back.
+
+  That comment lives in Go and not in `vibepanel.conf`, and the reason is worth
+  the paragraph. A note was first written into the config where the line had
+  been, and then taken out again before committing: `ConfigStamp` is a hash of
+  the file's raw bytes, comments included, and a running server whose stamp
+  differs shows `tmux-config-stale` in settings and in `doctor`. A comment would
+  have told every upgraded panel that its tmux config was not loaded -- a
+  warning whose only cure is restarting the tmux server, which ends every
+  session -- for a change of no settings at all. The file is byte-identical to
+  v1.12.0's.
+- **The running-server path had no test.** Every test started a fresh server.
+  `TestEnsureServerAdvertisesTruecolorToARunningServer` starts one, unsets the
+  variable on the server itself, checks the unset took and the server is still
+  up, and calls `EnsureServer` again. Clearing it on the server rather than in
+  the environment makes it independent of whatever the shell or its login
+  profile exports -- which matters, because the server starts through a login
+  shell.
+- **The tests read the environment of whoever ran them.** The fresh-start
+  assertion now runs with `COLORTERM` set to empty, which tmux carries as
+  `COLORTERM=` and only the panel can turn into `truecolor`. The pane test keeps
+  running, with a comment saying it cannot fail on tmux 3.6 and later and is
+  there for 3.4.
+
+The error from `set-environment` is still dropped, now with the reason written
+down, following the config stamp beside it: a server that cannot take one
+`set-environment` right after answering is broken in a way the next command
+reports, and refusing to start a panel over a colour capability trades every
+session for one box.

@@ -241,17 +241,13 @@ func (c *Client) EnsureServer(ctx context.Context) error {
 		return fmt.Errorf("tmux: write config: %w", err)
 	}
 	if c.ServerRunning(ctx) {
-		// The config is read only when tmux starts, but the server environment can
-		// be updated live. This matters after a panel upgrade: existing tmux
-		// sessions must survive the restart, while the next pane they create must
-		// still tell Codex that truecolor is available.
-		_, _ = c.run(ctx, "set-environment", "-g", "COLORTERM", "truecolor")
+		c.advertiseTruecolor(ctx)
 		return nil
 	}
 	if err := c.startServerWithProfile(ctx); err != nil {
 		return err
 	}
-	_, _ = c.run(ctx, "set-environment", "-g", "COLORTERM", "truecolor")
+	c.advertiseTruecolor(ctx)
 	// Stamp what the server was started with.
 	//
 	// `-f` is read once, at start-server, and the panel never kills its server
@@ -296,6 +292,32 @@ func (c *Client) RunningConfigStamp(ctx context.Context) string {
 		return ""
 	}
 	return strings.TrimSpace(out)
+}
+
+// advertiseTruecolor puts COLORTERM=truecolor in the server's global
+// environment, so that every pane created from now on inherits it.
+//
+// `terminal-features ,*:RGB` in the config lets tmux draw 24-bit colour, and
+// says nothing to the program inside the pane. Codex decides between its
+// truecolor palette and an ANSI-256 fallback by looking for this variable, and
+// the fallback is a dark indexed box -- 234 -- that sits under the light
+// theme's near-black text. tmux 3.6 sets the variable in panes on its own;
+// 3.4, which is what Ubuntu 24.04 ships and CI runs, does not, so on 3.4 the
+// panel has to.
+//
+// On both paths through EnsureServer, and not as a line in vibepanel.conf. The
+// config is read once, when the server starts, and the panel never restarts
+// its server; a panel upgraded onto a server started by an older one would
+// never see a config line, and that is the machine most people have. With the
+// line and this call both present, each hid the other's absence from every
+// test.
+//
+// The error is dropped, like the config stamp below. A server that just
+// started, or answered ServerRunning, and cannot take set-environment is
+// broken in a way the next command reports properly, and refusing to start a
+// panel over a colour capability would trade every session for one box.
+func (c *Client) advertiseTruecolor(ctx context.Context) {
+	_, _ = c.run(ctx, "set-environment", "-g", "COLORTERM", "truecolor")
 }
 
 // ServerRunning reports whether our tmux server is up.
