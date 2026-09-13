@@ -21321,18 +21321,3 @@ stopped running: with the threshold raised to 3.9 it skips and says
 
 `#{client_theme}` is used nowhere else -- checked before assuming one cause --
 so this was the whole of it.
-
-## ANSI backgrounds could hide agent input in the light theme
-
-Claude Code and Codex draw their TUIs with ANSI 256-colour sequences rather
-than inheriting the panel's CSS palette. Codex's input hint can set background
-colour 234 (`#1c1c1c`) and dim text without setting a foreground colour, so the
-panel's light foreground (`#1d1d1f`) landed on an almost identical background.
-The result was black text on a black input area even though the surrounding
-panel was light. Claude uses the same terminal protocol and can hit the same
-class of mismatch with its own fixed ANSI colours.
-
-xterm already has a contrast-correction path that handles both normal and dim
-cells. Setting `minimumContrastRatio` to 9 is deliberate: xterm halves the
-requested ratio for dim text, leaving the 4.5:1 AA floor for the hints these
-agents use while preserving their ANSI foreground and background semantics.
