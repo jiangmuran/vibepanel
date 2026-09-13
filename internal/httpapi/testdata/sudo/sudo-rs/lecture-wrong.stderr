@@ -1,0 +1,9 @@
+/etc/sudoers.d/vp:1:18: can't assign to boolean setting 'lecture'
+Defaults lecture=always
+                 ^
+[sudo: <<vp:u>>] Password: 
+sudo: Authentication failed, try again.
+[sudo: <<vp:u>>] Password: 
+sudo: Authentication failed, try again.
+[sudo: <<vp:u>>] Password: 
+sudo-rs: Maximum 3 incorrect authentication attempts

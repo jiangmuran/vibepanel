@@ -108,15 +108,21 @@ func newUnconfiguredServer(t *testing.T) (*httptest.Server, *Server) {
 	t.Cleanup(mgr.DetachAll)
 
 	srv := &Server{
-		Cfg:      config.Config{DataDir: dir, Addr: ":0", TmuxSocket: socket, StaticDir: dir},
-		DB:       db,
-		Tmux:     tm,
-		Manager:  mgr,
-		Hub:      ws.NewHub(),
-		Detector: session.NewDetector(),
-		Sampler:  &sysmon.Sampler{DiskPath: dir},
-		Auth:     &Auth{Throttle: auth.NewThrottle(), SetupToken: "test-setup-token"},
-		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		// Never the real sudo. The elevated upgrade runs a command as root,
+		// and on a CI runner with passwordless sudo the real one would run
+		// this test binary that way. A test that means to reach sudo sets a
+		// fake one; everything else sees a machine with none.
+		sudo:           filepath.Join(dir, "no-sudo-in-tests"),
+		upgradeCommand: []string{"/bin/false"},
+		Cfg:            config.Config{DataDir: dir, Addr: ":0", TmuxSocket: socket, StaticDir: dir},
+		DB:             db,
+		Tmux:           tm,
+		Manager:        mgr,
+		Hub:            ws.NewHub(),
+		Detector:       session.NewDetector(),
+		Sampler:        &sysmon.Sampler{DiskPath: dir},
+		Auth:           &Auth{Throttle: auth.NewThrottle(), SetupToken: "test-setup-token"},
+		Log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
 		// Pointed at empty directories under the test's own tree, never at the
 		// running user's home. Without this every test that touches the token
 		// endpoints would start a background walk of whoever's machine the

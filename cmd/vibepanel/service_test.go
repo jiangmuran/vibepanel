@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -215,6 +216,31 @@ func TestUpgradeWorksWithNoServiceInstalled(t *testing.T) {
 		if _, err := plan(none, sub, svcOpts{}); err == nil {
 			t.Errorf("%s with nothing installed produced a command instead of an explanation", sub)
 		}
+	}
+}
+
+// The panel upgrades a system install by running `sudo ... service upgrade`
+// and treats the first byte on stdout as "sudo let it run": sudo writes every
+// prompt, warning and refusal to stderr. So the first thing this command writes
+// is a line, on stdout, before anything that waits on the network -- the
+// installer's own first line only arrives once curl has fetched it.
+func TestUpgradeSpeaksOnStdoutBeforeTheNetwork(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdout
+	os.Stdout = w
+	runErr := cmdService([]string{"upgrade", "--dry-run"})
+	os.Stdout = old
+	w.Close()
+	out, _ := io.ReadAll(r)
+	if runErr != nil {
+		t.Fatalf("service upgrade --dry-run: %v", runErr)
+	}
+	first, _, _ := strings.Cut(string(out), "\n")
+	if first != upgradeBanner {
+		t.Errorf("first line on stdout = %q, want %q before the installer runs; all of it:\n%s", first, upgradeBanner, out)
 	}
 }
 

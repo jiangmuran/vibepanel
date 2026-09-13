@@ -1,0 +1,4 @@
+/etc/sudoers.d/vp:1:18: can't assign to boolean setting 'lecture'
+Defaults lecture=always
+                 ^
+[sudo: <<vp:u>>] Password: 

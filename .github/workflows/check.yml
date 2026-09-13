@@ -47,6 +47,23 @@ jobs:
       - name: vet, gofmt, eslint, Go tests, frontend units
         run: make check
 
+  # The elevated upgrade against real sudo 1.9 and sudo-rs, every sudoers
+  # variant, in containers. Its own job because it needs docker and network and
+  # none of the frontend, and because what it catches -- a sudo release
+  # rewording a refusal -- has nothing to do with the push that runs it.
+  sudo:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          cache-dependency-path: go.sum
+
+      - name: real sudo and sudo-rs, every sudoers variant
+        run: make sudo-check
+
   build:
     runs-on: ubuntu-24.04
     steps:

@@ -171,6 +171,7 @@ Each of these exists because the alternative broke something real.
   | `make board-check` | every share-board preset on every screen one gets put on: scale spread, clipping, empty tiles |
   | `make tls-check` | its own TLS: wss, the Secure cookie, swapping a certificate |
   | `make release-check` | build the archives and run one from a throwaway HOME |
+  | `make sudo-check` | the elevated upgrade against real sudo 1.9 and sudo-rs, in containers, down every sudoers variant: a password rule, NOPASSWD for everything and for the upgrade alone, a password rule for the upgrade alone, rootpw, targetpw, requiretty, the lecture, an account sudoers does not mention. Needs docker |
   | `make install-check` | both installers down every branch: the one-liner against a local HTTP server (checksums, platforms, a tampered archive), then `deploy/install.sh` — tmux missing/old, six package managers, Linux and macOS, user unit and system unit, root and no root, no systemd at all, the refusal to install both, and the first account |
 
   Run the one that covers what you touched, and `verify` before anything

@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { Download, RefreshCw } from 'lucide-react'
 
-import { api } from '../protocol/api'
+import { api, ElevateRefusedError } from '../protocol/api'
 import type { UpdateCheck } from '../protocol/wire'
 import { t, useLang } from '../i18n'
 import { askConfirm } from './ask'
 import { showToast } from './toasts'
 import { safeText } from './text'
+import { afterRefusal, initialElevate, type ElevateState } from './updateElevate'
 
 /**
  * Updating the panel from the panel.
@@ -27,11 +28,16 @@ export function UpdateSection() {
   // Held for as long as the form is open and no longer. Never put anywhere
   // that outlives the page: not localStorage, not a URL, not a log.
   const [secret, setSecret] = useState('')
+  // Button or field, whose password, or neither. Set from the check and moved
+  // by what sudo says; see updateElevate.
+  const [elev, setElev] = useState<ElevateState>(initialElevate(false, ''))
 
   const check = async () => {
     setBusy('check')
     try {
-      setFound(await api.checkUpdate())
+      const res = await api.checkUpdate()
+      setFound(res)
+      setElev(initialElevate(res.elevateNoPassword, res.elevateAs))
     } catch (e) {
       showToast({ kind: 'error', key: 'upd.failed', params: { why: '' }, detail: msg(e) })
     } finally {
@@ -62,6 +68,12 @@ export function UpdateSection() {
         params: { v: res.installed, why: res.restartWhy },
       })
     } catch (e) {
+      if (e instanceof ElevateRefusedError) {
+        const next = afterRefusal(elev, e.reason, e.askedFor, found.elevateAs)
+        setElev(next.state)
+        showToast({ kind: 'error', key: next.key, params: next.params, detail: e.message })
+        return
+      }
       showToast({ kind: 'error', key: 'upd.failed', params: { why: '' }, detail: msg(e) })
     } finally {
       setBusy('')
@@ -125,7 +137,27 @@ export function UpdateSection() {
           session on a panel whose purpose is running commands as this account,
           and can type the same thing into a terminal in the next tab. What
           this removes is a window switch. */}
-      {found?.byHand && found.newer && found.elevate && (
+      {found?.byHand && found.newer && found.elevate && !elev.blocked && !elev.field && (
+        // sudo will run it without a password, so nothing is asked for: a
+        // field here would collect something sudo never reads.
+        <div data-testid="update-elevate" className="mt-2 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void apply()}
+            disabled={busy !== ''}
+            data-testid="update-elevate-apply"
+            className="vp-press flex items-center gap-1.5 rounded-vp px-3 py-1.5 text-vp-base font-medium disabled:opacity-50"
+            style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+          >
+            <Download size={13} />
+            {busy === 'apply' ? t('upd.applying') : t('upd.apply')}
+          </button>
+          <span className="text-vp-sm text-ink-2" data-testid="update-no-password">
+            {t('upd.noPassword')}
+          </span>
+        </div>
+      )}
+      {found?.byHand && found.newer && found.elevate && !elev.blocked && elev.field && (
         <form
           data-testid="update-elevate"
           onSubmit={(e) => {
@@ -142,7 +174,9 @@ export function UpdateSection() {
             // the one the person is signed into on this very page -- and sudo
             // wants the machine's. Both are reasonable readings of the same
             // three words, so the field says whose.
-            placeholder={t('upd.secretHint', { user: found.elevateAs ?? '' })}
+            // Whose, as sudo said after a refusal -- root under rootpw -- and
+            // until then the account the panel runs as.
+            placeholder={t('upd.secretHint', { user: elev.who })}
             autoComplete="current-password"
             data-testid="update-secret"
             className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent"
@@ -158,6 +192,11 @@ export function UpdateSection() {
             {busy === 'apply' ? t('upd.applying') : t('upd.apply')}
           </button>
         </form>
+      )}
+      {found?.byHand && found.newer && found.cannotElevate && (
+        <p className="mt-2 text-vp-sm leading-relaxed text-ink-2" data-testid="update-cannot-elevate">
+          {t('upd.cannotElevate')}
+        </p>
       )}
       {found?.byHand && found.newer && (
         <p

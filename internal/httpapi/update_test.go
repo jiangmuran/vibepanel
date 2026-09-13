@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 
@@ -157,86 +156,5 @@ func TestASuppliedSecretIsRefusedWhereItWouldNotBeUsed(t *testing.T) {
 	}
 	if strings.Contains(body, "hunter2") {
 		t.Errorf("the refusal echoed what was sent: %s", body)
-	}
-}
-
-// TestTheCheckOffersToAskOnlyWhenSomethingCanBeAsked.
-//
-// `elevate` is what decides whether the page shows a field or only a command,
-// and it is two facts and-ed together: the binary is unwritable *because of
-// permissions*, and the helper exists on this machine. Either one alone is a
-// field that cannot lead anywhere.
-func TestTheCheckOffersToAskOnlyWhenSomethingCanBeAsked(t *testing.T) {
-	ts, srv := newTestServer(t)
-
-	for _, tc := range []struct {
-		what string
-		err  error
-		want bool
-	}{
-		{"permissions", fmt.Errorf("%w: /usr/local/bin", selfupdate.ErrNotWritable), elevateAvailable()},
-		{"a full disk", errors.New("no space left on device"), false},
-	} {
-		srv.installable = func() error { return tc.err }
-		res, err := ts.Client().Get(ts.URL + "/api/update")
-		if err != nil {
-			t.Fatal(err)
-		}
-		body, _ := io.ReadAll(res.Body)
-		res.Body.Close() //nolint:errcheck // test
-		var out map[string]any
-		if err := json.Unmarshal(body, &out); err != nil {
-			t.Fatal(err)
-		}
-		if out["unreachable"] != nil {
-			t.Skip("no network on this runner, and the check says nothing about installing")
-		}
-		got, _ := out["elevate"].(bool)
-		if got != tc.want {
-			t.Errorf("%s: elevate = %v, want %v", tc.what, got, tc.want)
-		}
-	}
-}
-
-// TestNothingTypedReachesACommandLine.
-//
-// The one property that cannot be checked by making a request, so it is read
-// out of the source: what somebody types goes to the helper on stdin. On a
-// command line it would be visible to every account on the machine through
-// `ps`, and in the environment through /proc -- both of which are the whole
-// reason the field exists rather than telling people to run it themselves.
-func TestNothingTypedReachesACommandLine(t *testing.T) {
-	src, err := os.ReadFile("update.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	code := string(src)
-
-	i := strings.Index(code, "func (s *Server) applyElevated")
-	if i < 0 {
-		t.Fatal("applyElevated is gone; this test is checking nothing")
-	}
-	body := code[i:]
-	if j := strings.Index(body, "\n}\n"); j >= 0 {
-		body = body[:j]
-	}
-	if !strings.Contains(body, "Stdin = strings.NewReader(") {
-		t.Error("what is typed no longer goes in on stdin")
-	}
-	// Every exec built here, and none of them may carry it. `-S` is what makes
-	// the helper read stdin at all; without it the process waits on a terminal
-	// that is not there.
-	if !strings.Contains(body, `"-S"`) {
-		t.Error("the helper is not being told to read stdin")
-	}
-	for _, bad := range []string{"password)", "password,", "password +"} {
-		for _, line := range strings.Split(body, "\n") {
-			if !strings.Contains(line, "exec.Command") {
-				continue
-			}
-			if strings.Contains(line, bad) {
-				t.Errorf("a command line is being built with it: %s", strings.TrimSpace(line))
-			}
-		}
 	}
 }

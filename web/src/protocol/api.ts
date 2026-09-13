@@ -28,6 +28,7 @@ import type {
   Webhook,
   WebhookTest,
   UpdateResult,
+  ElevateRefusal,
   TuneStatus,
   RestartResult,
   EnvSettings,
@@ -182,6 +183,24 @@ export class OriginNotTrustedError extends Error {
     this.name = 'OriginNotTrustedError'
     this.origin = origin
     this.answersTo = answersTo
+  }
+}
+
+/**
+ * sudo did not run the upgrade, and said why.
+ *
+ * Its own class because the page does something different for each reason --
+ * asks for a password, asks for somebody else's, or stops asking -- and a
+ * plain Error would leave it one sentence to show for all of them.
+ */
+export class ElevateRefusedError extends Error {
+  readonly reason: ElevateRefusal
+  readonly askedFor: string
+  constructor(message: string, reason: ElevateRefusal, askedFor: string) {
+    super(message)
+    this.name = 'ElevateRefusedError'
+    this.reason = reason
+    this.askedFor = askedFor
   }
 }
 
@@ -622,11 +641,24 @@ export const api = {
    * nowhere: not in a query string, not in a log, and not in this module
    * beyond the call.
    */
-  applyUpdate: (secret?: string) =>
-    request<UpdateResult>('/api/update', {
+  applyUpdate: async (secret?: string): Promise<UpdateResult> => {
+    const res = await fetch('/api/update', {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(secret ? { password: secret } : {}),
-    }),
+    })
+    if (!res.ok) {
+      // A refusal from sudo carries a reason; anything else is the ordinary
+      // error shape and goes through the ordinary path, 401 included.
+      const body = (await res
+        .clone()
+        .json()
+        .catch(() => null)) as { error?: string; reason?: ElevateRefusal; askedFor?: string } | null
+      if (body?.reason) throw new ElevateRefusedError(body.error ?? '', body.reason, body.askedFor ?? '')
+      throw await failure(res)
+    }
+    return (await res.json()) as UpdateResult
+  },
 
   /**
    * What the agents recorded spending. Not `usage` above, which is CPU and

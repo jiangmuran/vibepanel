@@ -53,6 +53,16 @@ type Server struct {
 	// Nil means the real check.
 	installable func() error
 
+	// sudo is the sudo binary to hand an upgrade to. Empty means look it up on
+	// PATH; a path that does not exist means there is none. Tests always set
+	// it: the elevated path runs the upgrade command as root, and on a CI
+	// runner with passwordless sudo the real one would run the test binary.
+	sudo string
+
+	// upgradeCommand replaces `<this binary> service upgrade`, for the same
+	// reason. Nil means the real command.
+	upgradeCommand []string
+
 	// zone caches the configured time zone. Not a field to set: read it with
 	// s.loc(ctx), which resolves the setting the first time and remembers.
 	zone zoneCache

@@ -1,0 +1,6 @@
+[sudo: <<vp:root>>] Password: 
+sudo: Authentication failed, try again.
+[sudo: <<vp:root>>] Password: 
+sudo: Authentication failed, try again.
+[sudo: <<vp:root>>] Password: 
+sudo-rs: Maximum 3 incorrect authentication attempts

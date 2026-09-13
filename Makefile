@@ -117,6 +117,14 @@ release-check:        ## Build the archives and run one from a throwaway HOME
 install-check:        ## Drive deploy/install.sh down every branch it has
 	scripts/install-check.sh
 
+# A minute or two, and docker: the elevated upgrade against real sudo and
+# sudo-rs, in containers, down every sudoers variant it handles. No build: it
+# compiles the httpapi test binary and runs that. Run it whenever
+# internal/httpapi/elevate.go changes.
+.PHONY: sudo-check
+sudo-check:           ## The elevated upgrade against real sudo and sudo-rs, every sudoers variant
+	scripts/sudo-check.sh
+
 .PHONY: head-check
 head-check:           ## Build and test a clean worktree at HEAD, not this tree
 	scripts/head-check.sh

@@ -1,0 +1,4 @@
+/etc/sudoers.d/vp:1:10: unknown setting: 'requiretty'
+Defaults requiretty
+         ^~~~~~~~~~
+[sudo: <<vp:u>>] Password: 

@@ -663,6 +663,27 @@ const DICT = {
   },
   'upd.done': { zh: '已装上 {v}，正在重启面板…', en: 'Installed {v}; the panel is restarting…' },
   'upd.secretHint': { zh: '{user} 的系统密码，不是面板密码', en: '{user}’s system password, not the panel’s' },
+  'upd.noPassword': {
+    zh: '这台机器的 sudo 执行升级不需要密码',
+    en: 'sudo on this machine runs the upgrade without a password',
+  },
+  'upd.wrongPassword': {
+    zh: 'sudo 没有接受这个密码。它要的是 {who} 的密码',
+    en: 'sudo did not accept that password. It wants {who}’s password',
+  },
+  'upd.needPassword': { zh: 'sudo 需要密码', en: 'sudo wants a password' },
+  'upd.notAllowed': {
+    zh: 'sudo 不允许 {user} 执行升级，请用有权限的账号在终端里升级',
+    en: 'sudo does not let {user} run the upgrade; upgrade from a shell as an account it does',
+  },
+  'upd.cannotElevate': {
+    zh: 'NoNewPrivileges 使 sudo 无法提权，请在终端运行下面命令',
+    en: 'sudo cannot become root from the panel (NoNewPrivileges); run the command below in a shell',
+  },
+  'upd.needsTty': {
+    zh: 'sudo 只允许在终端里用（requiretty），请在终端运行下面的命令',
+    en: 'sudo only runs from a terminal here (requiretty); run the command below in one',
+  },
   'upd.elevated': {
     zh: '已授权，正在后台升级并重启面板…',
     en: 'Authorised; upgrading and restarting in the background…',

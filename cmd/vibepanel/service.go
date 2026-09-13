@@ -229,6 +229,11 @@ func (t svcTarget) root(argv ...string) []string {
 
 func (t svcTarget) guiTarget() string { return "gui/" + t.UID + "/" + macLabel }
 
+// upgradeBanner is the first line `service upgrade` prints. The panel waits
+// for a byte on stdout to know sudo let the upgrade run; see where it is
+// printed.
+const upgradeBanner = "vibepanel: handing over to the installer"
+
 // plan is the whole mapping, in one place, as a pure function.
 func plan(t svcTarget, sub string, o svcOpts) ([]step, error) {
 	lines := o.Lines
@@ -477,6 +482,20 @@ func cmdService(args []string) error {
 		}
 	}
 
+	if sub == "upgrade" {
+		// Before anything that waits on the network, and on stdout.
+		//
+		// The panel runs this through sudo and has to tell "sudo let it run"
+		// from "sudo is still deciding" without a terminal to watch. Sudo
+		// writes every prompt, warning and refusal to stderr, so the first
+		// byte on stdout is this command's -- but the installer's own first
+		// line only comes once curl has fetched it, and on a slow link that is
+		// long enough to look like a hang. See internal/httpapi/elevate.go.
+		//
+		// Under --dry-run too, where it costs nothing, so a test can see it without
+		// running the installer.
+		fmt.Println(upgradeBanner)
+	}
 	for _, s := range steps {
 		if *dry {
 			fmt.Println(s)

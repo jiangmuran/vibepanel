@@ -1,14 +1,12 @@
 package httpapi
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/user"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -55,7 +53,22 @@ func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 		// account may use it is that program's question, and it answers it a
 		// moment later. Reading /etc/sudoers here to guess would be a second
 		// implementation of something that already has a real one.
-		out["elevate"] = errors.Is(err, selfupdate.ErrNotWritable) && elevateAvailable()
+		sudo := s.sudoBin()
+		elevate := errors.Is(err, selfupdate.ErrNotWritable) && sudo != ""
+		// A field that no password can get past is not offered. The page says
+		// why instead, and the shell command in byHand is the way through.
+		if elevate && cannotElevate() {
+			out["cannotElevate"] = true
+			elevate = false
+		}
+		out["elevate"] = elevate
+		// And whether it needs anything typed. A NOPASSWD rule -- for
+		// everything, or for the upgrade command alone -- answers yes to
+		// `sudo -n -l` for exactly this command, and a page that asks such a
+		// machine for a password is asking for something sudo will not read.
+		if elevate {
+			out["elevateNoPassword"] = s.sudoRunsWithoutPassword(r.Context(), sudo)
+		}
 		// Whose password sudo will want, by name. The field said "this
 		// account's password" and was read, reasonably, as the panel account
 		// the person is signed into on this page -- and sudo refused it.
@@ -95,12 +108,23 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.canInstall(); err != nil {
-		// A password is refused when it would not be used. Sending one to a
-		// panel that can already write its own binary is a password sent for
-		// nothing, and the answer to that is to not accept it rather than to
-		// quietly ignore it.
-		if req.Password == "" || !errors.Is(err, selfupdate.ErrNotWritable) {
+		// Nothing typed can help a panel that cannot write for a reason other
+		// than permissions, or one with no sudo to hand it to, so a password is
+		// not taken there. An empty one is not refused: passwordless sudo is
+		// the common case on a machine somebody set up for this, and it runs
+		// with -n. When that sudo does want a password the answer says so, and
+		// the page asks.
+		if !errors.Is(err, selfupdate.ErrNotWritable) || s.sudoBin() == "" {
 			writeErr(w, http.StatusConflict, updateByHand(err))
+			return
+		}
+		// Before sudo is run, not after it fails: under no_new_privs it fails
+		// every time, and sudo-rs describes that as a broken sudo install.
+		if cannotElevate() {
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error":  updateByHand(err),
+				"reason": refusedCannotElevate,
+			})
 			return
 		}
 		s.applyElevated(w, r, req.Password)
@@ -240,90 +264,5 @@ func updateByHand(err error) string {
 		self = "vibepanel"
 	}
 	return "this panel cannot replace its own binary: " + err.Error() +
-		". Update it from a shell instead: sudo " + self + " service upgrade"
-}
-
-// ─── upgrading a root-owned binary, with a password typed once ─────────────
-
-// elevateAvailable reports whether the privileged path can even be offered.
-//
-// Only that sudo exists. Whether this account may use it, and whether the
-// password is right, are answered by sudo itself a moment later -- guessing
-// either from /etc/sudoers here would be a second implementation of a question
-// that has a real one.
-func elevateAvailable() bool {
-	_, err := exec.LookPath("sudo")
-	return err == nil
-}
-
-// applyElevated hands one typed password to sudo and lets the installer do the
-// rest.
-//
-// It answers before the upgrade finishes, and that is not laziness. `service
-// upgrade` ends by restarting the unit, which kills this process -- so a
-// handler that waited for it to return would be a request that never gets an
-// answer, on a page left guessing whether anything happened. The password is
-// checked first, synchronously, because "wrong password" is the one failure
-// worth reporting properly and the only one that happens before anything has
-// been changed.
-func (s *Server) applyElevated(w http.ResponseWriter, r *http.Request, password string) {
-	self, _ := os.Executable()
-	sudo, lookErr := exec.LookPath("sudo")
-	if lookErr != nil {
-		writeErr(w, http.StatusConflict, updateByHand(selfupdate.ErrNotWritable))
-		return
-	}
-
-	// `-k` on both commands: the password is what authorises each one, never a
-	// timestamp left behind by the one before.
-	//
-	// This first verified with `-v` and then ran the upgrade with `-n`, which
-	// depended on sudo carrying a credential from one process to the next with
-	// no terminal attached. sudo-rs -- what this machine actually has -- keys
-	// that cache by terminal or by parent process, and whether it carries is
-	// not a thing to find out after the page has already said "upgrading".
-	//
-	// It also closes the quieter failure. With a live timestamp, `sudo -S`
-	// does not read stdin at all, and the password sits unread in the pipe for
-	// the command sudo runs to inherit. `-k` makes sudo read it every time, so
-	// the child is handed a pipe at EOF.
-	check := exec.CommandContext(r.Context(), sudo, "-k", "-S", "-p", "", "--", "true")
-	check.Stdin = strings.NewReader(password + "\n")
-	var why bytes.Buffer
-	check.Stderr = &why
-	if err := check.Run(); err != nil {
-		// 403, not 401. The panel session is fine; it is this machine's
-		// password that was refused, and three places in the frontend read a
-		// 401 as "signed out".
-		writeErr(w, http.StatusForbidden, sudoSays(why.String(), err))
-		return
-	}
-
-	name := ""
-	if u, ok, err := s.currentUser(r); ok && err == nil {
-		name = u.Username
-	}
-	// The event, never the password. The audit log is read on a settings page,
-	// printed into a journal and shipped to whatever collects journals.
-	s.audit(r.Context(), "update.elevated", name, s.clientIP(r), "")
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"elevated":   true,
-		"restarting": true,
-	})
-
-	// Detached from the request, whose context is cancelled the moment the
-	// response is written -- and this outlives the response on purpose.
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-		defer cancel()
-		time.Sleep(1500 * time.Millisecond)
-		// The same password again, read by sudo again. Held by this goroutine
-		// for the second and a half before it is used, and by nothing after.
-		run := exec.CommandContext(ctx, sudo, "-k", "-S", "-p", "", "--", self, "service", "upgrade")
-		run.Stdin = strings.NewReader(password + "\n")
-		if out, err := run.CombinedOutput(); err != nil {
-			s.Log.Error("elevated upgrade", "err", err, "out", string(out))
-		}
-	}()
+		". Update it from a shell instead: " + privilegeHelper(self)
 }

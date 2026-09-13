@@ -673,12 +673,41 @@ export interface UpdateCheck {
    */
   elevate?: boolean
   /**
+   * Whether sudo would run the upgrade with no password at all -- a NOPASSWD
+   * rule, for everything or for the upgrade command alone. The page offers a
+   * button instead of a field: sudo would not read what was typed.
+   *
+   * Answered by `sudo -k -n -l` for exactly the upgrade command, which reads
+   * nothing and runs nothing. If sudo turns out to want one after all, the
+   * apply answers `needPassword` and the page asks.
+   */
+  elevateNoPassword?: boolean
+  /**
+   * This process can never become root through sudo: it runs with
+   * no_new_privs, which a unit installed before NoNewPrivileges was removed
+   * still sets. `elevate` is false with it, and the shell command in `byHand`
+   * is the way through -- its installer rewrites the unit.
+   */
+  cannotElevate?: boolean
+  /**
    * The machine account whose password sudo will ask for. Not the panel
    * account: the field used to say "this account's password", which reads as
    * the one you are signed into the page with.
    */
   elevateAs?: string
 }
+
+/**
+ * Why sudo did not run the upgrade, from `POST /api/update` with 403.
+ *
+ * `wrongPassword` comes with `askedFor`, the account whose password sudo
+ * wanted: root under rootpw or targetpw, otherwise the user. `needPassword`
+ * answers an attempt with nothing typed. `notAllowed` and `needsTty` cannot be
+ * fixed by typing anything: sudoers does not let this account run it, or only
+ * lets it from a terminal. Nor is `cannotElevate`: the panel runs with
+ * no_new_privs, and no sudoers rule gets past that.
+ */
+export type ElevateRefusal = 'wrongPassword' | 'needPassword' | 'notAllowed' | 'needsTty' | 'cannotElevate' | 'failed'
 
 /** What `POST /api/update` answers, before it restarts. */
 export interface UpdateResult {

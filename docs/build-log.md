@@ -21400,3 +21400,111 @@ down, following the config stamp beside it: a server that cannot take one
 `set-environment` right after answering is broken in a way the next command
 reports, and refusing to start a panel over a colour capability trades every
 session for one box.
+
+## The elevated upgrade, against every sudo it will meet
+
+The question was whether passwordless sudo upgrades without a password, and
+whether the other variants were handled. The honest answer was no, and
+answering it properly meant running real sudo rather than reading about it.
+
+What the code did before: offer a password field whenever the binary was
+root-owned and `sudo` existed; refuse an empty password with 409; check the
+typed password with `sudo -k -S -- true`; then run the upgrade in the
+background. A NOPASSWD user had to type *something* -- anything -- into a field
+sudo never read.
+
+### What real sudo does
+
+sudo 1.9.15 (Ubuntu 24.04) and sudo-rs 0.2.8 (Ubuntu 25.10), in throwaway
+containers, as an unprivileged user with no terminal, which is how a systemd
+service runs it. Recorded byte for byte into `internal/httpapi/testdata/sudo`,
+where the fast tests replay them. What they showed:
+
+- **Verify-then-run is wrong, twice over.** A rule that allows only the upgrade
+  refuses `true` -- `Sorry, user u is not allowed to execute '/usr/bin/true'` --
+  so a machine whose sudoers said "yes, this command" was told sudo refused.
+  Checking with `sudo -l <cmd>` instead is worse: classic sudo authenticates
+  `-l` as the invoking user even under `rootpw`, accepting a password the real
+  run then rejects, after the page has said "upgrading". The only question sudo
+  answers the same way as running the command is running it.
+- **Everything sudo says goes to stderr** -- prompts, the lecture, sudoers parse
+  warnings, refusals -- in every variant, so the first byte on stdout belongs
+  to the command, and is the signal authentication passed.
+  `vibepanel service upgrade` now prints a line before anything that waits on
+  the network, so that signal does not wait on curl.
+- **`sudo -k -n -l -- <cmd>` answers "would this run without a password"** and
+  agreed with the real run everywhere, reading nothing and running nothing. The
+  `-k` matters: after one `sudo -v` in the same session, `-n -l` said "no
+  password" under a rule that needs one, in both implementations; `-k -n -l`
+  said the truth.
+- **`%p` in the prompt names whose password sudo wants** -- root under `rootpw`
+  or `targetpw`, the user otherwise -- in both, on the real run.
+- **The lecture has blank lines inside it**, so skipping "to the end of the
+  paragraph" showed `#1) Respect the privacy of others.` as sudo's answer. It is
+  matched line by line.
+- **no_new_privs stops sudo whatever sudoers says**, and a unit installed before
+  NoNewPrivileges was removed still sets it. sudo 1.9 names the flag; sudo-rs
+  says `sudo must be owned by uid 0 and have the setuid bit set`, which reads
+  as a broken install. The panel reads `NoNewPrivs` from `/proc/self/status`
+  instead of trusting either.
+- `requiretty` defeats classic sudo from a service entirely; sudo-rs ignores it
+  with a warning. A user not in sudoers who types the wrong password gets
+  classic sudo's wrong-password lines, not the sudoers one.
+
+### What it does now
+
+One run of the real command: `sudo -k -S -p '<<vp:%p>>' -- … service upgrade`
+with the password on stdin, or `sudo -k -n -- …` when nothing was typed. Output
+goes to files rather than pipes -- the upgrade restarts this process, and a pipe
+whose reader died kills the installer's next write with SIGPIPE. The page is
+answered when stdout gets its first byte, or with a reason when sudo exits
+first: `wrongPassword` (with whose password it wanted), `needPassword`,
+`notAllowed`, `needsTty`, `cannotElevate`, or `failed` with sudo's own line. A
+sudo that does neither within a minute is killed.
+
+The check endpoint adds `elevateNoPassword` from the `-k -n -l` probe, and
+`cannotElevate` under no_new_privs. The page shows a plain button when sudo
+needs nothing, a field when it does, names root in the field once sudo has
+said so, and stops offering either when typing cannot help -- leaving the shell
+command, which names `doas` or `su -c` on a machine without sudo.
+
+### How it is tested
+
+- `TestSudoIsReadForWhatItMeant` reads every recording, from both
+  implementations and this machine's sudo-rs 0.2.13, for its reason, whose
+  password and the line shown -- and fails on a recording nothing reads.
+- `TestElevatedUpgrade` drives the HTTP path against a fake sudo -- this test
+  binary, replaying the recordings -- for each variant under both
+  implementations, and checks every sudo run: the password on stdin and never in
+  argv or the environment, only the upgrade command ever run, `-k` always,
+  output to regular files. The reference passwords reach the fake through a
+  file, so the environment check is not satisfied by the test's own variables.
+- `make sudo-check` runs the same matrix against real sudo in containers --
+  password, NOPASSWD for everything and for the upgrade alone, a password rule
+  for the upgrade alone, rootpw, targetpw, a user not in sudoers, requiretty, the
+  lecture, and no_new_privs through `setpriv` -- and is in `verify` and in CI as
+  its own job. Its pass condition is `--- PASS`, not exit 0, because a skipped
+  test exits 0.
+
+Every guard was removed and watched go red: nineteen in the Go code, four in the
+page's mapping. And the real-sudo matrix was run once against the old
+verify-with-true: exactly `only-upgrade` failed, in both images, with sudo's
+own refusal as the message.
+
+The test server's sudo defaults to a path that does not exist. The elevated
+path runs a command as root, and on a CI runner with passwordless sudo the real
+one would have run the test binary that way.
+
+### A correction to an earlier correction
+
+An earlier entry -- the paragraph beginning "A correction to what was said in
+the conversation rather than in the code" -- says the owner was wrongly told
+this machine has password-less sudo, and that it was a cached timestamp. On
+2026-09-13, `sudo -k -n -l` -- which attempts no authentication -- lists
+`(ALL) NOPASSWD: ALL` for this account, beside `(ALL : ALL) ALL`. Whether that
+rule was there on 2026-09-11 is not recorded, and what the mutation run then
+ran is not either, so neither sentence is certain. What is certain is how the
+reported failure happens under these rules: v1.10.0 validated with `sudo -v`,
+which asks for a password whenever any matching rule needs one, before running
+a command sudo would have run without one. On this machine the new version
+shows a button and no field.
