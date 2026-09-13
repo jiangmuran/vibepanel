@@ -21321,3 +21321,18 @@ stopped running: with the threshold raised to 3.9 it skips and says
 
 `#{client_theme}` is used nowhere else -- checked before assuming one cause --
 so this was the whole of it.
+
+## Codex was told 256 colours but not truecolor
+
+The light-theme input report did not survive comparison with the live v1.12.0
+palette. Current Codex sessions on this machine had `TERM=tmux-256color`, no
+`COLORTERM`, and emitted ANSI-256 backgrounds; the panel already sends the
+browser's light/dark scheme to tmux, so adding a global xterm contrast floor
+would have rewritten the colours of every terminal cell to rescue one hint.
+
+The narrower fix is to advertise the capability Codex is selecting against.
+The embedded tmux configuration sets `COLORTERM=truecolor`, and `EnsureServer`
+refreshes that global environment even when the existing tmux server survives a
+panel restart. New panes therefore choose their truecolor palette without
+touching the colours of existing output. `TestEnsureServerLoadsConfig` pins the
+live server environment so an upgrade cannot silently lose the marker.
