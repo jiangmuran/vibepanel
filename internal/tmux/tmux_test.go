@@ -104,6 +104,14 @@ func TestEnsureServerLoadsConfig(t *testing.T) {
 			t.Errorf("%v = %q, want %q", tc.args, got, tc.want)
 		}
 	}
+
+	got, err := c.run(ctx, "show-environment", "-g", "COLORTERM")
+	if err != nil {
+		t.Fatalf("show-environment COLORTERM: %v", err)
+	}
+	if got != "COLORTERM=truecolor" {
+		t.Fatalf("COLORTERM = %q, want truecolor", got)
+	}
 }
 
 func TestSessionLifecycle(t *testing.T) {
@@ -340,6 +348,40 @@ func TestEnvIsInjected(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("env var never reached pane; capture was %q", out)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func TestTruecolorEnvironmentReachesNewPanes(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	if err := c.EnsureServer(ctx); err != nil {
+		t.Fatalf("EnsureServer: %v", err)
+	}
+
+	const name = "vp_truecolor"
+	if err := c.Create(ctx, CreateOptions{
+		Name:    name,
+		Dir:     t.TempDir(),
+		Command: []string{"sh", "-c", "printf %s \"$COLORTERM\"; sleep 60"},
+		Width:   80,
+		Height:  24,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		out, err := c.Capture(ctx, name)
+		if err != nil {
+			t.Fatalf("Capture: %v", err)
+		}
+		if strings.Contains(out, "truecolor") {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("COLORTERM never reached pane; capture was %q", out)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

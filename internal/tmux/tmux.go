@@ -241,11 +241,17 @@ func (c *Client) EnsureServer(ctx context.Context) error {
 		return fmt.Errorf("tmux: write config: %w", err)
 	}
 	if c.ServerRunning(ctx) {
+		// The config is read only when tmux starts, but the server environment can
+		// be updated live. This matters after a panel upgrade: existing tmux
+		// sessions must survive the restart, while the next pane they create must
+		// still tell Codex that truecolor is available.
+		_, _ = c.run(ctx, "set-environment", "-g", "COLORTERM", "truecolor")
 		return nil
 	}
 	if err := c.startServerWithProfile(ctx); err != nil {
 		return err
 	}
+	_, _ = c.run(ctx, "set-environment", "-g", "COLORTERM", "truecolor")
 	// Stamp what the server was started with.
 	//
 	// `-f` is read once, at start-server, and the panel never kills its server
