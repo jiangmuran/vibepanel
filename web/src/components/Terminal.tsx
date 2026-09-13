@@ -26,6 +26,11 @@ import { t, useLang } from '../i18n'
  */
 const MIN_LEGIBLE_FONT_PX = 9
 
+// xterm halves the requested ratio for dim text. The agent TUIs use dim text
+// for their input hints, so 9 is the smallest setting that still gives those
+// hints the 4.5:1 AA contrast floor on an ANSI background they chose.
+const MIN_TERMINAL_CONTRAST_RATIO = 9
+
 interface Props {
   socket: PanelSocket
   sessionId: string
@@ -174,6 +179,7 @@ export function TerminalView({
       rescaleOverlappingGlyphs: true,
       scrollback: 10_000,
       theme: terminalTheme(),
+      minimumContrastRatio: MIN_TERMINAL_CONTRAST_RATIO,
       // The panel owns the scroll position on mobile, where the browser would
       // otherwise fight the touch-selection layer for the same gesture.
       smoothScrollDuration: 0,
