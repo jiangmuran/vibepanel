@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/jiangmuran/vibepanel/internal/git"
+	"github.com/jiangmuran/vibepanel/internal/pages"
 	"github.com/jiangmuran/vibepanel/internal/store"
 )
 
@@ -17,24 +18,23 @@ import (
 //
 // Both are subject to the same two rules as everything else on this surface:
 //
-//   - **A board can only subtract.** These sections are computed when a widget
-//     on the board asks for them and not otherwise, and every widget chooses
+//   - **A page can only subtract.** These sections are computed when the
+//     page's manifest asks for them and not otherwise, and every option chooses
 //     among precomputed answers rather than carrying a parameter into a query.
-//     The one number a widget does carry -- a day range -- is bounded by the
-//     store and by the git package before it reaches either.
+//     The one number a manifest does carry -- a day range -- is bounded by
+//     pages.MaxDays when it is published and again here.
 //
 //   - **Nothing here may make the poll slow.** The event log is two indexed
 //     queries over a table of at most a month. The repository half never runs
 //     a process at all on this goroutine: it reads whatever internal/git's warm
 //     cache has, and says how old it is. See internal/git/warm.go.
 
-// shareFlowDays is the window the day-bucketed flow series covers when a widget
-// does not say.
+// shareFlowDays is the window the day-bucketed flow series covers when the
+// manifest does not say.
 //
 // Fourteen, which is two weeks of columns on a tile -- long enough that a
 // weekend is visible in the shape and short enough that each column is still
-// wide enough to see. A widget may ask for more; the store bounds how many
-// buckets it will produce.
+// wide enough to see. A page may ask for more; pages.MaxDays bounds it.
 const shareFlowDays = 14
 
 // shareFlowBucketSeconds is how finely "today" is cut: one hour.
@@ -44,20 +44,20 @@ const shareFlowDays = 14
 // noise at that distance and anything coarser is four columns.
 const shareFlowBucketSeconds = 3600
 
-// shareRepoDaysDefault is the repository window when no widget says.
+// shareRepoDaysDefault is the repository window when the manifest does not say.
 const shareRepoDaysDefault = 14
 
 // maxRepoProjects bounds how many working trees one dashboard reads.
 //
 // Every one is a `git log` and a `git status` behind the warm cache -- so the
 // bound is not on the poll, which runs nothing, but on how many background
-// refreshes a single board can keep alive. A dozen is the same number the git
+// refreshes a single link can keep alive. A dozen is the same number the git
 // tab's session list uses, and a panel with more projects than that shows the
 // twelve it read and says the list was cut.
 const maxRepoProjects = 12
 
 // shareFlowFor buckets the session-event log for one link.
-func (s *Server) shareFlowFor(ctx context.Context, scope scopeOf, board store.Board,
+func (s *Server) shareFlowFor(ctx context.Context, scope scopeOf, needs pages.Needs,
 	now time.Time, dayStart int64) shareFlow {
 	es := store.EventScope{ProjectID: scope.projectID, SessionID: scope.sessionID}
 	// A scope that names a row which is gone must show nothing rather than
@@ -76,8 +76,8 @@ func (s *Server) shareFlowFor(ctx context.Context, scope scopeOf, board store.Bo
 		return shareFlow{Every: shareFlowBucketSeconds, Buckets: []shareFlowBucket{}}
 	}
 
-	days := boardDaysFor(board, flowSeriesKinds, shareFlowDays)
-	byHour := boardWantsHours(board)
+	days := daysOr(needs.FlowDays, shareFlowDays)
+	byHour := needs.FlowHours
 	out := shareFlow{WindowDays: days, Buckets: []shareFlowBucket{}}
 
 	if today, err := s.DB.CountSessionEvents(ctx, dayStart, es); err == nil {
@@ -184,15 +184,15 @@ func (s *Server) shareFeedFor(ctx context.Context, sessions []store.Session, sec
 // it is the only hint. That is said in docs/api.md rather than on the screen --
 // a wall is not the place to explain its own measurement.
 func (s *Server) shareRepoWork(ctx context.Context, projects []store.Project, secret []byte,
-	named bool, needs map[string]bool, board store.Board, scope scopeOf, dayStart int64) shareRepo {
-	days := boardDaysFor(board, repoSeriesKinds, shareRepoDaysDefault)
+	named bool, needs pages.Needs, scope scopeOf, dayStart int64) shareRepo {
+	days := daysOr(needs.RepoDays, shareRepoDaysDefault)
 	out := shareRepo{
 		AgeSeconds: -1, WindowDays: days,
 		Days: []shareRepoDay{}, ByProject: []shareRepoProject{},
 	}
 	today := s.today(ctx)
 	byDay := map[string]*shareRepoDay{}
-	if needs[store.NeedRepoDays] {
+	if needs.RepoDays > 0 {
 		// The frame is built before anything is read, so a day nothing happened
 		// on is a zero column rather than a missing one. A series drawn only
 		// from the days with commits in them has no weekends in it.
@@ -234,9 +234,7 @@ func (s *Server) shareRepoWork(ctx context.Context, projects []store.Project, se
 		if !snap.Repo {
 			// A project directory that is not a checkout contributes nothing
 			// and says so, which has to look deliberate rather than broken.
-			if needs[store.NeedRepo] {
-				out.ByProject = append(out.ByProject, item)
-			}
+			out.ByProject = append(out.ByProject, item)
 			continue
 		}
 		out.Repos++
@@ -262,10 +260,7 @@ func (s *Server) shareRepoWork(ctx context.Context, projects []store.Project, se
 	if oldest >= 0 {
 		out.AgeSeconds = oldest
 	}
-	if !needs[store.NeedRepo] {
-		out.ByProject = []shareRepoProject{}
-	}
-	if needs[store.NeedRepoPRs] {
+	if needs.RepoPRs {
 		prs := s.sharePRsFor(projects, named, scope, dayStart)
 		out.PRs = &prs
 	}
@@ -285,13 +280,13 @@ func addRepo(into *shareRepoTotals, add shareRepoTotals) {
 // Four conditions, all of them decisions somebody signed in made, and none of
 // them a default:
 //
-//   - the board carries a pull-request widget, so nothing is fetched for a
-//     board that does not draw one;
+//   - the page's manifest asks for pull requests, so nothing is fetched for a
+//     page that does not draw them;
 //   - the link is scoped to one project, because a whole-panel link has no
 //     single repository and a session-scoped one would be disclosing which
 //     project a session belongs to;
 //   - the link is in `names` mode, because reaching github.com for a repository
-//     is the same disclosure ScopeRepoOwner is gated on -- a counts-mode board
+//     is the same disclosure ScopeRepoOwner is gated on -- a counts-mode link
 //     must not cause an outbound request naming the customer;
 //   - a token is in the panel's environment, which is not something a settings
 //     page can put there.
@@ -338,58 +333,16 @@ func (s *Server) sharePRsFor(projects []store.Project, named bool, scope scopeOf
 	return out
 }
 
-// The kinds whose `days` setting decides how wide each series is.
+// daysOr is a manifest's day range, or the section's default when it named
+// none, cut to pages.MaxDays.
 //
-// Spelled out rather than derived from `spec.days`, for the same reason
-// daySeriesKinds next door is: three series over three different tables read
-// three different windows, and folding them onto one setting would mean a
-// board asking for a fortnight of commits also asked for a fortnight of spend.
-var flowSeriesKinds = map[string]bool{"flow": true, "waits": true}
-
-var repoSeriesKinds = map[string]bool{"codechurn": true, "spentmade": true}
-
-// boardDaysFor is the widest window any of these kinds asks for.
-//
-// The widest rather than each widget's own, because there is one payload and
-// two widgets on one board drawing different lengths of the same series would
-// otherwise need two copies of it. A widget draws the tail of what it is given.
-func boardDaysFor(board store.Board, kinds map[string]bool, fallback int) int {
-	most := 0
-	for _, w := range board.Widgets {
-		if !kinds[w.Kind] {
-			continue
-		}
-		n := w.Days
-		if n <= 0 {
-			n = fallback
-		}
-		if n > most {
-			most = n
-		}
+// Cut again here although the manifest was checked when it was published: a
+// stored version is decoded leniently (pages.DecodeStored), and a bound that
+// only holds for rows written by this build is not a bound on what the query
+// below it is handed.
+func daysOr(days, fallback int) int {
+	if days <= 0 {
+		days = fallback
 	}
-	if most == 0 {
-		most = fallback
-	}
-	if most > store.MaxSpendDays {
-		most = store.MaxSpendDays
-	}
-	return most
-}
-
-// boardWantsHours reports whether any flow widget is cut by the hour.
-//
-// One series per payload, so the finer of the two wins: a board with an hourly
-// tile and a daily one gets hours, and the daily tile folds them. The other way
-// round is a tile that cannot draw what it was asked for.
-func boardWantsHours(board store.Board) bool {
-	for _, w := range board.Widgets {
-		if !flowSeriesKinds[w.Kind] {
-			continue
-		}
-		// Empty means the kind's first `by`, which is "hour".
-		if w.By == "" || w.By == "hour" {
-			return true
-		}
-	}
-	return false
+	return min(days, pages.MaxDays)
 }

@@ -4673,218 +4673,28 @@ browser = await chromium.launch({ headless: true })
       }
     }
 
-    // ── the board editor ───────────────────────────────────────────────────
+    // ── sharing ───────────────────────────────────────────────────────────
     //
-    // The wall's board is arranged by dragging it now, and a drag is exactly
-    // the thing a unit test cannot see: `board/edit.ts` has the arithmetic
-    // pinned, and none of that says whether a press on a palette entry and a
-    // release over the canvas produce a widget on the board.
-    //
-    // Pointer Events by hand rather than Playwright's `dragTo`, which uses the
-    // mouse API and so does not exercise the same path a touch screen takes —
-    // and the panel's whole reason for using Pointer Events is that HTML5 drag
-    // and drop never fires on touch.
+    // Pages and their links, with the new-page form open, since that is the
+    // widest thing the group draws.
     {
       await settingsGroup(page, 'sharing')
-      const nameField = page.locator('[data-testid="share-name"]')
-      if ((await nameField.count()) === 0) {
-        note('FAIL', 'board', 'the settings page offers no way to make a share link')
+      const add = page.locator('[data-testid="page-new"]')
+      if ((await add.count()) === 0) {
+        note('FAIL', 'sharing', 'the settings page offers no way to make a share page')
       } else {
-        // The board of a link that does not exist yet.
-        //
-        // There is no preview to draw -- a preview needs a link -- and for as
-        // long as this editor existed that meant the canvas rendered nothing
-        // at all: six widgets on screen as an empty black rectangle with
-        // invisible drag handles over it, on the one surface whose whole job
-        // is composing a layout before anything exists. Two source comments
-        // said "the rectangles are the board" while there were no rectangles.
-        {
-          const slots = await page.locator('[data-slot-index]').count()
-          const ghosts = await page.locator('[data-testid="canvas-ghost"]').count()
-          if (slots === 0) {
-            note('FAIL', 'board', 'the new-link canvas drew no slots for a board that has widgets')
-          } else if (ghosts !== slots) {
-            note('FAIL', 'board',
-              `a board with no preview drew ${ghosts} of ${slots} tiles; the rest are invisible`)
-          }
-        }
-
-        await nameField.fill('render-check wall')
-        await page.locator('[data-testid="share-create"]').click()
-        let row = false
-        for (let i = 0; i < 20; i++) {
-          if ((await page.locator('[data-testid="share-edit"]').count()) > 0) { row = true; break }
-          await sleep(300)
-        }
-        if (!row) {
-          note('FAIL', 'board', 'creating a share link produced no row to edit')
-        } else {
-          await page.locator('[data-testid="share-edit"]').first().click()
-          const canvas = page.locator('[data-testid="board-canvas"]')
-          const shown = await canvas.isVisible().catch(() => false)
-          if (!shown) {
-            note('FAIL', 'board', 'editing a link showed no canvas to arrange')
-          } else {
-            const before = await page.locator('[data-slot-index]').count()
-            if (before === 0) {
-              note('FAIL', 'board', 'the canvas drew no widgets for a board that has some')
-            }
-
-            // Drag one entry out of the palette and drop it on the canvas.
-            const item = page.locator('[data-testid="palette-item"]').first()
-            await page.locator('[data-testid="board-editor"]').scrollIntoViewIfNeeded()
-            await sleep(300)
-            const from = await item.boundingBox()
-            const onto = await canvas.boundingBox()
-            const view = page.viewportSize()
-            const inView = (b) =>
-              b && b.y >= 0 && b.y + b.height <= view.height && b.x + b.width <= view.width
-            if (!from || !onto) {
-              note('FAIL', 'board', 'the palette or the canvas has no box to drag between')
-            } else if (!inView(from) || !inView(onto)) {
-              // A drag needs both ends on screen at once. If the settings dialog
-              // has put one of them off the fold this says so rather than
-              // reporting a failure the layout caused.
-              note('WARN', 'board',
-                'the palette and the canvas are not both in the viewport, so the drag was ' +
-                'not exercised')
-            } else {
-              await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
-              await page.mouse.down()
-              // Two moves: the first crosses the threshold, the second is what
-              // decides the landing place. One move is a gesture the threshold
-              // is allowed to swallow.
-              await page.mouse.move(onto.x + onto.width / 2, onto.y + onto.height / 4, { steps: 8 })
-              await page.mouse.move(onto.x + onto.width / 3, onto.y + onto.height / 3, { steps: 8 })
-              const marker = await page
-                .locator('[data-testid="canvas-marker"][data-on="true"]').count()
-              if (marker === 0) {
-                note('FAIL', 'board',
-                  'nothing was drawn where the widget would land; a drop target you cannot ' +
-                  'see is a guessing game')
-              }
-              await page.mouse.up()
-              await sleep(600)
-              const after = await page.locator('[data-slot-index]').count()
-              if (after !== before + 1) {
-                note('FAIL', 'board',
-                  `dragging a widget out of the palette left ${after} on the canvas, was ${before}`)
-              }
-            }
-
-            // Select a tile and resize it with the keyboard. The canvas is the
-            // only way to arrange a board now, so a pointer-only canvas would
-            // have taken the feature away from anybody who cannot use one.
-            const grab = page.locator('[data-testid="canvas-grab"]').first()
-            await grab.click()
-            const spanSelect = page.locator('[data-testid="widget-span"]')
-            if ((await spanSelect.count()) === 0) {
-              note('FAIL', 'board', 'selecting a tile opened no inspector for it')
-            } else {
-              const wide = await spanSelect.inputValue()
-              await grab.press('Shift+ArrowLeft')
-              await sleep(400)
-              if ((await spanSelect.inputValue()) === wide) {
-                note('FAIL', 'board',
-                  `shift-arrow did not resize the selected widget; it is still ${wide}/12`)
-              }
-            }
-
-            // Escape gets you out of a drag from anywhere. A drag you can only
-            // leave by finding a neutral place to release is one people abandon
-            // by dropping the tile somewhere they did not want it.
-            const held = await page.locator('[data-slot-index]').count()
-            const item2 = page.locator('[data-testid="palette-item"]').nth(1)
-            const box2 = await item2.boundingBox()
-            const onto2 = await canvas.boundingBox()
-            if (box2 && onto2 && inView(box2) && inView(onto2)) {
-              const onto = onto2
-              await page.mouse.move(box2.x + box2.width / 2, box2.y + box2.height / 2)
-              await page.mouse.down()
-              await page.mouse.move(onto.x + onto.width / 2, onto.y + onto.height / 2, { steps: 8 })
-              await page.keyboard.press('Escape')
-              await page.mouse.up()
-              await sleep(500)
-              if ((await page.locator('[data-slot-index]').count()) !== held) {
-                note('FAIL', 'board', 'Escape did not cancel a drag that was in progress')
-              }
-            }
-
-            // The template gallery is picked by looking at it.
-            const thumbs = await page.locator('[data-testid="gallery-thumb"]').count()
-            if (thumbs < 8) {
-              note('FAIL', 'board',
-                `the template gallery drew ${thumbs} thumbnails; choosing a board by name out ` +
-                'of a dropdown is what this replaced')
-            }
-            // The edit is live: the wall follows without a save button.
-            let saved = false
-            for (let i = 0; i < 20; i++) {
-              const said = await page.locator('[data-testid="share-edit-status"]').innerText()
-                .catch(() => '')
-              if (said) { saved = true; break }
-              await sleep(300)
-            }
-            if (!saved) {
-              note('FAIL', 'board', 'the editor never said whether the change had reached the panel')
-            }
-            // Every control in this row says what it sets, and says it on
-            // screen.
-            //
-            // The row wraps to one control per line at the width the settings
-            // panel gives it, and the two selects carried their names in
-            // `title` only. What arrived was "Fill the screen" with "Normal"
-            // and "Never" under it: a heading and two dropdowns about nothing.
-            // A tooltip is not a label -- it needs a pointer to exist, and a
-            // phone has none.
-            for (const [id, want] of [['board-density', 'Density'], ['board-rotate', 'Rotate pages']]) {
-              const sel = page.locator(`[data-testid="${id}"]`)
-              const labelled = await sel.evaluate((el) => {
-                const lab = el.closest('label')
-                return lab ? lab.innerText.trim() : ''
-              }).catch(() => '')
-              if (!labelled.includes(want)) {
-                note('FAIL', 'board', `${id} is not labelled on screen; the row reads "${labelled}"`)
-              }
-            }
-
-            // And fill is a checkbox, so its state is a shape (red line 4).
-            // It was a transparent `.vp-control` whose entire on-state was the
-            // text turning accent-coloured, with nothing else carrying it.
-            const fill = page.locator('[data-testid="board-fill"]')
-            if ((await fill.getAttribute('type')) !== 'checkbox') {
-              note('FAIL', 'board', 'fill does not carry its state as a shape; colour was doing it alone')
-            } else {
-              const was = await fill.isChecked()
-              await fill.click()
-              await sleep(200)
-              if ((await fill.isChecked()) === was) {
-                note('FAIL', 'board', 'the fill checkbox did not change when clicked')
-              } else {
-                note('PASS', 'board', `fill toggles and is a checkbox (${was} -> ${!was})`)
-                await fill.click()
-                await sleep(200)
-              }
-            }
-
-            await page.screenshot({ path: join(SHOTS, 'board-editor.png') })
-            await page.locator('[data-testid="share-edit-cancel"]').click()
-            await sleep(300)
-          }
-        }
+        await add.click()
+        await sleep(300)
       }
 
       // Nothing on this page is wider than the page.
       //
       // The overflow scan two hundred lines up does not see this one: the body
       // *is* a scroller, so a row that outgrows it sideways is "reachable" and
-      // reported as fine. It was not fine. Each link's row was nine `shrink-0`
-      // fields in one line — a prefix, a viewer count, a scope, a board name, a
-      // detail mode, an expiry and three buttons — which adds up to more than
-      // this body has ever been wide, and `overflow-y: auto` computes
-      // `overflow-x` to `auto` behind it. So the settings dialog scrolled
-      // sideways, and pressing the pencil scrolled the whole page right to
-      // bring the button into view.
+      // reported as fine. It was not fine once: a link's row was nine
+      // `shrink-0` fields in one line, `overflow-y: auto` computes
+      // `overflow-x` to `auto` behind it, and the settings dialog scrolled
+      // sideways.
       //
       // Asked at three widths, because the row that fits a desktop is not the
       // row that fits the phone this panel is read on at 2am.
@@ -4896,11 +4706,11 @@ browser = await chromium.launch({ headless: true })
           return body ? body.scrollWidth - body.clientWidth : -1
         })
         if (over < 0) {
-          note('FAIL', 'board', `the settings body was not on screen at ${w}px`)
+          note('FAIL', 'sharing', `the settings body was not on screen at ${w}px`)
         } else if (over > 1) {
-          note('FAIL', 'board', `the sharing page is ${over}px wider than the dialog at ${w}px`)
+          note('FAIL', 'sharing', `the sharing page is ${over}px wider than the dialog at ${w}px`)
         } else {
-          note('PASS', 'board', `the sharing page fits the dialog at ${w}px`)
+          note('PASS', 'sharing', `the sharing page fits the dialog at ${w}px`)
         }
       }
       await page.setViewportSize({ width: 1440, height: 900 })

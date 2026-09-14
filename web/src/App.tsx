@@ -54,7 +54,6 @@ import { dismissToast, showToast } from './components/toasts'
 import { focusTerminal } from './components/focus'
 import { RestoreDialog } from './components/RestoreDialog'
 import { LaunchPicker } from './components/LaunchPicker'
-import { samePath } from './components/pages/usePages'
 import { filesFrom } from './components/upload'
 import { copyTextInGesture } from './clipboard'
 import { notifyOnWaiting } from './notify'
@@ -852,19 +851,37 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   const [launchFor, setLaunchFor] = useState<Project | null>(null)
   const newSession = (project: Project) => setLaunchFor(project)
 
-  // A new share page, made in settings, becomes a project with an agent in it
-  // and a first line at its prompt -- typed, not sent. The launch picker in
-  // between is the ordinary one, because which agent writes the page is the
-  // same choice as which agent does anything else.
+  // Opening a share page from settings: the server makes sure its directory
+  // is there (writing the published version back if it has gone) and that a
+  // `page-…` project points at it. Then the Preview opens beside it, and an
+  // agent is started when the page is new or nothing is running in it -- with
+  // a first line at its prompt, typed, not sent. The launch picker is the
+  // ordinary one: which agent writes the page is the same choice as which
+  // agent does anything else.
   const pagePrompt = useRef<{ projectId: string; text: string } | null>(null)
-  const startPage = async (page: SharePage) => {
+  const [previewAsk, setPreviewAsk] = useState(0)
+  const openPage = async (page: SharePage, fresh: boolean) => {
     setSettingsAt(null)
     try {
+      const opened = await api.openPage(page.id)
       const project =
-        state.projects.find((p) => samePath(p.path, page.sourceDir)) ??
-        (await api.createProject(page.sourceDir, page.name))
-      pagePrompt.current = { projectId: project.id, text: t('page.firstPrompt') }
-      setLaunchFor(project)
+        state.projects.find((p) => p.id === opened.projectId) ??
+        (await api.state()).projects.find((p) => p.id === opened.projectId)
+      if (!project) throw new Error(t('page.openFailed'))
+      if (!narrow) {
+        setRightOpen(true)
+        setPreviewAsk((n) => n + 1)
+      }
+      const running = state.sessions.find((s) => s.projectId === project.id && !s.scratch)
+      if (running && !fresh && opened.restored === 0) {
+        selectSession(running.id)
+      } else {
+        pagePrompt.current = {
+          projectId: project.id,
+          text: t(opened.restored !== 0 ? 'page.restoredPrompt' : 'page.firstPrompt'),
+        }
+        setLaunchFor(project)
+      }
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -1483,7 +1500,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
       {settingsAt && (
         <Settings
           openAt={settingsAt}
-          onStartPage={(page) => void startPage(page)}
+          onOpenPage={(page, fresh) => void openPage(page, fresh)}
           onClose={() => {
             setSettingsAt(null)
             loadProfiles()
@@ -1557,6 +1574,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           onOpenTokens={() => setTokensOpen(true)}
           currentSession={current}
           onPaste={pasteToSession}
+          previewAsk={previewAsk}
         />
       )}
 

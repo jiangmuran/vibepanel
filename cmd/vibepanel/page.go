@@ -36,7 +36,8 @@ import (
 
 const pageUsage = `usage: vibepanel page <command> [flags] [dir]
 
-  init      scaffold a new page into dir and register it
+  init      scaffold a new page and register it: into dir, or with --name and no
+            dir into <data dir>/pages/page-<slug>
   check     report what is wrong with the page in dir (the current directory by default)
   shot      screenshot the draft through a preview link, and report what broke
   publish   store the draft as the next published version
@@ -107,7 +108,7 @@ func pageFor(ctx context.Context, db *store.DB, dir string) (store.SharePage, er
 	}
 	if errors.Is(err, store.ErrNotFound) {
 		return store.SharePage{}, fmt.Errorf("%s is not a page the panel knows about; "+
-			"`vibepanel page init %s` makes one, or add it in Settings → Share", dir, dir)
+			"`vibepanel page init %s` makes one, or add it in Settings → Sharing", dir, dir)
 	}
 	return page, err
 }
@@ -121,19 +122,24 @@ func pageInit(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	dir, err := dirArg(fs)
+	ctx := context.Background()
+	cfg, db, err := openDB(ctx)
 	if err != nil {
+		return err
+	}
+	defer db.Close()
+	// A name and no directory puts the page where the settings page would:
+	// under the data directory as page-<slug>, not in whatever directory the
+	// command happened to be typed in.
+	var dir string
+	if fs.NArg() == 0 && *name != "" {
+		dir = httpapi.NewPageDir(cfg.PagesDir(), *name)
+	} else if dir, err = dirArg(fs); err != nil {
 		return err
 	}
 	if *name == "" {
 		*name = filepath.Base(dir)
 	}
-	ctx := context.Background()
-	_, db, err := openDB(ctx)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
 	owner, err := db.FirstUserID(ctx)
 	if err != nil {
 		return errors.New("the panel has no account yet; finish setup first")
@@ -566,28 +572,15 @@ func pageCheckout(args []string) error {
 	if v == 0 {
 		v = page.PublishedVersion
 	}
-	row, err := db.SharePageVersionByNumber(ctx, page.ID, v)
-	if err != nil {
+	if _, err := db.SharePageVersionByNumber(ctx, page.ID, v); err != nil {
 		return fmt.Errorf("%s has no version %d", page.Name, v)
 	}
-	files, err := db.SharePageFiles(ctx, page.ID, v)
-	if err != nil {
-		return err
-	}
-	b := pages.Bundle{Manifest: pages.DecodeStored(row.Manifest)}
-	for _, f := range files {
-		_, data, ferr := db.SharePageFileData(ctx, page.ID, v, f.Path)
-		if ferr != nil {
-			return ferr
-		}
-		b.Files = append(b.Files, pages.File{Path: f.Path, ContentType: f.ContentType, Data: data})
-	}
-	if err := pages.ScaffoldFrom(dir, b.Manifest.Name, b, httpapi.PageFixtures()); err != nil {
+	if err := httpapi.CheckoutVersion(ctx, db, page, v, dir); err != nil {
 		return err
 	}
 	fmt.Printf("wrote %s v%d into %s\n", page.Name, v, dir)
 	if dir != page.SourceDir {
-		fmt.Printf("the page's draft is still %s; change it in Settings → Share to edit here\n", page.SourceDir)
+		fmt.Printf("the page's draft is still %s; change it in Settings → Sharing to edit here\n", page.SourceDir)
 	}
 	return nil
 }

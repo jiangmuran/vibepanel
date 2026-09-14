@@ -9,8 +9,8 @@ import (
 	"fmt"
 )
 
-// A share page is HTML the owner wrote, drawn on a share link in place of a
-// board. See docs/share-pages.md for the design and internal/httpapi/sharepage.go
+// A share page is HTML the owner wrote, drawn on a share link. See
+// docs/share-pages.md for the design and internal/httpapi/sharepage.go
 // for how one is served.
 //
 // This file stores them and decides nothing about what they may contain: the
@@ -209,7 +209,7 @@ func (d *DB) DeleteSharePage(ctx context.Context, id string) error {
 	defer tx.Rollback() //nolint:errcheck // a no-op after Commit
 
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM share_links WHERE page_id = ? AND purpose = ?`, id, SharePurposePreview); err != nil {
+		`DELETE FROM share_links WHERE page_id = ? AND purpose != ''`, id); err != nil {
 		return fmt.Errorf("store: delete preview links: %w", err)
 	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM share_pages WHERE id = ?`, id)

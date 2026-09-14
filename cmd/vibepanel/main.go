@@ -291,6 +291,13 @@ func cmdServe(args []string) error {
 		srv.Auth.SetupToken = token
 		defer func() { srv.Auth.SetupToken = "" }()
 	}
+	// Before the listener: a wall polling an address a build with boards
+	// handed out must find a page there on its first poll after the upgrade.
+	// A failure is logged and does not stop the panel -- the link answers
+	// "no longer works" and the next start tries again.
+	if cerr := srv.ConvertBoardLinks(ctx); cerr != nil {
+		logger.Warn("board links were not converted", "err", cerr)
+	}
 	// The pump reports output and bells straight into the server, which is how
 	// last_output_at stays honest and, from M4, how session state is decided.
 	mgr.OnSignals = srv.HandleSignals

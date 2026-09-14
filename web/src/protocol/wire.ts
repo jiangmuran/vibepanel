@@ -752,17 +752,12 @@ export interface ShareLink {
   /** What the scoped project or session is called, resolved on every listing
    *  rather than stored: it can be renamed, and it can be deleted. */
   scopeName: string
-  /** What this link opens. Decoded and re-validated by the server on every
-   *  read, so what arrives here is always a board this build's vocabulary
-   *  covers. */
-  board: ShareBoard
   /** The owner's own label for the screen: which room, which audience. Shown
    *  to viewers under both detail modes — it is the owner's sentence to them,
    *  not one of the panel's own words. */
   remark: string
-  /** The board is fixed. The server refuses an edit to a locked link, so this
-   *  is a guard and not a hint: it is what stops the wall a customer is
-   *  looking at being rearranged from an editor left open on the wrong row. */
+  /** What the link draws is fixed: its page, pin, parameters and trials are
+   *  refused by the server until it is unlocked. A guard, not a hint. */
   locked: boolean
   /** How many screens had this open a moment ago, counted from their polls.
    *  Not stored: it is true for about two seconds and must be 0 again after a
@@ -772,7 +767,7 @@ export interface ShareLink {
    *  owner is composing for when they cannot see it. */
   viewportWidth: number
   viewportHeight: number
-  /** The share page this link draws, or '' for its board. */
+  /** The share page this link draws. */
   pageId: string
   /** Holds the link on one version of its page; 0 follows the published one.
    *  With `pinUntil` in the future it is a trial, which ends by itself. */
@@ -964,7 +959,7 @@ export interface ShareCounts {
    *  came out today, as opposed to what is finished. */
   doneToday: number
   /** When the session that has waited longest entered that state, or 0.
-   *  Sent as a count rather than derived from the rows, because a board that
+   *  Sent as a count rather than derived from the rows, because a page that
    *  is one number carries no rows to derive it from. */
   longestWaitAt: number
 }
@@ -972,7 +967,7 @@ export interface ShareCounts {
 export interface ShareProject {
   /** Pseudonymous and stable for the life of one link; not the panel's id. */
   id: string
-  /** Empty under 'counts'. The dashboard numbers the groups instead. */
+  /** Empty under 'counts'. A page numbers the groups instead. */
   name: string
   waiting: number
   working: number
@@ -999,213 +994,6 @@ export interface ShareSession {
   cpuPercent: number
   rss: number
   procs: number
-}
-
-/** Everything a share link discloses, in one object. Read it as the list. */
-export interface ShareDashboard {
-  /** When the server took this reading. The dashboard counts up from it, which
-   *  is what stops a frozen page from looking like a quiet system. */
-  at: number
-  name: string
-  /** The owner's label for this screen. Sent under both detail modes: `detail`
-   *  governs whether the panel's own words may leave the machine, and this is
-   *  the owner's sentence to whoever is standing in front of the screen. */
-  remark: string
-  /** The owner has fixed this board. Said on screen because the lock is about
-   *  which wall is safe to rearrange, and the wall is where you find out. */
-  locked: boolean
-  detail: string
-  /** Unix seconds, 0 when the link does not expire. */
-  expiresAt: number
-  usageReadable: boolean
-  /** The panel has stopped keeping its records up to date. The reason is not
-   *  sent: it is a message about this machine's storage, and a wall display can
-   *  do nothing with it. */
-  stale: boolean
-  /** What this link opens. The page draws this and nothing else — there is no
-   *  second copy of the layout here to drift from the stored one. */
-  board: ShareBoard
-  machine: ShareMachine
-  counts: ShareCounts
-  projects: ShareProject[]
-  /** Empty unless a widget on the board shows rows. */
-  sessions: ShareSession[]
-  /** Null unless a widget on the board shows spend. Null and a zeroed object
-   *  are different facts, and `readable` tells the second from "nothing has
-   *  been counted yet". */
-  spend: ShareSpend | null
-  /** Null unless a widget on the board shows checklist progress. */
-  todos: ShareTodos | null
-  /** Null unless a widget on the board draws a moving line. Short after a
-   *  restart or a screen that has just been switched on: the ring is filled by
-   *  the polls that draw it. */
-  trend: ShareTrend | null
-  /** Null unless a widget on the board draws how the day went. Out of the
-   *  session-event log, which is what made a trend possible at all: before it
-   *  the panel stored one timestamp per session and nothing about what came
-   *  before, so every time axis degraded to a single current number. */
-  flow: ShareFlow | null
-  /** Null unless a widget on the board lists what just happened. */
-  feed: ShareFeed | null
-  /** Null unless a widget on the board shows what was built. The only section
-   *  read off a disk, and refreshed in the background rather than by the poll —
-   *  a wall asking every two seconds must never be the thing that runs
-   *  `git log`. `readable` tells "not counted yet" from "nothing today". */
-  repo: ShareRepo | null
-  /** '', 'project' or 'session': what this link is about. A scoped board
-   *  showing nothing means "nothing in the thing you were sent", which is a
-   *  different sentence from "nothing is running". */
-  scope: string
-  /** The scoped project's or session's name under 'names'; empty under
-   *  'counts', and empty when the scoped row no longer exists. */
-  scopeName: string
-  /**
-   * The scoped project's repository, as two parsed halves.
-   *
-   * Both empty unless the link is project-scoped, in 'names' mode, and points
-   * at a github.com remote — see the disclosure note on the Go struct. The
-   * page builds the URL from these with githubURL(); the raw remote and the
-   * project's path are never sent, in any mode.
-   */
-  scopeRepoOwner: string
-  scopeRepoName: string
-  /** Non-empty when the link has been pointed at a share page since this board
-   *  opened: the board's cue to reload into the page. */
-  page: string
-}
-
-// ── boards ─────────────────────────────────────────────────────────────────
-
-/**
- * One thing on a board. Mirrors store.Widget.
- *
- * `kind` is widened to string rather than a union of the kinds this build
- * knows, and that is the whole client-side half of the safety story: a stored
- * board may name a widget from a newer server, and the renderer's switch has to
- * fall through to nothing rather than fail to compile or throw. Nothing here is
- * a URL, a path or a template — every option is an enum or a bounded number,
- * validated by the server on the way in and again on the way out.
- */
-export interface ShareWidget {
-  kind: string
-  span: number
-  metric?: string
-  filter?: string
-  order?: string
-  /** What a session list is broken into: project, state, or nothing. */
-  group?: string
-  /** The dimension a chart is cut along — day/month for a series, agent,
-   *  project or model for a breakdown. A setting rather than four widget
-   *  kinds, so "split it by X" is one control. */
-  by?: string
-  days?: number
-  /** Which page of a rotating board this widget is on, 0-based. */
-  page?: number
-  /** Seconds one page of a long list stays on screen, or absent for none. */
-  rotate?: number
-  /** A caption the owner typed. The only free text on a board, so the only
-   *  thing here that goes through safeText. */
-  text?: string
-  /** How many grid rows tall, 1..catalogue.maxRows. Absent means one.
-   *  The dimension that makes a hero a hero: a flat list of equal tiles is a
-   *  dashboard, and a wall needs one thing four times the size of the rest. */
-  height?: number
-}
-
-/** An arrangement. Mirrors store.Board. */
-export interface ShareBoard {
-  /** How many columns the spans are counted in. Twelve, for anything this
-   *  build wrote; the server converts a board stored in the old quarters on
-   *  the way through, so a board that arrives here is always in twelfths. */
-  grid: number
-  /** Which preset it started from, kept as provenance for the editor. Nothing
-   *  renders from it. */
-  preset: string
-  /** Seconds each page stays on screen, or 0 for a board that does not move. */
-  rotate: number
-  /** Stretch the rows to the height of the screen instead of flowing down it.
-   *  The difference between a board and a wall — nobody is going to scroll a
-   *  television. */
-  fill: boolean
-  /**
-   * How much each widget says: 1 spare, 3 dense. Not how large it is drawn.
-   *
-   * Scale and density are two axes and the whole point of this field is that
-   * they are independent. How large everything is drawn follows the viewport
-   * and is settled in CSS with no stored value (`.vp-wall` in styles.css); how
-   * much is on screen is this. Somebody sitting in front of the same
-   * television wants it denser, not smaller.
-   */
-  density: number
-  widgets: ShareWidget[]
-}
-
-/** What one widget kind accepts. Mirrors store.WidgetSpec. */
-export interface ShareWidgetSpec {
-  kind: string
-  span: number
-  metrics: string[] | null
-  filters: string[] | null
-  orders: string[] | null
-  groups: string[] | null
-  bys: string[] | null
-  days: boolean
-  text: boolean
-  /** This kind draws a list, so it can page through one that does not fit. */
-  rotate: boolean
-  /** How many grid rows tall this kind may be made. */
-  rows: number
-}
-
-/** A starting arrangement offered by the settings page. Mirrors store.Preset. */
-export interface SharePreset {
-  id: string
-  /** Who the board is for: the axis the catalogue is organised on. A label,
-   *  nothing renders from it except the grouping in the editor. */
-  audience: string
-  /** What it was composed for: phone, laptop, wall, bigwall. The question
-   *  somebody can always answer, unlike "which of twenty-four do I want". */
-  screen: string
-  rotate: number
-  /** This arrangement was drawn to occupy a whole screen. */
-  fill: boolean
-  /** The disclosure mode this preset is only correct at, or '' when that is
-   *  the owner's call. Applied by the editor; validated by the server on its
-   *  own, from the request, exactly as before. */
-  detail: string
-  /** This arrangement is meaningless pointed at the whole panel. */
-  needsScope: boolean
-  /** How much each widget on it says. See ShareBoard.density — a wall preset
-   *  and a sit-in-front-of-it preset can be for the same screen. */
-  density: number
-  widgets: ShareWidget[]
-}
-
-/**
- * The vocabulary a board is built from, served rather than mirrored.
- *
- * The editor offers exactly what the validator accepts because both read this.
- * A second copy of the table in this file is how a settings page comes to offer
- * a widget the server refuses.
- */
-export interface ShareCatalogue {
-  presets: SharePreset[]
-  widgets: ShareWidgetSpec[]
-  /** The screen sizes a preset can be composed for, in the order to offer. */
-  screens: string[]
-  /** The widths worth offering, in twelfths. The server accepts any span from
-   *  1 to `maxSpan`; these are the ones a select should hold. Served rather
-   *  than listed here, so a preset's widths and the editor's cannot drift. */
-  steps: number[]
-  maxWidgets: number
-  maxSpan: number
-  maxRows: number
-  maxCaption: number
-  maxRemark: number
-  maxDays: number
-  /** How many density steps there are. Served, so the editor's control and the
-   *  validator's bound cannot drift. */
-  maxDensity: number
 }
 
 /** How many transitions of each kind happened in a span. */
@@ -1249,7 +1037,7 @@ export interface ShareFlow {
 }
 
 /** One thing that happened. Exactly the fields a session row already carries,
- *  in the order they happened — no new fact reaches the wire because a board
+ *  in the order they happened — no new fact reaches the wire because a page
  *  asked for a feed. */
 export interface ShareFeedEntry {
   at: number
@@ -1369,7 +1157,7 @@ export interface ShareTrend {
   points: ShareTrendPoint[]
 }
 
-// ── token spend on a board ─────────────────────────────────────────────────
+// ── token spend on a share page ─────────────────────────────────────────────────
 
 /** Tokens, never money: prices differ per model, per tier and over time. */
 export interface ShareSpendTotals {
@@ -1429,7 +1217,7 @@ export interface ShareSpend {
   /** Every token this panel has recorded within this scope. The only figure
    *  here that only ever goes up, which is what an odometer needs. */
   allTime: ShareSpendTotals
-  /** Empty unless a widget on the board asks for them. */
+  /** Empty unless the page asks for them. */
   days: ShareSpendBucket[]
   months: ShareSpendBucket[]
   heatmap: ShareSpendBucket[]

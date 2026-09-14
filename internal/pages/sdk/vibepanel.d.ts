@@ -19,7 +19,7 @@ export type Section = 'sessions' | 'todos' | 'spend' | 'trend' | 'flow' | 'feed'
 export interface Snapshot {
   /** The contract version, 1. */
   v: number
-  /** Which page and version this is; null when the link still draws a board. */
+  /** Which page and version this is. Never null from this panel today (a link that draws no page answers 410); typed nullable because the contract always allowed it. */
   page: SnapshotPage | null
   /** The sections this page asked for. Anything not listed is null or empty below. */
   sections: Section[]

@@ -8,9 +8,9 @@ import { safeText } from './text'
 /**
  * A project's name, and where its code lives if that is somewhere nameable.
  *
- * 「read only和面板左下角等等地方 都加上GitHub链接和项目名」. Two surfaces show
- * this — the foot of the sidebar and the read-only dashboard's header — and
- * they show it the same way because it is the same fact.
+ * 「read only和面板左下角等等地方 都加上GitHub链接和项目名」. Shown at the foot
+ * of the sidebar; a share page gets the same two halves in its snapshot
+ * (scopeRepoOwner, scopeRepoName) and draws them itself.
  *
  * The link is `owner/name` in words with an "leaves this page" glyph, not a
  * brand mark. Two reasons and both are practical: the icon set this project

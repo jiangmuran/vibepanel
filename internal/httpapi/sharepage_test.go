@@ -123,7 +123,6 @@ const sessionsManifest = `{"sdk":1,"name":"Lobby","sections":["sessions"],
 func TestAShareTokenReachesOnlyTheseRoutes(t *testing.T) {
 	_, srv := newTestServer(t)
 	want := []string{
-		"GET /api/share/{token}/dashboard",
 		"GET /api/share/{token}/v1/snapshot",
 		"GET /share/{token}",
 		"GET /share/{token}/*",
@@ -408,56 +407,91 @@ func TestTwentyScreensOnOneLinkCostOneBuild(t *testing.T) {
 	}
 	var m snapshotMemo
 	at := time.Now()
-	m.put("k", at, shareDashboard{At: 1})
+	m.put("k", at, shareReading{At: 1})
 	if _, hit := m.get("k", at.Add(snapshotMemoTTL)); hit {
 		t.Error("the memo outlived its window")
 	}
 	for i := 0; i < snapshotMemoCap+10; i++ {
-		m.put(strings.Repeat("x", i+1), at, shareDashboard{})
+		m.put(strings.Repeat("x", i+1), at, shareReading{})
 	}
 	if len(m.entries) > snapshotMemoCap {
 		t.Errorf("the memo grew to %d entries", len(m.entries))
 	}
 }
 
-// A board link still answers exactly as it did: the SPA at /share/<token>, the
-// dashboard under /api. Pointing it at a page tells the open board to reload.
-func TestABoardLinkIsTheBoardUntilItIsPointedAtAPage(t *testing.T) {
-	ts, _ := newTestServer(t)
-	link := newShare(t, ts, `{"name":"board"}`)
-	// The SPA, whatever the SPA answers in a test server with no frontend
-	// built: the same status as the root, and no sandbox.
-	root, rootBody := anonGET(t, ts, "/")
-	res, body := anonGET(t, ts, "/share/"+link.Token)
-	if res.StatusCode != root.StatusCode || string(body) != string(rootBody) ||
-		strings.Contains(res.Header.Get("Content-Security-Policy"), "sandbox") {
-		t.Errorf("a board link's page = %d with CSP %q; it is the SPA (%d)", res.StatusCode,
-			res.Header.Get("Content-Security-Policy"), root.StatusCode)
-	}
-	if _, body := shareGET(t, ts, link.Token); decodeDashboard(t, body).Page != "" {
-		t.Error("a board link says it draws a page")
-	}
-	status, snap, _ := snapshotGET(t, ts, link.Token)
-	if status != http.StatusOK || snap.Page != nil {
-		t.Errorf("a board link's v1 snapshot = %d, page %+v", status, snap.Page)
+// An address that draws nothing is answered by a page that says so, and never
+// by the panel's own bundle.
+//
+// `/share/<token>` used to fall through to the SPA for a token that drew a
+// board or nothing. With boards gone the SPA has nothing to draw there -- and
+// the panel's bundle on an address a stranger holds is its sign-in page. So an
+// unknown, revoked or unconverted link gets a static page with no script, and
+// the snapshot says 410 for a link that still draws no page.
+func TestALinkThatDrawsNothingSaysSoAndIsNeverThePanel(t *testing.T) {
+	ts, srv := newTestServer(t)
+	_, rootBody := anonGET(t, ts, "/")
+
+	gone := func(t *testing.T, path string) {
+		t.Helper()
+		res, body := anonGET(t, ts, path)
+		csp := res.Header.Get("Content-Security-Policy")
+		if res.StatusCode != http.StatusNotFound {
+			t.Errorf("%s = %d, want 404", path, res.StatusCode)
+		}
+		if !strings.HasPrefix(res.Header.Get("Content-Type"), "text/html") ||
+			!strings.Contains(csp, "sandbox") || !strings.Contains(csp, "default-src 'none'") {
+			t.Errorf("%s: content type %q, CSP %q; want inert HTML", path,
+				res.Header.Get("Content-Type"), csp)
+		}
+		if len(rootBody) > 0 && string(body) == string(rootBody) {
+			t.Errorf("%s answered with the panel's own bundle", path)
+		}
+		if strings.Contains(string(body), "<script") || !strings.Contains(string(body), "no longer works") {
+			t.Errorf("%s is not the page that says the link is gone:\n%s", path, body)
+		}
 	}
 
+	gone(t, "/share/not-a-real-token")
+	gone(t, "/share/not-a-real-token/")
+	gone(t, "/share/not-a-real-token/index.html")
+
 	p := newPublishedPage(t, ts, sessionsManifest, nil)
-	if status, out := callJSON(t, ts, http.MethodPut, "/api/settings/shares/"+link.ID+"/page",
-		`{"pageId":"`+p.page.ID+`"}`); status != http.StatusNoContent {
-		t.Fatalf("point at page = %d %s", status, out)
-	}
-	if _, body := shareGET(t, ts, link.Token); decodeDashboard(t, body).Page == "" {
-		t.Error("the open board is not told to reload into the page")
-	}
-	if res, _ := anonGET(t, ts, "/share/"+link.Token+"/"); !strings.Contains(res.Header.Get("Content-Security-Policy"), "sandbox") {
-		t.Error("the link does not serve the page after being pointed at it")
+	link := pageLink(t, ts, p.page.ID, "")
+	if res, _ := anonGET(t, ts, "/share/"+link.Token+"/"); !strings.Contains(
+		res.Header.Get("Content-Security-Policy"), "allow-scripts") {
+		t.Fatal("a link that draws a page does not serve it")
 	}
 
 	// A page a link draws cannot be deleted out from under the wall.
 	if status, _ := callJSON(t, ts, http.MethodDelete, "/api/settings/pages/"+p.page.ID, ""); status != http.StatusConflict {
 		t.Errorf("deleting a page a link draws = %d, want 409", status)
 	}
+
+	// A link written by a build with boards and not converted: the row is
+	// valid, and it draws nothing.
+	if _, err := srv.DB.SQL().Exec(`UPDATE share_links SET page_id = '' WHERE id = ?`, link.ID); err != nil {
+		t.Fatal(err)
+	}
+	gone(t, "/share/"+link.Token+"/")
+	if status, _, _ := snapshotGET(t, ts, link.Token); status != http.StatusGone {
+		t.Errorf("the snapshot of a link that draws no page = %d, want 410", status)
+	}
+
+	// And a revoked one.
+	revoked := pageLink(t, ts, p.page.ID, "")
+	revokeShare(t, ts, revoked.ID)
+	gone(t, "/share/"+revoked.Token+"/")
+
+	entries, err := srv.DB.RecentAudit(context.Background(), 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Event == "share.rejected" {
+			return
+		}
+	}
+	t.Error("a guessed page address recorded nothing")
 }
 
 func TestAPreviewLinkDrawsTheDraftAndIsNotAWall(t *testing.T) {

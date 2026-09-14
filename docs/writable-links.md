@@ -6,22 +6,23 @@ undone the one property that makes share links defensible.
 
 ## What is there now
 
-A share link reaches `GET`s and nothing else: the dashboard, the v1 snapshot, and
-a share page's files (see [share-pages.md](share-pages.md)). That is not a
+A share link reaches `GET`s and nothing else: the v1 snapshot, and a share
+page's files (see [share-pages.md](share-pages.md)). That is not a
 policy, it is the shape of the router, and a test walks it:
 
 ```go
 r.Route("/share/{token}", func(r chi.Router) {
     r.Use(shareReadableAnywhere)
     r.Use(s.requireShareToken)
-    r.Get("/dashboard", s.handleShareDashboard)
     r.Get("/v1/snapshot", s.handleShareSnapshot)
 })
 ```
 
-When this document was written there was one `GET`. Share pages made it four
-without adding a write, and nothing below changes because of it: a writable link
-is still a different table, not a column on this one.
+When this document was written there was one `GET`, the board's dashboard.
+Share pages added their files, and removing boards took the dashboard away, so
+it is three: the snapshot, `/share/{token}` and everything below it. None of them
+writes, and nothing below changes because of it: a writable link is still a
+different table, not a column on this one.
 
 `requireShareToken` resolves the token against `share_links` and nothing else,
 and `currentUser` never consults `share_links`. So a share token presented as a
@@ -78,7 +79,7 @@ DELETE /api/collab/{token}/todos/{id}
 PATCH  /api/collab/{token}/sessions/{id}/state
 ```
 
-Every one of them scoped by the link's own row, the way the dashboard already
+Every one of them scoped by the link's own row, the way the snapshot already
 is: the `{id}` in the path is a per-link pseudonym, resolved server-side against
 the scope, so a request naming another project's todo resolves to nothing rather
 than to that todo. That is the same mechanism `shareID` already provides, run

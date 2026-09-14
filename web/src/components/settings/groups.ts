@@ -19,7 +19,7 @@ import type { Key } from '../../i18n'
  *     together: the permission this browser has, and the webhook that reaches
  *     a phone which is not looking at the panel. They were four sections
  *     apart, and "turn on notifications" found only one of them.
- *   - **Sharing** — the read-only links, and the board a wall shows. One
+ *   - **Sharing** — share pages and the links that show them. One
  *     section, and it keeps its own group: it is the one surface that shows
  *     anything to somebody who is not signed in (red line 8).
  *   - **Account** — the ways in, and who has come in: password, passkeys, API
@@ -52,10 +52,8 @@ export const GROUP_TITLE: Record<SettingsGroup, Key> = {
  *
  * Four of the five are label/value lines and a handful of controls: they read
  * badly past about seventy characters, which is what `max-w-3xl` is. Sharing
- * holds the board editor, which is a canvas you drag onto with a library
- * beside it — and at 3xl the arithmetic came out at a 208px canvas next to a
- * 320px palette, so the thing being arranged was smaller than the list of
- * things to put on it, and every link's row overflowed the body sideways.
+ * is a list of pages with their links nested under them, forms unfolding in
+ * place — at 3xl a link's row overflowed the body sideways.
  *
  * A record rather than a set, so a sixth group is a type error here until
  * somebody decides which of the two it is.
@@ -86,7 +84,6 @@ export const SETTINGS_SECTIONS = [
   'browser',
   'webhooks',
   'pages',
-  'shares',
   'password',
   'passkeys',
   'tokens',
@@ -119,10 +116,8 @@ export const SECTION_GROUP: Record<SettingsSection, SettingsGroup> = {
   paste: 'sessions',
   browser: 'notify',
   webhooks: 'notify',
-  // Above the links, in the same group: a link draws a page, so the page is
-  // made where the link that shows it is made.
+  // Pages and the links that show them, as one list.
   pages: 'sharing',
-  shares: 'sharing',
   password: 'account',
   passkeys: 'account',
   tokens: 'account',

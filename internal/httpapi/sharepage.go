@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"strconv"
@@ -20,8 +21,8 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/store"
 )
 
-// A share page is HTML the owner wrote, served on a share link in place of the
-// board, drawing the same redacted snapshot through the SDK. docs/share-pages.md
+// A share page is HTML the owner wrote, served on a share link, drawing the
+// redacted snapshot through the SDK. docs/share-pages.md
 // is the design; this file is the part a share token can reach.
 //
 // It adds two things below the token, and both are GETs. Red line 8 counts them:
@@ -102,17 +103,50 @@ const sharePagePermissions = "camera=(), microphone=(), geolocation=(), usb=(), 
 // registerSharePageRoutes mounts the page files, outside /api.
 //
 // Outside /api because this is what a browser opens, and before the SPA's
-// catch-all because `/share/<token>` used to be answered by the catch-all and a
-// board link still is: spa is that catch-all, and a link that draws a board,
-// or a token that resolves to nothing, is handed to it exactly as before.
-func (s *Server) registerSharePageRoutes(r chi.Router, spa http.Handler) {
-	h := func(w http.ResponseWriter, r *http.Request) { s.handleSharePage(w, r, spa) }
-	r.Get("/share/{token}", h)
-	r.Get("/share/{token}/*", h)
+// catch-all, which must never answer `/share/<token>`: the panel's own bundle
+// on an address a stranger holds is the sign-in page, one click from the door
+// this link was made so nobody would need.
+func (s *Server) registerSharePageRoutes(r chi.Router) {
+	r.Get("/share/{token}", s.handleSharePage)
+	r.Get("/share/{token}/*", s.handleSharePage)
+}
+
+// goneHTML is what `/share/<token>` answers for a link that no longer draws
+// anything. Static, no script, no stylesheet from anywhere, and nothing that
+// came from the database: whoever holds a dead address learns that it is dead
+// and nothing about the panel it pointed at. Both languages, because the
+// person reading it did not choose the panel's.
+const goneHTML = `<!doctype html><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>%s</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;
+font:16px/1.5 system-ui,sans-serif;background:#111;color:#ddd;padding:1rem;box-sizing:border-box}
+main{max-width:28rem;text-align:center}h1{font-size:1.25rem;margin:0 0 .5rem}p{margin:.25rem 0;color:#999}</style>
+<main><h1>%s</h1><p>%s</p><p>%s</p></main>
+`
+
+func writeGonePage(w http.ResponseWriter, down bool) {
+	title, en, zh := "This link no longer works",
+		"It was revoked, it expired, or it never existed. Ask whoever sent it for a new one.",
+		"链接已失效：已被吊销、已过期或不存在。请向发给你的人要一个新链接。"
+	status := http.StatusNotFound
+	if down {
+		title, en, zh = "This screen is unavailable",
+			"The panel cannot read its own database right now. The link may be fine; try again shortly.",
+			"面板暂时读不到自己的数据库，链接本身可能没问题，请稍后再试。"
+		status = http.StatusServiceUnavailable
+	}
+	h := w.Header()
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
+	h.Set("Cache-Control", "no-store")
+	h.Set("X-Robots-Tag", "noindex, nofollow")
+	w.WriteHeader(status)
+	_, _ = fmt.Fprintf(w, goneHTML, title, title, en, zh)
 }
 
 // handleSharePage serves one file of the page a link draws.
-func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request, spa http.Handler) {
+func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	ip := s.clientIP(r)
 	if s.Auth != nil && !auth.Allowed(ip, s.Auth.Allow) {
@@ -125,11 +159,18 @@ func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request, spa htt
 	token := chi.URLParam(r, "token")
 	link, err := s.DB.ShareLinkByToken(ctx, auth.HashToken(token))
 	if err != nil || link.PageID == "" {
-		// Unknown, expired, a database hiccup, or a board: the SPA, which is
-		// what answered this path before pages existed. It asks the dashboard
-		// endpoint next, and that is where a bad token is refused and audited
-		// -- once, rather than once here and again there.
-		spa.ServeHTTP(w, r)
+		// Unknown, expired, revoked, or a database hiccup. A page of its own,
+		// with no script and nothing of the panel's in it: the address is held
+		// by somebody who is not signed in, and the one useful thing to tell
+		// them is that it no longer works. A database that is down says so,
+		// because "ask for a new link" is the wrong advice for that one.
+		down := err != nil && !errors.Is(err, store.ErrNotFound)
+		if down {
+			s.noteStale(err)
+		} else {
+			s.auditFromOutside(ctx, "share.rejected", "", ip, "unknown or expired share link")
+		}
+		writeGonePage(w, down)
 		return
 	}
 
@@ -247,23 +288,22 @@ func draftManifest(dir string) (pages.Manifest, error) {
 
 // shareSnapshot is the v1 wire contract, and the SDK's Snapshot type.
 //
-// Restated field by field from shareDashboard rather than embedding it, for
+// Restated field by field from shareReading rather than embedding it, for
 // the reason every struct in share.go is restated: a field added to the
-// dashboard -- the board's own `board` and `locked`, for instance -- must not
-// become part of a published API without somebody writing the line here.
+// reading must not become part of a published API without somebody writing
+// the line here.
 //
 // v1 is additive only. A field may be added; none may be renamed, retyped or
 // removed while a published page asks for v1. vibepanel.d.ts declares every
 // field here and TestTheSDKTypesMatchTheSnapshot holds the two together.
 type shareSnapshot struct {
 	V int `json:"v"`
-	// Page is which page and version this is, or null for a link that still
-	// draws a board. The SDK reloads when it changes.
+	// Page is which page and version this is. The SDK reloads when it changes.
 	Page *shareSnapshotPage `json:"page"`
 	// Sections is what the page's manifest asked for, in pages.Sections order.
 	Sections []string `json:"sections"`
 	// Params is every declared parameter with this link's value, or its
-	// default. An empty object on a board link.
+	// default.
 	Params map[string]any `json:"params"`
 
 	At            int64  `json:"at"`
@@ -327,20 +367,20 @@ type snapshotMemo struct {
 
 type snapshotMemoEntry struct {
 	at   time.Time
-	dash shareDashboard
+	dash shareReading
 }
 
-func (m *snapshotMemo) get(key string, now time.Time) (shareDashboard, bool) {
+func (m *snapshotMemo) get(key string, now time.Time) (shareReading, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	e, ok := m.entries[key]
 	if !ok || now.Sub(e.at) >= snapshotMemoTTL {
-		return shareDashboard{}, false
+		return shareReading{}, false
 	}
 	return e.dash, true
 }
 
-func (m *snapshotMemo) put(key string, now time.Time, d shareDashboard) {
+func (m *snapshotMemo) put(key string, now time.Time, d shareReading) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.entries == nil {
@@ -408,62 +448,61 @@ func (s *Server) buildShareSnapshot(ctx context.Context, sc shareContext) (share
 	link := sc.link
 	now := time.Now()
 	out := shareSnapshot{V: pages.SDKVersion, Params: map[string]any{}}
+	var needs pages.Needs
 
-	board := link.Board
-	memoKey := link.ID + "|board"
-	if link.PageID != "" {
-		page, err := s.DB.SharePageByID(ctx, link.PageID)
-		if errors.Is(err, store.ErrNotFound) {
-			return out, http.StatusGone, "this page no longer exists"
+	if link.PageID == "" {
+		// Not converted yet (ConvertBoardLinks runs at startup, before the
+		// listener), which only a failed conversion leaves behind.
+		return out, http.StatusGone, "this link draws no page"
+	}
+	var memoKey string
+	page, err := s.DB.SharePageByID(ctx, link.PageID)
+	if errors.Is(err, store.ErrNotFound) {
+		return out, http.StatusGone, "this page no longer exists"
+	}
+	if err != nil {
+		s.noteStale(err)
+		return out, http.StatusServiceUnavailable, "the panel cannot reach its own database"
+	}
+	var manifest pages.Manifest
+	ref := &shareSnapshotPage{ID: shareID(sc.secret, page.ID)}
+	if link.Purpose == store.SharePurposePreview {
+		raw, rerr := readDraftManifest(page.SourceDir)
+		if rerr != nil {
+			return out, http.StatusUnprocessableEntity, rerr.Error()
 		}
-		if err != nil {
-			s.noteStale(err)
+		m, perr := pages.ParseManifest(raw)
+		if perr != nil {
+			return out, http.StatusUnprocessableEntity, perr.Error()
+		}
+		manifest = m
+		ref.Draft = true
+		sum := sha256.Sum256(raw)
+		memoKey = link.ID + "|draft|" + hex.EncodeToString(sum[:8])
+	} else {
+		version := link.ResolvePageVersion(page.PublishedVersion, now.Unix())
+		v, verr := s.DB.SharePageVersionByNumber(ctx, page.ID, version)
+		if errors.Is(verr, store.ErrNotFound) {
+			return out, http.StatusGone, "this page has no published version"
+		}
+		if verr != nil {
+			s.noteStale(verr)
 			return out, http.StatusServiceUnavailable, "the panel cannot reach its own database"
 		}
-		var manifest pages.Manifest
-		ref := &shareSnapshotPage{ID: shareID(sc.secret, page.ID)}
-		if link.Purpose == store.SharePurposePreview {
-			raw, rerr := readDraftManifest(page.SourceDir)
-			if rerr != nil {
-				return out, http.StatusUnprocessableEntity, rerr.Error()
-			}
-			m, perr := pages.ParseManifest(raw)
-			if perr != nil {
-				return out, http.StatusUnprocessableEntity, perr.Error()
-			}
-			manifest = m
-			ref.Draft = true
-			sum := sha256.Sum256(raw)
-			memoKey = link.ID + "|draft|" + hex.EncodeToString(sum[:8])
-		} else {
-			version := link.ResolvePageVersion(page.PublishedVersion, now.Unix())
-			v, verr := s.DB.SharePageVersionByNumber(ctx, page.ID, version)
-			if errors.Is(verr, store.ErrNotFound) {
-				return out, http.StatusGone, "this page has no published version"
-			}
-			if verr != nil {
-				s.noteStale(verr)
-				return out, http.StatusServiceUnavailable, "the panel cannot reach its own database"
-			}
-			manifest = pages.DecodeStored(v.Manifest)
-			ref.Version = version
-			memoKey = link.ID + "|v" + strconv.Itoa(version)
-		}
-		out.Page = ref
-		out.Sections = manifest.Needs()
-		out.Params = pages.ResolveParams(manifest.Params, link.Params)
-		board = manifest.Board()
-	} else {
-		out.Sections = sectionsOfBoard(board)
+		manifest = pages.DecodeStored(v.Manifest)
+		ref.Version = version
+		memoKey = link.ID + "|v" + strconv.Itoa(version)
 	}
+	out.Page = ref
+	out.Sections = manifest.SectionNames()
+	out.Params = pages.ResolveParams(manifest.Params, link.Params)
+	needs = manifest.Needs()
 
 	dash, hit := s.snapshots.get(memoKey, now)
 	if !hit {
 		s.snapshots.builds.Add(1)
-		built := link
-		built.Board = board
 		var err error
-		dash, err = s.buildShareDashboard(ctx, built, sc.secret)
+		dash, err = s.buildShareReading(ctx, link, sc.secret, needs)
 		if err != nil {
 			s.noteStale(err)
 			return out, http.StatusServiceUnavailable, "the panel cannot reach its own database"
@@ -471,38 +510,17 @@ func (s *Server) buildShareSnapshot(ctx context.Context, sc shareContext) (share
 		s.snapshots.put(memoKey, now, dash)
 	}
 
-	out.At, out.Name, out.Remark, out.Detail = dash.At, dash.Name, dash.Remark, dash.Detail
-	out.ExpiresAt, out.UsageReadable, out.Stale = dash.ExpiresAt, dash.UsageReadable, dash.Stale
+	// The link's own words from the row this request just read, never from the
+	// memo: an owner renaming a screen from a laptop expects the next poll to
+	// say so, and a memo keyed by version does not change when a remark does.
+	out.Name, out.Remark, out.Detail, out.ExpiresAt = link.Name, link.Remark, link.Detail, link.ExpiresAt
+	out.At, out.UsageReadable, out.Stale = dash.At, dash.UsageReadable, dash.Stale
 	out.Machine, out.Counts, out.Projects, out.Sessions = dash.Machine, dash.Counts, dash.Projects, dash.Sessions
 	out.Spend, out.Todos, out.Trend, out.Flow, out.Feed, out.Repo =
 		dash.Spend, dash.Todos, dash.Trend, dash.Flow, dash.Feed, dash.Repo
 	out.Scope, out.ScopeName = dash.Scope, dash.ScopeName
 	out.ScopeRepoOwner, out.ScopeRepoName = dash.ScopeRepoOwner, dash.ScopeRepoName
 	return out, http.StatusOK, ""
-}
-
-// sectionsOfBoard names what a board link's snapshot carries, in the
-// manifest's vocabulary, so a page hosted elsewhere and pointed at a board link
-// can tell what it was given.
-func sectionsOfBoard(b store.Board) []string {
-	needs := b.Needs()
-	have := map[string]bool{
-		pages.SectionSessions: needs[store.NeedSessions],
-		pages.SectionTodos:    needs[store.NeedTodos],
-		pages.SectionSpend:    needs[store.NeedSpend],
-		pages.SectionTrend:    needs[store.NeedTrend],
-		pages.SectionFlow:     needs[store.NeedFlow],
-		pages.SectionFeed:     needs[store.NeedFeed],
-		pages.SectionRepo: needs[store.NeedRepo] || needs[store.NeedRepoDays] ||
-			needs[store.NeedRepoPRs],
-	}
-	out := []string{}
-	for _, name := range pages.Sections() {
-		if have[name] {
-			out = append(out, name)
-		}
-	}
-	return out
 }
 
 // readDraftManifest reads vibepanel.json out of a draft directory, confined

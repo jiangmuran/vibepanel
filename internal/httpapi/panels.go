@@ -19,7 +19,7 @@ import (
 )
 
 // registerPanelRoutes mounts the side-panel endpoints: system stats, the file
-// browser, notes, and the todo routes the wall boards and API clients still
+// browser, notes, and the todo routes share pages and API clients still
 // use after the panel's own checklist was removed.
 func (s *Server) registerPanelRoutes(r chi.Router) {
 	r.Get("/system", s.handleSystem)
@@ -50,10 +50,9 @@ func (s *Server) registerPanelRoutes(r chi.Router) {
 	//
 	// The side panel's checklist was removed — 「也不要留下 todo」 — and the
 	// obvious next step is to delete the handlers, the store methods and the
-	// table. Two things call them that are not the side panel. The read-only
-	// wall boards count todos: `todos` is a widget kind, `todoPercent` is a
-	// gauge metric, and four of the shipped presets place one, so deleting the
-	// routes means rewriting somebody's wall. And an API token is a documented
+	// table. Two things call them that are not the side panel. Share pages
+	// count todos: `todos` is a snapshot section a manifest can ask for, so
+	// deleting the rows means emptying somebody's wall. And an API token is a documented
 	// way in — an agent that finishes a task can tick it off, which is the one
 	// use of this that never needed a panel at all.
 	//

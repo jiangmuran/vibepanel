@@ -272,6 +272,13 @@ func (c Config) TmuxDir() string { return filepath.Join(c.DataDir, "tmux") }
 // ACMEDir holds cached certificates and account keys.
 func (c Config) ACMEDir() string { return filepath.Join(c.DataDir, "acme") }
 
+// PagesDir is where a share page's directory goes when nobody names one:
+// <DataDir>/pages/page-<slug>, beside the pasted screenshots rather than in
+// the home directory. A page is a project in the panel, so it is not lost when
+// this directory is -- the published versions are in the database, and
+// opening the page from the settings writes the published one back here.
+func (c Config) PagesDir() string { return filepath.Join(c.DataDir, "pages") }
+
 // RestoreDir holds the scrollback handed to a pane being rebuilt.
 //
 // A file rather than an argument or an environment variable: the archive is a

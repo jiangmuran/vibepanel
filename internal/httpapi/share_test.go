@@ -10,7 +10,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -19,12 +18,13 @@ import (
 
 	"github.com/jiangmuran/vibepanel/internal/auth"
 	"github.com/jiangmuran/vibepanel/internal/git"
+	"github.com/jiangmuran/vibepanel/internal/pages"
 	"github.com/jiangmuran/vibepanel/internal/store"
 )
 
 // A share link is a second door onto a panel whose first door is one password
 // in front of a writable terminal. Every test in this file is about the shape
-// of that door rather than about what the dashboard looks like.
+// of that door rather than about what a page looks like.
 
 // freshShare is the one moment a link's token is readable.
 type freshShare struct {
@@ -37,33 +37,64 @@ type freshShare struct {
 	CreatedAt int64  `json:"createdAt"`
 }
 
-// newShare mints a link through the real endpoint, as the signed-in owner.
+// widestManifest asks for every section with every option, so a link made on
+// it carries everything a link can carry. The redaction tests use it because a
+// sweep for what must never be sent is only worth something against the most
+// that is.
+const widestManifest = `{"sdk":1,"name":"Everything",
+	"sections":["sessions","todos","spend","trend","flow","feed","repo"],
+	"spend":{"days":30,"months":true,"heatmap":true,"split":["tool","model","project"]},
+	"repo":{"days":14,"prs":true},"flow":{"by":"hour"}}`
+
+// newShare mints a link through the real endpoint, as the signed-in owner, on
+// a published page with widestManifest unless the body names a page.
 func newShare(t *testing.T, ts *httptest.Server, body string) freshShare {
 	t.Helper()
-	return postJSON[freshShare](t, ts, "/api/settings/shares", body)
+	return shareOn(t, ts, widestManifest, body)
 }
 
-// shareGET fetches the dashboard the way a wall display does: no cookie, no
+// shareOn mints a link on a freshly published page with this manifest.
+func shareOn(t *testing.T, ts *httptest.Server, manifest, body string) freshShare {
+	t.Helper()
+	return postJSON[freshShare](t, ts, "/api/settings/shares", withPage(t, ts, manifest, body))
+}
+
+// withPage adds a published page with this manifest to a create body that
+// does not name one.
+func withPage(t *testing.T, ts *httptest.Server, manifest, body string) string {
+	t.Helper()
+	if strings.Contains(body, `"pageId"`) {
+		return body
+	}
+	p := newPublishedPage(t, ts, manifest, nil)
+	rest := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(body), "{"))
+	if rest == "}" {
+		return `{"pageId":"` + p.page.ID + `"}`
+	}
+	return `{"pageId":"` + p.page.ID + `",` + rest
+}
+
+// shareGET fetches the snapshot the way a wall display does: no cookie, no
 // header, nothing but the URL.
 func shareGET(t *testing.T, ts *httptest.Server, token string) (*http.Response, []byte) {
 	t.Helper()
-	res, err := anonymousClient(t).Get(ts.URL + "/api/share/" + token + "/dashboard")
+	res, err := anonymousClient(t).Get(ts.URL + "/api/share/" + token + "/v1/snapshot")
 	if err != nil {
-		t.Fatalf("GET dashboard: %v", err)
+		t.Fatalf("GET snapshot: %v", err)
 	}
 	defer res.Body.Close()
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		t.Fatalf("read dashboard: %v", err)
+		t.Fatalf("read snapshot: %v", err)
 	}
 	return res, body
 }
 
-func decodeDashboard(t *testing.T, body []byte) shareDashboard {
+func decodeSnapshot(t *testing.T, body []byte) shareSnapshot {
 	t.Helper()
-	var out shareDashboard
+	var out shareSnapshot
 	if err := json.Unmarshal(body, &out); err != nil {
-		t.Fatalf("decode dashboard: %v: %s", err, body)
+		t.Fatalf("decode snapshot: %v: %s", err, body)
 	}
 	return out
 }
@@ -92,7 +123,7 @@ func revokeShare(t *testing.T, ts *httptest.Server, id string) int {
 //
 // Delete the middleware, move the route inside the RequireAuth group, or teach
 // currentUser to look in share_links, and this fails.
-func TestAShareTokenReachesTheDashboardAndNothingElse(t *testing.T) {
+func TestAShareTokenReachesItsSnapshotAndNothingElse(t *testing.T) {
 	ts, _ := newTestServer(t)
 	project := postJSON[store.Project](t, ts, "/api/projects",
 		`{"path":"`+t.TempDir()+`","name":"test"}`)
@@ -100,9 +131,9 @@ func TestAShareTokenReachesTheDashboardAndNothingElse(t *testing.T) {
 
 	res, body := shareGET(t, ts, link.Token)
 	if res.StatusCode != http.StatusOK {
-		t.Fatalf("the dashboard itself = %d, want 200: %s", res.StatusCode, body)
+		t.Fatalf("the snapshot itself = %d, want 200: %s", res.StatusCode, body)
 	}
-	if got := decodeDashboard(t, body); got.Name != "wall" {
+	if got := decodeSnapshot(t, body); got.Name != "wall" {
 		t.Errorf("name = %q, want the link's own name", got.Name)
 	}
 
@@ -162,11 +193,13 @@ func TestAShareTokenReachesTheDashboardAndNothingElse(t *testing.T) {
 		t.Errorf("the socket answered %d to a share token, want 401", wres.StatusCode)
 	}
 
-	// And the share surface is one GET. Anything else under it is not a
-	// narrower version of the dashboard, it is a route that does not exist.
+	// And the share surface is GETs. Anything else under it is not a narrower
+	// version of the snapshot, it is a route that does not exist -- the
+	// dashboard boards drew from included.
 	for _, probe := range []struct{ method, path string }{
-		{http.MethodPost, "/api/share/" + link.Token + "/dashboard"},
-		{http.MethodDelete, "/api/share/" + link.Token + "/dashboard"},
+		{http.MethodPost, "/api/share/" + link.Token + "/v1/snapshot"},
+		{http.MethodDelete, "/api/share/" + link.Token + "/v1/snapshot"},
+		{http.MethodGet, "/api/share/" + link.Token + "/dashboard"},
 		{http.MethodGet, "/api/share/" + link.Token + "/state"},
 		{http.MethodGet, "/api/share/" + link.Token + "/usage"},
 	} {
@@ -180,7 +213,8 @@ func TestAShareTokenReachesTheDashboardAndNothingElse(t *testing.T) {
 		}
 		r.Body.Close()
 		if r.StatusCode == http.StatusOK {
-			t.Errorf("%s %s succeeded; the share surface is one GET", probe.method, probe.path)
+			t.Errorf("%s %s succeeded; the share surface is the snapshot and a page's files",
+				probe.method, probe.path)
 		}
 	}
 }
@@ -236,7 +270,7 @@ func TestAnExpiredShareLinkStopsWorking(t *testing.T) {
 // somebody's desk. The whole response is searched as text rather than checked
 // field by field, so a field added to the payload later is covered by a test
 // written today.
-func TestTheDashboardNeverCarriesAPathACommandOrARealID(t *testing.T) {
+func TestTheSnapshotNeverCarriesAPathACommandOrARealID(t *testing.T) {
 	ts, _ := newTestServer(t)
 
 	// A path with something recognisable in it, so a substring search means
@@ -254,7 +288,7 @@ func TestTheDashboardNeverCarriesAPathACommandOrARealID(t *testing.T) {
 		link := newShare(t, ts, `{"name":"wall","detail":"`+detail+`"}`)
 		res, body := shareGET(t, ts, link.Token)
 		if res.StatusCode != http.StatusOK {
-			t.Fatalf("%s: dashboard = %d: %s", detail, res.StatusCode, body)
+			t.Fatalf("%s: snapshot = %d: %s", detail, res.StatusCode, body)
 		}
 		text := string(body)
 
@@ -279,7 +313,7 @@ func TestTheDashboardNeverCarriesAPathACommandOrARealID(t *testing.T) {
 			}
 		}
 
-		got := decodeDashboard(t, body)
+		got := decodeSnapshot(t, body)
 		if len(got.Sessions) != 1 || len(got.Projects) != 1 {
 			t.Fatalf("%s: %d session rows and %d groups, want 1 and 1",
 				detail, len(got.Sessions), len(got.Projects))
@@ -296,7 +330,7 @@ func TestTheDashboardNeverCarriesAPathACommandOrARealID(t *testing.T) {
 				strings.Contains(text, "Acme payroll") {
 				t.Errorf("counts mode carries a name somewhere in the body:\n%s", text)
 			}
-			// A repository is a name, and a public one. Under counts the board
+			// A repository is a name, and a public one. Under counts the link
 			// sends none, so a link to github.com/<org>/<repo> would identify
 			// the customer more precisely than the project path this mode
 			// exists to withhold -- and it would do it on the mode people pick
@@ -319,7 +353,7 @@ func TestTheDashboardNeverCarriesAPathACommandOrARealID(t *testing.T) {
 	}
 }
 
-// A board that is about one project may say which repository, and only then.
+// A link that is about one project may say which repository, and only then.
 //
 // 「read only和面板左下角等等地方 都加上GitHub链接和项目名」. The name half was
 // already there under `names`; the repository is new, and it is the first thing
@@ -330,7 +364,7 @@ func TestTheDashboardNeverCarriesAPathACommandOrARealID(t *testing.T) {
 // project-scoped link; only for a github.com remote; and as two parsed halves
 // rather than the remote string, so the viewer's browser can build one URL and
 // nothing else.
-func TestARepositoryIsNamedOnlyOnAProjectBoardThatAlreadyNamesThings(t *testing.T) {
+func TestARepositoryIsNamedOnlyOnAProjectLinkThatAlreadyNamesThings(t *testing.T) {
 	ts, srv := newTestServer(t)
 
 	dir := t.TempDir()
@@ -352,14 +386,14 @@ func TestARepositoryIsNamedOnlyOnAProjectBoardThatAlreadyNamesThings(t *testing.
 	warmRemote(t, srv, dir)
 	warmRemote(t, srv, other)
 
-	read := func(t *testing.T, body string) (shareDashboard, string) {
+	read := func(t *testing.T, body string) (shareSnapshot, string) {
 		t.Helper()
 		link := newShare(t, ts, body)
 		res, raw := shareGET(t, ts, link.Token)
 		if res.StatusCode != http.StatusOK {
-			t.Fatalf("dashboard = %d: %s", res.StatusCode, raw)
+			t.Fatalf("snapshot = %d: %s", res.StatusCode, raw)
 		}
-		return decodeDashboard(t, raw), string(raw)
+		return decodeSnapshot(t, raw), string(raw)
 	}
 
 	t.Run("named and project-scoped", func(t *testing.T) {
@@ -394,12 +428,12 @@ func TestARepositoryIsNamedOnlyOnAProjectBoardThatAlreadyNamesThings(t *testing.
 	})
 
 	t.Run("named, whole panel", func(t *testing.T) {
-		// No single project, so no single repository. A board covering three
+		// No single project, so no single repository. A link covering three
 		// projects that named one of their repositories would be worse than
 		// naming none.
 		got, _ := read(t, `{"name":"wall","detail":"names"}`)
 		if got.ScopeRepoOwner != "" || got.ScopeRepoName != "" {
-			t.Fatalf("an unscoped board named %q/%q", got.ScopeRepoOwner, got.ScopeRepoName)
+			t.Fatalf("an unscoped link named %q/%q", got.ScopeRepoOwner, got.ScopeRepoName)
 		}
 	})
 
@@ -412,7 +446,7 @@ func TestARepositoryIsNamedOnlyOnAProjectBoardThatAlreadyNamesThings(t *testing.
 		got, _ := read(t, `{"name":"wall","detail":"names","scope":"session","scopeId":"`+
 			sess.ID+`"}`)
 		if got.ScopeRepoOwner != "" || got.ScopeRepoName != "" {
-			t.Fatalf("a session board named %q/%q", got.ScopeRepoOwner, got.ScopeRepoName)
+			t.Fatalf("a session link named %q/%q", got.ScopeRepoOwner, got.ScopeRepoName)
 		}
 	})
 
@@ -491,7 +525,7 @@ func countingGit(t *testing.T) func() []string {
 // A wall's poll starts no process, whatever it asks the working tree for.
 //
 // Red line 8, and the half of it that is easiest to undo by accident: the
-// obvious way to put a repository's name on a board is s.Git.Read, which is the
+// obvious way to put a repository's name on a screen is s.Git.Read, which is the
 // *foreground* cache with a three-second TTL, and it runs three subprocesses.
 // Against a screen polling every two seconds forever that is a fork per project
 // per poll, and one of the three is
@@ -510,13 +544,16 @@ func TestAWallsPollNeverRunsGit(t *testing.T) {
 	// keeps its own TTL, which is the thing under test.
 	srv.Git = git.Cache{TTL: -1}
 
-	link := newShare(t, ts, `{"name":"wall","detail":"names","scope":"project","scopeId":"`+
-		project.ID+`","board":{"widgets":[{"kind":"machine"}]}}`)
+	link := shareOn(t, ts, `{"sdk":1,"name":"Machine","sections":[]}`,
+		`{"name":"wall","detail":"names","scope":"project","scopeId":"`+project.ID+`"}`)
 	const polls = 6
 	for i := 0; i < polls; i++ {
+		// Past the one-second memo, so each poll is a build and not a copy of
+		// the first: the property is about what a build runs.
+		srv.snapshots.entries = nil
 		res, raw := shareGET(t, ts, link.Token)
 		if res.StatusCode != http.StatusOK {
-			t.Fatalf("dashboard = %d: %s", res.StatusCode, raw)
+			t.Fatalf("snapshot = %d: %s", res.StatusCode, raw)
 		}
 	}
 
@@ -549,40 +586,60 @@ func TestAWallsPollNeverRunsGit(t *testing.T) {
 	}
 }
 
-// A board whose only spend series is `spentmade` still gets one.
+// A page that asks for a spend series gets one as long as it asked.
 //
-// The section is computed because board.Needs said the board wants it, and the
-// *width* of it was then decided by a second list that had never heard of the
-// widget. Nothing matched, the widest was zero, and the day array came back
-// empty -- so newsroom, deskwall and the spentmade preset all render "nothing
-// to show" forever, with a spend total beside them that is not zero.
-func TestABoardWhoseOnlySpendSeriesIsSpentMadeGetsIt(t *testing.T) {
+// The section is computed because the manifest named it, and the *width* of
+// the day series comes from the same manifest. When the two were decided in
+// two places, one of them could say "wanted" and the other "zero days", and the
+// page rendered "nothing to show" forever beside a spend total that was not
+// zero.
+func TestAPageAskingForASpendSeriesGetsIt(t *testing.T) {
 	ts, srv := newTestServer(t)
 	project := postJSON[store.Project](t, ts, "/api/projects",
 		`{"path":"`+t.TempDir()+`","name":"Acme"}`)
 	seedUsage(t, srv, project.Path, 4242)
 
-	link := newShare(t, ts,
-		`{"name":"wall","board":{"widgets":[{"kind":"spentmade"}]}}`)
+	link := shareOn(t, ts, `{"sdk":1,"name":"Spend","sections":["spend"],"spend":{"days":7}}`,
+		`{"name":"wall"}`)
 	_, body := shareGET(t, ts, link.Token)
-	got := decodeDashboard(t, body)
+	got := decodeSnapshot(t, body)
 	if got.Spend == nil {
-		t.Fatal("a board with a spend series carries no spend section at all")
+		t.Fatal("a page asking for spend carries no spend section at all")
 	}
 	if !got.Spend.Readable || got.Spend.Today.Total == 0 {
 		t.Fatalf("nothing was counted, so this test would pass on any server: "+
 			"readable=%v today=%d", got.Spend.Readable, got.Spend.Today.Total)
 	}
-	if len(got.Spend.Days) == 0 {
-		t.Errorf("the board draws a day series and was sent none, while its own totals "+
-			"say %d tokens were spent today", got.Spend.Today.Total)
+	if len(got.Spend.Days) == 0 || len(got.Spend.Days) > 7 {
+		t.Errorf("the page asked for seven days and was sent %d, while its own totals "+
+			"say %d tokens were spent today", len(got.Spend.Days), got.Spend.Today.Total)
+	}
+	if len(got.Spend.Months) != 0 || len(got.Spend.Heatmap) != 0 || len(got.Spend.Tools) != 0 {
+		t.Errorf("a page asking for days alone was sent months, the heatmap or the tools: %s", body)
+	}
+}
+
+// daysOr is the last bound on a day range before a query sees it. A stored
+// manifest is decoded leniently, so the bound cannot rest on publish alone.
+func TestADayRangeIsBoundedWhereverItCameFrom(t *testing.T) {
+	for _, tc := range []struct{ days, fallback, want int }{
+		{0, 14, 14},
+		{-3, 14, 14},
+		{30, 14, 30},
+		{pages.MaxDays, 14, pages.MaxDays},
+		{pages.MaxDays + 1, 14, pages.MaxDays},
+		{1 << 30, 14, pages.MaxDays},
+	} {
+		if got := daysOr(tc.days, tc.fallback); got != tc.want {
+			t.Errorf("daysOr(%d, %d) = %d, want %d", tc.days, tc.fallback, got, tc.want)
+		}
 	}
 }
 
 // The row ids are per link, and are not the panel's.
 //
 // Stable, because a list that re-keys itself every two seconds re-mounts every
-// row; different between links, so two dashboards on two walls cannot be
+// row; different between links, so two screens on two walls cannot be
 // correlated into one picture of the panel by somebody watching both.
 func TestShareRowIDsAreStablePerLinkAndDifferBetweenLinks(t *testing.T) {
 	ts, _ := newTestServer(t)
@@ -596,10 +653,10 @@ func TestShareRowIDsAreStablePerLinkAndDifferBetweenLinks(t *testing.T) {
 	idsFor := func(token string) []string {
 		res, body := shareGET(t, ts, token)
 		if res.StatusCode != http.StatusOK {
-			t.Fatalf("dashboard = %d: %s", res.StatusCode, body)
+			t.Fatalf("snapshot = %d: %s", res.StatusCode, body)
 		}
 		out := []string{}
-		for _, row := range decodeDashboard(t, body).Sessions {
+		for _, row := range decodeSnapshot(t, body).Sessions {
 			out = append(out, row.ID)
 		}
 		if len(out) == 0 {
@@ -736,7 +793,7 @@ func TestAnUnknownShareTokenIsRefusedAndRecorded(t *testing.T) {
 func TestShareCreationRefusesAnUnknownDetail(t *testing.T) {
 	ts, _ := newTestServer(t)
 	res, err := ts.Client().Post(ts.URL+"/api/settings/shares", "application/json",
-		strings.NewReader(`{"name":"wall","detail":"everything"}`))
+		strings.NewReader(withPage(t, ts, sessionsManifest, `{"name":"wall","detail":"everything"}`)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -753,12 +810,12 @@ func TestShareCreationRefusesAnUnknownDetail(t *testing.T) {
 	}
 }
 
-// The dashboard carries the numbers it exists for.
+// The snapshot carries the numbers it exists for.
 //
 // Thin on purpose -- the interesting assertions above are all about what is
 // absent, and a suite that only checks absence passes on a handler returning an
 // empty object.
-func TestTheDashboardCarriesTheMachineAndTheSessions(t *testing.T) {
+func TestTheSnapshotCarriesTheMachineAndTheSessions(t *testing.T) {
 	ts, _ := newTestServer(t)
 	project := postJSON[store.Project](t, ts, "/api/projects",
 		`{"path":"`+t.TempDir()+`","name":"test"}`)
@@ -767,9 +824,9 @@ func TestTheDashboardCarriesTheMachineAndTheSessions(t *testing.T) {
 	link := newShare(t, ts, `{"name":"wall"}`)
 	res, body := shareGET(t, ts, link.Token)
 	if res.StatusCode != http.StatusOK {
-		t.Fatalf("dashboard = %d: %s", res.StatusCode, body)
+		t.Fatalf("snapshot = %d: %s", res.StatusCode, body)
 	}
-	got := decodeDashboard(t, body)
+	got := decodeSnapshot(t, body)
 
 	if got.At == 0 {
 		t.Error("no reading time; the page cannot say when the numbers were last true")
@@ -796,7 +853,7 @@ func TestTheDashboardCarriesTheMachineAndTheSessions(t *testing.T) {
 	}
 
 	// A cache between here and the screen would look exactly like a live
-	// dashboard while being none of the things the indicator promises.
+	// screen while being none of the things the indicator promises.
 	if cc := res.Header.Get("Cache-Control"); !strings.Contains(cc, "no-store") {
 		t.Errorf("Cache-Control = %q, want no-store", cc)
 	}
@@ -804,10 +861,10 @@ func TestTheDashboardCarriesTheMachineAndTheSessions(t *testing.T) {
 
 // A scratch terminal is not a task.
 //
-// Bottom terminals are ordinary session rows with a parent, so a dashboard that
+// Bottom terminals are ordinary session rows with a parent, so a snapshot that
 // listed them would report two rows for one job and count a shell sitting at a
 // prompt as something that had finished.
-func TestTheDashboardLeavesScratchTerminalsOut(t *testing.T) {
+func TestTheSnapshotLeavesScratchTerminalsOut(t *testing.T) {
 	ts, _ := newTestServer(t)
 	project := postJSON[store.Project](t, ts, "/api/projects",
 		`{"path":"`+t.TempDir()+`","name":"test"}`)
@@ -818,7 +875,7 @@ func TestTheDashboardLeavesScratchTerminalsOut(t *testing.T) {
 
 	link := newShare(t, ts, `{"name":"wall"}`)
 	_, body := shareGET(t, ts, link.Token)
-	got := decodeDashboard(t, body)
+	got := decodeSnapshot(t, body)
 	if len(got.Sessions) != 1 {
 		t.Errorf("%d rows, want 1: a scratch terminal reached the wall", len(got.Sessions))
 	}
@@ -827,159 +884,83 @@ func TestTheDashboardLeavesScratchTerminalsOut(t *testing.T) {
 	}
 }
 
-// ─── boards ────────────────────────────────────────────────────────────────
+// ─── what a page asks for ──────────────────────────────────────────────────
 
-// A board is data, and this is the line it must not cross.
+// A page narrows what a link discloses and can never widen it.
 //
-// Every field on a widget is an enum or a bounded number, checked against the
-// registry in internal/store. The failure being refused here is the one where a
-// stored row starts choosing what the server does: an unknown kind resolved to
-// a neighbouring one, a metric that names a column, a range with no ceiling.
-// Each case is something a person could type into the request and something the
-// database could come to hold.
-func TestABoardRefusesAnythingOutsideItsVocabulary(t *testing.T) {
-	ts, _ := newTestServer(t)
-
-	for _, bad := range []struct{ body, why string }{
-		{`{"name":"w","board":{"widgets":[{"kind":"rm -rf"}]}}`,
-			"a widget kind nothing renders"},
-		{`{"name":"w","board":{"widgets":[{"kind":"bignumber","metric":"passwordHash"}]}}`,
-			"a metric that is not in the list"},
-		{`{"name":"w","board":{"widgets":[{"kind":"bignumber"}]}}`,
-			"a one-number widget with no number"},
-		{`{"name":"w","board":{"widgets":[{"kind":"spendsplit","by":"cwd"}]}}`,
-			"a dimension that would name a directory"},
-		{`{"name":"w","board":{"widgets":[{"kind":"states","span":99}]}}`,
-			"a span outside the grid"},
-		{`{"name":"w","board":{"widgets":[{"kind":"spendbars","days":100000}]}}`,
-			"a day range with no ceiling"},
-		{`{"name":"w","board":{"widgets":[{"kind":"states","text":"hello"}]}}`,
-			"free text on a widget that has none"},
-		{`{"name":"w","board":{"widgets":[{"kind":"gauge","metric":"cpu","rotate":10}]}}`,
-			"a rotation on something with no list"},
-		{`{"name":"w","board":{"widgets":[]}}`,
-			"a board with nothing on it"},
-		{`{"name":"w","preset":"whatever-i-like"}`,
-			"a preset that does not exist"},
-		{`{"name":"w","board":{"preset":"whatever-i-like","widgets":[{"kind":"states"}]}}`,
-			"a preset name smuggled inside the board"},
-	} {
-		res, err := ts.Client().Post(ts.URL+"/api/settings/shares", "application/json",
-			strings.NewReader(bad.body))
-		if err != nil {
-			t.Fatal(err)
-		}
-		body, _ := io.ReadAll(res.Body)
-		res.Body.Close()
-		if res.StatusCode != http.StatusBadRequest {
-			t.Errorf("%s = %d, want 400 (%s): %s", bad.body, res.StatusCode, bad.why, body)
-		}
-	}
-
-	// And a board that is entirely within the vocabulary is accepted, so the
-	// loop above is not passing because everything is refused.
-	link := newShare(t, ts,
-		`{"name":"w","board":{"rotate":20,"widgets":[`+
-			`{"kind":"bignumber","metric":"waiting","span":2,"page":0},`+
-			`{"kind":"spendsplit","by":"model","span":2,"page":1},`+
-			`{"kind":"caption","text":"team A","span":4,"page":1}]}}`)
-	if link.Token == "" {
-		t.Fatal("a valid board was refused")
-	}
-}
-
-// The read path drops what it cannot render, and never repairs it.
-//
-// A row can hold a board this build does not understand: written by a newer
-// release, edited by hand, half-written. The dashboard has nobody standing at
-// it, so it must keep working — but an unknown kind must never be resolved to
-// a known one, because that is a stored string choosing a code path.
-func TestAStoredBoardIsRevalidatedOnTheWayOut(t *testing.T) {
-	ts, srv := newTestServer(t)
-	link := newShare(t, ts, `{"name":"wall","preset":"single"}`)
-
-	// Straight into the column, past every check the API makes.
-	if _, err := srv.DB.SQL().ExecContext(context.Background(),
-		`UPDATE share_links SET board = ? WHERE id = ?`,
-		`{"preset":"nonsense","widgets":[{"kind":"states","span":2},`+
-			`{"kind":"exec","span":4},{"kind":"bignumber","metric":"$(whoami)"}]}`,
-		link.ID); err != nil {
-		t.Fatal(err)
-	}
-
-	_, body := shareGET(t, ts, link.Token)
-	got := decodeDashboard(t, body)
-	if len(got.Board.Widgets) != 1 || got.Board.Widgets[0].Kind != "states" {
-		t.Errorf("the board came back as %+v; the two unrenderable widgets should have been "+
-			"dropped and the one good one kept", got.Board.Widgets)
-	}
-	if got.Board.Preset != "" {
-		t.Errorf("preset = %q, want empty: an unknown preset name is not a preset",
-			got.Board.Preset)
-	}
-	if strings.Contains(string(body), "whoami") || strings.Contains(string(body), `"exec"`) {
-		t.Errorf("a widget nothing renders reached the client:\n%s", body)
-	}
-
-	// And a column that is not JSON at all still leaves a working screen.
-	if _, err := srv.DB.SQL().ExecContext(context.Background(),
-		`UPDATE share_links SET board = ? WHERE id = ?`, `{{{`, link.ID); err != nil {
-		t.Fatal(err)
-	}
-	res, body := shareGET(t, ts, link.Token)
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("a corrupt board answered %d; a wall display goes dark: %s", res.StatusCode, body)
-	}
-	if len(decodeDashboard(t, body).Board.Widgets) == 0 {
-		t.Error("a corrupt board rendered nothing at all")
-	}
-}
-
-// A board narrows what a link discloses and can never widen it.
-//
-// The two halves matter separately. A board with no spend widget must not carry
-// the spend section — that is the narrowing. And the widest board possible must
-// still carry nothing beyond the fixed structs — that is the ceiling, and it is
-// the half that would fail if somebody added a widget that named a field.
-func TestABoardCanOnlyNarrowWhatALinkDiscloses(t *testing.T) {
+// The two halves matter separately. A page with no spend section must not carry
+// the spend section -- that is the narrowing. And the widest manifest possible
+// must still carry nothing beyond the fixed structs -- that is the ceiling, and
+// it is the half that would fail if somebody added a manifest option that named
+// a field.
+func TestAPageCanOnlyNarrowWhatALinkDiscloses(t *testing.T) {
 	ts, _ := newTestServer(t)
 	project := postJSON[store.Project](t, ts, "/api/projects",
 		`{"path":"`+t.TempDir()+`","name":"test"}`)
 	postJSON[store.Session](t, ts, "/api/sessions", `{"projectId":"`+project.ID+`","command":[]}`)
 
-	narrow := newShare(t, ts, `{"name":"one","board":{"widgets":[`+
-		`{"kind":"bignumber","metric":"waiting"}]}}`)
+	narrow := shareOn(t, ts, `{"sdk":1,"name":"One","sections":[]}`, `{"name":"one"}`)
 	_, body := shareGET(t, ts, narrow.Token)
-	got := decodeDashboard(t, body)
-	if got.Spend != nil {
-		t.Error("a board showing one count carries the whole spend section")
+	got := decodeSnapshot(t, body)
+	for name, present := range map[string]bool{
+		"spend": got.Spend != nil, "todos": got.Todos != nil, "trend": got.Trend != nil,
+		"flow": got.Flow != nil, "feed": got.Feed != nil, "repo": got.Repo != nil,
+		"sessions": len(got.Sessions) != 0,
+	} {
+		if present {
+			t.Errorf("a page asking for no sections carries %s:\n%s", name, body)
+		}
 	}
-	if got.Todos != nil {
-		t.Error("a board showing one count carries the checklists")
-	}
-	if len(got.Sessions) != 0 {
-		t.Errorf("a board showing one count carries %d session rows", len(got.Sessions))
+	if len(got.Sections) != 0 {
+		t.Errorf("sections = %v, want none", got.Sections)
 	}
 	if got.Counts.Sessions != 1 {
 		t.Error("the count itself is missing, so the narrowing took the number too")
 	}
 
-	// The widest board there is. Every section arrives, and nothing else does.
-	wide := newShare(t, ts, `{"name":"all","board":{"widgets":[`+
-		`{"kind":"sessionlist"},{"kind":"todos"},{"kind":"spendtotals"},`+
-		`{"kind":"spendheatmap"},{"kind":"spendsplit","by":"project"},`+
-		`{"kind":"spendsplit","by":"model"},{"kind":"spendsplit","by":"tool"},`+
-		`{"kind":"spendbars","by":"month"},{"kind":"spendbars","by":"day"}]}}`)
+	// The widest page there is. Every section arrives, and nothing else does.
+	wide := newShare(t, ts, `{"name":"all"}`)
 	_, wideBody := shareGET(t, ts, wide.Token)
-	wideGot := decodeDashboard(t, wideBody)
-	if wideGot.Spend == nil || wideGot.Todos == nil {
-		t.Fatal("the widest board did not get the sections it asked for")
+	wideGot := decodeSnapshot(t, wideBody)
+	if wideGot.Spend == nil || wideGot.Todos == nil || wideGot.Flow == nil ||
+		wideGot.Feed == nil || wideGot.Repo == nil || wideGot.Trend == nil || len(wideGot.Sessions) == 0 {
+		t.Fatalf("the widest page did not get the sections it asked for:\n%s", wideBody)
 	}
 	for _, key := range []string{`"path"`, `"cwd"`, `"command"`, `"tmuxName"`, `"diskPath"`,
-		`"agentSession"`, `"scopeId"`} {
+		`"agentSession"`, `"scopeId"`, `"board"`, `"locked"`} {
 		if strings.Contains(string(wideBody), key) {
-			t.Errorf("the widest board carries a %s field:\n%s", key, wideBody)
+			t.Errorf("the widest page carries a %s field:\n%s", key, wideBody)
 		}
+	}
+}
+
+// A link draws a page. There is no other thing for it to draw, so a request
+// that names none is a mistake worth a 400 rather than a link that shows nothing.
+func TestALinkCannotBeMadeWithoutAPage(t *testing.T) {
+	ts, _ := newTestServer(t)
+	for _, body := range []string{
+		`{"name":"wall"}`,
+		`{"name":"wall","pageId":""}`,
+		`{"name":"wall","pageId":"no-such-page"}`,
+		`{"name":"wall","preset":"attention"}`,
+	} {
+		status, out := callJSON(t, ts, http.MethodPost, "/api/settings/shares", body)
+		if status != http.StatusBadRequest {
+			t.Errorf("%s = %d, want 400: %s", body, status, out)
+		}
+	}
+	if links := listShares(t, ts); len(links) != 0 {
+		t.Errorf("%d links were stored by refused requests", len(links))
+	}
+
+	// Nor can an existing link be pointed at nothing afterwards.
+	link := newShare(t, ts, `{"name":"wall"}`)
+	if status, out := callJSON(t, ts, http.MethodPut, "/api/settings/shares/"+link.ID+"/page",
+		`{"pageId":""}`); status != http.StatusBadRequest {
+		t.Errorf("pointing a link at no page = %d, want 400: %s", status, out)
+	}
+	if status, _ := anonGET(t, ts, "/share/"+link.Token+"/"); status.StatusCode != http.StatusOK {
+		t.Errorf("after a refused re-point the link's page = %d", status.StatusCode)
 	}
 }
 
@@ -989,7 +970,7 @@ func TestABoardCanOnlyNarrowWhatALinkDiscloses(t *testing.T) {
 // date. It is the one piece of user text neither detail mode offers, so this
 // asserts it in both -- an assertion about `counts` alone would pass on a
 // server that disclosed every item under `names`.
-func TestTheDashboardCountsTodosAndNeverQuotesThem(t *testing.T) {
+func TestTheSnapshotCountsTodosAndNeverQuotesThem(t *testing.T) {
 	ts, _ := newTestServer(t)
 	project := postJSON[store.Project](t, ts, "/api/projects",
 		`{"path":"`+t.TempDir()+`","name":"test"}`)
@@ -999,14 +980,14 @@ func TestTheDashboardCountsTodosAndNeverQuotesThem(t *testing.T) {
 		`{"text":"email legal about the acme contract"}`)
 
 	for _, detail := range []string{"counts", "names"} {
-		link := newShare(t, ts, `{"name":"w","detail":"`+detail+`","board":{"widgets":[`+
-			`{"kind":"todos"}]}}`)
+		link := shareOn(t, ts, `{"sdk":1,"name":"Todos","sections":["todos"]}`,
+			`{"name":"w","detail":"`+detail+`"}`)
 		_, body := shareGET(t, ts, link.Token)
 		if strings.Contains(string(body), "production keys") ||
 			strings.Contains(string(body), "acme contract") {
 			t.Errorf("%s mode quotes a todo item:\n%s", detail, body)
 		}
-		got := decodeDashboard(t, body)
+		got := decodeSnapshot(t, body)
 		if got.Todos == nil || got.Todos.Open != 2 {
 			t.Errorf("%s mode counted %+v, want two open items", detail, got.Todos)
 		}
@@ -1034,10 +1015,10 @@ func TestAScopedLinkSeesOnlyWhatItIsScopedTo(t *testing.T) {
 	one := postJSON[store.Session](t, ts, "/api/sessions",
 		`{"projectId":"`+mine.ID+`","title":"the one thing","command":[]}`)
 
-	byProject := newShare(t, ts, `{"name":"p","detail":"names","scope":"project","scopeId":"`+
-		mine.ID+`","board":{"widgets":[{"kind":"sessionlist"}]}}`)
+	byProject := shareOn(t, ts, sessionsManifest, `{"name":"p","detail":"names","scope":"project","scopeId":"`+
+		mine.ID+`"}`)
 	_, body := shareGET(t, ts, byProject.Token)
-	got := decodeDashboard(t, body)
+	got := decodeSnapshot(t, body)
 	if len(got.Sessions) != 2 || got.Counts.Sessions != 2 {
 		t.Errorf("a project-scoped link saw %d rows and counted %d, want 2 and 2",
 			len(got.Sessions), got.Counts.Sessions)
@@ -1049,10 +1030,10 @@ func TestAScopedLinkSeesOnlyWhatItIsScopedTo(t *testing.T) {
 		t.Errorf("scopeName = %q, want the project's name under names", got.ScopeName)
 	}
 
-	bySession := newShare(t, ts, `{"name":"s","detail":"names","scope":"session","scopeId":"`+
-		one.ID+`","board":{"widgets":[{"kind":"sessionlist"}]}}`)
+	bySession := shareOn(t, ts, sessionsManifest, `{"name":"s","detail":"names","scope":"session","scopeId":"`+
+		one.ID+`"}`)
 	_, sbody := shareGET(t, ts, bySession.Token)
-	sgot := decodeDashboard(t, sbody)
+	sgot := decodeSnapshot(t, sbody)
 	if len(sgot.Sessions) != 1 || sgot.Sessions[0].Name != "the one thing" {
 		t.Errorf("a session-scoped link saw %d rows: %+v", len(sgot.Sessions), sgot.Sessions)
 	}
@@ -1061,7 +1042,9 @@ func TestAScopedLinkSeesOnlyWhatItIsScopedTo(t *testing.T) {
 	}
 
 	// The scope is not a name the counts mode leaks either.
-	quiet := newShare(t, ts, `{"name":"p","scope":"project","scopeId":"`+mine.ID+`"}`)
+	// On a page of sessions alone: the widest one carries "hoursToday", which
+	// would find "ours" in a body that names nothing.
+	quiet := shareOn(t, ts, sessionsManifest, `{"name":"p","scope":"project","scopeId":"`+mine.ID+`"}`)
 	_, qbody := shareGET(t, ts, quiet.Token)
 	if strings.Contains(string(qbody), "ours") || strings.Contains(string(qbody), mine.ID) {
 		t.Errorf("a counts-mode scoped link named its project:\n%s", qbody)
@@ -1089,9 +1072,8 @@ func TestAScopedLinkWhoseTargetIsGoneShowsNothing(t *testing.T) {
 	// transcripts, so every total is zero whether or not the scope was applied.
 	seedUsage(t, srv, other.Path, 4242)
 
-	link := newShare(t, ts, `{"name":"p","detail":"names","scope":"project","scopeId":"`+
-		doomed.ID+`","board":{"widgets":[{"kind":"sessionlist"},{"kind":"spendtotals"},`+
-		`{"kind":"todos"}]}}`)
+	link := shareOn(t, ts, `{"sdk":1,"name":"P","sections":["sessions","spend","todos"]}`,
+		`{"name":"p","detail":"names","scope":"project","scopeId":"`+doomed.ID+`"}`)
 
 	req, err := http.NewRequest(http.MethodDelete, ts.URL+"/api/projects/"+doomed.ID, nil)
 	if err != nil {
@@ -1104,7 +1086,7 @@ func TestAScopedLinkWhoseTargetIsGoneShowsNothing(t *testing.T) {
 	res.Body.Close()
 
 	_, body := shareGET(t, ts, link.Token)
-	got := decodeDashboard(t, body)
+	got := decodeSnapshot(t, body)
 	if got.Counts.Sessions != 0 || len(got.Sessions) != 0 {
 		t.Errorf("a link scoped to a deleted project shows %d sessions; it has fallen back "+
 			"to the whole panel:\n%s", got.Counts.Sessions, body)
@@ -1113,7 +1095,7 @@ func TestAScopedLinkWhoseTargetIsGoneShowsNothing(t *testing.T) {
 		t.Errorf("a link scoped to a deleted project discloses another project:\n%s", body)
 	}
 	if got.Spend == nil {
-		t.Fatal("the board asked for spend and got none at all")
+		t.Fatal("the page asked for spend and got none at all")
 	}
 	if got.Spend.Window.Total != 0 || got.Spend.Today.Total != 0 {
 		t.Errorf("a link scoped to a deleted project reports %d tokens; an empty scope "+
@@ -1141,8 +1123,8 @@ func TestAScopedLinkWithNoTargetShowsNothing(t *testing.T) {
 		`{"projectId":"`+project.ID+`","title":"private work","command":[]}`)
 	seedUsage(t, srv, project.Path, 9999)
 
-	link := newShare(t, ts, `{"name":"p","detail":"names","board":{"widgets":[`+
-		`{"kind":"sessionlist"},{"kind":"spendtotals"},{"kind":"todos"}]}}`)
+	link := shareOn(t, ts, `{"sdk":1,"name":"P","sections":["sessions","spend","todos"]}`,
+		`{"name":"p","detail":"names"}`)
 	// Straight into the column: scope set, nothing for it to point at.
 	if _, err := srv.DB.SQL().ExecContext(context.Background(),
 		`UPDATE share_links SET scope = 'project', scope_id = '' WHERE id = ?`,
@@ -1151,7 +1133,7 @@ func TestAScopedLinkWithNoTargetShowsNothing(t *testing.T) {
 	}
 
 	_, body := shareGET(t, ts, link.Token)
-	got := decodeDashboard(t, body)
+	got := decodeSnapshot(t, body)
 	if got.Counts.Sessions != 0 || len(got.Sessions) != 0 {
 		t.Errorf("a scope pointing at nothing showed %d sessions:\n%s",
 			got.Counts.Sessions, body)
@@ -1160,7 +1142,7 @@ func TestAScopedLinkWithNoTargetShowsNothing(t *testing.T) {
 		t.Errorf("a scope pointing at nothing disclosed a session:\n%s", body)
 	}
 	if got.Spend == nil {
-		t.Fatal("the board asked for spend and got none at all")
+		t.Fatal("the page asked for spend and got none at all")
 	}
 	if got.Spend.Window.Total != 0 {
 		t.Errorf("a scope pointing at nothing reported %d tokens", got.Spend.Window.Total)
@@ -1198,6 +1180,9 @@ func seedUsage(t *testing.T, srv *Server, cwd string, tokens int64) {
 // A scope is checked when it is made, not left to fail quietly forever.
 func TestShareCreationRefusesAScopeThatNamesNothing(t *testing.T) {
 	ts, _ := newTestServer(t)
+	// On a real page, so what refuses each of these is the scope and not a
+	// missing page.
+	page := newPublishedPage(t, ts, sessionsManifest, nil)
 	for _, body := range []string{
 		`{"name":"w","scope":"project","scopeId":"no-such-project"}`,
 		`{"name":"w","scope":"session","scopeId":"no-such-session"}`,
@@ -1205,6 +1190,7 @@ func TestShareCreationRefusesAScopeThatNamesNothing(t *testing.T) {
 		`{"name":"w","scope":"project"}`,
 		`{"name":"w","scopeId":"dangling"}`,
 	} {
+		body = `{"pageId":"` + page.page.ID + `",` + strings.TrimPrefix(body, "{")
 		res, err := ts.Client().Post(ts.URL+"/api/settings/shares", "application/json",
 			strings.NewReader(body))
 		if err != nil {
@@ -1219,61 +1205,48 @@ func TestShareCreationRefusesAScopeThatNamesNothing(t *testing.T) {
 
 // ─── editing an existing link ──────────────────────────────────────────────
 
-// A board can be rearranged afterwards; what the link may say cannot.
+// A link can be renamed and relabelled afterwards; what it may say cannot.
 //
 // By the time anybody edits a link its URL is in an email or typed into a
-// television. Rearranging the board cannot disclose anything the link did not
-// already carry. Changing `detail` or `scope` can, and the people holding the
-// address would never see it happen -- so those two are fixed at creation, and
-// a request that tries is ignored rather than obeyed.
-func TestEditingALinkChangesItsBoardAndNothingElse(t *testing.T) {
+// television. A name or a remark discloses nothing the link did not already
+// carry. Changing `detail` or `scope` can, and the people holding the address
+// would never see it happen -- so those two are fixed at creation, and a
+// request that tries is refused rather than obeyed.
+func TestEditingALinkChangesItsNameAndNothingElse(t *testing.T) {
 	ts, _ := newTestServer(t)
 	project := postJSON[store.Project](t, ts, "/api/projects",
 		`{"path":"`+t.TempDir()+`","name":"secret project"}`)
 	postJSON[store.Session](t, ts, "/api/sessions",
 		`{"projectId":"`+project.ID+`","title":"secret work","command":[]}`)
 
-	link := newShare(t, ts, `{"name":"wall","detail":"counts","preset":"single"}`)
+	link := newShare(t, ts, `{"name":"wall","detail":"counts"}`)
 
-	patch := func(body string) int {
-		req, err := http.NewRequest(http.MethodPatch,
-			ts.URL+"/api/settings/shares/"+link.ID, strings.NewReader(body))
-		if err != nil {
-			t.Fatal(err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		res, err := ts.Client().Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		res.Body.Close()
-		return res.StatusCode
-	}
-
-	if code := patch(`{"name":"the wall","board":{"widgets":[{"kind":"sessionlist"}]}}`); code !=
+	if code := patchShare(t, ts, link.ID, `{"name":"the wall","remark":"lobby"}`); code !=
 		http.StatusNoContent {
 		t.Fatalf("PATCH = %d, want 204", code)
 	}
 	_, body := shareGET(t, ts, link.Token)
-	got := decodeDashboard(t, body)
-	if got.Name != "the wall" || len(got.Board.Widgets) != 1 ||
-		got.Board.Widgets[0].Kind != "sessionlist" {
-		t.Errorf("the edit did not take: name %q, board %+v", got.Name, got.Board.Widgets)
+	got := decodeSnapshot(t, body)
+	if got.Name != "the wall" || got.Remark != "lobby" {
+		t.Errorf("the edit did not take: name %q, remark %q", got.Name, got.Remark)
 	}
 
 	// The fields that would widen it, sent anyway. Refused outright rather than
 	// ignored: decode() disallows unknown fields, so a client asking for
 	// something the edit surface does not offer is told so instead of getting a
 	// 204 that quietly did less than it asked for.
-	if code := patch(`{"name":"the wall","detail":"names","scope":"project","scopeId":"` +
-		project.ID + `","board":{"widgets":[{"kind":"sessionlist"}]}}`); code !=
-		http.StatusBadRequest {
-		t.Fatalf("PATCH carrying detail and scope = %d, want 400: the edit surface has grown "+
-			"the two fields that widen what a link somebody is already holding discloses",
-			code)
+	for _, wider := range []string{
+		`{"name":"the wall","detail":"names"}`,
+		`{"name":"the wall","scope":"project","scopeId":"` + project.ID + `"}`,
+		`{"name":"the wall","board":{"widgets":[{"kind":"sessionlist"}]}}`,
+	} {
+		if code := patchShare(t, ts, link.ID, wider); code != http.StatusBadRequest {
+			t.Errorf("PATCH %s = %d, want 400: the edit surface has grown a field that "+
+				"changes what a link somebody is already holding shows", wider, code)
+		}
 	}
 	_, body = shareGET(t, ts, link.Token)
-	got = decodeDashboard(t, body)
+	got = decodeSnapshot(t, body)
 	if got.Detail != "counts" {
 		t.Errorf("detail became %q through an edit; a link somebody is already holding "+
 			"started using names", got.Detail)
@@ -1286,13 +1259,12 @@ func TestEditingALinkChangesItsBoardAndNothingElse(t *testing.T) {
 		t.Errorf("an edit widened what the link discloses:\n%s", body)
 	}
 
-	// And a board that is not a board is refused rather than stored.
-	if code := patch(`{"name":"x","board":{"widgets":[{"kind":"nonsense"}]}}`); code !=
-		http.StatusBadRequest {
-		t.Errorf("PATCH with an unknown widget = %d, want 400", code)
+	// An empty name keeps the one it had rather than blanking a heading.
+	if code := patchShare(t, ts, link.ID, `{"name":""}`); code != http.StatusNoContent {
+		t.Fatalf("PATCH with no name = %d, want 204", code)
 	}
-	if code := patch(`{"name":"x"}`); code != http.StatusBadRequest {
-		t.Errorf("PATCH with no board = %d, want 400", code)
+	if _, body := shareGET(t, ts, link.Token); decodeSnapshot(t, body).Name != "the wall" {
+		t.Error("an edit with no name blanked the link's name")
 	}
 }
 
@@ -1301,7 +1273,7 @@ func TestEditingAShareLinkIsAudited(t *testing.T) {
 	ts, srv := newTestServer(t)
 	link := newShare(t, ts, `{"name":"wall"}`)
 	req, err := http.NewRequest(http.MethodPatch, ts.URL+"/api/settings/shares/"+link.ID,
-		strings.NewReader(`{"name":"wall","board":{"widgets":[{"kind":"states"}]}}`))
+		strings.NewReader(`{"name":"wall"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1322,146 +1294,4 @@ func TestEditingAShareLinkIsAudited(t *testing.T) {
 		}
 	}
 	t.Error("nothing recorded share.updated")
-}
-
-// The catalogue is a settings route, not a share one.
-//
-// It lists every widget and preset the panel offers, which is harmless in
-// itself -- and is exactly the kind of endpoint that gets mounted next to the
-// dashboard because it is "just a list". One GET below requireShareToken, still.
-func TestTheBoardCatalogueNeedsASessionAndIsNotOnTheShareSurface(t *testing.T) {
-	ts, _ := newTestServer(t)
-	link := newShare(t, ts, `{"name":"wall"}`)
-
-	res, err := ts.Client().Get(ts.URL + "/api/settings/shares/catalogue")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(res.Body)
-	res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("signed in = %d, want 200", res.StatusCode)
-	}
-	var cat shareCatalogue
-	if err := json.Unmarshal(body, &cat); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(cat.Presets) < 10 {
-		t.Errorf("%d presets; the point of the catalogue is that there are many",
-			len(cat.Presets))
-	}
-	if len(cat.Widgets) != len(store.KnownWidgetKinds()) {
-		t.Errorf("the catalogue lists %d widget kinds and the registry has %d",
-			len(cat.Widgets), len(store.KnownWidgetKinds()))
-	}
-
-	anon := anonymousClient(t)
-	for _, how := range []string{"bearer", "cookie", "none"} {
-		req, err := http.NewRequest(http.MethodGet,
-			ts.URL+"/api/settings/shares/catalogue", nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		switch how {
-		case "bearer":
-			req.Header.Set("Authorization", "Bearer "+link.Token)
-		case "cookie":
-			req.Header.Set("Cookie", "vibepanel_session="+link.Token)
-		}
-		r, err := anon.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		r.Body.Close()
-		if r.StatusCode != http.StatusUnauthorized {
-			t.Errorf("the catalogue with %s = %d, want 401", how, r.StatusCode)
-		}
-	}
-
-	// And it is not reachable under the share token's own prefix.
-	r, err := anon.Get(ts.URL + "/api/share/" + link.Token + "/catalogue")
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.Body.Close()
-	if r.StatusCode == http.StatusOK {
-		t.Error("the catalogue is mounted on the share surface")
-	}
-}
-
-// Every preset in the catalogue is a board the validator accepts.
-//
-// A preset that does not validate is one the settings page offers and the
-// server then refuses, and the person who finds out is the one who pressed the
-// button. Cheap to check and impossible to notice by reading.
-func TestEveryPresetIsAValidBoard(t *testing.T) {
-	for _, p := range store.Presets() {
-		board, ok := store.PresetBoard(p.ID)
-		if !ok {
-			t.Fatalf("PresetBoard(%q) is not a preset, but Presets() listed it", p.ID)
-		}
-		if _, err := store.ValidateBoard(board); err != nil {
-			t.Errorf("preset %q does not validate: %v", p.ID, err)
-		}
-	}
-}
-
-// The vocabulary a board is built from has to be sayable in both languages.
-//
-// The strings are the server's: widget kinds, presets, metrics, filters,
-// orders, groups and dimensions all come out of internal/store, so the frontend
-// cannot type-check them and the untranslated-string test cannot see them -- it
-// reads .tsx files and these are ids in a .go one. A kind added without a
-// dictionary entry renders as its own identifier on a wall.
-func TestEveryBoardWordHasBothLanguages(t *testing.T) {
-	const path = "../../web/src/i18n.ts"
-	src, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("cannot read %s, so nothing was compared: %v", path, err)
-	}
-	dict := string(src)
-
-	want := map[string]bool{}
-	for _, kind := range store.KnownWidgetKinds() {
-		want["board.kind."+kind] = true
-		spec, _ := store.WidgetOptions(kind)
-		for _, m := range spec.Metrics {
-			want["board.metric."+m] = true
-		}
-		for _, f := range spec.Filters {
-			want["board.filter."+f] = true
-		}
-		for _, o := range spec.Orders {
-			want["board.order."+o] = true
-		}
-		for _, g := range spec.Groups {
-			want["board.group."+g] = true
-		}
-		for _, b := range spec.Bys {
-			want["board.by."+b] = true
-		}
-	}
-	for _, p := range store.Presets() {
-		want["board.preset."+p.ID] = true
-		want["board.presetWhy."+p.ID] = true
-		want["board.audience."+p.Audience] = true
-	}
-	if len(want) < 40 {
-		t.Fatalf("only %d words collected; the registry reader has stopped reading", len(want))
-	}
-
-	var missing []string
-	for key := range want {
-		// The dictionary keeps both languages on one line per key, so finding
-		// the key finds both -- which is the property that makes a missing
-		// translation impossible to introduce by editing one file.
-		if !strings.Contains(dict, "'"+key+"'") {
-			missing = append(missing, key)
-		}
-	}
-	sort.Strings(missing)
-	if len(missing) > 0 {
-		t.Errorf("%s has no entry for %v. These are ids the server owns; without a "+
-			"dictionary entry the dashboard renders the identifier itself.", path, missing)
-	}
 }

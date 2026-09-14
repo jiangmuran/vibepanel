@@ -65,31 +65,23 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		{"FileListing", browse.Listing{}},
 		{"SystemSample", sysmon.Sample{}},
 		{"Passkey", store.Credential{}},
-		// The share-link surface. The dashboard one matters more than most:
-		// this struct is the definition of what a read-only link discloses,
-		// and a field the server sends that wire.ts does not declare is a
-		// field nobody reviewing the TypeScript would know had been added.
 		// Launch profiles. The one row in the panel that can hold somebody
 		// else's credential, so a field this side sends and wire.ts does not
 		// declare is a field nobody reviewing the TypeScript would know had
 		// started leaving the machine.
 		{"LaunchProfile", store.LaunchProfile{}},
 		{"LaunchEnvVar", store.LaunchEnvVar{}},
+		// The share-link surface. The sections are the definition of what a
+		// read-only link discloses, and a field the server sends that wire.ts
+		// does not declare is a field nobody reviewing the TypeScript would
+		// know had been added. The snapshot around them is pinned to
+		// vibepanel.d.ts by TestTheSDKTypesMatchTheSnapshot instead.
 		{"ShareLink", store.ShareLink{}},
-		{"ShareDashboard", shareDashboard{}},
 		{"ShareMachine", shareMachine{}},
 		{"ShareCounts", shareCounts{}},
 		{"ShareProject", shareProject{}},
 		{"ShareSession", shareSession{}},
-		// Boards. The dashboard draws these and nothing else, so a field the
-		// server stopped sending is a widget that renders blank on a wall with
-		// nobody in front of it to notice.
-		{"ShareBoard", store.Board{}},
-		{"ShareWidget", store.Widget{}},
-		{"ShareWidgetSpec", store.WidgetSpec{}},
-		{"SharePreset", store.Preset{}},
-		{"ShareCatalogue", shareCatalogue{}},
-		// The two sections that were added when the board turned out to be
+		// The two sections that were added when a wall turned out to be
 		// empty because the panel had no history. Pinned for the same reason
 		// everything else here is, with one extra: the repository half is the
 		// part of this surface that reads somebody's working tree, so a field
@@ -362,6 +354,11 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"page.created":     true,
 		"page.published":   true,
 		"page.rolled_back": true,
+		// A page's directory written back from its published version.
+		"page.restored": true,
+		// A link a build with boards handed out, pointed at a page at startup.
+		// No user and no address: nobody asked, the upgrade did.
+		"share.converted":  true,
 		"page.moved":       true,
 		"page.deleted":     true,
 		"token.created":    true,

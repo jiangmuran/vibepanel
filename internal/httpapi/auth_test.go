@@ -66,17 +66,18 @@ var openRoutes = map[string]string{
 	// back on -- which is exactly why this needs saying here.
 	"/preview/{token}/":  "the token in the path is the capability; see preview.go",
 	"/preview/{token}/*": "the same route, with a path under it",
-	// A share page's files. For a token that resolves to nothing, or to a
-	// board, these answer with the SPA -- exactly what the catch-all answered
-	// at this path before pages existed, and the SPA is served to strangers on
-	// purpose. For a page link the token is the capability, sandboxed the way
-	// the preview above is; TestAShareTokenReachesOnlyTheseRoutes and
-	// TestEveryFileOfAPageIsServedInsideTheSandbox stand over that half.
-	"/share/{token}":   "an unknown token is the SPA; a page link's token is the capability, see sharepage.go",
+	// A share page's files. For a token that resolves to nothing, or to a link
+	// that draws no page, these answer with a static page saying the link no
+	// longer works -- no script, nothing of the panel's. For a page link the
+	// token is the capability, sandboxed the way the preview above is;
+	// TestAShareTokenReachesOnlyTheseRoutes,
+	// TestEveryFileOfAPageIsServedInsideTheSandbox and
+	// TestALinkThatDrawsNothingSaysSoAndIsNeverThePanel stand over it.
+	"/share/{token}":   "an unknown token is a static gone page; a page link's token is the capability, see sharepage.go",
 	"/share/{token}/*": "the same route, with a path under it",
 }
 
-// `/api/share/{token}/dashboard` is deliberately NOT in the list above, and the
+// `/api/share/{token}/v1/snapshot` is deliberately NOT in the list above, and the
 // reason is worth a paragraph because it looks like an omission.
 //
 // A stranger holding a share link can reach it, so by the letter of the comment
@@ -87,7 +88,7 @@ var openRoutes = map[string]string{
 // route that most needs a test standing over it.
 //
 // What that check proves is narrow: without a valid capability, this is not a
-// way in. That a valid capability reaches the dashboard and nothing else is
+// way in. That a valid capability reaches the snapshot and nothing else is
 // share_test.go's job, and it presents the token as a cookie and as a Bearer
 // header against nine routes and the socket to prove it.
 

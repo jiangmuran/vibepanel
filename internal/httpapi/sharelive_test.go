@@ -16,9 +16,9 @@ import (
 // The half of a share link that is about a screen on a wall.
 //
 // Everything here exists because of one sentence: nobody is standing at the
-// television, so the board has to be changeable from somewhere else and the
+// television, so what it shows has to be changeable from somewhere else and the
 // change has to arrive without anybody touching the screen. The tests are
-// arranged around what that must not cost — the share surface is still one GET,
+// arranged around what that must not cost — the share surface is still GETs,
 // the payload is still what the redaction says it is, and nothing a viewer
 // sends decides anything.
 
@@ -39,16 +39,16 @@ func patchShare(t *testing.T, ts *httptest.Server, id, body string) int {
 	return res.StatusCode
 }
 
-// shareGETAs fetches the dashboard the way one particular screen does.
+// shareGETAs fetches the snapshot the way one particular screen does.
 func shareGETAs(t *testing.T, ts *httptest.Server, token, viewer string, w, h int) []byte {
 	t.Helper()
-	url := ts.URL + "/api/share/" + token + "/dashboard?v=" + viewer
+	url := ts.URL + "/api/share/" + token + "/v1/snapshot?v=" + viewer
 	if w > 0 || h > 0 {
 		url += "&w=" + itoa(w) + "&h=" + itoa(h)
 	}
 	res, err := anonymousClient(t).Get(url)
 	if err != nil {
-		t.Fatalf("GET dashboard: %v", err)
+		t.Fatalf("GET snapshot: %v", err)
 	}
 	defer res.Body.Close()
 	body, err := io.ReadAll(res.Body)
@@ -56,7 +56,7 @@ func shareGETAs(t *testing.T, ts *httptest.Server, token, viewer string, w, h in
 		t.Fatal(err)
 	}
 	if res.StatusCode != http.StatusOK {
-		t.Fatalf("GET dashboard = %d: %s", res.StatusCode, body)
+		t.Fatalf("GET snapshot = %d: %s", res.StatusCode, body)
 	}
 	return body
 }
@@ -83,43 +83,59 @@ func listShares(t *testing.T, ts *httptest.Server) []store.ShareLink {
 	return out
 }
 
+// lockedOf reads whether a link is locked from the owner's listing, which is
+// the only place it is said: the screen has nothing to do with it.
+func lockedOf(t *testing.T, ts *httptest.Server, id string) bool {
+	t.Helper()
+	for _, l := range listShares(t, ts) {
+		if l.ID == id {
+			return l.Locked
+		}
+	}
+	t.Fatalf("link %s is not listed", id)
+	return false
+}
+
 // The whole feature, from the owner's side to the wall's, in one pass.
 //
-// This is the test the work exists for: an owner edits a board from a
-// signed-in client and the screen shows the new one without anybody touching
-// it. Break the live path -- cache the row in the middleware, serve the board
-// from a snapshot taken at startup, move the read out of the poll -- and this
-// is what says so.
+// This is the test the work exists for: an owner changes a screen from a
+// signed-in client and the screen shows it without anybody touching it. Break
+// the live path -- cache the row in the middleware, serve the link's words from
+// the snapshot memo, move the read out of the poll -- and this is what says so.
 func TestAnOwnersEditReachesAnOpenScreenOnItsNextPoll(t *testing.T) {
 	ts, _ := newTestServer(t)
-	link := newShare(t, ts, `{"name":"wall","detail":"counts","preset":"single"}`)
+	link := newShare(t, ts, `{"name":"wall","detail":"counts"}`)
 
-	first := decodeDashboard(t, shareGETAs(t, ts, link.Token, "aa11", 3840, 2160))
-	if len(first.Board.Widgets) != 1 || first.Board.Widgets[0].Kind != "bignumber" {
-		t.Fatalf("the link did not open its preset: %+v", first.Board.Widgets)
+	first := decodeSnapshot(t, shareGETAs(t, ts, link.Token, "aa11", 3840, 2160))
+	if first.Remark != "" || lockedOf(t, ts, link.ID) {
+		t.Fatalf("a new link is not blank: remark %q", first.Remark)
 	}
-	if first.Remark != "" || first.Locked {
-		t.Fatalf("a new link is not blank: remark %q locked %v", first.Remark, first.Locked)
+	if first.Page == nil {
+		t.Fatal("the link draws no page")
 	}
 
-	if code := patchShare(t, ts, link.ID,
-		`{"name":"wall","remark":"meeting room three",`+
-			`"board":{"grid":12,"fill":true,"widgets":[{"kind":"statebar","span":12}]}}`); code !=
+	if code := patchShare(t, ts, link.ID, `{"name":"lobby","remark":"meeting room three"}`); code !=
 		http.StatusNoContent {
 		t.Fatalf("PATCH = %d, want 204", code)
 	}
 
 	// No reload, no socket, no second request shape: the same poll the screen
-	// was already making.
-	after := decodeDashboard(t, shareGETAs(t, ts, link.Token, "aa11", 3840, 2160))
-	if after.Remark != "meeting room three" {
-		t.Errorf("remark = %q; the owner's label did not reach the screen", after.Remark)
+	// was already making, inside the snapshot memo's second.
+	after := decodeSnapshot(t, shareGETAs(t, ts, link.Token, "aa11", 3840, 2160))
+	if after.Remark != "meeting room three" || after.Name != "lobby" {
+		t.Errorf("name %q remark %q; the owner's edit did not reach the screen", after.Name, after.Remark)
 	}
-	if len(after.Board.Widgets) != 1 || after.Board.Widgets[0].Kind != "statebar" {
-		t.Errorf("board = %+v; the owner's edit did not reach the screen", after.Board.Widgets)
+
+	// And what it draws: pointed at another page, the next poll names it, which
+	// is the SDK's cue to reload.
+	other := newPublishedPage(t, ts, sessionsManifest, nil)
+	if status, out := callJSON(t, ts, http.MethodPut, "/api/settings/shares/"+link.ID+"/page",
+		`{"pageId":"`+other.page.ID+`"}`); status != http.StatusNoContent {
+		t.Fatalf("point at another page = %d %s", status, out)
 	}
-	if !after.Board.Fill {
-		t.Error("fill did not reach the screen; a board drawn for a wall arrived as a page")
+	moved := decodeSnapshot(t, shareGETAs(t, ts, link.Token, "aa11", 3840, 2160))
+	if moved.Page == nil || moved.Page.ID == first.Page.ID {
+		t.Errorf("page %+v; the screen was not told it now draws another page", moved.Page)
 	}
 }
 
@@ -139,10 +155,9 @@ func TestTheRemarkIsShownUnderBothDetailModes(t *testing.T) {
 
 	for _, detail := range []string{"counts", "names"} {
 		link := newShare(t, ts,
-			`{"name":"wall","detail":"`+detail+`","remark":"for the customer",`+
-				`"preset":"attention"}`)
+			`{"name":"wall","detail":"`+detail+`","remark":"for the customer"}`)
 		_, body := shareGET(t, ts, link.Token)
-		got := decodeDashboard(t, body)
+		got := decodeSnapshot(t, body)
 		if got.Remark != "for the customer" {
 			t.Errorf("detail %q: remark = %q, want the owner's own words", detail, got.Remark)
 		}
@@ -165,7 +180,7 @@ func TestARemarkIsBoundedInRunesAndNotInBytes(t *testing.T) {
 	link := newShare(t, ts, `{"name":"wall","remark":"`+long+`"}`)
 
 	_, body := shareGET(t, ts, link.Token)
-	got := decodeDashboard(t, body)
+	got := decodeSnapshot(t, body)
 	if n := len([]rune(got.Remark)); n != store.MaxRemark {
 		t.Errorf("remark kept %d runes, want %d", n, store.MaxRemark)
 	}
@@ -176,71 +191,82 @@ func TestARemarkIsBoundedInRunesAndNotInBytes(t *testing.T) {
 	// The same on the way through an edit, which is the path with its own
 	// call site and therefore its own chance to forget.
 	if code := patchShare(t, ts, link.ID,
-		`{"name":"wall","remark":"`+long+`","board":{"widgets":[{"kind":"states"}]}}`); code !=
+		`{"name":"wall","remark":"`+long+`"}`); code !=
 		http.StatusNoContent {
 		t.Fatalf("PATCH = %d, want 204", code)
 	}
 	_, body = shareGET(t, ts, link.Token)
-	if n := len([]rune(decodeDashboard(t, body).Remark)); n != store.MaxRemark {
+	if n := len([]rune(decodeSnapshot(t, body).Remark)); n != store.MaxRemark {
 		t.Errorf("an edited remark kept %d runes, want %d", n, store.MaxRemark)
 	}
 }
 
-// A locked board is a guard and not a message.
+// A locked link is a guard and not a message.
 //
-// What it prevents is not an attacker: it is the wall a customer is sitting in
-// front of being rearranged from an editor left open on the wrong row, with
-// several links in a list. So it is enforced on the server, and the only edit a
-// locked link accepts is the one that unlocks it -- applying nothing else,
-// because a request that could unlock *and* apply a board makes the lock one
-// step instead of two.
-func TestALockedBoardRefusesEveryEditExceptUnlocking(t *testing.T) {
+// What it prevents is not an attacker: it is the screen a customer is sitting
+// in front of being changed from a settings page left open on the wrong row,
+// with several links in a list. So it is enforced on the server, and the only
+// edit a locked link accepts is the one that unlocks it -- applying nothing
+// else, because a request that could unlock *and* rename makes the lock one
+// step instead of two. What it draws is locked too: its page, its pin, its
+// parameters and a trial.
+func TestALockedLinkRefusesEveryEditExceptUnlocking(t *testing.T) {
 	ts, _ := newTestServer(t)
-	link := newShare(t, ts, `{"name":"wall","preset":"single","locked":true}`)
+	page := newPublishedPage(t, ts, sessionsManifest, nil)
+	other := newPublishedPage(t, ts, sessionsManifest, nil)
+	link := newShare(t, ts, `{"name":"wall","locked":true,"pageId":"`+page.page.ID+`"}`)
 
-	before := decodeDashboard(t, shareGETAs(t, ts, link.Token, "aa11", 1920, 1080))
-	if !before.Locked {
+	if !lockedOf(t, ts, link.ID) {
 		t.Fatal("a link created locked did not arrive locked")
 	}
+	before := decodeSnapshot(t, shareGETAs(t, ts, link.Token, "aa11", 1920, 1080))
 
-	edit := `{"name":"changed","remark":"changed",` +
-		`"board":{"grid":12,"widgets":[{"kind":"statebar","span":12}]}}`
+	edit := `{"name":"changed","remark":"changed"}`
 	if code := patchShare(t, ts, link.ID, edit); code != http.StatusConflict {
-		t.Fatalf("editing a locked board = %d, want 409", code)
+		t.Fatalf("editing a locked link = %d, want 409", code)
 	}
 	// Including one that says "locked": true alongside the edit, which is the
 	// shape a client that had not refetched would send.
 	if code := patchShare(t, ts, link.ID,
 		strings.TrimSuffix(edit, "}")+`,"locked":true}`); code != http.StatusConflict {
-		t.Fatalf("editing a locked board while re-asserting the lock = %d, want 409", code)
+		t.Fatalf("editing a locked link while re-asserting the lock = %d, want 409", code)
 	}
-	still := decodeDashboard(t, shareGETAs(t, ts, link.Token, "aa11", 1920, 1080))
-	if still.Name != "wall" || still.Board.Widgets[0].Kind != "bignumber" {
-		t.Errorf("a refused edit changed the screen anyway: %q %+v",
-			still.Name, still.Board.Widgets)
+	for _, refused := range []struct{ method, path, body string }{
+		{http.MethodPut, "/api/settings/shares/" + link.ID + "/page", `{"pageId":"` + other.page.ID + `"}`},
+		{http.MethodPut, "/api/settings/shares/" + link.ID + "/page",
+			`{"pageId":"` + page.page.ID + `","params":{"title":"changed"}}`},
+		{http.MethodPost, "/api/settings/pages/" + page.page.ID + "/trial", `{"linkId":"` + link.ID + `"}`},
+	} {
+		status, out := callJSON(t, ts, refused.method, refused.path, refused.body)
+		if status != http.StatusConflict || !strings.Contains(string(out), "this link is locked") {
+			t.Errorf("%s %s on a locked link = %d %s, want 409 saying it is locked",
+				refused.method, refused.path, status, out)
+		}
+	}
+	still := decodeSnapshot(t, shareGETAs(t, ts, link.Token, "aa11", 1920, 1080))
+	if still.Name != "wall" || still.Page == nil || still.Page.ID != before.Page.ID ||
+		still.Page.Version != before.Page.Version || still.Params["title"] != before.Params["title"] {
+		t.Errorf("a refused edit changed the screen anyway: %q %+v %v", still.Name, still.Page, still.Params)
 	}
 
-	// The unlocking request applies the unlock and nothing else, even carrying
-	// a board.
+	// The unlocking request applies the unlock and nothing else.
 	if code := patchShare(t, ts, link.ID,
-		`{"name":"sneaky","remark":"sneaky","locked":false,`+
-			`"board":{"grid":12,"widgets":[{"kind":"statebar","span":12}]}}`); code !=
-		http.StatusNoContent {
+		`{"name":"sneaky","remark":"sneaky","locked":false}`); code != http.StatusNoContent {
 		t.Fatalf("unlocking = %d, want 204", code)
 	}
-	opened := decodeDashboard(t, shareGETAs(t, ts, link.Token, "aa11", 1920, 1080))
-	if opened.Locked {
+	if lockedOf(t, ts, link.ID) {
 		t.Error("the link is still locked after an unlock")
 	}
-	if opened.Name != "wall" || opened.Board.Widgets[0].Kind != "bignumber" {
-		t.Errorf("unlocking carried an edit with it: %q %+v", opened.Name, opened.Board.Widgets)
+	opened := decodeSnapshot(t, shareGETAs(t, ts, link.Token, "aa11", 1920, 1080))
+	if opened.Name != "wall" || opened.Remark != "" {
+		t.Errorf("unlocking carried an edit with it: %q %q", opened.Name, opened.Remark)
 	}
 
 	// And now the ordinary edit lands.
 	if code := patchShare(t, ts, link.ID, edit); code != http.StatusNoContent {
-		t.Fatalf("editing an unlocked board = %d, want 204", code)
+		t.Fatalf("editing an unlocked link = %d, want 204", code)
 	}
-	if got := decodeDashboard(t, shareGETAs(t, ts, link.Token, "aa11", 1920, 1080)); got.Name !=
+	if got := decodeSnapshot(t, shareGETAs(t, ts, link.Token, "aa11", 1920, 1080)); got.Name !=
 		"changed" {
 		t.Errorf("the edit after unlocking did not land: %q", got.Name)
 	}
@@ -250,8 +276,7 @@ func TestALockedBoardRefusesEveryEditExceptUnlocking(t *testing.T) {
 func TestLockingAndUnlockingAShareLinkIsAudited(t *testing.T) {
 	ts, srv := newTestServer(t)
 	link := newShare(t, ts, `{"name":"wall"}`)
-	patchShare(t, ts, link.ID,
-		`{"name":"wall","locked":true,"board":{"widgets":[{"kind":"states"}]}}`)
+	patchShare(t, ts, link.ID, `{"name":"wall","locked":true}`)
 	patchShare(t, ts, link.ID, `{"locked":false}`)
 
 	entries, err := srv.DB.RecentAudit(context.Background(), 200)
@@ -275,13 +300,13 @@ func TestLockingAndUnlockingAShareLinkIsAudited(t *testing.T) {
 // vary, and the property that has to hold is that they are recorded and never
 // read back. Make one of them select a scope, a range or a field, and this
 // fails.
-func TestWhatAViewerSaysAboutItselfCannotChangeTheDashboard(t *testing.T) {
+func TestWhatAViewerSaysAboutItselfCannotChangeTheSnapshot(t *testing.T) {
 	ts, _ := newTestServer(t)
 	project := postJSON[store.Project](t, ts, "/api/projects",
 		`{"path":"`+t.TempDir()+`","name":"p"}`)
 	postJSON[store.Session](t, ts, "/api/sessions",
 		`{"projectId":"`+project.ID+`","title":"work","command":[]}`)
-	link := newShare(t, ts, `{"name":"wall","detail":"names","preset":"overview"}`)
+	link := newShare(t, ts, `{"name":"wall","detail":"names"}`)
 
 	strip := func(raw []byte) string {
 		var m map[string]any
@@ -387,147 +412,76 @@ func TestAViewerIsNotToldWhoElseIsWatching(t *testing.T) {
 	}
 	for _, field := range []string{"viewers", "viewportWidth", "viewportHeight"} {
 		if _, found := m[field]; found {
-			t.Errorf("the dashboard carries %q; one holder of a URL is being told about "+
+			t.Errorf("the snapshot carries %q; one holder of a URL is being told about "+
 				"another", field)
 		}
 	}
 }
 
-// The preview is the same builder, behind a session, and off the share surface.
+// A moving line is a section like any other: it arrives only if the page asked.
 //
-// Two failures it exists to prevent, and they pull in opposite directions. A
-// preview written on the frontend from /api/state would diverge from the real
-// redaction on the first field either side gained, in the direction "the
-// preview shows something the real screen does not". A preview mounted under
-// the share token would be the second route below requireShareToken.
-func TestThePreviewIsTheSameRedactionAndNeedsASession(t *testing.T) {
-	ts, _ := newTestServer(t)
-	project := postJSON[store.Project](t, ts, "/api/projects",
-		`{"path":"`+t.TempDir()+`","name":"secret project"}`)
-	postJSON[store.Session](t, ts, "/api/sessions",
-		`{"projectId":"`+project.ID+`","title":"secret work","command":[]}`)
-	link := newShare(t, ts, `{"name":"wall","detail":"counts","preset":"overview"}`)
-
-	res, err := ts.Client().Get(ts.URL + "/api/settings/shares/" + link.ID + "/preview")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(res.Body)
-	res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("preview = %d: %s", res.StatusCode, body)
-	}
-	got := decodeDashboard(t, body)
-	if got.Detail != "counts" || got.Name != "wall" {
-		t.Errorf("the preview is not this link: %+v", got)
-	}
-	// The redaction, not the panel's own state. A preview that leaked what the
-	// dashboard hides would be a settings page quietly holding the answer the
-	// owner is trying to check they are not disclosing.
-	if strings.Contains(string(body), "secret work") ||
-		strings.Contains(string(body), "secret project") ||
-		strings.Contains(string(body), project.ID) {
-		t.Errorf("the preview disclosed what the link does not:\n%s", body)
-	}
-
-	// A share token is not a session, here as everywhere.
-	req, err := http.NewRequest(http.MethodGet,
-		ts.URL+"/api/settings/shares/"+link.ID+"/preview", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Authorization", "Bearer "+link.Token)
-	r, err := anonymousClient(t).Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.Body.Close()
-	if r.StatusCode != http.StatusUnauthorized {
-		t.Errorf("the preview answered %d to a share token, want 401", r.StatusCode)
-	}
-
-	// And it is not reachable under the share token's own prefix either.
-	for _, path := range []string{
-		"/api/share/" + link.Token + "/preview",
-		"/api/share/" + link.Token + "/settings/shares",
-	} {
-		p, err := anonymousClient(t).Get(ts.URL + path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		p.Body.Close()
-		if p.StatusCode == http.StatusOK {
-			t.Errorf("GET %s succeeded; the share surface is one GET", path)
-		}
-	}
-}
-
-// A moving line is a section like any other: it arrives only if the board asked.
-//
-// The point of the whole "a board can only subtract" rule. Delete the `needs`
+// The point of the whole "a page can only subtract" rule. Delete the `needs`
 // check around the trend and every link starts carrying fifteen minutes of
 // machine readings whether or not anything draws them.
-func TestTheTrendArrivesOnlyForABoardThatDrawsOne(t *testing.T) {
+func TestTheTrendArrivesOnlyForAPageThatDrawsOne(t *testing.T) {
 	ts, _ := newTestServer(t)
 
-	plain := newShare(t, ts, `{"name":"a","board":{"widgets":[{"kind":"states"}]}}`)
-	if got := decodeDashboard(t, shareGETAs(t, ts, plain.Token, "aa11", 800, 600)); got.Trend !=
+	plain := shareOn(t, ts, `{"sdk":1,"name":"A","sections":[]}`, `{"name":"a"}`)
+	if got := decodeSnapshot(t, shareGETAs(t, ts, plain.Token, "aa11", 800, 600)); got.Trend !=
 		nil {
-		t.Errorf("a board with no line carries %d trend points", len(got.Trend.Points))
+		t.Errorf("a page with no line carries %d trend points", len(got.Trend.Points))
 	}
 
-	drawn := newShare(t, ts,
-		`{"name":"b","board":{"widgets":[{"kind":"machinearea","by":"cpu"}]}}`)
-	got := decodeDashboard(t, shareGETAs(t, ts, drawn.Token, "aa11", 800, 600))
+	drawn := shareOn(t, ts, `{"sdk":1,"name":"B","sections":["trend"]}`, `{"name":"b"}`)
+	got := decodeSnapshot(t, shareGETAs(t, ts, drawn.Token, "aa11", 800, 600))
 	if got.Trend == nil {
-		t.Fatal("a board with a machine line carries no trend")
+		t.Fatal("a page with a machine line carries no trend")
 	}
 	if got.Trend.Every != int(trendSampleEvery/time.Second) {
 		t.Errorf("trend.every = %d, want %d seconds", got.Trend.Every,
 			int(trendSampleEvery/time.Second))
 	}
 	if len(got.Trend.Points) == 0 {
-		t.Error("the first poll of a board with a line drew nothing at all")
+		t.Error("the first poll of a page with a line drew nothing at all")
 	}
 }
 
 // One ring per token series, not one ring per directory.
 //
-// The token half of a point is the spend section's total, and a board with no
+// The token half of a point is the spend section's total, and a page with no
 // spend section contributes a zero because there is nothing to ask. Two
 // whole-panel links both keyed on the empty directory therefore shared a ring:
-// the machine board stamped zeros into the one the burn board reads, and
+// the machine page stamped zeros into the one the burn page reads, and
 // TokenBurn -- which draws differences between consecutive points -- rendered
 // the day's whole running total as a fresh burst every other sample and a rate
 // per minute larger than the day.
-func TestABoardWithNoSpendCannotZeroAnothersTokenLine(t *testing.T) {
+func TestAPageWithNoSpendCannotZeroAnothersTokenLine(t *testing.T) {
 	ts, srv := newTestServer(t)
 	project := postJSON[store.Project](t, ts, "/api/projects",
 		`{"path":"`+t.TempDir()+`","name":"Acme"}`)
 	seedUsage(t, srv, project.Path, 6000000)
 
-	machine := newShare(t, ts,
-		`{"name":"m","board":{"widgets":[{"kind":"machinearea","by":"cpu"}]}}`)
-	burn := newShare(t, ts, `{"name":"b","board":{"widgets":[{"kind":"tokenburn"}]}}`)
+	machine := shareOn(t, ts, `{"sdk":1,"name":"M","sections":["trend"]}`, `{"name":"m"}`)
+	burn := shareOn(t, ts, burnManifest, `{"name":"b"}`)
 
-	// The machine board first, which is the whole trigger: its poll lands the
+	// The machine page first, which is the whole trigger: its poll lands the
 	// only point trendSampleEvery will allow for the next ten seconds, so the
-	// burn board's own reading is dropped and it reads back the zero.
+	// burn page's own reading is dropped and it reads back the zero.
 	shareGET(t, ts, machine.Token)
 
 	_, body := shareGET(t, ts, burn.Token)
-	got := decodeDashboard(t, body)
+	got := decodeSnapshot(t, body)
 	if got.Spend == nil || got.Spend.Today.Total == 0 {
 		t.Fatal("nothing was counted, so this test would pass on any server")
 	}
 	if got.Trend == nil || len(got.Trend.Points) == 0 {
-		t.Fatal("a board with a burn widget carries no trend at all")
+		t.Fatal("a page with spend and a trend carries no trend at all")
 	}
 	for i, p := range got.Trend.Points {
 		if p.Tokens != got.Spend.Today.Total {
 			t.Fatalf("trend point %d carries %d tokens while the same response's spend "+
 				"section says %d were spent today; the point was written by another "+
-				"board that has no spend section", i, p.Tokens, got.Spend.Today.Total)
+				"page that has no spend section", i, p.Tokens, got.Spend.Today.Total)
 		}
 	}
 }
@@ -537,7 +491,7 @@ func TestABoardWithNoSpendCannotZeroAnothersTokenLine(t *testing.T) {
 // The same defect wearing the other face, and this one is a disclosure rather
 // than a wrong shape. `cwd` is empty for a whole-panel link *and* for a scoped
 // link whose target has been deleted, so keying the ring on the directory alone
-// put the panel's token history on a board that was deliberately narrowed to one
+// put the panel's token history on a link that was deliberately narrowed to one
 // project -- while its own spend section, which does check `kind`, correctly
 // reported nothing.
 func TestALinkWhoseProjectIsGoneDoesNotReadThePanelsTokenLine(t *testing.T) {
@@ -548,9 +502,8 @@ func TestALinkWhoseProjectIsGoneDoesNotReadThePanelsTokenLine(t *testing.T) {
 		`{"path":"`+t.TempDir()+`","name":"still here"}`)
 	seedUsage(t, srv, other.Path, 6000000)
 
-	whole := newShare(t, ts, `{"name":"w","board":{"widgets":[{"kind":"tokenburn"}]}}`)
-	scoped := newShare(t, ts, `{"name":"s","scope":"project","scopeId":"`+doomed.ID+
-		`","board":{"widgets":[{"kind":"tokenburn"}]}}`)
+	whole := shareOn(t, ts, burnManifest, `{"name":"w"}`)
+	scoped := shareOn(t, ts, burnManifest, `{"name":"s","scope":"project","scopeId":"`+doomed.ID+`"}`)
 
 	req, err := http.NewRequest(http.MethodDelete, ts.URL+"/api/projects/"+doomed.ID, nil)
 	if err != nil {
@@ -562,23 +515,26 @@ func TestALinkWhoseProjectIsGoneDoesNotReadThePanelsTokenLine(t *testing.T) {
 	}
 	res.Body.Close()
 
-	// The whole-panel board polls first and puts the panel's real total in its
+	// The whole-panel link polls first and puts the panel's real total in its
 	// ring.
-	first := decodeDashboard(t, shareGETAs(t, ts, whole.Token, "aa11", 800, 600))
+	first := decodeSnapshot(t, shareGETAs(t, ts, whole.Token, "aa11", 800, 600))
 	if first.Spend == nil || first.Spend.Today.Total == 0 {
 		t.Fatal("nothing was counted, so this test would pass on any server")
 	}
 
 	_, body := shareGET(t, ts, scoped.Token)
-	got := decodeDashboard(t, body)
+	got := decodeSnapshot(t, body)
 	if got.Trend == nil {
-		t.Fatal("a board with a burn widget carries no trend at all")
+		t.Fatal("a page with spend and a trend carries no trend at all")
 	}
 	for i, p := range got.Trend.Points {
 		if p.Tokens != 0 {
 			t.Fatalf("a link scoped to a deleted project drew %d tokens at point %d; the "+
-				"whole panel's line has been read into a board narrowed to one project",
+				"whole panel's line has been read into a link narrowed to one project",
 				p.Tokens, i)
 		}
 	}
 }
+
+// burnManifest is a token-burn page: spend, and the line it is drawn on.
+const burnManifest = `{"sdk":1,"name":"Burn","sections":["spend","trend"]}`

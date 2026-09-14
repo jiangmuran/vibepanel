@@ -126,14 +126,14 @@ strings `internal/hooks` writes into files the panel does not own.
 
 ## Colour is never the only carrier of meaning
 
-Each state has a shape as well as a hue — circle, triangle, check — and so does
-the share dashboard's connection state. People read this panel at 2am on a phone
-in a dark room, and some of them cannot tell the hues apart at any hour.
+Each state has a shape as well as a hue — circle, triangle, check. People read
+this panel at 2am on a phone in a dark room, and some of them cannot tell the
+hues apart at any hour.
 
-The same rule is why the share dashboard says *live* / *reconnecting* /
-*disconnected* in words, and always carries the time of the last reading and how
-long ago that was. A dashboard that has silently frozen otherwise looks exactly
-like a quiet machine.
+The same rule is why the share SDK hands a page its connection state as a word —
+*live*, *reconnecting*, *disconnected*, *revoked* — along with the time of the
+last reading, for a page to print. A screen that has silently
+frozen otherwise looks exactly like a quiet machine.
 
 ## Files move over HTTP, not through the terminal
 
@@ -153,9 +153,11 @@ opaque origin, no scripts and a policy that allows it no network.
 Share links live in their own table, and `currentUser` does not consult it. That
 is the entire security design: a share token presented as a session cookie or a
 `Bearer` header is an unrecognised string, and every authenticated route already
-answers 401 to those. The routes a share token reaches are `GET`s, four of them,
-and a test holds the list: the dashboard, the v1 snapshot, and a share page's
-files. It was one until share pages; see the next section for why it grew.
+answers 401 to those. The routes a share token reaches are `GET`s, three of them,
+and a test holds the list: the v1 snapshot, and a share page's files at
+`/share/{token}` and below it. It was one data route before share pages and is
+one data route again now that boards are gone; the page files are the only
+addition, and the next section is why.
 
 The alternative — a `scope` or `readOnly` column on the existing token table —
 makes every handler in the panel one that has to remember to check a flag, and
@@ -163,7 +165,7 @@ the handler that forgets is the one somebody writes next year.
 
 Redaction is the same shape. The share response restates the fields it discloses
 instead of embedding `sysmon.Sample` or `store.Session`, so a field added to
-either is not disclosed by default. Row ids on the dashboard are
+either is not disclosed by default. Row ids in the snapshot are
 `HMAC(token hash, real id)`: stable within one link, different between links, so
 two screens cannot be correlated and neither carries the panel's real ids.
 
@@ -201,11 +203,14 @@ to watch the page become the owner:
   as well and the same probe reads `/api/state`, reads the audit log and opens
   the terminal socket. Each layer alone held in that experiment; neither is
   decoration.
-- **A page can only subtract.** Its manifest names sections from the board's
-  own registry and compiles to a board, so the snapshot builder is the one it
-  always was and a page has no vocabulary for anything it does not already
-  compute. Parameters are only echoed: a test changes them and asserts every
-  other key of the snapshot is identical.
+- **A page can only subtract.** Its manifest chooses among the snapshot's fixed
+  sections, and every option is a switch or a bounded day count (`pages.Needs`),
+  so the snapshot builder is the one redaction there is and a page has no
+  vocabulary for anything it does not already compute. Which sections are
+  computed is a cost decision; it would become a permission one the day a
+  manifest field carried a parameter into a query, which is the edit to refuse.
+  Parameters are only echoed: a test changes them and asserts every other key of
+  the snapshot is identical.
 
 What CSP does not do is stop a determined page sending what it can see
 somewhere else. That residue is written down rather than argued away: what a
@@ -221,11 +226,45 @@ a default and is called one. A trial on a screen ends by itself, decided on
 read like expiry, because whoever pressed the button is by definition not
 standing at the wall.
 
-## What a board can show is what the panel wrote down at the time
+## Boards were removed, not kept beside pages
 
-The read-only dashboard was empty for a reason that no arrangement of widgets
-could fix: the panel kept *state* and no history. `sessions` carries one
-`state_changed_at` and nothing about what came before, so every widget with a
+For one release a link could draw either a board or a page, and the settings
+section showed both: a board editor with thirty presets under a list of pages,
+and a "shows" select on every link choosing between them. Two ways to make the
+same screen is two vocabularies to keep redacting, two sets of browser checks,
+and a settings page nobody could read. The board was always going to lose — its
+limit was the vocabulary — so it went entirely: the editor, the presets, the
+widget registry, the dashboard route and the SPA that drew it.
+
+The addresses already on walls did not go with it. At startup, before the
+listener, every link that still draws no page is pointed at a page built from
+the template closest to what its board showed, one page per owner and template,
+published, at the same address with the same detail and scope. The detail and
+scope are the disclosure; the drawing was never part of it, so changing the
+drawing under a handed-out URL discloses nothing new.
+
+A page lives in `<data dir>/pages/page-<slug>` rather than in the home
+directory, beside the other things the panel writes for its own use, and its
+project is called `page-<slug>` so the sidebar says what it is. The directory is
+a working copy, not the page: the page is its published versions in the
+database. So a directory or project that has gone is recovered by **Open**,
+which writes the published version back and makes the project again, rather
+than by a command somebody has to know.
+
+Two things the list needed once it was the only way in. The panel keeps only a
+hash of a link's token, so it can never show an owner the address again; **View**
+mints a fifteen-minute unlisted copy of the link — same page, pin, trial,
+parameters, detail and scope — which draws the same screen through the same
+route. And `/share/<token>` for a dead token used to fall through to the SPA,
+which meant a stranger holding a revoked address was handed the panel's bundle
+and its sign-in page. It now answers with a static page that says the link no
+longer works and carries nothing of the panel's.
+
+## What a screen can show is what the panel wrote down at the time
+
+The read-only screens were empty for a reason that no way of drawing them could
+fix: the panel kept *state* and no history. `sessions` carries one
+`state_changed_at` and nothing about what came before, so every chart with a
 time axis had a single current number to draw. The fix is an append-only row per
 state transition, and the shape of that row decides what can honestly be asked
 of it.

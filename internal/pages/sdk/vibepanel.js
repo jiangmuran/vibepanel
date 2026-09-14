@@ -22,7 +22,7 @@
 
   var SDK_VERSION = 1
 
-  /** How often a wall asks, when all is well. The board has always used two. */
+  /** How often a wall asks, when all is well: two seconds, the number walls have always polled at. */
   var POLL_MS = 2000
   /** The longest a failing wall waits between attempts. */
   var MAX_BACKOFF_MS = 30000
@@ -515,7 +515,7 @@
     function accept(snapshot) {
       if (!snapshot || typeof snapshot !== 'object') return
       if (typeof snapshot.at === 'number') offset = snapshot.at - Date.now() / 1000
-      var key = snapshot.page ? snapshot.page.id + ':' + snapshot.page.version : 'board'
+      var key = snapshot.page ? snapshot.page.id + ':' + snapshot.page.version : 'none'
       if (pageKey === undefined) {
         pageKey = key
       } else if (key !== pageKey && !(snapshot.page && snapshot.page.draft)) {

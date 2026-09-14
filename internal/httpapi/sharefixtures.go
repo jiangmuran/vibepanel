@@ -319,7 +319,7 @@ func shapeFixture(raw []byte, m pages.Manifest, params map[string]any) []byte {
 		return raw
 	}
 	s := f.Snapshot
-	s.Sections = m.Needs()
+	s.Sections = m.SectionNames()
 	s.Params = pages.ResolveParams(m.Params, params)
 	want := map[string]bool{}
 	for _, name := range s.Sections {

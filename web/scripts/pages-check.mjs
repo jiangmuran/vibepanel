@@ -31,7 +31,7 @@ import { chromium } from 'playwright'
 import { createServer as createNetServer } from 'node:net'
 import { createServer as createHttpServer } from 'node:http'
 import { spawn, execFileSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -263,11 +263,13 @@ setTimeout(() => { try { done('frame', frame.contentDocument ? 'readable' : 'opa
     // one, because what is being checked is the hand-over, not Claude.
     await ui.locator('[data-testid="settings-open"]').click()
     await ui.locator('[data-testid="settings-group-sharing"]').click()
-    await ui.waitForSelector('[data-testid="share-pages"]', { timeout: 10000 })
-    const pageDir = join(work, 'pages', 'lobby')
+    await ui.waitForSelector('[data-testid="sharing"]', { timeout: 10000 })
+    // No directory given: it goes under the data directory as page-<slug>,
+    // not into somebody's home.
+    const pageDir = join(work, 'data', 'pages', 'page-lobby')
+    await ui.locator('[data-testid="page-new"]').click()
     await ui.locator('[data-testid="page-new-name"]').fill('Lobby')
     await ui.locator('[data-testid="page-new-template"]').selectOption('blank')
-    await ui.locator('[data-testid="page-new-dir"]').fill(pageDir)
     await ui.screenshot({ path: join(SHOTS, 'workflow-settings.png') })
     await ui.locator('[data-testid="page-create"]').click()
     await ui.waitForSelector('[data-testid="launch-picker"]', { timeout: 10000 })
@@ -282,6 +284,8 @@ setTimeout(() => { try { done('frame', frame.contentDocument ? 'readable' : 'opa
     const state = await must('GET', '/api/state')
     const project = state.projects.find((p) => p.path === pageDir)
     const session = state.sessions.find((s) => project && s.projectId === project.id && !s.scratch)
+    if (project && project.name === 'page-lobby') pass('workflow/create', 'the project is called page-lobby')
+    else note('FAIL', 'workflow/create', `the page's project is called ${project?.name}`)
     if (!project || !session) {
       note('FAIL', 'workflow/create', 'no project and session were made for the page')
       throw new Error('cannot continue the workflow without a session')
@@ -299,8 +303,14 @@ setTimeout(() => { try { done('frame', frame.contentDocument ? 'readable' : 'opa
     // The Preview pane.
     const pages = await must('GET', '/api/settings/pages')
     const lobby = pages.find((p) => p.sourceDir === pageDir)
-    await ui.locator('[data-testid="page-line"]').click({ timeout: 15000 })
-      .catch(() => note('FAIL', 'workflow/preview', 'the page line did not appear above the file list'))
+    // Opening a page from the settings opens its Preview by itself; the page
+    // line above the file list is the way back to it otherwise.
+    if (await ui.locator('[data-testid="page-frame"]').first().waitFor({ state: 'visible', timeout: 8000 }).then(() => true, () => false)) {
+      pass('workflow/preview', 'the Preview opened beside the new page by itself')
+    } else {
+      await ui.locator('[data-testid="page-line"]').click({ timeout: 15000 })
+        .catch(() => note('FAIL', 'workflow/preview', 'the Preview did not open and no page line appeared above the file list'))
+    }
     const frameEl = ui.locator('[data-testid="page-frame"]').first()
     await frameEl.waitFor({ timeout: 15000 }).catch(() => note('FAIL', 'workflow/preview', 'no preview frame'))
     await sleep(3000)
@@ -422,15 +432,41 @@ setTimeout(() => { try { done('frame', frame.contentDocument ? 'readable' : 'opa
     if (polls === 0) pass('workflow/revoke', 'no polling after revocation')
     else note('FAIL', 'workflow/revoke', `${polls} polls after the link was revoked`)
 
-    // A board on a wall becomes a page when its link is pointed at one.
-    const board = await must('POST', '/api/settings/shares', { name: 'board', detail: 'counts', expiresIn: 3600, preset: 'glance' })
-    const boardWall = await stranger.newPage()
-    await boardWall.goto(`${BASE}/share/${board.token}`, { waitUntil: 'networkidle' })
-    await sleep(2500)
-    await must('PUT', `/api/settings/shares/${board.id}/page`, { pageId: lobby.id, pinVersion: 0, params: {} })
-    await sleep(10000)
-    if (await boardWall.locator('#title').count()) pass('workflow/board', 'an open board reloaded into the page')
-    else note('FAIL', 'workflow/board', 'the open board did not become the page')
+    // The revoked address answers with a page of its own, not the panel.
+    const dead = await stranger.newPage()
+    const deadRes = await dead.goto(`${BASE}/share/${link.token}/`, { waitUntil: 'load' })
+    const deadText = await dead.locator('body').innerText().catch(() => '')
+    const spa = await dead.locator('#root').count()
+    if (deadRes?.status() === 404 && /no longer works/.test(deadText) && spa === 0) {
+      pass('workflow/gone', 'a dead link says so, without the panel\'s bundle')
+    } else note('FAIL', 'workflow/gone', `status ${deadRes?.status()}, #root ${spa}: ${deadText.slice(0, 120)}`)
+
+    // Links are listed under the page they show, and View opens a copy of one.
+    const kept = await must('POST', '/api/settings/shares', {
+      name: 'kitchen', detail: 'counts', expiresIn: 3600, pageId: lobby.id, params: { title: 'Kitchen' },
+      scope: '', scopeId: '', remark: '', locked: false,
+    })
+    await ui.locator('[data-testid="settings-open"]').click()
+    await ui.locator('[data-testid="settings-group-sharing"]').click()
+    const row = ui.locator(`[data-testid="page-row"][data-page="${lobby.id}"] [data-testid="share-row"]`, { hasText: 'kitchen' })
+    await row.waitFor({ timeout: 10000 }).catch(() => {})
+    if (await row.count()) pass('workflow/settings', 'the link is listed under its page')
+    else note('FAIL', 'workflow/settings', 'no row for the link under its page')
+    await ui.screenshot({ path: join(SHOTS, 'workflow-sharing.png') })
+    const [peekTab] = await Promise.all([
+      ui.context().waitForEvent('page', { timeout: 10000 }).catch(() => null),
+      row.locator('[data-testid="share-view"]').click().catch(() => {}),
+    ])
+    if (peekTab) {
+      await peekTab.waitForLoadState('load').catch(() => {})
+      await sleep(2500)
+      const peekTitle = await peekTab.locator('#title').innerText().catch(() => '')
+      if (peekTitle === 'Kitchen') pass('workflow/view', 'View shows what the link shows')
+      else note('FAIL', 'workflow/view', `the viewed page's title is ${JSON.stringify(peekTitle)}`)
+      await peekTab.close()
+    } else note('FAIL', 'workflow/view', 'View opened no tab')
+    await ui.locator('[data-testid="settings-close"]').click().catch(() => {})
+    await must('DELETE', `/api/settings/shares/${kept.id}`)
 
     // The error the check planted in the page is expected; anything else is not.
     const unexpected = consoleErrors.filter((m) => !m.includes('definitelyNotAFunction'))
@@ -445,6 +481,13 @@ setTimeout(() => { try { done('frame', frame.contentDocument ? 'readable' : 'opa
     if (frames >= 2) pass('workflow/full', `${frames} screens side by side`)
     else note('FAIL', 'workflow/full', `the full Preview shows ${frames} screen(s) after adding one`)
     await ui.screenshot({ path: join(SHOTS, 'workflow-full.png') })
+
+    // A page whose directory is gone comes back from its published version.
+    rmSync(pageDir, { recursive: true, force: true })
+    const reopened = await must('POST', `/api/settings/pages/${lobby.id}/open`, {})
+    if (reopened.restored > 0 && existsSync(join(pageDir, 'index.html')) && reopened.projectId === project.id) {
+      pass('workflow/restore', `v${reopened.restored} written back into the same directory and project`)
+    } else note('FAIL', 'workflow/restore', JSON.stringify(reopened))
     await stranger.close()
     await ui.close()
   }

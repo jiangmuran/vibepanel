@@ -18,8 +18,6 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
-
-	"github.com/jiangmuran/vibepanel/internal/store"
 )
 
 // SDKVersion is the snapshot contract a page is written against.
@@ -35,6 +33,11 @@ const ManifestFile = "vibepanel.json"
 
 // MaxName is how long a page's name may be, in runes.
 const MaxName = 64
+
+// MaxDays bounds any day range a manifest asks for: 371, the 53 whole weeks a
+// year grid needs. Longer is a GROUP BY with no ceiling driven by a stored
+// file, which is the shape the token endpoint's own clamp exists to close.
+const MaxDays = 371
 
 // The sections a page may ask for. Every one is a fixed struct in
 // internal/httpapi/share.go; a page chooses among them and has no vocabulary
@@ -68,9 +71,9 @@ var ScriptHosts = []string{"cdnjs.cloudflare.com", "cdn.jsdelivr.net"}
 
 // Viewports are the screens the Preview pane frames a page at, by name.
 //
-// The same list web/scripts/board-check.mjs measures boards against, moved
-// rather than re-chosen: these are the screens a share link actually gets put
-// on, and a page composed for a size nobody owns is a page nobody sees right.
+// The screens a share link actually gets put on -- the list the retired board
+// check measured against, kept rather than re-chosen. A page composed for a
+// size nobody owns is a page nobody sees right.
 var Viewports = []Viewport{
 	{"phone", 390, 844},
 	{"ipad-portrait", 820, 1180},
@@ -139,7 +142,7 @@ var splitDimensions = []string{"tool", "project", "model"}
 
 // ParseManifest reads and checks vibepanel.json.
 //
-// Strict, as ValidateBoard is: the person is at a keyboard, or an agent is,
+// Strict: the person is at a keyboard, or an agent is,
 // and an error naming the field is something either can act on. An unknown key
 // is refused rather than ignored, because a misspelt "sections" that is
 // silently ignored is a page that draws nothing and never says why.
@@ -237,12 +240,12 @@ func (m Manifest) Validate() error {
 			return fmt.Errorf("viewports: unknown screen %q", v)
 		}
 	}
-	return m.checkBoard()
+	return nil
 }
 
 func dayRange(field string, n int) error {
-	if n < 0 || n > store.MaxSpendDays {
-		return fmt.Errorf("%s must be between 0 and %d", field, store.MaxSpendDays)
+	if n < 0 || n > MaxDays {
+		return fmt.Errorf("%s must be between 0 and %d", field, MaxDays)
 	}
 	return nil
 }
@@ -257,90 +260,88 @@ func ViewportNamed(name string) (Viewport, bool) {
 	return Viewport{}, false
 }
 
-// Board compiles the manifest into the board the snapshot builder already
-// reads.
+// Needs is what a snapshot has to compute for a page, and how much of each.
 //
-// This is the whole reason a page cannot ask for more than a board can: it
-// asks in the board's own vocabulary. buildShareDashboard decides which
-// sections to compute, and how many days of each, from a store.Board, and a
-// second way of deciding it would be a second reduction of the panel's state
-// -- the thing that function exists to be the only one of. The widgets here
-// are never drawn by anything; each is there for what Board.Needs reads off it.
-func (m Manifest) Board() store.Board {
-	b := store.Board{Grid: store.GridColumns, Density: store.DefaultDensity}
-	add := func(w store.Widget) { b.Widgets = append(b.Widgets, w) }
+// The whole of the vocabulary a page has for asking. Every field is a switch
+// or a bounded day count, and each one selects a section or a series that
+// internal/httpapi/share.go restates field by field; there is no field here
+// that names a table, a column, a path or a query, which is what keeps "a page
+// can only subtract" true. The builder reads this and nothing a request says.
+type Needs struct {
+	Sessions bool
+	Todos    bool
+	Spend    bool
+	Trend    bool
+	Flow     bool
+	Feed     bool
+	Repo     bool
+
+	// SpendDays is how many days of the per-day spend series, 0 for none.
+	SpendDays     int
+	SpendMonths   bool
+	SpendHeatmap  bool
+	SpendTools    bool
+	SpendModels   bool
+	SpendProjects bool
+
+	// RepoDays is how many days of the per-day repository series, 0 for none
+	// (the totals still cover the default window).
+	RepoDays int
+	RepoPRs  bool
+
+	// FlowDays is the window the flow totals cover, 0 for the default; FlowHours
+	// cuts today by the hour rather than the window by the day.
+	FlowDays  int
+	FlowHours bool
+}
+
+// Needs reads the manifest into what the snapshot builder computes.
+func (m Manifest) Needs() Needs {
+	var n Needs
 	for _, s := range m.Sections {
 		switch s {
 		case SectionSessions:
-			add(store.Widget{Kind: "sessionlist"})
+			n.Sessions = true
 		case SectionTodos:
-			add(store.Widget{Kind: "todos"})
+			n.Todos = true
 		case SectionSpend:
-			add(store.Widget{Kind: "spendtotals"})
+			n.Spend = true
 			if o := m.Spend; o != nil {
-				if o.Days > 0 {
-					add(store.Widget{Kind: "spendbars", By: "day", Days: o.Days})
-				}
-				if o.Months {
-					add(store.Widget{Kind: "spendbars", By: "month"})
-				}
-				if o.Heatmap {
-					add(store.Widget{Kind: "spendheatmap"})
-				}
+				n.SpendDays, n.SpendMonths, n.SpendHeatmap = o.Days, o.Months, o.Heatmap
 				for _, d := range o.Split {
-					add(store.Widget{Kind: "spendsplit", By: d})
+					switch d {
+					case "tool":
+						n.SpendTools = true
+					case "model":
+						n.SpendModels = true
+					case "project":
+						n.SpendProjects = true
+					}
 				}
 			}
 		case SectionTrend:
-			add(store.Widget{Kind: "machinearea"})
+			n.Trend = true
 		case SectionFlow:
-			w := store.Widget{Kind: "flow", By: "hour"}
+			n.Flow, n.FlowHours = true, true
 			if o := m.Flow; o != nil {
-				if o.By != "" {
-					w.By = o.By
-				}
-				w.Days = o.Days
+				n.FlowDays = o.Days
+				n.FlowHours = o.By != "day"
 			}
-			add(w)
 		case SectionFeed:
-			add(store.Widget{Kind: "feed"})
+			n.Feed = true
 		case SectionRepo:
-			add(store.Widget{Kind: "output"})
+			n.Repo = true
 			if o := m.Repo; o != nil {
-				if o.Days > 0 {
-					add(store.Widget{Kind: "codechurn", Days: o.Days})
-				}
-				if o.PRs {
-					add(store.Widget{Kind: "prs"})
-				}
+				n.RepoDays, n.RepoPRs = o.Days, o.PRs
 			}
 		}
 	}
-	if len(b.Widgets) == 0 {
-		// A page that asked for no sections still gets the counts and the
-		// machine, which every snapshot carries. A board needs one widget to be
-		// a board, and this one needs nothing.
-		add(store.Widget{Kind: "states"})
-	}
-	return b
+	return n
 }
 
-// checkBoard runs the compiled board through the board's own validator.
-//
-// It cannot fail for a manifest that passed the checks above, and that is
-// what it is for: if the two sets of rules ever disagree, a manifest the panel
-// accepted would compile to a board the panel refuses, and this is where that
-// is caught -- at publish, with a person there -- rather than on a wall.
-func (m Manifest) checkBoard() error {
-	if _, err := store.ValidateBoard(m.Board()); err != nil {
-		return fmt.Errorf("the sections do not compile: %w", err)
-	}
-	return nil
-}
-
-// Needs reports the section names the compiled board asks for, in the
-// manifest's vocabulary, for the snapshot's `sections` field.
-func (m Manifest) Needs() []string {
+// SectionNames is the manifest's sections in the documented order, for the
+// snapshot's `sections` field.
+func (m Manifest) SectionNames() []string {
 	out := []string{}
 	for _, s := range Sections() {
 		if slices.Contains(m.Sections, s) {

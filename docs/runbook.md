@@ -458,7 +458,7 @@ More than one row per session there, or a total far past `sessions × 256 KiB`,
 means something is keeping a history of captures instead of one; that is a bug,
 not a configuration.
 
-A third arrived with the boards: `session_events`, one row per session state
+A third arrived with the share boards, and outlived them: `session_events`, one row per session state
 transition. It is the only table here that grows with *time* rather than with
 what exists.
 
@@ -475,8 +475,8 @@ runs on the same goroutine that drains the log: if that has stopped, so has the
 poller, and the sidebar would have gone stale long before this table became the
 problem.
 
-The opposite reading — a count that is *low* while a share board's trends are
-empty — is not a database problem. Transitions are queued to one writer through
+The opposite reading — a count that is *low* while a share page's flow and
+feed are empty — is not a database problem. Transitions are queued to one writer through
 a bounded channel and **dropped when it is full** rather than made to wait,
 because the alternative is the poller stalling and the whole panel losing track
 of what is running. That only happens when writes are already failing, which the
@@ -725,6 +725,12 @@ line without a browser.
 the page it drew was deleted. The panel answers `401` or `410` and the page
 stops asking; making a new link is the fix.
 
+Opened directly, a dead address answers with a plain page instead of the page it
+used to draw: *This link no longer works* (`404`) for a link that was revoked,
+expired or never existed, and *This screen is unavailable* (`503`) when the panel
+cannot read its own database — in which case the link may be fine, and the stale
+banner in the panel says why.
+
 **The badge says *reconnecting* and never recovers.** The page can reach the
 panel's address but not its snapshot. Check `curl -si
 https://<panel>/api/share/<token>/v1/snapshot` from the same network: `403` is
@@ -734,6 +740,23 @@ https://<panel>/api/share/<token>/v1/snapshot` from the same network: `403` is
 poll and a few seconds once the version it is drawing changes. If it does not,
 the link is pinned: Settings → Sharing → the link's editor shows *Pinned vN* or
 *trying vN*. A trial ends by itself at the time it names.
+
+**A page's directory or its `page-…` project is gone.** Nothing is lost: the
+page is its published versions, in the database. Settings → Sharing → **Restore
+and open** writes the published version back — into the old directory if it can
+be created, otherwise under `~/.local/share/vibepanel/pages/page-<name>` — and
+makes the project again. The audit log records it as `page.restored`. A page
+that was never published has nothing to restore and comes back blank.
+
+**After an upgrade, a wall shows a template instead of its board.** Boards were
+removed; at the first start every board link was pointed at the closest
+built-in template, published, under `pages/page-…` in the data directory, and
+the log says `converted board links to pages` with how many. Open that page from
+Settings → Sharing to have an agent make it look like the board did. A link that
+still shows *This link no longer works* was not converted: look for `convert a
+board link` or `board links were not converted` in the log, usually a data
+directory the panel cannot write to. The conversion runs again on every start
+until it succeeds.
 
 **`vibepanel page shot` says the browser cannot start its sandbox.** Ubuntu
 23.10 and later restrict the user namespaces Chromium's sandbox uses. Run it

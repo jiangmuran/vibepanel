@@ -41,7 +41,7 @@ const (
 
 // ParamSpec is one declared parameter.
 //
-// One flat struct, checked per type, for the reason store.Widget is one: a
+// One flat struct, checked per type: a
 // field that does not belong to the type is refused rather than ignored, and a
 // `values` list on a text field that silently does nothing is a form its author
 // believes is a select.
@@ -260,7 +260,7 @@ func ValidateParamValues(specs []ParamSpec, in map[string]any) (map[string]any, 
 // ResolveParams is what a page receives: every declared parameter, with the
 // link's value where it still fits and the default where it does not.
 //
-// Lenient where ValidateParamValues is strict, for SanitiseBoard's reason. A
+// Lenient where ValidateParamValues is strict, because a wall has nobody at it. A
 // page republished with a narrower range must not break the wall still holding
 // a value from the old one; that value is replaced by the default rather than
 // passed through, which is the direction that cannot surprise the page.

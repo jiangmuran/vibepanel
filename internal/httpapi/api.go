@@ -173,18 +173,18 @@ type Server struct {
 	archivedOutput map[string]int64
 	// shareTouch rate-limits the "last seen" write on a share link.
 	//
-	// A wall display polls the dashboard every couple of seconds and never
+	// A wall display polls the snapshot every couple of seconds and never
 	// stops, so stamping every lookup is tens of thousands of writes a day
 	// through SQLite's one write lock, for a field the settings page renders as
 	// a date. Lazily built so a Server assembled by hand still has one.
 	shareTouchOnce sync.Once
 	shareTouch     *auth.Cooldown
 
-	// spendSnap is the token-spend rollup a share board draws from, shared by
+	// spendSnap is the token-spend rollup a share page draws from, shared by
 	// every link and recomputed when it ages out.
 	//
 	// A wall polls every two seconds forever, and the rollups behind one spend
-	// board are five GROUP BYs over a table holding a year of history. Without
+	// page are five GROUP BYs over a table holding a year of history. Without
 	// this they run forty thousand times a day to answer a question whose
 	// answer moves when an agent finishes a request. Shared rather than kept
 	// per link on purpose: the snapshot holds the panel's real project ids and
@@ -460,14 +460,11 @@ func (s *Server) Routes() http.Handler {
 	// than chosen: see the note in preview.go.
 	s.registerPreviewRoutes(r)
 
-	spa := webui.Handler(s.Cfg.StaticDir)
-	// A share page's files, for a link that draws a page. A link that draws a
-	// board, and a token that resolves to nothing, are handed straight back to
-	// the SPA, which is what answered `/share/<token>` before pages existed.
-	// Red line 8 counts these routes; see sharepage.go.
-	s.registerSharePageRoutes(r, spa)
+	// A share page's files. Before the SPA's catch-all, which must never answer
+	// `/share/<token>`. Red line 8 counts these routes; see sharepage.go.
+	s.registerSharePageRoutes(r)
 
-	r.Handle("/*", spa)
+	r.Handle("/*", webui.Handler(s.Cfg.StaticDir))
 	return r
 }
 

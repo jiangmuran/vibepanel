@@ -56,8 +56,8 @@ function toolTitle(x: ToolShare): string {
  *              is a reading of.
  *
  * The hierarchy is ratio, not a new type size. The scale tops out at
- * `text-vp-lg` for the panel on purpose — `text-vp-xl` and up exist for a
- * dashboard read from across a room — so the hero is `lg`, the pair is `md`,
+ * `text-vp-lg` for the panel on purpose — `text-vp-xl` and up are for a
+ * figure that is the whole point of a view — so the hero is `lg`, the pair is `md`,
  * and everything else is `xs`. Three steps is enough to rank three ranks.
  */
 export function TokenBlock({

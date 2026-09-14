@@ -127,7 +127,7 @@ func TestAPinnedCandidateSurvivesTheSweep(t *testing.T) {
 		t.Fatal(err)
 	}
 	link, err := db.CreateShareLink(ctx, NewShareLink{ID: "l1", TokenHash: []byte("h1"), Prefix: "p",
-		Name: "wall", Detail: ShareCounts, Board: DefaultBoard(), UserID: "u1", PageID: p.ID})
+		Name: "wall", Detail: ShareCounts, UserID: "u1", PageID: p.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestPreviewLinksAreNotListedNotEditableAndSwept(t *testing.T) {
 	past := now() - 10
 	for i, purpose := range []string{"", SharePurposePreview} {
 		if _, err := db.CreateShareLink(ctx, NewShareLink{ID: []string{"real", "prev"}[i],
-			TokenHash: []byte{byte(i)}, Prefix: "p", Name: "x", Detail: ShareCounts, Board: DefaultBoard(),
+			TokenHash: []byte{byte(i)}, Prefix: "p", Name: "x", Detail: ShareCounts,
 			UserID: "u1", PageID: p.ID, Purpose: purpose, ExpiresAt: past + int64(i)*0}); err != nil {
 			t.Fatal(err)
 		}
@@ -183,7 +183,7 @@ func TestPreviewLinksAreNotListedNotEditableAndSwept(t *testing.T) {
 	if len(list) != 1 || list[0].ID != "real" {
 		t.Errorf("list = %+v, want only the real link", list)
 	}
-	if err := db.UpdateShareLink(ctx, "prev", "renamed", "", DefaultBoard(), false); !errors.Is(err, ErrNotFound) {
+	if err := db.UpdateShareLink(ctx, "prev", "renamed", "", false); !errors.Is(err, ErrNotFound) {
 		t.Errorf("a preview link was editable: %v", err)
 	}
 	if err := db.SetShareLinkPage(ctx, "prev", "other", 0, 0, nil); !errors.Is(err, ErrNotFound) {
@@ -211,7 +211,7 @@ func TestDeletingAPageTakesItsPreviewLinksAndOrphanBlobs(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := db.CreateShareLink(ctx, NewShareLink{ID: "prev", TokenHash: []byte("t"), Prefix: "p",
-		Name: "x", Detail: ShareCounts, Board: DefaultBoard(), UserID: "u1", PageID: p.ID,
+		Name: "x", Detail: ShareCounts, UserID: "u1", PageID: p.ID,
 		Purpose: SharePurposePreview}); err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestLinkParamsSurviveAGarbageColumn(t *testing.T) {
 	db, _ := newPageFixture(t)
 	ctx := context.Background()
 	if _, err := db.CreateShareLink(ctx, NewShareLink{ID: "l", TokenHash: []byte("x"), Prefix: "p",
-		Name: "x", Detail: ShareCounts, Board: DefaultBoard(), UserID: "u1",
+		Name: "x", Detail: ShareCounts, UserID: "u1",
 		Params: map[string]any{"title": "Kitchen"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -247,5 +247,52 @@ func TestLinkParamsSurviveAGarbageColumn(t *testing.T) {
 	got, err := db.ShareLinkByID(ctx, "l")
 	if err != nil || got.Params == nil || len(got.Params) != 0 {
 		t.Errorf("a broken params column = %v, %v; want an empty map and no error", got.Params, err)
+	}
+}
+
+// A conversion only ever fills in a link that draws nothing. A startup that
+// raced an owner pointing the link at a page must not re-point it.
+func TestConvertingABoardLinkNeverTakesOneThatDrawsAPage(t *testing.T) {
+	db, p := newPageFixture(t)
+	ctx := context.Background()
+	for _, l := range []NewShareLink{
+		{ID: "legacy", TokenHash: []byte("a"), Prefix: "p", Name: "old", Detail: ShareCounts, UserID: "u1"},
+		{ID: "drawn", TokenHash: []byte("b"), Prefix: "p", Name: "new", Detail: ShareCounts, UserID: "u1", PageID: p.ID},
+		{ID: "prev", TokenHash: []byte("c"), Prefix: "p", Name: "prev", Detail: ShareCounts, UserID: "u1",
+			Purpose: SharePurposePreview},
+	} {
+		if _, err := db.CreateShareLink(ctx, l); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.sql.Exec(`UPDATE share_links SET board = '{"widgets":[]}'`); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := db.LegacyBoardLinks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(legacy) != 1 || legacy[0].ID != "legacy" || legacy[0].Board == "" {
+		t.Fatalf("legacy links = %+v, want only the one that draws nothing, with its board", legacy)
+	}
+	if err := db.ConvertBoardLink(ctx, "drawn", "other"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("converting a link that draws a page: %v", err)
+	}
+	if err := db.ConvertBoardLink(ctx, "prev", "other"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("converting a preview link: %v", err)
+	}
+	if got, _ := db.ShareLinkByID(ctx, "drawn"); got.PageID != p.ID {
+		t.Errorf("the link now draws %q", got.PageID)
+	}
+	if err := db.ConvertBoardLink(ctx, "legacy", p.ID); err != nil {
+		t.Fatal(err)
+	}
+	var board string
+	_ = db.sql.QueryRow(`SELECT board FROM share_links WHERE id = 'legacy'`).Scan(&board)
+	if got, _ := db.ShareLinkByID(ctx, "legacy"); got.PageID != p.ID || board != "" {
+		t.Errorf("converted link draws %q with board %q", got.PageID, board)
+	}
+	if again, _ := db.LegacyBoardLinks(ctx); len(again) != 0 {
+		t.Errorf("%d legacy links after converting the only one", len(again))
 	}
 }

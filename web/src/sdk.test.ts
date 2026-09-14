@@ -173,7 +173,7 @@ describe('the SDK', () => {
     expect(draft.reload).not.toHaveBeenCalled()
   })
 
-  it('reloads when a board link is pointed at a page', async () => {
+  it('reloads when a link that drew nothing is pointed at a page', async () => {
     const env = load()
     env.fetch.mockReturnValueOnce(answer(200, snapshot({ page: null })))
     env.VibePanel.connect()

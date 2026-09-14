@@ -14,7 +14,7 @@ import type {
 const PAGE_FOR_MS = 30_000
 
 /** Paths compared the way a person typed them, give or take a trailing slash. */
-export function samePath(a: string, b: string): boolean {
+function samePath(a: string, b: string): boolean {
   const trim = (p: string) => (p.length > 1 ? p.replace(/\/+$/, '') : p)
   return a !== '' && trim(a) === trim(b)
 }
@@ -53,43 +53,6 @@ export function usePageFor(project: Project | null): SharePageRow | null {
   }, [path])
   if (path === '') return null
   return pages.find((p) => samePath(p.sourceDir, path)) ?? null
-}
-
-/** The published pages a link can be pointed at, re-read when `version` moves. */
-export function usePublishedPages(version: number): SharePageRow[] {
-  const [pages, setPages] = useState<SharePageRow[]>([])
-  useEffect(() => {
-    let cancelled = false
-    api.listPages().then(
-      (list) => {
-        if (!cancelled) setPages(list.filter((p) => p.publishedVersion > 0))
-      },
-      () => {},
-    )
-    return () => {
-      cancelled = true
-    }
-  }, [version])
-  return pages
-}
-
-/** One page's history, for its manifest's parameters and the versions to pin. */
-export function usePageDetail(pageId: string): SharePageDetail | null {
-  const [detail, setDetail] = useState<SharePageDetail | null>(null)
-  useEffect(() => {
-    if (pageId === '') return
-    let cancelled = false
-    api.page(pageId).then(
-      (d) => {
-        if (!cancelled) setDetail(d)
-      },
-      () => {},
-    )
-    return () => {
-      cancelled = true
-    }
-  }, [pageId])
-  return pageId === '' || detail?.page.id !== pageId ? null : detail
 }
 
 /** The manifest a link on this page, at this pin, is drawing. */

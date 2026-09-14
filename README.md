@@ -50,11 +50,12 @@ saves you from interrupting the agent to ask. There is a separate interface
 built for phones, and you can turn on system notifications or point them at a
 channel of your own. Leaving the house stops being a reason to stop shipping.
 
-The other thing I am fond of is read-only links. Put the whole system's status
-on a monitor, or put tokens spent against code produced on a big screen so
-whoever needs convincing can see it, or cycle through every agent on rotation.
-There are a lot of templates and they work out of the box. ~~Fine, I know this
-is a niche feature. I still think it matters.~~
+The other thing I am fond of is share links. Put the whole system's status on a
+monitor, or put tokens spent against code produced on a big screen so whoever
+needs convincing can see it. What the screen shows is a page you have an agent
+write, in its own project, with a live preview beside the terminal: start from a
+template, publish, make a link, open it on the screen. ~~Fine, I know this is a
+niche feature. I still think it matters.~~
 
 I will say this plainly: this is **not AI slop**. It is a terminal I use hard
 every day and it is genuinely nice to use. I hope it saves you some time and
@@ -62,10 +63,13 @@ that you enjoy it. It is early, so come and join in if you have ideas or
 complaints.
 
 <p align="center">
-  <img src="docs/images/share-templates.png" width="49%" alt="Board templates to start a read-only link from">
-  <img src="docs/images/share-editor.png" width="49%" alt="Building a read-only link: its name, how long it lasts, and the widgets on the board">
+  <img src="docs/images/share-preview.png" width="49%" alt="A share page's live Preview beside the agent writing it">
+  <img src="docs/images/share-settings.png" width="49%" alt="Settings, Sharing: each page with its version, and the links that show it underneath">
 </p>
-<p align="center"><sub>Read-only links for a monitor or a big screen, started from a template.</sub></p>
+<p align="center">
+  <img src="docs/images/share-wall.png" width="98%" alt="The session wall template on a 1920x1080 screen">
+</p>
+<p align="center"><sub>Share pages: an agent writes it beside a live preview, you publish it, and a link puts it on a screen. <a href="docs/features.md#screens-for-other-people">How</a>.</sub></p>
 
 <p align="center">
   <img src="docs/images/mobile-session.png" width="36%" alt="A session on a phone, with the compose box and the key bar">
@@ -177,6 +181,7 @@ the ones that do:
 | `make stress-check` | wide characters, full-screen programs, scrollback, floods, dropped sockets |
 | `make restart-check` | kill the backend; the sessions and the login must outlive it |
 | `make scale-check` | two dozen sessions: snapshot size, sidebar reachability, poller |
+| `make pages-check` | share pages: the sandbox from inside a page, the editing loop, every template |
 | `make tls-check` | its own TLS: wss, the Secure cookie, swapping a certificate |
 | `make install-check` | both installers down every branch, in both languages |
 | `make release-check` | build the archives and run one from a throwaway HOME |

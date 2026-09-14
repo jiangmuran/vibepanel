@@ -3,8 +3,6 @@ package pages
 import (
 	"strings"
 	"testing"
-
-	"github.com/jiangmuran/vibepanel/internal/store"
 )
 
 func TestAManifestIsStrictAboutWhatItSays(t *testing.T) {
@@ -51,92 +49,51 @@ func TestAManifestIsStrictAboutWhatItSays(t *testing.T) {
 	}
 }
 
-// A manifest asks in the board's own vocabulary, which is why it cannot ask
-// for more than a board can. Every section, and every option on one, must
-// compile to a board the board's validator accepts and whose Needs are exactly
-// what the manifest named -- no more.
-func TestAManifestCompilesToExactlyTheSectionsItNames(t *testing.T) {
-	needsOf := map[string][]string{
-		SectionSessions: {store.NeedSessions},
-		SectionTodos:    {store.NeedTodos},
-		SectionSpend:    {store.NeedSpend},
-		SectionTrend:    {store.NeedTrend},
-		SectionFlow:     {store.NeedFlow},
-		SectionFeed:     {store.NeedFeed},
-		SectionRepo:     {store.NeedRepo},
+// A manifest reads into exactly the sections it names and the options it sets,
+// and nothing else: a page must not receive a section it did not ask for.
+func TestAManifestNeedsExactlyWhatItNames(t *testing.T) {
+	one := map[string]Needs{
+		SectionSessions: {Sessions: true},
+		SectionTodos:    {Todos: true},
+		SectionSpend:    {Spend: true},
+		SectionTrend:    {Trend: true},
+		SectionFlow:     {Flow: true, FlowHours: true},
+		SectionFeed:     {Feed: true},
+		SectionRepo:     {Repo: true},
 	}
 	for _, section := range Sections() {
 		m := Manifest{SDK: 1, Name: "x", Sections: []string{section}}
 		if err := m.Validate(); err != nil {
 			t.Fatalf("%s: %v", section, err)
 		}
-		needs := m.Board().Needs()
-		for _, want := range needsOf[section] {
-			if !needs[want] {
-				t.Errorf("%s compiled to a board that does not need %s: %v", section, want, needs)
-			}
-		}
-		for n := range needs {
-			if !contains(needsOf[section], n) {
-				t.Errorf("%s compiled to a board that also needs %s; a page must not receive a "+
-					"section it did not ask for", section, n)
-			}
+		if got := m.Needs(); got != one[section] {
+			t.Errorf("%s needs %+v, want %+v", section, got, one[section])
 		}
 	}
 
-	full := Manifest{SDK: 1, Name: "x", Sections: []string{SectionSpend, SectionRepo},
+	full := Manifest{SDK: 1, Name: "x", Sections: []string{SectionSpend, SectionRepo, SectionFlow},
 		Spend: &SpendOptions{Days: 12, Months: true, Heatmap: true, Split: []string{"model"}},
-		Repo:  &RepoOptions{Days: 9, PRs: true}}
+		Repo:  &RepoOptions{Days: 9, PRs: true}, Flow: &FlowOptions{By: "day", Days: 7}}
 	if err := full.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	needs := full.Board().Needs()
-	for _, want := range []string{store.NeedSpendDays, store.NeedSpendMonths, store.NeedSpendHeatmap,
-		store.NeedSpendModels, store.NeedRepoDays, store.NeedRepoPRs} {
-		if !needs[want] {
-			t.Errorf("options did not reach the board: missing %s in %v", want, needs)
-		}
-	}
-	for _, not := range []string{store.NeedSpendTools, store.NeedSpendProjects, store.NeedSessions} {
-		if needs[not] {
-			t.Errorf("the board needs %s, which nothing asked for", not)
-		}
-	}
-
-	// Without the options, no series: a page that did not ask for a year of
-	// days must not be sent one.
-	plain := Manifest{SDK: 1, Name: "x", Sections: []string{SectionSpend, SectionRepo}}
-	pn := plain.Board().Needs()
-	for _, not := range []string{store.NeedSpendDays, store.NeedSpendHeatmap, store.NeedRepoDays, store.NeedRepoPRs} {
-		if pn[not] {
-			t.Errorf("a page with no options was given %s", not)
-		}
+	want := Needs{Spend: true, SpendDays: 12, SpendMonths: true, SpendHeatmap: true, SpendModels: true,
+		Repo: true, RepoDays: 9, RepoPRs: true, Flow: true, FlowDays: 7}
+	if got := full.Needs(); got != want {
+		t.Errorf("needs %+v\nwant  %+v", got, want)
 	}
 
 	// Options present, but not the day range: months are asked for and days
 	// are not, so days must not be sent.
 	months := Manifest{SDK: 1, Name: "x", Sections: []string{SectionSpend, SectionRepo},
 		Spend: &SpendOptions{Months: true}, Repo: &RepoOptions{PRs: true}}
-	mn := months.Board().Needs()
-	if mn[store.NeedSpendDays] || mn[store.NeedRepoDays] {
-		t.Errorf("options without days were given a day series: %v", mn)
-	}
-	if !mn[store.NeedSpendMonths] || !mn[store.NeedRepoPRs] {
-		t.Errorf("the options that were set did not reach the board: %v", mn)
+	if got := months.Needs(); got.SpendDays != 0 || got.RepoDays != 0 || !got.SpendMonths || !got.RepoPRs {
+		t.Errorf("options without days: %+v", got)
 	}
 
-	if _, err := store.ValidateBoard(Manifest{SDK: 1, Name: "none"}.Board()); err != nil {
-		t.Errorf("a page with no sections compiles to a board the validator refuses: %v", err)
+	if got := (Manifest{SDK: 1, Name: "none"}).Needs(); got != (Needs{}) {
+		t.Errorf("a page with no sections needs %+v", got)
 	}
-}
-
-func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }
 
 // A stored manifest is read leniently: a wall must not go dark because a
@@ -161,4 +118,13 @@ func TestAStoredManifestDropsWhatNoLongerValidates(t *testing.T) {
 	if got := DecodeStored([]byte("not json")); got.Validate() != nil {
 		t.Errorf("garbage decoded to an invalid manifest: %+v", got)
 	}
+}
+
+func contains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }

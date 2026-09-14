@@ -49,12 +49,12 @@ const GROUP_ICON: Record<SettingsGroup, LucideIcon> = {
 export function Settings({
   openAt,
   onClose,
-  onStartPage,
+  onOpenPage,
 }: {
   openAt: SettingsSection
   onClose: () => void
-  /** A share page was made and should become a project with an agent in it. */
-  onStartPage?: (page: SharePage) => void
+  /** Open a share page as its project, with its Preview; `fresh` starts an agent in it. */
+  onOpenPage?: (page: SharePage, fresh: boolean) => void
 }) {
   const lang = useLang()
   const [group, setGroup] = useState<SettingsGroup>(() => groupOf(openAt))
@@ -101,11 +101,10 @@ export function Settings({
   //
   // Both exceptions were found by breaking them. A dialog that swallows every
   // Escape closes itself *and* the confirmation asking for a passkey name,
-  // which is a cancel that throws away the page behind the question. And the
-  // board editor cancels a drag with Escape: the render check watched a widget
-  // stay where it was dropped because this listener had closed the settings
-  // dialog out from under the gesture, three assertions before anything
-  // reported it.
+  // which is a cancel that throws away the page behind the question. And a
+  // control inside may use Escape for itself: the render check once watched a
+  // drag in progress survive its own cancel because this listener had closed
+  // the dialog out from under the gesture.
   //
   // So: not while another modal is over this one, and not while the keyboard
   // is inside a group, where Escape belongs to whatever is holding it.
@@ -260,7 +259,7 @@ export function Settings({
           >
             {group === 'sessions' && <SessionsGroup />}
             {group === 'notify' && <NotificationsGroup />}
-            {group === 'sharing' && <SharingGroup onStartPage={onStartPage} />}
+            {group === 'sharing' && <SharingGroup onOpenPage={onOpenPage} />}
             {group === 'account' && <AccountGroup info={info} />}
             {group === 'panel' && <PanelGroup info={info} />}
           </div>

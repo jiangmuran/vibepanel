@@ -16,9 +16,6 @@ import type {
   Project,
   Session,
   SessionState,
-  ShareBoard,
-  ShareCatalogue,
-  ShareDashboard,
   ShareDetail,
   ShareLink,
   SharePage,
@@ -380,15 +377,14 @@ export const api = {
     name: string
     detail: ShareDetail
     expiresIn: number
-    board: ShareBoard
     scope: string
     scopeId: string
     /** The owner's label for the screen. Shown to viewers under both modes. */
     remark: string
     locked: boolean
-    /** A published share page to draw instead of the board, with its settings. */
-    pageId?: string
-    params?: Record<string, ShareParamValue>
+    /** The published share page the link draws, with its settings on it. */
+    pageId: string
+    params: Record<string, ShareParamValue>
   }) =>
     request<{
       token: string
@@ -396,7 +392,8 @@ export const api = {
       name: string
       prefix: string
       detail: string
-      board: ShareBoard
+      pageId: string
+      params: Record<string, ShareParamValue>
       scope: string
       remark: string
       locked: boolean
@@ -408,12 +405,7 @@ export const api = {
     }),
 
   /**
-   * Renames a link, relabels it, rearranges its board and fixes or unfixes it.
-   *
-   * This is how a television on a wall is changed: from a laptop, signed in,
-   * with the wall picking it up on its next poll. There is nothing to do at the
-   * screen itself, which is the whole point — and the reason the share surface
-   * has no write route.
+   * Renames a link, relabels it, and fixes or unfixes what it draws.
    *
    * Deliberately no `detail` and no `scope`. By the time anybody edits a link
    * its URL is already in an email or typed into a television, and widening
@@ -421,10 +413,7 @@ export const api = {
    * see. The server refuses them too; this signature is the same refusal said
    * where the caller reads it.
    */
-  updateShare: (
-    id: string,
-    fields: { name: string; remark: string; board: ShareBoard; locked: boolean },
-  ) =>
+  updateShare: (id: string, fields: { name: string; remark: string; locked: boolean }) =>
     request<void>(`/api/settings/shares/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(fields),
@@ -434,10 +423,9 @@ export const api = {
    * Unlocks a link, and does nothing else.
    *
    * Its own call rather than `updateShare({locked: false, ...})`, because the
-   * server accepts exactly one thing on a locked link and this is it. A locked
-   * board is a guard against rearranging the wall a customer is sitting in
-   * front of from an editor left open on the wrong row; a single request that
-   * could unlock *and* apply a board would make it a message instead.
+   * server accepts exactly one thing on a locked link and this is it: a single
+   * request that could unlock *and* change the link would make the lock a
+   * message instead of a guard.
    */
   unlockShare: (id: string) =>
     request<void>(`/api/settings/shares/${encodeURIComponent(id)}`, {
@@ -446,25 +434,22 @@ export const api = {
     }),
 
   /**
-   * What one link's screen is showing right now.
-   *
-   * The same body the dashboard itself receives, built by the same function on
-   * the server. Not a second reduction written here: that would diverge on the
-   * first field either side gained, in the direction "the preview shows
-   * something the real screen does not".
+   * A fifteen-minute copy of a link -- same page, pin, parameters, detail and
+   * scope -- so the owner can see what it shows. The panel keeps only a hash
+   * of the real link's token and cannot open that one for them.
    */
-  sharePreview: (id: string) =>
-    request<ShareDashboard>(`/api/settings/shares/${encodeURIComponent(id)}/preview`),
-
-  /** The vocabulary a board is built from: presets, widget kinds, bounds. */
-  shareCatalogue: () => request<ShareCatalogue>('/api/settings/shares/catalogue'),
+  viewShare: (id: string) =>
+    request<{ token: string; expiresAt: number }>(
+      `/api/settings/shares/${encodeURIComponent(id)}/view`,
+      { method: 'POST' },
+    ),
 
   deleteShare: (id: string) =>
     request<void>(`/api/settings/shares/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   /**
-   * Points a link at a share page, or back at its board with `pageId: ''`,
-   * with the page's parameter values. Not what the link discloses: that is
+   * Points a link at a share page, at a version or following the published
+   * one, with the page's parameter values. Not what the link discloses: that is
    * `detail` and `scope`, fixed when it was made.
    */
   setSharePage: (
@@ -483,7 +468,8 @@ export const api = {
   pageCatalogue: () => request<SharePageCatalogue>('/api/settings/pages/catalogue'),
 
   /** A new page from a template, or an existing directory adopted when
-   *  `template` is ''. An empty `sourceDir` puts a new one under pagesRoot. */
+   *  `template` is ''. An empty `sourceDir` puts a new one at
+   *  <pagesRoot>/page-<slug>. */
   createPage: (req: { name: string; template: string; sourceDir: string }) =>
     request<SharePage>('/api/settings/pages', { method: 'POST', body: JSON.stringify(req) }),
 
@@ -494,6 +480,17 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(fields),
     }),
+
+  /**
+   * Makes a page something an agent can start in: writes its published
+   * version back out if the directory has gone, and finds or makes the
+   * `page-…` project that is that directory.
+   */
+  openPage: (id: string) =>
+    request<{ page: SharePage; projectId: string; restored: number }>(
+      `/api/settings/pages/${encodeURIComponent(id)}/open`,
+      { method: 'POST' },
+    ),
 
   deletePage: (id: string) =>
     request<void>(`/api/settings/pages/${encodeURIComponent(id)}`, { method: 'DELETE' }),
@@ -567,20 +564,6 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ name, sourceDir: '' }),
     }),
-
-  /**
-   * The whole surface a share token can reach.
-   *
-   * The token is in the path because that is what makes the URL the
-   * capability: one address you can put on a second screen, with nothing to
-   * sign in to. Everything else about the panel answers 401 to it, which is
-   * enforced by the server's routing rather than by this file.
-   */
-  shareDashboard: (token: string, viewer: string, width: number, height: number) =>
-    request<ShareDashboard>(
-      `/api/share/${encodeURIComponent(token)}/dashboard` +
-        `?v=${encodeURIComponent(viewer)}&w=${width}&h=${height}`,
-    ),
 
   /**
    * List directories. No argument means home; `''` means the filesystem root.
@@ -944,7 +927,7 @@ export const api = {
 
   // The four todo methods were here and are gone with the panel that called
   // them. The *routes* are not gone — see the note above registerPanelRoutes
-  // in internal/httpapi/panels.go: the wall boards count todos, and an agent
+  // in internal/httpapi/panels.go: share pages count todos, and an agent
   // with an API token can still write one. What has no caller is this client,
   // and dead client code is how somebody concludes the feature is dead.
 }

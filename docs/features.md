@@ -160,78 +160,79 @@ back the endpoint as well as the command.
 
 ## Screens for other people
 
-**Settings → Read-only share links** makes a URL for a second screen:
-`https://<panel>/share/<token>`. It opens a dashboard and nothing else: no
-terminal, no write path, no file browser, and no way to make a second link from
-the first.
+A **share link** is a URL for a second screen: `https://<panel>/share/<token>/`.
+It opens one **share page** and nothing else: no terminal, no write path, no file
+browser, and no way to make a second link from the first.
 
-The dashboard draws a **board**, chosen when the link is made. Thirty
-starting points, grouped by the screen they were composed for:
+A share page is HTML, usually written by an agent in one of the panel's own
+sessions, reading the panel's data through a small SDK. Everything to do with
+it is in **Settings → Sharing**, which is one list: each page, and under it the
+links that show it.
 
-| | |
-|---|---|
-| a phone | one column, three things, four seconds standing up |
-| a laptop | overview · does anything need me · the waiting queue · what is waiting on an answer · how today went · everything at once · only the machine · what has gone wrong · cost against output · pull requests · for your boss · where it went · per project · which model is working · what today cost |
-| a screen on a wall | every session as a tile · three numbers and a clock · one number filling the screen · how busy it is · three pages that cycle · **what it is spending, live** · **sitting in front of it** · **what got built** · **for a client** · **for leadership** · the year as a grid of days |
-| a 4K wall | **the room screen** · **for leadership** · a corridor screen |
+### Making one, publishing it, handing it out
 
-Three of those are named for the room. **The room screen** is the 4K one: what
-got built today at headline size, the number of agents waiting for a person
-beside it, what it cost against what came out on one time axis under both, a
-feed, and a strip of every session's state along the bottom. Five tiles, at the
-lowest density, because a screen read across a room carries five to nine things
-before it is noise. **Sitting in front of it** is the same room read from the
-chair in front of the screen: eight tiles at the highest density instead of
-five at the lowest. **For a client** scopes itself to one project and turns
-names off, because the failure there is a customer reading another customer's
-project name off the screen they are sat in front of. Two of the thirty are
-both called *for leadership*: one composed for a wall, one for a 4K one.
+1. **New page.** Give it a name and pick a starting point — a session wall,
+   token spend, what got built, a phone glance, or blank. It goes in
+   `<data dir>/pages/page-<name>` (on Linux,
+   `~/.local/share/vibepanel/pages/page-lobby`, beside pasted screenshots) unless
+   you give it a directory, and it becomes a project called `page-lobby`. With
+   *start an agent* ticked, an agent opens in it with a first line already typed
+   at its prompt for you to finish.
+2. **Write it.** Above the project's file list, **Share page** opens the Preview
+   beside the terminal:
+   - it redraws each time the agent finishes writing a file, on the real data or
+     on a made-up one — forty sessions, nothing at all, no names, names full of
+     markup;
+   - errors the page throws are listed under it, and written to a file the agent
+     reads;
+   - **pick** an element and a line pointing at it is typed at the agent's
+     prompt, for you to finish with what should change;
+   - side by side on a phone, a laptop and a television, in the window.
 
-A template is a starting point, not a mode, and it is **arranged by dragging
-it**. The preview of the wall *is* the editor: pick a tile up and drop it where
-it goes, drag its right edge for width and its bottom for height, and pick the
-next one out of a library of small pictures beside it. Templates are chosen the
-same way — a gallery of thumbnails of the actual arrangement, not a list of
-names. Every landing place is drawn for the whole drag with the one under the
-pointer filled, and arrow keys do the same thing without a pointer.
+   From a shell, `vibepanel page check` says what is wrong with a page, file and
+   line, and `vibepanel page shot` screenshots it on the screens it is for and
+   reports what broke — which is how an agent checks its own work.
+3. **Publish.** From the Preview, from the page's row in settings, or with
+   `vibepanel page publish` in its directory. Publishing stores the directory as
+   it is now as the next version; nothing a link shows changes until you do.
+4. **New link**, under the page (it needs a published version). Name it, give
+   the screen a label, choose what it may say and for how long, and set the
+   page's own settings for this screen. The URL is shown **once** — copy it, or
+   open it — because the panel keeps only a hash.
+5. **Open it on the screen.** That is the whole install.
 
-There are **forty-four widget kinds**: single figures, gauges, sparklines, a
-filled machine line over the last fifteen minutes, stacked token bars, ranked
-breakdowns, session tiles, a dwell timeline, the year as a grid of days, what
-just happened as a feed, how the day went hour by hour, what was committed, and
-the furniture a composed screen needs — a spacer, a rule, a section heading, and
-the screen's own name.
+Afterwards, from the same list:
 
-The grid is **twelve columns wide and four rows tall**, so a widget can be a
-third of a wall or three times the height of the tiles beside it. A screen where
-every tile is the same size gives a reader nowhere to look first. A board can
-also be set to **fill** the screen rather than flow down it, since nobody is
-going to scroll a television.
+- **View** (the eye on a link's row) opens what that link is showing right now,
+  in a new tab, through a fifteen-minute copy of the link. The real address
+  cannot be shown again, so this is how you look at it.
+- **Publish** again and every link following the published version picks it up
+  on its next poll, without anybody touching the screen. A link can instead be
+  **pinned** to one version.
+- **Try it on a screen** from the Preview puts the draft on one link for ten
+  minutes; the screen goes back by itself if you do nothing.
+- **Versions** lists every published version, and any of them can be rolled
+  back to.
+- **Open** takes you back to the page's project with the Preview beside it. If
+  its directory has gone — deleted, a new machine, a wiped data directory — the
+  button says **Restore and open** and writes the published version back first;
+  if the `page-…` project was removed, it is made again.
 
-Two more settings, and they are two different questions:
-
-- **How large** everything is drawn follows the screen and needs no setting. A
-  4K television shows the same composition *bigger*, not more columns of smaller
-  type; a phone gets the same board collapsed to one column.
-- **How much** is on screen is the board's **density**, in three steps. It is
-  the axis **the room screen** and **sitting in front of it** differ on, and it
-  changes without rebuilding the board.
-
-**Changing a wall does not mean walking to it.** The board is edited from the
-settings page on a laptop and the screen follows within two seconds, with nobody
-touching it: every poll re-reads the link. The canvas being arranged is
-drawn at the shape of the screen that is actually showing the link, from that
-screen's own live data, and each row says how many screens have it open right
-now. **Lock** a link and its board cannot be changed until it is unlocked, which
-is what stops the one a customer is watching being rearranged from an editor left
-open on the wrong row.
+A page can declare settings — a title, a colour, a threshold — that are changed
+per link, from the link's row, and reach the screen without a reload. Each row
+also says how many screens have the link open right now. **Lock** a link and its
+page, version, settings and trials cannot be changed until it is unlocked, which
+is what stops the one a customer is watching being changed from a row left open.
 
 Give a link a **remark** — "the screen in meeting room three", "for the
-customer" — and it appears on the screen as well as in the settings row. It is
-shown in both detail levels, because it is the owner's sentence to whoever is standing
-in front of the screen rather than one of the panel's own words.
+customer" — and it is shown in the settings row and handed to the page. It is
+shown in both detail levels, because it is the owner's sentence to whoever is
+standing in front of the screen rather than one of the panel's own words.
 
-The numbers are what the panel knows and what the repositories say.
+### What a page can show
+
+The numbers are what the panel knows and what the repositories say, and a page
+names which of these it wants in its `vibepanel.json`; nothing else is sent to it.
 
 **What it cost**: what the agents recorded spending, by day, by agent, by model,
 by project. Tokens, never money — prices differ by model and tier and change,
@@ -242,69 +243,49 @@ a window, and as a series. Pull requests open, checks green or red, and what was
 merged today, where the panel has been given a GitHub token. These are counted
 by reading the working trees, so they are things that exist now and did not this
 morning rather than things somebody remembered to tick off. Lines are always two
-numbers and never a net one, and they are labelled as *change*: +1200/−800 is a
-different day from +400/−0 and the net figure is the same in both. Work an agent
-has not committed yet is invisible to all of it.
+numbers and never a net one: +1200/−800 is a different day from +400/−0 and the
+net figure is the same in both. Work an agent has not committed yet is invisible
+to all of it.
 
 **How the day went**: what started, what went quiet waiting for a person, what
 finished, and how long things sat before somebody got to them — hour by hour, or
 day by day. And a feed of what just happened, which is the thing on a wall that
 moves.
 
+Plus the sessions and their states, checklist progress, and the machine's load.
+
+### What a link may say
+
 A link is scoped to the whole panel, one project or one session, and the server
 enforces that from the link's own row. Delete the project a link was scoped to
 and the link shows nothing, rather than falling back to the whole panel. Detail
-is either **counts and states**, the default, which shows shapes and numbers and
-no text at all, or **names as well**, which adds session titles and project
+is either **counts and states**, the default, which carries shapes and numbers
+and no text at all, or **names as well**, which adds session titles and project
 names. Neither ever sends a path, a working directory, a command line, a
-hostname or the panel's own ids. The board, the remark and the lock can be
-changed later; the detail level and the scope cannot, because by then the URL is
-in somebody's email and widening what it discloses is a change nobody holding it
-would see.
+hostname or the panel's own ids. The name, remark, lock, version and settings
+can be changed later; the detail level and the scope cannot, because by then
+the URL is in somebody's email and widening what it discloses is a change nobody
+holding it would see.
 
-The link is a credential: anyone holding it can watch. The panel stores only a
-hash, so creation is the only time it can be read. Links are revoked
+The link is a credential: anyone holding it can watch. Links are revoked
 individually, can be given an expiry, and their creation and revocation are in
-the audit log.
-
-The dashboard says *live*, *reconnecting* or *disconnected* in words as well as
-in shape, and the header always carries the time of the last reading and how
-long ago that was. A board that has quietly frozen otherwise looks like a quiet
-machine.
-
-### A page you write instead of a board
-
-When no arrangement of widgets is the screen you want, a link can draw a **share
-page**: an HTML page, usually written by an agent in one of the panel's own
-sessions, reading the same data through a small SDK.
-
-**Settings → Sharing → Share pages** makes one from a template — a session wall,
-token spend, what got built, a phone glance, or blank — and starts an agent in
-its directory with a first line already typed at the prompt. The directory
-shows up as a project. Above its file list, **Share page** opens the Preview
-beside the terminal:
-
-- it redraws each time the agent finishes writing a file, on the real data or on
-  a made-up one — forty sessions, nothing at all, no names, names full of markup;
-- errors the page throws are listed under it, and written to a file the agent reads;
-- **pick** an element and a line pointing at it is typed at the agent's prompt,
-  for you to finish with what should change;
-- side by side on a phone, a laptop and a television, in the window;
-- **Publish** when it is right; **try it on a screen** for ten minutes first, and
-  the screen goes back by itself if you do nothing.
-
-A page can declare settings — a title, a colour, a threshold — that are changed
-per link from the settings page, and reach the screen without a reload. Every
-published version is kept and can be rolled back to.
-
-From a shell, `vibepanel page check` says what is wrong with a page, file and
-line, and `vibepanel page shot` screenshots it on the screens it is for and
-reports what broke — which is how an agent checks its own work.
+the audit log. A revoked or expired address answers with a plain page saying the
+link no longer works, and nothing of the panel's.
 
 A page runs sandboxed: it cannot read the panel's cookies or storage, call the
-panel's API or open its terminal, and cannot reach any other address. It sees
-exactly what its link's detail level and scope allow, which is what a board
-sees. [share-pages.md](share-pages.md) has how.
+panel's API or open its terminal, and cannot reach any other address. The SDK
+says *live*, *reconnecting*, *disconnected* or *revoked*, so a page that has
+quietly frozen does not look like a quiet machine. [share-pages.md](share-pages.md)
+has how.
+
+### Links from before pages
+
+Earlier releases drew **boards** — arrangements of widgets — on share links.
+Boards are gone. On the first start after upgrading, every existing link is
+pointed at a page made from the template closest to what its board showed (what
+got built, token spend, a phone glance, or a session wall), published, in the
+same `page-…` directories. The addresses on walls keep working, with the same
+detail level, scope, remark and expiry.
 
 ## The first run
 
@@ -394,7 +375,7 @@ public internet.
 Everything needs a credential, including the WebSocket, which is the terminal.
 The exceptions are the health probe, the hook endpoint (which takes a token
 injected into every session) and the share link (which takes a share token, on
-its dashboard, its page's files and its snapshot — `GET`s only — and is rejected
+its page's files and its snapshot — `GET`s only — and is rejected
 everywhere else).
 
 First run prints a one-time setup token to the console: whoever can read the

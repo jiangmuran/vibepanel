@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
@@ -69,6 +70,7 @@ func (s *Server) registerPageRoutes(r chi.Router) {
 	r.Post("/settings/pages/{pageID}/trial/{linkID}/keep", s.handleKeepTrial)
 	r.Delete("/settings/pages/{pageID}/trial/{linkID}", s.handleEndTrial)
 	r.Post("/settings/pages/{pageID}/fork", s.handleForkPage)
+	r.Post("/settings/pages/{pageID}/open", s.handleOpenPage)
 	r.Put("/settings/shares/{shareID}/page", s.handleSetSharePage)
 }
 
@@ -165,18 +167,51 @@ func (s *Server) handlePageCatalogue(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(fixtures)
 	writeJSON(w, http.StatusOK, pageCatalogue{
 		Templates: pages.Templates(), Sections: pages.Sections(), Viewports: pages.Viewports,
-		Fixtures: fixtures, ScriptHosts: pages.ScriptHosts, PagesRoot: pagesRoot(),
+		Fixtures: fixtures, ScriptHosts: pages.ScriptHosts, PagesRoot: s.Cfg.PagesDir(),
 		SDK: pages.SDKVersion, MaxFiles: pages.MaxFiles, MaxBytes: pages.MaxBytes,
 	})
 }
 
-// pagesRoot is where new pages go by default: ~/vibepanel-pages.
-func pagesRoot() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return ""
+// PageDirPrefix starts the name of every directory, and every project, the
+// panel makes for a page. So `page-lobby` in the sidebar is recognisably a
+// share page's project and not somebody's repository called lobby.
+const PageDirPrefix = "page-"
+
+// NewPageDir is where a page called name goes when nobody said where:
+// <root>/page-<name>, or -2, -3… for the first that is free.
+func NewPageDir(root, name string) string {
+	return freeDir(root, PageDirPrefix+dirName(name))
+}
+
+// dirName is a page name as a directory name: letters and digits of any
+// script, lower-cased, everything else a single dash.
+//
+// Not pages.Slug, which keeps ASCII only and is right for what it names. A
+// directory is what the sidebar calls the page's project, and most pages here
+// are named in Chinese: 「走廊电视墙」 slugged to "page" made every one of them
+// page-page, page-page-2, page-page-3 -- a list nobody can tell apart.
+func dirName(name string) string {
+	var b strings.Builder
+	dash := false
+	n := 0
+	for _, r := range strings.ToLower(name) {
+		if n >= 40 {
+			break
+		}
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+			dash = false
+			n++
+		} else if !dash && b.Len() > 0 {
+			b.WriteByte('-')
+			dash = true
+		}
 	}
-	return filepath.Join(home, "vibepanel-pages")
+	out := strings.TrimRight(b.String(), "-")
+	if out == "" {
+		return "page"
+	}
+	return out
 }
 
 // ─── create, update, delete ───────────────────────────────────────────────
@@ -187,7 +222,7 @@ type createPageRequest struct {
 	// a page, which is adopted as it is.
 	Template string `json:"template"`
 	// SourceDir is an absolute directory. Empty with a template means a new
-	// directory under pagesRoot, named after the page.
+	// directory under the data directory's pages/, named page-<slug>.
 	SourceDir string `json:"sourceDir"`
 }
 
@@ -226,12 +261,7 @@ func (s *Server) handleCreatePage(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		if dir == "" {
-			root := pagesRoot()
-			if root == "" {
-				writeErr(w, http.StatusBadRequest, "no home directory to put the page in; give a sourceDir")
-				return
-			}
-			dir = freeDir(root, pages.Slug(name))
+			dir = NewPageDir(s.Cfg.PagesDir(), name)
 		}
 		if err := pages.Scaffold(dir, req.Template, name, PageFixtures()); err != nil {
 			status := http.StatusBadRequest
@@ -663,7 +693,7 @@ func MintPreviewLink(ctx context.Context, db *store.DB, page store.SharePage, de
 	}
 	link, err := db.CreateShareLink(ctx, store.NewShareLink{
 		ID: id.New(), TokenHash: auth.HashToken(token), Prefix: token[:8], Name: page.Name,
-		Detail: detail, Board: store.DefaultBoard(), Scope: scope, ScopeID: scopeID, UserID: userID,
+		Detail: detail, Scope: scope, ScopeID: scopeID, UserID: userID,
 		ExpiresAt: time.Now().Add(previewLinkTTL).Unix(), PageID: page.ID, Purpose: store.SharePurposePreview,
 	})
 	return link, token, err
@@ -779,7 +809,7 @@ func (s *Server) handleStartTrial(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if link.Locked {
-		writeErr(w, http.StatusConflict, "this board is locked")
+		writeErr(w, http.StatusConflict, "this link is locked")
 		return
 	}
 	minutes := req.Minutes
@@ -901,11 +931,7 @@ func (s *Server) handleForkPage(w http.ResponseWriter, r *http.Request) {
 	dir := strings.TrimSpace(expandHome(req.SourceDir))
 	switch {
 	case dir == "":
-		base := filepath.Dir(src.SourceDir)
-		if base == "" || base == "." {
-			base = pagesRoot()
-		}
-		dir = freeDir(base, pages.Slug(name))
+		dir = NewPageDir(s.Cfg.PagesDir(), name)
 	case !filepath.IsAbs(dir):
 		writeErr(w, http.StatusBadRequest, "sourceDir must be an absolute path")
 		return
@@ -929,7 +955,7 @@ func (s *Server) handleForkPage(w http.ResponseWriter, r *http.Request) {
 // ─── pointing a link at a page ────────────────────────────────────────────
 
 type setSharePageRequest struct {
-	// PageID is the page to draw, or "" to go back to the board.
+	// PageID is the page to draw.
 	PageID string `json:"pageId"`
 	// PinVersion holds the link on one published version; 0 follows whatever
 	// is published.
@@ -940,7 +966,7 @@ type setSharePageRequest struct {
 // handleSetSharePage changes what a link draws and the page's settings on it.
 //
 // Not what it discloses: detail and scope stay what they were, for the reason
-// handleUpdateShare gives. A page and a board read the same redacted snapshot.
+// handleUpdateShare gives.
 func (s *Server) handleSetSharePage(w http.ResponseWriter, r *http.Request) {
 	var req setSharePageRequest
 	if !decode(w, r, &req) {
@@ -953,7 +979,7 @@ func (s *Server) handleSetSharePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if link.Locked {
-		writeErr(w, http.StatusConflict, "this board is locked")
+		writeErr(w, http.StatusConflict, "this link is locked")
 		return
 	}
 	params, err := s.pageLinkSettings(r, req.PageID, req.PinVersion, req.Params)
@@ -973,8 +999,6 @@ func (s *Server) handleSetSharePage(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case req.PageID == link.PageID && req.PinVersion == link.PinVersion:
 			s.audit(ctx, "share.params_changed", u.Username, s.clientIP(r), link.Name)
-		case req.PageID == "":
-			s.audit(ctx, "share.page_changed", u.Username, s.clientIP(r), link.Name+" → board")
 		default:
 			detail := link.Name + " → " + req.PageID
 			if req.PinVersion > 0 {
@@ -991,10 +1015,7 @@ func (s *Server) handleSetSharePage(w http.ResponseWriter, r *http.Request) {
 func (s *Server) pageLinkSettings(r *http.Request, pageID string, pin int,
 	values map[string]any) (map[string]any, error) {
 	if pageID == "" {
-		if pin != 0 || len(values) > 0 {
-			return nil, errors.New("a board takes no version or parameters")
-		}
-		return map[string]any{}, nil
+		return nil, errors.New("a link draws a page: pageId is required")
 	}
 	page, err := s.DB.SharePageByID(r.Context(), pageID)
 	if err != nil {

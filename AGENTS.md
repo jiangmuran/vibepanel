@@ -76,20 +76,24 @@ Each of these exists because the alternative broke something real.
    `internal/tmux`, never hand-built target strings.
 
 8. **A read-only share token is narrowed by its route, never by a flag.**
-   A share token reaches `GET`s only, and exactly these four:
-   `/api/share/{token}/dashboard`, `/api/share/{token}/v1/snapshot`, and a
-   share page's files at `/share/{token}` and `/share/{token}/*`.
+   A share token reaches `GET`s only, and exactly these three:
+   `/api/share/{token}/v1/snapshot`, and a share page's files at
+   `/share/{token}` and `/share/{token}/*`.
    `TestAShareTokenReachesOnlyTheseRoutes` walks the router and fails on any
    route, method or path under either prefix that is not that list.
    `share_links` is a table `currentUser` does not consult. That is what makes
    a share token presented as a cookie or a `Bearer` header an unknown string
    that every authenticated route already answers 401 to.
 
-   This said "exactly one `GET`" until share pages, and the count changed on
-   purpose rather than by drift: the snapshot is the same redaction as the
-   dashboard restated as a published contract, and the page files are HTML the
-   owner published, served inside `sandbox allow-scripts` with a
-   `connect-src` that names that token's snapshot and nothing else.
+   This said "exactly one `GET`" until share pages, and the list changed on
+   purpose rather than by drift: the snapshot is the one redaction restated as
+   a published contract (it replaced the board's dashboard route when boards
+   were removed), and the page files are HTML the owner published, served
+   inside `sandbox allow-scripts` with a `connect-src` that names that token's
+   snapshot and nothing else. A token that resolves to nothing gets a static
+   "no longer works" page on `/share/{token}`, never the panel's SPA: the
+   bundle is the sign-in page, one click from the door the link exists so
+   nobody needs.
    `pages-check` removes each of those two layers in turn and watches a page
    become the owner — cookie, storage, API, terminal socket — so neither is
    decoration. `docs/share-pages.md` is the design.
@@ -103,7 +107,8 @@ Each of these exists because the alternative broke something real.
 
    A share page is the owner's HTML; it is not a way in. No write route, no
    server-side code, no parameter that reaches a query: the manifest chooses
-   sections from the board's own registry and parameters are only echoed.
+   among the snapshot's fixed sections (`pages.Needs` — switches and bounded
+   day counts) and parameters are only echoed.
    `allow-same-origin` never appears beside `allow-scripts`.
 
    The redaction is the same shape: `internal/httpapi/share.go` restates the
@@ -116,17 +121,21 @@ Each of these exists because the alternative broke something real.
    was "I should not have to walk to the wall and log in to change the layout".
    The obvious answer is a `PATCH` here, one line, obviously correct in review.
    The right answer was that the person who wants to change it is not at the
-   screen. They are on a laptop, signed in, so the board is edited through
-   `PATCH /api/settings/shares/{id}` and the wall picks it up on its next poll,
-   because every poll re-reads the row. The whole live-update feature cost this
-   file nothing. If the next request sounds like it needs a write here, ask
-   first where the person making the change actually is.
+   screen. They are on a laptop, signed in, so what a screen shows — its page,
+   version, settings, name — is changed through the settings routes and the
+   wall picks it up on its next poll, because every poll re-reads the row. The
+   whole live-update feature cost the share surface nothing. If the next
+   request sounds like it needs a write here, ask first where the person making
+   the change actually is. The same answer covers "let me see what that link
+   shows": the token is hash-only, so the owner's session mints a
+   fifteen-minute copy of the link (`POST /api/settings/shares/{id}/view`)
+   rather than anything under the token learning to be read back.
 
-   Two things a viewer *does* send, on the query string of the dashboard and the
-   snapshot: an opaque per-tab id and its viewport, for the owner's "how many
-   screens have this open". They are recorded in process memory and never read
-   back, and nothing a viewer sends decides anything the response carries —
-   `TestWhatAViewerSaysAboutItselfCannotChangeTheDashboard` and
+   Two things a viewer *does* send, on the query string of the snapshot: an
+   opaque per-tab id and its viewport, for the owner's "how many screens have
+   this open". They are recorded in process memory and never read back, and
+   nothing a viewer sends decides anything the response carries —
+   `TestWhatAViewerSaysAboutItselfCannotChangeTheSnapshot` and
    `TestWhatAPageSendsCannotChangeItsSnapshot` are what say so. A page's
    sections come from the version its owner published, not from the request.
 
@@ -143,8 +152,8 @@ Each of these exists because the alternative broke something real.
      `TestTheActivityReadAsksForATimestampAndNothingElse` pins the argument
      list rather than trusting the parser.
    - It can cause **one outbound request**, to github.com, and four things must
-     be true at once (a pull-request widget on the board, a project-scoped
-     link, `names` mode, and a token in the environment) behind a cache that
+     be true at once (pull requests asked for in the page's manifest, a
+     project-scoped link, `names` mode, and a token in the environment) behind a cache that
      refreshes at most once per repository per five minutes and stops entirely
      when nobody is looking. `internal/git/warm.go` is where that is enforced;
      the thing that may not be added to it is a ticker.
@@ -168,11 +177,12 @@ Each of these exists because the alternative broke something real.
   **Inside a panel or a dialog, a responsive variant is a container query**
   (`@container` plus `@3xl:`), never `sm:`/`lg:`. The settings modal's body is
   about a third of the window, so a `lg:` rule there fires roughly a thousand
-  pixels early: the board editor's `lg:grid-cols-[1fr_20rem]` split 540px of
-  real space into a 208px canvas beside a 320px palette on every desktop, and
-  the whole sharing page was 「排版乱、错位」 from that one mistake repeated.
-  `components/board/layout.test.ts` fails on a viewport breakpoint anywhere in
-  the four files that draw it.
+  pixels early: a `lg:grid-cols-[1fr_20rem]` in the since-removed board editor
+  split 540px of real space into a 208px canvas beside a 320px palette on every
+  desktop, and the whole sharing page was 「排版乱、错位」 from that one mistake
+  repeated. The Sharing list (`components/pages/Sharing.tsx`,
+  `PageLinks.tsx`) is built on `@container` for that reason, and
+  `render-check` measures that it fits the dialog at three widths.
 - **Tests**: Go standard `testing`; `vitest` on the frontend. The tmux wrapper
   is tested against a real tmux on a throwaway socket rather than a mock. The bugs
   worth catching there are tmux's, and a mock reproduces none of them.
@@ -189,7 +199,6 @@ Each of these exists because the alternative broke something real.
   | `make stress-check` | wide characters, full-screen programs, scrollback, floods, dropped sockets |
   | `make restart-check` | kill the backend; the sessions and the login must outlive it |
   | `make scale-check` | two dozen sessions: snapshot size, sidebar reachability, poller |
-  | `make board-check` | every share-board preset on every screen one gets put on: scale spread, clipping, empty tiles |
   | `make pages-check` | share pages: every escape from inside a sandboxed page, in a signed-in browser; the editing loop through the UI; every template × screen × fixture |
   | `make tls-check` | its own TLS: wss, the Secure cookie, swapping a certificate |
   | `make release-check` | build the archives and run one from a throwaway HOME |

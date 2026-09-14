@@ -21617,3 +21617,95 @@ non-ASCII as underscores. `TestEveryCommandForcesUTF8` pins the flag (and goes
 red with it removed), and release-check now makes a session inside the built
 image and fails if it reads as GONE: red against the old image, green with the
 fix.
+
+## Boards removed; sharing is pages
+
+2026-09-14. For one release a share link could draw a board or a share page,
+and Settings → Sharing showed both: the pages list, then the links with a board
+editor, thirty presets and a widget library under a "shows: board / page"
+select. Put in front of the owner in a container, it read as two features mixed
+together, and the owner's answer settled the rest: the read-only board was the
+feature that was meant to be deleted. Pages exist because the board's limit was
+its vocabulary; keeping both meant two redactions of the same state to keep in
+step, two browser checks, and a settings section nobody could read.
+
+### What went
+
+The board editor, its canvas and palette, the thirty presets and the widget
+registry (`internal/store/board.go`, `presets.go` and their tests), the
+`/api/share/{token}/dashboard` route and the SPA root that drew it, the
+catalogue and preview settings routes, the board fields on link create and
+update, the board styles, `board-check`, and some three hundred dictionary
+entries. `pages.Manifest.Board()` compiled a manifest into a board so the
+existing builder could read it; `Manifest.Needs()` now reads it into a struct of
+switches and bounded day counts and the builder takes that directly, which is
+the same "a page can only subtract" with one translation fewer. The share
+surface is three `GET`s: the snapshot and a page's files. A link must name a
+page when it is made, and `PATCH` on a link is name, remark and lock.
+
+### The links on walls did not go
+
+Deleting the board would have blanked every screen showing one. So
+`ConvertBoardLinks` runs at startup, before the listener, over every link that
+still draws no page. The stored board column is read once, raw, only to choose
+a template: repository widgets outnumbering-or-equal spend widgets → *what got
+built*; any spend → *token spend*; the `phone` preset → *phone glance*;
+everything else → *session wall*, which is what the default board was. One page
+per owner and template, scaffolded, published as v1, and the link pointed at it
+in one statement that also clears the board. Detail, scope, remark and expiry
+are not touched, because they are what the link discloses and the drawing never
+was. `share.converted` is audited per link. A second start finds nothing; a
+failure is logged and retried next start, and meanwhile the link says it no
+longer works rather than showing the whole panel or an error page from the SPA.
+
+### Where a page lives, and getting it back
+
+The page directory defaulted to `~/vibepanel-pages/<slug>`. "Data straight in
+`~/` isn't good": it is now `<data dir>/pages/page-<slug>`, beside `pasted/`,
+and the project the panel makes for it is `page-<slug>`, so the sidebar says
+what it is. The directory is a working copy; the page is its published versions
+in SQLite. `POST /api/settings/pages/{id}/open` is what the settings **Open**
+button calls: a missing directory gets the published version written back
+(through `CheckoutVersion`, which `vibepanel page checkout` now shares, so the
+two cannot differ), into the old path if it can be created and a new `page-…`
+directory otherwise, a never-published page comes back blank, and a missing
+project is made again. Audited as `page.restored`. It then opens the Preview
+beside the project and starts an agent when the page is new, restored, or has
+nothing running.
+
+### Seeing what a link shows
+
+The question "after creating it, how do I publish, and how do I see the link"
+had two halves with the same cause. A link's URL is readable once, because the
+table keeps a SHA-256, and nothing in the old list let the owner look at a link
+afterwards. `POST /api/settings/shares/{id}/view` mints a *peek* link: fifteen
+minutes, unlisted, uneditable, swept with preview links, copying the original's
+page, pin, trial, parameters, detail and scope. The eye on a link's row opens it
+in a tab whose `opener` is cut before it navigates. It is minted from the
+owner's session, not derived from anything under the token.
+
+### A dead address is not the panel
+
+`/share/<token>` for a token that resolved to nothing used to fall through to
+the SPA, which asked the dashboard route and drew a revoked state. With the
+dashboard gone it had nothing to ask, and the fall-through had always meant a
+stranger holding a revoked address was served the panel's bundle, one click from
+its sign-in page. It now answers `404` with a static bilingual page — no script,
+nothing from the database, `default-src 'none'; sandbox` — or `503` with
+"unavailable" when the database cannot be read, because "ask for a new link" is
+the wrong advice for that one.
+
+### The settings list
+
+One section, one list: a page card (name, `vN published`, directory, *missing —
+Open restores vN*) with Open, Publish, versions and rollback, fork and delete,
+and under it that page's links — viewers, View, lock, edit (name, label, version
+pin, parameters, saved as typed) and revoke — and **New link**, disabled until
+there is a published version, ending in the once-only URL with copy and open.
+The "which page does this link draw" select is gone because a link is made on
+its page. Built on container queries, and `render-check` still measures that it
+fits the dialog at three widths; `pages-check` now makes the page with no
+directory given and checks it lands in `data/pages/page-lobby` as project
+`page-lobby`, that a revoked address gets the plain page and no `#root`, that
+View opens a tab showing the link's parameters, and that deleting the directory
+and pressing Open writes the published version back into the same project.

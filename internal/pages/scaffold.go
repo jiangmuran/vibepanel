@@ -52,7 +52,7 @@ func Templates() []Template {
 		if err != nil {
 			continue
 		}
-		out = append(out, Template{ID: id, Sections: m.Needs()})
+		out = append(out, Template{ID: id, Sections: m.SectionNames()})
 	}
 	return out
 }

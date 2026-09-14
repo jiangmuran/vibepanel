@@ -108,6 +108,9 @@ interface Props {
   /** The selected session, which a share page's Preview pastes into. */
   currentSession: Session | null
   onPaste: (sessionId: string, text: string, submit: boolean) => void
+  /** Bumped to open the share page's Preview, when a page is opened from
+   *  the settings. A counter rather than a flag, so the same ask twice is two. */
+  previewAsk?: number
 }
 
 /** Pixels of movement before a press on a tab becomes a drag.
@@ -195,6 +198,13 @@ export function RightPanel(props: Props) {
    */
   const [opened, setDetail] = useState<{ block: DetailBlock; full: boolean } | null>(null)
   const openDetail = useCallback((block: DetailBlock) => setDetail({ block, full: false }), [])
+  // Adjusted during render rather than in an effect, so the Preview opens in
+  // the same frame the ask arrives instead of one frame later.
+  const [askSeen, setAskSeen] = useState(props.previewAsk ?? 0)
+  if ((props.previewAsk ?? 0) !== askSeen) {
+    setAskSeen(props.previewAsk ?? 0)
+    setDetail({ block: 'page', full: false })
+  }
 
   // One reading of the token ledger for the compact block and the opened one,
   // so expanding does not restart the poll under the figures you pressed.
