@@ -401,6 +401,28 @@ else
         fail "the container ran and never answered /api/health: $(docker logs "$CID" 2>&1 | tail -3 | tr '\n' ' ')"
       else
         ok "the container answers /api/health ($(curl -s --max-time 3 "http://127.0.0.1:$PORT/api/health"))"
+
+        # A session, made inside the image, must still be there a few polls
+        # later. The alpine image sets no locale, and its tmux then replaced
+        # the panel's field separator with "_": every line of list-sessions
+        # failed to parse and every live session read as GONE -- in the image
+        # that shipped, while the health probe above answered ok. The host's
+        # tmux does not do this, so this is the only place it can be seen.
+        PROJ="$(docker exec "$CID" vibepanel project add --path /tmp --name probe 2>&1 \
+          | sed -nE 's/^created project ([^ ]+).*/\1/p')"
+        if [ -z "$PROJ" ] || ! docker exec "$CID" vibepanel session new --project "$PROJ" >/dev/null 2>&1; then
+          fail "could not make a session inside the container"
+        else
+          sleep 4
+          LS="$(docker exec "$CID" vibepanel session ls 2>&1)"
+          if printf '%s\n' "$LS" | grep -q 'GONE'; then
+            fail "a live session inside the container reads as GONE: $(printf '%s' "$LS" | tail -1)"
+          elif printf '%s\n' "$LS" | grep -q 'live'; then
+            ok "a session inside the container reads as live"
+          else
+            fail "session ls inside the container said neither live nor GONE: $(printf '%s' "$LS" | tr '\n' ' ')"
+          fi
+        fi
       fi
       docker rm -f "$CID" >/dev/null 2>&1 || true
     fi

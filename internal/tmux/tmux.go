@@ -97,9 +97,20 @@ func New(socket, dir string) *Client {
 // -f is passed on every call even though tmux only reads it when the server
 // starts. That way whichever command happens to be first also brings the
 // server up correctly — there is no ordering rule for callers to get wrong.
+//
+// -u is passed on every call because without it tmux decides from LANG and
+// LC_* whether it may write UTF-8, and the panel's output format is separated
+// by U+241F. Measured in the shipped alpine image, which sets no locale, on
+// tmux 3.5a: `list-sessions` printed `vp_…_sh` where the separator should
+// have been, every line failed to parse, and the poller marked every live
+// session as vanished within a second of its creation. A systemd unit started
+// with no LANG is the same environment. This host's tmux 3.6 on glibc kept the
+// separator either way, which is why nothing here noticed. -u also makes an
+// attached client draw non-ASCII instead of underscores, which is what the
+// browser terminal expects.
 func (c *Client) args(rest ...string) []string {
-	a := make([]string, 0, len(rest)+4)
-	a = append(a, "-L", c.Socket)
+	a := make([]string, 0, len(rest)+5)
+	a = append(a, "-u", "-L", c.Socket)
 	if c.ConfigPath != "" {
 		a = append(a, "-f", c.ConfigPath)
 	}

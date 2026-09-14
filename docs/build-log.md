@@ -21595,3 +21595,25 @@ they go through `dayIn`/`dayShift`. The source scan for invisible characters
 refused a literal RTL override in the hostile fixture; it is an escape now. And
 the harness test noticed the new check's tmux socket prefix was not one the
 stale-socket sweeper knew.
+
+## Every session in the container image read as gone
+
+Found while putting the share-pages branch in a container for somebody to try:
+every session made there was marked vanished within a second, while `tmux
+list-panes` inside the container showed it running. `main`'s image did the same.
+
+The panel reads `list-sessions` with fields separated by U+241F. The alpine
+image sets no locale, and its tmux 3.5a, deciding from LANG and LC_* that it may
+not write UTF-8, printed `vp_…_sh` where the separator should have been. Every
+line failed to parse, the poller saw no sessions, and marked each one vanished.
+`/api/health` answered ok the whole time, which is all release-check asked of
+the image. This machine's tmux 3.6 kept the separator with or without a locale,
+so no test here could see it; a systemd unit started without LANG on an
+affected tmux would have been the same failure outside a container.
+
+`tmux -u` makes tmux write UTF-8 regardless, and it is now on every command the
+panel runs, attach included — which also stops an attached client drawing
+non-ASCII as underscores. `TestEveryCommandForcesUTF8` pins the flag (and goes
+red with it removed), and release-check now makes a session inside the built
+image and fails if it reads as GONE: red against the old image, green with the
+fix.

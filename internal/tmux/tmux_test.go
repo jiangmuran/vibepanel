@@ -647,6 +647,38 @@ func TestEveryCommandNamesOurSocket(t *testing.T) {
 	}
 }
 
+// Every command tells tmux it may write UTF-8, whatever the environment says.
+//
+// Pinned as an argument rather than exercised against a real tmux, because the
+// tmux this suite runs against keeps the field separator without it; the one
+// that does not is alpine's, in the container image, and release-check
+// exercises that one for real.
+func TestEveryCommandForcesUTF8(t *testing.T) {
+	c := New("a-socket", t.TempDir())
+	for _, argv := range [][]string{
+		c.args("list-sessions"),
+		c.AttachArgs("vp_x"),
+	} {
+		sub := -1
+		for i, a := range argv {
+			if a == "list-sessions" || a == "attach-session" {
+				sub = i
+				break
+			}
+		}
+		found := false
+		for _, a := range argv[:max(sub, 0)] {
+			if a == "-u" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("no -u before the command in %q; without a UTF-8 locale tmux replaces the "+
+				"field separator and every session reads as vanished", strings.Join(argv, " "))
+		}
+	}
+}
+
 // Nothing outside this package builds a tmux target by hand.
 //
 // The helpers exist so the '=' … ':' form cannot be forgotten, and a helper
