@@ -1,0 +1,12 @@
+{
+  "sdk": 1,
+  "name": "Token spend",
+  "sections": ["spend", "trend"],
+  "spend": { "days": 30, "split": ["tool", "model"] },
+  "params": [
+    { "key": "title", "type": "text", "label": "Title", "max": 40, "default": "Token spend" },
+    { "key": "accent", "type": "color", "label": "Accent", "default": "#3fc8b4" },
+    { "key": "split", "type": "enum", "label": "Split by", "values": ["tool", "model"], "default": "tool" }
+  ],
+  "viewports": ["tv-1080", "laptop", "phone"]
+}

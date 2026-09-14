@@ -763,7 +763,7 @@ an ordinary authenticated route, from a laptop — and every open viewer picks t
 change up on its **next poll**, about two seconds later, because every poll
 re-reads the link's row.
 
-There is no push, no socket and no second route under the share token. A share
+There is no push, no socket and no write route under the share token. A share
 viewer is not authenticated, and a socket authorised once and held open for a
 week would need the revalidation machinery `/ws` has, for a page that reads six
 numbers; revocation currently takes effect on the next poll precisely because
@@ -974,12 +974,14 @@ name off the screen they were sat in front of. The server validates `detail` and
 `scope` from the request regardless, exactly as it always did.
 
 This is a settings route: a share token answers `401` to it, like everything
-else that is not the one dashboard `GET`.
+else that is not one of the share `GET`s.
 
 ### `GET /api/share/{token}/dashboard`
 
-The entire surface a share token can reach. No credential beyond the token in
-the path, and no other route accepts that token at all: presenting it as a
+What a board draws. With the v1 snapshot and a share page's files (see
+[Share pages](#share-pages)) this is the whole of what a share token can reach.
+No credential beyond the token in the path, and no other route accepts that
+token at all: presenting it as a
 `Bearer` header or as the session cookie answers `401` everywhere, including on
 `/ws`. That is enforced by where the route is registered rather than by a flag a
 handler reads.
@@ -987,7 +989,7 @@ handler reads.
 ```json
 {"at": 1735689600, "name": "wall display", "detail": "counts", "expiresAt": 0,
  "usageReadable": true, "stale": false, "scope": "", "scopeName": "",
- "scopeRepoOwner": "", "scopeRepoName": "",
+ "scopeRepoOwner": "", "scopeRepoName": "", "page": "",
  "board": {"preset": "attention", "rotate": 0,
            "widgets": [{"kind": "attention", "span": 4}]},
  "machine": {"cpuReadable": true, "cpuPercent": 31.4, "cores": 16,
@@ -1009,6 +1011,10 @@ handler reads.
  "repo": null,
  "remark": "the screen in meeting room three", "locked": false}
 ```
+
+`page` is `""` while the link draws a board. It becomes that link's id for a
+share page once the owner points the link at one, which is the open dashboard's
+cue to reload into the page at the same address.
 
 `sessions` is empty, and `spend`, `todos`, `trend`, `flow`, `feed` and `repo`
 are `null`, unless a widget on the board asks for them. A board can only ever subtract: the sections a dashboard
@@ -1163,6 +1169,150 @@ expired, or never existed: one answer for all three. Rejected attempts are
 audited as `share.rejected`, gated to one row per source per minute. `403` is
 the `--allow-from` allowlist, which applies here exactly as it does to the
 panel: a share link must not be a way around it.
+
+## Share pages
+
+A share page is HTML the owner wrote, drawn on a share link instead of a board.
+It reads the same redacted data a board does, through a versioned contract and a
+small SDK. The design, the security model and the workflow are in
+[share-pages.md](share-pages.md); this section is the wire.
+
+A link that draws a page serves the page's files at `/share/<token>/…` —
+`index.html` for the directory, `vibepanel.js` from the binary, and every other
+published file by its path — each with `Content-Security-Policy: sandbox
+allow-scripts` and a `connect-src` that names that token's snapshot and nothing
+else. A link that draws a board, and a token that resolves to nothing, get the
+dashboard at that address exactly as before.
+
+### `GET /api/share/{token}/v1/snapshot`
+
+What a page draws. Authenticated by the token in the path and nothing else;
+`Access-Control-Allow-Origin: *` on every answer, refusals included, and never
+credentials — a sandboxed page has the origin `null`, and the token is the whole
+capability.
+
+```jsonc
+{
+  "v": 1,
+  "page": { "id": "…", "version": 3, "draft": false },  // null on a board link
+  "sections": ["sessions", "spend"],                     // what the manifest asked for
+  "params": { "title": "Lobby", "warnAt": 5 },           // every declared parameter
+  "at": 1756740600, "name": "…", "remark": "…", "detail": "counts",
+  "expiresAt": 0, "usageReadable": true, "stale": false,
+  "machine": { … }, "counts": { … }, "projects": [ … ], "sessions": [ … ],
+  "spend": { … } | null, "todos": null, "trend": null, "flow": null, "feed": null, "repo": null,
+  "scope": "", "scopeName": "", "scopeRepoOwner": "", "scopeRepoName": ""
+}
+```
+
+Every field is declared, with its meaning, in
+`internal/pages/sdk/vibepanel.d.ts`, and a test fails when the two disagree.
+`v1` is additive: fields and sections may be added, nothing is renamed, retyped
+or removed. Names are `''` under `counts`, as on the dashboard.
+
+A section not named in the page's manifest is `null` (or, for `sessions`, an
+empty list). Nothing on the query string changes that: `v`, `w` and `h` are the
+viewer report the dashboard already takes, and anything else is ignored. The
+body is built at most once a second per link, however many screens poll it.
+
+`401` is a revoked, expired or unknown link; `410` is a page that is gone or has
+no published version; `422` is a preview whose draft manifest does not validate,
+with the reason; `503` is the panel's database.
+
+### `GET /api/settings/pages`
+### `POST /api/settings/pages`
+### `GET /api/settings/pages/catalogue`
+### `GET /api/settings/pages/{pageID}`
+### `PATCH /api/settings/pages/{pageID}`
+### `DELETE /api/settings/pages/{pageID}`
+
+Pages, behind the ordinary session. A share token answers `401` to all of them.
+
+```sh
+# A new page from a template, in ~/vibepanel-pages/lobby
+curl -sX POST https://panel.example:18443/api/settings/pages \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"Lobby","template":"wall","sourceDir":""}'
+# {"id":"…","name":"Lobby","sourceDir":"/home/me/vibepanel-pages/lobby","publishedVersion":0,…}
+```
+
+`template` is one of the catalogue's templates, which scaffolds an empty or new
+directory (never one with files in it); `""` adopts a directory that already
+holds a `vibepanel.json`. `sourceDir` is absolute; empty with a template means a
+new directory under `pagesRoot`. The catalogue also names the sections, the
+viewports the Preview offers, the fixtures, the script hosts a manifest may
+allow and the size limits.
+
+`GET /api/settings/pages/{pageID}` is the page with its versions (candidates
+marked) and the links drawing it, with their viewer counts. `PATCH` renames it
+or moves its draft (`page.moved` in the audit log). `DELETE` is refused with
+`409` and the links' names while any handed-out link draws it.
+
+### `GET /api/settings/pages/{pageID}/draft`
+### `GET /api/settings/pages/{pageID}/draft/fingerprint`
+
+The draft directory as the Preview sees it: whether it reads as a page (`ok`,
+`error`), its manifest, files, what was ignored and why, lint problems with file,
+line and fix, and the changes against the published version by file hash.
+`fingerprint` is sizes and modification times hashed — cheap enough to ask for
+twice a second while a pane is open.
+
+### `POST /api/settings/pages/{pageID}/publish`
+### `POST /api/settings/pages/{pageID}/rollback`
+
+`{"note": "…"}` stores the draft as the next version and publishes it:
+`{"version": 4}`. The same reader the Preview used, the same limits (64 files,
+5 MiB, 2 MiB a file, types checked against their bytes, no symlinks). Lint
+problems do not block it; a directory that does not read as a page does.
+`{"version": 2}` to `rollback` re-publishes an existing version. Links following
+the published version reload into it on their next poll. Audited as
+`page.published` and `page.rolled_back`, and a line is appended to the draft's
+`.vibepanel/HISTORY.md`.
+
+### `POST /api/settings/pages/{pageID}/preview`
+### `POST /api/settings/pages/{pageID}/preview/{linkID}/renew`
+
+`{"detail": "counts"}` mints a share link that draws the page's **draft**, lives
+fifteen minutes and is not listed: `{"id", "token", "expiresAt"}`. It goes
+through exactly the routes above, so a preview cannot show what a wall would
+not. `renew` moves a live preview's expiry; an expired one answers `410` and is
+not revived.
+
+### `PUT /api/settings/pages/{pageID}/errors`
+
+`{"errors": [{"kind", "message", "source", "line"}]}` — what a preview frame
+reported, relayed by the signed-in pane and written to the draft's
+`.vibepanel/errors.json` for the agent. Bounded to 50 errors and 500 characters
+each; refused when `.vibepanel` is a symlink.
+
+### `POST /api/settings/pages/{pageID}/trial`
+### `POST /api/settings/pages/{pageID}/trial/{linkID}/keep`
+### `DELETE /api/settings/pages/{pageID}/trial/{linkID}`
+
+`{"linkId": "…", "minutes": 10}` freezes the draft into a candidate version and
+puts it on one link that already draws the page, for 1 to 60 minutes:
+`{"version": 5, "pinUntil": 1756741200}`. The screen reloads into it; when
+`pinUntil` passes it resolves back to the published version on read, with
+nothing having to run. `keep` publishes the candidate; `DELETE` ends the trial
+now. Audited as `share.page_trial`.
+
+### `POST /api/settings/pages/{pageID}/fork`
+
+`{"name": "…", "sourceDir": ""}` copies the page's draft into a new directory
+(beside the original by default) as a new page.
+
+### `PUT /api/settings/shares/{shareID}/page`
+
+What a link draws: `{"pageId": "…", "pinVersion": 0, "params": {"title": "Hall"}}`.
+`pageId: ""` goes back to the board. `pinVersion: 0` follows the published
+version. `params` are checked against that version's manifest and refused with
+the parameter's name when one does not fit; a page republished with a narrower
+range gets the default in place of a stored value that no longer fits. Not the
+link's `detail` or `scope`, which are fixed. Refused with `409` on a locked link.
+Audited as `share.page_changed`, or `share.params_changed` when only the
+parameters moved.
+
+`POST /api/settings/shares` takes the same `pageId` and `params`.
 
 ## Authentication
 

@@ -212,6 +212,10 @@ type Server struct {
 	// two seconds and must be false again after a restart.
 	viewers shareViewerBook
 
+	// snapshots is the one-second memo in front of a page's v1 snapshot. See
+	// snapshotMemoTTL in sharepage.go.
+	snapshots snapshotMemo
+
 	// TrimEvery and AuditKeep override the audit trim's schedule and cap. Zero
 	// means the constants. Tests set them small; nothing else should. They
 	// exist because a periodic job nobody can drive from a test is how this
@@ -403,6 +407,10 @@ func (s *Server) Routes() http.Handler {
 			// one, which is the property that keeps one leaked link from
 			// becoming a supply of them.
 			s.registerShareAdminRoutes(r)
+			// Share pages: made, previewed, published and pointed at from
+			// here, by somebody signed in. Nothing about a page is editable
+			// through a share token.
+			s.registerPageRoutes(r)
 		})
 
 		r.NotFound(func(w http.ResponseWriter, r *http.Request) {
@@ -452,7 +460,14 @@ func (s *Server) Routes() http.Handler {
 	// than chosen: see the note in preview.go.
 	s.registerPreviewRoutes(r)
 
-	r.Handle("/*", webui.Handler(s.Cfg.StaticDir))
+	spa := webui.Handler(s.Cfg.StaticDir)
+	// A share page's files, for a link that draws a page. A link that draws a
+	// board, and a token that resolves to nothing, are handed straight back to
+	// the SPA, which is what answered `/share/<token>` before pages existed.
+	// Red line 8 counts these routes; see sharepage.go.
+	s.registerSharePageRoutes(r, spa)
+
+	r.Handle("/*", spa)
 	return r
 }
 

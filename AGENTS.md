@@ -76,16 +76,35 @@ Each of these exists because the alternative broke something real.
    `internal/tmux`, never hand-built target strings.
 
 8. **A read-only share token is narrowed by its route, never by a flag.**
-   `registerShareRoutes` mounts exactly one `GET` below `requireShareToken`,
-   and `share_links` is a table `currentUser` does not consult. That is what
-   makes a share token presented as a cookie or a `Bearer` header an unknown
-   string that every authenticated route already answers 401 to.
+   A share token reaches `GET`s only, and exactly these four:
+   `/api/share/{token}/dashboard`, `/api/share/{token}/v1/snapshot`, and a
+   share page's files at `/share/{token}` and `/share/{token}/*`.
+   `TestAShareTokenReachesOnlyTheseRoutes` walks the router and fails on any
+   route, method or path under either prefix that is not that list.
+   `share_links` is a table `currentUser` does not consult. That is what makes
+   a share token presented as a cookie or a `Bearer` header an unknown string
+   that every authenticated route already answers 401 to.
 
-   Two ways to undo that, and both look like ordinary edits. Adding a second
-   route under `/api/share/{token}` widens the capability by one line. Teaching
-   `currentUser` about `share_links`, to "reuse the auth path", turns every
-   handler in the panel into one that has to check a `readOnly` flag, and the
-   handler that forgets is the one written next.
+   This said "exactly one `GET`" until share pages, and the count changed on
+   purpose rather than by drift: the snapshot is the same redaction as the
+   dashboard restated as a published contract, and the page files are HTML the
+   owner published, served inside `sandbox allow-scripts` with a
+   `connect-src` that names that token's snapshot and nothing else.
+   `pages-check` removes each of those two layers in turn and watches a page
+   become the owner — cookie, storage, API, terminal socket — so neither is
+   decoration. `docs/share-pages.md` is the design.
+
+   Two ways to undo all of it, and both look like ordinary edits. Adding a
+   route under `/api/share/{token}` or `/share/{token}` widens the capability
+   by one line; the test's list is where that decision is made, out loud.
+   Teaching `currentUser` about `share_links`, to "reuse the auth path", turns
+   every handler in the panel into one that has to check a `readOnly` flag, and
+   the handler that forgets is the one written next.
+
+   A share page is the owner's HTML; it is not a way in. No write route, no
+   server-side code, no parameter that reaches a query: the manifest chooses
+   sections from the board's own registry and parameters are only echoed.
+   `allow-same-origin` never appears beside `allow-scripts`.
 
    The redaction is the same shape: `internal/httpapi/share.go` restates the
    fields it discloses rather than embedding `sysmon.Sample` or `store.Session`,
@@ -103,11 +122,13 @@ Each of these exists because the alternative broke something real.
    file nothing. If the next request sounds like it needs a write here, ask
    first where the person making the change actually is.
 
-   Two things a viewer *does* send, on the query string of that one GET: an
-   opaque per-tab id and its viewport, for the owner's "how many screens have
-   this open". They are recorded in process memory and never read back, and nothing
-   a viewer sends decides anything the response carries, and
-   `TestWhatAViewerSaysAboutItselfCannotChangeTheDashboard` is what says so.
+   Two things a viewer *does* send, on the query string of the dashboard and the
+   snapshot: an opaque per-tab id and its viewport, for the owner's "how many
+   screens have this open". They are recorded in process memory and never read
+   back, and nothing a viewer sends decides anything the response carries —
+   `TestWhatAViewerSaysAboutItselfCannotChangeTheDashboard` and
+   `TestWhatAPageSendsCannotChangeItsSnapshot` are what say so. A page's
+   sections come from the version its owner published, not from the request.
 
    The surface now **reads working trees**, which it did not when this rule was
    written, so two sentences that used to be simple are not:
@@ -169,6 +190,7 @@ Each of these exists because the alternative broke something real.
   | `make restart-check` | kill the backend; the sessions and the login must outlive it |
   | `make scale-check` | two dozen sessions: snapshot size, sidebar reachability, poller |
   | `make board-check` | every share-board preset on every screen one gets put on: scale spread, clipping, empty tiles |
+  | `make pages-check` | share pages: every escape from inside a sandboxed page, in a signed-in browser; the editing loop through the UI; every template × screen × fixture |
   | `make tls-check` | its own TLS: wss, the Secure cookie, swapping a certificate |
   | `make release-check` | build the archives and run one from a throwaway HOME |
   | `make sudo-check` | the elevated upgrade against real sudo 1.9 and sudo-rs, in containers, down every sudoers variant: a password rule, NOPASSWD for everything and for the upgrade alone, a password rule for the upgrade alone, rootpw, targetpw, requiretty, the lecture, an account sudoers does not mention. Needs docker |

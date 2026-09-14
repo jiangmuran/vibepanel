@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Glance</title>
+  <style>
+    /* Colours are tokens, and only the tokens change with the scheme. */
+    :root {
+      --bg: #f4f5f8;
+      --card: #ffffff;
+      --line: #e3e5eb;
+      --text: #161820;
+      --muted: #6a7080;
+      --working: #2f63e0;
+      --waiting: #b87800;
+      --waiting-bg: #fff4dc;
+      --done: #1f8a55;
+      --shadow: 0 1px 2px rgba(20, 24, 40, 0.06), 0 2px 8px rgba(20, 24, 40, 0.05);
+      --vp-live: #1f8a55;
+      --vp-waiting: #b87800;
+      --vp-trouble: #cf3b32;
+      color-scheme: light;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0e1016;
+        --card: #181b23;
+        --line: #272b36;
+        --text: #eef0f5;
+        --muted: #8e95a5;
+        --working: #6f98ff;
+        --waiting: #f2b53a;
+        --waiting-bg: #2c2517;
+        --done: #45c283;
+        --shadow: none;
+        --vp-live: #45c283;
+        --vp-waiting: #f2b53a;
+        --vp-trouble: #ff6b61;
+        color-scheme: dark;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.4 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+      font-variant-numeric: tabular-nums;
+      -webkit-text-size-adjust: 100%;
+    }
+    .page { max-width: 560px; margin: 0 auto; padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); }
+    [hidden] { display: none !important; }
+    .shape { width: 1em; height: 1em; flex: none; display: block; }
+
+    header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+    h1 { flex: 1; min-width: 0; margin: 0; font-size: 22px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #status { font-size: 14px; color: var(--muted); white-space: nowrap; }
+
+    .banner { background: var(--card); border: 2px solid var(--vp-trouble); border-radius: 12px; padding: 10px 14px; margin-bottom: 12px; font-weight: 600; }
+
+    .counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .count { background: var(--card); box-shadow: var(--shadow); border-radius: 14px; padding: 12px 12px 10px; }
+    .count .n { font-size: 38px; font-weight: 750; line-height: 1.05; letter-spacing: -0.02em; }
+    .count .word { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--muted); }
+    /* Tinted only when somebody is actually waiting, so a calm screen looks calm. */
+    .count.waiting.hot { background: var(--waiting-bg); }
+    .count.waiting.hot .n { color: var(--waiting); }
+
+    .wait { margin-top: 10px; background: var(--card); box-shadow: var(--shadow); border-radius: 14px; padding: 12px 14px;
+      display: flex; align-items: baseline; gap: 10px; }
+    .wait .k { color: var(--muted); flex: 1; }
+    .wait .v { font-size: 26px; font-weight: 700; }
+
+    h2 { display: flex; align-items: center; gap: 8px; margin: 22px 4px 8px; font-size: 13px; font-weight: 650; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.06em; }
+    h2 .shape { font-size: 13px; }
+    ul { list-style: none; margin: 0; padding: 0; background: var(--card); box-shadow: var(--shadow); border-radius: 14px; overflow: hidden; }
+    li { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-top: 1px solid var(--line); min-height: 48px; }
+    li:first-child { border-top: 0; }
+    li .shape { font-size: 15px; }
+    li .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; unicode-bidi: isolate; }
+    li .name.fallback { color: var(--muted); }
+    li .since { color: var(--muted); font-size: 14px; white-space: nowrap; }
+    li.more { color: var(--muted); font-size: 14px; justify-content: center; }
+    .empty { text-align: center; color: var(--muted); padding: 32px 16px; }
+    footer { margin-top: 18px; text-align: center; color: var(--muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <h1 id="title">Sessions</h1>
+      <span id="status"></span>
+    </header>
+    <div class="banner" id="banner" hidden></div>
+
+    <section class="counts">
+      <div class="count waiting"><div class="n" id="waiting">—</div><div class="word" data-shape="waiting">waiting</div></div>
+      <div class="count"><div class="n" id="working">—</div><div class="word" data-shape="working">working</div></div>
+      <div class="count"><div class="n" id="done">—</div><div class="word" data-shape="done">done</div></div>
+    </section>
+    <div class="wait"><span class="k" id="waitLabel">Longest wait</span><span class="v" id="longest">—</span></div>
+
+    <div id="groups"></div>
+    <footer id="footer"></footer>
+  </div>
+
+  <script src="vibepanel.js"></script>
+  <script>
+    const vp = VibePanel.connect()
+    vp.badge(document.getElementById('status'))
+
+    const $ = (id) => document.getElementById(id)
+    const SVG = 'http://www.w3.org/2000/svg'
+    let title = ''
+
+    // Shape as well as colour: circle working, triangle waiting, check done.
+    const SHAPES = {
+      waiting: ['path', { d: 'M12 2.5 L22.5 21 H1.5 Z', fill: 'var(--waiting)' }],
+      working: ['circle', { cx: 12, cy: 12, r: 9.5, fill: 'var(--working)' }],
+      done: ['path', { d: 'M3.5 12.5 L9.5 18.5 L20.5 5.5', fill: 'none', stroke: 'var(--done)',
+        'stroke-width': 3.6, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }],
+    }
+    function shape(state) {
+      const [tag, attrs] = SHAPES[state] || SHAPES.done
+      const svg = document.createElementNS(SVG, 'svg')
+      svg.setAttribute('class', 'shape')
+      svg.setAttribute('viewBox', '0 0 24 24')
+      svg.setAttribute('aria-hidden', 'true')
+      const mark = document.createElementNS(SVG, tag)
+      for (const [k, v] of Object.entries(attrs)) mark.setAttribute(k, String(v))
+      svg.append(mark)
+      return svg
+    }
+    function el(tag, className, text) {
+      const node = document.createElement(tag)
+      if (className) node.className = className
+      if (text !== undefined) vp.text(node, text)
+      return node
+    }
+    for (const slot of document.querySelectorAll('[data-shape]')) slot.prepend(shape(slot.dataset.shape))
+
+    vp.on('params', (p) => {
+      title = p.title || ''
+      if (vp.snapshot) draw(vp.snapshot)
+    })
+
+    // On a phone the warning sits in the flow rather than over the numbers:
+    // the last reading is still worth reading, as long as it says it is old.
+    const OFFLINE = { disconnected: 'Not live — showing the last reading', revoked: 'This link no longer works' }
+    function banner() {
+      const stale = vp.status === 'live' && vp.snapshot && vp.snapshot.stale
+      const words = OFFLINE[vp.status] || (stale ? 'The panel has stopped updating; these numbers may be old' : '')
+      $('banner').hidden = !words
+      $('banner').textContent = words
+    }
+    vp.on('status', banner)
+
+    // How many rows each group shows before it becomes "and N more". Waiting
+    // is never cut: it is the reason anybody opens this.
+    const LIMIT = { waiting: Infinity, working: 12, done: 5 }
+    const GROUPS = [['waiting', 'Waiting'], ['working', 'Working'], ['done', 'Done']]
+
+    function row(s) {
+      const li = el('li')
+      const name = vp.name(s)
+      // Counts mode (the default) sends no names; the kind is the next best word.
+      const label = name || (s.kind === 'other' ? 'session' : `${s.kind} session`)
+      li.append(shape(s.state), el('span', name ? 'name' : 'name fallback', s.exited ? `${label} · exited` : label),
+        el('span', 'since', vp.since(s.stateChangedAt)))
+      return li
+    }
+
+    function draw(s) {
+      const c = s.counts
+      vp.text($('title'), title || s.name, 'Sessions')
+      vp.text($('waiting'), c.waiting)
+      $('waiting').parentNode.classList.toggle('hot', c.waiting > 0)
+      vp.text($('working'), c.working)
+      vp.text($('done'), c.done)
+      if (c.waiting > 0 && c.longestWaitAt > 0) {
+        vp.text($('waitLabel'), c.waiting === 1 ? 'Waiting for' : 'Longest wait')
+        vp.text($('longest'), vp.since(c.longestWaitAt))
+      } else {
+        vp.text($('waitLabel'), 'Nobody is waiting')
+        $('longest').textContent = ''
+      }
+
+      const groups = $('groups')
+      groups.replaceChildren()
+      if (!s.sessions.length) {
+        groups.append(el('p', 'empty', c.sessions ? `${c.sessions} sessions, not listed on this link.` : 'Nothing is running.'))
+      }
+      for (const [state, heading] of GROUPS) {
+        // Waiting oldest first; the others most recent first.
+        const rows = s.sessions.filter((x) => x.state === state)
+          .sort((a, b) => state === 'waiting' ? a.stateChangedAt - b.stateChangedAt : b.stateChangedAt - a.stateChangedAt)
+        if (!rows.length) continue
+        const h = el('h2')
+        h.append(shape(state), `${heading} · ${rows.length}`)
+        const list = el('ul')
+        for (const r of rows.slice(0, LIMIT[state])) list.append(row(r))
+        if (rows.length > LIMIT[state]) list.append(el('li', 'more', `and ${rows.length - LIMIT[state]} more`))
+        groups.append(h, list)
+      }
+
+      const bits = [`${c.doneToday} done today`, `${c.projects} projects`]
+      if (s.remark) bits.push(s.remark)
+      vp.text($('footer'), bits.join(' · '))
+    }
+
+    vp.on('snapshot', (s) => { draw(s); banner() })
+  </script>
+</body>
+</html>

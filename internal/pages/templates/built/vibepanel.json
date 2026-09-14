@@ -1,0 +1,12 @@
+{
+  "sdk": 1,
+  "name": "What got built",
+  "sections": ["repo", "flow"],
+  "repo": { "days": 14, "prs": true },
+  "flow": { "by": "hour" },
+  "params": [
+    { "key": "title", "type": "text", "label": "Title", "max": 40, "default": "What got built" },
+    { "key": "accent", "type": "color", "label": "Accent", "default": "#9b87ff" }
+  ],
+  "viewports": ["tv-1080", "laptop", "phone"]
+}

@@ -153,7 +153,9 @@ opaque origin, no scripts and a policy that allows it no network.
 Share links live in their own table, and `currentUser` does not consult it. That
 is the entire security design: a share token presented as a session cookie or a
 `Bearer` header is an unrecognised string, and every authenticated route already
-answers 401 to those. Exactly one `GET` is mounted below the share middleware.
+answers 401 to those. The routes a share token reaches are `GET`s, four of them,
+and a test holds the list: the dashboard, the v1 snapshot, and a share page's
+files. It was one until share pages; see the next section for why it grew.
 
 The alternative — a `scope` or `readOnly` column on the existing token table —
 makes every handler in the panel one that has to remember to check a flag, and
@@ -177,6 +179,47 @@ Neither is read on the request goroutine. A wall polls every two seconds
 forever, so a poll that runs `git log` is a fork per project per poll: the poll
 takes what a background refresh already produced and says how old it is, and
 "not counted yet" stays a different answer from zero.
+
+## A share page draws the snapshot; it cannot ask for more of it
+
+The board's limit was its vocabulary, not its data. Every new way of drawing a
+number had been a Go widget kind, a React component, a preset and a check
+budget, while what a link may disclose was already one fixed, redacted struct.
+So the struct is published as `GET /api/share/{token}/v1/snapshot`, a small SDK
+polls it, and a page is HTML the owner writes — in practice, HTML an agent in
+one of the panel's own sessions writes while a Preview beside it reloads.
+
+Three things keep that from being a way in, and each is a layer a check removes
+to watch the page become the owner:
+
+- **The page is sandboxed by its response header**, not by an iframe: `sandbox
+  allow-scripts` on every file, so a wall that opens the page top-level gets
+  the same opaque origin a frame would. No cookie, no storage, and every request
+  to the panel is cross-origin without credentials. Take it away and
+  `pages-check` reads the cookie, writes storage and opens a window.
+- **`connect-src` names that token's snapshot and nothing else.** Take it away
+  as well and the same probe reads `/api/state`, reads the audit log and opens
+  the terminal socket. Each layer alone held in that experiment; neither is
+  decoration.
+- **A page can only subtract.** Its manifest names sections from the board's
+  own registry and compiles to a board, so the snapshot builder is the one it
+  always was and a page has no vocabulary for anything it does not already
+  compute. Parameters are only echoed: a test changes them and asserts every
+  other key of the snapshot is identical.
+
+What CSP does not do is stop a determined page sending what it can see
+somewhere else. That residue is written down rather than argued away: what a
+page can see is the snapshot, which whoever holds the URL can already fetch.
+
+The workflow decisions have reasons too. A preview is a real share link that
+lives fifteen minutes, because a signed-in preview route cannot work — the
+sandbox that protects the cookie is the same thing that stops the page sending
+it — and because a second path to the same bytes would be a preview that could
+show what a wall does not. Publishing is a person's action and the scaffolded
+instructions tell the agent not to; the agent runs as the same user, so that is
+a default and is called one. A trial on a screen ends by itself, decided on
+read like expiry, because whoever pressed the button is by definition not
+standing at the wall.
 
 ## What a board can show is what the panel wrote down at the time
 

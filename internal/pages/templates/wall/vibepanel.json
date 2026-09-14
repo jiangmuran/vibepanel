@@ -1,0 +1,11 @@
+{
+  "sdk": 1,
+  "name": "Session wall",
+  "sections": ["sessions", "feed"],
+  "params": [
+    { "key": "title", "type": "text", "label": "Title", "max": 40, "default": "" },
+    { "key": "accent", "type": "color", "label": "Accent", "default": "#8b7cff" },
+    { "key": "warnAt", "type": "number", "label": "Waiting turns urgent at", "min": 1, "max": 99, "default": 3 }
+  ],
+  "viewports": ["tv-1080", "laptop", "phone"]
+}

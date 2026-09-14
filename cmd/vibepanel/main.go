@@ -56,6 +56,9 @@ func main() {
 		if errors.Is(err, flag.ErrHelp) {
 			return // the flag package already printed usage
 		}
+		if errors.Is(err, errSilentFailure) {
+			os.Exit(1) // the command has already said what was wrong
+		}
 		if errors.Is(err, errRestart) {
 			os.Exit(restartExitCode)
 		}
@@ -95,6 +98,7 @@ func init() {
 		"tune":    cmdTune,
 		"service": cmdService,
 		"account": cmdAccount,
+		"page":    cmdPage,
 		"version": func([]string) error { fmt.Println("vibepanel", version.String()); return nil },
 	}
 }

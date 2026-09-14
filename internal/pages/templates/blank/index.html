@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>vibepanel</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #171a21;
+      --text: #e8eaef;
+      --muted: #8a91a0;
+      --working: #4f7cff;
+      --waiting: #e0a526;
+      --done: #2f9e62;
+      --vp-live: #2f9e62;
+      --vp-waiting: #e0a526;
+      --vp-trouble: #e05252;
+      color-scheme: dark;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      padding: clamp(16px, 3vw, 48px);
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.4 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+    }
+    header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: clamp(16px, 3vw, 40px);
+    }
+    h1 { margin: 0; font-size: clamp(20px, 3vw, 40px); font-weight: 600; }
+    #status { color: var(--muted); font-size: clamp(14px, 1.4vw, 20px); }
+    .counts {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: clamp(12px, 2vw, 24px);
+    }
+    .count {
+      background: var(--panel);
+      border-radius: 12px;
+      padding: clamp(16px, 2vw, 28px);
+    }
+    .count .n { font-size: clamp(40px, 7vw, 112px); font-weight: 700; line-height: 1; }
+    .count .label { display: flex; align-items: center; gap: 8px; color: var(--muted); margin-top: 8px; }
+    .shape { width: 14px; height: 14px; flex: none; }
+    ul { list-style: none; padding: 0; margin: clamp(16px, 3vw, 40px) 0 0; }
+    li {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 0;
+      border-bottom: 1px solid #242833;
+    }
+    li .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    li .since { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .empty { color: var(--muted); margin-top: 24px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1 id="title">vibepanel</h1>
+    <span id="status"></span>
+  </header>
+
+  <section class="counts">
+    <div class="count"><div class="n" id="waiting">—</div><div class="label"><svg class="shape" viewBox="0 0 14 14"><path d="M7 1 L13 13 H1 Z" fill="var(--waiting)"/></svg>waiting</div></div>
+    <div class="count"><div class="n" id="working">—</div><div class="label"><svg class="shape" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6" fill="var(--working)"/></svg>working</div></div>
+    <div class="count"><div class="n" id="done">—</div><div class="label"><svg class="shape" viewBox="0 0 14 14"><path d="M2 7.5 L5.5 11 L12 3" fill="none" stroke="var(--done)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>done</div></div>
+  </section>
+
+  <ul id="sessions"></ul>
+  <p class="empty" id="empty" hidden>Nothing is running.</p>
+
+  <script src="vibepanel.js"></script>
+  <script>
+    const vp = VibePanel.connect()
+    vp.badge(document.getElementById('status'))
+
+    // Shape as well as colour: people read this at night on a phone.
+    const SVG = 'http://www.w3.org/2000/svg'
+    const SHAPES = {
+      waiting: ['path', { d: 'M7 1 L13 13 H1 Z', fill: 'var(--waiting)' }],
+      working: ['circle', { cx: 7, cy: 7, r: 6, fill: 'var(--working)' }],
+      done: ['path', { d: 'M2 7.5 L5.5 11 L12 3', fill: 'none', stroke: 'var(--done)',
+        'stroke-width': 2.4, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }],
+    }
+
+    function stateShape(state) {
+      const [tag, attrs] = SHAPES[state] || SHAPES.done
+      const svg = document.createElementNS(SVG, 'svg')
+      svg.setAttribute('class', 'shape')
+      svg.setAttribute('viewBox', '0 0 14 14')
+      const mark = document.createElementNS(SVG, tag)
+      for (const [k, v] of Object.entries(attrs)) mark.setAttribute(k, String(v))
+      svg.append(mark)
+      return svg
+    }
+
+    vp.on('params', (p) => {
+      vp.text(document.getElementById('title'), p.title, 'vibepanel')
+    })
+
+    vp.on('snapshot', (s) => {
+      vp.text(document.getElementById('waiting'), s.counts.waiting)
+      vp.text(document.getElementById('working'), s.counts.working)
+      vp.text(document.getElementById('done'), s.counts.done)
+
+      const list = document.getElementById('sessions')
+      list.replaceChildren()
+      for (const row of s.sessions) {
+        const li = document.createElement('li')
+        const shape = stateShape(row.state)
+        const name = document.createElement('span')
+        name.className = 'name'
+        // Empty in counts mode, and always text: a title is somebody else's.
+        vp.text(name, vp.name(row, row.kind))
+        const since = document.createElement('span')
+        since.className = 'since'
+        vp.text(since, vp.since(row.stateChangedAt))
+        li.append(shape, name, since)
+        list.append(li)
+      }
+      document.getElementById('empty').hidden = s.sessions.length > 0
+    })
+  </script>
+</body>
+</html>

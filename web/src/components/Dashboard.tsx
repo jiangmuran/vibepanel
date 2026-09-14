@@ -230,6 +230,14 @@ export function Dashboard({ token }: { token: string }) {
   const poll = useCallback(async () => {
     try {
       const next = await api.shareDashboard(token, viewer, viewport.width, viewport.height)
+      if (next.page) {
+        // The owner pointed this link at a share page. The same address now
+        // serves the page, so the wall reloads into it -- after a random
+        // moment, so a room of screens does not arrive at the panel at once.
+        goneRef.current = true
+        window.setTimeout(() => location.reload(), Math.random() * 5000)
+        return
+      }
       lastOkRef.current = Date.now()
       setData(next)
       setConnection('live')

@@ -764,6 +764,83 @@ var migrations = []func(tx *sql.Tx) error{
 			`ALTER TABLE preview_links ADD COLUMN allow_external INTEGER NOT NULL DEFAULT 0`)
 		return err
 	},
+
+	// v23: share pages -- HTML the owner wrote, served on a share link.
+	//
+	// The board's limit was its vocabulary, not its data: every new way of
+	// drawing a number was a Go widget kind and a React component. A page is a
+	// bundle of static files that draws the same redacted snapshot through the
+	// SDK. See docs/share-pages.md.
+	//
+	// In the database rather than on disk. A page is served to anybody holding
+	// a token, and a directory is something a symlink, a rename or an agent
+	// can change under a wall. A version is immutable once written; blobs are
+	// content-addressed so publishing version 8 with one changed file stores
+	// one file.
+	//
+	// The link gains five columns and none of them is a permission. `page_id`
+	// chooses what is drawn ('' is the board, as every link before this was);
+	// `pin_version` and `pin_until` choose which version; `params` is the
+	// owner's values for the page's declared knobs; `purpose` separates the
+	// short-lived links the Preview pane mints from the ones a person handed
+	// out. What a link *discloses* is still `detail` and `scope`, set once.
+	//
+	// No foreign key from share_links.page_id: SQLite will only add a
+	// referencing column with a NULL default, and '' meaning "the board" is
+	// what every existing row already means. Deleting a page a link still
+	// points at is refused in the handler instead, because the alternative
+	// cascade -- a wall silently reverting to some other drawing -- is the
+	// failure a wall with nobody at it cannot report.
+	func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`CREATE TABLE IF NOT EXISTS share_pages (
+			     id                TEXT PRIMARY KEY,
+			     user_id           TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			     name              TEXT NOT NULL,
+			     source_dir        TEXT NOT NULL DEFAULT '',
+			     published_version INTEGER NOT NULL DEFAULT 0,
+			     created_at        INTEGER NOT NULL,
+			     updated_at        INTEGER NOT NULL
+			 )`,
+			`CREATE TABLE IF NOT EXISTS share_page_versions (
+			     page_id    TEXT NOT NULL REFERENCES share_pages(id) ON DELETE CASCADE,
+			     version    INTEGER NOT NULL,
+			     manifest   TEXT NOT NULL,
+			     note       TEXT NOT NULL DEFAULT '',
+			     bytes      INTEGER NOT NULL DEFAULT 0,
+			     files      INTEGER NOT NULL DEFAULT 0,
+			     commit_sha TEXT NOT NULL DEFAULT '',
+			     dirty      INTEGER NOT NULL DEFAULT 0,
+			     candidate  INTEGER NOT NULL DEFAULT 0,
+			     created_at INTEGER NOT NULL,
+			     PRIMARY KEY (page_id, version)
+			 )`,
+			`CREATE TABLE IF NOT EXISTS share_page_blobs (
+			     sha256 BLOB PRIMARY KEY,
+			     data   BLOB NOT NULL
+			 )`,
+			`CREATE TABLE IF NOT EXISTS share_page_files (
+			     page_id      TEXT NOT NULL,
+			     version      INTEGER NOT NULL,
+			     path         TEXT NOT NULL,
+			     content_type TEXT NOT NULL,
+			     sha256       BLOB NOT NULL REFERENCES share_page_blobs(sha256),
+			     PRIMARY KEY (page_id, version, path),
+			     FOREIGN KEY (page_id, version)
+			         REFERENCES share_page_versions(page_id, version) ON DELETE CASCADE
+			 )`,
+			`ALTER TABLE share_links ADD COLUMN page_id TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE share_links ADD COLUMN pin_version INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE share_links ADD COLUMN pin_until INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE share_links ADD COLUMN params TEXT NOT NULL DEFAULT '{}'`,
+			`ALTER TABLE share_links ADD COLUMN purpose TEXT NOT NULL DEFAULT ''`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	},
 }
 
 // scanner is *sql.Row and *sql.Rows both, so one scan function serves a

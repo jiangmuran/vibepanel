@@ -3,7 +3,7 @@ import { Bell, Gauge, Share2, Terminal, UserRound, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 import { api } from '../protocol/api'
-import type { SettingsInfo } from '../protocol/wire'
+import type { SettingsInfo, SharePage } from '../protocol/wire'
 import { setLang, t, useLang } from '../i18n'
 import { AccountGroup } from './settings/AccountGroup'
 import { NotificationsGroup } from './settings/NotificationsGroup'
@@ -46,7 +46,16 @@ const GROUP_ICON: Record<SettingsGroup, LucideIcon> = {
  * rearranges the layout under somebody's finger, and the cheapest way to keep
  * that promise here is for there to be nothing to get wrong.
  */
-export function Settings({ openAt, onClose }: { openAt: SettingsSection; onClose: () => void }) {
+export function Settings({
+  openAt,
+  onClose,
+  onStartPage,
+}: {
+  openAt: SettingsSection
+  onClose: () => void
+  /** A share page was made and should become a project with an agent in it. */
+  onStartPage?: (page: SharePage) => void
+}) {
   const lang = useLang()
   const [group, setGroup] = useState<SettingsGroup>(() => groupOf(openAt))
   const [info, setInfo] = useState<SettingsInfo | null>(null)
@@ -251,7 +260,7 @@ export function Settings({ openAt, onClose }: { openAt: SettingsSection; onClose
           >
             {group === 'sessions' && <SessionsGroup />}
             {group === 'notify' && <NotificationsGroup />}
-            {group === 'sharing' && <SharingGroup />}
+            {group === 'sharing' && <SharingGroup onStartPage={onStartPage} />}
             {group === 'account' && <AccountGroup info={info} />}
             {group === 'panel' && <PanelGroup info={info} />}
           </div>

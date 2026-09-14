@@ -66,6 +66,10 @@ render-check: build   ## Drive the real binary with a real browser
 board-check: build    ## Every board preset on every screen one gets put on
 	cd web && npm run check:board
 
+.PHONY: pages-check
+pages-check: build    ## Share pages: the sandbox from inside a page, the editing loop, every template
+	cd web && npm run check:pages
+
 .PHONY: stress-check
 stress-check: build   ## Wide characters, full-screen programs, floods, dropouts
 	cd web && npm run check:stress

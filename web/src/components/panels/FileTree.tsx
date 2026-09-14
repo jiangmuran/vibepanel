@@ -41,11 +41,14 @@ export function FileTree({
   projectId,
   density = 'narrow',
   onOpenRepo,
+  pageLine,
 }: {
   projectId: string
   density?: PanelDensity
   /** Opens the repository panel from the status line above the listing. */
   onOpenRepo?: () => void
+  /** The share page's line, when this directory is a page's draft. */
+  pageLine?: React.ReactNode
 }) {
   useLang()
   // The caller keys this component by project, so switching projects gives a
@@ -230,6 +233,7 @@ export function FileTree({
           rest of it (the changed files, the commits, the pull requests) is one
           press away rather than permanently taking a third of the column. */}
       {onOpenRepo && <RepoLine projectId={projectId} onOpen={onOpenRepo} />}
+      {pageLine}
 
       <div className="flex items-center gap-1 px-2 py-1">
         {listing?.parent != null && (

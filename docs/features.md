@@ -272,6 +272,40 @@ in shape, and the header always carries the time of the last reading and how
 long ago that was. A board that has quietly frozen otherwise looks like a quiet
 machine.
 
+### A page you write instead of a board
+
+When no arrangement of widgets is the screen you want, a link can draw a **share
+page**: an HTML page, usually written by an agent in one of the panel's own
+sessions, reading the same data through a small SDK.
+
+**Settings → Sharing → Share pages** makes one from a template — a session wall,
+token spend, what got built, a phone glance, or blank — and starts an agent in
+its directory with a first line already typed at the prompt. The directory
+shows up as a project. Above its file list, **Share page** opens the Preview
+beside the terminal:
+
+- it redraws each time the agent finishes writing a file, on the real data or on
+  a made-up one — forty sessions, nothing at all, no names, names full of markup;
+- errors the page throws are listed under it, and written to a file the agent reads;
+- **pick** an element and a line pointing at it is typed at the agent's prompt,
+  for you to finish with what should change;
+- side by side on a phone, a laptop and a television, in the window;
+- **Publish** when it is right; **try it on a screen** for ten minutes first, and
+  the screen goes back by itself if you do nothing.
+
+A page can declare settings — a title, a colour, a threshold — that are changed
+per link from the settings page, and reach the screen without a reload. Every
+published version is kept and can be rolled back to.
+
+From a shell, `vibepanel page check` says what is wrong with a page, file and
+line, and `vibepanel page shot` screenshots it on the screens it is for and
+reports what broke — which is how an agent checks its own work.
+
+A page runs sandboxed: it cannot read the panel's cookies or storage, call the
+panel's API or open its terminal, and cannot reach any other address. It sees
+exactly what its link's detail level and scope allow, which is what a board
+sees. [share-pages.md](share-pages.md) has how.
+
 ## The first run
 
 A panel with no account prints a one-time token; you paste it, choose a
@@ -359,8 +393,9 @@ public internet.
 
 Everything needs a credential, including the WebSocket, which is the terminal.
 The exceptions are the health probe, the hook endpoint (which takes a token
-injected into every session) and the share dashboard (which takes a share token,
-on one `GET`, and is rejected everywhere else).
+injected into every session) and the share link (which takes a share token, on
+its dashboard, its page's files and its snapshot — `GET`s only — and is rejected
+everywhere else).
 
 First run prints a one-time setup token to the console: whoever can read the
 server's output claims the panel, and the endpoint closes once an account

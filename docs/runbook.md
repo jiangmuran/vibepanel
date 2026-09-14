@@ -702,6 +702,46 @@ is the far more common case.
 the session's last screen: a killed agent leaves its output where it stopped,
 and a finished one usually says so.
 
+## A share page is blank, or its badge never says live
+
+**First, ask the page.** Open the link in a desktop browser and look at the
+console. A page runs in a sandbox with no origin, so most mistakes show up
+there as a refusal rather than as anything on screen:
+
+- `Failed to read the 'localStorage' property` or `document.cookie` — the page
+  uses browser storage, which throws in a sandbox. `vp.storage` is the
+  replacement.
+- `Refused to load … because it violates the following Content Security Policy
+  directive` — the page loads something from another address: a CDN stylesheet,
+  a Google font, an API. Only the page's own files and, if its manifest lists
+  them, scripts from cdnjs or jsdelivr can load. Copy the file into the page.
+- nothing at all, and the badge stuck on *connecting* — the page never loaded
+  `vibepanel.js`, or threw before calling `VibePanel.connect()`.
+
+`vibepanel page check` in the page's directory reports all three by file and
+line without a browser.
+
+**The badge says *link no longer valid*.** The link was revoked or expired, or
+the page it drew was deleted. The panel answers `401` or `410` and the page
+stops asking; making a new link is the fix.
+
+**The badge says *reconnecting* and never recovers.** The page can reach the
+panel's address but not its snapshot. Check `curl -si
+https://<panel>/api/share/<token>/v1/snapshot` from the same network: `403` is
+`--allow-from`, which applies to share links exactly as to the panel.
+
+**The screen shows an old version after a publish.** A page reloads within a
+poll and a few seconds once the version it is drawing changes. If it does not,
+the link is pinned: Settings → Sharing → the link's editor shows *Pinned vN* or
+*trying vN*. A trial ends by itself at the time it names.
+
+**`vibepanel page shot` says the browser cannot start its sandbox.** Ubuntu
+23.10 and later restrict the user namespaces Chromium's sandbox uses. Run it
+again with `--no-browser-sandbox`; the page is still sandboxed by its own
+policy. It prefers `chrome-headless-shell` when one is on the machine, which a
+Playwright install provides; the full browser in headless mode was measured
+hanging on a screenshot where the shell took under a second.
+
 ## The one-liner refused with "checksum mismatch"
 
 The archive that arrived is not the archive `SHA256SUMS` describes, and the

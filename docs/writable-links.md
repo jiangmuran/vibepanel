@@ -6,15 +6,22 @@ undone the one property that makes share links defensible.
 
 ## What is there now
 
-A share link reaches exactly one `GET`. That is not a policy, it is the shape of
-the router:
+A share link reaches `GET`s and nothing else: the dashboard, the v1 snapshot, and
+a share page's files (see [share-pages.md](share-pages.md)). That is not a
+policy, it is the shape of the router, and a test walks it:
 
 ```go
 r.Route("/share/{token}", func(r chi.Router) {
+    r.Use(shareReadableAnywhere)
     r.Use(s.requireShareToken)
     r.Get("/dashboard", s.handleShareDashboard)
+    r.Get("/v1/snapshot", s.handleShareSnapshot)
 })
 ```
+
+When this document was written there was one `GET`. Share pages made it four
+without adding a write, and nothing below changes because of it: a writable link
+is still a different table, not a column on this one.
 
 `requireShareToken` resolves the token against `share_links` and nothing else,
 and `currentUser` never consults `share_links`. So a share token presented as a
@@ -54,8 +61,8 @@ half and are the ones a collaborator actually asks for.
 ## The shape it would have to take
 
 **A different table, not a column.** `share_links` must stay the table that
-grants exactly one `GET`, because that is what makes every other route's `401`
-free. A writable link is a second table — say `collab_links` — resolved by its
+grants `GET`s and nothing else, because that is what makes every other route's
+`401` free. A writable link is a second table — say `collab_links` — resolved by its
 own middleware, mounted under its own prefix, and consulted by nothing else.
 Two tables means "can this credential write" is answered by which lookup
 succeeded rather than by a field somebody has to remember to read.

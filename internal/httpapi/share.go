@@ -34,8 +34,10 @@ import (
 //     Nothing anywhere can read a link back out.
 //
 //  2. It is read-only because of where it is registered, not because a handler
-//     checks a flag. registerShareRoutes mounts one GET below its own
-//     middleware; that middleware resolves the token against share_links and
+//     checks a flag. registerShareRoutes mounts GETs below its own middleware
+//     -- the dashboard and the v1 snapshot, and registerSharePageRoutes a
+//     page's files -- and TestAShareTokenReachesOnlyTheseRoutes is the list;
+//     that middleware resolves the token against share_links and
 //     nothing else, and share_links is not consulted by currentUser. So a share
 //     token presented as a cookie or as a Bearer header is not a credential at
 //     all -- it is an unknown string, and every authenticated route answers 401
@@ -123,10 +125,20 @@ func (s *Server) shareCooldowns() *auth.Cooldown {
 // later, because every poll re-reads the row. Nothing a viewer sends decides
 // anything: `v`, `w` and `h` on the query string are recorded in memory for the
 // owner's count and are not readable through this token at all.
+//
+// Pages added the second GET here, and a third outside /api for the page's own
+// files (registerSharePageRoutes). Neither writes, and neither is reachable by
+// a token as a cookie or a header. TestAShareTokenReachesOnlyTheseRoutes is the
+// list, and adding to it is the decision.
 func (s *Server) registerShareRoutes(r chi.Router) {
 	r.Route("/share/{token}", func(r chi.Router) {
+		r.Use(shareReadableAnywhere)
 		r.Use(s.requireShareToken)
 		r.Get("/dashboard", s.handleShareDashboard)
+		// The versioned contract a share page is written against. The same
+		// redaction as the dashboard, restated as a published shape; see
+		// sharepage.go.
+		r.Get("/v1/snapshot", s.handleShareSnapshot)
 	})
 }
 
@@ -826,6 +838,15 @@ type shareDashboard struct {
 	// and none at all in counts mode.
 	ScopeRepoOwner string `json:"scopeRepoOwner"`
 	ScopeRepoName  string `json:"scopeRepoName"`
+
+	// Page is non-empty when the link has been pointed at a share page since
+	// this board was opened: this link's pseudonym for the page, and the
+	// board's cue to reload into it. Empty for a link that draws a board.
+	//
+	// The owner changes what a wall shows from a laptop; the wall finds out on
+	// its next poll. That was true of boards, and this keeps it true across the
+	// switch from a board to a page, with nothing added under the token.
+	Page string `json:"page"`
 }
 
 // handleShareDashboard is everything a share token can ask for.
@@ -849,6 +870,9 @@ func (s *Server) handleShareDashboard(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.writeStoreErr(w, err)
 		return
+	}
+	if sc.link.PageID != "" {
+		out.Page = shareID(sc.secret, sc.link.PageID)
 	}
 	// No caching, anywhere between here and the screen. This is a live
 	// reading, and a dashboard served from a proxy's cache is the exact failure
@@ -1868,6 +1892,11 @@ type createShareRequest struct {
 	Remark string `json:"remark"`
 	// Locked fixes the board against later edits until it is unlocked.
 	Locked bool `json:"locked"`
+	// PageID makes the link draw a published share page instead of the board,
+	// with Params as the page's settings on it. The board is still stored, and
+	// is what the link draws if it is pointed back at one.
+	PageID string         `json:"pageId"`
+	Params map[string]any `json:"params"`
 }
 
 // scopeFor validates a requested scope against the rows that exist.
@@ -1984,6 +2013,12 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 	if req.ExpiresIn > 0 {
 		expiresAt = time.Now().Add(time.Duration(req.ExpiresIn) * time.Second).Unix()
 	}
+	pageID := strings.TrimSpace(req.PageID)
+	params, err := s.pageLinkSettings(r, pageID, 0, req.Params)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	u, ok := currentUserFrom(r)
 	if !ok {
@@ -1999,8 +2034,12 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 	if len(prefix) > 8 {
 		prefix = prefix[:8]
 	}
-	rec, err := s.DB.CreateShareLink(r.Context(), id.New(), auth.HashToken(token), prefix, name,
-		detail, board, scope, scopeID, u.ID, req.Remark, req.Locked, expiresAt)
+	rec, err := s.DB.CreateShareLink(r.Context(), store.NewShareLink{
+		ID: id.New(), TokenHash: auth.HashToken(token), Prefix: prefix, Name: name,
+		Detail: detail, Board: board, Scope: scope, ScopeID: scopeID, UserID: u.ID,
+		Remark: req.Remark, Locked: req.Locked, ExpiresAt: expiresAt,
+		PageID: pageID, Params: params,
+	})
 	if err != nil {
 		s.writeStoreErr(w, err)
 		return
@@ -2017,6 +2056,8 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 		"prefix":    rec.Prefix,
 		"detail":    rec.Detail,
 		"board":     rec.Board,
+		"pageId":    rec.PageID,
+		"params":    rec.Params,
 		"scope":     rec.Scope,
 		"remark":    rec.Remark,
 		"locked":    rec.Locked,

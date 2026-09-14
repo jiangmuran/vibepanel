@@ -57,6 +57,9 @@ import {
   type PaneLayout,
 } from './panes'
 import { StackedTab } from './StackedTab'
+import { PageLine } from './pages/PageLine'
+import { usePageFor } from './pages/usePages'
+import { PagePreview } from './pages/PagePreview'
 import { t, useLang, type Key } from '../i18n'
 
 export type { PanelTab }
@@ -102,6 +105,9 @@ interface Props {
   onCollapse: () => void
   /** Opens the full-width token view. The panel is too narrow to hold it. */
   onOpenTokens: () => void
+  /** The selected session, which a share page's Preview pastes into. */
+  currentSession: Session | null
+  onPaste: (sessionId: string, text: string, submit: boolean) => void
 }
 
 /** Pixels of movement before a press on a tab becomes a drag.
@@ -204,7 +210,15 @@ export function RightPanel(props: Props) {
   // that has gone. The two dock blocks survive a project change untouched —
   // they were never about the project.
   const projectId = project?.id ?? null
-  const detail = opened !== null && (opened.block !== 'repo' || project !== null) ? opened : null
+  // The share page this project's directory is the draft of, if any. Its
+  // detail goes with it for the reason the repository's does.
+  const page = usePageFor(project)
+  const detail =
+    opened !== null &&
+    (opened.block !== 'repo' || project !== null) &&
+    (opened.block !== 'page' || page !== null)
+      ? opened
+      : null
 
   // A stored layout is not a promise about the screen it comes back on. Four
   // panes in a browser window dragged short is four tab strips and no content,
@@ -408,6 +422,7 @@ export function RightPanel(props: Props) {
           projectId={project.id}
           density={density}
           onOpenRepo={() => openDetail('repo')}
+          pageLine={page && <PageLine page={page} onOpen={() => openDetail('page')} />}
         />
       ) : (
         <Notes key={project.id} projectId={project.id} socket={props.socket} />
@@ -418,8 +433,14 @@ export function RightPanel(props: Props) {
   }
 
   /** What an opened block draws, and whether it has a full-width form. */
-  const detailBody = (block: DetailBlock) => {
+  const detailBody = (block: DetailBlock, full = false) => {
     if (block === 'monitor') return <SystemMonitor sessions={props.sessions} density="wide" />
+    if (block === 'page') {
+      if (!page || !project) return null
+      const session =
+        props.currentSession && props.currentSession.projectId === project.id ? props.currentSession : null
+      return <PagePreview page={page} session={session} full={full} onPaste={props.onPaste} />
+    }
     if (block === 'tokens') {
       return (
         <TokenUsage
@@ -567,7 +588,7 @@ export function RightPanel(props: Props) {
           onBack={() => setDetail({ block: detail.block, full: false })}
         >
           <ErrorBoundary label={`The ${detail.block} detail`}>
-            {detailBody(detail.block)}
+            {detailBody(detail.block, true)}
           </ErrorBoundary>
         </PanelDetail>
       )}

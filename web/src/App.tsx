@@ -15,7 +15,7 @@ import {
 import { api, UnauthorizedError } from './protocol/api'
 import { PanelSocket } from './protocol/socket'
 import type { SocketStatus } from './protocol/socket'
-import type { AuthState, PanelState, Project, Session } from './protocol/wire'
+import type { AuthState, PanelState, Project, Session, SharePage } from './protocol/wire'
 import { TerminalView } from './components/Terminal'
 import { StateDot } from './components/StateDot'
 import { Sidebar } from './components/Sidebar'
@@ -54,6 +54,7 @@ import { dismissToast, showToast } from './components/toasts'
 import { focusTerminal } from './components/focus'
 import { RestoreDialog } from './components/RestoreDialog'
 import { LaunchPicker } from './components/LaunchPicker'
+import { samePath } from './components/pages/usePages'
 import { filesFrom } from './components/upload'
 import { copyTextInGesture } from './clipboard'
 import { notifyOnWaiting } from './notify'
@@ -67,6 +68,16 @@ import { t, useLang } from './i18n'
  * socket reconnected — repairs itself instead of showing a stale list forever.
  */
 const STATE_RESYNC_MS = 30_000
+
+/**
+ * How long after a new page's agent starts its first line is typed at it.
+ *
+ * A guess, and said to be one. Claude Code and Codex both take a second or two
+ * to put their terminal into the mode that reads a paste; three is the margin.
+ * Early, and the line can land in a buffer the agent discards on start; late
+ * costs a moment of looking at an empty prompt.
+ */
+const PAGE_PROMPT_AFTER_MS = 3000
 
 const SELECTED_KEY = 'vibepanel.selected'
 const SIDEBAR_KEY = 'vibepanel.sidebar'
@@ -641,6 +652,13 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     },
     [socket, current],
   )
+  // By id rather than "the current one": a share page's Preview names the
+  // session it resolved, so a selection that changes between the pick and the
+  // paste cannot send the line to a different terminal.
+  const pasteToSession = useCallback(
+    (sessionId: string, text: string, submit: boolean) => socket.pasteText(sessionId, text, submit),
+    [socket],
+  )
   const currentProject = current
     ? (state.projects.find((p) => p.id === current.projectId) ?? null)
     : null
@@ -833,6 +851,25 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   // Which project the picker is open for, null when it is closed.
   const [launchFor, setLaunchFor] = useState<Project | null>(null)
   const newSession = (project: Project) => setLaunchFor(project)
+
+  // A new share page, made in settings, becomes a project with an agent in it
+  // and a first line at its prompt -- typed, not sent. The launch picker in
+  // between is the ordinary one, because which agent writes the page is the
+  // same choice as which agent does anything else.
+  const pagePrompt = useRef<{ projectId: string; text: string } | null>(null)
+  const startPage = async (page: SharePage) => {
+    setSettingsAt(null)
+    try {
+      const project =
+        state.projects.find((p) => samePath(p.path, page.sourceDir)) ??
+        (await api.createProject(page.sourceDir, page.name))
+      pagePrompt.current = { projectId: project.id, text: t('page.firstPrompt') }
+      setLaunchFor(project)
+      setError(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
 
   const newBottomTerminal = () => {
     if (!current) return
@@ -1446,6 +1483,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
       {settingsAt && (
         <Settings
           openAt={settingsAt}
+          onStartPage={(page) => void startPage(page)}
           onClose={() => {
             setSettingsAt(null)
             loadProfiles()
@@ -1456,11 +1494,24 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
       {launchFor && (
         <LaunchPicker
           profiles={profiles}
-          onClose={() => setLaunchFor(null)}
+          onClose={() => {
+            setLaunchFor(null)
+            pagePrompt.current = null
+          }}
           onPick={(launchProfileId) => {
             const project = launchFor
             setLaunchFor(null)
-            void guard(() => api.createSession(project.id, [], { launchProfileId }))
+            const prompt = pagePrompt.current?.projectId === project.id ? pagePrompt.current.text : null
+            pagePrompt.current = null
+            void guard(async () => {
+              const made = await api.createSession(project.id, [], { launchProfileId })
+              if (!prompt) return
+              selectSession(made.id)
+              // After the agent has had a moment to start. A paste that
+              // arrives before it has set up its terminal lands in a buffer
+              // it may throw away, and nothing says so.
+              window.setTimeout(() => socket.pasteText(made.id, prompt, false), PAGE_PROMPT_AFTER_MS)
+            })
           }}
         />
       )}
@@ -1504,6 +1555,8 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           onWidthChange={setRightSize}
           onCollapse={() => setRightOpen(false)}
           onOpenTokens={() => setTokensOpen(true)}
+          currentSession={current}
+          onPaste={pasteToSession}
         />
       )}
 

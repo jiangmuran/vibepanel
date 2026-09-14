@@ -1,0 +1,9 @@
+{
+  "sdk": 1,
+  "name": "Blank",
+  "sections": ["sessions"],
+  "params": [
+    { "key": "title", "type": "text", "label": "Title", "max": 40, "default": "" }
+  ],
+  "viewports": ["laptop", "phone"]
+}

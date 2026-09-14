@@ -85,6 +85,7 @@ export const SETTINGS_SECTIONS = [
   'paste',
   'browser',
   'webhooks',
+  'pages',
   'shares',
   'password',
   'passkeys',
@@ -118,6 +119,9 @@ export const SECTION_GROUP: Record<SettingsSection, SettingsGroup> = {
   paste: 'sessions',
   browser: 'notify',
   webhooks: 'notify',
+  // Above the links, in the same group: a link draws a page, so the page is
+  // made where the link that shows it is made.
+  pages: 'sharing',
   shares: 'sharing',
   password: 'account',
   passkeys: 'account',

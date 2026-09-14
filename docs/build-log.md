@@ -21508,3 +21508,90 @@ reported failure happens under these rules: v1.10.0 validated with `sudo -v`,
 which asks for a password whenever any matching rule needs one, before running
 a command sudo would have run without one. On this machine the new version
 shows a button and no field.
+
+## Share pages: the read-only link, drawn by HTML its owner wrote
+
+Asked for as 「重构只读链接功能 开放api/sdk 然后让用户自己vibe coding 前端html」,
+with the architecture, the workflow, iteration and security left to design. The
+design is `docs/share-pages.md`; this is what happened on the way.
+
+The board's limit was its vocabulary. The data a link may disclose was already
+one redacted struct, so it is published as `GET /api/share/{token}/v1/snapshot`,
+a plain-script SDK polls it, and a page is HTML stored as immutable versions and
+served on the link. Boards stay. A manifest names sections and *compiles into a
+board* of the widgets that need them, so the existing builder decides what is
+computed and a page has no vocabulary a board lacks. Parameters are only echoed.
+
+Red line 8 changed from "exactly one GET" to a list of four, pinned by a test
+that walks the router. That was the first decision, taken before any code.
+
+### The editing loop is the panel's own
+
+A page is a project with an agent session in it. Settings scaffolds the
+directory (template, `AGENTS.md`, SDK, types, fixtures), opens the launch
+picker, and types a first line at the new agent's prompt without Enter. The
+Preview is a detail block beside the repository's: a frame on a fifteen-minute
+preview link, reloading only when two fingerprint polls agree (three writes in
+450 ms reload once), errors listed and written to `.vibepanel/errors.json`,
+Pick typing a one-line pointer at the prompt, Publish, and a trial on a real
+screen that ends by itself because it is resolved on read. For an agent with no
+person watching, `vibepanel page check` and `vibepanel page shot`.
+
+### What the browser found that reasoning had not
+
+- **A revoked wall said "reconnecting" forever.** The CORS header was set in the
+  snapshot handler, and a revoked token is refused by the middleware before any
+  handler runs. The sandboxed page could not read its own 401, so the SDK saw a
+  network error. The header moved into middleware in front of the token check.
+  `pages-check`'s revoke step is what failed.
+- **A page could not read its own fixture.** An opaque origin makes the page's
+  fetch of `fixtures/busy.json` cross-origin too. Page files carry
+  `Access-Control-Allow-Origin: *` as well.
+- **A bidi override in a session title reversed the text on screen** — the
+  hostile fixture's "RTL override" rendered as "edirrevo LTR" on the phone
+  template. The panel's `safeText` already neutralises these; the SDK's
+  `vp.text` and `vp.name` now do the same, and `pages-check` fails on a bidi
+  control reaching any template's screen.
+- **The full browser hung on `--screenshot` of `about:blank`** for a minute on
+  this machine; `chrome-headless-shell` wrote it in under a second, so `shot`
+  prefers it. And Ubuntu's AppArmor refuses Chromium its process sandbox:
+  `shot` says so and asks for `--no-browser-sandbox` instead of dropping it.
+
+### The two layers, each removed
+
+With the `sandbox` token taken out of the page's policy, the probe page — opened
+in a browser signed in to the panel — reads the cookie jar, writes storage, gets
+the panel's origin and opens a window (5 FAIL). The API and the terminal socket
+still refused it, because `connect-src` names only the snapshot. With that
+widened as well, it read `/api/state` and the audit log with the owner's cookie,
+had a `POST /api/sessions` accepted past authentication, and opened `/ws`
+(9 FAIL). Each layer alone held; neither is decoration.
+
+### Guards removed, and what went red
+
+Fifty mutations across `internal/pages`, `internal/store`, `internal/httpapi`,
+the Preview's frame handling and the SDK; the final run killed all fifty. The
+first pass had one survivor and five
+mutants that did not compile; rewriting those so they compiled turned up three
+more survivors. All four were real:
+
+- The memo test compared `at`, which is in seconds, so twenty rebuilds inside
+  one second looked like one. The memo now counts builds and the test asserts
+  the count.
+- `ReadFile`'s path comparison survived because the test had no symlinked
+  *directory* inside the root — a symlinked file is refused by `Lstat` anyway.
+  The test has one now.
+- An options object with no `days` was never compiled, so the day series was
+  untested for it. It is now.
+- In the SDK, `stopped = true` on a 401 changed nothing: that branch schedules
+  no further poll, which is the whole of the stop. The line was removed rather
+  than given a contrived test; the mutation that matters (scheduling a poll
+  after `revoked`) is killed.
+
+### Two existing tests caught things in passing
+
+`TestOnlyThisFileNamesTheDayLayout` refused the fixtures' hand-formatted dates;
+they go through `dayIn`/`dayShift`. The source scan for invisible characters
+refused a literal RTL override in the hostile fixture; it is an escape now. And
+the harness test noticed the new check's tmux socket prefix was not one the
+stale-socket sweeper knew.

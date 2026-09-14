@@ -321,12 +321,13 @@ describe('the blocks that open out of their compact form', () => {
     for (const b of DOCK_BLOCKS) expect(DETAIL_BLOCKS).toContain(b)
   })
 
-  it('has one that is not in the dock, and knows it', () => {
-    // The repository. Its compact form is a line in the file tree's header,
-    // because it is a fact about the directory above it rather than about the
-    // machine — but the gesture that opens it is the same one.
+  it('has two that are not in the dock, and knows them', () => {
+    // The repository and the share page's Preview. Both compact forms are a
+    // line in the file tree's header, because each is a fact about the
+    // directory above it rather than about the machine — but the gesture that
+    // opens them is the same one.
     const extra = DETAIL_BLOCKS.filter((b) => !(DOCK_BLOCKS as readonly string[]).includes(b))
-    expect(extra).toEqual(['repo'])
+    expect(extra).toEqual(['repo', 'page'])
   })
 
   it('recognises exactly the blocks it lists', () => {

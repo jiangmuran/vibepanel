@@ -772,6 +772,161 @@ export interface ShareLink {
    *  owner is composing for when they cannot see it. */
   viewportWidth: number
   viewportHeight: number
+  /** The share page this link draws, or '' for its board. */
+  pageId: string
+  /** Holds the link on one version of its page; 0 follows the published one.
+   *  With `pinUntil` in the future it is a trial, which ends by itself. */
+  pinVersion: number
+  pinUntil: number
+  /** The owner's values for the page's parameters, as stored. */
+  params: Record<string, ShareParamValue>
+}
+
+// ── share pages ────────────────────────────────────────────────────────────
+//
+// HTML the owner wrote, drawn on a share link through the SDK. The page itself
+// reads a different, published contract (internal/pages/sdk/vibepanel.d.ts);
+// these are the settings page's view of pages, and pinned against the server
+// by TestTypeScriptRowsMatchWhatIsSent like everything else here.
+
+export type ShareParamValue = string | number | boolean
+
+export interface SharePage {
+  id: string
+  name: string
+  /** The directory the draft lives in, on the panel's machine. */
+  sourceDir: string
+  /** 0 for a page never published, which no handed-out link may draw. */
+  publishedVersion: number
+  createdAt: number
+  updatedAt: number
+}
+
+// Written out rather than `extends SharePage`: the test that holds this file to
+// the server reads one interface body at a time, and a field that arrives by
+// inheritance is a field it cannot see.
+export interface SharePageRow {
+  id: string
+  name: string
+  sourceDir: string
+  publishedVersion: number
+  createdAt: number
+  updatedAt: number
+  /** How many handed-out links draw it. */
+  links: number
+  sourceExists: boolean
+}
+
+export interface SharePageVersion {
+  version: number
+  manifest: SharePageManifest
+  note: string
+  bytes: number
+  files: number
+  commitSha: string
+  dirty: boolean
+  /** Frozen for a trial on one screen and not kept yet. */
+  candidate: boolean
+  createdAt: number
+}
+
+export interface SharePageDetail {
+  page: SharePage
+  sourceExists: boolean
+  versions: SharePageVersion[]
+  links: ShareLink[]
+}
+
+export interface SharePageManifest {
+  sdk: number
+  name: string
+  sections: string[]
+  spend?: { days?: number; months?: boolean; heatmap?: boolean; split?: string[] }
+  repo?: { days?: number; prs?: boolean }
+  flow?: { by?: string; days?: number }
+  params?: SharePageParam[]
+  scriptHosts?: string[]
+  viewports?: string[]
+}
+
+export interface SharePageParam {
+  key: string
+  type: 'text' | 'color' | 'number' | 'enum' | 'bool'
+  label?: string
+  min?: number
+  max?: number
+  values?: string[]
+  default?: ShareParamValue
+}
+
+export interface SharePageViewport {
+  name: string
+  width: number
+  height: number
+}
+
+export interface SharePageTemplate {
+  id: string
+  sections: string[]
+}
+
+export interface SharePageCatalogue {
+  templates: SharePageTemplate[]
+  sections: string[]
+  viewports: SharePageViewport[]
+  fixtures: string[]
+  scriptHosts: string[]
+  /** Where a new page's directory goes when none is given. */
+  pagesRoot: string
+  sdk: number
+  maxFiles: number
+  maxBytes: number
+}
+
+export interface SharePageFile {
+  path: string
+  contentType: string
+  size: number
+  sha256: string
+}
+
+export interface SharePageIgnored {
+  path: string
+  reason: string
+}
+
+export interface SharePageProblem {
+  file: string
+  line: number
+  severity: 'error' | 'warning'
+  code: string
+  message: string
+  fix: string
+}
+
+export interface SharePageChanges {
+  /** The published version these are against, 0 for none. */
+  against: number
+  added: string[]
+  removed: string[]
+  modified: string[]
+  manifest: boolean
+}
+
+export interface SharePageDraft {
+  fingerprint: string
+  /** False when the directory cannot be read as a page at all; `error` says why. */
+  ok: boolean
+  error: string
+  manifest: SharePageManifest | null
+  files: SharePageFile[]
+  ignored: SharePageIgnored[]
+  problems: SharePageProblem[]
+  bytes: number
+  changes: SharePageChanges
+  sdkCurrent: boolean
+  commit: string
+  dirty: boolean
 }
 
 /**
@@ -914,6 +1069,9 @@ export interface ShareDashboard {
    */
   scopeRepoOwner: string
   scopeRepoName: string
+  /** Non-empty when the link has been pointed at a share page since this board
+   *  opened: the board's cue to reload into the page. */
+  page: string
 }
 
 // ── boards ─────────────────────────────────────────────────────────────────

@@ -1,0 +1,4 @@
+# What the panel and its tools write here: screenshots, the error log, history.
+.vibepanel/shots/
+.vibepanel/errors.json
+node_modules/

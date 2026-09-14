@@ -21,6 +21,12 @@ import type {
   ShareDashboard,
   ShareDetail,
   ShareLink,
+  SharePage,
+  SharePageCatalogue,
+  SharePageDetail,
+  SharePageDraft,
+  SharePageRow,
+  ShareParamValue,
   SystemSample,
   TokenUsage,
   UsageSample,
@@ -380,6 +386,9 @@ export const api = {
     /** The owner's label for the screen. Shown to viewers under both modes. */
     remark: string
     locked: boolean
+    /** A published share page to draw instead of the board, with its settings. */
+    pageId?: string
+    params?: Record<string, ShareParamValue>
   }) =>
     request<{
       token: string
@@ -404,7 +413,7 @@ export const api = {
    * This is how a television on a wall is changed: from a laptop, signed in,
    * with the wall picking it up on its next poll. There is nothing to do at the
    * screen itself, which is the whole point — and the reason the share surface
-   * is still exactly one GET.
+   * has no write route.
    *
    * Deliberately no `detail` and no `scope`. By the time anybody edits a link
    * its URL is already in an email or typed into a television, and widening
@@ -452,6 +461,112 @@ export const api = {
 
   deleteShare: (id: string) =>
     request<void>(`/api/settings/shares/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  /**
+   * Points a link at a share page, or back at its board with `pageId: ''`,
+   * with the page's parameter values. Not what the link discloses: that is
+   * `detail` and `scope`, fixed when it was made.
+   */
+  setSharePage: (
+    id: string,
+    fields: { pageId: string; pinVersion: number; params: Record<string, ShareParamValue> },
+  ) =>
+    request<void>(`/api/settings/shares/${encodeURIComponent(id)}/page`, {
+      method: 'PUT',
+      body: JSON.stringify(fields),
+    }),
+
+  // ── share pages ──────────────────────────────────────────────────────────
+
+  listPages: () => request<SharePageRow[]>('/api/settings/pages'),
+
+  pageCatalogue: () => request<SharePageCatalogue>('/api/settings/pages/catalogue'),
+
+  /** A new page from a template, or an existing directory adopted when
+   *  `template` is ''. An empty `sourceDir` puts a new one under pagesRoot. */
+  createPage: (req: { name: string; template: string; sourceDir: string }) =>
+    request<SharePage>('/api/settings/pages', { method: 'POST', body: JSON.stringify(req) }),
+
+  page: (id: string) => request<SharePageDetail>(`/api/settings/pages/${encodeURIComponent(id)}`),
+
+  updatePage: (id: string, fields: { name: string; sourceDir: string }) =>
+    request<void>(`/api/settings/pages/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(fields),
+    }),
+
+  deletePage: (id: string) =>
+    request<void>(`/api/settings/pages/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  pageDraft: (id: string) =>
+    request<SharePageDraft>(`/api/settings/pages/${encodeURIComponent(id)}/draft`),
+
+  /** Cheap: sizes and times, hashed. Asked twice a second while a Preview is open. */
+  pageFingerprint: (id: string) =>
+    request<{ fingerprint: string }>(`/api/settings/pages/${encodeURIComponent(id)}/draft/fingerprint`),
+
+  publishPage: (id: string, note: string) =>
+    request<{ version: number }>(`/api/settings/pages/${encodeURIComponent(id)}/publish`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    }),
+
+  rollbackPage: (id: string, version: number) =>
+    request<void>(`/api/settings/pages/${encodeURIComponent(id)}/rollback`, {
+      method: 'POST',
+      body: JSON.stringify({ version }),
+    }),
+
+  /**
+   * A fifteen-minute share link that draws the page's draft. A real link, so
+   * the Preview cannot show what a wall would not; the token is held in memory
+   * by the pane and never stored.
+   */
+  previewPage: (id: string, detail: ShareDetail) =>
+    request<{ id: string; token: string; expiresAt: number }>(
+      `/api/settings/pages/${encodeURIComponent(id)}/preview`,
+      { method: 'POST', body: JSON.stringify({ detail }) },
+    ),
+
+  renewPreview: (pageId: string, linkId: string) =>
+    request<{ expiresAt: number }>(
+      `/api/settings/pages/${encodeURIComponent(pageId)}/preview/${encodeURIComponent(linkId)}/renew`,
+      { method: 'POST', body: '{}' },
+    ),
+
+  /** What a preview frame reported, written into the draft for the agent. */
+  reportPageErrors: (
+    id: string,
+    errors: { kind: string; message: string; source: string; line: number }[],
+  ) =>
+    request<void>(`/api/settings/pages/${encodeURIComponent(id)}/errors`, {
+      method: 'PUT',
+      body: JSON.stringify({ errors }),
+    }),
+
+  startTrial: (id: string, linkId: string, minutes: number) =>
+    request<{ version: number; pinUntil: number }>(
+      `/api/settings/pages/${encodeURIComponent(id)}/trial`,
+      { method: 'POST', body: JSON.stringify({ linkId, minutes }) },
+    ),
+
+  keepTrial: (id: string, linkId: string) =>
+    request<{ version: number }>(
+      `/api/settings/pages/${encodeURIComponent(id)}/trial/${encodeURIComponent(linkId)}/keep`,
+      { method: 'POST', body: '{}' },
+    ),
+
+  endTrial: (id: string, linkId: string) =>
+    request<void>(
+      `/api/settings/pages/${encodeURIComponent(id)}/trial/${encodeURIComponent(linkId)}`,
+      { method: 'DELETE' },
+    ),
+
+  forkPage: (id: string, name: string) =>
+    request<SharePage>(`/api/settings/pages/${encodeURIComponent(id)}/fork`, {
+      method: 'POST',
+      body: JSON.stringify({ name, sourceDir: '' }),
+    }),
 
   /**
    * The whole surface a share token can reach.

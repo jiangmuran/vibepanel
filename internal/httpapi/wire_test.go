@@ -15,6 +15,7 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/browse"
 	"github.com/jiangmuran/vibepanel/internal/git"
 	"github.com/jiangmuran/vibepanel/internal/hooks"
+	"github.com/jiangmuran/vibepanel/internal/pages"
 	"github.com/jiangmuran/vibepanel/internal/store"
 	"github.com/jiangmuran/vibepanel/internal/sysmon"
 )
@@ -108,6 +109,23 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		{"ShareSpendTotals", shareSpendTotals{}},
 		{"ShareSpendBucket", shareSpendBucket{}},
 		{"ShareSpendGroup", shareSpendGroup{}},
+		// Share pages, as the settings page and the Preview pane see them. The
+		// page's own contract is vibepanel.d.ts, held by
+		// TestTheSDKTypesMatchTheSnapshot; these are the owner's side.
+		{"SharePage", store.SharePage{}},
+		{"SharePageRow", pageRow{}},
+		{"SharePageVersion", store.SharePageVersion{}},
+		{"SharePageDetail", pageDetail{}},
+		{"SharePageManifest", pages.Manifest{}},
+		{"SharePageParam", pages.ParamSpec{}},
+		{"SharePageViewport", pages.Viewport{}},
+		{"SharePageTemplate", pages.Template{}},
+		{"SharePageCatalogue", pageCatalogue{}},
+		{"SharePageFile", pages.File{}},
+		{"SharePageIgnored", pages.Ignored{}},
+		{"SharePageProblem", pages.Problem{}},
+		{"SharePageChanges", pageChanges{}},
+		{"SharePageDraft", pageDraft{}},
 		// Token usage. Pinned from the first commit rather than after the
 		// first drift, because this surface has more fields than anything
 		// above it and every one of them is a number somebody will believe.
@@ -334,9 +352,21 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"share.revoked":           true,
 		"share.unlocked":          true,
 		"share.updated":           true,
-		"token.created":           true,
-		"token.revoked":           true,
-		"update.installed":        true,
+		// What a link draws and its page's settings on it. `share.` rather
+		// than `page.`: the question they answer is "what did this screen
+		// start showing", which is a question about the link.
+		"share.page_changed":   true,
+		"share.params_changed": true,
+		"share.page_trial":     true,
+		// A page's own history, which is a question about the page.
+		"page.created":     true,
+		"page.published":   true,
+		"page.rolled_back": true,
+		"page.moved":       true,
+		"page.deleted":     true,
+		"token.created":    true,
+		"token.revoked":    true,
+		"update.installed": true,
 		// Written when somebody authorises the upgrade of a binary this panel
 		// does not own. The same prefix as update.installed on purpose: "what
 		// has this panel replaced itself with, and who said so" is one

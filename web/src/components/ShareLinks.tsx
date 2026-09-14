@@ -9,8 +9,12 @@ import type {
   ShareCatalogue,
   ShareDetail,
   ShareLink,
+  ShareParamValue,
   SharePreset,
 } from '../protocol/wire'
+import { LinkPage } from './pages/LinkPage'
+import { manifestFor, useNow, usePageDetail, usePublishedPages } from './pages/usePages'
+import { ParamsForm } from './pages/ParamsForm'
 import type { Key } from '../i18n'
 import { t, useLang } from '../i18n'
 import { BoardEditor } from './BoardEditor'
@@ -27,7 +31,7 @@ import { copyTextInGesture } from '../clipboard'
  * widget is the thing that must not be necessary. So the board is changed from
  * here, on a laptop, and the wall picks it up on its next poll — two seconds —
  * because every poll re-reads the link's row. Nothing was added to the share
- * token's own surface to make that work; it is still exactly one GET.
+ * token's own surface to make that work; it has no write route.
  *
  * Three things make editing a screen you cannot see workable, and all three are
  * on this page:
@@ -123,9 +127,17 @@ interface Editing {
   board: ShareBoard
 }
 
-export function ShareLinks() {
+export function ShareLinks({ pagesVersion = 0 }: { pagesVersion?: number }) {
   useLang()
   const [links, setLinks] = useState<ShareLink[]>([])
+  // The pages a link can draw instead of a board. Only published ones: a page
+  // with no version has nothing for a wall to show.
+  const pages = usePublishedPages(pagesVersion)
+  // What a new link draws: '' is the board below, anything else a page's id.
+  const [draws, setDraws] = useState('')
+  const [params, setParams] = useState<Record<string, ShareParamValue>>({})
+  const drawsManifest = manifestFor(usePageDetail(draws), 0)
+  const now = useNow()
   // Fetched here rather than threaded down from the settings page, which is
   // opened from three places and would have to carry them through all three.
   // One extra request, once, while a modal is open.
@@ -258,6 +270,8 @@ export function ShareLinks() {
         scopeId: scopeId ?? '',
         remark: remark.trim(),
         locked: false,
+        pageId: draws,
+        params: draws === '' ? {} : params,
       })
       setFresh(shareURL(made.token))
       setCopied(false)
@@ -402,6 +416,25 @@ export function ShareLinks() {
                 className={INPUT}
               />
             </Field>
+            <Field label={t('page.draws')} htmlFor="share-draws">
+              <select
+                id="share-draws"
+                value={draws}
+                onChange={(e) => {
+                  setDraws(e.target.value)
+                  setParams({})
+                }}
+                data-testid="share-draws"
+                className={INPUT}
+              >
+                <option value="">{t('page.drawsBoard')}</option>
+                {pages.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {safeText(p.name)}
+                  </option>
+                ))}
+              </select>
+            </Field>
             <Field label={t('share.scopeLabel')} htmlFor="share-scope">
               <select
                 id="share-scope"
@@ -460,7 +493,7 @@ export function ShareLinks() {
               <button
                 type="button"
                 onClick={() => void create()}
-                disabled={!board || board.widgets.length === 0}
+                disabled={draws === '' ? !board || board.widgets.length === 0 : !drawsManifest}
                 data-testid="share-create"
                 className="vp-press w-full rounded-vp px-3 py-1.5 text-vp-base @md:w-auto"
                 style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
@@ -470,7 +503,16 @@ export function ShareLinks() {
             </div>
           </div>
 
-          {catalogue && board && (
+          {draws !== '' && drawsManifest && (
+            <ParamsForm
+              specs={drawsManifest.params ?? []}
+              values={params}
+              idPrefix="share-param"
+              onChange={setParams}
+            />
+          )}
+
+          {draws === '' && catalogue && board && (
             <BoardEditorFor
               linkID=""
               board={board}
@@ -624,8 +666,19 @@ export function ShareLinks() {
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-5 text-vp-sm text-ink-2">
                 <code className="font-mono text-ink-3">{link.prefix}…</code>
                 <span data-testid="share-row-scope">{scopeLabel(link)}</span>
-                {link.board.preset !== '' && (
-                  <span data-testid="share-row-board">{presetLabel(link.board.preset)}</span>
+                {link.pageId !== '' ? (
+                  <span data-testid="share-row-page">
+                    {safeText(pages.find((p) => p.id === link.pageId)?.name ?? t('page.title'))}
+                    {link.pinUntil > now
+                      ? ` · ${t('page.trialShort', { v: link.pinVersion })}`
+                      : link.pinVersion > 0
+                        ? ` · ${t('page.pinned', { v: link.pinVersion })}`
+                        : ''}
+                  </span>
+                ) : (
+                  link.board.preset !== '' && (
+                    <span data-testid="share-row-board">{presetLabel(link.board.preset)}</span>
+                  )
                 )}
                 <span>{detailLabel(link.detail)}</span>
                 <span>
@@ -697,17 +750,22 @@ export function ShareLinks() {
                     </div>
                   </div>
                 </div>
+                {/* What the link draws comes before how the board is arranged,
+                    because a link drawing a page has no board to arrange. */}
+                <LinkPage link={link} pages={pages} onSaved={() => void refresh()} onError={setError} />
                 {/* One surface, not two. The picture of the wall used to sit
                     beside a list of dropdowns; it is the thing you arrange
                     now. */}
-                <BoardEditorFor
-                  linkID={link.id}
-                  board={editing.board}
-                  catalogue={catalogue}
-                  viewportWidth={link.viewportWidth}
-                  viewportHeight={link.viewportHeight}
-                  onChange={(next) => setEditing({ ...editing, board: next })}
-                />
+                {link.pageId === '' && (
+                  <BoardEditorFor
+                    linkID={link.id}
+                    board={editing.board}
+                    catalogue={catalogue}
+                    viewportWidth={link.viewportWidth}
+                    viewportHeight={link.viewportHeight}
+                    onChange={(next) => setEditing({ ...editing, board: next })}
+                  />
+                )}
               </div>
             )}
           </div>
