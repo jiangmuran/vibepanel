@@ -185,19 +185,48 @@ from its page's row, so there is no "which page" choice to get wrong.
 
 **Start.** **New page**: a name, a template (`blank`, `wall`, `spend`, `built`,
 `glance`) or an existing directory, and "start an agent session". The directory
-— by default `<data dir>/pages/page-<slug>`, beside `pasted/`, not the home
-directory — is scaffolded: the template, `AGENTS.md` and `CLAUDE.md`, the SDK and
-its types, fixtures, a `.gitignore`; made a repository with one commit where the
+— by default `page-<name>` under the pages directory, see below — is scaffolded:
+the template, `AGENTS.md`, `CLAUDE.md` and a `README.md` with links back to these
+docs, the SDK and its types, fixtures, a `.gitignore`; made a repository with one commit where the
 tools and an identity allow; and registered. Then the panel opens it (below),
 which adds it as a project called `page-<slug>`, opens the ordinary launch
 picker, and three seconds after the agent starts types a first line at its
 prompt without pressing Enter. `vibepanel page init` does the same from a shell
 (given `--name` and no directory, into the same default), less the session.
 
+**Where pages go.** Unset, the pages directory is `<data dir>/pages`, and nothing
+is stored: move the data directory and the pages default moves with it. The
+owner can name another on the line under the page list (`PUT
+/api/settings/pages/root`); a directory is only stored if a file can be written
+in it. It is resolved each time a page is made (`ResolvePagesRoot`), down a
+fallback — the setting, `<data dir>/pages`, `~/.local/share/vibepanel/pages`
+when the data directory is elsewhere, a `vibepanel-pages-<uid>` directory in
+the temporary directory — and the catalogue's `pagesRootInfo` says which rung
+was used and why the ones above it were not, so a disk that went away is a
+sentence on the settings page rather than a page that cannot be made. The
+directory name keeps the page's name in any script (`page-走廊电视墙`), because
+an ASCII slug made every Chinese-named page `page-page`.
+
+**Export and import.** A page travels as a zip: `vibepanel.json` at the top and
+the page's files, without the companions every directory gets. Export is the
+published version (or `?version=N`, or the directory for a page never
+published); import reads the archive by the publish rules
+(`pages.ReadArchive`: every path through `ValidPath`, every file through the
+content sniff, every limit an error, a path that leaves the page refused, one
+wrapping folder looked through) and makes a new unpublished page under the
+pages directory. `vibepanel page export` and `vibepanel page import` are the
+same code. Audited as `page.imported`.
+
+**Freedom.** The scaffolded `AGENTS.md` separates what the sandbox enforces from
+what is the page author's business, and says the template is a starting point.
+`blank` is a heading, the connection badge and one line of counts — no layout to
+inherit. An agent that reads the old instructions as a house style builds the
+same wall every time.
+
 **Open, and restore.** `POST /api/settings/pages/{id}/open` is what **Open** does:
 if the directory is gone it writes the published version back (`CheckoutVersion`,
 the same code as `vibepanel page checkout`) — into the old path if that can be
-created, otherwise a new `page-…` directory under the data directory — and a
+created, otherwise a new `page-…` directory under the pages directory — and a
 never-published page comes back as the blank template; then it finds the project
 whose path is the directory or makes `page-<slug>`. The page is its versions in
 the database, so a deleted directory, a deleted project or a new machine is one

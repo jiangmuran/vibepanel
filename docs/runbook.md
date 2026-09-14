@@ -744,9 +744,16 @@ the link is pinned: Settings → Sharing → the link's editor shows *Pinned vN*
 **A page's directory or its `page-…` project is gone.** Nothing is lost: the
 page is its published versions, in the database. Settings → Sharing → **Restore
 and open** writes the published version back — into the old directory if it can
-be created, otherwise under `~/.local/share/vibepanel/pages/page-<name>` — and
-makes the project again. The audit log records it as `page.restored`. A page
+be created, otherwise under the pages directory as `page-<name>` — and makes
+the project again. The audit log records it as `page.restored`. A page
 that was never published has nothing to restore and comes back blank.
+
+**New pages land in `/tmp` or somewhere unexpected.** The pages directory fell
+back. The line under the page list in Settings → Sharing says which directory is
+in use, *(default)*, *(custom)* or *(fallback)*, and what was wrong with the ones
+above it — usually a custom directory on a disk that is gone, or a data
+directory the panel's user cannot write. Fix that or choose another directory
+there; pages already made stay where they are.
 
 **After an upgrade, a wall shows a template instead of its board.** Boards were
 removed; at the first start every board link was pointed at the closest

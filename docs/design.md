@@ -243,9 +243,12 @@ published, at the same address with the same detail and scope. The detail and
 scope are the disclosure; the drawing was never part of it, so changing the
 drawing under a handed-out URL discloses nothing new.
 
-A page lives in `<data dir>/pages/page-<slug>` rather than in the home
-directory, beside the other things the panel writes for its own use, and its
-project is called `page-<slug>` so the sidebar says what it is. The directory is
+A page lives in `page-<name>` under the pages directory — `<data dir>/pages`
+unless the owner chose another, beside the other things the panel writes for its
+own use, never the home directory by default — and its project is called
+`page-<name>` so the sidebar says what it is. The default is not stored as a
+setting, and a directory that cannot be written falls back rather than failing
+the page; see share-pages.md. The directory is
 a working copy, not the page: the page is its published versions in the
 database. So a directory or project that has gone is recovered by **Open**,
 which writes the published version back and makes the project again, rather

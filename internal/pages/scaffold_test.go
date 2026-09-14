@@ -21,7 +21,7 @@ func TestAScaffoldIsAWorkingPage(t *testing.T) {
 	if b.Manifest.Name != "大厅 wall" {
 		t.Errorf("manifest name = %q", b.Manifest.Name)
 	}
-	for _, p := range []string{"AGENTS.md", "CLAUDE.md", ".gitignore", SDKFile, TypesFile, "fixtures/busy.json"} {
+	for _, p := range []string{"AGENTS.md", "CLAUDE.md", "README.md", ".gitignore", SDKFile, TypesFile, "fixtures/busy.json"} {
 		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
 			t.Errorf("%s was not written: %v", p, err)
 		}

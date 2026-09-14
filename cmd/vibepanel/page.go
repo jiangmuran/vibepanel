@@ -37,12 +37,14 @@ import (
 const pageUsage = `usage: vibepanel page <command> [flags] [dir]
 
   init      scaffold a new page and register it: into dir, or with --name and no
-            dir into <data dir>/pages/page-<slug>
+            dir into the pages directory (Settings → Sharing), as page-<name>
   check     report what is wrong with the page in dir (the current directory by default)
   shot      screenshot the draft through a preview link, and report what broke
   publish   store the draft as the next published version
   checkout  write a published version back out into a directory
   list      list pages
+  export    write a page as a zip: --page <id> [--version N] [-o file.zip]
+  import    make a new page from a zip: import [--name X] file.zip
   sync-sdk  replace dir's copy of vibepanel.js and vibepanel.d.ts with this build's`
 
 func cmdPage(args []string) error {
@@ -66,6 +68,10 @@ func cmdPage(args []string) error {
 		return pageList(rest)
 	case "sync-sdk":
 		return pageSyncSDK(rest)
+	case "export":
+		return pageExport(rest)
+	case "import":
+		return pageImport(rest)
 	}
 	return fmt.Errorf("unknown page command %q\n\n%s", sub, pageUsage)
 }
@@ -128,12 +134,16 @@ func pageInit(args []string) error {
 		return err
 	}
 	defer db.Close()
-	// A name and no directory puts the page where the settings page would:
-	// under the data directory as page-<slug>, not in whatever directory the
+	// A name and no directory puts the page where the settings page would --
+	// the pages directory, with its fallback -- not in whatever directory the
 	// command happened to be typed in.
 	var dir string
 	if fs.NArg() == 0 && *name != "" {
-		dir = httpapi.NewPageDir(cfg.PagesDir(), *name)
+		root := httpapi.ResolvePagesRoot(ctx, db, cfg)
+		if root.Dir == "" {
+			return errors.New("nowhere to put the page: " + root.Problem)
+		}
+		dir = httpapi.NewPageDir(root.Dir, *name)
 	} else if dir, err = dirArg(fs); err != nil {
 		return err
 	}
@@ -610,6 +620,80 @@ func pageList(args []string) error {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", p.ID, p.Name, pub, p.SourceDir)
 	}
 	return w.Flush()
+}
+
+func pageExport(args []string) error {
+	fs := flag.NewFlagSet("page export", flag.ContinueOnError)
+	pageID := fs.String("page", "", "the page's id (see `vibepanel page list`)")
+	version := fs.Int("version", 0, "which version (default: the published one, or the directory if never published)")
+	out := fs.String("o", "", "where to write the zip (default: page-<name>[-vN].zip here)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *pageID == "" {
+		return errors.New("page export: --page is required")
+	}
+	ctx := context.Background()
+	_, db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	page, err := db.SharePageByID(ctx, *pageID)
+	if err != nil {
+		return fmt.Errorf("no page %s", *pageID)
+	}
+	data, got, err := httpapi.PageArchive(ctx, db, page, *version)
+	if err != nil {
+		return err
+	}
+	if *out == "" {
+		*out = httpapi.PageArchiveName(page.Name, got)
+	}
+	if err := os.WriteFile(*out, data, 0o644); err != nil { //nolint:gosec // the user named it
+		return err
+	}
+	fmt.Printf("wrote %s (%d bytes)\n", *out, len(data))
+	return nil
+}
+
+func pageImport(args []string) error {
+	fs := flag.NewFlagSet("page import", flag.ContinueOnError)
+	name := fs.String("name", "", "the new page's name (default: the name in the archive)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("page import: one zip file")
+	}
+	data, err := os.ReadFile(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	cfg, db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	owner, err := db.FirstUserID(ctx)
+	if err != nil {
+		return errors.New("the panel has no account yet; finish setup first")
+	}
+	root := httpapi.ResolvePagesRoot(ctx, db, cfg)
+	if root.Dir == "" {
+		return errors.New("nowhere to put the page: " + root.Problem)
+	}
+	got, err := httpapi.ImportPage(ctx, db, root.Dir, owner, *name, data)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("imported page %s  %s\n  %s\n", got.Page.ID, got.Page.Name, got.Page.SourceDir)
+	for _, ig := range got.Ignored {
+		fmt.Printf("  left out %s: %s\n", ig.Path, ig.Reason)
+	}
+	fmt.Println("Not published: look at it in the Preview, then publish.")
+	return nil
 }
 
 func pageSyncSDK(args []string) error {

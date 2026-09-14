@@ -71,6 +71,9 @@ func (s *Server) registerPageRoutes(r chi.Router) {
 	r.Delete("/settings/pages/{pageID}/trial/{linkID}", s.handleEndTrial)
 	r.Post("/settings/pages/{pageID}/fork", s.handleForkPage)
 	r.Post("/settings/pages/{pageID}/open", s.handleOpenPage)
+	r.Get("/settings/pages/{pageID}/export", s.handleExportPage)
+	r.Post("/settings/pages/import", s.handleImportPage)
+	r.Put("/settings/pages/root", s.handlePutPagesRoot)
 	r.Put("/settings/shares/{shareID}/page", s.handleSetSharePage)
 }
 
@@ -152,11 +155,13 @@ type pageCatalogue struct {
 	Viewports   []pages.Viewport `json:"viewports"`
 	Fixtures    []string         `json:"fixtures"`
 	ScriptHosts []string         `json:"scriptHosts"`
-	// PagesRoot is where a new page's directory goes when none is given.
-	PagesRoot string `json:"pagesRoot"`
-	SDK       int    `json:"sdk"`
-	MaxFiles  int    `json:"maxFiles"`
-	MaxBytes  int    `json:"maxBytes"`
+	// PagesRoot is where a new page's directory goes when none is given, and
+	// PagesRootInfo why: the owner's setting, the default, or a fallback.
+	PagesRoot     string    `json:"pagesRoot"`
+	PagesRootInfo PagesRoot `json:"pagesRootInfo"`
+	SDK           int       `json:"sdk"`
+	MaxFiles      int       `json:"maxFiles"`
+	MaxBytes      int       `json:"maxBytes"`
 }
 
 func (s *Server) handlePageCatalogue(w http.ResponseWriter, r *http.Request) {
@@ -165,9 +170,10 @@ func (s *Server) handlePageCatalogue(w http.ResponseWriter, r *http.Request) {
 		fixtures = append(fixtures, name)
 	}
 	sort.Strings(fixtures)
+	root := s.pagesRoot(r.Context())
 	writeJSON(w, http.StatusOK, pageCatalogue{
 		Templates: pages.Templates(), Sections: pages.Sections(), Viewports: pages.Viewports,
-		Fixtures: fixtures, ScriptHosts: pages.ScriptHosts, PagesRoot: s.Cfg.PagesDir(),
+		Fixtures: fixtures, ScriptHosts: pages.ScriptHosts, PagesRoot: root.Dir, PagesRootInfo: root,
 		SDK: pages.SDKVersion, MaxFiles: pages.MaxFiles, MaxBytes: pages.MaxBytes,
 	})
 }
@@ -261,7 +267,11 @@ func (s *Server) handleCreatePage(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		if dir == "" {
-			dir = NewPageDir(s.Cfg.PagesDir(), name)
+			var derr error
+			if dir, derr = s.newPageDir(r.Context(), name); derr != nil {
+				writeErr(w, http.StatusInternalServerError, derr.Error())
+				return
+			}
 		}
 		if err := pages.Scaffold(dir, req.Template, name, PageFixtures()); err != nil {
 			status := http.StatusBadRequest
@@ -931,7 +941,11 @@ func (s *Server) handleForkPage(w http.ResponseWriter, r *http.Request) {
 	dir := strings.TrimSpace(expandHome(req.SourceDir))
 	switch {
 	case dir == "":
-		dir = NewPageDir(s.Cfg.PagesDir(), name)
+		var derr error
+		if dir, derr = s.newPageDir(ctx, name); derr != nil {
+			writeErr(w, http.StatusInternalServerError, derr.Error())
+			return
+		}
 	case !filepath.IsAbs(dir):
 		writeErr(w, http.StatusBadRequest, "sourceDir must be an absolute path")
 		return

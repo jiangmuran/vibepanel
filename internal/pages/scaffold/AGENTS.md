@@ -1,62 +1,82 @@
 # A vibepanel share page
 
-This directory is a page that vibepanel shows on a read-only share link: a wall
-display, a phone glance, a screen for a customer. It draws live data about the
-panel's coding sessions through `vibepanel.js`.
+This directory is a page that vibepanel shows on a share link: a wall display,
+a phone glance, a screen for a customer, or something nobody has thought of
+yet. It gets live data about the panel's coding sessions through
+`vibepanel.js`. What it looks like and how it is built is up to you and the
+person you are working with.
 
-Read this file before changing anything. Then read `.vibepanel/HISTORY.md` if
-it exists: it is what was published before, and why.
+Read `.vibepanel/HISTORY.md` if it exists: it is what was published before.
+
+Docs: [share pages](https://github.com/jiangmuran/vibepanel/blob/main/docs/share-pages.md) ·
+[the snapshot's fields](vibepanel.d.ts) ·
+[how the owner uses this](https://github.com/jiangmuran/vibepanel/blob/main/docs/features.md#screens-for-other-people)
 
 ## What is here
 
 | file | what it is |
 |---|---|
-| `index.html` | the page. Add CSS, JS, images and fonts beside it as you like |
+| `index.html` | where the page opens. Everything else is yours to add, rename or delete |
 | `vibepanel.json` | the manifest: which data the page receives, its parameters |
 | `vibepanel.js` | the SDK. The panel serves its own copy; this one is for reading |
 | `vibepanel.d.ts` | every field of a snapshot, with what it means |
-| `fixtures/*.json` | made-up snapshots for testing: `busy`, `empty`, `counts`, `hostile`, `stale`, `revoked` |
+| `fixtures/*.json` | made-up snapshots: `busy`, `empty`, `counts`, `hostile`, `stale`, `revoked` |
 
-## The contract
+If the page was made from a template, the template is a starting point, not a
+style guide. Replace it wholesale if the owner wants something else.
+
+## The limits
+
+These are enforced by the sandbox the page runs in, or by the panel when it is
+published. Working against them does not work.
+
+- **Data comes only from the SDK.** The page cannot reach any other address:
+  no CDN fonts, no APIs, no remote images. Put every file it needs in this
+  directory and load it by relative path. Scripts from `cdnjs.cloudflare.com`
+  and `cdn.jsdelivr.net` are allowed when listed in `scriptHosts` in
+  `vibepanel.json`.
+- **Sections you did not ask for are `null` or empty.** Add them to `sections`
+  in `vibepanel.json`. Day series need `spend.days` / `repo.days`.
+- **No browser storage, cookies, dialogs, popups or navigation away.** The page
+  has no origin; `localStorage` and friends throw. `vp.storage` is the
+  replacement.
+- **Files a page can serve:** html, css, js/mjs, json, svg, txt, images and
+  woff/woff2 fonts. At most 64 files, 2 MiB each, 5 MiB in total. A build step
+  is fine as long as what it outputs is here as plain files.
+- **Do not publish.** The owner reviews the page in the Preview pane and
+  presses Publish.
+
+## The SDK, in brief
 
 ```js
 const vp = VibePanel.connect()
 vp.on('snapshot', (s) => draw(s))      // every ~2 seconds
 vp.on('params', (p) => applyParams(p)) // when the owner changes a setting
-vp.badge(document.querySelector('#status'))
 ```
 
-- **Data comes only from the SDK.** A page cannot reach any other address:
-  no CDN fonts, no APIs, no images from the internet. Put every file the page
-  needs in this directory and load it by relative path. The two exceptions are
-  scripts from `cdnjs.cloudflare.com` and `cdn.jsdelivr.net`, and only if they
-  are listed in `scriptHosts` in `vibepanel.json`.
-- **A section you did not ask for is `null` or empty.** Add it to `sections` in
-  `vibepanel.json`. Day series need `spend.days` / `repo.days`.
-- **Names may be empty.** A link made in `counts` mode sends no session or
-  project names at all, and it is the default. Draw something useful without
-  them: `vp.name(row, 'session')`. Test with `?fixture=counts`.
-- **Every string is untrusted.** A session title is text somebody else chose.
-  Use `vp.text(el, value)` or `textContent`; never `innerHTML` with data. The
-  `hostile` fixture puts markup in every name to show you where you did.
-- **No browser storage.** The page runs in a sandbox with no origin, and
-  `localStorage`, `sessionStorage`, `indexedDB` and `document.cookie` throw.
-  Use `vp.storage`.
-- **No dialogs, forms, popups or links that leave.** Nobody is standing at a
-  wall to close an alert.
-- **Unknown is not zero.** `spend.readable`, `repo.readable`, `session.measured`
-  and `machine.cpuPercent === null` each mean "not counted yet". Show that
-  differently from 0.
-- **Say when the data is not live.** Keep `vp.badge()` somewhere visible, or
-  draw `vp.status` yourself with a shape as well as a colour. A frozen
-  dashboard looks exactly like a quiet one.
-- **Times are the panel's.** Use `vp.now()` and `vp.since(unix)`, not
-  `Date.now()`: the screen's clock may be wrong.
+Everything else — `vp.badge`, `vp.text`, `vp.name`, `vp.since`, `vp.now`,
+`vp.storage` — is described in `vibepanel.d.ts`. Use what helps.
+
+## Worth knowing
+
+Not rules, and not a design. Things that have bitten pages before:
+
+- A link in `counts` mode (the default) sends no session or project names.
+  `?fixture=counts` shows what the page looks like then.
+- Session titles are text somebody else chose. Put them in the page with
+  `textContent` or `vp.text`, not `innerHTML`; the `hostile` fixture shows where
+  that went wrong.
+- `spend.readable`, `repo.readable`, `session.measured` and a null
+  `machine.cpuPercent` mean "not counted yet", which is different from 0.
+- A page that stopped updating looks exactly like a quiet one. Showing the
+  connection state somewhere (`vp.badge`, or `vp.status` drawn your way) avoids
+  that.
+- The screen's clock may be wrong; `vp.now()` is the panel's.
 
 ## Parameters
 
-Settings the owner changes per screen without touching code — a title, a
-colour, a threshold — are declared in `vibepanel.json`:
+Settings the owner can change per screen without touching code are declared in
+`vibepanel.json`, if the page wants any:
 
 ```json
 "params": [
@@ -68,8 +88,7 @@ colour, a threshold — are declared in `vibepanel.json`:
 ]
 ```
 
-They arrive as `snapshot.params` and through `vp.on('params', …)`, with no
-reload. Prefer a parameter to a hard-coded value the owner might want to change.
+They arrive as `snapshot.params` and through `vp.on('params', …)`.
 
 ## Checking your work
 
@@ -79,18 +98,5 @@ vibepanel page shot       # screenshots into .vibepanel/shots/, and what broke
 vibepanel page shot --viewport phone,tv-1080 --fixture busy,counts,hostile
 ```
 
-Look at the screenshots. They are PNGs you can read. `page shot` also prints
-errors the page threw, requests the policy refused, text that rendered as
-`NaN`/`undefined`/`null`, and whether the page overflows the screen.
-
-If the owner has the Preview pane open, errors it saw are in
-`.vibepanel/errors.json`.
-
-Screens this page is likely to be on: a 1920×1080 television read from across a
-room, a 390×844 phone, a laptop. Big type for the television; nothing that
-needs a mouse.
-
-## Publishing
-
-**Do not publish.** The owner reviews the page in the Preview pane and presses
-Publish. `vibepanel page publish` exists for people and scripts.
+The screenshots are PNGs you can read. If the owner has the Preview pane open,
+errors it saw are in `.vibepanel/errors.json`.

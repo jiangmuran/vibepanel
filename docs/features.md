@@ -172,10 +172,13 @@ links that show it.
 ### Making one, publishing it, handing it out
 
 1. **New page.** Give it a name and pick a starting point — a session wall,
-   token spend, what got built, a phone glance, or blank. It goes in
-   `<data dir>/pages/page-<name>` (on Linux,
-   `~/.local/share/vibepanel/pages/page-lobby`, beside pasted screenshots) unless
-   you give it a directory, and it becomes a project called `page-lobby`. With
+   token spend, what got built, a phone glance, or blank — blank really is
+   blank, and a template is a starting point the agent is free to throw away.
+   It goes in the pages directory as `page-<name>` unless you give it a
+   directory, and it becomes a project called `page-lobby`. The pages directory
+   is `~/.local/share/vibepanel/pages` (the data directory, beside pasted
+   screenshots) until you change it on the line under the page list; nothing is
+   stored until you do. With
    *start an agent* ticked, an agent opens in it with a first line already typed
    at its prompt for you to finish.
 2. **Write it.** Above the project's file list, **Share page** opens the Preview
@@ -217,6 +220,16 @@ Afterwards, from the same list:
   its directory has gone — deleted, a new machine, a wiped data directory — the
   button says **Restore and open** and writes the published version back first;
   if the `page-…` project was removed, it is made again.
+
+**Export** (the download on a page's row) saves the published version as a zip,
+or the directory as it is for a page never published; **Import** above the list
+makes a new, unpublished page from one. `vibepanel page export` and `vibepanel
+page import` do the same from a shell.
+
+If the pages directory cannot be written — a disk that is gone, a data directory
+under a system unit's `/var/lib` — new pages go to the next place that works:
+`~/.local/share/vibepanel/pages`, then a directory in `/tmp`, and the line under
+the list says which and why.
 
 A page can declare settings — a title, a colour, a threshold — that are changed
 per link, from the link's row, and reach the screen without a reload. Each row

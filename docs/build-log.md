@@ -21709,3 +21709,49 @@ directory given and checks it lands in `data/pages/page-lobby` as project
 `page-lobby`, that a revoked address gets the plain page and no `#root`, that
 View opens a tab showing the link's parameters, and that deleting the directory
 and pressing Open writes the published version back into the same project.
+
+## Pages: where they go, how they travel, and less house style
+
+Three complaints in one message after the boards went. The new-link form was a
+grid of eight boxes with a hole in its second row and the page's own colours in
+the same run as who may see what; 「好乱」. The pages directory was a path the
+panel decided, with no way to change it and no answer for a machine where it
+could not be written. And the blank template and the `AGENTS.md` written into
+every page read as a design to follow: 「不要让ai完全按照你的范式走」.
+
+**The form** is three headed groups — this screen (name, screen name), what it
+can see (scope, detail, expiry, and the sentence about names under them), and
+the page's settings when it has any — and the link editor uses the same
+headings. A docs link sits at the end of the sharing intro, in the reader's
+language.
+
+**The pages directory** is a setting nobody has to set. Unset, nothing is
+stored and pages go to `<data dir>/pages`, so moving the data directory moves
+the default. A chosen directory is kept only if a file can be written in it. The
+root is resolved each time a page is made, down a fallback — the setting, the
+data directory's `pages/`, `~/.local/share/vibepanel/pages`, a directory in the
+temporary directory — because the answer changes under a running panel: a disk
+unmounted, a system unit's `/var/lib`. The line under the page list says which
+rung was used and why the ones above it were skipped. The resolution first
+returned an empty `problem` every time: the reasons were written by a deferred
+closure onto a copy the unnamed return had already taken, and the test that
+asked for the reason is what found it.
+
+Directory names now keep a page name's letters in any script. `pages.Slug` is
+ASCII, and every Chinese-named page came out `page-page`, `page-page-2` —
+photographed in the README screenshots before anybody read the paths.
+
+**Export and import.** A zip with `vibepanel.json` at the top and the page's
+files, without the SDK copy, its types or the Markdown every directory gets.
+Import reads it by the publish rules rather than unpacking and checking after:
+`ValidPath`, the content sniff, the file and byte limits counted on what
+decompresses rather than what the header claims, and a path that leaves the
+page refused outright (it was first skipped silently with the dotfiles, which
+was safe and said nothing). One folder wrapping everything is looked through,
+since that is what "compress this folder" makes. An imported page is not
+published: it is somebody else's page until its new owner has looked at it.
+
+**Less house style.** `AGENTS.md` now separates the limits the sandbox enforces
+from things worth knowing, says a template is a starting point to throw away,
+and links to the docs; a `README.md` with the same links is written beside it.
+`blank` is a heading, the badge and one line of counts.

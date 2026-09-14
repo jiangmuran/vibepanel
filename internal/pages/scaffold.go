@@ -25,7 +25,7 @@ import (
 //go:embed all:templates
 var templateFS embed.FS
 
-//go:embed scaffold/AGENTS.md scaffold/CLAUDE.md scaffold/gitignore
+//go:embed scaffold/AGENTS.md scaffold/CLAUDE.md scaffold/README.md scaffold/gitignore
 var scaffoldFS embed.FS
 
 // Template is one starting point in the New page gallery.
@@ -197,6 +197,7 @@ func writeCommon(dir string, fixtures map[string][]byte) error {
 	for src, dst := range map[string]string{
 		"scaffold/AGENTS.md": "AGENTS.md",
 		"scaffold/CLAUDE.md": "CLAUDE.md",
+		"scaffold/README.md": "README.md",
 		"scaffold/gitignore": ".gitignore",
 	} {
 		data, rerr := scaffoldFS.ReadFile(src)

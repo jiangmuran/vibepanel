@@ -356,6 +356,9 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"page.rolled_back": true,
 		// A page's directory written back from its published version.
 		"page.restored": true,
+		// Where new pages go, and a page that arrived as a zip.
+		"page.root_changed": true,
+		"page.imported":     true,
 		// A link a build with boards handed out, pointed at a page at startup.
 		// No user and no address: nobody asked, the upgrade did.
 		"share.converted":  true,

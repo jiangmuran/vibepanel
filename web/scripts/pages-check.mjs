@@ -452,6 +452,23 @@ setTimeout(() => { try { done('frame', frame.contentDocument ? 'readable' : 'opa
     await row.waitFor({ timeout: 10000 }).catch(() => {})
     if (await row.count()) pass('workflow/settings', 'the link is listed under its page')
     else note('FAIL', 'workflow/settings', 'no row for the link under its page')
+    // Nobody chose a pages directory, so none is stored and the default is said.
+    const source = await ui.locator('[data-testid="pages-root-source"]').getAttribute('data-source').catch(() => null)
+    const rootDir = await ui.locator('[data-testid="pages-root-dir"]').innerText().catch(() => '')
+    if (source === 'default' && rootDir === join(work, 'data', 'pages')) pass('workflow/root', 'the pages directory is the default, and says so')
+    else note('FAIL', 'workflow/root', `pages directory ${JSON.stringify(rootDir)} from ${source}`)
+
+    // Out as a zip, back in as a new unpublished page.
+    const zipRes = await owner.request.get(`${BASE}/api/settings/pages/${lobby.id}/export`)
+    const zipBody = await zipRes.body()
+    const imported = await owner.request.post(`${BASE}/api/settings/pages/import?name=Lobby%20copy`, {
+      headers: { Origin: BASE, 'Content-Type': 'application/zip' }, data: zipBody,
+    })
+    const importedBody = await imported.json().catch(() => ({}))
+    if (zipRes.status() === 200 && imported.status() === 201 && importedBody.page?.publishedVersion === 0 &&
+      existsSync(join(importedBody.page.sourceDir, 'index.html'))) {
+      pass('workflow/import', `exported ${zipBody.length} bytes and imported as ${importedBody.page.name}`)
+    } else note('FAIL', 'workflow/import', `export ${zipRes.status()}, import ${imported.status()}: ${JSON.stringify(importedBody).slice(0, 200)}`)
     await ui.screenshot({ path: join(SHOTS, 'workflow-sharing.png') })
     const [peekTab] = await Promise.all([
       ui.context().waitForEvent('page', { timeout: 10000 }).catch(() => null),

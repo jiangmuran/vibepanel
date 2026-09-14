@@ -23,6 +23,7 @@ import type {
   SharePageDetail,
   SharePageDraft,
   SharePageRow,
+  SharePagesRoot,
   ShareParamValue,
   SystemSample,
   TokenUsage,
@@ -490,6 +491,21 @@ export const api = {
     request<{ page: SharePage; projectId: string; restored: number }>(
       `/api/settings/pages/${encodeURIComponent(id)}/open`,
       { method: 'POST' },
+    ),
+
+  /** Where new pages go; '' goes back to the default. */
+  setPagesRoot: (dir: string) =>
+    request<SharePagesRoot>('/api/settings/pages/root', { method: 'PUT', body: JSON.stringify({ dir }) }),
+
+  /** A link to the page as a zip: the published version, or the directory for a
+   *  page never published. A plain GET, so an <a download> with the cookie works. */
+  exportPageURL: (id: string) => `/api/settings/pages/${encodeURIComponent(id)}/export`,
+
+  /** A zip becomes a new, unpublished page under the pages directory. */
+  importPage: (file: Blob, name = '') =>
+    request<{ page: SharePage; ignored: { path: string; reason: string }[] }>(
+      `/api/settings/pages/import${name ? `?name=${encodeURIComponent(name)}` : ''}`,
+      { method: 'POST', body: file, headers: { 'Content-Type': 'application/zip' } },
     ),
 
   deletePage: (id: string) =>

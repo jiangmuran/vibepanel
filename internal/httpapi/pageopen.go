@@ -156,7 +156,10 @@ func (s *Server) restorePage(ctx context.Context, page store.SharePage) (string,
 			return page.SourceDir, v, nil
 		}
 	}
-	dir := NewPageDir(s.Cfg.PagesDir(), page.Name)
+	dir, err := s.newPageDir(ctx, page.Name)
+	if err != nil {
+		return "", 0, err
+	}
 	v, err := write(dir)
 	return dir, v, err
 }
@@ -258,14 +261,17 @@ func (s *Server) ConvertBoardLinks(ctx context.Context) error {
 	return nil
 }
 
-// pageFromTemplate scaffolds a template under the data directory, registers it
+// pageFromTemplate scaffolds a template under the pages directory, registers it
 // for userID and publishes it as version 1.
 func (s *Server) pageFromTemplate(ctx context.Context, userID, tpl string) (store.SharePage, error) {
 	name, err := templateName(tpl)
 	if err != nil {
 		return store.SharePage{}, err
 	}
-	dir := NewPageDir(s.Cfg.PagesDir(), name)
+	dir, err := s.newPageDir(ctx, name)
+	if err != nil {
+		return store.SharePage{}, err
+	}
 	if err := pages.Scaffold(dir, tpl, name, PageFixtures()); err != nil {
 		return store.SharePage{}, err
 	}

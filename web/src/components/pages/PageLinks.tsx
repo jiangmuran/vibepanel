@@ -63,6 +63,23 @@ export function Field({
   )
 }
 
+/**
+ * One question the form asks, under its own heading.
+ *
+ * The form was eight controls and a paragraph in one grid, and the grid put
+ * what the link is called, who can see what, and the page's own colours in one
+ * run of boxes with a hole in the middle of it. Three headings are the three
+ * decisions, and the disclosure one is the one worth reading.
+ */
+function Group({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="min-w-0 border-t border-hairline pt-3 first:border-t-0 first:pt-0">
+      <h4 className="mb-2 text-vp-sm font-semibold text-ink-2">{title}</h4>
+      {children}
+    </div>
+  )
+}
+
 function shareURL(token: string): string {
   return `${location.origin}/share/${token}/`
 }
@@ -397,86 +414,92 @@ function NewLink({
   }
 
   return (
-    <div data-testid="share-form" className="mt-2 rounded-vp border border-hairline bg-surface-2 p-3">
-      <div className="mb-2 grid grid-cols-1 gap-x-3 gap-y-2 @md:grid-cols-2 @3xl:grid-cols-3">
-        <Field label={t('share.nameLabel')} htmlFor={`share-name-${id}`}>
-          <input
-            id={`share-name-${id}`}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder={safeText(page.name)}
-            data-testid="share-name"
-            className={INPUT}
-          />
-        </Field>
-        <Field label={t('share.remarkLabel')} htmlFor={`share-remark-${id}`}>
-          <input
-            id={`share-remark-${id}`}
-            value={remark}
-            maxLength={MAX_REMARK}
-            onChange={(e) => setRemark(e.target.value)}
-            placeholder={t('share.remark')}
-            data-testid="share-remark"
-            className={INPUT}
-          />
-        </Field>
-        <Field label={t('share.scopeLabel')} htmlFor={`share-scope-${id}`}>
-          <select
-            id={`share-scope-${id}`}
-            value={target}
-            onChange={(e) => setTarget(e.target.value)}
-            data-testid="share-scope"
-            className={INPUT}
-          >
-            <option value="">{t('share.scopeWhole')}</option>
-            {projects.map((p) => (
-              <option key={p.id} value={`project:${p.id}`}>
-                {t('share.scopeProject', { name: safeText(p.name) })}
-              </option>
-            ))}
-            {sessions
-              .filter((s) => !s.scratch)
-              .map((s) => (
-                <option key={s.id} value={`session:${s.id}`}>
-                  {t('share.scopeSession', { name: safeText(s.title || t('share.untitled')) })}
+    <div data-testid="share-form" className="mt-2 flex flex-col gap-3 rounded-vp border border-hairline bg-surface-2 p-3">
+      <Group title={t('share.groupScreen')}>
+        <div className="grid grid-cols-1 gap-x-3 gap-y-2 @md:grid-cols-2">
+          <Field label={t('share.nameLabel')} htmlFor={`share-name-${id}`}>
+            <input
+              id={`share-name-${id}`}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={safeText(page.name)}
+              data-testid="share-name"
+              className={INPUT}
+            />
+          </Field>
+          <Field label={t('share.remarkLabel')} htmlFor={`share-remark-${id}`}>
+            <input
+              id={`share-remark-${id}`}
+              value={remark}
+              maxLength={MAX_REMARK}
+              onChange={(e) => setRemark(e.target.value)}
+              placeholder={t('share.remark')}
+              data-testid="share-remark"
+              className={INPUT}
+            />
+          </Field>
+        </div>
+      </Group>
+      <Group title={t('share.groupAccess')}>
+        <div className="grid grid-cols-1 gap-x-3 gap-y-2 @md:grid-cols-3">
+          <Field label={t('share.scopeLabel')} htmlFor={`share-scope-${id}`}>
+            <select
+              id={`share-scope-${id}`}
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+              data-testid="share-scope"
+              className={INPUT}
+            >
+              <option value="">{t('share.scopeWhole')}</option>
+              {projects.map((p) => (
+                <option key={p.id} value={`project:${p.id}`}>
+                  {t('share.scopeProject', { name: safeText(p.name) })}
                 </option>
               ))}
-          </select>
-        </Field>
-        <Field label={t('share.shows')} htmlFor={`share-detail-${id}`}>
-          <select
-            id={`share-detail-${id}`}
-            value={shows}
-            onChange={(e) => setShows(e.target.value as ShareDetail)}
-            data-testid="share-detail"
-            className={INPUT}
-          >
-            <option value="counts">{t('share.detailCounts')}</option>
-            <option value="names">{t('share.detailNames')}</option>
-          </select>
-        </Field>
-        <Field label={t('share.expiry')} htmlFor={`share-expiry-${id}`}>
-          <select
-            id={`share-expiry-${id}`}
-            value={expiresIn}
-            onChange={(e) => setExpiresIn(Number(e.target.value))}
-            data-testid="share-expiry"
-            className={INPUT}
-          >
-            {EXPIRIES.map((choice) => (
-              <option key={choice.seconds} value={choice.seconds}>
-                {t(choice.label)}
-              </option>
-            ))}
-          </select>
-        </Field>
-      </div>
-      {manifest && (manifest.params ?? []).length > 0 && (
-        <div className="mb-2">
-          <ParamsForm specs={manifest.params ?? []} values={params} idPrefix={`share-param-${id}`} onChange={setParams} />
+              {sessions
+                .filter((s) => !s.scratch)
+                .map((s) => (
+                  <option key={s.id} value={`session:${s.id}`}>
+                    {t('share.scopeSession', { name: safeText(s.title || t('share.untitled')) })}
+                  </option>
+                ))}
+            </select>
+          </Field>
+          <Field label={t('share.shows')} htmlFor={`share-detail-${id}`}>
+            <select
+              id={`share-detail-${id}`}
+              value={shows}
+              onChange={(e) => setShows(e.target.value as ShareDetail)}
+              data-testid="share-detail"
+              className={INPUT}
+            >
+              <option value="counts">{t('share.detailCounts')}</option>
+              <option value="names">{t('share.detailNames')}</option>
+            </select>
+          </Field>
+          <Field label={t('share.expiry')} htmlFor={`share-expiry-${id}`}>
+            <select
+              id={`share-expiry-${id}`}
+              value={expiresIn}
+              onChange={(e) => setExpiresIn(Number(e.target.value))}
+              data-testid="share-expiry"
+              className={INPUT}
+            >
+              {EXPIRIES.map((choice) => (
+                <option key={choice.seconds} value={choice.seconds}>
+                  {t(choice.label)}
+                </option>
+              ))}
+            </select>
+          </Field>
         </div>
+        <p className="mt-2 text-vp-sm leading-relaxed text-ink-3">{t('share.detailWhy')}</p>
+      </Group>
+      {manifest && (manifest.params ?? []).length > 0 && (
+        <Group title={t('share.groupParams')}>
+          <ParamsForm specs={manifest.params ?? []} values={params} idPrefix={`share-param-${id}`} onChange={setParams} />
+        </Group>
       )}
-      <p className="mb-2 text-vp-sm leading-relaxed text-ink-3">{t('share.detailWhy')}</p>
       <div className="flex flex-wrap items-center justify-end gap-2">
         <button
           type="button"
@@ -551,70 +574,74 @@ function LinkEditor({
     )
 
   return (
-    <div data-testid="share-edit-panel" className="mt-2 mb-1 rounded-vp border border-hairline bg-surface-2 p-3">
-      <div className="mb-2 grid grid-cols-1 gap-x-3 gap-y-2 @md:grid-cols-3">
-        <Field label={t('share.nameLabel')} htmlFor={`share-edit-name-${link.id}`}>
-          <input
-            id={`share-edit-name-${link.id}`}
-            value={name}
-            onChange={(e) => {
-              setName(e.target.value)
-              saveLabels(e.target.value, remark)
-            }}
-            data-testid="share-edit-name"
-            className={INPUT}
-          />
-        </Field>
-        <Field label={t('share.remarkLabel')} htmlFor={`share-edit-remark-${link.id}`}>
-          <input
-            id={`share-edit-remark-${link.id}`}
-            value={remark}
-            maxLength={MAX_REMARK}
-            onChange={(e) => {
-              setRemark(e.target.value)
-              saveLabels(name, e.target.value)
-            }}
-            placeholder={t('share.remark')}
-            data-testid="share-edit-remark"
-            className={INPUT}
-          />
-        </Field>
-        {detail && (
-          <Field label={t('page.version')} htmlFor={`link-pin-${link.id}`}>
-            <select
-              id={`link-pin-${link.id}`}
-              data-testid="link-pin"
-              value={trial ? -1 : link.pinVersion}
-              disabled={trial}
-              onChange={(e) => void saveDrawing(Number(e.target.value), params)}
+    <div data-testid="share-edit-panel" className="mt-2 mb-1 flex flex-col gap-3 rounded-vp border border-hairline bg-surface-2 p-3">
+      <Group title={t('share.groupScreen')}>
+        <div className="grid grid-cols-1 gap-x-3 gap-y-2 @md:grid-cols-3">
+          <Field label={t('share.nameLabel')} htmlFor={`share-edit-name-${link.id}`}>
+            <input
+              id={`share-edit-name-${link.id}`}
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value)
+                saveLabels(e.target.value, remark)
+              }}
+              data-testid="share-edit-name"
               className={INPUT}
-            >
-              {trial && <option value={-1}>{t('page.trialShort', { v: link.pinVersion })}</option>}
-              <option value={0}>{t('page.followPublished', { v: detail.page.publishedVersion })}</option>
-              {detail.versions
-                .filter((v) => !v.candidate)
-                .map((v) => (
-                  <option key={v.version} value={v.version}>
-                    {t('page.pinned', { v: v.version })}
-                  </option>
-                ))}
-            </select>
+            />
           </Field>
-        )}
-      </div>
-      {manifest && (
-        <ParamsForm
-          specs={manifest.params ?? []}
-          values={params}
-          idPrefix={`param-${link.id}`}
-          onChange={(next) => {
-            setParams(next)
-            clearTimeout(paramTimer.current)
-            paramTimer.current = window.setTimeout(() => void saveDrawing(link.pinVersion, next), SAVE_AFTER_MS)
-          }}
-        />
+          <Field label={t('share.remarkLabel')} htmlFor={`share-edit-remark-${link.id}`}>
+            <input
+              id={`share-edit-remark-${link.id}`}
+              value={remark}
+              maxLength={MAX_REMARK}
+              onChange={(e) => {
+                setRemark(e.target.value)
+                saveLabels(name, e.target.value)
+              }}
+              placeholder={t('share.remark')}
+              data-testid="share-edit-remark"
+              className={INPUT}
+            />
+          </Field>
+          {detail && (
+            <Field label={t('page.version')} htmlFor={`link-pin-${link.id}`}>
+              <select
+                id={`link-pin-${link.id}`}
+                data-testid="link-pin"
+                value={trial ? -1 : link.pinVersion}
+                disabled={trial}
+                onChange={(e) => void saveDrawing(Number(e.target.value), params)}
+                className={INPUT}
+              >
+                {trial && <option value={-1}>{t('page.trialShort', { v: link.pinVersion })}</option>}
+                <option value={0}>{t('page.followPublished', { v: detail.page.publishedVersion })}</option>
+                {detail.versions
+                  .filter((v) => !v.candidate)
+                  .map((v) => (
+                    <option key={v.version} value={v.version}>
+                      {t('page.pinned', { v: v.version })}
+                    </option>
+                  ))}
+              </select>
+            </Field>
+          )}
+        </div>
+      </Group>
+      {manifest && (manifest.params ?? []).length > 0 && (
+        <Group title={t('share.groupParams')}>
+          <ParamsForm
+            specs={manifest.params ?? []}
+            values={params}
+            idPrefix={`param-${link.id}`}
+            onChange={(next) => {
+              setParams(next)
+              clearTimeout(paramTimer.current)
+              paramTimer.current = window.setTimeout(() => void saveDrawing(link.pinVersion, next), SAVE_AFTER_MS)
+            }}
+          />
+        </Group>
       )}
-      <div className="mt-2 flex justify-end">
+      <div className="flex justify-end">
         <button
           type="button"
           onClick={onClose}

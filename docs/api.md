@@ -1210,6 +1210,40 @@ had to be written. When no project points at the directory one is made, named
 directory was written. A lost project or a wiped data directory is recovered by
 the same request, because the page is its versions in the database.
 
+### `PUT /api/settings/pages/root`
+
+Where new pages go: `{"dir": "/abs/path"}`, or `{"dir": ""}` to go back to the
+default. Unset, nothing is stored and a page goes under the data directory's
+`pages/`. A directory is refused with `400` unless it is absolute and a file can
+be written in it; pages already made stay where they are. Answers what the
+catalogue's `pagesRootInfo` says, and is audited as `page.root_changed`.
+
+The root is resolved every time a page is made, down a fallback: the setting;
+`<data dir>/pages`; `~/.local/share/vibepanel/pages` when the data directory is
+somewhere else; a `vibepanel-pages-<uid>` directory in the temporary directory
+as the last resort. `pagesRootInfo` is `{"dir", "setting", "source", "problem"}`,
+where `source` is `setting`, `default` or `fallback` and `problem` says why a
+rung above `dir` was skipped.
+
+### `GET /api/settings/pages/{pageID}/export`
+
+The page as a zip: `vibepanel.json` at the top and the page's files beside it —
+not the SDK copy, its types or `AGENTS.md`, which every directory gets. `?version=N`
+picks a version; without it, the published one, or the directory as it is for a
+page never published. Named `page-<name>-v<N>.zip`. `404` for a version that
+does not exist.
+
+### `POST /api/settings/pages/import`
+
+A zip as the request body (at most 6 MiB) becomes a new page, in a new
+`page-<name>` directory under the pages root, named `?name=` or the name in its
+manifest. `201` with `{"page", "ignored"}`: `ignored` lists what the archive had
+that a page does not keep (`AGENTS.md`, the SDK copy, a file of a type a page
+cannot serve). One folder wrapping everything is looked through. The archive is
+read by the publish rules — a path that leaves the page, a file that is not what
+its name says, a missing `index.html` or manifest, or a limit exceeded is `400`
+— and the page is not published. Audited as `page.imported`.
+
 ### `PUT /api/settings/shares/{shareID}/page`
 
 What a link draws: `{"pageId": "…", "pinVersion": 0, "params": {"title": "Hall"}}`.

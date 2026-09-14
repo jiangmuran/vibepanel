@@ -1,5 +1,17 @@
-import { useCallback, useEffect, useState } from 'react'
-import { FolderOpen, GitFork, History, PanelsTopLeft, Plus, Trash2, Upload } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  BookOpen,
+  Download,
+  FileUp,
+  FolderCog,
+  FolderOpen,
+  GitFork,
+  History,
+  PanelsTopLeft,
+  Plus,
+  Trash2,
+  Upload,
+} from 'lucide-react'
 
 import { api } from '../../protocol/api'
 import type {
@@ -10,8 +22,9 @@ import type {
   SharePageCatalogue,
   SharePageDetail,
   SharePageRow,
+  SharePagesRoot,
 } from '../../protocol/wire'
-import { t, useLang, type Key } from '../../i18n'
+import { t, useLang, type Key, type Lang } from '../../i18n'
 import { safeText } from '../text'
 import { Field, PageLinks } from './PageLinks'
 
@@ -40,6 +53,13 @@ const TEMPLATE_LABEL: Record<string, Key> = {
   glance: 'page.tpl.glance',
 }
 
+/** The long-form docs, in the reader's language. */
+function docsURL(lang: Lang): string {
+  return lang === 'zh'
+    ? 'https://github.com/jiangmuran/vibepanel/blob/main/docs/features.zh-CN.md#给别人看的屏幕'
+    : 'https://github.com/jiangmuran/vibepanel/blob/main/docs/features.md#screens-for-other-people'
+}
+
 /** The directory name the server makes of a page name (httpapi dirName), for
  *  the placeholder: letters and digits of any script, the rest a dash. */
 function slugOf(name: string): string {
@@ -56,8 +76,10 @@ export function Sharing({
    *  `fresh` or when nothing is running in it. */
   onOpenPage?: (page: SharePage, fresh: boolean) => void
 }) {
-  useLang()
+  const lang = useLang()
   const [pages, setPages] = useState<SharePageRow[]>([])
+  const [notice, setNotice] = useState('')
+  const importInput = useRef<HTMLInputElement>(null)
   const [links, setLinks] = useState<ShareLink[]>([])
   const [details, setDetails] = useState<Record<string, SharePageDetail>>({})
   const [catalogue, setCatalogue] = useState<SharePageCatalogue | null>(null)
@@ -112,23 +134,83 @@ export function Sharing({
     }
   }, [refresh])
 
+  const importZip = async (file: File) => {
+    try {
+      const made = await api.importPage(file)
+      setError('')
+      setNotice(t('page.imported', { name: made.page.name }))
+      await refresh()
+    } catch (e) {
+      setNotice('')
+      fail(e)
+    }
+  }
+
   return (
     <div data-testid="sharing" className="@container">
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <p className="min-w-0 flex-1 text-vp-base leading-relaxed text-ink-2">{t('page.why')}</p>
-        {!creating && (
+      <div className="mb-2 flex flex-wrap items-start gap-x-3 gap-y-2">
+        <p className="min-w-0 flex-1 text-vp-base leading-relaxed text-ink-2">
+          {t('page.why')}{' '}
+          <a
+            href={docsURL(lang)}
+            target="_blank"
+            rel="noreferrer noopener"
+            data-testid="sharing-docs"
+            className="inline-flex items-center gap-1 whitespace-nowrap text-accent hover:underline"
+          >
+            <BookOpen size={12} />
+            {t('page.docs')}
+          </a>
+        </p>
+        <span className="flex shrink-0 items-center gap-2">
+          <input
+            ref={importInput}
+            type="file"
+            accept=".zip,application/zip"
+            hidden
+            data-testid="page-import-file"
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              e.target.value = ''
+              if (file) void importZip(file)
+            }}
+          />
           <button
             type="button"
-            data-testid="page-new"
-            onClick={() => setCreating(true)}
-            className="vp-press flex shrink-0 items-center gap-1 rounded-vp px-3 py-1.5 text-vp-base"
-            style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+            data-testid="page-import"
+            onClick={() => importInput.current?.click()}
+            title={t('page.importWhy')}
+            className="vp-press flex items-center gap-1 rounded-vp border border-hairline px-2.5 py-1.5 text-vp-base text-ink-2 hover:text-ink"
           >
-            <Plus size={13} />
-            {t('page.create')}
+            <FileUp size={13} />
+            {t('page.import')}
           </button>
-        )}
+          {!creating && (
+            <button
+              type="button"
+              data-testid="page-new"
+              onClick={() => setCreating(true)}
+              className="vp-press flex items-center gap-1 rounded-vp px-3 py-1.5 text-vp-base"
+              style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+            >
+              <Plus size={13} />
+              {t('page.create')}
+            </button>
+          )}
+        </span>
       </div>
+
+      <PagesRootLine
+        root={catalogue?.pagesRootInfo ?? null}
+        onChanged={(next) => setCatalogue((c) => (c ? { ...c, pagesRoot: next.dir, pagesRootInfo: next } : c))}
+        onError={fail}
+      />
+
+      {notice && (
+        <p className="mb-2 text-vp-base text-ink-2" data-testid="sharing-notice">
+          {safeText(notice)}
+        </p>
+      )}
 
       {error && (
         <p className="mb-2 text-vp-base" style={{ color: 'var(--vp-state-crashed)' }} data-testid="sharing-error">
@@ -169,6 +251,118 @@ export function Sharing({
             onError={fail}
           />
         ))
+      )}
+    </div>
+  )
+}
+
+/**
+ * Where new pages go, in one line, and the way to change it.
+ *
+ * Collapsed to a sentence because most people never need it: unset, pages go
+ * under the panel's data directory and nothing is stored. When the directory
+ * someone chose stops working, the line says so without being opened.
+ */
+function PagesRootLine({
+  root,
+  onChanged,
+  onError,
+}: {
+  root: SharePagesRoot | null
+  onChanged: (next: SharePagesRoot) => void
+  onError: (e: unknown) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState('')
+  const [busy, setBusy] = useState(false)
+  if (!root) return null
+
+  const save = async (dir: string) => {
+    setBusy(true)
+    try {
+      onChanged(await api.setPagesRoot(dir))
+      setEditing(false)
+    } catch (e) {
+      onError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const sourceLabel =
+    root.source === 'setting' ? t('page.rootSetting') : root.source === 'default' ? t('page.rootDefault') : t('page.rootFallback')
+
+  return (
+    <div data-testid="pages-root" className="mb-3 text-vp-sm text-ink-3">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <FolderCog size={12} className="shrink-0" />
+        <span>{t('page.root')}</span>
+        <code className="min-w-0 truncate font-mono text-ink-2" data-testid="pages-root-dir">
+          {safeText(root.dir)}
+        </code>
+        <span data-testid="pages-root-source" data-source={root.source}>
+          {sourceLabel}
+        </span>
+        {!editing && (
+          <button
+            type="button"
+            data-testid="pages-root-change"
+            onClick={() => {
+              setValue(root.setting)
+              setEditing(true)
+            }}
+            className="vp-press rounded-vp px-1.5 py-0.5 text-ink-2 hover:text-ink"
+          >
+            {t('page.rootChange')}
+          </button>
+        )}
+      </div>
+      {root.problem && (
+        <p className="mt-1" style={{ color: 'var(--vp-state-waiting)' }} data-testid="pages-root-problem">
+          {t('page.rootProblem', { why: safeText(root.problem) })}
+        </p>
+      )}
+      {editing && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <input
+            data-testid="pages-root-input"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void save(value.trim())
+            }}
+            placeholder={t('page.rootPlaceholder')}
+            className={`${INPUT} min-w-0 flex-1 font-mono @md:max-w-xl`}
+          />
+          <button
+            type="button"
+            disabled={busy}
+            data-testid="pages-root-save"
+            onClick={() => void save(value.trim())}
+            className="vp-press rounded-vp px-2.5 py-1 text-vp-base disabled:opacity-40"
+            style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+          >
+            {t('page.rootSave')}
+          </button>
+          {root.setting !== '' && (
+            <button
+              type="button"
+              disabled={busy}
+              data-testid="pages-root-reset"
+              onClick={() => void save('')}
+              className="vp-press rounded-vp px-2 py-1 text-vp-base text-ink-2 hover:text-ink disabled:opacity-40"
+            >
+              {t('page.rootReset')}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setEditing(false)}
+            className="vp-press rounded-vp px-2 py-1 text-vp-base text-ink-2 hover:text-ink"
+          >
+            {t('share.cancel')}
+          </button>
+        </div>
       )}
     </div>
   )
@@ -351,6 +545,16 @@ function PageCard({
             <Upload size={12} />
             {t('page.publish')}
           </button>
+          <a
+            href={api.exportPageURL(page.id)}
+            download
+            title={t('page.export')}
+            aria-label={t('page.export')}
+            data-testid="page-export"
+            className="vp-control"
+          >
+            <Download size={13} />
+          </a>
           <button
             type="button"
             onClick={() => setVersions(!versions)}

@@ -865,6 +865,17 @@ export interface SharePageTemplate {
   sections: string[]
 }
 
+/** Where new pages go, and why there. Unset, nothing is stored and pages go
+ *  under the data directory; a directory that stops working falls back, and
+ *  `problem` says which rung was skipped. */
+export interface SharePagesRoot {
+  dir: string
+  /** What the owner chose, '' for the default. */
+  setting: string
+  source: 'setting' | 'default' | 'fallback'
+  problem: string
+}
+
 export interface SharePageCatalogue {
   templates: SharePageTemplate[]
   sections: string[]
@@ -873,6 +884,7 @@ export interface SharePageCatalogue {
   scriptHosts: string[]
   /** Where a new page's directory goes when none is given. */
   pagesRoot: string
+  pagesRootInfo: SharePagesRoot
   sdk: number
   maxFiles: number
   maxBytes: number
