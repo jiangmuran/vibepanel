@@ -133,18 +133,19 @@ IOWeight=200
 # console that becomes unreachable precisely when there is something worth
 # looking at.
 #
-# MemoryMax stays, and it is what the original reasoning was actually about: a
-# hard ceiling so a runaway session cannot take the machine into swap and drag
-# everything else down with it. It bites once, at the end, on the process that
-# did it -- OOMPolicy=continue below is what keeps that from taking the panel
-# with it. A ceiling is not a throttle.
+# MemoryMax is not a hard ceiling by itself. While swap is available, memory.max
+# can keep the cgroup below the value by reclaiming and swapping, which throttles
+# every session. Pair it with MemorySwapMax=0 so crossing the percentage invokes
+# the cgroup OOM killer instead of turning the panel into a swap-backed throttle.
+# OOMPolicy=continue below keeps one killed agent from taking down the panel.
 #
 # If the *panel* itself ever needs a limit of its own, the place for it is the
 # panel: GOMEMLIMIT in this unit's environment bounds its heap and cannot touch
 # anything it hosts. Nothing measured says it needs one -- it sits at about
 # half a gigabyte -- so there is none.
 MemoryAccounting=yes
-MemoryMax=26G
+MemoryMax=70%
+MemorySwapMax=0
 # Do not stop the unit because something inside it was OOM-killed. The panel
 # and the tmux server are usually not the victim -- an agent is -- and taking
 # the whole thing down over that would turn one dead agent into all of them.
