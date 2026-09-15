@@ -544,7 +544,7 @@ func IsShellCommand(cmd string) bool {
 // agents, and a notice that fires on them is one people stop reading.
 func IsAgentCommand(cmd string) bool {
 	switch cmd {
-	case "claude", "codex", "opencode":
+	case "claude", "codex", "opencode", "kimi", "zcode":
 		return true
 	}
 	return false

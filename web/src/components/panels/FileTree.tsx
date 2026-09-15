@@ -63,6 +63,9 @@ export function FileTree({
   const [reloads, setReloads] = useState(0)
   const [dropping, setDropping] = useState(false)
   const [note, setNote] = useState('')
+  // Fraction of the running upload, null when none is. The note says what is
+  // happening; this says how far it has got.
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null)
   const [making, setMaking] = useState(false)
   // Closed on every path change, or the menu for one directory stays open over
   // the next one and the link it makes is not the directory on screen.
@@ -108,12 +111,15 @@ export function FileTree({
   const take = useCallback(
     (files: File[]) => {
       if (files.length === 0) return
-      void uploadFiles(projectId, path, files, setNote).then((paths) => {
-        // Reread rather than splice the new names in. The upload is not the
-        // only thing writing here — that is the whole premise of the panel —
-        // so the honest picture is the one the server has.
-        if (paths.length > 0) setReloads((n) => n + 1)
-      })
+      setUploadProgress(0)
+      void uploadFiles(projectId, path, files, setNote, setUploadProgress)
+        .then((paths) => {
+          // Reread rather than splice the new names in. The upload is not the
+          // only thing writing here — that is the whole premise of the panel —
+          // so the honest picture is the one the server has.
+          if (paths.length > 0) setReloads((n) => n + 1)
+        })
+        .finally(() => setUploadProgress(null))
     },
     [projectId, path],
   )
@@ -517,6 +523,24 @@ export function FileTree({
           {/* Carries the server's message on a failure — "shot.png already
               exists" — which is a filename and so goes through safeText. */}
           {safeText(note)}
+          {uploadProgress !== null && (
+            <span
+              data-testid="file-upload-progress"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(uploadProgress * 100)}
+              className="mt-1 block h-1 overflow-hidden rounded-full bg-surface-2"
+            >
+              <span
+                className="block h-full rounded-full transition-[width] duration-150 ease-vp"
+                style={{
+                  width: `${Math.round(uploadProgress * 100)}%`,
+                  background: 'var(--vp-accent)',
+                }}
+              />
+            </span>
+          )}
         </p>
       )}
 

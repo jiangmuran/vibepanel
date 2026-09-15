@@ -816,7 +816,16 @@ not affect agents you start from an ordinary terminal.
 ── Codex ──  merge into ~/.codex/hooks.json, then run /hooks in Codex once to trust them
 
 %s
-`, hooks.ClaudeSettings(script), hooks.CodexHooks(script))
+
+── Kimi Code ──  append to ~/.kimi-code/config.toml
+
+%s
+
+── zcode ──  merge into ~/.zcode/cli/config.json
+
+%s
+
+`, hooks.ClaudeSettings(script), hooks.CodexHooks(script), hooks.KimiHooks(script), hooks.ZcodeHooks(script))
 	return nil
 }
 
@@ -857,6 +866,10 @@ func hookRemove(args []string) error {
 	}
 	_, err = hooks.UninstallCodex(script)
 	say("codex", err)
+	_, err = hooks.UninstallKimi(script)
+	say("kimi", err)
+	_, err = hooks.UninstallZcode(script)
+	say("zcode", err)
 	say("opencode", hooks.UninstallOpencode())
 
 	// The script itself last, and only when nothing still refers to it.

@@ -338,8 +338,12 @@ func hookAgent(w http.ResponseWriter, r *http.Request) (string, bool) {
 		return "codex", true
 	case "opencode":
 		return "opencode", true
+	case "kimi":
+		return "kimi", true
+	case "zcode":
+		return "zcode", true
 	default:
-		writeErr(w, http.StatusBadRequest, "unknown agent "+agent+"; want claude, codex or opencode")
+		writeErr(w, http.StatusBadRequest, "unknown agent "+agent+"; want claude, codex, opencode, kimi or zcode")
 		return "", false
 	}
 }
@@ -364,6 +368,10 @@ func (s *Server) handleHooksInstall(w http.ResponseWriter, r *http.Request) {
 	switch agent {
 	case "codex":
 		st, err = hooks.InstallCodex(script)
+	case "kimi":
+		st, err = hooks.InstallKimi(script)
+	case "zcode":
+		st, err = hooks.InstallZcode(script)
 	case "opencode":
 		if err = hooks.InstallOpencode(); err == nil {
 			st, err = hooks.Inspect(script)
@@ -400,6 +408,10 @@ func (s *Server) handleHooksUninstall(w http.ResponseWriter, r *http.Request) {
 	switch agent {
 	case "codex":
 		st, err = hooks.UninstallCodex(script)
+	case "kimi":
+		st, err = hooks.UninstallKimi(script)
+	case "zcode":
+		st, err = hooks.UninstallZcode(script)
 	case "opencode":
 		if err = hooks.UninstallOpencode(); err == nil {
 			st, err = hooks.Inspect(script)
@@ -504,6 +516,10 @@ func hookTarget(agent string, st hooks.Status) string {
 	switch agent {
 	case "codex":
 		return st.CodexPath
+	case "kimi":
+		return st.KimiPath
+	case "zcode":
+		return st.ZcodePath
 	case "opencode":
 		return st.OpencodePath
 	default:
