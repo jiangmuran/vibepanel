@@ -51,6 +51,8 @@ type serverState struct {
 	logs      map[string][]serverLogLine
 	transform map[string]cachedTransform
 	schedule  map[string]time.Time
+	// quiet is the CLI, which prints its log instead of writing the panel's.
+	quiet bool
 }
 
 type compiledServer struct {
@@ -136,7 +138,7 @@ func (s *Server) serverLog(pageID, level, text string) {
 // flushServerLog writes a page's log to .vibepanel/server.log in its draft
 // directory, where the agent building the page reads it.
 func (s *Server) flushServerLog(page store.SharePage) {
-	if page.SourceDir == "" {
+	if page.SourceDir == "" || s.pb.server.quiet {
 		return
 	}
 	st := &s.pb.server

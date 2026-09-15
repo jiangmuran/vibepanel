@@ -214,6 +214,9 @@ func writeCommon(dir string, fixtures map[string][]byte) error {
 	if err := writeNew(filepath.Join(dir, TypesFile), Types); err != nil {
 		return err
 	}
+	if err := writeNew(filepath.Join(dir, ArchitectureFile), Architecture); err != nil {
+		return err
+	}
 	if len(fixtures) > 0 {
 		if err := os.MkdirAll(filepath.Join(dir, "fixtures"), 0o755); err != nil {
 			return err
@@ -236,11 +239,11 @@ var fixtureName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
 // same pattern the SDK checks, so a fixture written here is one it can open.
 func FixtureName(s string) bool { return fixtureName.MatchString(s) }
 
-// SyncSDK rewrites a page directory's copy of the SDK and its types with this
-// build's. The copies are for editors and offline work; the page itself always
-// loads the panel's.
+// SyncSDK rewrites a page directory's copy of the SDK, its types and
+// ARCHITECTURE.md with this build's. The copies are for editors, agents and
+// offline work; the page itself always loads the panel's.
 func SyncSDK(dir string) error {
-	for p, data := range map[string][]byte{SDKFile: SDK, TypesFile: Types} {
+	for p, data := range map[string][]byte{SDKFile: SDK, TypesFile: Types, ArchitectureFile: Architecture} {
 		target := filepath.Join(dir, p)
 		if info, err := os.Lstat(target); err == nil && !info.Mode().IsRegular() {
 			return fmt.Errorf("%s is not a regular file", p)

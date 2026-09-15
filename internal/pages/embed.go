@@ -16,3 +16,16 @@ var SDK []byte
 //
 //go:embed sdk/vibepanel.d.ts
 var Types []byte
+
+// ArchitectureFile is the name Architecture is written under in a page
+// directory.
+const ArchitectureFile = "ARCHITECTURE.md"
+
+// Architecture is docs/page-backend.md, written into every page directory so
+// the agent building a page reads how data, admin pages, sources, server.js
+// and actions work, and what stops each, from the build it is building for.
+// A test keeps it byte-identical to the document; `vibepanel page docs`
+// prints it.
+//
+//go:embed scaffold/ARCHITECTURE.md
+var Architecture []byte

@@ -21,7 +21,7 @@ func TestAScaffoldIsAWorkingPage(t *testing.T) {
 	if b.Manifest.Name != "大厅 wall" {
 		t.Errorf("manifest name = %q", b.Manifest.Name)
 	}
-	for _, p := range []string{"AGENTS.md", "CLAUDE.md", "README.md", ".gitignore", SDKFile, TypesFile, "fixtures/busy.json"} {
+	for _, p := range []string{"AGENTS.md", "CLAUDE.md", "README.md", ".gitignore", SDKFile, TypesFile, ArchitectureFile, "fixtures/busy.json"} {
 		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
 			t.Errorf("%s was not written: %v", p, err)
 		}
@@ -121,5 +121,19 @@ func TestSlug(t *testing.T) {
 		if got := Slug(in); got != want {
 			t.Errorf("Slug(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// ARCHITECTURE.md in a page directory is docs/page-backend.md, byte for byte.
+// Two copies of a security design that are allowed to differ are two designs,
+// and the one an agent reads is the one a reviewer never opens.
+func TestArchitectureIsThePageBackendDocument(t *testing.T) {
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "page-backend.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(doc) != string(Architecture) {
+		t.Error("internal/pages/scaffold/ARCHITECTURE.md differs from docs/page-backend.md; " +
+			"copy the document over it")
 	}
 }
