@@ -33,7 +33,7 @@ them is a flag on another:
 
 | caller | credential | where it is looked up | what it can reach |
 |---|---|---|---|
-| the owner, in the panel | the panel's session cookie | `sessions` | the settings routes, including everything below |
+| the owner, in the panel | the panel's session cookie | `auth_sessions` | the settings routes, including everything below |
 | an admin page | an **admin grant** in the URL path | `page_admin_grants` | one page's admin API |
 | a screen | a **share token** in the URL path | `share_links` | one link's snapshot, its page's files, and — only on an interactive link — that page's declared visitor actions |
 
@@ -103,9 +103,13 @@ Without one, settings draws a form from the data schema (the same way it draws
 link parameters), which is enough for most pages.
 
 **It requires the panel login.** The address to open is
-`/pages/{pageID}/admin/` on the panel. That route is behind the ordinary session:
-not signed in, it goes to the sign-in page and back. Signed in, the server mints
-an **admin grant** and answers `303` to `/page-admin/{grant}/`.
+`/pages/{pageID}/admin/` on the panel. That route reads the session cookie and
+nothing else — an API token in an `Authorization` header does not open an admin
+page, because a grant is bound to a session and a token has none. Not signed
+in, it answers `303` to the panel (`/`), which asks for the sign-in; open the
+address again afterwards. Signed in, the server mints an **admin grant** and
+answers `303` to `/page-admin/{grant}/<admin.entry>`. A page with no `admin`
+answers `404`; a page never published answers `409` (use `?draft=1`).
 
 **Why a grant, and not the cookie.** The admin page is HTML the owner — usually
 an agent — wrote. Run with the panel's cookie on the panel's origin, it would be
@@ -229,8 +233,8 @@ compiled program.
 
 **Limits**: the time budgets above, enforced by interrupting the runtime; a
 return value of at most 64 KiB encoded; a call that throws, times out or
-returns too much is reported (settings, `server.log`, the Preview's errors) and
-changes nothing — data writes made before the failure in that call are rolled
+returns too much is reported (`GET /api/settings/pages/{id}/server/log` and
+`.vibepanel/server.log`) and changes nothing — data writes made before the failure in that call are rolled
 back.
 
 **Whose code this is.** `server.js` is the owner's code, published with the
@@ -238,7 +242,15 @@ page; a screen can only make it run through a declared visitor action. The
 sandbox is there so that a mistake — an infinite loop, a huge result — costs a
 failed call and not the panel, not to make untrusted code safe to run: a
 visitor never supplies code, only a payload validated against the action's
-input schema.
+input schema. It does not bound memory — goja cannot — so a `server.js` that
+builds a gigabyte string inside its budget is a problem for the panel's
+process, which is one more reason the only code that runs here is code the
+owner published.
+
+**`transform` gets no `ctx`.** It runs on every snapshot a screen reads, and a
+read must not be able to write. Its input is the snapshot that link would
+receive — a share link's has no admin-visibility data — and its result is
+memoised per exact input and code.
 
 ## 6. Visitor actions: a screen that writes
 
@@ -346,11 +358,21 @@ runs admin actions. `vibepanel.d.ts` declares all of it.
 - The Preview pane has **Admin** beside the frames (the draft admin page, on
   `draft` data) and **Data** (the draft namespace, editable, with *Reset*).
   Visitor actions in the Preview write to `draft`.
-- `vibepanel page data get|set|reset [--live] <key> [value]`.
-- `vibepanel page run transform|schedule|action <name> [payload]` runs
-  `server.js` against `draft` data and prints the result and the log.
-- Fixtures may carry `data`, `sources` and `server`; `fixtures/*.json` are
-  shaped to the manifest as before.
+- `vibepanel page data get|set|reset [--live] <key> [value]`: draft data
+  unless `--live`, checked by the same rules as settings, audited as the user
+  `cli`. A running panel caches data for up to five seconds.
+- `vibepanel page run transform [--fixture name]|schedule|action <name>
+  [payload] [--admin]` runs `server.js` from the directory against `draft`
+  data and prints the result and the log. An action runs as a visitor when
+  visitors may run it (the stricter reading) unless `--admin`. `ctx.sources`
+  is empty there: fetching is the running panel's job.
+- `vibepanel page docs` prints this document; `vibepanel page sync-sdk` also
+  refreshes `ARCHITECTURE.md`.
+- Fixtures may carry `data` and `sources`; `fixtures/*.json` are shaped to the
+  manifest as before: every public key the fixture leaves out at its default
+  (in `hostile`, filled with markup and long text a visitor could really have
+  written), admin keys removed, a source it leaves out "not fetched", and the
+  actions as an interactive link would see them.
 - Export includes `admin/` and `server.js`; `?data=1` adds the `live` data as
   `vibepanel-data.json` (a name reserved at a page's root, so it cannot be
   mistaken for one of the page's own files). Secrets and approved hosts are
@@ -435,7 +457,13 @@ for `draft`.
 
 | route | body → answer |
 |---|---|
-| `GET /api/settings/pages/{id}/server/log` | → `{"lines": [{"at", "level", "text"}]}`, the last 200 |
+| `GET /api/settings/pages/{id}/server/log` | → `{"lines": [{"at", "level", "text"}]}`, the last 200, in memory; `level` is `info` (`ctx.log`) or `error` |
+
+**Export and import.** `GET /api/settings/pages/{id}/export?data=1` adds
+`vibepanel-data.json` with the `live` data. `POST /api/settings/pages/import`
+answers, beside `page` and `ignored`, `"hosts"` (to approve), `"secrets"` (names
+to store) and `"dataSkipped"` (keys of the archive's data the manifest did not
+accept).
 
 **A page's capabilities.** `GET /api/settings/pages/{id}` adds
 `"capabilities": {"data", "admin", "sources", "server", "actions", "visitorActions"}`

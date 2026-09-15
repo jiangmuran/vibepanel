@@ -450,10 +450,17 @@ func shapeFixture(raw []byte, m pages.Manifest, params map[string]any, hostile b
 	}
 	s.Interactive = len(m.Actions) > 0
 	s.Actions = snapshotActions(m, false, s.Interactive)
-	s.Sources = map[string]*sourceResult{}
+	// A fixture the author wrote may carry a source's result, to draw the page
+	// against one; a declared source it does not mention has not been fetched,
+	// and one the manifest no longer declares is not sent.
+	sources := map[string]*sourceResult{}
 	for _, src := range m.Sources {
-		s.Sources[src.Key] = &sourceResult{Error: "not fetched in a fixture"}
+		sources[src.Key] = &sourceResult{Error: "not fetched in a fixture"}
+		if given := s.Sources[src.Key]; given != nil {
+			sources[src.Key] = given
+		}
 	}
+	s.Sources = sources
 	out, err := json.Marshal(f)
 	if err != nil {
 		return raw
