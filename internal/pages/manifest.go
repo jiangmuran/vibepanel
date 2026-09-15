@@ -109,6 +109,13 @@ type Manifest struct {
 	Params      []ParamSpec `json:"params,omitempty"`
 	ScriptHosts []string    `json:"scriptHosts,omitempty"`
 	Viewports   []string    `json:"viewports,omitempty"`
+
+	// A page with a backend, all optional: docs/page-backend.md.
+	Data    map[string]*DataSpec   `json:"data,omitempty"`
+	Admin   *AdminOptions          `json:"admin,omitempty"`
+	Sources []SourceSpec           `json:"sources,omitempty"`
+	Server  *ServerOptions         `json:"server,omitempty"`
+	Actions map[string]*ActionSpec `json:"actions,omitempty"`
 }
 
 // SpendOptions shapes the spend section.
@@ -240,7 +247,7 @@ func (m Manifest) Validate() error {
 			return fmt.Errorf("viewports: unknown screen %q", v)
 		}
 	}
-	return nil
+	return m.validateBackend()
 }
 
 func dayRange(field string, n int) error {
@@ -393,6 +400,15 @@ func DecodeStored(raw []byte) Manifest {
 	}
 	if validateParamSpecs(m.Params) == nil {
 		clean.Params = m.Params
+	}
+	// The backend is kept whole or dropped whole: half of one -- an action
+	// whose data key was dropped -- is a page that writes somewhere it did not
+	// declare. Dropping it is the direction that fails closed.
+	withBackend := clean
+	withBackend.Data, withBackend.Admin, withBackend.Sources, withBackend.Server, withBackend.Actions =
+		m.Data, m.Admin, m.Sources, m.Server, m.Actions
+	if withBackend.Validate() == nil {
+		clean = withBackend
 	}
 	if clean.Validate() != nil {
 		return Manifest{SDK: SDKVersion, Name: clean.Name}

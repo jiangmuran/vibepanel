@@ -109,7 +109,7 @@ var rules = []rule{
 	{code: "form", severity: SeverityWarning,
 		pattern: regexp.MustCompile(`(?i)<form\b`),
 		message: "a form in a page cannot submit anywhere",
-		fix:     "a page is read-only; use vp.storage for local toggles",
+		fix:     "use vp.storage for local toggles; to send what a visitor typed, read the inputs and call vp.action",
 		types:   []string{"text/html"}},
 }
 
@@ -136,6 +136,11 @@ func Lint(b Bundle) []Problem {
 			if !typeIn(f.ContentType, r.types) {
 				continue
 			}
+			// An admin page may have forms: it is sandboxed with allow-forms,
+			// and submitting through vp.admin is what it is for.
+			if r.code == "form" && b.Manifest.Admin != nil && strings.HasPrefix(f.Path, b.Manifest.Admin.Dir()+"/") {
+				continue
+			}
 			for _, loc := range r.pattern.FindAllStringIndex(src, -1) {
 				out = append(out, Problem{File: f.Path, Line: lineOf(lines, loc[0]),
 					Severity: r.severity, Code: r.code, Message: r.message, Fix: r.fix})
@@ -150,6 +155,7 @@ func Lint(b Bundle) []Problem {
 				Fix:     `add <script src="vibepanel.js"></script> before your own script`})
 		}
 	}
+	out = append(out, lintBackend(b)...)
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].File != out[j].File {
 			return out[i].File < out[j].File
@@ -245,4 +251,48 @@ func lineIndex(src string) []int {
 
 func lineOf(idx []int, offset int) int {
 	return sort.Search(len(idx), func(i int) bool { return idx[i] > offset })
+}
+
+var serverForbidden = regexp.MustCompile(`\b(require|import|fetch|XMLHttpRequest|setTimeout|setInterval)\s*\(`)
+
+// lintBackend checks what a manifest's backend points at. docs/page-backend.md.
+func lintBackend(b Bundle) []Problem {
+	m := b.Manifest
+	var out []Problem
+	if m.Admin != nil && !b.Has(m.Admin.Entry) {
+		out = append(out, Problem{File: ManifestFile, Severity: SeverityError, Code: "admin-missing",
+			Message: "admin.entry names " + m.Admin.Entry + ", which is not in the page",
+			Fix:     "create it, or remove admin from vibepanel.json and use the form settings draws from data"})
+	}
+	if m.Server != nil {
+		f, ok := fileNamed(b, m.Server.Entry)
+		if !ok {
+			out = append(out, Problem{File: ManifestFile, Severity: SeverityError, Code: "server-missing",
+				Message: "server.entry names " + m.Server.Entry + ", which is not in the page",
+				Fix:     "create it, or remove server from vibepanel.json"})
+		} else {
+			src := string(f.Data)
+			lines := lineIndex(src)
+			for _, loc := range serverForbidden.FindAllStringIndex(src, -1) {
+				out = append(out, Problem{File: f.Path, Line: lineOf(lines, loc[0]), Severity: SeverityError,
+					Code: "server-api", Message: "server.js has no modules, network or timers",
+					Fix: "use sources for data from the network, and onSchedule for anything periodic"})
+			}
+		}
+	}
+	for _, src := range m.Sources {
+		out = append(out, Problem{File: ManifestFile, Severity: SeverityWarning, Code: "source-approval",
+			Message: "source " + src.Key + " fetches nothing until the owner approves its host in settings",
+			Fix:     "ask the owner to approve " + hostOf(src.URL) + " under the page's Sources"})
+	}
+	return out
+}
+
+func fileNamed(b Bundle, rel string) (File, bool) {
+	for _, f := range b.Files {
+		if f.Path == rel {
+			return f, true
+		}
+	}
+	return File{}, false
 }

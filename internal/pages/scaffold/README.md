@@ -12,3 +12,4 @@ page there.
   https://github.com/jiangmuran/vibepanel/blob/main/docs/features.zh-CN.md#给别人看的屏幕
 - Every field a page receives: `vibepanel.d.ts`
 - For an agent working here: `AGENTS.md`
+- Data, an admin page, sources, server code and visitor actions — optional, and how each is kept safe / 可选的数据、管理页、数据源、服务端代码和访客操作，以及各自的安全机制: `ARCHITECTURE.md`

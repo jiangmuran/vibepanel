@@ -246,6 +246,127 @@ describe('the SDK', () => {
   })
 })
 
+describe('data and actions', () => {
+  const GRANT = 'grant_0123456789abcdefghijkl'
+
+  /** Snapshots from the queue, one per poll; an action answers what `act` says. */
+  function panel(env: ReturnType<typeof load>, datas: unknown[], act?: (url: string, init: RequestInit) => unknown) {
+    let n = 0
+    env.fetch.mockImplementation((url: string, init: RequestInit) => {
+      if (url.includes('/snapshot')) return answer(200, snapshot({ data: datas[Math.min(n++, datas.length - 1)] }))
+      return act ? act(url, init) : answer(404, {})
+    })
+  }
+  const snapshotPolls = (env: ReturnType<typeof load>) =>
+    env.fetch.mock.calls.filter((c) => String(c[0]).includes('/snapshot')).length
+
+  it('hands the page its data, and says so only when it changed', async () => {
+    const env = load()
+    panel(env, [{ votes: 1 }, { votes: 1 }, { votes: 2 }])
+    const vp = env.VibePanel.connect()
+    const seen: unknown[] = []
+    vp.on('data', (d: unknown) => seen.push(d))
+    for (let i = 0; i < 3; i++) await env.step()
+    expect(snapshotPolls(env)).toBe(3)
+    // A wall polls every two seconds; a guestbook redrawn on each one flickers.
+    expect(seen).toEqual([{ votes: 1 }, { votes: 2 }])
+    expect(vp.data).toEqual({ votes: 2 })
+    // A late listener hears the current data at once.
+    const late: unknown[] = []
+    vp.on('data', (d: unknown) => late.push(d))
+    expect(late).toEqual([{ votes: 2 }])
+    expect(vp.admin).toBeNull()
+  })
+
+  it('runs an action without credentials and reads the snapshot again at once', async () => {
+    const env = load()
+    panel(env, [{ votes: 0 }, { votes: 1 }], () => answer(200, { ok: true, result: 1 }))
+    const vp = env.VibePanel.connect()
+    await env.step()
+    const polls = snapshotPolls(env)
+
+    const result = await vp.action('vote', { name: 'ann' })
+    expect(result).toEqual({ ok: true, result: 1 })
+    const call = env.fetch.mock.calls.find((c) => String(c[0]).includes('/actions/'))!
+    expect(call[0]).toBe(`https://panel.example/api/share/${TOKEN}/v1/actions/vote`)
+    expect(call[1]).toMatchObject({ method: 'POST', credentials: 'omit', body: '{"name":"ann"}' })
+    // Not at the next poll: now, so the person who pressed it sees it.
+    expect(snapshotPolls(env)).toBe(polls + 1)
+  })
+
+  it('resolves a refusal rather than throwing, and does not poll for one', async () => {
+    const env = load()
+    let reply: unknown = answer(429, { ok: false, error: 'too many; try again shortly', retryAfter: 5 })
+    panel(env, [{}], () => reply)
+    const vp = env.VibePanel.connect()
+    await env.step()
+    const polls = snapshotPolls(env)
+
+    expect(await vp.action('vote')).toEqual({ ok: false, error: 'too many; try again shortly', retryAfter: 5 })
+    reply = Promise.reject(new TypeError('Failed to fetch'))
+    expect(await vp.action('vote')).toEqual({ ok: false, error: 'the panel could not be reached' })
+    reply = answer(403, {})
+    expect(await vp.action('vote')).toEqual({ ok: false, error: 'the panel answered 403' })
+    expect(snapshotPolls(env)).toBe(polls)
+  })
+
+  it('never starts a second chain of polls when an action lands mid-poll', async () => {
+    const env = load()
+    let release: (v: unknown) => void = () => {}
+    env.fetch.mockImplementation((url: string) => {
+      if (url.includes('/actions/')) return answer(200, { ok: true })
+      return new Promise((r) => { release = r }).then(() => answer(200, snapshot({ data: {} })))
+    })
+    const vp = env.VibePanel.connect()
+    await env.step() // the first poll is now in flight
+    await vp.action('vote')
+    expect(snapshotPolls(env)).toBe(1)
+    const queued = env.timers.length
+    release(undefined)
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r))
+    // One follow-up, straight away, instead of two overlapping polls.
+    expect(env.timers.length).toBe(queued + 1)
+    expect(env.timers.at(-1)!.ms).toBe(0)
+  })
+
+  it('does not run actions on a fixture', async () => {
+    const env = load(`https://panel.example/share/${TOKEN}/?fixture=busy`)
+    env.fetch.mockReturnValue(answer(200, { snapshot: snapshot() }))
+    const vp = env.VibePanel.connect()
+    await env.step()
+    expect(await vp.action('vote')).toMatchObject({ ok: false })
+    expect(env.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('in an admin page reads the admin API and offers vp.admin', async () => {
+    const env = load(`https://panel.example/page-admin/${GRANT}/admin/index.html`)
+    panel(env, [{ announcement: 'hello', notes: 'private' }], (url, init) => {
+      if (url.endsWith('/data') && !init.method) return answer(200, { values: { announcement: 'hello' } })
+      if (url.endsWith('/data')) return answer(200, { values: { announcement: 'hello' } })
+      if (init.method === 'PUT') return answer(200, { value: JSON.parse(String(init.body)).value })
+      if (init.method === 'DELETE') return answer(200, { value: '' })
+      if (url.endsWith('/links')) return answer(401, { error: 'this admin page has expired; open it again' })
+      return answer(400, { error: 'announcement is longer than 40' })
+    })
+    const vp = env.VibePanel.connect()
+    await env.step()
+    const root = `https://panel.example/api/page-admin/${GRANT}/v1`
+    expect(String(env.fetch.mock.calls[0][0]).startsWith(root + '/snapshot?')).toBe(true)
+    expect(vp.status).toBe('live')
+    expect(vp.data).toEqual({ announcement: 'hello', notes: 'private' })
+
+    expect(await vp.admin.set('announcement', 'hi')).toEqual({ ok: true, result: 'hi' })
+    const put = env.fetch.mock.calls.find((c) => c[1]?.method === 'PUT')!
+    expect(put[0]).toBe(root + '/data/announcement')
+    expect(put[1]).toMatchObject({ credentials: 'omit', body: '{"value":"hi"}' })
+    expect(await vp.admin.reset('announcement')).toEqual({ ok: true, result: '' })
+    expect(env.fetch.mock.calls.find((c) => c[1]?.method === 'DELETE')![0]).toBe(root + '/data/announcement')
+    expect(await vp.admin.data()).toEqual({ ok: true, values: { announcement: 'hello' } })
+    expect(await vp.admin.append('guestbook', { name: 'x' })).toEqual({ ok: false, error: 'announcement is longer than 40' })
+    expect(await vp.admin.links()).toEqual({ ok: false, error: 'this admin page has expired; open it again' })
+  })
+})
+
 describe('the helpers a page draws with', () => {
   const { VibePanel } = load()
   const vp = VibePanel.connect({ snapshot: snapshot() })

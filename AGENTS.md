@@ -75,15 +75,45 @@ Each of these exists because the alternative broke something real.
    prefix by default, so `-t vp_ab` also matches `vp_abcd`. Use the helpers in
    `internal/tmux`, never hand-built target strings.
 
-8. **A read-only share token is narrowed by its route, never by a flag.**
-   A share token reaches `GET`s only, and exactly these three:
+8. **A share token is narrowed by its route, never by a flag.**
+   A share token reaches exactly five routes: three `GET`s —
    `/api/share/{token}/v1/snapshot`, and a share page's files at
-   `/share/{token}` and `/share/{token}/*`.
+   `/share/{token}` and `/share/{token}/*` — and one write with its preflight,
+   `POST` and `OPTIONS /api/share/{token}/v1/actions/{name}`.
    `TestAShareTokenReachesOnlyTheseRoutes` walks the router and fails on any
    route, method or path under either prefix that is not that list.
    `share_links` is a table `currentUser` does not consult. That is what makes
    a share token presented as a cookie or a `Bearer` header an unknown string
    that every authenticated route already answers 401 to.
+
+   **The one write** is a visitor action (`docs/page-backend.md` §6): a kiosk's
+   *Vote* button, a guestbook. It changes one page's own data, or runs that
+   page's `server.js`, and nothing else in the panel. It runs only when every
+   one of these holds, each checked in `handleVisitorAction` and each with a
+   test that removes it: the link is **interactive**, the panel allows visitor
+   writes, the action is declared for visitors in the version the link draws,
+   the rate limits pass, and the payload is exactly the action's input.
+
+   That `interactive` is a per-link switch reads like the flag this rule
+   forbids, and it is not, for a reason worth keeping straight. The flag this
+   rule is about is a `readOnly` bit that *authenticated* handlers would have
+   to check — hundreds of them, where the one that forgets hands the panel to
+   whoever holds a link. `interactive` widens nothing: the routes a token
+   reaches are the five above whatever it is set to, and it is read in the one
+   handler that exists only for share tokens, where a missing check costs one
+   page's declared data and not the panel. It narrows a route; it does not
+   stand in for one. Default off, audited, and refused on a locked link.
+
+   **Admin pages** are a second capability on their own prefixes,
+   `/page-admin/{grant}/…` and `/api/page-admin/{grant}/v1/…`, minted by
+   `/pages/{pageID}/admin/` from the session cookie. A grant is in
+   `page_admin_grants`, which `currentUser` does not consult either; it is
+   bound to the session that minted it (the lookup joins `auth_sessions`, so
+   signing out ends it), lives eight hours and reaches one page's admin API.
+   `TestAnAdminGrantReachesOnlyTheseRoutes` is its list, and
+   `TestCredentialsDoNotCrossBetweenSurfaces` shows a grant and a share token
+   each refused on the other's routes, a grant refused as a cookie or a
+   `Bearer`, and an API token unable to mint one.
 
    This said "exactly one `GET`" until share pages, and the list changed on
    purpose rather than by drift: the snapshot is the one redaction restated as
@@ -105,11 +135,16 @@ Each of these exists because the alternative broke something real.
    every handler in the panel into one that has to check a `readOnly` flag, and
    the handler that forgets is the one written next.
 
-   A share page is the owner's HTML; it is not a way in. No write route, no
-   server-side code, no parameter that reaches a query: the manifest chooses
-   among the snapshot's fixed sections (`pages.Needs` — switches and bounded
-   day counts) and parameters are only echoed.
-   `allow-same-origin` never appears beside `allow-scripts`.
+   A share page is the owner's HTML; it is not a way in. No parameter reaches
+   a query: the manifest chooses among the snapshot's fixed sections
+   (`pages.Needs` — switches and bounded day counts) and parameters are only
+   echoed. The server-side pieces a page may declare — data, `server.js`,
+   sources, actions — are the owner's declarations, published with the page:
+   a visitor supplies a payload checked against a schema, never code, never a
+   key the page did not declare. `server.js` runs in a fresh goja runtime per
+   call with no modules, network, files or timers, under a time budget.
+   `allow-same-origin` never appears beside `allow-scripts`, on a share page or
+   an admin page.
 
    The redaction is the same shape: `internal/httpapi/share.go` restates the
    fields it discloses rather than embedding `sysmon.Sample` or `store.Session`,
@@ -157,6 +192,12 @@ Each of these exists because the alternative broke something real.
      refreshes at most once per repository per five minutes and stops entirely
      when nobody is looking. `internal/git/warm.go` is where that is enforced;
      the thing that may not be added to it is a ticker.
+   - A page's **sources** cause outbound requests too, and only to hosts the
+     owner approved for that page, over https, to addresses checked after
+     resolution (no loopback, private, link-local or metadata address, and the
+     dialled address is the checked one), with no redirects, bounded in size
+     and time, in the background and only while something is watching.
+     `internal/httpapi/pagesources.go` is the guard; `publicAddr` is the list.
 
    Neither may be read on the request goroutine. A wall polls every two seconds
    forever, so a `git log` on that path is a fork per project per poll, and the

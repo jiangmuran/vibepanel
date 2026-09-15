@@ -19,6 +19,12 @@
 //              into a new version; a trial ends; parameters redraw without a
 //              reload; a revoked link stops polling.
 //
+//   backend    docs/page-backend.md, from the outside: a link's address copied
+//              again from its row, a rotated address, the interactive switch,
+//              visitor writes refused when the panel turns them off and counted
+//              when it does not, a data edit reaching the snapshot, and an
+//              admin page that needs the login and holds no cookie.
+//
 //   templates  Every template the binary carries, on the screens it is for,
 //              against every fixture: no errors, no refused requests, no NaN or
 //              [object Object] on screen, no horizontal overflow, and the hostile
@@ -67,7 +73,7 @@ const note = (sev, where, msg) => {
 }
 const pass = (where, msg) => console.log(`[ok]   ${where}: ${msg}`)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-const only = (process.env.VP_PAGES_ONLY ?? 'sandbox,workflow,templates').split(',')
+const only = (process.env.VP_PAGES_ONLY ?? 'sandbox,workflow,backend,templates').split(',')
 
 const work = mkdtempSync(join(tmpdir(), 'vppages-'))
 const SHOTS = join(work, 'shots')
@@ -319,6 +325,22 @@ setTimeout(() => { try { done('frame', frame.contentDocument ? 'readable' : 'opa
     if (badge === 'live') pass('workflow/preview', 'the draft is live in the pane')
     else note('FAIL', 'workflow/preview', `the preview's badge says ${badge}`)
 
+    // The thumbnail opens large, and Escape puts it away.
+    await ui.locator('[data-testid="page-zoom-open"]').first().click().catch(() => {})
+    const zoom = ui.locator('[data-testid="page-zoom"]')
+    const zoomOpen = await zoom.waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false)
+    const zoomBox = zoomOpen ? await zoom.locator('[data-testid="page-frame-box"]').boundingBox() : null
+    const thumbBox = await ui.locator('[data-testid="page-preview"] [data-testid="page-frame-box"]').first().boundingBox()
+    if (zoomOpen) {
+      await sleep(1500)
+      await ui.screenshot({ path: join(SHOTS, 'workflow-zoom.png') })
+    }
+    await ui.keyboard.press('Escape')
+    const zoomGone = await zoom.waitFor({ state: 'detached', timeout: 3000 }).then(() => true, () => false)
+    if (zoomBox && thumbBox && zoomBox.width > thumbBox.width * 2 && zoomGone) {
+      pass('workflow/zoom', `the preview opens at ${Math.round(zoomBox.width)}px wide and Escape closes it`)
+    } else note('FAIL', 'workflow/zoom', `open ${zoomOpen}, ${JSON.stringify(zoomBox)} vs ${JSON.stringify(thumbBox)}, closed ${zoomGone}`)
+
     // Settle, then reload once: three writes in quick succession.
     let loads = 0
     ui.on('framenavigated', (f) => {
@@ -505,6 +527,169 @@ setTimeout(() => { try { done('frame', frame.contentDocument ? 'readable' : 'opa
     if (reopened.restored > 0 && existsSync(join(pageDir, 'index.html')) && reopened.projectId === project.id) {
       pass('workflow/restore', `v${reopened.restored} written back into the same directory and project`)
     } else note('FAIL', 'workflow/restore', JSON.stringify(reopened))
+    await stranger.close()
+    await ui.close()
+  }
+
+  // ─── backend ─────────────────────────────────────────────────────────────
+  //
+  // Written against docs/page-backend.md §2, §3, §6 and §7. Every step reports
+  // what it saw rather than throwing, so one missing route does not hide the
+  // rest of what this section can say.
+  if (only.includes('backend')) {
+    const cat = await api('GET', '/api/settings/pages/catalogue')
+    if (!(cat.body?.templates ?? []).some((tpl) => tpl.id === 'kiosk')) {
+      note('WARN', 'backend/kiosk', 'the binary carries no kiosk template')
+    }
+
+    // A page with data, an admin page and a visitor action, written here so
+    // this does not depend on what a template happens to declare.
+    const kiosk = await publishedPage('kiosk-check', {
+      'index.html': '<!doctype html><meta charset="utf-8"><h1 id="title">kiosk</h1><p id="votes"></p>' +
+        '<script src="vibepanel.js"></script><script>const vp = VibePanel.connect();' +
+        "vp.on('snapshot', (s) => { document.getElementById('votes').textContent = String(s.data && s.data.votes) })</script>",
+      'admin/index.html': '<!doctype html><meta charset="utf-8"><title>admin</title><h1 id="admin">admin</h1>' +
+        '<script src="../vibepanel.js"></script>',
+    }, {
+      sdk: 1, name: 'kiosk-check', sections: ['sessions'],
+      data: {
+        headline: { type: 'text', max: 80, default: '' },
+        votes: { type: 'counter' },
+        secret: { type: 'text', max: 40, visibility: 'admin' },
+      },
+      admin: { entry: 'admin/index.html' },
+      actions: { vote: { who: 'visitor', effect: { increment: 'votes' }, rate: '60/min' } },
+    })
+    const link = kiosk.link
+    const snapshotOf = async (token) => {
+      const res = await fetch(`${BASE}/api/share/${token}/v1/snapshot`)
+      return res.ok ? res.json() : null
+    }
+
+    // The address again, from the row, is the address the link opens.
+    await owner.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: BASE }).catch(() => {})
+    const ui = await owner.newPage()
+    await ui.goto(BASE, { waitUntil: 'networkidle' })
+    await ui.waitForSelector('[data-testid="sidebar"], [data-testid="sidebar-rail"]', { timeout: 15000 }).catch(() => {})
+    const openSharing = async () => {
+      await ui.locator('[data-testid="settings-open"]').click().catch(() => {})
+      await ui.locator('[data-testid="settings-group-sharing"]').click().catch(() => {})
+      await ui.waitForSelector('[data-testid="sharing"]', { timeout: 10000 }).catch(() => {})
+    }
+    await openSharing()
+    const kioskRow = ui.locator(`[data-testid="page-row"][data-page="${kiosk.page.id}"]`)
+    const linkRow = kioskRow.locator('[data-testid="share-row"]').first()
+    await linkRow.waitFor({ timeout: 10000 }).catch(() => {})
+    const stored = await api('GET', `/api/settings/shares/${link.id}/url`)
+    await linkRow.locator('[data-testid="share-copy-address"]').click().catch(() => {})
+    await sleep(1200)
+    const shown = await kioskRow.locator('[data-testid="share-url"]').innerText().catch(() => '')
+    const clip = await ui.evaluate(() => navigator.clipboard.readText()).catch(() => '')
+    if (stored.status === 200 && stored.body?.url && shown === stored.body.url && clip === stored.body.url &&
+      stored.body.url.includes(link.token)) {
+      pass('backend/copy', 'the row copies the address the link was made with')
+    } else {
+      note('FAIL', 'backend/copy', `url ${stored.status} ${JSON.stringify(stored.body)}; shown ${JSON.stringify(shown)}; clipboard ${JSON.stringify(clip)}`)
+    }
+
+    // Interactive, through the editor.
+    await linkRow.locator('[data-testid="share-edit"]').click().catch(() => {})
+    const interactiveBox = kioskRow.locator('[data-testid="share-edit-panel"] [data-testid="share-interactive"]')
+    await interactiveBox.check({ timeout: 5000 }).catch(() => {})
+    await sleep(1500)
+    const listed = await api('GET', '/api/settings/shares')
+    const row = (listed.body ?? []).find((l) => l.id === link.id)
+    if (row?.interactive === true) pass('backend/interactive', 'the editor made the link interactive')
+    else note('FAIL', 'backend/interactive', `after the switch the link says ${JSON.stringify(row?.interactive)}`)
+
+    // Visitor writes: off refuses, on counts.
+    const stranger = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+    const visitor = await stranger.newPage()
+    await visitor.goto(`${BASE}/share/${link.token}/`, { waitUntil: 'load' }).catch(() => {})
+    const act = (token) => visitor.evaluate(async ([base, tok]) => {
+      try {
+        const r = await fetch(`${base}/api/share/${tok}/v1/actions/vote`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+        })
+        return r.status
+      } catch (e) {
+        return 'threw:' + e.name
+      }
+    }, [BASE, token])
+    await api('PUT', '/api/settings/sharing', { visitorWrites: false })
+    const refused = await act(link.token)
+    await api('PUT', '/api/settings/sharing', { visitorWrites: true })
+    const before = (await snapshotOf(link.token))?.data?.votes ?? 0
+    const accepted = await act(link.token)
+    await sleep(300)
+    const after = (await snapshotOf(link.token))?.data?.votes ?? 0
+    if (typeof refused === 'number' && refused >= 400 && refused < 500) {
+      pass('backend/visitor-writes', `turned off, an action answers ${refused}`)
+    } else note('FAIL', 'backend/visitor-writes', `turned off, an action answered ${refused}`)
+    if (accepted === 200 && after === before + 1) pass('backend/action', `an action counted: ${before} -> ${after}`)
+    else note('FAIL', 'backend/action', `action answered ${accepted}; votes ${before} -> ${after}`)
+    const secretLeak = JSON.stringify((await snapshotOf(link.token))?.data ?? {})
+    if (secretLeak.includes('"secret"')) note('FAIL', 'backend/visibility', 'an admin-only key is in a share snapshot')
+    else pass('backend/visibility', 'admin-only data stays out of the share snapshot')
+
+    // A data edit in the manage dialog reaches the snapshot.
+    await ui.keyboard.press('Escape').catch(() => {})
+    await sleep(300)
+    await openSharing()
+    await kioskRow.locator('[data-testid="page-manage-open"]').click().catch(() => {})
+    const dialog = ui.locator('[data-testid="page-manage"]')
+    await dialog.waitFor({ timeout: 8000 }).catch(() => {})
+    await dialog.locator('[data-testid="page-manage-tab-data"]').click().catch(() => {})
+    const headline = dialog.locator('[data-testid="data-field"][data-key="headline"] input, [data-testid="data-field"][data-key="headline"] textarea').first()
+    await headline.fill('hello from the form', { timeout: 8000 }).catch(() => {})
+    await sleep(2500)
+    const edited = (await snapshotOf(link.token))?.data?.headline
+    if (edited === 'hello from the form') pass('backend/data', 'a form edit is in the next snapshot')
+    else note('FAIL', 'backend/data', `the snapshot's headline is ${JSON.stringify(edited)}`)
+    await ui.screenshot({ path: join(SHOTS, 'backend-manage.png') })
+    await dialog.locator('[data-testid="page-manage-close"]').click().catch(() => {})
+
+    // Rotated: the old address is gone and the new one works.
+    const rotated = await api('POST', `/api/settings/shares/${link.id}/rotate`)
+    const oldPage = await fetch(`${BASE}/share/${link.token}/`)
+    const newToken = rotated.body?.token ?? ''
+    const newPage = newToken ? await fetch(`${BASE}/share/${newToken}/`) : null
+    if (rotated.status === 200 && oldPage.status === 404 && newPage?.status === 200) {
+      pass('backend/rotate', 'a new address works and the old one is a dead link')
+    } else {
+      note('FAIL', 'backend/rotate', `rotate ${rotated.status}, old ${oldPage.status}, new ${newPage?.status}`)
+    }
+
+    // The admin page: the login in front of it, and no cookie behind it.
+    const adminPath = `/pages/${kiosk.page.id}/admin/`
+    const anon = await stranger.newPage()
+    await anon.goto(`${BASE}${adminPath}`, { waitUntil: 'load' }).catch(() => {})
+    const anonURL = anon.url()
+    const anonAdmin = await anon.locator('#admin').count().catch(() => 0)
+    if (!anonURL.includes('/page-admin/') && anonAdmin === 0) pass('backend/admin-login', 'without the login the admin page does not open')
+    else note('FAIL', 'backend/admin-login', `a stranger reached ${anonURL}`)
+    const adminTab = await owner.newPage()
+    await adminTab.goto(`${BASE}${adminPath}`, { waitUntil: 'load' }).catch(() => {})
+    const adminURL = adminTab.url()
+    const opened = await adminTab.locator('#admin').count().catch(() => 0)
+    const inside = await adminTab.evaluate(async () => {
+      const out = {}
+      try { out.cookie = 'read:' + document.cookie } catch (e) { out.cookie = 'threw:' + e.name }
+      try {
+        const r = await fetch('/api/state', { credentials: 'include' })
+        out.state = 'read:' + r.status
+      } catch (e) {
+        out.state = 'refused:' + e.name
+      }
+      return out
+    }).catch((e) => ({ error: String(e) }))
+    if (adminURL.includes('/page-admin/') && opened > 0) pass('backend/admin-open', 'signed in, the admin page opens on a grant')
+    else note('FAIL', 'backend/admin-open', `the owner landed on ${adminURL} (admin marker ${opened})`)
+    if (String(inside.cookie).startsWith('threw') && String(inside.state).startsWith('refused')) {
+      pass('backend/admin-sandbox', `inside the admin page: cookie ${inside.cookie}, /api/state ${inside.state}`)
+    } else note('FAIL', 'backend/admin-sandbox', `inside the admin page: ${JSON.stringify(inside)}`)
+
+    await adminTab.close()
     await stranger.close()
     await ui.close()
   }

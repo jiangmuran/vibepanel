@@ -772,6 +772,14 @@ export interface ShareLink {
    *  Not stored: it is true for about two seconds and must be 0 again after a
    *  restart. */
   viewers: number
+  /** Visitors may run this page's declared visitor actions through it.
+   *  Off by default; see docs/page-backend.md §6. */
+  interactive: boolean
+  /** The address can be shown again. False for a link made before tokens were
+   *  kept encrypted; such a link can only be given a new address. */
+  copyable: boolean
+  /** Visitor actions run through this link since the panel's local midnight. */
+  actionsToday: number
   /** The largest live viewer's screen, or 0 when nothing is looking. What the
    *  owner is composing for when they cannot see it. */
   viewportWidth: number
@@ -839,6 +847,18 @@ export interface SharePageDetail {
   sourceExists: boolean
   versions: SharePageVersion[]
   links: ShareLink[]
+  capabilities: SharePageCapabilities
+}
+
+/** What the published version of a page declares beyond drawing a snapshot. */
+export interface SharePageCapabilities {
+  data: boolean
+  admin: boolean
+  sources: boolean
+  server: boolean
+  actions: boolean
+  /** At least one action a visitor may run. */
+  visitorActions: boolean
 }
 
 export interface SharePageManifest {
@@ -851,6 +871,98 @@ export interface SharePageManifest {
   params?: SharePageParam[]
   scriptHosts?: string[]
   viewports?: string[]
+  data?: Record<string, SharePageDataSpec>
+  admin?: { entry: string }
+  sources?: SharePageSourceSpec[]
+  server?: { entry: string; every?: string }
+  actions?: Record<string, SharePageActionSpec>
+}
+
+export type SharePageDataType =
+  | 'text'
+  | 'number'
+  | 'bool'
+  | 'enum'
+  | 'color'
+  | 'list'
+  | 'object'
+  | 'json'
+  | 'counter'
+  | 'log'
+
+/** One declared key of a page's data. docs/page-backend.md §2. */
+export interface SharePageDataSpec {
+  type: SharePageDataType
+  label?: string
+  min?: number
+  max?: number
+  values?: string[]
+  maxBytes?: number
+  item?: SharePageDataSpec
+  fields?: Record<string, SharePageDataSpec>
+  default?: unknown
+  visibility?: 'public' | 'admin'
+}
+
+export interface SharePageSourceSpec {
+  key: string
+  url: string
+  every: string
+  headers?: Record<string, string>
+  maxBytes?: number
+  timeout?: string
+  parse?: 'json' | 'text'
+}
+
+export interface SharePageActionSpec {
+  who: 'visitor' | 'admin' | 'both'
+  effect: { increment: string } | { append: string } | { set: string } | 'server'
+  input?: Record<string, SharePageDataSpec>
+  rate?: string
+  label?: string
+  /** Data keys a "server" effect may set from a visitor action. */
+  writes?: string[]
+}
+
+export type SharePageDataNamespace = 'live' | 'draft'
+
+/** A page's data as settings reads it: both visibilities. */
+export interface SharePageData {
+  schema: Record<string, SharePageDataSpec>
+  values: Record<string, unknown>
+  updatedAt: Record<string, number>
+  bytes: number
+  limit: number
+}
+
+/** One declared source and how its last fetch went. */
+export interface SharePageSource {
+  key: string
+  url: string
+  host: string
+  approved: boolean
+  every: string
+  ok: boolean
+  fetchedAt: number
+  status: number
+  error: string
+  secrets: { name: string; set: boolean }[]
+}
+
+export interface SharePageSecret {
+  name: string
+  setAt: number
+}
+
+export interface SharePageServerLogLine {
+  at: number
+  level: 'info' | 'warn' | 'error'
+  text: string
+}
+
+/** Panel-wide sharing switches. */
+export interface SharingSettings {
+  visitorWrites: boolean
 }
 
 export interface SharePageParam {

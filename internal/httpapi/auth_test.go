@@ -75,6 +75,16 @@ var openRoutes = map[string]string{
 	// TestALinkThatDrawsNothingSaysSoAndIsNeverThePanel stand over it.
 	"/share/{token}":   "an unknown token is a static gone page; a page link's token is the capability, see sharepage.go",
 	"/share/{token}/*": "the same route, with a path under it",
+	// A page's admin page. Opening it without a session redirects to the
+	// sign-in page and mints nothing; with one, it mints a grant bound to that
+	// session. The grant's routes are a capability like a share page's, and an
+	// unknown grant is the static gone page. admingrants_test.go stands over
+	// both: TestAnAdminPageNeedsTheLoginAndRunsWithoutIt and
+	// TestAnAdminGrantEndsWithItsSession.
+	"/pages/{pageID}/admin":  "no session redirects to sign-in and mints nothing; see admingrants.go",
+	"/pages/{pageID}/admin/": "the same route, with its slash",
+	"/page-admin/{grant}":    "an unknown grant is a static gone page; a live grant is the capability",
+	"/page-admin/{grant}/*":  "the same route, with a path under it",
 }
 
 // `/api/share/{token}/v1/snapshot` is deliberately NOT in the list above, and the

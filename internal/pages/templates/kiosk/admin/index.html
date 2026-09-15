@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Kiosk admin</title>
+  <style>
+    /* The kiosk's admin page. The panel opens it only for somebody signed in,
+       through /pages/<id>/admin/; it runs with an admin grant, never the
+       panel's cookie, and reaches this page's admin API and nothing else. */
+    :root {
+      --bg: #f4f5f8; --card: #fff; --line: #e3e5eb; --text: #161820; --muted: #6a7080;
+      --accent: #2f63e0; --accent-text: #fff; --danger: #cf3b32; --good: #1f8a55;
+      --vp-live: #1f8a55; --vp-waiting: #b87800; --vp-trouble: #cf3b32;
+      color-scheme: light;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0e1016; --card: #181b23; --line: #272b36; --text: #eef0f5; --muted: #8e95a5;
+        --accent: #6f98ff; --accent-text: #0b1020; --danger: #ff6b61; --good: #45c283;
+        --vp-live: #45c283; --vp-waiting: #f2b53a; --vp-trouble: #ff6b61;
+        color-scheme: dark;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", "PingFang SC", sans-serif; }
+    .page { max-width: 760px; margin: 0 auto; padding: 20px 16px 40px; display: grid; gap: 14px; }
+    header { display: flex; align-items: center; gap: 12px; }
+    h1 { flex: 1; margin: 0; font-size: 20px; }
+    #status { color: var(--muted); font-size: 13px; }
+    section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; min-width: 0; }
+    h2 { margin: 0 0 8px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    textarea, input { width: 100%; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+    textarea { min-height: 80px; resize: vertical; }
+    .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+    .grow { flex: 1; min-width: 0; }
+    button { font: inherit; border: 0; border-radius: 8px; padding: 7px 14px; background: var(--accent); color: var(--accent-text); cursor: pointer; }
+    button.danger { background: transparent; color: var(--danger); border: 1px solid currentColor; }
+    .said { font-size: 13px; color: var(--muted); min-height: 1.2em; }
+    .said.bad { color: var(--danger); }
+    .said.good { color: var(--good); }
+    .big { font-size: 34px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    ol, ul { margin: 0; padding: 0; list-style: none; }
+    li { padding: 6px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+    li:first-child { border-top: 0; }
+    .muted { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header><h1>Kiosk admin</h1><span id="status"></span></header>
+
+    <section>
+      <h2>Announcement</h2>
+      <form id="announceForm">
+        <textarea id="announcement" maxlength="280" placeholder="Shown at the top of the kiosk"></textarea>
+        <div class="row"><span class="said grow" id="announceSaid"></span><button type="submit">Save</button></div>
+      </form>
+    </section>
+
+    <section>
+      <h2>Votes</h2>
+      <div class="row"><span class="big grow" id="votes">—</span><button class="danger" id="resetVotes" type="button">Reset to 0</button></div>
+      <div class="said" id="votesSaid"></div>
+    </section>
+
+    <section>
+      <h2>Guestbook</h2>
+      <ol id="entries"></ol>
+      <div class="row"><span class="said grow" id="bookSaid"></span><button class="danger" id="clearBook" type="button">Clear</button></div>
+    </section>
+
+    <section>
+      <h2>Notes for whoever runs this screen</h2>
+      <p class="muted">Only here and in settings; never on a screen.</p>
+      <form id="notesForm">
+        <textarea id="notes" maxlength="2000"></textarea>
+        <div class="row"><span class="said grow" id="notesSaid"></span><button type="submit">Save</button></div>
+      </form>
+    </section>
+
+    <section>
+      <h2>Screens showing this page</h2>
+      <ul id="links"></ul>
+    </section>
+  </div>
+
+  <script src="../vibepanel.js"></script>
+  <script>
+    const vp = VibePanel.connect()
+    vp.badge(document.getElementById('status'))
+    const $ = (id) => document.getElementById(id)
+
+    if (!vp.admin) {
+      vp.text($('announceSaid'), 'Open this through the panel: Settings → Sharing → the page → Admin.')
+    }
+
+    function say(el, result, good) {
+      el.classList.toggle('bad', !result.ok)
+      el.classList.toggle('good', Boolean(result.ok))
+      vp.text(el, result.ok ? good : result.error || 'That did not work', '')
+    }
+
+    // Filled once, and again after a save, so a draft being typed is not
+    // replaced by the next poll.
+    let filled = false
+    vp.on('data', (d) => {
+      vp.text($('votes'), vp.fmt.number(typeof d.votes === 'number' ? d.votes : 0))
+      const list = $('entries')
+      list.replaceChildren()
+      const entries = Array.isArray(d.guestbook) ? d.guestbook.slice().reverse() : []
+      for (const e of entries) {
+        const li = document.createElement('li')
+        vp.text(li, `${e.name || 'someone'} · ${vp.since(e.at)} — ${e.msg || ''}`)
+        list.append(li)
+      }
+      if (!entries.length) list.append(vp.text(document.createElement('li'), 'Empty.'))
+      if (!filled) {
+        filled = true
+        $('announcement').value = typeof d.announcement === 'string' ? d.announcement : ''
+        $('notes').value = typeof d.notes === 'string' ? d.notes : ''
+      }
+    })
+
+    $('announceForm').addEventListener('submit', async (e) => {
+      e.preventDefault()
+      say($('announceSaid'), await vp.admin.set('announcement', $('announcement').value.trim()), 'Saved; the kiosk shows it on its next poll')
+    })
+    $('notesForm').addEventListener('submit', async (e) => {
+      e.preventDefault()
+      say($('notesSaid'), await vp.admin.set('notes', $('notes').value), 'Saved')
+    })
+    $('resetVotes').addEventListener('click', async () => {
+      say($('votesSaid'), await vp.admin.reset('votes'), 'Reset')
+    })
+    $('clearBook').addEventListener('click', async () => {
+      say($('bookSaid'), await vp.admin.reset('guestbook'), 'Cleared')
+    })
+
+    async function links() {
+      if (!vp.admin) return
+      const r = await vp.admin.links()
+      const list = $('links')
+      list.replaceChildren()
+      if (!r.ok) {
+        list.append(vp.text(document.createElement('li'), r.error))
+        return
+      }
+      for (const l of r.links) {
+        const words = [l.name || 'unnamed link', l.interactive ? 'visitors can vote and sign' : 'read only',
+          `${l.viewers} open now`]
+        if (l.remark) words.push(l.remark)
+        list.append(vp.text(document.createElement('li'), words.join(' · ')))
+      }
+      if (!r.links.length) list.append(vp.text(document.createElement('li'), 'No links yet. Make one in Settings → Sharing.'))
+    }
+    links()
+    setInterval(links, 30000)
+  </script>
+</body>
+</html>

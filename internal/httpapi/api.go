@@ -221,6 +221,10 @@ type Server struct {
 	// snapshotMemoTTL in sharepage.go.
 	snapshots snapshotMemo
 
+	// pb is the state behind pages with a backend: the sealing key, visitor
+	// action counts and limits, sources, server.js. docs/page-backend.md.
+	pb pageBackend
+
 	// TrimEvery and AuditKeep override the audit trim's schedule and cap. Zero
 	// means the constants. Tests set them small; nothing else should. They
 	// exist because a periodic job nobody can drive from a test is how this
@@ -373,6 +377,9 @@ func (s *Server) Routes() http.Handler {
 		// authentication; add a second route here and a share token can reach
 		// it. There is no flag in between, on purpose.
 		s.registerShareRoutes(r)
+		// An admin page's API: its own credential, its own table, the same
+		// placement as the share routes. See admingrants.go.
+		s.registerAdminAPIRoutes(r)
 
 		// Everything else needs a session. This panel hands out a writable
 		// terminal; there is no such thing as a harmless unauthenticated
@@ -468,6 +475,9 @@ func (s *Server) Routes() http.Handler {
 	// A share page's files. Before the SPA's catch-all, which must never answer
 	// `/share/<token>`. Red line 8 counts these routes; see sharepage.go.
 	s.registerSharePageRoutes(r)
+	// A page's admin page: the session mints a grant here, and the grant
+	// serves the page. Before the catch-all for the same reason.
+	s.registerAdminPageRoutes(r)
 
 	r.Handle("/*", webui.Handler(s.Cfg.StaticDir))
 	return r

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Crosshair, RotateCw, Send, TriangleAlert, Upload, Tv } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import { Crosshair, Maximize2, RotateCw, Send, TriangleAlert, Upload, Tv, X } from 'lucide-react'
 
 import { api } from '../../protocol/api'
 import type {
@@ -20,6 +21,8 @@ import {
   shouldReload,
   type FrameError,
 } from './pick'
+import { DataForm } from './DataForm'
+import { AdminFrame } from './ManageDialog'
 import { useNow } from './usePages'
 
 /**
@@ -113,6 +116,12 @@ export function PagePreview({
   const [reloads, setReloads] = useState(0)
   const [errors, setErrors] = useState<FrameError[]>([])
   const [picking, setPicking] = useState(false)
+  // The screen drawn large over the whole window, or null.
+  const [zoomed, setZoomed] = useState<SharePageViewport | null>(null)
+  // What the pane shows below its controls: the frames, the draft's admin page,
+  // or the draft's data. The frames stay mounted behind the other two, so a
+  // reload count and a pick are not lost by looking at the data.
+  const [view, setView] = useState<'frames' | 'admin' | 'data'>('frames')
   const [panel, setPanel] = useState<'' | 'publish' | 'trial'>('')
   const [note, setNote] = useState('')
   const [trialLink, setTrialLink] = useState('')
@@ -255,6 +264,10 @@ export function PagePreview({
     for (const f of frames.current) f?.contentWindow?.postMessage({ type: 'vp.pick', on: next }, '*')
   }
 
+  // The enlarged frame is one more frame: its errors and picks count, and a
+  // pick started from the pane reaches it. Its slot is after the pane's.
+  const zoomSlot = 8
+
   // ── the screens ──
   // The live screen is a choice like the named ones, first in the list: it is
   // the one the owner is composing for and cannot see.
@@ -270,6 +283,11 @@ export function PagePreview({
     if (picked.length > 0) return picked.slice(0, full ? 3 : 1)
     return [defaultViewport(allViewports, allViewports.find((v) => v.name === liveName) ?? null, draft?.manifest?.viewports)]
   }, [allViewports, chosen, draft, full, liveName])
+
+  // A tab whose subject the draft stopped declaring falls back to the frames
+  // rather than leaving the pane empty.
+  const shown =
+    (view === 'admin' && !draft?.manifest?.admin) || (view === 'data' && !draft?.manifest?.data) ? 'frames' : view
 
   const src = link
     ? `/share/${link.token}/${fixture ? `?fixture=${encodeURIComponent(fixture)}` : ''}`
@@ -464,8 +482,46 @@ export function PagePreview({
         </button>
       </div>
 
+      {(draft?.manifest?.admin || draft?.manifest?.data) && (
+        <div className="vp-segmented self-start" role="tablist" data-testid="page-views">
+          {(
+            [
+              ['frames', 'page.viewFrames', true],
+              ['admin', 'page.viewAdmin', Boolean(draft?.manifest?.admin)],
+              ['data', 'page.viewData', Boolean(draft?.manifest?.data)],
+            ] as const
+          )
+            .filter(([, , declared]) => declared)
+            .map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                data-testid={`page-view-${id}`}
+                aria-selected={shown === id}
+                data-active={shown === id}
+                onClick={() => setView(id)}
+                className="vp-tab px-3 text-vp-sm whitespace-nowrap"
+              >
+                {t(label)}
+              </button>
+            ))}
+        </div>
+      )}
+
+      {shown === 'admin' && (
+        <div className="flex min-h-[28rem] flex-col" data-testid="page-view-admin-body">
+          <AdminFrame pageId={page.id} draft />
+        </div>
+      )}
+      {shown === 'data' && (
+        <div data-testid="page-view-data-body">
+          <DataForm pageId={page.id} ns="draft" />
+        </div>
+      )}
+
       {full && catalogue && (
-        <div className="flex flex-wrap gap-1" data-testid="page-screens">
+        <div className="flex flex-wrap gap-1" data-testid="page-screens" hidden={shown !== 'frames'}>
           {allViewports.map((v) => {
             const on = viewports.some((x) => x.name === v.name)
             return (
@@ -596,7 +652,7 @@ export function PagePreview({
       {/* The frames. Each one is drawn at the screen's real size and scaled to
           fit, so a television's layout is a television's layout and not a
           laptop's squeezed. */}
-      <div className={full ? 'flex flex-wrap items-start gap-3' : 'flex flex-col gap-2'}>
+      <div className={full ? 'flex flex-wrap items-start gap-3' : 'flex flex-col gap-2'} hidden={shown !== 'frames'}>
         {src &&
           viewports.map((v, i) => (
             <ScaledFrame
@@ -611,9 +667,30 @@ export function PagePreview({
               frameRef={(el) => {
                 frames.current[i] = el
               }}
+              // Not while picking: the click is the pick's, inside the frame.
+              onZoom={picking ? undefined : () => setZoomed(v)}
             />
           ))}
       </div>
+
+      {zoomed && src && (
+        <ZoomedFrame
+          viewport={zoomed}
+          viewports={allViewports}
+          src={src}
+          reloads={reloads}
+          onViewport={setZoomed}
+          onClose={() => setZoomed(null)}
+          frameRef={(el) => {
+            frames.current[zoomSlot] = el
+            if (el && picking) {
+              el.addEventListener('load', () => el.contentWindow?.postMessage({ type: 'vp.pick', on: true }, '*'), {
+                once: true,
+              })
+            }
+          }}
+        />
+      )}
 
       {errors.length > 0 && (
         <ul data-testid="page-errors" className="space-y-0.5 text-vp-xs">
@@ -706,12 +783,120 @@ function ChangeList({ draft }: { draft: SharePageDraft }) {
  * anything; it is here so the frame is sandboxed even if the response were
  * ever served without its header.
  */
+/**
+ * One screen, as large as the window allows, over everything.
+ *
+ * The pane's frames are thumbnails: a television at a third of a sidebar's width
+ * is a composition, not something you can read. This is the same preview link
+ * at the size of the window, with the screens to switch between, and gone on
+ * Escape or a click outside it.
+ *
+ * A portal, because the side panel is a scroller with its own stacking, and a
+ * `fixed` box inside one is only as fixed as its ancestors let it be.
+ */
+function ZoomedFrame({
+  viewport,
+  viewports,
+  src,
+  reloads,
+  onViewport,
+  onClose,
+  frameRef,
+}: {
+  viewport: SharePageViewport
+  viewports: SharePageViewport[]
+  src: string
+  reloads: number
+  onViewport: (v: SharePageViewport) => void
+  onClose: () => void
+  frameRef: (el: HTMLIFrameElement | null) => void
+}) {
+  const [height, setHeight] = useState(() => window.innerHeight)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      // Before the settings dialog's or the panel's own Escape handling.
+      e.stopPropagation()
+      onClose()
+    }
+    const onResize = () => setHeight(window.innerHeight)
+    window.addEventListener('keydown', onKey, true)
+    window.addEventListener('resize', onResize)
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('resize', onResize)
+    }
+  }, [onClose])
+
+  return createPortal(
+    <div
+      data-testid="page-zoom"
+      role="dialog"
+      aria-modal="true"
+      aria-label={t('page.zoomTitle', { name: viewport.name })}
+      className="vp-backdrop fixed inset-0 z-50 flex flex-col bg-black/80 px-4 py-3"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose()
+      }}
+    >
+      <div className="mx-auto mb-3 flex w-full max-w-[96vw] flex-wrap items-center gap-2 rounded-vp bg-surface px-2 py-1.5">
+        <div className="flex flex-wrap gap-1" data-testid="page-zoom-screens">
+          {viewports.map((v) => (
+            <button
+              key={v.name}
+              type="button"
+              aria-pressed={v.name === viewport.name}
+              onClick={() => onViewport(v)}
+              className={`vp-press rounded-vp border px-2 py-0.5 text-vp-sm ${
+                v.name === viewport.name ? 'border-accent text-ink' : 'border-hairline text-ink-2 hover:text-ink'
+              }`}
+            >
+              {v.name === `${v.width}×${v.height}`
+                ? v.name
+                : t('page.viewportOption', { name: v.name, w: v.width, h: v.height })}
+            </button>
+          ))}
+        </div>
+        <span className="flex-1" />
+        <button
+          type="button"
+          data-testid="page-zoom-close"
+          onClick={onClose}
+          title={t('page.zoomClose')}
+          aria-label={t('page.zoomClose')}
+          className="vp-control"
+        >
+          <X size={14} />
+        </button>
+      </div>
+      <div
+        className="flex min-h-0 flex-1 items-start justify-center"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) onClose()
+        }}
+      >
+        <ScaledFrame
+          key={`${viewport.name}|${src}|${reloads}`}
+          viewport={viewport}
+          src={src}
+          share={1}
+          // The window less the bar above and the caption below.
+          maxHeight={Math.max(200, height - 110)}
+          frameRef={frameRef}
+        />
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
 function ScaledFrame({
   viewport,
   src,
   share,
   maxHeight,
   frameRef,
+  onZoom,
 }: {
   viewport: SharePageViewport
   src: string
@@ -720,6 +905,8 @@ function ScaledFrame({
   /** The tallest the scaled frame may be, in CSS pixels. */
   maxHeight: number
   frameRef: (el: HTMLIFrameElement | null) => void
+  /** Draws a click target over the frame that opens it large. */
+  onZoom?: () => void
 }) {
   const row = useRef<HTMLElement>(null)
   const [scale, setScale] = useState(0)
@@ -757,6 +944,23 @@ function ScaledFrame({
           className="absolute left-0 top-0 origin-top-left border-0"
           style={{ transform: `scale(${scale})`, width: viewport.width, height: viewport.height }}
         />
+        {/* Over the frame rather than inside it: a sandboxed document's clicks
+            never reach this one. Transparent, with the magnifier shown on
+            hover and focus so a thumbnail says it can be opened. */}
+        {onZoom && (
+          <button
+            type="button"
+            data-testid="page-zoom-open"
+            onClick={onZoom}
+            title={t('page.zoom')}
+            aria-label={t('page.zoom')}
+            className="group absolute inset-0 cursor-zoom-in"
+          >
+            <span className="absolute right-1.5 top-1.5 rounded-vp bg-black/60 p-1 text-white opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100">
+              <Maximize2 size={13} />
+            </span>
+          </button>
+        )}
       </div>
       <figcaption className="mt-0.5 text-vp-xs text-ink-3">
         {/* A live screen is named by its size already; saying it twice is noise. */}

@@ -306,6 +306,9 @@ try {
   // with rows in it: two templates, published, with three links of which one
   // has a long name, because one short row fits anything.
   const walls = []
+  // The wall page's project, with a shell in it, so the Preview can be opened
+  // beside a terminal and photographed large.
+  let wallSession = null
   {
     const made = []
     for (const [name, template] of [['走廊电视墙', 'wall'], ['本月 token', 'spend']]) {
@@ -321,6 +324,9 @@ try {
       { page: made[0], name: '一个长得过分的名字，用来看它会不会把这一行挤爆', remark: '', detail: 'counts', expiresIn: 2592000, scope: '', scopeId: '', params: {} },
       { page: made[1], name: '给客户看的那块', remark: '会议室', detail: 'names', expiresIn: 604800, scope: 'project', scopeId: proj.id, params: {} },
     ]
+    const opened = await (await authed(`/api/settings/pages/${made[0].id}/open`, { method: 'POST' })).json()
+    wallSession = await mk(opened.projectId, ['sh', '-c',
+      "printf '\\033[1m> \\033[0m把会话墙改成三列，等待中的放最上面\\n\\n  - 读了 AGENTS.md 和 vibepanel.d.ts\\n  - 改了 index.html 的网格\\n  - vibepanel page shot --viewport tv-1080,phone\\n\\n  两个尺寸都没有溢出，等你看一眼预览。\\n'; exec sleep 3000"], '走廊电视墙')
     for (const { page, ...link } of links) {
       const res = await (await authed('/api/settings/shares', {
         method: 'POST',
@@ -410,6 +416,23 @@ try {
         await page.locator('[data-testid="dir-cancel"]').click().catch(() => {})
       } else {
         console.log('  (could not open the directory picker; button not found)')
+      }
+
+      // The Preview beside the page's terminal, then opened large.
+      if (wallSession) {
+        await page.locator(`[data-testid="session-row"][data-session-id="${wallSession.id}"]`).click().catch(() => {})
+        await sleep(1500)
+        await page.locator('[data-testid="panel-tab-files"]').click().catch(() => {})
+        await sleep(800)
+        await page.locator('[data-testid="page-line"]').click().catch(() => {})
+        await sleep(4000)
+        await shoot(page, 'share-preview')
+        await page.locator('[data-testid="page-zoom-open"]').first().click().catch(() => {})
+        await page.locator('[data-testid="page-zoom-screens"] button', { hasText: 'tv-1080' }).click().catch(() => {})
+        await sleep(4000)
+        await shoot(page, 'share-zoom')
+        await page.keyboard.press('Escape').catch(() => {})
+        await sleep(400)
       }
 
       // What a link shows, on the screen it is for, as a stranger sees it.

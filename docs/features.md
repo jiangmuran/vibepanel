@@ -203,7 +203,9 @@ links that show it.
      reads;
    - **pick** an element and a line pointing at it is typed at the agent's
      prompt, for you to finish with what should change;
-   - side by side on a phone, a laptop and a television, in the window.
+   - side by side on a phone, a laptop and a television, in the window;
+   - click the preview to open it large over the whole window, switch screens
+     there, and press Escape to put it away.
 
    From a shell, `vibepanel page check` says what is wrong with a page, file and
    line, and `vibepanel page shot` screenshots it on the screens it is for and
