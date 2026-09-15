@@ -413,7 +413,8 @@ export interface Formatters {
 export interface ConnectOptions {
   /** The panel's address, for a page hosted somewhere else. Defaults to this page's. */
   base?: string
-  /** The share token, for a page hosted somewhere else. Defaults to the one in the address. */
+  /** The share token, for a page hosted somewhere else. Defaults to the one in the address.
+   *  In an admin page the address carries an admin grant instead, and vp.admin is set. */
   token?: string
   /** Load fixtures/<name>.json instead of polling. Also read from ?fixture= in the address. */
   fixture?: string
@@ -447,7 +448,7 @@ export interface Client {
   /** Run an action. In a share page only visitor actions, and only on an interactive link;
    *  in an admin page, admin actions. The snapshot is re-read when it resolves. */
   action(name: string, payload?: Record<string, DataValue>): Promise<ActionResult>
-  /** Set in an admin page, null everywhere else. */
+  /** Set in an admin page (served from /page-admin/<grant>/), null everywhere else. */
   readonly admin: AdminClient | null
 
   /** The panel's clock, unix seconds, corrected for this screen's. */

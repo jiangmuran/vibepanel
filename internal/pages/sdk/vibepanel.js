@@ -10,9 +10,15 @@
  *   vp.on('snapshot', (s) => draw(s))
  *   vp.on('status', (st) => ...)       // 'connecting' | 'live' | 'reconnecting' | 'disconnected' | 'revoked'
  *   vp.badge(document.querySelector('#status'))
+ *   vp.on('data', (d) => ...)          // the page's own data, when it changed
+ *   vp.action('vote').then((r) => ...) // { ok, result } | { ok: false, error, retryAfter }
+ *
+ * In an admin page (served from /page-admin/<grant>/) the same file reads the
+ * admin API instead, and adds vp.admin.
  *
  * vibepanel.d.ts declares every field of a snapshot. docs/share-pages.md is the
- * design, including what a page cannot do and why.
+ * design, including what a page cannot do and why; ARCHITECTURE.md (a copy of
+ * docs/page-backend.md) is data, admin pages, sources, server.js and actions.
  *
  * Written as one plain script with no build and no dependencies, because it is
  * read by the people and agents writing pages as much as it is run.
@@ -36,6 +42,7 @@
   var RELOAD_JITTER_MS = 5000
 
   var TOKEN_IN_PATH = /\/share\/([A-Za-z0-9_-]{20,})(?:\/|$)/
+  var GRANT_IN_PATH = /\/page-admin\/([A-Za-z0-9_-]{20,})(?:\/|$)/
   var FIXTURE_NAME = /^[a-z0-9][a-z0-9-]{0,39}$/
 
   // ─── small helpers ──────────────────────────────────────────────────────
@@ -225,7 +232,7 @@
       errors.push({
         kind: kind,
         message: String(message || '').slice(0, 500),
-        source: String(source || '').replace(/^.*\/share\/[^/]+\//, ''),
+        source: String(source || '').replace(/^.*\/(?:share|page-admin)\/[^/]+\//, ''),
         line: line || 0,
       })
       schedule()
@@ -456,9 +463,12 @@
   function Client(options) {
     options = options || {}
     var self = this
-    var listeners = { snapshot: [], status: [], params: [], error: [] }
+    var listeners = { snapshot: [], status: [], params: [], error: [], data: [] }
     var stopped = false
     var timer = 0
+    var inflight = false
+    var soon = false
+    var dataKey = null
     var failures = 0
     var lastOk = 0
     var offset = 0
@@ -470,21 +480,32 @@
     var href = global.location ? global.location.href : ''
     var base = options.base
     var token = options.token
+    var grant = ''
     try {
       var url = new URL(href)
       if (!base) base = url.protocol + '//' + url.host
       if (!token) {
         var m = TOKEN_IN_PATH.exec(url.pathname)
         token = m ? m[1] : ''
+        // An admin page: the grant in its address is its credential for the
+        // admin API, and the only one it has -- the page runs in a sandbox
+        // with no origin, so no cookie goes anywhere.
+        var g = m ? null : GRANT_IN_PATH.exec(url.pathname)
+        grant = g ? g[1] : ''
       }
     } catch (e) {
       /* no location: a test, or a page handed base and token */
     }
     base = (base || '').replace(/\/+$/, '')
+    var api = grant
+      ? base + '/api/page-admin/' + encodeURIComponent(grant) + '/v1'
+      : base + '/api/share/' + encodeURIComponent(token) + '/v1'
 
     this.snapshot = null
     this.status = 'connecting'
     this.params = {}
+    this.data = {}
+    this.admin = null
     this.error = null
     this.storage = MemoryStorage()
     this.fmt = fmt
@@ -539,6 +560,15 @@
         self.params = nextParams
         emit('params', nextParams)
       }
+      // Only when it changed: a wall polls every two seconds, and a page that
+      // redraws its guestbook on each one flickers for nothing.
+      var nextData = snapshot.data || {}
+      var nextDataKey = safeJSON(nextData)
+      if (nextDataKey !== dataKey) {
+        dataKey = nextDataKey
+        self.data = nextData
+        emit('data', nextData)
+      }
       instruments.snapshot()
     }
 
@@ -549,6 +579,8 @@
     }
 
     function fail(message) {
+      inflight = false
+      soon = false
       failures++
       if (message) {
         self.error = message
@@ -567,7 +599,8 @@
         waitingForVisible = true
         return
       }
-      var url = base + '/api/share/' + encodeURIComponent(token) + '/v1/snapshot' +
+      inflight = true
+      var url = api + '/snapshot' +
         '?v=' + viewer +
         '&w=' + Math.round(global.innerWidth || 0) +
         '&h=' + Math.round(global.innerHeight || 0)
@@ -579,6 +612,7 @@
           // this branch schedules nothing, which is the whole of the stop; a
           // `stopped = true` here was measured to change nothing and removed.
           return res.json().catch(function () { return {} }).then(function (body) {
+            inflight = false
             self.error = body && body.error ? body.error : null
             setStatus('revoked')
           })
@@ -589,16 +623,73 @@
           })
         }
         return res.json().then(function (snapshot) {
+          inflight = false
           failures = 0
           lastOk = Date.now()
           accept(snapshot)
           if (stopped) return
           setStatus('live')
-          schedule(POLL_MS)
+          var now = soon
+          soon = false
+          schedule(now ? 0 : POLL_MS)
         })
       }).catch(function () {
         fail(null)
       })
+    }
+
+    /**
+     * Ask again now, rather than at the next poll: after an action, so the
+     * person who pressed the button sees what it did. A poll already on its
+     * way is left to finish and the next one follows it at once, so this never
+     * starts a second chain of polls.
+     */
+    function refresh() {
+      if (stopped) return
+      if (inflight) {
+        soon = true
+        return
+      }
+      if (timer) global.clearTimeout(timer)
+      timer = 0
+      tick()
+    }
+
+    /**
+     * One call to the panel that always resolves: { ok: true, ... } with the
+     * answer's fields, or { ok: false, error, retryAfter }. A page draws a
+     * refusal; it should never have to catch one.
+     */
+    function call(method, path, body) {
+      if (!token && !grant) {
+        return Promise.resolve({ ok: false, error: 'actions run only through a share link or an admin page' })
+      }
+      var init = { method: method, cache: 'no-store', credentials: 'omit' }
+      if (body !== undefined) {
+        init.headers = { 'Content-Type': 'application/json' }
+        init.body = JSON.stringify(body)
+      }
+      return global.fetch(api + path, init).then(function (res) {
+        return res.json().catch(function () { return {} }).then(function (answer) {
+          answer = answer && typeof answer === 'object' && !Array.isArray(answer) ? answer : {}
+          if (res.ok) {
+            if (answer.ok === undefined) answer.ok = true
+            return answer
+          }
+          var out = { ok: false, error: answer.error || 'the panel answered ' + res.status }
+          var wait = answer.retryAfter || Number(res.headers && res.headers.get && res.headers.get('Retry-After'))
+          if (wait > 0) out.retryAfter = wait
+          if (res.status === 401) refresh()
+          return out
+        })
+      }).catch(function () {
+        return { ok: false, error: 'the panel could not be reached' }
+      })
+    }
+
+    function changed(result) {
+      if (result.ok) refresh()
+      return result
     }
 
     function stop() {
@@ -624,6 +715,7 @@
       if (event === 'snapshot' && self.snapshot) fn(self.snapshot, self)
       if (event === 'status') fn(self.status, self)
       if (event === 'params' && self.snapshot) fn(self.params, self)
+      if (event === 'data' && self.snapshot) fn(self.data, self)
       return function off() {
         var i = listeners[event].indexOf(fn)
         if (i >= 0) listeners[event].splice(i, 1)
@@ -680,6 +772,54 @@
       }
     }
 
+    /**
+     * Run an action by name: a visitor action through an interactive share
+     * link, an admin action in an admin page. Resolves, never rejects, and
+     * re-reads the snapshot when it ran.
+     */
+    this.action = function (name, payload) {
+      if (fixtureMode) return Promise.resolve({ ok: false, error: 'actions do not run on a fixture' })
+      return call('POST', '/actions/' + encodeURIComponent(String(name)), payload || {}).then(changed)
+    }
+
+    if (grant) {
+      var key = function (k) {
+        return '/data/' + encodeURIComponent(String(k))
+      }
+      var value = function (r) {
+        return r.ok ? { ok: true, result: r.value } : r
+      }
+      this.admin = {
+        data: function () {
+          return call('GET', '/data').then(function (r) {
+            return r.ok ? { ok: true, values: r.values || {} } : r
+          })
+        },
+        set: function (k, v) {
+          return call('PUT', key(k), { value: v }).then(value).then(changed)
+        },
+        increment: function (k, by) {
+          return call('POST', key(k) + '/increment', { by: by === undefined ? 1 : by }).then(value).then(changed)
+        },
+        append: function (k, item) {
+          return call('POST', key(k) + '/append', { item: item || {} }).then(value).then(changed)
+        },
+        reset: function (k) {
+          return call('DELETE', key(k)).then(value).then(changed)
+        },
+        sources: function () {
+          return call('GET', '/sources').then(function (r) {
+            return r.ok ? { ok: true, sources: r.sources || {} } : r
+          })
+        },
+        links: function () {
+          return call('GET', '/links').then(function (r) {
+            return r.ok ? { ok: true, links: r.links || [] } : r
+          })
+        },
+      }
+    }
+
     this.stop = stop
 
     // ── start ──
@@ -689,6 +829,7 @@
     }
 
     var fixture = options.fixture || query('fixture')
+    var fixtureMode = Boolean(options.snapshot || fixture)
     if (options.snapshot) {
       global.setTimeout(function () {
         lastOk = Date.now()
@@ -716,7 +857,7 @@
             setStatus('disconnected')
           })
       }
-    } else if (!token) {
+    } else if (!token && !grant) {
       global.setTimeout(function () {
         stopped = true
         self.error = 'no share token in the address; open the page through its share link'
