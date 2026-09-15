@@ -1,8 +1,10 @@
 package hooks
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -18,9 +20,22 @@ func codexPath(t *testing.T) string {
 	return p
 }
 
+func codexHooksFile(t *testing.T) string {
+	t.Helper()
+	p, err := CodexHooksPath()
+	if err != nil {
+		t.Fatalf("CodexHooksPath: %v", err)
+	}
+	return p
+}
+
 func writeCodexConfig(t *testing.T, body string) string {
 	t.Helper()
-	p := codexPath(t)
+	return writeAt(t, codexPath(t), body)
+}
+
+func writeAt(t *testing.T, p, body string) string {
+	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -39,7 +54,28 @@ func readFile(t *testing.T, path string) string {
 	return string(b)
 }
 
-func TestInstallCodexCreatesTheConfigWhenThereIsNone(t *testing.T) {
+// ourCommands is event → commands of our entries in hooks.json.
+func ourCommands(t *testing.T) map[string][]string {
+	t.Helper()
+	doc := readJSON(t, codexHooksFile(t))
+	out := map[string][]string{}
+	hooks, _ := doc["hooks"].(map[string]any)
+	for event, v := range hooks {
+		list, _ := v.([]any)
+		for _, item := range list {
+			if !isOurs(item, "") {
+				continue
+			}
+			inner := item.(map[string]any)["hooks"].([]any)
+			for _, h := range inner {
+				out[event] = append(out[event], h.(map[string]any)["command"].(string))
+			}
+		}
+	}
+	return out
+}
+
+func TestInstallCodexWritesAHookForEveryTransition(t *testing.T) {
 	withFakeHome(t)
 	st, err := InstallCodex(codexScript)
 	if err != nil {
@@ -48,76 +84,81 @@ func TestInstallCodexCreatesTheConfigWhenThereIsNone(t *testing.T) {
 	if !st.CodexInstalled {
 		t.Error("installed and then reported not installed")
 	}
-	body := readFile(t, codexPath(t))
-	if !strings.Contains(body, CodexNotify(codexScript)) {
-		t.Errorf("config does not carry the notify line:\n%s", body)
-	}
-}
-
-// The one that made this a file editor rather than a TOML round-trip.
-//
-// This machine's config.toml ends with `[tui.model_availability_nux]` and
-// `[notice]`. TOML keys belong to the table above them, so a notify appended to
-// the end of that file defines `notice.notify` — a key Codex never reads.
-// Nothing anywhere reports it: the file still parses, `codex doctor` is happy,
-// reading the line back finds it, the settings page says installed, and no
-// Codex session ever reports a state. Exactly the silent-in-every-direction
-// failure red line 3 is about, from the other end.
-func TestInstallCodexPutsNotifyAboveTheFirstTable(t *testing.T) {
-	withFakeHome(t)
-	writeCodexConfig(t, `model = "gpt-5.6"
-
-[model_providers.mine]
-name = "cpa"
-
-[notice]
-hide_gpt5_1_migration_prompt = true
-`)
-	if _, err := InstallCodex(codexScript); err != nil {
-		t.Fatalf("InstallCodex: %v", err)
-	}
-	body := readFile(t, codexPath(t))
-
-	notify := strings.Index(body, "notify =")
-	firstTable := strings.Index(body, "[model_providers.mine]")
-	if notify < 0 {
-		t.Fatalf("no notify line at all:\n%s", body)
-	}
-	if notify > firstTable {
-		t.Errorf("notify landed inside a table, where Codex will never read it:\n%s", body)
-	}
-	// Everything the user had is still there, and still says the same thing.
-	for _, keep := range []string{`model = "gpt-5.6"`, `name = "cpa"`, "[notice]",
-		"hide_gpt5_1_migration_prompt = true"} {
-		if !strings.Contains(body, keep) {
-			t.Errorf("installing dropped %q from the user's config:\n%s", keep, body)
+	got := ourCommands(t)
+	for event, state := range codexEvents {
+		want := codexScript + " " + state + " codex"
+		if len(got[event]) != 1 || got[event][0] != want {
+			t.Errorf("%s: %v, want exactly [%q]", event, got[event], want)
 		}
 	}
+	// A timeout, because Codex's default is ten minutes per call and a panel
+	// that is down would cost that on every tool call.
+	doc := readJSON(t, codexHooksFile(t))
+	entry := doc["hooks"].(map[string]any)["Stop"].([]any)[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+	if entry["timeout"] != float64(codexHookTimeout) {
+		t.Errorf("timeout = %v, want %d", entry["timeout"], codexHookTimeout)
+	}
+	if st.CodexTrust != CodexUntrusted {
+		t.Errorf("trust right after installing = %q, want untrusted: Codex has not seen them yet", st.CodexTrust)
+	}
 }
 
-func TestInstallCodexLeavesEverythingElseByteIdentical(t *testing.T) {
-	withFakeHome(t)
-	// Comments, alignment and ordering are what a round-trip through a TOML
-	// encoder loses. The file is the user's; it has to come back the way they
-	// wrote it, with one line more.
-	const original = `# my provider, do not touch
-model     = "gpt-5.6"   # aligned on purpose
-service_tier = "fast"
+// The four states the panel needs are all reachable now. This is the property
+// the notify line could not have.
+func TestCodexHooksReportEveryState(t *testing.T) {
+	seen := map[string]bool{}
+	for _, state := range codexEvents {
+		seen[state] = true
+	}
+	for _, want := range []string{"working", "waiting", "done"} {
+		if !seen[want] {
+			t.Errorf("no Codex event reports %q", want)
+		}
+	}
+	if codexEvents["PermissionRequest"] != "waiting" {
+		t.Error("an approval prompt must report waiting: it is the moment a person is needed")
+	}
+}
 
-[projects."/home/jmr"]
-trust_level = "trusted"
+func TestInstallCodexKeepsTheUsersOwnHooks(t *testing.T) {
+	withFakeHome(t)
+	const mine = `{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "/home/me/guard.sh" } ] }
+    ],
+    "Custom": [ { "hooks": [ { "type": "command", "command": "echo hi" } ] } ]
+  },
+  "other": true
+}
 `
-	writeCodexConfig(t, original)
+	writeAt(t, codexHooksFile(t), mine)
 	if _, err := InstallCodex(codexScript); err != nil {
 		t.Fatalf("InstallCodex: %v", err)
 	}
-	body := readFile(t, codexPath(t))
-	want := strings.Replace(original,
-		"service_tier = \"fast\"\n",
-		"service_tier = \"fast\"\n"+CodexNotify(codexScript)+"\n",
-		1)
-	if body != want {
-		t.Errorf("the file came back changed in more than the one line.\n got:\n%s\nwant:\n%s", body, want)
+	doc := readJSON(t, codexHooksFile(t))
+	if doc["other"] != true {
+		t.Error("installing dropped a key the user had")
+	}
+	hooks := doc["hooks"].(map[string]any)
+	pre := hooks["PreToolUse"].([]any)
+	if len(pre) != 2 || !strings.Contains(mustJSON(pre[0]), "guard.sh") {
+		t.Errorf("the user's PreToolUse hook moved or went: %s", mustJSON(pre))
+	}
+	if _, ok := hooks["Custom"]; !ok {
+		t.Error("an event the panel does not use was dropped")
+	}
+
+	if _, err := UninstallCodex(codexScript); err != nil {
+		t.Fatalf("UninstallCodex: %v", err)
+	}
+	after := readJSON(t, codexHooksFile(t))
+	var want map[string]any
+	if err := json.Unmarshal([]byte(mine), &want); err != nil {
+		t.Fatal(err)
+	}
+	if mustJSON(after) != mustJSON(want) {
+		t.Errorf("install then uninstall did not give the file back:\n got %s\nwant %s", mustJSON(after), mustJSON(want))
 	}
 }
 
@@ -126,14 +167,13 @@ func TestInstallCodexTwiceWritesOnce(t *testing.T) {
 	if _, err := InstallCodex(codexScript); err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	first := readFile(t, codexPath(t))
+	first := readFile(t, codexHooksFile(t))
 	if _, err := InstallCodex(codexScript); err != nil {
 		t.Fatalf("second: %v", err)
 	}
-	if second := readFile(t, codexPath(t)); second != first {
+	if second := readFile(t, codexHooksFile(t)); second != first {
 		t.Errorf("the second install changed the file:\n%s", second)
 	}
-	// And left no backup recording an edit that did not happen.
 	entries, err := os.ReadDir(filepath.Join(home, ".codex"))
 	if err != nil {
 		t.Fatalf("readdir: %v", err)
@@ -145,216 +185,200 @@ func TestInstallCodexTwiceWritesOnce(t *testing.T) {
 	}
 }
 
-// An upgrade moves the data directory, and the old line has to go rather than
-// sit above the new one as a second notify Codex would parse as a duplicate key.
-func TestInstallCodexReplacesOurOwnOlderLine(t *testing.T) {
+// An upgrade moves the data directory: the old entries go, rather than two
+// hooks per event each reporting through a different script.
+func TestInstallCodexReplacesOurOwnOlderEntries(t *testing.T) {
 	withFakeHome(t)
-	writeCodexConfig(t, `notify = ["/old/path/vibepanel-report.sh", "waiting"]
-model = "gpt-5.6"
-`)
-	if _, err := InstallCodex(codexScript); err != nil {
-		t.Fatalf("InstallCodex: %v", err)
+	if _, err := InstallCodex("/old/path/vibepanel-report.sh"); err != nil {
+		t.Fatal(err)
 	}
-	body := readFile(t, codexPath(t))
+	if _, err := InstallCodex(codexScript); err != nil {
+		t.Fatal(err)
+	}
+	body := readFile(t, codexHooksFile(t))
 	if strings.Contains(body, "/old/path") {
-		t.Errorf("the old line survived; the file now has two notify keys:\n%s", body)
+		t.Errorf("the old entries survived:\n%s", body)
 	}
-	if n := strings.Count(body, "notify ="); n != 1 {
-		t.Errorf("got %d notify lines, want 1:\n%s", n, body)
-	}
-}
-
-// Codex has one notify slot, so installing takes it. Taking it silently would
-// delete a hook the user wrote — the backup beside the file is not where
-// anybody looks.
-func TestInstallCodexKeepsSomebodyElsesNotifyInSight(t *testing.T) {
-	withFakeHome(t)
-	writeCodexConfig(t, `notify = ["/home/jmr/bin/my-own-notifier.sh"]
-model = "gpt-5.6"
-`)
-	if _, err := InstallCodex(codexScript); err != nil {
-		t.Fatalf("InstallCodex: %v", err)
-	}
-	body := readFile(t, codexPath(t))
-	if !strings.Contains(body, "# ") || !strings.Contains(body, "my-own-notifier.sh") {
-		t.Errorf("the user's own notify was deleted rather than commented out:\n%s", body)
-	}
-	if !strings.Contains(body, CodexNotify(codexScript)) {
-		t.Errorf("ours was not installed:\n%s", body)
-	}
-	// The commented one must not still be a key.
-	for _, line := range strings.Split(body, "\n") {
-		if strings.Contains(line, "my-own-notifier.sh") && !strings.HasPrefix(strings.TrimSpace(line), "#") {
-			t.Errorf("two live notify keys; the file will not load: %q", line)
+	for event, cmds := range ourCommands(t) {
+		if len(cmds) != 1 {
+			t.Errorf("%s has %d hooks of ours", event, len(cmds))
 		}
 	}
 }
 
-// A notify written across lines is still one key. Replacing only its first line
-// leaves `"waiting"]` behind, and Codex will not start on a config that does
-// not parse — the panel would have broken the agent it was wiring up.
-func TestInstallCodexReplacesAMultiLineNotify(t *testing.T) {
+// $CODEX_HOME is where Codex reads its configuration when it is set, so it is
+// where the hooks have to go.
+func TestCodexHomeIsHonoured(t *testing.T) {
 	withFakeHome(t)
-	writeCodexConfig(t, `notify = [
-  "/old/path/vibepanel-report.sh",
-  "waiting",
-]
-model = "gpt-5.6"
-`)
+	dir := t.TempDir()
+	t.Setenv("CODEX_HOME", dir)
 	if _, err := InstallCodex(codexScript); err != nil {
-		t.Fatalf("InstallCodex: %v", err)
+		t.Fatal(err)
 	}
-	body := readFile(t, codexPath(t))
-	if strings.Contains(body, "/old/path") || strings.Contains(body, "]") && strings.Count(body, "[") != strings.Count(body, "]") {
-		t.Errorf("the multi-line array was not replaced whole:\n%s", body)
-	}
-	if !strings.Contains(body, `model = "gpt-5.6"`) {
-		t.Errorf("the key after the array was eaten:\n%s", body)
+	if _, err := os.Stat(filepath.Join(dir, "hooks.json")); err != nil {
+		t.Errorf("hooks.json is not under CODEX_HOME: %v", err)
 	}
 }
 
-// `notify` under a table is a different key. Rewriting it would edit a setting
-// the user meant for something else and leave the one Codex reads unset.
-func TestInstallCodexIgnoresANotifyInsideATable(t *testing.T) {
-	withFakeHome(t)
-	writeCodexConfig(t, `model = "gpt-5.6"
-
-[some_plugin]
-notify = ["/home/jmr/bin/plugin-thing.sh"]
-`)
-	if _, err := InstallCodex(codexScript); err != nil {
-		t.Fatalf("InstallCodex: %v", err)
-	}
-	body := readFile(t, codexPath(t))
-	if !strings.Contains(body, `notify = ["/home/jmr/bin/plugin-thing.sh"]`) {
-		t.Errorf("the plugin's own notify was rewritten:\n%s", body)
-	}
-	top := strings.Index(body, "[some_plugin]")
-	if ours := strings.Index(body, "vibepanel-report.sh"); ours < 0 || ours > top {
-		t.Errorf("ours did not go in above the table:\n%s", body)
-	}
-}
-
-func TestUninstallCodexRemovesOnlyOurs(t *testing.T) {
-	withFakeHome(t)
-	writeCodexConfig(t, `model = "gpt-5.6"
-`)
-	if _, err := InstallCodex(codexScript); err != nil {
-		t.Fatalf("InstallCodex: %v", err)
-	}
-	st, err := UninstallCodex(codexScript)
-	if err != nil {
-		t.Fatalf("UninstallCodex: %v", err)
-	}
-	if st.CodexInstalled {
-		t.Error("still reported as installed after removal")
-	}
-	body := readFile(t, codexPath(t))
-	if strings.Contains(body, "notify") {
-		t.Errorf("our line survived removal:\n%s", body)
-	}
-	if !strings.Contains(body, `model = "gpt-5.6"`) {
-		t.Errorf("removal took the user's key with it:\n%s", body)
-	}
-
-	// Somebody else's is left exactly where it is.
-	writeCodexConfig(t, `notify = ["/home/jmr/bin/my-own-notifier.sh"]
-`)
-	if _, err := UninstallCodex(codexScript); err != nil {
-		t.Fatalf("UninstallCodex: %v", err)
-	}
-	if body := readFile(t, codexPath(t)); !strings.Contains(body, "my-own-notifier.sh") {
-		t.Errorf("removing our hook deleted somebody else's:\n%s", body)
-	}
-}
-
-// Install over somebody else's notify, then uninstall: the file has to be what
-// it was.
-//
-// The install takes Codex's one slot and keeps the old line as a comment under
-// its banner. Removing only our own line left that comment there for good — the
-// user's notifier stopped running, `codexInstalled` correctly said false, and
-// the settings page said not installed, so nothing on screen or in the file
-// admitted that anything had been taken. TestUninstallCodexRemovesOnlyOurs
-// covers uninstall without an install before it, which is the case that already
-// worked.
-func TestInstallThenUninstallGivesBackTheNotifyItTook(t *testing.T) {
-	for _, tc := range []struct{ name, doc string }{
-		{"one line", `model = "gpt-5.6"
-notify = ["/home/jmr/bin/my-own-notifier.sh"]
-
-[tui]
-theme = "dark"
-`},
-		{"array across lines", `model = "gpt-5.6"
-notify = [
-  "/home/jmr/bin/my-own-notifier.sh",
-  "--quiet",
-]
-
-[tui]
-theme = "dark"
-`},
+// An install from before hooks left `notify` in config.toml. Installing hooks
+// takes it out -- it would report "waiting" at the end of every turn next to
+// the Stop hook's "done" -- and gives back a notify it had replaced.
+func TestInstallingHooksRetiresTheOldNotifyLine(t *testing.T) {
+	for _, tc := range []struct{ name, legacy, want string }{
+		{"ours alone",
+			"model = \"gpt-5.6\"\nnotify = [\"/data/hooks/vibepanel-report.sh\", \"waiting\"]\n\n[tui]\ntheme = \"dark\"\n",
+			"model = \"gpt-5.6\"\n\n[tui]\ntheme = \"dark\"\n"},
+		{"ours over somebody else's",
+			"model = \"gpt-5.6\"\n# replaced by vibepanel:\nnotify = [\"/data/hooks/vibepanel-report.sh\", \"waiting\"]\n# notify = [\"/home/jmr/bin/my-own-notifier.sh\"]\n\n[tui]\ntheme = \"dark\"\n",
+			"model = \"gpt-5.6\"\nnotify = [\"/home/jmr/bin/my-own-notifier.sh\"]\n\n[tui]\ntheme = \"dark\"\n"},
+		{"somebody else's, untouched",
+			"notify = [\"/home/jmr/bin/my-own-notifier.sh\"]\nmodel = \"gpt-5.6\"\n",
+			"notify = [\"/home/jmr/bin/my-own-notifier.sh\"]\nmodel = \"gpt-5.6\"\n"},
+		{"a multi-line array of ours",
+			"notify = [\n  \"/old/vibepanel-report.sh\",\n  \"waiting\",\n]\nmodel = \"gpt-5.6\"\n",
+			"model = \"gpt-5.6\"\n"},
+		{"a notify inside a table is a different key",
+			"model = \"gpt-5.6\"\n\n[some_plugin]\nnotify = [\"/x/vibepanel-report.sh\"]\n",
+			"model = \"gpt-5.6\"\n\n[some_plugin]\nnotify = [\"/x/vibepanel-report.sh\"]\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			withFakeHome(t)
-			writeCodexConfig(t, tc.doc)
-			if _, err := InstallCodex(codexScript); err != nil {
-				t.Fatalf("InstallCodex: %v", err)
-			}
-			st, err := UninstallCodex(codexScript)
+			writeCodexConfig(t, tc.legacy)
+			st, err := InstallCodex(codexScript)
 			if err != nil {
-				t.Fatalf("UninstallCodex: %v", err)
+				t.Fatal(err)
 			}
-			if st.CodexInstalled {
-				t.Error("still reported as installed after removal")
+			if got := readFile(t, codexPath(t)); got != tc.want {
+				t.Errorf("config.toml after install:\n%s\nwant:\n%s", got, tc.want)
 			}
-			if body := readFile(t, codexPath(t)); body != tc.doc {
-				t.Errorf("the round trip did not give the file back:\n--- want ---\n%s"+
-					"--- got ---\n%s", tc.doc, body)
+			if st.CodexLegacyNotify {
+				t.Error("still reported the old notify line after it was removed")
 			}
 		})
 	}
 }
 
-func TestUninstallCodexWithNoConfigAtAll(t *testing.T) {
+func TestInspectSeesALegacyNotifyInstall(t *testing.T) {
+	withFakeHome(t)
+	writeCodexConfig(t, "notify = [\"/data/hooks/vibepanel-report.sh\", \"waiting\"]\n")
+	st, err := Inspect(codexScript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.CodexLegacyNotify || st.CodexInstalled {
+		t.Errorf("legacy=%v installed=%v; an old notify install is not the hooks", st.CodexLegacyNotify, st.CodexInstalled)
+	}
+}
+
+func TestUninstallCodexWithNothingInstalled(t *testing.T) {
 	withFakeHome(t)
 	st, err := UninstallCodex(codexScript)
 	if err != nil {
 		t.Fatalf("UninstallCodex: %v", err)
 	}
 	if st.CodexInstalled {
-		t.Error("reported installed with no config file at all")
+		t.Error("reported installed with nothing there")
 	}
-	if _, err := os.Stat(codexPath(t)); err == nil {
-		t.Error("removing a hook that was never installed created the config file")
-	}
-}
-
-// The path is built from --data-dir, which is a flag. A quote or a backslash in
-// it written raw produces a config.toml that does not parse, and Codex refuses
-// to start on that.
-func TestCodexNotifyQuotesThePath(t *testing.T) {
-	line := CodexNotify(`/data/we"ird\path/vibepanel-report.sh`)
-	if !strings.Contains(line, `we\"ird`) || !strings.Contains(line, `\\path`) {
-		t.Errorf("the path was written into TOML unescaped: %s", line)
+	for _, p := range []string{codexPath(t), codexHooksFile(t)} {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("removing a hook that was never installed created %s", p)
+		}
 	}
 }
 
-func TestCodexInstalledIsAboutOurScriptAndNotJustAnyNotify(t *testing.T) {
+func TestCodexInstalledIsAboutOurHooksAndNotJustAnyHooks(t *testing.T) {
 	withFakeHome(t)
-	writeCodexConfig(t, `notify = ["/home/jmr/bin/my-own-notifier.sh"]
-`)
+	writeAt(t, codexHooksFile(t), `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/home/me/notify.sh"}]}]}}`)
 	st, err := Inspect(codexScript)
 	if err != nil {
 		t.Fatalf("Inspect: %v", err)
 	}
-	if st.CodexInstalled {
-		t.Error("somebody else's notify was reported as the panel's hook, so the " +
-			"settings page would say Codex reporting is installed and nothing " +
-			"would ever arrive")
+	if st.CodexInstalled || len(st.CodexEvents) != 0 || st.CodexTrust != "" {
+		t.Errorf("somebody else's hooks read as the panel's: %+v", st)
 	}
 	if st.CodexPath == "" {
 		t.Error("Inspect did not say which file it read")
 	}
+}
+
+// Codex records a trust decision per handler in config.toml. The keys are the
+// ones Codex's own app server listed for this layout (hooks/list, 0.153.4):
+// `<hooks.json>:<snake_case event>:<group>:<handler>`, with the group counted
+// after the user's own entries.
+func TestCodexTrustIsReadFromConfigToml(t *testing.T) {
+	withFakeHome(t)
+	writeAt(t, codexHooksFile(t), `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"echo mine"}]}]}}`)
+	if _, err := InstallCodex(codexScript); err != nil {
+		t.Fatal(err)
+	}
+	hooksPath := codexHooksFile(t)
+	var keys []string
+	for event := range codexEvents {
+		g := 0
+		if event == "PreToolUse" {
+			g = 1 // after the user's own
+		}
+		keys = append(keys, hooksPath+":"+snakeCase(event)+":"+itoa(g)+":0")
+	}
+	sort.Strings(keys)
+
+	trust := func(n int) string {
+		var b strings.Builder
+		b.WriteString("model = \"gpt-5.6\"\n")
+		for _, k := range keys[:n] {
+			b.WriteString("\n[hooks.state.\"" + k + "\"]\ntrusted_hash = \"sha256:abc\"\n")
+		}
+		writeCodexConfig(t, b.String())
+		st, err := Inspect(codexScript)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st.CodexTrust
+	}
+	if got := trust(0); got != CodexUntrusted {
+		t.Errorf("no decisions = %q", got)
+	}
+	if got := trust(3); got != CodexPartial {
+		t.Errorf("some decisions = %q", got)
+	}
+	if got := trust(len(keys)); got != CodexTrusted {
+		t.Errorf("every handler trusted = %q", got)
+	}
+	// A decision recorded against the user's own hook is not one for ours.
+	writeCodexConfig(t, "[hooks.state.\""+hooksPath+":pre_tool_use:0:0\"]\ntrusted_hash = \"sha256:abc\"\n")
+	if st, _ := Inspect(codexScript); st.CodexTrust != CodexUntrusted {
+		t.Errorf("trusting the user's own hook made ours %q", st.CodexTrust)
+	}
+}
+
+func TestSnakeCaseMatchesCodexKeys(t *testing.T) {
+	for in, want := range map[string]string{
+		"PreToolUse": "pre_tool_use", "UserPromptSubmit": "user_prompt_submit",
+		"Stop": "stop", "PermissionRequest": "permission_request", "SessionStart": "session_start",
+	} {
+		if got := snakeCase(in); got != want {
+			t.Errorf("snakeCase(%s) = %s, want %s", in, got, want)
+		}
+	}
+}
+
+// The snippet the settings page shows is what the installer writes.
+func TestTheCodexSnippetIsWhatGetsMerged(t *testing.T) {
+	withFakeHome(t)
+	if _, err := InstallCodex(codexScript); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := readFile(t, codexHooksFile(t)), CodexHooks(codexScript); got != want {
+		t.Errorf("installed file differs from the snippet:\n got %s\nwant %s", got, want)
+	}
+}
+
+func mustJSON(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
+}
+
+func itoa(n int) string {
+	b, _ := json.Marshal(n)
+	return string(b)
 }

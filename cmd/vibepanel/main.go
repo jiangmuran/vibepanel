@@ -301,6 +301,7 @@ func cmdServe(args []string) error {
 	// The pump reports output and bells straight into the server, which is how
 	// last_output_at stays honest and, from M4, how session state is decided.
 	mgr.OnSignals = srv.HandleSignals
+	mgr.OnInput = srv.HandleInput
 	// Before Reconcile, which re-derives every session from what is running
 	// right now. A bell that rang before the restart is not on the wire any
 	// more, and nothing else will say a session was asking for a human.
@@ -812,11 +813,10 @@ not affect agents you start from an ordinary terminal.
 
 %s
 
-── Codex ──  add to ~/.codex/config.toml
+── Codex ──  merge into ~/.codex/hooks.json, then run /hooks in Codex once to trust them
 
 %s
-
-`, hooks.ClaudeSettings(script), hooks.CodexNotify(script))
+`, hooks.ClaudeSettings(script), hooks.CodexHooks(script))
 	return nil
 }
 

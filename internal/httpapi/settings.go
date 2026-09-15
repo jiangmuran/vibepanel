@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"github.com/jiangmuran/vibepanel/internal/tz"
 	"net/http"
 	"os"
@@ -294,7 +295,32 @@ func (s *Server) handleHooksStatus(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, st)
+	writeJSON(w, http.StatusOK, s.withCodexReports(r.Context(), st))
+}
+
+// withCodexReports counts the running Codex sessions and how many of them a
+// hook has reported for.
+//
+// Here because it is the one thing the settings page can show that settles
+// whether Codex's hooks work: Codex runs them only once trusted with /hooks,
+// and a hooks.json that is installed, trusted by config.toml's record and
+// still silent -- a definition changed since it was trusted, a Codex too old
+// for hooks -- looks fine in every file the panel can read.
+func (s *Server) withCodexReports(ctx context.Context, st hooks.Status) hooks.Status {
+	rows, err := s.DB.ListSessions(ctx)
+	if err != nil || s.Detector == nil {
+		return st
+	}
+	for _, row := range rows {
+		if row.Exited || row.Command != "codex" {
+			continue
+		}
+		st.CodexSessions++
+		if !s.Detector.LastHook(row.ID).IsZero() {
+			st.CodexReporting++
+		}
+	}
+	return st
 }
 
 // hookAgent reads which agent a hook request is about.
@@ -357,7 +383,7 @@ func (s *Server) handleHooksInstall(w http.ResponseWriter, r *http.Request) {
 	if u, ok := currentUserFrom(r); ok {
 		s.audit(r.Context(), "hooks.installed", u.Username, s.clientIP(r), hookTarget(agent, st))
 	}
-	writeJSON(w, http.StatusOK, st)
+	writeJSON(w, http.StatusOK, s.withCodexReports(r.Context(), st))
 }
 
 func (s *Server) handleHooksUninstall(w http.ResponseWriter, r *http.Request) {
@@ -390,7 +416,7 @@ func (s *Server) handleHooksUninstall(w http.ResponseWriter, r *http.Request) {
 	if u, ok := currentUserFrom(r); ok {
 		s.audit(r.Context(), "hooks.removed", u.Username, s.clientIP(r), hookTarget(agent, st))
 	}
-	writeJSON(w, http.StatusOK, st)
+	writeJSON(w, http.StatusOK, s.withCodexReports(r.Context(), st))
 }
 
 // ─── API tokens ───────────────────────────────────────────────────────────

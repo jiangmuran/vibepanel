@@ -21,6 +21,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/jiangmuran/vibepanel/internal/auth"
+	"github.com/jiangmuran/vibepanel/internal/codexlog"
 	"github.com/jiangmuran/vibepanel/internal/config"
 	"github.com/jiangmuran/vibepanel/internal/git"
 	"github.com/jiangmuran/vibepanel/internal/hooks"
@@ -44,7 +45,11 @@ type Server struct {
 	Manager  *session.Manager
 	Hub      *ws.Hub
 	Detector *session.Detector
-	Sampler  *sysmon.Sampler
+
+	// codexLogs follows the rollout file of each Codex session, for the ones
+	// no hook is reporting. The zero value reads the real /proc.
+	codexLogs codexlog.Watcher
+	Sampler   *sysmon.Sampler
 
 	// installable answers whether this binary can be replaced in place. A
 	// field so a test can force the answer: the real one asks about the
@@ -505,12 +510,20 @@ func (s *Server) RestoreState(ctx context.Context) error {
 		return fmt.Errorf("restore state: %w", err)
 	}
 	restored := 0
+	// Whether a restored hook state on a Codex session came from the legacy
+	// notify line is not written down; what is known is whether Codex's real
+	// hooks are installed. Without them, a Codex hook state can only have come
+	// from notify, and has to be releasable like one.
+	codexNotifyOnly := !hooks.CodexHooksInstalled()
 	for _, row := range rows {
 		if row.StateChangedAt == 0 {
 			continue
 		}
 		before := row.State
 		s.Detector.Restore(row.ID, row.State, row.StateSource, time.Unix(row.StateChangedAt, 0))
+		if codexNotifyOnly && row.StateSource == session.SourceHook && row.Command == "codex" {
+			s.Detector.MarkNotify(row.ID)
+		}
 		if before == session.StateWaiting || row.StateSource != session.SourceHeuristic {
 			restored++
 		}
@@ -683,6 +696,12 @@ func (s *Server) HookToken(ctx context.Context) (string, error) {
 type hookStateRequest struct {
 	SessionID string `json:"sessionId"`
 	State     string `json:"state"`
+	// Source is which agent's hook is calling, where that changes how the
+	// report is read: "" (Claude Code, opencode, or anything else), "codex" for
+	// Codex's hooks, "codex-notify" for Codex's older notify line. Checked
+	// against that list (red line 6): an unknown value is refused rather than
+	// read as the default, since the default is the one that never releases.
+	Source string `json:"source"`
 }
 
 // handleHookState accepts a state report from an agent hook.
@@ -732,6 +751,12 @@ func (s *Server) handleHookState(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "unknown state "+req.State)
 		return
 	}
+	switch req.Source {
+	case "", "codex", hooks.CodexLegacySource:
+	default:
+		writeErr(w, http.StatusBadRequest, "unknown source "+req.Source)
+		return
+	}
 	prev, err := s.DB.GetSession(ctx, req.SessionID)
 	if err != nil {
 		// An unknown session id is the normal case for an agent started
@@ -740,7 +765,11 @@ func (s *Server) handleHookState(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreErr(w, err)
 		return
 	}
-	s.Detector.Report(req.SessionID, st, time.Now())
+	if req.Source == hooks.CodexLegacySource {
+		s.Detector.ReportNotify(req.SessionID, st, time.Now())
+	} else {
+		s.Detector.Report(req.SessionID, st, time.Now())
+	}
 	// The row is kept rather than discarded because the transition has to be
 	// recorded from here. A hook is the *accurate* path -- the agent said so
 	// itself -- and by the time the poller looks, the detector already agrees
@@ -773,6 +802,14 @@ func (s *Server) handleHookState(w http.ResponseWriter, r *http.Request) {
 		s.fireWebhooks(context.WithoutCancel(ctx), prev, string(st))
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// HandleInput records that a viewer sent a session a line. Wired to
+// session.Manager.OnInput; runs on the viewer's goroutine.
+func (s *Server) HandleInput(sessionID string) {
+	if s.Detector != nil {
+		s.Detector.Input(sessionID, time.Now())
+	}
 }
 
 // HandleSignals records what the PTY pump observed. Wired to
@@ -975,6 +1012,12 @@ func (s *Server) stateIsGuessed(sessions []store.Session) bool {
 	}
 	return true
 }
+
+// codexLogAfter is how long a Codex session has to go without a hook report
+// before its rollout file is read instead. Long, because a session whose hooks
+// work reports every turn, and the log is for the ones whose hooks do not:
+// Codex too old for them, hooks not yet trusted, or none installed.
+const codexLogAfter = 10 * time.Minute
 
 // hookCheckTTL bounds how stale the cached answer may be. Short enough that
 // editing the agent's configuration by hand is noticed while you are still
@@ -1970,6 +2013,7 @@ func (s *Server) pollOnce(ctx context.Context) error {
 			ids = append(ids, row.ID)
 		}
 		s.Detector.Retain(ids)
+		s.codexLogs.Retain(ids)
 	}
 	// Which panes have a full-screen program drawing in them.
 	//
@@ -2054,6 +2098,15 @@ func (s *Server) pollOnce(ctx context.Context) error {
 		if info.Dead != row.Exited || (info.Dead && info.ExitStatus() != row.ExitStatus) {
 			if err := s.DB.SetSessionExit(ctx, row.ID, info.Dead, info.ExitStatus()); err != nil {
 				return err
+			}
+		}
+		// A Codex with no hook reporting: what its own rollout file says. Here,
+		// on the poller, because finding the file walks /proc and reading it is
+		// disk I/O; the watcher reads only what was appended since the last
+		// tick.
+		if s.Detector != nil && info.Command == "codex" && now.Sub(s.Detector.LastHook(row.ID)) > codexLogAfter {
+			if st, ok := s.codexLogs.State(row.ID, info.PID, now); ok {
+				s.Detector.ReportLog(row.ID, session.State(st.State), st.At)
 			}
 		}
 		if s.Detector != nil {

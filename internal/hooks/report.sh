@@ -9,7 +9,12 @@
 # variables below are absent and this exits immediately, so agents you start
 # from an ordinary terminal are unaffected.
 #
-# Usage: vibepanel-report.sh <working|waiting|done>
+# Usage: vibepanel-report.sh <working|waiting|done> [codex|codex-notify]
+#
+# The second argument says which agent's hook is calling, where that changes how
+# the panel reads the report: `codex-notify` is Codex's older `notify` line,
+# which can only ever say "waiting". Anything after it -- Codex appends a JSON
+# argument to notify -- is ignored.
 
 # Never fail, never block, never print. A hook that makes an agent wait — or
 # worse, error — is far more expensive than a missed state update.
@@ -23,6 +28,14 @@ case "$state" in
   *) exit 0 ;;
 esac
 
+source=""
+case "${2-}" in
+  codex|codex-notify) source="$2" ;;
+  # An install from before codex hooks: notify = [script, "waiting"], to which
+  # Codex appends its JSON. That is the legacy line, and it says so by shape.
+  \{*) source="codex-notify" ;;
+esac
+
 # --insecure is safe and necessary here: the destination is 127.0.0.1, and when
 # the panel is serving TLS its certificate is issued for the public hostname,
 # which a loopback address will never match.
@@ -30,7 +43,7 @@ curl --silent --show-error --insecure --max-time 2 --output /dev/null \
   --request POST "$VIBEPANEL_URL/api/hook/state" \
   --header "Authorization: Bearer $VIBEPANEL_TOKEN" \
   --header 'Content-Type: application/json' \
-  --data "{\"sessionId\":\"$VIBEPANEL_SESSION_ID\",\"state\":\"$state\"}" \
+  --data "{\"sessionId\":\"$VIBEPANEL_SESSION_ID\",\"state\":\"$state\",\"source\":\"$source\"}" \
   >/dev/null 2>&1
 
 exit 0

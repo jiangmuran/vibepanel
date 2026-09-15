@@ -61,18 +61,34 @@ type Status struct {
 	Events []string `json:"events"`
 	// Snippet is what would be merged, for the user to read before agreeing.
 	Snippet string `json:"snippet"`
-	// CodexSnippet is the equivalent for Codex: the one line that goes into
-	// config.toml, shown before the button is pressed the same way Snippet is.
+	// CodexSnippet is the equivalent for Codex: the hooks.json the panel merges,
+	// shown before the button is pressed the same way Snippet is.
 	CodexSnippet string `json:"codexSnippet"`
-	// CodexPath is the file that line goes into.
+	// CodexPath is the file those hooks go into: ~/.codex/hooks.json, or under
+	// $CODEX_HOME.
 	CodexPath string `json:"codexPath"`
-	// CodexInstalled reports whether that file's notify is ours.
+	// CodexInstalled reports whether every Codex event has our hook.
 	//
 	// Separate from Installed rather than folded into it. They are two agents
 	// configured by two mechanisms that fail separately -- the runbook has a
 	// section for exactly that -- and one flag would make a page that can only
 	// say "hooks are installed" about a machine where half of them are.
 	CodexInstalled bool `json:"codexInstalled"`
+	// CodexEvents lists the Codex events whose hooks are ours, sorted.
+	CodexEvents []string `json:"codexEvents"`
+	// CodexTrust is whether Codex has recorded a trust decision for those hooks:
+	// "trusted", "partial", "untrusted", or "" when none is installed. Codex runs
+	// a user hook only after `/hooks` has trusted it; see codexTrust.
+	CodexTrust string `json:"codexTrust"`
+	// CodexLegacyNotify is true while config.toml still carries the notify line
+	// an older install wrote, which reports "waiting" and nothing else.
+	CodexLegacyNotify bool `json:"codexLegacyNotify"`
+	// CodexSessions is how many sessions are running Codex right now, and
+	// CodexReporting how many of those a hook has reported for. Filled in by
+	// the server, not by Inspect, which reads files: installed and trusted is
+	// what the files say, and reports arriving is the only thing that proves it.
+	CodexSessions  int `json:"codexSessions"`
+	CodexReporting int `json:"codexReporting"`
 
 	// OpencodePath is the plugin file, and OpencodeInstalled says whether the
 	// one in place is *this build's*.
@@ -99,10 +115,15 @@ func Inspect(scriptPath string) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	codexPath, err := CodexConfigPath()
+	codexConfig, err := CodexConfigPath()
 	if err != nil {
 		return Status{}, err
 	}
+	codexHooks, err := CodexHooksPath()
+	if err != nil {
+		return Status{}, err
+	}
+	codexEventsInstalled := codexHookEvents(codexHooks)
 	// Everything that does not depend on the Claude settings file is filled in
 	// here, in the literal, and nothing below adds a field.
 	//
@@ -124,9 +145,12 @@ func Inspect(scriptPath string) (Status, error) {
 		SettingsPath:      settingsPath,
 		ScriptPath:        scriptPath,
 		Snippet:           ClaudeSettings(scriptPath),
-		CodexSnippet:      CodexNotify(scriptPath),
-		CodexPath:         codexPath,
-		CodexInstalled:    codexInstalled(codexPath),
+		CodexSnippet:      CodexHooks(scriptPath),
+		CodexPath:         codexHooks,
+		CodexInstalled:    len(codexEventsInstalled) == len(codexEvents),
+		CodexEvents:       codexEventsInstalled,
+		CodexTrust:        codexTrust(codexHooks, codexConfig),
+		CodexLegacyNotify: codexNotifyInstalled(codexConfig),
 		OpencodePath:      opencodePath,
 		OpencodeInstalled: OpencodeInstalled(),
 		Events:            []string{},

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jiangmuran/vibepanel/internal/hooks"
+	"github.com/jiangmuran/vibepanel/internal/session"
 	"github.com/jiangmuran/vibepanel/internal/store"
 )
 
@@ -48,9 +49,9 @@ func TestTheReporterScriptActuallyReportsState(t *testing.T) {
 		t.Fatalf("InstallScript: %v", err)
 	}
 
-	run := func(state, tok string) {
+	run := func(state, tok string, extra ...string) {
 		t.Helper()
-		cmd := exec.Command(script, state)
+		cmd := exec.Command(script, append([]string{state}, extra...)...)
 		cmd.Env = append(os.Environ(),
 			"VIBEPANEL_SESSION_ID="+sess.ID,
 			"VIBEPANEL_TOKEN="+tok,
@@ -117,5 +118,20 @@ func TestTheReporterScriptActuallyReportsState(t *testing.T) {
 	time.Sleep(1500 * time.Millisecond)
 	if got := stateOf(); got != "done" {
 		t.Errorf("state is %q after a report with a bad token; it should still be done", got)
+	}
+
+	// Codex's older notify line: `notify = [script, "waiting"]`, to which Codex
+	// appends a JSON argument. The script has to tell the server that is what
+	// called, or its "waiting" sticks for the rest of the session.
+	run("waiting", token, `{"type":"agent-turn-complete","turn-id":"t1"}`)
+	waitFor("waiting")
+	// The poller is not running here, so the detector is asked directly.
+	if st, src := srv.Detector.Evaluate(sess.ID, session.Observation{}, time.Now()); st != session.StateWaiting || src != session.SourceHook {
+		t.Fatalf("after the notify report: %s from %s", st, src)
+	}
+	srv.Detector.Input(sess.ID, time.Now().Add(time.Second))
+	if st, _ := srv.Detector.Evaluate(sess.ID, session.Observation{}, time.Now().Add(2*time.Second)); st != session.StateWorking {
+		t.Errorf("a notify report the script sent was not released by input: %s; "+
+			"the script did not say it was the notify line", st)
 	}
 }

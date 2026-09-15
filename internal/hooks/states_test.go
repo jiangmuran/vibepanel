@@ -15,7 +15,7 @@ import (
 //
 // What reading did establish, so the remaining risk is a typo rather than a
 // design mistake: `events` is a map[string]string in this package;
-// `ClaudeSettings` and `CodexNotify` both take a string and return one;
+// `ClaudeSettings` and `CodexHooks` both take a string and return one;
 // `session.AllStates` is a []State over a string type, so string(s) converts;
 // and there is no import cycle — internal/session imports only internal/tmux,
 // which imports no internal package at all, so this file's dependency on
@@ -87,18 +87,19 @@ func TestEveryStateAHookReportsIsARealState(t *testing.T) {
 		}
 	}
 
-	// Codex has one command for one event and can only ever report waiting.
-	// Whatever that one is, it has to be a state the server accepts.
-	codex := CodexNotify("/tmp/report.sh")
-	found := false
-	for state := range valid {
-		if strings.Contains(codex, `"`+state+`"`) {
-			found = true
-			break
-		}
+	// Codex's hooks are a second map with its own literals, written into a
+	// second file the panel does not own.
+	if len(codexEvents) == 0 {
+		t.Fatal("codexEvents is empty, so the Codex half compares nothing")
 	}
-	if !found {
-		t.Errorf("the Codex notify line reports no state the server accepts: %s", codex)
+	codex := CodexHooks("/tmp/report.sh")
+	for event, state := range codexEvents {
+		if !valid[state] {
+			t.Errorf("the Codex %s hook reports %q, which is not a state the server accepts", event, state)
+		}
+		if !strings.Contains(codex, `"`+event+`"`) || !strings.Contains(codex, command("/tmp/report.sh", state)+" "+codexSource) {
+			t.Errorf("the Codex snippet does not carry %s -> %s", event, state)
+		}
 	}
 }
 
