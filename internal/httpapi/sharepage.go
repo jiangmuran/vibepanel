@@ -547,9 +547,14 @@ func (s *Server) buildShareSnapshot(ctx context.Context, sc shareContext) (share
 		s.noteStale(derr)
 		return out, http.StatusServiceUnavailable, "the panel cannot reach its own database"
 	}
-	out.Data, _ = resolvePageData(manifest, rows, false)
-	out.Interactive = manifest.Capabilities().VisitorActions && s.linkMayAct(ctx, link)
-	out.Actions = snapshotActions(manifest, false, out.Interactive)
+	out.Data, _ = resolvePageData(manifest, rows, sc.admin)
+	if sc.admin {
+		out.Interactive = true
+		out.Actions = snapshotActions(manifest, true, true)
+	} else {
+		out.Interactive = manifest.Capabilities().VisitorActions && s.linkMayAct(ctx, link)
+		out.Actions = snapshotActions(manifest, false, out.Interactive)
+	}
 	s.markWatched(page.ID)
 	out.Sources = s.sourceResults(page.ID, manifest)
 	out.Server = s.serverTransform(ctx, page, ns, manifest, out)

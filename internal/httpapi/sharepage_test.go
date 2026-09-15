@@ -126,6 +126,9 @@ func TestAShareTokenReachesOnlyTheseRoutes(t *testing.T) {
 		"GET /api/share/{token}/v1/snapshot",
 		"GET /share/{token}",
 		"GET /share/{token}/*",
+		// The one write, and its preflight: docs/page-backend.md §6.
+		"OPTIONS /api/share/{token}/v1/actions/{name}",
+		"POST /api/share/{token}/v1/actions/{name}",
 	}
 	var got []string
 	err := chi.Walk(srv.Routes().(chi.Routes),

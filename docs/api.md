@@ -970,7 +970,12 @@ capability.
   "expiresAt": 0, "usageReadable": true, "stale": false,
   "machine": { … }, "counts": { … }, "projects": [ … ], "sessions": [ … ],
   "spend": { … } | null, "todos": null, "trend": null, "flow": null, "feed": null, "repo": null,
-  "scope": "", "scopeName": "", "scopeRepoOwner": "", "scopeRepoName": ""
+  "scope": "", "scopeName": "", "scopeRepoOwner": "", "scopeRepoName": "",
+  "data": { "announcement": "…" },      // the page's public data (docs/page-backend.md §2)
+  "interactive": false,                  // may this link run visitor actions right now
+  "actions": { "vote": { "who": "visitor", "label": "", "input": {}, "enabled": false } },
+  "sources": { "weather": { "ok": true, "fetchedAt": 0, "status": 200, "error": "", "value": {} } },
+  "server": null                         // server.js transform's result
 }
 ```
 
@@ -990,6 +995,73 @@ the next one.
 no published version, or a link that draws no page; `422` is a preview whose
 draft manifest does not validate, with the reason; `503` is the panel's
 database.
+
+### `POST /api/share/{token}/v1/actions/{name}`
+### `OPTIONS /api/share/{token}/v1/actions/{name}`
+
+The one write a share token reaches: a visitor action the page declares, on a
+link the owner made interactive (docs/page-backend.md §6). The body is the
+action's input as one JSON object, at most 4 KiB, or empty. The answer is always
+`{"ok": true, "result": …}` or `{"ok": false, "error": "…", "retryAfter": n}`:
+
+| status | why |
+|---|---|
+| `403` | the link is not interactive (or is a view copy), or visitor writes are off |
+| `404` | no such visitor action in the version the link draws |
+| `429` | over the action's rate for this address, 600/min for the link, or 3000/min for the panel; `Retry-After` |
+| `400` | the payload is not exactly the declared input, or the data change breaks a limit |
+| `401` | the link is revoked, expired or unknown |
+
+Effects write only the page's own data, or run `server.js`'s `onVisitorAction`.
+A preview link's actions write draft data. `OPTIONS` answers the browser's
+preflight with `Access-Control-Allow-Origin: *`, `POST` and `Content-Type`,
+never credentials. Counted per link (`actionsToday`) and audited as
+`share.action`, one row when an action starts being used in a minute and one
+with the count when that minute has passed.
+
+## Admin pages
+
+A page's own admin page, behind the panel login (docs/page-backend.md §3).
+
+### Opening one: `/pages/{pageID}/admin/`
+
+Signed in with the session cookie (not an API token), mints an **admin grant**
+bound to that session and answers `303` to `/page-admin/{grant}/<admin.entry>`;
+not signed in, `303` to `/`. `?draft=1` serves the draft directory's admin page
+on draft data. `404` for a page with no `admin` in its manifest; `409` for a
+live admin page on a page never published.
+
+### Its files: `/page-admin/{grant}/…`
+
+The page's files, for its admin page, served like a share page's: `sandbox
+allow-scripts allow-forms`, `form-action 'none'`, `frame-ancestors 'self'`, a
+`connect-src` that names `/api/page-admin/{grant}/v1/`. `server.js` is never
+served. A grant that has expired or whose session has ended gets the plain
+"no longer works" page.
+
+### `GET /api/page-admin/{grant}/v1/snapshot`
+### `GET /api/page-admin/{grant}/v1/data`
+### `PUT /api/page-admin/{grant}/v1/data/{key}`
+### `POST /api/page-admin/{grant}/v1/data/{key}/increment`
+### `POST /api/page-admin/{grant}/v1/data/{key}/append`
+### `DELETE /api/page-admin/{grant}/v1/data/{key}`
+### `POST /api/page-admin/{grant}/v1/actions/{name}`
+### `GET /api/page-admin/{grant}/v1/sources`
+### `GET /api/page-admin/{grant}/v1/links`
+
+The admin API. The grant in the path is the only credential; it lives 8 hours,
+dies with the session that minted it (sign-out, a password change) on its next
+request, and is refused anywhere else, as a share token is refused here — both
+answer `401`. `OPTIONS` on any of these answers the preflight.
+
+`snapshot` is the page's snapshot with names, over the whole panel, with
+admin-visibility data and admin actions. The data routes take and answer what
+the settings data routes do (see below). `actions/{name}` runs an action whose
+`who` includes `admin`, answering like a visitor action. `sources` is each
+source's last fetch. `links` is `{"links": [{"name", "remark", "interactive",
+"viewers"}]}` — never a token or an address. Writes are audited as
+`page.data_changed` under the user the grant was minted for; a refused grant as
+`page.admin_rejected`.
 
 `sessions` is empty, and `spend`, `todos`, `trend`, `flow`, `feed` and `repo`
 are `null`, unless the page's manifest names them. A page can only ever

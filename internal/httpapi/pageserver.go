@@ -13,3 +13,9 @@ func (s *Server) serverTransform(ctx context.Context, page store.SharePage, ns s
 	snap shareSnapshot) any {
 	return nil
 }
+
+// runServerHook runs one of server.js's hooks for an action.
+func (s *Server) runServerHook(ctx context.Context, page store.SharePage, ns string, m pages.Manifest,
+	hook, name string, input, visitor map[string]any, action *pages.ActionSpec, by string) (any, error) {
+	return nil, dataErrorf("server.js is not available")
+}

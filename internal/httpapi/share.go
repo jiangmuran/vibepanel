@@ -97,6 +97,9 @@ type shareContext struct {
 	// server and is stable for the life of the link, which is exactly what
 	// shareID needs.
 	secret []byte
+	// admin is an admin page's snapshot (admingrants.go): admin-visibility
+	// data and admin actions, never set for a share token.
+	admin bool
 }
 
 func (s *Server) shareCooldowns() *auth.Cooldown {
@@ -128,6 +131,11 @@ func (s *Server) registerShareRoutes(r chi.Router) {
 		// The versioned contract a share page is written against; see
 		// sharepage.go.
 		r.Get("/v1/snapshot", s.handleShareSnapshot)
+		// The one write a share token reaches: a page's declared visitor
+		// actions, on an interactive link. pageactions.go says why this is
+		// still narrowing by route.
+		r.Post("/v1/actions/{name}", s.handleVisitorAction)
+		r.Options("/v1/actions/{name}", s.handleActionPreflight)
 	})
 }
 

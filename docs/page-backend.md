@@ -274,12 +274,14 @@ schema the payload must match, using §2's scalar types.
    default; off refuses every action on every link immediately).
 4. The action is declared, with `who` including `visitor`, **in the version
    the link is drawing** — not the draft, not a newer version.
-5. The body is JSON, at most 4 KiB, and matches `input` exactly: no extra
-   fields, every string free of control and bidi-override characters, every
-   limit held.
-6. **Rate limits** pass: the action's `rate` per client address (default
+5. **Rate limits** pass: the action's `rate` per client address (default
    `30/min`), 600 actions per minute per link, 3000 per minute across the
-   panel. Over any of them is `429` with `Retry-After`.
+   panel. Over any of them is `429` with `Retry-After`. Checked before the body
+   is read, so a flood costs a lookup, and a refused call still counts against
+   its address.
+6. The body is JSON, at most 4 KiB, and matches `input` exactly: no extra
+   fields, every string free of control characters (line breaks included) and
+   bidi overrides, every limit held.
 7. The effect's own limits hold (§2's sizes, a log's `max`, the data cap).
 
 The answer is `{ok, result}` or `{ok: false, error, retryAfter}`. The next

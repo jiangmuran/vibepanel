@@ -363,6 +363,10 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"sharing.visitor_writes": true,
 		// A page's own data changed by its owner or through an admin page.
 		"page.data_changed": true,
+		// A visitor action run through a link, coalesced per minute; a grant
+		// presented after it ended.
+		"share.action":        true,
+		"page.admin_rejected": true,
 		// A page's own history, which is a question about the page.
 		"page.created":     true,
 		"page.published":   true,

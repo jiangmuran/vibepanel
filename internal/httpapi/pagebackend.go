@@ -8,4 +8,6 @@ type pageBackend struct {
 	secrets secrets
 	actions actionDay
 	data    pageDataState
+	rates   rateBook
+	audit   actionAudit
 }
