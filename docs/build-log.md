@@ -16229,8 +16229,8 @@ softened.
 Verified and kept, because they are the ones that would have been guessed wrong:
 24 board presets, 37 widget kinds, a 12×4 grid, 2,000 lines / 256 KiB of
 scrollback every 30 s, the last fifteen commits, 8 MiB and 256 KiB / 4,000 lines
-in preview, four built-in launch profiles, `MemoryHigh=20G` / `MemoryMax=26G` on
-both units and `OOMScoreAdjust=-500` on only the system one.
+in preview, four built-in launch profiles, the then-shipped `MemoryHigh=20G` /
+`MemoryMax=26G` on both units and `OOMScoreAdjust=-500` on only the system one.
 
 ### Left undone, deliberately
 
@@ -18767,10 +18767,13 @@ of its tmux windows. The journal named them — `Found left-over process (go)`,
 `(vet)`, `(compile)`. But the load only revealed the setting; a person running
 a dozen agents reaches the same place.
 
-`MemoryHigh` is gone from both units. `MemoryMax` stays and is what the
-original reasoning was actually about: a hard ceiling so a runaway session
-cannot take the machine into swap, biting once, at the end, on the process that
-did it, with `OOMPolicy=continue` keeping that from taking the panel too.
+`MemoryHigh` is gone from both units. The conclusion that a bare `MemoryMax`
+was therefore a hard ceiling was wrong. With swap available, `memory.max` can
+still reclaim and swap pages to hold the cgroup below the limit, throttling the
+same session tree; only after that swap is exhausted does memcg OOM. The two
+directives have to be paired, with `MemorySwapMax=0` when the intended behavior
+is an immediate cgroup ceiling. `OOMPolicy=continue` still keeps one killed
+agent from taking down the panel.
 
 This is the fourth thing removed under the same rule, so the rule's guard grew
 a category. It used to list only what a shell can *do*; a shared throttle is
@@ -21508,6 +21511,51 @@ reported failure happens under these rules: v1.10.0 validated with `sudo -v`,
 which asks for a password whenever any matching rule needs one, before running
 a command sudo would have run without one. On this machine the new version
 shows a button and no field.
+
+## 2026-09-14 — MemoryMax needs MemorySwapMax
+
+The host evidence that prompted this change was a 15.6 GiB VM with 5.9 GiB of
+swap. Its hand-edited panel unit had `MemoryMax=4G` and no
+`MemorySwapMax`. `memory.events` reported `max=1910360`, `oom=183` and
+`oom_kill=13`; `memory.stat` reported `pgscan_direct=176323326` versus
+`pgscan_kswapd=976138`, and `swap.current` reached 4.3 GiB. The host still
+reported more than 8 GiB `MemAvailable`, so host-level `pgscan_direct` did not
+explain the pressure: the reclaim was being driven by the cgroup limit.
+
+This was reproduced without touching the running `vibepanel.service`, using
+two transient scopes and the same 400 MiB page-touching program:
+
+```
+systemd-run --scope -p MemoryMax=200M <allocate-and-touch-400M>
+```
+
+After 14 seconds the process was still alive and printed `completed`. The
+scope stayed at about 200 MiB resident, its `memory.events` grew to
+`max=12823 oom=0 oom_kill=0`, and `memory.swap.current` was about 217 MiB.
+`MemorySwapMax` was `infinity` in the scope. This is the silent reclaim and
+swap throttle.
+
+The same scope with an explicit swap ceiling:
+
+```
+systemd-run --scope -p MemoryMax=200M -p MemorySwapMax=0 <allocate-and-touch-400M>
+```
+
+was killed before the first one-second sample. The scope reported
+`Result=oom-kill`, the process exited 137, and the last readable counters were
+`max=19 oom=1 oom_kill=1` with `swap.current=0`. This is the hard ceiling the
+unit comments intended to describe.
+
+Both shipped units now use `MemoryMax=70%` (relative to physical RAM) and
+`MemorySwapMax=0`. The percentage leaves room for the host and other services;
+machine-specific changes belong in systemd drop-ins because the installer
+rewrites the base unit on install and upgrade.
+
+The new guard was run against the old files before changing them and failed for
+both units with the explicit reason that `memory.max` alone can throttle by
+reclaiming and swapping. After the paired directives landed,
+`go test ./internal/config -run TestMemoryMaxAlwaysHasMemorySwapMax -count=1`
+passed.
 
 ## Share pages: the read-only link, drawn by HTML its owner wrote
 

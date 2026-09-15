@@ -55,8 +55,29 @@ The user unit sets `CPUWeight`, `IOWeight` and `ManagedOOMPreference` instead,
 and the installer enables lingering for it. Without lingering the unit stops
 when your last login session ends.
 
-Both units carry `MemoryAccounting=yes`, `MemoryHigh=20G` and `MemoryMax=26G`,
-sized for a 32 GB machine running a dozen agents. Lower them on a small VPS.
+Both units carry `MemoryAccounting=yes`, `MemoryMax=70%` and
+`MemorySwapMax=0`. The limit is relative to physical RAM, leaves roughly 30%
+for the host and other services, and does not let the session tree turn spare
+swap into a sustained reclaim throttle. `MemorySwapMax=0` makes reaching the
+limit a cgroup OOM instead. Tune the pair for a host that needs a different
+balance.
+
+The installer writes the shipped unit on every install and re-run, including
+`vibepanel service upgrade`; editing `/etc/systemd/system/vibepanel.service`
+directly is therefore not a durable host override. Use a systemd drop-in so an
+upgrade can replace the base unit without losing the local policy:
+
+```sh
+# system service
+sudo systemctl set-property vibepanel.service MemoryMax=60% MemorySwapMax=0
+
+# user service
+systemctl --user set-property vibepanel.service MemoryMax=60% MemorySwapMax=0
+```
+
+For a persistent, reviewable change, use `systemctl edit` instead. Keep
+`MemoryMax` and `MemorySwapMax` together; setting only the former lets the
+kernel reclaim and swap below the limit and throttles every session.
 
 **Install one, never both.** Two units are two panels on one tmux socket and one
 database, and the symptom is a panel that forgets things. The installer refuses

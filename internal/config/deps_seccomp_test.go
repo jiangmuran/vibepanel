@@ -113,7 +113,8 @@ var inheritedConfinement = map[string]string{
 		"together: the kernel holds the group at that figure by reclaiming and swapping for as " +
 		"long as it takes, so an agent doing real work throttles the console that is meant to " +
 		"show it. Measured at 20G peak and 3.1G swap peak, with the proxy in front returning " +
-		"intermittent 502s. MemoryMax is the ceiling and stays; a ceiling is not a throttle",
+		"intermittent 502s. MemoryMax must be paired with MemorySwapMax; without that pair, " +
+		"memory.max can cause the same reclaim-and-swap throttle before memcg OOM",
 	"CPUQuota": "the same shape on the other axis -- a cap the whole cgroup shares, so the panel " +
 		"waits behind whatever an agent is compiling",
 	"TasksMax": "shared by every session, so one agent spawning workers stops the next session " +
@@ -154,6 +155,41 @@ func TestNothingInEitherUnitConfinesWhatAShellDoes(t *testing.T) {
 		// would come to be trusted while checking nothing.
 		if seen < 5 {
 			t.Fatalf("deploy/%s parsed as %d directives; this test is no longer reading the unit", unit, seen)
+		}
+	}
+}
+
+// A memory.max without memory.swap.max is not a hard ceiling. Once the cgroup
+// reaches memory.max, the kernel can reclaim and swap pages to keep the group
+// below it, which throttles every session before swap exhaustion finally makes
+// the cgroup OOM. Keep the two controls paired so the unit says which behavior
+// it actually wants.
+func TestMemoryMaxAlwaysHasMemorySwapMax(t *testing.T) {
+	assign := regexp.MustCompile(`(?m)^\s*([A-Za-z]+)\s*=`)
+	for _, unit := range []string{"vibepanel.service", "vibepanel-system.service"} {
+		b, err := os.ReadFile(filepath.Join("..", "..", "deploy", unit))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var hasMax, hasSwapMax bool
+		for _, line := range strings.Split(string(b), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			m := assign.FindStringSubmatch(trimmed)
+			if m == nil {
+				continue
+			}
+			if strings.EqualFold(m[1], "MemoryMax") {
+				hasMax = true
+			}
+			if strings.EqualFold(m[1], "MemorySwapMax") {
+				hasSwapMax = true
+			}
+		}
+		if hasMax && !hasSwapMax {
+			t.Errorf("deploy/%s sets MemoryMax without MemorySwapMax: memory.max alone can reclaim and swap below the limit, throttling every session instead of acting as a hard ceiling", unit)
 		}
 	}
 }
