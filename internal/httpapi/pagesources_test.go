@@ -219,4 +219,3 @@ func TestASecretIsNeverQuotedBackInAnError(t *testing.T) {
 		t.Error("a message without secrets changed")
 	}
 }
-
