@@ -26,6 +26,22 @@ import (
 // one, and a page never published is exported from its directory as it is.
 // It returns the bytes and the version they are (0 for a directory).
 func PageArchive(ctx context.Context, db *store.DB, page store.SharePage, version int) ([]byte, int, error) {
+	return pageArchive(ctx, db, page, version, false)
+}
+
+// pageArchive is PageArchive, with the page's live data as vibepanel-data.json
+// when withData.
+func pageArchive(ctx context.Context, db *store.DB, page store.SharePage, version int, withData bool) ([]byte, int, error) {
+	var extra []pages.File
+	if withData {
+		raw, err := exportPageData(ctx, db, page)
+		if err != nil && !errors.Is(err, errNotPublished) {
+			return nil, 0, err
+		}
+		if raw != nil {
+			extra = append(extra, pages.File{Path: pages.DataFile, Data: raw})
+		}
+	}
 	if version == 0 {
 		version = page.PublishedVersion
 	}
@@ -39,7 +55,7 @@ func PageArchive(ctx context.Context, db *store.DB, page store.SharePage, versio
 		if err != nil {
 			return nil, 0, err
 		}
-		if err := pages.WriteArchive(&buf, raw, b.Files); err != nil {
+		if err := pages.WriteArchive(&buf, raw, append(b.Files, extra...)); err != nil {
 			return nil, 0, err
 		}
 		return buf.Bytes(), 0, nil
@@ -60,7 +76,7 @@ func PageArchive(ctx context.Context, db *store.DB, page store.SharePage, versio
 		}
 		out = append(out, pages.File{Path: f.Path, ContentType: f.ContentType, Data: data})
 	}
-	if err := pages.WriteArchive(&buf, row.Manifest, out); err != nil {
+	if err := pages.WriteArchive(&buf, row.Manifest, append(out, extra...)); err != nil {
 		return nil, 0, err
 	}
 	return buf.Bytes(), version, nil
@@ -80,7 +96,7 @@ func (s *Server) handleExportPage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	data, got, err := PageArchive(ctx, s.DB, page, version)
+	data, got, err := pageArchive(ctx, s.DB, page, version, r.URL.Query().Get("data") == "1")
 	if errors.Is(err, store.ErrNotFound) {
 		writeErr(w, http.StatusNotFound, "no such version")
 		return
@@ -113,6 +129,13 @@ func PageArchiveName(name string, version int) string {
 type importedPage struct {
 	Page    store.SharePage `json:"page"`
 	Ignored []pages.Ignored `json:"ignored"`
+	// Hosts and Secrets are what the page's sources need before they fetch
+	// anything: approved hosts and stored secrets, neither of which travels
+	// in an archive.
+	Hosts   []string `json:"hosts"`
+	Secrets []string `json:"secrets"`
+	// DataSkipped is what of the archive's data did not fit the page.
+	DataSkipped []string `json:"dataSkipped"`
 }
 
 // ImportPage makes a new page from an archive, in a new directory under root,
@@ -139,7 +162,32 @@ func ImportPage(ctx context.Context, db *store.DB, root, userID, name string, ar
 	if err != nil {
 		return importedPage{}, err
 	}
-	return importedPage{Page: page, Ignored: b.Ignored}, nil
+	out := importedPage{Page: page, Ignored: b.Ignored, Hosts: []string{}, Secrets: []string{}, DataSkipped: []string{}}
+	seen := map[string]bool{}
+	for _, src := range b.Manifest.Sources {
+		if h := sourceHost(src.URL); h != "" && !seen["h"+h] {
+			seen["h"+h] = true
+			out.Hosts = append(out.Hosts, h)
+		}
+		for _, name := range src.Secrets() {
+			if !seen["s"+name] {
+				seen["s"+name] = true
+				out.Secrets = append(out.Secrets, name)
+			}
+		}
+	}
+	if b.Data != nil {
+		// Into live and draft both, checked against the manifest the page
+		// arrived with, which is the one its first publish will have. A value
+		// that does not fit is reported, not written.
+		for _, ns := range []string{store.PageDataLive, store.PageDataDraft} {
+			skipped := importPageData(ctx, db, page.ID, ns, b.Manifest, b.Data, "import")
+			if ns == store.PageDataLive {
+				out.DataSkipped = append(out.DataSkipped, skipped...)
+			}
+		}
+	}
+	return out, nil
 }
 
 func (s *Server) handleImportPage(w http.ResponseWriter, r *http.Request) {

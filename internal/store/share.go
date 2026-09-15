@@ -151,6 +151,17 @@ type ShareLink struct {
 	// is drawing, by internal/pages -- a page republished with a different
 	// schema must not break a wall over a value that no longer fits.
 	Params map[string]any `json:"params"`
+	// Interactive lets visitors run the page's declared visitor actions through
+	// this link. Off unless the owner turned it on; read by the actions handler
+	// and nothing else. docs/page-backend.md §6.
+	Interactive bool `json:"interactive"`
+	// Copyable is whether the address can be shown again: a link made before
+	// tokens were kept sealed has only its hash, and can only be given a new
+	// address.
+	Copyable bool `json:"copyable"`
+	// ActionsToday is how many visitor actions ran through the link since the
+	// panel's local midnight, filled in from memory by the settings list.
+	ActionsToday int `json:"actionsToday"`
 	// Purpose is '' for a link somebody handed out and "preview" for the
 	// short-lived ones the Preview pane mints. Never sent: a preview link is
 	// not listed, cannot be edited, and says nothing a real link would not.
@@ -222,6 +233,9 @@ func TruncateRemark(s string) string { return truncateRunes(s, MaxRemark) }
 type NewShareLink struct {
 	ID        string
 	TokenHash []byte
+	// TokenEnc is the token sealed under the panel's secrets key, so the
+	// address can be shown again. Empty is allowed and means it cannot be.
+	TokenEnc  []byte
 	Prefix    string
 	Name      string
 	Detail    ShareDetail
@@ -234,13 +248,15 @@ type NewShareLink struct {
 	PageID    string
 	// PinVersion and PinUntil start the link pinned, for a peek link that has
 	// to draw what the link it copies draws, trial and all.
-	PinVersion int
-	PinUntil   int64
-	Params     map[string]any
-	Purpose    string
+	PinVersion  int
+	PinUntil    int64
+	Params      map[string]any
+	Purpose     string
+	Interactive bool
 }
 
-// CreateShareLink records a link. The token itself is never stored.
+// CreateShareLink records a link. The token itself is never stored in the
+// clear: its hash, and optionally its sealed form.
 func (d *DB) CreateShareLink(ctx context.Context, in NewShareLink) (ShareLink, error) {
 	params, err := encodeParams(in.Params)
 	if err != nil {
@@ -252,11 +268,11 @@ func (d *DB) CreateShareLink(ctx context.Context, in NewShareLink) (ShareLink, e
 		INSERT INTO share_links
 			(id, token_hash, prefix, name, detail, scope, scope_id,
 			 user_id, created_at, expires_at, remark, locked, page_id, params, purpose,
-			 pin_version, pin_until)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 pin_version, pin_until, token_enc, interactive)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.ID, in.TokenHash, in.Prefix, in.Name, string(in.Detail), string(in.Scope),
 		in.ScopeID, in.UserID, n, in.ExpiresAt, remark, in.Locked, in.PageID, params, in.Purpose,
-		in.PinVersion, in.PinUntil)
+		in.PinVersion, in.PinUntil, nonNilBytes(in.TokenEnc), in.Interactive)
 	if err != nil {
 		return ShareLink{}, fmt.Errorf("store: create share link: %w", err)
 	}
@@ -265,23 +281,33 @@ func (d *DB) CreateShareLink(ctx context.Context, in NewShareLink) (ShareLink, e
 		Scope: string(in.Scope), ScopeID: in.ScopeID, ExpiresAt: in.ExpiresAt, CreatedAt: n,
 		Remark: remark, Locked: in.Locked, PageID: in.PageID, Params: decodeParams(params),
 		Purpose: in.Purpose, PinVersion: in.PinVersion, PinUntil: in.PinUntil,
+		Interactive: in.Interactive, Copyable: len(in.TokenEnc) > 0,
 	}, nil
 }
 
+func nonNilBytes(b []byte) []byte {
+	if b == nil {
+		return []byte{}
+	}
+	return b
+}
+
 // shareLinkColumns is the one list every read of share_links selects, in the
-// order scanShareLink reads them. token_hash is not in it, which is the whole
-// reason there is exactly one list: no read path can hand a live credential
-// back, and a second SELECT written by hand is where it would be added.
+// order scanShareLink reads them. token_hash is not in it, and token_enc only
+// as whether it is there, which is the whole reason there is exactly one list:
+// no ordinary read path can hand a live credential back, and a second SELECT
+// written by hand is where it would be added. ShareLinkTokenEnc is the one
+// read of the sealed token, and it is named for it.
 const shareLinkColumns = `id, prefix, name, detail, scope, scope_id,
 	expires_at, created_at, last_used_at, remark, locked,
-	page_id, pin_version, pin_until, params, purpose`
+	page_id, pin_version, pin_until, params, purpose, interactive, length(token_enc) > 0`
 
 func scanShareLink(row scanner) (ShareLink, error) {
 	var s ShareLink
 	var params string
 	if err := row.Scan(&s.ID, &s.Prefix, &s.Name, &s.Detail, &s.Scope, &s.ScopeID,
 		&s.ExpiresAt, &s.CreatedAt, &s.LastUsedAt, &s.Remark, &s.Locked,
-		&s.PageID, &s.PinVersion, &s.PinUntil, &params, &s.Purpose); err != nil {
+		&s.PageID, &s.PinVersion, &s.PinUntil, &params, &s.Purpose, &s.Interactive, &s.Copyable); err != nil {
 		return ShareLink{}, err
 	}
 	s.Params = decodeParams(params)
@@ -339,6 +365,52 @@ func (d *DB) UpdateShareLink(ctx context.Context, id, name, remark string, locke
 		name, TruncateRemark(remark), locked, id)
 	if err != nil {
 		return fmt.Errorf("store: update share link: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ShareLinkTokenEnc reads a handed-out link's sealed token, for showing its
+// address again. ErrNotFound for a preview or peek link, whose address is the
+// pane's; an empty value for a link made before tokens were sealed.
+func (d *DB) ShareLinkTokenEnc(ctx context.Context, id string) ([]byte, error) {
+	var enc []byte
+	err := d.sql.QueryRowContext(ctx,
+		`SELECT token_enc FROM share_links WHERE id = ? AND purpose = ''`, id).Scan(&enc)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("store: share link token: %w", err)
+	}
+	return enc, nil
+}
+
+// RotateShareLink gives a handed-out link a new token. The old address stops
+// resolving in the same statement that the new one starts to.
+func (d *DB) RotateShareLink(ctx context.Context, id string, tokenHash, tokenEnc []byte, prefix string) error {
+	res, err := d.sql.ExecContext(ctx,
+		`UPDATE share_links SET token_hash = ?, token_enc = ?, prefix = ? WHERE id = ? AND purpose = ''`,
+		tokenHash, nonNilBytes(tokenEnc), prefix, id)
+	if err != nil {
+		return fmt.Errorf("store: rotate share link: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetShareLinkInteractive turns visitor actions on or off for a handed-out
+// link. Preview and peek links are refused by the WHERE clause: whether they
+// may write is decided by their purpose, not by a column.
+func (d *DB) SetShareLinkInteractive(ctx context.Context, id string, on bool) error {
+	res, err := d.sql.ExecContext(ctx,
+		`UPDATE share_links SET interactive = ? WHERE id = ? AND purpose = ''`, on, id)
+	if err != nil {
+		return fmt.Errorf("store: set share link interactive: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound

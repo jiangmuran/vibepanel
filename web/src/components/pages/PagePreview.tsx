@@ -21,6 +21,8 @@ import {
   shouldReload,
   type FrameError,
 } from './pick'
+import { DataForm } from './DataForm'
+import { AdminFrame } from './ManageDialog'
 import { useNow } from './usePages'
 
 /**
@@ -116,6 +118,10 @@ export function PagePreview({
   const [picking, setPicking] = useState(false)
   // The screen drawn large over the whole window, or null.
   const [zoomed, setZoomed] = useState<SharePageViewport | null>(null)
+  // What the pane shows below its controls: the frames, the draft's admin page,
+  // or the draft's data. The frames stay mounted behind the other two, so a
+  // reload count and a pick are not lost by looking at the data.
+  const [view, setView] = useState<'frames' | 'admin' | 'data'>('frames')
   const [panel, setPanel] = useState<'' | 'publish' | 'trial'>('')
   const [note, setNote] = useState('')
   const [trialLink, setTrialLink] = useState('')
@@ -277,6 +283,11 @@ export function PagePreview({
     if (picked.length > 0) return picked.slice(0, full ? 3 : 1)
     return [defaultViewport(allViewports, allViewports.find((v) => v.name === liveName) ?? null, draft?.manifest?.viewports)]
   }, [allViewports, chosen, draft, full, liveName])
+
+  // A tab whose subject the draft stopped declaring falls back to the frames
+  // rather than leaving the pane empty.
+  const shown =
+    (view === 'admin' && !draft?.manifest?.admin) || (view === 'data' && !draft?.manifest?.data) ? 'frames' : view
 
   const src = link
     ? `/share/${link.token}/${fixture ? `?fixture=${encodeURIComponent(fixture)}` : ''}`
@@ -471,8 +482,46 @@ export function PagePreview({
         </button>
       </div>
 
+      {(draft?.manifest?.admin || draft?.manifest?.data) && (
+        <div className="vp-segmented self-start" role="tablist" data-testid="page-views">
+          {(
+            [
+              ['frames', 'page.viewFrames', true],
+              ['admin', 'page.viewAdmin', Boolean(draft?.manifest?.admin)],
+              ['data', 'page.viewData', Boolean(draft?.manifest?.data)],
+            ] as const
+          )
+            .filter(([, , declared]) => declared)
+            .map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                data-testid={`page-view-${id}`}
+                aria-selected={shown === id}
+                data-active={shown === id}
+                onClick={() => setView(id)}
+                className="vp-tab px-3 text-vp-sm whitespace-nowrap"
+              >
+                {t(label)}
+              </button>
+            ))}
+        </div>
+      )}
+
+      {shown === 'admin' && (
+        <div className="flex min-h-[28rem] flex-col" data-testid="page-view-admin-body">
+          <AdminFrame pageId={page.id} draft />
+        </div>
+      )}
+      {shown === 'data' && (
+        <div data-testid="page-view-data-body">
+          <DataForm pageId={page.id} ns="draft" />
+        </div>
+      )}
+
       {full && catalogue && (
-        <div className="flex flex-wrap gap-1" data-testid="page-screens">
+        <div className="flex flex-wrap gap-1" data-testid="page-screens" hidden={shown !== 'frames'}>
           {allViewports.map((v) => {
             const on = viewports.some((x) => x.name === v.name)
             return (
@@ -603,7 +652,7 @@ export function PagePreview({
       {/* The frames. Each one is drawn at the screen's real size and scaled to
           fit, so a television's layout is a television's layout and not a
           laptop's squeezed. */}
-      <div className={full ? 'flex flex-wrap items-start gap-3' : 'flex flex-col gap-2'}>
+      <div className={full ? 'flex flex-wrap items-start gap-3' : 'flex flex-col gap-2'} hidden={shown !== 'frames'}>
         {src &&
           viewports.map((v, i) => (
             <ScaledFrame

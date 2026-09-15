@@ -21,7 +21,7 @@ func TestAScaffoldIsAWorkingPage(t *testing.T) {
 	if b.Manifest.Name != "大厅 wall" {
 		t.Errorf("manifest name = %q", b.Manifest.Name)
 	}
-	for _, p := range []string{"AGENTS.md", "CLAUDE.md", "README.md", ".gitignore", SDKFile, TypesFile, "fixtures/busy.json"} {
+	for _, p := range []string{"AGENTS.md", "CLAUDE.md", "README.md", ".gitignore", SDKFile, TypesFile, ArchitectureFile, "fixtures/busy.json"} {
 		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
 			t.Errorf("%s was not written: %v", p, err)
 		}
@@ -121,5 +121,40 @@ func TestSlug(t *testing.T) {
 		if got := Slug(in); got != want {
 			t.Errorf("Slug(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// A template's manifest is rewritten with the page's name, and a rewrite that
+// kept only the keys it knew dropped the kiosk's data and actions: a page that
+// linted clean and had nothing to vote with.
+func TestAScaffoldKeepsEveryManifestKey(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "kiosk")
+	if err := Scaffold(dir, "kiosk", "Front desk", nil); err != nil {
+		t.Fatal(err)
+	}
+	b, problems := LintDir(dir)
+	if len(problems) != 0 {
+		t.Errorf("problems = %v", problems)
+	}
+	m := b.Manifest
+	if m.Name != "Front desk" || len(m.Data) != 4 || len(m.Actions) != 2 || m.Admin == nil || m.Admin.Entry != "admin/index.html" {
+		t.Errorf("the kiosk's manifest after scaffolding: %+v", m)
+	}
+	if !m.Capabilities().VisitorActions {
+		t.Error("the kiosk has no visitor actions")
+	}
+}
+
+// ARCHITECTURE.md in a page directory is docs/page-backend.md, byte for byte.
+// Two copies of a security design that are allowed to differ are two designs,
+// and the one an agent reads is the one a reviewer never opens.
+func TestArchitectureIsThePageBackendDocument(t *testing.T) {
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "page-backend.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(doc) != string(Architecture) {
+		t.Error("internal/pages/scaffold/ARCHITECTURE.md differs from docs/page-backend.md; " +
+			"copy the document over it")
 	}
 }

@@ -126,6 +126,9 @@ func TestAShareTokenReachesOnlyTheseRoutes(t *testing.T) {
 		"GET /api/share/{token}/v1/snapshot",
 		"GET /share/{token}",
 		"GET /share/{token}/*",
+		// The one write, and its preflight: docs/page-backend.md §6.
+		"OPTIONS /api/share/{token}/v1/actions/{name}",
+		"POST /api/share/{token}/v1/actions/{name}",
 	}
 	var got []string
 	err := chi.Walk(srv.Routes().(chi.Routes),
@@ -659,7 +662,7 @@ func TestAFixtureIsShapedToThePage(t *testing.T) {
 		t.Fatal(err)
 	}
 	var f pageFixture
-	if err := json.Unmarshal(shapeFixture(fx["busy"], m, nil), &f); err != nil {
+	if err := json.Unmarshal(shapeFixture(fx["busy"], m, nil, false), &f); err != nil {
 		t.Fatal(err)
 	}
 	s := f.Snapshot
@@ -713,6 +716,9 @@ func TestTheSDKTypesMatchTheSnapshot(t *testing.T) {
 		{"RepoProject", shareRepoProject{}},
 		{"RepoPRs", shareRepoPRs{}},
 		{"Repo", shareRepo{}},
+		{"SnapshotAction", snapshotAction{}},
+		{"SourceResult", sourceResult{}},
+		{"DataSpec", pages.DataSpec{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sent := jsonKeys(t, tc.row)

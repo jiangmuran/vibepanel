@@ -10,6 +10,8 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"sort"
 	"strings"
 )
 
@@ -38,7 +40,7 @@ type Template struct {
 
 // templateOrder is the gallery order: the plain starting point first, then
 // the templates by how often a screen like that gets put up.
-var templateOrder = []string{"blank", "wall", "spend", "built", "glance"}
+var templateOrder = []string{"blank", "wall", "spend", "built", "glance", "kiosk"}
 
 // Templates lists the templates this build carries.
 func Templates() []Template {
@@ -214,6 +216,9 @@ func writeCommon(dir string, fixtures map[string][]byte) error {
 	if err := writeNew(filepath.Join(dir, TypesFile), Types); err != nil {
 		return err
 	}
+	if err := writeNew(filepath.Join(dir, ArchitectureFile), Architecture); err != nil {
+		return err
+	}
 	if len(fixtures) > 0 {
 		if err := os.MkdirAll(filepath.Join(dir, "fixtures"), 0o755); err != nil {
 			return err
@@ -236,11 +241,11 @@ var fixtureName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
 // same pattern the SDK checks, so a fixture written here is one it can open.
 func FixtureName(s string) bool { return fixtureName.MatchString(s) }
 
-// SyncSDK rewrites a page directory's copy of the SDK and its types with this
-// build's. The copies are for editors and offline work; the page itself always
-// loads the panel's.
+// SyncSDK rewrites a page directory's copy of the SDK, its types and
+// ARCHITECTURE.md with this build's. The copies are for editors, agents and
+// offline work; the page itself always loads the panel's.
 func SyncSDK(dir string) error {
-	for p, data := range map[string][]byte{SDKFile: SDK, TypesFile: Types} {
+	for p, data := range map[string][]byte{SDKFile: SDK, TypesFile: Types, ArchitectureFile: Architecture} {
 		target := filepath.Join(dir, p)
 		if info, err := os.Lstat(target); err == nil && !info.Mode().IsRegular() {
 			return fmt.Errorf("%s is not a regular file", p)
@@ -288,10 +293,25 @@ func orderedManifest(m map[string]any) any {
 			out = append(out, kv{k, v})
 		}
 	}
-	for _, k := range []string{"sections", "spend", "repo", "flow", "params", "scriptHosts", "viewports"} {
+	known := []string{"sections", "spend", "repo", "flow", "params", "data", "admin", "sources", "server", "actions",
+		"scriptHosts", "viewports"}
+	for _, k := range known {
 		if v, ok := m[k]; ok {
 			out = append(out, kv{k, v})
 		}
+	}
+	// Anything else after, sorted: a key this list has not heard of is still
+	// the template's, and a rename that dropped it would publish a different
+	// page. That is how the kiosk template first lost its data.
+	var rest []string
+	for k := range m {
+		if k != "sdk" && k != "name" && !slices.Contains(known, k) {
+			rest = append(rest, k)
+		}
+	}
+	sort.Strings(rest)
+	for _, k := range rest {
+		out = append(out, kv{k, m[k]})
 	}
 	return orderedJSON(func(yield func(string, any) bool) {
 		for _, e := range out {

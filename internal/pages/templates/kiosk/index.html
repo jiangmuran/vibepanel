@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Kiosk</title>
+  <style>
+    /* A screen people walk up to: a vote, a guestbook, an announcement. It
+       writes only through the actions in vibepanel.json, and only on a link
+       the owner made interactive; everywhere else it is a screen to read. */
+    :root {
+      --bg: #f3f1ec;
+      --card: #ffffff;
+      --line: #e4e0d6;
+      --text: #1c1b18;
+      --muted: #6d6a60;
+      --accent: #2f63e0;
+      --accent-text: #ffffff;
+      --good: #1f8a55;
+      --warn-bg: #fff4dc;
+      --warn: #8a5a00;
+      --shadow: 0 1px 2px rgba(30, 25, 10, 0.06), 0 4px 16px rgba(30, 25, 10, 0.05);
+      --vp-live: #1f8a55;
+      --vp-waiting: #b87800;
+      --vp-trouble: #cf3b32;
+      color-scheme: light;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #11110f;
+        --card: #1b1b18;
+        --line: #2c2b27;
+        --text: #f1efe8;
+        --muted: #9a968a;
+        --accent: #6f98ff;
+        --accent-text: #0b1020;
+        --good: #45c283;
+        --warn-bg: #2c2517;
+        --warn: #f2b53a;
+        --shadow: none;
+        --vp-live: #45c283;
+        --vp-waiting: #f2b53a;
+        --vp-trouble: #ff6b61;
+        color-scheme: dark;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: clamp(16px, 1.1vw + 10px, 26px)/1.4 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+      font-variant-numeric: tabular-nums;
+      -webkit-text-size-adjust: 100%;
+    }
+    [hidden] { display: none !important; }
+    .page {
+      min-height: 100%;
+      display: flex; flex-direction: column; gap: 1em;
+      padding: max(1em, env(safe-area-inset-top)) clamp(1em, 3vw, 3em) max(1em, env(safe-area-inset-bottom));
+      max-width: 1600px; margin: 0 auto;
+    }
+    header { display: flex; align-items: center; gap: 0.75em; }
+    h1 { flex: 1; min-width: 0; margin: 0; font-size: 2em; line-height: 1.15; overflow-wrap: anywhere; }
+    #status { font-size: 0.75em; color: var(--muted); white-space: nowrap; }
+    .banner { border-radius: 0.6em; padding: 0.6em 0.9em; background: var(--warn-bg); color: var(--warn); font-weight: 600; }
+
+    .announcement { background: var(--card); box-shadow: var(--shadow); border-radius: 0.8em; padding: 0.9em 1.1em;
+      font-size: 1.35em; font-weight: 600; overflow-wrap: anywhere; unicode-bidi: plaintext; }
+
+    main { flex: 1; display: grid; gap: 1em; grid-template-columns: minmax(0, 1fr); align-content: start; }
+    @media (min-width: 900px) { main { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); } }
+    .card { background: var(--card); box-shadow: var(--shadow); border-radius: 0.8em; padding: 1em 1.1em; min-width: 0; }
+    .card h2 { margin: 0 0 0.6em; font-size: 0.8em; font-weight: 650; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+
+    .vote { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.5em; text-align: center; }
+    .question { font-size: 1.2em; font-weight: 600; overflow-wrap: anywhere; }
+    .votes { font-size: 4.5em; font-weight: 750; line-height: 1; letter-spacing: -0.02em; }
+    .votes-word { color: var(--muted); }
+
+    button, input {
+      font: inherit; color: inherit;
+    }
+    button {
+      border: 0; border-radius: 0.6em; padding: 0.55em 1.2em; min-height: 2.6em; min-width: 6em;
+      background: var(--accent); color: var(--accent-text); font-weight: 650; cursor: pointer;
+      touch-action: manipulation;
+    }
+    button:disabled { opacity: 0.5; cursor: default; }
+    button.big { font-size: 1.3em; padding: 0.6em 1.6em; }
+    .said { min-height: 1.4em; font-size: 0.85em; color: var(--muted); }
+    .said.good { color: var(--good); }
+
+    .sign { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.5em; margin-bottom: 0.8em; }
+    @media (min-width: 600px) { .sign { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto; } }
+    input {
+      width: 100%; min-width: 0; min-height: 2.6em; padding: 0.4em 0.7em; border-radius: 0.6em;
+      border: 1px solid var(--line); background: var(--bg);
+    }
+    ol { list-style: none; margin: 0; padding: 0; }
+    li { padding: 0.55em 0; border-top: 1px solid var(--line); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 0.8em; }
+    li:first-child { border-top: 0; }
+    li .who { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; unicode-bidi: isolate; }
+    li .when { color: var(--muted); font-size: 0.8em; white-space: nowrap; }
+    li .msg { grid-column: 1 / -1; overflow-wrap: anywhere; unicode-bidi: plaintext; }
+    .empty { color: var(--muted); padding: 0.5em 0; }
+    .readonly { color: var(--muted); font-size: 0.85em; }
+
+    footer { color: var(--muted); font-size: 0.8em; display: flex; flex-wrap: wrap; gap: 0.3em 1em; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <h1 id="title">Welcome</h1>
+      <span id="status"></span>
+    </header>
+    <div class="banner" id="banner" hidden></div>
+    <div class="announcement" id="announcement" hidden></div>
+
+    <main>
+      <section class="card vote">
+        <div class="question" id="question"></div>
+        <div class="votes" id="votes">—</div>
+        <div class="votes-word" id="votesWord">votes</div>
+        <button class="big" id="vote" type="button" hidden>Vote</button>
+        <div class="said" id="voteSaid" aria-live="polite"></div>
+      </section>
+
+      <section class="card">
+        <h2 id="bookTitle">Guestbook</h2>
+        <!-- Inputs and a button rather than a form element: a share page's
+             sandbox submits nothing, and vp.action is what sends this. -->
+        <div class="sign" id="sign" hidden>
+          <input id="name" maxlength="40" placeholder="Your name" autocomplete="off" aria-label="Your name">
+          <input id="msg" maxlength="140" placeholder="Say something" autocomplete="off" aria-label="Message">
+          <button id="send" type="button">Sign</button>
+        </div>
+        <div class="said" id="signSaid" aria-live="polite"></div>
+        <p class="readonly" id="readonly" hidden>This screen shows the guestbook; signing it happens at the kiosk.</p>
+        <ol id="entries"></ol>
+      </section>
+    </main>
+
+    <footer id="footer"></footer>
+  </div>
+
+  <script src="vibepanel.js"></script>
+  <script>
+    const vp = VibePanel.connect()
+    vp.badge(document.getElementById('status'))
+    const $ = (id) => document.getElementById(id)
+    let params = {}
+
+    // Everything a visitor wrote is drawn with vp.text: it is text somebody at
+    // a kiosk chose, and the hostile fixture is what shows it stays text.
+    function drawData(d) {
+      const announcement = typeof d.announcement === 'string' ? d.announcement : ''
+      $('announcement').hidden = !announcement
+      vp.text($('announcement'), announcement, '')
+
+      const votes = typeof d.votes === 'number' ? d.votes : 0
+      vp.text($('votes'), vp.fmt.number(votes))
+      vp.text($('votesWord'), votes === 1 ? 'vote' : 'votes')
+
+      const list = $('entries')
+      list.replaceChildren()
+      const entries = Array.isArray(d.guestbook) ? d.guestbook.slice().reverse() : []
+      for (const e of entries.slice(0, 12)) {
+        const li = document.createElement('li')
+        const who = document.createElement('span')
+        who.className = 'who'
+        vp.text(who, e.name, 'someone')
+        const when = document.createElement('span')
+        when.className = 'when'
+        vp.text(when, vp.since(e.at))
+        const msg = document.createElement('span')
+        msg.className = 'msg'
+        vp.text(msg, e.msg, '')
+        li.append(who, when, msg)
+        list.append(li)
+      }
+      if (!entries.length) {
+        const li = document.createElement('li')
+        li.className = 'empty'
+        li.textContent = 'Nobody has signed yet.'
+        list.append(li)
+      }
+    }
+
+    // The buttons exist only where pressing them can work: an interactive
+    // link, with visitor writes on. A wall showing the same page reads.
+    function drawActions(s) {
+      const actions = s.actions || {}
+      const canVote = Boolean(s.interactive && actions.vote && actions.vote.enabled)
+      const canSign = Boolean(s.interactive && actions.sign && actions.sign.enabled)
+      $('vote').hidden = !canVote
+      $('sign').hidden = !canSign
+      $('readonly').hidden = canSign
+    }
+
+    function say(el, result, good) {
+      el.classList.toggle('good', Boolean(result.ok))
+      if (result.ok) {
+        el.textContent = good
+      } else if (result.retryAfter) {
+        el.textContent = `Thanks — try again in ${result.retryAfter}s`
+      } else {
+        el.textContent = result.error || 'That did not work'
+      }
+      clearTimeout(el.clearTimer)
+      el.clearTimer = setTimeout(() => { el.textContent = '' }, 4000)
+    }
+
+    $('vote').addEventListener('click', async () => {
+      $('vote').disabled = true
+      const result = await vp.action('vote')
+      $('vote').disabled = false
+      say($('voteSaid'), result, 'Counted — thank you')
+    })
+
+    async function sign() {
+      const name = $('name').value.trim()
+      const msg = $('msg').value.trim()
+      if (!name || !msg) {
+        say($('signSaid'), { ok: false, error: 'A name and a message, please' })
+        return
+      }
+      $('send').disabled = true
+      const result = await vp.action('sign', { name, msg })
+      $('send').disabled = false
+      say($('signSaid'), result, 'Signed — thank you')
+      if (result.ok) $('msg').value = ''
+    }
+    $('send').addEventListener('click', sign)
+    $('msg').addEventListener('keydown', (e) => { if (e.key === 'Enter') sign() })
+
+    const OFFLINE = { disconnected: 'Not live — showing the last reading', revoked: 'This screen’s link no longer works' }
+    function banner() {
+      const words = OFFLINE[vp.status] || ''
+      $('banner').hidden = !words
+      $('banner').textContent = words
+    }
+
+    function draw(s) {
+      vp.text($('title'), params.title || s.name, 'Welcome')
+      vp.text($('question'), params.question, '')
+      drawActions(s)
+      const c = s.counts || {}
+      const bits = []
+      if (typeof c.working === 'number') bits.push(`${c.working} agents working`)
+      if (typeof c.waiting === 'number' && c.waiting > 0) bits.push(`${c.waiting} waiting`)
+      if (s.remark) bits.push(s.remark)
+      $('footer').replaceChildren(...bits.map((b) => vp.text(document.createElement('span'), b)))
+    }
+
+    vp.on('params', (p) => { params = p; if (vp.snapshot) draw(vp.snapshot) })
+    vp.on('data', drawData)
+    vp.on('snapshot', (s) => { draw(s); banner() })
+    vp.on('status', banner)
+  </script>
+</body>
+</html>

@@ -221,6 +221,13 @@ func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request) {
 	// snapshot gives: the token in the path is the whole capability.
 	h.Set("Access-Control-Allow-Origin", "*")
 
+	// The admin page and server code are the page's, and never a screen's:
+	// refused the way a file that does not exist is, so a probe cannot tell
+	// which pages have them.
+	if manifest.Private(rel) {
+		http.NotFound(w, r)
+		return
+	}
 	if rel == pages.SDKFile {
 		h.Set("Content-Type", "text/javascript; charset=utf-8")
 		_, _ = w.Write(pages.SDK)
@@ -263,7 +270,7 @@ func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(rel, "fixtures/") && strings.HasSuffix(rel, ".json") {
 		// Shaped to what this page would really receive, with this link's
 		// parameters. See shapeFixture.
-		data = shapeFixture(data, manifest, link.Params)
+		data = shapeFixture(data, manifest, link.Params, rel == "fixtures/hostile.json")
 	}
 	h.Set("Content-Type", ct)
 	h.Set("Content-Length", strconv.Itoa(len(data)))
@@ -329,6 +336,39 @@ type shareSnapshot struct {
 	ScopeName      string `json:"scopeName"`
 	ScopeRepoOwner string `json:"scopeRepoOwner"`
 	ScopeRepoName  string `json:"scopeRepoName"`
+
+	// A page with a backend, additive like everything above
+	// (docs/page-backend.md). Data is every public key the version declares;
+	// Interactive is whether this link may run visitor actions right now;
+	// Actions the visitor actions it declares; Sources the last fetch of each
+	// source; Server what server.js's transform returned, or null.
+	Data        map[string]any            `json:"data"`
+	Interactive bool                      `json:"interactive"`
+	Actions     map[string]snapshotAction `json:"actions"`
+	Sources     map[string]*sourceResult  `json:"sources"`
+	Server      any                       `json:"server"`
+}
+
+// snapshotAction is one action as a page sees it: enough to draw a button and
+// a form for it, and whether pressing it can work.
+type snapshotAction struct {
+	Who     string                     `json:"who"`
+	Label   string                     `json:"label"`
+	Input   map[string]*pages.DataSpec `json:"input"`
+	Enabled bool                       `json:"enabled"`
+}
+
+// snapshotActions lists the actions a caller may run; visitor for a share
+// link, admin for an admin page.
+func snapshotActions(m pages.Manifest, forAdmin, enabled bool) map[string]snapshotAction {
+	out := map[string]snapshotAction{}
+	for name, a := range m.Actions {
+		if forAdmin && !a.AdminMay() || !forAdmin && !a.VisitorMay() {
+			continue
+		}
+		out[name] = snapshotAction{Who: a.Who, Label: a.Label, Input: m.InputFields(a), Enabled: enabled}
+	}
+	return out
 }
 
 // shareSnapshotPage identifies what a link is drawing.
@@ -498,6 +538,26 @@ func (s *Server) buildShareSnapshot(ctx context.Context, sc shareContext) (share
 	out.Params = pages.ResolveParams(manifest.Params, link.Params)
 	needs = manifest.Needs()
 
+	ns := store.PageDataLive
+	if link.Purpose == store.SharePurposePreview {
+		ns = store.PageDataDraft
+	}
+	rows, derr := s.pageDataRows(ctx, page.ID, ns)
+	if derr != nil {
+		s.noteStale(derr)
+		return out, http.StatusServiceUnavailable, "the panel cannot reach its own database"
+	}
+	out.Data, _ = resolvePageData(manifest, rows, sc.admin)
+	if sc.admin {
+		out.Interactive = true
+		out.Actions = snapshotActions(manifest, true, true)
+	} else {
+		out.Interactive = manifest.Capabilities().VisitorActions && s.linkMayAct(ctx, link)
+		out.Actions = snapshotActions(manifest, false, out.Interactive)
+	}
+	s.markWatched(page.ID, ns, manifest)
+	out.Sources = s.sourceResults(page.ID, ns, manifest)
+
 	dash, hit := s.snapshots.get(memoKey, now)
 	if !hit {
 		s.snapshots.builds.Add(1)
@@ -520,6 +580,8 @@ func (s *Server) buildShareSnapshot(ctx context.Context, sc shareContext) (share
 		dash.Spend, dash.Todos, dash.Trend, dash.Flow, dash.Feed, dash.Repo
 	out.Scope, out.ScopeName = dash.Scope, dash.ScopeName
 	out.ScopeRepoOwner, out.ScopeRepoName = dash.ScopeRepoOwner, dash.ScopeRepoName
+	// Last, so transform sees the snapshot it is transforming.
+	out.Server = s.serverTransform(ctx, page, ns, manifest, out)
 	return out, http.StatusOK, ""
 }
 

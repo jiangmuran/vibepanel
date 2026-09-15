@@ -841,6 +841,61 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+
+	// A page with a backend: docs/page-backend.md.
+	//
+	// token_enc is the link's token sealed under <data dir>/secrets.key, so its
+	// address can be shown again; a copy of this file alone still opens no
+	// link. interactive is the per-link switch visitor actions need, and is
+	// read by exactly one handler.
+	//
+	// Grants hold the hash of the auth session that minted them, not a
+	// foreign key: an auth session is deleted by sign-out and by a password
+	// change, and a grant whose session row is gone is dead at its next
+	// request because the lookup joins on it -- the same answer as a cascade,
+	// without a second place deciding it.
+	func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`ALTER TABLE share_links ADD COLUMN token_enc BLOB NOT NULL DEFAULT x''`,
+			`ALTER TABLE share_links ADD COLUMN interactive INTEGER NOT NULL DEFAULT 0`,
+			`CREATE TABLE IF NOT EXISTS share_page_data (
+			     page_id    TEXT NOT NULL REFERENCES share_pages(id) ON DELETE CASCADE,
+			     ns         TEXT NOT NULL,
+			     key        TEXT NOT NULL,
+			     value      TEXT NOT NULL,
+			     updated_at INTEGER NOT NULL,
+			     updated_by TEXT NOT NULL DEFAULT '',
+			     PRIMARY KEY (page_id, ns, key)
+			 )`,
+			`CREATE TABLE IF NOT EXISTS page_admin_grants (
+			     token_hash   BLOB PRIMARY KEY,
+			     page_id      TEXT NOT NULL REFERENCES share_pages(id) ON DELETE CASCADE,
+			     user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			     session_hash BLOB NOT NULL,
+			     draft        INTEGER NOT NULL DEFAULT 0,
+			     created_at   INTEGER NOT NULL,
+			     expires_at   INTEGER NOT NULL
+			 )`,
+			`CREATE TABLE IF NOT EXISTS share_page_hosts (
+			     page_id     TEXT NOT NULL REFERENCES share_pages(id) ON DELETE CASCADE,
+			     host        TEXT NOT NULL,
+			     approved_at INTEGER NOT NULL,
+			     PRIMARY KEY (page_id, host)
+			 )`,
+			`CREATE TABLE IF NOT EXISTS share_page_secrets (
+			     page_id   TEXT NOT NULL REFERENCES share_pages(id) ON DELETE CASCADE,
+			     name      TEXT NOT NULL,
+			     value_enc BLOB NOT NULL,
+			     set_at    INTEGER NOT NULL,
+			     PRIMARY KEY (page_id, name)
+			 )`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	},
 }
 
 // scanner is *sql.Row and *sql.Rows both, so one scan function serves a

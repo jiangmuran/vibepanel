@@ -850,14 +850,19 @@ is what stops one leaked link becoming a supply of them.
 curl -sX POST https://panel.example:18443/api/settings/shares \
   -b cookies.txt -H 'Content-Type: application/json' \
   -d '{"name":"wall display","detail":"counts","expiresIn":604800,"pageId":"3f9c…"}'
-# {"token":"Jq4…","id":"…","prefix":"Jq4x9m2v","detail":"counts","scope":"",
-#  "pageId":"3f9c…","params":{},"expiresAt":1735689600}
+# {"token":"Jq4…","url":"https://panel.example:18443/share/Jq4…/","id":"…",
+#  "prefix":"Jq4x9m2v","detail":"counts","scope":"","pageId":"3f9c…","params":{},
+#  "interactive":false,"copyable":true,"expiresAt":1735689600}
 ```
 
-The response is the only time the token is readable — the database keeps a
-SHA-256 of it, exactly as it does for an API token — so the URL to paste is
-`https://<panel>/share/<token>` and there is no way to ask for it again. To see
-what a link shows later, use `POST /api/settings/shares/{shareID}/view`.
+A link is an address any number of screens may open, as often as they like. The
+database keeps a SHA-256 of the token, which requests are looked up by, and the
+token sealed with AES-256-GCM under `<data dir>/secrets.key` (mode `0600`, not in
+the database), so the address can be asked for again with
+`GET /api/settings/shares/{shareID}/url` while a copy of the database alone opens
+nothing. A listed link carries `copyable`, `false` for a link made before tokens
+were sealed; `interactive`; and `actionsToday`, the visitor actions run through it
+since local midnight.
 
 `pageId` is required and names a published page; `params` are that page's
 parameter values for this link, checked against its manifest. A request without
@@ -877,17 +882,42 @@ only that scope's checklists — enforced by the handler from the stored row, no
 from anything in the request. If the project or session is later deleted, the
 link shows **nothing**; it does not fall back to the whole panel.
 
-`PATCH` takes `{"name": "...", "remark": "...", "locked": false}` and nothing
-else. Sending `detail` or `scope` is a `400`, because unknown fields are
+`interactive` (default `false`) lets visitors run the page's declared visitor
+actions through the link; see docs/page-backend.md §6.
+
+`PATCH` takes `{"name": "...", "remark": "...", "locked": false, "interactive":
+false}` and nothing else; `interactive` may be left out to keep it as it is. Sending `detail` or `scope` is a `400`, because unknown fields are
 refused: an edit that quietly did less than it asked for is worse than one that
 says no. An empty `name` keeps the one the link had. On a **locked** link the
 only accepted request is `{"locked": false}`; anything else is a `409`, and the
 unlocking request applies nothing but the unlock.
 
 Creation, editing, locking and revocation are audited as `share.created`,
-`share.updated`, `share.locked`, `share.unlocked` and `share.revoked`.
+`share.updated`, `share.locked`, `share.unlocked` and `share.revoked`; a change
+to `interactive` as `share.interactive_changed`.
 Revocation takes effect on the link's next poll; there is nothing else to
 invalidate, because a share link has no session, no cookie and no socket.
+
+### `GET /api/settings/shares/{shareID}/url`
+
+`{"url", "token"}`: the link's address again, `Cache-Control: no-store`. `409`
+with `{"error", "rotatable": true}` for a link made before tokens were sealed,
+or one whose sealed token does not open under the current key; give it a new
+address. `404` for a preview or view link.
+
+### `POST /api/settings/shares/{shareID}/rotate`
+
+A new token for the link: `{"url", "token"}`. The old address stops resolving in
+the same statement. Allowed on a locked link — a lock fixes what a screen draws,
+and a leaked address is the moment nobody should have to unlock first. Audited
+as `share.rotated`.
+
+### `GET /api/settings/sharing`
+### `PUT /api/settings/sharing`
+
+`{"visitorWrites": true}`: whether any visitor action on any link may run. On by
+default; turning it off refuses the next action on every interactive link.
+`PUT` requires the field and is audited as `sharing.visitor_writes`.
 
 ### `POST /api/settings/shares/{shareID}/view`
 
@@ -896,9 +926,9 @@ link that copies the link's page, pin, trial, parameters, `detail` and `scope`,
 lives fifteen minutes, is not listed and cannot be edited. Open
 `/share/<token>/` with it.
 
-A copy rather than the link itself because the panel cannot read a link's token
-back — that is what storing only its hash is for — and a copy drawn through the
-same routes cannot show anything the real screen would not. `404` for a link
+A copy rather than the link itself, so looking never counts as the screen's
+viewer or runs as it, and a copy drawn through the same routes cannot show
+anything the real screen would not. A view link is never interactive. `404` for a link
 that is not an ordinary handed-out one (a preview or another view). Not audited:
 it discloses nothing the owner's own session does not already show them.
 
@@ -940,7 +970,12 @@ capability.
   "expiresAt": 0, "usageReadable": true, "stale": false,
   "machine": { … }, "counts": { … }, "projects": [ … ], "sessions": [ … ],
   "spend": { … } | null, "todos": null, "trend": null, "flow": null, "feed": null, "repo": null,
-  "scope": "", "scopeName": "", "scopeRepoOwner": "", "scopeRepoName": ""
+  "scope": "", "scopeName": "", "scopeRepoOwner": "", "scopeRepoName": "",
+  "data": { "announcement": "…" },      // the page's public data (docs/page-backend.md §2)
+  "interactive": false,                  // may this link run visitor actions right now
+  "actions": { "vote": { "who": "visitor", "label": "", "input": {}, "enabled": false } },
+  "sources": { "weather": { "ok": true, "fetchedAt": 0, "status": 200, "error": "", "value": {} } },
+  "server": null                         // server.js transform's result
 }
 ```
 
@@ -960,6 +995,73 @@ the next one.
 no published version, or a link that draws no page; `422` is a preview whose
 draft manifest does not validate, with the reason; `503` is the panel's
 database.
+
+### `POST /api/share/{token}/v1/actions/{name}`
+### `OPTIONS /api/share/{token}/v1/actions/{name}`
+
+The one write a share token reaches: a visitor action the page declares, on a
+link the owner made interactive (docs/page-backend.md §6). The body is the
+action's input as one JSON object, at most 4 KiB, or empty. The answer is always
+`{"ok": true, "result": …}` or `{"ok": false, "error": "…", "retryAfter": n}`:
+
+| status | why |
+|---|---|
+| `403` | the link is not interactive (or is a view copy), or visitor writes are off |
+| `404` | no such visitor action in the version the link draws |
+| `429` | over the action's rate for this address, 600/min for the link, or 3000/min for the panel; `Retry-After` |
+| `400` | the payload is not exactly the declared input, or the data change breaks a limit |
+| `401` | the link is revoked, expired or unknown |
+
+Effects write only the page's own data, or run `server.js`'s `onVisitorAction`.
+A preview link's actions write draft data. `OPTIONS` answers the browser's
+preflight with `Access-Control-Allow-Origin: *`, `POST` and `Content-Type`,
+never credentials. Counted per link (`actionsToday`) and audited as
+`share.action`, one row when an action starts being used in a minute and one
+with the count when that minute has passed.
+
+## Admin pages
+
+A page's own admin page, behind the panel login (docs/page-backend.md §3).
+
+### Opening one: `/pages/{pageID}/admin/`
+
+Signed in with the session cookie (not an API token), mints an **admin grant**
+bound to that session and answers `303` to `/page-admin/{grant}/<admin.entry>`;
+not signed in, `303` to `/`. `?draft=1` serves the draft directory's admin page
+on draft data. `404` for a page with no `admin` in its manifest; `409` for a
+live admin page on a page never published.
+
+### Its files: `/page-admin/{grant}/…`
+
+The page's files, for its admin page, served like a share page's: `sandbox
+allow-scripts allow-forms`, `form-action 'none'`, `frame-ancestors 'self'`, a
+`connect-src` that names `/api/page-admin/{grant}/v1/`. `server.js` is never
+served. A grant that has expired or whose session has ended gets the plain
+"no longer works" page.
+
+### `GET /api/page-admin/{grant}/v1/snapshot`
+### `GET /api/page-admin/{grant}/v1/data`
+### `PUT /api/page-admin/{grant}/v1/data/{key}`
+### `POST /api/page-admin/{grant}/v1/data/{key}/increment`
+### `POST /api/page-admin/{grant}/v1/data/{key}/append`
+### `DELETE /api/page-admin/{grant}/v1/data/{key}`
+### `POST /api/page-admin/{grant}/v1/actions/{name}`
+### `GET /api/page-admin/{grant}/v1/sources`
+### `GET /api/page-admin/{grant}/v1/links`
+
+The admin API. The grant in the path is the only credential; it lives 8 hours,
+dies with the session that minted it (sign-out, a password change) on its next
+request, and is refused anywhere else, as a share token is refused here — both
+answer `401`. `OPTIONS` on any of these answers the preflight.
+
+`snapshot` is the page's snapshot with names, over the whole panel, with
+admin-visibility data and admin actions. The data routes take and answer what
+the settings data routes do (see below). `actions/{name}` runs an action whose
+`who` includes `admin`, answering like a visitor action. `sources` is each
+source's last fetch. `links` is `{"links": [{"name", "remark", "interactive",
+"viewers"}]}` — never a token or an address. Writes are audited as
+`page.data_changed` under the user the grant was minted for; a refused grant as
+`page.admin_rejected`.
 
 `sessions` is empty, and `spend`, `todos`, `trend`, `flow`, `feed` and `repo`
 are `null`, unless the page's manifest names them. A page can only ever
@@ -1243,6 +1345,81 @@ cannot serve). One folder wrapping everything is looked through. The archive is
 read by the publish rules — a path that leaves the page, a file that is not what
 its name says, a missing `index.html` or manifest, or a limit exceeded is `400`
 — and the page is not published. Audited as `page.imported`.
+
+The answer also carries `hosts` and `secrets`, what the page's sources need
+before they fetch anything (neither travels in an archive), and `dataSkipped`.
+An archive exported with `?data=1` carries `vibepanel-data.json`; its values are
+written into both namespaces, checked against the manifest the page arrived
+with, and whatever does not fit is listed in `dataSkipped`.
+
+### `GET /api/settings/pages/{pageID}/data`
+### `DELETE /api/settings/pages/{pageID}/data`
+### `PUT /api/settings/pages/{pageID}/data/{key}`
+### `POST /api/settings/pages/{pageID}/data/{key}/increment`
+### `POST /api/settings/pages/{pageID}/data/{key}/append`
+### `DELETE /api/settings/pages/{pageID}/data/{key}`
+
+A page's own data, docs/page-backend.md §2. `?ns=live` (the default) is what
+handed-out links read; `?ns=draft` is the Preview's. The schema is the published
+version's manifest for `live` (`409` for a page never published) and the draft
+directory's for `draft`.
+
+`GET` answers `{"schema", "values", "updatedAt", "bytes", "limit"}` with every
+declared key, admin-visibility ones included, at its stored value or default. A
+stored value that no longer fits the manifest reads as the default.
+
+`PUT` takes `{"value": …}` and refuses a counter or a log (they change by
+`increment` and `append`); `increment` takes `{"by": n}` (a whole number,
+default 1, never below zero); `append` takes `{"item": {…}}` with exactly the
+log item's fields, stamps `at` and keeps the newest `max` entries. Each answers
+`{"value": …}` with the key's new value. `DELETE` on a key puts it back to its
+default and on the collection clears the namespace; both answer `204`.
+
+Refused with `400` and the reason: an undeclared key, a value that does not fit
+its type or bounds, or a write that would take the namespace past 64 keys or
+256 KiB. Every write is audited as `page.data_changed`, and shows on every
+link's next poll.
+
+### `GET /api/settings/pages/{pageID}/sources`
+### `GET /api/settings/pages/{pageID}/hosts`
+### `PUT /api/settings/pages/{pageID}/hosts`
+### `GET /api/settings/pages/{pageID}/secrets`
+### `PUT /api/settings/pages/{pageID}/secrets/{name}`
+### `DELETE /api/settings/pages/{pageID}/secrets/{name}`
+
+What a page's sources need before the panel fetches anything
+(docs/page-backend.md §4). `sources` lists each declared source of the
+published version (the draft's, for a page never published) as `{"key", "url",
+"host", "approved", "every", "ok", "fetchedAt", "status", "error",
+"secrets": [{"name", "set"}]}`.
+
+`PUT hosts` replaces the approved list with `{"hosts": ["api.example.com",
+"internal.example.com:8443"]}`: names, with `:port` only when it is not 443 —
+never a URL, a wildcard or an address range, because approving a name must
+approve exactly that name. At most 32; audited as `page.hosts_changed`.
+
+`PUT secrets/{name}` takes `{"value": "…"}` (1 to 4096 bytes, no line breaks),
+seals it under the panel's key and answers `204`; `GET secrets` answers
+`[{"name", "setAt"}]` and never a value. A secret is replaced into a source's
+headers at fetch time and redacted from its errors. Audited as
+`page.secret_set` and `page.secret_deleted`, by name.
+
+Changing hosts or secrets drops the page's last results, so the next background
+tick fetches again. A fetch refuses `http`, any address that is loopback,
+private, link-local (cloud metadata), CGNAT, multicast or reserved — checked on
+every address the name resolves to, and the checked address is the one dialled
+— any redirect, a body over `maxBytes` and anything slower than `timeout`.
+
+### `GET /api/settings/pages/{pageID}/server/log`
+
+The page's `server.js` log (docs/page-backend.md §5): `{"lines": [{"at",
+"level", "text"}]}`, the last 200, oldest first. `level` is `info` for
+`ctx.log(...)` and `error` for a hook that did not compile, threw, ran past its
+budget (transform 50 ms, `onSchedule` and `onAdminAction` 500 ms,
+`onVisitorAction` 200 ms), or returned more than 64 KiB — each of which also
+wrote nothing. Kept in memory, so a restart empties it; the same lines are
+written to `.vibepanel/server.log` in the page's directory for the agent
+building it.
 
 ### `PUT /api/settings/shares/{shareID}/page`
 

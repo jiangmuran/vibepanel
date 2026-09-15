@@ -24,6 +24,12 @@ import type {
   SharePageDraft,
   SharePageRow,
   SharePagesRoot,
+  SharePageData,
+  SharePageDataNamespace,
+  SharePageSecret,
+  SharePageServerLogLine,
+  SharePageSource,
+  SharingSettings,
   ShareParamValue,
   SystemSample,
   TokenUsage,
@@ -383,6 +389,8 @@ export const api = {
     /** The owner's label for the screen. Shown to viewers under both modes. */
     remark: string
     locked: boolean
+    /** Visitors may run the page's visitor actions through this link. */
+    interactive?: boolean
     /** The published share page the link draws, with its settings on it. */
     pageId: string
     params: Record<string, ShareParamValue>
@@ -414,7 +422,10 @@ export const api = {
    * see. The server refuses them too; this signature is the same refusal said
    * where the caller reads it.
    */
-  updateShare: (id: string, fields: { name: string; remark: string; locked: boolean }) =>
+  updateShare: (
+    id: string,
+    fields: { name: string; remark: string; locked: boolean; interactive?: boolean },
+  ) =>
     request<void>(`/api/settings/shares/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(fields),
@@ -496,6 +507,80 @@ export const api = {
   /** Where new pages go; '' goes back to the default. */
   setPagesRoot: (dir: string) =>
     request<SharePagesRoot>('/api/settings/pages/root', { method: 'PUT', body: JSON.stringify({ dir }) }),
+
+  /** The link's address, again. 409 for a link made before addresses were kept. */
+  shareURL: (id: string) =>
+    request<{ url: string; token: string }>(`/api/settings/shares/${encodeURIComponent(id)}/url`),
+
+  /** A new address for a link; the old one stops working. */
+  rotateShare: (id: string) =>
+    request<{ url: string; token: string }>(`/api/settings/shares/${encodeURIComponent(id)}/rotate`, {
+      method: 'POST',
+    }),
+
+  sharingSettings: () => request<SharingSettings>('/api/settings/sharing'),
+
+  setSharingSettings: (s: SharingSettings) =>
+    request<SharingSettings>('/api/settings/sharing', { method: 'PUT', body: JSON.stringify(s) }),
+
+  pageData: (id: string, ns: SharePageDataNamespace = 'live') =>
+    request<SharePageData>(`/api/settings/pages/${encodeURIComponent(id)}/data?ns=${ns}`),
+
+  setPageData: (id: string, key: string, value: unknown, ns: SharePageDataNamespace = 'live') =>
+    request<{ value: unknown }>(
+      `/api/settings/pages/${encodeURIComponent(id)}/data/${encodeURIComponent(key)}?ns=${ns}`,
+      { method: 'PUT', body: JSON.stringify({ value }) },
+    ),
+
+  incrementPageData: (id: string, key: string, by: number, ns: SharePageDataNamespace = 'live') =>
+    request<{ value: number }>(
+      `/api/settings/pages/${encodeURIComponent(id)}/data/${encodeURIComponent(key)}/increment?ns=${ns}`,
+      { method: 'POST', body: JSON.stringify({ by }) },
+    ),
+
+  appendPageData: (id: string, key: string, item: unknown, ns: SharePageDataNamespace = 'live') =>
+    request<{ value: unknown[] }>(
+      `/api/settings/pages/${encodeURIComponent(id)}/data/${encodeURIComponent(key)}/append?ns=${ns}`,
+      { method: 'POST', body: JSON.stringify({ item }) },
+    ),
+
+  resetPageData: (id: string, key: string, ns: SharePageDataNamespace = 'live') =>
+    request<void>(`/api/settings/pages/${encodeURIComponent(id)}/data/${encodeURIComponent(key)}?ns=${ns}`, {
+      method: 'DELETE',
+    }),
+
+  clearPageData: (id: string, ns: SharePageDataNamespace = 'live') =>
+    request<void>(`/api/settings/pages/${encodeURIComponent(id)}/data?ns=${ns}`, { method: 'DELETE' }),
+
+  pageSources: (id: string) => request<SharePageSource[]>(`/api/settings/pages/${encodeURIComponent(id)}/sources`),
+
+  pageHosts: (id: string) => request<{ hosts: string[] }>(`/api/settings/pages/${encodeURIComponent(id)}/hosts`),
+
+  setPageHosts: (id: string, hosts: string[]) =>
+    request<{ hosts: string[] }>(`/api/settings/pages/${encodeURIComponent(id)}/hosts`, {
+      method: 'PUT',
+      body: JSON.stringify({ hosts }),
+    }),
+
+  pageSecrets: (id: string) => request<SharePageSecret[]>(`/api/settings/pages/${encodeURIComponent(id)}/secrets`),
+
+  setPageSecret: (id: string, name: string, value: string) =>
+    request<void>(`/api/settings/pages/${encodeURIComponent(id)}/secrets/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ value }),
+    }),
+
+  deletePageSecret: (id: string, name: string) =>
+    request<void>(`/api/settings/pages/${encodeURIComponent(id)}/secrets/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    }),
+
+  pageServerLog: (id: string) =>
+    request<{ lines: SharePageServerLogLine[] }>(`/api/settings/pages/${encodeURIComponent(id)}/server/log`),
+
+  /** Where a page's admin page opens: behind the panel login, which mints a
+   *  grant and redirects. `draft` serves the draft admin page on draft data. */
+  pageAdminURL: (id: string, draft = false) => `/pages/${encodeURIComponent(id)}/admin/${draft ? '?draft=1' : ''}`,
 
   /** A link to the page as a zip: the published version, or the directory for a
    *  page never published. A plain GET, so an <a download> with the cookie works. */

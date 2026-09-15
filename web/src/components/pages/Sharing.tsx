@@ -9,6 +9,8 @@ import {
   History,
   PanelsTopLeft,
   Plus,
+  ShieldCheck,
+  SlidersHorizontal,
   Trash2,
   Upload,
 } from 'lucide-react'
@@ -23,9 +25,11 @@ import type {
   SharePageDetail,
   SharePageRow,
   SharePagesRoot,
+  SharingSettings,
 } from '../../protocol/wire'
 import { t, useLang, type Key, type Lang } from '../../i18n'
 import { safeText } from '../text'
+import { ManageDialog } from './ManageDialog'
 import { Field, PageLinks } from './PageLinks'
 
 /**
@@ -51,7 +55,11 @@ const TEMPLATE_LABEL: Record<string, Key> = {
   spend: 'page.tpl.spend',
   built: 'page.tpl.built',
   glance: 'page.tpl.glance',
+  kiosk: 'page.tpl.kiosk',
 }
+
+/** Everything a page can do beyond reading, and what keeps it from the panel. */
+const ARCHITECTURE_URL = 'https://github.com/jiangmuran/vibepanel/blob/main/docs/page-backend.md'
 
 /** The long-form docs, in the reader's language. */
 function docsURL(lang: Lang): string {
@@ -86,6 +94,7 @@ export function Sharing({
   const [projects, setProjects] = useState<Project[]>([])
   const [sessions, setSessions] = useState<Session[]>([])
   const [creating, setCreating] = useState(false)
+  const [sharing, setSharing] = useState<SharingSettings | null>(null)
   const [error, setError] = useState('')
 
   const fail = useCallback((e: unknown) => setError(e instanceof Error ? e.message : String(e)), [])
@@ -114,6 +123,12 @@ export function Sharing({
     api.pageCatalogue().then(
       (c) => {
         if (!cancelled) setCatalogue(c)
+      },
+      () => {},
+    )
+    api.sharingSettings().then(
+      (v) => {
+        if (!cancelled) setSharing(v)
       },
       () => {},
     )
@@ -160,6 +175,16 @@ export function Sharing({
           >
             <BookOpen size={12} />
             {t('page.docs')}
+          </a>{' '}
+          <a
+            href={ARCHITECTURE_URL}
+            target="_blank"
+            rel="noreferrer noopener"
+            data-testid="sharing-architecture"
+            className="inline-flex items-center gap-1 whitespace-nowrap text-accent hover:underline"
+          >
+            <ShieldCheck size={12} />
+            {t('page.architecture')}
           </a>
         </p>
         <span className="flex shrink-0 items-center gap-2">
@@ -206,6 +231,8 @@ export function Sharing({
         onError={fail}
       />
 
+      <VisitorWritesLine settings={sharing} onChanged={setSharing} onError={fail} />
+
       {notice && (
         <p className="mb-2 text-vp-base text-ink-2" data-testid="sharing-notice">
           {safeText(notice)}
@@ -243,6 +270,7 @@ export function Sharing({
             links={links.filter((l) => l.pageId === page.id)}
             projects={projects}
             sessions={sessions}
+            visitorWrites={sharing?.visitorWrites ?? true}
             onOpen={() => onOpenPage?.(page, false)}
             onChanged={() => {
               setError('')
@@ -368,6 +396,54 @@ function PagesRootLine({
   )
 }
 
+/**
+ * The panel-wide switch for visitor actions, in one line.
+ *
+ * Off refuses every action on every link at once, whatever each link says:
+ * the answer to "something is writing to a wall and I do not know which".
+ */
+function VisitorWritesLine({
+  settings,
+  onChanged,
+  onError,
+}: {
+  settings: SharingSettings | null
+  onChanged: (next: SharingSettings) => void
+  onError: (e: unknown) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  if (!settings) return null
+  const toggle = async (on: boolean) => {
+    setBusy(true)
+    try {
+      onChanged(await api.setSharingSettings({ visitorWrites: on }))
+    } catch (e) {
+      onError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div data-testid="visitor-writes" className="-mt-1 mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-vp-sm text-ink-3">
+      <label className="flex items-center gap-1.5 text-ink-2" title={t('sharing.visitorWritesWhy')}>
+        <input
+          type="checkbox"
+          role="switch"
+          data-testid="visitor-writes-toggle"
+          disabled={busy}
+          checked={settings.visitorWrites}
+          aria-checked={settings.visitorWrites}
+          onChange={(e) => void toggle(e.target.checked)}
+        />
+        {t('sharing.visitorWrites')}
+      </label>
+      <span data-testid="visitor-writes-state" data-on={settings.visitorWrites}>
+        {settings.visitorWrites ? t('sharing.visitorWritesOn') : t('sharing.visitorWritesOff')}
+      </span>
+    </div>
+  )
+}
+
 function NewPage({
   catalogue,
   onCancel,
@@ -483,6 +559,7 @@ function PageCard({
   links,
   projects,
   sessions,
+  visitorWrites,
   onOpen,
   onChanged,
   onError,
@@ -492,6 +569,7 @@ function PageCard({
   links: ShareLink[]
   projects: Project[]
   sessions: Session[]
+  visitorWrites: boolean
   onOpen: () => void
   onChanged: () => void
   onError: (e: unknown) => void
@@ -499,6 +577,9 @@ function PageCard({
   const [versions, setVersions] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [managing, setManaging] = useState(false)
+  const caps = detail?.capabilities
+  const manageable = caps !== undefined && (caps.data || caps.admin || caps.sources || caps.server)
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true)
@@ -545,6 +626,18 @@ function PageCard({
             <Upload size={12} />
             {t('page.publish')}
           </button>
+          {manageable && (
+            <button
+              type="button"
+              data-testid="page-manage-open"
+              onClick={() => setManaging(true)}
+              title={t('manage.why')}
+              className="vp-press flex items-center gap-1 rounded-vp border border-hairline px-2 py-1 text-vp-sm text-ink hover:border-accent"
+            >
+              <SlidersHorizontal size={12} />
+              {t('manage.open')}
+            </button>
+          )}
           <a
             href={api.exportPageURL(page.id)}
             download
@@ -661,12 +754,15 @@ function PageCard({
         </ul>
       )}
 
+      {managing && caps && <ManageDialog page={page} capabilities={caps} onClose={() => setManaging(false)} />}
+
       <PageLinks
         page={page}
         detail={detail}
         links={links}
         projects={projects}
         sessions={sessions}
+        visitorWrites={visitorWrites}
         onChanged={onChanged}
         onError={(m) => onError(new Error(m))}
       />

@@ -45,7 +45,10 @@ const pageUsage = `usage: vibepanel page <command> [flags] [dir]
   list      list pages
   export    write a page as a zip: --page <id> [--version N] [-o file.zip]
   import    make a new page from a zip: import [--name X] file.zip
-  sync-sdk  replace dir's copy of vibepanel.js and vibepanel.d.ts with this build's`
+  sync-sdk  replace dir's copy of vibepanel.js, vibepanel.d.ts and ARCHITECTURE.md with this build's
+  data      read or change the page's data: data get|set|reset [--live] <key> [value]
+  run       run server.js on draft data: run transform|schedule|action <name> [payload]
+  docs      print ARCHITECTURE.md: data, admin pages, sources, server.js, actions`
 
 func cmdPage(args []string) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
@@ -72,6 +75,12 @@ func cmdPage(args []string) error {
 		return pageExport(rest)
 	case "import":
 		return pageImport(rest)
+	case "data":
+		return pageData(rest)
+	case "run":
+		return pageRun(rest)
+	case "docs":
+		return pageDocs(rest)
 	}
 	return fmt.Errorf("unknown page command %q\n\n%s", sub, pageUsage)
 }
@@ -711,6 +720,6 @@ func pageSyncSDK(args []string) error {
 	if err := pages.SyncSDK(dir); err != nil {
 		return err
 	}
-	fmt.Printf("%s and %s are this build's\n", pages.SDKFile, pages.TypesFile)
+	fmt.Printf("%s, %s and %s are this build's\n", pages.SDKFile, pages.TypesFile, pages.ArchitectureFile)
 	return nil
 }

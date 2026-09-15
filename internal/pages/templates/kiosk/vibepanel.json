@@ -1,0 +1,25 @@
+{
+  "sdk": 1,
+  "name": "Kiosk",
+  "sections": ["sessions"],
+  "params": [
+    { "key": "title", "type": "text", "label": "Title", "max": 40, "default": "Welcome" },
+    { "key": "question", "type": "text", "label": "What the vote is for", "max": 80, "default": "Enjoying the demo?" }
+  ],
+  "data": {
+    "announcement": { "type": "text", "label": "Announcement", "max": 280, "default": "" },
+    "votes": { "type": "counter", "label": "Votes" },
+    "guestbook": { "type": "log", "label": "Guestbook", "max": 50, "item": { "type": "object", "fields": {
+      "name": { "type": "text", "label": "Name", "max": 40 },
+      "msg": { "type": "text", "label": "Message", "max": 140 }
+    } } },
+    "notes": { "type": "text", "label": "Notes for whoever runs this screen", "max": 2000, "visibility": "admin" }
+  },
+  "admin": { "entry": "admin/index.html" },
+  "actions": {
+    "vote": { "who": "visitor", "label": "Vote", "effect": { "increment": "votes" }, "rate": "5/min" },
+    "sign": { "who": "visitor", "label": "Sign the guestbook", "effect": { "append": "guestbook" }, "rate": "2/min",
+      "input": { "name": { "type": "text", "max": 40 }, "msg": { "type": "text", "max": 140 } } }
+  },
+  "viewports": ["kiosk-portrait", "ipad-landscape", "tv-1080", "phone"]
+}

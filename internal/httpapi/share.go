@@ -97,6 +97,9 @@ type shareContext struct {
 	// server and is stable for the life of the link, which is exactly what
 	// shareID needs.
 	secret []byte
+	// admin is an admin page's snapshot (admingrants.go): admin-visibility
+	// data and admin actions, never set for a share token.
+	admin bool
 }
 
 func (s *Server) shareCooldowns() *auth.Cooldown {
@@ -128,6 +131,11 @@ func (s *Server) registerShareRoutes(r chi.Router) {
 		// The versioned contract a share page is written against; see
 		// sharepage.go.
 		r.Get("/v1/snapshot", s.handleShareSnapshot)
+		// The one write a share token reaches: a page's declared visitor
+		// actions, on an interactive link. pageactions.go says why this is
+		// still narrowing by route.
+		r.Post("/v1/actions/{name}", s.handleVisitorAction)
+		r.Options("/v1/actions/{name}", s.handleActionPreflight)
 	})
 }
 
@@ -1617,6 +1625,10 @@ func (s *Server) registerShareAdminRoutes(r chi.Router) {
 	r.Get("/settings/shares", s.handleListShares)
 	r.Post("/settings/shares", s.handleCreateShare)
 	r.Post("/settings/shares/{shareID}/view", s.handleViewShare)
+	r.Get("/settings/shares/{shareID}/url", s.handleShareURL)
+	r.Post("/settings/shares/{shareID}/rotate", s.handleRotateShare)
+	r.Get("/settings/sharing", s.handleGetSharing)
+	r.Put("/settings/sharing", s.handlePutSharing)
 	r.Patch("/settings/shares/{shareID}", s.handleUpdateShare)
 	r.Delete("/settings/shares/{shareID}", s.handleDeleteShare)
 }
@@ -1655,9 +1667,8 @@ func (s *Server) handleListShares(w http.ResponseWriter, r *http.Request) {
 		// This is the signal that tells an owner about to rearrange a wall
 		// whether anything is actually showing it -- and, when something is,
 		// what shape of screen they are composing for.
-		links[i].Viewers, links[i].ViewportWidth, links[i].ViewportHeight =
-			s.viewers.count(links[i].ID, now)
 	}
+	s.fillLinkCounts(ctx, links, now)
 	writeJSON(w, http.StatusOK, emptyIfNil(links))
 }
 
@@ -1683,6 +1694,9 @@ type createShareRequest struct {
 	Remark string `json:"remark"`
 	// Locked fixes what the link draws against later edits until it is unlocked.
 	Locked bool `json:"locked"`
+	// Interactive lets visitors run the page's visitor actions through the
+	// link. docs/page-backend.md §6.
+	Interactive bool `json:"interactive"`
 	// PageID is the published share page the link draws, required, with Params
 	// as the page's settings on it.
 	PageID string         `json:"pageId"`
@@ -1789,11 +1803,13 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 	if len(prefix) > 8 {
 		prefix = prefix[:8]
 	}
+	linkID := id.New()
 	rec, err := s.DB.CreateShareLink(r.Context(), store.NewShareLink{
-		ID: id.New(), TokenHash: auth.HashToken(token), Prefix: prefix, Name: name,
+		ID: linkID, TokenHash: auth.HashToken(token), TokenEnc: s.sealShareToken(linkID, token),
+		Prefix: prefix, Name: name,
 		Detail: detail, Scope: scope, ScopeID: scopeID, UserID: u.ID,
 		Remark: req.Remark, Locked: req.Locked, ExpiresAt: expiresAt,
-		PageID: pageID, Params: params,
+		PageID: pageID, Params: params, Interactive: req.Interactive,
 	})
 	if err != nil {
 		s.writeStoreErr(w, err)
@@ -1803,19 +1819,25 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 	// what an operator reading this row is looking for.
 	s.audit(r.Context(), "share.created", u.Username, s.clientIP(r),
 		name+" ("+string(detail)+", page "+pageID+scopeLabel(scope, scopeID)+")")
+	if req.Interactive {
+		s.audit(r.Context(), "share.interactive_changed", u.Username, s.clientIP(r), name+" on")
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"token":     token,
-		"id":        rec.ID,
-		"name":      rec.Name,
-		"prefix":    rec.Prefix,
-		"detail":    rec.Detail,
-		"pageId":    rec.PageID,
-		"params":    rec.Params,
-		"scope":     rec.Scope,
-		"remark":    rec.Remark,
-		"locked":    rec.Locked,
-		"expiresAt": rec.ExpiresAt,
-		"createdAt": rec.CreatedAt,
+		"token":       token,
+		"id":          rec.ID,
+		"name":        rec.Name,
+		"prefix":      rec.Prefix,
+		"detail":      rec.Detail,
+		"pageId":      rec.PageID,
+		"params":      rec.Params,
+		"scope":       rec.Scope,
+		"remark":      rec.Remark,
+		"locked":      rec.Locked,
+		"interactive": rec.Interactive,
+		"copyable":    rec.Copyable,
+		"url":         s.shareAddress(r, token),
+		"expiresAt":   rec.ExpiresAt,
+		"createdAt":   rec.CreatedAt,
 	})
 }
 
@@ -1839,6 +1861,8 @@ type updateShareRequest struct {
 	// different requests. They have to be: on a locked link the second is the
 	// only edit that is allowed, and the first is the one that gets refused.
 	Locked *bool `json:"locked"`
+	// Interactive is a pointer for the same reason: absent leaves it alone.
+	Interactive *bool `json:"interactive"`
 }
 
 // handleUpdateShare renames a link, relabels it, and fixes or unfixes it.
@@ -1885,6 +1909,19 @@ func (s *Server) handleUpdateShare(w http.ResponseWriter, r *http.Request) {
 	if err := s.DB.UpdateShareLink(r.Context(), linkID, name, req.Remark, locked); err != nil {
 		s.writeStoreErr(w, err)
 		return
+	}
+	if req.Interactive != nil && *req.Interactive != current.Interactive {
+		if err := s.DB.SetShareLinkInteractive(r.Context(), linkID, *req.Interactive); err != nil {
+			s.writeStoreErr(w, err)
+			return
+		}
+		if u, ok := currentUserFrom(r); ok {
+			state := "off"
+			if *req.Interactive {
+				state = "on"
+			}
+			s.audit(r.Context(), "share.interactive_changed", u.Username, s.clientIP(r), name+" "+state)
+		}
 	}
 	if u, ok := currentUserFrom(r); ok {
 		// A lock is its own line rather than a word inside share.updated: "who
