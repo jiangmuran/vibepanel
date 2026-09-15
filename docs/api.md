@@ -850,14 +850,19 @@ is what stops one leaked link becoming a supply of them.
 curl -sX POST https://panel.example:18443/api/settings/shares \
   -b cookies.txt -H 'Content-Type: application/json' \
   -d '{"name":"wall display","detail":"counts","expiresIn":604800,"pageId":"3f9c…"}'
-# {"token":"Jq4…","id":"…","prefix":"Jq4x9m2v","detail":"counts","scope":"",
-#  "pageId":"3f9c…","params":{},"expiresAt":1735689600}
+# {"token":"Jq4…","url":"https://panel.example:18443/share/Jq4…/","id":"…",
+#  "prefix":"Jq4x9m2v","detail":"counts","scope":"","pageId":"3f9c…","params":{},
+#  "interactive":false,"copyable":true,"expiresAt":1735689600}
 ```
 
-The response is the only time the token is readable — the database keeps a
-SHA-256 of it, exactly as it does for an API token — so the URL to paste is
-`https://<panel>/share/<token>` and there is no way to ask for it again. To see
-what a link shows later, use `POST /api/settings/shares/{shareID}/view`.
+A link is an address any number of screens may open, as often as they like. The
+database keeps a SHA-256 of the token, which requests are looked up by, and the
+token sealed with AES-256-GCM under `<data dir>/secrets.key` (mode `0600`, not in
+the database), so the address can be asked for again with
+`GET /api/settings/shares/{shareID}/url` while a copy of the database alone opens
+nothing. A listed link carries `copyable`, `false` for a link made before tokens
+were sealed; `interactive`; and `actionsToday`, the visitor actions run through it
+since local midnight.
 
 `pageId` is required and names a published page; `params` are that page's
 parameter values for this link, checked against its manifest. A request without
@@ -877,17 +882,42 @@ only that scope's checklists — enforced by the handler from the stored row, no
 from anything in the request. If the project or session is later deleted, the
 link shows **nothing**; it does not fall back to the whole panel.
 
-`PATCH` takes `{"name": "...", "remark": "...", "locked": false}` and nothing
-else. Sending `detail` or `scope` is a `400`, because unknown fields are
+`interactive` (default `false`) lets visitors run the page's declared visitor
+actions through the link; see docs/page-backend.md §6.
+
+`PATCH` takes `{"name": "...", "remark": "...", "locked": false, "interactive":
+false}` and nothing else; `interactive` may be left out to keep it as it is. Sending `detail` or `scope` is a `400`, because unknown fields are
 refused: an edit that quietly did less than it asked for is worse than one that
 says no. An empty `name` keeps the one the link had. On a **locked** link the
 only accepted request is `{"locked": false}`; anything else is a `409`, and the
 unlocking request applies nothing but the unlock.
 
 Creation, editing, locking and revocation are audited as `share.created`,
-`share.updated`, `share.locked`, `share.unlocked` and `share.revoked`.
+`share.updated`, `share.locked`, `share.unlocked` and `share.revoked`; a change
+to `interactive` as `share.interactive_changed`.
 Revocation takes effect on the link's next poll; there is nothing else to
 invalidate, because a share link has no session, no cookie and no socket.
+
+### `GET /api/settings/shares/{shareID}/url`
+
+`{"url", "token"}`: the link's address again, `Cache-Control: no-store`. `409`
+with `{"error", "rotatable": true}` for a link made before tokens were sealed,
+or one whose sealed token does not open under the current key; give it a new
+address. `404` for a preview or view link.
+
+### `POST /api/settings/shares/{shareID}/rotate`
+
+A new token for the link: `{"url", "token"}`. The old address stops resolving in
+the same statement. Allowed on a locked link — a lock fixes what a screen draws,
+and a leaked address is the moment nobody should have to unlock first. Audited
+as `share.rotated`.
+
+### `GET /api/settings/sharing`
+### `PUT /api/settings/sharing`
+
+`{"visitorWrites": true}`: whether any visitor action on any link may run. On by
+default; turning it off refuses the next action on every interactive link.
+`PUT` requires the field and is audited as `sharing.visitor_writes`.
 
 ### `POST /api/settings/shares/{shareID}/view`
 
@@ -896,9 +926,9 @@ link that copies the link's page, pin, trial, parameters, `detail` and `scope`,
 lives fifteen minutes, is not listed and cannot be edited. Open
 `/share/<token>/` with it.
 
-A copy rather than the link itself because the panel cannot read a link's token
-back — that is what storing only its hash is for — and a copy drawn through the
-same routes cannot show anything the real screen would not. `404` for a link
+A copy rather than the link itself, so looking never counts as the screen's
+viewer or runs as it, and a copy drawn through the same routes cannot show
+anything the real screen would not. A view link is never interactive. `404` for a link
 that is not an ordinary handed-out one (a preview or another view). Not audited:
 it discloses nothing the owner's own session does not already show them.
 

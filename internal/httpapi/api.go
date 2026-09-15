@@ -216,6 +216,10 @@ type Server struct {
 	// snapshotMemoTTL in sharepage.go.
 	snapshots snapshotMemo
 
+	// pb is the state behind pages with a backend: the sealing key, visitor
+	// action counts and limits, sources, server.js. docs/page-backend.md.
+	pb pageBackend
+
 	// TrimEvery and AuditKeep override the audit trim's schedule and cap. Zero
 	// means the constants. Tests set them small; nothing else should. They
 	// exist because a periodic job nobody can drive from a test is how this

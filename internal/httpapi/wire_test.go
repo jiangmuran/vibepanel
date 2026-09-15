@@ -350,6 +350,11 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"share.page_changed":   true,
 		"share.params_changed": true,
 		"share.page_trial":     true,
+		// A link's address replaced, and a link made able to write page data.
+		"share.rotated":             true,
+		"share.interactive_changed": true,
+		// The switch for every visitor write on the panel.
+		"sharing.visitor_writes": true,
 		// A page's own history, which is a question about the page.
 		"page.created":     true,
 		"page.published":   true,

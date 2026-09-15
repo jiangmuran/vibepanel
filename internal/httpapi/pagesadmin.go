@@ -139,10 +139,7 @@ func (s *Server) handleGetPage(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreErr(w, err)
 		return
 	}
-	now := time.Now()
-	for i := range links {
-		links[i].Viewers, links[i].ViewportWidth, links[i].ViewportHeight = s.viewers.count(links[i].ID, now)
-	}
+	s.fillLinkCounts(ctx, links, time.Now())
 	writeJSON(w, http.StatusOK, pageDetail{Page: page, SourceExists: dirExists(page.SourceDir),
 		Versions: versions, Links: links})
 }
