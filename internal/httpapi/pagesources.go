@@ -427,6 +427,7 @@ func (s *Server) registerPageSourceRoutes(r chi.Router) {
 	r.Get("/settings/pages/{pageID}/secrets", s.handleGetPageSecrets)
 	r.Put("/settings/pages/{pageID}/secrets/{name}", s.handlePutPageSecret)
 	r.Delete("/settings/pages/{pageID}/secrets/{name}", s.handleDeletePageSecret)
+	r.Get("/settings/pages/{pageID}/server/log", s.handlePageServerLog)
 }
 
 // pageSourceRow is a declared source as settings shows it.

@@ -557,7 +557,6 @@ func (s *Server) buildShareSnapshot(ctx context.Context, sc shareContext) (share
 	}
 	s.markWatched(page.ID, ns, manifest)
 	out.Sources = s.sourceResults(page.ID, ns, manifest)
-	out.Server = s.serverTransform(ctx, page, ns, manifest, out)
 
 	dash, hit := s.snapshots.get(memoKey, now)
 	if !hit {
@@ -581,6 +580,8 @@ func (s *Server) buildShareSnapshot(ctx context.Context, sc shareContext) (share
 		dash.Spend, dash.Todos, dash.Trend, dash.Flow, dash.Feed, dash.Repo
 	out.Scope, out.ScopeName = dash.Scope, dash.ScopeName
 	out.ScopeRepoOwner, out.ScopeRepoName = dash.ScopeRepoOwner, dash.ScopeRepoName
+	// Last, so transform sees the snapshot it is transforming.
+	out.Server = s.serverTransform(ctx, page, ns, manifest, out)
 	return out, http.StatusOK, ""
 }
 

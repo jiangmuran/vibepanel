@@ -125,6 +125,7 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		{"SharePageActionSpec", pages.ActionSpec{}},
 		{"SharePageData", pageDataResponse{}},
 		{"SharePageSource", pageSourceRow{}},
+		{"SharePageServerLogLine", serverLogLine{}},
 		{"SharePageSecret", store.PageSecret{}},
 		// Token usage. Pinned from the first commit rather than after the
 		// first drift, because this surface has more fields than anything

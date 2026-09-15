@@ -11,4 +11,5 @@ type pageBackend struct {
 	rates   rateBook
 	audit   actionAudit
 	sources sourcesState
+	server  serverState
 }

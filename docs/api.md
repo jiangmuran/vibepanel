@@ -1410,6 +1410,17 @@ private, link-local (cloud metadata), CGNAT, multicast or reserved — checked o
 every address the name resolves to, and the checked address is the one dialled
 — any redirect, a body over `maxBytes` and anything slower than `timeout`.
 
+### `GET /api/settings/pages/{pageID}/server/log`
+
+The page's `server.js` log (docs/page-backend.md §5): `{"lines": [{"at",
+"level", "text"}]}`, the last 200, oldest first. `level` is `info` for
+`ctx.log(...)` and `error` for a hook that did not compile, threw, ran past its
+budget (transform 50 ms, `onSchedule` and `onAdminAction` 500 ms,
+`onVisitorAction` 200 ms), or returned more than 64 KiB — each of which also
+wrote nothing. Kept in memory, so a restart empties it; the same lines are
+written to `.vibepanel/server.log` in the page's directory for the agent
+building it.
+
 ### `PUT /api/settings/shares/{shareID}/page`
 
 What a link draws: `{"pageId": "…", "pinVersion": 0, "params": {"title": "Hall"}}`.
