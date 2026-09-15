@@ -54,8 +54,11 @@ The other thing I am fond of is share links. Put the whole system's status on a
 monitor, or put tokens spent against code produced on a big screen so whoever
 needs convincing can see it. What the screen shows is a page you have an agent
 write, in its own project, with a live preview beside the terminal: start from a
-template, publish, make a link, open it on the screen. ~~Fine, I know this is a
-niche feature. I still think it matters.~~
+template, publish, make a link, open it on the screen. Click the preview and it
+opens large over the whole window, on a phone, a laptop or a television, so you
+see what the wall will see before you hang it. Pages live beside the panel's own
+data unless you say otherwise, and travel between panels as a zip. ~~Fine, I
+know this is a niche feature. I still think it matters.~~
 
 I will say this plainly: this is **not AI slop**. It is a terminal I use hard
 every day and it is genuinely nice to use. I hope it saves you some time and
@@ -63,13 +66,13 @@ that you enjoy it. It is early, so come and join in if you have ideas or
 complaints.
 
 <p align="center">
-  <img src="docs/images/share-preview.png" width="49%" alt="A share page's live Preview beside the agent writing it">
-  <img src="docs/images/share-settings.png" width="49%" alt="Settings, Sharing: each page with its version, and the links that show it underneath">
+  <img src="docs/images/share-zoom.png" width="98%" alt="A share page's Preview opened large over the window, on a 1920x1080 television">
 </p>
 <p align="center">
-  <img src="docs/images/share-wall.png" width="98%" alt="The session wall template on a 1920x1080 screen">
+  <img src="docs/images/share-settings.png" width="49%" alt="Settings, Sharing: each page with its version, and the links that show it underneath">
+  <img src="docs/images/share-wall.png" width="49%" alt="The session wall template on a 1920x1080 screen">
 </p>
-<p align="center"><sub>Share pages: an agent writes it beside a live preview, you publish it, and a link puts it on a screen. <a href="docs/features.md#screens-for-other-people">How</a>.</sub></p>
+<p align="center"><sub>Share pages: an agent writes it beside a live preview you can open large, you publish it, and a link puts it on a screen. <a href="docs/features.md#screens-for-other-people">How</a>.</sub></p>
 
 <p align="center">
   <img src="docs/images/mobile-session.png" width="36%" alt="A session on a phone, with the compose box and the key bar">

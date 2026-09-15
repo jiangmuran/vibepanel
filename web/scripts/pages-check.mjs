@@ -319,6 +319,22 @@ setTimeout(() => { try { done('frame', frame.contentDocument ? 'readable' : 'opa
     if (badge === 'live') pass('workflow/preview', 'the draft is live in the pane')
     else note('FAIL', 'workflow/preview', `the preview's badge says ${badge}`)
 
+    // The thumbnail opens large, and Escape puts it away.
+    await ui.locator('[data-testid="page-zoom-open"]').first().click().catch(() => {})
+    const zoom = ui.locator('[data-testid="page-zoom"]')
+    const zoomOpen = await zoom.waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false)
+    const zoomBox = zoomOpen ? await zoom.locator('[data-testid="page-frame-box"]').boundingBox() : null
+    const thumbBox = await ui.locator('[data-testid="page-preview"] [data-testid="page-frame-box"]').first().boundingBox()
+    if (zoomOpen) {
+      await sleep(1500)
+      await ui.screenshot({ path: join(SHOTS, 'workflow-zoom.png') })
+    }
+    await ui.keyboard.press('Escape')
+    const zoomGone = await zoom.waitFor({ state: 'detached', timeout: 3000 }).then(() => true, () => false)
+    if (zoomBox && thumbBox && zoomBox.width > thumbBox.width * 2 && zoomGone) {
+      pass('workflow/zoom', `the preview opens at ${Math.round(zoomBox.width)}px wide and Escape closes it`)
+    } else note('FAIL', 'workflow/zoom', `open ${zoomOpen}, ${JSON.stringify(zoomBox)} vs ${JSON.stringify(thumbBox)}, closed ${zoomGone}`)
+
     // Settle, then reload once: three writes in quick succession.
     let loads = 0
     ui.on('framenavigated', (f) => {
