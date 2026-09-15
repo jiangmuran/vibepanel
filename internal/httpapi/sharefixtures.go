@@ -377,6 +377,24 @@ func shapeFixture(raw []byte, m pages.Manifest, params map[string]any) []byte {
 	if s.Repo != nil && (m.Repo == nil || m.Repo.Days == 0) {
 		s.Repo.Days = []shareRepoDay{}
 	}
+	// The backend: every public key at its zero, the visitor actions as a
+	// kiosk link would see them, and sources that have not been fetched. A
+	// fixture that carried a fetched source would be a page tested against
+	// data it will not have until its host is approved.
+	if s.Data == nil {
+		s.Data = map[string]any{}
+	}
+	for key, spec := range m.Data {
+		if _, ok := s.Data[key]; !ok && spec.Visibility != pages.VisibilityAdmin {
+			s.Data[key] = spec.Zero()
+		}
+	}
+	s.Interactive = len(m.Actions) > 0
+	s.Actions = snapshotActions(m, false, s.Interactive)
+	s.Sources = map[string]*sourceResult{}
+	for _, src := range m.Sources {
+		s.Sources[src.Key] = &sourceResult{Error: "not fetched in a fixture"}
+	}
 	out, err := json.Marshal(f)
 	if err != nil {
 		return raw

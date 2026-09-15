@@ -7,4 +7,5 @@ package httpapi
 type pageBackend struct {
 	secrets secrets
 	actions actionDay
+	data    pageDataState
 }

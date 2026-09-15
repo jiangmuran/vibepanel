@@ -911,6 +911,8 @@ export interface SharePageActionSpec {
   input?: Record<string, SharePageDataSpec>
   rate?: string
   label?: string
+  /** Data keys a "server" effect may set from a visitor action. */
+  writes?: string[]
 }
 
 export type SharePageDataNamespace = 'live' | 'draft'

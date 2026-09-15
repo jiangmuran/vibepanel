@@ -46,7 +46,7 @@ func WriteArchive(w io.Writer, manifest []byte, files []File) error {
 	sorted := append([]File(nil), files...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Path < sorted[j].Path })
 	for _, f := range sorted {
-		if !ValidPath(f.Path) {
+		if !ValidPath(f.Path) && f.Path != DataFile {
 			return fmt.Errorf("bad path %q", f.Path)
 		}
 		if err := put(f.Path, f.Data); err != nil {
@@ -102,6 +102,11 @@ func ReadArchive(data []byte) (Bundle, error) {
 			continue
 		case name == ManifestFile:
 			if manifest, err = readZipFile(zf, MaxFileBytes); err != nil {
+				return Bundle{}, fmt.Errorf("%s: %w", name, err)
+			}
+			continue
+		case name == DataFile:
+			if b.Data, err = readZipFile(zf, MaxDataBytes); err != nil {
 				return Bundle{}, fmt.Errorf("%s: %w", name, err)
 			}
 			continue

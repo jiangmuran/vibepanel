@@ -350,8 +350,11 @@ runs admin actions. `vibepanel.d.ts` declares all of it.
 - Fixtures may carry `data`, `sources` and `server`; `fixtures/*.json` are
   shaped to the manifest as before.
 - Export includes `admin/` and `server.js`; `?data=1` adds the `live` data as
-  `data.json`. Secrets and approved hosts are never exported; import lists the
-  hosts and secret names the page needs.
+  `vibepanel-data.json` (a name reserved at a page's root, so it cannot be
+  mistaken for one of the page's own files). Secrets and approved hosts are
+  never exported; import writes the data into `live` and `draft`, checked
+  against the manifest the page arrived with, and answers the hosts and secret
+  names the page needs.
 
 ## 10. What an owner turns on, and where
 

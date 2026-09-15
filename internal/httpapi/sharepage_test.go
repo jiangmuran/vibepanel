@@ -713,6 +713,9 @@ func TestTheSDKTypesMatchTheSnapshot(t *testing.T) {
 		{"RepoProject", shareRepoProject{}},
 		{"RepoPRs", shareRepoPRs{}},
 		{"Repo", shareRepo{}},
+		{"SnapshotAction", snapshotAction{}},
+		{"SourceResult", sourceResult{}},
+		{"DataSpec", pages.DataSpec{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sent := jsonKeys(t, tc.row)

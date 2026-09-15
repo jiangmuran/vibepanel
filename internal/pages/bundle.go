@@ -47,6 +47,10 @@ const SDKFile = "vibepanel.js"
 // Never served.
 const TypesFile = "vibepanel.d.ts"
 
+// DataFile is where an exported page carries its data. Reserved at the root
+// so an import can tell it from a file of the page.
+const DataFile = "vibepanel-data.json"
+
 // IndexFile is what a page opens on.
 const IndexFile = "index.html"
 
@@ -98,7 +102,7 @@ func ValidPath(rel string) bool {
 			return false
 		}
 	}
-	if rel == SDKFile || rel == TypesFile || rel == ManifestFile {
+	if rel == SDKFile || rel == TypesFile || rel == ManifestFile || rel == DataFile {
 		return false
 	}
 	return ContentTypeFor(rel) != ""
@@ -122,6 +126,9 @@ type Bundle struct {
 	// load" is a much shorter conversation when the answer is on screen.
 	Ignored []Ignored `json:"ignored"`
 	Bytes   int64     `json:"bytes"`
+	// Data is an archive's vibepanel-data.json, when it had one. Never read
+	// from a directory.
+	Data []byte `json:"-"`
 }
 
 // Ignored is one path left out of a bundle.
@@ -194,6 +201,9 @@ func ReadDir(root string) (Bundle, error) {
 			return nil
 		case rel == TypesFile:
 			b.Ignored = append(b.Ignored, Ignored{rel, "for editors only"})
+			return nil
+		case rel == DataFile:
+			b.Ignored = append(b.Ignored, Ignored{rel, "reserved for an exported page's data"})
 			return nil
 		case ContentTypeFor(rel) == "":
 			b.Ignored = append(b.Ignored, Ignored{rel, "not a type a page can serve"})

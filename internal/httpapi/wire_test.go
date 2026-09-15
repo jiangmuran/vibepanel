@@ -118,6 +118,12 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		{"SharePageProblem", pages.Problem{}},
 		{"SharePageChanges", pageChanges{}},
 		{"SharePageDraft", pageDraft{}},
+		// A page with a backend: docs/page-backend.md.
+		{"SharePageCapabilities", pages.Capabilities{}},
+		{"SharePageDataSpec", pages.DataSpec{}},
+		{"SharePageSourceSpec", pages.SourceSpec{}},
+		{"SharePageActionSpec", pages.ActionSpec{}},
+		{"SharePageData", pageDataResponse{}},
 		// Token usage. Pinned from the first commit rather than after the
 		// first drift, because this surface has more fields than anything
 		// above it and every one of them is a number somebody will believe.
@@ -355,6 +361,8 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"share.interactive_changed": true,
 		// The switch for every visitor write on the panel.
 		"sharing.visitor_writes": true,
+		// A page's own data changed by its owner or through an admin page.
+		"page.data_changed": true,
 		// A page's own history, which is a question about the page.
 		"page.created":     true,
 		"page.published":   true,

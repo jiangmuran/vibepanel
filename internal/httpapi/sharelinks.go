@@ -123,6 +123,22 @@ func (s *Server) handleRotateShare(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"url": s.shareAddress(r, token), "token": token})
 }
 
+// linkMayAct is whether visitor actions may run through a link at all: an
+// interactive handed-out link, or a preview link (whose actions write draft
+// data), and never a view link; and never while visitor writes are off.
+func (s *Server) linkMayAct(ctx context.Context, link store.ShareLink) bool {
+	switch link.Purpose {
+	case "":
+		if !link.Interactive {
+			return false
+		}
+	case store.SharePurposePreview:
+	default:
+		return false
+	}
+	return s.visitorWritesAllowed(ctx)
+}
+
 // ─── the panel-wide switch ────────────────────────────────────────────────
 
 const visitorWritesKey = "sharing.visitor_writes"

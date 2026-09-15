@@ -74,6 +74,7 @@ func (s *Server) registerPageRoutes(r chi.Router) {
 	r.Get("/settings/pages/{pageID}/export", s.handleExportPage)
 	r.Post("/settings/pages/import", s.handleImportPage)
 	r.Put("/settings/pages/root", s.handlePutPagesRoot)
+	s.registerPageDataRoutes(r)
 	r.Put("/settings/shares/{shareID}/page", s.handleSetSharePage)
 }
 
@@ -120,6 +121,8 @@ type pageDetail struct {
 	SourceExists bool                     `json:"sourceExists"`
 	Versions     []store.SharePageVersion `json:"versions"`
 	Links        []store.ShareLink        `json:"links"`
+	// Capabilities is what the published version declares beyond drawing.
+	Capabilities pages.Capabilities `json:"capabilities"`
 }
 
 func (s *Server) handleGetPage(w http.ResponseWriter, r *http.Request) {
@@ -140,8 +143,12 @@ func (s *Server) handleGetPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.fillLinkCounts(ctx, links, time.Now())
+	var caps pages.Capabilities
+	if m, merr := s.pageManifestFor(ctx, page, store.PageDataLive); merr == nil {
+		caps = m.Capabilities()
+	}
 	writeJSON(w, http.StatusOK, pageDetail{Page: page, SourceExists: dirExists(page.SourceDir),
-		Versions: versions, Links: links})
+		Versions: versions, Links: links, Capabilities: caps})
 }
 
 // pageCatalogue is the vocabulary the New page dialog and the Preview pane are

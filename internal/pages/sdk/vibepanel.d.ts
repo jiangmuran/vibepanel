@@ -61,6 +61,86 @@ export interface Snapshot {
   /** The scoped project's GitHub owner and repository; '' unless names and a project scope. */
   scopeRepoOwner: string
   scopeRepoName: string
+
+  /** The page's own data: every public key vibepanel.json declares, at its stored value or default.
+   *  Text in it may have been written by a visitor; render it with vp.text. ARCHITECTURE.md §2. */
+  data: Record<string, DataValue>
+  /** Whether this link may run visitor actions right now: the link is interactive and the owner
+   *  allows visitor writes. An action pressed while this is false answers { ok: false }. */
+  interactive: boolean
+  /** The actions this caller may run: visitor actions on a share link, admin actions in an admin page. */
+  actions: Record<string, SnapshotAction>
+  /** Each declared source's last fetch, done by the panel. ARCHITECTURE.md §4. */
+  sources: Record<string, SourceResult>
+  /** What server.js's transform returned for this snapshot, or null. ARCHITECTURE.md §5. */
+  server: unknown
+}
+
+/** A data value: text, number, bool, a list, an object, a log's entries (each with `at`), or JSON. */
+export type DataValue =
+  | string
+  | number
+  | boolean
+  | null
+  | DataValue[]
+  | { [key: string]: DataValue }
+
+/** One declared data key, action input field, or item. */
+export interface DataSpec {
+  type: 'text' | 'number' | 'bool' | 'enum' | 'color' | 'list' | 'object' | 'json' | 'counter' | 'log'
+  label?: string
+  min?: number
+  max?: number
+  values?: string[]
+  maxBytes?: number
+  item?: DataSpec
+  fields?: Record<string, DataSpec>
+  default?: DataValue
+  visibility?: 'public' | 'admin'
+}
+
+export interface SnapshotAction {
+  who: 'visitor' | 'admin' | 'both'
+  label: string
+  /** The fields vp.action(name, payload) must send: exactly these, no others. */
+  input: Record<string, DataSpec>
+  /** False when pressing it cannot work: the link is not interactive, or visitor writes are off. */
+  enabled: boolean
+}
+
+export interface SourceResult {
+  ok: boolean
+  /** Unix seconds of the last fetch, 0 before the first. */
+  fetchedAt: number
+  /** The HTTP status of the last fetch, 0 when it never got one. */
+  status: number
+  /** Why the last fetch failed, or ''. "host not approved" until the owner approves it. */
+  error: string
+  /** The parsed JSON or text of the last successful fetch, or null. */
+  value: unknown
+}
+
+/** What vp.action resolves to. It never rejects. */
+export interface ActionResult {
+  ok: boolean
+  /** What the action's effect produced: the new value, or server.js's return. */
+  result?: unknown
+  /** Why it did not run, in words to show. */
+  error?: string
+  /** Seconds to wait before trying again, when rate limited. */
+  retryAfter?: number
+}
+
+/** Present only in an admin page (served from /page-admin/…). Every call resolves, never rejects. */
+export interface AdminClient {
+  /** Every declared key, admin-visibility included. */
+  data(): Promise<{ ok: boolean; values?: Record<string, DataValue>; error?: string }>
+  set(key: string, value: DataValue): Promise<ActionResult>
+  increment(key: string, by?: number): Promise<ActionResult>
+  append(key: string, item: Record<string, DataValue>): Promise<ActionResult>
+  reset(key: string): Promise<ActionResult>
+  sources(): Promise<{ ok: boolean; sources?: Record<string, SourceResult>; error?: string }>
+  links(): Promise<{ ok: boolean; links?: { name: string; remark: string; interactive: boolean; viewers: number }[]; error?: string }>
 }
 
 export interface SnapshotPage {
@@ -359,6 +439,16 @@ export interface Client {
   on(event: 'status', fn: (status: Status, vp: Client) => void): () => void
   on(event: 'params', fn: (params: Snapshot['params'], vp: Client) => void): () => void
   on(event: 'error', fn: (message: string, vp: Client) => void): () => void
+  /** Fires when the page's data changed, with all of it. */
+  on(event: 'data', fn: (data: Snapshot['data'], vp: Client) => void): () => void
+
+  /** The page's data from the latest snapshot. */
+  readonly data: Snapshot['data']
+  /** Run an action. In a share page only visitor actions, and only on an interactive link;
+   *  in an admin page, admin actions. The snapshot is re-read when it resolves. */
+  action(name: string, payload?: Record<string, DataValue>): Promise<ActionResult>
+  /** Set in an admin page, null everywhere else. */
+  readonly admin: AdminClient | null
 
   /** The panel's clock, unix seconds, corrected for this screen's. */
   now(): number

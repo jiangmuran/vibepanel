@@ -1274,6 +1274,40 @@ read by the publish rules — a path that leaves the page, a file that is not wh
 its name says, a missing `index.html` or manifest, or a limit exceeded is `400`
 — and the page is not published. Audited as `page.imported`.
 
+The answer also carries `hosts` and `secrets`, what the page's sources need
+before they fetch anything (neither travels in an archive), and `dataSkipped`.
+An archive exported with `?data=1` carries `vibepanel-data.json`; its values are
+written into both namespaces, checked against the manifest the page arrived
+with, and whatever does not fit is listed in `dataSkipped`.
+
+### `GET /api/settings/pages/{pageID}/data`
+### `DELETE /api/settings/pages/{pageID}/data`
+### `PUT /api/settings/pages/{pageID}/data/{key}`
+### `POST /api/settings/pages/{pageID}/data/{key}/increment`
+### `POST /api/settings/pages/{pageID}/data/{key}/append`
+### `DELETE /api/settings/pages/{pageID}/data/{key}`
+
+A page's own data, docs/page-backend.md §2. `?ns=live` (the default) is what
+handed-out links read; `?ns=draft` is the Preview's. The schema is the published
+version's manifest for `live` (`409` for a page never published) and the draft
+directory's for `draft`.
+
+`GET` answers `{"schema", "values", "updatedAt", "bytes", "limit"}` with every
+declared key, admin-visibility ones included, at its stored value or default. A
+stored value that no longer fits the manifest reads as the default.
+
+`PUT` takes `{"value": …}` and refuses a counter or a log (they change by
+`increment` and `append`); `increment` takes `{"by": n}` (a whole number,
+default 1, never below zero); `append` takes `{"item": {…}}` with exactly the
+log item's fields, stamps `at` and keeps the newest `max` entries. Each answers
+`{"value": …}` with the key's new value. `DELETE` on a key puts it back to its
+default and on the collection clears the namespace; both answer `204`.
+
+Refused with `400` and the reason: an undeclared key, a value that does not fit
+its type or bounds, or a write that would take the namespace past 64 keys or
+256 KiB. Every write is audited as `page.data_changed`, and shows on every
+link's next poll.
+
 ### `PUT /api/settings/shares/{shareID}/page`
 
 What a link draws: `{"pageId": "…", "pinVersion": 0, "params": {"title": "Hall"}}`.
