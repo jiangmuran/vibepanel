@@ -208,3 +208,15 @@ func TestSourcesNeedAnApprovedHostAndTheirSecrets(t *testing.T) {
 		t.Errorf("delete secret = %d", code)
 	}
 }
+
+func TestASecretIsNeverQuotedBackInAnError(t *testing.T) {
+	msg := "fetch failed: GET with Authorization: Bearer tok-123-extra and tok-123 again"
+	got := redactSecrets(msg, []string{"tok-123", "tok-123-extra", ""})
+	if strings.Contains(got, "tok-123") || strings.Contains(got, "extra") || strings.Count(got, "[secret]") != 2 {
+		t.Errorf("redacted = %q", got)
+	}
+	if redactSecrets("nothing to hide", nil) != "nothing to hide" {
+		t.Error("a message without secrets changed")
+	}
+}
+

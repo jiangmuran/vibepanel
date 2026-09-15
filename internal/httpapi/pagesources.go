@@ -240,12 +240,27 @@ func (s *Server) fetchSource(ctx context.Context, f *sourceFetcher, pageID strin
 		f = &sourceFetcher{}
 	}
 	res := f.fetch(ctx, src, headers)
-	for _, secret := range secrets {
+	res.Error = redactSecrets(res.Error, secrets)
+	return res
+}
+
+// redactSecrets takes every secret out of a message before it is stored where
+// settings, the admin API or a log can show it.
+//
+// No error the fetcher writes today quotes a header, so this is the second
+// line rather than the first: the next error message somebody adds -- a
+// transport error that prints its request, a body excerpt -- is the one that
+// would quote a token back to a page's admin screen. Longest first, so a
+// secret that contains another is not left half-visible.
+func redactSecrets(msg string, secrets []string) string {
+	sorted := append([]string(nil), secrets...)
+	sort.Slice(sorted, func(i, j int) bool { return len(sorted[i]) > len(sorted[j]) })
+	for _, secret := range sorted {
 		if secret != "" {
-			res.Error = strings.ReplaceAll(res.Error, secret, "[secret]")
+			msg = strings.ReplaceAll(msg, secret, "[secret]")
 		}
 	}
-	return res
+	return msg
 }
 
 func pageSecretContext(pageID, name string) string { return "page-secret:" + pageID + ":" + name }
