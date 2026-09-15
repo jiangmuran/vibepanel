@@ -609,11 +609,7 @@ func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int, 
 		return fmt.Errorf("subscribe: %w", err)
 	}
 	attachedAt := time.Now()
-	subscribeAs := live.Subscribe
-	if hidden {
-		subscribeAs = live.SubscribeHidden
-	}
-	sub, replay := subscribeAs(c.clientID)
+	sub, replay := c.h.Manager.Subscribe(ctx, live, c.clientID, hidden)
 
 	c.mu.Lock()
 	c.nextRef++

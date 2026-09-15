@@ -21859,3 +21859,43 @@ end of a file that can be hundreds, reads only what was appended, never a
 partial line, and is consulted only after ten minutes without a hook report.
 Checked against a running Codex: it found the rollout and read `done`.
 
+**Upload progress.** `fetch` cannot report request-body progress, so the
+upload call is XMLHttpRequest now, and the "uploading…" toast carries a
+determinate bar (`setToastProgress` moves it without re-raising the toast —
+an upload reporting itself every hundred milliseconds must not keep itself
+alive forever). The file panel's note line grows the same bar.
+
+`IsAgentCommand` learned `kimi` and `zcode`, which is what the "states are
+guessed" notice matches against. Codex and zcode report `node` on this box —
+script wrappers — so for them the hooks, not the process name, are what they
+are recognised by; the runbook says so now.
+
+## 2026-09-16 — Subscribe replays the screen, not the animation
+
+「切换会话的时候终端渲染太慢，codex 甚至有时候完全渲染不出来只能渲染下面
+的粒子」.
+
+The ring keeps raw PTY bytes, which is the faithful replay until it wraps.
+Codex's idle animation is a cursor-addressed repaint several times a second,
+so a session that has been animating wraps the 2 MiB ring in well under a
+minute — and everything the screen was showing is evicted by frames of the
+animation. A terminal that remounted (it falls out of the three-session
+recency window quickly on a busy panel) replayed the tail: the particles, and
+a blank area where the conversation was. The bytes it never had to show were
+also most of the wait: two megabytes of spinner frames through the parser on
+every switch.
+
+tmux has the rendered screen regardless of what the byte stream did to the
+ring, so once the ring has overflowed, `Manager.Subscribe` builds the replay
+from `capture-pane -e -J` instead — history and the visible screen with their
+colours, plus a CUP back to the pane's cursor, which no capture carries —
+and appends only the ring bytes written since the capture, computed under
+the same lock that registers the subscriber so nothing slips between. The
+capture is read before that lock: it is a tmux exec, and the pump writes
+under it. A ring that has not overflowed still replays its own bytes, which
+are the exact ones.
+
+Measured with the fixture the report is about (`replay_test.go`): a marker
+line, then a cursor-addressed animation until the ring wraps — the raw
+snapshot holds frames and no marker, and the subscribe replay still carries
+both, the conversation from the capture and the frames from the tail.

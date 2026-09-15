@@ -805,7 +805,7 @@ func (m *Manager) DetachAll() {
 // The snapshot is taken under the same lock that registers the subscriber, so
 // no output can slip between the two and be lost.
 func (l *Live) Subscribe(clientID string) (*Subscriber, []byte) {
-	return l.subscribe(clientID, false)
+	return l.subscribe(clientID, false, nil, -1)
 }
 
 // SubscribeHidden is Subscribe for a viewer that starts off-screen. A browser
@@ -817,10 +817,61 @@ func (l *Live) Subscribe(clientID string) (*Subscriber, []byte) {
 // every reconnect would restart the grace period on a grid its owner walked
 // away from an hour ago.
 func (l *Live) SubscribeHidden(clientID string) (*Subscriber, []byte) {
-	return l.subscribe(clientID, true)
+	return l.subscribe(clientID, true, nil, -1)
 }
 
-func (l *Live) subscribe(clientID string, hidden bool) (*Subscriber, []byte) {
+// Subscribe registers a viewer the way the socket does: with a replay that
+// still shows the session's screen when the ring has scrolled past it.
+//
+// The ring keeps raw bytes, which is the faithful replay until it wraps — and
+// an agent that animates (Codex's spinner is a full-screen repaint several
+// times a second) wraps it in under a minute, evicting the conversation the
+// screen was showing. Replaying the tail then draws the animation and a blank
+// area where the session was: 「codex 完全渲染不出来，只能渲染下面的粒子」.
+// tmux has the rendered screen regardless, so once the ring has overflowed
+// the prefix comes from capture-pane instead, and only the bytes written
+// since the capture still come from the ring.
+//
+// The capture is read before Subscribe's lock, not under it: it is a tmux
+// exec, and the pump writes under that lock. Bytes it races are not lost —
+// they are exactly the tail the subscribe appends.
+func (m *Manager) Subscribe(ctx context.Context, l *Live, clientID string, hidden bool) (*Subscriber, []byte) {
+	prefix, total := m.captureReplay(ctx, l)
+	return l.subscribe(clientID, hidden, prefix, total)
+}
+
+// captureReplay builds the capture-pane replay prefix for a session whose
+// ring has wrapped, and the ring total it was taken at. (-1, nil) means the
+// plain ring snapshot is the right replay: nothing has been evicted, or the
+// capture could not be read.
+func (m *Manager) captureReplay(ctx context.Context, l *Live) ([]byte, int64) {
+	if !l.ring.Overflowed() {
+		return nil, -1
+	}
+	total := l.ring.Total()
+	screen, err := m.tmux.Capture(ctx, l.TmuxName)
+	if err != nil || screen == "" {
+		if err != nil {
+			m.logf("capture for %s: %v", l.ID, err)
+		}
+		return nil, -1
+	}
+	// capture-pane separates lines with \n, and convertEol is off on the other
+	// end for the same reason as Attach's prime.
+	replay := strings.ReplaceAll(screen, "\n", "\r\n") + "\r\n"
+	// The cursor, which no capture carries. Without it the next echoed
+	// keystroke prints at the bottom-left of the restored screen.
+	if x, y, cerr := m.tmux.Cursor(ctx, l.TmuxName); cerr == nil {
+		replay += fmt.Sprintf("\033[%d;%dH", y+1, x+1)
+	}
+	p := []byte(replay)
+	if len(p) > m.ringSize {
+		p = trimPartialEscape(p[len(p)-m.ringSize:])
+	}
+	return p, total
+}
+
+func (l *Live) subscribe(clientID string, hidden bool, prefix []byte, prefixTotal int64) (*Subscriber, []byte) {
 	sub := &Subscriber{Events: make(chan Event, subscriberQueue), ClientID: clientID, hidden: hidden}
 
 	l.mu.Lock()
@@ -829,7 +880,20 @@ func (l *Live) subscribe(clientID string, hidden bool) (*Subscriber, []byte) {
 		close(sub.Events)
 		return sub, nil
 	}
-	replay := l.ring.Snapshot()
+	snapshot := l.ring.Snapshot()
+	replay := snapshot
+	if prefixTotal >= 0 {
+		// The capture covers everything up to prefixTotal; only what the pump
+		// wrote during it still has to come from the ring. The slice can land
+		// mid-sequence, so it goes through the same trim as a wrapped snapshot.
+		tail := snapshot
+		if written := l.ring.Total() - prefixTotal; written < int64(len(snapshot)) {
+			tail = trimPartialEscape(snapshot[len(snapshot)-int(written):])
+		}
+		replay = make([]byte, 0, len(prefix)+len(tail))
+		replay = append(replay, prefix...)
+		replay = append(replay, tail...)
+	}
 	l.subs[sub] = struct{}{}
 
 	// A session nobody has ever driven goes to whoever opened it. Without this

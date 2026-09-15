@@ -726,6 +726,22 @@ func (c *Client) Capture(ctx context.Context, name string) (string, error) {
 	return c.run(ctx, "capture-pane", "-p", "-e", "-J", "-S", "-", "-t", target(name))
 }
 
+// Cursor returns the pane's cursor position as 0-based column and row.
+//
+// capture-pane reproduces the screen's contents but not where its cursor is,
+// and a replay that ends without one leaves the terminal printing the next
+// echoed keystroke at the bottom-left of whatever was just restored.
+func (c *Client) Cursor(ctx context.Context, name string) (x, y int, err error) {
+	out, err := c.run(ctx, "display-message", "-p", "-t", target(name), "#{cursor_x} #{cursor_y}")
+	if err != nil {
+		return 0, 0, err
+	}
+	if n, _ := fmt.Sscanf(strings.TrimSpace(out), "%d %d", &x, &y); n != 2 {
+		return 0, 0, fmt.Errorf("tmux: unreadable cursor position %q", strings.TrimSpace(out))
+	}
+	return x, y, nil
+}
+
 // CaptureHistory returns everything above the visible screen.
 //
 // `-E -1` stops one line short of the pane's top row, which is the difference
