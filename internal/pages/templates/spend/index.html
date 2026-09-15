@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Token spend</title>
+  <style>
+    :root {
+      --bg: #0c0f13;
+      --card: #151a21;
+      --line: #262d38;
+      --text: #edf0f4;
+      --muted: #8a93a3;
+      --accent: #3fc8b4;
+      --vp-live: #3fb67a;
+      --vp-waiting: #f0b429;
+      --vp-trouble: #ff5d4a;
+      --radius: clamp(10px, 0.9vw, 20px);
+      --pad: clamp(16px, 1.6vw, 36px);
+      color-scheme: dark;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      padding: clamp(14px, 1.8vw, 40px);
+      background: var(--bg);
+      color: var(--text);
+      font: clamp(14px, 1vw, 22px)/1.35 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+      font-variant-numeric: tabular-nums;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: clamp(12px, 1.4vw, 32px);
+      overflow: hidden;
+    }
+    header { display: flex; align-items: center; gap: 1em; min-width: 0; }
+    header .titles { flex: 1; min-width: 0; }
+    h1 { margin: 0; font-size: clamp(22px, 2.3vw, 52px); font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    h1::before { content: ""; display: inline-block; width: 0.5em; height: 0.5em; border-radius: 3px; background: var(--accent);
+      margin-right: 0.45em; vertical-align: 0.08em; }
+    .sub { color: var(--muted); font-size: clamp(13px, 1.05vw, 24px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #status { font-size: clamp(14px, 1.3vw, 30px); color: var(--muted); white-space: nowrap; }
+
+    main {
+      display: grid;
+      grid-template-columns: minmax(0, 5fr) minmax(0, 4fr) minmax(0, 4fr);
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: clamp(12px, 1.2vw, 28px);
+      min-height: 0;
+    }
+    .card { background: var(--card); border-radius: var(--radius); padding: var(--pad); min-width: 0; min-height: 0;
+      display: flex; flex-direction: column; }
+    h2 { margin: 0 0 0.5em; font-size: clamp(12px, 0.95vw, 22px); font-weight: 600; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .big { font-size: clamp(56px, 7vw, 170px); font-weight: 750; line-height: 0.95; letter-spacing: -0.03em; }
+    .mid { font-size: clamp(36px, 3.8vw, 92px); font-weight: 700; line-height: 1; letter-spacing: -0.02em; }
+    .unit { color: var(--muted); font-size: clamp(14px, 1.2vw, 28px); margin-top: 0.2em; }
+    .note { color: var(--muted); margin-top: 0.6em; }
+    .note b { color: var(--text); font-weight: 600; }
+
+    /* "Not counted yet" gets its own shape and words: a dashed ring is not a zero. */
+    .unknown { display: flex; align-items: center; gap: 0.4em; color: var(--muted); font-weight: 600; font-size: clamp(20px, 1.9vw, 44px); margin-top: 0.2em; }
+    .unknown svg { width: 1em; height: 1em; flex: none; }
+    [hidden] { display: none !important; }
+
+    /* Not live: grey the figures and say so in words, because a frozen
+       dashboard looks exactly like a quiet one and grey alone is a colour. */
+    body.offline main { opacity: 0.3; filter: grayscale(1); }
+    #notice { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none; z-index: 1; }
+    #notice span { background: var(--card); border: 2px solid var(--vp-trouble); border-radius: 16px; padding: 0.8em 1.4em;
+      font-size: clamp(18px, 2vw, 44px); font-weight: 600; text-align: center; max-width: 80%; }
+
+    .parts { display: grid; grid-template-columns: repeat(4, auto); justify-content: start; gap: 0.2em 1.6em; margin: 1.2em 0 0; }
+    .parts dt { color: var(--muted); font-size: 0.85em; }
+    .parts dd { margin: 0; font-weight: 600; font-size: 1.15em; }
+
+    .spark { width: 100%; height: clamp(40px, 5vh, 90px); margin-top: auto; display: block; }
+
+    .compare { display: grid; gap: 0.9em; margin-top: 0.4em; }
+    .row .label { display: flex; justify-content: space-between; gap: 1em; margin-bottom: 0.3em; }
+    .row .label span:first-child { color: var(--muted); }
+    .row .label b { font-size: 1.35em; font-weight: 700; }
+    .track { height: clamp(10px, 1vw, 22px); background: var(--line); border-radius: 99px; overflow: hidden; }
+    .fill { height: 100%; border-radius: 99px; background: var(--accent); }
+    .fill.previous { background: var(--muted); }
+    /* A projection is drawn as an outline: it has not happened. */
+    .fill.pace { background: transparent; border: 2px dashed var(--accent); }
+
+    .trend { grid-column: span 2; }
+    .chart { position: relative; flex: 1; min-height: 120px; }
+    .chart svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .chart .avg { position: absolute; right: 0; transform: translateY(-120%); color: var(--muted); font-size: 0.85em;
+      background: var(--card); padding: 0 0.3em; }
+    .axis { display: flex; justify-content: space-between; color: var(--muted); font-size: 0.85em; margin-top: 0.5em; }
+    .axis span:last-child { color: var(--text); font-weight: 600; }
+    .placeholder { flex: 1; display: grid; place-items: center; text-align: center; border: 2px dashed var(--line);
+      border-radius: var(--radius); color: var(--muted); padding: 1em; }
+
+    #split { list-style: none; margin: 0; padding: 0; display: grid; gap: 1em; align-content: start; overflow: hidden; }
+    #split .label { display: flex; gap: 0.8em; align-items: baseline; margin-bottom: 0.35em; }
+    #split .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; unicode-bidi: isolate; font-weight: 600; font-size: 1.1em; }
+    #split .share { color: var(--muted); }
+    #split .req { color: var(--muted); font-size: 0.85em; margin-top: 0.3em; }
+    .totals { margin-top: auto; padding-top: 1em; border-top: 1px solid var(--line); display: grid;
+      grid-template-columns: 1fr 1fr; gap: 0.2em 1em; }
+    .totals dt { color: var(--muted); font-size: 0.85em; }
+    .totals dd { margin: 0; font-size: clamp(22px, 2vw, 46px); font-weight: 700; }
+
+    @media (max-width: 900px) {
+      html, body { height: auto; }
+      body { display: block; overflow: visible; }
+      header { margin-bottom: 16px; }
+      main { grid-template-columns: minmax(0, 1fr); }
+      .trend { grid-column: auto; }
+      .chart { height: 180px; flex: none; }
+      .parts { grid-template-columns: repeat(2, auto); }
+      .big { font-size: 22vw; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="titles">
+      <h1 id="title">Token spend</h1>
+      <div class="sub" id="sub"></div>
+    </div>
+    <span id="status"></span>
+  </header>
+
+  <div id="notice" hidden><span></span></div>
+  <main>
+    <section class="card">
+      <h2>Today</h2>
+      <div data-known>
+        <div class="big" id="today">—</div>
+        <div class="unit">tokens</div>
+        <dl class="parts" id="parts"></dl>
+        <div class="note" id="yesterday"></div>
+      </div>
+      <div class="unknown" data-unknown hidden>not counted yet</div>
+    </section>
+
+    <section class="card">
+      <h2>Rate so far today</h2>
+      <div data-known>
+        <div class="mid" id="rate">—</div>
+        <div class="unit">tokens an hour</div>
+        <div class="note" id="rateNote"></div>
+      </div>
+      <div class="unknown" data-unknown hidden>not counted yet</div>
+      <svg class="spark" id="spark" preserveAspectRatio="none" aria-hidden="true"></svg>
+    </section>
+
+    <section class="card">
+      <h2>This month</h2>
+      <div class="compare" id="month" data-known></div>
+      <div class="unknown" data-unknown hidden>not counted yet</div>
+    </section>
+
+    <section class="card trend">
+      <h2 id="trendTitle">Last 30 days</h2>
+      <div class="chart" id="chart"></div>
+      <div class="axis" id="axis"></div>
+      <div class="placeholder" id="chartEmpty" hidden></div>
+    </section>
+
+    <section class="card">
+      <h2 id="splitTitle">By tool</h2>
+      <ul id="split"></ul>
+      <dl class="totals" id="totals" data-known></dl>
+    </section>
+  </main>
+
+  <script src="vibepanel.js"></script>
+  <script>
+    const vp = VibePanel.connect()
+    vp.badge(document.getElementById('status'))
+
+    const $ = (id) => document.getElementById(id)
+    const SVG = 'http://www.w3.org/2000/svg'
+    const fmt = vp.fmt
+    let splitBy = 'tool'
+    let title = 'Token spend'
+
+    function svgEl(tag, attrs) {
+      const node = document.createElementNS(SVG, tag)
+      for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, String(v))
+      return node
+    }
+
+    function el(tag, className, text) {
+      const node = document.createElement(tag)
+      if (className) node.className = className
+      if (text !== undefined) vp.text(node, text)
+      return node
+    }
+
+    // A dashed ring: the "unknown" mark, next to the words.
+    for (const u of document.querySelectorAll('[data-unknown]')) {
+      const ring = svgEl('svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true' })
+      ring.append(svgEl('circle', { cx: 12, cy: 12, r: 9, fill: 'none', stroke: 'currentColor',
+        'stroke-width': 2.4, 'stroke-dasharray': '3.5 3' }))
+      u.prepend(ring)
+    }
+
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    // Labels are the panel's own calendar days ("2026-08-23"). Read as text,
+    // never through Date, which would move them into this screen's time zone.
+    function dayLabel(label) {
+      const [, m, d] = label.split('-').map(Number)
+      return MONTHS[m - 1] ? `${MONTHS[m - 1]} ${d}` : label
+    }
+
+    vp.on('params', (p) => {
+      if (typeof p.accent === 'string') document.documentElement.style.setProperty('--accent', p.accent)
+      if (p.split === 'tool' || p.split === 'model') splitBy = p.split
+      title = p.title || 'Token spend'
+      if (vp.snapshot) draw(vp.snapshot)
+    })
+
+    function drawToday(sp) {
+      vp.text($('today'), fmt.tokens(sp.today.total))
+      const parts = $('parts')
+      parts.replaceChildren()
+      for (const [label, key] of [['input', 'input'], ['output', 'output'], ['cache read', 'cacheRead'], ['cache write', 'cacheWrite']]) {
+        const box = el('div')
+        box.append(el('dt', null, label), el('dd', null, fmt.tokens(sp.today[key])))
+        parts.append(box)
+      }
+      $('yesterday').replaceChildren('yesterday ', el('b', null, fmt.tokens(sp.yesterday.total)),
+        ` · ${fmt.number(sp.today.requests)} requests today`)
+    }
+
+    function drawRate(sp, trend) {
+      // Early in the day a rate is a guess; say how many hours it covers.
+      const hours = sp.hoursToday
+      vp.text($('rate'), hours > 0 ? fmt.tokens(sp.today.total / hours) : null)
+      vp.text($('rateNote'), hours > 0 ? `over ${hours.toFixed(1)} hours since midnight` : 'the day has just started')
+
+      // The trend's token figure is a running total, so each bar is the
+      // difference between two samples. It restarts at midnight; a drop is
+      // the new day, not negative spend, and is left out.
+      const spark = $('spark')
+      spark.replaceChildren()
+      const pts = trend ? trend.points : []
+      if (pts.length < 2) return
+      const steps = []
+      for (let i = 1; i < pts.length; i++) steps.push(Math.max(0, pts[i].tokens - pts[i - 1].tokens))
+      const max = Math.max(...steps, 1)
+      spark.setAttribute('viewBox', `0 0 ${steps.length} 100`)
+      steps.forEach((v, i) => {
+        const h = (v / max) * 100
+        spark.append(svgEl('rect', { x: i + 0.15, y: 100 - h, width: 0.7, height: h, fill: 'var(--accent)', opacity: 0.55 }))
+      })
+      const minutes = Math.round((pts[pts.length - 1].at - pts[0].at) / 60)
+      $('rateNote').append(el('br'), `bars: the last ${minutes} minutes`)
+    }
+
+    function drawMonth(sp) {
+      const box = $('month')
+      box.replaceChildren()
+      // Month to date against the whole of last month, and a projection only
+      // once there are enough days for one to mean anything.
+      const [y, m, day] = sp.date.split('-').map(Number)
+      const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate()
+      const elapsed = (day - 1) + sp.hoursToday / 24
+      const pace = elapsed >= 2 ? (sp.month.total / elapsed) * daysInMonth : null
+      const max = Math.max(sp.month.total, sp.lastMonth.total, pace || 0, 1)
+      const rows = [['so far', sp.month.total, 'fill'], ['all of last month', sp.lastMonth.total, 'fill previous']]
+      if (pace !== null) rows.push(['at this pace', pace, 'fill pace'])
+      for (const [label, value, cls] of rows) {
+        const row = el('div', 'row')
+        const head = el('div', 'label')
+        head.append(el('span', null, label), el('b', null, fmt.tokens(value)))
+        const track = el('div', 'track')
+        const fill = el('div', cls)
+        fill.style.width = `${Math.max(1, (value / max) * 100)}%`
+        track.append(fill)
+        row.append(head, track)
+        box.append(row)
+      }
+      if (pace === null) box.append(el('div', 'note', 'too early in the month to project'))
+    }
+
+    function drawChart(sp) {
+      const days = sp.days
+      const chart = $('chart')
+      const axis = $('axis')
+      chart.replaceChildren()
+      axis.replaceChildren()
+      vp.text($('trendTitle'), `Last ${days.length || 30} days`)
+      const empty = !days.length
+      chart.hidden = axis.hidden = empty
+      $('chartEmpty').hidden = !empty
+      if (empty) {
+        vp.text($('chartEmpty'), 'No days to draw yet.')
+        return
+      }
+      const max = Math.max(...days.map((d) => d.total), 1)
+      const avg = days.reduce((a, d) => a + d.total, 0) / days.length
+      const W = days.length * 10
+      // preserveAspectRatio none stretches the bars to the card; the only
+      // text is outside the SVG, so nothing gets squashed.
+      const svg = svgEl('svg', { viewBox: `0 0 ${W} 100`, preserveAspectRatio: 'none', role: 'img',
+        'aria-label': `daily tokens, peak ${fmt.tokens(max)}` })
+      days.forEach((d, i) => {
+        const h = Math.max(d.total > 0 ? 0.8 : 0, (d.total / max) * 97)
+        const today = i === days.length - 1
+        svg.append(svgEl('rect', { x: i * 10 + 1.5, y: 100 - h, width: 7, height: h, rx: 1,
+          fill: 'var(--accent)', opacity: today ? 1 : 0.42 }))
+      })
+      const avgY = 100 - (avg / max) * 97
+      svg.append(svgEl('line', { x1: 0, x2: W, y1: avgY, y2: avgY, stroke: 'var(--text)', 'stroke-width': 1.5,
+        'stroke-dasharray': '6 5', 'vector-effect': 'non-scaling-stroke', opacity: 0.6 }))
+      const avgLabel = el('span', 'avg', `average ${fmt.tokens(avg)}`)
+      avgLabel.style.top = `${avgY}%`
+      chart.append(svg, avgLabel)
+      const mid = days[Math.floor(days.length / 2)]
+      axis.append(el('span', null, dayLabel(days[0].label)), el('span', null, dayLabel(mid.label)),
+        el('span', null, `today ${fmt.tokens(days[days.length - 1].total)}`))
+    }
+
+    function drawSplit(sp) {
+      const list = $('split')
+      list.replaceChildren()
+      const groups = (splitBy === 'model' ? sp.models : sp.tools).slice().sort((a, b) => b.total - a.total)
+      vp.text($('splitTitle'), `By ${splitBy} · last ${sp.windowDays} days`)
+      if (!groups.length) {
+        list.append(el('li', 'note', `Nothing to split by ${splitBy} yet.`))
+        return
+      }
+      const sum = groups.reduce((a, g) => a + g.total, 0)
+      const max = Math.max(groups[0].total, 1)
+      const shown = groups.slice(0, 6)
+      for (const g of shown) {
+        const li = el('li')
+        const head = el('div', 'label')
+        // Tool and model names are vendors' words, but a row can still be
+        // unnamed; the id is the next best thing, then a plain word.
+        head.append(el('span', 'name', vp.name(g, g.id || 'other')), el('b', null, fmt.tokens(g.total)),
+          el('span', 'share', sum > 0 ? fmt.percent((g.total / sum) * 100) : '—'))
+        const track = el('div', 'track')
+        const fill = el('div', 'fill')
+        fill.style.width = `${Math.max(g.total > 0 ? 1 : 0, (g.total / max) * 100)}%`
+        track.append(fill)
+        li.append(head, track, el('div', 'req', `${fmt.number(g.requests)} requests`))
+        list.append(li)
+      }
+      if (groups.length > shown.length) list.append(el('li', 'note', `and ${groups.length - shown.length} more`))
+    }
+
+    function draw(s) {
+      vp.text($('title'), title)
+      const sp = s.spend
+      const known = Boolean(sp && sp.readable)
+      const bits = [s.name, s.remark].filter(Boolean)
+      if (known && sp.scannedAt > 0) bits.push(`transcripts read ${vp.since(sp.scannedAt)} ago`)
+      vp.text($('sub'), bits.join(' · '), '')
+
+      // Until the first pass over the transcripts finishes, every figure is
+      // unknown rather than zero, so none of them is drawn.
+      for (const n of document.querySelectorAll('[data-known]')) n.hidden = !known
+      for (const n of document.querySelectorAll('[data-unknown]')) n.hidden = known
+      if (!known) {
+        $('spark').replaceChildren()
+        $('chart').hidden = $('axis').hidden = true
+        $('chartEmpty').hidden = false
+        vp.text($('chartEmpty'), 'Not counted yet: the panel is still reading transcripts.')
+        $('split').replaceChildren(el('li', 'note', 'Not counted yet.'))
+        return
+      }
+      drawToday(sp)
+      drawRate(sp, s.trend)
+      drawMonth(sp)
+      drawChart(sp)
+      drawSplit(sp)
+
+      const totals = $('totals')
+      totals.replaceChildren()
+      for (const [label, t] of [[`last ${sp.windowDays} days`, sp.window], ['all time', sp.allTime]]) {
+        const box = el('div')
+        box.append(el('dt', null, label), el('dd', null, fmt.tokens(t.total)))
+        totals.append(box)
+      }
+    }
+
+    const OFFLINE = {
+      disconnected: 'Not live — these are the last figures the panel sent',
+      revoked: 'This link no longer works',
+    }
+    vp.on('status', (st) => {
+      document.body.classList.toggle('offline', Boolean(OFFLINE[st]))
+      $('notice').hidden = !OFFLINE[st]
+      $('notice').firstChild.textContent = OFFLINE[st] || ''
+    })
+
+    vp.on('snapshot', draw)
+  </script>
+</body>
+</html>

@@ -15,6 +15,7 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/browse"
 	"github.com/jiangmuran/vibepanel/internal/git"
 	"github.com/jiangmuran/vibepanel/internal/hooks"
+	"github.com/jiangmuran/vibepanel/internal/pages"
 	"github.com/jiangmuran/vibepanel/internal/store"
 	"github.com/jiangmuran/vibepanel/internal/sysmon"
 )
@@ -64,31 +65,23 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		{"FileListing", browse.Listing{}},
 		{"SystemSample", sysmon.Sample{}},
 		{"Passkey", store.Credential{}},
-		// The share-link surface. The dashboard one matters more than most:
-		// this struct is the definition of what a read-only link discloses,
-		// and a field the server sends that wire.ts does not declare is a
-		// field nobody reviewing the TypeScript would know had been added.
 		// Launch profiles. The one row in the panel that can hold somebody
 		// else's credential, so a field this side sends and wire.ts does not
 		// declare is a field nobody reviewing the TypeScript would know had
 		// started leaving the machine.
 		{"LaunchProfile", store.LaunchProfile{}},
 		{"LaunchEnvVar", store.LaunchEnvVar{}},
+		// The share-link surface. The sections are the definition of what a
+		// read-only link discloses, and a field the server sends that wire.ts
+		// does not declare is a field nobody reviewing the TypeScript would
+		// know had been added. The snapshot around them is pinned to
+		// vibepanel.d.ts by TestTheSDKTypesMatchTheSnapshot instead.
 		{"ShareLink", store.ShareLink{}},
-		{"ShareDashboard", shareDashboard{}},
 		{"ShareMachine", shareMachine{}},
 		{"ShareCounts", shareCounts{}},
 		{"ShareProject", shareProject{}},
 		{"ShareSession", shareSession{}},
-		// Boards. The dashboard draws these and nothing else, so a field the
-		// server stopped sending is a widget that renders blank on a wall with
-		// nobody in front of it to notice.
-		{"ShareBoard", store.Board{}},
-		{"ShareWidget", store.Widget{}},
-		{"ShareWidgetSpec", store.WidgetSpec{}},
-		{"SharePreset", store.Preset{}},
-		{"ShareCatalogue", shareCatalogue{}},
-		// The two sections that were added when the board turned out to be
+		// The two sections that were added when a wall turned out to be
 		// empty because the panel had no history. Pinned for the same reason
 		// everything else here is, with one extra: the repository half is the
 		// part of this surface that reads somebody's working tree, so a field
@@ -108,6 +101,23 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		{"ShareSpendTotals", shareSpendTotals{}},
 		{"ShareSpendBucket", shareSpendBucket{}},
 		{"ShareSpendGroup", shareSpendGroup{}},
+		// Share pages, as the settings page and the Preview pane see them. The
+		// page's own contract is vibepanel.d.ts, held by
+		// TestTheSDKTypesMatchTheSnapshot; these are the owner's side.
+		{"SharePage", store.SharePage{}},
+		{"SharePageRow", pageRow{}},
+		{"SharePageVersion", store.SharePageVersion{}},
+		{"SharePageDetail", pageDetail{}},
+		{"SharePageManifest", pages.Manifest{}},
+		{"SharePageParam", pages.ParamSpec{}},
+		{"SharePageViewport", pages.Viewport{}},
+		{"SharePageTemplate", pages.Template{}},
+		{"SharePageCatalogue", pageCatalogue{}},
+		{"SharePageFile", pages.File{}},
+		{"SharePageIgnored", pages.Ignored{}},
+		{"SharePageProblem", pages.Problem{}},
+		{"SharePageChanges", pageChanges{}},
+		{"SharePageDraft", pageDraft{}},
 		// Token usage. Pinned from the first commit rather than after the
 		// first drift, because this surface has more fields than anything
 		// above it and every one of them is a number somebody will believe.
@@ -334,9 +344,29 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"share.revoked":           true,
 		"share.unlocked":          true,
 		"share.updated":           true,
-		"token.created":           true,
-		"token.revoked":           true,
-		"update.installed":        true,
+		// What a link draws and its page's settings on it. `share.` rather
+		// than `page.`: the question they answer is "what did this screen
+		// start showing", which is a question about the link.
+		"share.page_changed":   true,
+		"share.params_changed": true,
+		"share.page_trial":     true,
+		// A page's own history, which is a question about the page.
+		"page.created":     true,
+		"page.published":   true,
+		"page.rolled_back": true,
+		// A page's directory written back from its published version.
+		"page.restored": true,
+		// Where new pages go, and a page that arrived as a zip.
+		"page.root_changed": true,
+		"page.imported":     true,
+		// A link a build with boards handed out, pointed at a page at startup.
+		// No user and no address: nobody asked, the upgrade did.
+		"share.converted":  true,
+		"page.moved":       true,
+		"page.deleted":     true,
+		"token.created":    true,
+		"token.revoked":    true,
+		"update.installed": true,
 		// Written when somebody authorises the upgrade of a binary this panel
 		// does not own. The same prefix as update.installed on purpose: "what
 		// has this panel replaced itself with, and who said so" is one

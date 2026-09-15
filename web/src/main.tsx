@@ -3,7 +3,6 @@ import { createRoot } from 'react-dom/client'
 import './styles.css'
 import { App } from './App'
 import { AuthGate } from './components/AuthGate'
-import { Dashboard } from './components/Dashboard'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { watchSystemTheme } from './components/theme'
 
@@ -28,43 +27,14 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
   })
 }
 
-/**
- * The read-only dashboard's capability, read out of the address bar.
- *
- * `/share/<token>` reaches the single-page fallback like any other unknown
- * path, so the token arrives here and nowhere else — it is never put in
- * storage, never sent to another endpoint, and never rendered.
- *
- * The character class is base64url, which is what auth.NewToken emits. The
- * length floor is there so that `/share/` with something short after it — a
- * truncated paste, a link somebody typed from memory — falls through to the
- * panel instead of being sent to the server as a credential and recorded as a
- * rejected one.
- */
-function shareToken(pathname: string): string | null {
-  const m = /^\/share\/([A-Za-z0-9_-]{20,})\/?$/.exec(pathname)
-  return m ? m[1] : null
-}
-
-const token = shareToken(location.pathname)
-
-// Two roots, and only one of them is ever built.
-//
-// The dashboard is deliberately not the panel with pieces hidden: AuthGate is
-// what asks who you are and then hands the whole console to whoever answers,
-// and a read-only page must not be one `if` away from that. It is also why the
-// dashboard component reaches exactly one endpoint — there is no socket and no
-// state fetch anywhere below this line.
+// One root. `/share/<token>` never reaches this bundle: the server answers it
+// with the page the link draws, or with a page of its own saying the link no
+// longer works, so a stranger holding a share address is never one click from
+// the sign-in screen.
 createRoot(root).render(
   <StrictMode>
-    {token ? (
-      <ErrorBoundary label="The dashboard">
-        <Dashboard token={token} />
-      </ErrorBoundary>
-    ) : (
-      <ErrorBoundary label="The panel">
-        <AuthGate>{(auth, signOut) => <App auth={auth} onSignOut={signOut} />}</AuthGate>
-      </ErrorBoundary>
-    )}
+    <ErrorBoundary label="The panel">
+      <AuthGate>{(auth, signOut) => <App auth={auth} onSignOut={signOut} />}</AuthGate>
+    </ErrorBoundary>
   </StrictMode>,
 )

@@ -1,15 +1,11 @@
 /**
  * A small filled trend line, drawn from numbers already in hand.
  *
- * Shared because there is one of this shape in the product and it was about to
- * become two: the share board's charts had it, and the panel's own spend block
- * needed one. Two copies of a chart drift the way charts drift -- one gains a
- * baseline, the other a different stroke width -- and then the panel and the
- * wall showing the same series stop looking like the same product.
+ * One of this shape in the product, so it cannot drift from itself: a second
+ * copy gains a baseline, the other a different stroke width, and two views of
+ * the same series stop looking like the same product.
  *
- * No chart library, no fetch and no URL below this line, which is the property
- * the board already had and the reason its charts can render inside a share
- * page at all.
+ * No chart library, no fetch and no URL below this line.
  */
 
 /** How these are drawn: a unit box, stretched by CSS. */

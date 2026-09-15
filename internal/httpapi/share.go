@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 
 	"github.com/jiangmuran/vibepanel/internal/auth"
 	"github.com/jiangmuran/vibepanel/internal/id"
+	"github.com/jiangmuran/vibepanel/internal/pages"
 	"github.com/jiangmuran/vibepanel/internal/session"
 	"github.com/jiangmuran/vibepanel/internal/store"
 	"github.com/jiangmuran/vibepanel/internal/sysmon"
@@ -34,8 +34,10 @@ import (
 //     Nothing anywhere can read a link back out.
 //
 //  2. It is read-only because of where it is registered, not because a handler
-//     checks a flag. registerShareRoutes mounts one GET below its own
-//     middleware; that middleware resolves the token against share_links and
+//     checks a flag. registerShareRoutes mounts the v1 snapshot below its own
+//     middleware, registerSharePageRoutes a page's files, and
+//     TestAShareTokenReachesOnlyTheseRoutes is the list;
+//     that middleware resolves the token against share_links and
 //     nothing else, and share_links is not consulted by currentUser. So a share
 //     token presented as a cookie or as a Bearer header is not a credential at
 //     all -- it is an unknown string, and every authenticated route answers 401
@@ -55,29 +57,27 @@ import (
 // text, store.ShareNames adds the names. Counts is the default, because the
 // default has to be the one that is safe to point a camera at.
 //
-// The fourth arrived with boards, and it is the one an edit here is most
-// likely to lose:
+// The fourth is the one an edit here is most likely to lose:
 //
-//	4. A board can only ever subtract. The sections a dashboard may carry are
-//	   the structs below and nothing else; a board chooses among them and has
-//	   no vocabulary for anything that is not one of them. There is no widget
-//	   that names a table, a range, a directory or a field -- every option on
-//	   one is an enum or a bounded number, checked against store's registry
-//	   when it is stored and again when it is read back.
+//	4. A page can only ever subtract. The sections a snapshot may carry are
+//	   the structs below and nothing else; a page's manifest chooses among them
+//	   (pages.Needs) and has no vocabulary for anything that is not one of them.
+//	   Every option is a switch or a bounded day count -- nothing names a table,
+//	   a column, a directory or a query.
 //
-//	   So the question "which arrangement of widgets discloses more" has no
-//	   answer: the widest board and the narrowest board differ only in how much
-//	   of the same fixed set is written. What a link may say is still decided
-//	   once, at creation, by `detail`, by somebody signed in -- and store's
-//	   UpdateShareLink deliberately cannot change it afterwards.
+//	   So the question "which page discloses more" has no answer: the widest
+//	   manifest and the narrowest differ only in how much of the same fixed set
+//	   is written. What a link may say is still decided once, at creation, by
+//	   `detail`, by somebody signed in -- and store's UpdateShareLink
+//	   deliberately cannot change it afterwards.
 //
-//	   Whether a section is computed at all does follow from whether the board
+//	   Whether a section is computed at all does follow from whether the page
 //	   asked for it, and that is a cost decision rather than a permission one:
 //	   the spend rollups are five GROUP BYs over a year of history and a wall
 //	   polls every two seconds. It stays a cost decision only while every
-//	   section remains a fixed struct in this file. A widget that carried a
-//	   *parameter* into a query rather than a choice among precomputed answers
-//	   would turn it into a permission one, which is the edit to refuse.
+//	   section remains a fixed struct in this file. A manifest field that
+//	   carried a *parameter* into a query rather than a choice among precomputed
+//	   answers would turn it into a permission one, which is the edit to refuse.
 
 // shareTouchWindow is how often a link's "last seen" may be written.
 //
@@ -108,25 +108,26 @@ func (s *Server) shareCooldowns() *auth.Cooldown {
 
 // registerShareRoutes mounts the entire surface a share token can reach.
 //
-// One route. Adding a second is the decision, and it should be made against
-// the list of what a share token deliberately cannot do: read terminal bytes,
-// open the socket, write anything, browse a file, see a note or a todo, or
-// learn where on the disk any of it lives.
+// The whole of the share surface under /api. Adding a route here is the
+// decision, and it should be made against the list of what a share token
+// deliberately cannot do: read terminal bytes, open the socket, write
+// anything, browse a file, see a note or a todo, or learn where on the disk any
+// of it lives. TestAShareTokenReachesOnlyTheseRoutes is the list.
 //
-// It stayed one route through the change that made a board editable from
-// somewhere else, and that is worth recording because the obvious design was
-// the other one. "Let the person at the screen rearrange it" wants a PATCH
-// here, one line, obviously correct in review. What was actually asked for was
-// "I should not have to walk to the wall and log in to change it" — which is an
-// *owner* editing a board from a laptop, over a route that already exists
-// behind a session. The wall picks the change up on its next poll, two seconds
-// later, because every poll re-reads the row. Nothing a viewer sends decides
-// anything: `v`, `w` and `h` on the query string are recorded in memory for the
-// owner's count and are not readable through this token at all.
+// There is no write route, and the pressure for one came once: "I should not
+// have to walk to the wall to change it". What that asks for is an *owner*
+// changing a link from a laptop, over the settings routes, with the wall
+// picking it up on its next poll because every poll re-reads the row. Nothing
+// a viewer sends decides anything: `v`, `w` and `h` on the query string are
+// recorded in memory for the owner's count and are not readable through this
+// token at all.
 func (s *Server) registerShareRoutes(r chi.Router) {
 	r.Route("/share/{token}", func(r chi.Router) {
+		r.Use(shareReadableAnywhere)
 		r.Use(s.requireShareToken)
-		r.Get("/dashboard", s.handleShareDashboard)
+		// The versioned contract a share page is written against; see
+		// sharepage.go.
+		r.Get("/v1/snapshot", s.handleShareSnapshot)
 	})
 }
 
@@ -449,7 +450,7 @@ type shareSpend struct {
 	// no chart of a window can say.
 	AllTime shareSpendTotals `json:"allTime"`
 
-	// The arrays are empty unless a widget on this board asks for them. Empty
+	// The arrays are empty unless the page's manifest asks for them. Empty
 	// rather than absent so the client renders one shape either way.
 	Days     []shareSpendBucket `json:"days"`
 	Months   []shareSpendBucket `json:"months"`
@@ -694,17 +695,18 @@ type shareRepo struct {
 
 	Today  shareRepoTotals `json:"today"`
 	Window shareRepoTotals `json:"window"`
-	// Days is empty unless a widget on this board draws a series.
+	// Days is empty unless the manifest asks for a day series (repo.days).
 	Days []shareRepoDay `json:"days"`
-	// ByProject is empty unless a widget on this board ranks them.
+	// ByProject is every project that was read.
 	ByProject []shareRepoProject `json:"byProject"`
-	// PRs is null unless a widget on this board shows pull requests.
+	// PRs is null unless the manifest asks for pull requests (repo.prs).
 	PRs *shareRepoPRs `json:"prs"`
 }
 
-// shareDashboard is the whole response, and the whole of what a share link
-// discloses. Read it as the list.
-type shareDashboard struct {
+// shareReading is one redacted reading of the panel for a link, and the whole
+// of what a share link can disclose. Read it as the list. shareSnapshot in
+// sharepage.go restates it as the published v1 shape.
+type shareReading struct {
 	// At is when the server took this reading, in unix seconds. The dashboard
 	// counts up from it, which is what stops a frozen page from looking like a
 	// quiet system.
@@ -727,14 +729,6 @@ type shareDashboard struct {
 	// wall they labelled -- which they would then put in `name`, which is
 	// disclosed anyway. The settings page says so where it is typed.
 	Remark string `json:"remark"`
-	// Locked says the owner has fixed this board.
-	//
-	// Sent so the screen can say it -- the lock exists so that a wall a
-	// customer is looking at is not the one you rearrange by accident, and it
-	// is enforced where the edit happens, in handleUpdateShare. Nothing here
-	// depends on the viewer honouring it, because there is nothing for a viewer
-	// to honour: a board is not editable from this side at all.
-	Locked bool `json:"locked"`
 	// Detail echoes which mode this link is in, so the page can say so rather
 	// than leaving a reader to wonder why nothing has a name.
 	Detail string `json:"detail"`
@@ -750,35 +744,27 @@ type shareDashboard struct {
 	// machine's storage and a wall display can do nothing with it.
 	Stale bool `json:"stale"`
 
-	// Board is the arrangement this link opens, as it was stored and after the
-	// read path has dropped anything it does not recognise. Sent back rather
-	// than kept on the server so the page draws what the link says and nothing
-	// else -- there is no second copy of the layout in the frontend to drift
-	// from this one.
-	Board store.Board `json:"board"`
-
 	Machine  shareMachine   `json:"machine"`
 	Counts   shareCounts    `json:"counts"`
 	Projects []shareProject `json:"projects"`
-	// Sessions is empty unless a widget on this board shows rows. A board that
-	// is one number does not carry a list of every session to draw it.
+	// Sessions is empty unless the page asks for sessions. A page that is one
+	// number does not carry a list of every session to draw it.
 	Sessions []shareSession `json:"sessions"`
-	// Spend is null unless a widget on this board shows token spend.
+	// Spend is null unless the page asks for token spend.
 	//
-	// Null rather than a zeroed object: "this board does not show spend" and
+	// Null rather than a zeroed object: "this page does not show spend" and
 	// "this panel spent nothing" are different facts, and the second one has a
 	// Readable flag of its own to tell it from "nothing has been counted yet".
 	Spend *shareSpend `json:"spend"`
-	// Todos is null unless a widget on this board shows checklist progress.
+	// Todos is null unless the page asks for checklist progress.
 	Todos *shareTodos `json:"todos"`
-	// Trend is null unless a widget on this board draws a moving line.
+	// Trend is null unless the page asks for the moving line.
 	Trend *shareTrend `json:"trend"`
-	// Flow is null unless a widget on this board draws how the day went, and
-	// Feed unless one lists what just happened. Both come out of the
-	// session-event log.
+	// Flow is null unless the page asks for how the day went, and Feed unless
+	// it asks for what just happened. Both come out of the session-event log.
 	Flow *shareFlow `json:"flow"`
 	Feed *shareFeed `json:"feed"`
-	// Repo is null unless a widget on this board shows what was built. It is
+	// Repo is null unless the page asks for what was built. It is
 	// the only section read from a disk rather than from the database, and it
 	// is computed from a background-refreshed cache -- a wall polling every two
 	// seconds must never be the thing that runs `git log`.
@@ -786,13 +772,13 @@ type shareDashboard struct {
 
 	// Scope is "", "project" or "session": what this link is about.
 	//
-	// Echoed so the page can say it is one project's board rather than the
+	// Echoed so the page can say it is one project's screen rather than the
 	// panel's, which is the difference between "nothing is running" and
 	// "nothing is running in the thing you were sent".
 	Scope string `json:"scope"`
 	// ScopeName is the scoped project's or session's name under `names`, and
 	// empty under `counts` like every other name here. Also empty when the
-	// scoped row no longer exists, which is the same thing the empty board
+	// scoped row no longer exists, which is the same thing the empty screen
 	// below is already saying.
 	ScopeName string `json:"scopeName"`
 
@@ -828,80 +814,42 @@ type shareDashboard struct {
 	ScopeRepoName  string `json:"scopeRepoName"`
 }
 
-// handleShareDashboard is everything a share token can ask for.
+// buildShareReading is the redaction itself, with no HTTP in it.
 //
-// It reads the same two sources the panel's own monitor does -- the session
-// rows and the process-tree sampler -- and returns a redaction of them. It
-// writes nothing to the database, and the only state it touches is the
-// sampler's previous counters, which is what makes a CPU percentage a
-// percentage, and the in-memory viewer book and trend ring next door.
-func (s *Server) handleShareDashboard(w http.ResponseWriter, r *http.Request) {
-	sc, ok := shareFrom(r)
-	if !ok {
-		// Unreachable through the router: the middleware either sets this or
-		// answers. Refusing rather than carrying on is the point -- a handler
-		// that renders a dashboard when it cannot say which link asked has
-		// lost the only thing that limits what it may say.
-		writeErr(w, http.StatusUnauthorized, "this link is not valid")
-		return
-	}
-	out, err := s.buildShareDashboard(r.Context(), sc.link, sc.secret)
-	if err != nil {
-		s.writeStoreErr(w, err)
-		return
-	}
-	// No caching, anywhere between here and the screen. This is a live
-	// reading, and a dashboard served from a proxy's cache is the exact failure
-	// the connection indicator exists to make visible -- except that it would
-	// look live, because the numbers would arrive.
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, out)
-}
-
-// buildShareDashboard is the redaction itself, with no HTTP in it.
+// The one reduction of the panel's state a share link gets. The snapshot, the
+// Preview and the fixtures' shapes all come out of it or out of the structs it
+// fills, because a second reduction would diverge on the first field added to
+// either -- and the direction it diverges in is "the preview shows something
+// the real screen does not".
 //
-// Split out from the handler so that the editor's preview draws from *this*
-// function rather than from a second one. An owner composing a wall from a
-// laptop has to be shown what that wall shows, and the way to get that wrong is
-// to write a second reduction of the panel's state for the preview: it would
-// diverge on the first field added to either, and the direction it diverges in
-// is "the preview shows something the real screen does not".
-//
-// secret is what the pseudonymous ids are derived from. For a real poll it is
-// the presented token's stored hash; for the preview it is the link's id, so a
-// preview's ids are stable, different from the live link's, and join to
-// nothing. Nothing downstream cares which it was, which is the point.
-func (s *Server) buildShareDashboard(ctx context.Context, link store.ShareLink,
-	secret []byte) (shareDashboard, error) {
+// needs is what the page asked for (pages.Needs), read from the stored version,
+// never from the request. secret is what the pseudonymous ids are derived
+// from: the presented token's stored hash.
+func (s *Server) buildShareReading(ctx context.Context, link store.ShareLink,
+	secret []byte, needs pages.Needs) (shareReading, error) {
 	sc := shareContext{link: link, secret: secret}
 
 	projects, err := s.DB.ListProjects(ctx)
 	if err != nil {
-		return shareDashboard{}, err
+		return shareReading{}, err
 	}
 	sessions, err := s.DB.ListSessions(ctx)
 	if err != nil {
-		return shareDashboard{}, err
+		return shareReading{}, err
 	}
 
 	named := store.ShareDetail(sc.link.Detail) == store.ShareNames
 	sample := s.Sampler.Sample()
 
-	// What the board asks for, as a set of section names. It can only ever
-	// subtract: every section is a fixed struct in this file, and a widget
-	// chooses among them rather than describing one. See property 4 at the top.
-	board := sc.link.Board
-	needs := board.Needs()
-
 	// What this link is about, resolved from its own row. Never from the
 	// request: a scope a caller could name is a scope a caller could change.
 	scope := resolveScope(sc.link, projects, sessions)
 
-	out := shareDashboard{
+	out := shareReading{
 		At: time.Now().Unix(), Name: sc.link.Name, Detail: sc.link.Detail,
-		Remark: sc.link.Remark, Locked: sc.link.Locked,
+		Remark:    sc.link.Remark,
 		ExpiresAt: sc.link.ExpiresAt, UsageReadable: sysmon.ProcReadable(),
-		Stale: s.stale() != "", Machine: shareMachineFrom(sample), Board: board,
+		Stale: s.stale() != "", Machine: shareMachineFrom(sample),
 		Scope: string(scope.kind), Projects: []shareProject{}, Sessions: []shareSession{},
 	}
 	if named {
@@ -986,7 +934,7 @@ func (s *Server) buildShareDashboard(ctx context.Context, link store.ShareLink,
 			item.RSS = u.RSS
 			item.Procs = u.Procs
 		}
-		if needs[store.NeedSessions] {
+		if needs.Sessions {
 			out.Sessions = append(out.Sessions, item)
 		}
 		out.Counts.Sessions++
@@ -1007,32 +955,32 @@ func (s *Server) buildShareDashboard(ctx context.Context, link store.ShareLink,
 	}
 	out.Counts.Projects = len(out.Projects)
 
-	if needs[store.NeedSpend] {
-		spend := s.shareSpendFor(ctx, projects, sc.secret, named, needs, board, scope)
+	if needs.Spend {
+		spend := s.shareSpendFor(ctx, projects, sc.secret, named, needs, scope)
 		out.Spend = &spend
 	}
-	if needs[store.NeedTodos] {
+	if needs.Todos {
 		todos := s.shareTodosFor(ctx, projects, sc.secret, named, scope, dayStart)
 		out.Todos = &todos
 	}
-	if needs[store.NeedFlow] {
-		flow := s.shareFlowFor(ctx, scope, board, time.Now(), dayStart)
+	if needs.Flow {
+		flow := s.shareFlowFor(ctx, scope, needs, time.Now(), dayStart)
 		out.Flow = &flow
 	}
-	if needs[store.NeedFeed] {
+	if needs.Feed {
 		feed := s.shareFeedFor(ctx, sessions, sc.secret, named, scope, dayStart)
 		out.Feed = &feed
 	}
-	if needs[store.NeedRepo] || needs[store.NeedRepoDays] || needs[store.NeedRepoPRs] {
+	if needs.Repo {
 		// Nothing here runs a process. Every figure comes from the warm cache
 		// in internal/git, which refreshes behind the request; a wall polling
 		// every two seconds must never be the thing that runs `git log`, and
 		// the version of this that called ReadActivity directly would be one
 		// fork per project per poll, forever.
-		repo := s.shareRepoWork(ctx, projects, sc.secret, named, needs, board, scope, dayStart)
+		repo := s.shareRepoWork(ctx, projects, sc.secret, named, needs, scope, dayStart)
 		out.Repo = &repo
 	}
-	if needs[store.NeedTrend] {
+	if needs.Trend {
 		// Sampled here rather than by the poller, and only when a widget on
 		// this board draws it. A panel nobody is watching does no work for a
 		// graph nobody is looking at -- the same rule the token ingester
@@ -1486,12 +1434,12 @@ func (s *Server) putSpend(key string, snap spendSnapshot) {
 	s.spendCache[key] = cachedSpend{at: time.Now(), snap: snap}
 }
 
-// shareSpendFor projects the shared snapshot onto one link and one board.
+// shareSpendFor projects the shared snapshot onto one link and one page.
 //
 // Two things happen here and nowhere else: the real project ids become this
-// link's pseudonyms, and the arrays the board did not ask for are left empty.
+// link's pseudonyms, and the arrays the page did not ask for are left empty.
 func (s *Server) shareSpendFor(ctx context.Context, projects []store.Project, secret []byte,
-	named bool, needs map[string]bool, board store.Board, scope scopeOf) shareSpend {
+	named bool, needs pages.Needs, scope scopeOf) shareSpend {
 	out := shareSpend{
 		WindowDays: shareSpendWindowDays,
 		Days:       []shareSpendBucket{}, Months: []shareSpendBucket{},
@@ -1521,10 +1469,10 @@ func (s *Server) shareSpendFor(ctx context.Context, projects []store.Project, se
 	windowFrom := spendDaysFrom(snap.date, shareSpendWindowDays)
 
 	daysCut := ""
-	if needs[store.NeedSpendDays] {
-		// Cut to the widest range any bar widget on this board asked for. A
-		// board showing a fortnight does not carry a year of days to draw it.
-		daysCut = spendDaysFrom(snap.date, boardSpendDays(board))
+	if needs.SpendDays > 0 {
+		// Cut to the range the page asked for. A page showing a fortnight does
+		// not carry a year of days to draw it.
+		daysCut = spendDaysFrom(snap.date, min(needs.SpendDays, pages.MaxDays))
 	}
 	for _, d := range snap.days {
 		switch {
@@ -1543,7 +1491,7 @@ func (s *Server) shareSpendFor(ctx context.Context, projects []store.Project, se
 		if daysCut != "" && d.Day >= daysCut {
 			out.Days = append(out.Days, bucket)
 		}
-		if needs[store.NeedSpendHeatmap] {
+		if needs.SpendHeatmap {
 			out.Heatmap = append(out.Heatmap, bucket)
 		}
 	}
@@ -1556,18 +1504,18 @@ func (s *Server) shareSpendFor(ctx context.Context, projects []store.Project, se
 		// is the only figure on a board that only goes up, and it would be a
 		// sixth GROUP BY if it were asked for separately.
 		addDay(&out.AllTime, m)
-		if needs[store.NeedSpendMonths] {
+		if needs.SpendMonths {
 			out.Months = append(out.Months, bucketOf(m.Day, m))
 		}
 	}
 
-	if needs[store.NeedSpendTools] {
+	if needs.SpendTools {
 		out.Tools = snap.tools
 	}
-	if needs[store.NeedSpendModels] {
+	if needs.SpendModels {
 		out.Models = snap.models
 	}
-	if needs[store.NeedSpendProjects] {
+	if needs.SpendProjects {
 		for _, p := range snap.projects {
 			row := shareSpendGroup{Total: p.total, Requests: p.requests}
 			// The catch-all row for work done outside every project keeps an
@@ -1612,50 +1560,6 @@ func addDay(into *shareSpendTotals, d store.UsageDay) {
 	into.CacheWrite += d.CacheWrite
 	into.Requests += d.Requests
 	into.Total += d.Total()
-}
-
-// daySeriesKinds are the widget kinds that draw the day series.
-//
-// A list rather than a single name, because "which widgets draw days" and
-// "which widgets need the days section" are the same question asked in two
-// places -- board.Needs answers the second from the registry, and this answers
-// the first. A kind missing from here gets its section cut to the default
-// window, which is a chart that quietly shows a fortnight when its author asked
-// for a year.
-//
-// `spentmade` was missing from here and that was not the fortnight: with no kind
-// matching, the widest was 0, spendDaysFrom returns "" for that, and the
-// section's day array stayed empty on every board whose only spend series is
-// this widget -- newsroom, deskwall and the spentmade preset all render Empty
-// forever, however much was spent. The fallback below is what makes the
-// paragraph above true rather than only intended.
-var daySeriesKinds = map[string]bool{
-	"spendbars": true, "sparkline": true, "spendstack": true, "spentmade": true,
-}
-
-// boardSpendDays is the widest day range any series widget on a board asked for.
-func boardSpendDays(board store.Board) int {
-	widest := 0
-	for _, w := range board.Widgets {
-		if !daySeriesKinds[w.Kind] || (w.By != "" && w.By != "day") {
-			continue
-		}
-		days := w.Days
-		if days <= 0 {
-			days = shareSpendWindowDays
-		}
-		if days > widest {
-			widest = days
-		}
-	}
-	if widest == 0 {
-		// Nothing matched, and the caller has already decided the board needs
-		// the day series -- board.Needs said so from the registry. The default
-		// window rather than zero, exactly as boardDaysFor next door does: zero
-		// here is an empty array on a board that asked for a chart.
-		widest = shareSpendWindowDays
-	}
-	return widest
 }
 
 // spendDaysFrom is the oldest day a range of n days reaches back to.
@@ -1705,97 +1609,16 @@ const maxShareSeconds = 365 * 24 * 60 * 60
 // registerShareAdminRoutes is where a link is made, edited and revoked.
 //
 // Behind the ordinary session, and that is the whole answer to "I should not
-// have to walk to the wall and log in to change it". The board a television is
-// showing is edited from here, by somebody signed in on a laptop, and the
+// have to walk to the wall and log in to change it". What a television is
+// showing is changed from here, by somebody signed in on a laptop, and the
 // television picks it up on its next poll. Nothing was added under the share
 // token to make that work.
 func (s *Server) registerShareAdminRoutes(r chi.Router) {
 	r.Get("/settings/shares", s.handleListShares)
 	r.Post("/settings/shares", s.handleCreateShare)
-	r.Get("/settings/shares/catalogue", s.handleShareCatalogue)
-	r.Get("/settings/shares/{shareID}/preview", s.handleSharePreview)
+	r.Post("/settings/shares/{shareID}/view", s.handleViewShare)
 	r.Patch("/settings/shares/{shareID}", s.handleUpdateShare)
 	r.Delete("/settings/shares/{shareID}", s.handleDeleteShare)
-}
-
-// handleSharePreview answers with what that screen is showing right now.
-//
-// The editor's whole problem is that the owner is composing for a screen they
-// cannot see, and the two ways to solve it badly are both worse than this one:
-// invented sample data, which composes a layout against numbers that will not
-// be the real ones; or a second reduction of the panel's state written in the
-// frontend, which diverges from the real redaction on the first field either
-// side gains.
-//
-// So it is the same builder the dashboard uses, called with the link's own row.
-// It is a settings route: it needs the ordinary session, a share token answers
-// 401 to it like everything else, and it discloses strictly less than
-// /api/state -- which the caller already has -- so there is nothing here a
-// signed-in owner could not already read.
-func (s *Server) handleSharePreview(w http.ResponseWriter, r *http.Request) {
-	link, err := s.DB.ShareLinkByID(r.Context(), chi.URLParam(r, "shareID"))
-	if err != nil {
-		s.writeStoreErr(w, err)
-		return
-	}
-	// The link's id as the secret, not its token hash. The hash is a live
-	// credential's fingerprint and this response is not the place to derive
-	// anything from it; the preview's pseudonyms only have to be stable within
-	// the preview, and joining them to the real screen's is not something
-	// anybody wants to be able to do.
-	out, err := s.buildShareDashboard(r.Context(), link, []byte(link.ID))
-	if err != nil {
-		s.writeStoreErr(w, err)
-		return
-	}
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, out)
-}
-
-// shareCatalogue is the vocabulary a board is built from.
-//
-// Served rather than mirrored in the frontend, so that every option the editor
-// offers is an option the validator accepts. Two copies of this table is how a
-// settings page comes to offer a widget the server refuses, and the person who
-// finds out is the one who pressed the button.
-type shareCatalogue struct {
-	Presets []store.Preset     `json:"presets"`
-	Widgets []store.WidgetSpec `json:"widgets"`
-	// Screens are the sizes a preset can be composed for, in the order the
-	// editor offers them. Served rather than mirrored, like everything else
-	// here: a screen the picker offers and the catalogue does not name is a
-	// group with nothing in it.
-	Screens []string `json:"screens"`
-	// Steps are the widths the editor offers, in twelfths. The validator takes
-	// any span from 1 to MaxSpan; these are the ones worth putting in a select.
-	Steps []int `json:"steps"`
-	// The bounds, so the editor can stop somebody rather than watch the server
-	// stop them.
-	MaxWidgets int `json:"maxWidgets"`
-	MaxSpan    int `json:"maxSpan"`
-	MaxRows    int `json:"maxRows"`
-	MaxCaption int `json:"maxCaption"`
-	MaxRemark  int `json:"maxRemark"`
-	MaxDays    int `json:"maxDays"`
-	// MaxDensity is how many density steps there are, so the editor's control
-	// is built from the server's answer rather than from a number in a file
-	// beside it.
-	MaxDensity int `json:"maxDensity"`
-}
-
-func (s *Server) handleShareCatalogue(w http.ResponseWriter, r *http.Request) {
-	out := shareCatalogue{
-		Presets: store.Presets(), Screens: store.Screens(), Steps: store.GridSteps(),
-		MaxWidgets: store.MaxWidgets, MaxSpan: store.MaxSpan, MaxRows: store.MaxRows,
-		MaxCaption: store.MaxCaption, MaxRemark: store.MaxRemark, MaxDays: store.MaxSpendDays,
-		MaxDensity: store.MaxDensity,
-	}
-	for _, kind := range store.KnownWidgetKinds() {
-		if spec, ok := store.WidgetOptions(kind); ok {
-			out.Widgets = append(out.Widgets, spec)
-		}
-	}
-	writeJSON(w, http.StatusOK, out)
 }
 
 // handleListShares lists the links, with each scope resolved to a name.
@@ -1845,14 +1668,6 @@ type createShareRequest struct {
 	// duration rather than an instant because the client has no reason to be
 	// trusted about what time it is, and "two weeks" is what a person means.
 	ExpiresIn int64 `json:"expiresIn"`
-	// Preset names a starting arrangement; Board is an explicit one and wins.
-	//
-	// Both are offered because both are how this gets used: the settings page
-	// sends a board it has just let somebody edit, and a person wiring up a
-	// television with `curl` sends "preset": "attention" and is finished.
-	// Neither is required, and a request with neither gets the default board.
-	Preset string       `json:"preset"`
-	Board  *store.Board `json:"board"`
 	// Scope is "", "project" or "session"; ScopeID is the panel's own id of the
 	// one it is about.
 	//
@@ -1866,8 +1681,12 @@ type createShareRequest struct {
 	// store.MaxRemark runes rather than refused: it is a sentence somebody
 	// typed, and a 400 on the eighty-first character is a form that argues.
 	Remark string `json:"remark"`
-	// Locked fixes the board against later edits until it is unlocked.
+	// Locked fixes what the link draws against later edits until it is unlocked.
 	Locked bool `json:"locked"`
+	// PageID is the published share page the link draws, required, with Params
+	// as the page's settings on it.
+	PageID string         `json:"pageId"`
+	Params map[string]any `json:"params"`
 }
 
 // scopeFor validates a requested scope against the rows that exist.
@@ -1904,38 +1723,6 @@ func (s *Server) scopeFor(ctx context.Context, kind, id string) (store.ShareScop
 	return scope, id, nil
 }
 
-// boardFrom resolves the two ways a request can name a board.
-//
-// A pointer for Board so that "no board field" and "an empty board" are
-// different requests: the first means "use the preset, or the default", and
-// the second is a mistake worth an error rather than a silent substitution.
-func boardFrom(preset string, board *store.Board) (store.Board, error) {
-	// Checked here rather than left to ValidateBoard, which only ever sees the
-	// preset written inside the board. An unknown name arriving in the
-	// top-level field would otherwise be copied onto a valid board below and
-	// stored, which is the one string on a board nothing else validates.
-	if preset != "" && !store.KnownPreset(preset) {
-		return store.Board{}, fmt.Errorf("unknown preset %q", preset)
-	}
-	if board != nil {
-		out, err := store.ValidateBoard(*board)
-		if err != nil {
-			return store.Board{}, err
-		}
-		// A board the editor built from a preset carries the provenance in the
-		// board itself; one sent by hand can name it alongside instead.
-		if out.Preset == "" {
-			out.Preset = preset
-		}
-		return out, nil
-	}
-	if preset == "" {
-		return store.DefaultBoard(), nil
-	}
-	expanded, _ := store.PresetBoard(preset)
-	return expanded, nil
-}
-
 // handleCreateShare mints a link, and is the only time its token is readable.
 //
 // The same shape as an API token and for the same reason: the database keeps a
@@ -1953,7 +1740,7 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 	// reason nobody has noticed.
 	name := session.TruncateTitle(strings.TrimSpace(req.Name))
 	if name == "" {
-		name = "dashboard"
+		name = "screen"
 	}
 
 	// Default to the quieter mode. A default that discloses names would be one
@@ -1970,11 +1757,6 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "expiresIn must be between 0 and a year, in seconds")
 		return
 	}
-	board, err := boardFrom(strings.TrimSpace(req.Preset), req.Board)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
 	scope, scopeID, err := s.scopeFor(r.Context(), req.Scope, req.ScopeID)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -1983,6 +1765,14 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 	var expiresAt int64
 	if req.ExpiresIn > 0 {
 		expiresAt = time.Now().Add(time.Duration(req.ExpiresIn) * time.Second).Unix()
+	}
+	// A link draws a page, so no page is a 400. pageLinkSettings says so, for
+	// here and for PUT .../page alike: one refusal, not one per caller.
+	pageID := strings.TrimSpace(req.PageID)
+	params, err := s.pageLinkSettings(r, pageID, 0, req.Params)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	u, ok := currentUserFrom(r)
@@ -1999,24 +1789,28 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 	if len(prefix) > 8 {
 		prefix = prefix[:8]
 	}
-	rec, err := s.DB.CreateShareLink(r.Context(), id.New(), auth.HashToken(token), prefix, name,
-		detail, board, scope, scopeID, u.ID, req.Remark, req.Locked, expiresAt)
+	rec, err := s.DB.CreateShareLink(r.Context(), store.NewShareLink{
+		ID: id.New(), TokenHash: auth.HashToken(token), Prefix: prefix, Name: name,
+		Detail: detail, Scope: scope, ScopeID: scopeID, UserID: u.ID,
+		Remark: req.Remark, Locked: req.Locked, ExpiresAt: expiresAt,
+		PageID: pageID, Params: params,
+	})
 	if err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}
-	// The board's shape goes in the audit line, not its contents. "which
-	// widgets" is a layout decision; "counts or names" is the disclosure
-	// decision, and that is the one an operator reading this row is looking for.
+	// "counts or names" and the scope are the disclosure decision, and that is
+	// what an operator reading this row is looking for.
 	s.audit(r.Context(), "share.created", u.Username, s.clientIP(r),
-		name+" ("+string(detail)+", "+boardLabel(board)+scopeLabel(scope, scopeID)+")")
+		name+" ("+string(detail)+", page "+pageID+scopeLabel(scope, scopeID)+")")
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"token":     token,
 		"id":        rec.ID,
 		"name":      rec.Name,
 		"prefix":    rec.Prefix,
 		"detail":    rec.Detail,
-		"board":     rec.Board,
+		"pageId":    rec.PageID,
+		"params":    rec.Params,
 		"scope":     rec.Scope,
 		"remark":    rec.Remark,
 		"locked":    rec.Locked,
@@ -2038,63 +1832,42 @@ func scopeLabel(scope store.ShareScope, id string) string {
 	return ", " + string(scope) + " " + id
 }
 
-// boardLabel names a board for the audit trail: its preset, or its size.
-func boardLabel(b store.Board) string {
-	if b.Preset != "" {
-		return b.Preset
-	}
-	return strconv.Itoa(len(b.Widgets)) + " widgets"
-}
-
 type updateShareRequest struct {
-	Name   string       `json:"name"`
-	Remark string       `json:"remark"`
-	Board  *store.Board `json:"board"`
+	Name   string `json:"name"`
+	Remark string `json:"remark"`
 	// Locked is a pointer so that "not mentioned" and "set to false" are
 	// different requests. They have to be: on a locked link the second is the
 	// only edit that is allowed, and the first is the one that gets refused.
 	Locked *bool `json:"locked"`
 }
 
-// handleUpdateShare renames a link and rearranges its board.
+// handleUpdateShare renames a link, relabels it, and fixes or unfixes it.
 //
 // Not its detail mode, and not its expiry. By the time anybody edits a link its
 // URL is already in an email or typed into a television, so widening what that
-// address discloses is a change the people holding it would never see. A board
-// can only rearrange what the mode already allows; the mode itself means a new
-// link, which is a thing somebody has to hand out on purpose.
+// address discloses is a change the people holding it would never see.
 func (s *Server) handleUpdateShare(w http.ResponseWriter, r *http.Request) {
 	linkID := chi.URLParam(r, "shareID")
 	var req updateShareRequest
 	if !decode(w, r, &req) {
 		return
 	}
-
-	// What the row says now, before anything is written. The lock is decided
-	// against the stored value and never against one in the request: a client
-	// that believed a link was unlocked is exactly the client the lock exists
-	// to stop.
+	// The lock is decided against the stored value and never against one in
+	// the request: a client that believed a link was unlocked is exactly the
+	// client the lock exists to stop.
 	current, err := s.DB.ShareLinkByID(r.Context(), linkID)
-	if err != nil {
-		s.writeStoreErr(w, err)
+	if err != nil || current.Purpose != "" {
+		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
 	if current.Locked {
-		// A locked board accepts one change and it is unlocking. Not "unlock
-		// and also apply this board": the failure being prevented is a screen
-		// somebody is sitting in front of being rearranged by an editor left
-		// open on the wrong row, and a single request that could do both would
-		// leave the lock as a message rather than a guard.
-		//
-		// So the rest of the request is dropped, deliberately, rather than
-		// merged. The editor unlocks, refetches, and edits -- two acts, which
-		// is the whole of what a lock is.
+		// A locked link accepts one change and it is unlocking -- not "unlock
+		// and also rename", so the lock stays a guard rather than a message.
 		if req.Locked == nil || *req.Locked {
-			writeErr(w, http.StatusConflict, "this board is locked")
+			writeErr(w, http.StatusConflict, "this link is locked")
 			return
 		}
-		if uerr := s.DB.UpdateShareLink(r.Context(), linkID, current.Name, current.Remark,
-			current.Board, false); uerr != nil {
+		if uerr := s.DB.UpdateShareLink(r.Context(), linkID, current.Name, current.Remark, false); uerr != nil {
 			s.writeStoreErr(w, uerr)
 			return
 		}
@@ -2104,35 +1877,23 @@ func (s *Server) handleUpdateShare(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if req.Board == nil {
-		writeErr(w, http.StatusBadRequest, "a board is required")
-		return
-	}
-	board, err := store.ValidateBoard(*req.Board)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
 	name := session.TruncateTitle(strings.TrimSpace(req.Name))
 	if name == "" {
-		name = "dashboard"
+		name = current.Name
 	}
 	locked := req.Locked != nil && *req.Locked
-	if err := s.DB.UpdateShareLink(r.Context(), linkID, name, req.Remark, board,
-		locked); err != nil {
+	if err := s.DB.UpdateShareLink(r.Context(), linkID, name, req.Remark, locked); err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}
 	if u, ok := currentUserFrom(r); ok {
-		// A lock is its own line rather than a word inside share.updated. An
-		// operator reading the trail for "who fixed the screen the customer is
-		// looking at" is asking a different question from "who moved a widget",
-		// and one event answering both is one somebody has to grep inside.
+		// A lock is its own line rather than a word inside share.updated: "who
+		// fixed the screen the customer is looking at" is a different question
+		// from "who renamed it".
 		if locked {
 			s.audit(r.Context(), "share.locked", u.Username, s.clientIP(r), name)
 		}
-		s.audit(r.Context(), "share.updated", u.Username, s.clientIP(r),
-			name+" ("+boardLabel(board)+")")
+		s.audit(r.Context(), "share.updated", u.Username, s.clientIP(r), name)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

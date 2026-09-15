@@ -1,0 +1,9 @@
+{
+  "sdk": 1,
+  "name": "Glance",
+  "sections": ["sessions"],
+  "params": [
+    { "key": "title", "type": "text", "label": "Title", "max": 40, "default": "" }
+  ],
+  "viewports": ["phone", "ipad-portrait", "laptop"]
+}

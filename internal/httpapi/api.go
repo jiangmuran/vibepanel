@@ -173,18 +173,18 @@ type Server struct {
 	archivedOutput map[string]int64
 	// shareTouch rate-limits the "last seen" write on a share link.
 	//
-	// A wall display polls the dashboard every couple of seconds and never
+	// A wall display polls the snapshot every couple of seconds and never
 	// stops, so stamping every lookup is tens of thousands of writes a day
 	// through SQLite's one write lock, for a field the settings page renders as
 	// a date. Lazily built so a Server assembled by hand still has one.
 	shareTouchOnce sync.Once
 	shareTouch     *auth.Cooldown
 
-	// spendSnap is the token-spend rollup a share board draws from, shared by
+	// spendSnap is the token-spend rollup a share page draws from, shared by
 	// every link and recomputed when it ages out.
 	//
 	// A wall polls every two seconds forever, and the rollups behind one spend
-	// board are five GROUP BYs over a table holding a year of history. Without
+	// page are five GROUP BYs over a table holding a year of history. Without
 	// this they run forty thousand times a day to answer a question whose
 	// answer moves when an agent finishes a request. Shared rather than kept
 	// per link on purpose: the snapshot holds the panel's real project ids and
@@ -211,6 +211,10 @@ type Server struct {
 	// count in a table would be that many writes for a fact that is true for
 	// two seconds and must be false again after a restart.
 	viewers shareViewerBook
+
+	// snapshots is the one-second memo in front of a page's v1 snapshot. See
+	// snapshotMemoTTL in sharepage.go.
+	snapshots snapshotMemo
 
 	// TrimEvery and AuditKeep override the audit trim's schedule and cap. Zero
 	// means the constants. Tests set them small; nothing else should. They
@@ -403,6 +407,10 @@ func (s *Server) Routes() http.Handler {
 			// one, which is the property that keeps one leaked link from
 			// becoming a supply of them.
 			s.registerShareAdminRoutes(r)
+			// Share pages: made, previewed, published and pointed at from
+			// here, by somebody signed in. Nothing about a page is editable
+			// through a share token.
+			s.registerPageRoutes(r)
 		})
 
 		r.NotFound(func(w http.ResponseWriter, r *http.Request) {
@@ -451,6 +459,10 @@ func (s *Server) Routes() http.Handler {
 	// The token in the path is the capability, for a reason measured rather
 	// than chosen: see the note in preview.go.
 	s.registerPreviewRoutes(r)
+
+	// A share page's files. Before the SPA's catch-all, which must never answer
+	// `/share/<token>`. Red line 8 counts these routes; see sharepage.go.
+	s.registerSharePageRoutes(r)
 
 	r.Handle("/*", webui.Handler(s.Cfg.StaticDir))
 	return r

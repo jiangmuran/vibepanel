@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Session wall</title>
+  <style>
+    :root {
+      --bg: #0b0d12;
+      --panel: #141821;
+      --tile: #181d28;
+      --line: #252b38;
+      --text: #eef0f5;
+      --muted: #8d95a6;
+      --accent: #8b7cff;
+      --working: #5b8cff;
+      --waiting: #f0b429;
+      --done: #3fb67a;
+      --urgent: #ff5d4a;
+      --vp-live: #3fb67a;
+      --vp-waiting: #f0b429;
+      --vp-trouble: #ff5d4a;
+      --gap: clamp(8px, 0.8vw, 16px);
+      color-scheme: dark;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      padding: clamp(14px, 1.8vw, 40px);
+      background: var(--bg);
+      color: var(--text);
+      font: clamp(14px, 1vw, 22px)/1.3 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: clamp(12px, 1.4vw, 32px);
+      overflow: hidden;
+    }
+    .shape { width: 1em; height: 1em; flex: none; display: block; }
+    .name { unicode-bidi: isolate; overflow-wrap: anywhere; }
+
+    header { display: flex; align-items: center; gap: clamp(12px, 1.2vw, 28px); min-width: 0; }
+    header .mark { width: clamp(6px, 0.4vw, 10px); align-self: stretch; border-radius: 99px; background: var(--accent); }
+    header .titles { min-width: 0; flex: 1; }
+    h1 { margin: 0; font-size: clamp(22px, 2.3vw, 52px); font-weight: 650; letter-spacing: -0.01em;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sub { color: var(--muted); font-size: clamp(13px, 1.05vw, 24px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #status { font-size: clamp(14px, 1.3vw, 30px); color: var(--muted); white-space: nowrap; }
+
+    main {
+      display: grid;
+      grid-template-columns: minmax(0, 22fr) minmax(0, 56fr) minmax(0, 22fr);
+      gap: clamp(12px, 1.4vw, 32px);
+      min-height: 0;
+    }
+    section { min-height: 0; min-width: 0; }
+    h2 { margin: 0 0 0.6em; font-size: clamp(12px, 0.95vw, 22px); font-weight: 600; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.08em; }
+
+    /* ── the figure you read from the door ── */
+    .hero { display: flex; flex-direction: column; gap: var(--gap); }
+    .waiting { background: var(--panel); border-radius: clamp(10px, 0.9vw, 20px); padding: clamp(16px, 1.6vw, 36px);
+      border: 2px solid transparent; }
+    .waiting .label { display: flex; align-items: center; gap: 0.45em; font-size: clamp(16px, 1.6vw, 36px); font-weight: 600; }
+    .waiting .label .shape { color: var(--waiting); }
+    .waiting .n { font-size: clamp(88px, 12vw, 280px); font-weight: 750; line-height: 0.95; letter-spacing: -0.04em;
+      font-variant-numeric: tabular-nums; margin: 0.08em 0 0.05em; }
+    .waiting .oldest { color: var(--muted); font-size: clamp(14px, 1.2vw, 28px); }
+    .waiting .oldest b { display: block; color: var(--text); font-size: clamp(30px, 3.4vw, 80px); font-weight: 700;
+      line-height: 1.05; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .waiting .alarm { display: none; align-items: center; gap: 0.4em; margin-top: 0.7em; font-weight: 650;
+      font-size: clamp(14px, 1.2vw, 28px); color: var(--urgent); }
+    .waiting.urgent { border-color: var(--urgent); background: color-mix(in srgb, var(--urgent) 12%, var(--panel)); }
+    .waiting.urgent .n { color: var(--urgent); }
+    .waiting.urgent .alarm { display: flex; }
+    .stat { background: var(--panel); border-radius: clamp(10px, 0.9vw, 20px); padding: clamp(12px, 1.2vw, 28px) clamp(16px, 1.6vw, 36px);
+      display: flex; align-items: center; gap: 0.5em; font-size: clamp(16px, 1.5vw, 34px); }
+    .stat .word { flex: 1; min-width: 0; }
+    .stat .word small { display: block; color: var(--muted); font-size: 0.62em; }
+    .stat .n { font-size: clamp(36px, 4.2vw, 96px); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+
+    /* ── tiles: the grid's shape is chosen in JS to fit however many there are ── */
+    #tiles { display: grid; gap: var(--gap); height: calc(100% - 2em); align-content: start; }
+    .tile {
+      container-type: size;
+      min-width: 0; overflow: hidden;
+      background: var(--tile);
+      border-radius: clamp(6px, 0.6vw, 14px);
+      border-left: clamp(4px, 0.35vw, 8px) solid var(--c);
+      padding: 0.5em 0.7em;
+      display: flex; flex-direction: column; justify-content: space-between;
+    }
+    .tile.waiting-tile { background: color-mix(in srgb, var(--waiting) 16%, var(--tile)); }
+    .tile.done-tile { opacity: 0.72; }
+    .tile .top { display: flex; align-items: center; gap: 0.35em; font-size: clamp(12px, min(24cqh, 10.5cqw), 50px); color: var(--c); min-width: 0; }
+    .tile .dur { white-space: nowrap; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+    .tile .kind { margin-left: auto; min-width: 0; color: var(--muted); font-size: 0.62em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tile .name { font-size: clamp(11px, min(20cqh, 9cqw), 40px); line-height: 1.2; display: -webkit-box; -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2; overflow: hidden; }
+    .tile .name.fallback { color: var(--muted); }
+    .tile.more { --c: var(--line); justify-content: center; }
+    .tile.more .top { color: var(--muted); gap: 0.3em; font-size: clamp(12px, 20cqh, 40px); }
+    .tile.more .big { font-size: clamp(16px, 30cqh, 60px); font-weight: 700; line-height: 1.1; }
+    .empty { color: var(--muted); font-size: clamp(16px, 1.6vw, 36px); display: flex; align-items: center; gap: 0.5em; padding: 1em 0; }
+    /* A wall that lost its data greys out, so a frozen screen never passes for a quiet one;
+       the notice says so in words, because greying alone is a colour. */
+    main { position: relative; }
+    #notice[hidden] { display: none; }
+    #notice { position: absolute; inset: 0; display: grid; place-items: center; z-index: 1; pointer-events: none; }
+    #notice span { background: var(--panel); border: 2px solid var(--vp-trouble); border-radius: 16px;
+      padding: 0.8em 1.4em; font-size: clamp(18px, 2vw, 44px); font-weight: 600; text-align: center; max-width: 80%; }
+    body.offline main > section { opacity: 0.3; filter: grayscale(1); }
+
+    /* ── feed ── */
+    #feed { list-style: none; margin: 0; padding: 0; height: calc(100% - 2em); overflow: hidden;
+      mask-image: linear-gradient(to bottom, #000 80%, transparent); }
+    #feed li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 0 0.6em; align-items: center;
+      padding: 0.55em 0; border-bottom: 1px solid var(--line); }
+    #feed .shape { font-size: 1.25em; grid-row: span 2; }
+    #feed .primary { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 550; }
+    #feed .meta { color: var(--muted); font-size: 0.82em; grid-column: 2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #feed .ago { color: var(--muted); font-size: 0.82em; grid-row: 1; grid-column: 3; font-variant-numeric: tabular-nums; }
+
+    /* A phone or a narrow window gets one scrolling column instead of a fitted wall. */
+    @media (max-width: 900px) {
+      html, body { height: auto; }
+      body { overflow: visible; display: block; }
+      header { margin-bottom: 16px; }
+      header .mark { display: none; }
+      main { grid-template-columns: minmax(0, 1fr); }
+      .waiting .n { font-size: 30vw; }
+      #tiles { height: auto; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)) !important; grid-auto-rows: 84px; }
+      #feed { height: auto; max-height: 60vh; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="mark"></div>
+    <div class="titles">
+      <h1 id="title">Sessions</h1>
+      <div class="sub" id="sub"></div>
+    </div>
+    <span id="status"></span>
+  </header>
+
+  <main>
+    <div id="notice" hidden><span></span></div>
+    <section class="hero">
+      <div class="waiting" id="waitingBox">
+        <div class="label" data-shape="waiting">waiting</div>
+        <div class="n" id="waiting">—</div>
+        <div class="oldest" id="oldest"></div>
+        <div class="alarm" id="alarm"></div>
+      </div>
+      <div class="stat"><span data-shape="working"></span><span class="word">working</span><span class="n" id="working">—</span></div>
+      <div class="stat"><span data-shape="done"></span><span class="word">done<small id="doneToday"></small></span><span class="n" id="done">—</span></div>
+    </section>
+
+    <section>
+      <h2>Sessions</h2>
+      <div id="tiles"></div>
+    </section>
+
+    <section>
+      <h2>Recent changes</h2>
+      <ul id="feed"></ul>
+    </section>
+  </main>
+
+  <script src="vibepanel.js"></script>
+  <script>
+    const vp = VibePanel.connect()
+    vp.badge(document.getElementById('status'))
+
+    const $ = (id) => document.getElementById(id)
+    const params = { warnAt: 3 }
+
+    // Shape as well as colour: circle working, triangle waiting, check done.
+    const SVG = 'http://www.w3.org/2000/svg'
+    const SHAPES = {
+      waiting: ['path', { d: 'M12 2.5 L22.5 21 H1.5 Z', fill: 'currentColor' }],
+      working: ['circle', { cx: 12, cy: 12, r: 9.5, fill: 'currentColor' }],
+      done: ['path', { d: 'M3.5 12.5 L9.5 18.5 L20.5 5.5', fill: 'none', stroke: 'currentColor',
+        'stroke-width': 3.6, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }],
+      alarm: ['path', { d: 'M12 2.5 L22.5 21 H1.5 Z M12 9 V14 M12 17.2 V17.4', fill: 'none', stroke: 'currentColor',
+        'stroke-width': 2.4, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }],
+    }
+    const COLOUR = { waiting: 'var(--waiting)', working: 'var(--working)', done: 'var(--done)' }
+
+    function shape(state) {
+      const [tag, attrs] = SHAPES[state] || SHAPES.done
+      const svg = document.createElementNS(SVG, 'svg')
+      svg.setAttribute('class', 'shape')
+      svg.setAttribute('viewBox', '0 0 24 24')
+      svg.setAttribute('aria-hidden', 'true')
+      const mark = document.createElementNS(SVG, tag)
+      for (const [k, v] of Object.entries(attrs)) mark.setAttribute(k, String(v))
+      svg.append(mark)
+      if (COLOUR[state]) svg.style.color = COLOUR[state]
+      return svg
+    }
+
+    function el(tag, className, text) {
+      const node = document.createElement(tag)
+      if (className) node.className = className
+      if (text !== undefined) vp.text(node, text)
+      return node
+    }
+
+    // The static shapes in the markup.
+    for (const slot of document.querySelectorAll('[data-shape]')) slot.prepend(shape(slot.dataset.shape))
+    $('alarm').append(shape('alarm'), el('span'))
+
+    vp.on('params', (p) => {
+      if (typeof p.accent === 'string') document.documentElement.style.setProperty('--accent', p.accent)
+      if (typeof p.warnAt === 'number') params.warnAt = p.warnAt
+      params.title = p.title
+      if (vp.snapshot) draw(vp.snapshot)
+    })
+
+    const OFFLINE = {
+      disconnected: 'Not live — these are the last numbers the panel sent',
+      revoked: 'This link no longer works',
+    }
+    vp.on('status', (st) => {
+      document.body.classList.toggle('offline', Boolean(OFFLINE[st]))
+      $('notice').hidden = !OFFLINE[st]
+      $('notice').firstChild.textContent = OFFLINE[st] || ''
+    })
+
+    // Waiting first and oldest first: the tile that has waited longest is the
+    // one somebody should walk over for. Done last, most recent first.
+    const ORDER = { waiting: 0, working: 1, done: 2 }
+    function sortSessions(rows) {
+      return rows.slice().sort((a, b) =>
+        (ORDER[a.state] - ORDER[b.state]) ||
+        (a.state === 'done' ? b.stateChangedAt - a.stateChangedAt : a.stateChangedAt - b.stateChangedAt))
+    }
+
+    // Pick the column count that gives the most readable tiles in the space
+    // there is. Tiles aim for about 2:1 and never grow past a quarter of the
+    // height, so two sessions do not become two billboards. Returns how many
+    // tiles fit, so the rest collapse into a "+N more" tile.
+    function fitGrid(box, n) {
+      const gap = parseFloat(getComputedStyle(box).rowGap) || 12
+      const W = box.clientWidth
+      const H = box.clientHeight
+      const minW = Math.max(140, innerWidth * 0.085)
+      const minH = Math.max(72, innerHeight * 0.085)
+      const maxCols = Math.max(1, Math.floor((W + gap) / (minW + gap)))
+      const maxRows = Math.max(1, Math.floor((H + gap) / (minH + gap)))
+      const shown = Math.min(n, maxCols * maxRows)
+      let best = { cols: maxCols, rowH: minH, score: -1 }
+      for (let cols = 1; cols <= maxCols; cols++) {
+        const rows = Math.ceil(shown / cols)
+        if (rows > maxRows) continue
+        const w = (W - gap * (cols - 1)) / cols
+        const h = Math.min((H - gap * (rows - 1)) / rows, H * 0.26)
+        const score = Math.min(w / 2, h)
+        if (score >= best.score) best = { cols, rowH: h, score }
+      }
+      box.style.gridTemplateColumns = `repeat(${best.cols}, minmax(0, 1fr))`
+      box.style.gridAutoRows = `${Math.floor(best.rowH)}px`
+      return shown
+    }
+
+    function tile(row) {
+      const t = el('div', `tile ${row.state}-tile`)
+      t.style.setProperty('--c', COLOUR[row.state] || 'var(--muted)')
+      const top = el('div', 'top')
+      top.append(shape(row.state), el('span', 'dur', vp.since(row.stateChangedAt)))
+      // An exited process is worth a word; its exit code is not a name.
+      const exited = row.exited ? ' · exited' : ''
+      const name = vp.name(row)
+      // Counts mode sends no names (the default): the kind moves down into the
+      // name's place, so the tile still says what it is rather than nothing.
+      if (name) top.append(el('span', 'kind', row.kind + exited))
+      t.append(top, el('div', name ? 'name' : 'name fallback', name || `${row.kind} session${exited}`))
+      return t
+    }
+
+    function moreTile(hidden) {
+      const t = el('div', 'tile more')
+      t.append(el('div', 'big', `+${hidden.length} more`))
+      const top = el('div', 'top')
+      for (const state of ['waiting', 'working', 'done']) {
+        const n = hidden.filter((r) => r.state === state).length
+        if (n) top.append(shape(state), el('span', null, n))
+      }
+      t.append(top)
+      return t
+    }
+
+    function drawTiles(sessions) {
+      const box = $('tiles')
+      box.replaceChildren()
+      if (!sessions.length) {
+        const empty = el('div', 'empty')
+        empty.append(shape('done'), el('span', null, 'Nothing is running.'))
+        box.append(empty)
+        return
+      }
+      const rows = sortSessions(sessions)
+      const narrow = matchMedia('(max-width: 900px)').matches
+      const fits = narrow ? rows.length : fitGrid(box, rows.length)
+      const overflow = fits < rows.length
+      const visible = overflow ? rows.slice(0, fits - 1) : rows
+      for (const row of visible) box.append(tile(row))
+      if (overflow) box.append(moreTile(rows.slice(fits - 1)))
+    }
+
+    const WORD = { waiting: 'waiting', working: 'working', done: 'done' }
+    function drawFeed(feed) {
+      const list = $('feed')
+      list.replaceChildren()
+      const entries = feed ? feed.entries.slice(0, 40) : []
+      if (!entries.length) {
+        list.append(el('li', 'meta', 'No changes yet.'))
+        return
+      }
+      for (const e of entries) {
+        const li = el('li')
+        const name = vp.name(e)
+        const move = `${WORD[e.from] || e.from} → ${WORD[e.to] || e.to}`
+        // forSeconds is how long it spent in the state it just left.
+        const after = `after ${vp.fmt.duration(e.forSeconds)}`
+        const primary = el('span', 'primary name', name || move)
+        const meta = el('span', 'meta', name ? `${move} · ${after}` : after)
+        li.append(shape(e.to), primary, el('span', 'ago', `${vp.since(e.at)} ago`), meta)
+        list.append(li)
+      }
+    }
+
+    function draw(s) {
+      const c = s.counts
+      vp.text($('title'), params.title || s.name, 'Sessions')
+      const bits = [`${c.sessions} sessions`, `${c.projects} projects`]
+      if (s.remark) bits.push(s.remark)
+      vp.text($('sub'), bits.join(' · '))
+
+      vp.text($('waiting'), c.waiting)
+      vp.text($('working'), c.working)
+      vp.text($('done'), c.done)
+      vp.text($('doneToday'), `${c.doneToday} today`)
+      if (c.waiting > 0 && c.longestWaitAt > 0) {
+        $('oldest').replaceChildren('longest wait', el('b', null, vp.since(c.longestWaitAt)))
+      } else {
+        vp.text($('oldest'), 'nobody is waiting')
+      }
+      const urgent = c.waiting >= params.warnAt
+      $('waitingBox').classList.toggle('urgent', urgent)
+      vp.text($('alarm').lastChild, `${params.warnAt} or more waiting`)
+
+      drawTiles(s.sessions)
+      drawFeed(s.feed)
+    }
+
+    vp.on('snapshot', draw)
+    // Refit when the screen changes size; a wall rotated or a window resized.
+    addEventListener('resize', () => { if (vp.snapshot) draw(vp.snapshot) })
+  </script>
+</body>
+</html>

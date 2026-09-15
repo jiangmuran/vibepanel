@@ -248,44 +248,33 @@ func TestTheLogRefusesAStateNothingRecognises(t *testing.T) {
 	}
 }
 
-// ─── what a board asks for is what it gets ────────────────────────────────
+// ─── what a page asks for is what it gets ─────────────────────────────────
 
-// A board with no repository widget makes the dashboard read no repository, and
-// a board with no flow widget makes it read no event log.
+// A page with no repository section makes the snapshot read no repository, and
+// a page with no flow section makes it read no event log.
 //
 // A cost decision rather than a permission one -- every section is computable
 // for every link -- but it is the one that decides whether a wall polling every
 // two seconds keeps a `git log` alive per project.
-func TestABoardOnlyPullsTheSectionsItDraws(t *testing.T) {
+func TestAPageOnlyPullsTheSectionsItDraws(t *testing.T) {
 	ts, _ := newTestServer(t)
 
 	for _, tc := range []struct {
 		name                         string
-		board                        string
+		sections                     string
 		wantRepo, wantFlow, wantFeed bool
 	}{
-		{"a board of one count", `{"grid":12,"widgets":[{"kind":"states","span":12}]}`,
-			false, false, false},
-		{"a production board", `{"grid":12,"widgets":[{"kind":"output","span":12}]}`,
-			true, false, false},
-		{"a board that draws the day", `{"grid":12,"widgets":[{"kind":"flow","span":12}]}`,
-			false, true, false},
-		{"a board with a feed", `{"grid":12,"widgets":[{"kind":"feed","span":12}]}`,
-			false, false, true},
-		// A metric pulls the section it comes out of. Without that, a board
-		// whose one figure is "commits today" carries no repository section and
-		// the figure is a dash forever.
-		{"one production figure",
-			`{"grid":12,"widgets":[{"kind":"bignumber","metric":"commitsToday","span":12}]}`,
-			true, false, false},
-		{"one figure out of the log",
-			`{"grid":12,"widgets":[{"kind":"bignumber","metric":"avgWaitToday","span":12}]}`,
-			false, true, false},
+		{"a page of counts", `[]`, false, false, false},
+		{"a production page", `["repo"]`, true, false, false},
+		{"a page that draws the day", `["flow"]`, false, true, false},
+		{"a page with a feed", `["feed"]`, false, false, true},
+		{"all three", `["repo","flow","feed"]`, true, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			link := newShare(t, ts, `{"name":"wall","detail":"names","board":`+tc.board+`}`)
+			link := shareOn(t, ts, `{"sdk":1,"name":"P","sections":`+tc.sections+`}`,
+				`{"name":"wall","detail":"names"}`)
 			_, body := shareGET(t, ts, link.Token)
-			got := decodeDashboard(t, body)
+			got := decodeSnapshot(t, body)
 			if (got.Repo != nil) != tc.wantRepo {
 				t.Errorf("repo section present = %v, want %v", got.Repo != nil, tc.wantRepo)
 			}
@@ -296,6 +285,36 @@ func TestABoardOnlyPullsTheSectionsItDraws(t *testing.T) {
 				t.Errorf("feed section present = %v, want %v", got.Feed != nil, tc.wantFeed)
 			}
 		})
+	}
+}
+
+// The options inside a section narrow it the same way: a repository page that
+// did not ask for a day series or pull requests is sent neither, and a flow
+// page cut by the day is not cut by the hour.
+func TestASectionsOptionsDecideItsSeries(t *testing.T) {
+	ts, _ := newTestServer(t)
+	postJSON[store.Project](t, ts, "/api/projects", `{"path":"`+t.TempDir()+`","name":"p"}`)
+
+	plain := shareOn(t, ts, `{"sdk":1,"name":"P","sections":["repo","flow"],"flow":{"by":"day","days":5}}`,
+		`{"name":"wall","detail":"names"}`)
+	_, body := shareGET(t, ts, plain.Token)
+	got := decodeSnapshot(t, body)
+	if got.Repo == nil || len(got.Repo.Days) != 0 || got.Repo.PRs != nil {
+		t.Errorf("a repository page with no options was sent a day series or pull requests: %s", body)
+	}
+	if got.Flow == nil || got.Flow.Every != 24*3600 || got.Flow.WindowDays != 5 {
+		t.Errorf("a flow page by the day over five days = %+v", got.Flow)
+	}
+
+	full := shareOn(t, ts, `{"sdk":1,"name":"P","sections":["repo","flow"],"repo":{"days":9,"prs":true}}`,
+		`{"name":"wall","detail":"names"}`)
+	_, body = shareGET(t, ts, full.Token)
+	got = decodeSnapshot(t, body)
+	if got.Repo == nil || len(got.Repo.Days) != 9 || got.Repo.PRs == nil || got.Repo.WindowDays != 9 {
+		t.Errorf("a repository page asking for nine days and pull requests = %s", body)
+	}
+	if got.Flow == nil || got.Flow.Every != shareFlowBucketSeconds || got.Flow.WindowDays != shareFlowDays {
+		t.Errorf("a flow page with no options is not today by the hour: %+v", got.Flow)
 	}
 }
 
@@ -338,12 +357,12 @@ func makeRepo(t *testing.T) string {
 //
 // The poll deliberately never waits for git -- that is the property the test
 // below pins -- so a test that wants the numbers has to ask twice.
-func warmUp(t *testing.T, ts *httptest.Server, token string) shareDashboard {
+func warmUp(t *testing.T, ts *httptest.Server, token string) shareSnapshot {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		_, body := shareGET(t, ts, token)
-		got := decodeDashboard(t, body)
+		got := decodeSnapshot(t, body)
 		if got.Repo != nil && got.Repo.Readable {
 			return got
 		}
@@ -356,7 +375,7 @@ func warmUp(t *testing.T, ts *httptest.Server, token string) shareDashboard {
 
 // The first poll returns without having run anything.
 //
-// This is the whole of why a wall may carry a commit count at all. A dashboard
+// This is the whole of why a wall may carry a commit count at all. A snapshot
 // polled every two seconds that read `git log` inline would be one process per
 // project per poll, forever, on a machine whose agents are contending for the
 // same .git directory. So the first ask is "not counted yet" and the refresh
@@ -366,12 +385,11 @@ func TestTheFirstPollDoesNotWaitForGit(t *testing.T) {
 	dir := makeRepo(t)
 	postJSON[store.Project](t, ts, "/api/projects", `{"path":"`+dir+`","name":"Acme payroll"}`)
 
-	link := newShare(t, ts, `{"name":"wall","detail":"names",`+
-		`"board":{"grid":12,"widgets":[{"kind":"output","span":12}]}}`)
+	link := shareOn(t, ts, repoManifest, `{"name":"wall","detail":"names"}`)
 	_, body := shareGET(t, ts, link.Token)
-	got := decodeDashboard(t, body)
+	got := decodeSnapshot(t, body)
 	if got.Repo == nil {
-		t.Fatal("a board with a production widget got no repository section")
+		t.Fatal("a page asking for the repository got no repository section")
 	}
 	if got.Repo.Readable {
 		t.Error("the first poll came back with a repository already read; a wall polling " +
@@ -400,10 +418,8 @@ func TestTheRepositorySectionCarriesCountsAndNoText(t *testing.T) {
 	postJSON[store.Project](t, ts, "/api/projects", `{"path":"`+dir+`","name":"Acme payroll"}`)
 
 	for _, detail := range []string{"counts", "names"} {
-		link := newShare(t, ts, `{"name":"wall","detail":"`+detail+`",`+
-			`"board":{"grid":12,"widgets":[{"kind":"output","span":6},`+
-			`{"kind":"codechurn","span":6,"by":"lines","days":7},`+
-			`{"kind":"repoprojects","span":12,"by":"commits"}]}}`)
+		link := shareOn(t, ts, `{"sdk":1,"name":"Built","sections":["repo"],"repo":{"days":7}}`,
+			`{"name":"wall","detail":"`+detail+`"}`)
 		got := warmUp(t, ts, link.Token)
 		raw, err := json.Marshal(got)
 		if err != nil {
@@ -424,7 +440,7 @@ func TestTheRepositorySectionCarriesCountsAndNoText(t *testing.T) {
 			}
 		}
 		// Counts *are* disclosed, in both modes: a commit count names nobody,
-		// and withholding it would leave the board as empty as it was.
+		// and withholding it would leave the page as empty as it was.
 		if got.Repo.Today.Commits != 1 {
 			t.Errorf("%s mode: %d commits, want 1", detail, got.Repo.Today.Commits)
 		}
@@ -435,7 +451,7 @@ func TestTheRepositorySectionCarriesCountsAndNoText(t *testing.T) {
 			t.Fatalf("%s mode: %d projects, want 1", detail, len(got.Repo.ByProject))
 		}
 		// The project's *name* still follows the detail mode, exactly like
-		// every other group on this dashboard.
+		// every other group in this snapshot.
 		if detail == "counts" && got.Repo.ByProject[0].Name != "" {
 			t.Errorf("counts mode named a project in the repository section: %q",
 				got.Repo.ByProject[0].Name)
@@ -449,7 +465,7 @@ func TestTheRepositorySectionCarriesCountsAndNoText(t *testing.T) {
 // The four gates in front of the only outbound request a wall can cause.
 //
 // None of them is a default: an owner signed in has to have put a pull-request
-// widget on a board, pointed the link at one project, set it to disclose names,
+// section on a page, pointed the link at one project, set it to disclose names,
 // and started the panel with a token in its environment. Any one of them
 // missing and github.com is never reached.
 func TestAWallReachesGitHubOnlyWhenEveryGateIsOpen(t *testing.T) {
@@ -480,28 +496,24 @@ func TestAWallReachesGitHubOnlyWhenEveryGateIsOpen(t *testing.T) {
 	// Short TTLs so a case that should ask, asks within the few polls below.
 	srv.Git = git.Cache{WarmFor: time.Millisecond, GitHubFor: time.Millisecond}
 
-	prBoard := `{"grid":12,"widgets":[{"kind":"prs","span":12}]}`
-	plainBoard := `{"grid":12,"widgets":[{"kind":"output","span":12}]}`
+	prBoard := `{"sdk":1,"name":"PRs","sections":["repo"],"repo":{"prs":true}}`
+	plainBoard := repoManifest
 
 	for _, tc := range []struct {
-		name, body string
-		token      bool
-		wantAsk    bool
+		name, manifest, body string
+		token                bool
+		wantAsk              bool
 	}{
-		{"no pull-request widget on the board",
-			`{"name":"w","detail":"names","scope":"project","scopeId":"` + project.ID +
-				`","board":` + plainBoard + `}`, true, false},
-		{"a link that is not scoped to one project",
-			`{"name":"w","detail":"names","board":` + prBoard + `}`, true, false},
-		{"a link that discloses no names",
-			`{"name":"w","detail":"counts","scope":"project","scopeId":"` + project.ID +
-				`","board":` + prBoard + `}`, true, false},
-		{"no token in the panel's environment",
-			`{"name":"w","detail":"names","scope":"project","scopeId":"` + project.ID +
-				`","board":` + prBoard + `}`, false, false},
-		{"every gate open",
-			`{"name":"w","detail":"names","scope":"project","scopeId":"` + project.ID +
-				`","board":` + prBoard + `}`, true, true},
+		{"no pull requests asked for on the page", plainBoard,
+			`{"name":"w","detail":"names","scope":"project","scopeId":"` + project.ID + `"}`, true, false},
+		{"a link that is not scoped to one project", prBoard,
+			`{"name":"w","detail":"names"}`, true, false},
+		{"a link that discloses no names", prBoard,
+			`{"name":"w","detail":"counts","scope":"project","scopeId":"` + project.ID + `"}`, true, false},
+		{"no token in the panel's environment", prBoard,
+			`{"name":"w","detail":"names","scope":"project","scopeId":"` + project.ID + `"}`, false, false},
+		{"every gate open", prBoard,
+			`{"name":"w","detail":"names","scope":"project","scopeId":"` + project.ID + `"}`, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.token {
@@ -512,7 +524,7 @@ func TestAWallReachesGitHubOnlyWhenEveryGateIsOpen(t *testing.T) {
 			}
 			drain(asked)
 
-			link := newShare(t, ts, tc.body)
+			link := shareOn(t, ts, tc.manifest, tc.body)
 			// Several polls: the request is made behind the poll, so "it never
 			// asked" needs more than one chance to be wrong.
 			for i := 0; i < 5; i++ {
@@ -557,13 +569,13 @@ func TestPullRequestsThatCouldNotBeFetchedAreNotZero(t *testing.T) {
 	srv.Git = git.Cache{WarmFor: time.Millisecond, GitHubFor: time.Millisecond}
 	t.Setenv("GITHUB_TOKEN", "test-token")
 
-	link := newShare(t, ts, `{"name":"w","detail":"names","scope":"project","scopeId":"`+
-		project.ID+`","board":{"grid":12,"widgets":[{"kind":"prs","span":12}]}}`)
+	link := shareOn(t, ts, `{"sdk":1,"name":"PRs","sections":["repo"],"repo":{"prs":true}}`,
+		`{"name":"w","detail":"names","scope":"project","scopeId":"`+project.ID+`"}`)
 	for i := 0; i < 6; i++ {
 		_, body := shareGET(t, ts, link.Token)
-		got := decodeDashboard(t, body)
+		got := decodeSnapshot(t, body)
 		if got.Repo == nil || got.Repo.PRs == nil {
-			t.Fatalf("a board with a pull-request widget got no section: %s", body)
+			t.Fatalf("a page asking for pull requests got no section: %s", body)
 		}
 		if got.Repo.PRs.Readable {
 			t.Fatalf("a fetch that failed was reported as readable, with %d open",
@@ -625,14 +637,13 @@ func TestTheDayIsDrawnFromTheEventLog(t *testing.T) {
 		}
 	}
 
-	link := newShare(t, ts, `{"name":"wall","detail":"names",`+
-		`"board":{"grid":12,"widgets":[{"kind":"flow","span":6,"by":"hour"},`+
-		`{"kind":"feed","span":6}]}}`)
+	link := shareOn(t, ts, `{"sdk":1,"name":"Day","sections":["flow","feed"],"flow":{"by":"hour"}}`,
+		`{"name":"wall","detail":"names"}`)
 	_, body := shareGET(t, ts, link.Token)
-	got := decodeDashboard(t, body)
+	got := decodeSnapshot(t, body)
 
 	if got.Flow == nil || got.Feed == nil {
-		t.Fatal("a board with a flow and a feed widget got neither section")
+		t.Fatal("a page asking for the flow and the feed got neither section")
 	}
 	if got.Flow.Today.Waited != 1 || got.Flow.Today.Started != 1 || got.Flow.Today.Finished != 1 {
 		t.Errorf("today reads started=%d waited=%d finished=%d, want 1 of each",
@@ -666,8 +677,7 @@ func TestTheDayIsDrawnFromTheEventLog(t *testing.T) {
 	}
 
 	// And under counts, no title at all.
-	quiet := newShare(t, ts, `{"name":"wall","detail":"counts",`+
-		`"board":{"grid":12,"widgets":[{"kind":"feed","span":12}]}}`)
+	quiet := shareOn(t, ts, `{"sdk":1,"name":"Feed","sections":["feed"]}`, `{"name":"wall","detail":"counts"}`)
 	_, qbody := shareGET(t, ts, quiet.Token)
 	if strings.Contains(string(qbody), "rotate the production keys") {
 		t.Errorf("counts mode carried a session title in the feed:\n%s", qbody)
@@ -697,10 +707,10 @@ func TestAScopedLinkSeesOnlyItsOwnEvents(t *testing.T) {
 		}
 	}
 
-	link := newShare(t, ts, `{"name":"one","detail":"names","scope":"project","scopeId":"`+
-		mine.ID+`","board":{"grid":12,"widgets":[{"kind":"flow","span":12}]}}`)
+	link := shareOn(t, ts, `{"sdk":1,"name":"Day","sections":["flow"]}`,
+		`{"name":"one","detail":"names","scope":"project","scopeId":"`+mine.ID+`"}`)
 	_, body := shareGET(t, ts, link.Token)
-	got := decodeDashboard(t, body)
+	got := decodeSnapshot(t, body)
 	if got.Flow == nil || got.Flow.Today.Finished != 1 {
 		t.Fatalf("a project-scoped link counted %v finished; it should see only its own one",
 			got.Flow)
@@ -717,10 +727,16 @@ func TestAScopedLinkSeesOnlyItsOwnEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	res.Body.Close()
+	// Past the snapshot memo's second, which would otherwise answer with the
+	// reading taken before the project went.
+	srv.snapshots.entries = nil
 	_, after := shareGET(t, ts, link.Token)
-	gone := decodeDashboard(t, after)
+	gone := decodeSnapshot(t, after)
 	if gone.Flow != nil && gone.Flow.Today.Finished != 0 {
 		t.Errorf("a link whose project was deleted counted %d finished; an empty scope must "+
 			"not become an empty filter", gone.Flow.Today.Finished)
 	}
 }
+
+// repoManifest is a page of what got built, with no options.
+const repoManifest = `{"sdk":1,"name":"Built","sections":["repo"]}`

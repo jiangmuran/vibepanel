@@ -102,7 +102,14 @@ export type DockBlock = (typeof DOCK_BLOCKS)[number]
  * the stack, not beside it: two of these open at once is the four-tab panel's
  * mistake in a smaller box.
  */
-export const DETAIL_BLOCKS = ['repo', 'tokens', 'monitor'] as const
+//
+// The share page's Preview is the fourth, and the second that is not in the
+// dock: its compact form is the line under the repository's, shown only when
+// the project's directory is a page's draft. It is opened for the same reason
+// the repository is -- it is about the directory -- and it is the one block
+// that is mostly a picture of something else, which is why its full form is
+// the one that earns the window.
+export const DETAIL_BLOCKS = ['repo', 'page', 'tokens', 'monitor'] as const
 
 export type DetailBlock = (typeof DETAIL_BLOCKS)[number]
 

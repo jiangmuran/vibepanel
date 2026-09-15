@@ -270,20 +270,20 @@ func trendFrom(now time.Time, sample sysmon.Sample, tokens int64) trendPoint {
 	return p
 }
 
-// trendKey names the ring a board's points belong in.
+// trendKey names the ring a link's points belong in.
 //
 // Everything that decides the token half of a point, and nothing else. The
 // directory alone -- which is what this was -- collapsed three different token
 // series onto one ring:
 //
-//   - A board with no spend section contributes a zero token total, because
-//     there is nothing to ask. Sharing a ring with a board that has one means
+//   - A page with no spend section contributes a zero token total, because
+//     there is nothing to ask. Sharing a ring with a page that has one means
 //     the burn widget sees the day's running total arrive, vanish and arrive
 //     again, and draws the whole day as a fresh burst every other sample.
 //   - A scoped link whose project has been deleted has an empty cwd, exactly
 //     like a whole-panel link, and its spend section is deliberately empty.
 //     Sharing the whole panel's ring would put the whole panel's token line on
-//     a board that was narrowed to one project -- a disclosure, not a glitch.
+//     a link that was narrowed to one project -- a disclosure, not a glitch.
 //
 // The machine half is the same for every scope and is duplicated across rings
 // rather than shared, which is four floats per scope and not worth a second

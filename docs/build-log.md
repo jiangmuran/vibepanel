@@ -21556,3 +21556,250 @@ both units with the explicit reason that `memory.max` alone can throttle by
 reclaiming and swapping. After the paired directives landed,
 `go test ./internal/config -run TestMemoryMaxAlwaysHasMemorySwapMax -count=1`
 passed.
+
+## Share pages: the read-only link, drawn by HTML its owner wrote
+
+Asked for as 「重构只读链接功能 开放api/sdk 然后让用户自己vibe coding 前端html」,
+with the architecture, the workflow, iteration and security left to design. The
+design is `docs/share-pages.md`; this is what happened on the way.
+
+The board's limit was its vocabulary. The data a link may disclose was already
+one redacted struct, so it is published as `GET /api/share/{token}/v1/snapshot`,
+a plain-script SDK polls it, and a page is HTML stored as immutable versions and
+served on the link. Boards stay. A manifest names sections and *compiles into a
+board* of the widgets that need them, so the existing builder decides what is
+computed and a page has no vocabulary a board lacks. Parameters are only echoed.
+
+Red line 8 changed from "exactly one GET" to a list of four, pinned by a test
+that walks the router. That was the first decision, taken before any code.
+
+### The editing loop is the panel's own
+
+A page is a project with an agent session in it. Settings scaffolds the
+directory (template, `AGENTS.md`, SDK, types, fixtures), opens the launch
+picker, and types a first line at the new agent's prompt without Enter. The
+Preview is a detail block beside the repository's: a frame on a fifteen-minute
+preview link, reloading only when two fingerprint polls agree (three writes in
+450 ms reload once), errors listed and written to `.vibepanel/errors.json`,
+Pick typing a one-line pointer at the prompt, Publish, and a trial on a real
+screen that ends by itself because it is resolved on read. For an agent with no
+person watching, `vibepanel page check` and `vibepanel page shot`.
+
+### What the browser found that reasoning had not
+
+- **A revoked wall said "reconnecting" forever.** The CORS header was set in the
+  snapshot handler, and a revoked token is refused by the middleware before any
+  handler runs. The sandboxed page could not read its own 401, so the SDK saw a
+  network error. The header moved into middleware in front of the token check.
+  `pages-check`'s revoke step is what failed.
+- **A page could not read its own fixture.** An opaque origin makes the page's
+  fetch of `fixtures/busy.json` cross-origin too. Page files carry
+  `Access-Control-Allow-Origin: *` as well.
+- **A bidi override in a session title reversed the text on screen** — the
+  hostile fixture's "RTL override" rendered as "edirrevo LTR" on the phone
+  template. The panel's `safeText` already neutralises these; the SDK's
+  `vp.text` and `vp.name` now do the same, and `pages-check` fails on a bidi
+  control reaching any template's screen.
+- **The full browser hung on `--screenshot` of `about:blank`** for a minute on
+  this machine; `chrome-headless-shell` wrote it in under a second, so `shot`
+  prefers it. And Ubuntu's AppArmor refuses Chromium its process sandbox:
+  `shot` says so and asks for `--no-browser-sandbox` instead of dropping it.
+
+### The two layers, each removed
+
+With the `sandbox` token taken out of the page's policy, the probe page — opened
+in a browser signed in to the panel — reads the cookie jar, writes storage, gets
+the panel's origin and opens a window (5 FAIL). The API and the terminal socket
+still refused it, because `connect-src` names only the snapshot. With that
+widened as well, it read `/api/state` and the audit log with the owner's cookie,
+had a `POST /api/sessions` accepted past authentication, and opened `/ws`
+(9 FAIL). Each layer alone held; neither is decoration.
+
+### Guards removed, and what went red
+
+Fifty mutations across `internal/pages`, `internal/store`, `internal/httpapi`,
+the Preview's frame handling and the SDK; the final run killed all fifty. The
+first pass had one survivor and five
+mutants that did not compile; rewriting those so they compiled turned up three
+more survivors. All four were real:
+
+- The memo test compared `at`, which is in seconds, so twenty rebuilds inside
+  one second looked like one. The memo now counts builds and the test asserts
+  the count.
+- `ReadFile`'s path comparison survived because the test had no symlinked
+  *directory* inside the root — a symlinked file is refused by `Lstat` anyway.
+  The test has one now.
+- An options object with no `days` was never compiled, so the day series was
+  untested for it. It is now.
+- In the SDK, `stopped = true` on a 401 changed nothing: that branch schedules
+  no further poll, which is the whole of the stop. The line was removed rather
+  than given a contrived test; the mutation that matters (scheduling a poll
+  after `revoked`) is killed.
+
+### Two existing tests caught things in passing
+
+`TestOnlyThisFileNamesTheDayLayout` refused the fixtures' hand-formatted dates;
+they go through `dayIn`/`dayShift`. The source scan for invisible characters
+refused a literal RTL override in the hostile fixture; it is an escape now. And
+the harness test noticed the new check's tmux socket prefix was not one the
+stale-socket sweeper knew.
+
+## Every session in the container image read as gone
+
+Found while putting the share-pages branch in a container for somebody to try:
+every session made there was marked vanished within a second, while `tmux
+list-panes` inside the container showed it running. `main`'s image did the same.
+
+The panel reads `list-sessions` with fields separated by U+241F. The alpine
+image sets no locale, and its tmux 3.5a, deciding from LANG and LC_* that it may
+not write UTF-8, printed `vp_…_sh` where the separator should have been. Every
+line failed to parse, the poller saw no sessions, and marked each one vanished.
+`/api/health` answered ok the whole time, which is all release-check asked of
+the image. This machine's tmux 3.6 kept the separator with or without a locale,
+so no test here could see it; a systemd unit started without LANG on an
+affected tmux would have been the same failure outside a container.
+
+`tmux -u` makes tmux write UTF-8 regardless, and it is now on every command the
+panel runs, attach included — which also stops an attached client drawing
+non-ASCII as underscores. `TestEveryCommandForcesUTF8` pins the flag (and goes
+red with it removed), and release-check now makes a session inside the built
+image and fails if it reads as GONE: red against the old image, green with the
+fix.
+
+## Boards removed; sharing is pages
+
+2026-09-14. For one release a share link could draw a board or a share page,
+and Settings → Sharing showed both: the pages list, then the links with a board
+editor, thirty presets and a widget library under a "shows: board / page"
+select. Put in front of the owner in a container, it read as two features mixed
+together, and the owner's answer settled the rest: the read-only board was the
+feature that was meant to be deleted. Pages exist because the board's limit was
+its vocabulary; keeping both meant two redactions of the same state to keep in
+step, two browser checks, and a settings section nobody could read.
+
+### What went
+
+The board editor, its canvas and palette, the thirty presets and the widget
+registry (`internal/store/board.go`, `presets.go` and their tests), the
+`/api/share/{token}/dashboard` route and the SPA root that drew it, the
+catalogue and preview settings routes, the board fields on link create and
+update, the board styles, `board-check`, and some three hundred dictionary
+entries. `pages.Manifest.Board()` compiled a manifest into a board so the
+existing builder could read it; `Manifest.Needs()` now reads it into a struct of
+switches and bounded day counts and the builder takes that directly, which is
+the same "a page can only subtract" with one translation fewer. The share
+surface is three `GET`s: the snapshot and a page's files. A link must name a
+page when it is made, and `PATCH` on a link is name, remark and lock.
+
+### The links on walls did not go
+
+Deleting the board would have blanked every screen showing one. So
+`ConvertBoardLinks` runs at startup, before the listener, over every link that
+still draws no page. The stored board column is read once, raw, only to choose
+a template: repository widgets outnumbering-or-equal spend widgets → *what got
+built*; any spend → *token spend*; the `phone` preset → *phone glance*;
+everything else → *session wall*, which is what the default board was. One page
+per owner and template, scaffolded, published as v1, and the link pointed at it
+in one statement that also clears the board. Detail, scope, remark and expiry
+are not touched, because they are what the link discloses and the drawing never
+was. `share.converted` is audited per link. A second start finds nothing; a
+failure is logged and retried next start, and meanwhile the link says it no
+longer works rather than showing the whole panel or an error page from the SPA.
+
+### Where a page lives, and getting it back
+
+The page directory defaulted to `~/vibepanel-pages/<slug>`. "Data straight in
+`~/` isn't good": it is now `<data dir>/pages/page-<slug>`, beside `pasted/`,
+and the project the panel makes for it is `page-<slug>`, so the sidebar says
+what it is. The directory is a working copy; the page is its published versions
+in SQLite. `POST /api/settings/pages/{id}/open` is what the settings **Open**
+button calls: a missing directory gets the published version written back
+(through `CheckoutVersion`, which `vibepanel page checkout` now shares, so the
+two cannot differ), into the old path if it can be created and a new `page-…`
+directory otherwise, a never-published page comes back blank, and a missing
+project is made again. Audited as `page.restored`. It then opens the Preview
+beside the project and starts an agent when the page is new, restored, or has
+nothing running.
+
+### Seeing what a link shows
+
+The question "after creating it, how do I publish, and how do I see the link"
+had two halves with the same cause. A link's URL is readable once, because the
+table keeps a SHA-256, and nothing in the old list let the owner look at a link
+afterwards. `POST /api/settings/shares/{id}/view` mints a *peek* link: fifteen
+minutes, unlisted, uneditable, swept with preview links, copying the original's
+page, pin, trial, parameters, detail and scope. The eye on a link's row opens it
+in a tab whose `opener` is cut before it navigates. It is minted from the
+owner's session, not derived from anything under the token.
+
+### A dead address is not the panel
+
+`/share/<token>` for a token that resolved to nothing used to fall through to
+the SPA, which asked the dashboard route and drew a revoked state. With the
+dashboard gone it had nothing to ask, and the fall-through had always meant a
+stranger holding a revoked address was served the panel's bundle, one click from
+its sign-in page. It now answers `404` with a static bilingual page — no script,
+nothing from the database, `default-src 'none'; sandbox` — or `503` with
+"unavailable" when the database cannot be read, because "ask for a new link" is
+the wrong advice for that one.
+
+### The settings list
+
+One section, one list: a page card (name, `vN published`, directory, *missing —
+Open restores vN*) with Open, Publish, versions and rollback, fork and delete,
+and under it that page's links — viewers, View, lock, edit (name, label, version
+pin, parameters, saved as typed) and revoke — and **New link**, disabled until
+there is a published version, ending in the once-only URL with copy and open.
+The "which page does this link draw" select is gone because a link is made on
+its page. Built on container queries, and `render-check` still measures that it
+fits the dialog at three widths; `pages-check` now makes the page with no
+directory given and checks it lands in `data/pages/page-lobby` as project
+`page-lobby`, that a revoked address gets the plain page and no `#root`, that
+View opens a tab showing the link's parameters, and that deleting the directory
+and pressing Open writes the published version back into the same project.
+
+## Pages: where they go, how they travel, and less house style
+
+Three complaints in one message after the boards went. The new-link form was a
+grid of eight boxes with a hole in its second row and the page's own colours in
+the same run as who may see what; 「好乱」. The pages directory was a path the
+panel decided, with no way to change it and no answer for a machine where it
+could not be written. And the blank template and the `AGENTS.md` written into
+every page read as a design to follow: 「不要让ai完全按照你的范式走」.
+
+**The form** is three headed groups — this screen (name, screen name), what it
+can see (scope, detail, expiry, and the sentence about names under them), and
+the page's settings when it has any — and the link editor uses the same
+headings. A docs link sits at the end of the sharing intro, in the reader's
+language.
+
+**The pages directory** is a setting nobody has to set. Unset, nothing is
+stored and pages go to `<data dir>/pages`, so moving the data directory moves
+the default. A chosen directory is kept only if a file can be written in it. The
+root is resolved each time a page is made, down a fallback — the setting, the
+data directory's `pages/`, `~/.local/share/vibepanel/pages`, a directory in the
+temporary directory — because the answer changes under a running panel: a disk
+unmounted, a system unit's `/var/lib`. The line under the page list says which
+rung was used and why the ones above it were skipped. The resolution first
+returned an empty `problem` every time: the reasons were written by a deferred
+closure onto a copy the unnamed return had already taken, and the test that
+asked for the reason is what found it.
+
+Directory names now keep a page name's letters in any script. `pages.Slug` is
+ASCII, and every Chinese-named page came out `page-page`, `page-page-2` —
+photographed in the README screenshots before anybody read the paths.
+
+**Export and import.** A zip with `vibepanel.json` at the top and the page's
+files, without the SDK copy, its types or the Markdown every directory gets.
+Import reads it by the publish rules rather than unpacking and checking after:
+`ValidPath`, the content sniff, the file and byte limits counted on what
+decompresses rather than what the header claims, and a path that leaves the
+page refused outright (it was first skipped silently with the dotfiles, which
+was safe and said nothing). One folder wrapping everything is looked through,
+since that is what "compress this folder" makes. An imported page is not
+published: it is somebody else's page until its new owner has looked at it.
+
+**Less house style.** `AGENTS.md` now separates the limits the sandbox enforces
+from things worth knowing, says a template is a starting point to throw away,
+and links to the docs; a `README.md` with the same links is written beside it.
+`blank` is a heading, the badge and one line of counts.

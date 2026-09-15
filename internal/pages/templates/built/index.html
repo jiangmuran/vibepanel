@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>What got built</title>
+  <style>
+    :root {
+      --bg: #0d0e14;
+      --card: #16171f;
+      --line: #282a36;
+      --text: #eeeef4;
+      --muted: #8e90a2;
+      --accent: #9b87ff;
+      --added: #4cc38a;
+      --removed: #f2706a;
+      --pending: #e0b33c;
+      --vp-live: #4cc38a;
+      --vp-waiting: #e0b33c;
+      --vp-trouble: #f2706a;
+      --radius: clamp(10px, 0.9vw, 20px);
+      --pad: clamp(16px, 1.5vw, 34px);
+      color-scheme: dark;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      padding: clamp(14px, 1.8vw, 40px);
+      background: var(--bg);
+      color: var(--text);
+      font: clamp(14px, 1vw, 22px)/1.35 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+      font-variant-numeric: tabular-nums;
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
+      gap: clamp(12px, 1.2vw, 28px);
+      overflow: hidden;
+    }
+    [hidden] { display: none !important; }
+    header { display: flex; align-items: center; gap: 1em; min-width: 0; }
+    header .titles { flex: 1; min-width: 0; }
+    h1 { margin: 0; font-size: clamp(22px, 2.3vw, 52px); font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    h1::after { content: ""; display: inline-block; width: 0.28em; height: 0.28em; border-radius: 50%; background: var(--accent); margin-left: 0.2em; }
+    .sub { color: var(--muted); font-size: clamp(13px, 1.05vw, 24px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #status { font-size: clamp(14px, 1.3vw, 30px); color: var(--muted); white-space: nowrap; }
+
+    .card { background: var(--card); border-radius: var(--radius); padding: var(--pad); min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+    h2 { margin: 0 0 0.5em; font-size: clamp(12px, 0.95vw, 22px); font-weight: 600; color: var(--muted); text-transform: uppercase;
+      letter-spacing: 0.08em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .muted { color: var(--muted); }
+    .note { color: var(--muted); margin-top: auto; padding-top: 0.6em; }
+
+    .stats { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 4fr) minmax(0, 4fr) minmax(0, 3fr); gap: inherit; }
+    .figure { font-size: clamp(44px, 5.2vw, 124px); font-weight: 750; line-height: 1; letter-spacing: -0.03em; white-space: nowrap; }
+    .figure.accent { color: var(--accent); }
+    .pair { display: flex; gap: 0.5em; align-items: baseline; flex-wrap: wrap; }
+    .pair .figure { font-size: clamp(34px, 3.6vw, 88px); }
+    .added { color: var(--added); }
+    .removed { color: var(--removed); }
+    .checks { display: flex; flex-wrap: wrap; gap: 0.3em 1em; margin-top: 0.5em; font-size: 1.1em; }
+    .checks span { display: inline-flex; align-items: center; gap: 0.3em; white-space: nowrap; }
+    .mark { width: 1em; height: 1em; flex: none; }
+
+    /* "Not counted yet" has a shape of its own: a dashed ring is not a zero. */
+    .unknown { display: flex; align-items: center; gap: 0.4em; color: var(--muted); font-weight: 600; font-size: clamp(18px, 1.5vw, 36px); }
+
+    main { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: inherit; min-height: 0; }
+    .charts { display: grid; grid-template-rows: minmax(0, 3fr) minmax(0, 2fr); gap: inherit; min-height: 0; }
+    .plot { position: relative; flex: 1; min-height: 80px; }
+    .plot svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+    .ticks { display: grid; margin-top: 0.4em; color: var(--muted); font-size: 0.8em; text-align: center; }
+    .ticks .today { color: var(--text); font-weight: 700; }
+    .ticks .c, .legend b { color: var(--accent); font-weight: 700; }
+    .legend { display: flex; gap: 1.2em; font-size: 0.85em; color: var(--muted); margin-left: auto; font-weight: 400;
+      text-transform: none; letter-spacing: 0; }
+    .legend span { display: inline-flex; align-items: center; gap: 0.35em; }
+    .h2row { display: flex; align-items: baseline; gap: 1em; margin-bottom: 0.5em; min-width: 0; }
+    .h2row h2 { margin: 0; }
+
+    #projects { list-style: none; margin: 0; padding: 0; overflow: hidden; flex: 1; min-height: 0; }
+    #projects li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.1em 1em; padding: 0.6em 0; border-bottom: 1px solid var(--line); }
+    #projects .name { font-weight: 600; font-size: 1.1em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; unicode-bidi: isolate; }
+    #projects .name.fallback { color: var(--muted); font-weight: 500; }
+    #projects .today { text-align: right; white-space: nowrap; font-weight: 600; font-size: 1.1em; }
+    #projects .detail { color: var(--muted); font-size: 0.85em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; grid-column: 1 / -1; }
+    #projects .more { color: var(--muted); border: 0; }
+
+    body.offline .stats, body.offline main { opacity: 0.3; filter: grayscale(1); }
+    #notice { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none; z-index: 1; }
+    #notice span { background: var(--card); border: 2px solid var(--vp-trouble); border-radius: 16px; padding: 0.8em 1.4em;
+      font-size: clamp(18px, 2vw, 44px); font-weight: 600; text-align: center; max-width: 80%; }
+
+    @media (max-width: 900px) {
+      html, body { height: auto; }
+      body { display: block; overflow: visible; }
+      body > * + * { margin-top: 12px; }
+      .stats { grid-template-columns: 1fr 1fr; gap: 12px; }
+      main, .charts { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: none; gap: 12px; }
+      .plot { height: 160px; flex: none; }
+      .legend { display: none; }
+      .unknown { font-size: 15px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="titles">
+      <h1 id="title">What got built</h1>
+      <div class="sub" id="sub"></div>
+    </div>
+    <span id="status"></span>
+  </header>
+  <div id="notice" hidden><span></span></div>
+
+  <section class="stats">
+    <div class="card"><h2>Commits today</h2><div data-repo class="figure accent" id="commits">—</div><div data-repo class="note" id="commitsNote"></div></div>
+    <div class="card"><h2>Lines today</h2>
+      <div data-repo class="pair"><span class="figure added" id="added">—</span><span class="figure removed" id="removed">—</span></div>
+      <div data-repo class="note" id="linesNote"></div></div>
+    <div class="card"><h2>Pull requests</h2><div id="prs"></div></div>
+    <div class="card"><h2>Sessions today</h2><div class="pair"><span class="figure" id="finished">—</span><span class="muted" id="finishedWord">finished</span></div>
+      <div class="note" id="flowNote"></div></div>
+  </section>
+
+  <main>
+    <div class="charts">
+      <section class="card">
+        <div class="h2row"><h2 id="churnTitle">Last 14 days</h2>
+          <div class="legend"><span data-mark="plus">added</span><span data-mark="minus">removed</span><span><b>#</b>commits</span></div></div>
+        <div class="plot" id="churn" data-repo></div>
+        <div class="ticks" id="churnTicks" data-repo></div>
+      </section>
+      <section class="card">
+        <div class="h2row"><h2>Sessions by hour</h2>
+          <div class="legend"><span data-mark="solid">started</span><span data-mark="outline">finished</span></div></div>
+        <div class="plot" id="flow"></div>
+        <div class="ticks" id="flowTicks"></div>
+      </section>
+    </div>
+    <section class="card">
+      <h2>Projects today</h2>
+      <ul id="projects"></ul>
+    </section>
+  </main>
+
+  <script src="vibepanel.js"></script>
+  <script>
+    const vp = VibePanel.connect()
+    vp.badge(document.getElementById('status'))
+
+    const $ = (id) => document.getElementById(id)
+    const SVG = 'http://www.w3.org/2000/svg'
+    const fmt = vp.fmt
+    let title = 'What got built'
+
+    function svgEl(tag, attrs) {
+      const node = document.createElementNS(SVG, tag)
+      for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, String(v))
+      return node
+    }
+    function el(tag, className, text) {
+      const node = document.createElement(tag)
+      if (className) node.className = className
+      if (text !== undefined) vp.text(node, text)
+      return node
+    }
+
+    // Small marks. Passing, failing and pending checks differ in shape, not
+    // only in colour: a tick, a cross and a dashed ring.
+    const MARKS = {
+      pass: [['path', { d: 'M4 12.5 L9.5 18 L20 6', fill: 'none', stroke: 'var(--added)', 'stroke-width': 3.2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }]],
+      fail: [['path', { d: 'M6 6 L18 18 M18 6 L6 18', stroke: 'var(--removed)', 'stroke-width': 3.2, 'stroke-linecap': 'round' }]],
+      pending: [['circle', { cx: 12, cy: 12, r: 8, fill: 'none', stroke: 'var(--pending)', 'stroke-width': 2.8, 'stroke-dasharray': '4 3' }]],
+      unknown: [['circle', { cx: 12, cy: 12, r: 9, fill: 'none', stroke: 'currentColor', 'stroke-width': 2.4, 'stroke-dasharray': '3.5 3' }]],
+      plus: [['rect', { x: 3, y: 3, width: 18, height: 18, rx: 3, fill: 'var(--added)' }], ['path', { d: 'M12 7 V17 M7 12 H17', stroke: 'var(--card)', 'stroke-width': 2.6 }]],
+      minus: [['rect', { x: 3, y: 3, width: 18, height: 18, rx: 3, fill: 'var(--removed)' }], ['path', { d: 'M7 12 H17', stroke: 'var(--card)', 'stroke-width': 2.6 }]],
+      solid: [['rect', { x: 3, y: 3, width: 18, height: 18, rx: 3, fill: 'var(--accent)' }]],
+      outline: [['rect', { x: 4, y: 4, width: 16, height: 16, rx: 3, fill: 'none', stroke: 'var(--text)', 'stroke-width': 2.4 }]],
+    }
+    function mark(name) {
+      const svg = svgEl('svg', { class: 'mark', viewBox: '0 0 24 24', 'aria-hidden': 'true' })
+      for (const [tag, attrs] of MARKS[name]) svg.append(svgEl(tag, attrs))
+      return svg
+    }
+    for (const slot of document.querySelectorAll('[data-mark]')) slot.prepend(mark(slot.dataset.mark))
+
+    function unknown(words) {
+      const box = el('div', 'unknown')
+      box.append(mark('unknown'), el('span', null, words))
+      return box
+    }
+
+    vp.on('params', (p) => {
+      if (typeof p.accent === 'string') document.documentElement.style.setProperty('--accent', p.accent)
+      title = p.title || 'What got built'
+      if (vp.snapshot) draw(vp.snapshot)
+    })
+
+    const OFFLINE = { disconnected: 'Not live — these are the last figures the panel sent', revoked: 'This link no longer works' }
+    vp.on('status', (st) => {
+      document.body.classList.toggle('offline', Boolean(OFFLINE[st]))
+      $('notice').hidden = !OFFLINE[st]
+      $('notice').firstChild.textContent = OFFLINE[st] || ''
+    })
+
+    // A card's own "not counted yet", swapped in for its figures and back.
+    function setKnown(known, words) {
+      for (const n of document.querySelectorAll('[data-repo]')) n.hidden = !known
+      for (const n of document.querySelectorAll('.unknown[data-placeholder]')) n.remove()
+      if (known) return
+      for (const id of ['commits', 'added', 'churn']) {
+        const host = $(id).closest('.card')
+        const u = unknown(words)
+        u.dataset.placeholder = ''
+        host.append(u)
+      }
+    }
+
+    function drawPRs(prs) {
+      const box = $('prs')
+      box.replaceChildren()
+      // null: this link's page never asked. readable false: asked, but GitHub
+      // is only read for a single-project link, in names mode, with a token.
+      if (!prs || !prs.readable) {
+        box.append(unknown('not counted yet'))
+        box.append(el('div', 'note', 'Read from GitHub on a single-project link that shows names.'))
+        return
+      }
+      const row = el('div', 'pair')
+      row.append(el('span', 'figure', prs.open), el('span', 'muted', prs.draft ? `open · ${prs.draft} draft` : 'open'))
+      const checks = el('div', 'checks')
+      for (const [kind, n, word] of [['pass', prs.green, 'passing'], ['fail', prs.red, 'failing'], ['pending', prs.pending, 'pending']]) {
+        const s = el('span')
+        s.append(mark(kind), el('b', null, n), el('span', 'muted', word))
+        checks.append(s)
+      }
+      const merged = `${prs.mergedToday}${prs.mergedPartial ? '+' : ''} merged today · ${prs.approved} approved`
+      box.append(row, checks, el('div', 'note', `${merged} · checked ${fmt.duration(prs.ageSeconds)} ago`))
+    }
+
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    function drawChurn(days) {
+      const plot = $('churn')
+      const ticks = $('churnTicks')
+      plot.replaceChildren()
+      ticks.replaceChildren()
+      if (!days.length) return
+      const range = (label) => { const [, m, d] = label.split('-').map(Number); return `${MONTHS[m - 1]} ${d}` }
+      vp.text($('churnTitle'), `Last ${days.length} days · ${range(days[0].label)} – ${range(days[days.length - 1].label)}`)
+      // Added above the line, removed below it, on one scale: the two numbers
+      // are shown side by side and never netted into one. The line sits where
+      // the tallest of each meet, so neither half is empty space.
+      const maxAdded = Math.max(...days.map((d) => d.added), 0)
+      const maxRemoved = Math.max(...days.map((d) => d.removed), 0)
+      const max = Math.max(maxAdded + maxRemoved, 1)
+      const axis = (maxAdded / max) * 100
+      const W = days.length * 10
+      const svg = svgEl('svg', { viewBox: `0 0 ${W} 100`, preserveAspectRatio: 'none', role: 'img', 'aria-label': 'lines added and removed per day' })
+      days.forEach((d, i) => {
+        const up = (d.added / max) * 100
+        const down = (d.removed / max) * 100
+        const last = i === days.length - 1
+        svg.append(svgEl('rect', { x: i * 10 + 2, y: axis - up, width: 6, height: up, fill: 'var(--added)', opacity: last ? 1 : 0.7 }))
+        svg.append(svgEl('rect', { x: i * 10 + 2, y: axis, width: 6, height: down, fill: 'var(--removed)', opacity: last ? 1 : 0.7 }))
+      })
+      svg.append(svgEl('line', { x1: 0, x2: W, y1: axis, y2: axis, stroke: 'var(--text)', opacity: 0.35, 'stroke-width': 1, 'vector-effect': 'non-scaling-stroke' }))
+      plot.append(svg)
+      ticks.style.gridTemplateColumns = `repeat(${days.length}, minmax(0, 1fr))`
+      days.forEach((d, i) => {
+        // The label is the panel's calendar day, read as text so this screen's
+        // time zone cannot move it.
+        const day = Number(d.label.slice(8, 10))
+        const t = el('div', i === days.length - 1 ? 'today' : '')
+        t.append(el('div', null, day), el('div', 'c', d.commits))
+        ticks.append(t)
+      })
+    }
+
+    function drawFlow(flow) {
+      const plot = $('flow')
+      const ticks = $('flowTicks')
+      plot.replaceChildren()
+      ticks.replaceChildren()
+      if (!flow) {
+        plot.append(unknown('not counted yet'))
+        return
+      }
+      vp.text($('finished'), flow.today.finished)
+      const avgWait = flow.today.waitEnded > 0 ? fmt.duration(flow.today.waitSeconds / flow.today.waitEnded) : null
+      vp.text($('flowNote'), `${flow.today.started} started · ${flow.today.waited} waited` + (avgWait ? ` · answered in ${avgWait} on average` : ''))
+
+      // Always the whole day, so the shape reads the same at 9am as at 9pm.
+      // Buckets count from the panel's local midnight (flow.since).
+      const slots = Math.max(24, flow.buckets.length)
+      const cells = new Array(slots).fill(null)
+      for (const b of flow.buckets) {
+        const i = Math.round((b.at - flow.since) / flow.every)
+        if (i >= 0 && i < slots) cells[i] = b
+      }
+      const max = Math.max(...flow.buckets.map((b) => Math.max(b.started, b.finished)), 1)
+      const svg = svgEl('svg', { viewBox: `0 0 ${slots * 10} 100`, preserveAspectRatio: 'none', role: 'img', 'aria-label': 'sessions started and finished per hour' })
+      cells.forEach((b, i) => {
+        if (!b) return
+        const hs = (b.started / max) * 98
+        const hf = (b.finished / max) * 98
+        // Started solid, finished as an outline: distinguishable without colour.
+        svg.append(svgEl('rect', { x: i * 10 + 1.2, y: 100 - hs, width: 3.6, height: hs, fill: 'var(--accent)' }))
+        if (hf > 0) svg.append(svgEl('rect', { x: i * 10 + 5.4, y: 100 - hf + 0.75, width: 3.4, height: Math.max(0, hf - 0.75), fill: 'none',
+          stroke: 'var(--text)', 'stroke-width': 1.5, 'vector-effect': 'non-scaling-stroke' }))
+      })
+      svg.append(svgEl('line', { x1: 0, x2: slots * 10, y1: 100, y2: 100, stroke: 'var(--line)', 'stroke-width': 1, 'vector-effect': 'non-scaling-stroke' }))
+      plot.append(svg)
+      ticks.style.gridTemplateColumns = `repeat(${slots}, minmax(0, 1fr))`
+      for (let i = 0; i < slots; i++) {
+        const t = el('div')
+        t.textContent = i % 6 === 0 ? String(i).padStart(2, '0') : ''
+        ticks.append(t)
+      }
+    }
+
+    function drawProjects(repo) {
+      const list = $('projects')
+      list.replaceChildren()
+      if (!repo || !repo.readable) {
+        list.append(el('li', 'more', repo && repo.projects ? `Not counted yet: reading ${repo.projects} projects.` : 'Not counted yet.'))
+        return
+      }
+      if (!repo.byProject.length) {
+        list.append(el('li', 'more', 'No projects to show.'))
+        return
+      }
+      // Repositories before directories that are not, busiest today first, then busiest over the window; the panel's order
+      // breaks ties, so rows do not shuffle between polls.
+      const rows = repo.byProject.map((p, i) => ({ p, i }))
+        .sort((a, b) => (b.p.repo - a.p.repo) || (b.p.today.commits - a.p.today.commits) || (b.p.window.commits - a.p.window.commits) || (a.i - b.i))
+      for (const { p, i } of rows) {
+        const li = el('li')
+        const name = vp.name(p)
+        // No names on this link: a numbered stand-in, visibly not a name.
+        li.append(el('span', name ? 'name' : 'name fallback', name || `project ${i + 1}`))
+        const today = el('span', 'today')
+        if (!p.repo) {
+          today.append(el('span', 'muted', 'not a repository'))
+        } else {
+          today.append(`${p.today.commits} `, el('span', 'muted', 'commits  '), el('span', 'added', `+${fmt.number(p.today.added)} `),
+            el('span', 'removed', `−${fmt.number(p.today.removed)}`))
+        }
+        li.append(today)
+        if (p.repo) {
+          const bits = [`${p.window.commits} commits in ${repo.windowDays} days`]
+          if (p.ahead || p.behind) bits.push(`${p.ahead} ahead, ${p.behind} behind`)
+          if (p.dirty) bits.push(`${p.dirty} uncommitted`)
+          li.append(el('span', 'detail', bits.join(' · ')))
+        }
+        list.append(li)
+      }
+      // Rows that do not fit are counted rather than cut off mid-line.
+      const bottom = list.getBoundingClientRect().bottom
+      const items = [...list.children]
+      const firstHidden = items.findIndex((li) => li.getBoundingClientRect().bottom > bottom + 1)
+      if (firstHidden > 0) {
+        let keep = firstHidden
+        items.slice(keep).forEach((li) => li.remove())
+        const more = el('li', 'more')
+        list.append(more)
+        do {
+          more.textContent = `and ${items.length - keep} more`
+          if (more.getBoundingClientRect().bottom <= bottom + 1) break
+          items[--keep].remove()
+        } while (keep > 0)
+      }
+    }
+
+    function draw(s) {
+      vp.text($('title'), title)
+      const repo = s.repo
+      const known = Boolean(repo && repo.readable)
+      const bits = [s.name, s.remark].filter(Boolean)
+      if (known && repo.ageSeconds >= 0) bits.push(`git read ${fmt.duration(repo.ageSeconds)} ago`)
+      vp.text($('sub'), bits.join(' · '), '')
+
+      setKnown(known, 'not counted yet')
+      if (known) {
+        vp.text($('commits'), fmt.number(repo.today.commits))
+        vp.text($('commitsNote'), `${fmt.number(repo.window.commits)} in ${repo.windowDays} days · ${repo.repos} of ${repo.projects} projects are repositories`)
+        vp.text($('added'), `+${fmt.number(repo.today.added)}`)
+        vp.text($('removed'), `−${fmt.number(repo.today.removed)}`)
+        vp.text($('linesNote'), `${fmt.number(repo.today.files)} files today · +${fmt.number(repo.window.added)} −${fmt.number(repo.window.removed)} in ${repo.windowDays} days`)
+        drawChurn(repo.days)
+      }
+      drawPRs(repo ? repo.prs : null)
+      drawFlow(s.flow)
+      drawProjects(repo)
+    }
+
+    vp.on('snapshot', draw)
+    addEventListener('resize', () => { if (vp.snapshot) draw(vp.snapshot) })
+  </script>
+</body>
+</html>

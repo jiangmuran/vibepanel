@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>vibepanel</title>
+  <style>
+    /* A starting point with no design in it. Replace any of this. */
+    body { margin: 0; padding: 24px; background: #111; color: #eee; font: 16px/1.5 system-ui, sans-serif; }
+    header { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; }
+    h1 { margin: 0; font-size: 24px; }
+    pre { color: #999; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1 id="title">vibepanel</h1>
+    <span id="status"></span>
+  </header>
+  <p id="summary"></p>
+  <pre id="sections"></pre>
+
+  <script src="vibepanel.js"></script>
+  <script>
+    const vp = VibePanel.connect()
+    vp.badge(document.getElementById('status'))
+
+    vp.on('params', (p) => vp.text(document.getElementById('title'), p.title, 'vibepanel'))
+
+    vp.on('snapshot', (s) => {
+      const c = s.counts
+      vp.text(document.getElementById('summary'),
+        `${c.waiting} waiting · ${c.working} working · ${c.done} done`)
+      // What this page receives. Add sections in vibepanel.json; see vibepanel.d.ts.
+      vp.text(document.getElementById('sections'), 'sections: ' + (s.sections.join(', ') || 'none'))
+    })
+  </script>
+</body>
+</html>

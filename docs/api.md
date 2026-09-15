@@ -728,47 +728,46 @@ is what makes the button safe to press at all.
 
 ## Read-only share links
 
-A share link is a capability: a long random token in a URL that opens a
-dashboard at `/share/<token>` on a second screen, and reaches nothing else at
-all.
+A share link is a capability: a long random token in a URL that opens a **share
+page** at `/share/<token>` on a second screen, and reaches nothing else at all.
 
-What that dashboard *shows* is a **board**: an arrangement chosen when the link
-is made, stored with it, and sent back with every reading. A board is data, not
-code: an ordered list of widgets, each naming a kind from a fixed registry with
-options that are enums or bounded numbers. There is no widget that names a
-table, a field, a directory, a URL or a template, which is what keeps a stored
-row from being able to make the panel do anything.
+What the link *shows* is a page: HTML the owner published, drawn from a
+versioned, redacted snapshot (see [Share pages](#share-pages)). A link always
+draws a page. The boards earlier builds drew are gone; the links they handed out
+were converted at startup into links that draw a page built from the closest
+built-in template, at the same address, with the same detail and scope, and the
+conversion is audited as `share.converted`.
 
 Five things are decided when a link is created, and two of them are permanent:
 
 | | | |
 |---|---|---|
-| `board` | what it shows | changeable afterwards |
+| `pageId`, `pinVersion`, `params` | what it draws | changeable afterwards |
 | `remark` | a label the owner writes for whoever is looking | changeable afterwards |
-| `locked` | the board is fixed | changeable afterwards |
+| `locked` | what it draws is fixed | changeable afterwards |
 | `detail` | whether it may use words | fixed at creation |
 | `scope` | which rows it is about | fixed at creation |
 
 The first three can be changed later because none of them can disclose anything
-the link did not already carry. The other two can, and by then the URL is in an
+the link did not already carry: every page reads the same redaction, narrowed by
+the same `detail` and `scope`. The other two can, and by then the URL is in an
 email or typed into a television, so a different mode or a different scope
 means a different link, which somebody has to hand out on purpose.
 
-### Editing a screen you are not standing in front of
+### Changing a screen you are not standing in front of
 
 The case this is built for is a television on a wall. Nobody is at it, and
-walking to it to sign in and move a widget is the thing that must not be
-necessary. So the board is edited from `PATCH /api/settings/shares/{shareID}` —
-an ordinary authenticated route, from a laptop — and every open viewer picks the
-change up on its **next poll**, about two seconds later, because every poll
-re-reads the link's row.
+walking to it to sign in is the thing that must not be necessary. So a link is
+changed from `PATCH /api/settings/shares/{shareID}` and
+`PUT /api/settings/shares/{shareID}/page` — ordinary authenticated routes, from
+a laptop — and every open viewer picks the change up on its **next poll**, about
+two seconds later, because every poll re-reads the link's row. A page that is
+republished, or a link pointed at another page, reloads itself.
 
-There is no push, no socket and no second route under the share token. A share
+There is no push, no socket and no write route under the share token. A share
 viewer is not authenticated, and a socket authorised once and held open for a
-week would need the revalidation machinery `/ws` has, for a page that reads six
-numbers; revocation currently takes effect on the next poll precisely because
-there is nothing else to invalidate. Polling is what makes "the owner changed it
-and the wall followed" free.
+week would need the revalidation machinery `/ws` has; revocation takes effect
+on the next poll precisely because there is nothing else to invalidate.
 
 `remark` is a short label — the room a screen is in, the audience it is for —
 cut to 80 runes. It is disclosed **under both detail modes**, deliberately.
@@ -776,26 +775,22 @@ cut to 80 runes. It is disclosed **under both detail modes**, deliberately.
 titles and project names, read out of its own database. A remark is not the
 panel's; it is a sentence the owner wrote to the person in front of the screen,
 with the effect visible to them. `name` has always been sent in both modes for
-the same reason, and a remark suppressed under `counts` would be a label its
-author cannot see on the wall they labelled, which they would then put in
-`name`, which is disclosed anyway.
+the same reason.
 
-`locked` fixes a board. It is enforced on the server: a `PATCH` to a locked link
-answers `409` unless it is the one that unlocks it, and an unlocking `PATCH`
-changes nothing else. Unlocking and editing are two separate requests, which is
-the whole of what the lock is. What it guards against is not an attacker; it is
-a wall a customer is sitting in front of being rearranged from an editor left
-open on the wrong row.
+`locked` fixes what a link draws. It is enforced on the server: a `PATCH` to a
+locked link answers `409` unless it is the one that unlocks it, an unlocking
+`PATCH` changes nothing else, and pointing it at a page, changing its
+parameters or starting a trial on it answer `409` too. What it guards against
+is not an attacker; it is a screen a customer is sitting in front of being
+changed from a settings page left open on the wrong row.
 
 `viewers` on each listed link is how many screens had it open a moment ago,
 counted from the polls they were already making. It is not a column: a wall
 polls every two seconds forever, and a stored count would be that many writes
-for a number that is true for two seconds, and one that must read zero again
-after a restart, which a row would not. A viewer that is unplugged needs no
-cleanup, because nothing is held open to notice dying: its entry simply stops
-being refreshed and ages out within fifteen seconds. Viewers are **not** told
-the count; it is a fact about other people holding the same URL, and a link that
-says nothing about who holds it should not start.
+for a number that is true for two seconds. A viewer that is unplugged needs no
+cleanup: its entry simply stops being refreshed and ages out within fifteen
+seconds. Viewers are **not** told the count; it is a fact about other people
+holding the same URL.
 
 ## Directory previews
 
@@ -854,23 +849,24 @@ is what stops one leaked link becoming a supply of them.
 ```sh
 curl -sX POST https://panel.example:18443/api/settings/shares \
   -b cookies.txt -H 'Content-Type: application/json' \
-  -d '{"name":"wall display","detail":"counts","expiresIn":604800,"preset":"attention"}'
+  -d '{"name":"wall display","detail":"counts","expiresIn":604800,"pageId":"3f9c…"}'
 # {"token":"Jq4…","id":"…","prefix":"Jq4x9m2v","detail":"counts","scope":"",
-#  "board":{"preset":"attention","rotate":0,"widgets":[…]},"expiresAt":1735689600}
+#  "pageId":"3f9c…","params":{},"expiresAt":1735689600}
 ```
 
 The response is the only time the token is readable — the database keeps a
 SHA-256 of it, exactly as it does for an API token — so the URL to paste is
-`https://<panel>/share/<token>` and there is no way to ask for it again.
+`https://<panel>/share/<token>` and there is no way to ask for it again. To see
+what a link shows later, use `POST /api/settings/shares/{shareID}/view`.
+
+`pageId` is required and names a published page; `params` are that page's
+parameter values for this link, checked against its manifest. A request without
+a page is a `400`: a link has nothing else to draw.
 
 `detail` is `counts` (the default) or `names`; anything else is a `400`, because
 the value decides what the link discloses for as long as it exists and a default
 could only fall towards saying more or towards saying less. `expiresIn` is
 seconds from now, `0` for a link that does not expire, and at most a year.
-
-`preset` names a starting arrangement and `board` is an explicit one; `board`
-wins, and a request with neither gets the default board. An unknown preset or an
-unknown widget kind is a `400` rather than a fallback; see the catalogue below.
 
 `scope` is `""` (the whole panel, the default), `project` or `session`, with
 `scopeId` naming which. It is checked against the rows that exist: a scope
@@ -881,155 +877,110 @@ only that scope's checklists — enforced by the handler from the stored row, no
 from anything in the request. If the project or session is later deleted, the
 link shows **nothing**; it does not fall back to the whole panel.
 
-`PATCH` takes `{"name": "...", "remark": "...", "board": {...}, "locked": false}`
-and nothing else. Sending `detail` or `scope` is a `400`, because unknown fields
-are refused: an edit that quietly did less than it asked for is worse than one
-that says no. On a **locked** link the only accepted request is
-`{"locked": false}`; anything else is a `409`, and the unlocking request applies
-nothing but the unlock.
+`PATCH` takes `{"name": "...", "remark": "...", "locked": false}` and nothing
+else. Sending `detail` or `scope` is a `400`, because unknown fields are
+refused: an edit that quietly did less than it asked for is worse than one that
+says no. An empty `name` keeps the one the link had. On a **locked** link the
+only accepted request is `{"locked": false}`; anything else is a `409`, and the
+unlocking request applies nothing but the unlock.
 
 Creation, editing, locking and revocation are audited as `share.created`,
 `share.updated`, `share.locked`, `share.unlocked` and `share.revoked`.
 Revocation takes effect on the link's next poll; there is nothing else to
 invalidate, because a share link has no session, no cookie and no socket.
 
-### `GET /api/settings/shares/{shareID}/preview`
+### `POST /api/settings/shares/{shareID}/view`
 
-What that screen is showing right now, for the editor to draw beside the board
-being composed. The **same builder** the dashboard uses, called with the link's
-own row — not a second reduction of the panel's state, which would diverge on
-the first field either side gained, in the direction "the preview shows
-something the real screen does not".
+What a handed-out link shows, for its owner: `{"token", "expiresAt"}` for a new
+link that copies the link's page, pin, trial, parameters, `detail` and `scope`,
+lives fifteen minutes, is not listed and cannot be edited. Open
+`/share/<token>/` with it.
 
-The response is exactly a `GET /api/share/{token}/dashboard` body. Its `id` and
-`projectId` pseudonyms are derived from the link's id rather than its token
-hash, so they are stable within the preview and join to nothing outside it.
+A copy rather than the link itself because the panel cannot read a link's token
+back — that is what storing only its hash is for — and a copy drawn through the
+same routes cannot show anything the real screen would not. `404` for a link
+that is not an ordinary handed-out one (a preview or another view). Not audited:
+it discloses nothing the owner's own session does not already show them.
 
-A settings route: it needs the ordinary session, a share token answers `401` to
-it, and it discloses strictly less than `/api/state`, which the caller already
-has.
+## Share pages
 
-### `GET /api/settings/shares/catalogue`
+A share page is HTML the owner wrote, drawn on a share link. It reads a redacted
+snapshot of the panel through a versioned contract and a small SDK. The design, the security model and the workflow are in
+[share-pages.md](share-pages.md); this section is the wire.
 
-The vocabulary a board can be built from: every preset with the widgets it
-expands to, every widget kind with the options it accepts, and the bounds.
-Served rather than mirrored in the frontend, so that every option an editor
-offers is an option the validator accepts.
+A link serves its page's files at `/share/<token>/…` — `index.html` for the
+directory, `vibepanel.js` from the binary, and every other published file by its
+path — each with `Content-Security-Policy: sandbox allow-scripts` and a
+`connect-src` that names that token's snapshot and nothing else. A token that
+resolves to nothing — revoked, expired, never issued — gets a `404` static page
+saying the link no longer works: no script, nothing of the panel's, and never
+the panel's own bundle, which on an address a stranger holds would be its
+sign-in page.
 
-```json
-{"presets": [{"id": "exec", "audience": "manager", "screen": "bigwall",
-              "rotate": 0, "fill": true, "detail": "", "needsScope": false,
-              "widgets": [{"kind": "tokenburn", "span": 6, "height": 3}, …]}, …],
- "widgets": [{"kind": "spendsplit", "span": 6, "metrics": null, "filters": null,
-              "orders": null, "groups": null, "bys": ["tool", "project", "model"],
-              "days": false, "text": false, "rotate": false, "rows": 4}, …],
- "screens": ["phone", "laptop", "wall", "bigwall"],
- "maxWidgets": 24, "maxSpan": 12, "maxRows": 4, "maxCaption": 64,
- "maxRemark": 80, "maxDays": 371, "maxDensity": 3}
+With the snapshot below, those are the whole of what a share token can reach.
+No credential beyond the token in the path, and no other route accepts that
+token at all: presenting it as a `Bearer` header or as the session cookie
+answers `401` everywhere, including on `/ws`. That is enforced by where the
+routes are registered rather than by a flag a handler reads.
+
+### `GET /api/share/{token}/v1/snapshot`
+
+What a page draws. Authenticated by the token in the path and nothing else;
+`Access-Control-Allow-Origin: *` on every answer, refusals included, and never
+credentials — a sandboxed page has the origin `null`, and the token is the whole
+capability.
+
+```jsonc
+{
+  "v": 1,
+  "page": { "id": "…", "version": 3, "draft": false },  // this link's pseudonym for the page
+  "sections": ["sessions", "spend"],                     // what the manifest asked for
+  "params": { "title": "Lobby", "warnAt": 5 },           // every declared parameter
+  "at": 1756740600, "name": "…", "remark": "…", "detail": "counts",
+  "expiresAt": 0, "usageReadable": true, "stale": false,
+  "machine": { … }, "counts": { … }, "projects": [ … ], "sessions": [ … ],
+  "spend": { … } | null, "todos": null, "trend": null, "flow": null, "feed": null, "repo": null,
+  "scope": "", "scopeName": "", "scopeRepoOwner": "", "scopeRepoName": ""
+}
 ```
 
-A widget is `{"kind", "span", "height"?, "metric"?, "filter"?, "order"?,
-"group"?, "by"?, "days"?, "page"?, "rotate"?, "text"?}`.
+Every field is declared, with its meaning, in
+`internal/pages/sdk/vibepanel.d.ts`, and a test fails when the two disagree.
+`v1` is additive: fields and sections may be added, nothing is renamed, retyped
+or removed. Names are `''` under `counts`.
 
-`span` is **1–12 columns**. Twelve rather than four because twelve divides by 2,
-3, 4 and 6: a third is the width that makes three things read as three things,
-and four columns cannot say it. The grid stays twelve wide at every size and the
-*minimum* span rises as the screen narrows — half a screen below about 1100
-pixels, the whole of it below 640 — so one stored board is a summary on a phone
-and a composed wall on a television.
+A section not named in the page's manifest is `null` (or, for `sessions`, an
+empty list). Nothing on the query string changes that: `v`, `w` and `h` are the
+viewer report for the owner's count, and anything else is ignored. The body is
+built at most once a second per link, however many screens poll it; the link's
+own `name` and `remark` are read from its row on every poll, so an edit shows on
+the next one.
 
-`height` is 1–4 grid rows. It is the dimension a flat list did not have and the
-one a wall needs: a screen where every tile is the same size is a dashboard, not
-a display, and hierarchy comes from the size ratio between a hero and the
-texture around it. A board's `fill` stretches the rows to the height of the
-screen rather than letting them flow down it. Nobody is going to scroll a
-television.
-
-A board also carries `density`, 1–3, which is **how much each widget says** and
-not how large it is drawn. Those are two axes and neither derives from the
-other. Scale — the same composition drawn bigger on a bigger screen — follows
-the viewport and is settled in the browser's own CSS with no stored value at
-all; density is a property of the board, so one link can be a headline read from
-the door and a working dashboard read from the chair in front of the same
-television. A widget with nothing more to say ignores it; it never decides
-whether a widget renders, because that would be a stored number choosing a code
-path. Zero on the way in means the default, 2.
-
-A board carries `grid`, which is the column count its spans are in. A board that
-arrives without one is read as the old four columns and its spans are multiplied
-by three, so a `curl` written against the previous version of this page still
-means what it meant. Anything this build writes says `12`.
-
-`page` puts a widget on one page of a rotating board and the board's own
-`rotate` is how many seconds each page stays; a widget's `rotate` pages through
-a list longer than its tile. A field a kind does not accept is a `400` rather
-than an ignored value.
-
-A preset carries `screen` — `phone`, `laptop`, `wall` or `bigwall` — which is
-what it was *composed* for, not what it is limited to; every board still
-collapses with the viewport. `detail` and `needsScope` are hints the editor
-applies: one preset (`client`) is only correct scoped to one project in `counts`
-mode, because the failure there is a customer reading another customer's project
-name off the screen they were sat in front of. The server validates `detail` and
-`scope` from the request regardless, exactly as it always did.
-
-This is a settings route: a share token answers `401` to it, like everything
-else that is not the one dashboard `GET`.
-
-### `GET /api/share/{token}/dashboard`
-
-The entire surface a share token can reach. No credential beyond the token in
-the path, and no other route accepts that token at all: presenting it as a
-`Bearer` header or as the session cookie answers `401` everywhere, including on
-`/ws`. That is enforced by where the route is registered rather than by a flag a
-handler reads.
-
-```json
-{"at": 1735689600, "name": "wall display", "detail": "counts", "expiresAt": 0,
- "usageReadable": true, "stale": false, "scope": "", "scopeName": "",
- "scopeRepoOwner": "", "scopeRepoName": "",
- "board": {"preset": "attention", "rotate": 0,
-           "widgets": [{"kind": "attention", "span": 4}]},
- "machine": {"cpuReadable": true, "cpuPercent": 31.4, "cores": 16,
-             "load1": 2.1, "load5": 1.8, "load15": 1.4,
-             "memTotal": 33654304768, "memAvailable": 20401324032,
-             "swapTotal": 0, "swapFree": 0,
-             "diskTotal": 981472473088, "diskFree": 402653184000,
-             "uptime": 918273},
- "counts": {"projects": 2, "sessions": 5, "waiting": 1, "working": 2,
-            "done": 2, "exited": 0, "crashed": 0, "doneToday": 3,
-            "longestWaitAt": 1735689000},
- "projects": [{"id": "3f9c1a…", "name": "", "waiting": 1, "working": 1,
-               "done": 0, "total": 2}],
- "sessions": [{"id": "b7e20d…", "projectId": "3f9c1a…", "name": "",
-               "state": "waiting", "kind": "agent", "stateChangedAt": 1735689000,
-               "exited": false, "exitStatus": 0,
-               "measured": true, "cpuPercent": 24.1, "rss": 831258624, "procs": 7}],
- "spend": null, "todos": null, "trend": null, "flow": null, "feed": null,
- "repo": null,
- "remark": "the screen in meeting room three", "locked": false}
-```
+`401` is a revoked, expired or unknown link; `410` is a page that is gone, has
+no published version, or a link that draws no page; `422` is a preview whose
+draft manifest does not validate, with the reason; `503` is the panel's
+database.
 
 `sessions` is empty, and `spend`, `todos`, `trend`, `flow`, `feed` and `repo`
-are `null`, unless a widget on the board asks for them. A board can only ever subtract: the sections a dashboard
-may carry are a fixed set, a widget chooses among them, and no arrangement of
-widgets produces a field that is not in the list. `null` and a zeroed object are
-different facts: the first is "this board does not show it", and the second has
-a `readable` flag of its own to tell "nothing was spent" from "nothing has been
-counted yet".
+are `null`, unless the page's manifest names them. A page can only ever
+subtract: the sections a snapshot may carry are a fixed set, a manifest chooses
+among them, and no manifest produces a field that is not in the list. `null` and
+a zeroed object are different facts: the first is "this page does not ask for
+it", and the second has a `readable` flag of its own to tell "nothing was spent"
+from "nothing has been counted yet".
 
 `spend` is tokens, never money: prices differ per model, per tier and over time,
 and a currency figure from a stale table is a confident wrong number on a wall.
 It carries `today`, `yesterday`, `month`, `lastMonth` and `window` totals (each
 split into input, output, cache read, cache write, requests and a summed
 `total`), `hoursToday` so a per-hour rate is "so far today" on the *server's*
-clock, and the arrays a board asked for: `days`, `months`, `heatmap`, `tools`,
-`models`, `projects`. Its `date` is the server's local day, because the buckets
+clock, and the arrays the manifest asked for (`spend.days`, `months`,
+`heatmap`, `split`): `days`, `months`, `heatmap`, `tools`, `models`,
+`projects`. Its `date` is the server's local day, because the buckets
 are local days and a phone abroad must not decide which square is today.
 
 `trend` is the last fifteen minutes of the machine and the running token total,
-sampled every ten seconds, for the widgets that draw a line rather than a
-number: `{"every": 10, "points": [{"at", "cpu", "memory", "load", "tokens"}]}`.
+sampled every ten seconds, for a page that draws a line rather than a number: `{"every": 10, "points": [{"at", "cpu", "memory", "load", "tokens"}]}`.
 `cpu` is `null` where `/proc` could not be read, which is a different fact from
 zero. It is kept in this process's memory and never stored, so on a screen that
 has just been switched on, or after a restart, the line starts now rather than
@@ -1050,12 +1001,12 @@ note than to a session title.
 `flow` and `feed` come out of the session-event log: one append-only row per
 state transition, written where the poller already notices one. Before it the
 panel kept state and no history, so every widget with a time axis on this
-surface degraded to a single current number and a board of trends was
+surface degraded to a single current number and a screen of trends was
 unbuildable. `flow` is `{"every", "since", "windowDays", "today", "window",
 "buckets": [{"at", "started", "waited", "finished", "waitSeconds",
 "waitEnded"}]}`; `feed` is the same transitions in the order they happened, each
 carrying the per-link pseudonyms, the state and the time. No new fact reaches
-the wire because a board asked for a feed.
+the wire because a page asked for a feed.
 
 It is a **flow**, not a stock: a bucket counts transitions that happened in it,
 never how many sessions were in each state at the time. Reconstructing a stock
@@ -1073,7 +1024,7 @@ repositories. `{"readable", "ageSeconds", "repos", "projects", "windowDays",
 `{"commits", "added", "removed", "files"}`.
 
 This replaced `counts.doneToday` and the checklist figure as the headline
-numbers a board offers, because both of those are *self-reported*: a todo is
+numbers a page offers, because both of those are *self-reported*: a todo is
 ticked because somebody remembered to tick it, and a session reaches `done`
 because an agent's hook said so; a session left running all day never says it at
 all. They measure whether the panel was told something. Commits and changed
@@ -1096,8 +1047,8 @@ What to know before building against `repo`:
   pull requests at most every 5 minutes, shared across every viewer of every
   link, and not at all once nobody is looking.
 - `prs` is the only outbound request a wall can cause, and four things have to
-  be true at once, none of them a default: the board carries a pull-request
-  widget, the link is scoped to one project, `detail` is `names`, and a token is
+  be true at once, none of them a default: the manifest asks for pull
+  requests (`repo.prs`), the link is scoped to one project, `detail` is `names`, and a token is
   in the panel's environment. It is counts and rollups — `open`, `draft`,
   `green`, `red`, `pending`, `approved`, `changesRequested`, `mergedToday` — and
   never a title, a number, an author, a branch or a URL.
@@ -1111,7 +1062,7 @@ filename through the panel on its way to a wall, and asking for `%s` would carry
 the commit messages. A commit *count* is a number; a commit *subject* is prose
 from inside somebody's repository. So no path, no filename, no branch name, no
 sha, no author and no subject appears here at either `detail`, only the project
-names, which follow `names` exactly like every other group on this dashboard.
+names, which follow `names` exactly like every other group in the snapshot.
 
 `scopeRepoOwner` and `scopeRepoName` are the scoped project's repository, and
 they are the one thing on this surface that reads a working tree: one
@@ -1124,11 +1075,11 @@ project's path are never sent, at either `detail`.
 
 The narrowing is the disclosure decision, not a styling one. A repository is a
 public, resolvable name that also names the organisation. Under `counts` the
-board sends no names at all, so a repository link there would identify the
+link sends no names at all, so a repository link there would identify the
 customer more precisely than the project path that mode exists to withhold. A
 session-scoped link's `scopeName` is a session title, and hanging a repository
 off it would disclose which project that session belongs to on a link that was
-narrowed to one session. An unscoped board has no single repository to name.
+narrowed to one session. An unscoped link has no single repository to name.
 
 What it deliberately does **not** carry, in either `detail` mode: the project's
 path on disk, a session's `cwd`, the command line, the tmux session name, the
@@ -1139,7 +1090,7 @@ agent was invoked with. Neither has a use on a screen behind somebody's desk.
 
 `id` and `projectId` are pseudonyms: an HMAC of the real id under the link's own
 stored hash. They are stable for the life of one link, so a list does not re-key
-itself on every poll, and different for every other link, so two dashboards on
+itself on every poll, and different for every other link, so two screens on
 two walls cannot be joined into one picture of the panel.
 
 Under `detail: "counts"` the `name` fields are empty strings and the page
@@ -1153,7 +1104,7 @@ is a real reading. Scratch terminals opened under a session are left out
 entirely: they are session rows with a parent, and listing them reports two rows
 for one job.
 
-`at` is when the server took the reading, and the dashboard counts up from it.
+`at` is when the server took the reading, and a page counts up from it.
 That is the field to use if you build your own display: a page that has
 silently frozen looks exactly like a quiet system, and the numbers themselves
 cannot tell you which you are looking at.
@@ -1163,6 +1114,148 @@ expired, or never existed: one answer for all three. Rejected attempts are
 audited as `share.rejected`, gated to one row per source per minute. `403` is
 the `--allow-from` allowlist, which applies here exactly as it does to the
 panel: a share link must not be a way around it.
+
+### `GET /api/settings/pages`
+### `POST /api/settings/pages`
+### `GET /api/settings/pages/catalogue`
+### `GET /api/settings/pages/{pageID}`
+### `PATCH /api/settings/pages/{pageID}`
+### `DELETE /api/settings/pages/{pageID}`
+
+Pages, behind the ordinary session. A share token answers `401` to all of them.
+
+```sh
+# A new page from a template, in <data dir>/pages/page-lobby
+curl -sX POST https://panel.example:18443/api/settings/pages \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"Lobby","template":"wall","sourceDir":""}'
+# {"id":"…","name":"Lobby","sourceDir":"/home/me/.local/share/vibepanel/pages/page-lobby","publishedVersion":0,…}
+```
+
+`template` is one of the catalogue's templates, which scaffolds an empty or new
+directory (never one with files in it); `""` adopts a directory that already
+holds a `vibepanel.json`. `sourceDir` is absolute; empty with a template means a
+new directory `page-<slug>` under `pagesRoot`, which is `pages/` in the panel's
+data directory, beside the pasted screenshots. The catalogue also names the sections, the
+viewports the Preview offers, the fixtures, the script hosts a manifest may
+allow and the size limits.
+
+`GET /api/settings/pages/{pageID}` is the page with its versions (candidates
+marked) and the links drawing it, with their viewer counts. `PATCH` renames it
+or moves its draft (`page.moved` in the audit log). `DELETE` is refused with
+`409` and the links' names while any handed-out link draws it.
+
+### `GET /api/settings/pages/{pageID}/draft`
+### `GET /api/settings/pages/{pageID}/draft/fingerprint`
+
+The draft directory as the Preview sees it: whether it reads as a page (`ok`,
+`error`), its manifest, files, what was ignored and why, lint problems with file,
+line and fix, and the changes against the published version by file hash.
+`fingerprint` is sizes and modification times hashed — cheap enough to ask for
+twice a second while a pane is open.
+
+### `POST /api/settings/pages/{pageID}/publish`
+### `POST /api/settings/pages/{pageID}/rollback`
+
+`{"note": "…"}` stores the draft as the next version and publishes it:
+`{"version": 4}`. The same reader the Preview used, the same limits (64 files,
+5 MiB, 2 MiB a file, types checked against their bytes, no symlinks). Lint
+problems do not block it; a directory that does not read as a page does.
+`{"version": 2}` to `rollback` re-publishes an existing version. Links following
+the published version reload into it on their next poll. Audited as
+`page.published` and `page.rolled_back`, and a line is appended to the draft's
+`.vibepanel/HISTORY.md`.
+
+### `POST /api/settings/pages/{pageID}/preview`
+### `POST /api/settings/pages/{pageID}/preview/{linkID}/renew`
+
+`{"detail": "counts"}` mints a share link that draws the page's **draft**, lives
+fifteen minutes and is not listed: `{"id", "token", "expiresAt"}`. It goes
+through exactly the routes above, so a preview cannot show what a wall would
+not. `renew` moves a live preview's expiry; an expired one answers `410` and is
+not revived.
+
+### `PUT /api/settings/pages/{pageID}/errors`
+
+`{"errors": [{"kind", "message", "source", "line"}]}` — what a preview frame
+reported, relayed by the signed-in pane and written to the draft's
+`.vibepanel/errors.json` for the agent. Bounded to 50 errors and 500 characters
+each; refused when `.vibepanel` is a symlink.
+
+### `POST /api/settings/pages/{pageID}/trial`
+### `POST /api/settings/pages/{pageID}/trial/{linkID}/keep`
+### `DELETE /api/settings/pages/{pageID}/trial/{linkID}`
+
+`{"linkId": "…", "minutes": 10}` freezes the draft into a candidate version and
+puts it on one link that already draws the page, for 1 to 60 minutes:
+`{"version": 5, "pinUntil": 1756741200}`. The screen reloads into it; when
+`pinUntil` passes it resolves back to the published version on read, with
+nothing having to run. `keep` publishes the candidate; `DELETE` ends the trial
+now. Audited as `share.page_trial`.
+
+### `POST /api/settings/pages/{pageID}/fork`
+
+`{"name": "…", "sourceDir": ""}` copies the page's draft into a new directory
+(`page-<slug>` under `pagesRoot` by default) as a new page.
+
+### `POST /api/settings/pages/{pageID}/open`
+
+Makes a page something an agent can be started in: `{"page", "projectId",
+"restored"}`. When the page's directory is gone it is written back from the
+published version — where it was when that is possible, under `pagesRoot`
+otherwise, with the page's `sourceDir` updated — and `restored` is that version,
+`-1` for a page never published (a blank page is scaffolded), `0` when nothing
+had to be written. When no project points at the directory one is made, named
+`page-<slug>`; an existing one is reused. Audited as `page.restored` when a
+directory was written. A lost project or a wiped data directory is recovered by
+the same request, because the page is its versions in the database.
+
+### `PUT /api/settings/pages/root`
+
+Where new pages go: `{"dir": "/abs/path"}`, or `{"dir": ""}` to go back to the
+default. Unset, nothing is stored and a page goes under the data directory's
+`pages/`. A directory is refused with `400` unless it is absolute and a file can
+be written in it; pages already made stay where they are. Answers what the
+catalogue's `pagesRootInfo` says, and is audited as `page.root_changed`.
+
+The root is resolved every time a page is made, down a fallback: the setting;
+`<data dir>/pages`; `~/.local/share/vibepanel/pages` when the data directory is
+somewhere else; a `vibepanel-pages-<uid>` directory in the temporary directory
+as the last resort. `pagesRootInfo` is `{"dir", "setting", "source", "problem"}`,
+where `source` is `setting`, `default` or `fallback` and `problem` says why a
+rung above `dir` was skipped.
+
+### `GET /api/settings/pages/{pageID}/export`
+
+The page as a zip: `vibepanel.json` at the top and the page's files beside it —
+not the SDK copy, its types or `AGENTS.md`, which every directory gets. `?version=N`
+picks a version; without it, the published one, or the directory as it is for a
+page never published. Named `page-<name>-v<N>.zip`. `404` for a version that
+does not exist.
+
+### `POST /api/settings/pages/import`
+
+A zip as the request body (at most 6 MiB) becomes a new page, in a new
+`page-<name>` directory under the pages root, named `?name=` or the name in its
+manifest. `201` with `{"page", "ignored"}`: `ignored` lists what the archive had
+that a page does not keep (`AGENTS.md`, the SDK copy, a file of a type a page
+cannot serve). One folder wrapping everything is looked through. The archive is
+read by the publish rules — a path that leaves the page, a file that is not what
+its name says, a missing `index.html` or manifest, or a limit exceeded is `400`
+— and the page is not published. Audited as `page.imported`.
+
+### `PUT /api/settings/shares/{shareID}/page`
+
+What a link draws: `{"pageId": "…", "pinVersion": 0, "params": {"title": "Hall"}}`.
+`pageId` is required. `pinVersion: 0` follows the published
+version. `params` are checked against that version's manifest and refused with
+the parameter's name when one does not fit; a page republished with a narrower
+range gets the default in place of a stored value that no longer fits. Not the
+link's `detail` or `scope`, which are fixed. Refused with `409` on a locked link.
+Audited as `share.page_changed`, or `share.params_changed` when only the
+parameters moved.
+
+`POST /api/settings/shares` takes the same `pageId` and `params`.
 
 ## Authentication
 

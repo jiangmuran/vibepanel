@@ -34,7 +34,7 @@ import (
 // ingester and the trend ring already follow. That is what keeps the GitHub
 // half of this honest: internal/git/github.go says the network runs when
 // somebody presses a button, and a wall that an owner deliberately pointed at a
-// board with a pull-request tile on it is that press, held down. It is bounded
+// page that asks for pull requests is that press, held down. It is bounded
 // by the TTL, shared across every viewer of every link, and gone the moment the
 // screen is switched off.
 

@@ -15,10 +15,9 @@ import { describe, expect, it } from 'vitest'
  * followed carefully in the file where it was written and forgotten in the next
  * one. Every field below is free text somebody typed and the panel renders:
  *
- *   - `remark` — the owner's label for a screen, added for a wall display, and
- *     the newest of these. It is drawn in the dashboard header, in a widget of
- *     its own, and in a settings row.
- *   - `text` — a board's caption and section heading.
+ *   - `remark` — the owner's label for a screen, shown in the settings rows
+ *     and sent to the share page.
+ *   - `text` — free text in notes and previews.
  *   - `name`, `title`, `scopeName` — the link's name, session titles from
  *     `pane_title` (which any program sets with two bytes) and project names.
  *

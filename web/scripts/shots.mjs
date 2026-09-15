@@ -295,41 +295,38 @@ try {
     // unknown field -- so every screenshot since had an empty notes tab.
     body: JSON.stringify({ content: '# 今天\n\n- 目录选择器做完了\n- 终端行距 1.2 → 1.0\n- 还差 PWA 通知' }),
   })
-  // Todos are seeded even though the panel no longer shows them: the routes
-  // are still there for the wall boards, and a board screenshot with an empty
-  // checklist widget photographs the wrong thing.
+  // Todos are seeded even though the panel no longer shows them: a share page
+  // can still count them, and one photographed with an empty checklist
+  // photographs the wrong thing.
   for (const t of ['把右栏排版重做', '简体中文', 'PWA 通知']) {
     await authed(`/api/projects/${proj.id}/todos`, { method: 'POST', body: JSON.stringify({ text: t }) })
   }
 
-  // Share links, so the sharing page below is photographed with rows in it.
-  //
-  // An empty one is a photograph of a form, and the form was never the part
-  // that was wrong: what needed looking at was three rows of a list whose
-  // fields started at a different x on every row and ran off the side of the
-  // dialog. Three, with a long name and a remark, because one short row fits
-  // anything.
+  // Share pages with links under them, so the sharing page is photographed
+  // with rows in it: two templates, published, with three links of which one
+  // has a long name, because one short row fits anything.
+  const walls = []
   {
-    const cat = await (await authed('/api/settings/shares/catalogue')).json()
-    const preset = cat.presets[0]
-    const board = {
-      grid: cat.maxSpan,
-      preset: preset.id,
-      rotate: preset.rotate,
-      fill: preset.fill,
-      density: preset.density,
-      widgets: [...preset.widgets],
+    const made = []
+    for (const [name, template] of [['走廊电视墙', 'wall'], ['本月 token', 'spend']]) {
+      const page = await (await authed('/api/settings/pages', {
+        method: 'POST',
+        body: JSON.stringify({ name, template, sourceDir: '' }),
+      })).json()
+      await authed(`/api/settings/pages/${page.id}/publish`, { method: 'POST', body: JSON.stringify({ note: 'v1' }) })
+      made.push(page)
     }
     const links = [
-      { name: '走廊电视', remark: '三楼靠窗那台', detail: 'counts', expiresIn: 0, scope: '', scopeId: '' },
-      { name: '给客户看的那块', remark: '会议室', detail: 'names', expiresIn: 604800, scope: 'project', scopeId: proj.id },
-      { name: '一个长得过分的名字，用来看它会不会把这一行挤爆', remark: '', detail: 'counts', expiresIn: 2592000, scope: '', scopeId: '' },
+      { page: made[0], name: '走廊电视', remark: '三楼靠窗那台', detail: 'names', expiresIn: 0, scope: '', scopeId: '', params: { title: '三楼' } },
+      { page: made[0], name: '一个长得过分的名字，用来看它会不会把这一行挤爆', remark: '', detail: 'counts', expiresIn: 2592000, scope: '', scopeId: '', params: {} },
+      { page: made[1], name: '给客户看的那块', remark: '会议室', detail: 'names', expiresIn: 604800, scope: 'project', scopeId: proj.id, params: {} },
     ]
-    for (const link of links) {
-      await authed('/api/settings/shares', {
+    for (const { page, ...link } of links) {
+      const res = await (await authed('/api/settings/shares', {
         method: 'POST',
-        body: JSON.stringify({ ...link, board, locked: false }),
-      })
+        body: JSON.stringify({ ...link, pageId: page.id, locked: false }),
+      })).json()
+      walls.push(res.token)
     }
   }
   await sleep(2500)
@@ -392,17 +389,14 @@ try {
     if (theme === 'dark' && locale === 'zh-CN') {
       await page.locator('[data-testid="settings-open"]').click().catch(() => {})
       await shoot(page, 'settings')
-      // Sharing, which is the largest surface in this dialog and was the one
-      // nothing photographed. Twice: the page as it opens, and with a link's
-      // board editor unfolded under its row, which is where the canvas, the
-      // widget library and the template gallery are all on screen at once.
+      // Sharing: pages with their links, then one link's editor unfolded.
       await page.locator('[data-testid="settings-group-sharing"]').click().catch(() => {})
-      await sleep(900)
+      await sleep(1500)
       await shoot(page, 'settings-sharing')
       await page.locator('[data-testid="share-edit"]').first().click().catch(() => {})
       await sleep(1200)
       await shoot(page, 'settings-sharing-editing')
-      await page.locator('[data-testid="share-edit-cancel"]').click().catch(() => {})
+      await page.locator('[data-testid="share-edit-close"]').click().catch(() => {})
       await page.locator('[data-testid="settings-close"]').click().catch(() => {})
       await sleep(400)
       // The picker. By testid, because the three guesses this used to make were
@@ -417,6 +411,17 @@ try {
       } else {
         console.log('  (could not open the directory picker; button not found)')
       }
+
+      // What a link shows, on the screen it is for, as a stranger sees it.
+      const tv = await browser.newContext({ viewport: { width: 1920, height: 1080 }, colorScheme: 'dark' })
+      for (const [i, name] of [[0, 'share-wall'], [2, 'share-spend']]) {
+        const wall = await tv.newPage()
+        await wall.goto(`${BASE}/share/${walls[i]}/`, { waitUntil: 'load' }).catch(() => {})
+        await sleep(3500)
+        await shoot(wall, name)
+        await wall.close()
+      }
+      await tv.close()
     }
     await ctx.close()
   }

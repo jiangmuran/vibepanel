@@ -25,7 +25,7 @@ cd "$(dirname "$0")/.."
 # Overridable so the collection logic can be exercised without a twenty-minute
 # run. The default is the real list; the order no longer decides anything, see
 # the scheduling note below.
-TARGETS=${VERIFY_TARGETS:-"check panes-check install-check sudo-check head-check first-run-check board-check render-check stress-check restart-check scale-check tls-check release-check"}
+TARGETS=${VERIFY_TARGETS:-"check panes-check install-check sudo-check head-check first-run-check pages-check render-check stress-check restart-check scale-check tls-check release-check"}
 
 # ─── how these run at the same time ───────────────────────────────────────
 #
@@ -71,7 +71,7 @@ cpus=$(nproc 2>/dev/null || echo 4)
 #
 # The first guess was cores bounded by MemAvailable, at a couple of GiB per
 # browser check, which on a sixteen core machine came out at eight. Every
-# browser check went red -- render-check 8 FAIL, board-check dead before it
+# browser check went red -- render-check 8 FAIL, another check dead before it
 # printed a line -- and the whole suite was "finished" in five and a half
 # minutes. Two separate things were wrong with it.
 #

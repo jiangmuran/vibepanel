@@ -125,10 +125,8 @@ describe('what opens the dialog', () => {
  *
  * The width used to be one class on the panel — `max-w-3xl`, which is a
  * reading measure and right for four of the five groups. It is wrong for the
- * fifth by enough to break it: the board editor inside Sharing is a canvas you
- * drag onto with a library beside it, and at 3xl the split came out as a 208px
- * canvas next to a 320px palette, with every link's row overflowing the body
- * sideways underneath it.
+ * fifth by enough to break it: Sharing is a list of pages with their links
+ * nested under them, and at 3xl each link's row overflowed the body sideways.
  *
  * What this pins is that the width is *decided by the group* rather than
  * written once in the JSX, and that the decision still says what it said. Both

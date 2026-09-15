@@ -16,11 +16,15 @@ import type {
   Project,
   Session,
   SessionState,
-  ShareBoard,
-  ShareCatalogue,
-  ShareDashboard,
   ShareDetail,
   ShareLink,
+  SharePage,
+  SharePageCatalogue,
+  SharePageDetail,
+  SharePageDraft,
+  SharePageRow,
+  SharePagesRoot,
+  ShareParamValue,
   SystemSample,
   TokenUsage,
   UsageSample,
@@ -374,12 +378,14 @@ export const api = {
     name: string
     detail: ShareDetail
     expiresIn: number
-    board: ShareBoard
     scope: string
     scopeId: string
     /** The owner's label for the screen. Shown to viewers under both modes. */
     remark: string
     locked: boolean
+    /** The published share page the link draws, with its settings on it. */
+    pageId: string
+    params: Record<string, ShareParamValue>
   }) =>
     request<{
       token: string
@@ -387,7 +393,8 @@ export const api = {
       name: string
       prefix: string
       detail: string
-      board: ShareBoard
+      pageId: string
+      params: Record<string, ShareParamValue>
       scope: string
       remark: string
       locked: boolean
@@ -399,12 +406,7 @@ export const api = {
     }),
 
   /**
-   * Renames a link, relabels it, rearranges its board and fixes or unfixes it.
-   *
-   * This is how a television on a wall is changed: from a laptop, signed in,
-   * with the wall picking it up on its next poll. There is nothing to do at the
-   * screen itself, which is the whole point — and the reason the share surface
-   * is still exactly one GET.
+   * Renames a link, relabels it, and fixes or unfixes what it draws.
    *
    * Deliberately no `detail` and no `scope`. By the time anybody edits a link
    * its URL is already in an email or typed into a television, and widening
@@ -412,10 +414,7 @@ export const api = {
    * see. The server refuses them too; this signature is the same refusal said
    * where the caller reads it.
    */
-  updateShare: (
-    id: string,
-    fields: { name: string; remark: string; board: ShareBoard; locked: boolean },
-  ) =>
+  updateShare: (id: string, fields: { name: string; remark: string; locked: boolean }) =>
     request<void>(`/api/settings/shares/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(fields),
@@ -425,10 +424,9 @@ export const api = {
    * Unlocks a link, and does nothing else.
    *
    * Its own call rather than `updateShare({locked: false, ...})`, because the
-   * server accepts exactly one thing on a locked link and this is it. A locked
-   * board is a guard against rearranging the wall a customer is sitting in
-   * front of from an editor left open on the wrong row; a single request that
-   * could unlock *and* apply a board would make it a message instead.
+   * server accepts exactly one thing on a locked link and this is it: a single
+   * request that could unlock *and* change the link would make the lock a
+   * message instead of a guard.
    */
   unlockShare: (id: string) =>
     request<void>(`/api/settings/shares/${encodeURIComponent(id)}`, {
@@ -437,35 +435,151 @@ export const api = {
     }),
 
   /**
-   * What one link's screen is showing right now.
-   *
-   * The same body the dashboard itself receives, built by the same function on
-   * the server. Not a second reduction written here: that would diverge on the
-   * first field either side gained, in the direction "the preview shows
-   * something the real screen does not".
+   * A fifteen-minute copy of a link -- same page, pin, parameters, detail and
+   * scope -- so the owner can see what it shows. The panel keeps only a hash
+   * of the real link's token and cannot open that one for them.
    */
-  sharePreview: (id: string) =>
-    request<ShareDashboard>(`/api/settings/shares/${encodeURIComponent(id)}/preview`),
-
-  /** The vocabulary a board is built from: presets, widget kinds, bounds. */
-  shareCatalogue: () => request<ShareCatalogue>('/api/settings/shares/catalogue'),
+  viewShare: (id: string) =>
+    request<{ token: string; expiresAt: number }>(
+      `/api/settings/shares/${encodeURIComponent(id)}/view`,
+      { method: 'POST' },
+    ),
 
   deleteShare: (id: string) =>
     request<void>(`/api/settings/shares/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   /**
-   * The whole surface a share token can reach.
-   *
-   * The token is in the path because that is what makes the URL the
-   * capability: one address you can put on a second screen, with nothing to
-   * sign in to. Everything else about the panel answers 401 to it, which is
-   * enforced by the server's routing rather than by this file.
+   * Points a link at a share page, at a version or following the published
+   * one, with the page's parameter values. Not what the link discloses: that is
+   * `detail` and `scope`, fixed when it was made.
    */
-  shareDashboard: (token: string, viewer: string, width: number, height: number) =>
-    request<ShareDashboard>(
-      `/api/share/${encodeURIComponent(token)}/dashboard` +
-        `?v=${encodeURIComponent(viewer)}&w=${width}&h=${height}`,
+  setSharePage: (
+    id: string,
+    fields: { pageId: string; pinVersion: number; params: Record<string, ShareParamValue> },
+  ) =>
+    request<void>(`/api/settings/shares/${encodeURIComponent(id)}/page`, {
+      method: 'PUT',
+      body: JSON.stringify(fields),
+    }),
+
+  // ── share pages ──────────────────────────────────────────────────────────
+
+  listPages: () => request<SharePageRow[]>('/api/settings/pages'),
+
+  pageCatalogue: () => request<SharePageCatalogue>('/api/settings/pages/catalogue'),
+
+  /** A new page from a template, or an existing directory adopted when
+   *  `template` is ''. An empty `sourceDir` puts a new one at
+   *  <pagesRoot>/page-<slug>. */
+  createPage: (req: { name: string; template: string; sourceDir: string }) =>
+    request<SharePage>('/api/settings/pages', { method: 'POST', body: JSON.stringify(req) }),
+
+  page: (id: string) => request<SharePageDetail>(`/api/settings/pages/${encodeURIComponent(id)}`),
+
+  updatePage: (id: string, fields: { name: string; sourceDir: string }) =>
+    request<void>(`/api/settings/pages/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(fields),
+    }),
+
+  /**
+   * Makes a page something an agent can start in: writes its published
+   * version back out if the directory has gone, and finds or makes the
+   * `page-…` project that is that directory.
+   */
+  openPage: (id: string) =>
+    request<{ page: SharePage; projectId: string; restored: number }>(
+      `/api/settings/pages/${encodeURIComponent(id)}/open`,
+      { method: 'POST' },
     ),
+
+  /** Where new pages go; '' goes back to the default. */
+  setPagesRoot: (dir: string) =>
+    request<SharePagesRoot>('/api/settings/pages/root', { method: 'PUT', body: JSON.stringify({ dir }) }),
+
+  /** A link to the page as a zip: the published version, or the directory for a
+   *  page never published. A plain GET, so an <a download> with the cookie works. */
+  exportPageURL: (id: string) => `/api/settings/pages/${encodeURIComponent(id)}/export`,
+
+  /** A zip becomes a new, unpublished page under the pages directory. */
+  importPage: (file: Blob, name = '') =>
+    request<{ page: SharePage; ignored: { path: string; reason: string }[] }>(
+      `/api/settings/pages/import${name ? `?name=${encodeURIComponent(name)}` : ''}`,
+      { method: 'POST', body: file, headers: { 'Content-Type': 'application/zip' } },
+    ),
+
+  deletePage: (id: string) =>
+    request<void>(`/api/settings/pages/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  pageDraft: (id: string) =>
+    request<SharePageDraft>(`/api/settings/pages/${encodeURIComponent(id)}/draft`),
+
+  /** Cheap: sizes and times, hashed. Asked twice a second while a Preview is open. */
+  pageFingerprint: (id: string) =>
+    request<{ fingerprint: string }>(`/api/settings/pages/${encodeURIComponent(id)}/draft/fingerprint`),
+
+  publishPage: (id: string, note: string) =>
+    request<{ version: number }>(`/api/settings/pages/${encodeURIComponent(id)}/publish`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    }),
+
+  rollbackPage: (id: string, version: number) =>
+    request<void>(`/api/settings/pages/${encodeURIComponent(id)}/rollback`, {
+      method: 'POST',
+      body: JSON.stringify({ version }),
+    }),
+
+  /**
+   * A fifteen-minute share link that draws the page's draft. A real link, so
+   * the Preview cannot show what a wall would not; the token is held in memory
+   * by the pane and never stored.
+   */
+  previewPage: (id: string, detail: ShareDetail) =>
+    request<{ id: string; token: string; expiresAt: number }>(
+      `/api/settings/pages/${encodeURIComponent(id)}/preview`,
+      { method: 'POST', body: JSON.stringify({ detail }) },
+    ),
+
+  renewPreview: (pageId: string, linkId: string) =>
+    request<{ expiresAt: number }>(
+      `/api/settings/pages/${encodeURIComponent(pageId)}/preview/${encodeURIComponent(linkId)}/renew`,
+      { method: 'POST', body: '{}' },
+    ),
+
+  /** What a preview frame reported, written into the draft for the agent. */
+  reportPageErrors: (
+    id: string,
+    errors: { kind: string; message: string; source: string; line: number }[],
+  ) =>
+    request<void>(`/api/settings/pages/${encodeURIComponent(id)}/errors`, {
+      method: 'PUT',
+      body: JSON.stringify({ errors }),
+    }),
+
+  startTrial: (id: string, linkId: string, minutes: number) =>
+    request<{ version: number; pinUntil: number }>(
+      `/api/settings/pages/${encodeURIComponent(id)}/trial`,
+      { method: 'POST', body: JSON.stringify({ linkId, minutes }) },
+    ),
+
+  keepTrial: (id: string, linkId: string) =>
+    request<{ version: number }>(
+      `/api/settings/pages/${encodeURIComponent(id)}/trial/${encodeURIComponent(linkId)}/keep`,
+      { method: 'POST', body: '{}' },
+    ),
+
+  endTrial: (id: string, linkId: string) =>
+    request<void>(
+      `/api/settings/pages/${encodeURIComponent(id)}/trial/${encodeURIComponent(linkId)}`,
+      { method: 'DELETE' },
+    ),
+
+  forkPage: (id: string, name: string) =>
+    request<SharePage>(`/api/settings/pages/${encodeURIComponent(id)}/fork`, {
+      method: 'POST',
+      body: JSON.stringify({ name, sourceDir: '' }),
+    }),
 
   /**
    * List directories. No argument means home; `''` means the filesystem root.
@@ -829,7 +943,7 @@ export const api = {
 
   // The four todo methods were here and are gone with the panel that called
   // them. The *routes* are not gone — see the note above registerPanelRoutes
-  // in internal/httpapi/panels.go: the wall boards count todos, and an agent
+  // in internal/httpapi/panels.go: share pages count todos, and an agent
   // with an API token can still write one. What has no caller is this client,
   // and dead client code is how somebody concludes the feature is dead.
 }
