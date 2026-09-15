@@ -99,6 +99,19 @@ func TestTheWalkIsBounded(t *testing.T) {
 	if got := FindRollout(p, 1); got != "" {
 		t.Errorf("a codex 500 levels down was found: the walk is not bounded")
 	}
+	// Depth on its own, with few enough processes that the count does not
+	// stop the walk first.
+	q := fakeProc{children: map[int][]int{}, comm: map[int]string{8: "codex"},
+		fds: map[int][]string{8: {"/x/sessions/a/rollout-deep.jsonl"}}}
+	for i := 1; i < 8; i++ {
+		q.children[i] = []int{i + 1}
+	}
+	if got := FindRollout(q, 1); got != "" {
+		t.Errorf("a codex %d levels down was found past maxDepth %d", 7, maxDepth)
+	}
+	if got := FindRollout(q, 3); got == "" {
+		t.Error("a codex within maxDepth was not found")
+	}
 }
 
 func TestTheWatcherReadsOnlyWhatWasAppended(t *testing.T) {

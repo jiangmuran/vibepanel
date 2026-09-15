@@ -26,7 +26,7 @@ import (
 // third, and it is the one with no type system on either side of it.
 //
 // This package writes state strings into files that leave the repository: the
-// reporter script, the `notify` line in ~/.codex/config.toml, and the hooks
+// reporter script, the hooks merged into ~/.codex/hooks.json, and the hooks
 // block merged into ~/.claude/settings.json. `internal/hooks` does not import
 // `internal/session` at all — measured, zero references — so every one of those
 // strings is a bare literal.

@@ -193,7 +193,7 @@ function Reporting({ onOpenSettings }: StepProps) {
     st
       ? [
           { id: 'claude', name: t('set.claudeCode'), on: st.installed },
-          { id: 'codex', name: t('set.codex'), on: st.codexInstalled, note: t('set.codexOneEvent') },
+          { id: 'codex', name: t('set.codex'), on: st.codexInstalled, note: t('set.codexTrust') },
           { id: 'opencode', name: t('set.opencode'), on: st.opencodeInstalled },
         ]
       : []

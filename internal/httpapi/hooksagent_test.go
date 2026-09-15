@@ -17,10 +17,11 @@ import (
 // the request that says which is a query parameter — which is exactly the kind
 // of thing that gets dropped by a caller and silently resolves to the default.
 // Then the button labelled Codex writes Claude's settings.json, the page reads
-// Codex's config.toml back, and it truthfully reports nothing installed.
+// Codex's hooks.json back, and it truthfully reports nothing installed.
 func TestInstallingForCodexEditsCodexAndOnlyCodex(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", "")
 	ts, _ := newTestServer(t)
 
 	res, err := ts.Client().Post(ts.URL+"/api/settings/hooks?agent=codex", "application/json", nil)
@@ -32,12 +33,12 @@ func TestInstallingForCodexEditsCodexAndOnlyCodex(t *testing.T) {
 		t.Fatalf("POST: %s", res.Status)
 	}
 
-	body, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	body, err := os.ReadFile(filepath.Join(home, ".codex", "hooks.json"))
 	if err != nil {
-		t.Fatalf("codex config: %v", err)
+		t.Fatalf("codex hooks: %v", err)
 	}
 	if !strings.Contains(string(body), "vibepanel-report.sh") {
-		t.Errorf("the notify line is not in the file:\n%s", body)
+		t.Errorf("the hooks are not in the file:\n%s", body)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); err == nil {
 		t.Error("installing for Codex also wrote Claude's settings file")
@@ -56,12 +57,12 @@ func TestInstallingForCodexEditsCodexAndOnlyCodex(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("DELETE: %s", res.Status)
 	}
-	body, err = os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	body, err = os.ReadFile(filepath.Join(home, ".codex", "hooks.json"))
 	if err != nil {
-		t.Fatalf("codex config after removal: %v", err)
+		t.Fatalf("codex hooks after removal: %v", err)
 	}
 	if strings.Contains(string(body), "vibepanel-report.sh") {
-		t.Errorf("the notify line survived removal:\n%s", body)
+		t.Errorf("the hooks survived removal:\n%s", body)
 	}
 }
 
@@ -72,6 +73,7 @@ func TestInstallingForCodexEditsCodexAndOnlyCodex(t *testing.T) {
 func TestAnUnknownAgentIsRefusedRatherThanGuessed(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", "")
 	ts, _ := newTestServer(t)
 
 	res, err := ts.Client().Post(ts.URL+"/api/settings/hooks?agent=codx", "application/json", nil)
@@ -82,7 +84,7 @@ func TestAnUnknownAgentIsRefusedRatherThanGuessed(t *testing.T) {
 	if res.StatusCode != http.StatusBadRequest {
 		t.Fatalf("POST with a bad agent: %s, want 400", res.Status)
 	}
-	for _, p := range []string{".claude/settings.json", ".codex/config.toml"} {
+	for _, p := range []string{".claude/settings.json", ".codex/config.toml", ".codex/hooks.json"} {
 		if _, err := os.Stat(filepath.Join(home, p)); err == nil {
 			t.Errorf("a refused request still wrote %s", p)
 		}
@@ -95,6 +97,7 @@ func TestAnUnknownAgentIsRefusedRatherThanGuessed(t *testing.T) {
 func TestEitherAgentCountsAsHooksInstalled(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", "")
 	s := &Server{Cfg: config.Config{DataDir: t.TempDir()}}
 
 	if s.hooksAreInstalled() {

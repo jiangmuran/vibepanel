@@ -1013,6 +1013,12 @@ func (s *Server) stateIsGuessed(sessions []store.Session) bool {
 	return true
 }
 
+// readCodexLog says whether a pane's state should come from its Codex rollout:
+// a Codex, with no hook report for codexLogAfter.
+func readCodexLog(command string, lastHook, now time.Time) bool {
+	return command == "codex" && now.Sub(lastHook) > codexLogAfter
+}
+
 // codexLogAfter is how long a Codex session has to go without a hook report
 // before its rollout file is read instead. Long, because a session whose hooks
 // work reports every turn, and the log is for the ones whose hooks do not:
@@ -2104,7 +2110,7 @@ func (s *Server) pollOnce(ctx context.Context) error {
 		// on the poller, because finding the file walks /proc and reading it is
 		// disk I/O; the watcher reads only what was appended since the last
 		// tick.
-		if s.Detector != nil && info.Command == "codex" && now.Sub(s.Detector.LastHook(row.ID)) > codexLogAfter {
+		if s.Detector != nil && readCodexLog(info.Command, s.Detector.LastHook(row.ID), now) {
 			if st, ok := s.codexLogs.State(row.ID, info.PID, now); ok {
 				s.Detector.ReportLog(row.ID, session.State(st.State), st.At)
 			}

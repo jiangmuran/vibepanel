@@ -1288,11 +1288,15 @@ which is injected into each session's environment as `VIBEPANEL_TOKEN` — not b
 an API token, and not by a session.
 
 ```json
-{"sessionId": "…", "state": "waiting"}
+{"sessionId": "…", "state": "waiting", "source": ""}
 ```
 
-`state` is one of `waiting`, `working`, `done`. Anything else is refused, and a
-refused token is audited as `hook.rejected`.
+`state` is one of `waiting`, `working`, `done`. `source` is optional: `codex`
+for Codex's hooks, `codex-notify` for Codex's older `notify` line, empty for
+everything else. A `codex-notify` report is released when the session's screen
+moves on or somebody sends it a line, because that line never reports the next
+turn starting. Any other state or source is refused, and a refused token is
+audited as `hook.rejected`.
 
 ## The WebSocket
 

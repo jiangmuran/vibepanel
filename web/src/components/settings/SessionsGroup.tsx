@@ -106,14 +106,23 @@ function HooksSection() {
             onInstall={() => void act(() => api.installHooks('claude'))}
             onRemove={() => void act(() => api.removeHooks('claude'))}
           />
+          {/* Codex needs one more step than the others: it runs a hook from
+              the user's own hooks.json only after `/hooks` has trusted it. The
+              note is that step until Codex has recorded a decision, and then
+              the count that proves it -- reports arriving is the only thing a
+              file read cannot fake. */}
           <AgentHooks
             label={t('set.codex')}
-            value={status.codexInstalled ? t('set.installedNotify') : t('set.notInstalled')}
+            value={
+              status.codexInstalled
+                ? t('set.installedCodexHooks', { n: status.codexEvents.length })
+                : t('set.notInstalled')
+            }
             file={status.codexPath}
             installed={status.codexInstalled}
             busy={busy}
             testid="codex-hooks"
-            note={t('set.codexOneEvent')}
+            note={codexNote(status)}
             onInstall={() => void act(() => api.installHooks('codex'))}
             onRemove={() => void act(() => api.removeHooks('codex'))}
           />
@@ -174,6 +183,19 @@ function HooksSection() {
       )}
     </Section>
   )
+}
+
+/** What the Codex row says under its status, in order of what to do next. */
+function codexNote(status: HookStatus): string | undefined {
+  if (!status.codexInstalled) {
+    return status.codexLegacyNotify ? t('set.codexLegacyNotify') : undefined
+  }
+  const lines: string[] = []
+  lines.push(status.codexTrust === 'trusted' ? t('set.codexTrusted') : t('set.codexTrust'))
+  if (status.codexSessions > 0) {
+    lines.push(t('set.codexReports', { n: status.codexSessions, m: status.codexReporting }))
+  }
+  return lines.join(' · ')
 }
 
 /** One agent's row: what is installed, which file, and the button for it. */

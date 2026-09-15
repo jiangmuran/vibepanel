@@ -21803,3 +21803,59 @@ published: it is somebody else's page until its new owner has looked at it.
 from things worth knowing, says a template is a starting point to throw away,
 and links to the docs; a `README.md` with the same links is written beside it.
 `blank` is a heading, the badge and one line of counts.
+
+## Codex states from Codex's own hooks
+
+「codex监控状态有更好的方法吗 现在几乎不可用」. It was. Codex was wired through
+`notify`, which fires once when a turn ends. The panel read that as "waiting",
+and a hook report stands until the next report -- which, for `notify`, never
+comes. So a Codex session that finished one turn said "waiting" for the rest of
+its life, working or not. And on a machine where nothing was installed, a Codex
+at its prompt read as working forever, because the foreground process is
+`codex` and Codex does not ring the bell.
+
+A comment in `internal/hooks/hooks.go` had already noticed that codex-cli 0.147
+ships a hooks system and that `notify` lives in a file called `legacy_notify.rs`,
+and stopped there because the schema was only known from strings in a binary.
+It is now known from Codex itself: `codex app-server` answers `hooks/list` on a
+throwaway `CODEX_HOME` with no account and no API call, and for a `hooks.json`
+with every event the panel wanted it listed each handler with no warnings, its
+timeout, `trustStatus: "untrusted"`, and a key of the form
+`<hooks.json>:<snake_case event>:<group>:<handler>`. Writing a
+`[hooks.state."<key>"]` table with the right `trusted_hash` into that throwaway
+`config.toml` turned the status to `trusted`, and a wrong hash to `modified`.
+
+So the install writes `hooks.json`: SessionStart and Stop and Interrupt are
+done, UserPromptSubmit, PreToolUse and PostToolUse are working,
+PermissionRequest is waiting. Merged beside the user's own hooks the way
+Claude's settings are, tagged, backed up, idempotent, and a timeout of five
+seconds rather than Codex's ten minutes. The old `notify` line comes out on
+install, and a notify it had replaced is given back.
+
+**Trust is the user's.** Codex runs a user hook only after `/hooks` has trusted
+that exact definition. The panel could write the table itself -- the probe did
+-- and does not: that review is the one step Codex put a person in front of.
+What it reads is whether a decision is recorded for each of its handlers, and
+the settings row shows it. It cannot compute Codex's hash (13,888 candidate
+encodings of the handler did not produce it), so "trusted" means a decision
+exists, not that it is current; the row's second line, how many running Codex
+sessions a hook has reported for, is what settles it.
+
+**The legacy line, for sessions still on it.** The reporter now passes a source,
+and a `notify` call is recognised by its shape -- Codex appends a JSON argument --
+so installs from before this change are told apart without being touched. Such a
+report is released when the screen advances more than three seconds after it
+(the end of the answer lands in the same moment) or when somebody sends the
+session a line; the Claude rule is untouched and its tests still pin it.
+
+**Without any hook, on Linux**, the poller reads the session's rollout file. Codex
+holds it open for the life of the session, so it is found through
+`/proc/<pid>/fd` of the `codex` process under the pane rather than by guessing
+from the working directory, which two sessions in one project share. Measured
+on this machine's rollouts: `task_started`, `task_complete` and `turn_aborted`
+are there; approval requests were never seen (these sessions run without
+approvals) and are read if present. The watcher starts half a megabyte from the
+end of a file that can be hundreds, reads only what was appended, never a
+partial line, and is consulted only after ten minutes without a hook report.
+Checked against a running Codex: it found the rollout and read `done`.
+
