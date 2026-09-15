@@ -124,6 +124,8 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		{"SharePageSourceSpec", pages.SourceSpec{}},
 		{"SharePageActionSpec", pages.ActionSpec{}},
 		{"SharePageData", pageDataResponse{}},
+		{"SharePageSource", pageSourceRow{}},
+		{"SharePageSecret", store.PageSecret{}},
 		// Token usage. Pinned from the first commit rather than after the
 		// first drift, because this surface has more fields than anything
 		// above it and every one of them is a number somebody will believe.
@@ -367,6 +369,11 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		// presented after it ended.
 		"share.action":        true,
 		"page.admin_rejected": true,
+		// What a page's sources may reach and with what: the owner's
+		// decisions, audited by name and never by value.
+		"page.hosts_changed":  true,
+		"page.secret_set":     true,
+		"page.secret_deleted": true,
 		// A page's own history, which is a question about the page.
 		"page.created":     true,
 		"page.published":   true,

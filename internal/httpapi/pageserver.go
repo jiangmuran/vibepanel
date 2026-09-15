@@ -19,3 +19,7 @@ func (s *Server) runServerHook(ctx context.Context, page store.SharePage, ns str
 	hook, name string, input, visitor map[string]any, action *pages.ActionSpec, by string) (any, error) {
 	return nil, dataErrorf("server.js is not available")
 }
+
+// runSchedule runs server.js's onSchedule when it is due.
+func (s *Server) runSchedule(ctx context.Context, page store.SharePage, ns string, m pages.Manifest) {
+}

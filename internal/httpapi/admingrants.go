@@ -170,7 +170,6 @@ func (s *Server) requireAdminGrant(next http.Handler) http.Handler {
 			writeErr(w, http.StatusServiceUnavailable, "the panel cannot reach its own database")
 			return
 		}
-		s.markWatched(grant.PageID)
 		next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, adminContextKey{}, adminContext{grant: grant, hash: hash})))
 	})
 }
@@ -309,6 +308,7 @@ func (s *Server) adminTarget(w http.ResponseWriter, r *http.Request) (adminConte
 		writeErr(w, http.StatusConflict, err.Error())
 		return adminContext{}, store.SharePage{}, "", pages.Manifest{}, false
 	}
+	s.markWatched(page.ID, ns, m)
 	return a, page, ns, m, true
 }
 
@@ -388,11 +388,11 @@ func (s *Server) handleAdminDataOp(kind string) http.HandlerFunc {
 }
 
 func (s *Server) handleAdminSources(w http.ResponseWriter, r *http.Request) {
-	_, page, _, m, ok := s.adminTarget(w, r)
+	_, page, ns, m, ok := s.adminTarget(w, r)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"sources": s.sourceResults(page.ID, m)})
+	writeJSON(w, http.StatusOK, map[string]any{"sources": s.sourceResults(page.ID, ns, m)})
 }
 
 // adminLink is a link as an admin page sees it: no token, no address.

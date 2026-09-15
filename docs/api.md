@@ -1380,6 +1380,36 @@ its type or bounds, or a write that would take the namespace past 64 keys or
 256 KiB. Every write is audited as `page.data_changed`, and shows on every
 link's next poll.
 
+### `GET /api/settings/pages/{pageID}/sources`
+### `GET /api/settings/pages/{pageID}/hosts`
+### `PUT /api/settings/pages/{pageID}/hosts`
+### `GET /api/settings/pages/{pageID}/secrets`
+### `PUT /api/settings/pages/{pageID}/secrets/{name}`
+### `DELETE /api/settings/pages/{pageID}/secrets/{name}`
+
+What a page's sources need before the panel fetches anything
+(docs/page-backend.md §4). `sources` lists each declared source of the
+published version (the draft's, for a page never published) as `{"key", "url",
+"host", "approved", "every", "ok", "fetchedAt", "status", "error",
+"secrets": [{"name", "set"}]}`.
+
+`PUT hosts` replaces the approved list with `{"hosts": ["api.example.com",
+"internal.example.com:8443"]}`: names, with `:port` only when it is not 443 —
+never a URL, a wildcard or an address range, because approving a name must
+approve exactly that name. At most 32; audited as `page.hosts_changed`.
+
+`PUT secrets/{name}` takes `{"value": "…"}` (1 to 4096 bytes, no line breaks),
+seals it under the panel's key and answers `204`; `GET secrets` answers
+`[{"name", "setAt"}]` and never a value. A secret is replaced into a source's
+headers at fetch time and redacted from its errors. Audited as
+`page.secret_set` and `page.secret_deleted`, by name.
+
+Changing hosts or secrets drops the page's last results, so the next background
+tick fetches again. A fetch refuses `http`, any address that is loopback,
+private, link-local (cloud metadata), CGNAT, multicast or reserved — checked on
+every address the name resolves to, and the checked address is the one dialled
+— any redirect, a body over `maxBytes` and anything slower than `timeout`.
+
 ### `PUT /api/settings/shares/{shareID}/page`
 
 What a link draws: `{"pageId": "…", "pinVersion": 0, "params": {"title": "Hall"}}`.

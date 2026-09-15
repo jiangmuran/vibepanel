@@ -75,6 +75,7 @@ func (s *Server) registerPageRoutes(r chi.Router) {
 	r.Post("/settings/pages/import", s.handleImportPage)
 	r.Put("/settings/pages/root", s.handlePutPagesRoot)
 	s.registerPageDataRoutes(r)
+	s.registerPageSourceRoutes(r)
 	r.Put("/settings/shares/{shareID}/page", s.handleSetSharePage)
 }
 

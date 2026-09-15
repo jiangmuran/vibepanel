@@ -10,4 +10,5 @@ type pageBackend struct {
 	data    pageDataState
 	rates   rateBook
 	audit   actionAudit
+	sources sourcesState
 }

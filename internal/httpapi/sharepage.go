@@ -555,8 +555,8 @@ func (s *Server) buildShareSnapshot(ctx context.Context, sc shareContext) (share
 		out.Interactive = manifest.Capabilities().VisitorActions && s.linkMayAct(ctx, link)
 		out.Actions = snapshotActions(manifest, false, out.Interactive)
 	}
-	s.markWatched(page.ID)
-	out.Sources = s.sourceResults(page.ID, manifest)
+	s.markWatched(page.ID, ns, manifest)
+	out.Sources = s.sourceResults(page.ID, ns, manifest)
 	out.Server = s.serverTransform(ctx, page, ns, manifest, out)
 
 	dash, hit := s.snapshots.get(memoKey, now)
