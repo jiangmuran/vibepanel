@@ -713,6 +713,8 @@ const DICT = {
   },
   'set.claudeCode': { zh: 'Claude Code', en: 'Claude Code' },
   'set.opencode': { zh: 'opencode', en: 'opencode' },
+  'set.kimiCode': { zh: 'Kimi Code', en: 'Kimi Code' },
+  'set.zcode': { zh: 'zcode', en: 'zcode' },
   'set.installedPlugin': { zh: '已装插件', en: 'Plugin installed' },
   'set.codex': { zh: 'Codex', en: 'Codex' },
   'set.settingsFile': { zh: '配置文件', en: 'Settings file' },

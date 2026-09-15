@@ -126,6 +126,36 @@ function HooksSection() {
             onInstall={() => void act(() => api.installHooks('codex'))}
             onRemove={() => void act(() => api.removeHooks('codex'))}
           />
+          {/* Kimi Code and zcode need no extra step: their hooks run from the
+              user-level file with no trust review. */}
+          <AgentHooks
+            label={t('set.kimiCode')}
+            value={
+              status.kimiInstalled
+                ? t('set.installedCodexHooks', { n: status.kimiEvents.length })
+                : t('set.notInstalled')
+            }
+            file={status.kimiPath}
+            installed={status.kimiInstalled}
+            busy={busy}
+            testid="kimi-hooks"
+            onInstall={() => void act(() => api.installHooks('kimi'))}
+            onRemove={() => void act(() => api.removeHooks('kimi'))}
+          />
+          <AgentHooks
+            label={t('set.zcode')}
+            value={
+              status.zcodeInstalled
+                ? t('set.installedCodexHooks', { n: status.zcodeEvents.length })
+                : t('set.notInstalled')
+            }
+            file={status.zcodePath}
+            installed={status.zcodeInstalled}
+            busy={busy}
+            testid="zcode-hooks"
+            onInstall={() => void act(() => api.installHooks('zcode'))}
+            onRemove={() => void act(() => api.removeHooks('zcode'))}
+          />
           {/* opencode is the one that needs no edit to anybody's config: it
               auto-discovers every file in its plugin directory, so installing
               writes a file that did not exist and removing deletes it. */}
@@ -177,6 +207,8 @@ function HooksSection() {
             <div className="mt-3">
               <Snippet label={t('set.claudeCode')} text={status.snippet} />
               <Snippet label={t('set.codex')} text={status.codexSnippet} />
+              <Snippet label={t('set.kimiCode')} text={status.kimiSnippet} />
+              <Snippet label={t('set.zcode')} text={status.zcodeSnippet} />
             </div>
           )}
         </div>

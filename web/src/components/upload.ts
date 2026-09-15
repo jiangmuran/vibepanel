@@ -56,6 +56,7 @@ export async function uploadFiles(
   path: string,
   files: File[],
   onNote: (note: string) => void,
+  onProgress?: (fraction: number) => void,
 ): Promise<string[]> {
   if (files.length === 0) return []
   // One and many are separate entries rather than a plural rule: English wants
@@ -63,7 +64,7 @@ export async function uploadFiles(
   // is a library this project does not have.
   onNote(files.length === 1 ? t('upload.one') : t('upload.many', { n: files.length }))
   try {
-    const { paths } = await api.upload(projectId, path, files)
+    const { paths } = await api.upload(projectId, path, files, undefined, onProgress)
     onNote(paths.length === 1 ? t('upload.doneOne') : t('upload.doneMany', { n: paths.length }))
     clearLater(onNote)
     return paths

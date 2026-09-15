@@ -21859,3 +21859,55 @@ end of a file that can be hundreds, reads only what was appended, never a
 partial line, and is consulted only after ten minutes without a hook report.
 Checked against a running Codex: it found the rollout and read `done`.
 
+
+## 2026-09-16 — Kimi Code and zcode hooks; a rename button people find; upload progress
+
+Reported against a deployment running several agent CLIs at once: 「侧边栏三个
+状态图标对于 codex kimicode 和 zcodecli 的识别有问题」 — Codex was covered
+by then (its own hooks, #11), the other two had nothing, and a rename and an
+upload-progress ask rode along.
+
+**What each agent turned out to support** (verified live, not from
+documentation):
+
+- Kimi Code has `[[hooks]]` in `~/.kimi-code/config.toml`, documented and
+  trust-free: UserPromptSubmit/PreToolUse → working, PermissionRequest →
+  waiting, Stop/Interrupt → done. Line-based append, blocks recognised by the
+  marker in their command so removal takes only ours.
+- zcode has `hooks.events` in `~/.zcode/cli/config.json` in Claude's shape,
+  behind `hooks.enabled`, which defaults to `false` — nothing runs until it
+  is true, so the install flips it and the uninstall flips it back only when
+  no hooks of anybody's remain. User-level entries run without the trust
+  machinery the binary reserves for workspace hooks.
+
+Both follow the house rules: merged beside the user's own hooks, backup
+first, removal by marker so nobody else's entries go with them, and a row
+each on the settings page because they are configured by different mechanisms
+and fail separately. Verified on the live box, one fresh session per agent:
+kimi went working(hook) → waiting(hook) at a real approval prompt → done
+(hook) after approving; zcode went working(hook) → done(hook).
+`IsAgentCommand` learned both names (`kimi` is a native binary; zcode reports
+`node` through its wrapper, so the hooks, not the process name, are what it
+is recognised by).
+
+**Rename was already there and nobody could find it.** Double click and long
+press on a session name have renamed it for a long time, but a gesture you
+have to know about is a feature most people never find — reported as 「增加左
+边栏每一个 session 可以改名的功能」. The session row now has a pencil beside
+pin and kill — mouse-only: under a coarse pointer every control is a 44px
+box, and a third one squeezed the selected row's name to "scratc…" and moved
+the row's centre off the name entirely, which render-check caught as the
+compose box becoming unreachable behind an open drawer. Rename with a finger
+stays on the long press, which is why that gesture exists. `InlineName`
+learned a controlled `editing` prop so the button opens the same input the
+gestures open — its first version only handled the close direction, so a
+controlled row could never be opened by the gestures either, which the same
+suite caught as "pressing and holding a session name does not start a
+rename". The unused `session.rename` dictionary entry finally names the
+tooltip.
+
+**Upload progress.** `fetch` cannot report request-body progress, so the
+upload call is XMLHttpRequest now, and the "uploading…" toast carries a
+determinate bar (`setToastProgress` moves it without re-raising the toast —
+an upload reporting itself every hundred milliseconds must not keep itself
+alive forever). The file panel's note line grows the same bar.

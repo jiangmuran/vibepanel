@@ -927,16 +927,49 @@ export const api = {
    * working directory is a git repository, and a picture pasted at an agent
    * should not dirty it.
    */
-  upload: async (projectId: string, path: string, files: File[], dest?: 'panel') => {
+  upload: async (
+    projectId: string,
+    path: string,
+    files: File[],
+    dest?: 'panel',
+    onProgress?: (fraction: number) => void,
+  ) => {
     const form = new FormData()
     for (const f of files) form.append('file', f, f.name)
-    const res = await fetch(
-      `/api/projects/${projectId}/upload?path=${encodeURIComponent(path)}` +
-        (dest ? `&dest=${dest}` : ''),
-      { method: 'POST', body: form },
-    )
-    if (!res.ok) throw await failure(res)
-    return (await res.json()) as { paths: string[] }
+    // XMLHttpRequest rather than fetch: fetch cannot report request-body
+    // progress, and a progress bar is the difference between "uploading…" and
+    // knowing a 300MB drop is halfway rather than hung.
+    return await new Promise<{ paths: string[] }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open(
+        'POST',
+        `/api/projects/${projectId}/upload?path=${encodeURIComponent(path)}` +
+          (dest ? `&dest=${dest}` : ''),
+      )
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total)
+      }
+      xhr.onload = () => {
+        let body: { paths?: string[]; error?: string; setupRequired?: boolean } = {}
+        try {
+          body = JSON.parse(xhr.responseText) as typeof body
+        } catch {
+          /* non-JSON body: a proxy or a crash, same as failure() covers */
+        }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve({ paths: body.paths ?? [] })
+          return
+        }
+        const message = body.error ?? `${xhr.status} ${xhr.statusText}`
+        if (xhr.status === 401) {
+          reject(new UnauthorizedError(message, body.setupRequired === true))
+          return
+        }
+        reject(new Error(message))
+      }
+      xhr.onerror = () => reject(new Error('network error'))
+      xhr.send(form)
+    })
   },
 
   /**

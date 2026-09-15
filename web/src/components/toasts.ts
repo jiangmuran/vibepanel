@@ -25,6 +25,11 @@ export interface ToastSpec {
   params?: Record<string, string | number>
   /** Text the panel did not write: a server error, a filename. */
   detail?: string
+  /**
+   * A fraction (0..1) that draws a progress bar under the message, for the
+   * one toast whose job is taking time: an upload. Undefined means no bar.
+   */
+  progress?: number
 }
 
 export interface Toast extends ToastSpec {
@@ -127,6 +132,19 @@ export function dismissToast(id: number) {
   if (!current.some((toast) => toast.id === id)) return
   clearTimer(id)
   current = current.filter((toast) => toast.id !== id)
+  emit()
+}
+
+/**
+ * Move a toast's progress bar. Not a re-raise: the message is the same one
+ * already on screen, so the timer is left alone and the dedup count is not
+ * touched — an upload reporting itself every hundred milliseconds must not
+ * keep its own toast alive forever.
+ */
+export function setToastProgress(id: number, fraction: number) {
+  const toast = current.find((toast) => toast.id === id)
+  if (!toast) return
+  current = current.map((t) => (t.id === id ? { ...t, progress: fraction } : t))
   emit()
 }
 

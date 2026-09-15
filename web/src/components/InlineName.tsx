@@ -5,6 +5,14 @@ interface Props {
   onCommit: (next: string) => void
   className?: string
   title?: string
+  /**
+   * Controlled editing, for the rename button on the row: double click and
+   * long press are gestures you have to know about, and a feature nobody
+   * finds is a feature nobody has. Leave unset for the uncontrolled,
+   * gestures-only behaviour.
+   */
+  editing?: boolean
+  onEditingChange?: (editing: boolean) => void
 }
 
 /** How long a finger has to stay put before it means "rename". */
@@ -26,8 +34,13 @@ const LONG_PRESS_SLOP = 10
  * from a phone was impossible rather than merely awkward. Nothing else in a
  * session row uses a press-and-hold, so the gesture was free.
  */
-export function InlineName({ value, onCommit, className, title }: Props) {
-  const [editing, setEditing] = useState(false)
+export function InlineName({ value, onCommit, className, title, ...controlled }: Props) {
+  const [innerEditing, setInnerEditing] = useState(false)
+  const editing = controlled.editing ?? innerEditing
+  const setEditing = (next: boolean) => {
+    setInnerEditing(next)
+    controlled.onEditingChange?.(next)
+  }
   const [draft, setDraft] = useState(value)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const pressRef = useRef<{ timer: number; x: number; y: number } | null>(null)
@@ -69,6 +82,16 @@ export function InlineName({ value, onCommit, className, title }: Props) {
   }
 
   useEffect(() => cancelPress, [])
+
+  // Seeding for an edit the pencil opened: the gestures seed through
+  // startEditing, but a controlled open skips it, and an input that opens
+  // with a stale draft renames the session to whatever the last row edited
+  // was. The ref keeps a title change mid-edit from clobbering the draft.
+  const wasEditing = useRef(false)
+  useEffect(() => {
+    if (editing && !wasEditing.current) setDraft(value)
+    wasEditing.current = editing
+  }, [editing, value])
 
   useEffect(() => {
     if (editing && inputRef.current) {

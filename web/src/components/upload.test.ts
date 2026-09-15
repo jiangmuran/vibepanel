@@ -54,7 +54,7 @@ describe('uploading and saying so', () => {
     const notes: string[] = []
     const paths = await uploadFiles('proj', 'sub', [shot, doc], (n) => notes.push(n))
 
-    expect(api.upload).toHaveBeenCalledWith('proj', 'sub', [shot, doc])
+    expect(api.upload).toHaveBeenCalledWith('proj', 'sub', [shot, doc], undefined, undefined)
     expect(paths).toEqual(['/p/a.png', '/p/b.png'])
     // Both ends, in order: something is happening, and then what happened.
     expect(notes).toEqual(['Uploading 2 files…', '2 files uploaded'])

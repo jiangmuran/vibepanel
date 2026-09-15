@@ -101,6 +101,22 @@ func TestEveryStateAHookReportsIsARealState(t *testing.T) {
 			t.Errorf("the Codex snippet does not carry %s -> %s", event, state)
 		}
 	}
+
+	// Kimi Code and zcode: two more tables of bare literals, written into two
+	// more files the panel does not own, with the same silence if one drifts.
+	if len(kimiEvents) == 0 || len(zcodeEvents) == 0 {
+		t.Fatal("an agent table is empty, so this test is comparing nothing")
+	}
+	for _, e := range kimiEvents {
+		if !valid[e.state] {
+			t.Errorf("kimi's %s reports %q, not a state the server accepts", e.event, e.state)
+		}
+	}
+	for _, e := range zcodeEvents {
+		if !valid[e.state] {
+			t.Errorf("zcode's %s reports %q, not a state the server accepts", e.event, e.state)
+		}
+	}
 }
 
 // The other direction: a snippet entry the events map does not know.

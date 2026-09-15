@@ -180,7 +180,7 @@ function Reporting({ onOpenSettings }: StepProps) {
   }
   useEffect(load, [])
 
-  const install = (agent: 'claude' | 'codex' | 'opencode') => {
+  const install = (agent: 'claude' | 'codex' | 'opencode' | 'kimi' | 'zcode') => {
     setBusy(agent)
     api
       .installHooks(agent)
@@ -189,14 +189,20 @@ function Reporting({ onOpenSettings }: StepProps) {
       .finally(() => setBusy(''))
   }
 
-  const agents: { id: 'claude' | 'codex' | 'opencode'; name: string; on: boolean; note?: string }[] =
-    st
-      ? [
-          { id: 'claude', name: t('set.claudeCode'), on: st.installed },
-          { id: 'codex', name: t('set.codex'), on: st.codexInstalled, note: t('set.codexTrust') },
-          { id: 'opencode', name: t('set.opencode'), on: st.opencodeInstalled },
-        ]
-      : []
+  const agents: {
+    id: 'claude' | 'codex' | 'opencode' | 'kimi' | 'zcode'
+    name: string
+    on: boolean
+    note?: string
+  }[] = st
+    ? [
+        { id: 'claude', name: t('set.claudeCode'), on: st.installed },
+        { id: 'codex', name: t('set.codex'), on: st.codexInstalled, note: t('set.codexTrust') },
+        { id: 'kimi', name: t('set.kimiCode'), on: st.kimiInstalled },
+        { id: 'zcode', name: t('set.zcode'), on: st.zcodeInstalled },
+        { id: 'opencode', name: t('set.opencode'), on: st.opencodeInstalled },
+      ]
+    : []
 
   return (
     <>

@@ -239,6 +239,29 @@ knows (`task_started`, `task_complete`, `turn_aborted`, approval requests) --
 a Codex whose rollout format changed. macOS has no `/proc`, so there the hooks
 are the only precise source.
 
+## Kimi Code and zcode sessions never report their state
+
+Both are wired through Settings → State reporting like the other agents, each
+into its own file, and each fails separately:
+
+- Kimi Code: `[[hooks]]` blocks appended to `~/.kimi-code/config.toml`
+  (UserPromptSubmit/PreToolUse → working, PermissionRequest → waiting,
+  Stop/Interrupt → done). No trust step.
+- zcode: `hooks.events` merged into `~/.zcode/cli/config.json`. Its
+  `hooks.enabled` defaults to `false` and nothing runs until it is `true` --
+  the install flips it, and the uninstall flips it back only when no hooks of
+  anybody's remain.
+
+```sh
+grep -A2 '\[\[hooks\]\]' ~/.kimi-code/config.toml   # are the blocks there?
+grep -A6 '"hooks"' ~/.zcode/cli/config.json         # enabled, and whose events?
+```
+
+An agent reads its hooks when it starts, so sessions that were already running
+when the install happened stay on the heuristic until restarted — which, in a
+panel built for long-lived sessions, is all of them. That is the one sentence
+the settings page says out loud after every install.
+
 ## A session is named after its directory, and renaming it from inside does nothing
 
 The automatic name comes from the title the program in the pane set, and there
@@ -576,11 +599,13 @@ anything, so that a state which is only inferred is not read as a fact. If your
 agents run without hooks and the notice never appears, the panel has not
 recognised them as agents.
 
-It matches `#{pane_current_command}` against `claude` and `codex`, and that
-string is a fact about how the program was packaged rather than about this
-project. A native binary reports its own name. Anything shipped as a script
-with a `#!` line reports the interpreter, because that is what the kernel
-executed -- Claude Code installed through npm reports `node`.
+It matches `#{pane_current_command}` against `claude`, `codex`, `opencode`,
+`kimi` and `zcode`, and that string is a fact about how the program was
+packaged rather than about this project. A native binary reports its own name
+— `kimi` is one. Anything shipped as a script with a `#!` line reports the
+interpreter, because that is what the kernel executed -- Claude Code installed
+through npm reports `node`, and so do Codex and zcode, which is why the hooks
+rather than the process name are what those are recognised by.
 
 `doctor` prints what tmux actually reports, which is the whole diagnosis:
 

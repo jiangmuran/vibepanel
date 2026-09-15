@@ -596,7 +596,7 @@ export interface SettingsInfo {
 /** Which agent an install request is about. The server accepts these two and
  *  refuses anything else; it is not a free-text field because it chooses a file
  *  in the user's home directory to edit. */
-export type HookAgent = 'claude' | 'codex' | 'opencode'
+export type HookAgent = 'claude' | 'codex' | 'opencode' | 'kimi' | 'zcode'
 
 export interface HookStatus {
   settingsPath: string
@@ -625,6 +625,18 @@ export interface HookStatus {
   /** Codex sessions running now, and how many of them a hook has reported for. */
   codexSessions: number
   codexReporting: number
+  /** ~/.kimi-code/config.toml: whether every event has a [[hooks]] block of
+   *  this panel's in it, which ones, and what would be appended. */
+  kimiPath: string
+  kimiInstalled: boolean
+  kimiEvents: string[]
+  kimiSnippet: string
+  /** ~/.zcode/cli/config.json: whether every event has a group of this
+   *  panel's in it, which ones, and what would be merged. */
+  zcodePath: string
+  zcodeInstalled: boolean
+  zcodeEvents: string[]
+  zcodeSnippet: string
   /** The plugin file opencode auto-discovers. */
   opencodePath: string
   /** Whether the plugin in place is this build's, not merely that one exists. */
