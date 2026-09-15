@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jiangmuran/vibepanel/internal/store"
 )
 
 func visitorAction(t *testing.T, ts *httptest.Server, token, name, body string) (int, actionAnswer, http.Header) {
@@ -59,6 +61,9 @@ func TestAVisitorActionRunsOnlyWhenEveryConditionHolds(t *testing.T) {
 	for _, body := range []string{
 		`{"name":"ann","msg":"hi","extra":1}`,
 		`{"name":"ann","msg":"a\u202eb"}`,
+		// A line break is the owner's to write and not a visitor's: the
+		// stricter reading.
+		`{"name":"ann","msg":"a\nb"}`,
 		`{"name":"` + strings.Repeat("x", 11) + `","msg":"hi"}`,
 		`{"name":"ann","msg":"` + strings.Repeat("x", 5000) + `"}`,
 		`[1,2]`,
@@ -125,6 +130,14 @@ func TestViewAndPreviewLinksWriteWhereTheyShould(t *testing.T) {
 	_ = json.Unmarshal(body, &peek)
 	if code, _, _ := visitorAction(t, ts, peek.Token, "vote", ""); code != http.StatusForbidden {
 		t.Errorf("a vote through a View copy = %d", code)
+	}
+	// Refused by what it is, not by its switch: a View copy whose row says
+	// interactive still does not write.
+	if _, err := srv.DB.SQL().Exec(`UPDATE share_links SET interactive = 1 WHERE purpose = ?`, store.SharePurposePeek); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, _ := visitorAction(t, ts, peek.Token, "vote", ""); code != http.StatusForbidden {
+		t.Errorf("a vote through an interactive View copy = %d", code)
 	}
 
 	prev := postJSON[map[string]any](t, ts, "/api/settings/pages/"+p.page.ID+"/preview", `{"detail":"counts"}`)

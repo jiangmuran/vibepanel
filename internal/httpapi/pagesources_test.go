@@ -52,8 +52,9 @@ func TestTheRealFetcherRefusesLoopbackBeforeConnecting(t *testing.T) {
 	f := &sourceFetcher{resolve: func(context.Context, string) ([]netip.Addr, error) {
 		return []netip.Addr{netip.MustParseAddr("8.8.8.8"), netip.MustParseAddr("127.0.0.1")}, nil
 	}}
-	if res := f.fetch(context.Background(), pages.SourceSpec{Key: "s", URL: "https://mixed.example/x", Every: "1m"}, nil); res.OK {
-		t.Error("a name resolving to a private address beside a public one was fetched")
+	if res := f.fetch(context.Background(), pages.SourceSpec{Key: "s", URL: "https://mixed.example/x", Every: "1m"}, nil); res.OK ||
+		!strings.Contains(res.Error, "may not reach") {
+		t.Errorf("a name resolving to a private address beside a public one = %+v, want refused before dialling", res)
 	}
 	if n := hits.Load(); n != 0 {
 		t.Errorf("the loopback server was asked %d times", n)

@@ -31,6 +31,7 @@ const serverManifest = `{"sdk":1,"name":"Counter","sections":["sessions"],
 		"huge":{"who":"visitor","effect":"server"},
 		"reach":{"who":"visitor","effect":"server"},
 		"again":{"who":"visitor","effect":"server"},
+		"echo":{"who":"visitor","effect":"server","input":{"msg":{"type":"text","max":20}}},
 		"reset":{"who":"admin","effect":"server"}
 	}}`
 
@@ -72,6 +73,8 @@ function onVisitorAction(name, payload, ctx) {
     return 'x'.repeat(70000)
   case 'reach':
     return [typeof require, typeof fetch, typeof setTimeout, typeof process, typeof XMLHttpRequest, typeof module].join(',')
+  case 'echo':
+    return payload.msg
   case 'again':
     calls++
     return calls
@@ -130,6 +133,15 @@ func TestServerJSWritesOnlyWhatItsActionAllowsAndOnlyOnSuccess(t *testing.T) {
 	}
 	if v := pageValues(t, ts, dataURL); v["votes"] != float64(1) || v["notes"] != "" {
 		t.Errorf("after the refused calls: %v", v)
+	}
+
+	// What server.js is handed was checked as a visitor's text first: no data
+	// write stands behind it to catch a line break later.
+	if code, out, _ := visitorAction(t, ts, kiosk.Token, "echo", `{"msg":"a\nb"}`); code != http.StatusBadRequest {
+		t.Errorf("echo with a line break = %d %+v", code, out)
+	}
+	if _, out, _ := visitorAction(t, ts, kiosk.Token, "echo", `{"msg":"hi"}`); out.Result != "hi" {
+		t.Errorf("echo = %+v", out)
 	}
 
 	// Nothing to reach, and nothing kept between calls.

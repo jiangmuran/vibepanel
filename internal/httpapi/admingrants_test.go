@@ -75,6 +75,14 @@ func TestAnAdminPageNeedsTheLoginAndRunsWithoutIt(t *testing.T) {
 	if res, _ := anonGET(t, ts, "/page-admin/"+grant+"/server.js"); res.StatusCode != http.StatusNotFound {
 		t.Errorf("server.js through a grant = %d, want 404", res.StatusCode)
 	}
+	// A share link is refused both: the owner's code and the admin page are
+	// published with the page, and neither is a screen's to read.
+	link := pageLink(t, ts, p.page.ID, "")
+	for _, rel := range []string{"server.js", "admin/index.html"} {
+		if res, _ := anonGET(t, ts, "/share/"+link.Token+"/"+rel); res.StatusCode != http.StatusNotFound {
+			t.Errorf("%s through a share link = %d, want 404", rel, res.StatusCode)
+		}
+	}
 	if res, _ := anonGET(t, ts, "/page-admin/"+grant+"/vibepanel.js"); res.StatusCode != http.StatusOK {
 		t.Errorf("the SDK through a grant = %d", res.StatusCode)
 	}
@@ -105,7 +113,7 @@ func TestAnAdminPageNeedsTheLoginAndRunsWithoutIt(t *testing.T) {
 	if !strings.Contains(string(raw), `"name":"wall"`) || strings.Contains(string(raw), "token") || strings.Contains(string(raw), "/share/") {
 		t.Errorf("links through a grant = %s", raw)
 	}
-	link := pageLink(t, ts, p.page.ID, "")
+	link = pageLink(t, ts, p.page.ID, "")
 	if _, snap, _ := snapshotGET(t, ts, link.Token); snap.Data["announcement"] != "from admin" {
 		t.Errorf("an admin action did not reach a screen: %v", snap.Data)
 	}
