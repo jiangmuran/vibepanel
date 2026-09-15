@@ -21,6 +21,7 @@ Docs: [share pages](https://github.com/jiangmuran/vibepanel/blob/main/docs/share
 | `vibepanel.js` | the SDK. The panel serves its own copy; this one is for reading |
 | `vibepanel.d.ts` | every field of a snapshot, with what it means |
 | `fixtures/*.json` | made-up snapshots: `busy`, `empty`, `counts`, `hostile`, `stale`, `revoked` |
+| `ARCHITECTURE.md` | data, admin pages, sources, `server.js` and actions: how they work and what stops each |
 
 If the page was made from a template, the template is a starting point, not a
 style guide. Replace it wholesale if the owner wants something else.
@@ -31,7 +32,8 @@ These are enforced by the sandbox the page runs in, or by the panel when it is
 published. Working against them does not work.
 
 - **Data comes only from the SDK.** The page cannot reach any other address:
-  no CDN fonts, no APIs, no remote images. Put every file it needs in this
+  no CDN fonts, no APIs, no remote images (for an API, declare a source and
+  the panel fetches it; see below). Put every file it needs in this
   directory and load it by relative path. Scripts from `cdnjs.cloudflare.com`
   and `cdn.jsdelivr.net` are allowed when listed in `scriptHosts` in
   `vibepanel.json`.
@@ -89,6 +91,51 @@ Settings the owner can change per screen without touching code are declared in
 ```
 
 They arrive as `snapshot.params` and through `vp.on('params', …)`.
+
+## Optional: data, an admin page, sources, server.js, actions
+
+A page can do more than read the snapshot, when the owner wants it to.
+**`ARCHITECTURE.md` in this directory is the whole design** — read it before
+adding any of these (`vibepanel page docs` prints the same file). Each is
+declared in `vibepanel.json` and is off until declared:
+
+| declare | what it gives the page |
+|---|---|
+| `data` | its own small store, in `snapshot.data` and `vp.on('data', …)` |
+| `admin` + `admin/index.html` | a page the owner opens behind the panel login, with `vp.admin` |
+| `sources` | JSON the panel fetches from an https API, in `snapshot.sources` |
+| `server` + `server.js` | code run inside the panel: `transform`, `onSchedule`, `onAdminAction`, `onVisitorAction` |
+| `actions` | buttons that write: `vp.action('vote')` |
+
+The `kiosk` template uses data, an admin page and visitor actions together.
+
+The hard limits, all enforced rather than advised:
+
+- **Visitors write only through declared actions**, only on a link the owner
+  made interactive, only to this page's data, rate limited, with input checked
+  against the action's `input`. You cannot switch a link to interactive; the
+  owner does, in Settings → Sharing.
+- **Data**: at most 64 keys and 256 KiB for the whole page. `admin`-visibility
+  keys never reach a screen. The Preview and `vibepanel page run` use `draft`
+  data; screens use `live`.
+- **Sources** reach only hosts the owner approved, over https, to public
+  addresses, with no redirects. Secrets are `${secret:NAME}` in a header and
+  are set by the owner; you never see or write their values.
+- **`server.js`** has no `require`, modules, network, files or timers, and no
+  state between calls. Budgets: transform 50 ms, schedule and admin actions
+  500 ms, visitor actions 200 ms; results at most 64 KiB. A call that fails
+  writes nothing. Its log is `.vibepanel/server.log`.
+- **An admin page is not a way into the panel.** It runs sandboxed like any
+  page; `vp.admin` reaches this page's admin API and nothing else.
+- Text a visitor wrote is somebody else's text: `vp.text`, never `innerHTML`.
+  The `hostile` fixture fills public data with it.
+
+```sh
+vibepanel page data get                         # draft data; --live for the screens'
+vibepanel page data set announcement "Lunch at 12"
+vibepanel page run action vote                  # server.js against draft data
+vibepanel page run transform --fixture busy
+```
 
 ## Checking your work
 

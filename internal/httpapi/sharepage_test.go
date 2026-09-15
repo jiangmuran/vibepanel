@@ -662,7 +662,7 @@ func TestAFixtureIsShapedToThePage(t *testing.T) {
 		t.Fatal(err)
 	}
 	var f pageFixture
-	if err := json.Unmarshal(shapeFixture(fx["busy"], m, nil), &f); err != nil {
+	if err := json.Unmarshal(shapeFixture(fx["busy"], m, nil, false), &f); err != nil {
 		t.Fatal(err)
 	}
 	s := f.Snapshot

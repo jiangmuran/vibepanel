@@ -270,7 +270,7 @@ func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(rel, "fixtures/") && strings.HasSuffix(rel, ".json") {
 		// Shaped to what this page would really receive, with this link's
 		// parameters. See shapeFixture.
-		data = shapeFixture(data, manifest, link.Params)
+		data = shapeFixture(data, manifest, link.Params, rel == "fixtures/hostile.json")
 	}
 	h.Set("Content-Type", ct)
 	h.Set("Content-Length", strconv.Itoa(len(data)))

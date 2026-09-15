@@ -109,7 +109,7 @@ var rules = []rule{
 	{code: "form", severity: SeverityWarning,
 		pattern: regexp.MustCompile(`(?i)<form\b`),
 		message: "a form in a page cannot submit anywhere",
-		fix:     "a page is read-only; use vp.storage for local toggles",
+		fix:     "use vp.storage for local toggles; to send what a visitor typed, read the inputs and call vp.action",
 		types:   []string{"text/html"}},
 }
 

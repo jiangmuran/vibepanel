@@ -88,6 +88,62 @@ func namesHostile(kind string, i int) string {
 	return hostile[(i+len(kind))%len(hostile)]
 }
 
+// hostileData is what a visitor could really have written into a key: markup,
+// template syntax, a paragraph of CJK with no spaces, emoji. Only what would
+// pass the visitor's checks -- a bidi override or a line break never reaches
+// stored data, so a fixture carrying one would test a page against something
+// that cannot happen. Every key a visitor action writes is text somebody at a
+// kiosk chose, and this is the fixture that says whether the page draws it as
+// text.
+func hostileData(spec *pages.DataSpec, i int) any {
+	texts := []string{
+		`<img src=x onerror="document.body.style.background='red'">`,
+		`</li></ul><h1 style="font-size:200px">INJECTED</h1>`,
+		strings.Repeat("非常长的留言用来测试溢出和截断", 12),
+		`{{constructor.constructor('return 1')()}}`,
+		`"; background: url(https://example.com/x); "`,
+		"👩‍💻🧪🔥",
+	}
+	var v any
+	switch spec.Type {
+	case pages.DataText:
+		r := []rune(texts[i%len(texts)])
+		if spec.Max != nil && len(r) > int(*spec.Max) {
+			r = r[:int(*spec.Max)]
+		}
+		v = string(r)
+	case pages.DataList:
+		items := []any{}
+		for j := 0; j < 3 && (spec.Max == nil || j < int(*spec.Max)); j++ {
+			items = append(items, hostileData(spec.Item, i+j))
+		}
+		v = items
+	case pages.DataObject:
+		obj := map[string]any{}
+		j := 0
+		for name, f := range spec.Fields {
+			obj[name] = hostileData(f, i+j)
+			j++
+		}
+		v = obj
+	case pages.DataLog:
+		entries := []any{}
+		item := &pages.DataSpec{Type: pages.DataObject, Fields: pages.ItemFields(spec.Item)}
+		for j := 0; j < 3 && j < spec.LogLimit(); j++ {
+			fields, _ := hostileData(item, i+j).(map[string]any)
+			entries = append(entries, pages.NewLogEntry(fields, fixtureAt-int64(60*(3-j))))
+		}
+		v = entries
+	default:
+		return spec.Zero()
+	}
+	clean, err := spec.Check(v, true)
+	if err != nil {
+		return spec.Zero()
+	}
+	return clean
+}
+
 func fixtureBusy(name func(kind string, i int) string) *shareSnapshot {
 	s := fixtureBase("names")
 	s.Name = "Engineering wall"
@@ -313,7 +369,7 @@ func fixtureSpend(readable bool) *shareSpend {
 // because the manifest changes after the scaffold and a fixture carrying every
 // section would let a page that forgot to ask for one pass every test.
 // A file that is not a fixture this build wrote is served as it is.
-func shapeFixture(raw []byte, m pages.Manifest, params map[string]any) []byte {
+func shapeFixture(raw []byte, m pages.Manifest, params map[string]any, hostile bool) []byte {
 	var f pageFixture
 	if err := json.Unmarshal(raw, &f); err != nil || f.Snapshot == nil {
 		return raw
@@ -387,6 +443,9 @@ func shapeFixture(raw []byte, m pages.Manifest, params map[string]any) []byte {
 	for key, spec := range m.Data {
 		if _, ok := s.Data[key]; !ok && spec.Visibility != pages.VisibilityAdmin {
 			s.Data[key] = spec.Zero()
+			if hostile {
+				s.Data[key] = hostileData(spec, len(key))
+			}
 		}
 	}
 	s.Interactive = len(m.Actions) > 0

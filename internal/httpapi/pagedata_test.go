@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/jiangmuran/vibepanel/internal/pages"
 )
 
 // A kiosk page: data of every kind a visitor or an admin writes, an admin
@@ -158,6 +160,39 @@ func TestAPageDataCapHoldsAcrossKeys(t *testing.T) {
 	}
 	if code, body := dataOp(t, ts, base+"e", http.MethodPut, big); code != http.StatusBadRequest {
 		t.Errorf("a write past 256 KiB = %d %v, want 400", code, body)
+	}
+}
+
+// The hostile fixture fills a page's public data with what a visitor could
+// write, and only that: markup and long text, never a character the checks
+// refuse, never an admin key.
+func TestTheHostileFixtureCarriesVisitorText(t *testing.T) {
+	m, err := pages.ParseManifest([]byte(kioskManifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f pageFixture
+	if err := json.Unmarshal(shapeFixture(PageFixtures()["hostile"], m, nil, true), &f); err != nil {
+		t.Fatal(err)
+	}
+	d := f.Snapshot.Data
+	raw, _ := json.Marshal(d)
+	if !strings.Contains(string(raw), "onerror") || len(d["guestbook"].([]any)) != 2 || len(d["goals"].([]any)) != 3 {
+		t.Errorf("hostile data = %s", raw)
+	}
+	if _, ok := d["notes"]; ok {
+		t.Error("the hostile fixture carries an admin key")
+	}
+	for key, v := range d {
+		if _, err := m.Data[key].Check(v, true); err != nil {
+			t.Errorf("%s = %v, which a visitor could not have written: %v", key, v, err)
+		}
+	}
+	if err := json.Unmarshal(shapeFixture(PageFixtures()["busy"], m, nil, false), &f); err != nil {
+		t.Fatal(err)
+	}
+	if f.Snapshot.Data["announcement"] != "hello" {
+		t.Errorf("busy data = %v, want the defaults", f.Snapshot.Data)
 	}
 }
 

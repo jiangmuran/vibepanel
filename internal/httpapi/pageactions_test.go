@@ -184,6 +184,41 @@ func TestTheRateBookForgetsNothingUnderAFlood(t *testing.T) {
 	_ = context.Background()
 }
 
+// The kiosk template, made the way the New page gallery makes it: its
+// actions run on an interactive link, its admin page opens behind the login,
+// and its admin data stays off the screen.
+func TestTheKioskTemplateWorksAsMade(t *testing.T) {
+	ts, _ := newTestServer(t)
+	dir := filepath.Join(t.TempDir(), "kiosk")
+	body, _ := json.Marshal(map[string]string{"name": "Front desk", "template": "kiosk", "sourceDir": dir})
+	page := postJSON[struct{ ID string }](t, ts, "/api/settings/pages", string(body))
+	postJSON[map[string]int](t, ts, "/api/settings/pages/"+page.ID+"/publish", `{"note":"first"}`)
+	link := pageLink(t, ts, page.ID, `,"interactive":true`)
+
+	if code, out, _ := visitorAction(t, ts, link.Token, "vote", ""); code != http.StatusOK || out.Result != float64(1) {
+		t.Errorf("vote = %d %+v", code, out)
+	}
+	if code, out, _ := visitorAction(t, ts, link.Token, "sign", `{"name":"ann","msg":"<b>hi</b>"}`); code != http.StatusOK {
+		t.Errorf("sign = %d %+v", code, out)
+	}
+	grant := openAdmin(t, ts, page.ID, "")
+	if code, _ := adminCall(t, ts, http.MethodPut, grant, "/data/notes", `{"value":"wifi password is on the desk"}`); code != http.StatusOK {
+		t.Errorf("an admin note = %d", code)
+	}
+	_, snap, _ := snapshotGET(t, ts, link.Token)
+	book, _ := snap.Data["guestbook"].([]any)
+	if snap.Data["votes"] != float64(1) || len(book) != 1 || !snap.Actions["sign"].Enabled {
+		t.Errorf("the kiosk's snapshot: %v, actions %v", snap.Data, snap.Actions)
+	}
+	if _, ok := snap.Data["notes"]; ok {
+		t.Error("the kiosk's admin notes reached a screen")
+	}
+	res, raw := anonGET(t, ts, "/page-admin/"+grant+"/admin/index.html")
+	if res.StatusCode != http.StatusOK || !strings.Contains(string(raw), "vp.admin.set") {
+		t.Errorf("the kiosk admin page = %d", res.StatusCode)
+	}
+}
+
 func writeTestFile(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
