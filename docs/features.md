@@ -64,9 +64,22 @@ entries vibepanel added. The hook is a `/bin/sh` script that calls `curl`;
 without curl the panel falls back to the heuristic.
 
 Claude Code exposes four events and reports *working*, *waiting* and *done*.
-Codex has a single `notify` command, so a Codex session reports *waiting* and
-the heuristic covers the rest. opencode takes a standalone plugin rather than a
-merge into its configuration.
+Codex gets the same three through its own hooks, in `~/.codex/hooks.json`
+(under `$CODEX_HOME` if that is set): a turn starting or a tool running is
+*working*, an approval prompt is *waiting*, a turn ending or being interrupted is
+*done*. **Codex runs hooks only once you trust them: after installing, run
+`/hooks` in Codex once.** The settings row says whether Codex has recorded that,
+and how many running Codex sessions have actually reported. An older install
+that used Codex's `notify` line is switched over the next time you press
+install.
+
+A Codex session with no hook reporting -- hooks not installed or not yet
+trusted, or a Codex too old for them -- is not left to the guess on Linux: the
+panel reads the session's own rollout file, which it finds through the files
+the pane's `codex` process has open, and takes the turn's start, end and
+approval requests from it.
+
+opencode takes a standalone plugin rather than a merge into its configuration.
 
 Any other agent can report by posting to `/api/hook/state` itself; the shape is
 in [docs/api.md](api.md).

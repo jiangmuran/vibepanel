@@ -780,14 +780,23 @@ const DICT = {
   // "installed" is a claim about a file, not about behaviour: the panel has
   // read a config, it has not heard from an agent.
   'set.installedEvents': { zh: '已安装，{n} 个事件', en: 'installed for {n} events' },
-  'set.installedNotify': { zh: '已安装（notify）', en: 'installed as notify' },
+  'set.installedCodexHooks': { zh: '已安装，{n} 个事件', en: 'installed for {n} events' },
+  'set.codexLegacyNotify': {
+    zh: '还是旧的 notify，只能报「等你处理」。再装一次换成 hooks。',
+    en: 'Still the old notify line, which reports waiting only. Install again to switch to hooks.',
+  },
   'set.install': { zh: '安装', en: 'Install' },
-  // Codex has one notify slot for one event, so a Codex session can report
-  // "waiting" and nothing else. Saying so on the page is cheaper than the
-  // runbook section that exists because nobody knew.
-  'set.codexOneEvent': {
-    zh: 'Codex 仅有一个 notify，只能上报「等你处理」',
-    en: 'Codex has a single notify command, so it reports waiting only.',
+  // Codex runs a user hook only after `/hooks` in Codex has trusted it, which
+  // the panel must not do for the user. So the page says the one step left,
+  // and then whether anything has actually reported.
+  'set.codexTrust': {
+    zh: '在 Codex 里执行一次 /hooks，信任这些 hooks 后才会生效。',
+    en: 'Run /hooks in Codex once and trust them; Codex runs none until then.',
+  },
+  'set.codexTrusted': { zh: 'Codex 已记录信任', en: 'Codex has recorded trusting them' },
+  'set.codexReports': {
+    zh: '{n} 个 Codex 会话里有 {m} 个上报过状态',
+    en: '{m} of {n} running Codex sessions have reported',
   },
   'set.showWrites': { zh: '查看写入内容', en: 'Show what it writes' },
   'set.remove': { zh: '移除', en: 'Remove' },

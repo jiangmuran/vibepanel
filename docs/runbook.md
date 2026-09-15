@@ -199,29 +199,45 @@ vibepanel doctor                        # which one this config uses
 Claude and Codex are configured by different mechanisms and fail separately, so
 check which one is quiet before assuming the panel is at fault.
 
-Codex is wired through `notify` in `~/.codex/config.toml`, which is one command
-for one event, so a Codex session can only ever report `waiting`, never
-`working` or `done`. A Codex session that shows a guessed state most of the
-time is behaving as designed, not misconfigured.
+Codex reports through its own hooks in `~/.codex/hooks.json` (or
+`$CODEX_HOME/hooks.json`). Settings → State reporting says three things about
+it, in the order they go wrong:
 
-Settings → state reporting has a button for it, the same as Claude's. If the
-line is missing after pressing it, check *where* it landed: it belongs above the
-first `[table]` in the file, and a `notify` under `[notice]` or
-`[tui.model_availability_nux]` is a different key that Codex never reads. That
-is the one failure the installer is written to avoid and the one to look for if
-a hand-edited file goes quiet.
+1. **Installed** -- every event has the panel's hook. If it says the old
+   `notify` line is still there, press install again: that line reports
+   `waiting` and nothing else.
+2. **Trusted** -- Codex runs a hook from a user's `hooks.json` only after `/hooks`
+   in Codex has trusted it. The panel reads whether Codex recorded a decision
+   (`[hooks.state."…"]` tables with a `trusted_hash` in `config.toml`) and never
+   writes one. Until then Codex ignores the hooks silently.
+3. **Reporting** -- "m of n running Codex sessions have reported". This is the
+   one that settles it: a hook trusted and then changed (a moved data
+   directory changes the command) reads as trusted in the file and as
+   *modified* in Codex, which does not run it.
 
 ```sh
-codex doctor | grep -A2 'config.toml'   # does Codex still accept the setting?
-grep notify ~/.codex/config.toml        # is it still there?
+grep -c vibepanel-report ~/.codex/hooks.json       # installed?
+grep -A1 'hooks.state' ~/.codex/config.toml        # any trust decisions?
 ```
 
-`notify` lives in `hooks/src/legacy_notify.rs` inside codex-cli 0.147, which
-also ships a full hooks system. If a future version drops `notify`, Codex
-sessions go quiet with no error anywhere: the reporter script suppresses its
-own failures on purpose, because a hook that makes an agent wait is worse than
-a missed state update. `codex doctor` reporting a parse error or a deprecation
-on that line is the signal.
+In Codex, `/hooks` lists each hook with its trust status; trust the
+`vibepanel-report.sh` ones. Sessions already running pick hooks up when Codex
+reloads them there.
+
+**Without hooks, on Linux**, a Codex session's state comes from its rollout file
+once no hook has reported for ten minutes. The panel finds it through
+`/proc/<pid>/fd` of the `codex` process under the pane, so it needs the panel
+and Codex to run as the same user. To see what it would find:
+
+```sh
+tmux -L vibepanel list-panes -a -F '#{pane_pid} #{pane_current_command}' | grep codex
+ls -l /proc/<pid>/fd | grep rollout
+```
+
+If a session is still guessed, the rollout carries no turn events the panel
+knows (`task_started`, `task_complete`, `turn_aborted`, approval requests) --
+a Codex whose rollout format changed. macOS has no `/proc`, so there the hooks
+are the only precise source.
 
 ## A session is named after its directory, and renaming it from inside does nothing
 

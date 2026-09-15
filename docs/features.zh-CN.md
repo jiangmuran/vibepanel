@@ -52,8 +52,17 @@ agent 自己的配置，写之前先把内容原样显示出来，并备份被�
 vibepanel 自己加的那几条。hook 是一个 `/bin/sh` 脚本，里面调 `curl`；没有 curl 就退回去用
 输出流判断。
 
-Claude Code 有四个事件，能报 *working*、*waiting* 和 *done*。Codex 只有一个 `notify`，
-所以只报 *waiting*，其余靠判断。opencode 装的是一个独立插件，不动它自己的配置文件。
+Claude Code 有四个事件，能报 *working*、*waiting* 和 *done*。Codex 用它自己的 hooks
+（`~/.codex/hooks.json`，设了 `$CODEX_HOME` 就在那下面）也能报这三种：开始一轮、跑工具是
+*working*，弹出审批是 *waiting*，一轮结束或被打断是 *done*。**Codex 只运行你信任过的
+hooks：装好之后在 Codex 里执行一次 `/hooks`。** 设置里那一行会写 Codex 有没有记下这个信任，
+以及正在跑的 Codex 会话里有几个真的上报过。以前用 `notify` 装的，再点一次安装就换过来。
+
+没有 hook 上报的 Codex 会话——没装、还没信任、或者 Codex 版本太老——在 Linux 上也不靠猜：
+面板顺着这个面板里 `codex` 进程打开的文件找到它自己的 rollout 记录，从里面读一轮的开始、
+结束和审批请求。
+
+opencode 装的是一个独立插件，不动它自己的配置文件。
 
 别的 agent 也可以自己 POST 到 `/api/hook/state`，格式见 [docs/api.md](api.md)（英文）。
 

@@ -37,6 +37,12 @@ const (
 	// the first for sampling reasons silently widened the second, which is how
 	// a session that had resumed work went on showing a triangle.
 	bellGrace = 2 * time.Second
+
+	// notifyGrace — how long after a legacy Codex notify the screen may keep
+	// moving without that meaning the next turn has started. notify fires as
+	// the turn ends, and the last lines of the answer land on the screen in the
+	// same moment.
+	notifyGrace = 3 * time.Second
 )
 
 // Observation is what the detector has been told about one session.
@@ -70,6 +76,20 @@ type tracker struct {
 
 	hookState State
 	hookAt    time.Time
+	// hookLegacy marks a report from Codex's old `notify` line. That line fires
+	// once, when a turn ends, so it can say "waiting" and nothing else: no
+	// later report will ever replace it. See Evaluate.
+	hookLegacy bool
+
+	// lastInput is when somebody last sent a line to the session: a keystroke
+	// with Enter in it, from any viewer.
+	lastInput time.Time
+
+	// logState is what the agent's own session log says it is doing, for an
+	// agent with no hook installed (Codex's rollout file; see internal/codexlog).
+	// logAt is when the log recorded it.
+	logState State
+	logAt    time.Time
 
 	manualState State
 	manualAt    time.Time
@@ -111,13 +131,79 @@ func (d *Detector) Report(id string, st State, now time.Time) {
 	if !st.Valid() {
 		return
 	}
+	d.report(id, st, now, false)
+}
+
+// ReportNotify records a report from Codex's legacy `notify` line.
+//
+// Separate from Report because the one thing the two disagree on is whether a
+// later report is coming. A hook system reports every transition, so its last
+// report stands until the next one. `notify` reports the end of a turn and
+// nothing else, so a Codex session that said "waiting" and then went back to
+// work would say "waiting" for the rest of its life -- which is what every
+// Codex session did before the panel installed Codex's real hooks.
+func (d *Detector) ReportNotify(id string, st State, now time.Time) {
+	if !st.Valid() {
+		return
+	}
+	d.report(id, st, now, true)
+}
+
+func (d *Detector) report(id string, st State, now time.Time, legacy bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	t := d.get(id)
-	t.hookState, t.hookAt = st, now
+	t.hookState, t.hookAt, t.hookLegacy = st, now, legacy
 	// A hook report is fresh evidence, so an older manual override no longer
 	// describes the situation.
 	t.manualState, t.manualAt = "", time.Time{}
+}
+
+// MarkNotify flags a restored hook state as one from the legacy notify line, so
+// it can be released as ReportNotify's are. The flag is not persisted; the
+// caller decides from what it knows about the session after a restart.
+func (d *Detector) MarkNotify(id string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if t, ok := d.track[id]; ok && t.hookState != "" {
+		t.hookLegacy = true
+	}
+}
+
+// Input records that somebody sent a line to the session.
+func (d *Detector) Input(id string, now time.Time) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.get(id).lastInput = now
+}
+
+// ReportLog records what an agent's own session log says, at the time the log
+// says it. Called by the poller only for sessions with no recent hook report.
+//
+// A manual override is dropped only by a log entry newer than it: the poller
+// hands the same latest entry over on every tick, and a click must not be
+// undone two seconds later by the event it was a reaction to.
+func (d *Detector) ReportLog(id string, st State, at time.Time) {
+	if !st.Valid() || at.IsZero() {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	t := d.get(id)
+	t.logState, t.logAt = st, at
+	if at.After(t.manualAt) && !t.manualAt.IsZero() {
+		t.manualState, t.manualAt = "", time.Time{}
+	}
+}
+
+// LastHook is when a hook last reported for the session, zero if never.
+func (d *Detector) LastHook(id string) time.Time {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if t, ok := d.track[id]; ok {
+		return t.hookAt
+	}
+	return time.Time{}
 }
 
 // SetManual records a state the user chose by clicking the indicator.
@@ -327,7 +413,24 @@ func (d *Detector) Evaluate(id string, obs Observation, now time.Time) (State, S
 	// the agent no longer being there: if the foreground process is back to a
 	// plain shell then whatever it last said about itself is over, and the
 	// fall-through below is the honest answer.
-	if t.hookState != "" && !obs.ShellOnly {
+	//
+	// The exception is the legacy Codex `notify` line, and it is an exception
+	// because the argument above does not hold for it: it reports the end of a
+	// turn and never the start of the next, so "the report is superseded by
+	// the next report" is a report that is never superseded. Its "waiting" is
+	// released by the two things that mean the turn is over -- the screen
+	// moving forward, or somebody sending the session a line -- and what is
+	// left is the fall-through below.
+	releasedNotify := t.hookLegacy && (t.lastAdvance.After(t.hookAt.Add(notifyGrace)) || t.lastInput.After(t.hookAt))
+
+	// The agent's own log, for an agent with no hooks. Newer than any hook
+	// report, it is the more recent statement of the two; the poller only
+	// feeds it while no hook has reported for a while.
+	if t.logState != "" && !obs.ShellOnly && (t.hookState == "" || releasedNotify || t.logAt.After(t.hookAt)) {
+		return t.logState, SourceHook
+	}
+
+	if t.hookState != "" && !obs.ShellOnly && !releasedNotify {
 		return t.hookState, SourceHook
 	}
 

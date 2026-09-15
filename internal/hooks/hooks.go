@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // ReportScript is the shell script installed into the data directory.
@@ -104,45 +103,6 @@ func ClaudeSettings(script string) string {
 		entry("UserPromptSubmit", "working"),
 		entry("PreToolUse", "working"),
 	)
-}
-
-// CodexNotify renders the notify setting for ~/.codex/config.toml.
-//
-// `notify` is a single command rather than a set of per-event hooks, so a
-// Codex session can only ever report "waiting" through it. The second element
-// is that literal state; Codex appends its own JSON argument after it, which
-// report.sh ignores.
-//
-// This comment used to explain that as a limitation of Codex — "Codex has a
-// single notify command rather than per-event hooks". That is no longer true
-// and possibly never was. codex-cli 0.147 ships a hooks system: the binary
-// carries `hooks/src/legacy_notify.rs`, a `Stop` event, `bypass_hook_trust`
-// and a `--dangerously-bypass-hook-trust` flag. `notify` living in a file
-// called *legacy* is the whole story.
-//
-// So `working` and `done` are reachable for Codex too, and the panel does not
-// ask for them. Not changed here because the hooks schema is only known from
-// strings in a binary, and confirming it needs a real Codex session. What is
-// confirmed is that this setting still works: `codex doctor` on 0.147 with
-// exactly this line reports `config.toml parse ok` and no deprecation.
-//
-// The reason to write it down is that the old comment told the next reader
-// Codex could not do better, which is the kind of sentence that stops someone
-// looking.
-func CodexNotify(script string) string {
-	return fmt.Sprintf(`notify = [%s, "waiting"]`, tomlString(script))
-}
-
-// tomlString quotes a value for a TOML basic string.
-//
-// The script path is built from the data directory, which is a flag: it can
-// contain a backslash or a quote, and either one written raw produces a
-// config.toml that does not parse. Codex refuses to start on that, so the
-// panel would have broken the agent it was trying to wire up -- and this
-// string is not only shown, it is what InstallCodex writes.
-func tomlString(s string) string {
-	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
-	return `"` + r.Replace(s) + `"`
 }
 
 // SessionEnv is what a session needs in its environment for its agent's hooks

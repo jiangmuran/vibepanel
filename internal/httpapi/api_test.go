@@ -137,6 +137,7 @@ func newUnconfiguredServer(t *testing.T) (*httptest.Server, *Server) {
 		},
 	}
 	mgr.OnSignals = srv.HandleSignals
+	mgr.OnInput = srv.HandleInput
 	ts := httptest.NewServer(srv.Routes())
 	t.Cleanup(ts.Close)
 	return ts, srv
@@ -794,6 +795,11 @@ func TestHookRejectsGarbage(t *testing.T) {
 		{"unknown state", `{"sessionId":"` + sess.ID + `","state":"banana"}`, http.StatusBadRequest},
 		{"unknown session", `{"sessionId":"nope","state":"done"}`, http.StatusNotFound},
 		{"empty body", `{}`, http.StatusBadRequest},
+		// The source decides whether a report can ever be released, so an
+		// unknown one is refused rather than read as the kind that never is.
+		{"unknown source", `{"sessionId":"` + sess.ID + `","state":"done","source":"claude-code"}`, http.StatusBadRequest},
+		{"codex hooks", `{"sessionId":"` + sess.ID + `","state":"done","source":"codex"}`, http.StatusNoContent},
+		{"codex notify", `{"sessionId":"` + sess.ID + `","state":"waiting","source":"codex-notify"}`, http.StatusNoContent},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

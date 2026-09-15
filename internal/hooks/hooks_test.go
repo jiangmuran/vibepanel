@@ -105,9 +105,9 @@ func TestInstallIsIdempotentAndExecutable(t *testing.T) {
 	}
 }
 
-func TestCodexNotifyMentionsTheScript(t *testing.T) {
-	out := CodexNotify("/tmp/vibepanel-report.sh")
-	if !strings.Contains(out, "/tmp/vibepanel-report.sh") || !strings.Contains(out, "notify") {
+func TestCodexHooksMentionTheScript(t *testing.T) {
+	out := CodexHooks("/tmp/vibepanel-report.sh")
+	if !strings.Contains(out, "/tmp/vibepanel-report.sh") || !strings.Contains(out, `"PermissionRequest"`) {
 		t.Errorf("unexpected codex snippet: %q", out)
 	}
 }
@@ -118,6 +118,10 @@ func withFakeHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	// Codex reads $CODEX_HOME before ~/.codex, and so does this package: a
+	// developer who has it set would otherwise have their real hooks.json
+	// edited by the tests.
+	t.Setenv("CODEX_HOME", "")
 	return home
 }
 

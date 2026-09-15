@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -79,6 +80,9 @@ func (s *Subscriber) Dropped() bool { return s.dropped.Load() }
 type Live struct {
 	ID       string
 	TmuxName string
+
+	// onInput is Manager.OnInput, captured when the attachment was made.
+	onInput func(sessionID string)
 
 	mu   sync.RWMutex
 	ptmx *os.File
@@ -286,6 +290,12 @@ type Manager struct {
 	// produced something worth acting on. It must not block.
 	OnSignals func(Signals)
 
+	// OnInput, if set, is called when a viewer sends a session a line -- input
+	// with a carriage return or a line feed in it. Called on the viewer's
+	// goroutine; it must not block. The detector uses it to tell that a turn
+	// an agent announced the end of has been followed by another.
+	OnInput func(sessionID string)
+
 	// Log, if set, receives non-fatal problems.
 	Log *slog.Logger
 
@@ -453,6 +463,7 @@ func (m *Manager) Attach(ctx context.Context, sessionID, tmuxName string, cols, 
 		pumped:         make(chan struct{}),
 		reconfiguredAt: time.Now(),
 		now:            time.Now,
+		onInput:        m.OnInput,
 		// Before the pump starts, because the pump is what answers tmux's
 		// colour queries and it answers them on the first chunk. See lastDark.
 		dark: m.lastDark.Load(),
@@ -1013,6 +1024,9 @@ func (l *Live) Write(clientID string, p []byte) (int, error) {
 	}
 	ptmx := l.ptmx
 	l.mu.Unlock()
+	if l.onInput != nil && bytes.ContainsAny(p, "\r\n") {
+		l.onInput(l.ID)
+	}
 	return ptmx.Write(p)
 }
 

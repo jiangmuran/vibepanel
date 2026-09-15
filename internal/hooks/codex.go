@@ -5,93 +5,370 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
-// CodexConfigPath is the file Codex reads its settings from.
-func CodexConfigPath() (string, error) {
+// Codex reports its state through its own hooks: the same shape as Claude
+// Code's, in ~/.codex/hooks.json, with an event per transition. It used to be
+// wired through `notify`, which fires once when a turn ends -- so a Codex
+// session could report "waiting" and nothing else, and once it had, nothing it
+// ever did afterwards could say otherwise. See the build log entry "Codex
+// states from Codex's own hooks".
+//
+// Verified against codex-cli 0.153.4 through its app server (`hooks/list`, on a
+// throwaway CODEX_HOME): every event below is accepted, `timeout` is honoured,
+// an unknown `_source` field is ignored, and each handler is keyed
+// `<hooks.json path>:<snake_case event>:<group>:<handler>`.
+
+// codexEvents maps a Codex hook event to the state it reports.
+//
+// PermissionRequest is the one that matters: it fires before Codex shows an
+// approval prompt, which is the moment a person is needed. PostToolUse is here
+// as well as PreToolUse because an approved tool call resumes work without a
+// new prompt, and the report that it did has to come from somewhere.
+// SessionStart is "done" because a Codex that has just opened is sitting at its
+// prompt, which the panel calls finished.
+var codexEvents = map[string]string{
+	"SessionStart":      "done",
+	"UserPromptSubmit":  "working",
+	"PreToolUse":        "working",
+	"PostToolUse":       "working",
+	"PermissionRequest": "waiting",
+	"Stop":              "done",
+	"Interrupt":         "done",
+}
+
+// codexHookTimeout is the seconds Codex waits for our handler. Codex's default
+// is 600, which a panel that is down would spend on every tool call; the script
+// gives curl two seconds and exits.
+const codexHookTimeout = 5
+
+// codexSource is the argument that marks a report as coming from Codex's hooks.
+const codexSource = "codex"
+
+// CodexLegacySource marks a report from the old `notify` line, which the server
+// treats differently: it can only ever say "waiting", so nothing else will ever
+// replace it. See session.Detector.
+const CodexLegacySource = "codex-notify"
+
+// codexHome is where Codex keeps its configuration: $CODEX_HOME, as Codex
+// itself reads it, or ~/.codex.
+func codexHome() (string, error) {
+	if dir := os.Getenv("CODEX_HOME"); dir != "" {
+		return dir, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("hooks: home directory: %w", err)
 	}
-	return filepath.Join(home, ".codex", "config.toml"), nil
+	return filepath.Join(home, ".codex"), nil
 }
 
-// InstallCodex writes the notify line into ~/.codex/config.toml.
+// CodexConfigPath is the file Codex reads its settings from.
+func CodexConfigPath() (string, error) {
+	dir, err := codexHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config.toml"), nil
+}
+
+// CodexHooksPath is the file the panel writes Codex's hooks into.
+func CodexHooksPath() (string, error) {
+	dir, err := codexHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "hooks.json"), nil
+}
+
+// CodexHooks renders the hooks.json the panel merges, for the settings page to
+// show before anybody presses install. Built from the same entries the
+// installer writes, so what is read is what is merged.
+func CodexHooks(script string) string {
+	doc := map[string]any{"hooks": map[string]any{}}
+	hooks := doc["hooks"].(map[string]any)
+	for event, state := range codexEvents {
+		hooks[event] = mergeCodexEvent(nil, script, state)
+	}
+	return string(encode(doc))
+}
+
+// InstallCodex merges the panel's hooks into ~/.codex/hooks.json, and takes an
+// older install's `notify` line back out of config.toml.
 //
-// Line-based rather than parse-and-re-encode, and that is the whole design.
-// The file is the user's: this machine's has a model provider, thirty-odd
-// `[projects."..."]` tables and a `[notice]` section in it. Every TOML library
-// that round-trips a document loses comments and reorders keys, so a panel that
-// decoded and re-encoded it would hand back something the user did not write in
-// exchange for one line. Editing lines leaves everything else byte-identical.
-//
-// Writes nothing when the line is already exactly right, for the same reason
-// InstallClaude does: the settings page calls this whenever somebody presses
-// the button, and rewriting a file to make no change to it still moves its
-// mtime and still leaves a backup recording an edit that never happened.
+// Merged exactly like Claude's settings: the user's own hooks on the same events
+// stay where they are, the file is backed up before an edit, and nothing is
+// written when it is already right. The notify line comes out because leaving
+// it would report "waiting" at the end of every turn next to the hook's "done",
+// and whichever arrived second would win.
 func InstallCodex(scriptPath string) (Status, error) {
 	editMu.Lock()
 	defer editMu.Unlock()
-	path, err := CodexConfigPath()
+	hooksPath, err := CodexHooksPath()
 	if err != nil {
 		return Status{}, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return Status{}, fmt.Errorf("hooks: create %s: %w", filepath.Dir(path), err)
-	}
-
-	before, err := os.ReadFile(path)
+	doc, err := readSettings(hooksPath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return Status{}, fmt.Errorf("hooks: read %s: %w", path, err)
-	}
-	after := withCodexNotify(string(before), scriptPath)
-	if after == string(before) {
-		return Inspect(scriptPath)
-	}
-	if err := backup(path); err != nil {
 		return Status{}, err
 	}
-	if err := writeFileLike(path, []byte(after)); err != nil {
+	if doc == nil {
+		doc = map[string]any{}
+	}
+	before := encode(doc)
+	hooks, _ := doc["hooks"].(map[string]any)
+	if hooks == nil {
+		hooks = map[string]any{}
+	}
+	for event, state := range codexEvents {
+		hooks[event] = mergeCodexEvent(hooks[event], scriptPath, state)
+	}
+	doc["hooks"] = hooks
+	if !unchanged(before, doc) {
+		if err := backup(hooksPath); err != nil {
+			return Status{}, err
+		}
+		if err := writeSettings(hooksPath, doc); err != nil {
+			return Status{}, err
+		}
+	}
+	if err := removeCodexNotify(); err != nil {
 		return Status{}, err
 	}
 	return Inspect(scriptPath)
 }
 
-// UninstallCodex removes only a notify line this panel wrote.
-//
-// A notify pointing at somebody else's script is left exactly where it is.
-// Codex has one notify slot, so "remove ours" and "remove whatever is there"
-// are the same keystroke from the settings page and very much not the same act.
+// UninstallCodex removes only what this panel wrote: its hooks.json entries,
+// and a notify line an older install left.
 func UninstallCodex(scriptPath string) (Status, error) {
 	editMu.Lock()
 	defer editMu.Unlock()
-	path, err := CodexConfigPath()
+	hooksPath, err := CodexHooksPath()
 	if err != nil {
 		return Status{}, err
+	}
+	doc, err := readSettings(hooksPath)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+	case err != nil:
+		return Status{}, err
+	default:
+		before := encode(doc)
+		hooks, _ := doc["hooks"].(map[string]any)
+		for event := range codexEvents {
+			cleaned := removeOurs(hooks[event], scriptPath)
+			if cleaned == nil {
+				delete(hooks, event)
+			} else {
+				hooks[event] = cleaned
+			}
+		}
+		if len(hooks) == 0 {
+			delete(doc, "hooks")
+		} else {
+			doc["hooks"] = hooks
+		}
+		if !unchanged(before, doc) {
+			if err := backup(hooksPath); err != nil {
+				return Status{}, err
+			}
+			if err := writeSettings(hooksPath, doc); err != nil {
+				return Status{}, err
+			}
+		}
+	}
+	if err := removeCodexNotify(); err != nil {
+		return Status{}, err
+	}
+	return Inspect(scriptPath)
+}
+
+// mergeCodexEvent is mergeEvent for Codex: the same entry, with the source
+// argument that tells the server which agent's hook this is, and a timeout.
+func mergeCodexEvent(existing any, scriptPath, state string) any {
+	list, _ := existing.([]any)
+	out := make([]any, 0, len(list)+1)
+	for _, item := range list {
+		if !isOurs(item, "") {
+			out = append(out, item)
+		}
+	}
+	return append(out, map[string]any{
+		"hooks": []any{
+			map[string]any{
+				"type":    "command",
+				"command": command(scriptPath, state) + " " + codexSource,
+				"timeout": codexHookTimeout,
+				"_source": marker,
+			},
+		},
+	})
+}
+
+// CodexHooksInstalled reports whether every Codex event has the panel's hook.
+func CodexHooksInstalled() bool {
+	path, err := CodexHooksPath()
+	if err != nil {
+		return false
+	}
+	return len(codexHookEvents(path)) == len(codexEvents)
+}
+
+// codexHookEvents lists the events whose hooks.json entries are ours, sorted.
+func codexHookEvents(path string) []string {
+	out := []string{}
+	doc, err := readSettings(path)
+	if err != nil {
+		return out
+	}
+	hooks, _ := doc["hooks"].(map[string]any)
+	for event := range codexEvents {
+		if entriesFor(hooks, event, "") {
+			out = append(out, event)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// CodexTrust is whether Codex will run the hooks the panel installed.
+//
+// Codex runs a hook from a user's hooks.json only after the user has reviewed
+// and trusted that exact definition with `/hooks`, and it records the decision
+// in config.toml as `[hooks.state."<key>"]` with a `trusted_hash`. The panel
+// never writes that: trusting a command on the user's behalf is the one step
+// Codex put a person in front of, and a panel that skipped it would be the
+// thing that review exists to catch.
+//
+// What it can read is whether a decision exists for each of its handlers.
+// "trusted" means every one has a recorded hash; the hash itself is Codex's to
+// compare, so a definition changed after it was trusted still reads trusted
+// here and Codex reports it as modified -- the settings page's "reports
+// arriving" line is what catches that. "untrusted" means none has one,
+// "partial" some, and "" that nothing is installed.
+const (
+	CodexTrusted   = "trusted"
+	CodexUntrusted = "untrusted"
+	CodexPartial   = "partial"
+)
+
+func codexTrust(hooksPath, configPath string) string {
+	doc, err := readSettings(hooksPath)
+	if err != nil {
+		return ""
+	}
+	hooks, _ := doc["hooks"].(map[string]any)
+	var keys []string
+	for event := range codexEvents {
+		list, _ := hooks[event].([]any)
+		for g, item := range list {
+			entry, _ := item.(map[string]any)
+			inner, _ := entry["hooks"].([]any)
+			for h, hook := range inner {
+				m, _ := hook.(map[string]any)
+				cmd, _ := m["command"].(string)
+				if m["_source"] == marker || containsMarker(cmd) {
+					keys = append(keys, fmt.Sprintf("%s:%s:%d:%d", hooksPath, snakeCase(event), g, h))
+				}
+			}
+		}
+	}
+	if len(keys) == 0 {
+		return ""
+	}
+	trusted := trustedHookKeys(configPath)
+	n := 0
+	for _, k := range keys {
+		if trusted[k] {
+			n++
+		}
+	}
+	switch n {
+	case len(keys):
+		return CodexTrusted
+	case 0:
+		return CodexUntrusted
+	}
+	return CodexPartial
+}
+
+// trustedHookKeys reads the `[hooks.state."<key>"]` tables in config.toml that
+// carry a trusted_hash. Line-based, like everything else this package does to
+// that file, and only reading.
+func trustedHookKeys(configPath string) map[string]bool {
+	out := map[string]bool{}
+	b, err := os.ReadFile(configPath)
+	if err != nil {
+		return out
+	}
+	current := ""
+	for _, line := range strings.Split(string(b), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") {
+			current = ""
+			if key, ok := strings.CutPrefix(trimmed, `[hooks.state."`); ok {
+				if key, ok = strings.CutSuffix(key, `"]`); ok {
+					current = strings.ReplaceAll(key, `\\`, `\`)
+				}
+			}
+			continue
+		}
+		if current == "" {
+			continue
+		}
+		if name, value, found := strings.Cut(trimmed, "="); found &&
+			strings.TrimSpace(name) == "trusted_hash" && strings.Trim(strings.TrimSpace(value), `"`) != "" {
+			out[current] = true
+		}
+	}
+	return out
+}
+
+// snakeCase is how Codex spells an event inside a hook's key: PreToolUse is
+// pre_tool_use.
+func snakeCase(s string) string {
+	var b strings.Builder
+	for i, r := range s {
+		if r >= 'A' && r <= 'Z' {
+			if i > 0 {
+				b.WriteByte('_')
+			}
+			r += 'a' - 'A'
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// removeCodexNotify takes a notify line an older install wrote out of
+// config.toml, giving the slot back to whatever it replaced.
+func removeCodexNotify() error {
+	path, err := CodexConfigPath()
+	if err != nil {
+		return err
 	}
 	before, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return Inspect(scriptPath)
+			return nil
 		}
-		return Status{}, fmt.Errorf("hooks: read %s: %w", path, err)
+		return fmt.Errorf("hooks: read %s: %w", path, err)
 	}
 	after := withoutCodexNotify(string(before))
 	if after == string(before) {
-		return Inspect(scriptPath)
+		return nil
 	}
 	if err := backup(path); err != nil {
-		return Status{}, err
+		return err
 	}
-	if err := writeFileLike(path, []byte(after)); err != nil {
-		return Status{}, err
-	}
-	return Inspect(scriptPath)
+	return writeFileLike(path, []byte(after))
 }
 
-// codexInstalled reports whether the config's notify line is ours.
-func codexInstalled(path string) bool {
+// codexNotifyInstalled reports whether config.toml still has an older install's
+// notify line in it.
+func codexNotifyInstalled(path string) bool {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return false
@@ -104,69 +381,16 @@ func codexInstalled(path string) bool {
 	return containsMarker(strings.Join(lines[start:end], "\n"))
 }
 
-// ─── editing ──────────────────────────────────────────────────────────────
+// ─── editing an older install's notify line ───────────────────────────────
 
-// codexReplacedBanner marks the notify our install took the slot from.
+// codexReplacedBanner marks the notify an older install took the slot from.
 //
-// One constant rather than a literal in each place, because the install writes
-// it and the uninstall reads it to give the line back: two spellings that drift
-// apart leave the user's own notifier commented out for good, with the settings
-// page correctly saying nothing of ours is installed.
+// Read by the uninstall to give the line back. Older installs wrote it; this
+// build only ever reads it, and the constant is kept so the two cannot drift.
 const codexReplacedBanner = "# replaced by vibepanel:"
 
-// withCodexNotify returns the document with our notify line in it.
-func withCodexNotify(doc, scriptPath string) string {
-	want := CodexNotify(scriptPath)
-	lines := strings.Split(doc, "\n")
-
-	if start, end, ok := notifySpan(lines); ok {
-		replacement := []string{want}
-		if !containsMarker(strings.Join(lines[start:end], "\n")) {
-			// Somebody else's notify. Codex has exactly one slot, so installing
-			// means taking it — but taking it silently would delete a hook the
-			// user wrote, and a backup beside the file is not where anyone
-			// looks. Keep the old line where it was, commented, so what
-			// happened is legible in the file itself.
-			replacement = append([]string{codexReplacedBanner}, replacement...)
-			for _, old := range lines[start:end] {
-				replacement = append(replacement, "# "+old)
-			}
-		}
-		out := append([]string{}, lines[:start]...)
-		out = append(out, replacement...)
-		out = append(out, lines[end:]...)
-		return strings.Join(out, "\n")
-	}
-
-	// No notify yet: it has to go *before the first table header*.
-	//
-	// TOML keys belong to the table they follow, so appending to the end of
-	// this machine's config would define `notify` inside `[notice]`, which is a
-	// different key that Codex never reads. Nothing reports that: the file
-	// still parses, `codex doctor` is happy, the settings page reads the line
-	// back and says installed, and no session ever reports a state.
-	at := len(lines)
-	for i, l := range lines {
-		if strings.HasPrefix(strings.TrimSpace(l), "[") {
-			at = i
-			break
-		}
-	}
-	out := append([]string{}, lines[:at]...)
-	// Trailing blank lines belong to the gap before the table, not to the keys
-	// above it; inserting after them puts our line against the header.
-	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
-		out = out[:len(out)-1]
-	}
-	out = append(out, want)
-	if at < len(lines) {
-		out = append(out, "")
-	}
-	out = append(out, lines[at:]...)
-	return strings.Join(out, "\n")
-}
-
-// withoutCodexNotify returns the document with our notify line removed.
+// withoutCodexNotify returns the document with an older install's notify line
+// removed.
 func withoutCodexNotify(doc string) string {
 	lines := strings.Split(doc, "\n")
 	start, end, ok := notifySpan(lines)

@@ -609,13 +609,22 @@ export interface HookStatus {
   events: string[]
   snippet: string
   codexSnippet: string
-  /** Where the Codex notify line goes: ~/.codex/config.toml. */
+  /** Where the Codex hooks go: ~/.codex/hooks.json, or under $CODEX_HOME. */
   codexPath: string
-  /** Whether that file's `notify` is this panel's. Separate from `installed`,
-   *  which is Claude's: the two agents are configured by different mechanisms
-   *  and fail separately, so one flag would describe a machine where half of
-   *  them are wired as if it were all of them. */
+  /** Whether every Codex event has this panel's hook. Separate from
+   *  `installed`, which is Claude's: the two agents are configured by different
+   *  mechanisms and fail separately, so one flag would describe a machine where
+   *  half of them are wired as if it were all of them. */
   codexInstalled: boolean
+  codexEvents: string[]
+  /** Whether Codex has recorded trusting those hooks (it runs a user hook only
+   *  after `/hooks` trusts it): '' when nothing is installed. */
+  codexTrust: '' | 'trusted' | 'partial' | 'untrusted'
+  /** An older install's notify line is still in config.toml. */
+  codexLegacyNotify: boolean
+  /** Codex sessions running now, and how many of them a hook has reported for. */
+  codexSessions: number
+  codexReporting: number
   /** The plugin file opencode auto-discovers. */
   opencodePath: string
   /** Whether the plugin in place is this build's, not merely that one exists. */
