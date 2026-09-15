@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Eye, ExternalLink, Lock, LockOpen, Monitor, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Copy, Eye, ExternalLink, Lock, LockOpen, Monitor, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 
 import { api } from '../../protocol/api'
 import type {
@@ -13,13 +13,14 @@ import type {
 } from '../../protocol/wire'
 import { t, useLang, type Key } from '../../i18n'
 import { copyTextInGesture } from '../../clipboard'
+import { askConfirm } from '../ask'
 import { safeText } from '../text'
 import { ParamsForm } from './ParamsForm'
 import { manifestFor, useNow } from './usePages'
 
 /**
- * The links that show one page: making one, the address that is readable
- * once, and what can be changed on one afterwards.
+ * The links that show one page: making one, copying its address again, and
+ * what can be changed on one afterwards.
  *
  * Under the page rather than in a list of their own, because a link is only
  * ever a way of showing a page -- and "which screens show this" is the
@@ -112,12 +113,16 @@ async function peek(link: ShareLink, onError: (m: string) => void) {
   }
 }
 
+/** Why an address is on screen: just made, copied from a row, or just replaced. */
+type Shown = { url: string; kind: 'new' | 'copied' | 'rotated' }
+
 export function PageLinks({
   page,
   detail,
   links,
   projects,
   sessions,
+  visitorWrites,
   onChanged,
   onError,
 }: {
@@ -126,12 +131,14 @@ export function PageLinks({
   links: ShareLink[]
   projects: Project[]
   sessions: Session[]
+  /** The panel-wide switch: off refuses every visitor action on every link. */
+  visitorWrites: boolean
   onChanged: () => void
   onError: (message: string) => void
 }) {
   useLang()
   const [adding, setAdding] = useState(false)
-  const [fresh, setFresh] = useState<string | null>(null)
+  const [fresh, setFresh] = useState<Shown | null>(null)
   const [copied, setCopied] = useState(false)
   const [editing, setEditing] = useState<string | null>(null)
   const [confirming, setConfirming] = useState<string | null>(null)
@@ -155,6 +162,42 @@ export function PageLinks({
     }
   }
 
+  // The address, again. A link made before tokens were kept encrypted has none
+  // to show, and the only address it can have is a new one.
+  const copyAddress = async (link: ShareLink) => {
+    if (!link.copyable) {
+      await rotate(link)
+      return
+    }
+    try {
+      const got = await api.shareURL(link.id)
+      setCopied(false)
+      setFresh({ url: got.url, kind: 'copied' })
+      copyTextInGesture(got.url, setCopied)
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  const rotate = async (link: ShareLink) => {
+    const yes = await askConfirm({
+      title: t('share.rotateTitle', { name: safeText(link.name) }),
+      body: link.copyable ? t('share.rotateBody') : t('share.rotateLegacyBody'),
+      confirm: t('share.rotate'),
+      cancel: t('ask.cancel'),
+      destructive: true,
+    })
+    if (!yes) return
+    try {
+      const got = await api.rotateShare(link.id)
+      setCopied(false)
+      setFresh({ url: got.url, kind: 'rotated' })
+      onChanged()
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   const revoke = async (link: ShareLink) => {
     try {
       await api.deleteShare(link.id)
@@ -169,26 +212,32 @@ export function PageLinks({
     <div data-testid="page-links" className="mt-2 pl-5">
       {fresh && (
         <div data-testid="share-fresh" className="mb-2 rounded-vp border border-hairline bg-surface-2 p-3">
-          <p className="mb-2 text-vp-base" style={{ color: 'var(--vp-state-waiting)' }}>
-            {t('share.once')}
+          <p className="mb-2 text-vp-base text-ink-2" data-testid="share-fresh-kind" data-kind={fresh.kind}>
+            {fresh.kind === 'new'
+              ? t('share.once')
+              : fresh.kind === 'rotated'
+                ? t('share.rotated')
+                : copied
+                  ? t('share.addressCopied')
+                  : t('share.address')}
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <code
               data-testid="share-url"
               className="min-w-0 flex-1 truncate rounded-vp bg-surface px-2 py-1.5 font-mono text-vp-base text-ink"
             >
-              {fresh}
+              {fresh.url}
             </code>
             <button
               type="button"
               data-testid="share-copy"
-              onClick={() => copyTextInGesture(fresh, setCopied)}
+              onClick={() => copyTextInGesture(fresh.url, setCopied)}
               className="vp-press shrink-0 rounded-vp border border-hairline px-2 py-1.5 text-vp-base text-ink-2 hover:text-ink"
             >
               {copied ? t('tok.copied') : t('tok.copy')}
             </button>
             <a
-              href={fresh}
+              href={fresh.url}
               target="_blank"
               rel="noreferrer noopener"
               title={t('share.open')}
@@ -223,6 +272,17 @@ export function PageLinks({
             >
               {link.viewers > 0 ? t('share.viewers', { n: link.viewers }) : t('share.noViewers')}
             </span>
+            <button
+              type="button"
+              onClick={() => void copyAddress(link)}
+              title={link.copyable ? t('share.copyAddress') : t('share.newAddress')}
+              aria-label={link.copyable ? t('share.copyAddress') : t('share.newAddress')}
+              data-testid="share-copy-address"
+              data-copyable={link.copyable}
+              className="vp-control"
+            >
+              {link.copyable ? <Copy size={13} /> : <RefreshCw size={13} />}
+            </button>
             <button
               type="button"
               onClick={() => void peek(link, onError)}
@@ -296,6 +356,8 @@ export function PageLinks({
             <LinkEditor
               link={link}
               detail={detail}
+              visitorWrites={visitorWrites}
+              onRotate={() => void rotate(link)}
               onSaved={onChanged}
               onError={onError}
               onClose={() => setEditing(null)}
@@ -311,9 +373,10 @@ export function PageLinks({
           projects={projects}
           sessions={sessions}
           onCancel={() => setAdding(false)}
+          visitorWrites={visitorWrites}
           onMade={(token) => {
             setAdding(false)
-            setFresh(shareURL(token))
+            setFresh({ url: shareURL(token), kind: 'new' })
             setCopied(false)
             onChanged()
           }}
@@ -353,6 +416,12 @@ function LinkFacts({ link }: { link: ShareLink }) {
           ? t('share.noExpiry')
           : t('share.expiresOn', { date: new Date(link.expiresAt * 1000).toLocaleDateString() })}
       </span>
+      {link.interactive && <span data-testid="share-row-interactive">{t('share.interactiveShort')}</span>}
+      {link.actionsToday > 0 && (
+        <span className="tabular" data-testid="share-row-actions">
+          {t('share.actionsToday', { n: link.actionsToday })}
+        </span>
+      )}
       {link.remark !== '' && (
         <span className="min-w-0 truncate text-ink-3" data-testid="share-row-remark">
           {safeText(link.remark)}
@@ -367,6 +436,7 @@ function NewLink({
   detail,
   projects,
   sessions,
+  visitorWrites,
   onCancel,
   onMade,
   onError,
@@ -375,6 +445,7 @@ function NewLink({
   detail: SharePageDetail | null
   projects: Project[]
   sessions: Session[]
+  visitorWrites: boolean
   onCancel: () => void
   onMade: (token: string) => void
   onError: (message: string) => void
@@ -386,6 +457,7 @@ function NewLink({
   // "", "project:<id>" or "session:<id>": the two halves are never chosen apart.
   const [target, setTarget] = useState('')
   const [params, setParams] = useState<Record<string, ShareParamValue>>({})
+  const [interactive, setInteractive] = useState(false)
   const [busy, setBusy] = useState(false)
   const manifest = manifestFor(detail, 0)
   const id = page.id
@@ -402,6 +474,7 @@ function NewLink({
         scopeId: scopeId ?? '',
         remark: remark.trim(),
         locked: false,
+        interactive: interactive && canInteract(detail),
         pageId: page.id,
         params,
       })
@@ -495,6 +568,15 @@ function NewLink({
         </div>
         <p className="mt-2 text-vp-sm leading-relaxed text-ink-3">{t('share.detailWhy')}</p>
       </Group>
+      <Group title={t('share.groupDo')}>
+        <InteractiveChoice
+          id={`share-interactive-${id}`}
+          detail={detail}
+          visitorWrites={visitorWrites}
+          checked={interactive}
+          onChange={setInteractive}
+        />
+      </Group>
       {manifest && (manifest.params ?? []).length > 0 && (
         <Group title={t('share.groupParams')}>
           <ParamsForm specs={manifest.params ?? []} values={params} idPrefix={`share-param-${id}`} onChange={setParams} />
@@ -532,12 +614,16 @@ function NewLink({
 function LinkEditor({
   link,
   detail,
+  visitorWrites,
+  onRotate,
   onSaved,
   onError,
   onClose,
 }: {
   link: ShareLink
   detail: SharePageDetail | null
+  visitorWrites: boolean
+  onRotate: () => void
   onSaved: () => void
   onError: (message: string) => void
   onClose: () => void
@@ -545,6 +631,7 @@ function LinkEditor({
   const [name, setName] = useState(link.name)
   const [remark, setRemark] = useState(link.remark)
   const [params, setParams] = useState<Record<string, ShareParamValue>>(link.params)
+  const [interactive, setInteractive] = useState(link.interactive)
   const labelTimer = useRef(0)
   const paramTimer = useRef(0)
   const now = useNow()
@@ -566,6 +653,16 @@ function LinkEditor({
         onError(e instanceof Error ? e.message : String(e)),
       )
     }, SAVE_AFTER_MS)
+  }
+
+  const saveInteractive = (next: boolean) => {
+    setInteractive(next)
+    api
+      .updateShare(link.id, { name, remark, locked: false, interactive: next })
+      .then(onSaved, (e: unknown) => {
+        setInteractive(!next)
+        onError(e instanceof Error ? e.message : String(e))
+      })
   }
 
   const saveDrawing = (pinVersion: number, next: Record<string, ShareParamValue>) =>
@@ -627,6 +724,15 @@ function LinkEditor({
           )}
         </div>
       </Group>
+      <Group title={t('share.groupDo')}>
+        <InteractiveChoice
+          id={`share-edit-interactive-${link.id}`}
+          detail={detail}
+          visitorWrites={visitorWrites}
+          checked={interactive}
+          onChange={saveInteractive}
+        />
+      </Group>
       {manifest && (manifest.params ?? []).length > 0 && (
         <Group title={t('share.groupParams')}>
           <ParamsForm
@@ -641,7 +747,17 @@ function LinkEditor({
           />
         </Group>
       )}
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={onRotate}
+          data-testid="share-rotate"
+          title={t('share.rotateBody')}
+          className="vp-press flex items-center gap-1 rounded-vp border border-hairline px-2 py-1 text-vp-sm text-ink-2 hover:text-ink"
+        >
+          <RefreshCw size={12} />
+          {t('share.newAddress')}
+        </button>
         <button
           type="button"
           onClick={onClose}
@@ -651,6 +767,56 @@ function LinkEditor({
           {t('share.editDone')}
         </button>
       </div>
+    </div>
+  )
+}
+
+/** Whether the published version declares an action a visitor may run. */
+function canInteract(detail: SharePageDetail | null): boolean {
+  return detail?.capabilities?.visitorActions === true
+}
+
+/**
+ * Whether visitors may run the page's actions through this link.
+ *
+ * Disabled, with the reason beside it, when the page declares no visitor
+ * action: a switch that does nothing is one people turn on and trust.
+ */
+function InteractiveChoice({
+  id,
+  detail,
+  visitorWrites,
+  checked,
+  onChange,
+}: {
+  id: string
+  detail: SharePageDetail | null
+  visitorWrites: boolean
+  checked: boolean
+  onChange: (next: boolean) => void
+}) {
+  const possible = canInteract(detail)
+  return (
+    <div className="text-vp-sm">
+      <label htmlFor={id} className="flex items-center gap-2 text-ink-2">
+        <input
+          id={id}
+          type="checkbox"
+          data-testid="share-interactive"
+          disabled={!possible}
+          checked={checked && possible}
+          onChange={(e) => onChange(e.target.checked)}
+        />
+        {t('share.interactive')}
+      </label>
+      <p className="mt-1 text-vp-xs text-ink-3" data-testid="share-interactive-note">
+        {!possible ? t('share.interactiveNone') : t('share.interactiveWhy')}
+      </p>
+      {possible && !visitorWrites && (
+        <p className="mt-0.5 text-vp-xs" style={{ color: 'var(--vp-state-waiting)' }} data-testid="share-interactive-off">
+          {t('share.visitorWritesOffNote')}
+        </p>
+      )}
     </div>
   )
 }
