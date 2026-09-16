@@ -4,6 +4,8 @@ import './styles.css'
 import { App } from './App'
 import { AuthGate } from './components/AuthGate'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { SharingPage } from './components/SharingPage'
+import { routeFor } from './routes'
 import { watchSystemTheme } from './components/theme'
 
 const root = document.getElementById('root')
@@ -27,14 +29,24 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
   })
 }
 
-// One root. `/share/<token>` never reaches this bundle: the server answers it
+// Two roots, and only one of them is ever built; routes.ts says which. The
+// panel, or the sharing page — both behind the same AuthGate, on the same
+// cookie. `/share/<token>` never reaches this bundle: the server answers it
 // with the page the link draws, or with a page of its own saying the link no
 // longer works, so a stranger holding a share address is never one click from
 // the sign-in screen.
+const route = routeFor(location.pathname)
+
 createRoot(root).render(
   <StrictMode>
-    <ErrorBoundary label="The panel">
-      <AuthGate>{(auth, signOut) => <App auth={auth} onSignOut={signOut} />}</AuthGate>
-    </ErrorBoundary>
+    {route.kind === 'sharing' ? (
+      <ErrorBoundary label="The sharing page">
+        <AuthGate>{(auth, signOut) => <SharingPage auth={auth} onSignOut={signOut} />}</AuthGate>
+      </ErrorBoundary>
+    ) : (
+      <ErrorBoundary label="The panel">
+        <AuthGate>{(auth, signOut) => <App auth={auth} onSignOut={signOut} />}</AuthGate>
+      </ErrorBoundary>
+    )}
   </StrictMode>,
 )

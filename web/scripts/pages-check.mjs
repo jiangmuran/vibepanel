@@ -265,10 +265,13 @@ setTimeout(() => { try { done('frame', frame.contentDocument ? 'readable' : 'opa
     await ui.goto(BASE, { waitUntil: 'networkidle' })
     await ui.waitForSelector('[data-testid="sidebar"], [data-testid="sidebar-rail"]', { timeout: 15000 })
 
-    // Made in settings, with an agent: here the Shell profile stands in for
-    // one, because what is being checked is the hand-over, not Claude.
-    await ui.locator('[data-testid="settings-open"]').click()
-    await ui.locator('[data-testid="settings-group-sharing"]').click()
+    // Made on the sharing page, with an agent: here the Shell profile stands
+    // in for one, because what is being checked is the hand-over, not
+    // Claude. The hand-over crosses a navigation now — the sharing page is
+    // its own address and sends the panel the page to open on the query
+    // string — so the launch picker below has to appear on the panel that
+    // navigation lands on, which is the hand-over being tested.
+    await ui.goto(`${BASE}/sharing`, { waitUntil: 'networkidle' })
     await ui.waitForSelector('[data-testid="sharing"]', { timeout: 10000 })
     // No directory given: it goes under the data directory as page-<slug>,
     // not into somebody's home.
@@ -468,8 +471,8 @@ setTimeout(() => { try { done('frame', frame.contentDocument ? 'readable' : 'opa
       name: 'kitchen', detail: 'counts', expiresIn: 3600, pageId: lobby.id, params: { title: 'Kitchen' },
       scope: '', scopeId: '', remark: '', locked: false,
     })
-    await ui.locator('[data-testid="settings-open"]').click()
-    await ui.locator('[data-testid="settings-group-sharing"]').click()
+    await ui.goto(`${BASE}/sharing`, { waitUntil: 'networkidle' })
+    await ui.waitForSelector('[data-testid="sharing"]', { timeout: 10000 }).catch(() => {})
     const row = ui.locator(`[data-testid="page-row"][data-page="${lobby.id}"] [data-testid="share-row"]`, { hasText: 'kitchen' })
     await row.waitFor({ timeout: 10000 }).catch(() => {})
     if (await row.count()) pass('workflow/settings', 'the link is listed under its page')
@@ -504,7 +507,8 @@ setTimeout(() => { try { done('frame', frame.contentDocument ? 'readable' : 'opa
       else note('FAIL', 'workflow/view', `the viewed page's title is ${JSON.stringify(peekTitle)}`)
       await peekTab.close()
     } else note('FAIL', 'workflow/view', 'View opened no tab')
-    await ui.locator('[data-testid="settings-close"]').click().catch(() => {})
+    // Back to the panel, which the photograph below is of.
+    await ui.goto(BASE, { waitUntil: 'networkidle' }).catch(() => {})
     await must('DELETE', `/api/settings/shares/${kept.id}`)
 
     // The error the check planted in the page is expected; anything else is not.
@@ -572,8 +576,7 @@ setTimeout(() => { try { done('frame', frame.contentDocument ? 'readable' : 'opa
     await ui.goto(BASE, { waitUntil: 'networkidle' })
     await ui.waitForSelector('[data-testid="sidebar"], [data-testid="sidebar-rail"]', { timeout: 15000 }).catch(() => {})
     const openSharing = async () => {
-      await ui.locator('[data-testid="settings-open"]').click().catch(() => {})
-      await ui.locator('[data-testid="settings-group-sharing"]').click().catch(() => {})
+      await ui.goto(`${BASE}/sharing`, { waitUntil: 'networkidle' }).catch(() => {})
       await ui.waitForSelector('[data-testid="sharing"]', { timeout: 10000 }).catch(() => {})
     }
     await openSharing()

@@ -4,12 +4,12 @@ import type { Key } from '../../i18n'
  * What the settings dialog is divided into, and what lives in each part.
  *
  * The dialog was twelve sections stacked in one scroll — 「太长太恶心了」 — and
- * the fix is not a shorter page but a rail: five names on the left, one group
+ * the fix is not a shorter page but a rail: four names on the left, one group
  * on screen. That only helps if the names predict their contents, so the test
  * a grouping has to pass is that somebody who wants to change one thing can
- * guess which name it is under *without reading the other four*.
+ * guess which name it is under *without reading the other three*.
  *
- * The five, and what each answers:
+ * The four, and what each answers:
  *
  *   - **Sessions** — what a session is started with, and how the panel learns
  *     what it is doing. Launch profiles and state reporting are two halves of
@@ -19,9 +19,6 @@ import type { Key } from '../../i18n'
  *     together: the permission this browser has, and the webhook that reaches
  *     a phone which is not looking at the panel. They were four sections
  *     apart, and "turn on notifications" found only one of them.
- *   - **Sharing** — share pages and the links that show them. One
- *     section, and it keeps its own group: it is the one surface that shows
- *     anything to somebody who is not signed in (red line 8).
  *   - **Account** — the ways in, and who has come in: password, passkeys, API
  *     tokens, activity log. A token is a credential you make and revoke one at
  *     a time, which is the same object as a passkey and belongs beside it
@@ -31,39 +28,27 @@ import type { Key } from '../../i18n'
  *     the machine rather than 「面板」, which is what the *side* panel is called
  *     four inches to the left of this dialog.
  *
+ * Sharing was the fifth, and it is a page now (`routes.ts`, `SharingPage`).
+ * It is a list of pages with their links and forms unfolding under each, and
+ * a dialog whose body is a third of the window is the wrong container for
+ * that: each link's row overflowed the body sideways, and the dialog had to
+ * change width depending on which rail item was showing. The rail still says
+ * "Sharing" so that somebody looking for it here finds it — as a link that
+ * leaves the dialog, drawn with the arrow that says so.
+ *
  * The language switch is in none of them; it is in the dialog's header, always
  * on screen. Somebody hunting for it cannot read the rail — that is why they
  * are hunting for it.
  */
-export const SETTINGS_GROUPS = ['sessions', 'notify', 'sharing', 'account', 'panel'] as const
+export const SETTINGS_GROUPS = ['sessions', 'notify', 'account', 'panel'] as const
 
 export type SettingsGroup = (typeof SETTINGS_GROUPS)[number]
 
 export const GROUP_TITLE: Record<SettingsGroup, Key> = {
   sessions: 'grp.sessions',
   notify: 'grp.notify',
-  sharing: 'grp.sharing',
   account: 'grp.account',
   panel: 'grp.panel',
-}
-
-/**
- * How much width a group is given, because one of them is not a form.
- *
- * Four of the five are label/value lines and a handful of controls: they read
- * badly past about seventy characters, which is what `max-w-3xl` is. Sharing
- * is a list of pages with their links nested under them, forms unfolding in
- * place — at 3xl a link's row overflowed the body sideways.
- *
- * A record rather than a set, so a sixth group is a type error here until
- * somebody decides which of the two it is.
- */
-export const GROUP_WIDTH: Record<SettingsGroup, 'reading' | 'canvas'> = {
-  sessions: 'reading',
-  notify: 'reading',
-  sharing: 'canvas',
-  account: 'reading',
-  panel: 'reading',
 }
 
 /**
@@ -83,7 +68,6 @@ export const SETTINGS_SECTIONS = [
   'paste',
   'browser',
   'webhooks',
-  'pages',
   'password',
   'passkeys',
   'tokens',
@@ -116,8 +100,6 @@ export const SECTION_GROUP: Record<SettingsSection, SettingsGroup> = {
   paste: 'sessions',
   browser: 'notify',
   webhooks: 'notify',
-  // Pages and the links that show them, as one list.
-  pages: 'sharing',
   password: 'account',
   passkeys: 'account',
   tokens: 'account',

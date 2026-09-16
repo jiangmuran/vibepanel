@@ -22053,3 +22053,72 @@ file removes it; `hook remove` has a Go test, because nothing in the repository
 called it and `install-check` drives a fake binary; and `hookTarget`,
 `Inspect`'s four new path and snippet fields, and the `agentsShown` ordering
 each got the test the mutation run proved they did not have.
+
+## 2026-09-16 — The sharing page leaves the settings dialog
+
+Share pages and their links were a group in the settings dialog, and the
+dialog was the wrong room for them: a list of pages with links and forms
+unfolding under each, in a body a third of the window wide, and the dialog had
+grown a second width to hold it, chosen by which rail item was showing. That
+was a dialog changing shape depending on what was in it, which is the tell
+that one of the things in it was not a settings group.
+
+It is a page now, at `/sharing`. `web/src/routes.ts` is the one place the
+address bar is read: the panel or the sharing page, both behind the same
+`AuthGate`, on the same cookie (its path is `/`), so a second tab or a bookmark
+asks nothing of somebody already signed in. Nothing changed on the server: the
+single-page fallback already answered any unknown path with `index.html`, and
+the page reaches the same settings routes it always did. Red line 8 is
+untouched — this is an authenticated surface moving between two authenticated
+containers, and a share token still reaches its five routes and no more.
+
+What the page draws of its own is a header with the four things the panel's
+header answers: the way back, the language, the theme and the way out. The
+theme toggle and the language switch became components of their own for that,
+because each had been written inline in the file that first needed it, and a
+page that keeps the cookie but loses the theme goes white at 2am. The confirm
+dialog is mounted on the page too: the list asks through `askConfirm` before
+revoking a link, and a host with no dialog is a question that never resolves.
+
+One thing the page cannot do is *open* a page. That is a project, a terminal
+and the Preview, which are the panel's, so the page hands over by address:
+`panelOpeningPage` navigates to `/?page=<id>` (`&fresh=1` when an agent should
+start), and the panel opens it once its first snapshot has arrived — not on
+mount, because opening reads the projects and sessions and the empty initial
+state sent every hand-over to the launch picker — then takes the query off the
+address bar so a reload does not open it twice. Both ends go through
+`routes.ts`, and `routes.test.ts` says so.
+
+The settings rail still says "Sharing", as a link with an arrow rather than as
+a fifth tab, so somebody who last saw the pages under that word finds them
+under that word. The dialog is back to one width, and `settings/wiring.test.ts`
+now fails on a second `max-w-` there: a group that has outgrown the dialog
+gets a page, not a wider modal.
+
+The page itself: a title, the intro with its two links and two buttons, the
+pages as cards with their links inside, and an empty state that is a box
+rather than a line. Every testid the browser checks press is where it was;
+what changed for them is how they arrive. `render-check` follows the rail's
+link, so the link is what is tested, and a sign-in form on arrival reads as the
+whole feature gone; `pages-check` goes to the address, and its make-a-page
+step now crosses the hand-over navigation, which is the hand-over being tested.
+`shots` photographs the page in every theme and language, because it is the
+one surface with its own chrome.
+
+Mutations run against the new guards, seven, each red in the test written for
+it: the sharing path spelt as a literal in `Settings.tsx`; a prefix match in
+`routeFor`; a second width in the dialog; the rail link removed; the panel no
+longer reading the hand-over; the sharing page spelling the query by hand
+instead of through `panelOpeningPage`; and `pageToOpen` accepting any string
+as an id.
+
+## 2026-09-16 — The session row's rename button, taken back out
+
+The pencil beside pin and kill went in with the Kimi/zcode branch so that
+renaming was findable without knowing a gesture. It is out again: double click
+and the long press rename, the row was one control wider for a thing two
+gestures already did, and the owner read it as clutter. The gestures, the
+`InlineName` editing state they drive, and the phone's long-press check are
+untouched; what went was the button, its string and the desktop check that
+pressed it.
+
