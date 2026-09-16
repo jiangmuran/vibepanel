@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +10,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/jiangmuran/vibepanel/internal/auth"
 )
 
 /*
@@ -401,5 +405,40 @@ func TestAChosenAddressOpensThePreview(t *testing.T) {
 	defer res.Body.Close() //nolint:errcheck // test
 	if res.StatusCode != http.StatusConflict {
 		t.Errorf("a second link on the same address = %d, want 409", res.StatusCode)
+	}
+}
+
+// Every other capability route applies the operator's --allow-from list
+// before it looks at a credential; the preview route used to be the one that
+// did not, which made creating a preview link a way to serve files to
+// addresses the operator had excluded.
+func TestAPreviewLinkOpensOnlyInsideTheAllowlist(t *testing.T) {
+	ts, srv := newTestServer(t)
+
+	res, err := ts.Client().Get(ts.URL + "/preview/no-such-token/")
+	if err != nil {
+		t.Fatalf("GET without an allowlist: %v", err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNotFound {
+		t.Errorf("no allowlist, unknown token = %d, want 404", res.StatusCode)
+	}
+
+	_, block, err := net.ParseCIDR("10.0.0.0/8")
+	if err != nil {
+		t.Fatalf("ParseCIDR: %v", err)
+	}
+	srv.Auth.Allow = []*net.IPNet{block}
+	srv.Auth.BlockedAudit = auth.NewCooldown(time.Minute)
+
+	// The check fires before the token is looked at, so a stranger's answer
+	// is the same whether the token exists or not: 403, from the allowlist.
+	res, err = ts.Client().Get(ts.URL + "/preview/no-such-token/")
+	if err != nil {
+		t.Fatalf("GET under the allowlist: %v", err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusForbidden {
+		t.Errorf("loopback under a 10/8 allowlist = %d, want 403", res.StatusCode)
 	}
 }
