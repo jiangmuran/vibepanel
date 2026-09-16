@@ -1,18 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
-import { Bell, Gauge, Share2, Terminal, UserRound, X } from 'lucide-react'
+import { ArrowUpRight, Bell, Gauge, Share2, Terminal, UserRound, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 import { api } from '../protocol/api'
-import type { SettingsInfo, SharePage } from '../protocol/wire'
-import { setLang, t, useLang } from '../i18n'
+import type { SettingsInfo } from '../protocol/wire'
+import { t, useLang } from '../i18n'
+import { SHARING_PATH } from '../routes'
+import { LanguageSwitch } from './LanguageSwitch'
 import { AccountGroup } from './settings/AccountGroup'
 import { NotificationsGroup } from './settings/NotificationsGroup'
 import { PanelGroup } from './settings/PanelGroup'
 import { SessionsGroup } from './settings/SessionsGroup'
-import { SharingGroup } from './settings/SharingGroup'
 import {
   GROUP_TITLE,
-  GROUP_WIDTH,
   SETTINGS_GROUPS,
   groupFromKey,
   groupOf,
@@ -23,7 +23,6 @@ import type { SettingsGroup, SettingsSection } from './settings/groups'
 const GROUP_ICON: Record<SettingsGroup, LucideIcon> = {
   sessions: Terminal,
   notify: Bell,
-  sharing: Share2,
   account: UserRound,
   panel: Gauge,
 }
@@ -39,24 +38,18 @@ const GROUP_ICON: Record<SettingsGroup, LucideIcon> = {
  * "states are being guessed" notice asks for state reporting and lands on
  * whichever rail item holds it today.
  *
- * The rail is the same five buttons at every width; below `sm` it is a row
+ * The rail is the same four buttons and one link at every width; below `sm`
+ * it is a row
  * above the body that scrolls sideways instead of a column beside it. That is
  * a CSS branch and not a JavaScript one, on purpose: `components/chrome.ts`
  * exists because a control that is present at one size and absent at another
  * rearranges the layout under somebody's finger, and the cheapest way to keep
  * that promise here is for there to be nothing to get wrong.
  */
-export function Settings({
-  openAt,
-  onClose,
-  onOpenPage,
-}: {
-  openAt: SettingsSection
-  onClose: () => void
-  /** Open a share page as its project, with its Preview; `fresh` starts an agent in it. */
-  onOpenPage?: (page: SharePage, fresh: boolean) => void
-}) {
-  const lang = useLang()
+export function Settings({ openAt, onClose }: { openAt: SettingsSection; onClose: () => void }) {
+  // Subscribed to the language, so the switch in the header redraws every
+  // string in this dialog and not only its own two.
+  useLang()
   const [group, setGroup] = useState<SettingsGroup>(() => groupOf(openAt))
   const [info, setInfo] = useState<SettingsInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -135,13 +128,10 @@ export function Settings({
         role="dialog"
         aria-modal="true"
         aria-label={t('settings.title')}
-        // The width follows the group. Whole classes rather than an
-        // interpolated `max-w-${…}`: Tailwind scans this file as text, and a
-        // class it never sees written out is a class it never emits.
-        // groups.ts says why sharing is the one that is different.
-        className={`vp-panel-in flex max-h-full w-full flex-col rounded-vp-lg border border-hairline bg-surface shadow-xl ${
-          GROUP_WIDTH[group] === 'canvas' ? 'max-w-6xl' : 'max-w-3xl'
-        }`}
+        // A reading measure. Every group is label/value lines and a handful
+        // of controls, which read badly past about seventy characters. The
+        // one surface that wanted more — sharing — is a page now.
+        className="vp-panel-in flex max-h-full w-full max-w-3xl flex-col rounded-vp-lg border border-hairline bg-surface shadow-xl"
       >
         {/* The language switch is in the header rather than in a group, and it
             is the one control here that is about the reading rather than about
@@ -156,28 +146,7 @@ export function Settings({
           <h2 className="mr-auto text-vp-lg font-semibold tracking-tight text-ink">
             {t('settings.title')}
           </h2>
-          <div data-testid="settings-language" className="vp-segmented">
-            {(['zh', 'en'] as const).map((code) => (
-              <button
-                key={code}
-                type="button"
-                data-testid={`lang-${code}`}
-                onClick={() => setLang(code)}
-                // aria-pressed says it to a screen reader; data-active is what
-                // the stylesheet reads. Both, because `.vp-tab` keys its
-                // selected look off aria-selected/data-active and this is a
-                // toggle group rather than a tablist.
-                aria-pressed={lang === code}
-                data-active={lang === code}
-                // nowrap, because the header is the one place this control has
-                // to survive being squeezed: at 390px it folded 简体中文 into
-                // two lines inside a pill built for one.
-                className="vp-tab px-3 text-vp-base whitespace-nowrap"
-              >
-                {code === 'zh' ? t('settings.languageZh') : t('settings.languageEn')}
-              </button>
-            ))}
-          </div>
+          <LanguageSwitch testid="settings" />
           <button
             type="button"
             onClick={onClose}
@@ -198,49 +167,68 @@ export function Settings({
         <div className="flex min-h-0 flex-1 flex-col gap-3 p-4 sm:flex-row sm:gap-5 sm:p-5">
           <div
             ref={railRef}
-            role="tablist"
-            aria-label={t('settings.groups')}
             data-testid="settings-rail"
             // A row that scrolls sideways on a phone, a column on anything
             // wider. Not a select, and never a fold: the point of the rail is
-            // that all five names are readable at once, which is what makes a
+            // that all the names are readable at once, which is what makes a
             // wrong guess cost one press instead of a hunt.
             className="flex shrink-0 gap-1 overflow-x-auto sm:w-40 sm:flex-col sm:overflow-visible"
           >
-            {SETTINGS_GROUPS.map((id) => {
-              const Icon = GROUP_ICON[id]
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  role="tab"
-                  id={`settings-tab-${id}`}
-                  data-testid={`settings-group-${id}`}
-                  aria-selected={group === id}
-                  aria-controls="settings-panel"
-                  // Roving: the rail is one stop in the dialog's tab order and
-                  // the arrows move inside it, which is what a tablist is.
-                  tabIndex={group === id ? 0 : -1}
-                  onClick={() => setGroup(id)}
-                  onKeyDown={(e) => {
-                    const next = groupFromKey(e.key, group)
-                    if (!next) return
-                    e.preventDefault()
-                    setGroup(next)
-                    railRef.current
-                      ?.querySelector<HTMLElement>(`[data-testid="settings-group-${next}"]`)
-                      ?.focus()
-                  }}
-                  // No padding of its own: `.vp-tab` is unlayered and Tailwind's
-                  // utilities are in a cascade layer, so a `px-` here would be
-                  // inert and read as though it were doing something.
-                  className="vp-tab shrink-0 justify-start sm:w-full"
-                >
-                  <Icon size={13} className="vp-tab-icon shrink-0" />
-                  <span className="text-vp-base">{t(GROUP_TITLE[id])}</span>
-                </button>
-              )
-            })}
+            <div
+              role="tablist"
+              aria-label={t('settings.groups')}
+              className="flex shrink-0 gap-1 sm:flex-col"
+            >
+              {SETTINGS_GROUPS.map((id) => {
+                const Icon = GROUP_ICON[id]
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    role="tab"
+                    id={`settings-tab-${id}`}
+                    data-testid={`settings-group-${id}`}
+                    aria-selected={group === id}
+                    aria-controls="settings-panel"
+                    // Roving: the rail is one stop in the dialog's tab order and
+                    // the arrows move inside it, which is what a tablist is.
+                    tabIndex={group === id ? 0 : -1}
+                    onClick={() => setGroup(id)}
+                    onKeyDown={(e) => {
+                      const next = groupFromKey(e.key, group)
+                      if (!next) return
+                      e.preventDefault()
+                      setGroup(next)
+                      railRef.current
+                        ?.querySelector<HTMLElement>(`[data-testid="settings-group-${next}"]`)
+                        ?.focus()
+                    }}
+                    // No padding of its own: `.vp-tab` is unlayered and Tailwind's
+                    // utilities are in a cascade layer, so a `px-` here would be
+                    // inert and read as though it were doing something.
+                    className="vp-tab shrink-0 justify-start sm:w-full"
+                  >
+                    <Icon size={13} className="vp-tab-icon shrink-0" />
+                    <span className="text-vp-base">{t(GROUP_TITLE[id])}</span>
+                  </button>
+                )
+              })}
+            </div>
+            {/* Sharing is a page, and this is the way to it from where it used
+                to be. A link in the rail's own clothes, after a rule, with the
+                arrow that says it leaves: somebody who last saw the list of
+                pages under this word still finds it under this word. */}
+            <div className="flex shrink-0 sm:mt-1 sm:border-t sm:border-hairline sm:pt-2">
+              <a
+                href={SHARING_PATH}
+                data-testid="settings-sharing-link"
+                className="vp-tab shrink-0 justify-start sm:w-full"
+              >
+                <Share2 size={13} className="vp-tab-icon shrink-0" />
+                <span className="text-vp-base">{t('grp.sharing')}</span>
+                <ArrowUpRight size={12} className="ml-auto shrink-0 text-ink-3" aria-hidden="true" />
+              </a>
+            </div>
           </div>
 
           {/* Keyed by the group, so switching remounts rather than reuses:
@@ -259,7 +247,6 @@ export function Settings({
           >
             {group === 'sessions' && <SessionsGroup />}
             {group === 'notify' && <NotificationsGroup />}
-            {group === 'sharing' && <SharingGroup onOpenPage={onOpenPage} />}
             {group === 'account' && <AccountGroup info={info} />}
             {group === 'panel' && <PanelGroup info={info} />}
           </div>

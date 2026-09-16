@@ -392,17 +392,23 @@ try {
       await sleep(400)
     }
 
+    // Sharing, which is a page of its own. In every theme and language,
+    // because it is the one surface with its own chrome: a header that goes
+    // white-on-white in one theme is not visible from the other. Twice: pages
+    // with their links, then one link's editor unfolded.
+    await page.goto(`${BASE}/sharing`, { waitUntil: 'networkidle' })
+    await sleep(1500)
+    await shoot(page, `sharing-${tag}`)
+    await page.locator('[data-testid="share-edit"]').first().click().catch(() => {})
+    await sleep(1200)
+    await shoot(page, `sharing-editing-${tag}`)
+    await page.locator('[data-testid="share-edit-close"]').click().catch(() => {})
+    await page.goto(`${BASE}/`, { waitUntil: 'networkidle' })
+    await sleep(600)
+
     if (theme === 'dark' && locale === 'zh-CN') {
       await page.locator('[data-testid="settings-open"]').click().catch(() => {})
       await shoot(page, 'settings')
-      // Sharing: pages with their links, then one link's editor unfolded.
-      await page.locator('[data-testid="settings-group-sharing"]').click().catch(() => {})
-      await sleep(1500)
-      await shoot(page, 'settings-sharing')
-      await page.locator('[data-testid="share-edit"]').first().click().catch(() => {})
-      await sleep(1200)
-      await shoot(page, 'settings-sharing-editing')
-      await page.locator('[data-testid="share-edit-close"]').click().catch(() => {})
       await page.locator('[data-testid="settings-close"]').click().catch(() => {})
       await sleep(400)
       // The picker. By testid, because the three guesses this used to make were
@@ -465,9 +471,7 @@ try {
     // And the sharing page on a phone, which is where its form was worst: five
     // controls wrapping one per line with nothing but a truncated placeholder
     // saying what any of them set.
-    await page.locator('[data-testid="settings-open"]').first().click().catch(() => {})
-    await sleep(600)
-    await page.locator('[data-testid="settings-group-sharing"]').click().catch(() => {})
+    await page.goto(`${BASE}/sharing`, { waitUntil: 'networkidle' })
     await sleep(900)
     await shoot(page, `${name}-sharing`)
     await ctx.close()

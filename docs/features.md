@@ -188,8 +188,9 @@ browser, and no way to make a second link from the first.
 
 A share page is HTML, usually written by an agent in one of the panel's own
 sessions, reading the panel's data through a small SDK. Everything to do with
-it is in **Settings → Sharing**, which is one list: each page, and under it the
-links that show it.
+it is on the **Sharing** page — its own address, `/sharing`, on the same
+sign-in as the panel, and where Settings → Sharing leads — which is one list:
+each page, and under it the links that show it.
 
 ### Making one, publishing it, handing it out
 

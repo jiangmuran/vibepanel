@@ -163,8 +163,8 @@ export function Sharing({
 
   return (
     <div data-testid="sharing" className="@container">
-      <div className="mb-2 flex flex-wrap items-start gap-x-3 gap-y-2">
-        <p className="min-w-0 flex-1 text-vp-base leading-relaxed text-ink-2">
+      <div className="mb-4 flex flex-wrap items-start gap-x-6 gap-y-3">
+        <p className="min-w-0 max-w-2xl flex-1 text-vp-base leading-relaxed text-ink-2">
           {t('page.why')}{' '}
           <a
             href={docsURL(lang)}
@@ -260,25 +260,40 @@ export function Sharing({
       )}
 
       {pages.length === 0 && !creating ? (
-        <p className="text-vp-base text-ink-3">{t('page.none')}</p>
+        <div
+          data-testid="pages-empty"
+          className="flex flex-col items-center gap-2 rounded-vp-lg border border-dashed border-hairline-strong px-4 py-10 text-center"
+        >
+          <span className="flex h-10 w-10 items-center justify-center rounded-vp bg-surface-2 text-ink-3">
+            <PanelsTopLeft size={18} />
+          </span>
+          <p className="text-vp-base text-ink-2">{t('page.none')}</p>
+        </div>
       ) : (
-        pages.map((page) => (
-          <PageCard
-            key={page.id}
-            page={page}
-            detail={details[page.id] ?? null}
-            links={links.filter((l) => l.pageId === page.id)}
-            projects={projects}
-            sessions={sessions}
-            visitorWrites={sharing?.visitorWrites ?? true}
-            onOpen={() => onOpenPage?.(page, false)}
-            onChanged={() => {
-              setError('')
-              void refresh()
-            }}
-            onError={fail}
-          />
-        ))
+        // One card per page, with its links inside it. Cards rather than
+        // rows separated by a rule, because this is a page on the panel's
+        // ground now rather than a list inside a dialog, and a page with a
+        // form and three links unfolded under it needs an edge that says
+        // where it ends and the next one begins.
+        <div className="grid gap-3">
+          {pages.map((page) => (
+            <PageCard
+              key={page.id}
+              page={page}
+              detail={details[page.id] ?? null}
+              links={links.filter((l) => l.pageId === page.id)}
+              projects={projects}
+              sessions={sessions}
+              visitorWrites={sharing?.visitorWrites ?? true}
+              onOpen={() => onOpenPage?.(page, false)}
+              onChanged={() => {
+                setError('')
+                void refresh()
+              }}
+              onError={fail}
+            />
+          ))}
+        </div>
       )}
     </div>
   )
@@ -477,7 +492,10 @@ function NewPage({
   }
 
   return (
-    <div data-testid="page-form" className="mb-3 rounded-vp border border-hairline bg-surface-2 p-3">
+    <div
+      data-testid="page-form"
+      className="vp-panel-in mb-4 rounded-vp-lg border border-hairline bg-surface p-4 shadow-sm"
+    >
       <div className="mb-2 grid grid-cols-1 gap-x-3 gap-y-2 @md:grid-cols-2">
         <Field label={t('page.nameLabel')} htmlFor="page-name">
           <input
@@ -594,7 +612,11 @@ function PageCard({
   }
 
   return (
-    <div data-testid="page-row" data-page={page.id} className="border-t border-hairline py-2.5 text-vp-base first:border-t-0">
+    <div
+      data-testid="page-row"
+      data-page={page.id}
+      className="rounded-vp-lg border border-hairline bg-surface p-3 text-vp-base shadow-sm @md:p-4"
+    >
       <div className="flex flex-wrap items-center gap-2">
         <PanelsTopLeft size={14} className="shrink-0 text-ink-2" />
         <span className="min-w-0 flex-1 truncate font-medium text-ink">{safeText(page.name)}</span>
@@ -603,7 +625,7 @@ function PageCard({
         </span>
         {/* Its own line in a narrow container, so the page's name is not the
             thing that gives way to five buttons. */}
-        <span className="flex w-full shrink-0 items-center justify-end gap-1 @xl:w-auto">
+        <span className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1 @xl:w-auto">
           <button
             type="button"
             data-testid="page-open"

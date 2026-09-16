@@ -178,7 +178,7 @@ opaque origin. `scriptHosts` accepts only `cdnjs.cloudflare.com` and
 
 ## 6. The workflow
 
-**The settings list.** Settings → Sharing is one list: each page — its name,
+**The sharing page.** `/sharing` (Settings → Sharing leads there) is one list: each page — its name,
 `vN published` or not published, its directory — with **Open**, **Publish**,
 versions, fork and delete, and under it the links that draw it. A link is made
 from its page's row, so there is no "which page" choice to get wrong.

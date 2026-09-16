@@ -15,7 +15,7 @@ import {
   User,
 } from 'lucide-react'
 
-import { setLang, t, useLang } from '../i18n'
+import { t, useLang } from '../i18n'
 import { api, OriginNotTrustedError } from '../protocol/api'
 import {
   decodeRequestOptions,
@@ -23,6 +23,7 @@ import {
   passkeysSupported,
 } from '../protocol/webauthn'
 import type { AuthState } from '../protocol/wire'
+import { LanguageSwitch } from './LanguageSwitch'
 import { blockerKey } from './settings/passkeyReason'
 
 /**
@@ -97,10 +98,14 @@ export function AuthGate({ children }: { children: (state: AuthState, signOut: (
  * before anything else has been fetched. Inline, it paints with the first
  * frame, in whichever palette is on.
  */
-function Mark() {
+export function Mark({ small }: { small?: boolean }) {
+  // Two sizes and one drawing: the sign-in card's mark, and the same mark at
+  // control height in the sharing page's header, where a 48px square would be
+  // the tallest thing on the line.
+  const box = small ? 'h-7 w-7 rounded-md' : 'h-12 w-12 rounded-vp shadow-lg'
   return (
-    <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-vp bg-accent shadow-lg">
-      <svg viewBox="0 0 64 64" width="30" height="30" aria-hidden="true">
+    <span className={`flex shrink-0 items-center justify-center bg-accent ${box}`}>
+      <svg viewBox="0 0 64 64" width={small ? 18 : 30} height={small ? 18 : 30} aria-hidden="true">
         <g fill="var(--vp-accent-ink)">
           <rect x="13" y="17" width="26" height="6" rx="3" />
           <rect x="13" y="29" width="34" height="6" rx="3" />
@@ -111,36 +116,6 @@ function Mark() {
         <path d="M50 15 L56 25.5 L44 25.5 Z" fill="var(--vp-state-waiting)" />
       </svg>
     </span>
-  )
-}
-
-/**
- * The language switch, before there is anywhere else to put it.
- *
- * The same argument as the one in the settings header: somebody who needs this
- * cannot read the rest of the screen, which is why they are looking for it. On
- * every other screen it lives in settings — and settings is behind this one,
- * so a reader who lands here in the wrong language has no way through. Each
- * option is written in its own language for the same reason.
- */
-function LanguageSwitch() {
-  const lang = useLang()
-  return (
-    <div data-testid="auth-language" className="vp-segmented">
-      {(['zh', 'en'] as const).map((code) => (
-        <button
-          key={code}
-          type="button"
-          data-testid={`auth-lang-${code}`}
-          onClick={() => setLang(code)}
-          aria-pressed={lang === code}
-          data-active={lang === code}
-          className="vp-tab px-3 text-vp-base whitespace-nowrap"
-        >
-          {code === 'zh' ? t('settings.languageZh') : t('settings.languageEn')}
-        </button>
-      ))}
-    </div>
   )
 }
 
@@ -171,7 +146,7 @@ function Shell({ wide, children }: { wide?: boolean; children: React.ReactNode }
       <div aria-hidden="true" className="pointer-events-none fixed inset-0" style={{ backgroundImage: WASH }} />
       <div className="relative flex min-h-full flex-col">
         <div className="vp-safe-pad-top flex shrink-0 justify-end px-4 pb-1">
-          <LanguageSwitch />
+          <LanguageSwitch testid="auth" />
         </div>
         <div className="vp-safe-bottom flex flex-1 items-center justify-center px-4">
           {/* The breathing room is on this element and not on its parent.

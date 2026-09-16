@@ -4,24 +4,22 @@ import {
   ChevronUp,
   LogOut,
   Menu,
-  Moon,
-  Monitor,
   PanelRight,
   RotateCcw,
   Settings as SettingsIcon,
-  Sun,
 } from 'lucide-react'
 
 import { api, UnauthorizedError } from './protocol/api'
 import { PanelSocket } from './protocol/socket'
 import type { SocketStatus } from './protocol/socket'
-import type { AuthState, PanelState, Project, Session, SharePage } from './protocol/wire'
+import type { AuthState, PanelState, Project, Session } from './protocol/wire'
 import { TerminalView } from './components/Terminal'
 import { StateDot } from './components/StateDot'
 import { Sidebar } from './components/Sidebar'
 import { BottomTerminals } from './components/BottomTerminals'
 import { RightPanel } from './components/RightPanel'
 import { Settings } from './components/Settings'
+import { ThemeToggle } from './components/ThemeToggle'
 import { SETTINGS_HOME } from './components/settings/groups'
 import type { SettingsSection } from './components/settings/groups'
 import { TokenUsageView } from './components/TokenUsageView'
@@ -40,6 +38,7 @@ import {
 } from './components/panes'
 import { disambiguatedLabels, projectLabel, sessionLabel } from './components/label'
 import { applyTheme, loadTheme } from './components/theme'
+import { PANEL_PATH, pageToOpen } from './routes'
 import type { ThemeChoice } from './components/theme'
 import { NARROW_QUERY, useMediaQuery } from './hooks/useMediaQuery'
 import { EXIT_VANISHED } from './protocol/wire'
@@ -353,7 +352,18 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     }
   }, [socket])
 
+  // How many snapshots have arrived; see the hand-over effect below.
+  //
+  // State, not a ref, on purpose. A ref is bumped the moment the snapshot
+  // arrives, and the first one arrives in the same tick the socket reports
+  // open: an effect keyed on the status then ran with the count already at
+  // one and the render's `state` still the empty initial one, and sent every
+  // hand-over to the launch picker because no session was running in a list
+  // that had nothing in it. As state it is set in the same call as the
+  // snapshot, so the render that sees the count sees the sessions.
+  const [snapshots, setSnapshots] = useState(0)
   const applyState = useCallback((next: PanelState) => {
+    setSnapshots((n) => n + 1)
     setState(next)
     // Every snapshot, because the transition it looks for is only visible by
     // comparing this one with the last. It was written, tested, documented in
@@ -370,6 +380,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
 
   // Pushed updates are the primary path.
   useEffect(() => socket.onState(applyState), [socket, applyState])
+
 
   // What the server says went wrong, said to the person it happened to.
   //
@@ -854,7 +865,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   const [launchFor, setLaunchFor] = useState<Project | null>(null)
   const newSession = (project: Project) => setLaunchFor(project)
 
-  // Opening a share page from settings: the server makes sure its directory
+  // Opening a share page from the sharing page: the server makes sure its directory
   // is there (writing the published version back if it has gone) and that a
   // `page-…` project points at it. Then the Preview opens beside it, and an
   // agent is started when the page is new or nothing is running in it -- with
@@ -863,10 +874,9 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   // agent does anything else.
   const pagePrompt = useRef<{ projectId: string; text: string } | null>(null)
   const [previewAsk, setPreviewAsk] = useState(0)
-  const openPage = async (page: SharePage, fresh: boolean) => {
-    setSettingsAt(null)
+  const openPage = async (pageId: string, fresh: boolean) => {
     try {
-      const opened = await api.openPage(page.id)
+      const opened = await api.openPage(pageId)
       const project =
         state.projects.find((p) => p.id === opened.projectId) ??
         (await api.state()).projects.find((p) => p.id === opened.projectId)
@@ -890,6 +900,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
       setError(e instanceof Error ? e.message : String(e))
     }
   }
+
 
   const newBottomTerminal = () => {
     if (!current) return
@@ -957,6 +968,25 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     // matters.
     focusTerminal(id)
   }
+
+  // A page the sharing page handed over on the address (routes.ts). Opened
+  // once the first snapshot is here rather than on mount, because opening
+  // reads the projects and sessions and the empty initial state would send
+  // every hand-over to the launch picker. Read once, into a ref, and the
+  // query is taken off the address bar in the same step: a reload must not
+  // open it again, and a bookmark of the panel must not carry a page in it.
+  const handedOver = useRef(pageToOpen(location.search))
+  useEffect(() => {
+    if (status !== 'open' || snapshots === 0) return
+    const pending = handedOver.current
+    if (!pending) return
+    handedOver.current = null
+    history.replaceState(null, '', PANEL_PATH)
+    void openPage(pending.id, pending.fresh)
+    // openPage is not in the deps on purpose: it is a fresh closure every
+    // render and the effect is meant to fire once, on the first open snapshot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, snapshots])
 
   const showOverlay = narrow && drawerOpen
   const showSidebar = narrow ? drawerOpen : true
@@ -1503,7 +1533,6 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
       {settingsAt && (
         <Settings
           openAt={settingsAt}
-          onOpenPage={(page, fresh) => void openPage(page, fresh)}
           onClose={() => {
             setSettingsAt(null)
             loadProfiles()
@@ -1608,27 +1637,5 @@ function ConnectionDot({ status }: { status: SocketStatus }) {
       }`}
       style={status === 'open' ? { background: colour } : { border: `1.5px solid ${colour}` }}
     />
-  )
-}
-
-function ThemeToggle({
-  theme,
-  onChange,
-}: {
-  theme: ThemeChoice
-  onChange: (t: ThemeChoice) => void
-}) {
-  const next: Record<ThemeChoice, ThemeChoice> = { system: 'light', light: 'dark', dark: 'system' }
-  const Icon = theme === 'light' ? Sun : theme === 'dark' ? Moon : Monitor
-  return (
-    <button
-      type="button"
-      data-testid="theme-toggle"
-      onClick={() => onChange(next[theme])}
-      title={t('app.themeIs', { mode: t(`theme.${theme}`) })}
-      className="vp-control"
-    >
-      <Icon size={15} />
-    </button>
   )
 }

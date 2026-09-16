@@ -262,7 +262,7 @@ export function PageLinks({
 
       {links.map((link) => (
         <div key={link.id} data-testid="share-row" className="border-t border-hairline py-1.5 text-vp-base first:border-t-0">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Monitor size={12} className="shrink-0 text-ink-3" />
             <span className="min-w-0 flex-1 truncate text-ink">{safeText(link.name)}</span>
             <span
@@ -272,6 +272,10 @@ export function PageLinks({
             >
               {link.viewers > 0 ? t('share.viewers', { n: link.viewers }) : t('share.noViewers')}
             </span>
+            {/* Its own line in a narrow container, so the link's name is not
+                the thing that gives way to five buttons: at phone width the
+                row was cut off at the right edge and nothing said so. */}
+            <span className="flex w-full shrink-0 flex-wrap items-center justify-end gap-0.5 @md:w-auto">
             <button
               type="button"
               onClick={() => void copyAddress(link)}
@@ -350,6 +354,7 @@ export function PageLinks({
                 <Trash2 size={13} />
               </button>
             )}
+            </span>
           </div>
           <LinkFacts link={link} />
           {editing === link.id && (

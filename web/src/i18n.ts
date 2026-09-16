@@ -286,7 +286,6 @@ const DICT = {
 
   'session.new': { zh: '新建会话', en: 'New session' },
   'session.kill': { zh: '结束会话', en: 'Kill session' },
-  'session.rename': { zh: '重命名', en: 'Rename' },
   'session.pin': { zh: '置顶', en: 'Pin' },
   'session.unpin': { zh: '取消置顶', en: 'Unpin' },
   'session.markAs': { zh: '{state} —— 点一下改成{other}', en: '{state} — click to mark as {other}' },
@@ -542,6 +541,7 @@ const DICT = {
   'grp.sessions': { zh: '会话', en: 'Sessions' },
   'grp.notify': { zh: '通知', en: 'Notifications' },
   'grp.sharing': { zh: '分享', en: 'Sharing' },
+  'sharing.back': { zh: '返回面板', en: 'Back to the panel' },
   'grp.account': { zh: '账户', en: 'Account' },
   'grp.panel': { zh: '本机', en: 'This panel' },
   'settings.languageZh': { zh: '简体中文', en: '简体中文' },
