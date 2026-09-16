@@ -60,10 +60,10 @@ func init() {
 		Label:   "飞书",
 		Webhook: true,
 		Fields: []chat.Field{
-			{Name: "app_id", Label: "App ID", Hint: "开发者后台 → 应用 → 凭证与基础信息"},
+			{Name: "app_id", Label: "App ID", Hint: "console → app → credentials", HintZh: "开发者后台 → 应用 → 凭证与基础信息"},
 			{Name: "app_secret", Label: "App Secret", Secret: true},
-			{Name: "verification_token", Label: "Verification Token", Secret: true, Hint: "事件与回调 → 加密策略"},
-			{Name: "encrypt_key", Label: "Encrypt Key", Secret: true, Hint: "可选，建议填写；填了之后所有事件都会加密并签名"},
+			{Name: "verification_token", Label: "Verification Token", Secret: true, Hint: "events & callbacks → encryption", HintZh: "事件与回调 → 加密策略"},
+			{Name: "encrypt_key", Label: "Encrypt Key", Secret: true, Hint: "optional", HintZh: "可选"},
 		},
 		New: New,
 	})
@@ -90,9 +90,11 @@ type Adapter struct {
 	// the HTTP request's, because the bridge queues the work on a goroutine
 	// that outlives the request, and a picture is downloaded after the
 	// response has gone.
-	ctx    context.Context
-	seen   map[string]time.Time
-	pruned time.Time
+	ctx  context.Context
+	seen map[string]time.Time
+	// lastRefused is when the door last reported a refusal; see refuse.
+	lastRefused time.Time
+	pruned      time.Time
 
 	tokMu  sync.Mutex
 	token  string
@@ -165,8 +167,7 @@ func (a *Adapter) Kind() string { return Kind }
 func (a *Adapter) Capabilities() chat.Capabilities {
 	return chat.Capabilities{
 		Edit: true, Buttons: true, QuoteRefs: true, Proactive: true,
-		Flavor: chat.FlavorMarkdown, MaxText: 4000, Images: true,
-		Typing: false, VoiceText: false,
+		MaxText: 4000, Images: true, Typing: false,
 	}
 }
 

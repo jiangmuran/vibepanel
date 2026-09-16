@@ -115,7 +115,7 @@ func (r *Runner) codexMCP() []string {
 		"-c", "mcp_servers.vibepanel.command=" + q(r.cfg.SelfBinary),
 		"-c", `mcp_servers.vibepanel.args=["mcp"]`,
 		"-c", "mcp_servers.vibepanel.env.VIBEPANEL_URL=" + q(r.cfg.PanelURL),
-		"-c", "mcp_servers.vibepanel.env.VIBEPANEL_TOOLS_TOKEN=" + q(r.cfg.ToolsToken),
+		"-c", "mcp_servers.vibepanel.env.VIBEPANEL_TOOLS_TOKEN_FILE=" + q(r.tokenPathOrEmpty()),
 	}
 }
 
@@ -148,4 +148,15 @@ func codexThreadID(stdout []byte) string {
 		}
 	}
 	return ""
+}
+
+// tokenPathOrEmpty is the tools token's file for the MCP server's
+// environment; an error leaves it empty and the MCP server refuses to
+// start, which the answer then says.
+func (r *Runner) tokenPathOrEmpty() string {
+	p, err := r.tokenFile()
+	if err != nil {
+		return ""
+	}
+	return p
 }

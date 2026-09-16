@@ -707,10 +707,12 @@ else.
 ### `DELETE /api/chat/channels/{kind}`
 ### `POST /api/chat/channels/{kind}/test`
 
-`{"enabled": bool, "values": {field: value}}`. A secret sent empty keeps what
-is stored. The channel restarts on every write. `test` sends one line to every
-paired person on that channel (or `{"peerId"}` for one) and answers
-`{"sent", "error"}`.
+`{"enabled": bool, "values": {field: value}}`, answered `204`; a field left
+out is untouched and a secret sent empty keeps what is stored, so
+`{"enabled": false, "values": {}}` is the switch. The channel restarts on
+every write. `404` for a kind this build has no adapter for. `test` sends one
+line to every paired person on that channel (or `{"peerId"}` for one) and
+answers `200 {"sent", "error"}`.
 
 ### `POST /api/chat/channels/{kind}/login`
 ### `GET /api/chat/channels/{kind}/login/{id}`
@@ -724,7 +726,8 @@ stored and the channel is enabled.
 ### `POST /api/chat/pair`
 
 `{"code"}`: accept the pending person who was given this six-digit code by the
-bot. Codes expire ten minutes after the person last spoke.
+bot; `200` with the peer, `404` when no pending person has it. Codes expire
+ten minutes after the message that produced them.
 
 ### `PATCH /api/chat/peers/{channel}/{peer}`
 ### `DELETE /api/chat/peers/{channel}/{peer}`
@@ -735,9 +738,10 @@ bot. Codes expire ten minutes after the person last spoke.
 ### `POST /api/chat/routes/preview`
 
 The routing table (`{"rules": [...], "default": {...}}`), validated before it
-is stored. Preview takes `{"sessionId"}` and answers what the table would do
-about that session right now — the rule that matched, the destinations after
-muting, whether quiet hours would hold it — without sending anything.
+is stored (`400` says which rule and why). Preview takes `{"sessionId"}` and
+answers what the table would do about that session right now — the rule that
+matched, who would be told after pairing and muting, whether quiet hours would
+hold it — without sending anything; `404` for a session that is not there.
 
 ### `PUT /api/chat/keys`
 
@@ -750,15 +754,19 @@ with a space in it is refused: it would be typed as text.
 
 The advanced mode's configuration (`enabled`, `harness` claude|codex, `model`,
 `profileId`, `maxTurns`, `budgetUsd`, `timeoutSeconds`) and the language the
-bot speaks (`zh`|`en`).
+bot speaks (`zh`|`en`). A configuration the harness cannot be built from is
+answered `400` and nothing is stored.
 
 ### `GET /api/chat/log`
 
-The chat's own audit entries (`chat.*`), newest first, `?n=` up to 500.
+The chat's own audit entries (`chat.*`), newest first, `?n=` up to 500 (a
+larger or missing `n` reads as 100).
 
 ### `POST /api/chat/hooks/{kind}`
+### `GET /api/chat/hooks/{kind}`
 
-Where an IM that calls back (飞书) delivers events. Unauthenticated at the
+Where an IM that calls back (飞书) delivers events; the `GET` is for an IM
+that verifies the address with one. Unauthenticated at the
 panel's door, because the IM cannot sign in; the adapter verifies every
 request (signature, verification token) and the panel hands the request over
 and nothing else. 404 when no such channel is running.

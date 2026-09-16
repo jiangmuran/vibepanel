@@ -330,7 +330,10 @@ func running(t *testing.T, a *Adapter) (*recSink, func() error) {
 
 func TestRegisteredAsAQRLogin(t *testing.T) {
 	f, ok := chat.FactoryFor(Kind)
-	if !ok || !f.Login || len(f.Fields) != 0 || f.Label != "微信" {
+	// The fields are the sign-in's credentials, declared so the server can
+	// withhold the token and show who is signed in without knowing this
+	// adapter by name.
+	if !ok || !f.Login || len(f.Fields) != 3 || f.Fields[0].Name != "bot_token" || !f.Fields[0].Secret || f.Label != "微信" {
 		t.Fatalf("factory %+v", f)
 	}
 	ad, err := f.New(json.RawMessage(`{}`), chat.Env{})
@@ -341,8 +344,8 @@ func TestRegisteredAsAQRLogin(t *testing.T) {
 		t.Fatalf("Run without a token: %v", err)
 	}
 	caps := ad.Capabilities()
-	if caps.Edit || caps.Buttons || caps.QuoteRefs || caps.Proactive || caps.Flavor != chat.FlavorPlain ||
-		caps.MaxText != 4000 || !caps.Images || !caps.Typing || !caps.VoiceText {
+	if caps.Edit || caps.Buttons || caps.QuoteRefs || caps.Proactive ||
+		caps.MaxText != 4000 || !caps.Images || !caps.Typing {
 		t.Fatalf("capabilities %+v", caps)
 	}
 }
@@ -490,7 +493,7 @@ func TestGetUpdatesDeliversTextWithTheRightHeaders(t *testing.T) {
 	s, _ := running(t, a)
 	in := s.next(t)
 	if in.PeerID != "u1@im.wechat" || in.Ref != "1" || in.Text != "你好" || in.ContextToken != "ctx-1" ||
-		in.Voice || in.Image != nil || in.At.UnixMilli() != 1774158905123 {
+		in.FetchImage != nil || in.At.UnixMilli() != 1774158905123 {
 		t.Fatalf("inbound %+v", in)
 	}
 	polls := f.waitCalls(t, "getupdates", 2)
@@ -528,11 +531,11 @@ func TestVoiceArrivesAsTranscribedText(t *testing.T) {
 	))
 	s, _ := running(t, a)
 	in := s.next(t)
-	if !in.Voice || in.Text != "我下午三点到。" {
+	if in.Text != "我下午三点到。" {
 		t.Fatalf("%+v", in)
 	}
 	in = s.next(t)
-	if !in.Voice || in.Text != "" || in.ContextToken != "t" {
+	if in.Text != "" || in.ContextToken != "t" {
 		t.Fatalf("untranscribed voice %+v", in)
 	}
 }
@@ -582,8 +585,12 @@ func TestImagesAreDownloadedAndDecryptedWithEitherKeyEncoding(t *testing.T) {
 	s, _ := running(t, newAdapter(t, f, ""))
 	for i := 1; i <= 4; i++ {
 		in := s.next(t)
-		if in.Ref != fmt.Sprint(i) || !bytes.Equal(in.Image, plain) {
-			t.Fatalf("message %d: ref %s image %d bytes (want %d)", i, in.Ref, len(in.Image), len(plain))
+		if in.Ref != fmt.Sprint(i) || in.FetchImage == nil {
+			t.Fatalf("message %d: ref %s, no picture to fetch", i, in.Ref)
+		}
+		img, err := in.FetchImage(context.Background())
+		if err != nil || !bytes.Equal(img, plain) {
+			t.Fatalf("message %d: fetch %v, %d bytes (want %d)", i, err, len(img), len(plain))
 		}
 		if i == 1 && in.Text != "看这个" {
 			t.Fatalf("caption lost: %+v", in.Text)

@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -297,8 +298,13 @@ func (r *rig) post(body []byte, headers map[string]string) *httptest.ResponseRec
 
 // signed encrypts a plaintext body the way 飞书 does and signs it.
 func (r *rig) signed(plain []byte) ([]byte, map[string]string) {
+	return r.signedAt(plain, r.ad.now())
+}
+
+// signedAt signs with a chosen timestamp, for the replay test.
+func (r *rig) signedAt(plain []byte, at time.Time) ([]byte, map[string]string) {
 	body := encryptBody(r.t, encKey, plain)
-	ts, nonce := "1694779200", "nonce-1"
+	ts, nonce := strconv.FormatInt(at.Unix(), 10), "nonce-1"
 	return body, map[string]string{
 		"X-Lark-Request-Timestamp": ts,
 		"X-Lark-Request-Nonce":     nonce,
@@ -400,8 +406,8 @@ func TestRegisteredAsAWebhookAdapterWithTheFourFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	caps := ad.Capabilities()
-	if !caps.Edit || !caps.Buttons || !caps.QuoteRefs || !caps.Proactive || !caps.Images || caps.Typing || caps.VoiceText ||
-		caps.Flavor != chat.FlavorMarkdown || caps.MaxText != 4000 {
+	if !caps.Edit || !caps.Buttons || !caps.QuoteRefs || !caps.Proactive || !caps.Images || caps.Typing ||
+		caps.MaxText != 4000 {
 		t.Fatalf("capabilities: %+v", caps)
 	}
 	if _, ok := ad.(chat.WebhookAdapter); !ok {
@@ -609,7 +615,7 @@ func TestAPrivateTextMessageBecomesAnInbound(t *testing.T) {
 	}
 	in := r.sink.wait(t)
 	if in.PeerID != senderOID || in.Ref != "om_1" || in.QuotedRef != "om_parent" || in.Text != "@Panel fix the tests" ||
-		in.Action != nil || in.Voice || in.Image != nil {
+		in.Action != nil || in.FetchImage != nil {
 		t.Fatalf("inbound %+v", in)
 	}
 	if in.At.UnixMilli() != 1609073151345 {
@@ -691,11 +697,16 @@ func TestAnImageIsDownloadedAndDelivered(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("the response waited on the download")
 	}
-	r.sink.none(t)
-	release()
+	// Delivered at once, with the download deferred to the bridge's ask;
+	// the request never waited on the CDN.
 	in := r.sink.wait(t)
-	if !bytes.Equal(in.Image, r.api.resource) || in.PeerID != senderOID || in.Ref != "om_img" || in.Text != "" {
+	if in.FetchImage == nil || in.PeerID != senderOID || in.Ref != "om_img" || in.Text != "" {
 		t.Fatalf("inbound %+v", in)
+	}
+	release()
+	img, err := in.FetchImage(context.Background())
+	if err != nil || !bytes.Equal(img, r.api.resource) {
+		t.Fatalf("fetch: %v, %d bytes", err, len(img))
 	}
 	var dl *apiCall
 	for _, c := range r.api.messages() {
@@ -718,7 +729,7 @@ func TestAVoiceNoteArrivesAsVoiceWithNoText(t *testing.T) {
 	body := messageEvent("ev1", "om_a", "p2p", "audio", `{"file_key":"file_v2_x","duration":2140}`, nil)
 	r.post(body, nil)
 	in := r.sink.wait(t)
-	if !in.Voice || in.Text != "" || in.Ref != "om_a" {
+	if in.Text != "" || in.Ref != "om_a" {
 		t.Fatalf("inbound %+v", in)
 	}
 	if len(r.api.messages()) != 0 {
@@ -1184,5 +1195,25 @@ func TestAnAPIErrorCarriesTheCode(t *testing.T) {
 	}
 	if err := r.ad.Typing(context.Background(), chat.Peer{ID: "ou_x"}, true); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A signature is good for five minutes. The tombstones that stop a redelivery
+// last a day; a request captured and replayed after that would otherwise be
+// new again, and a press replayed is a keystroke replayed.
+func TestASignedRequestExpires(t *testing.T) {
+	r := newRig(t, encKey)
+	r.run()
+	body, h := r.signedAt(textEvent("ev-old", "om_old", "replayed"), r.ad.now().Add(-6*time.Minute))
+	if rec := r.post(body, h); rec.Code != 401 {
+		t.Fatalf("a six-minute-old signature got %d", rec.Code)
+	}
+	r.sink.none(t)
+	body, h = r.signedAt(textEvent("ev-recent", "om_recent", "fresh"), r.ad.now().Add(-4*time.Minute))
+	if rec := r.post(body, h); rec.Code != 200 {
+		t.Fatalf("a four-minute-old signature got %d %s", rec.Code, rec.Body.String())
+	}
+	if in := r.sink.wait(t); in.Text != "fresh" {
+		t.Fatalf("inbound %+v", in)
 	}
 }

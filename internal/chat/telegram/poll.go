@@ -185,17 +185,20 @@ func (a *Adapter) deliverMessage(ctx context.Context, sink chat.Sink, m *message
 	}
 	switch {
 	case len(m.Photo) > 0:
-		img, err := a.download(ctx, largest(m.Photo))
-		if err != nil {
-			// The caption still arrives; a photo that could not be
-			// fetched is logged, not silently turned into a text message.
-			a.logf("photo from %s: %v", in.PeerID, err)
+		// Fetched only when the bridge asks, which it does for a paired
+		// person and never for a stranger: a photo costs Telegram's
+		// bandwidth and the panel's disk, and both are the panel's to spend.
+		photo := largest(m.Photo)
+		in.FetchImage = func(ctx context.Context) ([]byte, error) {
+			img, err := a.download(ctx, photo)
+			if err != nil {
+				a.logf("photo from %s: %v", in.PeerID, a.scrub(err))
+			}
+			return img, err
 		}
-		in.Image = img
 	case len(m.Voice) > 0 || len(m.Audio) > 0:
-		// No transcription (Capabilities.VoiceText is false); the bridge
-		// drops an empty text, so this is a receipt for the record only.
-		in.Voice = true
+		// No transcription; the bridge drops an empty text, so this is a
+		// receipt for the record only.
 		in.Text = ""
 	}
 	sink.Inbound(ctx, in)
@@ -274,7 +277,7 @@ func (a *Adapter) download(ctx context.Context, p photoSize) ([]byte, error) {
 	}
 	resp, err := a.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("telegram: file: %w", err)
+		return nil, fmt.Errorf("telegram: file: %w", a.scrub(err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {

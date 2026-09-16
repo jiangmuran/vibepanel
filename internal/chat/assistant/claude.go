@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -99,11 +100,22 @@ func (r *Runner) claudeTranslate(ctx context.Context, prompt string) (chat.Inten
 }
 
 func (r *Runner) claudeAsk(ctx context.Context, prompt, resume string) (chat.AssistantAnswer, string, error) {
+	mcp, err := r.mcpConfig()
+	if err != nil {
+		return chat.AssistantAnswer{}, "", err
+	}
 	args := []string{
 		"-p", prompt,
 		"--max-turns", strconv.Itoa(r.cfg.MaxTurns),
 		"--allowedTools", "mcp__vibepanel__*",
-		"--mcp-config", r.mcpConfig(),
+		"--mcp-config", mcp,
+	}
+	if r.helpMentions("--tools ") {
+		// No built-in tools at all; the MCP tools are not built-ins and
+		// stay. The disallowed list is a fallback for a build that
+		// predates the flag, and a list of names ages -- a tool added in
+		// a later version is not on it.
+		args = append(args, "--tools", "")
 	}
 	if r.helpMentions("--strict-mcp-config") {
 		args = append(args, "--strict-mcp-config")
@@ -130,20 +142,45 @@ func (r *Runner) claudeAsk(ctx context.Context, prompt, resume string) (chat.Ass
 // mcpConfig is the inline --mcp-config: this binary, as `vibepanel mcp`,
 // told where the panel is and what to say to it. Inline rather than a file
 // so the token is never on disk.
-func (r *Runner) mcpConfig() string {
-	return mustJSON(map[string]any{
+// mcpConfig writes the MCP server declaration to a 0600 file in WorkDir and
+// returns its path. A file rather than inline JSON on argv: the command
+// line of a process is readable by every local account through /proc, and
+// the token is the capability. The token itself is in a second file the
+// MCP server reads (VIBEPANEL_TOOLS_TOKEN_FILE), so neither argv nor the
+// harness's own config carries it.
+func (r *Runner) mcpConfig() (string, error) {
+	tokenPath, err := r.tokenFile()
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(r.cfg.WorkDir, "mcp.json")
+	body := mustJSON(map[string]any{
 		"mcpServers": map[string]any{
 			"vibepanel": map[string]any{
 				"type":    "stdio",
 				"command": r.cfg.SelfBinary,
 				"args":    []string{"mcp"},
 				"env": map[string]string{
-					"VIBEPANEL_URL":         r.cfg.PanelURL,
-					"VIBEPANEL_TOOLS_TOKEN": r.cfg.ToolsToken,
+					"VIBEPANEL_URL":              r.cfg.PanelURL,
+					"VIBEPANEL_TOOLS_TOKEN_FILE": tokenPath,
 				},
 			},
 		},
 	})
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// tokenFile writes the tools token to a 0600 file in WorkDir and returns
+// its path. Rewritten on every call: the token is per panel process.
+func (r *Runner) tokenFile() (string, error) {
+	path := filepath.Join(r.cfg.WorkDir, "tools.token")
+	if err := os.WriteFile(path, []byte(r.cfg.ToolsToken), 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func parseClaudeResult(out []byte) (claudeResult, error) {

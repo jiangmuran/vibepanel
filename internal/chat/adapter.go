@@ -24,24 +24,6 @@ import (
 	"time"
 )
 
-// Flavor is the text format an adapter renders best.
-//
-// The bridge composes a Card; the adapter turns it into bytes for its IM.
-// Flavor tells the bridge how much markup survives, which decides whether a
-// code block is fenced or just indented and whether a title is bold or
-// merely first.
-type Flavor string
-
-const (
-	// FlavorPlain renders nothing: text arrives as typed. 微信 is this, with
-	// the caveat that its client draws **bold** and `code` in place anyway.
-	FlavorPlain Flavor = "plain"
-	// FlavorHTML is a small HTML subset: b, i, code, pre, a. Telegram.
-	FlavorHTML Flavor = "html"
-	// FlavorMarkdown is card markdown: 飞书's interactive card body.
-	FlavorMarkdown Flavor = "markdown"
-)
-
 // Capabilities is what an adapter can do, declared once and read by the
 // bridge to choose how a session's day is presented.
 //
@@ -56,15 +38,14 @@ type Capabilities struct {
 	// Action. Without them, a prompt is answered by typing a word.
 	Buttons bool
 	// QuoteRefs: an inbound reply that quotes a message carries the quoted
-	// message's Ref. Without it the bridge gets QuotedText and finds the
-	// handle in the text, which is why every card starts with its handle.
+	// message's Ref, and the bridge resolves the quote by it. Without it
+	// the bridge reads QuotedText and finds the handle in the text, which
+	// is why every card starts with its handle.
 	QuoteRefs bool
 	// Proactive: the adapter can message a peer at any time. Without it, the
 	// bridge can only speak while it holds a ContextToken from the peer's
 	// last inbound message, and a push with none is dropped and counted.
 	Proactive bool
-	// Flavor is how text is rendered; see Flavor.
-	Flavor Flavor
 	// MaxText is the longest text one message may carry, in runes; the
 	// bridge splits past it. Zero means the adapter has no known limit.
 	MaxText int
@@ -72,9 +53,13 @@ type Capabilities struct {
 	Images bool
 	// Typing: Typing works and is worth calling.
 	Typing bool
-	// VoiceText: inbound voice arrives already transcribed as Text.
-	VoiceText bool
 }
+
+// How an adapter renders is its own business: the bridge composes a Card and
+// the adapter draws it in its IM's markup (RenderPlain, RenderHTML,
+// RenderMarkdown are there to share). An earlier version declared a
+// "flavor" here that nothing read, which is the drift the comment above
+// warns about.
 
 // Peer is who the bridge is talking to, as an adapter needs to address them.
 type Peer struct {
@@ -103,11 +88,16 @@ type Inbound struct {
 	// ContextToken is what the IM needs echoed to answer this person; see
 	// Peer.ContextToken. Empty for IMs that need nothing.
 	ContextToken string
-	// Image is an attached picture, decoded to the bytes of a PNG or JPEG.
-	Image []byte
-	// Voice marks Text as a transcription rather than something typed.
-	Voice bool
-	At    time.Time
+	// FetchImage downloads an attached picture, as the bytes of a PNG or
+	// JPEG, when the bridge asks. A function rather than the bytes because
+	// the download costs the IM's bandwidth and the panel's disk and the
+	// bridge only asks for a paired person; a stranger's picture is never
+	// fetched. Nil when the message carries no picture.
+	FetchImage func(ctx context.Context) ([]byte, error)
+	// A voice note arrives as Text when the IM transcribes it (微信 does)
+	// and as nothing at all when it does not: the bridge ignores an empty
+	// message, which is better than pretending to have heard.
+	At time.Time
 }
 
 // Action is a button press.
@@ -184,14 +174,19 @@ type Adapter interface {
 	SendImage(ctx context.Context, to Peer, png []byte, caption string) (ref string, err error)
 	Typing(ctx context.Context, to Peer, on bool) error
 	// Ack acknowledges a button press, with a short line for the IM to show
-	// where it shows one. Called once per Action, before any Send.
+	// where it shows one. Called once per Action, before any Send, from the
+	// bridge's own goroutine -- after a webhook adapter has already answered
+	// the IM's HTTP request, so only an IM with an out-of-band
+	// acknowledgement (Telegram's answerCallbackQuery) can do anything here;
+	// the others make it a no-op.
 	Ack(ctx context.Context, a Action, text string) error
 }
 
 // Sink is where an adapter puts what it receives and how it is doing.
 type Sink interface {
-	// Inbound hands over one message or press. It returns quickly; the
-	// bridge queues.
+	// Inbound hands over one message or press. It returns at once; the
+	// bridge handles messages from one person in the order they arrived and
+	// people independently of each other.
 	Inbound(ctx context.Context, in Inbound)
 	// Health reports a poll or connection outcome. ok with err == nil is a
 	// successful round; ok == false is a failed one. The channel's page shows
@@ -248,8 +243,11 @@ type Field struct {
 	Name   string `json:"name"`
 	Label  string `json:"label"`
 	Secret bool   `json:"secret"`
-	// Hint is shown under the field; where a value comes from.
-	Hint string `json:"hint,omitempty"`
+	// Hint is shown in the field; where a value comes from. HintZh is the
+	// same in Chinese, because the page is bilingual and a hint in the wrong
+	// language is a hint nobody reads.
+	Hint   string `json:"hint,omitempty"`
+	HintZh string `json:"hintZh,omitempty"`
 }
 
 // Env is what an adapter gets from the panel when it is built.

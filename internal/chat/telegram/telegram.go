@@ -21,6 +21,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -59,7 +60,7 @@ func init() {
 		Kind:  Kind,
 		Label: "Telegram",
 		Fields: []chat.Field{
-			{Name: "token", Label: "Bot token", Secret: true, Hint: "From @BotFather"},
+			{Name: "token", Label: "Bot token", Secret: true, Hint: "from @BotFather", HintZh: "找 @BotFather 要"},
 		},
 		New: New,
 	})
@@ -148,11 +149,9 @@ func (a *Adapter) Capabilities() chat.Capabilities {
 		Buttons:   true,
 		QuoteRefs: true,
 		Proactive: true,
-		Flavor:    chat.FlavorHTML,
 		MaxText:   4096,
 		Images:    true,
 		Typing:    true,
-		VoiceText: false,
 	}
 }
 
@@ -195,6 +194,31 @@ func (a *Adapter) url(method string) string {
 	return a.apiBase + "/bot" + a.token + "/" + method
 }
 
+// scrub takes the token out of an error before it reaches a log line, the
+// health line on the settings page or a toast. The token is in every URL,
+// and a *url.Error prints the URL: a proxy timeout would otherwise put the
+// bot's credential in the journal.
+func (a *Adapter) scrub(err error) error {
+	if err == nil {
+		return nil
+	}
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		err = fmt.Errorf("%s %s: %w", ue.Op, redactURL(ue.URL, a.token), ue.Err)
+	}
+	if a.token != "" && strings.Contains(err.Error(), a.token) {
+		return errors.New(strings.ReplaceAll(err.Error(), a.token, "***"))
+	}
+	return err
+}
+
+func redactURL(u, token string) string {
+	if token == "" {
+		return u
+	}
+	return strings.ReplaceAll(u, token, "***")
+}
+
 // call posts params as JSON and decodes result into out, when out is not nil.
 func (a *Adapter) call(ctx context.Context, client *http.Client, method string, params any, out any) error {
 	body, err := json.Marshal(params)
@@ -212,7 +236,7 @@ func (a *Adapter) call(ctx context.Context, client *http.Client, method string, 
 func (a *Adapter) do(client *http.Client, method string, req *http.Request, out any) error {
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("telegram: %s: %w", method, err)
+		return fmt.Errorf("telegram: %s: %w", method, a.scrub(err))
 	}
 	defer resp.Body.Close()
 	// The envelope is small; the bound is against a proxy answering with a

@@ -397,13 +397,45 @@ type uploadURLResp struct {
 
 const mediaImage = 1
 
+// maxMedia bounds a download. The official client accepts 100 MiB; a
+// picture for an agent to read is a screenshot, and the bound is on what a
+// server-chosen URL can make this process hold.
+const maxMedia = 20 << 20
+
+// trusted says whether a URL the server handed over may be dialled: https,
+// and a host that is the IM's own (the API or CDN base this client was
+// built with, or anything under weixin.qq.com). A response is not allowed
+// to point the panel at a loopback or private address; a URL that fails
+// the test is replaced by the one built from the query parameter.
+func (c *client) trusted(target string) bool {
+	if target == "" {
+		return false
+	}
+	u, err := url.Parse(target)
+	if err != nil || u.Hostname() == "" {
+		return false
+	}
+	// The hosts this client was built to talk to, scheme and all: a test
+	// points both at a plain-http fake, and production at the IM's https.
+	for _, base := range []string{c.base, c.cdn} {
+		if bu, err := url.Parse(base); err == nil && bu.Host != "" && strings.EqualFold(bu.Scheme, u.Scheme) && strings.EqualFold(bu.Host, u.Host) {
+			return true
+		}
+	}
+	if u.Scheme != "https" {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == "weixin.qq.com" || strings.HasSuffix(host, ".weixin.qq.com")
+}
+
 // upload puts ciphertext on the CDN and returns the download parameter the
 // receiver's client will need. The parameter comes back in a response
 // header, and a 200 without it is a failure, because an image item built
 // without it is a bubble the phone cannot open.
 func (c *client) upload(ctx context.Context, u uploadURLResp, fileKey string, ciphertext []byte) (string, error) {
 	target := u.UploadFullURL
-	if target == "" {
+	if !c.trusted(target) {
 		q := url.Values{"encrypted_query_param": {u.UploadParam}, "filekey": {fileKey}}
 		target = strings.TrimRight(c.cdn, "/") + "/upload?" + q.Encode()
 	}
@@ -435,7 +467,7 @@ func (c *client) upload(ctx context.Context, u uploadURLResp, fileKey string, ci
 // built from the query parameter.
 func (c *client) download(ctx context.Context, m *cdnMedia) ([]byte, error) {
 	target := m.FullURL
-	if target == "" {
+	if !c.trusted(target) {
 		q := url.Values{"encrypted_query_param": {m.EncryptQueryParam}}
 		target = strings.TrimRight(c.cdn, "/") + "/download?" + q.Encode()
 	}
@@ -454,5 +486,5 @@ func (c *client) download(ctx context.Context, m *cdnMedia) ([]byte, error) {
 		return nil, fmt.Errorf("weixin: cdn download: http %d", res.StatusCode)
 	}
 	// 100 MiB is the official client's ceiling on inbound media.
-	return io.ReadAll(io.LimitReader(res.Body, 100<<20))
+	return io.ReadAll(io.LimitReader(res.Body, maxMedia))
 }

@@ -35,7 +35,15 @@ func init() {
 		Kind:  Kind,
 		Label: "微信",
 		Login: true,
-		New:   New,
+		// Filled by the sign-in, never typed; declared so the settings
+		// route knows which to withhold (the token) and which to show
+		// (who is signed in) without knowing this adapter by name.
+		Fields: []chat.Field{
+			{Name: "bot_token", Label: "Bot token", Secret: true},
+			{Name: "user_id", Label: "User"},
+			{Name: "bot_id", Label: "Bot"},
+		},
+		New: New,
 	})
 }
 
@@ -171,7 +179,7 @@ func (a *Adapter) Kind() string { return Kind }
 func (a *Adapter) Capabilities() chat.Capabilities {
 	return chat.Capabilities{
 		Edit: false, Buttons: false, QuoteRefs: false, Proactive: false,
-		Flavor: chat.FlavorPlain, MaxText: 4000, Images: true, Typing: true, VoiceText: true,
+		MaxText: 4000, Images: true, Typing: true,
 	}
 }
 
@@ -331,16 +339,14 @@ func (a *Adapter) deliver(ctx context.Context, sink chat.Sink, m message) {
 		case itemVoice:
 			if it.VoiceItem != nil && in.Text == "" {
 				in.Text = it.VoiceItem.Text
-				in.Voice = true
 			}
 		case itemImage:
-			if it.ImageItem != nil && in.Image == nil {
-				img, err := a.fetchImage(ctx, it.ImageItem)
-				if err != nil {
-					a.logf("image from %s: %v", m.FromUserID, err)
-					continue
-				}
-				in.Image = img
+			if it.ImageItem != nil && in.FetchImage == nil {
+				// Fetched only when the bridge asks: a paired person, a
+				// session to go to. A stranger's picture is never
+				// downloaded or decrypted.
+				item := it.ImageItem
+				in.FetchImage = func(ctx context.Context) ([]byte, error) { return a.fetchImage(ctx, item) }
 			}
 		}
 	}

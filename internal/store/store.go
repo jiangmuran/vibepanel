@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -953,8 +954,6 @@ var migrations = []func(tx *sql.Tx) error{
 			     pairing_code      TEXT NOT NULL DEFAULT '',
 			     mode              TEXT NOT NULL DEFAULT 'normal',
 			     focus_session     TEXT NOT NULL DEFAULT '',
-			     assistant_session TEXT NOT NULL DEFAULT '',
-			     assistant_at      INTEGER NOT NULL DEFAULT 0,
 			     context_token     TEXT NOT NULL DEFAULT '',
 			     created_at        INTEGER NOT NULL,
 			     last_seen_at      INTEGER NOT NULL DEFAULT 0,
@@ -1017,6 +1016,12 @@ var schemaVersion = len(migrations)
 // DB wraps the connection pool with the queries the panel needs.
 type DB struct {
 	sql *sql.DB
+	// handleMu serialises chat handle assignment. Two connections assigning
+	// at once both compute MAX+1 under their own read snapshot and the
+	// second INSERT fails with SQLITE_BUSY_SNAPSHOT, which busy_timeout does
+	// not wait out; one panel process is the only writer, so a mutex is the
+	// whole fix.
+	handleMu sync.Mutex
 }
 
 // Open connects to the database at path, applying the schema if needed.

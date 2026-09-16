@@ -381,11 +381,15 @@ id, that is the address a reply is read back from, and at 2am the first four
 characters are all anyone reads.
 
 **Where a reply goes is decided by a rule, in order, and refused when the rule
-does not apply.** A quoted message first; a handle in the text second
-(`3: …`, `#3`, `[3]`); then the focus, but only while exactly one session is
-waiting. Two waiting sessions and a bare "y" is refused with the list, even
+does not apply.** A quoted card first (a card, not any message with a number
+in it: the list the bridge sends when it refuses also has numbers, and a
+quote of it must not pick the first); a handle in the text second (`3: …`,
+`#3`, `[3]`); then the one session that is waiting, if exactly one is; then
+the focus. Two waiting sessions and a bare "y" is refused with the list, even
 when one of them is focused, because the cost of asking again is one message
-and the cost of guessing is a keystroke in the wrong shell. What "allow" is —
+and the cost of guessing is a keystroke in the wrong shell. A session at a
+permission prompt takes no words at all until the prompt is answered: its
+dialog reads keys, and Enter after a paste is "allow". What "allow" is —
 Enter for Claude Code, `y` for Codex — is a per-tool key profile, editable,
 and a tool without one is refused rather than guessed at. Every delivery comes
 back as a receipt naming the handle.

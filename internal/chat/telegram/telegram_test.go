@@ -300,7 +300,7 @@ func TestRegistered(t *testing.T) {
 		t.Fatalf("defaults: %+v", ad.(*Adapter))
 	}
 	caps := ad.Capabilities()
-	want := chat.Capabilities{Edit: true, Buttons: true, QuoteRefs: true, Proactive: true, Flavor: chat.FlavorHTML, MaxText: 4096, Images: true, Typing: true}
+	want := chat.Capabilities{Edit: true, Buttons: true, QuoteRefs: true, Proactive: true, MaxText: 4096, Images: true, Typing: true}
 	if caps != want || ad.Kind() != "telegram" {
 		t.Fatalf("caps = %+v", caps)
 	}
@@ -415,8 +415,16 @@ func TestPhotoIsDownloaded(t *testing.T) {
 	h.api.on("getFile", `{"ok":true,"result":{"file_id":"big","file_path":"photos/big.png"}}`)
 	h.api.push(`{"update_id":1,"message":{"message_id":3,"date":1,"chat":{"id":42,"type":"private"},"from":{"id":42,"first_name":"Ada"},"caption":"look","photo":[{"file_id":"small","width":90,"height":60},{"file_id":"big","width":800,"height":600},{"file_id":"mid","width":320,"height":240}]}}`)
 	in := recv(t, h.sink.in, "inbound")
-	if !bytes.Equal(in.Image, png) || in.Text != "look" {
+	if in.FetchImage == nil || in.Text != "look" {
 		t.Fatalf("inbound = %+v", in)
+	}
+	// Nothing is fetched until the bridge asks.
+	if len(h.api.of("getFile")) != 0 {
+		t.Fatal("the photo was fetched before anybody asked")
+	}
+	img, err := in.FetchImage(context.Background())
+	if err != nil || !bytes.Equal(img, png) {
+		t.Fatalf("fetch: %v, %d bytes", err, len(img))
 	}
 	if gf := h.api.of("getFile"); len(gf) != 1 || gf[0].json(t)["file_id"] != "big" {
 		t.Fatalf("getFile calls = %+v; the largest size is the one asked for", gf)
@@ -429,21 +437,21 @@ func TestPhotoIsDownloaded(t *testing.T) {
 	h.api.on("getFile", `{"ok":false,"error_code":400,"description":"Bad Request: file is too big"}`)
 	h.api.push(`{"update_id":2,"message":{"message_id":4,"date":1,"chat":{"id":42,"type":"private"},"caption":"again","photo":[{"file_id":"huge","width":8000,"height":6000}]}}`)
 	in = recv(t, h.sink.in, "inbound")
-	if in.Image != nil || in.Text != "again" || !strings.Contains(h.logged(), "file is too big") {
-		t.Fatalf("inbound = %+v\nlog: %s", in, h.logged())
+	if _, err := in.FetchImage(context.Background()); err == nil || in.Text != "again" || !strings.Contains(h.logged(), "file is too big") {
+		t.Fatalf("inbound = %+v err=%v\nlog: %s", in, err, h.logged())
 	}
 	// Over the cap on the wire, undeclared: read to the cap and dropped.
 	h.api.files["photos/vast.png"] = make([]byte, maxImage+1)
 	h.api.on("getFile", `{"ok":true,"result":{"file_path":"photos/vast.png"}}`)
 	h.api.push(`{"update_id":3,"message":{"message_id":5,"date":1,"chat":{"id":42,"type":"private"},"caption":"vast","photo":[{"file_id":"vast","width":1,"height":1}]}}`)
 	in = recv(t, h.sink.in, "inbound")
-	if in.Image != nil || in.Text != "vast" || !strings.Contains(h.logged(), "limit") {
-		t.Fatalf("an oversized download was delivered: %d bytes", len(in.Image))
+	if img, err := in.FetchImage(context.Background()); err == nil || in.Text != "vast" || !strings.Contains(h.logged(), "limit") {
+		t.Fatalf("an oversized download was delivered: %d bytes", len(img))
 	}
 	// Over the cap by declaration: not even asked for.
 	h.api.push(fmt.Sprintf(`{"update_id":4,"message":{"message_id":6,"date":1,"chat":{"id":42,"type":"private"},"photo":[{"file_id":"vast","width":1,"height":1,"file_size":%d}]}}`, maxImage+1))
 	in = recv(t, h.sink.in, "inbound")
-	if in.Image != nil || len(h.api.of("getFile")) != 3 {
+	if _, err := in.FetchImage(context.Background()); err == nil || len(h.api.of("getFile")) != 3 {
 		t.Fatalf("an oversized photo was fetched: %+v", in)
 	}
 }
@@ -452,12 +460,12 @@ func TestVoiceArrivesEmptyAndMarked(t *testing.T) {
 	h := newHarness(t, "", true)
 	h.api.push(`{"update_id":1,"message":{"message_id":3,"date":1,"chat":{"id":42,"type":"private"},"from":{"id":42,"first_name":"Ada"},"caption":"cap","voice":{"file_id":"v","duration":3}}}`)
 	in := recv(t, h.sink.in, "inbound")
-	if !in.Voice || in.Text != "" || in.Image != nil {
+	if in.Text != "" || in.FetchImage != nil {
 		t.Fatalf("inbound = %+v", in)
 	}
 	h.api.push(`{"update_id":2,"message":{"message_id":4,"date":1,"chat":{"id":42,"type":"private"},"audio":{"file_id":"a"}}}`)
-	if in := recv(t, h.sink.in, "inbound"); !in.Voice {
-		t.Fatalf("audio not marked: %+v", in)
+	if in := recv(t, h.sink.in, "inbound"); in.Text != "" || in.FetchImage != nil {
+		t.Fatalf("audio arrived as something: %+v", in)
 	}
 }
 

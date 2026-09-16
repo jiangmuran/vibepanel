@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/jiangmuran/vibepanel/internal/session"
 )
 
 // How a session looks in a chat.
@@ -19,12 +21,12 @@ import (
 // Glyphs for the three states: the same shapes the sidebar uses, so a person
 // who learnt them on the wall reads them on the phone (red line 4).
 func glyph(state string) string {
-	switch state {
-	case "waiting":
+	switch session.State(state) {
+	case session.StateWaiting:
 		return "▲"
-	case "working":
+	case session.StateWorking:
 		return "●"
-	case "done":
+	case session.StateDone:
 		return "✓"
 	}
 	return "○"
@@ -107,7 +109,7 @@ func RenderPlain(c *Card) string {
 }
 
 // RenderHTML draws a card in the HTML subset Telegram accepts: bold title,
-// the body escaped and, where it looks like output, in a pre block.
+// everything else escaped, the link as a word rather than the whole URL.
 func RenderHTML(c *Card) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s <b>[%d] %s</b>", html.EscapeString(c.Glyph), c.Handle, html.EscapeString(c.Title))
@@ -122,7 +124,7 @@ func RenderHTML(c *Card) string {
 		b.WriteString("\n\n" + html.EscapeString(c.Body))
 	}
 	if c.URL != "" {
-		fmt.Fprintf(&b, "\n<a href=\"%s\">%s</a>", html.EscapeString(c.URL), html.EscapeString(c.URL))
+		fmt.Fprintf(&b, "\n<a href=\"%s\">open</a>", html.EscapeString(c.URL))
 	}
 	return b.String()
 }

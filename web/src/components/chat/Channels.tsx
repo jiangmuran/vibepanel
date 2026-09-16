@@ -4,11 +4,12 @@ import { Check, Copy, Link2, LogIn, Send, Trash2 } from 'lucide-react'
 import { copyTextInGesture } from '../../clipboard'
 import { api } from '../../protocol/api'
 import type { ChatChannel, ChatFactory, ChatLogin, ChatSettings } from '../../protocol/wire'
-import { t } from '../../i18n'
+import { getLang, t } from '../../i18n'
 import { askConfirm } from '../ask'
 import { showToast } from '../toasts'
 import { safeText } from '../text'
-import { Card, INPUT, INPUT_SHORT, Section } from './Chat'
+import { Card, Section } from './Chat'
+import { INPUT, INPUT_SHORT, Primary, Secondary, errText } from './form'
 import { QR } from './QR'
 
 function ago(unix: number): string {
@@ -18,10 +19,6 @@ function ago(unix: number): string {
   if (s < 3600) return t('chat.minutesAgo', { n: String(Math.floor(s / 60)) })
   if (s < 86400) return t('chat.hoursAgo', { n: String(Math.floor(s / 3600)) })
   return t('chat.daysAgo', { n: String(Math.floor(s / 86400)) })
-}
-
-function errText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e)
 }
 
 /**
@@ -36,7 +33,7 @@ function errText(e: unknown): string {
 export function Channels({ data, onChange }: { data: ChatSettings; onChange: () => void }) {
   return (
     <Section id="channels" title={t('chat.channels')} lead={t('chat.channelsLead')}>
-      <div className="grid grid-cols-1 gap-3 @2xl:grid-cols-2 @5xl:grid-cols-3">
+      <div className="grid grid-cols-1 items-start gap-3 @2xl:grid-cols-2 @5xl:grid-cols-3">
         {data.factories.map((f) => (
           <ChannelCard
             key={f.kind}
@@ -54,18 +51,23 @@ export function Channels({ data, onChange }: { data: ChatSettings; onChange: () 
 function HealthLine({ ch }: { ch: ChatChannel | null }) {
   if (!ch) return <p className="text-vp-sm text-ink-3">{t('chat.notSetUp')}</p>
   const h = ch.health
+  // The word and the colour say the same thing (red line 4): an error that
+  // is current is "error", never "running" painted red.
+  const erroring = Boolean(h.lastError) && h.lastErrorAt >= h.lastOk
   const tone = !ch.enabled
     ? 'var(--vp-ink-3)'
-    : h.lastError && h.lastErrorAt >= h.lastOk
+    : erroring
       ? 'var(--vp-state-crashed)'
       : h.running
         ? 'var(--vp-state-done)'
         : 'var(--vp-state-waiting)'
   const word = !ch.enabled
     ? t('chat.off')
-    : h.running
-      ? t('chat.running')
-      : t('chat.stopped')
+    : erroring
+      ? t('chat.erroring')
+      : h.running
+        ? t('chat.running')
+        : t('chat.stopped')
   return (
     <div className="text-vp-sm text-ink-2" data-testid={`chat-health-${ch.kind}`}>
       <span className="font-medium" style={{ color: tone }}>
@@ -79,7 +81,7 @@ function HealthLine({ ch }: { ch: ChatChannel | null }) {
           <span style={{ color: 'var(--vp-state-waiting)' }}>{t('chat.needsHello', { n: String(h.needsHello) })}</span>
         </>
       )}
-      {h.lastError && h.lastErrorAt >= h.lastOk && (
+      {erroring && (
         <p className="mt-1 break-words" style={{ color: 'var(--vp-state-crashed)' }}>
           {safeText(h.lastError)}
         </p>
@@ -100,7 +102,6 @@ function ChannelCard({
   onChange: () => void
 }) {
   const [values, setValues] = useState<Record<string, string>>({})
-  const [enabled, setEnabled] = useState(channel?.enabled ?? true)
   const [busy, setBusy] = useState(false)
   const [login, setLogin] = useState<ChatLogin | null>(null)
   const [code, setCode] = useState('')
@@ -108,16 +109,10 @@ function ChannelCard({
 
   // The stored non-secret values arrive with every poll; the form keeps what
   // the person typed and shows the server's copy for fields they have not
-  // touched, so a poll does not erase a half-typed token. The enabled switch
-  // follows the server until it is touched, during render (React's
-  // "adjusting state when a prop changes").
-  const serverEnabled = channel?.enabled ?? true
-  const [seenEnabled, setSeenEnabled] = useState(serverEnabled)
-  if (seenEnabled !== serverEnabled) {
-    setSeenEnabled(serverEnabled)
-    setEnabled(serverEnabled)
-  }
+  // touched, so a poll does not erase a half-typed token.
   const shown = (name: string) => values[name] ?? channel?.values[name] ?? ''
+  const lang = getLang()
+  const hint = (f: ChatFactory['fields'][number]) => (lang === 'zh' ? (f.hintZh ?? f.hint ?? '') : (f.hint ?? ''))
 
   // The QR login: poll until it ends. Each status poll is one long request
   // to the IM held by the server, so the interval here is only what keeps
@@ -145,10 +140,22 @@ function ChannelCard({
     }
   }, [login, factory.kind, onChange])
 
+  // The switch acts at once, like the mode switch two sections down, and
+  // only exists once there is a channel to switch. A new channel is
+  // created on by Save.
+  const toggle = async (on: boolean) => {
+    try {
+      await api.saveChatChannel(factory.kind, on, {})
+      onChange()
+    } catch (e) {
+      showToast({ kind: 'error', key: 'chat.saveFailed', detail: errText(e) })
+    }
+  }
+
   const save = async () => {
     setBusy(true)
     try {
-      await api.saveChatChannel(factory.kind, enabled, values)
+      await api.saveChatChannel(factory.kind, channel?.enabled ?? true, values)
       setValues((v) => {
         const next = { ...v }
         for (const f of factory.fields) if (f.secret) delete next[f.name]
@@ -239,10 +246,17 @@ function ChannelCard({
             {t('chat.pairedCount', { n: String(paired) })}
           </span>
         )}
-        <label className="ml-auto flex items-center gap-1 text-vp-sm text-ink-2">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-          {t('chat.enabled')}
-        </label>
+        {channel && (
+          <label className="ml-auto flex items-center gap-1 text-vp-sm text-ink-2">
+            <input
+              type="checkbox"
+              checked={channel.enabled}
+              onChange={(e) => void toggle(e.target.checked)}
+              data-testid={`chat-enabled-${factory.kind}`}
+            />
+            {t('chat.enabled')}
+          </label>
+        )}
       </div>
       <HealthLine ch={channel} />
 
@@ -274,28 +288,18 @@ function ChannelCard({
                     onChange={(e) => setCode(e.target.value)}
                     placeholder="123456"
                   />
-                  <button type="button" className="vp-control" onClick={() => void sendCode()}>
-                    {t('chat.send')}
-                  </button>
+                  <Secondary onClick={() => void sendCode()}>{t('chat.send')}</Secondary>
                 </div>
               )}
               {(login.status === 'expired' || login.status === 'failed') && (
-                <button type="button" className="vp-control" onClick={() => void startLogin()}>
-                  {t('chat.tryAgain')}
-                </button>
+                <Secondary onClick={() => void startLogin()}>{t('chat.tryAgain')}</Secondary>
               )}
             </div>
           ) : (
-            <button
-              type="button"
-              className="vp-control vp-press gap-1.5"
-              disabled={busy}
-              onClick={() => void startLogin()}
-              data-testid={`chat-login-start-${factory.kind}`}
-            >
+            <Secondary disabled={busy} onClick={() => void startLogin()} data-testid={`chat-login-start-${factory.kind}`}>
               <LogIn size={14} />
               {signedIn ? t('chat.signInAgain') : t('chat.signIn')}
-            </button>
+            </Secondary>
           )}
         </div>
       ) : (
@@ -311,7 +315,7 @@ function ChannelCard({
                 type={f.secret ? 'password' : 'text'}
                 autoComplete="off"
                 value={shown(f.name)}
-                placeholder={f.secret && channel?.secretSet[f.name] ? t('chat.secretKept') : f.hint ?? ''}
+                placeholder={f.secret && channel?.secretSet[f.name] ? t('chat.secretKept') : hint(f)}
                 onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
               />
             </div>
@@ -323,9 +327,9 @@ function ChannelCard({
                 <code className="min-w-0 flex-1 truncate rounded-vp bg-surface-2 px-2 py-1 font-mono text-vp-sm text-ink">
                   {channel.webhookUrl}
                 </code>
-                <button type="button" className="vp-control" onClick={copy} title={t('chat.copy')}>
+                <Secondary onClick={copy} title={t('chat.copy')} aria-label={t('chat.copy')}>
                   {copied ? <Check size={14} /> : <Copy size={14} />}
-                </button>
+                </Secondary>
               </div>
               <p className="mt-1 text-vp-xs text-ink-3">{t('chat.webhookHint')}</p>
             </div>
@@ -334,23 +338,17 @@ function ChannelCard({
       )}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        {(!factory.login || signedIn) && (
-          <button
-            type="button"
-            className="vp-control vp-press gap-1.5"
-            disabled={busy}
-            onClick={() => void save()}
-            data-testid={`chat-save-${factory.kind}`}
-          >
+        {!factory.login && (
+          <Primary disabled={busy} onClick={() => void save()} data-testid={`chat-save-${factory.kind}`}>
             <Check size={14} />
             {t('chat.save')}
-          </button>
+          </Primary>
         )}
         {channel && (
-          <button type="button" className="vp-control gap-1.5" disabled={busy || !channel.enabled} onClick={() => void test()}>
+          <Secondary disabled={busy || !channel.enabled} onClick={() => void test()}>
             <Send size={14} />
             {t('chat.test')}
-          </button>
+          </Secondary>
         )}
         {factory.webhook && !channel && (
           <span className="flex items-center gap-1 text-vp-xs text-ink-3">
@@ -359,10 +357,10 @@ function ChannelCard({
           </span>
         )}
         {channel && (
-          <button type="button" className="vp-control ml-auto gap-1.5 text-ink-2" onClick={() => void remove()}>
+          <Secondary className="ml-auto text-ink-2" onClick={() => void remove()}>
             <Trash2 size={14} />
             {t('chat.remove')}
-          </button>
+          </Secondary>
         )}
       </div>
     </Card>

@@ -1,16 +1,14 @@
-import { useState } from 'react'
+
 
 import { api } from '../../protocol/api'
 import type { ChatSettings, ChatToolProfile } from '../../protocol/wire'
 import { t } from '../../i18n'
 import { showToast } from '../toasts'
-import { Card, INPUT, Section } from './Chat'
+import { Card, Section } from './Chat'
+import { INPUT, Primary, errText, useServerCopy } from './form'
+import { useState } from 'react'
 
 const FIELDS = ['approve', 'deny', 'interrupt', 'submit'] as const
-
-function errText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e)
-}
 
 function join(keys: string[] | null): string {
   return (keys ?? []).join(' ')
@@ -29,17 +27,9 @@ function split(s: string): string[] {
  * who finds their agent needs "y" fixes it here rather than in a release.
  */
 export function Keys({ data, onChange }: { data: ChatSettings; onChange: () => void }) {
-  const [tools, setTools] = useState<Record<string, ChatToolProfile>>(data.tools)
   const [dirty, setDirty] = useState(false)
+  const [tools, setTools] = useServerCopy<Record<string, ChatToolProfile>>(data.tools, dirty)
   const [busy, setBusy] = useState(false)
-
-  // See Assistant.tsx: the server's copy replaces the form only while
-  // nothing is being edited, during render rather than in an effect.
-  const [seen, setSeen] = useState(data.tools)
-  if (seen !== data.tools) {
-    setSeen(data.tools)
-    if (!dirty) setTools(data.tools)
-  }
 
   const set = (tool: string, field: (typeof FIELDS)[number], value: string) => {
     setTools((all) => ({ ...all, [tool]: { ...all[tool], [field]: split(value) } }))
@@ -61,10 +51,34 @@ export function Keys({ data, onChange }: { data: ChatSettings; onChange: () => v
   }
 
   const names = Object.keys(tools).sort()
+  const labels: Record<(typeof FIELDS)[number], string> = {
+    approve: t('chat.keyApprove'),
+    deny: t('chat.keyDeny'),
+    interrupt: t('chat.keyInterrupt'),
+    submit: t('chat.keySubmit'),
+  }
   return (
     <Section id="keys" title={t('chat.keys')} lead={t('chat.keysLead')}>
       <Card testid="chat-keys">
-        <div className="overflow-x-auto">
+        {/* Below the card's own 2xl width the five columns do not fit and a
+            clipped table hides its last column without saying so; one block
+            per tool, with the four fields labelled, is what a phone gets. */}
+        <div className="grid grid-cols-1 gap-3 @2xl:hidden">
+          {names.map((name) => (
+            <div key={name} className="rounded-vp border border-hairline p-2">
+              <div className="mb-1 font-mono text-vp-sm text-ink">{name}</div>
+              <div className="grid grid-cols-2 gap-2">
+                {FIELDS.map((f) => (
+                  <label key={f} className="min-w-0">
+                    <span className="mb-0.5 block text-vp-xs text-ink-3">{labels[f]}</span>
+                    <input className={`${INPUT} font-mono`} value={join(tools[name][f])} onChange={(e) => set(name, f, e.target.value)} />
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="hidden @2xl:block">
           <table className="w-full text-vp-sm">
             <thead>
               <tr className="text-left text-vp-xs text-ink-3">
@@ -95,9 +109,9 @@ export function Keys({ data, onChange }: { data: ChatSettings; onChange: () => v
           </table>
         </div>
         <p className="mt-2 text-vp-xs text-ink-3">{t('chat.keysHint')}</p>
-        <button type="button" className="vp-control vp-press mt-2" disabled={busy || !dirty} onClick={() => void save()}>
+        <Primary className="mt-2" disabled={busy || !dirty} onClick={() => void save()}>
           {t('chat.save')}
-        </button>
+        </Primary>
       </Card>
     </Section>
   )

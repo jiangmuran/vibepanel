@@ -18,6 +18,7 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/auth"
 	"github.com/jiangmuran/vibepanel/internal/chat"
 	"github.com/jiangmuran/vibepanel/internal/hooks"
+	"github.com/jiangmuran/vibepanel/internal/session"
 	"github.com/jiangmuran/vibepanel/internal/store"
 )
 
@@ -155,7 +156,11 @@ func (s *Server) registerChatRoutes(r chi.Router) {
 // registerChatPublicRoutes mounts the two doors described at the top of the
 // file. Outside RequireAuth on purpose; see there.
 func (s *Server) registerChatPublicRoutes(r chi.Router) {
+	// GET as well as POST: an IM that verifies a callback URL with a GET
+	// (企业微信's echostr) would otherwise be told 405 by the router before
+	// its adapter could answer. The adapter refuses what it does not expect.
 	r.Post("/chat/hooks/{kind}", s.handleChatWebhook)
+	r.Get("/chat/hooks/{kind}", s.handleChatWebhook)
 	r.Route("/chat/tools", func(r chi.Router) {
 		r.Use(s.requireChatToolsToken)
 		r.Get("/sessions", s.handleChatToolSessions)
@@ -256,20 +261,20 @@ func (s *Server) handleChatSettings(w http.ResponseWriter, r *http.Request) {
 		cv := chatChannelView{Kind: row.Kind, Enabled: row.Enabled, Configured: true, Values: map[string]string{},
 			SecretSet: map[string]bool{}, Health: healths[row.Kind], UpdatedAt: row.UpdatedAt}
 		if _, cfg, err := s.Chat.ReadChannel(ctx, row.Kind); err == nil && known {
+			anySecret := false
 			for _, fld := range f.Fields {
 				v := cfg.Values[fld.Name]
 				if fld.Secret {
 					cv.SecretSet[fld.Name] = v != ""
+					anySecret = anySecret || v != ""
 				} else {
 					cv.Values[fld.Name] = v
 				}
 			}
 			if f.Login {
-				// A signed-in QR channel shows who it is signed in as and
-				// nothing that could be replayed.
-				cv.Values["user_id"] = cfg.Values["user_id"]
-				cv.Values["bot_id"] = cfg.Values["bot_id"]
-				cv.Configured = cfg.Values["bot_token"] != ""
+				// A QR channel is configured once its sign-in stored a
+				// credential; the factory says which field that is.
+				cv.Configured = anySecret
 			}
 		}
 		if known && f.Webhook {
@@ -303,7 +308,7 @@ func (s *Server) handleChatSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if sessions, err := s.DB.ListSessions(ctx); err == nil {
 			for _, row := range sessions {
-				if row.ArchivedAt != nil || row.Scratch {
+				if !chat.Addressable(row) {
 					continue
 				}
 				h, _ := s.Chat.Handle(ctx, row.ID)
@@ -365,7 +370,7 @@ func (s *Server) handlePutChatChannel(w http.ResponseWriter, r *http.Request) {
 			cfg.Values[fld.Name] = v
 		}
 	}
-	if f.Login && req.Enabled && cfg.Values["bot_token"] == "" {
+	if f.Login && req.Enabled && !anySecretSet(f, cfg) {
 		writeErr(w, http.StatusBadRequest, "sign in first")
 		return
 	}
@@ -390,6 +395,17 @@ func (s *Server) handleDeleteChatChannel(w http.ResponseWriter, r *http.Request)
 	user, _, _ := s.currentUser(r)
 	s.audit(r.Context(), "chat.channel", user.Username, s.clientIP(r), kind+" removed")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// anySecretSet says whether a channel holds any of its factory's secret
+// fields, which for a QR channel is whether the sign-in happened.
+func anySecretSet(f chat.Factory, cfg chat.ChannelConfig) bool {
+	for _, fld := range f.Fields {
+		if fld.Secret && cfg.Values[fld.Name] != "" {
+			return true
+		}
+	}
+	return false
 }
 
 type testChannelRequest struct {
@@ -565,6 +581,9 @@ func (s *Server) handlePatchChatPeer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteChatPeer(w http.ResponseWriter, r *http.Request) {
+	if !s.requireChat(w) {
+		return
+	}
 	if err := s.DB.DeleteChatPeer(r.Context(), chi.URLParam(r, "channel"), chi.URLParam(r, "peer")); err != nil {
 		s.writeStoreErr(w, err)
 		return
@@ -615,33 +634,12 @@ func (s *Server) handleChatRoutePreview(w http.ResponseWriter, r *http.Request) 
 	if !decode(w, r, &req) {
 		return
 	}
-	ctx := r.Context()
-	d, c, ok := s.Chat.Preview(ctx, req.SessionID)
+	d, c, who, ok := s.Chat.Preview(r.Context(), req.SessionID)
 	if !ok {
 		writeErr(w, http.StatusNotFound, "no such session")
 		return
 	}
-	resp := routePreviewResponse{Decision: d, Change: c, Peers: []string{}}
-	if d.Send {
-		peers, _ := s.DB.PairedChatPeers(ctx)
-		now := time.Now().Unix()
-		for _, p := range peers {
-			hit := false
-			for _, to := range d.To {
-				if to == "*" || to == p.Channel+":"+p.PeerID {
-					hit = true
-				}
-			}
-			if !hit {
-				continue
-			}
-			if until, _ := s.DB.ChatMutedUntil(ctx, p.Channel, p.PeerID, req.SessionID, now); until > 0 {
-				continue
-			}
-			resp.Peers = append(resp.Peers, p.Channel+":"+p.PeerID)
-		}
-	}
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, routePreviewResponse{Decision: d, Change: c, Peers: who})
 }
 
 func (s *Server) handlePutChatTools(w http.ResponseWriter, r *http.Request) {
@@ -689,13 +687,21 @@ func (s *Server) handlePutChatAssistant(w http.ResponseWriter, r *http.Request) 
 	if cfg.Harness == "" {
 		cfg.Harness = "claude"
 	}
+	// Built before it is stored: a configuration the harness refuses is
+	// answered 400 and nothing changes, rather than saved and off.
+	if cfg.Enabled && s.NewAssistant != nil {
+		if _, err := s.buildAssistant(r.Context(), cfg); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	raw, _ := json.Marshal(cfg)
 	if err := s.DB.SetSetting(r.Context(), AssistantKey, string(raw)); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if err := s.RebuildAssistant(r.Context()); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	user, _, _ := s.currentUser(r)
@@ -714,25 +720,29 @@ func (s *Server) RebuildAssistant(ctx context.Context) error {
 		s.Chat.SetAssistant(nil)
 		return nil
 	}
-	var env []string
-	if cfg.ProfileID != "" {
-		profile, err := s.DB.GetLaunchProfile(ctx, cfg.ProfileID)
-		if err != nil {
-			return fmt.Errorf("launch profile: %w", err)
-		}
-		env = store.LaunchEnv(&profile, nil)
-	}
-	token, err := s.ChatToolsToken()
-	if err != nil {
-		return err
-	}
-	a, err := s.NewAssistant(cfg, env, token)
+	a, err := s.buildAssistant(ctx, cfg)
 	if err != nil {
 		s.Chat.SetAssistant(nil)
 		return err
 	}
 	s.Chat.SetAssistant(a)
 	return nil
+}
+
+func (s *Server) buildAssistant(ctx context.Context, cfg AssistantConfig) (chat.Assistant, error) {
+	var env []string
+	if cfg.ProfileID != "" {
+		profile, err := s.DB.GetLaunchProfile(ctx, cfg.ProfileID)
+		if err != nil {
+			return nil, fmt.Errorf("launch profile: %w", err)
+		}
+		env = store.LaunchEnv(&profile, nil)
+	}
+	token, err := s.ChatToolsToken()
+	if err != nil {
+		return nil, err
+	}
+	return s.NewAssistant(cfg, env, token)
 }
 
 func (s *Server) handlePutChatLang(w http.ResponseWriter, r *http.Request) {
@@ -970,9 +980,9 @@ func (s *Server) handleChatToolProjects(w http.ResponseWriter, r *http.Request) 
 			}
 			v.Sessions++
 			switch row.State {
-			case "waiting":
+			case session.StateWaiting:
 				v.Waiting++
-			case "working":
+			case session.StateWorking:
 				v.Working++
 			}
 		}
@@ -982,6 +992,12 @@ func (s *Server) handleChatToolProjects(w http.ResponseWriter, r *http.Request) 
 }
 
 // ─── what the hook said ────────────────────────────────────────────────────
+
+// promptEcho is how many seconds after a PermissionRequest its Notification
+// twin may arrive and still be the same prompt. Measured at under a second
+// on this machine; five leaves room for a hook runner under load without
+// swallowing a second, real prompt a minute later.
+const promptEcho = 5
 
 // recordHookMessage keeps what an agent's hook document carried and tells
 // the bridge. Called before the state is written, so the message is never
@@ -1006,10 +1022,10 @@ func (s *Server) recordHookMessage(ctx context.Context, row store.Session, body 
 	}
 	// Claude Code fires PermissionRequest (with the command) and then
 	// Notification (with a sentence about it) for one prompt. The first is
-	// the one worth keeping; the second, arriving within a few seconds of a
+	// the one worth keeping; the second, arriving within promptEcho of a
 	// prompt already stored, is the same event said twice.
 	if rep.Event == "Notification" && rep.Kind == hooks.KindPrompt {
-		if last, ok, _ := s.DB.LatestSessionMessage(ctx, row.ID); ok && last.Kind == store.MessagePrompt && time.Now().Unix()-last.At <= 5 {
+		if last, ok, _ := s.DB.LatestSessionMessage(ctx, row.ID); ok && last.Kind == store.MessagePrompt && time.Now().Unix()-last.At <= promptEcho {
 			return
 		}
 	}

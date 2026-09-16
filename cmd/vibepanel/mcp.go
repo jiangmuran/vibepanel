@@ -56,6 +56,14 @@ func cmdMCP(args []string) error {
 	}
 	panelURL := os.Getenv("VIBEPANEL_URL")
 	token := os.Getenv("VIBEPANEL_TOOLS_TOKEN")
+	// Preferred: the token in a 0600 file the assistant runner wrote, so it
+	// is on no command line and in no harness configuration. The bare
+	// variable stays for a hand-run server.
+	if path := os.Getenv("VIBEPANEL_TOOLS_TOKEN_FILE"); path != "" {
+		if b, err := os.ReadFile(path); err == nil {
+			token = strings.TrimSpace(string(b))
+		}
+	}
 	if panelURL == "" || token == "" {
 		// Refuse rather than serve tools that would all fail: a server that
 		// starts and answers "401" to everything looks, from the harness's

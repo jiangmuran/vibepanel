@@ -38,7 +38,7 @@ import { join } from 'node:path'
 // was sitting in /tmp. Giving it a pid to make the checks safe to run at the
 // same time is what made it sweepable, and harness.test.ts failed the moment
 // the prefix existed and this line did not know it.
-const HARNESS_SOCKET = /^vp(firstrun|render|stress|restart|scale|tls|clip|probe|check|release|shots|board|pages)-(\d+)$/
+const HARNESS_SOCKET = /^vp(firstrun|render|stress|restart|scale|tls|clip|probe|check|release|shots|board|pages|chat)-(\d+)$/
 
 export function sweepStaleSockets(log = () => {}) {
   const dir = join(process.env.TMUX_TMPDIR || '/tmp', `tmux-${process.getuid()}`)

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jiangmuran/vibepanel/internal/session"
 	"github.com/jiangmuran/vibepanel/internal/store"
 )
 
@@ -25,11 +26,32 @@ import (
 // reach a pane -- through a tool profile that decides which keys "allow" is,
 // with a receipt back saying where the words went.
 
-// pairingTTL is how long a stranger's code stays valid and how often the
-// bridge repeats it to them.
+// pairingTTL is how long a stranger's code stays valid after they last
+// spoke: long enough to walk to the panel, short enough that a code seen
+// over a shoulder is not good tomorrow.
 const pairingTTL = 10 * time.Minute
 
-// pendingTTL is how long "ok" has to arrive.
+// helloEvery is how often a stranger or a pending person is answered with the
+// code again. Once a minute: a person who sends three messages in a row gets
+// the code once, and one who comes back later gets it again.
+const helloEvery = time.Minute
+
+// maxPending bounds how many strangers the panel remembers at once. Past it
+// a new stranger is ignored rather than recorded: a flood of hellos must not
+// fill the table or the audit log.
+const maxPending = 50
+
+// maxImageBytes bounds a picture a paired person sends, and maxImages how
+// many are kept on disk; the oldest goes when the next arrives. A picture
+// is for one agent to read once.
+const (
+	maxImageBytes = 8 << 20
+	maxImages     = 50
+)
+
+// pendingTTL is how long "ok" has to arrive. Two minutes: a confirmation is
+// answered as it is read, and one found an hour later is about a session
+// that has moved on.
 const pendingTTL = 2 * time.Minute
 
 // contextLines is how many messages "context" shows without a count.
@@ -44,38 +66,38 @@ func (b *Bridge) handle(ctx context.Context, ch *channel, in Inbound) {
 		return
 	}
 	if err != nil {
+		b.d.Log.Warn("chat peer", "err", err)
 		return
 	}
 	now := b.d.Now()
-	peer.LastSeenAt = now.Unix()
-	if in.PeerName != "" {
-		peer.Display = in.PeerName
-	}
-	if in.ContextToken != "" {
-		peer.ContextToken = in.ContextToken
-	}
-	_ = b.d.DB.PutChatPeer(ctx, peer)
-
 	switch peer.Status {
 	case store.PeerBlocked:
+		// Nothing is written for a blocked person, not even that they
+		// spoke: a row they can keep changing is a row they still own.
 		return
 	case store.PeerPending:
-		b.mu.Lock()
-		last := b.hello[key]
-		b.hello[key] = now
-		b.mu.Unlock()
-		if now.Sub(last) > time.Minute {
+		// A pending person's clock is not advanced by their own messages:
+		// the code expires pairingTTL after the message that made it,
+		// however much they keep talking.
+		if b.sayHello(key, now) {
 			b.reply(ctx, ch, peer, msg(lang, "pairing", peer.PairingCode))
 		}
 		return
 	}
+	if err := b.d.DB.TouchChatPeer(ctx, peer.Channel, peer.PeerID, in.PeerName, in.ContextToken, now.Unix()); err != nil {
+		b.d.Log.Warn("chat peer", "err", err)
+	}
+	if in.ContextToken != "" {
+		peer.ContextToken = in.ContextToken
+	}
+	peer.LastSeenAt = now.Unix()
 
 	reply := func(text string) { b.reply(ctx, ch, peer, text) }
 	if in.Action != nil {
 		b.action(ctx, ch, peer, *in.Action, lang)
 		return
 	}
-	if len(in.Image) > 0 {
+	if in.FetchImage != nil {
 		b.image(ctx, ch, peer, in, lang)
 		return
 	}
@@ -93,7 +115,7 @@ func (b *Bridge) handle(ctx context.Context, ch *channel, in Inbound) {
 	// Words for an agent. Where they go is the one decision that can be
 	// wrong in a way a person cannot see, which is why it comes back as a
 	// receipt naming the handle.
-	quoteSession := b.quoted(ctx, in)
+	quoteSession := b.quoted(ctx, ch, in)
 	cands, err := b.candidates(ctx)
 	if err != nil {
 		return
@@ -112,7 +134,7 @@ func (b *Bridge) handle(ctx context.Context, ch *channel, in Inbound) {
 		reply(b.answer(ctx, target.SessionID, a.Verb == VerbApprove, lang))
 		return
 	}
-	if peer.Mode == store.ModeAdvanced && b.assistant() != nil && target.How != "quote" && target.How != "handle" {
+	if peer.Mode == store.ModeAdvanced && b.assistant() != nil && target.How != HowQuote && target.How != HowHandle {
 		// Focused delivery is convenient and also the case a sentence
 		// meant for the assistant ("what is 3 doing") lands in a pane. In
 		// advanced mode the assistant reads the sentence first and hands
@@ -123,9 +145,30 @@ func (b *Bridge) handle(ctx context.Context, ch *channel, in Inbound) {
 	reply(b.deliver(ctx, peer, target.SessionID, rest, lang))
 }
 
-// stranger answers somebody the panel does not know with a pairing code, and
-// remembers them as pending so the code shows up on the settings page.
+// sayHello reports whether a stranger or pending person is due the code
+// again, and remembers that they were told. The map is pruned when it grows
+// past what anything but a flood produces.
+func (b *Bridge) sayHello(key string, now time.Time) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.hello) > 500 {
+		for k, at := range b.hello {
+			if now.Sub(at) > time.Hour {
+				delete(b.hello, k)
+			}
+		}
+	}
+	last := b.hello[key]
+	b.hello[key] = now
+	return now.Sub(last) > helloEvery
+}
+
 func (b *Bridge) stranger(ctx context.Context, ch *channel, in Inbound, lang string) {
+	now := b.d.Now()
+	pending, err := b.d.DB.PrunePendingPeers(ctx, now.Add(-6*pairingTTL).Unix())
+	if err != nil || pending >= maxPending {
+		return
+	}
 	code, err := pairingCode()
 	if err != nil {
 		return
@@ -133,15 +176,17 @@ func (b *Bridge) stranger(ctx context.Context, ch *channel, in Inbound, lang str
 	p := store.ChatPeer{
 		Channel: in.Channel, PeerID: in.PeerID, Display: in.PeerName, Status: store.PeerPending,
 		PairingCode: code, Mode: store.ModeNormal, ContextToken: in.ContextToken,
-		CreatedAt: b.d.Now().Unix(), LastSeenAt: b.d.Now().Unix(),
+		CreatedAt: now.Unix(), LastSeenAt: now.Unix(),
 	}
 	if err := b.d.DB.PutChatPeer(ctx, p); err != nil {
 		return
 	}
+	// The audit row and the reply are gated the same way: one per person
+	// per helloEvery, never one per message.
+	if !b.sayHello(chatKey(in.Channel, in.PeerID), now) {
+		return
+	}
 	b.d.Audit(ctx, "chat.stranger", chatKey(in.Channel, in.PeerID))
-	b.mu.Lock()
-	b.hello[chatKey(in.Channel, in.PeerID)] = b.d.Now()
-	b.mu.Unlock()
 	b.reply(ctx, ch, p, msg(lang, "pairing", code))
 }
 
@@ -198,13 +243,12 @@ func (b *Bridge) reply(ctx context.Context, ch *channel, p store.ChatPeer, text 
 	}
 }
 
-// quoted resolves what a reply's quoted message was about, by ref where the
-// IM gives one and by the handle in its text otherwise.
-func (b *Bridge) quoted(ctx context.Context, in Inbound) string {
-	if in.QuotedRef != "" {
+func (b *Bridge) quoted(ctx context.Context, ch *channel, in Inbound) string {
+	if ch.caps.QuoteRefs && in.QuotedRef != "" {
 		if o, ok, _ := b.d.DB.ChatOutboundByRef(ctx, in.Channel, in.PeerID, in.QuotedRef); ok && o.SessionID != "" {
 			return o.SessionID
 		}
+		return ""
 	}
 	if in.QuotedText != "" {
 		if h, ok := HandleInQuote(in.QuotedText); ok {
@@ -216,7 +260,6 @@ func (b *Bridge) quoted(ctx context.Context, in Inbound) string {
 	return ""
 }
 
-// candidates is every session a chat may address, with a handle each.
 func (b *Bridge) candidates(ctx context.Context) ([]Candidate, error) {
 	rows, err := b.d.DB.ListSessions(ctx)
 	if err != nil {
@@ -224,20 +267,19 @@ func (b *Bridge) candidates(ctx context.Context) ([]Candidate, error) {
 	}
 	var out []Candidate
 	for _, r := range rows {
-		if r.ArchivedAt != nil || r.Scratch || r.Exited {
+		if !Addressable(r) {
 			continue
 		}
-		h, err := b.handleOf(ctx, r.ID)
+		h, err := b.Handle(ctx, r.ID)
 		if err != nil {
 			continue
 		}
-		out = append(out, Candidate{SessionID: r.ID, Handle: h, Waiting: r.State == "waiting"})
+		out = append(out, Candidate{SessionID: r.ID, Handle: h, Waiting: r.State == session.StateWaiting})
 	}
 	return out, nil
 }
 
-// explain says why a bare message could not be delivered.
-func (b *Bridge) explain(ctx context.Context, reason, text string, cands []Candidate, lang string) string {
+func (b *Bridge) explain(ctx context.Context, reason Reason, text string, cands []Candidate, lang string) string {
 	switch reason {
 	case ReasonSeveral:
 		return msg(lang, "several", b.list(ctx, lang, true))
@@ -248,14 +290,22 @@ func (b *Bridge) explain(ctx context.Context, reason, text string, cands []Candi
 	return msg(lang, "none")
 }
 
-// deliver pastes words into a session, or says why not.
 func (b *Bridge) deliver(ctx context.Context, p store.ChatPeer, sessionID, text string, lang string) string {
 	row, h, err := b.sessionAndHandle(ctx, sessionID)
 	if err != nil {
 		return msg(lang, "gone", h)
 	}
-	if row.State == "working" {
+	if row.State == session.StateWorking {
 		return msg(lang, "working", h, h)
+	}
+	// A session at a permission prompt reads keys, not words: Claude Code's
+	// dialog ignores typed text and Enter picks the highlighted choice, so
+	// pasting "wait, not that" and pressing Enter would allow the very
+	// thing. The prompt has to be answered first.
+	if row.State == session.StateWaiting {
+		if last, ok, _ := b.d.DB.LatestSessionMessage(ctx, sessionID); ok && CurrentKind(row, last) == store.MessagePrompt {
+			return msg(lang, "atPrompt", h)
+		}
 	}
 	tool := AgentFor(row.LaunchCommand, row.Command)
 	prof, ok := b.tools(ctx)[tool]
@@ -266,22 +316,25 @@ func (b *Bridge) deliver(ctx context.Context, p store.ChatPeer, sessionID, text 
 		return msg(lang, "gone", h)
 	}
 	if len(prof.Submit) > 0 {
-		_ = b.d.Term.Keys(ctx, row.TmuxName, prof.Submit...)
+		if err := b.d.Term.Keys(ctx, row.TmuxName, prof.Submit...); err != nil {
+			// The words are in the pane and Enter was not: the receipt
+			// must not say "sent" about a line that is waiting to be.
+			return msg(lang, "gone", h)
+		}
 	}
 	b.d.Audit(ctx, "chat.send", fmt.Sprintf("[%d] %s: %s", h, chatKey(p.Channel, p.PeerID), preview(text)))
-	p.FocusSession = sessionID
-	_ = b.d.DB.PutChatPeer(ctx, p)
+	if err := b.d.DB.SetChatPeerFocus(ctx, p.Channel, p.PeerID, sessionID); err != nil {
+		b.d.Log.Warn("chat focus", "err", err)
+	}
 	return msg(lang, "receipt", h)
 }
 
-// answer presses the tool's approve or deny keys, only while the session is
-// waiting on a prompt.
 func (b *Bridge) answer(ctx context.Context, sessionID string, approve bool, lang string) string {
 	row, h, err := b.sessionAndHandle(ctx, sessionID)
 	if err != nil {
 		return msg(lang, "gone", h)
 	}
-	if row.State != "waiting" {
+	if row.State != session.StateWaiting {
 		return msg(lang, "notWaiting", h)
 	}
 	tool := AgentFor(row.LaunchCommand, row.Command)
@@ -312,6 +365,14 @@ func (b *Bridge) interrupt(ctx context.Context, sessionID string, lang string) s
 	if err != nil {
 		return msg(lang, "gone", h)
 	}
+	// Confirmed up to two minutes after it was asked, by which time the
+	// session may have stopped at a prompt, where the interrupt key is the
+	// deny key. Say so rather than deny something in passing.
+	if row.State == session.StateWaiting {
+		if last, ok, _ := b.d.DB.LatestSessionMessage(ctx, sessionID); ok && CurrentKind(row, last) == store.MessagePrompt {
+			return msg(lang, "atPrompt", h)
+		}
+	}
 	tool := AgentFor(row.LaunchCommand, row.Command)
 	prof, ok := b.tools(ctx)[tool]
 	if !ok || len(prof.Interrupt) == 0 {
@@ -330,17 +391,46 @@ func (b *Bridge) tools(ctx context.Context) map[string]ToolProfile {
 }
 
 func (b *Bridge) sessionAndHandle(ctx context.Context, sessionID string) (store.Session, int, error) {
-	h, _ := b.handleOf(ctx, sessionID)
+	// The row first, the handle second: a handle is only assigned to a
+	// session that exists, so an id a client made up numbers nothing.
 	row, err := b.d.DB.GetSession(ctx, sessionID)
-	if err != nil || row.ArchivedAt != nil || row.Exited {
-		return store.Session{}, h, errors.New("gone")
+	if err != nil || !Addressable(row) {
+		h, _ := b.handleIfAny(sessionID)
+		return store.Session{}, h, errGone
+	}
+	h, err := b.Handle(ctx, sessionID)
+	if err != nil {
+		return store.Session{}, 0, err
 	}
 	return row, h, nil
 }
 
-// action handles a button press.
+// errGone is a session that cannot be reached: deleted, exited, or a scratch
+// terminal. The handle in the reply is whatever was assigned before, so the
+// person recognises which one is being talked about.
+var errGone = errors.New("chat: session gone")
+
+func (b *Bridge) handleIfAny(sessionID string) (int, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	h, ok := b.handles[sessionID]
+	return h, ok
+}
+
 func (b *Bridge) action(ctx context.Context, ch *channel, p store.ChatPeer, a Action, lang string) {
 	verb, sessionID, _ := strings.Cut(a.Value, ":")
+	// The value came back from the IM's servers, which is not this person.
+	// When the press names the message it was on, that message must be one
+	// the bridge sent this person about this session; otherwise the press
+	// is refused. An IM without message refs on presses still gets the
+	// session-must-be-waiting check in answer().
+	if a.MessageRef != "" {
+		o, ok, _ := b.d.DB.ChatOutboundByRef(ctx, p.Channel, p.PeerID, a.MessageRef)
+		if !ok || o.SessionID != sessionID {
+			b.d.Audit(ctx, "chat.refused", fmt.Sprintf("%s: press %q on a message that is not theirs", chatKey(p.Channel, p.PeerID), a.Value))
+			return
+		}
+	}
 	var text string
 	switch verb {
 	case "approve", "deny":
@@ -350,14 +440,14 @@ func (b *Bridge) action(ctx context.Context, ch *channel, p store.ChatPeer, a Ac
 	default:
 		return
 	}
-	_ = ch.ad.Ack(ctx, a, firstLine(text))
+	if err := ch.ad.Ack(ctx, a, firstLine(text)); err != nil {
+		b.d.Log.Warn("chat ack", "channel", p.Channel, "err", err)
+	}
 	b.reply(ctx, ch, p, text)
 }
 
-// image saves a picture next to the panel and types its path into the
-// session the picture was sent about, ready for the agent to read.
 func (b *Bridge) image(ctx context.Context, ch *channel, p store.ChatPeer, in Inbound, lang string) {
-	sessionID := b.quoted(ctx, in)
+	sessionID := b.quoted(ctx, ch, in)
 	if sessionID == "" {
 		if h, _, ok := SplitHandle(in.Text); ok {
 			sessionID, _, _ = b.d.DB.SessionByHandle(ctx, h)
@@ -377,15 +467,23 @@ func (b *Bridge) image(ctx context.Context, ch *channel, p store.ChatPeer, in In
 		b.reply(ctx, ch, p, msg(lang, "gone", h))
 		return
 	}
+	// Fetched only now: the person is paired and the picture has a
+	// session to go to.
+	img, err := in.FetchImage(ctx)
+	if err != nil || len(img) == 0 || len(img) > maxImageBytes {
+		b.reply(ctx, ch, p, msg(lang, "imageFailed"))
+		return
+	}
 	if err := os.MkdirAll(b.d.PastedDir, 0o700); err != nil {
 		return
 	}
+	pruneImages(b.d.PastedDir)
 	ext := ".png"
-	if len(in.Image) > 2 && in.Image[0] == 0xff && in.Image[1] == 0xd8 {
+	if len(img) > 2 && img[0] == 0xff && img[1] == 0xd8 {
 		ext = ".jpg"
 	}
 	path := filepath.Join(b.d.PastedDir, fmt.Sprintf("chat-%d%s", b.d.Now().UnixNano(), ext))
-	if err := os.WriteFile(path, in.Image, 0o600); err != nil {
+	if err := os.WriteFile(path, img, 0o600); err != nil {
 		return
 	}
 	// Typed, not submitted: the person adds their words and presses Enter,
@@ -398,7 +496,19 @@ func (b *Bridge) image(ctx context.Context, ch *channel, p store.ChatPeer, in In
 	b.reply(ctx, ch, p, msg(lang, "imageSaved", h))
 }
 
-// command runs a parsed command.
+// pruneImages keeps the newest maxImages-1 chat pictures, so the directory
+// holds a bounded number of them however many are sent.
+func pruneImages(dir string) {
+	names, err := filepath.Glob(filepath.Join(dir, "chat-*"))
+	if err != nil || len(names) < maxImages {
+		return
+	}
+	sort.Strings(names) // chat-<unixnano>: lexical order is time order
+	for _, n := range names[:len(names)-maxImages+1] {
+		_ = os.Remove(n)
+	}
+}
+
 func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in Inbound, cmd Command, lang string) {
 	key := chatKey(p.Channel, p.PeerID)
 	reply := func(text string) { b.reply(ctx, ch, p, text) }
@@ -413,7 +523,7 @@ func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in 
 			}
 			return id, true
 		}
-		if q := b.quoted(ctx, in); q != "" {
+		if q := b.quoted(ctx, ch, in); q != "" {
 			return q, true
 		}
 		cands, _ := b.candidates(ctx)
@@ -468,7 +578,7 @@ func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in 
 		if !ok {
 			return
 		}
-		h, _ := b.handleOf(ctx, id)
+		h, _ := b.Handle(ctx, id)
 		reply(msg(lang, "open", h, b.sessionURL(id)))
 	case VerbMute:
 		id, ok := target("mute")
@@ -478,7 +588,7 @@ func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in 
 		d := parseDuration(cmd.Arg, 2*time.Hour)
 		until := b.d.Now().Add(d)
 		_ = b.d.DB.MuteChat(ctx, p.Channel, p.PeerID, id, until.Unix())
-		h, _ := b.handleOf(ctx, id)
+		h, _ := b.Handle(ctx, id)
 		reply(msg(lang, "muted", h, until.In(b.d.Zone()).Format("15:04"), h))
 	case VerbUnmute:
 		id, ok := target("unmute")
@@ -486,16 +596,17 @@ func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in 
 			return
 		}
 		_ = b.d.DB.MuteChat(ctx, p.Channel, p.PeerID, id, 0)
-		h, _ := b.handleOf(ctx, id)
+		h, _ := b.Handle(ctx, id)
 		reply(msg(lang, "unmuted", h))
 	case VerbFocus:
 		id, ok := target("focus")
 		if !ok {
 			return
 		}
-		p.FocusSession = id
-		_ = b.d.DB.PutChatPeer(ctx, p)
-		h, _ := b.handleOf(ctx, id)
+		if err := b.d.DB.SetChatPeerFocus(ctx, p.Channel, p.PeerID, id); err != nil {
+			b.d.Log.Warn("chat focus", "err", err)
+		}
+		h, _ := b.Handle(ctx, id)
 		reply(msg(lang, "focused", h))
 	case VerbContext:
 		id, ok := target("context")
@@ -556,7 +667,7 @@ func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in 
 		if !ok {
 			return
 		}
-		h, _ := b.handleOf(ctx, id)
+		h, _ := b.Handle(ctx, id)
 		b.ask(key, msg(lang, "confirmStop", h), func(ctx context.Context) string { return b.interrupt(ctx, id, lang) })
 		reply(msg(lang, "confirmStop", h))
 	case VerbAsk:
@@ -588,13 +699,13 @@ func (b *Bridge) list(ctx context.Context, lang string, waitingOnly bool) string
 	}
 	var lines []line
 	for _, r := range rows {
-		if r.ArchivedAt != nil || r.Scratch || r.Exited {
+		if !Addressable(r) {
 			continue
 		}
-		if waitingOnly && r.State != "waiting" {
+		if waitingOnly && r.State != session.StateWaiting {
 			continue
 		}
-		h, err := b.handleOf(ctx, r.ID)
+		h, err := b.Handle(ctx, r.ID)
 		if err != nil {
 			continue
 		}
@@ -603,8 +714,8 @@ func (b *Bridge) list(ctx context.Context, lang string, waitingOnly bool) string
 			project = p.Name
 		}
 		kind := ""
-		if last, ok, _ := b.d.DB.LatestSessionMessage(ctx, r.ID); ok && last.At >= r.StateChangedAt-1 {
-			kind = last.Kind
+		if last, ok, _ := b.d.DB.LatestSessionMessage(ctx, r.ID); ok {
+			kind = CurrentKind(r, last)
 		}
 		since := ""
 		if r.StateChangedAt > 0 {
@@ -633,7 +744,7 @@ func (b *Bridge) list(ctx context.Context, lang string, waitingOnly bool) string
 }
 
 func (b *Bridge) screenHead(ctx context.Context, sessionID, lang string) string {
-	h, _ := b.handleOf(ctx, sessionID)
+	h, _ := b.Handle(ctx, sessionID)
 	return msg(lang, "screenHead", h)
 }
 
@@ -669,7 +780,7 @@ func (b *Bridge) replyCode(ctx context.Context, ch *channel, p store.ChatPeer, h
 
 // context renders the last n messages of a session, both sides.
 func (b *Bridge) context(ctx context.Context, sessionID string, n int, lang string) string {
-	h, _ := b.handleOf(ctx, sessionID)
+	h, _ := b.Handle(ctx, sessionID)
 	msgs, err := b.d.DB.ListSessionMessages(ctx, sessionID, n)
 	if err != nil || len(msgs) == 0 {
 		return msg(lang, "contextEmpty", h)
@@ -712,26 +823,29 @@ func (b *Bridge) usage(ctx context.Context, lang string) string {
 	return text
 }
 
-// parseDuration reads "2h", "30m", "1d", "forever" and plain minutes.
+// parseDuration reads "2h", "30m", "1d", "3天", "2小时", "15分钟", "forever"
+// and plain minutes.
 func parseDuration(s string, def time.Duration) time.Duration {
 	s = strings.TrimSpace(strings.ToLower(s))
 	switch s {
 	case "":
 		return def
 	case "forever", "永久", "一直":
-		return 100 * 365 * 24 * time.Hour
+		return 100 * 365 * 24 * time.Hour // long past any session's life
 	}
 	if d, err := time.ParseDuration(s); err == nil && d > 0 {
 		return d
 	}
-	if n, err := strconv.Atoi(strings.TrimSuffix(strings.TrimSuffix(s, "d"), "天")); err == nil && n > 0 && (strings.HasSuffix(s, "d") || strings.HasSuffix(s, "天")) {
-		return time.Duration(n) * 24 * time.Hour
-	}
-	if n, err := strconv.Atoi(strings.TrimSuffix(s, "分钟")); err == nil && n > 0 {
-		return time.Duration(n) * time.Minute
-	}
-	if n, err := strconv.Atoi(strings.TrimSuffix(s, "小时")); err == nil && n > 0 && strings.HasSuffix(s, "小时") {
-		return time.Duration(n) * time.Hour
+	for _, u := range []struct {
+		suffix string
+		unit   time.Duration
+	}{{"d", 24 * time.Hour}, {"天", 24 * time.Hour}, {"小时", time.Hour}, {"h", time.Hour}, {"分钟", time.Minute}, {"m", time.Minute}, {"", time.Minute}} {
+		if !strings.HasSuffix(s, u.suffix) {
+			continue
+		}
+		if n, err := strconv.Atoi(strings.TrimSuffix(s, u.suffix)); err == nil && n > 0 {
+			return time.Duration(n) * u.unit
+		}
 	}
 	return def
 }
@@ -789,17 +903,21 @@ func (b *Bridge) assist(ctx context.Context, ch *channel, p store.ChatPeer, text
 			return
 		}
 		if strings.TrimSpace(intent.Text) == "" {
-			reply(msg(lang, "clarify", intent.Say))
+			reply(firstNonEmpty(intent.Say, msg(lang, "none")))
 			return
 		}
 		b.ask(key, intent.Text, func(ctx context.Context) string { return b.deliver(ctx, p, id, intent.Text, lang) })
 		reply(msg(lang, "confirmSend", intent.Handle, intent.Text))
 	case "approve", "deny":
+		// A keystroke the model asked for is a write like any other: the
+		// table it read has titles a pane can set, so it waits for ok.
 		id, ok := sessionFor()
 		if !ok {
 			return
 		}
-		reply(b.answer(ctx, id, intent.Verb == "approve", lang))
+		approve := intent.Verb == "approve"
+		b.ask(key, intent.Verb, func(ctx context.Context) string { return b.answer(ctx, id, approve, lang) })
+		reply(msg(lang, "confirmAnswer", intent.Handle, pick(lang, map[bool]string{true: "允许", false: "拒绝"}[approve], map[bool]string{true: "allow", false: "deny"}[approve])))
 	case "stop":
 		id, ok := sessionFor()
 		if !ok {
@@ -815,7 +933,7 @@ func (b *Bridge) assist(ctx context.Context, ch *channel, p store.ChatPeer, text
 		b.askAssistant(ctx, ch, p, firstNonEmpty(intent.Text, text), cands, lang)
 	default:
 		if intent.Say != "" {
-			reply(msg(lang, "clarify", intent.Say))
+			reply(intent.Say)
 		} else {
 			reply(msg(lang, "none"))
 		}
@@ -854,8 +972,8 @@ func (b *Bridge) assistantRequest(ctx context.Context, p store.ChatPeer, text st
 			project = pr.Name
 		}
 		kind := ""
-		if last, ok, _ := b.d.DB.LatestSessionMessage(ctx, row.ID); ok && last.At >= row.StateChangedAt-1 {
-			kind = last.Kind
+		if last, ok, _ := b.d.DB.LatestSessionMessage(ctx, row.ID); ok {
+			kind = CurrentKind(row, last)
 		}
 		req.Sessions = append(req.Sessions, SessionBrief{
 			Handle: c.Handle, Title: row.Title, Project: project, State: string(row.State), Kind: kind,

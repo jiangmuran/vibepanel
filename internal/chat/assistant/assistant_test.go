@@ -352,8 +352,20 @@ func TestClaudeAskArgvResumeAndScoping(t *testing.T) {
 			Env     map[string]string `json:"env"`
 		} `json:"mcpServers"`
 	}
-	if err := json.Unmarshal([]byte(mcp), &conf); err != nil {
-		t.Fatalf("--mcp-config is not JSON: %v", err)
+	// A path to a 0600 file, not inline JSON: argv is world-readable through
+	// /proc and the token would be in it.
+	if strings.HasPrefix(mcp, "{") {
+		t.Fatalf("--mcp-config is inline JSON on argv: %s", mcp)
+	}
+	if st, err := os.Stat(mcp); err != nil || st.Mode().Perm() != 0o600 {
+		t.Fatalf("mcp config file: %v %v", st, err)
+	}
+	raw, err := os.ReadFile(mcp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &conf); err != nil {
+		t.Fatalf("--mcp-config file is not JSON: %v", err)
 	}
 	srv, ok := conf.Servers["vibepanel"]
 	if !ok {
@@ -362,8 +374,18 @@ func TestClaudeAskArgvResumeAndScoping(t *testing.T) {
 	if srv.Type != "stdio" || srv.Command != cfg.SelfBinary || len(srv.Args) != 1 || srv.Args[0] != "mcp" {
 		t.Errorf("server = %+v", srv)
 	}
-	if srv.Env["VIBEPANEL_URL"] != cfg.PanelURL || srv.Env["VIBEPANEL_TOOLS_TOKEN"] != cfg.ToolsToken {
+	if srv.Env["VIBEPANEL_URL"] != cfg.PanelURL {
 		t.Errorf("server env = %v", srv.Env)
+	}
+	if _, ok := srv.Env["VIBEPANEL_TOOLS_TOKEN"]; ok {
+		t.Error("the tools token is in the MCP config")
+	}
+	tokenPath := srv.Env["VIBEPANEL_TOOLS_TOKEN_FILE"]
+	if st, err := os.Stat(tokenPath); err != nil || st.Mode().Perm() != 0o600 {
+		t.Fatalf("token file: %v %v", st, err)
+	}
+	if b, _ := os.ReadFile(tokenPath); string(b) != cfg.ToolsToken {
+		t.Errorf("token file holds %q", b)
 	}
 	if hasFlag(argv, "--resume") {
 		t.Error("first call for a chat carries --resume")
@@ -443,7 +465,8 @@ func TestTheChildEnvironmentIsStrippedOfHookVariablesAndCarriesTheProfile(t *tes
 	t.Setenv("VIBEPANEL_TOKEN", "leak")
 	t.Setenv("VIBEPANEL_URL", "https://leak")
 	t.Setenv("VIBEPANEL_PROJECT_ID", "pr_leak")
-	t.Setenv("VIBEPANEL_DATA_DIR", "/kept") // not a hook variable; stays
+	t.Setenv("VIBEPANEL_DATA_DIR", "/kept")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "cf-secret")
 	f := newFake(t, "claude", claudeHelp)
 	f.set("reply", `{"type":"result","is_error":false,"structured_output":{"verb":"none","handle":0,"text":"","say":""}}`)
 	r, _ := newClaudeRunner(t, f, "ANTHROPIC_BASE_URL=https://proxy.example", "ANTHROPIC_API_KEY=sk-profile")
@@ -460,8 +483,14 @@ func TestTheChildEnvironmentIsStrippedOfHookVariablesAndCarriesTheProfile(t *tes
 	if env["ANTHROPIC_BASE_URL"] != "https://proxy.example" || env["ANTHROPIC_API_KEY"] != "sk-profile" {
 		t.Errorf("the profile's env did not reach the child: %v", env)
 	}
-	if env["VIBEPANEL_DATA_DIR"] != "/kept" {
-		t.Error("an unrelated VIBEPANEL_ variable was stripped")
+	// An allowlist: the panel's own variables, hook or not, and anything
+	// else in its environment (an ACME token, say) stay out of a child that
+	// can run a shell.
+	if _, ok := env["VIBEPANEL_DATA_DIR"]; ok {
+		t.Error("a panel variable reached the child")
+	}
+	if _, ok := env["CLOUDFLARE_API_TOKEN"]; ok {
+		t.Error("the panel's ACME token reached the child")
 	}
 	if env["HOME"] != os.Getenv("HOME") {
 		t.Errorf("HOME = %q, want the panel's own %q: the login lives there", env["HOME"], os.Getenv("HOME"))
@@ -697,11 +726,14 @@ func TestCodexAskArgvAndResume(t *testing.T) {
 		`mcp_servers.vibepanel.command="/opt/vibepanel/bin/vibepanel"`,
 		`mcp_servers.vibepanel.args=["mcp"]`,
 		`mcp_servers.vibepanel.env.VIBEPANEL_URL="https://127.0.0.1:18443"`,
-		`mcp_servers.vibepanel.env.VIBEPANEL_TOOLS_TOKEN="tok\"quoted"`,
+		`mcp_servers.vibepanel.env.VIBEPANEL_TOOLS_TOKEN_FILE="` + filepath.Join(cfg.WorkDir, "tools.token") + `"`,
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("argv lacks %q:\n%s", want, joined)
 		}
+	}
+	if strings.Contains(joined, "tok\"quoted") {
+		t.Fatal("the tools token is on argv")
 	}
 	if v, _ := flagValue(argv, "--sandbox"); v != "read-only" {
 		t.Errorf("--sandbox = %q", v)

@@ -1,20 +1,17 @@
 import { useState } from 'react'
-import { Plus, Search, Trash2 } from 'lucide-react'
+import { Check, Plus, Search, Trash2 } from 'lucide-react'
 
 import { api } from '../../protocol/api'
 import type { ChatRoutePreview, ChatRoutes, ChatRule, ChatSettings } from '../../protocol/wire'
 import { t } from '../../i18n'
 import { showToast } from '../toasts'
 import { safeText } from '../text'
-import { Card, INPUT, SELECT, Section } from './Chat'
+import { Card, Section } from './Chat'
+import { INPUT, Primary, SELECT, Secondary, errText, useServerCopy } from './form'
 
 const STATES = ['waiting', 'working', 'done'] as const
 const KINDS = ['prompt', 'question', 'assistant', 'notice', 'user'] as const
 const TOOLS = ['claude', 'codex', 'opencode', 'kimi', 'zcode', 'shell'] as const
-
-function errText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e)
-}
 
 function stateLabel(s: string): string {
   switch (s) {
@@ -67,20 +64,11 @@ function newRule(): ChatRule {
  * "why did I not get that" without waiting for the next one.
  */
 export function Routes({ data, onChange }: { data: ChatSettings; onChange: () => void }) {
-  const [routes, setRoutes] = useState<ChatRoutes>(data.routes)
   const [dirty, setDirty] = useState(false)
+  const [routes, setRoutes] = useServerCopy<ChatRoutes>(data.routes, dirty)
   const [busy, setBusy] = useState(false)
   const [previewId, setPreviewId] = useState('')
   const [preview, setPreview] = useState<ChatRoutePreview | null>(null)
-
-  // The server's copy replaces the form only while nothing is being edited:
-  // a poll landing mid-edit must not put the rule back. During render, as
-  // React's "adjusting state when a prop changes" pattern.
-  const [seen, setSeen] = useState(data.routes)
-  if (seen !== data.routes) {
-    setSeen(data.routes)
-    if (!dirty) setRoutes(data.routes)
-  }
 
   const edit = (fn: (r: ChatRoutes) => ChatRoutes) => {
     setRoutes((r) => fn(structuredClone(r)))
@@ -115,8 +103,10 @@ export function Routes({ data, onChange }: { data: ChatSettings; onChange: () =>
     }
   }
 
-  const peers = data.peers.filter((p) => p.status === 'paired')
   const labels = new Map(data.factories.map((f) => [f.kind, f.label]))
+  const peers = data.peers
+    .filter((p) => p.status === 'paired')
+    .map((p) => ({ key: `${p.channel}:${p.peerId}`, label: `${labels.get(p.channel) ?? p.channel} · ${p.display || p.peerId}` }))
 
   return (
     <Section id="routes" title={t('chat.routes')} lead={t('chat.routesLead')}>
@@ -126,7 +116,7 @@ export function Routes({ data, onChange }: { data: ChatSettings; onChange: () =>
             <RuleEditor
               rule={rule}
               data={data}
-              peers={peers.map((p) => ({ key: `${p.channel}:${p.peerId}`, label: `${labels.get(p.channel) ?? p.channel} · ${p.display || p.peerId}` }))}
+              peers={peers}
               isDefault={false}
               onChange={(next) => edit((r) => ({ ...r, rules: r.rules.map((x, j) => (j === i ? next : x)) }))}
               onDelete={() => edit((r) => ({ ...r, rules: r.rules.filter((_, j) => j !== i) }))}
@@ -137,7 +127,7 @@ export function Routes({ data, onChange }: { data: ChatSettings; onChange: () =>
           <RuleEditor
             rule={routes.default}
             data={data}
-            peers={peers.map((p) => ({ key: `${p.channel}:${p.peerId}`, label: `${labels.get(p.channel) ?? p.channel} · ${p.display || p.peerId}` }))}
+            peers={peers}
             isDefault
             onChange={(next) => edit((r) => ({ ...r, default: next }))}
           />
@@ -145,19 +135,13 @@ export function Routes({ data, onChange }: { data: ChatSettings; onChange: () =>
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <button type="button" className="vp-control gap-1.5" onClick={() => edit((r) => ({ ...r, rules: [...r.rules, newRule()] }))}>
+        <Secondary onClick={() => edit((r) => ({ ...r, rules: [...r.rules, newRule()] }))}>
           <Plus size={14} />
           {t('chat.addRule')}
-        </button>
-        <button
-          type="button"
-          className="vp-control vp-press gap-1.5"
-          disabled={busy || !dirty}
-          onClick={() => void save()}
-          data-testid="chat-save-routes"
-        >
+        </Secondary>
+        <Primary disabled={busy || !dirty} onClick={() => void save()} data-testid="chat-save-routes">
           {t('chat.saveRoutes')}
-        </button>
+        </Primary>
         {dirty && <span className="text-vp-xs text-ink-3">{t('chat.unsaved')}</span>}
       </div>
 
@@ -183,29 +167,38 @@ export function Routes({ data, onChange }: { data: ChatSettings; onChange: () =>
       </div>
       {preview && (
         <p className="mt-2 text-vp-sm text-ink-2" data-testid="chat-preview-result">
-          {preview.decision.Send
-            ? preview.decision.Hold
-              ? t('chat.previewHeld', { rule: safeText(preview.decision.Rule) })
+          {preview.decision.send
+            ? preview.decision.hold
+              ? t('chat.previewHeld', { rule: safeText(preview.decision.rule) })
               : preview.peers.length === 0
-                ? t('chat.previewNobody', { rule: safeText(preview.decision.Rule) })
-                : t('chat.previewSent', { rule: safeText(preview.decision.Rule), who: preview.peers.map(safeText).join(', ') })
-            : t('chat.previewSilent', { rule: safeText(preview.decision.Rule) })}
+                ? t('chat.previewNobody', { rule: safeText(preview.decision.rule) })
+                : t('chat.previewSent', { rule: safeText(preview.decision.rule), who: preview.peers.map(safeText).join(', ') })
+            : t('chat.previewSilent', { rule: safeText(preview.decision.rule) })}
         </p>
       )}
     </Section>
   )
 }
 
+/**
+ * One choice in a set. On is a filled chip with a check mark, off an
+ * outlined one: the mark is the difference a person who cannot see the
+ * colours reads (red line 4), and the fill is what everybody else does.
+ */
 function Toggle({ list, value, label, onChange }: { list: string[]; value: string; label: string; onChange: (next: string[]) => void }) {
   const on = list.includes(value)
   return (
-    <label className={`flex items-center gap-1 rounded-vp border px-1.5 py-0.5 text-vp-xs ${on ? 'border-accent text-ink' : 'border-hairline text-ink-2'}`}>
+    <label
+      className={`vp-press flex cursor-pointer items-center gap-1 rounded-vp border px-2 py-1 text-vp-sm has-focus-visible:ring-2 has-focus-visible:ring-accent ${on ? 'border-accent' : 'border-hairline text-ink-2'}`}
+      style={on ? { background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' } : undefined}
+    >
       <input
         type="checkbox"
         className="sr-only"
         checked={on}
         onChange={(e) => onChange(e.target.checked ? [...list, value] : list.filter((x) => x !== value))}
       />
+      {on && <Check size={12} aria-hidden="true" />}
       {label}
     </label>
   )
@@ -253,9 +246,9 @@ function RuleEditor({
             </label>
           )}
           {onDelete && (
-            <button type="button" className="vp-control text-ink-2" title={t('chat.deleteRule')} onClick={onDelete}>
+            <Secondary className="text-ink-2" title={t('chat.deleteRule')} aria-label={t('chat.deleteRule')} onClick={onDelete}>
               <Trash2 size={14} />
-            </button>
+            </Secondary>
           )}
         </div>
         <div className="grid grid-cols-1 gap-2">
@@ -339,7 +332,7 @@ function RuleEditor({
               onChange={(e) => set({ quietHours: e.target.value })}
             />
           </label>
-          <label className="flex items-end gap-1 pb-1.5 text-vp-sm text-ink-2">
+          <label className="col-span-2 flex items-center gap-1.5 text-vp-sm text-ink-2">
             <input type="checkbox" checked={rule.body} onChange={(e) => set({ body: e.target.checked })} />
             {t('chat.body')}
           </label>

@@ -33,7 +33,7 @@ type memAdapter struct {
 
 func (m *memAdapter) Kind() string { return "mem" }
 func (m *memAdapter) Capabilities() chat.Capabilities {
-	return chat.Capabilities{Proactive: true, Edit: true, Buttons: true, QuoteRefs: true, Flavor: chat.FlavorPlain}
+	return chat.Capabilities{Proactive: true, Edit: true, Buttons: true, QuoteRefs: true}
 }
 func (m *memAdapter) Run(ctx context.Context, sink chat.Sink) error {
 	m.mu.Lock()

@@ -157,16 +157,30 @@ func (a *Adapter) serve(w http.ResponseWriter, r *http.Request) {
 // pasted into the console shows up on the settings page rather than as
 // silence.
 func (a *Adapter) refuse(w http.ResponseWriter, status int, err error) {
-	if sink, _ := a.running(); sink != nil {
-		sink.Health(false, err)
+	// The door is unauthenticated, so what it refuses is written down at
+	// most once every few seconds: the health line and the log should say
+	// "somebody is knocking with the wrong token", not fill up with it.
+	a.mu.Lock()
+	quiet := a.now().Sub(a.lastRefused) < refuseEvery
+	if !quiet {
+		a.lastRefused = a.now()
 	}
-	a.logf("%v", err)
+	a.mu.Unlock()
+	if !quiet {
+		if sink, _ := a.running(); sink != nil {
+			sink.Health(false, err)
+		}
+		a.logf("%v", err)
+	}
 	if status == http.StatusOK {
 		writeJSON(w, map[string]any{})
 		return
 	}
 	http.Error(w, err.Error(), status)
 }
+
+// refuseEvery is how often a refused request is reported; see refuse.
+const refuseEvery = 10 * time.Second
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -183,8 +197,24 @@ func (a *Adapter) signatureOK(h http.Header, raw []byte) bool {
 	if ts == "" || nonce == "" || sig == "" {
 		return false
 	}
+	// A signed request is good for five minutes, not forever: the
+	// tombstones that stop a redelivery being pasted twice last a day, and
+	// a captured request replayed after that would be new again.
+	if secs, err := strconv.ParseInt(ts, 10, 64); err != nil || absDuration(a.now().Sub(time.Unix(secs, 0))) > signatureWindow {
+		return false
+	}
 	want := signature(ts, nonce, a.encryptKey, raw)
 	return subtle.ConstantTimeCompare([]byte(strings.ToLower(sig)), []byte(want)) == 1
+}
+
+// signatureWindow is how far a request's timestamp may be from now.
+const signatureWindow = 5 * time.Minute
+
+func absDuration(d time.Duration) time.Duration {
+	if d < 0 {
+		return -d
+	}
+	return d
 }
 
 func signature(ts, nonce, key string, raw []byte) string {
@@ -333,28 +363,19 @@ func (a *Adapter) message(ctx context.Context, sink chat.Sink, eventID string, r
 		if c.ImageKey == "" {
 			return
 		}
-		// Off the request goroutine: the download is the one slow thing
-		// here and the 3-second budget is for the response.
-		go a.deliverImage(ctx, sink, in, c.ImageKey)
-		return
+		// Fetched only when the bridge asks (a paired person, a session to
+		// go to), on the bridge's goroutine: the 3-second budget here is
+		// for the response, and a stranger's picture is never downloaded.
+		key := c.ImageKey
+		ref := in.Ref
+		in.FetchImage = func(ctx context.Context) ([]byte, error) { return a.download(ctx, ref, key, "image") }
 	case "audio":
-		// No transcription exists; the bridge sees an empty voice message
-		// and says nothing, which is better than pretending to have heard.
-		in.Voice = true
+		// No transcription exists; the bridge sees an empty message and
+		// says nothing, which is better than pretending to have heard.
 	default:
 		a.logf("ignoring %s message", m.MessageType)
 		return
 	}
-	sink.Inbound(ctx, in)
-}
-
-func (a *Adapter) deliverImage(ctx context.Context, sink chat.Sink, in chat.Inbound, key string) {
-	data, err := a.download(ctx, in.Ref, key, "image")
-	if err != nil {
-		sink.Health(false, err)
-		return
-	}
-	in.Image = data
 	sink.Inbound(ctx, in)
 }
 
@@ -444,7 +465,13 @@ func (a *Adapter) cardAction(ctx context.Context, sink chat.Sink, eventID string
 	if value == "" || ev.Operator.OpenID == "" {
 		return
 	}
-	if !a.fresh("e:" + eventID) {
+	// A callback with no event id is still one press on one message, and a
+	// second copy of it must not press twice.
+	dedupe := "e:" + eventID
+	if eventID == "" {
+		dedupe = "c:" + ev.Context.OpenMessageID + ":" + ev.Operator.OpenID + ":" + value
+	}
+	if !a.fresh(dedupe) {
 		return
 	}
 	sink.Inbound(ctx, chat.Inbound{

@@ -181,7 +181,9 @@ func (c *Client) Keys(ctx context.Context, name string, keys ...string) error {
 	if len(keys) == 0 {
 		return nil
 	}
-	args := append([]string{"send-keys", "-t", target(name)}, keys...)
+	// "--" so a key that starts with a dash is a key, not a send-keys flag:
+	// the names come from a settings row, and "-R" is a valid one.
+	args := append([]string{"send-keys", "-t", target(name), "--"}, keys...)
 	_, err := c.run(ctx, args...)
 	return err
 }

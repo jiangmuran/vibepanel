@@ -197,7 +197,10 @@ func (a *Adapter) LoginStatus(ctx context.Context, id string) (chat.Login, error
 			return chat.Login{ID: id, Status: "failed", Error: "confirmed without a bot_token"}, nil
 		}
 		baseURL := st.BaseURL
-		if baseURL == "" {
+		// The host every later call carries the bot token to. The sign-in
+		// response names it; only the IM's own hosts are believed, else the
+		// host the QR came from.
+		if baseURL == "" || !trustedBase(baseURL, a.qrBase) {
 			baseURL = a.qrBase
 		}
 		creds, _ := json.Marshal(map[string]string{
@@ -221,4 +224,19 @@ func (a *Adapter) SubmitCode(ctx context.Context, id, code string) error {
 	}
 	l.code = strings.TrimSpace(code)
 	return nil
+}
+
+// trustedBase says whether a base URL the sign-in handed over may carry the
+// bot token: https and the IM's own hosts, or the host the QR code came from
+// (which a test points at a fake).
+func trustedBase(target, qrBase string) bool {
+	u, err := url.Parse(target)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" {
+		return false
+	}
+	if q, err := url.Parse(qrBase); err == nil && strings.EqualFold(q.Hostname(), u.Hostname()) {
+		return true
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == "weixin.qq.com" || strings.HasSuffix(host, ".weixin.qq.com")
 }

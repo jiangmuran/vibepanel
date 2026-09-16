@@ -95,6 +95,9 @@ type channel struct {
 	caps   Capabilities
 	cancel context.CancelFunc
 	done   chan struct{}
+	// placeholder marks an adapter built only to sign in (LoginAdapter):
+	// it is not running, so it counts for nothing and answers no webhook.
+	placeholder bool
 
 	mu     sync.Mutex
 	health Health
@@ -122,17 +125,33 @@ type Bridge struct {
 	// for the goroutine handle() runs on rather than sleeping.
 	handled atomic.Int64
 
-	mu       sync.Mutex
-	chans    map[string]*channel
-	timers   map[string]*time.Timer
-	holds    map[string]bool
-	pend     map[string]pending
-	more     map[string]string
-	handles  map[string]int
-	hello    map[string]time.Time
-	lang     string
-	stopping bool
-	ctx      context.Context
+	mu      sync.Mutex
+	chans   map[string]*channel
+	timers  map[string]*time.Timer
+	pend    map[string]pending
+	more    map[string]string
+	handles map[string]int
+	// hello is when each stranger was last answered with a code, so a
+	// stranger who keeps talking is not answered every time. Pruned when it
+	// grows past a few hundred entries, which only a flood produces.
+	hello map[string]time.Time
+	// peers serialises inbound messages from one person: "stop 3" then "ok"
+	// must run in that order, and the confirmation state assumes it. One
+	// mutex per person, people independent of each other.
+	peers map[string]*sync.Mutex
+	// logins are QR sign-ins in progress, by kind, outside chans so a
+	// Reload while somebody is scanning does not lose the sign-in.
+	logins map[string]LoginAdapter
+	// failed is why a configured channel could not be started, by kind, so
+	// the page can say more than "not running".
+	failed map[string]string
+	lang   string
+	ctx    context.Context
+	// reloadMu serialises Reload, held for the whole of it, starts
+	// included: two at once each started the channels the other then
+	// forgot, and an adapter with no owner polls the same bot token
+	// forever.
+	reloadMu sync.Mutex
 }
 
 // New builds a bridge. Nothing runs until Start.
@@ -156,15 +175,20 @@ func New(d Deps) *Bridge {
 		d.Audit = func(context.Context, string, string) {}
 	}
 	return &Bridge{
-		d:       d,
+		d: d,
+		// 256: a change is a few bytes and the drain is a timer arm, so the
+		// queue empties faster than any poller fills it; the bound exists so
+		// a stuck bridge cannot grow without limit, not to be reached.
 		events:  make(chan event, 256),
 		chans:   map[string]*channel{},
 		timers:  map[string]*time.Timer{},
-		holds:   map[string]bool{},
 		pend:    map[string]pending{},
 		more:    map[string]string{},
 		handles: map[string]int{},
 		hello:   map[string]time.Time{},
+		peers:   map[string]*sync.Mutex{},
+		logins:  map[string]LoginAdapter{},
+		failed:  map[string]string{},
 		lang:    "zh",
 	}
 }
@@ -269,12 +293,11 @@ func (b *Bridge) loop(ctx context.Context) {
 	}
 }
 
-// schedule (re)arms the session's coalesce timer. A change while the timer
-// runs resets it, so what goes out is the state the session settled on.
 func (b *Bridge) schedule(ctx context.Context, sessionID string) {
-	if len(b.channelsRunning()) == 0 {
-		return
-	}
+	// Armed whether or not a channel is running right now: a Reload empties
+	// the channel map for a few seconds, and a session that went waiting
+	// during a settings save is still a session somebody wants told about.
+	// push finds no channel and does nothing, which costs a timer.
 	wait := DefaultCoalesce
 	if d, ok := b.decide(ctx, sessionID); ok {
 		wait = d.Coalesce
@@ -297,7 +320,9 @@ func (b *Bridge) channelsRunning() []*channel {
 	defer b.mu.Unlock()
 	out := make([]*channel, 0, len(b.chans))
 	for _, c := range b.chans {
-		out = append(out, c)
+		if !c.placeholder {
+			out = append(out, c)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].kind < out[j].kind })
 	return out
@@ -321,15 +346,38 @@ func (b *Bridge) change(ctx context.Context, sessionID string) (store.Session, C
 		SessionID: row.ID, ProjectID: row.ProjectID,
 		Tool: AgentFor(row.LaunchCommand, row.Command), State: string(row.State),
 	}
-	// A message older than the state change is not what the session is
-	// waiting on; it is what it said last time. Only a fresh one sharpens
-	// the state line.
-	if last.At >= row.StateChangedAt-1 {
-		c.Kind = last.Kind
-	} else {
+	if c.Kind = CurrentKind(row, last); c.Kind == "" {
 		last = store.SessionMessage{}
 	}
 	return row, c, last, true
+}
+
+// CurrentKind is the kind of the message a session is waiting on, or "" when
+// its last message predates the state change and so is what it said last
+// time, not what it is asking now.
+//
+// The slack: the hook handler stores the message before it writes the
+// state (recordHookMessage, so the two never arrive in the wrong order),
+// and each write takes its own timestamp. Under lock contention the second
+// can wait out busy_timeout, five seconds, so the message may be that much
+// older than the change it belongs to.
+func CurrentKind(row store.Session, last store.SessionMessage) string {
+	if last.SessionID == "" || last.At < row.StateChangedAt-messageSlack {
+		return ""
+	}
+	return last.Kind
+}
+
+// messageSlack is how much older than the state change a message may be and
+// still count as what the session is waiting on; see CurrentKind.
+const messageSlack = 6
+
+// Addressable says whether a session is one a chat may list, address or
+// answer: it exists, is not a scratch terminal, and its process has not
+// gone. Every path that turns a handle or a focus into a pane goes through
+// this, so the list, the reply and the tools agree on what a session is.
+func Addressable(row store.Session) bool {
+	return row.ArchivedAt == nil && !row.Scratch && !row.Exited
 }
 
 func (b *Bridge) decide(ctx context.Context, sessionID string) (Decision, bool) {
@@ -344,15 +392,19 @@ func (b *Bridge) decide(ctx context.Context, sessionID string) (Decision, bool) 
 // push tells every paired peer about a session, as the rules allow.
 func (b *Bridge) push(ctx context.Context, sessionID string) {
 	row, c, last, ok := b.change(ctx, sessionID)
+	// An exited session is still told about: its last "done" is the card
+	// that says the process is gone, which is the one worth having.
 	if !ok || row.ArchivedAt != nil || row.Scratch {
 		return
 	}
 	raw, _ := b.d.DB.GetSetting(ctx, RoutesKey, "")
 	d := ParseRoutes(raw).Decide(c, b.d.Now().In(b.d.Zone()))
 	if d.Hold {
-		// Inside quiet hours: look again in a while. The timer is the same
-		// one a new change would reset, so a session that keeps changing
-		// still goes out once when the window ends.
+		// Inside quiet hours: look again in a while. Five minutes is coarse
+		// enough to cost nothing and fine enough that a window ending at
+		// 08:00 is honoured by 08:05. The timer is the same one a new change
+		// would reset, so a session that keeps changing still goes out once
+		// when the window ends.
 		b.mu.Lock()
 		if t, ok := b.timers[sessionID]; ok {
 			t.Stop()
@@ -370,7 +422,7 @@ func (b *Bridge) push(ctx context.Context, sessionID string) {
 	if err != nil || len(peers) == 0 {
 		return
 	}
-	handle, err := b.handleOf(ctx, sessionID)
+	handle, err := b.Handle(ctx, sessionID)
 	if err != nil {
 		return
 	}
@@ -407,7 +459,7 @@ func (b *Bridge) push(ctx context.Context, sessionID string) {
 		if !ok {
 			continue
 		}
-		if !d.Send || !destined(d.To, p) {
+		if !d.Send || !Destined(d.To, p.Channel, p.PeerID) {
 			// Not a push, but a status message that exists is kept true.
 			b.editStatus(ctx, ch, p, sessionID, card)
 			continue
@@ -421,12 +473,12 @@ func (b *Bridge) push(ctx context.Context, sessionID string) {
 			ch.mu.Unlock()
 			continue
 		}
-		if c.State == "working" {
+		if c.State == string(session.StateWorking) {
 			b.editStatus(ctx, ch, p, sessionID, card)
 			continue
 		}
 		out := Outbound{Card: card}
-		if c.Kind == "prompt" && c.State == "waiting" && ch.caps.Buttons {
+		if c.Kind == store.MessagePrompt && c.State == string(session.StateWaiting) && ch.caps.Buttons {
 			out.Buttons = []Button{
 				{Label: pick(lang, "允许", "Allow"), Value: "approve:" + sessionID},
 				{Label: pick(lang, "拒绝", "Deny"), Value: "deny:" + sessionID, Danger: true},
@@ -447,15 +499,22 @@ func (b *Bridge) push(ctx context.Context, sessionID string) {
 			b.d.Log.Warn("chat push", "channel", p.Channel, "err", err)
 			continue
 		}
-		_ = b.d.DB.RecordChatOutbound(ctx, store.ChatOutbound{
+		// A record that fails to write breaks quote routing for this one
+		// message and turns the next edit into a fresh send; both are worth
+		// a line in the log, neither is worth failing the push.
+		if err := b.d.DB.RecordChatOutbound(ctx, store.ChatOutbound{
 			Channel: p.Channel, PeerID: p.PeerID, Ref: ref, SessionID: sessionID, Kind: store.OutboundStatus,
-		})
+		}); err != nil {
+			b.d.Log.Warn("chat outbound record", "err", err)
+		}
 		if ch.caps.Edit {
-			_ = b.d.DB.SetChatStatusRef(ctx, p.Channel, p.PeerID, sessionID, ref)
+			if err := b.d.DB.SetChatStatusRef(ctx, p.Channel, p.PeerID, sessionID, ref); err != nil {
+				b.d.Log.Warn("chat status ref", "err", err)
+			}
 		}
 		// The session a person was just told about is the one a bare
 		// reply means, subject to the single-waiting rule at reply time.
-		if c.State == "waiting" {
+		if c.State == string(session.StateWaiting) {
 			p.FocusSession = sessionID
 			_ = b.d.DB.PutChatPeer(ctx, p)
 		}
@@ -471,16 +530,6 @@ func wantShot(policy string, fullscreen bool) bool {
 		return true
 	case ShotAuto:
 		return fullscreen
-	}
-	return false
-}
-
-// destined says whether a rule's To names this peer.
-func destined(to []string, p store.ChatPeer) bool {
-	for _, t := range to {
-		if t == "*" || t == p.Channel+":"+p.PeerID {
-			return true
-		}
 	}
 	return false
 }
@@ -533,9 +582,11 @@ func (b *Bridge) sendShot(ctx context.Context, ch *channel, p store.ChatPeer, ro
 		b.d.Log.Warn("chat screenshot send", "channel", p.Channel, "err", err)
 		return
 	}
-	_ = b.d.DB.RecordChatOutbound(ctx, store.ChatOutbound{
+	if err := b.d.DB.RecordChatOutbound(ctx, store.ChatOutbound{
 		Channel: p.Channel, PeerID: p.PeerID, Ref: ref, SessionID: row.ID, Kind: store.OutboundScreen,
-	})
+	}); err != nil {
+		b.d.Log.Warn("chat outbound record", "err", err)
+	}
 }
 
 func (b *Bridge) sessionURL(sessionID string) string {
@@ -546,13 +597,29 @@ func (b *Bridge) sessionURL(sessionID string) string {
 	return strings.TrimRight(base, "/") + "/?session=" + sessionID
 }
 
-// Handle returns a session's number, assigning one on first use.
-func (b *Bridge) Handle(ctx context.Context, sessionID string) (int, error) {
-	return b.handleOf(ctx, sessionID)
+func (b *Bridge) Healths(ctx context.Context) []Health {
+	rows, _ := b.d.DB.ListChatChannels(ctx)
+	out := []Health{}
+	for _, row := range rows {
+		if ch, ok := b.channel(row.Kind); ok && !ch.placeholder {
+			ch.mu.Lock()
+			out = append(out, ch.health)
+			ch.mu.Unlock()
+			continue
+		}
+		h := Health{Kind: row.Kind}
+		b.mu.Lock()
+		if why, ok := b.failed[row.Kind]; ok {
+			h.LastError = why
+			h.LastErrorAt = b.d.Now().Unix()
+		}
+		b.mu.Unlock()
+		out = append(out, h)
+	}
+	return out
 }
 
-// handleOf returns a session's number, assigning one on first use.
-func (b *Bridge) handleOf(ctx context.Context, sessionID string) (int, error) {
+func (b *Bridge) Handle(ctx context.Context, sessionID string) (int, error) {
 	b.mu.Lock()
 	h, ok := b.handles[sessionID]
 	b.mu.Unlock()
@@ -572,14 +639,31 @@ func (b *Bridge) handleOf(ctx context.Context, sessionID string) (int, error) {
 func chatKey(channel, peer string) string { return channel + ":" + peer }
 
 // Preview says what the rules would do about a session right now, for the
-// settings page's "why did this go here". Nothing is sent.
-func (b *Bridge) Preview(ctx context.Context, sessionID string) (Decision, Change, bool) {
+// settings page's "why did this go here": the decision, and who would be
+// told after the destinations are intersected with the paired peers and
+// their mutes -- the same two checks push makes. Nothing is sent.
+func (b *Bridge) Preview(ctx context.Context, sessionID string) (Decision, Change, []string, bool) {
 	_, c, _, ok := b.change(ctx, sessionID)
 	if !ok {
-		return Decision{}, Change{}, false
+		return Decision{}, Change{}, nil, false
 	}
 	raw, _ := b.d.DB.GetSetting(ctx, RoutesKey, "")
-	return ParseRoutes(raw).Decide(c, b.d.Now().In(b.d.Zone())), c, true
+	d := ParseRoutes(raw).Decide(c, b.d.Now().In(b.d.Zone()))
+	who := []string{}
+	if d.Send {
+		peers, _ := b.d.DB.PairedChatPeers(ctx)
+		now := b.d.Now().Unix()
+		for _, p := range peers {
+			if !Destined(d.To, p.Channel, p.PeerID) {
+				continue
+			}
+			if until, _ := b.d.DB.ChatMutedUntil(ctx, p.Channel, p.PeerID, sessionID, now); until > 0 {
+				continue
+			}
+			who = append(who, chatKey(p.Channel, p.PeerID))
+		}
+	}
+	return d, c, who, true
 }
 
 // TestSend sends a line to every paired peer of a channel, or to one, so the
@@ -696,7 +780,6 @@ func (b *Bridge) open(row store.ChatChannel) (ChannelConfig, error) {
 	return cfg, nil
 }
 
-// WriteChannel seals and stores a channel's configuration, then restarts it.
 func (b *Bridge) WriteChannel(ctx context.Context, kind string, enabled bool, cfg ChannelConfig) error {
 	if _, ok := FactoryFor(kind); !ok {
 		return fmt.Errorf("chat: no adapter %q", kind)
@@ -708,34 +791,62 @@ func (b *Bridge) WriteChannel(ctx context.Context, kind string, enabled bool, cf
 	if err != nil {
 		return err
 	}
+	// The running adapter is stopped before the row is written, not after:
+	// its sink persists state by reading and rewriting the row, and a
+	// batch landing between the write and the cancel would put the old
+	// token back.
+	b.stopChannel(kind)
 	if err := b.d.DB.PutChatChannel(ctx, store.ChatChannel{
 		Kind: kind, Enabled: enabled, ConfigEnc: b.d.Box.Seal(plain, channelContext(kind)),
 	}); err != nil {
 		return err
 	}
+	b.mu.Lock()
+	delete(b.logins, kind)
+	b.mu.Unlock()
 	b.Reload(ctx)
 	return nil
 }
 
-// RemoveChannel stops and forgets a channel and its peers.
+// stopChannel cancels one running channel and waits for it.
+func (b *Bridge) stopChannel(kind string) {
+	b.mu.Lock()
+	c, ok := b.chans[kind]
+	if ok {
+		delete(b.chans, kind)
+	}
+	b.mu.Unlock()
+	if !ok {
+		return
+	}
+	c.cancel()
+	select {
+	case <-c.done:
+	case <-time.After(5 * time.Second):
+	}
+}
+
 func (b *Bridge) RemoveChannel(ctx context.Context, kind string) error {
+	b.stopChannel(kind)
 	if err := b.d.DB.DeleteChatChannel(ctx, kind); err != nil {
 		return err
 	}
+	b.mu.Lock()
+	delete(b.logins, kind)
+	delete(b.failed, kind)
+	b.mu.Unlock()
 	b.Reload(ctx)
 	return nil
 }
 
-// Reload starts every enabled channel and stops every other one.
-//
-// Everything is restarted, not only what changed: a channel's configuration
-// is one sealed blob, and comparing blobs to decide whether a restart is
-// needed is a way to keep an adapter running on a token that was replaced.
 func (b *Bridge) Reload(ctx context.Context) {
+	b.reloadMu.Lock()
+	defer b.reloadMu.Unlock()
 	b.mu.Lock()
 	base := b.ctx
 	old := b.chans
 	b.chans = map[string]*channel{}
+	b.failed = map[string]string{}
 	b.mu.Unlock()
 	for _, c := range old {
 		c.cancel()
@@ -767,9 +878,15 @@ func (b *Bridge) startChannel(base context.Context, row store.ChatChannel) {
 	if !ok {
 		return
 	}
+	fail := func(err error) {
+		b.d.Log.Warn("chat channel", "kind", row.Kind, "err", err)
+		b.mu.Lock()
+		b.failed[row.Kind] = err.Error()
+		b.mu.Unlock()
+	}
 	cfg, err := b.open(row)
 	if err != nil {
-		b.d.Log.Warn("chat channel config", "kind", row.Kind, "err", err)
+		fail(err)
 		return
 	}
 	values, _ := json.Marshal(cfg.Values)
@@ -780,7 +897,7 @@ func (b *Bridge) startChannel(base context.Context, row store.ChatChannel) {
 		},
 	})
 	if err != nil {
-		b.d.Log.Warn("chat channel", "kind", row.Kind, "err", err)
+		fail(err)
 		return
 	}
 	ctx, cancel := context.WithCancel(base)
@@ -791,7 +908,7 @@ func (b *Bridge) startChannel(base context.Context, row store.ChatChannel) {
 	b.mu.Unlock()
 	go func() {
 		defer close(ch.done)
-		err := ad.Run(ctx, &sink{b: b, ch: ch})
+		err := ad.Run(ctx, &sink{b: b, ch: ch, ctx: ctx})
 		ch.mu.Lock()
 		ch.health.Running = false
 		if err != nil && !errors.Is(err, context.Canceled) {
@@ -802,26 +919,9 @@ func (b *Bridge) startChannel(base context.Context, row store.ChatChannel) {
 	}()
 }
 
-// Healths reports every channel, configured or running.
-func (b *Bridge) Healths(ctx context.Context) []Health {
-	rows, _ := b.d.DB.ListChatChannels(ctx)
-	out := []Health{}
-	for _, row := range rows {
-		if ch, ok := b.channel(row.Kind); ok {
-			ch.mu.Lock()
-			out = append(out, ch.health)
-			ch.mu.Unlock()
-			continue
-		}
-		out = append(out, Health{Kind: row.Kind})
-	}
-	return out
-}
-
-// Webhook returns the handler for a webhook adapter, or nil.
 func (b *Bridge) Webhook(kind string) http.Handler {
 	ch, ok := b.channel(kind)
-	if !ok {
+	if !ok || ch.placeholder {
 		return nil
 	}
 	if w, ok := ch.ad.(WebhookAdapter); ok {
@@ -830,15 +930,18 @@ func (b *Bridge) Webhook(kind string) http.Handler {
 	return nil
 }
 
-// LoginAdapter returns the QR-login adapter for a kind, building one from
-// an empty configuration when none is running yet, so sign-in can start
-// before anything is stored.
 func (b *Bridge) LoginAdapter(kind string) (LoginAdapter, error) {
 	if ch, ok := b.channel(kind); ok {
 		if l, ok := ch.ad.(LoginAdapter); ok {
 			return l, nil
 		}
 		return nil, fmt.Errorf("chat: %s does not sign in by QR", kind)
+	}
+	b.mu.Lock()
+	l, ok := b.logins[kind]
+	b.mu.Unlock()
+	if ok {
+		return l, nil
 	}
 	f, ok := FactoryFor(kind)
 	if !ok || !f.Login {
@@ -849,14 +952,15 @@ func (b *Bridge) LoginAdapter(kind string) (LoginAdapter, error) {
 	if err != nil {
 		return nil, err
 	}
-	l, ok := ad.(LoginAdapter)
+	l, ok = ad.(LoginAdapter)
 	if !ok {
 		return nil, fmt.Errorf("chat: %s does not sign in by QR", kind)
 	}
+	// Kept apart from the running channels so a Reload while somebody is
+	// scanning does not lose the sign-in; WriteChannel drops it once the
+	// credentials are stored.
 	b.mu.Lock()
-	// Kept so the status poll finds the same login; replaced by Reload
-	// once credentials are stored.
-	b.chans[kind] = &channel{kind: kind, ad: ad, caps: ad.Capabilities(), cancel: func() {}, done: closedChan()}
+	b.logins[kind] = l
 	b.mu.Unlock()
 	return l, nil
 }
@@ -871,6 +975,10 @@ func closedChan() chan struct{} {
 type sink struct {
 	b  *Bridge
 	ch *channel
+	// ctx is the channel's own; State stops writing once it is done, so a
+	// batch persisted by an adapter being replaced cannot put a config the
+	// page just replaced back.
+	ctx context.Context
 }
 
 func (s *sink) Inbound(ctx context.Context, in Inbound) {
@@ -879,10 +987,39 @@ func (s *sink) Inbound(ctx context.Context, in Inbound) {
 	s.ch.health.LastInbound = s.b.d.Now().Unix()
 	s.ch.mu.Unlock()
 	in.Channel = s.ch.kind
+	// On the bridge's context, not the adapter's: a settings save restarts
+	// every adapter, and a reply half-way through a paste must finish, not
+	// die with the poll loop that delivered it. The channel pointer stays
+	// valid for the reply; its adapter answers Send until its own ctx ends.
+	bctx := s.b.baseContext()
 	go func() {
-		s.b.handle(ctx, s.ch, in)
+		// One person at a time, in arrival order; see Bridge.peers.
+		mu := s.b.peerLock(chatKey(in.Channel, in.PeerID))
+		mu.Lock()
+		defer mu.Unlock()
+		s.b.handle(bctx, s.ch, in)
 		s.b.handled.Add(1)
 	}()
+}
+
+func (b *Bridge) baseContext() context.Context {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.ctx == nil {
+		return context.Background()
+	}
+	return b.ctx
+}
+
+func (b *Bridge) peerLock(key string) *sync.Mutex {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	mu, ok := b.peers[key]
+	if !ok {
+		mu = &sync.Mutex{}
+		b.peers[key] = mu
+	}
+	return mu
 }
 
 func (s *sink) Health(ok bool, err error) {
@@ -899,6 +1036,9 @@ func (s *sink) Health(ok bool, err error) {
 }
 
 func (s *sink) State(ctx context.Context, state json.RawMessage) {
+	if s.ctx != nil && s.ctx.Err() != nil {
+		return
+	}
 	row, cfg, err := s.b.ReadChannel(ctx, s.ch.kind)
 	if err != nil {
 		return

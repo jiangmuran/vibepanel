@@ -244,15 +244,32 @@ func (r *Runner) forget(chatKey string) {
 // lives there, and the point of shelling out to the person's own harness is
 // that it is already signed in.
 func (r *Runner) env() []string {
+	// An allowlist, not the panel's environment minus the hook variables:
+	// the panel's own process holds things like an ACME API token, and a
+	// child that can run a shell (Codex's Ask has one, read-only) could be
+	// talked into printing them. What the harness needs is where it lives,
+	// how to reach the network, and what the launch profile says.
 	var out []string
 	for _, kv := range os.Environ() {
 		k, _, _ := strings.Cut(kv, "=")
-		if isHookVar(k) {
+		if isHookVar(k) || !inheritEnv(k) {
 			continue
 		}
 		out = append(out, kv)
 	}
 	return append(out, r.cfg.Env...)
+}
+
+// inheritEnv is the list of variables a harness child gets from the panel.
+func inheritEnv(k string) bool {
+	switch k {
+	case "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "LANG", "LANGUAGE", "TMPDIR", "TZ",
+		"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "no_proxy", "all_proxy",
+		"CLAUDE_CODE_OAUTH_TOKEN", "CODEX_HOME", "SSL_CERT_FILE", "SSL_CERT_DIR":
+		return true
+	}
+	return strings.HasPrefix(k, "LC_") || strings.HasPrefix(k, "XDG_") ||
+		strings.HasPrefix(k, "ANTHROPIC_") || strings.HasPrefix(k, "OPENAI_")
 }
 
 func isHookVar(k string) bool {

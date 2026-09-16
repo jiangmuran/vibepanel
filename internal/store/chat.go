@@ -47,10 +47,14 @@ const (
 
 // MessagesKeptPerSession bounds the rows one session may hold.
 //
-// The chat surface reads the last one, and "context" reads the last forty; a
+// The chat surface reads the last one, and "context" reads ten or so; a
 // session that runs for a week says a few thousand things, and none of them
 // past the first couple of hundred is something anyone will ask a phone for.
 const MessagesKeptPerSession = 200
+
+// ValidMessageKind reports whether k is one of the kinds above; the routing
+// rules validate against it so a rule cannot name a kind no message has.
+func ValidMessageKind(k string) bool { return validMessageKind(k) }
 
 func validMessageKind(k string) bool {
 	switch k {
@@ -286,11 +290,6 @@ type ChatPeer struct {
 	// FocusSession is the session a bare reply goes to, subject to the
 	// single-waiting rule in internal/chat.
 	FocusSession string `json:"focusSession"`
-	// AssistantSession is the headless agent's conversation id for this
-	// person, so the next question continues the last one; AssistantAt is
-	// when it was last used, so a stale one is dropped rather than resumed.
-	AssistantSession string `json:"-"`
-	AssistantAt      int64  `json:"-"`
 	// ContextToken is whatever the adapter needs to speak to this person
 	// unprompted. 微信's iLink hands one over with each inbound message and
 	// requires it on every outbound one; other adapters leave it empty.
@@ -316,13 +315,12 @@ func validPeerStatus(s string) bool {
 func validPeerMode(m string) bool { return m == ModeNormal || m == ModeAdvanced }
 
 const peerColumns = `channel, peer_id, display, status, pairing_code, mode, focus_session,
-	assistant_session, assistant_at, context_token, created_at, last_seen_at`
+	context_token, created_at, last_seen_at`
 
 func scanPeer(sc scanner) (ChatPeer, error) {
 	var p ChatPeer
 	err := sc.Scan(&p.Channel, &p.PeerID, &p.Display, &p.Status, &p.PairingCode, &p.Mode,
-		&p.FocusSession, &p.AssistantSession, &p.AssistantAt, &p.ContextToken, &p.CreatedAt,
-		&p.LastSeenAt)
+		&p.FocusSession, &p.ContextToken, &p.CreatedAt, &p.LastSeenAt)
 	return p, err
 }
 
@@ -335,18 +333,61 @@ func (d *DB) PutChatPeer(ctx context.Context, p ChatPeer) error {
 		p.CreatedAt = now()
 	}
 	_, err := d.sql.ExecContext(ctx,
-		`INSERT INTO chat_peers (`+peerColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO chat_peers (`+peerColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(channel, peer_id) DO UPDATE SET display = excluded.display,
 		     status = excluded.status, pairing_code = excluded.pairing_code, mode = excluded.mode,
-		     focus_session = excluded.focus_session, assistant_session = excluded.assistant_session,
-		     assistant_at = excluded.assistant_at, context_token = excluded.context_token,
+		     focus_session = excluded.focus_session, context_token = excluded.context_token,
 		     last_seen_at = excluded.last_seen_at`,
 		p.Channel, p.PeerID, p.Display, p.Status, p.PairingCode, p.Mode, p.FocusSession,
-		p.AssistantSession, p.AssistantAt, p.ContextToken, p.CreatedAt, p.LastSeenAt)
+		p.ContextToken, p.CreatedAt, p.LastSeenAt)
 	if err != nil {
 		return fmt.Errorf("store: put chat peer: %w", err)
 	}
 	return nil
+}
+
+// TouchChatPeer records that a person spoke: when, what they are called and,
+// where the IM needs one, the token that lets the panel answer. Narrow on
+// purpose: the bridge holds a copy of the row read a moment ago, and writing
+// the whole copy back would undo a pairing the settings page made meanwhile.
+func (d *DB) TouchChatPeer(ctx context.Context, channel, peerID, display, contextToken string, at int64) error {
+	_, err := d.sql.ExecContext(ctx,
+		`UPDATE chat_peers SET last_seen_at = ?,
+		     display = CASE WHEN ? = '' THEN display ELSE ? END,
+		     context_token = CASE WHEN ? = '' THEN context_token ELSE ? END
+		 WHERE channel = ? AND peer_id = ?`,
+		at, display, display, contextToken, contextToken, channel, peerID)
+	if err != nil {
+		return fmt.Errorf("store: touch chat peer: %w", err)
+	}
+	return nil
+}
+
+// SetChatPeerFocus records which session a bare reply from this person goes
+// to. Narrow for the reason TouchChatPeer is.
+func (d *DB) SetChatPeerFocus(ctx context.Context, channel, peerID, sessionID string) error {
+	_, err := d.sql.ExecContext(ctx,
+		`UPDATE chat_peers SET focus_session = ? WHERE channel = ? AND peer_id = ?`, sessionID, channel, peerID)
+	if err != nil {
+		return fmt.Errorf("store: set chat peer focus: %w", err)
+	}
+	return nil
+}
+
+// PrunePendingPeers forgets strangers who never got paired and have not
+// spoken since `before`, and reports how many pending rows remain: the
+// bridge stops answering new strangers past a bound, so a flood of hellos
+// cannot fill the table.
+func (d *DB) PrunePendingPeers(ctx context.Context, before int64) (int, error) {
+	if _, err := d.sql.ExecContext(ctx,
+		`DELETE FROM chat_peers WHERE status = ? AND last_seen_at < ?`, PeerPending, before); err != nil {
+		return 0, fmt.Errorf("store: prune pending peers: %w", err)
+	}
+	var n int
+	if err := d.sql.QueryRowContext(ctx, `SELECT COUNT(*) FROM chat_peers WHERE status = ?`, PeerPending).Scan(&n); err != nil {
+		return 0, fmt.Errorf("store: count pending peers: %w", err)
+	}
+	return n, nil
 }
 
 // GetChatPeer returns one peer, or ErrNotFound.
@@ -428,6 +469,11 @@ func (d *DB) ChatHandle(ctx context.Context, sessionID string) (int, error) {
 	if sessionID == "" {
 		return 0, fmt.Errorf("store: a handle needs a session")
 	}
+	// One assignment at a time; see DB.handleMu. The settings page assigns
+	// handles for every session it lists, so the second party is not
+	// hypothetical.
+	d.handleMu.Lock()
+	defer d.handleMu.Unlock()
 	tx, err := d.sql.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("store: chat handle: %w", err)

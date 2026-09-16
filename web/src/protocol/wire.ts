@@ -1632,6 +1632,8 @@ export interface ChatField {
   label: string
   secret: boolean
   hint?: string
+  /** The same hint in Chinese; the page picks by its language. */
+  hintZh?: string
 }
 
 export interface ChatHealth {
@@ -1763,14 +1765,16 @@ export interface ChatTestResult {
 
 export interface ChatRoutePreview {
   decision: {
-    Send: boolean
-    To: string[] | null
-    Screenshot: string
-    Coalesce: number
-    Hold: boolean
-    Body: boolean
-    Rule: string
+    send: boolean
+    to: string[] | null
+    screenshot: string
+    /** Nanoseconds, as Go marshals a Duration. */
+    coalesce: number
+    hold: boolean
+    body: boolean
+    rule: string
   }
-  change: { SessionID: string; ProjectID: string; Tool: string; State: string; Kind: string }
+  change: { sessionId: string; projectId: string; tool: string; state: string; kind: string }
+  /** Who would be told, as "channel:peer", after pairing and mutes. */
   peers: string[]
 }

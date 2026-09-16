@@ -1,6 +1,11 @@
 package chat
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/jiangmuran/vibepanel/internal/session"
+	"github.com/jiangmuran/vibepanel/internal/store"
+)
 
 // What the bridge says back.
 //
@@ -43,18 +48,22 @@ var strs = map[string][2]string{
 		"已发送中断", "interrupt sent",
 	},
 	"notWaiting": {
-		"[%d] 现在没有在等你，没有可以回答的提示。",
-		"[%d] is not waiting on anything to answer.",
+		"[%d] 现在没有在等你。",
+		"[%d] is not waiting on anything.",
 	},
 	"working": {
-		"[%d] 正在工作，这时候送字进去会打乱它。等它停下，或者回复 stop %d 打断。",
-		"[%d] is working; text now would interrupt it. Wait for it to stop, or reply stop %d.",
+		"[%d] 正在工作。等它停下，或者回复 stop %d 打断。",
+		"[%d] is working. Wait for it to stop, or reply stop %d to interrupt.",
 	},
-	"gone":    {"[%d] 已经不在了。", "[%d] is gone."},
-	"noShell": {"[%d] 是一个 shell，没有提示可以回答。", "[%d] is a shell; there is no prompt to answer."},
+	"gone": {"[%d] 已经不在了。", "[%d] is gone."},
+	"atPrompt": {
+		"[%d] 在等你允许或拒绝，先回 y 或 n。", "[%d] is at a permission prompt; answer y or n first.",
+	},
+	"imageFailed": {"图片没收到。", "The picture did not arrive."},
+	"noShell":     {"[%d] 是一个 shell，没有提示可以回答。", "[%d] is a shell; there is no prompt to answer."},
 	"noProfile": {
-		"[%d] 跑的是 %s，面板不知道怎么替它按键。在「聊天」设置里给它加一个按键表。",
-		"[%d] runs %s and the panel has no keys for it. Add a profile on the Chat page.",
+		"[%d] 跑的是 %s，面板不知道怎么替它按键。在「聊天」页的按键表里加上。",
+		"[%d] runs %s and the panel has no keys for it. Add them on the Chat page.",
 	},
 	"several": {
 		"有几个会话都在等你，说清楚是哪个：回复「3: 你的话」，或者引用它的消息。\n%s",
@@ -70,7 +79,7 @@ var strs = map[string][2]string{
 	"listHead":      {"会话（回复「编号: 你的话」即可对话）", "Sessions (reply \"number: your words\" to talk to one)"},
 	"screenHead":    {"[%d] 屏幕", "[%d] screen"},
 	"shotUnavailable": {
-		"这个面板没有截图渲染器。", "This panel cannot render screenshots.",
+		"这个面板不能截图。", "This panel cannot take screenshots.",
 	},
 	"muted":   {"[%d] 已静音到 %s。回复 unmute %d 恢复。", "[%d] muted until %s. Reply unmute %d to undo."},
 	"unmuted": {"[%d] 已恢复推送。", "[%d] unmuted."},
@@ -104,7 +113,9 @@ var strs = map[string][2]string{
 		"The assistant's budget for today is spent. Try tomorrow, or use the commands.",
 	},
 	"assistantFailed": {"助手没答上来：%s", "The assistant could not answer: %s"},
-	"clarify":         {"%s", "%s"},
+	"confirmAnswer": {
+		"要给 [%d] 回「%s」吗？回复 ok 确认，cancel 取消。", "Answer [%d] with \"%s\"? Reply ok to confirm, cancel to drop it.",
+	},
 	"help": {
 		"回复「3: 你的话」把话送进 [3]。在等你时回 y / n（允许 / 拒绝）。\n" +
 			"list 列表 · screen 3 看屏幕 · shot 3 截图 · open 3 链接\n" +
@@ -112,7 +123,7 @@ var strs = map[string][2]string{
 			"stop 3 打断 · usage 用量 · more 看剩下的\n" +
 			"高级模式下直接说话，或「问：…」让助手去看。",
 		"Reply \"3: your words\" to send them to [3]. While it waits, y / n allow or deny.\n" +
-			"list · screen 3 · shot 3 · open 3\n" +
+			"list · screen 3 (its pane as text) · shot 3 (a picture) · open 3 (a link)\n" +
 			"context 3 recent messages · focus 3 make it the default · mute 3 2h\n" +
 			"stop 3 interrupt · usage · more\n" +
 			"In advanced mode just talk, or \"ask: …\" to have the assistant look.",
@@ -122,9 +133,6 @@ var strs = map[string][2]string{
 	"stateDone":    {"已停下", "done"},
 	"kindPrompt":   {"要你允许", "needs your permission"},
 	"kindQuestion": {"在问你", "is asking you"},
-	"interruptedNote": {
-		"被打断了", "interrupted",
-	},
 	"imageSaved": {
 		"图片已放到 [%d] 的目录，路径已经填在它的输入框里。", "Picture saved next to [%d]; its path is typed at the prompt.",
 	},
@@ -136,18 +144,18 @@ var strs = map[string][2]string{
 
 // stateText renders a state, with the message kind sharpening "waiting".
 func stateText(lang, state, kind string) string {
-	switch state {
-	case "waiting":
+	switch session.State(state) {
+	case session.StateWaiting:
 		switch kind {
-		case "prompt":
+		case store.MessagePrompt:
 			return msg(lang, "kindPrompt")
-		case "question":
+		case store.MessageQuestion:
 			return msg(lang, "kindQuestion")
 		}
 		return msg(lang, "stateWaiting")
-	case "working":
+	case session.StateWorking:
 		return msg(lang, "stateWorking")
-	case "done":
+	case session.StateDone:
 		return msg(lang, "stateDone")
 	}
 	return state

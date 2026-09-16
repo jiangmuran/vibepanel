@@ -5,11 +5,8 @@ import type { ChatAssistantConfig, ChatSettings, LaunchProfile } from '../../pro
 import { t } from '../../i18n'
 import { showToast } from '../toasts'
 import { safeText } from '../text'
-import { Card, INPUT, SELECT, Section } from './Chat'
-
-function errText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e)
-}
+import { Card, Section } from './Chat'
+import { INPUT, Primary, SELECT, errText, useServerCopy } from './form'
 
 /**
  * The advanced mode: a headless agent that reads a sentence and decides
@@ -21,20 +18,10 @@ function errText(e: unknown): string {
  * nobody trusts.
  */
 export function Assistant({ data, onChange }: { data: ChatSettings; onChange: () => void }) {
-  const [cfg, setCfg] = useState<ChatAssistantConfig>(data.assistant)
   const [dirty, setDirty] = useState(false)
+  const [cfg, setCfg] = useServerCopy<ChatAssistantConfig>(data.assistant, dirty)
   const [busy, setBusy] = useState(false)
   const [profiles, setProfiles] = useState<LaunchProfile[]>([])
-
-  // The server's copy replaces the form only while nothing is being edited:
-  // a poll landing mid-edit must not put a field back. Done during render,
-  // as React's "adjusting state when a prop changes" pattern, rather than
-  // in an effect that would render twice.
-  const [seen, setSeen] = useState(data.assistant)
-  if (seen !== data.assistant) {
-    setSeen(data.assistant)
-    if (!dirty) setCfg(data.assistant)
-  }
 
   useEffect(() => {
     api.launchProfiles().then(setProfiles, () => {})
@@ -56,15 +43,6 @@ export function Assistant({ data, onChange }: { data: ChatSettings; onChange: ()
       showToast({ kind: 'error', key: 'chat.saveFailed', detail: errText(e) })
     } finally {
       setBusy(false)
-    }
-  }
-
-  const setLang = async (lang: 'zh' | 'en') => {
-    try {
-      await api.saveChatLang(lang)
-      onChange()
-    } catch (e) {
-      showToast({ kind: 'error', key: 'chat.saveFailed', detail: errText(e) })
     }
   }
 
@@ -125,19 +103,12 @@ export function Assistant({ data, onChange }: { data: ChatSettings; onChange: ()
           </div>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-3">
-          <button type="button" className="vp-control vp-press" disabled={busy || !dirty} onClick={() => void save()} data-testid="chat-save-assistant">
+          <Primary disabled={busy || !dirty} onClick={() => void save()} data-testid="chat-save-assistant">
             {t('chat.save')}
-          </button>
+          </Primary>
           <span className="text-vp-sm text-ink-2">
             {t('chat.spendToday', { usd: data.spendToday.toFixed(2), n: String(data.callsToday) })}
           </span>
-          <label className="ml-auto flex items-center gap-1 text-vp-sm text-ink-2">
-            {t('chat.botLang')}
-            <select className={SELECT} value={data.lang} onChange={(e) => void setLang(e.target.value as 'zh' | 'en')} data-testid="chat-lang">
-              <option value="zh">{t('chat.langZh')}</option>
-              <option value="en">{t('chat.langEn')}</option>
-            </select>
-          </label>
         </div>
       </Card>
     </Section>

@@ -2,16 +2,13 @@ import { useState } from 'react'
 import { Ban, Check, Trash2, UserCheck } from 'lucide-react'
 
 import { api } from '../../protocol/api'
-import type { ChatPeer, ChatSettings } from '../../protocol/wire'
+import type { ChatPeer, ChatPeerMode, ChatPeerStatus, ChatSettings } from '../../protocol/wire'
 import { t } from '../../i18n'
 import { askConfirm } from '../ask'
 import { showToast } from '../toasts'
 import { safeText } from '../text'
-import { Card, INPUT_SHORT, Section } from './Chat'
-
-function errText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e)
-}
+import { Card, Section } from './Chat'
+import { INPUT_SHORT, Primary, SELECT, Secondary, errText } from './form'
 
 /**
  * Who may talk to the panel from a chat app.
@@ -41,7 +38,7 @@ export function Peers({ data, onChange }: { data: ChatSettings; onChange: () => 
     }
   }
 
-  const patch = async (p: ChatPeer, body: { mode?: 'normal' | 'advanced'; status?: 'paired' | 'blocked' }) => {
+  const patch = async (p: ChatPeer, body: { mode?: ChatPeerMode; status?: ChatPeerStatus }) => {
     try {
       await api.patchChatPeer(p.channel, p.peerId, body)
       onChange()
@@ -69,6 +66,17 @@ export function Peers({ data, onChange }: { data: ChatSettings; onChange: () => 
   const pending = data.peers.filter((p) => p.status === 'pending')
   const others = data.peers.filter((p) => p.status !== 'pending')
 
+  // The bot's language governs every reply to every person, so it lives
+  // with the people rather than with the advanced mode.
+  const setLang = async (lang: 'zh' | 'en') => {
+    try {
+      await api.saveChatLang(lang)
+      onChange()
+    } catch (e) {
+      showToast({ kind: 'error', key: 'chat.saveFailed', detail: errText(e) })
+    }
+  }
+
   return (
     <Section id="peers" title={t('chat.peers')} lead={t('chat.peersLead')}>
       <Card testid="chat-peers">
@@ -91,10 +99,17 @@ export function Peers({ data, onChange }: { data: ChatSettings; onChange: () => 
             onChange={(e) => setCode(e.target.value)}
             data-testid="chat-pair-code"
           />
-          <button type="submit" className="vp-control vp-press gap-1.5" disabled={busy || code.trim().length !== 6}>
+          <Primary type="submit" disabled={busy || code.trim().length !== 6}>
             <UserCheck size={14} />
             {t('chat.pair')}
-          </button>
+          </Primary>
+          <label className="ml-auto flex items-center gap-1 text-vp-sm text-ink-2">
+            {t('chat.botLang')}
+            <select className={SELECT} value={data.lang} onChange={(e) => void setLang(e.target.value as 'zh' | 'en')} data-testid="chat-lang">
+              <option value="zh">{t('chat.langZh')}</option>
+              <option value="en">{t('chat.langEn')}</option>
+            </select>
+          </label>
         </form>
 
         {data.peers.length === 0 ? (
@@ -118,14 +133,14 @@ export function Peers({ data, onChange }: { data: ChatSettings; onChange: () => 
                     <span className="font-mono text-vp-md text-ink" title={t('chat.pairingCode')}>
                       {p.pairingCode}
                     </span>
-                    <button type="button" className="vp-control gap-1" onClick={() => void patch(p, { status: 'paired' })}>
+                    <Primary onClick={() => void patch(p, { status: 'paired' })}>
                       <Check size={14} />
                       {t('chat.pair')}
-                    </button>
-                    <button type="button" className="vp-control gap-1" onClick={() => void patch(p, { status: 'blocked' })}>
+                    </Primary>
+                    <Secondary onClick={() => void patch(p, { status: 'blocked' })}>
                       <Ban size={14} />
                       {t('chat.block')}
-                    </button>
+                    </Secondary>
                   </>
                 ) : (
                   <>
@@ -143,7 +158,7 @@ export function Peers({ data, onChange }: { data: ChatSettings; onChange: () => 
                         <select
                           className="rounded-vp border border-hairline bg-surface-2 px-1.5 py-1 text-vp-sm text-ink"
                           value={p.mode}
-                          onChange={(e) => void patch(p, { mode: e.target.value as 'normal' | 'advanced' })}
+                          onChange={(e) => void patch(p, { mode: e.target.value as ChatPeerMode })}
                           data-testid={`chat-peer-mode-${p.peerId}`}
                         >
                           <option value="normal">{t('chat.modeNormal')}</option>
@@ -152,21 +167,21 @@ export function Peers({ data, onChange }: { data: ChatSettings; onChange: () => 
                       </label>
                     ) : null}
                     {p.status === 'paired' ? (
-                      <button type="button" className="vp-control gap-1" onClick={() => void patch(p, { status: 'blocked' })}>
+                      <Secondary onClick={() => void patch(p, { status: 'blocked' })}>
                         <Ban size={14} />
                         {t('chat.block')}
-                      </button>
+                      </Secondary>
                     ) : (
-                      <button type="button" className="vp-control gap-1" onClick={() => void patch(p, { status: 'paired' })}>
+                      <Secondary onClick={() => void patch(p, { status: 'paired' })}>
                         <Check size={14} />
                         {t('chat.unblock')}
-                      </button>
+                      </Secondary>
                     )}
                   </>
                 )}
-                <button type="button" className="vp-control text-ink-2" title={t('chat.remove')} onClick={() => void remove(p)}>
+                <Secondary className="text-ink-2" title={t('chat.remove')} aria-label={t('chat.remove')} onClick={() => void remove(p)}>
                   <Trash2 size={14} />
-                </button>
+                </Secondary>
               </li>
             ))}
           </ul>

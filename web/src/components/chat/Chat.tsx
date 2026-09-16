@@ -4,6 +4,7 @@ import { api } from '../../protocol/api'
 import type { ChatSettings } from '../../protocol/wire'
 import { t, useLang } from '../../i18n'
 import { safeText } from '../text'
+import { errText } from './form'
 import { Assistant } from './Assistant'
 import { Channels } from './Channels'
 import { Keys } from './Keys'
@@ -13,16 +14,6 @@ import { Routes } from './Routes'
 
 /** How often the page re-reads: for the health lines and a stranger's code. */
 const POLL_MS = 4000
-
-export const INPUT =
-  'w-full min-w-0 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent'
-
-/** INPUT without the full width, for a code or a number beside a button. */
-export const INPUT_SHORT =
-  'min-w-0 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent'
-
-export const SELECT =
-  'min-w-0 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent'
 
 /** One block of the page, with its heading and a line saying what it is for. */
 export function Section({
@@ -64,36 +55,24 @@ export function Chat() {
   const [data, setData] = useState<ChatSettings | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  // One fetch, used by the poll and by every section after a write. The
+  // poll's copy is cancelled on unmount; a section's reload after the page
+  // has gone is harmless and does not need to be.
   const reload = useCallback(() => {
     api.chat().then(
       (d) => {
         setData(d)
         setError(null)
       },
-      (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
+      (e: unknown) => setError(errText(e)),
     )
   }, [])
 
   useEffect(() => {
-    let cancelled = false
-    const load = () =>
-      api.chat().then(
-        (d) => {
-          if (cancelled) return
-          setData(d)
-          setError(null)
-        },
-        (e: unknown) => {
-          if (!cancelled) setError(e instanceof Error ? e.message : String(e))
-        },
-      )
-    void load()
-    const timer = window.setInterval(() => void load(), POLL_MS)
-    return () => {
-      cancelled = true
-      clearInterval(timer)
-    }
-  }, [])
+    reload()
+    const timer = window.setInterval(reload, POLL_MS)
+    return () => clearInterval(timer)
+  }, [reload])
 
   if (error && !data) {
     return (

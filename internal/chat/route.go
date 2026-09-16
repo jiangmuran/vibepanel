@@ -6,6 +6,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jiangmuran/vibepanel/internal/session"
+	"github.com/jiangmuran/vibepanel/internal/store"
 )
 
 // Which changes reach which chats.
@@ -80,7 +83,7 @@ var DefaultCoalesce = 3 * time.Second
 func DefaultRoutes() Routes {
 	return Routes{Default: Rule{
 		Enabled: true, To: []string{"*"}, Screenshot: ShotAuto, Body: true,
-		Match: Match{States: []string{"waiting", "done"}},
+		Match: Match{States: []string{string(session.StateWaiting), string(session.StateDone)}},
 	}}
 }
 
@@ -109,7 +112,10 @@ func (r Routes) Validate() error {
 	if len(r.Rules) > 100 {
 		return fmt.Errorf("more than 100 rules")
 	}
-	for i, rule := range append(r.Rules, r.Default) {
+	// A copy: append on a slice with spare capacity would write the default
+	// into the caller's backing array.
+	all := append(append([]Rule(nil), r.Rules...), r.Default)
+	for i, rule := range all {
 		if err := rule.validate(); err != nil {
 			if i == len(r.Rules) {
 				return fmt.Errorf("default: %w", err)
@@ -135,16 +141,12 @@ func (rule Rule) validate() error {
 		}
 	}
 	for _, s := range rule.Match.States {
-		switch s {
-		case "waiting", "working", "done":
-		default:
+		if !session.State(s).Valid() {
 			return fmt.Errorf("state %q", s)
 		}
 	}
 	for _, k := range rule.Match.Kinds {
-		switch k {
-		case "assistant", "prompt", "question", "notice", "user":
-		default:
+		if !store.ValidMessageKind(k) {
 			return fmt.Errorf("kind %q", k)
 		}
 	}
@@ -158,28 +160,39 @@ func (rule Rule) validate() error {
 
 // Change is one thing that happened to a session, as routing sees it.
 type Change struct {
-	SessionID string
-	ProjectID string
-	Tool      string
-	State     string
+	SessionID string `json:"sessionId"`
+	ProjectID string `json:"projectId"`
+	Tool      string `json:"tool"`
+	State     string `json:"state"`
 	// Kind is the latest message's kind, or "" when the change carried no
 	// message.
-	Kind string
+	Kind string `json:"kind"`
 }
 
 // Decision is what to do about a Change.
 type Decision struct {
 	// Send is false when the change is not worth telling anyone about.
-	Send bool
+	Send bool `json:"send"`
 	// To is the destinations, still to be intersected with the paired peers.
-	To         []string
-	Screenshot string
-	Coalesce   time.Duration
+	To         []string      `json:"to"`
+	Screenshot string        `json:"screenshot"`
+	Coalesce   time.Duration `json:"coalesce"`
 	// Hold is true inside quiet hours for a change that can wait.
-	Hold bool
-	Body bool
+	Hold bool `json:"hold"`
+	Body bool `json:"body"`
 	// Rule is which rule decided, for the "why did this go here" preview.
-	Rule string
+	Rule string `json:"rule"`
+}
+
+// Destined says whether a rule's To names this peer: "*" or "channel:peer".
+// Exported so the preview and the push cannot drift apart on it.
+func Destined(to []string, channel, peerID string) bool {
+	for _, t := range to {
+		if t == "*" || t == channel+":"+peerID {
+			return true
+		}
+	}
+	return false
 }
 
 // Decide finds the first enabled rule that matches, else the default.
@@ -207,7 +220,7 @@ func (rule Rule) decision(c Change, now time.Time, name string) Decision {
 	if d.Coalesce == 0 {
 		d.Coalesce = DefaultCoalesce
 	}
-	if rule.QuietHours != "" && c.Kind != "prompt" {
+	if rule.QuietHours != "" && c.Kind != store.MessagePrompt {
 		if from, to, err := parseQuiet(rule.QuietHours); err == nil && inQuiet(now, from, to) {
 			d.Hold = true
 		}
@@ -221,6 +234,8 @@ func (m Match) matches(c Change) bool {
 }
 
 func in(list []string, v string) bool {
+	// An empty list is "any": the zero Match is the rule that matches
+	// everything, which is what a default has to be.
 	if len(list) == 0 {
 		return true
 	}

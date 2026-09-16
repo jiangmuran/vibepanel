@@ -42,11 +42,14 @@ case "${2-}" in
   \{*) source="codex-notify" ;;
 esac
 
-# Read the document only from a pipe. A terminal on stdin would mean waiting
-# for somebody to press ^D, in a hook whose one rule is never to wait. 256 KiB
-# is the panel's own cap; reading past it would only be discarded there.
+# Read the document only from a pipe, and only for the hooks that pipe one.
+# A terminal on stdin would mean waiting for somebody to press ^D, in a hook
+# whose one rule is never to wait; the legacy notify line carries its document
+# in argv and inherits whatever stdin Codex had, which under `codex exec` from
+# a program is a pipe that never closes. The agents that pipe a document close
+# it. 256 KiB is the panel's own cap; reading past it would only be discarded.
 body=""
-if [ ! -t 0 ]; then
+if [ "$source" != "codex-notify" ] && [ ! -t 0 ]; then
   body=$(head -c 262144 2>/dev/null)
 fi
 

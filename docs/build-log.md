@@ -22217,3 +22217,64 @@ would be wrong in a way nobody could see until a phone refused it.
 weixin adapter's commit lists what only a real account can confirm; the 飞书
 adapter lists the spec unknowns it decided. The opencode, Kimi and zcode key
 profiles copy Claude Code's and the page says so.
+
+## 2026-09-16 — Four reviews of the chat bridge, and what they found
+
+Four subagents read the branch back before it was offered: one for behaviour,
+one for security, one for the page and the bot's words, one for the shape of
+the code. Between them, sixty-odd findings; the ones that changed something:
+
+**Behaviour.** Words pasted into a session sitting at a permission prompt were
+followed by Enter, which on Claude Code's dialog is *allow*: the exact
+keystroke the bridge exists to refuse, reachable by quoting a prompt card and
+typing "wait, not that". A session at a prompt now takes no words until the
+prompt is answered. Two `Reload`s at once each started the adapters the other
+then forgot, and an adapter with no owner polled the same bot token forever:
+`Reload` is serialised and generation-numbered. Inbound messages ran on the
+adapter's own context, so every settings save killed every reply in flight:
+they run on the bridge's. Two connections assigning a chat handle at once both
+computed `MAX+1` and the second lost with `SQLITE_BUSY_SNAPSHOT`, which
+`busy_timeout` does not wait out, and the card was never sent: assignment is
+under a mutex. A quote of the "two are waiting" list resolved to the first
+number in it: only a card (glyph, then handle, at the start) is an address now.
+Whole-row peer writes from stale copies undid a pairing made meanwhile: the
+writes are narrow. QR sign-ins lived in a placeholder channel a `Reload`
+replaced mid-scan: they live apart.
+
+**Security.** The assistant's `approve`/`deny` intents pressed keys without an
+`ok`, against the one promise the design makes; they wait now. The harness
+child inherited the panel's whole environment, ACME token included, and
+Codex's `Ask` has a shell: the child gets an allowlist. A Telegram token
+printed in every `*url.Error`, and so on the health line and in the journal:
+scrubbed. 微信's server-chosen `full_url` was dialled as given: only the IM's
+own hosts, or the base a test configured, and 20 MiB. The tools token was on
+the MCP child's command line, readable by every local account through
+`/proc`: it is in a 0600 file now, on both harnesses. A stranger's picture was
+downloaded before anyone asked who they were: pictures are fetched lazily,
+for paired people only. 飞书 signatures had no timestamp window and so were
+replayable after the day's tombstones expired: five minutes. Button presses
+are checked against the message they were on, so the IM's servers cannot
+press *allow* on a session by id.
+
+**The page.** "Running" painted red is not a state; the word is "Error" when
+the error is current. Toggle chips were colour-only; they carry a check mark
+and a fill. The log and the key table did not fit a phone; each has a
+phone layout. Every action was a borderless header control; the page uses
+the sharing page's bordered secondary and accent-filled primary. A dozen
+strings argued for a design or named the implementation ("headless agent",
+"chat bridge", "not measured"); they say the thing now.
+
+**The code.** Three capability fields nothing read (`Flavor`, `VoiceText`,
+`Voice`) are gone and `QuoteRefs` is load-bearing; the state and kind
+literals are the enums, pinned; "is this message fresh" and "is this session
+addressable" are one function each; the preview and the push share
+`Destined`; the server no longer knows 微信 by its config keys, because a
+QR adapter declares its credential fields like any other. Still on the list:
+the per-turn struct that would collapse the six-parameter methods, the
+adapters' shared HTTP envelope, and the prompt text on the harness's argv.
+
+What the reviews measured rather than read: `go test -race -count=5` on the
+bridge and `-count=3` on every adapter, no flakes; the security review's
+probe tests under `go test -overlay`, which reproduced the unconfirmed
+`approve`, the token in the error string and the handle race before the
+fixes.

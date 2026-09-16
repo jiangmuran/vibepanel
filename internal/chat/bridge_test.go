@@ -829,7 +829,11 @@ func TestAnInboundPictureLandsNextToTheSessionAsAPath(t *testing.T) {
 	p.FocusSession = "s1"
 	_ = r.db.PutChatPeer(r.ctx, p)
 	before := r.b.Handled()
-	r.ad.inbound(t, Inbound{PeerID: "me", Image: []byte{0x89, 'P', 'N', 'G', 1, 2, 3}})
+	fetched := 0
+	r.ad.inbound(t, Inbound{PeerID: "me", FetchImage: func(context.Context) ([]byte, error) {
+		fetched++
+		return []byte{0x89, 'P', 'N', 'G', 1, 2, 3}, nil
+	}})
 	r.settleFrom(before)
 	got := r.term.pasted("vp_s1")
 	if len(got) != 1 || !strings.HasSuffix(strings.TrimSpace(got[0]), ".png") || !strings.HasPrefix(got[0], r.b.d.PastedDir) {
@@ -837,5 +841,132 @@ func TestAnInboundPictureLandsNextToTheSessionAsAPath(t *testing.T) {
 	}
 	if len(r.term.pressed("vp_s1")) != 0 {
 		t.Fatal("a picture's path was submitted; it should be typed and left")
+	}
+	if fetched != 1 {
+		t.Fatalf("the picture was fetched %d times", fetched)
+	}
+	// A stranger's picture is never fetched.
+	strangerFetched := 0
+	before = r.b.Handled()
+	r.ad.inbound(t, Inbound{PeerID: "nobody", FetchImage: func(context.Context) ([]byte, error) {
+		strangerFetched++
+		return []byte{1}, nil
+	}})
+	r.settleFrom(before)
+	if strangerFetched != 0 {
+		t.Fatal("a stranger's picture was downloaded")
+	}
+}
+
+// A session at a permission prompt reads keys, not words: a paste followed by
+// Enter would be "allow". Words are refused until the prompt is answered.
+func TestWordsAreRefusedWhileASessionIsAtAPrompt(t *testing.T) {
+	r := newRig(t, Capabilities{Proactive: true})
+	r.peer("me", store.PeerPaired, store.ModeNormal)
+	r.session("s1", "fix", "claude", session.StateWaiting)
+	_, _ = r.db.AddSessionMessage(r.ctx, store.SessionMessage{SessionID: "s1", Kind: "prompt", Text: "Bash: rm -rf build"})
+	h, _ := r.db.ChatHandle(r.ctx, "s1")
+	r.say("me", fmt.Sprintf("%d: wait, not that one", h))
+	if len(r.term.pasted("vp_s1")) != 0 || len(r.term.pressed("vp_s1")) != 0 {
+		t.Fatalf("words reached a session at a prompt: %q %v", r.term.pasted("vp_s1"), r.term.pressed("vp_s1"))
+	}
+	if !strings.Contains(r.ad.last(), "y 或 n") {
+		t.Fatalf("reply %q", r.ad.last())
+	}
+	// A stop confirmed after the session reached a prompt is refused too:
+	// its key would be the deny key.
+	r.say("me", fmt.Sprintf("stop %d", h))
+	r.say("me", "ok")
+	if len(r.term.pressed("vp_s1")) != 0 {
+		t.Fatalf("interrupt pressed at a prompt: %v", r.term.pressed("vp_s1"))
+	}
+	// Answered, the session takes words again.
+	r.say("me", fmt.Sprintf("%d: n", h))
+	_ = r.db.SetSessionState(r.ctx, "s1", session.StateDone, session.SourceHook)
+	r.say("me", fmt.Sprintf("%d: use make clean instead", h))
+	if got := r.term.pasted("vp_s1"); len(got) != 1 {
+		t.Fatalf("pasted %q", got)
+	}
+}
+
+// A press comes back from the IM's servers, not from the person. When it
+// names the message it was on, that message must be one the bridge sent this
+// person about this session.
+func TestAButtonPressOnSomebodyElsesMessageIsRefused(t *testing.T) {
+	r := newRig(t, Capabilities{Proactive: true, Buttons: true})
+	r.peer("me", store.PeerPaired, store.ModeNormal)
+	r.session("s1", "one", "codex", session.StateWaiting)
+	r.session("s2", "two", "codex", session.StateWaiting)
+	_ = r.db.RecordChatOutbound(r.ctx, store.ChatOutbound{Channel: r.ad.kind, PeerID: "me", Ref: "m-s2", SessionID: "s2", Kind: store.OutboundStatus})
+	before := r.b.Handled()
+	r.ad.inbound(t, Inbound{PeerID: "me", Action: &Action{Value: "approve:s1", ID: "cb", MessageRef: "m-s2"}})
+	r.settleFrom(before)
+	if len(r.term.pressed("vp_s1")) != 0 {
+		t.Fatalf("a press on s2's card approved s1: %v", r.term.pressed("vp_s1"))
+	}
+	before = r.b.Handled()
+	r.ad.inbound(t, Inbound{PeerID: "me", Action: &Action{Value: "approve:s1", ID: "cb", MessageRef: "never-sent"}})
+	r.settleFrom(before)
+	if len(r.term.pressed("vp_s1")) != 0 {
+		t.Fatal("a press on a message the bridge never sent approved s1")
+	}
+	before = r.b.Handled()
+	r.ad.inbound(t, Inbound{PeerID: "me", Action: &Action{Value: "approve:s2", ID: "cb", MessageRef: "m-s2"}})
+	r.settleFrom(before)
+	if keys := r.term.pressed("vp_s2"); len(keys) != 1 || keys[0][0] != "y" {
+		t.Fatalf("a press on the right card did nothing: %v", keys)
+	}
+}
+
+// Only a card is an address. The list the bridge sends when two sessions are
+// waiting has handles in it too, and quoting it must not pick the first.
+func TestQuotingTheWaitingListDoesNotPickTheFirstSession(t *testing.T) {
+	r := newRig(t, Capabilities{Proactive: true})
+	r.peer("me", store.PeerPaired, store.ModeNormal)
+	r.session("s1", "one", "claude", session.StateWaiting)
+	r.session("s2", "two", "claude", session.StateWaiting)
+	r.say("me", "y")
+	list := r.ad.last()
+	if !strings.Contains(list, "都在等你") {
+		t.Fatalf("expected the list, got %q", list)
+	}
+	before := r.b.Handled()
+	r.ad.inbound(t, Inbound{PeerID: "me", Text: "y", QuotedText: list})
+	r.settleFrom(before)
+	for _, name := range []string{"vp_s1", "vp_s2"} {
+		if len(r.term.pressed(name)) != 0 {
+			t.Fatalf("quoting the list pressed keys in %s", name)
+		}
+	}
+	// A quoted card still works.
+	h1, _ := r.db.ChatHandle(r.ctx, "s1")
+	before = r.b.Handled()
+	r.ad.inbound(t, Inbound{PeerID: "me", Text: "y", QuotedText: fmt.Sprintf("▲ [%d] one · vibepanel\n在等你", h1)})
+	r.settleFrom(before)
+	if keys := r.term.pressed("vp_s1"); len(keys) != 1 {
+		t.Fatalf("a quoted card did not resolve: %v", keys)
+	}
+}
+
+// A keystroke the model asked for is a write like any other and waits for ok.
+func TestAssistantApproveWaitsForOk(t *testing.T) {
+	r := newRig(t, Capabilities{Proactive: true})
+	fa := &fakeAssistant{}
+	r.b.SetAssistant(fa)
+	r.peer("me", store.PeerPaired, store.ModeAdvanced)
+	r.session("s1", "one", "codex", session.StateWaiting)
+	r.session("s2", "two", "codex", session.StateWaiting)
+	h1, _ := r.db.ChatHandle(r.ctx, "s1")
+	fa.intent = Intent{Verb: "approve", Handle: h1}
+	r.say("me", "allow the first one")
+	if len(r.term.pressed("vp_s1")) != 0 {
+		t.Fatalf("the model's approve pressed keys without ok: %v", r.term.pressed("vp_s1"))
+	}
+	if !strings.Contains(r.ad.last(), "回复 ok") {
+		t.Fatalf("no confirmation asked: %q", r.ad.last())
+	}
+	r.say("me", "ok")
+	if keys := r.term.pressed("vp_s1"); len(keys) != 1 || keys[0][0] != "y" {
+		t.Fatalf("after ok: %v", keys)
 	}
 }
