@@ -15,7 +15,7 @@ import {
 import { api, UnauthorizedError } from './protocol/api'
 import { PanelSocket } from './protocol/socket'
 import type { SocketStatus } from './protocol/socket'
-import type { AuthState, PanelState, Project, Session, SharePage } from './protocol/wire'
+import type { AuthState, PanelState, Project, Session, SharePage, UpdateStatus } from './protocol/wire'
 import { TerminalView } from './components/Terminal'
 import { StateDot } from './components/StateDot'
 import { Sidebar } from './components/Sidebar'
@@ -57,6 +57,7 @@ import { LaunchPicker } from './components/LaunchPicker'
 import { filesFrom, uploadErrorText } from './components/upload'
 import { copyTextInGesture } from './clipboard'
 import { notifyOnWaiting } from './notify'
+import { readSkipped, shouldNotice, writeSkipped } from './components/updateView'
 import { t, useLang } from './i18n'
 
 /**
@@ -585,6 +586,29 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   // worse failure than showing an old interface for another minute.
   const bootBuild = useRef<string | null>(null)
   const [upgraded, setUpgraded] = useState(false)
+
+  // Whether a release is waiting, from the server's memory of its last check.
+  //
+  // Asked when the socket opens and every half hour after, and that question
+  // is what makes the automatic check happen at all: the server asks GitHub
+  // only when a page has asked it and its answer is old (see update.go). A
+  // panel nobody has open never asks. Skipping is per browser, in
+  // localStorage, and per version.
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
+  const [skippedUpdate, setSkippedUpdate] = useState<string | null>(() => readSkipped())
+  const refreshUpdate = useCallback(() => {
+    void api
+      .updateStatus()
+      .then(setUpdateStatus)
+      .catch(() => {})
+  }, [])
+  useEffect(() => {
+    if (status !== 'open') return
+    refreshUpdate()
+    const timer = window.setInterval(refreshUpdate, 30 * 60_000)
+    return () => clearInterval(timer)
+  }, [status, refreshUpdate])
+  const updateAvailable = shouldNotice(updateStatus, skippedUpdate) ? (updateStatus?.version ?? null) : null
   useEffect(() => {
     if (status !== 'open') return
     let cancelled = false
@@ -1000,6 +1024,16 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           onOpenSettings={() => {
             setSettingsAt('reporting')
             if (narrow) setDrawerOpen(false)
+          }}
+          updateAvailable={updateAvailable}
+          onOpenUpdate={() => {
+            setSettingsAt('update')
+            if (narrow) setDrawerOpen(false)
+          }}
+          onSkipUpdate={() => {
+            const v = updateStatus?.version ?? null
+            writeSkipped(v)
+            setSkippedUpdate(v)
           }}
         />
       )}
@@ -1507,6 +1541,9 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           onClose={() => {
             setSettingsAt(null)
             loadProfiles()
+            // The section may have checked, or started an install; the
+            // notice in the sidebar should agree with it.
+            refreshUpdate()
           }}
         />
       )}

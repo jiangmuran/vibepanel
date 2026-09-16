@@ -715,27 +715,61 @@ rather than a stored one — the moment to test is before saving — and answers
 
 ## Updating
 
+### `GET /api/update/status`
 ### `GET /api/update`
+### `PUT /api/update/settings`
 ### `POST /api/update`
 
-`GET` asks GitHub what the newest release of `jiangmuran/vibepanel` is and
-answers with the tag, whether it is ahead of what is running, the release page
-and its notes. A panel with no route to GitHub answers `200` with
-`{"current": "...", "unreachable": "..."}` rather than failing: an air-gapped
-box is a normal state, not a broken one.
+Both `GET`s answer the same object: the running version and platform, what
+GitHub last said and when (`version`, `newer`, `url`, `notes`, `publishedAt`,
+`asset`, `checkedAt`), whether the automatic check is on, and `job` — the apply
+in progress or the last one, see below. The difference is who asks GitHub.
 
-`POST` downloads that release's archive for this exact GOOS/GOARCH, checks it
-against the `SHA256SUMS` published in the same release, unpacks the binary,
-moves the running one aside to `<path>.old`, renames the new one into place, and
-then asks systemd to restart the unit. It answers before restarting, with
-`{"installed", "previous", "restarting", "restartWhy"}`. `restarting` is
-`false`, with a reason, when the panel was started by hand and cannot bring
-itself back.
+`/status` answers from the panel's memory and never waits on the network. If
+the automatic check is on and the last answer is older than six hours (thirty
+minutes after a failure), it starts a fresh check in the background and answers
+with what it has, `checking: true`. The app calls it when it opens and every
+half hour after; that call is the only thing that makes the automatic check
+happen. A panel nobody has open never asks GitHub. There is no timer.
+
+`/update` is the button: it asks GitHub now and waits for the answer. Two
+requests that overlap are one question to GitHub.
+
+A panel with no route to GitHub answers `200` with `unreachable` (the error)
+and `unreachableKind` (`offline`, `timeout`, `rateLimited` or `http`) rather
+than failing: an air-gapped box is a normal state, not a broken one. The last
+answer, good or bad, is written to the settings table, so it survives the
+restart an update causes; `newer` is always computed against the version that
+is running now.
+
+`PUT /api/update/settings` takes `{"autoCheck": false}` to turn the automatic
+check off. On is the default. The button works either way.
+
+`POST` starts the install and answers `202` with `{"job": …}` as soon as it has:
+the download runs on the server, not on the request, so a tab that sleeps or
+reloads does not cancel it. The job carries `stage` — `downloading` (with
+`done` and `total` bytes), `installing`, `restarting`, `installed` or `failed`
+— and both `GET`s report it until the next one starts. `installed` is the end
+on a panel nothing supervises: the binary is in place, `restarting` is `false`
+and `restartWhy` says why; a systemd unit goes on to `restarting` and the page
+waits for the new process. `failed` names the step in `reason`: `checksum`,
+`verify`, `network` or `install`.
+
+What the job does, in order: download the archive for this exact GOOS/GOARCH
+and check it against the `SHA256SUMS` published with it; unpack the binary;
+**run it once**, as `--version`, and refuse it unless it reports the release
+asked for — the checksum proves the bytes are the published ones, not that
+they run here; move the running binary aside to `<path>.old`; rename the new
+one into place; and ask systemd to restart the unit.
 
 **The version is not a parameter.** A request cannot name what to install; the
 panel installs the latest release or refuses with `409`. The interesting case
 this closes is not a typo, it is somebody with a session cookie who would like
-this panel to run something else.
+this panel to run something else. The request *may* carry `expected`, the
+version the page showed when the button was pressed: if the newest release is
+now another, the answer is `409` with `reason: "changed"` and the page checks
+again, because what was confirmed is not what would be installed. A second
+`POST` while a job runs is `409` with `reason: "busy"` and the job.
 
 What the checksum buys: it detects a corrupt or truncated download. It does not
 defend against a compromised release, because the sums come from the same

@@ -28,7 +28,11 @@ import (
 // temp directory, so this branch is otherwise unreachable and shipped
 // unexercised.
 func TestAPanelThatCannotReplaceItsBinarySaysSoFirst(t *testing.T) {
-	ts, srv := newTestServer(t)
+	// Against a fake release, so the answer does not depend on whether this
+	// machine can reach GitHub. It used to, and skipped on the runners that
+	// could not.
+	gh := newFakeGitHub(t, "v99.0.0", "new")
+	ts, srv, _ := updatable(t, gh)
 	srv.installable = func() error {
 		return fmt.Errorf("%w: /usr/local/bin", selfupdate.ErrNotWritable)
 	}
@@ -66,11 +70,6 @@ func TestAPanelThatCannotReplaceItsBinarySaysSoFirst(t *testing.T) {
 	defer res2.Body.Close()
 	b2, _ := io.ReadAll(res2.Body)
 	said := string(b2)
-	// 502 is "GitHub could not be reached", which is a legitimate answer on an
-	// offline machine and not what this test is about.
-	if res2.StatusCode == http.StatusBadGateway {
-		t.Skip("no route to the release API on this machine")
-	}
 	if res2.StatusCode != http.StatusConflict {
 		t.Fatalf("apply: %d %s, want 409", res2.StatusCode, strings.TrimSpace(said))
 	}

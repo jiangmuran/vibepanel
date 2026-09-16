@@ -368,9 +368,17 @@ that remembers none of it. The restored pane says so in a banner, and the
 session keeps a `restored` mark.
 
 **Settings → Updates** fetches the newest release from GitHub, verifies it
-against the published `SHA256SUMS`, swaps the binary and restarts the service,
-keeping the old one as `.old`. It runs only when the button is pressed: no
-scheduled check, no heartbeat, no telemetry.
+against the published `SHA256SUMS`, runs the new binary once to see that it
+starts on this machine, swaps it in and restarts the service, keeping the old
+one as `.old`. The download runs on the server, so a tab that sleeps or reloads
+mid-way comes back to the same progress bar; the release notes are shown before
+you agree to anything, and the sidebar says when a release is waiting.
+
+The panel checks on its own, and only while somebody has it open: when the last
+answer is more than six hours old, one request to `api.github.com` carrying
+nothing but the version number. There is no timer, no heartbeat and no
+telemetry; a panel nobody opens never asks. The check can be switched off in
+the same section, and the button works either way.
 
 It talks to `api.github.com` and has no mirror setting, so a machine that cannot
 reach GitHub takes the other route: unpack a new archive and run

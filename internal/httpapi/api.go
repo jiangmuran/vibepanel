@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -67,6 +68,17 @@ type Server struct {
 	// upgradeCommand replaces `<this binary> service upgrade`, for the same
 	// reason. Nil means the real command.
 	upgradeCommand []string
+
+	// install replaces selfupdate.Install, whose real version swaps the
+	// running executable -- in a test, the test binary. Nil means the real
+	// one. restartCmd is restartCommand's stand-in for the same reason: the
+	// real one asks systemd to restart a unit named vibepanel.
+	install    func(bin []byte, version string) (string, error)
+	restartCmd func() (*exec.Cmd, error)
+
+	// updates is what the panel knows about updates between requests: the
+	// last check and the apply in progress. See update.go.
+	updates updateState
 
 	// zone caches the configured time zone. Not a field to set: read it with
 	// s.loc(ctx), which resolves the setting the first time and remembers.

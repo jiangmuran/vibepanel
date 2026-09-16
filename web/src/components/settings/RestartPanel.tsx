@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { api } from '../../protocol/api'
 import { t } from '../../i18n'
+import { waitForItToComeBack as waitForItToComeBack_ } from './comeback'
 import { Section } from './parts'
 
 /**
@@ -34,31 +35,20 @@ export function RestartPanel() {
       })
   }
 
-  // Polled rather than timed. How long a restart takes is the supervisor's
-  // business -- systemd's RestartSec is three seconds and a slow machine adds
-  // more -- and a fixed wait is either a lie or a delay.
-  const waitForItToComeBack = () => {
-    let tries = 0
-    const tick = () => {
-      tries++
-      fetch('/api/health')
-        .then((r) => {
-          if (!r.ok) throw new Error('not yet')
-          setState('back')
-          // The websocket and every cached snapshot belong to the process that
-          // just went away. Reloading is the honest way to reconnect to the
-          // new one, and it is what somebody pressing "restart" expects.
-          setTimeout(() => window.location.reload(), 400)
-        })
-        .catch(() => {
-          if (tries < 60) setTimeout(tick, 500)
-        })
-    }
-    // Not immediately: the old process answers /api/health right up until it
-    // stops, so a poll that starts now succeeds against the panel being
-    // replaced and reloads into a socket that is about to close.
-    setTimeout(tick, 1500)
-  }
+  // The loop itself is shared with the updater; see comeback.ts for why it
+  // waits before the first try and what it takes as "back".
+  const waitForItToComeBack = () =>
+    waitForItToComeBack_({
+      was: null,
+      onBack: () => {
+        setState('back')
+        // The websocket and every cached snapshot belong to the process that
+        // just went away. Reloading is the honest way to reconnect to the
+        // new one, and it is what somebody pressing "restart" expects.
+        setTimeout(() => window.location.reload(), 400)
+      },
+      onGaveUp: () => setState('idle'),
+    })
 
   return (
     <Section id="restart" title={t('rst.title')}>
