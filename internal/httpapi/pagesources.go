@@ -127,6 +127,16 @@ func (s *Server) markWatched(pageID, ns string, m pages.Manifest) {
 	go s.watchLoop(pageID, ns)
 }
 
+// sourceRoundBudget bounds one pass of watchOnce.
+//
+// Every fetch is already bounded on its own -- TimeoutOrDefault per source,
+// capped at MaxSourceTimeout, and a size cap under it -- so this is a backstop
+// for a pass that hangs rather than the thing bounding fetches. It has to be
+// larger than the worst case of the set it runs, or a page with sources enough
+// has its tail cut every round and never fetches successfully: two minutes of
+// schedule headroom plus every source timing out in full.
+const sourceRoundBudget = 2*time.Minute + pages.MaxSources*pages.MaxSourceTimeout
+
 func (s *Server) watchLoop(pageID, ns string) {
 	st := &s.pb.sources
 	key := pageID + "|" + ns
@@ -146,7 +156,7 @@ func (s *Server) watchLoop(pageID, ns string) {
 		if idle {
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), sourceRoundBudget)
 		if !s.watchOnce(ctx, pageID, ns) {
 			cancel()
 			return
