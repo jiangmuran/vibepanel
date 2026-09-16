@@ -526,6 +526,12 @@ func (s *Server) handlePublishPage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// What is live changed, and the source caches are keyed to the page rather
+	// than to the version: a draft whose sources point somewhere new would
+	// otherwise serve the previous version's data under the new version's
+	// name until the intervals happened to come round. Dropped, so the next
+	// watch refetches against the declarations that are now live.
+	s.forgetSources(page.ID)
 	if u, ok := currentUserFrom(r); ok {
 		s.audit(ctx, "page.published", u.Username, s.clientIP(r),
 			page.Name+" v"+strconv.Itoa(version))
