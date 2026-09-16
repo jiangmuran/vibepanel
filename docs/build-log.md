@@ -22977,3 +22977,27 @@ them removes nothing. A read-only review subagent checked the result against
 the real transcripts. Its findings are the per-field maximum, the fork layout
 (the first draft described two metas on a fork, which is really the subagent
 layout) and the paginated exemption above.
+
+## 2026-09-16 — The licence becomes PolyForm Noncommercial
+
+vibepanel moves from MIT to PolyForm Noncommercial 1.0.0: noncommercial use is
+free, and commercial use needs a separate licence, asked for at
+jmr@jiangmuran.com. PolyForm rather than the Business Source License because it
+says exactly that, with no change date and no additional-use grant to write.
+
+It carries attribution terms on top, in `LICENSE` under *Attribution*: a copy
+or a derivative keeps every credit and `Required Notice:` line unaltered, and a
+derivative says it is based on vibepanel. Modifying the code stays allowed for
+noncommercial use; what may not be modified is the credit. That makes the
+whole a PolyForm licence with added conditions rather than stock PolyForm, so
+tools that detect licences by matching the text will not name it.
+
+Two things the change cannot do, which `LICENSE` says out loud. It cannot
+reach back: v1.20.1 and earlier were published under MIT, and a copy obtained
+under MIT keeps it. And contributions merged under MIT (niuniu-869's deployment
+memory limits among them) stay under MIT's terms; MIT permits sublicensing, so
+they ship inside the new licence with their notice kept at the end of the file.
+
+The README said the source was "100% open". Under a noncommercial licence that
+reads as a claim to open source, which this is no longer; it now says the
+source is public, in both languages.

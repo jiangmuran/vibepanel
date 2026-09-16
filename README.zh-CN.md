@@ -8,7 +8,7 @@
 
 [![check](https://github.com/jiangmuran/vibepanel/actions/workflows/check.yml/badge.svg)](https://github.com/jiangmuran/vibepanel/actions/workflows/check.yml)
 [![Go 1.26](https://img.shields.io/badge/go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
-[![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![license: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial-orange)](LICENSE)
 
 [English](README.md) · **简体中文**
 
@@ -25,11 +25,15 @@
 
 vibepanel 是一个针对高强度agent开发者打造的实用终端，采用前后端分离的架构，你的终端托管在拥有最低内存保证和高优先级的专用系统服务，确保不会因为OOM或应用层故障导致丢失会话。同时，我们的UI通过web访问，以便于你使用开发服务器并通过任何设备远程访问。
 
-在安全层面，vibepanel的源码是100%开源且release通过公开GitHub action打包，同时最终打包成品是一个不联网、无依赖的go可执行文件，尽最大可能保证安全性、兼容性和性能。并且，升级/重启前端面板不会影响你的任何session和运行中的agent。面板运行时自带了TLS，可以配置https且要求使用密码/passkey登陆。
+在安全层面，vibepanel的源码全部公开且release通过公开GitHub action打包，同时最终打包成品是一个不联网、无依赖的go可执行文件，尽最大可能保证安全性、兼容性和性能。并且，升级/重启前端面板不会影响你的任何session和运行中的agent。面板运行时自带了TLS，可以配置https且要求使用密码/passkey登陆。
 
 在UI/UX层面，我们设计了很多小巧思，整个管理模式是项目+Session，您可以快速查看每个项目的每个session的工作状态（完成/工作中/等待输入），在面板的右侧，我们集成了文件管理和笔记本，可以快速通过复制粘贴来传输文件或图片，就像自己的电脑一样。
 
 在面板的下方我根据我自己的使用习惯添加了一个快速使用的终端，方便你在agent运行时查看文件/执行指令 告别/btw。同时我们针对手机端设计了一套独立的UI，并且你可以开启系统级的通知或配置自定义通知渠道，妈妈再也不怕我出门在外没法继续开发了！
+
+连网页都不用开。把面板和 Telegram 机器人、飞书应用或者微信连起来，session 需要你的时候就会发一张卡片过来：哪个 session、在等什么，Telegram 和飞书上下面直接就是「允许」「拒绝」两个按钮。回一句 `3: 再跑一遍测试` 就发进了 3 号 session，`截图 3` 会把终端截成图发回来。打开高级模式还能直接说人话，比如「让写文档的那个加一条 changelog」，后台的 Claude Code 或 Codex 会弄清楚你说的是哪个 session，然后等你回 `ok` 才动手。
+
+面板能分清 agent 是真的做完了还是只是安静了一会：Claude Code、Codex、Kimi Code、zcode、opencode 都是点一下就装好状态上报的 hook，写之前会先给你看要改什么并备份原文件。升级也是一个按钮：设置 → 更新，下载新版、对照 `SHA256SUMS` 校验、先把新程序跑一遍确认能启动再换上去、重启，所有 session 照常跑着。
 
 我们还有一大特色功能是分享链接，无论是想要在显示器上显示整个系统的工作状态，还是想要在大屏幕上让领导知道你消耗了多少token产出了多少代码，都可以。屏幕上显示什么，是你让agent写的一个页面：它有自己的项目，终端旁边就是实时预览，从模版开始，写好了发布，建个链接，拿到屏幕上打开就行。预览点一下就能放大到整个窗口，手机、笔记本、电视各种尺寸随便切，挂上墙之前就知道墙上长什么样。页面默认和面板的数据放在一起，也能导出成 zip 搬到别的面板上。~~好吧我觉得这是个很小众但是确实很重要的功能点~~
 
@@ -160,4 +164,6 @@ tmux 封装是拿真的 tmux 在一个一次性 socket 上测的，不是 mock�
 
 ## 许可证
 
-[MIT](LICENSE)。
+[PolyForm Noncommercial 1.0.0](LICENSE)，附加署名条款。个人使用、学习、研究等非商业用途免费，也可以修改和分享修改后的版本，但必须原样保留作者署名和协议声明，不得删除或改动，并注明基于 vibepanel。商业用途（公司内部使用、作为托管服务提供、打包进产品等）需要另外获得授权，请联系 [jmr@jiangmuran.com](mailto:jmr@jiangmuran.com)。
+
+v1.20.1 及之前的版本以 MIT 协议发布，按 MIT 获得的副本仍然适用 MIT。
