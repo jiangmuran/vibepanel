@@ -666,22 +666,90 @@ export interface AuditEntry {
   detail: string
 }
 
-/** What `GET /api/update` answers. */
-export interface UpdateCheck {
+/**
+ * Why sudo did not run the upgrade, from `POST /api/update` with 403.
+ *
+ * `wrongPassword` comes with `askedFor`, the account whose password sudo
+ * wanted: root under rootpw or targetpw, otherwise the user. `needPassword`
+ * answers an attempt with nothing typed. `notAllowed` and `needsTty` cannot be
+ * fixed by typing anything: sudoers does not let this account run it, or only
+ * lets it from a terminal. Nor is `cannotElevate`: the panel runs with
+ * no_new_privs, and no sudoers rule gets past that.
+ */
+export type ElevateRefusal = 'wrongPassword' | 'needPassword' | 'notAllowed' | 'needsTty' | 'cannotElevate' | 'failed'
+
+/**
+ * Why `POST /api/update` did not start, with 409. `busy` means one is already
+ * running and the answer carries it; `changed` means the newest release is no
+ * longer the one the page showed when the button was pressed, so what was
+ * confirmed is not what would be installed.
+ */
+export type UpdateRefusal = ElevateRefusal | 'busy' | 'changed'
+
+/** Where the one apply in progress is. Mirrors updateJob in update.go. */
+export type UpdateStage = 'downloading' | 'installing' | 'restarting' | 'installed' | 'failed'
+
+/** Which step of a failed job failed; the page says a sentence for each. */
+export type UpdateFailure = 'checksum' | 'verify' | 'network' | 'install' | 'restart'
+
+/**
+ * The apply in progress, or the last one, as both GETs report it.
+ *
+ * It lives on the server rather than in this tab: the download used to run on
+ * the request, and a phone that put the tab to sleep cancelled it. A page
+ * reloaded mid-update reads this and picks up where it was.
+ */
+export interface UpdateJob {
+  stage: UpdateStage
+  version: string
+  startedAt: number
+  endedAt?: number
+  /** Bytes of the archive so far, and the total; -1 when the server did not say. */
+  done: number
+  total: number
+  /**
+   * The upgrade went through sudo and is running as the installer outside the
+   * panel: there is no progress to draw and no version to name, only the
+   * restart to wait for.
+   */
+  elevated?: boolean
+  /** Where the old binary was moved to, once installed. */
+  previous?: string
+  restarting: boolean
+  /** Why the panel is not restarting itself, when it is not. */
+  restartWhy?: string
+  error?: string
+  reason?: UpdateFailure
+}
+
+/** What `GET /api/update` and `GET /api/update/status` answer. */
+export interface UpdateStatus {
   current: string
-  /** The newest release's tag, empty when the repository has none. */
+  /** GOOS/GOARCH, for the sentence about a release that has no archive for it. */
+  platform: string
+  /** The automatic check: on unless somebody turned it off. */
+  autoCheck: boolean
+  /** A check is in flight right now. */
+  checking: boolean
+  /** When GitHub was last asked, unix seconds; absent when never. */
+  checkedAt?: number
+  /** The newest release's tag, absent when the repository has none or nothing has been asked yet. */
   version?: string
-  /** Whether that tag is ahead of what is running. */
-  newer?: boolean
+  /** Whether that tag is ahead of what is running -- against the running version, always. */
+  newer: boolean
   url?: string
   notes?: string
+  /** When the release was cut, RFC 3339. */
+  publishedAt?: string
   /** Empty when the release has no archive for this platform. */
   asset?: string
   /**
-   * Why GitHub could not be reached. An air-gapped panel is a normal state,
-   * not a broken one, so this arrives with 200 rather than as an error.
+   * Why GitHub could not be reached, and what kind of reason that was. An
+   * air-gapped panel is a normal state, not a broken one, so this arrives
+   * with 200 rather than as an error.
    */
   unreachable?: string
+  unreachableKind?: 'offline' | 'timeout' | 'rateLimited' | 'http' | ''
   /**
    * Set when this panel cannot replace its own binary — a system install owns
    * it as root — and carries the command that can. Present means the update
@@ -720,33 +788,17 @@ export interface UpdateCheck {
    * the one you are signed into the page with.
    */
   elevateAs?: string
+  job?: UpdateJob
 }
 
 /**
- * Why sudo did not run the upgrade, from `POST /api/update` with 403.
- *
- * `wrongPassword` comes with `askedFor`, the account whose password sudo
- * wanted: root under rootpw or targetpw, otherwise the user. `needPassword`
- * answers an attempt with nothing typed. `notAllowed` and `needsTty` cannot be
- * fixed by typing anything: sudoers does not let this account run it, or only
- * lets it from a terminal. Nor is `cannotElevate`: the panel runs with
- * no_new_privs, and no sudoers rule gets past that.
+ * What `POST /api/update` answers when it starts something: the job, and
+ * `elevated` when the upgrade was handed to sudo rather than run here.
  */
-export type ElevateRefusal = 'wrongPassword' | 'needPassword' | 'notAllowed' | 'needsTty' | 'cannotElevate' | 'failed'
-
-/** What `POST /api/update` answers, before it restarts. */
-export interface UpdateResult {
-  installed: string
-  previous: string
-  restarting: boolean
-  restartWhy: string
-  /**
-   * Set when the upgrade was authorised rather than done in this process. The
-   * installer is running behind it and ends by restarting the unit, so there
-   * is no version to report yet -- `installed` is empty and the page waits for
-   * the panel to come back the way it does after any restart.
-   */
+export interface UpdateStarted {
+  job?: UpdateJob
   elevated?: boolean
+  restarting?: boolean
 }
 
 // ── read-only share links ──────────────────────────────────────────────────

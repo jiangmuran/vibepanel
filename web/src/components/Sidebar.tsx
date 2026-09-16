@@ -75,6 +75,11 @@ export interface SidebarProps {
   stateGuessed: boolean
   hooksInstalled: boolean
   onOpenSettings: () => void
+
+  /** A newer release than the one running, or null when there is none to say. */
+  updateAvailable: string | null
+  onOpenUpdate: () => void
+  onSkipUpdate: () => void
 }
 
 /**
@@ -564,6 +569,36 @@ export function Sidebar(props: SidebarProps) {
       {props.expanded && (
         <div className="shrink-0 border-t border-hairline px-3 py-1.5">
           <ProjectMark testid="sidebar-project" name={PANEL_NAME} remote={PANEL_REPO} />
+        </div>
+      )}
+
+      {/* A release is waiting. One line, in the same slot as the notice below
+          it: the version, a way to the section that installs it, and a way to
+          say "not this one" -- which is remembered in this browser, because
+          the person who skipped v1.10 on their phone did not skip it for the
+          laptop, and did not skip v1.11 either. */}
+      {props.updateAvailable !== null && (
+        <div
+          data-testid="update-notice"
+          className="flex items-center gap-2 border-t border-hairline px-3 py-2 text-vp-sm leading-relaxed text-ink-2"
+        >
+          <button
+            type="button"
+            onClick={props.onOpenUpdate}
+            className="vp-press min-w-0 flex-1 text-left transition-colors duration-200 ease-vp hover:text-ink"
+            data-testid="update-notice-open"
+            title={t('upd.noticeOpen')}
+          >
+            {t('upd.notice', { v: props.updateAvailable })}
+          </button>
+          <button
+            type="button"
+            onClick={props.onSkipUpdate}
+            className="vp-press shrink-0 text-vp-xs text-ink-3 transition-colors duration-200 ease-vp hover:text-ink"
+            data-testid="update-notice-skip"
+          >
+            {t('upd.skip')}
+          </button>
         </div>
       )}
 

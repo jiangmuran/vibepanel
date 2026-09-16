@@ -60,6 +60,11 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		// none of them is less hand-written than the rows above.
 		{"AuthState", authState{}},
 		{"SettingsInfo", settingsResponse{}},
+		// The update surface. The job is what a page reloaded mid-update
+		// reads to know why its socket is about to close, and a stage the
+		// server sends that wire.ts does not know is a bar that never moves.
+		{"UpdateStatus", updateStatus{}},
+		{"UpdateJob", updateJob{}},
 		// The response, not hooks.Status: the settings page reads one object,
 		// and the field that says which agents it offers is added here rather
 		// than in a package that has no database to read it from.

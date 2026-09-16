@@ -22134,6 +22134,119 @@ gestures already did, and the owner read it as clutter. The gestures, the
 untouched; what went was the button, its string and the desktop check that
 pressed it.
 
+## 2026-09-16 — The updater, second pass: a job you can watch, a check that happens on its own, and a binary that is run before it is trusted
+
+The first version of the updater was a request. `POST /api/update` downloaded,
+verified, swapped and answered, on the request's own context, and everything
+about that was wrong in a way nobody noticed on a laptop. A phone that put the
+tab to sleep during the download cancelled the download. A page reloaded
+mid-way came back knowing nothing while the process went on without it. A
+second tab, or a second click, was a second download racing the first for the
+same rename. And the HTTP client had `Timeout: 60s`, which bounds the whole
+exchange including the body: on a link slower than about a megabit the
+seven-megabyte archive was cut off and reported as a network failure, on
+exactly the machines a self-hosted panel tends to live on.
+
+**It is a job now.** `POST` checks that there is something newer, starts a
+goroutine with its own fifteen-minute context, and answers `202` with the job
+as it stands. Both `GET`s carry it -- `downloading` with bytes so far and the
+total, `installing`, `restarting`, or `installed` on a panel nothing
+supervises, or `failed` with which step -- until the next one starts. The page
+polls once a second while something is happening and draws the bar from the
+server's numbers, so a reload shows the same bar. There is one job at a time;
+a second press is `409 busy` and carries the job the page should be watching.
+`TestASecondPressDuringAnUpdateIsRefused` holds the archive open to prove it.
+
+**What was confirmed is what gets installed.** The request still cannot name a
+version -- that closes the case of a session cookie that would like the panel
+to run something else -- but it may say which version the page *showed*, and
+if the newest release has changed between the check and the press the answer
+is `409 changed` and the page checks again. Without this, a release that
+landed while somebody was reading the notes for the previous one was the one
+they got.
+
+**The new binary is run before it replaces anything.** The checksum proves the
+bytes are the published ones; it says nothing about whether they run here. An
+archive labelled for this platform and built for another, a binary directory
+on a `noexec` mount, a static build that turned out not to be -- each of those
+passed every check and was found out by the restart, by everybody at once,
+with the panel gone. `selfupdate.Verify` runs the temp file as `--version`
+with a twenty-second budget and refuses it unless the output names the
+release, because `true` exits zero and so does a shell script that prints
+nothing. A refusal costs nothing: the temp file is removed and the running
+binary was never touched. `TestABinaryThatWillNotRunIsNotInstalled` removes
+the call and watches the swap go ahead.
+
+**The panel checks on its own, and there is still no timer.** The rule
+`internal/git/warm.go` set for the wall applies: work happens because a page
+asked and the answer was old. `GET /api/update/status` answers from memory,
+and if the automatic check is on and the last answer is more than six hours
+old (thirty minutes after a failure) it starts one in the background and says
+`checking: true`. The app calls it when the socket opens and every half hour
+after; that call is the only thing that makes the check happen, so a panel
+nobody has open never asks GitHub, and one that is open asks four times a
+day at most. `TestTheStatusEndpointAsksOnItsOwnOnlyWhenTheAnswerIsOld` counts
+the questions, which is the test that would notice a ticker. The setting is
+`update.autoCheck` in the settings table, absent meaning on, with a checkbox
+in the section and a line under it saying what is sent: the version number,
+in the User-Agent, and nothing else about the machine.
+
+The last answer is written through to the settings table, so it survives the
+restart the update causes, and `newer` is recomputed against the running
+version on every read rather than trusted from the record. Without that a
+panel came back from its own upgrade knowing nothing, asked again, and a
+page open across the restart saw the badge go away and come back -- or, with
+the record trusted, saw v1.10.0 announced as newer than the v1.10.0 that was
+running. `TestTheLastCheckOutlivesTheProcess` resets the in-memory state and
+then bumps the version, and asserts both.
+
+**A release is announced outside the dialog.** One line in the sidebar's
+footer, in the slot the "states are guessed" notice uses: the version, a way
+to the section, and "skip this version", which is remembered per browser in
+localStorage. Per browser because the person who skipped v1.10 on their phone
+did not skip it for the laptop; per version because they did not skip v1.11
+either.
+
+**The wait after the restart is one loop, not two.** The restart button and
+the updater each had a copy, and the updater's was the one with the bug -- it
+was written second and left out the pause before the first poll, so it
+believed the old process answering `/api/health` and reloaded into a socket
+that was about to close. `settings/comeback.ts` holds the one loop: it waits
+before the first try, requires health to have been unreachable at least once,
+and also takes a health answer whose build differs from the one that was
+running, because a restart can be quick enough to fall between two polls.
+It gives up after ninety seconds and says so rather than polling forever.
+
+**Smaller things that were wrong.** GitHub's unauthenticated release API is
+sixty requests an hour per address, shared with everything behind the same
+NAT, and the refusal is a 403 that read as "GitHub answered 403 Forbidden"
+and sent people looking for a permissions problem; it is `rateLimited` now,
+with when it resets. The kinds a page can say something short about --
+offline, timeout, rate-limited, an HTTP error -- come from `selfupdate.Kind`,
+and the raw `dial tcp: lookup api.github.com: no such host` is the detail
+under the sentence rather than the sentence. The release notes were a `<pre>`
+of the tag message, hard-wrapped at eighty columns, so on a phone every line
+wrapped once more and a paragraph read as alternating long and short lines;
+`releaseNotes.ts` turns the four shapes a tag message uses into blocks and the
+component draws them as elements, every string through `safeText`, with a
+link's address dropped and the release page linked beside it. The release's
+date is shown, because a version number alone does not say whether you are
+a week or a year behind.
+
+**The copy.** 「看看有没有新版本」 and 「正在问…」 were the panel talking to
+itself. Every `upd.*` string was rewritten in both languages to say what the
+panel found, what it is doing and what it needs, and the prose-length test
+pushed four of them shorter than the first draft, which is what it is for.
+
+**Mutation.** Twenty guards removed one at a time, each against the test
+named for it: the verify call, the rate-limit header, the progress callback,
+the `expected` check, the setting, the age, the recomputed `newer`, the
+write-through, the busy check, both failure reasons, the audit line, the
+restart refusal, the skipped version, the notice during a job, the bar
+without a total, both halves of the comeback loop, and the paragraph join.
+Nineteen killed; the twentieth was a `sed` that matched nothing and the test
+beside it asserts the same thing directly.
+
 
 ## 2026-09-16 — Sources on a fake-ip network: the weather never came
 
