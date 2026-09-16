@@ -4,6 +4,7 @@ import { MoreHorizontal } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 import { t } from '../i18n'
+import { safeText } from './text'
 
 /**
  * The rest of the actions, behind one button.
@@ -17,38 +18,53 @@ import { t } from '../i18n'
  * What stays outside is what somebody does often; what comes in here is the
  * rest, named in words rather than by a glyph you have to hover to read.
  *
- * Through a portal, positioned from the trigger's rectangle, for two reasons
- * found by drawing it the short way first: the card that holds the trigger
- * rounds its corners with `overflow-hidden`, which clips an absolutely
- * positioned child, and the page scrolls under it, so a menu in the flow
- * scrolls with the content while the trigger does not. It closes on a scroll
- * or a resize rather than following, because a menu that chases its button
- * across the screen is worse than one that goes away.
+ * Through a portal, because the page scrolls under the trigger: a menu in the
+ * flow scrolls away from the button it belongs to. That means it has to be
+ * placed by hand, and the placement is the part that was wrong first — see
+ * `place` and `follow` below.
  */
 
-export interface MenuItem {
+interface Common {
   /** What it says. Already translated: this component adds no prose. */
   label: string
   icon?: LucideIcon
   testid?: string
   /** Red, for the ones that end something. */
   destructive?: boolean
-  disabled?: boolean
-  /**
-   * A link rather than an action, for the one item that is a download.
-   *
-   * `<a download>` is what makes the browser save the file instead of
-   * navigating to it, and a button cannot say that: driving it from script
-   * means building an anchor anyway, in a click handler, where a popup
-   * blocker is entitled to refuse it.
-   */
-  href?: string
-  onSelect?: () => void
 }
+
+/**
+ * An item is an action or a link, never both.
+ *
+ * A union rather than optional fields, because the first version allowed
+ * `{href, disabled}` and silently ignored the `disabled`: the anchor branch
+ * had nowhere to put it. A shape that cannot say that is a shape nobody has
+ * to remember.
+ */
+export type MenuItem =
+  | (Common & {
+      onSelect: () => void
+      disabled?: boolean
+      /** On for a toggle, so a reader is told which way it is set. */
+      checked?: boolean
+      href?: never
+    })
+  | (Common & {
+      /**
+       * A path on this panel. Relative on purpose: everything a menu links to
+       * is served by the panel itself, and a checked shape is what keeps the
+       * next caller from passing something a page supplied.
+       */
+      href: `/${string}`
+      /** Save it rather than open it. */
+      download?: boolean
+      onSelect?: never
+    })
 
 /** Everything the arrows walk: the download is an anchor, not a button. */
 const ITEMS = 'button:not(:disabled), a'
 
+/** Where the list sits, as the two edges it is pinned to. */
 interface At {
   top: number
   right: number
@@ -62,21 +78,58 @@ export function Menu({ items, label, testid }: { items: MenuItem[]; label?: stri
   const close = useCallback(() => {
     setAt(null)
     // Back to the button, so a keyboard is where it started rather than at the
-    // top of the document.
+    // top of the document. Selecting an item goes through here too: the item
+    // is unmounted with the portal, and focus would otherwise land on <body>.
     trigger.current?.focus()
   }, [])
 
-  const open = () => {
+  /**
+   * The list's corner, from the trigger's rectangle and the room around it.
+   *
+   * Flipped above the button when there is not enough room below it. Without
+   * this, the menu of the last card in a long list is drawn past the bottom of
+   * the window — and because it is `fixed`, there is nothing to scroll to
+   * reach it. Every action that lives only in a menu (fork, export, delete,
+   * lock, revoke) was unreachable there.
+   *
+   * `height` is what the list actually measured, or an estimate before it has
+   * been drawn once. The estimate is deliberately generous: guessing too tall
+   * flips a menu that would have fitted, which is survivable, and guessing too
+   * short puts it off the screen, which is the bug.
+   */
+  const place = useCallback((height: number): At | null => {
     const box = trigger.current?.getBoundingClientRect()
-    if (!box) return
-    setAt({ top: box.bottom + 4, right: Math.max(8, window.innerWidth - box.right) })
-  }
+    if (!box) return null
+    const below = window.innerHeight - box.bottom - 8
+    const top = height <= below ? box.bottom + 4 : Math.max(8, box.top - height - 4)
+    return { top, right: Math.max(8, window.innerWidth - box.right) }
+  }, [])
 
-  // The first item takes the keyboard the moment it is there, so Enter on the
-  // button and then Enter again runs the first action without a hunt.
+  const open = () => setAt(place(items.length * 30 + 8))
+
+  // Measured once it is on screen, and again on every frame while it is open.
+  //
+  // The list around this one re-reads itself every five seconds, so a card can
+  // grow a row or lose one while the menu is up; the trigger moves and a
+  // position read once at open time points at a different row. Following costs
+  // one rectangle per frame and only while something is open, and it is also
+  // what lets a scroll keep the menu attached instead of dismissing it.
   useLayoutEffect(() => {
-    if (at) list.current?.querySelector<HTMLElement>(ITEMS)?.focus()
-  }, [at])
+    if (!at) return
+    list.current?.querySelector<HTMLElement>(ITEMS)?.focus()
+    let frame = 0
+    const step = () => {
+      const next = place(list.current?.offsetHeight ?? 0)
+      if (next) setAt((now) => (now && now.top === next.top && now.right === next.right ? now : next))
+      frame = requestAnimationFrame(step)
+    }
+    frame = requestAnimationFrame(step)
+    return () => cancelAnimationFrame(frame)
+    // `at` is what this follows; depending on it would restart the loop on
+    // every frame it moves. It runs while the menu is open, which is what
+    // `at !== null` says.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [at !== null, place])
 
   useEffect(() => {
     if (!at) return
@@ -89,9 +142,13 @@ export function Menu({ items, label, testid }: { items: MenuItem[]; label?: stri
         return
       }
       if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
-      e.preventDefault()
       const buttons = [...(list.current?.querySelectorAll<HTMLElement>(ITEMS) ?? [])]
       const here = buttons.indexOf(document.activeElement as HTMLElement)
+      // Only while the keyboard is in the menu. It used to take both arrows
+      // from the whole document in capture, so tabbing out of an open menu
+      // left a page that would not scroll.
+      if (here < 0) return
+      e.preventDefault()
       const next = e.key === 'ArrowDown' ? here + 1 : here - 1
       buttons[(next + buttons.length) % buttons.length]?.focus()
     }
@@ -100,20 +157,15 @@ export function Menu({ items, label, testid }: { items: MenuItem[]; label?: stri
       if (list.current?.contains(el) || trigger.current?.contains(el)) return
       setAt(null)
     }
-    const away = () => setAt(null)
     window.addEventListener('keydown', onKey, true)
     window.addEventListener('pointerdown', onDown, true)
-    // Capture, so a scroll inside any container counts and not only the window's.
-    window.addEventListener('scroll', away, true)
-    window.addEventListener('resize', away)
     return () => {
       window.removeEventListener('keydown', onKey, true)
       window.removeEventListener('pointerdown', onDown, true)
-      window.removeEventListener('scroll', away, true)
-      window.removeEventListener('resize', away)
     }
   }, [at, close])
 
+  const name = label ?? t('menu.more')
   return (
     <>
       <button
@@ -121,8 +173,8 @@ export function Menu({ items, label, testid }: { items: MenuItem[]; label?: stri
         type="button"
         aria-haspopup="menu"
         aria-expanded={at !== null}
-        title={label ?? t('menu.more')}
-        aria-label={label ?? t('menu.more')}
+        title={name}
+        aria-label={name}
         data-testid={testid}
         onClick={() => (at ? setAt(null) : open())}
         className="vp-control"
@@ -134,6 +186,7 @@ export function Menu({ items, label, testid }: { items: MenuItem[]; label?: stri
           <div
             ref={list}
             role="menu"
+            aria-label={name}
             data-testid={testid ? `${testid}-list` : undefined}
             style={{ top: at.top, right: at.right }}
             className="vp-panel-in fixed z-50 min-w-44 rounded-vp border border-hairline bg-surface p-1 shadow-xl"
@@ -144,23 +197,32 @@ export function Menu({ items, label, testid }: { items: MenuItem[]; label?: stri
               // a strip of controls. The destructive one is red in its text
               // rather than in its ground, so it does not read as the one to
               // press.
+              //
+              // `focus:` and not only `focus-visible:`: the first item is
+              // focused the moment the menu opens, and Chrome does not match
+              // focus-visible after a pointer opened it — which left a live
+              // Enter target with nothing drawn on it.
               const look =
-                'vp-press flex w-full items-center gap-2 rounded-vp px-2 py-1.5 text-left text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink focus-visible:bg-surface-2 focus-visible:text-ink disabled:opacity-40'
+                'vp-press flex w-full items-center gap-2 rounded-vp px-2 py-1.5 text-left text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:bg-surface-2 hover:text-ink focus:bg-surface-2 focus:text-ink focus:outline-none disabled:opacity-40'
               const tint = item.destructive ? { color: 'var(--vp-state-crashed)' } : undefined
               const inside = (
                 <>
                   {Icon && <Icon size={13} className="shrink-0 opacity-80" />}
-                  <span className="min-w-0 truncate">{item.label}</span>
+                  <span className="min-w-0 truncate">{safeText(item.label)}</span>
                 </>
               )
+              // Keyed by what identifies the action rather than by what it
+              // says: two items can end up with the same words in some
+              // language, and the lock's label changes as it is toggled.
+              const key = item.testid ?? item.label
               return item.href !== undefined ? (
                 <a
-                  key={item.label}
+                  key={key}
                   role="menuitem"
                   href={item.href}
-                  download
+                  download={item.download}
                   data-testid={item.testid}
-                  onClick={() => setAt(null)}
+                  onClick={close}
                   className={look}
                   style={tint}
                 >
@@ -168,14 +230,18 @@ export function Menu({ items, label, testid }: { items: MenuItem[]; label?: stri
                 </a>
               ) : (
                 <button
-                  key={item.label}
+                  key={key}
                   type="button"
-                  role="menuitem"
+                  // A toggle says which way it is set. The versions block is
+                  // one, and as a plain menuitem nothing exposed that it was
+                  // already open.
+                  role={item.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
+                  aria-checked={item.checked}
                   disabled={item.disabled}
                   data-testid={item.testid}
                   onClick={() => {
-                    setAt(null)
-                    item.onSelect?.()
+                    close()
+                    item.onSelect()
                   }}
                   className={look}
                   style={tint}

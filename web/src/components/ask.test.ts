@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { answerAsk, askConfirm, askText, currentAsk } from './ask'
+import { answerAsk, askConfirm, askText, confirmThen, currentAsk } from './ask'
 
 const question = { title: 'Kill it?', confirm: 'Kill', cancel: 'Cancel' }
 
@@ -72,3 +72,35 @@ describe('asking before something cannot be taken back', () => {
     expect(await yes).toBe(true)
   })
 })
+
+describe('doing it only when the answer was yes', () => {
+  it('runs nothing when the question is dismissed', async () => {
+    let ran = 0
+    const done = confirmThen(question, () => {
+      ran += 1
+    })
+    answerAsk(null)
+    expect(await done).toBe(false)
+    expect(ran).toBe(0)
+  })
+
+  it('runs it once when the answer is yes, and waits for it', async () => {
+    let ran = 0
+    let finished = false
+    const done = confirmThen(question, async () => {
+      ran += 1
+      // A real wait, not a resolved promise. One microtask is short enough
+      // that a helper which forgot to await still reads as finished by the
+      // time the caller's own await returns -- this test passed that way.
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      finished = true
+    })
+    answerAsk('')
+    expect(await done).toBe(true)
+    expect(ran).toBe(1)
+    // Awaited, not fired: a caller that refreshes a list afterwards must not
+    // read it back before the delete it just asked for has landed.
+    expect(finished).toBe(true)
+  })
+})
+

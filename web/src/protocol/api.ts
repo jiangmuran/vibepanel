@@ -614,7 +614,7 @@ export const api = {
 
   /** A link to the page as a zip: the published version, or the directory for a
    *  page never published. A plain GET, so an <a download> with the cookie works. */
-  exportPageURL: (id: string) => `/api/settings/pages/${encodeURIComponent(id)}/export`,
+  exportPageURL: (id: string): `/${string}` => `/api/settings/pages/${encodeURIComponent(id)}/export`,
 
   /** A zip becomes a new, unpublished page under the pages directory. */
   importPage: (file: Blob, name = '') =>

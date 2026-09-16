@@ -28,12 +28,12 @@ import type {
   SharingSettings,
 } from '../../protocol/wire'
 import { t, useLang, type Key, type Lang } from '../../i18n'
-import { askConfirm } from '../ask'
+import { confirmThen } from '../ask'
 import { safeText } from '../text'
 import { Menu } from '../Menu'
 import { ManageDialog } from './ManageDialog'
-import { Field, PageLinks } from './PageLinks'
-import { BlockTitle, Chip, Empty, Mark } from './bits'
+import { PageLinks } from './PageLinks'
+import { BlockTitle, Chip, Empty, Field, INPUT, IconTile } from './bits'
 
 /**
  * Sharing, as one list: pages, and under each page the links that show it.
@@ -43,9 +43,6 @@ import { BlockTitle, Chip, Empty, Mark } from './bits'
  * for one screen that shows a page. There is nothing else to share: a link
  * cannot exist without a page, so a link is made on the page it shows.
  */
-
-const INPUT =
-  'w-full min-w-0 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent'
 
 /** How often pages and links are re-read while this is on screen: for the
  *  viewer counts, which are true for a few seconds each, and for a draft an
@@ -216,38 +213,48 @@ export function Sharing({
             data-testid="page-import"
             onClick={() => importInput.current?.click()}
             title={t('page.importWhy')}
-            className="vp-press flex items-center gap-1 rounded-vp border border-hairline px-2.5 py-1.5 text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:border-accent hover:text-ink"
+            className="vp-outline text-vp-base"
           >
             <FileUp size={13} />
             {t('page.import')}
           </button>
-          {!creating && (
-            <button
+          {/* Drawn whether or not the form is open. It used to disappear into
+              the form, which left a hole beside Import and a second button
+              with the same word two lines below it. */}
+          <button
               type="button"
               data-testid="page-new"
+              disabled={creating}
               onClick={() => setCreating(true)}
-              className="vp-press flex items-center gap-1 rounded-vp px-3 py-1.5 text-vp-base font-medium"
+              className="vp-press flex items-center gap-1 rounded-vp px-3 py-1.5 text-vp-base font-medium disabled:opacity-40"
               style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
             >
               <Plus size={13} />
               {t('page.create')}
             </button>
-          )}
         </span>
       </header>
 
       {/* The two settings that are about sharing rather than about any one
           page, in one quiet strip. They were two loose lines between the
           heading and the list, which read as its first two rows. */}
-      <div className="mb-4 flex flex-col gap-2 rounded-vp border border-hairline bg-surface px-3 py-2 @3xl:flex-row @3xl:items-center @3xl:gap-4">
-        <PagesRootLine
-          root={catalogue?.pagesRootInfo ?? null}
-          onChanged={(next) => setCatalogue((c) => (c ? { ...c, pagesRoot: next.dir, pagesRootInfo: next } : c))}
-          onError={fail}
-        />
-        <span className="hidden h-4 w-px shrink-0 bg-hairline @3xl:block" aria-hidden="true" />
-        <VisitorWritesLine settings={sharing} onChanged={setSharing} onError={fail} />
-      </div>
+      {/* Only once something is in it. Both halves fetch themselves and both
+          render nothing until they land, so an unconditional box is an empty
+          bordered strip on every first paint -- and permanently, if either
+          request fails. */}
+      {(catalogue?.pagesRootInfo || sharing) && (
+        <div className="mb-4 flex flex-col gap-2 rounded-vp border border-hairline bg-surface px-3 py-2 @3xl:flex-row @3xl:items-center @3xl:gap-4">
+          <PagesRootLine
+            root={catalogue?.pagesRootInfo ?? null}
+            onChanged={(next) => setCatalogue((c) => (c ? { ...c, pagesRoot: next.dir, pagesRootInfo: next } : c))}
+            onError={fail}
+          />
+          {catalogue?.pagesRootInfo && sharing && (
+            <span className="hidden h-4 w-px shrink-0 bg-hairline @3xl:block" aria-hidden="true" />
+          )}
+          <VisitorWritesLine settings={sharing} onChanged={setSharing} onError={fail} />
+        </div>
+      )}
 
       {notice && (
         <p className="mb-2 text-vp-base text-ink-2" data-testid="sharing-notice">
@@ -276,7 +283,7 @@ export function Sharing({
       )}
 
       {pages.length === 0 && !creating ? (
-        <Empty icon={PanelsTopLeft}>{t('page.none')}</Empty>
+        <Empty icon={PanelsTopLeft} testid="pages-empty">{t('page.none')}</Empty>
       ) : (
         // One card per page, with its links inside it. Cards rather than
         // rows separated by a rule, because this is a page on the panel's
@@ -486,7 +493,9 @@ function NewPage({
   const [dir, setDir] = useState('')
   const [startAgent, setStartAgent] = useState(true)
   const [busy, setBusy] = useState(false)
-  const where = catalogue?.pagesRoot ? `${catalogue.pagesRoot}/page-${slugOf(name) || 'page'}` : ''
+  // `page-page` is what an empty name used to produce here, which reads as a
+  // defect rather than as a placeholder.
+  const where = catalogue?.pagesRoot ? `${catalogue.pagesRoot}/page-${slugOf(name) || '…'}` : ''
 
   const create = async () => {
     const trimmed = name.trim()
@@ -617,16 +626,17 @@ function PageCard({
   // menu, and this is the one action here that cannot be undone. The server
   // refuses while any link still draws the page, so the question is about the
   // versions rather than about a wall going dark.
-  const remove = async () => {
-    const yes = await askConfirm({
-      title: t('page.deleteTitle', { name: safeText(page.name) }),
-      body: t('page.deleteBody'),
-      confirm: t('page.delete'),
-      cancel: t('ask.cancel'),
-      destructive: true,
-    })
-    if (yes) await act(() => api.deletePage(page.id))
-  }
+  const remove = () =>
+    confirmThen(
+      {
+        title: t('page.deleteTitle', { name: safeText(page.name) }),
+        body: t('page.deleteBody'),
+        confirm: t('page.delete'),
+        cancel: t('ask.cancel'),
+        destructive: true,
+      },
+      () => act(() => api.deletePage(page.id)),
+    )
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true)
@@ -648,13 +658,16 @@ function PageCard({
     <article
       data-testid="page-row"
       data-page={page.id}
-      className="rounded-vp-lg border border-hairline bg-surface text-vp-base shadow-sm"
+      // A container, so the queries inside it measure the card rather than the
+      // window -- the reason the Conventions section gives for `@container`
+      // holds one level down too.
+      className="@container rounded-vp-lg border border-hairline bg-surface text-vp-base shadow-sm"
     >
       <header className="flex flex-wrap items-start gap-x-3 gap-y-2 p-3 @md:p-4">
-        <Mark icon={PanelsTopLeft} />
+        <IconTile icon={PanelsTopLeft} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="min-w-0 truncate text-vp-md font-medium text-ink">{safeText(page.name)}</h3>
+            <h2 className="min-w-0 truncate text-vp-md font-medium text-ink">{safeText(page.name)}</h2>
             {/* Published or not, as a chip beside the name rather than as a
                 word at the far end of the row: it is the first thing somebody
                 needs, because an unpublished page has no links yet. */}
@@ -685,7 +698,10 @@ function PageCard({
             disabled={busy}
             onClick={onOpen}
             title={page.sourceExists ? t('page.openWhy') : t('page.restoreWhy')}
-            className="vp-press flex items-center gap-1 rounded-vp border border-accent/50 px-2.5 py-1 text-vp-sm text-accent transition-colors duration-200 ease-vp hover:border-accent disabled:opacity-40"
+            // The one verb on this card somebody presses every day, so it
+            // carries the accent while the rest are plain outlines.
+            className="vp-outline text-vp-sm"
+            style={{ borderColor: 'color-mix(in srgb, var(--vp-accent) 50%, transparent)', color: 'var(--vp-accent)' }}
           >
             <FolderOpen size={12} />
             {page.sourceExists ? t('page.open') : t('page.restore')}
@@ -696,7 +712,7 @@ function PageCard({
             disabled={busy || !page.sourceExists}
             onClick={() => void act(() => api.publishPage(page.id, ''))}
             title={t('page.publishWhy')}
-            className="vp-press flex items-center gap-1 rounded-vp border border-hairline px-2.5 py-1 text-vp-sm text-ink-2 transition-colors duration-200 ease-vp hover:border-accent hover:text-ink disabled:opacity-40"
+            className="vp-outline text-vp-sm"
           >
             <Upload size={12} />
             {t('page.publish')}
@@ -707,7 +723,7 @@ function PageCard({
               data-testid="page-manage-open"
               onClick={() => setManaging(true)}
               title={t('manage.why')}
-              className="vp-press flex items-center gap-1 rounded-vp border border-hairline px-2.5 py-1 text-vp-sm text-ink-2 transition-colors duration-200 ease-vp hover:border-accent hover:text-ink"
+              className="vp-outline text-vp-sm"
             >
               <SlidersHorizontal size={12} />
               {t('manage.open')}
@@ -715,11 +731,13 @@ function PageCard({
           )}
           <Menu
             testid="page-more"
+            label={t('menu.moreFor', { name: safeText(page.name) })}
             items={[
               {
                 label: t('page.history'),
                 icon: History,
                 testid: 'page-history',
+                checked: versions,
                 onSelect: () => setVersions(!versions),
               },
               {
@@ -729,7 +747,13 @@ function PageCard({
                 disabled: busy || !page.sourceExists,
                 onSelect: () => void act(() => api.forkPage(page.id, '')),
               },
-              { label: t('page.export'), icon: Download, testid: 'page-export', href: api.exportPageURL(page.id) },
+              {
+                label: t('page.export'),
+                icon: Download,
+                testid: 'page-export',
+                href: api.exportPageURL(page.id),
+                download: true,
+              },
               {
                 label: t('page.delete'),
                 icon: Trash2,
@@ -744,7 +768,7 @@ function PageCard({
 
       {versions && detail && (
         <div className="border-t border-hairline px-3 py-3 @md:px-4">
-          <BlockTitle>{t('page.history')}</BlockTitle>
+          <BlockTitle count={detail.versions.filter((v) => !v.candidate).length}>{t('page.history')}</BlockTitle>
           <ul data-testid="page-versions" className="mt-2 flex flex-col gap-1 text-vp-sm">
             {detail.versions.filter((v) => !v.candidate).length === 0 && (
               <li className="text-ink-3">{t('page.noVersions')}</li>
@@ -766,7 +790,11 @@ function PageCard({
                       {v.dirty ? '*' : ''}
                     </code>
                   )}
-                  <span className="min-w-0 flex-1 truncate text-ink-2">{safeText(v.note)}</span>
+                  {/* The server fills an empty note with the version, so a
+                      row read "v1 … v1" until this dropped the echo. */}
+                  <span className="min-w-0 flex-1 truncate text-ink-2">
+                    {v.note === `v${v.version}` ? '' : safeText(v.note)}
+                  </span>
                   {v.version === detail.page.publishedVersion ? (
                     <Chip tone="accent">{t('page.current')}</Chip>
                   ) : (
@@ -774,7 +802,7 @@ function PageCard({
                       type="button"
                       data-testid="page-rollback"
                       onClick={() => void act(() => api.rollbackPage(page.id, v.version))}
-                      className="vp-press shrink-0 rounded-vp border border-hairline px-2 py-0.5 text-vp-xs text-ink-2 transition-colors duration-200 ease-vp hover:border-accent hover:text-ink"
+                      className="vp-outline shrink-0 text-vp-xs"
                     >
                       {t('page.rollback')}
                     </button>

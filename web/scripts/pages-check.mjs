@@ -621,6 +621,90 @@ setTimeout(() => { try { done('frame', frame.contentDocument ? 'readable' : 'opa
     if (row?.interactive === true) pass('backend/interactive', 'the editor made the link interactive')
     else note('FAIL', 'backend/interactive', `after the switch the link says ${JSON.stringify(row?.interactive)}`)
 
+    // ── the menus ───────────────────────────────────────────────────────────
+    //
+    // Lock, revoke, versions, fork, export and delete live only behind a `⋯`
+    // now, and nothing else in any check presses one. actions.test.ts can see
+    // that they are written; only a browser can see that the menu opens, that
+    // an item in it does what it says, and that the row then shows it.
+    await linkRow.locator('[data-testid="share-edit-close"]').click().catch(() => {})
+    await sleep(300)
+    const lockVia = async () => {
+      await linkRow.locator('[data-testid="share-more"]').click().catch(() => {})
+      const item = ui.locator('[data-testid="share-more-list"] [data-testid="share-lock"]')
+      const opened = await item.waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false)
+      if (opened) await item.click().catch(() => {})
+      await sleep(1200)
+      return opened
+    }
+    const lockedNow = async () =>
+      ((await api('GET', '/api/settings/shares')).body ?? []).find((l) => l.id === link.id)?.locked === true
+    if (!(await lockVia())) {
+      note('FAIL', 'menus/link', "a link's menu did not open, or has no lock in it")
+    } else {
+      const chip = await linkRow.locator('[data-testid="share-row-locked"]').isVisible().catch(() => false)
+      if ((await lockedNow()) && chip) pass('menus/link', 'the menu locks the link, and the row says so in words')
+      else note('FAIL', 'menus/link', `after Lock: server says locked=${await lockedNow()}, row chip visible=${chip}`)
+      // Back as it was: the steps below need a link that can still be edited.
+      await lockVia()
+      const gone = !(await linkRow.locator('[data-testid="share-row-locked"]').isVisible().catch(() => false))
+      if (!(await lockedNow()) && gone) pass('menus/unlock', 'the same item unlocks it')
+      else note('FAIL', 'menus/unlock', `after Unlock: server says locked=${await lockedNow()}, chip gone=${gone}`)
+    }
+
+    // A menu near the bottom of the window opens upward rather than off it.
+    //
+    // It is `position: fixed`, so a list drawn below the fold has nothing to
+    // scroll to, and the audit that found this found it in the last card of an
+    // ordinary list: every action that lives only in a menu was unreachable
+    // there.
+    //
+    // The window is cut to end just under the trigger rather than the list
+    // being scrolled until the trigger is low. The first version scrolled, the
+    // list was too short to scroll that far, the trigger stayed mid-screen, and
+    // the check passed with the flip deleted -- reporting the same coordinates
+    // either way. So the precondition is asserted before the answer is read.
+    {
+      const trigger = ui.locator('[data-testid="page-more"]').first()
+      await trigger.scrollIntoViewIfNeeded().catch(() => {})
+      const full = ui.viewportSize()
+      const at = await trigger.boundingBox().catch(() => null)
+      if (!full || !at) {
+        note('FAIL', 'menus/edge', 'no page menu to open')
+      } else {
+        await ui.setViewportSize({ width: full.width, height: Math.ceil(at.y + at.height + 14) })
+        await sleep(500)
+        const low = await trigger.boundingBox().catch(() => null)
+        const view = ui.viewportSize()
+        const room = low && view ? view.height - (low.y + low.height) : -1
+        if (!low || !view || room < 0 || room > 40) {
+          note('FAIL', 'menus/edge', `could not put the trigger at the bottom edge (room below: ${Math.round(room)}px)`)
+        } else {
+          await trigger.click().catch(() => {})
+          const list = ui.locator('[data-testid="page-more-list"]')
+          await list.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {})
+          await sleep(300)
+          const box = await list.boundingBox().catch(() => null)
+          if (!box) {
+            note('FAIL', 'menus/edge', "the page's menu did not open")
+          } else if (box.y < 0 || box.y + box.height > view.height + 1) {
+            note('FAIL', 'menus/edge',
+              `with ${Math.round(room)}px under the trigger the menu is drawn at y=${Math.round(box.y)}..${Math.round(box.y + box.height)} in a ${view.height}px window`)
+          } else if (box.y + box.height > low.y + 1) {
+            note('FAIL', 'menus/edge', 'the menu fits the window but overlaps its own trigger')
+          } else {
+            pass('menus/edge', `with ${Math.round(room)}px under the trigger, the menu opens above it (y=${Math.round(box.y)}..${Math.round(box.y + box.height)})`)
+          }
+          await ui.keyboard.press('Escape').catch(() => {})
+          await sleep(300)
+          if (await list.isVisible().catch(() => false)) note('FAIL', 'menus/escape', 'Escape did not close the menu')
+          else pass('menus/escape', 'Escape closes the menu')
+        }
+        await ui.setViewportSize(full)
+        await sleep(400)
+      }
+    }
+
     // Visitor writes: off refuses, on counts.
     const stranger = await browser.newContext({ viewport: { width: 1280, height: 800 } })
     const visitor = await stranger.newPage()

@@ -22369,3 +22369,68 @@ The screenshots were looked at in both themes and at 390px after every step,
 which is how the doubled title, the bordered glyph with no label on a phone and
 the one-character link name were found.
 
+### Four audits read it back
+
+Four read-only reviewers were given the commit, one dimension each: function
+and logic, security, UI and copy, and elegance. Security found nothing to fix.
+The other three found real things, and the three worst were ones the
+screenshots could not have shown.
+
+- **A menu near the bottom of the window was drawn off it.** It is `fixed`, it
+  was placed at the trigger's bottom edge with no flip, and it closed on any
+  scroll — so the menu of the last card in an ordinary list could not be
+  reached at all, and every action that had just moved into a menu (fork,
+  export, delete, lock, revoke) moved with it. It flips above the trigger now,
+  measured from its real height, and it follows the trigger on every frame
+  while open instead of closing on scroll: the list re-reads itself every five
+  seconds, and a position read once pointed at a different row after a card
+  above it changed.
+- **A locked link was no longer shown anywhere.** The old row's padlock button
+  was the only thing that said so, and it went into the menu. It is a chip in
+  words now, and the row carries `data-locked`.
+- **The expiry chip broke red line 4.** It turned amber inside a day and said
+  "expires 9/22" either way, so tomorrow and next spring differed by colour
+  alone. A second chip that says 快过期了 appears instead.
+
+Smaller ones, all fixed: arrow keys were captured from the whole document while
+a menu was open; choosing an item dropped focus onto `<body>`; the first item
+was focused with no visible highlight after a mouse open; every menu was named
+"More"; the versions toggle did not say it was on; the settings strip drew as
+an empty bordered box until both of its requests landed; the manage dialog's
+two-row header cut the page's own Save button in half; the rotate button, which
+invalidates an address, was dressed exactly like Done; a phone still truncated
+a link's name because the viewers chip stayed on its line; the container
+queries measured the page, so the link row — the narrower box — went inline
+before the card around it did; the page's name was an `h3` under an `h1`; three
+strings were left orphaned; and a page with no name suggested a directory
+called `page-page`.
+
+**The test I wrote first was mostly a tautology**, and the elegance review
+proved it by running mutations against it: deleting the `if (!yes) return`
+before a revoke passed, wrapping the whole menu in `{false && …}` passed, and
+changing a quote style failed. That is the failure this project's mutation
+rule exists for, repeated. What replaced it:
+
+- `confirmThen` in `components/ask.ts`, used by revoke and delete, with a test
+  that answers no and watches nothing run. Its first version survived a
+  mutation too — `void run()` instead of `await run()` — because the test's
+  action yielded only one microtask; it waits on a real timer now.
+- `actions.test.ts` reads the whole directory, classifies only the entries of
+  a menu's `items` array as being in a menu, and says in its header what it
+  cannot see. Its tone check requires a chip whose `tone=` tests a condition to
+  test the same condition in its children, parsed past the `>` inside
+  `link.viewers > 0` rather than cutting there.
+- `pages-check` opens a link's menu, locks it, reads the chip and the server,
+  and unlocks it; and opens a page's menu with 15px of window under the
+  trigger. The first version of that step scrolled the list to put the trigger
+  low, the list was too short to scroll that far, and it passed with the flip
+  deleted — printing the same coordinates both ways. It cuts the window to the
+  trigger now and fails if it could not set up its own condition.
+
+Mutations, final count: ten, all red. Eight at the unit level (confirm ignores
+the answer, confirm does not wait, expiry back to tone-only, locked chip
+removed, every chip grey, the warn token swapped, lock moved out of the menu,
+fork dropped) and two in the browser (the flip removed, the menu never
+rendered). Two survived on the way and are the reason two of those tests look
+the way they do.
+

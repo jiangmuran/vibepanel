@@ -852,6 +852,52 @@ body {
   }
 }
 
+/* A bordered text button: an icon and a word, at control height.
+ *
+ * `.vp-control` is the icon-only square and `.vp-segmented` is the set you
+ * choose from; this is the third shape the panel actually uses and the one
+ * that was being written out by hand. The sharing list had seven copies of
+ * `vp-press flex items-center gap-1 rounded-vp border border-hairline px-2
+ * py-1 text-vp-sm text-ink-2 transition-colors … hover:border-accent
+ * hover:text-ink`, differing only in padding -- which is exactly how the panel
+ * arrived at three control heights in one row before, and why
+ * chrome-vocabulary.test.ts exists.
+ *
+ * A colour set on the element wins: the destructive ones say so in their ink
+ * rather than in a second class.
+ *
+ * No font-size here, on purpose. This rule is unlayered and Tailwind's
+ * utilities are in a layer, so a size set here could never be overridden by a
+ * `text-vp-*` beside it -- and the one in a page header sits next to a larger
+ * primary button than the ones in a card do. */
+.vp-outline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  height: var(--vp-control-h);
+  padding-inline: 0.5rem;
+  border: 1px solid var(--vp-hairline);
+  border-radius: var(--vp-radius-control);
+  color: var(--vp-ink-2);
+  background: transparent;
+  white-space: nowrap;
+  transition: transform 120ms var(--vp-ease), border-color 200ms var(--vp-ease),
+    color 200ms var(--vp-ease), opacity 200ms var(--vp-ease);
+}
+
+.vp-outline:hover:not(:disabled) {
+  border-color: var(--vp-accent);
+  color: var(--vp-ink);
+}
+
+.vp-outline:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.vp-outline:disabled {
+  opacity: 0.4;
+}
+
 /* A control whose ground is already `--vp-surface-2`.
  *
  * `.vp-control`'s hover *is* `--vp-surface-2`, so on that ground the hover is
