@@ -353,9 +353,17 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   }, [socket])
 
   // How many snapshots have arrived; see the hand-over effect below.
-  const snapshots = useRef(0)
+  //
+  // State, not a ref, on purpose. A ref is bumped the moment the snapshot
+  // arrives, and the first one arrives in the same tick the socket reports
+  // open: an effect keyed on the status then ran with the count already at
+  // one and the render's `state` still the empty initial one, and sent every
+  // hand-over to the launch picker because no session was running in a list
+  // that had nothing in it. As state it is set in the same call as the
+  // snapshot, so the render that sees the count sees the sessions.
+  const [snapshots, setSnapshots] = useState(0)
   const applyState = useCallback((next: PanelState) => {
-    snapshots.current += 1
+    setSnapshots((n) => n + 1)
     setState(next)
     // Every snapshot, because the transition it looks for is only visible by
     // comparing this one with the last. It was written, tested, documented in
@@ -969,7 +977,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   // open it again, and a bookmark of the panel must not carry a page in it.
   const handedOver = useRef(pageToOpen(location.search))
   useEffect(() => {
-    if (status !== 'open' || snapshots.current === 0) return
+    if (status !== 'open' || snapshots === 0) return
     const pending = handedOver.current
     if (!pending) return
     handedOver.current = null
@@ -978,7 +986,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     // openPage is not in the deps on purpose: it is a fresh closure every
     // render and the effect is meant to fire once, on the first open snapshot.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, state])
+  }, [status, snapshots])
 
   const showOverlay = narrow && drawerOpen
   const showSidebar = narrow ? drawerOpen : true

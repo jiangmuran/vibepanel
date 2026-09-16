@@ -507,8 +507,17 @@ setTimeout(() => { try { done('frame', frame.contentDocument ? 'readable' : 'opa
       else note('FAIL', 'workflow/view', `the viewed page's title is ${JSON.stringify(peekTitle)}`)
       await peekTab.close()
     } else note('FAIL', 'workflow/view', 'View opened no tab')
-    // Back to the panel, which the photograph below is of.
-    await ui.goto(BASE, { waitUntil: 'networkidle' }).catch(() => {})
+    // Back to the panel the way the sharing page's Open goes: by address,
+    // with the page on the query string (routes.ts, panelOpeningPage). The
+    // panel is meant to select the session already running in the page's
+    // project and open the Preview beside it, which is what the full-Preview
+    // step below stands on -- a plain reload would land on the panel with
+    // the Preview closed, and 0 screens would say nothing about the Preview.
+    await ui.goto(`${BASE}/?page=${lobby.id}`, { waitUntil: 'networkidle' }).catch(() => {})
+    const handedOver = await ui.locator('[data-testid="detail-full-page"]')
+      .waitFor({ state: 'visible', timeout: 15000 }).then(() => true, () => false)
+    if (handedOver && !ui.url().includes('page=')) pass('workflow/handover', 'the panel opened the page it was handed and cleared the address')
+    else note('FAIL', 'workflow/handover', `after the hand-over: preview ${handedOver ? 'open' : 'closed'}, url ${ui.url()}`)
     await must('DELETE', `/api/settings/shares/${kept.id}`)
 
     // The error the check planted in the page is expected; anything else is not.
@@ -518,7 +527,14 @@ setTimeout(() => { try { done('frame', frame.contentDocument ? 'readable' : 'opa
     // The Preview with the window to itself, and its screens side by side.
     await ui.locator('[data-testid="detail-full-page"]').click().catch(() => {})
     await sleep(800)
+    // Two screens picked here, by hand. The chosen screens are the Preview's
+    // own state, and the hand-over above is a navigation, so the pick made
+    // earlier in this flow did not survive it: what is being checked is that
+    // the full Preview lays picked screens side by side, not what it
+    // remembers.
     await ui.locator('[data-testid="page-screens"] button', { hasText: 'phone' }).click().catch(() => {})
+    await sleep(400)
+    await ui.locator('[data-testid="page-screens"] button[aria-pressed="false"]').first().click().catch(() => {})
     await sleep(2500)
     const frames = await ui.locator('[data-testid="page-frame"]').count()
     if (frames >= 2) pass('workflow/full', `${frames} screens side by side`)

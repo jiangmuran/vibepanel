@@ -22089,6 +22089,16 @@ state sent every hand-over to the launch picker — then takes the query off the
 address bar so a reload does not open it twice. Both ends go through
 `routes.ts`, and `routes.test.ts` says so.
 
+`pages-check` found the hand-over wrong the first time it crossed one. The
+panel counted snapshots in a ref and keyed the effect on the socket's status,
+and the first snapshot arrives in the same tick the socket reports open: the
+effect ran with the count already at one and the render's state still the
+empty initial one, found no session running in a list with nothing in it, and
+sent a page with a shell already open in it to the launch picker. The count is
+state now, set in the same call as the snapshot, so the render that sees the
+count sees the sessions. A ten-line reproduction against a throwaway panel
+found it in one run, after three reruns of the check had only said "1 screen".
+
 The settings rail still says "Sharing", as a link with an arrow rather than as
 a fifth tab, so somebody who last saw the pages under that word finds them
 under that word. The dialog is back to one width, and `settings/wiring.test.ts`
@@ -22100,8 +22110,10 @@ pages as cards with their links inside, and an empty state that is a box
 rather than a line. Every testid the browser checks press is where it was;
 what changed for them is how they arrive. `render-check` follows the rail's
 link, so the link is what is tested, and a sign-in form on arrival reads as the
-whole feature gone; `pages-check` goes to the address, and its make-a-page
-step now crosses the hand-over navigation, which is the hand-over being tested.
+whole feature gone; `pages-check` goes to the address; its make-a-page
+step crosses the hand-over navigation with `fresh`, and its way back to the
+panel is the hand-over without it, which has to select the session already
+running in the page's project and open the Preview, and clear the query.
 `shots` photographs the page in every theme and language, because it is the
 one surface with its own chrome.
 
