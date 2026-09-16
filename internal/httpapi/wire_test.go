@@ -14,7 +14,6 @@ import (
 
 	"github.com/jiangmuran/vibepanel/internal/browse"
 	"github.com/jiangmuran/vibepanel/internal/git"
-	"github.com/jiangmuran/vibepanel/internal/hooks"
 	"github.com/jiangmuran/vibepanel/internal/pages"
 	"github.com/jiangmuran/vibepanel/internal/store"
 	"github.com/jiangmuran/vibepanel/internal/sysmon"
@@ -61,7 +60,10 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		// none of them is less hand-written than the rows above.
 		{"AuthState", authState{}},
 		{"SettingsInfo", settingsResponse{}},
-		{"HookStatus", hooks.Status{}},
+		// The response, not hooks.Status: the settings page reads one object,
+		// and the field that says which agents it offers is added here rather
+		// than in a package that has no database to read it from.
+		{"HookStatus", hookStatusResponse{}},
 		{"FileListing", browse.Listing{}},
 		{"SystemSample", sysmon.Sample{}},
 		{"Passkey", store.Credential{}},

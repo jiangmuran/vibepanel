@@ -342,6 +342,16 @@ export const api = {
   removeHooks: (agent: HookAgent = 'claude') =>
     request<HookStatus>(`/api/settings/hooks?agent=${agent}`, { method: 'DELETE' }),
 
+  /** Which agents the reporting section offers. The server answers with the
+   *  list it stored, which is the one the page then draws from: it drops names
+   *  it does not know and fixes the order, and a page that kept its own copy
+   *  would show something the next reload disagrees with. */
+  setHookAgents: (agents: HookAgent[]) =>
+    request<{ agentsShown: HookAgent[] }>('/api/settings/hooks/agents', {
+      method: 'PUT',
+      body: JSON.stringify({ agents }),
+    }),
+
   state: () => request<PanelState>('/api/state'),
 
   health: () =>
@@ -950,24 +960,39 @@ export const api = {
         if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total)
       }
       xhr.onload = () => {
-        let body: { paths?: string[]; error?: string; setupRequired?: boolean } = {}
+        type Body = { paths?: string[]; error?: string; setupRequired?: boolean }
+        let body: Body | null = null
         try {
-          body = JSON.parse(xhr.responseText) as typeof body
+          body = JSON.parse(xhr.responseText) as Body
         } catch {
           /* non-JSON body: a proxy or a crash, same as failure() covers */
         }
         if (xhr.status >= 200 && xhr.status < 300) {
-          resolve({ paths: body.paths ?? [] })
+          // A 200 whose body is not the answer is a proxy in the way, not an
+          // upload of nothing: `paths ?? []` reported success and the panel
+          // said "0 files uploaded" with no way to tell that apart from a
+          // request that really did store none.
+          if (!body?.paths) {
+            reject(new Error(`${xhr.status} ${xhr.statusText}`))
+            return
+          }
+          resolve({ paths: body.paths })
           return
         }
-        const message = body.error ?? `${xhr.status} ${xhr.statusText}`
+        const message = body?.error ?? `${xhr.status} ${xhr.statusText}`
         if (xhr.status === 401) {
-          reject(new UnauthorizedError(message, body.setupRequired === true))
+          reject(new UnauthorizedError(message, body?.setupRequired === true))
           return
         }
         reject(new Error(message))
       }
+      // Every other way this ends. A Promise that is never settled leaves the
+      // "uploading…" toast on screen with its bar where it stopped, and the
+      // await above never returns -- so nothing takes it back and nothing says
+      // what happened.
       xhr.onerror = () => reject(new Error('network error'))
+      xhr.onabort = () => reject(new Error('upload cancelled'))
+      xhr.ontimeout = () => reject(new Error('upload timed out'))
       xhr.send(form)
     })
   },

@@ -2,11 +2,13 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/jiangmuran/vibepanel/internal/tz"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -30,6 +32,7 @@ func (s *Server) registerSettingsRoutes(r chi.Router) {
 	r.Post("/settings/tokens", s.handleCreateToken)
 	r.Delete("/settings/tokens/{tokenID}", s.handleDeleteToken)
 	r.Post("/settings/hooks", s.handleHooksInstall)
+	r.Put("/settings/hooks/agents", s.handlePutHookAgents)
 	r.Post("/settings/restart", s.handleRestart)
 	r.Post("/settings/tour", s.handleTourDone)
 	r.Put("/settings/paste", s.handlePutPaste)
@@ -284,6 +287,61 @@ func (s *Server) scriptPath() (string, error) {
 	return hooks.InstallScript(filepath.Join(s.Cfg.DataDir, "hooks"))
 }
 
+// hookStatusResponse is the hooks package's answer plus the one thing it
+// cannot know: which agents this panel has been asked to show.
+//
+// Embedded, so every field of hooks.Status is still sent at the top level and
+// wire.ts does not have to learn a new shape.
+type hookStatusResponse struct {
+	hooks.Status
+	// AgentsShown is the setting, not what ends up on screen: an agent with
+	// hooks installed is drawn whether or not it is in here, and the page is
+	// where those two are put together.
+	AgentsShown []string `json:"agentsShown"`
+}
+
+// agentsShown reads the setting, falling back to the default on anything it
+// does not recognise.
+//
+// An unreadable row is not a reason to draw nothing: the reporting section
+// with no rows in it reads as "this panel cannot install hooks", which is a
+// worse answer than the default list.
+func (s *Server) agentsShown(ctx context.Context) []string {
+	raw, err := s.DB.GetSetting(ctx, reportingAgentsKey, "")
+	if err != nil || raw == "" {
+		return hookAgentsShownDefault
+	}
+	// A JSON list rather than a comma-separated one, because "" has to mean
+	// "never set" and "[]" has to mean "none of them", and a comma list spells
+	// both of those the same way -- so turning every row off would have come
+	// back as the default list on the next page load.
+	var stored []string
+	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+		return hookAgentsShownDefault
+	}
+	// Order from hookAgents rather than from the stored list, so the rows do
+	// not reshuffle when somebody ticks one back on.
+	out := []string{}
+	for _, agent := range hookAgents {
+		if slices.Contains(stored, agent) {
+			out = append(out, agent)
+		}
+	}
+	return out
+}
+
+// hookStatus answers every route that reports the state of the hooks.
+//
+// The install and uninstall handlers return a status too, and the page replaces
+// everything it has with it -- so a field only the GET carried disappeared from
+// the page the moment somebody pressed a button.
+func (s *Server) hookStatus(ctx context.Context, st hooks.Status) hookStatusResponse {
+	return hookStatusResponse{
+		Status:      s.withCodexReports(ctx, st),
+		AgentsShown: s.agentsShown(ctx),
+	}
+}
+
 func (s *Server) handleHooksStatus(w http.ResponseWriter, r *http.Request) {
 	script, err := s.scriptPath()
 	if err != nil {
@@ -295,7 +353,41 @@ func (s *Server) handleHooksStatus(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, s.withCodexReports(r.Context(), st))
+	writeJSON(w, http.StatusOK, s.hookStatus(r.Context(), st))
+}
+
+// handlePutHookAgents sets which agents the reporting section lists.
+//
+// Names are checked against the same list the install route takes, because an
+// id nobody recognises would sit in the setting for good and hide a row that
+// the page has no other way to bring back.
+func (s *Server) handlePutHookAgents(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Agents []string `json:"agents"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	for _, agent := range req.Agents {
+		if !isHookAgent(agent) {
+			writeErr(w, http.StatusBadRequest,
+				"unknown agent "+agent+"; want "+strings.Join(hookAgents, ", "))
+			return
+		}
+	}
+	// Stored even when it is empty, and empty is a real answer: somebody who
+	// runs one agent and installed its hooks from the CLI wants none of these
+	// rows. The installed ones are still drawn.
+	stored, err := json.Marshal(agentsInOrder(req.Agents))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.DB.SetSetting(r.Context(), reportingAgentsKey, string(stored)); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"agentsShown": s.agentsShown(r.Context())})
 }
 
 // withCodexReports counts the running Codex sessions and how many of them a
@@ -323,6 +415,43 @@ func (s *Server) withCodexReports(ctx context.Context, st hooks.Status) hooks.St
 	return st
 }
 
+// hookAgents is every agent the panel can install hooks for, in the order the
+// settings page offers them.
+//
+// One list. The install switch, the uninstall switch, the file a status row
+// names, the error message and the "which of these do I want to see" setting
+// were each going to grow their own copy of it, and the fifth one added in a
+// hurry is how a panel ends up offering an agent it cannot install.
+var hookAgents = []string{"claude", "codex", "kimi", "zcode", "opencode"}
+
+// hookAgentsShownDefault is what the reporting section lists on a panel nobody
+// has configured.
+//
+// Not every agent the panel knows. Five rows of install buttons on a machine
+// running one agent is a settings page somebody stops reading, and the two
+// newest are the ones most people do not have: 「设置里面可以隐藏/配置」. An
+// agent whose hooks are actually installed is shown whatever this says -- the
+// panel does not hide a file it has written.
+var hookAgentsShownDefault = []string{"claude", "codex", "opencode"}
+
+const reportingAgentsKey = "reporting.agents"
+
+func isHookAgent(name string) bool {
+	return slices.Contains(hookAgents, name)
+}
+
+// agentsInOrder is the list in hookAgents order with the duplicates gone, so
+// what is stored is what is read back.
+func agentsInOrder(names []string) []string {
+	out := []string{}
+	for _, agent := range hookAgents {
+		if slices.Contains(names, agent) {
+			out = append(out, agent)
+		}
+	}
+	return out
+}
+
 // hookAgent reads which agent a hook request is about.
 //
 // Defaults to Claude, which is what the parameter-less request meant before
@@ -331,21 +460,16 @@ func (s *Server) withCodexReports(ctx context.Context, st hooks.Status) hooks.St
 // somebody's home directory gets edited, so a value nobody recognises has to be
 // an error and not a guess.
 func hookAgent(w http.ResponseWriter, r *http.Request) (string, bool) {
-	switch agent := r.URL.Query().Get("agent"); agent {
-	case "", "claude":
+	agent := r.URL.Query().Get("agent")
+	if agent == "" {
 		return "claude", true
-	case "codex":
-		return "codex", true
-	case "opencode":
-		return "opencode", true
-	case "kimi":
-		return "kimi", true
-	case "zcode":
-		return "zcode", true
-	default:
-		writeErr(w, http.StatusBadRequest, "unknown agent "+agent+"; want claude, codex, opencode, kimi or zcode")
+	}
+	if !isHookAgent(agent) {
+		writeErr(w, http.StatusBadRequest,
+			"unknown agent "+agent+"; want "+strings.Join(hookAgents, ", "))
 		return "", false
 	}
+	return agent, true
 }
 
 func (s *Server) handleHooksInstall(w http.ResponseWriter, r *http.Request) {
@@ -391,7 +515,7 @@ func (s *Server) handleHooksInstall(w http.ResponseWriter, r *http.Request) {
 	if u, ok := currentUserFrom(r); ok {
 		s.audit(r.Context(), "hooks.installed", u.Username, s.clientIP(r), hookTarget(agent, st))
 	}
-	writeJSON(w, http.StatusOK, s.withCodexReports(r.Context(), st))
+	writeJSON(w, http.StatusOK, s.hookStatus(r.Context(), st))
 }
 
 func (s *Server) handleHooksUninstall(w http.ResponseWriter, r *http.Request) {
@@ -428,7 +552,7 @@ func (s *Server) handleHooksUninstall(w http.ResponseWriter, r *http.Request) {
 	if u, ok := currentUserFrom(r); ok {
 		s.audit(r.Context(), "hooks.removed", u.Username, s.clientIP(r), hookTarget(agent, st))
 	}
-	writeJSON(w, http.StatusOK, s.withCodexReports(r.Context(), st))
+	writeJSON(w, http.StatusOK, s.hookStatus(r.Context(), st))
 }
 
 // ─── API tokens ───────────────────────────────────────────────────────────

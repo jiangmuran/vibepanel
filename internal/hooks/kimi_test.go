@@ -100,3 +100,59 @@ func TestKimiSnippetQuotesThePath(t *testing.T) {
 		t.Errorf("the path was written into TOML unescaped: %s", snippet)
 	}
 }
+
+// Removal takes our blocks and stops at the next table header -- so a comment
+// the user wrote to introduce the section after ours was inside the range
+// being dropped, and went with it.
+func TestUninstallKimiKeepsACommentWrittenAfterOurBlocks(t *testing.T) {
+	withFakeHome(t)
+	if err := os.MkdirAll(filepath.Dir(kimiPath(t)), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(kimiPath(t), []byte("default_model = \"k\"\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := InstallKimi(codexScript); err != nil {
+		t.Fatalf("InstallKimi: %v", err)
+	}
+	body := readFile(t, kimiPath(t))
+	body += "\n# the provider I use at work\n[providers.work]\nbase_url = \"https://example.invalid\"\n"
+	if err := os.WriteFile(kimiPath(t), []byte(body), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := UninstallKimi(codexScript); err != nil {
+		t.Fatalf("UninstallKimi: %v", err)
+	}
+	after := readFile(t, kimiPath(t))
+	if !strings.Contains(after, "# the provider I use at work") {
+		t.Errorf("the user's comment went out with our hooks:\n%s", after)
+	}
+	if strings.Contains(after, "vibepanel-report") {
+		t.Errorf("ours is still there:\n%s", after)
+	}
+}
+
+// And the blank line the installer itself writes between blocks is not
+// somebody's: kept, it would leave one more empty line behind on every
+// install-remove cycle.
+func TestKimiLeavesNoBlankLinesBehindOverCycles(t *testing.T) {
+	withFakeHome(t)
+	if err := os.MkdirAll(filepath.Dir(kimiPath(t)), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	start := "default_model = \"k\"\n"
+	if err := os.WriteFile(kimiPath(t), []byte(start), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := InstallKimi(codexScript); err != nil {
+			t.Fatalf("install %d: %v", i, err)
+		}
+		if _, err := UninstallKimi(codexScript); err != nil {
+			t.Fatalf("uninstall %d: %v", i, err)
+		}
+	}
+	if after := readFile(t, kimiPath(t)); after != start {
+		t.Errorf("three cycles did not leave the file as it was found:\n%q", after)
+	}
+}

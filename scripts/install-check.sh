@@ -2004,26 +2004,47 @@ uninst() { # uninst <home> <socket> [args...]
   RC=$?
 }
 
+# What `vibepanel hook remove` does to the files, for the fake binaries below.
+#
+# One copy rather than four. It was inline in each of them, so teaching this
+# script about an agent meant remembering four places, and the two added last
+# were remembered in none of them.
+td_hook_remove_body() {
+  cat <<EOF
+  rm -f "$HOME_DIR/.config/opencode/plugin/vibepanel.js"
+  printf '{"model":"opus"}\n' > "$HOME_DIR/.claude/settings.json"
+  : > "$HOME_DIR/.codex/config.toml"
+  : > "$HOME_DIR/.kimi-code/config.toml"
+  printf '{"hooks":{"enabled":false,"events":{}}}\n' > "$HOME_DIR/.zcode/cli/config.json"
+EOF
+}
+
 # A home with the shape a real install leaves, and a binary that removes hooks.
 teardown_home() { # teardown_home <"real"|"deaf">
   newhome
   mkdir -p "$HOME_DIR/.local/bin" "$HOME_DIR/.local/share/vibepanel/hooks" \
-           "$HOME_DIR/.claude" "$HOME_DIR/.codex" "$HOME_DIR/.config/opencode/plugin"
+           "$HOME_DIR/.claude" "$HOME_DIR/.codex" "$HOME_DIR/.config/opencode/plugin" \
+           "$HOME_DIR/.kimi-code" "$HOME_DIR/.zcode/cli"
   TD_REPORT="$HOME_DIR/.local/share/vibepanel/hooks/vibepanel-report.sh"
   : > "$TD_REPORT"
   printf '{"model":"opus","hooks":{"Stop":[{"hooks":[{"command":"%s done"}]}]}}\n' \
     "$TD_REPORT" > "$HOME_DIR/.claude/settings.json"
   printf 'notify = ["%s", "waiting"]\n' "$TD_REPORT" > "$HOME_DIR/.codex/config.toml"
   : > "$HOME_DIR/.config/opencode/plugin/vibepanel.js"
+  # The two agents the panel learned about last. Every file an agent reads the
+  # reporter out of belongs in the fixture, or the count that decides whether
+  # `hook remove` runs at all is measured against a home nobody has.
+  printf '[[hooks]]\nevent = "Stop"\ncommand = "%s done"\n' \
+    "$TD_REPORT" > "$HOME_DIR/.kimi-code/config.toml"
+  printf '{"hooks":{"enabled":true,"events":{"Stop":[{"matcher":".*","hooks":[{"type":"command","command":"%s done"}]}]}}}\n' \
+    "$TD_REPORT" > "$HOME_DIR/.zcode/cli/config.json"
   echo x > "$HOME_DIR/.config/vibepanel.env"
   if [ "$1" = real ]; then
     # Removes the hooks, the way the real `vibepanel hook remove` does.
     cat > "$HOME_DIR/.local/bin/vibepanel" <<EOF
 #!/bin/sh
 if [ "\$1" = hook ] && [ "\$2" = remove ]; then
-  rm -f "$HOME_DIR/.config/opencode/plugin/vibepanel.js"
-  printf '{"model":"opus"}\n' > "$HOME_DIR/.claude/settings.json"
-  : > "$HOME_DIR/.codex/config.toml"
+$(td_hook_remove_body)
 fi
 exit 0
 EOF
@@ -2118,9 +2139,7 @@ mkdir -p "$HOME_DIR/.config/systemd/user"
 cat > "$HOME_DIR/.local/bin/vibepanel" <<EOF
 #!/bin/sh
 if [ "\$1" = hook ] && [ "\$2" = remove ]; then
-  rm -f "$HOME_DIR/.config/opencode/plugin/vibepanel.js"
-  printf '{"model":"opus"}\n' > "$HOME_DIR/.claude/settings.json"
-  : > "$HOME_DIR/.codex/config.toml"
+$(td_hook_remove_body)
 fi
 exit 0
 EOF
@@ -2148,9 +2167,7 @@ cat > "$HOME_DIR/root/usr/local/bin/vibepanel" <<EOF
 #!/bin/sh
 echo "\$*" >> "$WORK/binary.log"
 if [ "\$1" = hook ] && [ "\$2" = remove ]; then
-  rm -f "$HOME_DIR/.config/opencode/plugin/vibepanel.js"
-  printf '{"model":"opus"}\n' > "$HOME_DIR/.claude/settings.json"
-  : > "$HOME_DIR/.codex/config.toml"
+$(td_hook_remove_body)
 fi
 if [ "\$1" = service ] && [ "\$2" = uninstall ]; then
   rm -f "$HOME_DIR/root/etc/systemd/system/vibepanel.service"
@@ -2214,9 +2231,7 @@ printf 'ExecStart=%s/root/usr/local/bin/vibepanel serve\n' "$HOME_DIR" \
 cat > "$HOME_DIR/root/usr/local/bin/vibepanel" <<EOF
 #!/bin/sh
 if [ "\$1" = hook ] && [ "\$2" = remove ]; then
-  rm -f "$HOME_DIR/.config/opencode/plugin/vibepanel.js"
-  printf '{"model":"opus"}\n' > "$HOME_DIR/.claude/settings.json"
-  : > "$HOME_DIR/.codex/config.toml"
+$(td_hook_remove_body)
 fi
 exit 0
 EOF
@@ -2234,6 +2249,25 @@ has "$LOG" "sudo rm -f" && ok "it says which file needs root, and how" \
   || fail "the binary could not be removed and nothing said so: $(tail -4 "$LOG" | tr '\n' ' ')"
 has "$LOG" "── done ──" && ok "and the summary is still printed" \
   || fail "the run stopped on the failed rm: $(tail -3 "$LOG" | tr '\n' ' ')"
+
+echo "==> uninstall: an agent missing from the file list is hooks nobody removes"
+# The count decides whether `hook remove` runs at all, and it was a list of the
+# three agents that existed when it was written. A machine whose only agent is
+# Kimi Code counted zero: the hooks were never removed, the run reported
+# success, and $DATA went with it -- taking the reporter script a live hook
+# still calls on every prompt. Nothing says so afterwards, because the reporter
+# suppresses its own failures on purpose.
+teardown_home real
+rm -f "$HOME_DIR/.config/opencode/plugin/vibepanel.js" "$HOME_DIR/.zcode/cli/config.json"
+printf '{"model":"opus"}\n' > "$HOME_DIR/.claude/settings.json"
+: > "$HOME_DIR/.codex/config.toml"
+uninst "$HOME_DIR" "vpuninst$$k" --yes --purge
+[ $RC -eq 0 ] && ok "exits 0" || fail "exited $RC: $(tail -3 "$LOG")"
+grep -q vibepanel-report "$HOME_DIR/.kimi-code/config.toml" 2>/dev/null \
+  && fail "the kimi hooks were never removed: $(tail -4 "$LOG" | tr '\n' ' ')" \
+  || ok "it counted an agent the older list did not know and removed its hooks"
+[ -e "$TD_REPORT" ] && fail "the reporter is still there" \
+  || ok "and only then deleted the reporter they pointed at"
 
 echo "==> uninstall: a binary that cannot remove hooks is caught by looking"
 teardown_home deaf

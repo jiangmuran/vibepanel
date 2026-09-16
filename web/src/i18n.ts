@@ -714,6 +714,8 @@ const DICT = {
   'set.claudeCode': { zh: 'Claude Code', en: 'Claude Code' },
   'set.opencode': { zh: 'opencode', en: 'opencode' },
   'set.kimiCode': { zh: 'Kimi Code', en: 'Kimi Code' },
+  'set.agentsShown': { zh: '显示这些 agent', en: 'Agents shown' },
+  'set.agentInstalledAnyway': { zh: '（已安装）', en: '(installed)' },
   'set.zcode': { zh: 'zcode', en: 'zcode' },
   'set.installedPlugin': { zh: '已装插件', en: 'Plugin installed' },
   'set.codex': { zh: 'Codex', en: 'Codex' },

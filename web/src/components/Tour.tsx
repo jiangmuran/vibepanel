@@ -4,7 +4,8 @@ import { Check, ChevronLeft, ChevronRight, Circle, Triangle, X } from 'lucide-re
 import { api } from '../protocol/api'
 import { requestNotifyPermission } from '../notify'
 import { showToast } from './toasts'
-import type { HookStatus, TuneStatus } from '../protocol/wire'
+import type { HookAgent, HookStatus, TuneStatus } from '../protocol/wire'
+import { hookAgentInstalled, hookAgentName, visibleHookAgents } from './hookAgents'
 import type { SettingsSection } from './settings/groups'
 import { t, getLang, useLang } from '../i18n'
 
@@ -180,7 +181,7 @@ function Reporting({ onOpenSettings }: StepProps) {
   }
   useEffect(load, [])
 
-  const install = (agent: 'claude' | 'codex' | 'opencode' | 'kimi' | 'zcode') => {
+  const install = (agent: HookAgent) => {
     setBusy(agent)
     api
       .installHooks(agent)
@@ -189,19 +190,18 @@ function Reporting({ onOpenSettings }: StepProps) {
       .finally(() => setBusy(''))
   }
 
-  const agents: {
-    id: 'claude' | 'codex' | 'opencode' | 'kimi' | 'zcode'
-    name: string
-    on: boolean
-    note?: string
-  }[] = st
-    ? [
-        { id: 'claude', name: t('set.claudeCode'), on: st.installed },
-        { id: 'codex', name: t('set.codex'), on: st.codexInstalled, note: t('set.codexTrust') },
-        { id: 'kimi', name: t('set.kimiCode'), on: st.kimiInstalled },
-        { id: 'zcode', name: t('set.zcode'), on: st.zcodeInstalled },
-        { id: 'opencode', name: t('set.opencode'), on: st.opencodeInstalled },
-      ]
+  // The same rows the settings page shows, from the same table: the tour had a
+  // list of its own, so an agent added to one of them appeared in the other by
+  // somebody remembering to. Which agents those are is the setting -- a first
+  // run should offer the agents this panel is set up for, not every agent it
+  // has ever heard of.
+  const agents: { id: HookAgent; name: string; on: boolean; note?: string }[] = st
+    ? visibleHookAgents(st).map((id) => ({
+        id,
+        name: hookAgentName(id),
+        on: hookAgentInstalled(st, id),
+        note: id === 'codex' ? t('set.codexTrust') : undefined,
+      }))
     : []
 
   return (

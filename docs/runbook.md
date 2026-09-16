@@ -257,6 +257,12 @@ grep -A2 '\[\[hooks\]\]' ~/.kimi-code/config.toml   # are the blocks there?
 grep -A6 '"hooks"' ~/.zcode/cli/config.json         # enabled, and whose events?
 ```
 
+If an agent has no row on that page at all, it is not turned off -- it is not
+being offered. Settings → State reporting ends with a tick per agent, and a
+fresh panel offers Claude Code, Codex and opencode; tick the one you want and
+the row appears. An agent whose hooks are already installed keeps its row
+whatever the ticks say, so this cannot hide hooks the panel has written.
+
 An agent reads its hooks when it starts, so sessions that were already running
 when the install happened stay on the heuristic until restarted — which, in a
 panel built for long-lived sessions, is all of them. That is the one sentence

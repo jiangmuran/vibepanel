@@ -76,8 +76,21 @@ function clearTimer(id: number) {
   timers.delete(id)
 }
 
+/**
+ * Start the countdown for a toast, unless it is reporting something still
+ * running.
+ *
+ * A bar that is not full means the work is not done, and four seconds is the
+ * one length of upload that never needed a progress bar. The 300MB drop this
+ * was built for lost its toast at four seconds and told the person nothing for
+ * the remaining minute. Both callers of a progress toast take it back
+ * themselves -- the upload replaces it with "uploaded" or with the failure --
+ * so there is no path where it stays up forever; a bar that reaches 1 arms the
+ * timer again anyway, for the caller that forgets.
+ */
 function arm(toast: Toast) {
   clearTimer(toast.id)
+  if (toast.progress !== undefined && toast.progress < 1) return
   timers.set(
     toast.id,
     setTimeout(() => dismissToast(toast.id), TOAST_MS[toast.kind]),
@@ -144,7 +157,12 @@ export function dismissToast(id: number) {
 export function setToastProgress(id: number, fraction: number) {
   const toast = current.find((toast) => toast.id === id)
   if (!toast) return
-  current = current.map((t) => (t.id === id ? { ...t, progress: fraction } : t))
+  const moved: Toast = { ...toast, progress: fraction }
+  current = current.map((t) => (t.id === id ? moved : t))
+  // Not arm() on every report -- that is the re-raise this function exists to
+  // avoid. Only the last one matters: a full bar is work that has finished, so
+  // it goes back on the ordinary timer whether or not the caller takes it back.
+  if (fraction >= 1) arm(moved)
   emit()
 }
 

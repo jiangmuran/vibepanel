@@ -193,10 +193,48 @@ func withoutKimiHooks(doc string) string {
 		}
 		if !containsMarker(strings.Join(lines[i:end], "\n")) {
 			out = append(out, lines[i:end]...)
+		} else {
+			// The block ends at the next table header, so anything the user
+			// wrote between our last key and that header -- a blank line and
+			// the comment introducing their own section -- is inside the range
+			// being dropped. Their comment went with our hooks. Keep the
+			// trailing run of blank and comment lines: it reads as belonging
+			// to what follows, and it is never ours, because KimiHooks writes
+			// neither.
+			out = append(out, trailingKept(lines[i:end])...)
 		}
 		i = end
 	}
 	return strings.Join(out, "\n")
+}
+
+// trailingKept is the run of blank and comment lines at the end of a block,
+// and nothing when that run is only blank lines.
+//
+// The blank line is the one the installer itself writes between blocks, so
+// keeping it would leave one more empty line in the file on every
+// install-remove cycle. A comment in there is somebody's, and is kept with the
+// blanks around it exactly as it was written.
+func trailingKept(block []string) []string {
+	keep := len(block)
+	comment := false
+	for keep > 0 {
+		t := strings.TrimSpace(block[keep-1])
+		if t == "" {
+			keep--
+			continue
+		}
+		if strings.HasPrefix(t, "#") {
+			comment = true
+			keep--
+			continue
+		}
+		break
+	}
+	if !comment {
+		return nil
+	}
+	return block[keep:]
 }
 
 func isKimiHooksHeader(line string) bool {

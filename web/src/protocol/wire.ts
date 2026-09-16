@@ -593,9 +593,9 @@ export interface SettingsInfo {
   panelDay?: string
 }
 
-/** Which agent an install request is about. The server accepts these two and
- *  refuses anything else; it is not a free-text field because it chooses a file
- *  in the user's home directory to edit. */
+/** Which agent an install request is about. The server accepts exactly these
+ *  and refuses anything else; it is not a free-text field because it chooses a
+ *  file in the user's home directory to edit. */
 export type HookAgent = 'claude' | 'codex' | 'opencode' | 'kimi' | 'zcode'
 
 export interface HookStatus {
@@ -637,6 +637,10 @@ export interface HookStatus {
   zcodeInstalled: boolean
   zcodeEvents: string[]
   zcodeSnippet: string
+  /** Which agents the reporting section offers, as the owner has set it. Not
+   *  the same as which rows are drawn: an agent whose hooks are installed
+   *  keeps its row whatever this says. */
+  agentsShown: HookAgent[]
   /** The plugin file opencode auto-discovers. */
   opencodePath: string
   /** Whether the plugin in place is this build's, not merely that one exists. */

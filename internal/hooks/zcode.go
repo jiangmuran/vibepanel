@@ -14,9 +14,10 @@ import (
 // from the other installers:
 //
 //   - hooks.enabled defaults to false and nothing runs until it is true. The
-//     install flips it; the uninstall flips it back only when no hooks of
-//     anybody's remain, so a user who had their own hooks configured does not
-//     watch the panel switch them off.
+//     install flips it and writes a marker beside the config saying so; the
+//     uninstall flips it back only if that marker is there and no hooks of
+//     anybody's remain, so neither a user with their own events nor one whose
+//     hooks live outside this file watches the panel switch them off.
 //   - The file is machine-managed — zcode rewrites it itself on login and
 //     model changes — so it is edited as JSON rather than line-by-line. It is
 //     still backed up first.
@@ -123,25 +124,27 @@ func zcodeHookEvents(path string) []string {
 	return out
 }
 
-func readZcodeConfig(path string) (map[string]any, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return map[string]any{}, nil
-		}
-		return nil, err
-	}
-	if len(b) == 0 {
-		return map[string]any{}, nil
-	}
-	var doc map[string]any
-	if err := json.Unmarshal(b, &doc); err != nil {
-		return nil, fmt.Errorf("hooks: %s is not valid JSON: %w", path, err)
-	}
-	return doc, nil
+// zcodeEnabledMarker is where the panel records that hooks.enabled was off
+// until it turned it on.
+//
+// Beside the config, named like the backups the same package already leaves
+// there, because the alternative is guessing on the way out. `enabled` belongs
+// to the whole "hooks" object and gates hooks this file does not list, so the
+// question the uninstall has to answer is not "are there events left" but "was
+// it on before we arrived" -- and nothing in the file says. Without this, a
+// zcode set up with workspace hooks and no user-level events had them switched
+// off by a `hook remove` that had installed nothing.
+func zcodeEnabledMarker(path string) string {
+	return path + ".vibepanel-enabled"
 }
 
 // InstallZcode merges the panel's hook events into ~/.zcode/cli/config.json.
+//
+// Read-modify-write through the same readSettings/encode/writeSettings as the
+// Claude and Codex installers rather than a second copy of them: `unchanged`
+// compares canonical encodings, so pressing install twice writes nothing and
+// leaves no second backup, which comparing raw bytes against a re-encode never
+// does -- the file on disk ends with a newline and the encoding does not.
 func InstallZcode(scriptPath string) (Status, error) {
 	editMu.Lock()
 	defer editMu.Unlock()
@@ -149,15 +152,17 @@ func InstallZcode(scriptPath string) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return Status{}, fmt.Errorf("hooks: create %s: %w", filepath.Dir(path), err)
-	}
-	doc, err := readZcodeConfig(path)
-	if err != nil {
+	doc, err := readSettings(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return Status{}, err
 	}
+	if doc == nil {
+		doc = map[string]any{}
+	}
+	before := encode(doc)
 
 	hooks := zcodeHooksOf(doc)
+	wasEnabled := hooks["enabled"] == true
 	hooks["enabled"] = true
 	events, _ := hooks["events"].(map[string]any)
 	if events == nil {
@@ -175,25 +180,33 @@ func InstallZcode(scriptPath string) (Status, error) {
 		events[e.event] = append(kept, zcodeGroup(command(scriptPath, e.state)))
 	}
 
-	before, _ := os.ReadFile(path)
-	after, err := json.MarshalIndent(doc, "", "  ")
-	if err != nil {
-		return Status{}, fmt.Errorf("hooks: encode %s: %w", path, err)
+	if !unchanged(before, doc) {
+		if err := backup(path); err != nil {
+			return Status{}, err
+		}
+		if err := writeSettings(path, doc); err != nil {
+			return Status{}, err
+		}
 	}
-	if string(before) == string(after) {
-		return Inspect(scriptPath)
-	}
-	if err := backup(path); err != nil {
-		return Status{}, err
-	}
-	if err := writeFileLike(path, append(after, '\n')); err != nil {
-		return Status{}, err
+	// After the write, so a failed install does not leave a note saying the
+	// panel switched something on that it did not.
+	if !wasEnabled {
+		if err := os.WriteFile(zcodeEnabledMarker(path), nil, 0o600); err != nil {
+			return Status{}, fmt.Errorf("hooks: record %s: %w", zcodeEnabledMarker(path), err)
+		}
 	}
 	return Inspect(scriptPath)
 }
 
-// UninstallZcode removes our groups and reverts enabled only when nothing of
-// anybody's is left.
+// UninstallZcode removes our groups, and puts enabled back only if the panel
+// is the one that turned it on and nothing of anybody's is left.
+//
+// A config that is not there is left alone: this used to create one, because
+// "not there" arrived as an empty document and the empty document was then
+// written back with hooks.enabled=false in it. On a machine without zcode --
+// which is most of them -- that write failed for want of a directory, and
+// `vibepanel hook remove` reported a failure and then kept the reporter script
+// because something had failed.
 func UninstallZcode(scriptPath string) (Status, error) {
 	editMu.Lock()
 	defer editMu.Unlock()
@@ -201,15 +214,22 @@ func UninstallZcode(scriptPath string) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	doc, err := readZcodeConfig(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return Inspect(scriptPath)
-		}
+	doc, err := readSettings(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return Inspect(scriptPath)
+	case err != nil:
 		return Status{}, err
 	}
 
-	hooks := zcodeHooksOf(doc)
+	// Read-only on the way in: an "uninstall" that adds a "hooks" object to a
+	// file that never had one has edited somebody's config to say the panel
+	// was here.
+	hooks, _ := doc["hooks"].(map[string]any)
+	if hooks == nil {
+		return Inspect(scriptPath)
+	}
+	before := encode(doc)
 	events, _ := hooks["events"].(map[string]any)
 	for name, v := range events {
 		groups, _ := v.([]any)
@@ -225,23 +245,22 @@ func UninstallZcode(scriptPath string) (Status, error) {
 			events[name] = kept
 		}
 	}
-	if !zcodeAnyEventsLeft(hooks) {
+	marker := zcodeEnabledMarker(path)
+	_, markerErr := os.Stat(marker)
+	if markerErr == nil && !zcodeAnyEventsLeft(hooks) {
 		hooks["enabled"] = false
 	}
 
-	before, _ := os.ReadFile(path)
-	after, err := json.MarshalIndent(doc, "", "  ")
-	if err != nil {
-		return Status{}, fmt.Errorf("hooks: encode %s: %w", path, err)
+	if !unchanged(before, doc) {
+		if err := backup(path); err != nil {
+			return Status{}, err
+		}
+		if err := writeSettings(path, doc); err != nil {
+			return Status{}, err
+		}
 	}
-	if string(before) == string(after) {
-		return Inspect(scriptPath)
-	}
-	if err := backup(path); err != nil {
-		return Status{}, err
-	}
-	if err := writeFileLike(path, append(after, '\n')); err != nil {
-		return Status{}, err
+	if err := os.Remove(marker); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return Status{}, fmt.Errorf("hooks: forget %s: %w", marker, err)
 	}
 	return Inspect(scriptPath)
 }

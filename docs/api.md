@@ -607,6 +607,7 @@ element, not a path.
 ### `GET /api/settings/hooks`
 ### `POST /api/settings/hooks`
 ### `DELETE /api/settings/hooks`
+### `PUT /api/settings/hooks/agents`
 ### `POST /api/settings/restart`
 ### `POST /api/settings/tour`
 ### `GET /api/settings/env`
@@ -654,14 +655,25 @@ configuration file, backing it up first and tagging every entry so removing them
 later cannot take anybody else's with it. `GET` shows what it would write before
 you agree to it.
 
-`POST` and `DELETE` take `?agent=claude` (the default, and what the parameter-less
-request has always meant) or `?agent=codex`. Anything else is a `400`: the value
-decides which file in the user's home directory gets edited, so an unrecognised
-one has to be refused rather than resolved to whichever agent is first in the
-code. Claude's four events are merged into `~/.claude/settings.json`; Codex's one
-`notify` line goes into `~/.codex/config.toml`, above the first table: a
-top-level key appended to the end of that file would belong to the last table in
-it and Codex would never read it.
+`POST` and `DELETE` take `?agent=`, one of `claude` (the default, and what the
+parameter-less request has always meant), `codex`, `kimi`, `zcode` or
+`opencode`. Anything else is a `400`: the value decides which file in the user's
+home directory gets edited, so an unrecognised one has to be refused rather than
+resolved to whichever agent is first in the code. Claude's four events are
+merged into `~/.claude/settings.json`; Codex's hooks into `~/.codex/hooks.json`,
+which it runs once `/hooks` has trusted them; Kimi Code's `[[hooks]]` blocks are
+appended to `~/.kimi-code/config.toml`; zcode's events are merged into
+`~/.zcode/cli/config.json` behind its `hooks.enabled`, which the install turns
+on and the uninstall turns back off only if it was the one that turned it on;
+opencode gets a plugin file of the panel's own, which it auto-discovers.
+
+`PUT /api/settings/hooks/agents` takes `{"agents": ["claude", "codex"]}` and
+decides which of them the settings page and the first-run tour offer. `GET
+/api/settings/hooks` carries it back as `agentsShown`. Unticking an agent hides
+a row nobody on this machine needs; it does not hide an agent whose hooks *are*
+installed, because that row carries the only button that takes them out again.
+`[]` is a real answer and is stored as one. A name the server does not know is a
+`400` rather than a stored value nothing on the page could remove.
 
 ## Notifications to somewhere else
 

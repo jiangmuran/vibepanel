@@ -15,9 +15,10 @@ import (
 
 // editMu serialises every read-modify-write of an agent's configuration file.
 //
-// Held by InstallClaude, UninstallClaude, ApplyTune, InstallCodex and
-// UninstallCodex — everything that reads one of those files, changes what it
-// read and writes it back. One lock for all of them rather than one per file:
+// Held by InstallClaude, UninstallClaude, ApplyTune, InstallCodex,
+// UninstallCodex, InstallKimi, UninstallKimi, InstallZcode and UninstallZcode
+// — everything that reads one of those files, changes what it read and writes
+// it back. One lock for all of them rather than one per file:
 // these are button presses on a settings page, so there is no contention worth
 // measuring, and a single lock cannot be taken in two orders.
 //
