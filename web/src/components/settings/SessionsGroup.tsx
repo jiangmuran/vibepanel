@@ -61,6 +61,30 @@ function HooksSection() {
   // the notice below. See it for why.
   const [justChanged, setJustChanged] = useState(false)
 
+  /**
+   * Tick an agent on or off.
+   *
+   * Optimistic, and every write through a functional update. Both halves are
+   * bugs that were here: the tick did nothing visible until the round trip
+   * finished, so a second tick was computed from the list the first one had
+   * not yet changed and the first agent was silently dropped; and spreading
+   * the `status` this render captured put back a snapshot taken before the
+   * request -- pressing Install while a tick was in flight ended with the row
+   * saying "not installed" over a file the panel had just written.
+   */
+  const setAgents = (next: HookAgent[]) => {
+    setStatus((cur) => (cur ? { ...cur, agentsShown: next } : cur))
+    api
+      .setHookAgents(next)
+      .then((r) => setStatus((cur) => (cur ? { ...cur, agentsShown: r.agentsShown } : cur)))
+      .catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : String(e))
+        // The optimistic list is now a claim nothing backs. Ask rather than
+        // guess which way to put it back.
+        api.hookStatus().then(setStatus).catch(() => {})
+      })
+  }
+
   const act = async (fn: () => Promise<HookStatus>) => {
     setBusy(true)
     setError(null)
@@ -120,14 +144,7 @@ function HooksSection() {
           <AgentsShown
             shown={status.agentsShown}
             status={status}
-            onChange={(next) => {
-              // The rows follow the answer the server gives back rather than
-              // the tick that was just clicked: it is the server that decides
-              // what a stored list means, and the page that guessed would
-              // disagree with the next reload.
-              setStatus({ ...status, agentsShown: next })
-            }}
-            onError={setError}
+            onChange={setAgents}
           />
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -212,7 +229,7 @@ function agentRow(
     case 'codex':
       return {
         value: status.codexInstalled
-          ? t('set.installedCodexHooks', { n: status.codexEvents.length })
+          ? t('set.installedHooks', { n: status.codexEvents.length })
           : t('set.notInstalled'),
         file: status.codexPath,
         installed: status.codexInstalled,
@@ -230,7 +247,7 @@ function agentRow(
     case 'kimi':
       return {
         value: status.kimiInstalled
-          ? t('set.installedCodexHooks', { n: status.kimiEvents.length })
+          ? t('set.installedHooks', { n: status.kimiEvents.length })
           : t('set.notInstalled'),
         file: status.kimiPath,
         installed: status.kimiInstalled,
@@ -240,7 +257,7 @@ function agentRow(
     case 'zcode':
       return {
         value: status.zcodeInstalled
-          ? t('set.installedCodexHooks', { n: status.zcodeEvents.length })
+          ? t('set.installedHooks', { n: status.zcodeEvents.length })
           : t('set.notInstalled'),
         file: status.zcodePath,
         installed: status.zcodeInstalled,
@@ -276,12 +293,10 @@ function AgentsShown({
   shown,
   status,
   onChange,
-  onError,
 }: {
   shown: HookAgent[]
   status: HookStatus
   onChange: (next: HookAgent[]) => void
-  onError: (message: string) => void
 }) {
   return (
     <fieldset className="mt-4 border-t border-hairline pt-3" data-testid="hook-agents">
@@ -295,13 +310,7 @@ function AgentsShown({
                 type="checkbox"
                 checked={on}
                 data-testid={`hook-agent-${a.id}`}
-                onChange={() => {
-                  const next = on ? shown.filter((x) => x !== a.id) : [...shown, a.id]
-                  api
-                    .setHookAgents(next)
-                    .then((r) => onChange(r.agentsShown))
-                    .catch((e: unknown) => onError(e instanceof Error ? e.message : String(e)))
-                }}
+                onChange={() => onChange(on ? shown.filter((x) => x !== a.id) : [...shown, a.id])}
               />
               <span>{hookAgentName(a.id)}</span>
               {/* An installed agent is on screen whether or not it is ticked,

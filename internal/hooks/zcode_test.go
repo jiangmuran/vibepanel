@@ -243,3 +243,73 @@ func zcodeBackups(t *testing.T) int {
 	}
 	return len(m)
 }
+
+// The marker says "the panel turned hooks.enabled on", and it is only true
+// while the panel's hooks are in that file. zcode rewrites this config itself
+// on login, so a file that comes back without a hooks object used to leave the
+// marker behind -- and the next removal, after the user had turned enabled on
+// for workspace hooks of their own, turned it off again.
+func TestUninstallZcodeForgetsTheMarkerWhenTheConfigLostOurHooks(t *testing.T) {
+	withFakeHome(t)
+	if _, err := InstallZcode(codexScript); err != nil {
+		t.Fatalf("InstallZcode: %v", err)
+	}
+	// zcode rewrote the file and our hooks are not in it any more.
+	writeZcodeConfig(t, `{"model": "glm-5"}`+"\n")
+	if _, err := UninstallZcode(codexScript); err != nil {
+		t.Fatalf("UninstallZcode: %v", err)
+	}
+	// The user turns hooks on for something that is not in this file.
+	writeZcodeConfig(t, `{"hooks": {"enabled": true, "events": {}}}`+"\n")
+	if _, err := UninstallZcode(codexScript); err != nil {
+		t.Fatalf("second UninstallZcode: %v", err)
+	}
+	doc := readZcodeDoc(t)
+	hooks, _ := doc["hooks"].(map[string]any)
+	if hooks["enabled"] != true {
+		t.Error("a marker left over from an install whose hooks are long gone switched the user's hooks off")
+	}
+}
+
+func TestUninstallZcodeForgetsTheMarkerWhenTheConfigIsGone(t *testing.T) {
+	home := withFakeHome(t)
+	if _, err := InstallZcode(codexScript); err != nil {
+		t.Fatalf("InstallZcode: %v", err)
+	}
+	if err := os.Remove(zcodePath(t)); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if _, err := UninstallZcode(codexScript); err != nil {
+		t.Fatalf("UninstallZcode: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".zcode", "cli", "config.json.vibepanel-enabled")); !os.IsNotExist(err) {
+		t.Error("the marker outlived the config it describes")
+	}
+}
+
+// An event key that is already empty is the user's -- zcode writes
+// `"SessionStart": []` itself -- so deleting it made "remove the hooks"
+// rewrite the config and leave a backup on a machine where the panel had
+// installed nothing.
+func TestUninstallZcodeLeavesAnEmptyEventOfTheirsAlone(t *testing.T) {
+	withFakeHome(t)
+	own := `{
+  "hooks": {
+    "enabled": true,
+    "events": {
+      "SessionStart": []
+    }
+  }
+}
+`
+	writeZcodeConfig(t, own)
+	if _, err := UninstallZcode(codexScript); err != nil {
+		t.Fatalf("UninstallZcode: %v", err)
+	}
+	if body := readFile(t, zcodePath(t)); body != own {
+		t.Errorf("a removal with nothing to remove rewrote the config:\n%s", body)
+	}
+	if n := zcodeBackups(t); n != 0 {
+		t.Errorf("and left %d backups", n)
+	}
+}

@@ -246,20 +246,28 @@ into its own file, and each fails separately:
 
 - Kimi Code: `[[hooks]]` blocks appended to `~/.kimi-code/config.toml`
   (UserPromptSubmit/PreToolUse → working, PermissionRequest → waiting,
-  Stop/Interrupt → done). No trust step.
+  Stop/Interrupt → done). No trust step. Removal takes only the blocks whose
+  command carries the panel's marker, so `[[hooks]]` of your own on the same
+  events stay where they are -- if a removal left something behind, that is
+  why, and it is what you want.
 - zcode: `hooks.events` merged into `~/.zcode/cli/config.json`. Its
   `hooks.enabled` defaults to `false` and nothing runs until it is `true` --
-  the install flips it, and the uninstall flips it back only when no hooks of
-  anybody's remain.
+  the install flips it and writes `config.json.vibepanel-enabled` beside the
+  config saying that it was the one that did. The uninstall flips it back only
+  if that marker is there *and* no events of anybody's are left, because
+  `enabled` also gates hooks that are not in this file: zcode's workspace and
+  plugin hooks. If your workspace hooks went quiet, that marker is the file
+  that answers whether the panel is responsible.
 
 ```sh
 grep -A2 '\[\[hooks\]\]' ~/.kimi-code/config.toml   # are the blocks there?
 grep -A6 '"hooks"' ~/.zcode/cli/config.json         # enabled, and whose events?
+ls ~/.zcode/cli/config.json.vibepanel-enabled       # did the panel turn enabled on?
 ```
 
 If an agent has no row on that page at all, it is not turned off -- it is not
-being offered. Settings → State reporting ends with a tick per agent, and a
-fresh panel offers Claude Code, Codex and opencode; tick the one you want and
+being offered. Settings → State reporting has a tick per agent below the rows,
+and a fresh panel offers Claude Code, Codex and opencode; tick the one you want and
 the row appears. An agent whose hooks are already installed keeps its row
 whatever the ticks say, so this cannot hide hooks the panel has written.
 
@@ -608,10 +616,12 @@ recognised them as agents.
 It matches `#{pane_current_command}` against `claude`, `codex`, `opencode`,
 `kimi` and `zcode`, and that string is a fact about how the program was
 packaged rather than about this project. A native binary reports its own name
-— `kimi` is one. Anything shipped as a script with a `#!` line reports the
-interpreter, because that is what the kernel executed -- Claude Code installed
-through npm reports `node`, and so do Codex and zcode, which is why the hooks
-rather than the process name are what those are recognised by.
+-- Codex is one, and so is `kimi`. Anything shipped as a script with a `#!`
+line reports the interpreter, because that is what the kernel executed: Claude
+Code installed through npm reports `node`, and zcode runs through a wrapper
+that does the same. This list decides one thing only -- whether the panel says
+"these states are guesses" over a session -- and a session's *state* comes from
+the hooks and the environment the panel injects, not from this name.
 
 `doctor` prints what tmux actually reports, which is the whole diagnosis:
 

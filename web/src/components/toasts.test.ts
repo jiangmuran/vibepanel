@@ -149,4 +149,19 @@ describe('a toast that is reporting something still running', () => {
     vi.advanceTimersByTime(TOAST_MS.info)
     expect(toastsSnapshot()).toHaveLength(0)
   })
+
+  // Dedup returns the *same id*, and a progress toast now lives as long as its
+  // upload rather than four seconds -- so a second paste during a big upload
+  // used to land on the first one's toast: the bar jumped back to the second
+  // upload's 1%, and whichever finished first dismissed the toast out from
+  // under the other.
+  it('does not merge a second upload into the first one’s bar', () => {
+    const first = showToast({ kind: 'info', key: 'toast.uploadingOne', progress: 0 })
+    setToastProgress(first, 0.6)
+    const second = showToast({ kind: 'info', key: 'toast.uploadingOne', progress: 0 })
+    expect(second).not.toBe(first)
+    expect(toastsSnapshot()).toHaveLength(2)
+    dismissToast(first)
+    expect(toastsSnapshot().map((t) => t.id)).toEqual([second])
+  })
 })

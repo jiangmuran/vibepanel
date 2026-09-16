@@ -2257,17 +2257,41 @@ echo "==> uninstall: an agent missing from the file list is hooks nobody removes
 # success, and $DATA went with it -- taking the reporter script a live hook
 # still calls on every prompt. Nothing says so afterwards, because the reporter
 # suppresses its own failures on purpose.
+# One run per agent that came after the list was written, because the fixture
+# has hooks for all of them: with claude's and codex's present the count is
+# non-zero whatever this list forgets, and forgetting is the failure.
+for only in kimi zcode; do
+  teardown_home real
+  rm -f "$HOME_DIR/.config/opencode/plugin/vibepanel.js"
+  printf '{"model":"opus"}\n' > "$HOME_DIR/.claude/settings.json"
+  : > "$HOME_DIR/.codex/config.toml"
+  case "$only" in
+    kimi) rm -f "$HOME_DIR/.zcode/cli/config.json"; LEFT_FILE="$HOME_DIR/.kimi-code/config.toml" ;;
+    zcode) : > "$HOME_DIR/.kimi-code/config.toml"; LEFT_FILE="$HOME_DIR/.zcode/cli/config.json" ;;
+  esac
+  uninst "$HOME_DIR" "vpuninst$$k$only" --yes --purge
+  [ $RC -eq 0 ] && ok "$only only: exits 0" || fail "$only only: exited $RC: $(tail -3 "$LOG")"
+  grep -q vibepanel-report "$LEFT_FILE" 2>/dev/null \
+    && fail "$only only: its hooks were never removed: $(tail -4 "$LOG" | tr '\n' ' ')" \
+    || ok "$only only: it counted the agent and removed its hooks"
+  [ -e "$TD_REPORT" ] && fail "$only only: the reporter is still there" \
+    || ok "$only only: and only then deleted the reporter they pointed at"
+done
+
+# --purge says what is left, and the backups the installers write beside the
+# agents' own configs are left. The list of those was written when there were
+# two agents.
 teardown_home real
-rm -f "$HOME_DIR/.config/opencode/plugin/vibepanel.js" "$HOME_DIR/.zcode/cli/config.json"
-printf '{"model":"opus"}\n' > "$HOME_DIR/.claude/settings.json"
-: > "$HOME_DIR/.codex/config.toml"
-uninst "$HOME_DIR" "vpuninst$$k" --yes --purge
-[ $RC -eq 0 ] && ok "exits 0" || fail "exited $RC: $(tail -3 "$LOG")"
-grep -q vibepanel-report "$HOME_DIR/.kimi-code/config.toml" 2>/dev/null \
-  && fail "the kimi hooks were never removed: $(tail -4 "$LOG" | tr '\n' ' ')" \
-  || ok "it counted an agent the older list did not know and removed its hooks"
-[ -e "$TD_REPORT" ] && fail "the reporter is still there" \
-  || ok "and only then deleted the reporter they pointed at"
+: > "$HOME_DIR/.kimi-code/config.toml.vibepanel-backup-20260101-000000.000"
+: > "$HOME_DIR/.zcode/cli/config.json.vibepanel-backup-20260101-000000.000"
+: > "$HOME_DIR/.zcode/cli/config.json.vibepanel-enabled"
+uninst "$HOME_DIR" "vpuninst$$p" --yes --purge
+[ -e "$HOME_DIR/.kimi-code/config.toml.vibepanel-backup-20260101-000000.000" ] \
+  && fail "--purge left a kimi backup behind: $(tail -3 "$LOG")" \
+  || ok "--purge takes the backups beside a newer agent's config too"
+[ -e "$HOME_DIR/.zcode/cli/config.json.vibepanel-enabled" ] \
+  && fail "--purge left the zcode enabled marker behind" \
+  || ok "and the note saying the panel turned zcode's hooks on"
 
 echo "==> uninstall: a binary that cannot remove hooks is caught by looking"
 teardown_home deaf

@@ -4470,6 +4470,112 @@ browser = await chromium.launch({ headless: true })
       note('FAIL', 'settings', `the hook snippet is not valid JSON: ${JSON.stringify(snippet.slice(0, 200))}`)
     }
 
+    // ── renaming with a mouse ──────────────────────────────────────────────
+    //
+    // The pencil on a session row. Double click and long press have renamed
+    // for a long time, and a gesture you have to know about is a feature most
+    // people never find -- so the button exists, and nothing here had ever
+    // pressed it. It is mouse-only on purpose (a third 44px control squeezed
+    // the selected row's name under a coarse pointer), which is why this runs
+    // on the desktop page and the phone keeps the long press above.
+    await page.locator('[data-testid="settings-close"]').click()
+    await sleep(500)
+    {
+      const row = page.locator('[data-testid="session-row"]').first()
+      await row.hover()
+      await sleep(300)
+      const pencil = row.locator('[data-testid="rename-session"]')
+      if (!(await pencil.isVisible().catch(() => false))) {
+        note('FAIL', 'rename', 'a session row has no rename button under a mouse')
+      } else {
+        await pencil.click()
+        await sleep(400)
+        const input = row.locator('input')
+        if ((await input.count()) === 0) {
+          note('FAIL', 'rename', 'the rename button does not open the name for editing')
+        } else {
+          // The input has to open on *this* row's name. It seeds from a ref,
+          // and the bug that guard exists for renames the session to whatever
+          // the last row edited was.
+          const before = (await row.locator('[data-testid="inline-name"]').innerText().catch(() => ''))
+            .trim()
+          const seeded = await input.inputValue()
+          if (before && seeded && !before.startsWith(seeded.slice(0, 6))) {
+            note('FAIL', 'rename',
+              `the rename box opened on ${JSON.stringify(seeded)} for a row called ${JSON.stringify(before)}`)
+          }
+          await input.fill('renamed-by-check')
+          await input.press('Enter')
+          await sleep(800)
+          const after = await page
+            .locator('[data-testid="session-row"] [data-testid="inline-name"]')
+            .first()
+            .innerText()
+            .catch(() => '')
+          if (!after.includes('renamed-by-check')) {
+            note('FAIL', 'rename', `the name did not change; the row now reads ${JSON.stringify(after)}`)
+          } else {
+            note('PASS', 'rename', 'the pencil opens the same input the gestures do and it commits')
+          }
+        }
+      }
+    }
+    await page.locator('[data-testid="settings-open"]').click()
+    await sleep(900)
+
+    // ── which agents the reporting section offers ──────────────────────────
+    //
+    // A tick list, and the thing worth driving is that it is the *setting*
+    // that decides the rows: the panel knows five agents and offers three
+    // until told otherwise. Nothing in this file had ever clicked one of
+    // these, so a checkbox that did not save, or saved and did not change the
+    // rows, would have gone out green.
+    {
+      // The block's testid is the row's own: claude's is `hooks`, and the
+      // others are `<agent>-hooks`.
+      const rowFor = (testid) => page.locator(`[data-testid="${testid}-block"]`)
+      const kimiBefore = await rowFor('kimi-hooks').isVisible().catch(() => false)
+      const claudeBefore = await rowFor('hooks').isVisible().catch(() => false)
+      if (kimiBefore || !claudeBefore) {
+        note('FAIL', 'reporting',
+          `a panel nobody has configured shows claude=${claudeBefore} kimi=${kimiBefore}; ` +
+          'it should offer claude, codex and opencode and no more')
+      } else {
+        note('PASS', 'reporting', 'the default three agents are offered and the other two are not')
+      }
+
+      await page.locator('[data-testid="hook-agent-kimi"]').click()
+      await sleep(700)
+      if (!(await rowFor('kimi-hooks').isVisible().catch(() => false))) {
+        note('FAIL', 'reporting', 'ticking Kimi Code did not put its row on the page')
+      } else {
+        // And it is the server that remembers, not this tab: the settings
+        // dialog is reopened from a fresh load below.
+        await page.reload()
+        await sleep(1500)
+        await page.locator('[data-testid="settings-open"]').click()
+        await sleep(900)
+        const stillThere = await rowFor('kimi-hooks').isVisible().catch(() => false)
+        const stillTicked = await page
+          .locator('[data-testid="hook-agent-kimi"]')
+          .isChecked()
+          .catch(() => false)
+        if (!stillThere || !stillTicked) {
+          note('FAIL', 'reporting',
+            `after a reload the Kimi row is ${stillThere ? 'there' : 'gone'} and the tick is ` +
+            `${stillTicked ? 'on' : 'off'}; the setting did not reach the server`)
+        } else {
+          note('PASS', 'reporting', 'a ticked agent survives a reload')
+        }
+        // Put it back, so the rest of this run sees the panel it expects.
+        await page.locator('[data-testid="hook-agent-kimi"]').click()
+        await sleep(700)
+        if (await rowFor('kimi-hooks').isVisible().catch(() => false)) {
+          note('FAIL', 'reporting', 'unticking Kimi Code left its row on the page')
+        }
+      }
+    }
+
     // ── webhooks ───────────────────────────────────────────────────────────
     //
     // Adding a custom one. It is empty by definition -- choosing the option

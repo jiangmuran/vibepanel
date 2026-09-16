@@ -190,10 +190,14 @@ func InstallZcode(scriptPath string) (Status, error) {
 	}
 	// After the write, so a failed install does not leave a note saying the
 	// panel switched something on that it did not.
+	//
+	// A marker that cannot be written is not a failed install -- the hooks are
+	// in the file and working. It costs the uninstall its licence to put
+	// `enabled` back, which is the conservative half of that decision, and
+	// returning an error here would instead show a 500 over an install that
+	// took effect.
 	if !wasEnabled {
-		if err := os.WriteFile(zcodeEnabledMarker(path), nil, 0o600); err != nil {
-			return Status{}, fmt.Errorf("hooks: record %s: %w", zcodeEnabledMarker(path), err)
-		}
+		_ = os.WriteFile(zcodeEnabledMarker(path), nil, 0o600) //nolint:errcheck
 	}
 	return Inspect(scriptPath)
 }
@@ -214,9 +218,28 @@ func UninstallZcode(scriptPath string) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
+	// The marker says "the panel turned hooks.enabled on", and it is only true
+	// while the panel's hooks are in that file. Both early returns below used
+	// to leave it: zcode rewrites this config itself on login, so a file that
+	// came back without a hooks object left a marker behind that said the
+	// panel owned a flag it no longer had anything to do with -- and the next
+	// removal, after the user had turned enabled on for their own workspace
+	// hooks, turned it off again. Forgetting it is the safe direction; the
+	// worst it costs is an `enabled: true` the panel declines to revert.
+	marker := zcodeEnabledMarker(path)
+	forget := func() error {
+		if err := os.Remove(marker); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("hooks: forget %s: %w", marker, err)
+		}
+		return nil
+	}
+
 	doc, err := readSettings(path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
+		if err := forget(); err != nil {
+			return Status{}, err
+		}
 		return Inspect(scriptPath)
 	case err != nil:
 		return Status{}, err
@@ -227,6 +250,9 @@ func UninstallZcode(scriptPath string) (Status, error) {
 	// was here.
 	hooks, _ := doc["hooks"].(map[string]any)
 	if hooks == nil {
+		if err := forget(); err != nil {
+			return Status{}, err
+		}
 		return Inspect(scriptPath)
 	}
 	before := encode(doc)
@@ -239,13 +265,20 @@ func UninstallZcode(scriptPath string) (Status, error) {
 				kept = append(kept, g)
 			}
 		}
+		// Only an event this removal emptied. An event key that was already
+		// empty is the user's -- `"SessionStart": []` is a thing zcode itself
+		// writes -- and deleting it made "remove the hooks" rewrite the config
+		// and leave a backup on a machine where the panel had installed
+		// nothing.
+		if len(kept) == len(groups) {
+			continue
+		}
 		if len(kept) == 0 {
 			delete(events, name)
 		} else {
 			events[name] = kept
 		}
 	}
-	marker := zcodeEnabledMarker(path)
 	_, markerErr := os.Stat(marker)
 	if markerErr == nil && !zcodeAnyEventsLeft(hooks) {
 		hooks["enabled"] = false
@@ -259,8 +292,8 @@ func UninstallZcode(scriptPath string) (Status, error) {
 			return Status{}, err
 		}
 	}
-	if err := os.Remove(marker); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return Status{}, fmt.Errorf("hooks: forget %s: %w", marker, err)
+	if err := forget(); err != nil {
+		return Status{}, err
 	}
 	return Inspect(scriptPath)
 }

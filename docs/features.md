@@ -49,9 +49,18 @@ not exited -- it is sitting at its own prompt waiting for you -- so what the
 panel sees is a running process, and the session stays blue until you look. The
 first-run tour opens on this for a reason.
 
-**Settings → State reporting** has a button for Claude Code, one for Codex and
-one for opencode. It installs a hook into the agent's own configuration, showing
-what it will write and backing up the file first. The hook reads two environment
+**Settings → State reporting** has a button per agent: Claude Code, Codex, Kimi
+Code, zcode and opencode. It installs a hook into the agent's own configuration,
+showing what it will write and backing up the file first. Each is a different
+mechanism in a different file and they fail separately, which is why there is a
+row each rather than one "turn reporting on".
+
+The panel knows five and offers three -- Claude Code, Codex and opencode. Tick
+the rest below the rows; an agent whose hooks are installed is shown whatever
+the ticks say, so nothing you have turned on can be hidden from you. Two of them
+have a wrinkle worth knowing: Codex runs a hook only after `/hooks` has trusted
+it, and zcode ignores every hook until `hooks.enabled` is `true`, which the
+install turns on and only turns back off if it was the one that turned it on. The hook reads two environment
 variables the panel injects into each session and posts the state:
 
 ```json
@@ -320,9 +329,9 @@ detail level, scope, remark and expiry.
 A panel with no account prints a one-time token; you paste it, choose a
 password, and the tour opens.
 
-Five steps, and two of them do something. It installs state reporting for
-Claude Code, Codex and opencode -- three separate mechanisms in three separate
-files -- and it offers the rest of Claude Code's settings: session mirroring,
+Five steps, and two of them do something. It installs state reporting for the
+agents the panel is set up for -- separate mechanisms in separate files, a
+button and an answer each -- and it offers the rest of Claude Code's settings: session mirroring,
 Remote Control, the commit and pull-request attribution, the billing header.
 Every key is printed with the value on disk beside the value that would replace
 it, and the file is copied before anything is written.

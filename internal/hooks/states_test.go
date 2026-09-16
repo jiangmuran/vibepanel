@@ -26,8 +26,10 @@ import (
 // third, and it is the one with no type system on either side of it.
 //
 // This package writes state strings into files that leave the repository: the
-// reporter script, the hooks merged into ~/.codex/hooks.json, and the hooks
-// block merged into ~/.claude/settings.json. `internal/hooks` does not import
+// reporter script, the hooks merged into ~/.codex/hooks.json, the [[hooks]]
+// blocks appended to ~/.kimi-code/config.toml, the events merged into
+// ~/.zcode/cli/config.json, and the hooks block merged into
+// ~/.claude/settings.json. `internal/hooks` does not import
 // `internal/session` at all — measured, zero references — so every one of those
 // strings is a bare literal.
 //

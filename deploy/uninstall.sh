@@ -217,9 +217,23 @@ leftover_files() {
   local f keep
   keep="$(newest_archive)"
   [ "$PURGE_ARCHIVES" = yes ] && keep=
+  # Every file the panel writes beside somebody's config: a backup per edit,
+  # and the note zcode's installer leaves saying it was the one that turned
+  # hooks.enabled on. This list was written when there were two agents and
+  # stayed that way through three more, so --purge said "nothing left" over
+  # backups in three directories it had never looked in. Derived from
+  # HOOK_FILES rather than retyped, so the next agent is one line in one place.
+  local hookfile
+  local IFS='
+'
+  for hookfile in $HOOK_FILES; do
+    for f in "$hookfile".vibepanel-backup-* "$hookfile".vibepanel-enabled; do
+      [ -e "$f" ] || continue
+      printf '%s\n' "$f"
+    done
+  done
+  unset IFS
   for f in "$HOME/vibepanel-backups" "$HOME"/vibepanel-data-*.tar.gz \
-           "$HOME"/.claude/settings.json.vibepanel-backup-* \
-           "$HOME"/.codex/config.toml.vibepanel-backup-* \
            "$BIN".*; do
     [ -e "$f" ] || continue
     [ -n "$keep" ] && [ "$f" = "$keep" ] && continue
@@ -293,7 +307,7 @@ if [ -x "$BIN" ] && [ "$HOOKS_BEFORE" != 0 ]; then
     HOOKS_LEFT=yes
   fi
 elif [ "$HOOKS_BEFORE" != 0 ]; then
-  # No binary, so nothing here can edit those three files -- and the removal of
+  # No binary, so nothing here can edit those config files -- and the removal of
   # $DATA further down must not go ahead without them. The same ordering rule as
   # above, reached from the other side: this used to be a silent skip, and a
   # system install came out of it with three live hooks calling a reporter
@@ -508,7 +522,7 @@ echo
 echo "── done ──"
 echo "Left alone: your own tmux, zellij, ttyd, and everything under ~/projects."
 if [ "${HOOKS_LEFT:-no}" = yes ]; then
-  echo "STILL THERE: the hooks in the three agent configs. See the FAIL above."
+  echo "STILL THERE: the hooks in the agent configs. See the FAIL above."
 fi
 if [ "${UNIT_LEFT:-no}" = yes ]; then
   echo "STILL THERE: the service unit. See the FAIL above."

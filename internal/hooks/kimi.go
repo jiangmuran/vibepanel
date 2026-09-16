@@ -16,7 +16,11 @@ import (
 // panel would have broken the agent it was trying to wire up -- and this
 // string is not only shown, it is what InstallKimi writes.
 func tomlString(s string) string {
-	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	// Tabs and newlines are escaped for the same reason as the quote: written
+	// raw they end the string, and TOML rejects the file. A data directory
+	// with a tab in its name is not something anybody sets on purpose; it is
+	// something a paste does.
+	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\t", `\t`, "\n", `\n`, "\r", `\r`)
 	return `"` + r.Replace(s) + `"`
 }
 
@@ -83,6 +87,9 @@ func InstallKimi(scriptPath string) (Status, error) {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return Status{}, fmt.Errorf("hooks: read %s: %w", path, err)
 	}
+	if err := kimiHooksAreAnArrayOfTables(string(before)); err != nil {
+		return Status{}, err
+	}
 	after := withoutKimiHooks(string(before))
 	if after != "" && !strings.HasSuffix(after, "\n") {
 		after += "\n"
@@ -125,6 +132,16 @@ func UninstallKimi(scriptPath string) (Status, error) {
 	if err := backup(path); err != nil {
 		return Status{}, err
 	}
+	// Nothing left but our blocks means the panel is the only reason this file
+	// exists: the install creates it on a machine that has never run Kimi
+	// Code. Leaving an empty config.toml behind is leaving a trace of a tool
+	// that has been removed, and the backup beside it holds what was there.
+	if strings.TrimSpace(after) == "" {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return Status{}, fmt.Errorf("hooks: remove %s: %w", path, err)
+		}
+		return Inspect(scriptPath)
+	}
 	if err := writeFileLike(path, []byte(after)); err != nil {
 		return Status{}, err
 	}
@@ -143,7 +160,7 @@ func kimiHookEvents(path string) []string {
 	body := string(b)
 	for _, e := range kimiEvents {
 		for _, block := range kimiHookBlocks(body) {
-			if strings.Contains(block, `event = "`+e.event+`"`) && containsMarker(block) {
+			if strings.Contains(block, `event = "`+e.event+`"`) && kimiBlockIsOurs(block) {
 				out = append(out, e.event)
 				break
 			}
@@ -191,7 +208,7 @@ func withoutKimiHooks(doc string) string {
 		for end < len(lines) && !isTableHeader(lines[end]) {
 			end++
 		}
-		if !containsMarker(strings.Join(lines[i:end], "\n")) {
+		if !kimiBlockIsOurs(strings.Join(lines[i:end], "\n")) {
 			out = append(out, lines[i:end]...)
 		} else {
 			// The block ends at the next table header, so anything the user
@@ -237,6 +254,53 @@ func trailingKept(block []string) []string {
 	return block[keep:]
 }
 
+// kimiHooksAreAnArrayOfTables refuses the two shapes an append would break.
+//
+// `[[hooks]]` after an existing `hooks = [...]` or `[hooks]` is not a second
+// element of an array of tables, it is a redefinition, and TOML rejects the
+// file -- so Kimi Code would not start and the settings page would say the
+// hooks were installed. Checked against a real parser: "Cannot mutate
+// immutable namespace" and "Cannot overwrite a value". The panel cannot merge
+// into either shape without parsing and re-encoding the whole file, which is
+// what the line-based editor exists to avoid, so it says so and does nothing.
+func kimiHooksAreAnArrayOfTables(doc string) error {
+	for _, line := range strings.Split(doc, "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "#") {
+			continue
+		}
+		if t == "[hooks]" || strings.HasPrefix(t, "[hooks]") {
+			return fmt.Errorf("hooks: %s already has a [hooks] table; "+
+				"the panel writes [[hooks]] blocks and will not rewrite that file", "config.toml")
+		}
+		if key, _, found := strings.Cut(t, "="); found && strings.TrimSpace(key) == "hooks" {
+			return fmt.Errorf("hooks: %s already has a hooks = ... key; "+
+				"the panel writes [[hooks]] blocks and will not rewrite that file", "config.toml")
+		}
+	}
+	return nil
+}
+
+// kimiBlockIsOurs reports whether a [[hooks]] block runs the panel's reporter.
+//
+// The marker is looked for in the *command*, the way isOurs does it for Claude
+// and Codex, and not in the block. A block is everything up to the next table
+// header, comments included, so "somebody wrote our script's name in a comment
+// above their own hook" was indistinguishable from "this block is ours" --
+// and the install, which strips ours before appending, deleted their hook.
+func kimiBlockIsOurs(block string) bool {
+	for _, line := range strings.Split(block, "\n") {
+		key, value, found := strings.Cut(line, "=")
+		if !found || strings.TrimSpace(key) != "command" {
+			continue
+		}
+		if containsMarker(value) {
+			return true
+		}
+	}
+	return false
+}
+
 func isKimiHooksHeader(line string) bool {
 	t := strings.TrimSpace(line)
 	if !strings.HasPrefix(t, "[[") || !strings.HasSuffix(t, "]]") {
@@ -246,8 +310,19 @@ func isKimiHooksHeader(line string) bool {
 }
 
 // isTableHeader reports whether a line opens a TOML table, which is what ends
-// a [[hooks]] block. Comments are not headers.
+// a [[hooks]] block.
+//
+// Opens and closes: `[providers.work]` and `[[hooks]]` do, and a continuation
+// line of a multi-line array -- `[1],` inside `args = [` -- does not. Testing
+// only the opening bracket cut a user's block short at that line, so the half
+// with our marker in it was not recognised and the block was left behind.
+//
+// The `!strings.HasPrefix(t, "#")` this used to carry is gone: a string cannot
+// begin with both `[` and `#`, so it read as a rule and excluded nothing.
 func isTableHeader(line string) bool {
 	t := strings.TrimSpace(line)
-	return strings.HasPrefix(t, "[") && !strings.HasPrefix(t, "#")
+	if cut := strings.Index(t, "#"); cut >= 0 {
+		t = strings.TrimSpace(t[:cut])
+	}
+	return strings.HasPrefix(t, "[") && strings.HasSuffix(t, "]")
 }

@@ -21988,3 +21988,68 @@ The settings page and the tour now read one table (`web/src/components/
 hookAgents.ts`) instead of a list each, and a Go test compares its ids with the
 server's. That is the cheap version of red line 3: two places describing one
 fact, with nothing to notice when they stop agreeing.
+
+
+## 2026-09-15 — Three subagents read the branch back, and what they found
+
+Three reviewers on the open PR, one each on the Go and the installers, the
+frontend and the wire, and the documentation. Between them, seventeen things.
+The ones worth recording:
+
+**The Kimi marker was matched against the whole block.** Claude and Codex test
+it against the command; Kimi tested every line between `[[hooks]]` and the next
+table header. So a block of somebody's whose *comment* said "adapted from the
+vibepanel-report.sh snippet" was ours, and the install -- which strips ours
+before appending -- deleted their hook. Found by writing that config and
+pressing install.
+
+**The zcode marker outlived the hooks it described.** Both early returns in the
+uninstall skipped the `os.Remove`, and zcode rewrites its own config on login:
+a file that came back without a hooks object left a marker saying the panel
+owned a flag it had nothing to do with, and the next removal -- after the user
+had turned `enabled` on for their own workspace hooks -- turned it off. The
+marker is forgotten on every path out now.
+
+**`--purge` had a list of two agents.** `leftover_files` globbed the Claude and
+Codex backups and nothing else, so the backups the two new installers write,
+and the marker, were "nothing left" three directories over. It is derived from
+`HOOK_FILES` now, which is the list the count already uses.
+
+**The settings page's tick could undo an install.** `onChange` captured the
+`status` of the render the checkbox was clicked in and spread it back when the
+PUT resolved, so pressing Install while a tick was in flight put the row back
+to "not installed" over a file the panel had just written. Functional updates
+throughout, and the tick is optimistic -- which is also what stopped two ticks
+in a row from losing the first, because the second was computed from a list the
+first had not yet changed.
+
+**A second paste during a big upload stole the first one's toast.** Making a
+progress toast immortal (the fix two entries up) widened the dedup window from
+four seconds to the whole upload, and dedup returns the *same id*: the bar
+jumped back to the second upload's 1%, and whichever finished first dismissed
+the toast out from under the other. A toast with a bar is never merged into.
+
+**The XHR upload had no test at all.** `upload.test.ts` mocks the api module,
+so the status handling, the 401 that returns the shell to the sign-in screen,
+and the three ways an upload ends without a response could all be deleted with
+575 tests still passing. It has its own suite now, against a fake
+XMLHttpRequest. While writing it: the bar is capped at 0.99 until the response
+arrives, because the last byte leaving the browser is not the upload finishing
+-- the server still has to write the files, which on a 300MB drop is the part
+you wait for.
+
+**Four of the new testids were in no browser check.** `render-check` now ticks
+an agent and reloads to prove the setting is the server's, and clicks the
+rename pencil. The tick block found nothing wrong with the panel; it found my
+own selector wrong, on the first run, which is the argument for the browser
+checks in one line.
+
+Also: `[[hooks]]` cannot be appended to a config that already has `hooks = []`
+or `[hooks]` -- TOML rejects the redefinition and Kimi Code would not start --
+so the install refuses those two shapes rather than writing a file that does
+not parse; `isTableHeader` now requires a closing bracket, so a multi-line
+array inside a block no longer cuts it in half; an uninstall that empties the
+file removes it; `hook remove` has a Go test, because nothing in the repository
+called it and `install-check` drives a fake binary; and `hookTarget`,
+`Inspect`'s four new path and snippet fields, and the `agentsShown` ordering
+each got the test the mutation run proved they did not have.

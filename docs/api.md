@@ -664,7 +664,8 @@ merged into `~/.claude/settings.json`; Codex's hooks into `~/.codex/hooks.json`,
 which it runs once `/hooks` has trusted them; Kimi Code's `[[hooks]]` blocks are
 appended to `~/.kimi-code/config.toml`; zcode's events are merged into
 `~/.zcode/cli/config.json` behind its `hooks.enabled`, which the install turns
-on and the uninstall turns back off only if it was the one that turned it on;
+on and the uninstall turns back off only if it was the one that turned it on
+*and* no events of anybody's are left in that file;
 opencode gets a plugin file of the panel's own, which it auto-discovers.
 
 `PUT /api/settings/hooks/agents` takes `{"agents": ["claude", "codex"]}` and
@@ -674,6 +675,13 @@ a row nobody on this machine needs; it does not hide an agent whose hooks *are*
 installed, because that row carries the only button that takes them out again.
 `[]` is a real answer and is stored as one. A name the server does not know is a
 `400` rather than a stored value nothing on the page could remove.
+
+It answers `{"agentsShown": [...]}` -- the stored list, in the server's own
+order and with duplicates gone -- and the page takes its rows from that answer
+rather than from the tick that was clicked. `POST` and `DELETE
+/api/settings/hooks` carry `agentsShown` too, because the page replaces
+everything it has with their answer and a field only the `GET` carried would
+disappear the moment somebody pressed Install.
 
 ## Notifications to somewhere else
 

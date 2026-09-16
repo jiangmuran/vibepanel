@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -9,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/jiangmuran/vibepanel/internal/hooks"
 )
 
 // The reporting section does not offer every agent the panel knows about, and
@@ -165,4 +168,48 @@ func mustRead(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(b)
+}
+
+// The audit log is read after the fact by somebody asking what this panel
+// changed on their machine, so every agent's entry has to name the file that
+// agent's hooks went into. The two newest could both have been dropped from
+// hookTarget and every test still passed: their entries would have said
+// ~/.claude/settings.json.
+func TestTheAuditEntryNamesTheFileEachAgentWasInstalledInto(t *testing.T) {
+	st := hooks.Status{
+		SettingsPath: "/h/.claude/settings.json",
+		CodexPath:    "/h/.codex/hooks.json",
+		KimiPath:     "/h/.kimi-code/config.toml",
+		ZcodePath:    "/h/.zcode/cli/config.json",
+		OpencodePath: "/h/.config/opencode/plugin/vibepanel.js",
+	}
+	want := map[string]string{
+		"claude":   st.SettingsPath,
+		"codex":    st.CodexPath,
+		"kimi":     st.KimiPath,
+		"zcode":    st.ZcodePath,
+		"opencode": st.OpencodePath,
+	}
+	for _, agent := range hookAgents {
+		if got := hookTarget(agent, st); got != want[agent] {
+			t.Errorf("an install of %s is recorded against %s, not %s", agent, got, want[agent])
+		}
+	}
+}
+
+// And the ordering the reader applies, which is what keeps the rows from
+// reshuffling when somebody ticks one back on. Written straight into the
+// settings row rather than through the handler, because the handler normalises
+// too and the two were covering for each other.
+func TestAgentsShownIsOrderedByTheServerNotByWhatWasStored(t *testing.T) {
+	ts, srv := newTestServer(t)
+	if err := srv.DB.SetSetting(context.Background(), reportingAgentsKey,
+		`["opencode","kimi","claude","claude"]`); err != nil {
+		t.Fatalf("SetSetting: %v", err)
+	}
+	st := hookStatusOf(t, ts.URL, ts.Client())
+	if !slices.Equal(st.AgentsShown, []string{"claude", "kimi", "opencode"}) {
+		t.Errorf("read back %v, want them in the order the page draws them with the duplicate gone",
+			st.AgentsShown)
+	}
 }

@@ -66,6 +66,8 @@ export function FileTree({
   // Fraction of the running upload, null when none is. The note says what is
   // happening; this says how far it has got.
   const [uploadProgress, setUploadProgress] = useState<number | null>(null)
+  // How many uploads are in flight. Only the last one out turns the bar off.
+  const running = useRef(0)
   const [making, setMaking] = useState(false)
   // Closed on every path change, or the menu for one directory stays open over
   // the next one and the link it makes is not the directory on screen.
@@ -111,6 +113,10 @@ export function FileTree({
   const take = useCallback(
     (files: File[]) => {
       if (files.length === 0) return
+      // Counted, because a second drop while the first is still going used to
+      // end with the first one's `finally` clearing the second one's bar: it
+      // uploaded with nothing on screen saying so.
+      running.current += 1
       setUploadProgress(0)
       void uploadFiles(projectId, path, files, setNote, setUploadProgress)
         .then((paths) => {
@@ -119,7 +125,10 @@ export function FileTree({
           // so the honest picture is the one the server has.
           if (paths.length > 0) setReloads((n) => n + 1)
         })
-        .finally(() => setUploadProgress(null))
+        .finally(() => {
+          running.current -= 1
+          if (running.current === 0) setUploadProgress(null)
+        })
     },
     [projectId, path],
   )
@@ -527,6 +536,7 @@ export function FileTree({
             <span
               data-testid="file-upload-progress"
               role="progressbar"
+              aria-label={t('upload.progress')}
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={Math.round(uploadProgress * 100)}

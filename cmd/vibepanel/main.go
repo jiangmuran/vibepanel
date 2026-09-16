@@ -829,15 +829,16 @@ not affect agents you start from an ordinary terminal.
 	return nil
 }
 
-// hookRemove takes the panel's hooks out of all three agents' configuration.
+// hookRemove takes the panel's hooks out of every agent's configuration.
 //
 // Every one of them is reported, including the ones that were not there. "Not
 // installed" and "removed" are different facts about somebody's machine, and a
 // teardown that prints only what it touched leaves you wondering about the rest.
 //
-// A failure on one does not stop the others. They are three separate files
-// owned by three separate tools, and an unreadable ~/.codex/config.toml is no
-// reason to leave the Claude Code hooks in place.
+// A failure on one does not stop the others. They are separate files owned by
+// separate tools, and an unreadable ~/.codex/config.toml is no reason to leave
+// the Claude Code hooks in place. No count in this comment: it was "three"
+// until there were five, and the number is the part that goes stale.
 func hookRemove(args []string) error {
 	cfg, err := config.Load(args, os.Stderr)
 	if err != nil {

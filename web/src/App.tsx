@@ -54,7 +54,7 @@ import { dismissToast, setToastProgress, showToast } from './components/toasts'
 import { focusTerminal } from './components/focus'
 import { RestoreDialog } from './components/RestoreDialog'
 import { LaunchPicker } from './components/LaunchPicker'
-import { filesFrom } from './components/upload'
+import { filesFrom, uploadErrorText } from './components/upload'
 import { copyTextInGesture } from './clipboard'
 import { notifyOnWaiting } from './notify'
 import { t, useLang } from './i18n'
@@ -744,7 +744,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         showToast({
           kind: 'error',
           key: 'toast.uploadFailed',
-          detail: err instanceof Error ? err.message : String(err),
+          detail: uploadErrorText(err),
         })
       }
     },

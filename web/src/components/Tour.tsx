@@ -164,9 +164,13 @@ function Intro() {
 /**
  * The step this whole thing exists for.
  *
- * Three agents, each configured by a different mechanism in a different file,
- * so three buttons and three answers rather than one "install everything" that
- * half-succeeds and reports nothing.
+ * One row per agent, each configured by a different mechanism in a different
+ * file, so a button and an answer each rather than one "install everything"
+ * that half-succeeds and reports nothing.
+ *
+ * Which agents: the ones the owner has ticked in Settings → State reporting
+ * (hookAgents.ts filters them), so a first run offers what this panel is set
+ * up for rather than every agent the panel has heard of.
  */
 function Reporting({ onOpenSettings }: StepProps) {
   const [st, setSt] = useState<HookStatus | null>(null)
@@ -240,7 +244,14 @@ function Reporting({ onOpenSettings }: StepProps) {
           </div>
         ))}
       </div>
-      {st && (
+      {/* Nobody sees this on a first run -- the default is three agents -- but
+          somebody who has turned them all off and reopened the tour gets a
+          step with nothing in it, and a step with nothing in it reads as
+          broken rather than as configured. */}
+      {st && agents.length === 0 && (
+        <p className="mt-3 text-vp-sm text-ink-3">{t('tour.noAgents')}</p>
+      )}
+      {st && agents.length > 0 && (
         <p className="mt-3 text-vp-sm text-ink-3">{t('tour.hooksExisting')}</p>
       )}
       <More to="reporting" onOpenSettings={onOpenSettings} />

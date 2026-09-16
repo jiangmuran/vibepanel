@@ -119,7 +119,13 @@ function sameAs(a: Toast, b: ToastSpec): boolean {
  */
 export function showToast(spec: ToastSpec): number {
   const last = current[current.length - 1]
-  if (last && sameAs(last, spec)) {
+  // Never merge into a toast with a bar on it. Dedup returns the *same id*,
+  // and a progress toast now lives as long as its upload rather than four
+  // seconds -- so pasting a second screenshot during a big upload handed both
+  // of them one toast: the bar jumped back to the second upload's 1%, and the
+  // first one to finish dismissed the toast out from under the other, whose
+  // remaining reports then moved a toast that was no longer there.
+  if (last && sameAs(last, spec) && last.progress === undefined && spec.progress === undefined) {
     const bumped: Toast = { ...last, count: last.count + 1 }
     current = [...current.slice(0, -1), bumped]
     arm(bumped)

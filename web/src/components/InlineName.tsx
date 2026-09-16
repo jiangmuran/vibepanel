@@ -1,19 +1,27 @@
 import { useEffect, useRef, useState } from 'react'
 
-interface Props {
+interface Base {
   value: string
   onCommit: (next: string) => void
   className?: string
   title?: string
-  /**
-   * Controlled editing, for the rename button on the row: double click and
-   * long press are gestures you have to know about, and a feature nobody
-   * finds is a feature nobody has. Leave unset for the uncontrolled,
-   * gestures-only behaviour.
-   */
-  editing?: boolean
-  onEditingChange?: (editing: boolean) => void
 }
+
+/**
+ * Controlled editing, for the rename button on the row: double click and long
+ * press are gestures you have to know about, and a feature nobody finds is a
+ * feature nobody has.
+ *
+ * The two arrive together or not at all. Separately optional, `editing`
+ * without `onEditingChange` type-checks and produces an input that can never
+ * close -- the gestures write the inner state that the prop is overriding, so
+ * Escape, Enter and blur all become no-ops.
+ */
+type Controlled =
+  | { editing: boolean; onEditingChange: (editing: boolean) => void }
+  | { editing?: undefined; onEditingChange?: undefined }
+
+type Props = Base & Controlled
 
 /** How long a finger has to stay put before it means "rename". */
 const LONG_PRESS_MS = 500
