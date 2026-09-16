@@ -1378,17 +1378,24 @@ browser = await chromium.launch({ headless: true })
           label: v.getAttribute('data-rank'),
           size: parseFloat(getComputedStyle(v).fontSize),
         })))
-      if (ranks.length < 3) {
+      if (ranks.length < 4) {
         note('FAIL', 'panel/spend', `only ${ranks.length} figures in the block`)
       } else {
-        const [hero, ...pair] = ranks
-        if (!(hero.size > pair[0].size)) {
+        // Today's total and output first and one size; everything below them
+        // one size smaller.
+        const heroes = ranks.filter((r) => r.label === 'hero')
+        const pair = ranks.filter((r) => r.label !== 'hero')
+        if (heroes.length !== 2 || heroes[0].size !== heroes[1].size) {
+          note('FAIL', 'panel/spend',
+            `today's two figures are not one rank: ${JSON.stringify(ranks)}`)
+        }
+        if (!pair.every((p) => p.size < heroes[0].size)) {
           note('FAIL', 'panel/spend',
             `today is not the largest figure: ${JSON.stringify(ranks)}`)
         }
-        if (pair.length >= 2 && pair[0].size !== pair[1].size) {
+        if (new Set(pair.map((p) => p.size)).size !== 1) {
           note('FAIL', 'panel/spend',
-            `the two context figures are different sizes: ${JSON.stringify(ranks)}`)
+            `the context figures are different sizes: ${JSON.stringify(ranks)}`)
         }
         // Three ranks and no more. Four sizes in a block this small is the
         // "nine font sizes" complaint the scale exists for, one layer up.
@@ -1429,6 +1436,64 @@ browser = await chromium.launch({ headless: true })
             `does not know it: ${JSON.stringify(blockText)}`)
         }
       }
+    }
+
+    // The block's header opens the full view directly -- there is no side-panel
+    // detail for tokens any more -- and the view lays out as cards that fit
+    // the dialog.
+    await page.locator('[data-testid="dock-open-tokens"]').click()
+    await sleep(800)
+    if ((await page.locator('[data-testid="detail-tokens"]').count()) !== 0) {
+      note('FAIL', 'tokens/view', 'the dock header opened a side-panel detail, not the full view')
+    }
+    const view = page.locator('[data-testid="token-view"]')
+    if ((await view.count()) !== 1) {
+      note('FAIL', 'tokens/view', 'the dock header did not open the full view')
+    } else {
+      // The view opens scoped to the selected session's project, which this
+      // check's transcript is not in; the whole panel is what is measured.
+      await page.locator('[data-testid="token-filter-project"]').selectOption('')
+      // A pass may not have finished; ask for one rather than measuring
+      // "still counting".
+      await page.locator('[data-testid="token-view-refresh"]').click()
+      let stats = 0
+      for (let i = 0; i < 60 && stats < 2; i++) {
+        await sleep(500)
+        stats = await page.locator('[data-testid="spend-stat-total"], [data-testid="spend-stat-output"]').count()
+      }
+      const total = await page.locator('[data-testid="spend-stat-total"]').count()
+      const output = await page.locator('[data-testid="spend-stat-output"]').count()
+      if (total !== 1 || output !== 1) {
+        note('FAIL', 'tokens/view', `expected the total and output cards, saw ${total} and ${output}`)
+      } else {
+        const bars = await page.locator('[data-testid="spend-trend-bars"] > [role="img"]').count()
+        if (bars < 7) note('FAIL', 'tokens/view', `the trend drew ${bars} days`)
+        const readout = page.locator('[data-testid="spend-trend-readout"]')
+        const before = await readout.innerText()
+        await page.locator('[data-testid="spend-metric-output"]').click()
+        await sleep(300)
+        const pressed = await page.locator('[data-testid="spend-metric-output"]').getAttribute('aria-pressed')
+        const after = await readout.innerText()
+        if (pressed !== 'true') note('FAIL', 'tokens/view', 'the output toggle did not take')
+        if (after === before) {
+          note('FAIL', 'tokens/view', `switching to output left the readout at ${JSON.stringify(after)}`)
+        }
+        await page.locator('[data-testid="spend-metric-total"]').click()
+        // One line per range button: 「365\n天」 wrapped in the old toolbar.
+        for (const n of [7, 30, 90, 365]) {
+          const box = await page.locator(`[data-testid="token-range-${n}"]`).boundingBox()
+          if (box && box.height > 34) {
+            note('FAIL', 'tokens/view', `the ${n}-day range button wraps (${Math.round(box.height)}px tall)`)
+          }
+        }
+        await probeContrast('tokens-view')
+        const overflow = await view.evaluate((el) => el.scrollWidth - el.clientWidth)
+        if (overflow > 1) note('FAIL', 'tokens/view', `the view scrolls sideways by ${overflow}px`)
+        note('PASS', 'tokens/view', `cards, ${bars} days of trend, toggle ${before} -> ${after}`)
+      }
+      await page.keyboard.press('Escape')
+      await sleep(400)
+      if ((await view.count()) !== 0) note('FAIL', 'tokens/view', 'Escape did not close the view')
     }
 
     // A panel you resized and then closed has to come back the size you left
