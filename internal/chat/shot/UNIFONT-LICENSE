@@ -1,0 +1,30 @@
+GNU Unifont 16.0.04 (unifont.hex.gz in this directory)
+======================================================
+
+Copyright (C) 1998-2025 Roman Czyborra, Paul Hardy, and others.
+Source: https://unifoundry.com/unifont/  (unifont-16.0.04.hex.gz)
+
+The font is dual-licensed. From the upstream LICENSE.txt:
+
+    The license for the compiled fonts is covered by the SIL Open Font
+    License version 1.1 and by the above GPL terms [GNU General Public
+    License version 2, or (at your option) a later version] with the GNU
+    font embedding exception, as follows:
+
+        As a special exception, if you create a document which uses this
+        font, and embed this font or unaltered portions of this font into
+        the document, this font does not by itself cause the resulting
+        document to be covered by the GNU General Public License. This
+        exception does not however invalidate any other reasons why the
+        document might be covered by the GNU General Public License. If
+        you modify this font, you may extend this exception to your
+        version of the font, but you are not obligated to do so. If you
+        do not wish to do so, delete this exception statement from your
+        version.
+
+    See "http://www.gnu.org/licenses/gpl-faq.html#FontException" and
+    "https://scripts.sil.org/OFL" for more details.
+
+vibepanel embeds the font file unaltered and uses it under the SIL Open
+Font License 1.1 (https://openfontlicense.org/open-font-license-official-text/).
+The file is the upstream build, byte for byte; nothing here modifies it.
