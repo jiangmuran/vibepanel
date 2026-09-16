@@ -337,6 +337,15 @@ request URL to paste into the console; 微信 signs in by scanning a QR code.
 Every card has a health line that says when a message last arrived, which is
 the only thing that tells a working channel from a configured one.
 
+**Privacy.** The chat code connects to nothing until a channel is switched
+on: the adapters are written in-house with no SDK and ship in the binary, the
+微信 QR code is drawn in your browser, and the screenshot font is bundled. The
+first time you switch a channel or the advanced mode on, the panel says what
+will pass through outside servers (session titles, what agents say, the
+commands they ask to run, screenshots; for the advanced mode, your words and
+the session list to the model provider) and goes ahead only once you agree.
+The server holds that answer, so an API token cannot skip it either.
+
 **Pairing.** Nobody can talk to the panel until you say so. Whoever messages
 the bot first gets a six-digit code and a *pending* row on the page; they tell
 you the code and you enter it. A paired person can see and act on every

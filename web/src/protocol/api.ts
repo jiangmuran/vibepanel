@@ -896,6 +896,7 @@ export const api = {
       `/api/chat/channels/${encodeURIComponent(kind)}/login/${encodeURIComponent(id)}/code`,
       { method: 'POST', body: JSON.stringify({ code }) },
     ),
+  chatConsent: () => request<{ consentAt: number }>('/api/chat/consent', { method: 'POST' }),
   pairChat: (code: string) =>
     request<ChatPeer>('/api/chat/pair', { method: 'POST', body: JSON.stringify({ code }) }),
   patchChatPeer: (channel: string, peerId: string, patch: { mode?: ChatPeerMode; status?: ChatPeerStatus; display?: string }) =>

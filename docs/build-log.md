@@ -22977,3 +22977,54 @@ them removes nothing. A read-only review subagent checked the result against
 the real transcripts. Its findings are the per-field maximum, the fork layout
 (the first draft described two metas on a fork, which is really the subagent
 layout) and the paginated exemption above.
+
+## 2026-09-16 — Chat asks before it talks to anyone, and the README says so
+
+Chat is advertised in both READMEs now, with the privacy side stated as a
+claim: until a channel is switched on, the chat code connects to no outside
+service. A claim like that in a README is a promise, so it has a test.
+`TestChatConnectsToNothingUntilAChannelIsSwitchedOn` builds a bridge with every
+real adapter this build ships, configures each with credentials and leaves it
+off, pairs a person, and has a session go waiting with a prompt, all over an
+HTTP transport that dials nothing and records every attempt: zero requests.
+Then it switches Telegram on and waits for the same transport to see a
+request, which is what shows the recorder would have caught one. Starting the
+channels regardless of their switch fails it with a list of the Telegram,
+飞书 and 微信 URLs that were tried.
+
+"All components offline" was checked rather than assumed: the three adapters
+are plain HTTP clients with no SDK in go.mod, the 微信 QR code is drawn in the
+browser by the bundled `qrcode` package from a URL, and the screenshot
+renderer's font is `go:embed`ded.
+
+The other half of the request was a confirmation the first time chat is
+configured, naming what leaves the machine. It is a gate on the server, not
+only a dialog: switching a channel on, starting a 微信 sign-in and switching
+the advanced mode on answer 409 until `POST /api/chat/consent` has recorded an
+acceptance. A dialog the API skips is a checkbox. Saving a channel switched
+off, reading, pairing and everything an already-running channel does are
+untouched, so a panel upgraded from v1.20.0 with channels running keeps
+running and is asked the next time something is switched on. The time of the
+first acceptance is kept and audited once. The dialog's text is the one string
+excused from the prose budget: a consent that does not say what is sent and to
+whom is consent to something unnamed.
+
+## 2026-09-16 — The assistant could not find `claude` under systemd
+
+The first advanced-mode message on the owner's own panel, v1.20.0 installed as
+a system unit, came back as `助手没答上来：claude: exec: "claude": executable
+file not found in $PATH`. The running service's environment said why:
+`PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/snap/bin`, and
+`claude` and `codex` are in `~/.local/bin`. Sessions never hit this, because
+their tmux server is started from a login shell (`startServerWithProfile`);
+the assistant runs the harness directly, with the service's PATH.
+
+The runner now asks what a session's pane would: the panel's PATH first, then
+the login shell's, read by running it with a marker line so a profile that
+prints a greeting does not get parsed as the answer. The PATH that found the
+harness is also the child's PATH, since Claude Code is a node program. A
+harness found nowhere is refused when the advanced mode is switched on,
+naming both places, rather than at the first message from a phone. A launch
+profile's PATH still wins. The tests fake the login shell's answer, so they
+pass on a CI runner with no harness installed, and a greeting-printing fake
+shell pins the marker parsing.

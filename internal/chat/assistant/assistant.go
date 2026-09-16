@@ -51,6 +51,8 @@ import (
 	"time"
 
 	"github.com/jiangmuran/vibepanel/internal/chat"
+
+	"github.com/jiangmuran/vibepanel/internal/tmux"
 )
 
 // Config is everything the runner needs; the bridge fills it from the
@@ -114,6 +116,9 @@ type Runner struct {
 
 	helpOnce sync.Once
 	help     string
+	// path is PATH as the person's login shell sets it, when the harness
+	// was found there and not on the panel's own PATH; "" otherwise.
+	path string
 }
 
 type thread struct {
@@ -138,8 +143,13 @@ func New(cfg Config) (*Runner, error) {
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = defaultTimeout
 	}
+	var path string
 	if cfg.Binary == "" {
-		cfg.Binary = cfg.Harness
+		bin, p, err := findHarness(cfg.Harness)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Binary, path = bin, p
 	}
 	if cfg.SelfBinary == "" {
 		self, err := os.Executable()
@@ -161,7 +171,68 @@ func New(cfg Config) (*Runner, error) {
 	if err := ensurePrompts(cfg.WorkDir); err != nil {
 		return nil, err
 	}
-	return &Runner{cfg: cfg, threads: map[string]thread{}}, nil
+	return &Runner{cfg: cfg, threads: map[string]thread{}, path: path}, nil
+}
+
+// loginPath is PATH as the login shell sets it; a variable so a test can say
+// what the login shell would answer.
+var loginPath = shellPath
+
+// findHarness is the harness's absolute path, and the PATH its children need
+// when that is not the panel's.
+//
+// The panel runs as a service, and a service's PATH is /usr/bin and little
+// else. `claude` installs to ~/.local/bin and `codex` usually through npm or
+// a version manager, all of which a login shell adds from the person's
+// profile: sessions find them because their tmux server is started from a
+// login shell, and the assistant, which runs the harness directly, answered
+// every message with `exec: "claude": executable file not found in $PATH`.
+// So the question asked here is the one a session's pane answers: the
+// panel's PATH first, then the login shell's. The login PATH is kept for the
+// child too, because Claude Code is a node program and node lives on the
+// same PATH.
+func findHarness(name string) (string, string, error) {
+	if p, err := exec.LookPath(name); err == nil {
+		return p, "", nil
+	}
+	path := loginPath()
+	for _, dir := range filepath.SplitList(path) {
+		if dir == "" || !filepath.IsAbs(dir) {
+			continue
+		}
+		candidate := filepath.Join(dir, name)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode().Perm()&0o111 != 0 {
+			return candidate, path, nil
+		}
+	}
+	return "", "", fmt.Errorf("assistant: %s is not installed where the panel or your login shell can find it; install it, or set PATH in the launch profile", name)
+}
+
+// pathMarker brackets PATH in the login shell's output, which a profile may
+// have printed a greeting into.
+const pathMarker = "VIBEPANEL_LOGIN_PATH="
+
+// shellPath asks the login shell for PATH, or "" when there is none or it
+// does not answer in time.
+func shellPath() string {
+	sh := tmux.LoginShell()
+	if sh == "" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, sh, "-l", "-c", `printf '\n%s%s\n' "`+pathMarker+`" "$PATH"`)
+	cmd.Stdin = nil
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if v, ok := strings.CutPrefix(line, pathMarker); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 // Budget reports the daily cap.
@@ -255,8 +326,15 @@ func (r *Runner) env() []string {
 		if isHookVar(k) || !inheritEnv(k) {
 			continue
 		}
+		if k == "PATH" && r.path != "" {
+			continue
+		}
 		out = append(out, kv)
 	}
+	if r.path != "" {
+		out = append(out, "PATH="+r.path)
+	}
+	// The launch profile's last, so a PATH it sets wins.
 	return append(out, r.cfg.Env...)
 }
 

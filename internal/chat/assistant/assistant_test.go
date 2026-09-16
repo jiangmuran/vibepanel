@@ -624,11 +624,21 @@ func TestNewRefusesABadConfig(t *testing.T) {
 	if _, err := New(Config{Harness: "claude", WorkDir: t.TempDir(), SelfBinary: "/x", Env: []string{"NOEQUALS"}}); err == nil {
 		t.Error("a malformed env entry was accepted")
 	}
+	// A harness where the login shell would find it, whatever this machine
+	// has installed.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", "/nonexistent")
+	old := loginPath
+	loginPath = func() string { return dir }
+	defer func() { loginPath = old }()
 	r, err := New(Config{Harness: "claude", WorkDir: t.TempDir(), SelfBinary: "/x", BudgetUSD: 2.5})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Budget() != 2.5 || r.cfg.MaxTurns != defaultMaxTurns || r.cfg.Timeout != defaultTimeout || r.cfg.Binary != "claude" {
+	if r.Budget() != 2.5 || r.cfg.MaxTurns != defaultMaxTurns || r.cfg.Timeout != defaultTimeout || r.cfg.Binary != filepath.Join(dir, "claude") {
 		t.Errorf("defaults: %+v", r.cfg)
 	}
 }

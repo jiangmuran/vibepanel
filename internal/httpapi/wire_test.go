@@ -425,6 +425,7 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"chat.channel":        true,
 		"chat.assistant":      true,
 		"chat.peer":           true,
+		"chat.consent":        true,
 	}
 
 	files, err := filepath.Glob("*.go")

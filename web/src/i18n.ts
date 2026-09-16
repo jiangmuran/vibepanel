@@ -560,6 +560,12 @@ const DICT = {
   'chat.stopped': { zh: '已停止', en: 'Stopped' },
   'chat.lastInbound': { zh: '最近收到：{when}', en: 'Last message: {when}' },
   'chat.needsHello': { zh: '等 {who} 先发一句（{n} 个请求）', en: 'Waiting for {who} to message first ({n} requests)' },
+  'chat.consentTitle': { zh: '聊天功能会把会话内容发到外部服务', en: 'Chat sends session content to outside services' },
+  'chat.consentBody': {
+    zh: '开启后，会话标题、agent 说的话、要你允许的命令和屏幕截图会经过你配置的聊天服务（Telegram、飞书、微信）的服务器，可能被它们保存。高级模式还会把你发的话和会话列表交给 Claude 或 Codex 的服务商。在这之前，聊天功能不连接任何外部服务。',
+    en: 'Once on, session titles, what agents say, the commands they ask to run and screenshots go through the servers of the chat service you configure (Telegram, Feishu, WeChat), which may keep them. The advanced mode also hands your words and the session list to the Claude or Codex provider. Until then, chat connects to no outside service.',
+  },
+  'chat.consentAccept': { zh: '我知道了，继续', en: 'I understand, continue' },
   'chat.channelOn': { zh: '{name} 已启用', en: '{name} is on' },
   'chat.channelOff': { zh: '{name} 已关闭', en: '{name} is off' },
   'chat.channelRemoved': { zh: '已删掉 {name}', en: '{name} removed' },

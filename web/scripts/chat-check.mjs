@@ -175,9 +175,22 @@ try {
   }
   pass('channels', 'a card per adapter')
 
+  // ── Consent: nothing reaches an outside service before the owner accepts ─
+  const refused = await api('PUT', '/api/chat/channels/telegram', { enabled: true, values: { token: '1:x' } })
+  if (refused.status !== 409) note('FAIL', 'consent', `switching a channel on without consent answered ${refused.status}`)
+  else pass('consent', 'the server refuses to switch a channel on before consent')
+
   // ── Telegram: a fake token becomes a channel whose health line speaks ────
   await page.fill('#chat-telegram-token', '123456:not-a-real-token')
   await page.getByTestId('chat-save-telegram').click()
+  const asked = await until(() => page.getByTestId('confirm-dialog').count().then((n) => n > 0), 5000)
+  if (!asked) note('FAIL', 'consent', 'saving the first channel did not ask for consent')
+  else {
+    const body = (await page.getByTestId('confirm-body').textContent()) ?? ''
+    if (!/Telegram/.test(body)) note('FAIL', 'consent', `the consent does not name where content goes: ${body}`)
+    else pass('consent', 'the first channel asks, naming the services')
+    await page.getByTestId('confirm-yes').click()
+  }
   const health = page.getByTestId('chat-health-telegram')
   const spoke = await until(async () => {
     const text = await health.textContent().catch(() => '')
@@ -195,6 +208,8 @@ try {
   await page.fill('#chat-feishu-app_secret', 'secret')
   await page.fill('#chat-feishu-verification_token', 'verify')
   await page.getByTestId('chat-save-feishu').click()
+  await page.waitForTimeout(300)
+  if ((await page.getByTestId('confirm-dialog').count()) > 0) note('FAIL', 'consent', 'asked again after it was accepted')
   const urlShown = await until(() => page.locator('[data-testid="chat-channel-feishu"] code').count().then((n) => n > 0), 8000)
   if (!urlShown) note('FAIL', 'feishu', 'no request URL after saving')
   else {

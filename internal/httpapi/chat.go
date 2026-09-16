@@ -145,6 +145,7 @@ func (s *Server) registerChatRoutes(r chi.Router) {
 	r.Post("/chat/channels/{kind}/login", s.handleChatLoginStart)
 	r.Get("/chat/channels/{kind}/login/{id}", s.handleChatLoginStatus)
 	r.Post("/chat/channels/{kind}/login/{id}/code", s.handleChatLoginCode)
+	r.Post("/chat/consent", s.handleChatConsent)
 	r.Post("/chat/pair", s.handleChatPair)
 	r.Patch("/chat/peers/{channel}/{peer}", s.handlePatchChatPeer)
 	r.Delete("/chat/peers/{channel}/{peer}", s.handleDeleteChatPeer)
@@ -223,6 +224,56 @@ type chatSettingsView struct {
 	Projects           []store.Project   `json:"projects"`
 	SpendToday         float64           `json:"spendToday"`
 	CallsToday         int               `json:"callsToday"`
+	// ConsentAt is when the owner accepted that configuring chat sends
+	// session content to services outside this machine; zero until then.
+	ConsentAt int64 `json:"consentAt"`
+}
+
+// ChatConsentKey is the settings row recording that acceptance.
+const ChatConsentKey = "chat.consentAt"
+
+// chatConsented reports whether the owner has accepted what configuring chat
+// means. Asked before anything that makes the panel talk to an IM or a model
+// provider for the first time: switching a channel on, a 微信 sign-in, the
+// advanced mode. Not before reading, saving a channel switched off, or
+// anything a channel already running keeps doing.
+//
+// On the server, not only in the page: an API token can configure a channel
+// too, and a consent the page asks for and the API skips is a checkbox, not a
+// gate. Until a channel is configured the chat code connects to nothing, which
+// is what this acceptance is about losing.
+func (s *Server) chatConsented(ctx context.Context) bool {
+	raw, err := s.DB.GetSetting(ctx, ChatConsentKey, "")
+	return err == nil && raw != "" && raw != "0"
+}
+
+// refuseWithoutConsent answers 409 when the owner has not accepted yet, and
+// reports whether it did.
+func (s *Server) refuseWithoutConsent(w http.ResponseWriter, r *http.Request) bool {
+	if s.chatConsented(r.Context()) {
+		return false
+	}
+	writeErr(w, http.StatusConflict, "chat consent required: accept that session content is sent to outside services first")
+	return true
+}
+
+func (s *Server) handleChatConsent(w http.ResponseWriter, r *http.Request) {
+	if !s.requireChat(w) {
+		return
+	}
+	ctx := r.Context()
+	at := time.Now().Unix()
+	if raw, err := s.DB.GetSetting(ctx, ChatConsentKey, ""); err == nil && raw != "" && raw != "0" {
+		at, _ = strconv.ParseInt(raw, 10, 64)
+	} else {
+		if err := s.DB.SetSetting(ctx, ChatConsentKey, strconv.FormatInt(at, 10)); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		user, _, _ := s.currentUser(r)
+		s.audit(ctx, "chat.consent", user.Username, s.clientIP(r), "accepted that chat sends session content to outside services")
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"consentAt": at})
 }
 
 func (s *Server) assistantConfig(ctx context.Context) AssistantConfig {
@@ -300,6 +351,9 @@ func (s *Server) handleChatSettings(w http.ResponseWriter, r *http.Request) {
 		view.Lang = l
 	}
 	view.Dropped = s.Chat.Dropped()
+	if raw, err := s.DB.GetSetting(ctx, ChatConsentKey, ""); err == nil {
+		view.ConsentAt, _ = strconv.ParseInt(raw, 10, 64)
+	}
 	if usd, calls, err := s.DB.ChatSpend(ctx, dayIn(s.loc(ctx), time.Now())); err == nil {
 		view.SpendToday, view.CallsToday = usd, calls
 	}
@@ -377,6 +431,9 @@ func (s *Server) handlePutChatChannel(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "sign in first")
 		return
 	}
+	if req.Enabled && s.refuseWithoutConsent(w, r) {
+		return
+	}
 	if err := s.Chat.WriteChannel(ctx, kind, req.Enabled, cfg); err != nil {
 		if errors.Is(err, chat.ErrChannelConfig) {
 			writeErr(w, http.StatusBadRequest, err.Error())
@@ -450,6 +507,10 @@ func (s *Server) handleChatLoginStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	kind := chi.URLParam(r, "kind")
+	// A sign-in is the first request to the IM's servers.
+	if s.refuseWithoutConsent(w, r) {
+		return
+	}
 	la, err := s.Chat.LoginAdapter(kind)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err.Error())
@@ -759,6 +820,11 @@ func (s *Server) handlePutChatAssistant(w http.ResponseWriter, r *http.Request) 
 	}
 	if cfg.Harness == "" {
 		cfg.Harness = "claude"
+	}
+	// The advanced mode hands a person's words and the session table to a
+	// model provider, which is outside this machine as much as an IM is.
+	if cfg.Enabled && s.refuseWithoutConsent(w, r) {
+		return
 	}
 	// Built before it is stored: a configuration the harness refuses is
 	// answered 400 and nothing changes, rather than saved and off.

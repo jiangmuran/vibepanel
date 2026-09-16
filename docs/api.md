@@ -717,6 +717,18 @@ their chat handles.
 Secrets never come back: a secret field reports `secretSet[name]` and nothing
 else.
 
+### `POST /api/chat/consent`
+
+Records that the owner accepts what configuring chat means: session titles,
+what agents say, the commands they ask to run and screenshots go through the
+servers of the chat service configured, and the advanced mode hands a person's
+words and the session table to a model provider. Answered `200
+{"consentAt"}`, the first acceptance's time, kept on later calls and audited
+once. Until it is recorded, switching a channel on, starting a sign-in and
+switching the advanced mode on answer `409`; saving a channel switched off,
+reading, pairing and everything a running channel does are not affected.
+`GET /api/chat` reports it as `consentAt`, zero until then.
+
 ### `PUT /api/chat/channels/{kind}`
 ### `DELETE /api/chat/channels/{kind}`
 ### `POST /api/chat/channels/{kind}/test`

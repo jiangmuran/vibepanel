@@ -1802,6 +1802,9 @@ export interface ChatSettings {
   projects: Project[]
   spendToday: number
   callsToday: number
+  /** When the owner accepted that chat sends session content to outside
+   *  services; 0 until then. */
+  consentAt: number
 }
 
 export interface ChatLogin {

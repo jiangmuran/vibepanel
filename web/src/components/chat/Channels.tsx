@@ -9,6 +9,7 @@ import { askConfirm } from '../ask'
 import { showToast } from '../toasts'
 import { safeText } from '../text'
 import { Card, Section } from './Chat'
+import { ensureChatConsent } from './consent'
 import { chatError } from './errors'
 import { INPUT, INPUT_SHORT, Primary, Secondary, errText } from './form'
 import { QR } from './QR'
@@ -41,6 +42,7 @@ export function Channels({ data, onChange }: { data: ChatSettings; onChange: () 
             factory={f}
             channel={data.channels.find((c) => c.kind === f.kind) ?? null}
             paired={data.peers.filter((p) => p.channel === f.kind && p.status === 'paired').length}
+            consentAt={data.consentAt}
             onChange={onChange}
           />
         ))}
@@ -97,11 +99,13 @@ function ChannelCard({
   factory,
   channel,
   paired,
+  consentAt,
   onChange,
 }: {
   factory: ChatFactory
   channel: ChatChannel | null
   paired: number
+  consentAt: number
   onChange: () => void
 }) {
   const [values, setValues] = useState<Record<string, string>>({})
@@ -147,6 +151,7 @@ function ChannelCard({
   // only exists once there is a channel to switch. A new channel is
   // created on by Save.
   const toggle = async (on: boolean) => {
+    if (on && !(await ensureChatConsent(consentAt))) return
     try {
       await api.saveChatChannel(factory.kind, on, {})
       showToast({ kind: 'success', key: on ? 'chat.channelOn' : 'chat.channelOff', params: { name: factory.label } })
@@ -157,9 +162,11 @@ function ChannelCard({
   }
 
   const save = async () => {
+    const enabled = channel?.enabled ?? true
+    if (enabled && !(await ensureChatConsent(consentAt))) return
     setBusy(true)
     try {
-      await api.saveChatChannel(factory.kind, channel?.enabled ?? true, values)
+      await api.saveChatChannel(factory.kind, enabled, values)
       setValues((v) => {
         const next = { ...v }
         for (const f of factory.fields) if (f.secret) delete next[f.name]
@@ -210,6 +217,7 @@ function ChannelCard({
   }
 
   const startLogin = async () => {
+    if (!(await ensureChatConsent(consentAt))) return
     setBusy(true)
     try {
       setLogin(await api.startChatLogin(factory.kind))

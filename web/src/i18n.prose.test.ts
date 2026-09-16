@@ -43,6 +43,9 @@ const allowed: Record<string, string> = {
   'set.tmuxConfigStale': 'carries the command the reader has to run',
   // Says what will and will not be restored. Getting this wrong loses work.
   'restore.body': 'what a restore does and does not bring back',
+  // What leaves the machine once chat is on, and to whom. The one thing the
+  // owner accepts; a shorter version is a consent to something unnamed.
+  'chat.consentBody': 'names what is sent and where before the owner accepts it',
 }
 
 describe('the dictionary', () => {
