@@ -21859,3 +21859,197 @@ end of a file that can be hundreds, reads only what was appended, never a
 partial line, and is consulted only after ten minutes without a hook report.
 Checked against a running Codex: it found the rollout and read `done`.
 
+## 2026-09-15 — Kimi Code and zcode hooks; a rename button people find; upload progress
+
+Reported against a deployment running several agent CLIs at once: 「侧边栏三个
+状态图标对于 codex kimicode 和 zcodecli 的识别有问题」 — Codex was covered
+by then (its own hooks, #11), the other two had nothing, and a rename and an
+upload-progress ask rode along.
+
+**What each agent turned out to support** (verified live, not from
+documentation):
+
+- Kimi Code has `[[hooks]]` in `~/.kimi-code/config.toml`, documented and
+  trust-free: UserPromptSubmit/PreToolUse → working, PermissionRequest →
+  waiting, Stop/Interrupt → done. Line-based append, blocks recognised by the
+  marker in their command so removal takes only ours.
+- zcode has `hooks.events` in `~/.zcode/cli/config.json` in Claude's shape,
+  behind `hooks.enabled`, which defaults to `false` — nothing runs until it
+  is true, so the install flips it and the uninstall flips it back only when
+  no hooks of anybody's remain. User-level entries run without the trust
+  machinery the binary reserves for workspace hooks.
+
+Both follow the house rules: merged beside the user's own hooks, backup
+first, removal by marker so nobody else's entries go with them, and a row
+each on the settings page because they are configured by different mechanisms
+and fail separately. Verified on the live box, one fresh session per agent:
+kimi went working(hook) → waiting(hook) at a real approval prompt → done
+(hook) after approving; zcode went working(hook) → done(hook).
+`IsAgentCommand` learned both names (`kimi` is a native binary; zcode reports
+`node` through its wrapper, so the hooks, not the process name, are what it
+is recognised by).
+
+**Rename was already there and nobody could find it.** Double click and long
+press on a session name have renamed it for a long time, but a gesture you
+have to know about is a feature most people never find — reported as 「增加左
+边栏每一个 session 可以改名的功能」. The session row now has a pencil beside
+pin and kill — mouse-only: under a coarse pointer every control is a 44px
+box, and a third one squeezed the selected row's name to "scratc…" and moved
+the row's centre off the name entirely, which render-check caught as the
+compose box becoming unreachable behind an open drawer. Rename with a finger
+stays on the long press, which is why that gesture exists. `InlineName`
+learned a controlled `editing` prop so the button opens the same input the
+gestures open — its first version only handled the close direction, so a
+controlled row could never be opened by the gestures either, which the same
+suite caught as "pressing and holding a session name does not start a
+rename". The unused `session.rename` dictionary entry finally names the
+tooltip.
+
+**Upload progress.** `fetch` cannot report request-body progress, so the
+upload call is XMLHttpRequest now, and the "uploading…" toast carries a
+determinate bar (`setToastProgress` moves it without re-raising the toast —
+an upload reporting itself every hundred milliseconds must not keep itself
+alive forever). The file panel's note line grows the same bar.
+
+
+## 2026-09-15 — Reviewing the Kimi/zcode branch: what its installers did to a machine that has neither
+
+Read #13 line by line before merging. Five things, in the order they would have
+been found by somebody running it.
+
+**`vibepanel hook remove` failed on every machine without zcode.** The read
+turned "there is no config" into an empty document, the empty document got a
+`hooks.enabled: false` written into it, and the write failed for want of
+`~/.zcode/cli`. `hook remove` counts failures, so it then kept the reporter
+script it exists to delete and exited 1. Now a config that is not there is left
+alone, and the `ErrNotExist` branch that was unreachable is the one doing it.
+Pinned by `TestUninstallZcodeWithoutZcodeWritesNothing`; run against the real
+binary in a throwaway HOME, which is how it was found.
+
+**`enabled` is not the panel's to turn off.** It gates hooks that are not in
+that file -- zcode's workspace and plugin hooks -- and the rule "put it back
+when no events remain" says nothing about who turned it on. Somebody using
+workspace hooks, with no user-level events of their own, had them switched off
+by a removal that had installed nothing. The install now leaves a marker beside
+the config when *it* is the one that flipped the flag, and only that marker
+licenses flipping it back. A marker file rather than a guess, because the file
+does not record who wrote what and the cost of guessing wrong is somebody's
+hooks going silent.
+
+**A backup per button press.** The install compared the bytes on disk against a
+re-encode that has no trailing newline, so they never matched: three presses,
+three writes, three backups. It was a second copy of `readSettings`/`encode`/
+`unchanged` with that one difference; it is now the first copy.
+
+**An uninstaller that did not know about the new agents.** `deploy/uninstall.sh`
+counted hooks in three files, and the count is what decides whether `hook
+remove` runs at all. A machine whose only agent was Kimi Code counted zero: the
+hooks stayed, the run said "done", and `$DATA` went -- taking the reporter
+script a live hook still calls on every prompt, silently, because the reporter
+suppresses its own failures. One list now, used by the count and by the
+hand-removal instructions, and `install-check` has a case whose only agent is
+one the old list did not know.
+
+**The upload bar outlived its toast by no time at all.** An info toast is armed
+for four seconds, and `setToastProgress` deliberately does not re-raise -- so
+the 300MB drop the bar was built for lost the whole toast four seconds in. A
+toast whose bar is short of the end is not armed at all now; a full one goes
+back on the ordinary timer, for the caller that forgets to take it back.
+
+Smaller: Kimi's removal took the comment somebody had written under our last
+block, because a block ends at the next table header; XHR uploads never settled
+on abort or timeout; a 200 with an unreadable body reported "0 files uploaded".
+
+## 2026-09-15 — Five rows of install buttons for tools you do not run
+
+「能不能在终端选择菜单默认不显示 kimi 和 zcode，或者在引导页面上和设置里面
+可以隐藏/配置」. The launch menu never listed them -- the built-in catalogue is
+shell, claude, codex, opencode -- so what the report is about is the reporting
+section, which after #13 offered five agents to every panel, and the tour did
+the same on first run.
+
+Ticks in Settings → State reporting, stored as `reporting.agents`, defaulting to
+Claude Code, Codex and opencode. Asked which rule to use and the answer was
+manual ticks rather than detection: "is Kimi Code installed here" is a question
+about a binary that need not be on the panel's PATH at all, and a page that
+guesses wrong hides the button somebody came to press.
+
+Two decisions worth keeping:
+
+- An agent whose hooks are installed keeps its row whatever the ticks say.
+  Hiding it would hide the only Remove button for a block the panel wrote into
+  somebody's configuration file, and leave nothing on screen saying it is there.
+- The setting is stored as JSON rather than a comma-separated list, because
+  "none of them" and "never set" are different answers and a comma list spells
+  them the same way -- turning every row off would have come back as the default
+  on the next load.
+
+The settings page and the tour now read one table (`web/src/components/
+hookAgents.ts`) instead of a list each, and a Go test compares its ids with the
+server's. That is the cheap version of red line 3: two places describing one
+fact, with nothing to notice when they stop agreeing.
+
+
+## 2026-09-15 — Three subagents read the branch back, and what they found
+
+Three reviewers on the open PR, one each on the Go and the installers, the
+frontend and the wire, and the documentation. Between them, seventeen things.
+The ones worth recording:
+
+**The Kimi marker was matched against the whole block.** Claude and Codex test
+it against the command; Kimi tested every line between `[[hooks]]` and the next
+table header. So a block of somebody's whose *comment* said "adapted from the
+vibepanel-report.sh snippet" was ours, and the install -- which strips ours
+before appending -- deleted their hook. Found by writing that config and
+pressing install.
+
+**The zcode marker outlived the hooks it described.** Both early returns in the
+uninstall skipped the `os.Remove`, and zcode rewrites its own config on login:
+a file that came back without a hooks object left a marker saying the panel
+owned a flag it had nothing to do with, and the next removal -- after the user
+had turned `enabled` on for their own workspace hooks -- turned it off. The
+marker is forgotten on every path out now.
+
+**`--purge` had a list of two agents.** `leftover_files` globbed the Claude and
+Codex backups and nothing else, so the backups the two new installers write,
+and the marker, were "nothing left" three directories over. It is derived from
+`HOOK_FILES` now, which is the list the count already uses.
+
+**The settings page's tick could undo an install.** `onChange` captured the
+`status` of the render the checkbox was clicked in and spread it back when the
+PUT resolved, so pressing Install while a tick was in flight put the row back
+to "not installed" over a file the panel had just written. Functional updates
+throughout, and the tick is optimistic -- which is also what stopped two ticks
+in a row from losing the first, because the second was computed from a list the
+first had not yet changed.
+
+**A second paste during a big upload stole the first one's toast.** Making a
+progress toast immortal (the fix two entries up) widened the dedup window from
+four seconds to the whole upload, and dedup returns the *same id*: the bar
+jumped back to the second upload's 1%, and whichever finished first dismissed
+the toast out from under the other. A toast with a bar is never merged into.
+
+**The XHR upload had no test at all.** `upload.test.ts` mocks the api module,
+so the status handling, the 401 that returns the shell to the sign-in screen,
+and the three ways an upload ends without a response could all be deleted with
+575 tests still passing. It has its own suite now, against a fake
+XMLHttpRequest. While writing it: the bar is capped at 0.99 until the response
+arrives, because the last byte leaving the browser is not the upload finishing
+-- the server still has to write the files, which on a 300MB drop is the part
+you wait for.
+
+**Four of the new testids were in no browser check.** `render-check` now ticks
+an agent and reloads to prove the setting is the server's, and clicks the
+rename pencil. The tick block found nothing wrong with the panel; it found my
+own selector wrong, on the first run, which is the argument for the browser
+checks in one line.
+
+Also: `[[hooks]]` cannot be appended to a config that already has `hooks = []`
+or `[hooks]` -- TOML rejects the redefinition and Kimi Code would not start --
+so the install refuses those two shapes rather than writing a file that does
+not parse; `isTableHeader` now requires a closing bracket, so a multi-line
+array inside a block no longer cuts it in half; an uninstall that empties the
+file removes it; `hook remove` has a Go test, because nothing in the repository
+called it and `install-check` drives a fake binary; and `hookTarget`,
+`Inspect`'s four new path and snippet fields, and the `agentsShown` ordering
+each got the test the mutation run proved they did not have.

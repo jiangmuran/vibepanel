@@ -26,8 +26,10 @@ import (
 // third, and it is the one with no type system on either side of it.
 //
 // This package writes state strings into files that leave the repository: the
-// reporter script, the hooks merged into ~/.codex/hooks.json, and the hooks
-// block merged into ~/.claude/settings.json. `internal/hooks` does not import
+// reporter script, the hooks merged into ~/.codex/hooks.json, the [[hooks]]
+// blocks appended to ~/.kimi-code/config.toml, the events merged into
+// ~/.zcode/cli/config.json, and the hooks block merged into
+// ~/.claude/settings.json. `internal/hooks` does not import
 // `internal/session` at all — measured, zero references — so every one of those
 // strings is a bare literal.
 //
@@ -99,6 +101,22 @@ func TestEveryStateAHookReportsIsARealState(t *testing.T) {
 		}
 		if !strings.Contains(codex, `"`+event+`"`) || !strings.Contains(codex, command("/tmp/report.sh", state)+" "+codexSource) {
 			t.Errorf("the Codex snippet does not carry %s -> %s", event, state)
+		}
+	}
+
+	// Kimi Code and zcode: two more tables of bare literals, written into two
+	// more files the panel does not own, with the same silence if one drifts.
+	if len(kimiEvents) == 0 || len(zcodeEvents) == 0 {
+		t.Fatal("an agent table is empty, so this test is comparing nothing")
+	}
+	for _, e := range kimiEvents {
+		if !valid[e.state] {
+			t.Errorf("kimi's %s reports %q, not a state the server accepts", e.event, e.state)
+		}
+	}
+	for _, e := range zcodeEvents {
+		if !valid[e.state] {
+			t.Errorf("zcode's %s reports %q, not a state the server accepts", e.event, e.state)
 		}
 	}
 }

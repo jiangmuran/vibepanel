@@ -50,11 +50,11 @@ import { DirectoryPicker } from './components/DirectoryPicker'
 import { Toasts } from './components/Toasts'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { askConfirm } from './components/ask'
-import { dismissToast, showToast } from './components/toasts'
+import { dismissToast, setToastProgress, showToast } from './components/toasts'
 import { focusTerminal } from './components/focus'
 import { RestoreDialog } from './components/RestoreDialog'
 import { LaunchPicker } from './components/LaunchPicker'
-import { filesFrom } from './components/upload'
+import { filesFrom, uploadErrorText } from './components/upload'
 import { copyTextInGesture } from './clipboard'
 import { notifyOnWaiting } from './notify'
 import { t, useLang } from './i18n'
@@ -687,6 +687,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         kind: 'info',
         key: files.length === 1 ? 'toast.uploadingOne' : 'toast.uploadingMany',
         params: { n: files.length },
+        progress: 0,
       })
       try {
         // Where it lands, and what happens to the path, are read now rather
@@ -698,7 +699,9 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         const dir = cfg?.pasteDir ?? paste.dir
         const then = cfg?.pasteThen ?? paste.then
         const dest = dir === 'session' ? undefined : ('panel' as const)
-        const { paths } = await api.upload(currentProject.id, rel, files, dest)
+        const { paths } = await api.upload(currentProject.id, rel, files, dest, (f) =>
+          setToastProgress(progress, f),
+        )
         // Quoted only when it needs to be: a shell-quoted path that did not
         // need quoting is noise at the prompt, and an unquoted one with a
         // space in it is a bug the user finds after pressing enter.
@@ -741,7 +744,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         showToast({
           kind: 'error',
           key: 'toast.uploadFailed',
-          detail: err instanceof Error ? err.message : String(err),
+          detail: uploadErrorText(err),
         })
       }
     },

@@ -30,7 +30,10 @@ Each of these exists because the alternative broke something real.
    hand-written and compared against `AllStates`; the SQL ordering in
    `internal/store/sessions.go`, which mirrors `State.SortWeight`; and the state
    strings `internal/hooks` writes into the reporter script, the hooks merged
-   into `~/.codex/hooks.json` and the block merged into `~/.claude/settings.json`.
+   into `~/.codex/hooks.json`, the Kimi Code `[[hooks]]` blocks appended to
+   `~/.kimi-code/config.toml`, the zcode `hooks.events` merged into
+   `~/.zcode/cli/config.json` and the block merged into
+   `~/.claude/settings.json`.
 
    This said "two things" until the third was looked for. The first two are
    pinned by tests. The third was not, and it is the one with no type system on

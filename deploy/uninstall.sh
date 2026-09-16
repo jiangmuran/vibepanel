@@ -83,7 +83,22 @@ fi
 say() { printf '  %-9s %s\n' "$1" "$2"; }
 did() { printf '[ok  ] %s\n' "$1"; }
 
-# How many of the three agents still point at the reporter.
+# Every file an agent reads the reporter out of.
+#
+# One list, used three ways: the count below, the hand-removal instructions
+# when something goes wrong, and nothing else may grow a second copy of it.
+# Each of these was added by an agent the panel learned about after this script
+# was written, and the one that was missed is the one that breaks: a machine
+# with only Kimi Code hooks counted zero, so `hook remove` never ran, and the
+# reporter script was deleted out from under hooks that still call it on every
+# prompt.
+HOOK_FILES="$HOME/.claude/settings.json
+$HOME/.codex/hooks.json
+$HOME/.codex/config.toml
+$HOME/.kimi-code/config.toml
+$HOME/.zcode/cli/config.json"
+
+# How many of the agents still point at the reporter.
 #
 # Counted from the files rather than taken from the exit status of `hook
 # remove`, because a binary from before that subcommand existed treats `remove`
@@ -92,16 +107,36 @@ did() { printf '[ok  ] %s\n' "$1"; }
 # gone" is to go and look.
 hooks_present() {
   local n=0
-  if [ -f "$HOME/.claude/settings.json" ] && grep -q vibepanel-report "$HOME/.claude/settings.json" 2>/dev/null; then
-    n=$((n + 1))
-  fi
-  if [ -f "$HOME/.codex/config.toml" ] && grep -q vibepanel-report "$HOME/.codex/config.toml" 2>/dev/null; then
-    n=$((n + 1))
-  fi
+  local f
+  # Split on newlines only: every one of these paths starts at $HOME, and a
+  # home directory with a space in it is not exotic on macOS.
+  local IFS='
+'
+  for f in $HOOK_FILES; do
+    if [ -f "$f" ] && grep -q vibepanel-report "$f" 2>/dev/null; then
+      n=$((n + 1))
+    fi
+  done
+  # opencode is a file the panel owns outright rather than a block inside
+  # somebody's config, so there is nothing to grep for: it being there is the
+  # answer.
   if [ -e "$HOME/.config/opencode/plugin/vibepanel.js" ]; then
     n=$((n + 1))
   fi
   printf '%s' "$n"
+}
+
+# The same list, for a person who now has to do it by hand.
+hook_files_list() {
+  local f
+  local IFS='
+'
+  for f in $HOOK_FILES; do
+    [ -f "$f" ] && grep -q vibepanel-report "$f" 2>/dev/null && echo "         $f"
+  done
+  [ -e "$HOME/.config/opencode/plugin/vibepanel.js" ] &&
+    echo "         $HOME/.config/opencode/plugin/vibepanel.js"
+  return 0
 }
 
 echo "vibepanel uninstall"
@@ -182,9 +217,23 @@ leftover_files() {
   local f keep
   keep="$(newest_archive)"
   [ "$PURGE_ARCHIVES" = yes ] && keep=
+  # Every file the panel writes beside somebody's config: a backup per edit,
+  # and the note zcode's installer leaves saying it was the one that turned
+  # hooks.enabled on. This list was written when there were two agents and
+  # stayed that way through three more, so --purge said "nothing left" over
+  # backups in three directories it had never looked in. Derived from
+  # HOOK_FILES rather than retyped, so the next agent is one line in one place.
+  local hookfile
+  local IFS='
+'
+  for hookfile in $HOOK_FILES; do
+    for f in "$hookfile".vibepanel-backup-* "$hookfile".vibepanel-enabled; do
+      [ -e "$f" ] || continue
+      printf '%s\n' "$f"
+    done
+  done
+  unset IFS
   for f in "$HOME/vibepanel-backups" "$HOME"/vibepanel-data-*.tar.gz \
-           "$HOME"/.claude/settings.json.vibepanel-backup-* \
-           "$HOME"/.codex/config.toml.vibepanel-backup-* \
            "$BIN".*; do
     [ -e "$f" ] || continue
     [ -n "$keep" ] && [ "$f" = "$keep" ] && continue
@@ -193,7 +242,7 @@ leftover_files() {
 }
 
 HOOKS_BEFORE="$(hooks_present)"
-[ "$HOOKS_BEFORE" != 0 ] && say "hooks" "$HOOKS_BEFORE of claude/codex/opencode point at the reporter"
+[ "$HOOKS_BEFORE" != 0 ] && say "hooks" "$HOOKS_BEFORE agent config(s) point at the reporter"
 LEFT="$(leftover_files || true)"
 if [ -n "$LEFT" ]; then
   n="$(printf '%s\n' "$LEFT" | wc -l | tr -d ' ')"
@@ -249,25 +298,23 @@ fi
 if [ -x "$BIN" ] && [ "$HOOKS_BEFORE" != 0 ]; then
   "$BIN" hook remove 2>&1 | sed 's/^/       /' || true
   if [ "$(hooks_present)" = 0 ]; then
-    did "hooks removed from claude, codex and opencode"
+    did "hooks removed from every agent this binary knows"
   else
     echo "[FAIL] $(hooks_present) of them are still there. This binary is probably"
     echo "       older than 'hook remove', which it treats as a stray argument."
     echo "       Take them out by hand before the reporter script goes:"
-    echo "         ~/.claude/settings.json, ~/.codex/config.toml,"
-    echo "         ~/.config/opencode/plugin/vibepanel.js"
+    hook_files_list
     HOOKS_LEFT=yes
   fi
 elif [ "$HOOKS_BEFORE" != 0 ]; then
-  # No binary, so nothing here can edit those three files -- and the removal of
+  # No binary, so nothing here can edit those config files -- and the removal of
   # $DATA further down must not go ahead without them. The same ordering rule as
   # above, reached from the other side: this used to be a silent skip, and a
   # system install came out of it with three live hooks calling a reporter
   # script this run had just deleted.
   echo "[FAIL] no vibepanel binary was found, so the hooks are still there."
   echo "       Take them out by hand:"
-  echo "         ~/.claude/settings.json, ~/.codex/config.toml,"
-  echo "         ~/.config/opencode/plugin/vibepanel.js"
+  hook_files_list
   HOOKS_LEFT=yes
 fi
 
@@ -475,7 +522,7 @@ echo
 echo "── done ──"
 echo "Left alone: your own tmux, zellij, ttyd, and everything under ~/projects."
 if [ "${HOOKS_LEFT:-no}" = yes ]; then
-  echo "STILL THERE: the hooks in the three agent configs. See the FAIL above."
+  echo "STILL THERE: the hooks in the agent configs. See the FAIL above."
 fi
 if [ "${UNIT_LEFT:-no}" = yes ]; then
   echo "STILL THERE: the service unit. See the FAIL above."

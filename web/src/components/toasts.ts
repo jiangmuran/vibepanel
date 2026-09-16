@@ -25,6 +25,11 @@ export interface ToastSpec {
   params?: Record<string, string | number>
   /** Text the panel did not write: a server error, a filename. */
   detail?: string
+  /**
+   * A fraction (0..1) that draws a progress bar under the message, for the
+   * one toast whose job is taking time: an upload. Undefined means no bar.
+   */
+  progress?: number
 }
 
 export interface Toast extends ToastSpec {
@@ -71,8 +76,21 @@ function clearTimer(id: number) {
   timers.delete(id)
 }
 
+/**
+ * Start the countdown for a toast, unless it is reporting something still
+ * running.
+ *
+ * A bar that is not full means the work is not done, and four seconds is the
+ * one length of upload that never needed a progress bar. The 300MB drop this
+ * was built for lost its toast at four seconds and told the person nothing for
+ * the remaining minute. Both callers of a progress toast take it back
+ * themselves -- the upload replaces it with "uploaded" or with the failure --
+ * so there is no path where it stays up forever; a bar that reaches 1 arms the
+ * timer again anyway, for the caller that forgets.
+ */
 function arm(toast: Toast) {
   clearTimer(toast.id)
+  if (toast.progress !== undefined && toast.progress < 1) return
   timers.set(
     toast.id,
     setTimeout(() => dismissToast(toast.id), TOAST_MS[toast.kind]),
@@ -101,7 +119,13 @@ function sameAs(a: Toast, b: ToastSpec): boolean {
  */
 export function showToast(spec: ToastSpec): number {
   const last = current[current.length - 1]
-  if (last && sameAs(last, spec)) {
+  // Never merge into a toast with a bar on it. Dedup returns the *same id*,
+  // and a progress toast now lives as long as its upload rather than four
+  // seconds -- so pasting a second screenshot during a big upload handed both
+  // of them one toast: the bar jumped back to the second upload's 1%, and the
+  // first one to finish dismissed the toast out from under the other, whose
+  // remaining reports then moved a toast that was no longer there.
+  if (last && sameAs(last, spec) && last.progress === undefined && spec.progress === undefined) {
     const bumped: Toast = { ...last, count: last.count + 1 }
     current = [...current.slice(0, -1), bumped]
     arm(bumped)
@@ -127,6 +151,24 @@ export function dismissToast(id: number) {
   if (!current.some((toast) => toast.id === id)) return
   clearTimer(id)
   current = current.filter((toast) => toast.id !== id)
+  emit()
+}
+
+/**
+ * Move a toast's progress bar. Not a re-raise: the message is the same one
+ * already on screen, so the timer is left alone and the dedup count is not
+ * touched — an upload reporting itself every hundred milliseconds must not
+ * keep its own toast alive forever.
+ */
+export function setToastProgress(id: number, fraction: number) {
+  const toast = current.find((toast) => toast.id === id)
+  if (!toast) return
+  const moved: Toast = { ...toast, progress: fraction }
+  current = current.map((t) => (t.id === id ? moved : t))
+  // Not arm() on every report -- that is the re-raise this function exists to
+  // avoid. Only the last one matters: a full bar is work that has finished, so
+  // it goes back on the ordinary timer whether or not the caller takes it back.
+  if (fraction >= 1) arm(moved)
   emit()
 }
 

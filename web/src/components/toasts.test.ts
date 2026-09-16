@@ -5,6 +5,7 @@ import {
   TOAST_MS,
   clearToasts,
   dismissToast,
+  setToastProgress,
   showToast,
   subscribeToasts,
   toastsSnapshot,
@@ -102,5 +103,65 @@ describe('the toast stack', () => {
     off()
     showToast({ kind: 'info', key: 'toast.copied' })
     expect(calls).toBe(2)
+  })
+})
+
+describe('a toast that is reporting something still running', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    clearToasts()
+  })
+  afterEach(() => {
+    clearToasts()
+    vi.useRealTimers()
+  })
+
+  // Four seconds is the one length of upload that never needed a bar. The
+  // 300MB drop this was built for lost its toast four seconds in and said
+  // nothing for the rest of the minute.
+  it('stays up while the bar is short of the end', () => {
+    const id = showToast({ kind: 'info', key: 'toast.uploadingOne', progress: 0 })
+    vi.advanceTimersByTime(TOAST_MS.info * 10)
+    expect(toastsSnapshot()).toHaveLength(1)
+    setToastProgress(id, 0.5)
+    vi.advanceTimersByTime(TOAST_MS.info * 10)
+    expect(toastsSnapshot()[0]?.progress).toBe(0.5)
+  })
+
+  // Moving it is not saying it again: an upload reporting itself every hundred
+  // milliseconds must not keep its own toast alive by being noisy, which is
+  // what re-raising it would do.
+  it('does not count up or re-raise as the bar moves', () => {
+    const id = showToast({ kind: 'info', key: 'toast.uploadingOne', progress: 0 })
+    setToastProgress(id, 0.3)
+    setToastProgress(id, 0.6)
+    expect(toastsSnapshot()).toHaveLength(1)
+    expect(toastsSnapshot()[0]?.count).toBe(1)
+  })
+
+  // A full bar is work that has finished, so it goes back on the ordinary
+  // timer. Both callers take their own toast back; this is for the one that
+  // forgets, so a finished upload cannot leave a bar on screen for good.
+  it('goes away on its own once the bar is full', () => {
+    const id = showToast({ kind: 'info', key: 'toast.uploadingOne', progress: 0 })
+    setToastProgress(id, 1)
+    expect(toastsSnapshot()).toHaveLength(1)
+    vi.advanceTimersByTime(TOAST_MS.info)
+    expect(toastsSnapshot()).toHaveLength(0)
+  })
+
+  // Dedup returns the *same id*, and a progress toast now lives as long as its
+  // upload rather than four seconds -- so a second paste during a big upload
+  // used to land on the first one's toast: the bar jumped back to the second
+  // upload's 1%, and whichever finished first dismissed the toast out from
+  // under the other.
+  it('does not merge a second upload into the first one’s bar', () => {
+    const first = showToast({ kind: 'info', key: 'toast.uploadingOne', progress: 0 })
+    setToastProgress(first, 0.6)
+    const second = showToast({ kind: 'info', key: 'toast.uploadingOne', progress: 0 })
+    expect(second).not.toBe(first)
+    expect(toastsSnapshot()).toHaveLength(2)
+    dismissToast(first)
+    expect(toastsSnapshot().map((t) => t.id)).toEqual([second])
   })
 })

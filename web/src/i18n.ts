@@ -440,6 +440,12 @@ const DICT = {
   'upload.doneOne': { zh: '已上传 1 个文件', en: '1 file uploaded' },
   'upload.doneMany': { zh: '已上传 {n} 个文件', en: '{n} files uploaded' },
   'upload.failed': { zh: '上传失败', en: 'Upload failed' },
+  // What went wrong before the server had a chance to answer. The panel wrote
+  // these, so they go through the dictionary like everything else it writes.
+  'upload.network': { zh: '没有连上面板', en: 'The panel could not be reached' },
+  'upload.aborted': { zh: '上传已取消', en: 'Upload cancelled' },
+  'upload.timeout': { zh: '上传超时', en: 'Upload timed out' },
+  'upload.progress': { zh: '上传进度', en: 'Upload progress' },
 
   'preview.title': { zh: '预览', en: 'Preview' },
   'preview.close': { zh: '关闭预览', en: 'Close preview' },
@@ -713,6 +719,14 @@ const DICT = {
   },
   'set.claudeCode': { zh: 'Claude Code', en: 'Claude Code' },
   'set.opencode': { zh: 'opencode', en: 'opencode' },
+  'set.kimiCode': { zh: 'Kimi Code', en: 'Kimi Code' },
+  'tour.noAgents': {
+    zh: '状态上报里现在一个 agent 都没勾。到设置 → 状态上报里选要用的那些。',
+    en: 'No agents are ticked for state reporting. Choose yours in Settings → State reporting.',
+  },
+  'set.agentsShown': { zh: '显示这些 agent', en: 'Agents shown' },
+  'set.agentInstalledAnyway': { zh: '（已安装）', en: '(installed)' },
+  'set.zcode': { zh: 'zcode', en: 'zcode' },
   'set.installedPlugin': { zh: '已装插件', en: 'Plugin installed' },
   'set.codex': { zh: 'Codex', en: 'Codex' },
   'set.settingsFile': { zh: '配置文件', en: 'Settings file' },
@@ -780,7 +794,7 @@ const DICT = {
   // "installed" is a claim about a file, not about behaviour: the panel has
   // read a config, it has not heard from an agent.
   'set.installedEvents': { zh: '已安装，{n} 个事件', en: 'installed for {n} events' },
-  'set.installedCodexHooks': { zh: '已安装，{n} 个事件', en: 'installed for {n} events' },
+  'set.installedHooks': { zh: '已安装，{n} 个事件', en: 'installed for {n} events' },
   'set.codexLegacyNotify': {
     zh: '还是旧的 notify，只能报「等你处理」。再装一次换成 hooks。',
     en: 'Still the old notify line, which reports waiting only. Install again to switch to hooks.',

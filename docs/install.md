@@ -261,7 +261,7 @@ leaves the data directory. `--dev-leftovers` also clears the sockets and
 servers this repository's own tests leave behind, which a normal install never
 has.
 
-Whether the hooks are gone is checked by reading the three files afterwards,
+Whether the hooks are gone is checked by reading those files afterwards,
 not by the exit status: a binary older than `vibepanel hook remove` treats
 `remove` as a stray word and exits 0 having done nothing. If any are left the
 script says so and keeps the data directory, so the reporter those hooks call

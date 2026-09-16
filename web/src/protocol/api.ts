@@ -214,6 +214,25 @@ export class ElevateRefusedError extends Error {
   }
 }
 
+/**
+ * The upload did not reach the server, or did not come back.
+ *
+ * A kind rather than a message, because this layer has no dictionary -- and
+ * the message of whatever is thrown here is shown to the person who dropped
+ * the file. `detail` on a toast is documented as "text the panel did not
+ * write: a server error, a filename", and `network error` in the middle of a
+ * Chinese page is the panel writing English into that slot. The caller turns
+ * the kind into a sentence; see uploadErrorText.
+ */
+export class UploadTransportError extends Error {
+  readonly kind: 'network' | 'aborted' | 'timeout'
+  constructor(kind: 'network' | 'aborted' | 'timeout') {
+    super(kind)
+    this.name = 'UploadTransportError'
+    this.kind = kind
+  }
+}
+
 export class UnauthorizedError extends Error {
   readonly setupRequired: boolean
   constructor(message: string, setupRequired: boolean) {
@@ -341,6 +360,17 @@ export const api = {
 
   removeHooks: (agent: HookAgent = 'claude') =>
     request<HookStatus>(`/api/settings/hooks?agent=${agent}`, { method: 'DELETE' }),
+
+  /** Which agents the reporting section offers. The server answers with the
+   *  list it stored, which is the one the page then draws from: it fixes the
+   *  order and drops duplicates, and a page that kept its own copy would show
+   *  something the next reload disagrees with. A name the server does not know
+   *  is a 400, not a silent omission. */
+  setHookAgents: (agents: HookAgent[]) =>
+    request<{ agentsShown: HookAgent[] }>('/api/settings/hooks/agents', {
+      method: 'PUT',
+      body: JSON.stringify({ agents }),
+    }),
 
   state: () => request<PanelState>('/api/state'),
 
@@ -927,16 +957,72 @@ export const api = {
    * working directory is a git repository, and a picture pasted at an agent
    * should not dirty it.
    */
-  upload: async (projectId: string, path: string, files: File[], dest?: 'panel') => {
+  upload: async (
+    projectId: string,
+    path: string,
+    files: File[],
+    dest?: 'panel',
+    onProgress?: (fraction: number) => void,
+  ) => {
     const form = new FormData()
     for (const f of files) form.append('file', f, f.name)
-    const res = await fetch(
-      `/api/projects/${projectId}/upload?path=${encodeURIComponent(path)}` +
-        (dest ? `&dest=${dest}` : ''),
-      { method: 'POST', body: form },
-    )
-    if (!res.ok) throw await failure(res)
-    return (await res.json()) as { paths: string[] }
+    // XMLHttpRequest rather than fetch: fetch cannot report request-body
+    // progress, and a progress bar is the difference between "uploading…" and
+    // knowing a 300MB drop is halfway rather than hung.
+    return await new Promise<{ paths: string[] }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open(
+        'POST',
+        `/api/projects/${projectId}/upload?path=${encodeURIComponent(path)}` +
+          (dest ? `&dest=${dest}` : ''),
+      )
+      // Capped just short of the end. The last byte leaving the browser is not
+      // the upload finishing -- the server still has to write the files, which
+      // on the 300MB drop this bar exists for is the part you wait for. A bar
+      // that reads 100% while nothing has come back is the same "is it hung?"
+      // question moved to the end, and a full bar puts the toast back on its
+      // four-second timer.
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && onProgress) onProgress(Math.min(e.loaded / e.total, 0.99))
+      }
+      xhr.onload = () => {
+        type Body = { paths?: string[]; error?: string; setupRequired?: boolean }
+        let body: Body | null = null
+        try {
+          body = JSON.parse(xhr.responseText) as Body
+        } catch {
+          /* non-JSON body: a proxy or a crash, same as failure() covers */
+        }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          // A 200 whose body is not the answer is a proxy in the way, not an
+          // upload of nothing: `paths ?? []` reported success and the panel
+          // said "0 files uploaded" with no way to tell that apart from a
+          // request that really did store none.
+          if (!body?.paths) {
+            reject(new Error(`${xhr.status} ${xhr.statusText}`))
+            return
+          }
+          // Now it is done, and the bar says so.
+          onProgress?.(1)
+          resolve({ paths: body.paths })
+          return
+        }
+        const message = body?.error ?? `${xhr.status} ${xhr.statusText}`
+        if (xhr.status === 401) {
+          reject(new UnauthorizedError(message, body?.setupRequired === true))
+          return
+        }
+        reject(new Error(message))
+      }
+      // Every other way this ends. A Promise that is never settled leaves the
+      // "uploading…" toast on screen with its bar where it stopped, and the
+      // await above never returns -- so nothing takes it back and nothing says
+      // what happened.
+      xhr.onerror = () => reject(new UploadTransportError('network'))
+      xhr.onabort = () => reject(new UploadTransportError('aborted'))
+      xhr.ontimeout = () => reject(new UploadTransportError('timeout'))
+      xhr.send(form)
+    })
   },
 
   /**

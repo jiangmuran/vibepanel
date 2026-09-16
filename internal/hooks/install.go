@@ -15,9 +15,10 @@ import (
 
 // editMu serialises every read-modify-write of an agent's configuration file.
 //
-// Held by InstallClaude, UninstallClaude, ApplyTune, InstallCodex and
-// UninstallCodex — everything that reads one of those files, changes what it
-// read and writes it back. One lock for all of them rather than one per file:
+// Held by InstallClaude, UninstallClaude, ApplyTune, InstallCodex,
+// UninstallCodex, InstallKimi, UninstallKimi, InstallZcode and UninstallZcode
+// — everything that reads one of those files, changes what it read and writes
+// it back. One lock for all of them rather than one per file:
 // these are button presses on a settings page, so there is no contention worth
 // measuring, and a single lock cannot be taken in two orders.
 //
@@ -90,6 +91,22 @@ type Status struct {
 	CodexSessions  int `json:"codexSessions"`
 	CodexReporting int `json:"codexReporting"`
 
+	// KimiPath is ~/.kimi-code/config.toml; KimiInstalled says every event has
+	// a [[hooks]] block of ours in it; KimiEvents lists which ones; KimiSnippet
+	// is what would be appended.
+	KimiPath      string   `json:"kimiPath"`
+	KimiInstalled bool     `json:"kimiInstalled"`
+	KimiEvents    []string `json:"kimiEvents"`
+	KimiSnippet   string   `json:"kimiSnippet"`
+
+	// ZcodePath is ~/.zcode/cli/config.json; ZcodeInstalled says every event
+	// has a group of ours in it; ZcodeEvents lists which ones; ZcodeSnippet is
+	// what would be merged.
+	ZcodePath      string   `json:"zcodePath"`
+	ZcodeInstalled bool     `json:"zcodeInstalled"`
+	ZcodeEvents    []string `json:"zcodeEvents"`
+	ZcodeSnippet   string   `json:"zcodeSnippet"`
+
 	// OpencodePath is the plugin file, and OpencodeInstalled says whether the
 	// one in place is *this build's*.
 	//
@@ -140,6 +157,10 @@ func Inspect(scriptPath string) (Status, error) {
 	//
 	// Pinned by TestOpencodeIsReportedWithNoClaudeSettingsFile.
 	opencodePath, _ := OpencodePluginPath()
+	kimiPath, _ := KimiConfigPath()
+	kimiEventsInstalled := kimiHookEvents(kimiPath)
+	zcodePath, _ := ZcodeConfigPath()
+	zcodeEventsInstalled := zcodeHookEvents(zcodePath)
 
 	st := Status{
 		SettingsPath:      settingsPath,
@@ -151,6 +172,14 @@ func Inspect(scriptPath string) (Status, error) {
 		CodexEvents:       codexEventsInstalled,
 		CodexTrust:        codexTrust(codexHooks, codexConfig),
 		CodexLegacyNotify: codexNotifyInstalled(codexConfig),
+		KimiPath:          kimiPath,
+		KimiInstalled:     len(kimiEventsInstalled) == len(kimiEvents),
+		KimiEvents:        kimiEventsInstalled,
+		KimiSnippet:       KimiHooks(scriptPath),
+		ZcodePath:         zcodePath,
+		ZcodeInstalled:    len(zcodeEventsInstalled) == len(zcodeEvents),
+		ZcodeEvents:       zcodeEventsInstalled,
+		ZcodeSnippet:      ZcodeHooks(scriptPath),
 		OpencodePath:      opencodePath,
 		OpencodeInstalled: OpencodeInstalled(),
 		Events:            []string{},

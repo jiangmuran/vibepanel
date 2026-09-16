@@ -4,7 +4,8 @@ import { Check, ChevronLeft, ChevronRight, Circle, Triangle, X } from 'lucide-re
 import { api } from '../protocol/api'
 import { requestNotifyPermission } from '../notify'
 import { showToast } from './toasts'
-import type { HookStatus, TuneStatus } from '../protocol/wire'
+import type { HookAgent, HookStatus, TuneStatus } from '../protocol/wire'
+import { hookAgentInstalled, hookAgentName, visibleHookAgents } from './hookAgents'
 import type { SettingsSection } from './settings/groups'
 import { t, getLang, useLang } from '../i18n'
 
@@ -163,9 +164,13 @@ function Intro() {
 /**
  * The step this whole thing exists for.
  *
- * Three agents, each configured by a different mechanism in a different file,
- * so three buttons and three answers rather than one "install everything" that
- * half-succeeds and reports nothing.
+ * One row per agent, each configured by a different mechanism in a different
+ * file, so a button and an answer each rather than one "install everything"
+ * that half-succeeds and reports nothing.
+ *
+ * Which agents: the ones the owner has ticked in Settings → State reporting
+ * (hookAgents.ts filters them), so a first run offers what this panel is set
+ * up for rather than every agent the panel has heard of.
  */
 function Reporting({ onOpenSettings }: StepProps) {
   const [st, setSt] = useState<HookStatus | null>(null)
@@ -180,7 +185,7 @@ function Reporting({ onOpenSettings }: StepProps) {
   }
   useEffect(load, [])
 
-  const install = (agent: 'claude' | 'codex' | 'opencode') => {
+  const install = (agent: HookAgent) => {
     setBusy(agent)
     api
       .installHooks(agent)
@@ -189,14 +194,19 @@ function Reporting({ onOpenSettings }: StepProps) {
       .finally(() => setBusy(''))
   }
 
-  const agents: { id: 'claude' | 'codex' | 'opencode'; name: string; on: boolean; note?: string }[] =
-    st
-      ? [
-          { id: 'claude', name: t('set.claudeCode'), on: st.installed },
-          { id: 'codex', name: t('set.codex'), on: st.codexInstalled, note: t('set.codexTrust') },
-          { id: 'opencode', name: t('set.opencode'), on: st.opencodeInstalled },
-        ]
-      : []
+  // The same rows the settings page shows, from the same table: the tour had a
+  // list of its own, so an agent added to one of them appeared in the other by
+  // somebody remembering to. Which agents those are is the setting -- a first
+  // run should offer the agents this panel is set up for, not every agent it
+  // has ever heard of.
+  const agents: { id: HookAgent; name: string; on: boolean; note?: string }[] = st
+    ? visibleHookAgents(st).map((id) => ({
+        id,
+        name: hookAgentName(id),
+        on: hookAgentInstalled(st, id),
+        note: id === 'codex' ? t('set.codexTrust') : undefined,
+      }))
+    : []
 
   return (
     <>
@@ -234,7 +244,14 @@ function Reporting({ onOpenSettings }: StepProps) {
           </div>
         ))}
       </div>
-      {st && (
+      {/* Nobody sees this on a first run -- the default is three agents -- but
+          somebody who has turned them all off and reopened the tour gets a
+          step with nothing in it, and a step with nothing in it reads as
+          broken rather than as configured. */}
+      {st && agents.length === 0 && (
+        <p className="mt-3 text-vp-sm text-ink-3">{t('tour.noAgents')}</p>
+      )}
+      {st && agents.length > 0 && (
         <p className="mt-3 text-vp-sm text-ink-3">{t('tour.hooksExisting')}</p>
       )}
       <More to="reporting" onOpenSettings={onOpenSettings} />

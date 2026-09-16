@@ -124,3 +124,33 @@ func TestAnInstallAndATuneAtTheSameTimeBothSurvive(t *testing.T) {
 		}
 	}
 }
+
+// What the settings page draws before anybody presses a button: the file it
+// will edit, and the text it will write into it. Both were unreported for
+// opencode once -- TestOpencodeIsReportedWithNoClaudeSettingsFile is that bug
+// -- and the two agents added since had nothing checking either field, so a
+// path and a snippet could both go empty with every test green.
+func TestInspectNamesEveryAgentsFileAndSnippet(t *testing.T) {
+	withFakeHome(t)
+	st, err := Inspect(codexScript)
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
+	}
+	for _, tc := range []struct{ agent, path, snippet string }{
+		{"claude", st.SettingsPath, st.Snippet},
+		{"codex", st.CodexPath, st.CodexSnippet},
+		{"kimi", st.KimiPath, st.KimiSnippet},
+		{"zcode", st.ZcodePath, st.ZcodeSnippet},
+		{"opencode", st.OpencodePath, "n/a"},
+	} {
+		if tc.path == "" {
+			t.Errorf("%s has no file to name on the settings page", tc.agent)
+		}
+		if tc.snippet == "" {
+			t.Errorf("%s shows an empty snippet where what it will write should be", tc.agent)
+		}
+		if tc.snippet != "n/a" && !strings.Contains(tc.snippet, codexScript) {
+			t.Errorf("%s's snippet does not carry the reporter it would install:\n%s", tc.agent, tc.snippet)
+		}
+	}
+}

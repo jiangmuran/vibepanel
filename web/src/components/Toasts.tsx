@@ -81,6 +81,29 @@ export function Toasts({ narrow }: { narrow: boolean }) {
               {toast.detail && (
                 <span className="block text-ink-2">{safeText(toast.detail)}</span>
               )}
+              {toast.progress !== undefined && (
+                <span
+                  data-testid="toast-progress"
+                  role="progressbar"
+                  // Named, or a screen reader says "progress bar, 50 percent"
+                  // about nothing in particular. An upload is the only thing
+                  // that puts a bar on a toast; when something else does, this
+                  // becomes a field on the spec.
+                  aria-label={t('upload.progress')}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(toast.progress * 100)}
+                  className="mt-1 block h-1 overflow-hidden rounded-full bg-surface-2"
+                >
+                  <span
+                    className="block h-full rounded-full transition-[width] duration-150 ease-vp"
+                    style={{
+                      width: `${Math.round(toast.progress * 100)}%`,
+                      background: TINT[toast.kind],
+                    }}
+                  />
+                </span>
+              )}
             </span>
             {toast.count > 1 && (
               <span

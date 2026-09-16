@@ -1,0 +1,328 @@
+package hooks
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// tomlString quotes a value for a TOML basic string.
+//
+// The script path is built from the data directory, which is a flag: it can
+// contain a backslash or a quote, and either one written raw produces a
+// config.toml that does not parse. Kimi Code refuses to start on that, so the
+// panel would have broken the agent it was trying to wire up -- and this
+// string is not only shown, it is what InstallKimi writes.
+func tomlString(s string) string {
+	// Tabs and newlines are escaped for the same reason as the quote: written
+	// raw they end the string, and TOML rejects the file. A data directory
+	// with a tab in its name is not something anybody sets on purpose; it is
+	// something a paste does.
+	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\t", `\t`, "\n", `\n`, "\r", `\r`)
+	return `"` + r.Replace(s) + `"`
+}
+
+// kimiEvents maps a Kimi Code hook event to the state it reports, in the order
+// the blocks are written.
+//
+// The mapping is Claude Code's: a prompt or a tool call means working, a
+// permission prompt means waiting, the turn ending means done. Kimi fires
+// Interrupt in place of Stop when somebody presses Esc, so without the last
+// entry an interrupted session would read as working for good.
+var kimiEvents = []struct{ event, state string }{
+	{"UserPromptSubmit", "working"},
+	{"PreToolUse", "working"},
+	{"PermissionRequest", "waiting"},
+	{"Stop", "done"},
+	{"Interrupt", "done"},
+}
+
+// KimiConfigPath is the file Kimi Code reads its [[hooks]] from.
+func KimiConfigPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("hooks: home directory: %w", err)
+	}
+	return filepath.Join(home, ".kimi-code", "config.toml"), nil
+}
+
+// KimiHooks renders the [[hooks]] blocks for the settings page.
+//
+// The same text the installer appends: the snippet's promise is that what you
+// read is what gets merged.
+func KimiHooks(script string) string {
+	var b strings.Builder
+	for i, e := range kimiEvents {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		fmt.Fprintf(&b, "[[hooks]]\nevent = %s\ncommand = %s\n",
+			tomlString(e.event), tomlString(command(script, e.state)))
+	}
+	return b.String()
+}
+
+// InstallKimi appends the panel's [[hooks]] blocks to ~/.kimi-code/config.toml.
+//
+// Line-based rather than parse-and-re-encode, for the same reason the Codex
+// config.toml edit is: the file is the user's, full of providers and model
+// tables, and every TOML round-trip loses comments and reorders keys. The
+// blocks are appended at the end of the file — each [[hooks]] header starts a
+// new table, so nothing that precedes them changes meaning, and a block is
+// recognised on removal by the marker in its command rather than by position.
+func InstallKimi(scriptPath string) (Status, error) {
+	editMu.Lock()
+	defer editMu.Unlock()
+	path, err := KimiConfigPath()
+	if err != nil {
+		return Status{}, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return Status{}, fmt.Errorf("hooks: create %s: %w", filepath.Dir(path), err)
+	}
+
+	before, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return Status{}, fmt.Errorf("hooks: read %s: %w", path, err)
+	}
+	if err := kimiHooksAreAnArrayOfTables(string(before)); err != nil {
+		return Status{}, err
+	}
+	after := withoutKimiHooks(string(before))
+	if after != "" && !strings.HasSuffix(after, "\n") {
+		after += "\n"
+	}
+	if after != "" {
+		after += "\n"
+	}
+	after += KimiHooks(scriptPath)
+	if after == string(before) {
+		return Inspect(scriptPath)
+	}
+	if err := backup(path); err != nil {
+		return Status{}, err
+	}
+	if err := writeFileLike(path, []byte(after)); err != nil {
+		return Status{}, err
+	}
+	return Inspect(scriptPath)
+}
+
+// UninstallKimi removes only the [[hooks]] blocks this panel wrote.
+func UninstallKimi(scriptPath string) (Status, error) {
+	editMu.Lock()
+	defer editMu.Unlock()
+	path, err := KimiConfigPath()
+	if err != nil {
+		return Status{}, err
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Inspect(scriptPath)
+		}
+		return Status{}, fmt.Errorf("hooks: read %s: %w", path, err)
+	}
+	after := withoutKimiHooks(string(before))
+	if after == string(before) {
+		return Inspect(scriptPath)
+	}
+	if err := backup(path); err != nil {
+		return Status{}, err
+	}
+	// Nothing left but our blocks means the panel is the only reason this file
+	// exists: the install creates it on a machine that has never run Kimi
+	// Code. Leaving an empty config.toml behind is leaving a trace of a tool
+	// that has been removed, and the backup beside it holds what was there.
+	if strings.TrimSpace(after) == "" {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return Status{}, fmt.Errorf("hooks: remove %s: %w", path, err)
+		}
+		return Inspect(scriptPath)
+	}
+	if err := writeFileLike(path, []byte(after)); err != nil {
+		return Status{}, err
+	}
+	return Inspect(scriptPath)
+}
+
+// kimiHookEvents lists the events whose blocks in the file are ours, in
+// kimiEvents order. Never nil: the wire contract says "nothing installed" is
+// an empty list, not null.
+func kimiHookEvents(path string) []string {
+	out := []string{}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return out
+	}
+	body := string(b)
+	for _, e := range kimiEvents {
+		for _, block := range kimiHookBlocks(body) {
+			if strings.Contains(block, `event = "`+e.event+`"`) && kimiBlockIsOurs(block) {
+				out = append(out, e.event)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// kimiHookBlocks returns each [[hooks]] block in the document, header to the
+// next table header or EOF.
+func kimiHookBlocks(doc string) []string {
+	lines := strings.Split(doc, "\n")
+	var blocks []string
+	for i := 0; i < len(lines); {
+		if !isKimiHooksHeader(lines[i]) {
+			i++
+			continue
+		}
+		end := i + 1
+		for end < len(lines) && !isTableHeader(lines[end]) {
+			end++
+		}
+		blocks = append(blocks, strings.Join(lines[i:end], "\n"))
+		i = end
+	}
+	return blocks
+}
+
+// withoutKimiHooks drops every [[hooks]] block whose command carries the
+// marker, leaving the user's own hooks and everything else byte-identical.
+//
+// Removal is by content rather than position, so a block the user moved or
+// copied elsewhere in the file is still recognised — and a block they wrote
+// themselves, on the same events, is left alone.
+func withoutKimiHooks(doc string) string {
+	lines := strings.Split(doc, "\n")
+	var out []string
+	for i := 0; i < len(lines); {
+		if !isKimiHooksHeader(lines[i]) {
+			out = append(out, lines[i])
+			i++
+			continue
+		}
+		end := i + 1
+		for end < len(lines) && !isTableHeader(lines[end]) {
+			end++
+		}
+		if !kimiBlockIsOurs(strings.Join(lines[i:end], "\n")) {
+			out = append(out, lines[i:end]...)
+		} else {
+			// The block ends at the next table header, so anything the user
+			// wrote between our last key and that header -- a blank line and
+			// the comment introducing their own section -- is inside the range
+			// being dropped. Their comment went with our hooks. Keep the
+			// trailing run of blank and comment lines: it reads as belonging
+			// to what follows, and it is never ours, because KimiHooks writes
+			// neither.
+			out = append(out, trailingKept(lines[i:end])...)
+		}
+		i = end
+	}
+	return strings.Join(out, "\n")
+}
+
+// trailingKept is the run of blank and comment lines at the end of a block,
+// and nothing when that run is only blank lines.
+//
+// The blank line is the one the installer itself writes between blocks, so
+// keeping it would leave one more empty line in the file on every
+// install-remove cycle. A comment in there is somebody's, and is kept with the
+// blanks around it exactly as it was written.
+func trailingKept(block []string) []string {
+	keep := len(block)
+	comment := false
+	for keep > 0 {
+		t := strings.TrimSpace(block[keep-1])
+		if t == "" {
+			keep--
+			continue
+		}
+		if strings.HasPrefix(t, "#") {
+			comment = true
+			keep--
+			continue
+		}
+		break
+	}
+	if !comment {
+		return nil
+	}
+	return block[keep:]
+}
+
+// kimiHooksAreAnArrayOfTables refuses the two shapes an append would break.
+//
+// `[[hooks]]` after an existing `hooks = [...]` or `[hooks]` is not a second
+// element of an array of tables, it is a redefinition, and TOML rejects the
+// file -- so Kimi Code would not start and the settings page would say the
+// hooks were installed. Checked against a real parser: "Cannot mutate
+// immutable namespace" and "Cannot overwrite a value". The panel cannot merge
+// into either shape without parsing and re-encoding the whole file, which is
+// what the line-based editor exists to avoid, so it says so and does nothing.
+func kimiHooksAreAnArrayOfTables(doc string) error {
+	for _, line := range strings.Split(doc, "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "#") {
+			continue
+		}
+		if t == "[hooks]" || strings.HasPrefix(t, "[hooks]") {
+			return fmt.Errorf("hooks: %s already has a [hooks] table; "+
+				"the panel writes [[hooks]] blocks and will not rewrite that file", "config.toml")
+		}
+		if key, _, found := strings.Cut(t, "="); found && strings.TrimSpace(key) == "hooks" {
+			return fmt.Errorf("hooks: %s already has a hooks = ... key; "+
+				"the panel writes [[hooks]] blocks and will not rewrite that file", "config.toml")
+		}
+	}
+	return nil
+}
+
+// kimiBlockIsOurs reports whether a [[hooks]] block runs the panel's reporter.
+//
+// The marker is looked for in the *command*, the way isOurs does it for Claude
+// and Codex, and not in the block. A block is everything up to the next table
+// header, comments included, so "somebody wrote our script's name in a comment
+// above their own hook" was indistinguishable from "this block is ours" --
+// and the install, which strips ours before appending, deleted their hook.
+func kimiBlockIsOurs(block string) bool {
+	for _, line := range strings.Split(block, "\n") {
+		key, value, found := strings.Cut(line, "=")
+		if !found || strings.TrimSpace(key) != "command" {
+			continue
+		}
+		if containsMarker(value) {
+			return true
+		}
+	}
+	return false
+}
+
+func isKimiHooksHeader(line string) bool {
+	t := strings.TrimSpace(line)
+	if !strings.HasPrefix(t, "[[") || !strings.HasSuffix(t, "]]") {
+		return false
+	}
+	return strings.TrimSpace(t[2:len(t)-2]) == "hooks"
+}
+
+// isTableHeader reports whether a line opens a TOML table, which is what ends
+// a [[hooks]] block.
+//
+// Opens and closes: `[providers.work]` and `[[hooks]]` do, and a continuation
+// line of a multi-line array -- `[1],` inside `args = [` -- does not. Testing
+// only the opening bracket cut a user's block short at that line, so the half
+// with our marker in it was not recognised and the block was left behind.
+//
+// The `!strings.HasPrefix(t, "#")` this used to carry is gone: a string cannot
+// begin with both `[` and `#`, so it read as a rule and excluded nothing.
+func isTableHeader(line string) bool {
+	t := strings.TrimSpace(line)
+	if cut := strings.Index(t, "#"); cut >= 0 {
+		t = strings.TrimSpace(t[:cut])
+	}
+	return strings.HasPrefix(t, "[") && strings.HasSuffix(t, "]")
+}

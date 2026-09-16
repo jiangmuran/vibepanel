@@ -1,4 +1,4 @@
-import { api } from '../protocol/api'
+import { api, UploadTransportError } from '../protocol/api'
 import { t } from '../i18n'
 
 /**
@@ -56,6 +56,7 @@ export async function uploadFiles(
   path: string,
   files: File[],
   onNote: (note: string) => void,
+  onProgress?: (fraction: number) => void,
 ): Promise<string[]> {
   if (files.length === 0) return []
   // One and many are separate entries rather than a plural rule: English wants
@@ -63,17 +64,29 @@ export async function uploadFiles(
   // is a library this project does not have.
   onNote(files.length === 1 ? t('upload.one') : t('upload.many', { n: files.length }))
   try {
-    const { paths } = await api.upload(projectId, path, files)
+    const { paths } = await api.upload(projectId, path, files, undefined, onProgress)
     onNote(paths.length === 1 ? t('upload.doneOne') : t('upload.doneMany', { n: paths.length }))
     clearLater(onNote)
     return paths
   } catch (err) {
-    // The server's message, when there is one: "shot.png already exists" is the
-    // whole answer, and t('upload.failed') would replace it with a shrug.
-    onNote(err instanceof Error ? err.message : t('upload.failed'))
+    onNote(uploadErrorText(err))
     clearLater(onNote)
     return []
   }
+}
+
+/**
+ * What to show somebody whose upload failed.
+ *
+ * The server's message when there is one: "shot.png already exists" is the
+ * whole answer, and t('upload.failed') would replace it with a shrug. A
+ * failure that never reached the server has no such message -- the panel is
+ * the one talking -- so it gets a dictionary entry rather than the English
+ * word the protocol layer threw.
+ */
+export function uploadErrorText(err: unknown): string {
+  if (err instanceof UploadTransportError) return t(`upload.${err.kind}`)
+  return err instanceof Error ? err.message : t('upload.failed')
 }
 
 function clearLater(onNote: (note: string) => void) {

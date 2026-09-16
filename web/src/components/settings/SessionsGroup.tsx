@@ -2,7 +2,13 @@ import { useEffect, useState } from 'react'
 import { Check, Copy } from 'lucide-react'
 
 import { api } from '../../protocol/api'
-import type { HookStatus } from '../../protocol/wire'
+import type { HookAgent, HookStatus } from '../../protocol/wire'
+import {
+  HOOK_AGENTS,
+  hookAgentInstalled,
+  hookAgentName,
+  visibleHookAgents,
+} from '../hookAgents'
 import { t } from '../../i18n'
 import { copyTextInGesture } from '../../clipboard'
 import { LaunchProfiles } from '../LaunchProfiles'
@@ -55,6 +61,30 @@ function HooksSection() {
   // the notice below. See it for why.
   const [justChanged, setJustChanged] = useState(false)
 
+  /**
+   * Tick an agent on or off.
+   *
+   * Optimistic, and every write through a functional update. Both halves are
+   * bugs that were here: the tick did nothing visible until the round trip
+   * finished, so a second tick was computed from the list the first one had
+   * not yet changed and the first agent was silently dropped; and spreading
+   * the `status` this render captured put back a snapshot taken before the
+   * request -- pressing Install while a tick was in flight ended with the row
+   * saying "not installed" over a file the panel had just written.
+   */
+  const setAgents = (next: HookAgent[]) => {
+    setStatus((cur) => (cur ? { ...cur, agentsShown: next } : cur))
+    api
+      .setHookAgents(next)
+      .then((r) => setStatus((cur) => (cur ? { ...cur, agentsShown: r.agentsShown } : cur)))
+      .catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : String(e))
+        // The optimistic list is now a claim nothing backs. Ask rather than
+        // guess which way to put it back.
+        api.hookStatus().then(setStatus).catch(() => {})
+      })
+  }
+
   const act = async (fn: () => Promise<HookStatus>) => {
     setBusy(true)
     setError(null)
@@ -82,62 +112,39 @@ function HooksSection() {
 
       {status && (
         <div data-testid="hooks-status">
-          {/* Two agents, two rows, two buttons. They are configured by
-              different mechanisms in different files and fail separately — the
-              runbook has a section for exactly that — so a single "hooks are
+          {/* A row each, because the agents are configured by different
+              mechanisms in different files and fail separately — the runbook
+              has a section for exactly that — so a single "hooks are
               installed" line would describe a machine where one of them is
-              wired as though both were. */}
-          <AgentHooks
-            label={t('set.claudeCode')}
-            // "installed", not "reporting". The panel has read a file; it has
-            // not heard from anything. Saying "reporting 4 events" the instant
-            // the file is written is a claim about behaviour that nothing has
-            // checked, and it is wrong for every session that was already
-            // running — see the notice below.
-            value={
-              status.installed
-                ? t('set.installedEvents', { n: status.events.length })
-                : t('set.notInstalled')
-            }
-            file={status.settingsPath}
-            installed={status.installed}
-            busy={busy}
-            testid="hooks"
-            onInstall={() => void act(() => api.installHooks('claude'))}
-            onRemove={() => void act(() => api.removeHooks('claude'))}
-          />
-          {/* Codex needs one more step than the others: it runs a hook from
-              the user's own hooks.json only after `/hooks` has trusted it. The
-              note is that step until Codex has recorded a decision, and then
-              the count that proves it -- reports arriving is the only thing a
-              file read cannot fake. */}
-          <AgentHooks
-            label={t('set.codex')}
-            value={
-              status.codexInstalled
-                ? t('set.installedCodexHooks', { n: status.codexEvents.length })
-                : t('set.notInstalled')
-            }
-            file={status.codexPath}
-            installed={status.codexInstalled}
-            busy={busy}
-            testid="codex-hooks"
-            note={codexNote(status)}
-            onInstall={() => void act(() => api.installHooks('codex'))}
-            onRemove={() => void act(() => api.removeHooks('codex'))}
-          />
-          {/* opencode is the one that needs no edit to anybody's config: it
-              auto-discovers every file in its plugin directory, so installing
-              writes a file that did not exist and removing deletes it. */}
-          <AgentHooks
-            label={t('set.opencode')}
-            value={status.opencodeInstalled ? t('set.installedPlugin') : t('set.notInstalled')}
-            file={status.opencodePath}
-            installed={status.opencodeInstalled}
-            busy={busy}
-            testid="opencode-hooks"
-            onInstall={() => void act(() => api.installHooks('opencode'))}
-            onRemove={() => void act(() => api.removeHooks('opencode'))}
+              wired as though all were.
+
+              Which rows: the ones ticked below, plus any agent whose hooks are
+              actually installed. Five rows of install buttons on a machine
+              running one agent is a page people stop reading, and hiding a row
+              for hooks this panel wrote would hide the only button that takes
+              them out again. */}
+          {visibleHookAgents(status).map((id) => {
+            const row = agentRow(id, status)
+            return (
+              <AgentHooks
+                key={id}
+                label={hookAgentName(id)}
+                value={row.value}
+                file={row.file}
+                installed={row.installed}
+                note={row.note}
+                busy={busy}
+                testid={row.testid}
+                onInstall={() => void act(() => api.installHooks(id))}
+                onRemove={() => void act(() => api.removeHooks(id))}
+              />
+            )
+          })}
+
+          <AgentsShown
+            shown={status.agentsShown}
+            status={status}
+            onChange={setAgents}
           />
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -175,13 +182,148 @@ function HooksSection() {
               anyone else's with it, and a backup is written first. */}
           {showSnippet && (
             <div className="mt-3">
-              <Snippet label={t('set.claudeCode')} text={status.snippet} />
-              <Snippet label={t('set.codex')} text={status.codexSnippet} />
+              {visibleHookAgents(status).map((id) => {
+                const text = agentRow(id, status).snippet
+                // opencode has none: the panel writes it a plugin file of its
+                // own rather than a block inside a file that is theirs, so
+                // there is nothing to read before agreeing to it.
+                return text ? <Snippet key={id} label={hookAgentName(id)} text={text} /> : null
+              })}
             </div>
           )}
         </div>
       )}
     </Section>
+  )
+}
+
+/**
+ * What one agent's row says: the state, the file it is in, and the text of the
+ * snippet if that agent has one.
+ *
+ * Each of these differs in a way that matters to somebody reading the page --
+ * Codex has a trust step, opencode has a whole file rather than a block -- and
+ * they used to differ by being five hand-written blocks of JSX. This is the
+ * same information with one shape, so a row cannot quietly lose its note.
+ */
+function agentRow(
+  id: HookAgent,
+  status: HookStatus,
+): { value: string; file: string; installed: boolean; testid: string; note?: string; snippet?: string } {
+  switch (id) {
+    case 'claude':
+      return {
+        // "installed", not "reporting". The panel has read a file; it has not
+        // heard from anything. Saying "reporting 4 events" the instant the file
+        // is written is a claim about behaviour that nothing has checked, and
+        // it is wrong for every session that was already running — see the
+        // notice below.
+        value: status.installed
+          ? t('set.installedEvents', { n: status.events.length })
+          : t('set.notInstalled'),
+        file: status.settingsPath,
+        installed: status.installed,
+        testid: 'hooks',
+        snippet: status.snippet,
+      }
+    case 'codex':
+      return {
+        value: status.codexInstalled
+          ? t('set.installedHooks', { n: status.codexEvents.length })
+          : t('set.notInstalled'),
+        file: status.codexPath,
+        installed: status.codexInstalled,
+        testid: 'codex-hooks',
+        // Codex needs one more step than the others: it runs a hook from the
+        // user's own hooks.json only after `/hooks` has trusted it. The note is
+        // that step until Codex has recorded a decision, and then the count
+        // that proves it -- reports arriving is the only thing a file read
+        // cannot fake.
+        note: codexNote(status),
+        snippet: status.codexSnippet,
+      }
+    // Kimi Code and zcode need no extra step: their hooks run from the
+    // user-level file with no trust review.
+    case 'kimi':
+      return {
+        value: status.kimiInstalled
+          ? t('set.installedHooks', { n: status.kimiEvents.length })
+          : t('set.notInstalled'),
+        file: status.kimiPath,
+        installed: status.kimiInstalled,
+        testid: 'kimi-hooks',
+        snippet: status.kimiSnippet,
+      }
+    case 'zcode':
+      return {
+        value: status.zcodeInstalled
+          ? t('set.installedHooks', { n: status.zcodeEvents.length })
+          : t('set.notInstalled'),
+        file: status.zcodePath,
+        installed: status.zcodeInstalled,
+        testid: 'zcode-hooks',
+        snippet: status.zcodeSnippet,
+      }
+    case 'opencode':
+      // The one that needs no edit to anybody's config: it auto-discovers
+      // every file in its plugin directory, so installing writes a file that
+      // did not exist and removing deletes it.
+      return {
+        value: status.opencodeInstalled ? t('set.installedPlugin') : t('set.notInstalled'),
+        file: status.opencodePath,
+        installed: status.opencodeInstalled,
+        testid: 'opencode-hooks',
+      }
+  }
+}
+
+/**
+ * Which agents this panel offers.
+ *
+ * Reported as 「设置里面可以隐藏/配置」: a panel running one agent had five
+ * rows of install buttons for other people's tools. Ticks rather than
+ * detection, because "is Kimi Code installed on this machine" is a question
+ * about a binary that may not be on the panel's PATH at all, and a page that
+ * guesses wrong hides the button somebody came here to press.
+ *
+ * An agent whose hooks are installed keeps its row whatever the tick says, so
+ * this cannot be used to lose track of a file the panel has written.
+ */
+function AgentsShown({
+  shown,
+  status,
+  onChange,
+}: {
+  shown: HookAgent[]
+  status: HookStatus
+  onChange: (next: HookAgent[]) => void
+}) {
+  return (
+    <fieldset className="mt-4 border-t border-hairline pt-3" data-testid="hook-agents">
+      <legend className="mb-1 text-vp-sm text-ink-2">{t('set.agentsShown')}</legend>
+      <div className="flex flex-wrap gap-x-4 gap-y-1">
+        {HOOK_AGENTS.map((a) => {
+          const on = shown.includes(a.id)
+          return (
+            <label key={a.id} className="flex items-center gap-1.5 text-vp-base text-ink">
+              <input
+                type="checkbox"
+                checked={on}
+                data-testid={`hook-agent-${a.id}`}
+                onChange={() => onChange(on ? shown.filter((x) => x !== a.id) : [...shown, a.id])}
+              />
+              <span>{hookAgentName(a.id)}</span>
+              {/* An installed agent is on screen whether or not it is ticked,
+                  and saying so is cheaper than leaving somebody to wonder why
+                  unticking it changed nothing. */}
+              {!on && hookAgentInstalled(status, a.id) && (
+                <span className="text-vp-sm text-ink-3">{t('set.agentInstalledAnyway')}</span>
+              )}
+            </label>
+          )
+        })}
+      </div>
+    </fieldset>
   )
 }
 
