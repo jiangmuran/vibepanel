@@ -91,11 +91,9 @@ func attachChat(t *testing.T, srv *Server) *memAdapter {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	prev := chat.DefaultCoalesce
-	chat.DefaultCoalesce = 200 * time.Millisecond
-	t.Cleanup(func() { chat.DefaultCoalesce = prev })
 	srv.Chat = chat.New(chat.Deps{
 		DB: srv.DB, Term: ChatTerminal(srv.Tmux), Box: box, Log: srv.Log,
+		Coalesce:  200 * time.Millisecond,
 		PublicURL: func() string { return "https://panel.test" },
 		Audit:     func(ctx context.Context, event, detail string) { srv.audit(ctx, event, "chat", "", detail) },
 	})

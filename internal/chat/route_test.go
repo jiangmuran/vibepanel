@@ -17,7 +17,9 @@ func TestDefaultRoutesSendWaitingAndDoneToEveryoneAndNotWorking(t *testing.T) {
 		if d.Send != c.send {
 			t.Errorf("%s: send=%v", c.state, d.Send)
 		}
-		if c.send && (len(d.To) != 1 || d.To[0] != "*" || d.Screenshot != ShotAuto || d.Coalesce != DefaultCoalesce || !d.Body) {
+		// Coalesce zero: the default rule asks for nothing and the bridge's
+		// own window applies.
+		if c.send && (len(d.To) != 1 || d.To[0] != "*" || d.Screenshot != ShotAuto || d.Coalesce != 0 || !d.Body) {
 			t.Errorf("%s: %+v", c.state, d)
 		}
 	}

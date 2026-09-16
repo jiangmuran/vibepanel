@@ -180,6 +180,10 @@ type rig struct {
 	amu   sync.Mutex
 }
 
+// testCoalesce is the window every rig runs with: long enough that a test
+// can watch a change be held, short enough that the suite takes seconds.
+const testCoalesce = 300 * time.Millisecond
+
 var rigKinds sync.Mutex
 var rigAdapters = map[string]*fakeAdapter{}
 
@@ -214,11 +218,9 @@ func newRig(t *testing.T, caps Capabilities) *rig {
 	// message must be no older than the state change compares the two, so
 	// the rig's clock is the real one, frozen at the start.
 	r := &rig{t: t, ctx: ctx, db: db, ad: ad, term: newTerm(), now: time.Now().Truncate(time.Second)}
-	prev := DefaultCoalesce
-	DefaultCoalesce = 300 * time.Millisecond
-	t.Cleanup(func() { DefaultCoalesce = prev })
 	r.b = New(Deps{
 		DB: db, Term: r.term, Box: box, Now: func() time.Time { return r.now },
+		Coalesce:  testCoalesce,
 		PublicURL: func() string { return "https://panel.test" },
 		Shot:      func(string) ([]byte, error) { return []byte("png"), nil },
 		Audit: func(_ context.Context, event, detail string) {
@@ -495,7 +497,7 @@ func TestAStateChangeIsPushedOnceItSettles(t *testing.T) {
 	r.b.SessionChanged(row, session.StateWaiting)
 	r.b.SessionSaid(row, store.SessionMessage{})
 	r.b.SessionChanged(row, session.StateWaiting)
-	time.Sleep(DefaultCoalesce / 2)
+	time.Sleep(testCoalesce / 2)
 	if r.ad.count() != 0 {
 		t.Fatalf("pushed before the window closed: %q", r.ad.texts())
 	}
@@ -628,7 +630,7 @@ func TestCommandsListScreenMuteFocusContext(t *testing.T) {
 	row, _ := r.db.GetSession(r.ctx, "s1")
 	before := r.ad.count()
 	r.b.SessionChanged(row, session.StateWaiting)
-	time.Sleep(DefaultCoalesce + 200*time.Millisecond)
+	time.Sleep(testCoalesce + 200*time.Millisecond)
 	if r.ad.count() != before {
 		t.Fatalf("a muted session was pushed: %q", r.ad.texts())
 	}
@@ -668,7 +670,7 @@ func TestANonProactiveChannelNeedsAHelloFirst(t *testing.T) {
 	p := r.peer("me", store.PeerPaired, store.ModeNormal)
 	row := r.session("s1", "fix", "claude", session.StateWaiting)
 	r.b.SessionChanged(row, session.StateWaiting)
-	time.Sleep(DefaultCoalesce + 200*time.Millisecond)
+	time.Sleep(testCoalesce + 200*time.Millisecond)
 	if r.ad.count() != 0 {
 		t.Fatalf("pushed with no context token: %q", r.ad.texts())
 	}

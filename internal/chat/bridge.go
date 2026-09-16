@@ -71,6 +71,11 @@ type Deps struct {
 	// Usage answers the "usage" command with whatever the panel knows about
 	// today's tokens; nil means only the bridge's own counters are shown.
 	Usage func(ctx context.Context, lang string) string
+	// Coalesce is how long a change is held before it is sent, when no rule
+	// says otherwise; zero takes DefaultCoalesce. A field rather than a
+	// package variable so a test can run in milliseconds without writing
+	// something a running bridge reads.
+	Coalesce time.Duration
 }
 
 // Health is how one channel is doing, for the settings page.
@@ -173,6 +178,9 @@ func New(d Deps) *Bridge {
 	}
 	if d.Audit == nil {
 		d.Audit = func(context.Context, string, string) {}
+	}
+	if d.Coalesce <= 0 {
+		d.Coalesce = DefaultCoalesce
 	}
 	return &Bridge{
 		d: d,
@@ -298,8 +306,8 @@ func (b *Bridge) schedule(ctx context.Context, sessionID string) {
 	// the channel map for a few seconds, and a session that went waiting
 	// during a settings save is still a session somebody wants told about.
 	// push finds no channel and does nothing, which costs a timer.
-	wait := DefaultCoalesce
-	if d, ok := b.decide(ctx, sessionID); ok {
+	wait := b.d.Coalesce
+	if d, ok := b.decide(ctx, sessionID); ok && d.Coalesce > 0 {
 		wait = d.Coalesce
 	}
 	b.mu.Lock()

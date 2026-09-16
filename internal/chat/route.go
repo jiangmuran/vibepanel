@@ -37,7 +37,8 @@ type Rule struct {
 	// full-screen programs), "always", "never".
 	Screenshot string `json:"screenshot"`
 	// CoalesceSeconds is how long to wait for a state to settle before
-	// telling anyone. Zero takes the default.
+	// telling anyone. Zero leaves it to the bridge, which uses
+	// DefaultCoalesce.
 	CoalesceSeconds int `json:"coalesceSeconds"`
 	// QuietHours is "HH:MM-HH:MM" in the panel's zone; matches inside the
 	// window are held until it ends, except prompts, which are sent anyway
@@ -72,11 +73,14 @@ const (
 	ShotNever  = "never"
 )
 
-// DefaultCoalesce is how long a change is held before it is sent. Three
-// seconds is longer than the flicker an agent produces between tool calls
-// and shorter than anyone notices on a phone. A variable so the bridge's
-// tests can run in seconds rather than minutes; nothing else writes it.
-var DefaultCoalesce = 3 * time.Second
+// DefaultCoalesce is how long a change is held before it is sent when no
+// rule says otherwise. Three seconds is longer than the flicker an agent
+// produces between tool calls and shorter than anyone notices on a phone.
+//
+// A constant, and the bridge is what applies it (Deps.Coalesce): it was a
+// variable so tests could run in milliseconds, and a test writing it while
+// a bridge goroutine read it is a data race the race detector found.
+const DefaultCoalesce = 3 * time.Second
 
 // DefaultRoutes is what a fresh panel does: waiting and done, to everyone,
 // with what the agent said, a picture only for full-screen programs.
@@ -174,9 +178,11 @@ type Decision struct {
 	// Send is false when the change is not worth telling anyone about.
 	Send bool `json:"send"`
 	// To is the destinations, still to be intersected with the paired peers.
-	To         []string      `json:"to"`
-	Screenshot string        `json:"screenshot"`
-	Coalesce   time.Duration `json:"coalesce"`
+	To         []string `json:"to"`
+	Screenshot string   `json:"screenshot"`
+	// Coalesce is what the rule asked for; zero means it asked for nothing
+	// and the bridge's own window applies.
+	Coalesce time.Duration `json:"coalesce"`
 	// Hold is true inside quiet hours for a change that can wait.
 	Hold bool `json:"hold"`
 	Body bool `json:"body"`
@@ -216,9 +222,6 @@ func (rule Rule) decision(c Change, now time.Time, name string) Decision {
 	}
 	if d.Screenshot == "" {
 		d.Screenshot = ShotAuto
-	}
-	if d.Coalesce == 0 {
-		d.Coalesce = DefaultCoalesce
 	}
 	if rule.QuietHours != "" && c.Kind != store.MessagePrompt {
 		if from, to, err := parseQuiet(rule.QuietHours); err == nil && inQuiet(now, from, to) {
