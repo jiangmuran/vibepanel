@@ -2974,10 +2974,22 @@ browser = await chromium.launch({ headless: true })
       } else {
         const tabs = touch.locator('[data-testid="settings-rail"] [role="tab"]')
         const count = await tabs.count()
-        if (count !== 5) {
+        if (count !== 4) {
           note('FAIL', 'mobile',
-            `the settings rail has ${count} groups on a phone and 5 on a laptop; a control set ` +
+            `the settings rail has ${count} groups on a phone and 4 on a laptop; a control set ` +
             'that changes with the viewport is the complaint chrome.ts exists for')
+        }
+        // The way to the sharing page is on the rail too, and on a phone the
+        // rail is a row: the last thing in it is the one that scrolls off.
+        {
+          const link = touch.locator('[data-testid="settings-sharing-link"]')
+          await link.scrollIntoViewIfNeeded().catch(() => {})
+          const box = await link.boundingBox()
+          const v = touch.viewportSize()
+          if (!box || box.x < -1 || box.x + box.width > v.width + 1) {
+            note('FAIL', 'mobile',
+              `the sharing link cannot be brought on screen at ${v.width}px: ${JSON.stringify(box)}`)
+          }
         }
         const view = touch.viewportSize()
         const ids = []
@@ -4451,11 +4463,21 @@ browser = await chromium.launch({ headless: true })
 
     // ── settings ───────────────────────────────────────────────────────────
     //
-    // Five groups on a rail, one on screen. Every block below says which one
-    // it needs; the gear opens on Sessions, which is where the hooks are.
+    // Four groups on a rail, one on screen, and a link to the sharing page.
+    // Every block below says which one it needs; the gear opens on Sessions,
+    // which is where the hooks are.
     const rail = await page.locator('[data-testid="settings-rail"] [role="tab"]').count()
-    if (rail !== 5) {
-      note('FAIL', 'settings', `the settings rail has ${rail} groups on it, expected 5`)
+    if (rail !== 4) {
+      note('FAIL', 'settings', `the settings rail has ${rail} groups on it, expected 4`)
+    }
+    // Sharing is a page now, and the rail still says the word: as a link to
+    // the page, not as a fifth tab.
+    {
+      const link = page.locator('[data-testid="settings-sharing-link"]')
+      const href = await link.getAttribute('href').catch(() => null)
+      if (href !== '/sharing') {
+        note('FAIL', 'settings', `the rail's sharing item points at ${JSON.stringify(href)}, expected /sharing`)
+      }
     }
     await page.screenshot({ path: join(SHOTS, 'settings.png') })
 
@@ -4470,58 +4492,6 @@ browser = await chromium.launch({ headless: true })
       note('FAIL', 'settings', `the hook snippet is not valid JSON: ${JSON.stringify(snippet.slice(0, 200))}`)
     }
 
-    // ── renaming with a mouse ──────────────────────────────────────────────
-    //
-    // The pencil on a session row. Double click and long press have renamed
-    // for a long time, and a gesture you have to know about is a feature most
-    // people never find -- so the button exists, and nothing here had ever
-    // pressed it. It is mouse-only on purpose (a third 44px control squeezed
-    // the selected row's name under a coarse pointer), which is why this runs
-    // on the desktop page and the phone keeps the long press above.
-    await page.locator('[data-testid="settings-close"]').click()
-    await sleep(500)
-    {
-      const row = page.locator('[data-testid="session-row"]').first()
-      await row.hover()
-      await sleep(300)
-      const pencil = row.locator('[data-testid="rename-session"]')
-      if (!(await pencil.isVisible().catch(() => false))) {
-        note('FAIL', 'rename', 'a session row has no rename button under a mouse')
-      } else {
-        await pencil.click()
-        await sleep(400)
-        const input = row.locator('input')
-        if ((await input.count()) === 0) {
-          note('FAIL', 'rename', 'the rename button does not open the name for editing')
-        } else {
-          // The input has to open on *this* row's name. It seeds from a ref,
-          // and the bug that guard exists for renames the session to whatever
-          // the last row edited was.
-          const before = (await row.locator('[data-testid="inline-name"]').innerText().catch(() => ''))
-            .trim()
-          const seeded = await input.inputValue()
-          if (before && seeded && !before.startsWith(seeded.slice(0, 6))) {
-            note('FAIL', 'rename',
-              `the rename box opened on ${JSON.stringify(seeded)} for a row called ${JSON.stringify(before)}`)
-          }
-          await input.fill('renamed-by-check')
-          await input.press('Enter')
-          await sleep(800)
-          const after = await page
-            .locator('[data-testid="session-row"] [data-testid="inline-name"]')
-            .first()
-            .innerText()
-            .catch(() => '')
-          if (!after.includes('renamed-by-check')) {
-            note('FAIL', 'rename', `the name did not change; the row now reads ${JSON.stringify(after)}`)
-          } else {
-            note('PASS', 'rename', 'the pencil opens the same input the gestures do and it commits')
-          }
-        }
-      }
-    }
-    await page.locator('[data-testid="settings-open"]').click()
-    await sleep(900)
 
     // ── which agents the reporting section offers ──────────────────────────
     //
@@ -4833,13 +4803,39 @@ browser = await chromium.launch({ headless: true })
 
     // ── sharing ───────────────────────────────────────────────────────────
     //
-    // Pages and their links, with the new-page form open, since that is the
-    // widest thing the group draws.
+    // Pages and their links, on a page of their own, with the new-page form
+    // open, since that is the widest thing it draws.
     {
-      await settingsGroup(page, 'sharing')
+      // The rail's link is how somebody who knew sharing as a settings group
+      // gets there. Followed rather than typed, so the link is what is
+      // tested — and it is a navigation, so the cookie that signed the panel
+      // in is what signs the page in: a sign-in form here is the whole
+      // feature gone.
+      await page.locator('[data-testid="settings-sharing-link"]').click()
+      const arrived = await page
+        .waitForSelector('[data-testid="sharing"]', { timeout: 10000 })
+        .then(() => true)
+        .catch(() => false)
+      if (!arrived) {
+        const askedToSignIn = await page.locator('[data-testid="login-form"]').isVisible().catch(() => false)
+        note('FAIL', 'sharing', askedToSignIn
+          ? 'the sharing page asked for a sign-in the panel had already done'
+          : 'following the rail\'s sharing link did not reach the sharing page')
+      }
+      if (!page.url().endsWith('/sharing')) {
+        note('FAIL', 'sharing', `the sharing page is at ${page.url()}, expected /sharing`)
+      }
+      // The header keeps the four things the panel's header has. Sign-out
+      // here is what makes this a page and not a leak: a page on the panel's
+      // cookie with no way out of it is a laptop left signed in.
+      for (const id of ['sharing-back', 'sharing-language', 'theme-toggle', 'sign-out']) {
+        if (!(await page.locator(`[data-testid="${id}"]`).isVisible().catch(() => false))) {
+          note('FAIL', 'sharing', `the sharing page's header has no ${id}`)
+        }
+      }
       const add = page.locator('[data-testid="page-new"]')
       if ((await add.count()) === 0) {
-        note('FAIL', 'sharing', 'the settings page offers no way to make a share page')
+        note('FAIL', 'sharing', 'the sharing page offers no way to make a share page')
       } else {
         await add.click()
         await sleep(300)
@@ -4847,12 +4843,12 @@ browser = await chromium.launch({ headless: true })
 
       // Nothing on this page is wider than the page.
       //
-      // The overflow scan two hundred lines up does not see this one: the body
-      // *is* a scroller, so a row that outgrows it sideways is "reachable" and
-      // reported as fine. It was not fine once: a link's row was nine
-      // `shrink-0` fields in one line, `overflow-y: auto` computes
-      // `overflow-x` to `auto` behind it, and the settings dialog scrolled
-      // sideways.
+      // The overflow scan two hundred lines up does not see this one: the
+      // page *is* a scroller, so a row that outgrows it sideways is
+      // "reachable" and reported as fine. It was not fine once: a link's row
+      // was nine `shrink-0` fields in one line, `overflow-y: auto` computes
+      // `overflow-x` to `auto` behind it, and the settings dialog this lived
+      // in scrolled sideways.
       //
       // Asked at three widths, because the row that fits a desktop is not the
       // row that fits the phone this panel is read on at 2am.
@@ -4860,19 +4856,34 @@ browser = await chromium.launch({ headless: true })
         await page.setViewportSize({ width: w, height: h })
         await sleep(700)
         const over = await page.evaluate(() => {
-          const body = document.querySelector('[data-testid="settings-body"]')
+          const body = document.querySelector('[data-testid="sharing-page"]')
           return body ? body.scrollWidth - body.clientWidth : -1
         })
         if (over < 0) {
-          note('FAIL', 'sharing', `the settings body was not on screen at ${w}px`)
+          note('FAIL', 'sharing', `the sharing page was not on screen at ${w}px`)
         } else if (over > 1) {
-          note('FAIL', 'sharing', `the sharing page is ${over}px wider than the dialog at ${w}px`)
+          note('FAIL', 'sharing', `the sharing page is ${over}px wider than the window at ${w}px`)
         } else {
-          note('PASS', 'sharing', `the sharing page fits the dialog at ${w}px`)
+          note('PASS', 'sharing', `the sharing page fits the window at ${w}px`)
         }
       }
       await page.setViewportSize({ width: 1440, height: 900 })
       await sleep(700)
+      await page.screenshot({ path: join(SHOTS, 'sharing-page.png') })
+
+      // And the way back is the panel, signed in, with the dialog where the
+      // blocks below expect it.
+      await page.locator('[data-testid="sharing-back"]').click()
+      const home = await page
+        .waitForSelector('[data-testid="sidebar"]', { timeout: 15000 })
+        .then(() => true)
+        .catch(() => false)
+      if (!home) {
+        note('FAIL', 'sharing', 'the way back from the sharing page did not reach the panel')
+      }
+      await sleep(600)
+      await page.locator('[data-testid="settings-open"]').click()
+      await sleep(900)
     }
 
     // Naming the passkey is the panel's own field now, not window.prompt. The

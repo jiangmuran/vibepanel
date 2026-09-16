@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-import { GROUP_WIDTH, SETTINGS_GROUPS, SETTINGS_SECTIONS, groupOf, sectionsIn } from './groups'
+import { SETTINGS_GROUPS, SETTINGS_SECTIONS, groupOf, sectionsIn } from './groups'
 import type { SettingsGroup, SettingsSection } from './groups'
 
 /**
@@ -121,31 +121,25 @@ describe('what opens the dialog', () => {
 })
 
 /**
- * How wide the dialog opens, and why exactly one group is different.
+ * How wide the dialog opens.
  *
- * The width used to be one class on the panel — `max-w-3xl`, which is a
- * reading measure and right for four of the five groups. It is wrong for the
- * fifth by enough to break it: Sharing is a list of pages with their links
- * nested under them, and at 3xl each link's row overflowed the body sideways.
- *
- * What this pins is that the width is *decided by the group* rather than
- * written once in the JSX, and that the decision still says what it said. Both
- * halves matter: a later edit that hardcodes either class puts every group
- * back on one width, and nothing on screen says which one is wrong until
- * somebody opens the one that is.
+ * One class, and a reading measure. There were two while Sharing was a group
+ * here — the list of pages wanted the width — and the record that chose
+ * between them, `GROUP_WIDTH`, is gone with the group. What this pins is that
+ * it stays gone: a second `max-w-` in the dialog is a group that has outgrown
+ * the dialog, and the answer to that was a page (see `SharingPage`), not a
+ * wider modal.
  */
 describe('how wide the dialog opens', () => {
-  it('takes its width from the group rather than from one class', () => {
-    expect(DIALOG).toContain('GROUP_WIDTH[group]')
-    // Written out as whole class names, both of them: Tailwind scans this file
-    // as text and an interpolated `max-w-${…}` is a class it never emits.
+  it('is one reading measure for every group', () => {
     const widths = new Set([...DIALOG.matchAll(/max-w-([\w-]+)/g)].map((m) => m[1]))
-    expect(widths).toEqual(new Set(['6xl', '3xl']))
+    expect(widths).toEqual(new Set(['3xl']))
   })
 
-  it('gives the canvas to sharing and to nothing else', () => {
-    for (const group of SETTINGS_GROUPS) {
-      expect(GROUP_WIDTH[group] === 'canvas', group).toBe(group === 'sharing')
-    }
+  it('links to the sharing page from where the sharing group was', () => {
+    // The rail item survives the group: somebody who last saw the pages
+    // under "Sharing" still finds them under "Sharing".
+    expect(DIALOG).toContain('href={SHARING_PATH}')
+    expect(DIALOG).toContain("t('grp.sharing')")
   })
 })

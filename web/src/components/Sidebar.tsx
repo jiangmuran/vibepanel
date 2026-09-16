@@ -4,7 +4,6 @@ import {
   Clock,
   GripVertical,
   ListOrdered,
-  Pencil,
   Pin,
   PinOff,
   Plus,
@@ -453,9 +452,9 @@ export function Sidebar(props: SidebarProps) {
                     className={`flex-1 ${rank.row}`}
                     editing={renaming === s.id}
                     onEditingChange={(v) => {
-                      // Both directions, because the gestures drive it too:
-                      // a long press opens through here just as the pencil
-                      // does, and a commit or an Escape closes it. Closing
+                      // Both directions, because the gestures drive it: a
+                      // long press or a double click opens through here, and
+                      // a commit or an Escape closes it. Closing
                       // reads the current row rather than the one this render
                       // captured: two rows can hand over between them, and a
                       // stale `renaming` would clear the row that just opened.
@@ -463,25 +462,6 @@ export function Sidebar(props: SidebarProps) {
                       else setRenaming((cur) => (cur === s.id ? null : cur))
                     }}
                   />
-                  {/* Mouse-only: under a coarse pointer every control is a
-                      44px box, and a third one squeezed the selected row's
-                      name to "scratc…" while the row's centre stopped being
-                      the name at all. Rename with a finger is the long
-                      press, which is why that gesture exists. */}
-                  {!touch && rowControls(isSelected) && renaming !== s.id && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setRenaming(s.id)
-                      }}
-                      data-testid="rename-session"
-                      title={t('session.rename')}
-                      className="vp-control vp-tap vp-reveal"
-                    >
-                      <Pencil size={12} />
-                    </button>
-                  )}
                   {/* The glyph says "gone" and this says how. A shape cannot
                       carry an exit code, and 3 vs 0 is the difference between
                       "it crashed" and "it finished and closed". */}

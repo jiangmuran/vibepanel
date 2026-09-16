@@ -159,6 +159,14 @@ and a test holds the list: the v1 snapshot, and a share page's files at
 one data route again now that boards are gone; the page files are the only
 addition, and the next section is why.
 
+Pages and links are made and edited on a page of their own, `/sharing`, behind
+the same `AuthGate` and the same cookie as the panel. That is an authenticated
+surface in an authenticated container and changes nothing above: the page
+reaches the settings routes, and a share token still reaches its five. The one
+thing that page cannot do is *open* a page — a project, a terminal, the Preview
+— so it hands the page's id to the panel on the panel's own address
+(`web/src/routes.ts`), and the panel opens it after its first snapshot.
+
 The alternative — a `scope` or `readOnly` column on the existing token table —
 makes every handler in the panel one that has to remember to check a flag, and
 the handler that forgets is the one somebody writes next year.
