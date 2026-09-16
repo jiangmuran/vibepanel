@@ -27,6 +27,7 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/hooks"
 	"github.com/jiangmuran/vibepanel/internal/httpapi"
 	"github.com/jiangmuran/vibepanel/internal/id"
+	"github.com/jiangmuran/vibepanel/internal/secret"
 	sessionpkg "github.com/jiangmuran/vibepanel/internal/session"
 	"github.com/jiangmuran/vibepanel/internal/store"
 	"github.com/jiangmuran/vibepanel/internal/sysmon"
@@ -612,7 +613,12 @@ func cmdSession(args []string) error {
 		// errors by design, the only symptom was a session whose state stayed
 		// guessed forever, in a panel whose settings page said hooks were
 		// installed.
-		token, terr := a.db.HookToken(ctx)
+		box, berr := secret.Open(filepath.Join(a.cfg.DataDir, secret.KeyFile))
+		if berr != nil {
+			fmt.Fprintf(os.Stderr, "warning: secrets key unreadable (%v); the hook token stays unsealed at rest\n", berr)
+			box = nil
+		}
+		token, terr := a.db.HookToken(ctx, box)
 		if terr != nil {
 			// Not fatal: without a token the session falls back to the output
 			// heuristic, which is the documented behaviour when hooks are not
@@ -620,6 +626,14 @@ func cmdSession(args []string) error {
 			// invisible from inside the session.
 			fmt.Fprintf(os.Stderr, "warning: no hook token (%v); this session will fall back to the output heuristic\n", terr)
 			token = ""
+		}
+		// This session's own credential, not the root token: the same
+		// derivation the HTTP path makes, through the same function. This path
+		// has already been the one that drifted — it built its own
+		// two-variable environment and left out the hook token — and the fix
+		// then was to move the building somewhere both callers share.
+		if token != "" {
+			token = hooks.ReportToken(token, sid)
 		}
 		env := hooks.SessionEnv(sid, p.ID, a.cfg.LoopbackURL(), token)
 
@@ -1050,7 +1064,12 @@ func cmdDoctor(args []string) error {
 	// Read out of the database below and compared against what the sessions
 	// hold, further down. Empty means either "no database to ask" or "no token
 	// has been created yet", and the check treats both as nothing to say.
+	// sessionIDByName is the tmux-name → panel-id half of the same story: a
+	// session's report credential derives from its panel id, not from the tmux
+	// name, so the comparison below needs the row to compute what a current
+	// session would hold.
 	var storedHookToken string
+	sessionIDByName := map[string]string{}
 
 	if !dirsOK {
 		skip("database", "the data directory is not usable")
@@ -1076,7 +1095,16 @@ func cmdDoctor(args []string) error {
 		// would generate a credential as a side effect. "A diagnostic that
 		// changes the thing it is diagnosing is one people stop trusting" --
 		// the same reason CheckWritable rolls its probe back.
-		storedHookToken, _ = db.GetSetting(ctx, "hook_token", "")
+		box, berr := secret.Open(filepath.Join(cfg.DataDir, secret.KeyFile))
+		if berr != nil {
+			box = nil
+		}
+		storedHookToken, _ = db.PeekHookToken(ctx, box)
+		if rows, lerr := db.ListSessions(ctx); lerr == nil {
+			for _, row := range rows {
+				sessionIDByName[row.TmuxName] = row.ID
+			}
+		}
 	}
 
 	// Free space where the database lives.
@@ -1288,7 +1316,17 @@ func cmdDoctor(args []string) error {
 				tok, terr := tm.SessionEnvValue(ctx, i.Name, "VIBEPANEL_TOKEN")
 				if terr == nil && tok != "" {
 					tokChecked++
-					if tok != storedHookToken {
+					// Valid either as the root token or as this session's own
+					// derived one: what a current session holds depends on
+					// when it was created, and the derivation binds to the
+					// panel id, which is why the map above exists. Compared,
+					// never printed: it is a credential, and doctor output
+					// ends up in bug reports.
+					current := tok == storedHookToken
+					if !current && sessionIDByName[i.Name] != "" {
+						current = tok == hooks.ReportToken(storedHookToken, sessionIDByName[i.Name])
+					}
+					if !current {
 						tokStale++
 					}
 				}

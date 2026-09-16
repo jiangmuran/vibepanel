@@ -10,6 +10,7 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/jiangmuran/vibepanel/internal/id"
+	"github.com/jiangmuran/vibepanel/internal/secret"
 )
 
 //go:embed schema.sql
@@ -1061,7 +1063,7 @@ func (d *DB) SetSetting(ctx context.Context, key, value string) error {
 	return nil
 }
 
-// HookToken returns the shared secret that authenticates state reports,
+// HookToken returns the root secret that authenticates state reports,
 // creating it on first use.
 //
 // Here rather than on the API server because the admin CLI needs the same
@@ -1072,19 +1074,101 @@ func (d *DB) SetSetting(ctx context.Context, key, value string) error {
 // 32 hex characters from crypto/rand. It travels in an Authorization header on
 // loopback and is written into the user's agent config, so it wants to be
 // unguessable but does not need to be long.
-func (d *DB) HookToken(ctx context.Context) (string, error) {
-	existing, err := d.GetSetting(ctx, "hook_token", "")
+//
+// Sealed at rest under the panel's secrets key when a box is given, because a
+// token that authenticates writes to any session is exactly the kind of value
+// a copied database must not hand over. A nil box keeps the historical
+// plaintext row: a panel whose key cannot be opened still works, which is the
+// same tolerance sealShareToken extends. Migration seals the *value* already
+// there -- running sessions hold it in their environment, and generating a new
+// one here would reject every report from every session started before this
+// change, silently, which is the drift red line 3 is about.
+func (d *DB) HookToken(ctx context.Context, box *secret.Box) (string, error) {
+	if box != nil {
+		enc, err := d.GetSetting(ctx, hookTokenSealedSetting, "")
+		if err != nil {
+			return "", err
+		}
+		if enc != "" {
+			if raw, derr := base64.StdEncoding.DecodeString(enc); derr == nil {
+				if out, uerr := box.Unseal(raw, hookTokenSealContext); uerr == nil {
+					return string(out), nil
+				}
+			}
+			// Sealed under a key that has since been replaced, or tampered
+			// with. Fall through and mint a new token: the reports it rejects
+			// until each session restarts are the cost of a rotated key, and
+			// the fallback to the output heuristic is the documented one.
+		}
+	}
+	legacy, err := d.GetSetting(ctx, hookTokenSetting, "")
 	if err != nil {
 		return "", err
 	}
-	if existing != "" {
-		return existing, nil
+	if legacy != "" {
+		if box != nil {
+			if err := d.storeHookToken(ctx, box, legacy); err != nil {
+				return "", err
+			}
+		}
+		return legacy, nil
 	}
 	token := id.New() + id.New()
-	if err := d.SetSetting(ctx, "hook_token", token); err != nil {
+	if err := d.storeHookToken(ctx, box, token); err != nil {
 		return "", err
 	}
 	return token, nil
+}
+
+// PeekHookToken reads the token without creating one.
+//
+// For `doctor`, which must not make a credential as a side effect of
+// diagnosing -- the same rule CheckWritable follows with its rolled-back
+// probe. Empty means none exists yet.
+func (d *DB) PeekHookToken(ctx context.Context, box *secret.Box) (string, error) {
+	if box != nil {
+		enc, err := d.GetSetting(ctx, hookTokenSealedSetting, "")
+		if err != nil {
+			return "", err
+		}
+		if enc != "" {
+			if raw, derr := base64.StdEncoding.DecodeString(enc); derr == nil {
+				if out, uerr := box.Unseal(raw, hookTokenSealContext); uerr == nil {
+					return string(out), nil
+				}
+			}
+			return "", nil
+		}
+	}
+	return d.GetSetting(ctx, hookTokenSetting, "")
+}
+
+const (
+	hookTokenSetting       = "hook_token"
+	hookTokenSealedSetting = "hook_token_sealed"
+	// The seal is bound to a purpose, so a ciphertext moved to a row or key
+	// meant for something else does not open there -- the same binding the
+	// share tokens and page secrets carry.
+	hookTokenSealContext = "hook-token"
+)
+
+// storeHookToken writes the token, sealed when a box is available, and removes
+// the plaintext row it migrated from: keeping both would make the seal
+// decorative.
+func (d *DB) storeHookToken(ctx context.Context, box *secret.Box, token string) error {
+	if box == nil {
+		return d.SetSetting(ctx, hookTokenSetting, token)
+	}
+	sealed := base64.StdEncoding.EncodeToString(
+		box.Seal([]byte(token), hookTokenSealContext))
+	if err := d.SetSetting(ctx, hookTokenSealedSetting, sealed); err != nil {
+		return err
+	}
+	_, err := d.sql.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, hookTokenSetting)
+	if err != nil {
+		return fmt.Errorf("store: remove plaintext hook token: %w", err)
+	}
+	return nil
 }
 
 // CheckWritable reports whether the database will actually accept a write.

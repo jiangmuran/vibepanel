@@ -720,7 +720,15 @@ func (s *Server) HookToken(ctx context.Context) (string, error) {
 	// restart cleared it.
 	read, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	token, err := s.DB.HookToken(read)
+	// The sealing key, or no seal: a key that cannot be read leaves the token
+	// in the plaintext settings row it may have migrated from, which is how
+	// the panel behaves for a share link on the same day.
+	box, berr := s.secretBox()
+	if berr != nil {
+		s.Log.Warn("secrets key unavailable; hook token stays unsealed at rest", "err", berr)
+		box = nil
+	}
+	token, err := s.DB.HookToken(read, box)
 	if err != nil {
 		return "", err
 	}
@@ -748,15 +756,32 @@ type hookStateRequest struct {
 // without affecting anything outside the panel.
 func (s *Server) handleHookState(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	token, err := s.HookToken(ctx)
+	root, err := s.HookToken(ctx)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "hook token unavailable")
 		return
 	}
+
+	var req hookStateRequest
+	if !decode(w, r, &req) {
+		return
+	}
+
 	presented := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	// Constant time: this endpoint is unauthenticated apart from the token, so
-	// a timing oracle on it is a timing oracle on the whole thing.
-	if subtle.ConstantTimeCompare([]byte(presented), []byte(token)) != 1 {
+	// Two credentials are valid here, checked in constant time either way:
+	// this endpoint is unauthenticated apart from the token, so a timing
+	// oracle on it is a timing oracle on the whole thing.
+	//
+	// The session's own derived token -- what a session created since report
+	// tokens exist holds in its environment, and the only thing that
+	// authorizes reporting *this* session id. Or the root token, which
+	// sessions created before it hold; sessions outlive the panel, and their
+	// environment was stamped when they were made. A restart re-stamps each
+	// one with its derived token, so the window where the root token is the
+	// wider credential shrinks on its own.
+	scoped := hooks.ReportToken(root, req.SessionID)
+	if subtle.ConstantTimeCompare([]byte(presented), []byte(root)) != 1 &&
+		subtle.ConstantTimeCompare([]byte(presented), []byte(scoped)) != 1 {
 		// Audited, like the other two paths an unauthenticated caller can
 		// reach. The allowlist refusal and a bad setup token both write a row
 		// through auditFromOutside; this one wrote nothing at all, so the
@@ -777,10 +802,6 @@ func (s *Server) handleHookState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req hookStateRequest
-	if !decode(w, r, &req) {
-		return
-	}
 	st := session.State(req.State)
 	if !st.Valid() {
 		writeErr(w, http.StatusBadRequest, "unknown state "+req.State)
@@ -1619,6 +1640,13 @@ func (s *Server) hookEnv(ctx context.Context, sessionID, projectID string) []str
 	if terr != nil {
 		s.Log.Warn("hook token unavailable; sessions will fall back to the heuristic", "err", terr)
 		token = ""
+	}
+	// A session is given the credential for itself, not the root token: see
+	// ReportToken for the one compromised agent that used to hold against
+	// every other session. Empty means no token at all, which SessionEnv
+	// drops and the heuristic covers.
+	if token != "" {
+		token = hooks.ReportToken(token, sessionID)
 	}
 	return hooks.SessionEnv(sessionID, projectID, s.Cfg.LoopbackURL(), token)
 }
