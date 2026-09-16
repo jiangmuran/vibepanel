@@ -778,3 +778,42 @@ func TestRunStopsWithContext(t *testing.T) {
 	// canceled" as the last error after every reconfigure.
 	none(t, h.sink.health, "health report at shutdown")
 }
+
+// The token is in every URL this adapter builds, and a *url.Error prints the
+// URL it failed on. That error reaches the settings page's health line, a
+// toast and the journal, so a proxy timeout would publish the bot's
+// credential in three places at once.
+func TestTheTokenIsNeverInAnError(t *testing.T) {
+	h := newHarness(t, "", false)
+	// A base nothing is listening on: client.Do fails with a *url.Error
+	// carrying the whole address.
+	h.ad.apiBase = "http://127.0.0.1:1"
+	err := h.ad.call(context.Background(), h.ad.http, "getMe", map[string]any{}, nil)
+	if err == nil {
+		t.Fatal("expected a transport error")
+	}
+	if strings.Contains(err.Error(), testToken) {
+		t.Fatalf("the token is in the error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "***") {
+		t.Fatalf("the error does not say a value was withheld: %v", err)
+	}
+	// And the file endpoint, which builds the same kind of URL.
+	if _, derr := h.ad.download(context.Background(), photoSize{FileID: "x"}); derr == nil ||
+		strings.Contains(derr.Error(), testToken) {
+		t.Fatalf("download error: %v", derr)
+	}
+	// Not every error that carries the URL is a *url.Error: a proxy's
+	// message, or anything wrapped along the way, can quote it too, so the
+	// last thing scrub does is look for the token itself.
+	plain := h.ad.scrub(errors.New("proxy refused " + h.ad.url("getMe")))
+	if strings.Contains(plain.Error(), testToken) {
+		t.Fatalf("a plain error kept the token: %v", plain)
+	}
+	if h.ad.scrub(nil) != nil {
+		t.Fatal("scrub invented an error")
+	}
+	if got := h.ad.scrub(errors.New("nothing secret")); got.Error() != "nothing secret" {
+		t.Fatalf("scrub changed an innocent error: %v", got)
+	}
+}

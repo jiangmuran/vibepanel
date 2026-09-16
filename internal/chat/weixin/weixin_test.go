@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1065,5 +1066,71 @@ func TestTypingKeepaliveStopsAtItsCap(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if m := len(f.calls("sendtyping")); m != n || n < 2 || n > 8 {
 		t.Fatalf("keepalives: %d then %d", n, m)
+	}
+}
+
+// The CDN URL a message carries is chosen by the server on the far side, and
+// a panel that dials it as given is a panel any iLink response can point at a
+// loopback or metadata address. Only the hosts this client was built with are
+// believed; anything else falls back to the URL built from the parameter.
+func TestAFullURLOnAnotherHostIsNotDialled(t *testing.T) {
+	var hits int32
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		_, _ = w.Write([]byte("should never be read"))
+	}))
+	defer elsewhere.Close()
+
+	f := newFake(t)
+	plain, key, ct := encryptFixture(t)
+	f.mu.Lock()
+	f.files["good"] = ct
+	f.mu.Unlock()
+	f.queue(batch("c1", userMsg(1, "t", map[string]any{"type": 2, "image_item": map[string]any{
+		"media": map[string]any{
+			"encrypt_query_param": "good",
+			"aes_key":             base64.StdEncoding.EncodeToString(key),
+			// The trap: a complete URL on a host that is not the IM's.
+			"full_url": elsewhere.URL + "/anything",
+		},
+	}})))
+	s, _ := running(t, newAdapter(t, f, ""))
+	in := s.next(t)
+	if in.FetchImage == nil {
+		t.Fatal("no picture to fetch")
+	}
+	img, err := in.FetchImage(context.Background())
+	if err != nil || !bytes.Equal(img, plain) {
+		t.Fatalf("fetch: %v, %q", err, img)
+	}
+	if n := atomic.LoadInt32(&hits); n != 0 {
+		t.Fatalf("the panel dialled the host the message named, %d times", n)
+	}
+}
+
+func TestTrustedOnlyBelievesTheIMsHosts(t *testing.T) {
+	c := &client{base: "https://ilinkai.weixin.qq.com", cdn: "https://novac2c.cdn.weixin.qq.com/c2c"}
+	for _, ok := range []string{
+		"https://ilinkai.weixin.qq.com/x",
+		"https://novac2c.cdn.weixin.qq.com/c2c/download?q=1",
+		"https://other.weixin.qq.com/y",
+		"https://weixin.qq.com/z",
+	} {
+		if !c.trusted(ok) {
+			t.Errorf("refused %s", ok)
+		}
+	}
+	for _, bad := range []string{
+		"",
+		"http://ilinkai.weixin.qq.com/x", // not https
+		"https://127.0.0.1/x",            // loopback
+		"https://169.254.169.254/latest/meta-data", // metadata
+		"https://weixin.qq.com.evil.example/x",     // suffix trick
+		"https://evilweixin.qq.com/x",              // no dot before the domain
+		"file:///etc/passwd",
+	} {
+		if c.trusted(bad) {
+			t.Errorf("believed %s", bad)
+		}
 	}
 }

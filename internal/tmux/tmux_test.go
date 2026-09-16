@@ -1846,3 +1846,32 @@ func TestKeysTypeAsAKeyboardWould(t *testing.T) {
 		t.Fatalf("expected y, Enter and Escape to be typed, got:\n%s", out)
 	}
 }
+
+// A key name that starts with a dash is a key, not a send-keys flag. The
+// names come from a settings row the owner edits, and tmux reads "-R" as
+// "reset the terminal" and "-X" as "a copy-mode command": without the "--"
+// the profile that answers a prompt with "-R" would clear the pane instead.
+func TestKeysThatLookLikeFlagsAreTypedNotParsed(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	const name = "vp_dashkeys"
+	if err := c.Create(ctx, CreateOptions{
+		Name: name, Dir: t.TempDir(), Width: 80, Height: 24,
+		Command: []string{"sh", "-c", "stty -echo -icanon min 1 time 0; exec cat -v"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	time.Sleep(700 * time.Millisecond)
+	// "-R" alone would be send-keys' own flag; as a key it is two characters.
+	if err := c.Keys(ctx, name, "-R"); err != nil {
+		t.Fatalf("Keys: %v", err)
+	}
+	time.Sleep(400 * time.Millisecond)
+	out, err := c.Capture(ctx, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "-R") {
+		t.Fatalf("a dash-leading key was eaten as a flag; pane holds:\n%s", out)
+	}
+}

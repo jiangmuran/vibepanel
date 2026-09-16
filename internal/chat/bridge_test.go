@@ -134,16 +134,42 @@ type fakeTerm struct {
 	keys       map[string][][]string
 	screen     string
 	fullscreen bool
+	gate       chan struct{}
+	entered    chan string
 }
 
 func newTerm() *fakeTerm {
 	return &fakeTerm{pastes: map[string][]string{}, keys: map[string][][]string{}, screen: "$ ls\nmain.go\n\n\n"}
 }
 func (f *fakeTerm) Paste(ctx context.Context, name, text string) error {
+	// gate lets a test hold one paste open, so it can see whether a second
+	// message from the same person is waiting or has run past it.
+	f.mu.Lock()
+	gate := f.gate
+	f.mu.Unlock()
+	if gate != nil {
+		f.entered <- text
+		<-gate
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.pastes[name] = append(f.pastes[name], text)
 	return nil
+}
+
+// hold makes the next pastes block until the returned function is called.
+func (f *fakeTerm) hold() (entered <-chan string, release func()) {
+	f.mu.Lock()
+	f.gate = make(chan struct{})
+	f.entered = make(chan string, 8)
+	g := f.gate
+	f.mu.Unlock()
+	return f.entered, func() {
+		f.mu.Lock()
+		f.gate = nil
+		f.mu.Unlock()
+		close(g)
+	}
 }
 func (f *fakeTerm) Keys(ctx context.Context, name string, keys ...string) error {
 	f.mu.Lock()
@@ -971,4 +997,54 @@ func TestAssistantApproveWaitsForOk(t *testing.T) {
 	if keys := r.term.pressed("vp_s1"); len(keys) != 1 || keys[0][0] != "y" {
 		t.Fatalf("after ok: %v", keys)
 	}
+}
+
+// Messages from one person run in the order they arrived. "stop 3" and then
+// "ok" is the pair that shows why: the confirmation the first one parks is
+// what the second one answers, and a bridge that runs them together answers
+// a confirmation that does not exist yet. Two pastes are the observable
+// version of the same thing.
+func TestOnePersonsMessagesRunInOrder(t *testing.T) {
+	r := newRig(t, Capabilities{Proactive: true})
+	r.peer("me", store.PeerPaired, store.ModeNormal)
+	r.session("s1", "one", "claude", session.StateDone)
+	h, _ := r.db.ChatHandle(r.ctx, "s1")
+
+	entered, release := r.term.hold()
+	r.ad.inbound(t, Inbound{PeerID: "me", Text: fmt.Sprintf("%d: first", h)})
+	select {
+	case got := <-entered:
+		if got != "first" {
+			t.Fatalf("entered with %q", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the first paste never started")
+	}
+	// The second message, while the first is still inside Paste.
+	r.ad.inbound(t, Inbound{PeerID: "me", Text: fmt.Sprintf("%d: second", h)})
+	select {
+	case got := <-entered:
+		t.Fatalf("the second message ran past the first and pasted %q", got)
+	case <-time.After(400 * time.Millisecond):
+	}
+	release()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(r.term.pasted("vp_s1")) == 2 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := r.term.pasted("vp_s1"); len(got) != 2 || got[0] != "first" || got[1] != "second" {
+		t.Fatalf("pasted %q", got)
+	}
+	// Another person is not held up by this one.
+	r.peer("other", store.PeerPaired, store.ModeNormal)
+	entered, release = r.term.hold()
+	r.ad.inbound(t, Inbound{PeerID: "me", Text: fmt.Sprintf("%d: mine", h)})
+	<-entered
+	before := r.b.Handled()
+	r.ad.inbound(t, Inbound{PeerID: "other", Text: "list"})
+	r.settleFrom(before)
+	release()
 }

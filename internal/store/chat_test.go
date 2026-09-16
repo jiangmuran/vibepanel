@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 )
 
@@ -283,5 +284,50 @@ func TestChatSpendAccumulatesPerDay(t *testing.T) {
 	}
 	if _, err := db.AddChatSpend(ctx, "", 1); err == nil {
 		t.Fatal("spend without a day")
+	}
+}
+
+// Two connections assigning a handle at once both read MAX+1 under their own
+// snapshot, and the second INSERT fails with SQLITE_BUSY_SNAPSHOT, which
+// busy_timeout does not wait out. The caller that loses drops the card it was
+// about to send. The settings page assigns a handle for every session it
+// lists, so the second party is not hypothetical.
+func TestHandlesAreAssignedUnderConcurrency(t *testing.T) {
+	db := openTest(t)
+	ctx := context.Background()
+	const n = 24
+	var wg sync.WaitGroup
+	handles := make([]int, n)
+	errs := make([]error, n)
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			handles[i], errs[i] = db.ChatHandle(ctx, fmt.Sprintf("s%d", i))
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	seen := map[int]int{}
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("session %d: %v", i, err)
+		}
+		if h := handles[i]; h <= 0 {
+			t.Fatalf("session %d got handle %d", i, h)
+		} else if prev, dup := seen[h]; dup {
+			t.Fatalf("sessions %d and %d both got handle %d", prev, i, h)
+		} else {
+			seen[h] = i
+		}
+	}
+	// And the numbering is the whole range, with nothing skipped: a handle
+	// is what a person types, so a gap means a lost card.
+	for want := 1; want <= n; want++ {
+		if _, ok := seen[want]; !ok {
+			t.Fatalf("handle %d was never assigned: %v", want, seen)
+		}
 	}
 }
