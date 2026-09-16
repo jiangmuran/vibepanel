@@ -2,8 +2,10 @@ package httpapi
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,6 +32,15 @@ import (
 // following a redirect. What makes that last list hold is where it is checked:
 // on the address the name resolved to, and then that exact address is dialled,
 // so a name that answers differently a moment later cannot move the request.
+//
+// One network makes "public addresses" the wrong test, and it is a common one
+// on a home LAN behind OpenClash, mihomo, Surge or sing-box: a fake-ip
+// resolver, which answers every name with the next address out of
+// 198.18.0.0/15 and translates it back to the name when the connection
+// arrives. On that network api.open-meteo.com is 198.18.0.157, api.github.com
+// is 198.18.0.7, and every source on every page said "may not reach" whatever
+// the owner approved. fakeIPResolver is how the guard tells that network from
+// a name somebody pointed into the block on purpose.
 
 // sourceWatchIdle is how long after the last look a page's sources and
 // schedule keep running.
@@ -269,10 +280,13 @@ func pageSecretContext(pageID, name string) string { return "page-secret:" + pag
 
 // sourceFetcher does one guarded HTTPS GET.
 type sourceFetcher struct {
-	// resolve and publicOnly are the guard; tests replace them to reach a
-	// server on loopback, and nothing else does.
+	// resolve and allowAddr are the guard; tests replace them to reach a
+	// server on loopback, and nothing else does. dial is the connection the
+	// checked address gets; tests replace it to see which address was chosen
+	// without a packet leaving the machine.
 	resolve    func(ctx context.Context, host string) ([]netip.Addr, error)
 	allowAddr  func(netip.Addr) bool
+	dial       func(ctx context.Context, network, addr string) (net.Conn, error)
 	rootCAs    *x509.CertPool
 	serverName string
 }
@@ -302,19 +316,41 @@ func (f *sourceFetcher) fetch(ctx context.Context, src pages.SourceSpec, headers
 	defer cancel()
 
 	var addrs []netip.Addr
+	resolved := false
 	if literal, perr := netip.ParseAddr(host); perr == nil {
 		addrs = []netip.Addr{literal}
 	} else if addrs, err = resolve(ctx, host); err != nil || len(addrs) == 0 {
 		res.Error = "the host does not resolve"
 		return res
+	} else {
+		resolved = true
 	}
 	// Every address must be public, not just the first: a name that answers
 	// one public and one private address is a name somebody arranged.
+	//
+	// The one exception is the fake-ip block, and only for a name, only when
+	// the resolver is shown to be handing that block out for names that cannot
+	// exist. A literal 198.18.0.157 in a URL is not a name the proxy can
+	// translate back, so it stays refused. The probe is asked once per fetch
+	// and only when an address needs it, so a public answer costs nothing.
+	fakeIP := -1
 	for _, a := range addrs {
-		if !allow(a) {
-			res.Error = "the host resolves to an address a source may not reach"
-			return res
+		if allow(a) {
+			continue
 		}
+		if resolved && benchmark.Contains(a.Unmap()) {
+			if fakeIP < 0 {
+				fakeIP = 0
+				if fakeIPResolver(ctx, resolve) {
+					fakeIP = 1
+				}
+			}
+			if fakeIP == 1 {
+				continue
+			}
+		}
+		res.Error = "the host resolves to an address a source may not reach"
+		return res
 	}
 	target := net.JoinHostPort(addrs[0].Unmap().String(), port)
 	serverName := host
@@ -322,12 +358,15 @@ func (f *sourceFetcher) fetch(ctx context.Context, src pages.SourceSpec, headers
 		serverName = f.serverName
 	}
 
-	dialer := &net.Dialer{Timeout: src.TimeoutOrDefault()}
+	dial := f.dial
+	if dial == nil {
+		dial = (&net.Dialer{Timeout: src.TimeoutOrDefault()}).DialContext
+	}
 	transport := &http.Transport{
 		Proxy: nil,
 		// The checked address, never the name: see the file comment.
 		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			return dialer.DialContext(ctx, network, target)
+			return dial(ctx, network, target)
 		},
 		TLSClientConfig:        &tls.Config{ServerName: serverName, RootCAs: f.rootCAs, MinVersion: tls.VersionTLS12},
 		DisableKeepAlives:      true,
@@ -411,6 +450,42 @@ var (
 	teredo    = netip.MustParsePrefix("2001::/32")
 	orchid    = netip.MustParsePrefix("2001:10::/28")
 )
+
+// fakeIPResolver reports whether the resolver is a fake-ip one: asked for a
+// name that cannot exist, it answers with an address in 198.18.0.0/15 anyway.
+//
+// The name is a fresh label under .test, which RFC 6761 reserves so that it
+// never resolves; a real resolver says NXDOMAIN, and a fake-ip proxy hands out
+// the next slot in its pool without asking upstream. The label is fresh each
+// time so that no cache between here and the proxy -- systemd-resolved keeps
+// a negative answer for as long as the SOA allows -- can answer for a network
+// the machine is no longer on. It is not .invalid, because systemd-resolved
+// synthesises NXDOMAIN for that one locally and the question never reaches
+// the router; that is what the first probe on this exact network did.
+//
+// What this widens is exactly one block, and only into a proxy that claimed
+// it: on a network without one, 198.18.0.0/15 routes nowhere, and TLS is
+// still verified against the approved name, so the most a resolver that lies
+// about .test can win is a connection to something on that block presenting
+// a certificate for a host the owner approved.
+func fakeIPResolver(ctx context.Context, resolve func(context.Context, string) ([]netip.Addr, error)) bool {
+	addrs, err := resolve(ctx, "vp-"+randomLabel()+".test")
+	if err != nil || len(addrs) == 0 {
+		return false
+	}
+	for _, a := range addrs {
+		if !benchmark.Contains(a.Unmap()) {
+			return false
+		}
+	}
+	return true
+}
+
+func randomLabel() string {
+	var b [6]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
 
 // publicAddr reports whether a source may reach an address: not loopback,
 // private, link-local (which is where cloud metadata lives, 169.254.169.254

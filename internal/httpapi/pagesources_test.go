@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/x509"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -61,6 +63,118 @@ func TestTheRealFetcherRefusesLoopbackBeforeConnecting(t *testing.T) {
 	}
 	if res := (&sourceFetcher{}).fetch(context.Background(), pages.SourceSpec{Key: "s", URL: "http://example.com", Every: "1m"}, nil); res.OK {
 		t.Error("an http source was fetched")
+	}
+}
+
+// fakeIPNet is a resolver like the one behind OpenClash or mihomo in fake-ip
+// mode: every name, including one that cannot exist, gets the next address out
+// of 198.18.0.0/15. hosts is what named hosts answer; probe is what a name under
+// .test answers, nil for NXDOMAIN. dial connects every target to srv on
+// loopback and keeps the target, which is the address the guard chose.
+type fakeIPNet struct {
+	hosts   map[string][]netip.Addr
+	probe   []netip.Addr
+	probes  []string
+	dialled []string
+	srv     *httptest.Server
+}
+
+func (n *fakeIPNet) fetcher() *sourceFetcher {
+	pool := x509.NewCertPool()
+	pool.AddCert(n.srv.Certificate())
+	return &sourceFetcher{
+		resolve: func(_ context.Context, host string) ([]netip.Addr, error) {
+			if strings.HasSuffix(host, ".test") {
+				n.probes = append(n.probes, host)
+				if n.probe == nil {
+					return nil, errors.New("no such host")
+				}
+				return n.probe, nil
+			}
+			return n.hosts[host], nil
+		},
+		dial: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			n.dialled = append(n.dialled, addr)
+			u, _ := url.Parse(n.srv.URL)
+			return (&net.Dialer{}).DialContext(ctx, network, u.Host)
+		},
+		rootCAs:    pool,
+		serverName: "example.com",
+	}
+}
+
+func addrs(list ...string) []netip.Addr {
+	out := make([]netip.Addr, 0, len(list))
+	for _, a := range list {
+		out = append(out, netip.MustParseAddr(a))
+	}
+	return out
+}
+
+// On a fake-ip network every name is 198.18.x.x, so the block is allowed --
+// but only that block, only for a name, and only once the resolver has been
+// caught answering a name that cannot exist. Each of those three is removed in
+// turn below and the fetch must be refused before anything is dialled.
+func TestAFakeIPResolverOpensItsOwnBlockAndNothingElse(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"temp":21}`))
+	}))
+	defer srv.Close()
+	spec := func(u string) pages.SourceSpec { return pages.SourceSpec{Key: "w", URL: u, Every: "1m"} }
+
+	// The network this was found on: the source host and the probe both
+	// answer out of the block, so the checked fake address is what is dialled,
+	// and TLS is still verified against the name.
+	n := &fakeIPNet{srv: srv, hosts: map[string][]netip.Addr{"api.example": addrs("198.18.0.157", "198.18.0.158")}, probe: addrs("198.18.0.200")}
+	f := n.fetcher()
+	if res := f.fetch(context.Background(), spec("https://api.example/now"), nil); !res.OK || res.Value.(map[string]any)["temp"] != float64(21) {
+		t.Fatalf("a source on a fake-ip network = %+v, want fetched", res)
+	}
+	if len(n.dialled) != 1 || n.dialled[0] != "198.18.0.157:443" {
+		t.Errorf("dialled %v, want the fake address the name resolved to", n.dialled)
+	}
+	if len(n.probes) != 1 || !strings.HasPrefix(n.probes[0], "vp-") || !strings.HasSuffix(n.probes[0], ".test") {
+		t.Errorf("probed %v, want one fresh label under .test, asked once for both addresses", n.probes)
+	}
+	if res := f.fetch(context.Background(), spec("https://api.example/now"), nil); !res.OK {
+		t.Fatalf("second fetch = %+v", res)
+	}
+	if len(n.probes) != 2 || n.probes[0] == n.probes[1] {
+		t.Errorf("probes %v, want a different label each time so no negative cache answers for an old network", n.probes)
+	}
+
+	refused := func(name string, n *fakeIPNet, u string, probed int) {
+		t.Helper()
+		res := n.fetcher().fetch(context.Background(), spec(u), nil)
+		if res.OK || !strings.Contains(res.Error, "may not reach") {
+			t.Errorf("%s: %+v, want refused as unreachable", name, res)
+		}
+		if len(n.dialled) != 0 {
+			t.Errorf("%s: dialled %v, want nothing", name, n.dialled)
+		}
+		if len(n.probes) != probed {
+			t.Errorf("%s: probed %v, want %d probe(s)", name, n.probes, probed)
+		}
+	}
+	block := map[string][]netip.Addr{"api.example": addrs("198.18.0.157")}
+	// A real resolver says NXDOMAIN for .test, and then 198.18.x.x is a name
+	// somebody pointed into a reserved block.
+	refused("no fake-ip proxy", &fakeIPNet{srv: srv, hosts: block}, "https://api.example/now", 1)
+	// A resolver that answers every name with something public -- an ISP's
+	// search page -- is not a fake-ip proxy either.
+	refused("wildcard resolver", &fakeIPNet{srv: srv, hosts: block, probe: addrs("8.8.8.8")}, "https://api.example/now", 1)
+	// A fake-ip network does not open the private ranges: mihomo's
+	// fake-ip-filter hands real addresses back for some names, and a real
+	// 10.0.0.1 is still the internal network.
+	refused("private beside fake-ip", &fakeIPNet{srv: srv, hosts: map[string][]netip.Addr{"api.example": addrs("10.0.0.1")}, probe: addrs("198.18.0.200")}, "https://api.example/now", 0)
+	refused("mixed answer", &fakeIPNet{srv: srv, hosts: map[string][]netip.Addr{"api.example": addrs("198.18.0.5", "10.0.0.1")}, probe: addrs("198.18.0.200")}, "https://api.example/now", 1)
+	// A literal address is not a name the proxy can translate back.
+	refused("literal", &fakeIPNet{srv: srv, probe: addrs("198.18.0.200")}, "https://198.18.0.157/now", 0)
+
+	// A public answer never asks the probe: the common case costs nothing.
+	n = &fakeIPNet{srv: srv, hosts: map[string][]netip.Addr{"api.example": addrs("93.184.216.34")}, probe: addrs("198.18.0.200")}
+	if res := n.fetcher().fetch(context.Background(), spec("https://api.example/now"), nil); !res.OK || len(n.probes) != 0 {
+		t.Errorf("a public host = %+v with probes %v, want fetched without a probe", res, n.probes)
 	}
 }
 

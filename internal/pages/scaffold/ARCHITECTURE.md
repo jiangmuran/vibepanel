@@ -180,6 +180,20 @@ a second URL nobody approved); a response over `maxBytes`; anything slower than
 answer that changes between the check and the connect cannot point it
 somewhere else.
 
+**One network is an exception, and it is a common one at home.** Behind a
+fake-ip resolver (OpenClash, mihomo, Surge, sing-box in that mode) every name
+answers out of 198.18.0.0/15 — `api.open-meteo.com` is 198.18.0.157 — and the
+proxy translates the address back to the name when the connection arrives.
+That block is reserved, so every source on such a network was refused whatever
+the owner approved. The fetch now allows it, on three conditions checked
+together: the address came from a *name*, not a literal in the URL; it is in
+that block and no other; and the resolver, asked for a fresh label under
+`.test` (a name RFC 6761 says can never exist), answers out of the same block.
+A resolver that says NXDOMAIN, or that answers with something public, is not a
+fake-ip proxy, and the block stays refused. The private ranges stay refused on
+every network: a fake-ip proxy's filter list still hands real addresses back
+for some names. TLS is verified against the approved name in either case.
+
 **Secrets.** `${secret:NAME}` in a header is replaced at fetch time with a value
 the owner stored in settings for that page. Secrets are encrypted at rest
 (§7), never sent to a page, an admin page, a snapshot, a log line or an export,

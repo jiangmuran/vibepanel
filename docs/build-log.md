@@ -22134,3 +22134,52 @@ gestures already did, and the owner read it as clutter. The gestures, the
 untouched; what went was the button, its string and the desktop check that
 pressed it.
 
+
+## 2026-09-16 — Sources on a fake-ip network: the weather never came
+
+The weather widget on a share page fetched nothing, and settings said why:
+"the host resolves to an address a source may not reach". It was the network,
+not the page. Behind the router runs a fake-ip resolver — OpenClash or mihomo,
+by the shape of it — which answers every name out of 198.18.0.0/15 and
+translates the address back to the name when the connection arrives.
+`api.open-meteo.com` was 198.18.0.157, `api.github.com` 198.18.0.7, and asking
+223.5.5.5 directly got the same, so the interception was on the router and
+nothing on the machine could be told to go around it. That block is the
+benchmarking range, on the fetcher's refuse list beside CGNAT and the test
+nets, so every source on every page was refused whatever the owner approved.
+
+The guard's job is to keep a source off the internal network, and on this
+network the block is not a network: it is a handle the proxy hands out and
+takes back. The fix lets the block through when three things hold together
+(`internal/httpapi/pagesources.go`): the address came from a name and not a
+literal in the URL, since a literal is not something the proxy can translate
+back; it is in that block and no other, so the private ranges are exactly as
+refused as before — mihomo's `fake-ip-filter` still returns real addresses for
+some names, and a real 10.0.0.1 is still the LAN; and the resolver, asked for
+a fresh label under `.test`, answers out of the block. RFC 6761 says `.test`
+can never resolve, so a real resolver says NXDOMAIN and a fake-ip proxy hands
+out the next slot without asking upstream. On a network without such a proxy
+the block routes nowhere, and TLS is still verified against the approved name,
+so what a lying resolver could win is a connection to something on that block
+presenting a certificate for a host the owner approved.
+
+Two things about the probe were learned by running it on this machine before
+writing it. `.invalid` was the first choice and answered nothing at all, not
+because the router is honest but because systemd-resolved synthesises NXDOMAIN
+for `.invalid` locally and the question never left the box; `.test` goes
+upstream. And the label is fresh each time, because systemd-resolved keeps a
+negative answer for as long as the SOA allows, and a probe cached on one
+network would answer for the next one the laptop joins. The probe is asked
+once per fetch, only when an address needs it, so a public answer costs
+nothing; on a fake-ip network it is one DNS question a minute per source,
+against a router that is already answering everything.
+
+The fetcher grew a `dial` seam so a test can see which address the guard chose
+without a packet leaving the machine: on the fake network the fake address is
+what is dialled, and the test connects that to a TLS server on loopback and
+checks the body came back. Nine mutations against the new guard, each red:
+the literal allowed, the probe always true, the probe ignoring its answer, the
+block widened to every refused address, the probe asked per address instead of
+per fetch, the probe under `.invalid`, a fixed label, the dial going to the
+name, and NXDOMAIN read as fake. `docs/page-backend.md` §4 says the same in
+fewer words.
