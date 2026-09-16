@@ -134,6 +134,23 @@ func (s *Server) cookieSecureFor(r *http.Request) bool {
 	return requestScheme(r, s.trustedProxies()) == "https"
 }
 
+// credentialTouchWindow is how long one "this credential was just used"
+// stamp is trusted. The stamps back a date a person reads, not an expiry the
+// panel enforces -- auth sessions and API tokens both expire by a fixed
+// deadline -- so a minute of staleness is invisible and a wall polling every
+// two seconds costs one write a minute instead of one a poll.
+const credentialTouchWindow = time.Minute
+
+// touchCooldowns gates the last-used stamps: the auth session's last-seen,
+// the API token's last-used, the preview link's last-used. One store, three
+// buckets, so the pattern is one field rather than three.
+func (s *Server) touchCooldowns() *auth.Cooldown {
+	s.touchOnce.Do(func() {
+		s.touchCooldown = auth.NewCooldown(credentialTouchWindow)
+	})
+	return s.touchCooldown
+}
+
 // ─── middleware ───────────────────────────────────────────────────────────
 
 // RequireAuth rejects requests without a valid session.
@@ -191,6 +208,37 @@ func (s *Server) RequireAuth(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, userContextKey, user)))
 	})
+}
+
+// refuseBlockedWrite re-runs the two checks RequireAuth makes ahead of its
+// currentUser lookup, for the auth routes registered outside the
+// authenticated group.
+//
+// They are /api/auth/logout and /api/auth/password. Both change state with the
+// session cookie attached, and SameSite=Strict does not separate ports: a page
+// served by another service on this host can POST here with the cookie riding
+// along. handleSetup, the third route outside the group, already checked these
+// itself; without the same two questions here, that pair was the exception no
+// test pinned and the CSRF that could force you out of your own panel.
+//
+// Same order, same messages, same audit event as the middleware: a second
+// wording for a guard is how the two copies drift.
+func (s *Server) refuseBlockedWrite(ctx context.Context, w http.ResponseWriter, r *http.Request) bool {
+	ip := s.clientIP(r)
+	if s.Auth != nil && !auth.Allowed(ip, s.Auth.Allow) {
+		s.auditFromOutside(ctx, "blocked", "", ip, "address not in the allowlist")
+		writeErr(w, http.StatusForbidden, "not allowed from this address")
+		return true
+	}
+	if allowed := s.publicOrigins(r); crossOriginWrite(r, allowed) {
+		s.auditFromOutside(ctx, "blocked", "", ip,
+			"a write from "+r.Header.Get("Origin")+"; this panel answers to "+strings.Join(allowed, " "))
+		writeErr(w, http.StatusForbidden,
+			"this panel answers to "+strings.Join(allowed, ", ")+", and that request came from "+
+				r.Header.Get("Origin")+". Set VIBEPANEL_DOMAIN, or add it to VIBEPANEL_PUBLIC_ORIGINS.")
+		return true
+	}
+	return false
 }
 
 // stillAuthorized re-runs the checks RequireAuth made, for a request whose
@@ -275,12 +323,18 @@ func (s *Server) currentUser(r *http.Request) (store.User, bool, error) {
 	// and it is why they can be revoked one at a time from the settings page,
 	// which a password change cannot do.
 	if bearer := bearerToken(r); bearer != "" {
-		user, err := s.DB.UserByAPIToken(ctx, auth.HashToken(bearer))
+		hash := auth.HashToken(bearer)
+		user, err := s.DB.UserByAPIToken(ctx, hash)
 		if errors.Is(err, store.ErrNotFound) {
 			return store.User{}, false, nil
 		}
 		if err != nil {
 			return store.User{}, false, err
+		}
+		if s.touchCooldowns().Allow("api-token", string(hash), time.Now()) {
+			if terr := s.DB.TouchAPIToken(ctx, hash); terr != nil {
+				s.Log.Debug("touch api token", "err", terr)
+			}
 		}
 		return user, true, nil
 	}
@@ -328,8 +382,18 @@ func (s *Server) currentUser(r *http.Request) (store.User, bool, error) {
 		return store.User{}, false, err
 	}
 	// Best effort; a failed touch must not fail the request.
-	if err := s.DB.TouchAuthSession(ctx, hash); err != nil {
-		s.Log.Debug("touch auth session", "err", err)
+	//
+	// Throttled to one write a minute per session. currentUser runs on every
+	// authenticated request and every open socket's revalidation tick, and a
+	// stamp whose timestamp always changes is a real write -- taking the one
+	// write lock tens of thousands of times a day to maintain a date the
+	// settings page renders. The expiry it does not serve: a session's
+	// expires_at is fixed at creation, so nothing is shortened by noticing a
+	// use late.
+	if s.touchCooldowns().Allow("auth-session", string(hash), time.Now()) {
+		if err := s.DB.TouchAuthSession(ctx, hash); err != nil {
+			s.Log.Debug("touch auth session", "err", err)
+		}
 	}
 	return user, true, nil
 }
@@ -666,6 +730,12 @@ func (s *Server) auditLoginFailure(ctx context.Context, username, ip, detail str
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	// Registered outside RequireAuth, so the two middleware checks are made
+	// here; refuseBlockedWrite says why. A logout someone else can drive is a
+	// small denial of service, but the check costs less than arguing about it.
+	if s.refuseBlockedWrite(r.Context(), w, r) {
+		return
+	}
 	if token := auth.TokenFromRequest(r); token != "" {
 		if err := s.DB.DeleteAuthSession(r.Context(), auth.HashToken(token)); err != nil {
 			s.Log.Warn("delete auth session", "err", err)
@@ -727,6 +797,14 @@ type changePasswordRequest struct {
 func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	ip := s.clientIP(r)
+
+	// Registered outside RequireAuth, so the two middleware checks are made
+	// here, ahead of the throttle: a cross-origin POST must not be able to
+	// spend the shared limiter on guesses, and the guesses a browser makes run
+	// from the owner's own IP. refuseBlockedWrite says why.
+	if s.refuseBlockedWrite(ctx, w, r) {
+		return
+	}
 
 	// KNOWN GAP, the same discarded error as handleAuthState above, and the
 	// fourth of four callers of currentUser. RequireAuth captures it and

@@ -119,6 +119,35 @@ func TestEveryStateAHookReportsIsARealState(t *testing.T) {
 			t.Errorf("zcode's %s reports %q, not a state the server accepts", e.event, e.state)
 		}
 	}
+
+	// opencode's literals are the one mirror that is not a Go table: they sit
+	// in an embedded JavaScript file, so a rename of the enum or a typo there
+	// passes every check above. Pulled back out of the plugin the only way the
+	// runtime could read them -- bare words in report('...') calls.
+	var reported []string
+	plugin := regexp.MustCompile(`report\('([a-z]+)'\)`)
+	for _, m := range plugin.FindAllStringSubmatch(string(opencodePlugin), -1) {
+		reported = append(reported, m[1])
+	}
+	if len(reported) == 0 {
+		t.Fatal("no report('...') calls found in the opencode plugin; "+
+			"the pattern has stopped matching and this test compares nothing")
+	}
+	said := map[string]bool{}
+	for _, s := range reported {
+		if !valid[s] {
+			t.Errorf("the opencode plugin reports %q, which is not a state the server accepts", s)
+		}
+		said[s] = true
+	}
+	// The plugin's own comment claims the three states the panel knows about;
+	// an enum member it stops reporting would send opencode sessions quietly
+	// back to the heuristic, which is the silence this file exists to break.
+	for _, s := range session.AllStates {
+		if !said[string(s)] {
+			t.Errorf("the opencode plugin never reports %q, though the enum knows it", s)
+		}
+	}
 }
 
 // The other direction: a snippet entry the events map does not know.

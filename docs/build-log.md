@@ -22434,3 +22434,84 @@ fork dropped) and two in the browser (the flip removed, the menu never
 rendered). Two survived on the way and are the reason two of those tests look
 the way they do.
 
+## 2026-09-16 — the audit fixes: one allowlist, two origins, one token bound to its session
+
+An eleven-dimension subagent audit (34 raw findings, adversarially verified
+down to 24) left six worth fixing now, and the fixing found a fifth mirror of
+the state enum that red line 3 did not know about.
+
+### `/preview/{token}` was the capability route that skipped `--allow-from`
+
+requireShareToken checks the operator's address allowlist before it looks at a
+credential, and so do the admin-grant routes. The directory preview route did
+not: token lookup straight to file serving. Creating a preview link was a way
+to serve files to addresses the operator had excluded — and a preview address
+can be a chosen word, which is guessable in a way a share token is not.
+**Fix**: the same check, in the same words, at the top of handleDirPreview.
+
+### Two auth routes had no origin check
+
+`/api/auth/logout` and `/api/auth/password` are registered outside the
+authenticated group, and neither handler ran the `crossOriginWrite` check
+RequireAuth applies to every other write. SameSite=Strict does not separate
+ports, so a page served by an agent's dev server could POST with the session
+cookie attached: forced sign-out, and password guesses that poison the shared
+login throttle from the owner's own IP. handleSetup already checked these
+itself; that pair was the exception no test pinned. **Fix**: a
+`refuseBlockedWrite` helper with the same two questions in the same words,
+called by both handlers.
+
+### The hook token now reports only its own session
+
+One root token went into every session's environment, and handleHookState
+authenticated the bearer without binding it to the session id in the body: any
+process in any session could flip any other session's state. Sessions now hold
+`ReportToken(root, sessionID)` — an HMAC of their own id — and the endpoint
+accepts either that or the root token, the latter for sessions created before
+this change, whose environment was stamped at creation and cannot be re-stamped
+without a restart. The derivation lives in internal/hooks next to
+SessionEnv, because that package is where the credential is built, and the
+CLI's session-create path derives through the same function.
+
+The same token is now sealed at rest under the panel's secrets key
+(`hook_token_sealed`, base64 AES-GCM), with the plaintext row deleted on
+migration — sealed to the same value, so no running session notices. A nil box
+(a key that cannot be read) keeps the historical plaintext behaviour, the same
+tolerance sealShareToken extends. `doctor` reads through PeekHookToken, which
+never creates a token, and accepts a session's env holding either the root or
+its derived value — which is why it needed the tmux-name → session-id map.
+
+### The share snapshot stopped forking tmux per wall
+
+buildShareReading called `Tmux.List` synchronously per link per snapshot per
+two seconds. The poller's `pollOnce` now publishes its list onto the Server,
+and shareUsage reads it; a list older than three seconds (poller stuck or gone)
+falls back to the fork that existed before.
+
+### Toolchain, and the fifth mirror
+
+`toolchain go1.26.6` is pinned in go.mod: govulncheck reported five reachable
+stdlib vulnerabilities (GO-2026-6089 slowloris, GO-2026-6090 TLS handshake,
+6218, 5972, 5026), and the pin clears them — re-run, zero reachable. And
+red line 3 grew by one: the opencode reporter's state literals live in an
+embedded JavaScript file rather than a Go table, so the drift test never saw
+them. It now extracts every `report('...')` call from the plugin and checks
+both directions — nothing invalid, nothing of the enum missing.
+
+Every new guard was mutation-tested: dropping the preview allowlist, the
+logout/password origin checks, the scoped-token accept, the derivation in
+hookEnv, and the plaintext-row deletion each turned its test red before the
+code was restored.
+
+The audit's tail was fixed the next day: the source caches dropped on
+republish, the three last-used stamps throttled to one write a minute
+(their expiries are fixed deadlines; the stamps back dates a person
+reads), idx_sessions_state dropped by a v26 migration -- and the hard
+way learned that `TestTheFirstMigrationIsFrozen` pins schema.sql by
+hash, so removing the index there was never an option -- ReorderProjects
+returning the omitted to automatic, which the function's own comment had
+been asking for in writing, a fifteen-second cache on the share flow
+rollups, a source-watch round budget larger than the worst case of the
+set it runs, and the release tag validated before it reaches a sed
+program. Two new guards mutation-tested red; the frozen-schema test
+caught the schema.sql edit before any database could.

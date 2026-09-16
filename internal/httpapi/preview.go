@@ -237,6 +237,19 @@ func (s *Server) registerPreviewRoutes(r chi.Router) {
 // handlePreview serves one file, or an index of one directory.
 func (s *Server) handleDirPreview(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
+	// The allowlist, checked first in the same words requireShareToken and
+	// requireAdminGrant use. Every other capability route applies it before it
+	// looks at a credential -- leaving --allow-from out of this path would make
+	// creating a preview link a way to serve files to addresses the operator
+	// had excluded, which matters more for a chosen address: a word is
+	// guessable in a way a share token is not.
+	if ip := s.clientIP(r); s.Auth != nil && !auth.Allowed(ip, s.Auth.Allow) {
+		s.auditFromOutside(ctx, "blocked", "", ip, "address not in the allowlist")
+		writeErr(w, http.StatusForbidden, "not allowed from this address")
+		return
+	}
+
 	link, err := s.DB.PreviewLinkByToken(ctx, auth.HashToken(chi.URLParam(r, "token")))
 	if err != nil {
 		// Not distinguishable from a path that is not there: a wrong token and
@@ -257,8 +270,13 @@ func (s *Server) handleDirPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.DB.TouchPreviewLink(ctx, link.ID); err != nil {
-		s.Log.Warn("touch preview link", "id", link.ID, "err", err)
+	// One write a minute per link, not one per file a page loads: the handler
+	// runs per asset, and a page referencing a stylesheet and a script would
+	// take the write lock twice per load for a date the settings page renders.
+	if s.touchCooldowns().Allow("preview", link.ID, time.Now()) {
+		if err := s.DB.TouchPreviewLink(ctx, link.ID); err != nil {
+			s.Log.Warn("touch preview link", "id", link.ID, "err", err)
+		}
 	}
 
 	// Every response, not only the HTML ones. A stylesheet or a JSON file

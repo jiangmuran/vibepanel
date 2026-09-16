@@ -579,6 +579,14 @@ if [ -z "$VERSION" ]; then
   [ -n "$VERSION" ] || die latest.fail "$API_URL"
 fi
 
+# The tag names a URL path below and a filename the sums file is matched with;
+# a `/`, a `|` or a newline in it is not data in either place. Whatever the API
+# answered -- or whoever was asked, under --mirror -- a release tag is one word
+# of letters, digits, dots and dashes.
+case $VERSION in
+  *[!A-Za-z0-9.-]*) die latest.fail "$API_URL" ;;
+esac
+
 [ -n "$BASE_URL" ] || BASE_URL="https://github.com/$REPO/releases/download/$VERSION"
 NAME="vibepanel_${VERSION}_${OS}_${ARCH}.tar.gz"
 

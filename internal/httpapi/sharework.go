@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/jiangmuran/vibepanel/internal/git"
@@ -56,6 +57,25 @@ const shareRepoDaysDefault = 14
 // twelve it read and says the list was cut.
 const maxRepoProjects = 12
 
+// shareFlowCacheFor is how long one reading of the event rollups is reused.
+//
+// The same arithmetic the spend cache carries, one section over: a wall polls
+// every two seconds and never stops, and the flow section is three queries --
+// two counts and a series -- walking up to EventRetentionDays of
+// session_events per ask, with no index that reaches the scope filter. Fifteen
+// seconds is invisible on a chart whose bucket is an hour or a day.
+const shareFlowCacheFor = 15 * time.Second
+
+// shareFlowCacheMax bounds the scopes held, on the same terms as the spend
+// cache's cap: scopes are owner-created, and over the cap the map is dropped
+// whole rather than evicted cleverly.
+const shareFlowCacheMax = 32
+
+type cachedFlow struct {
+	at   time.Time
+	flow shareFlow
+}
+
 // shareFlowFor buckets the session-event log for one link.
 func (s *Server) shareFlowFor(ctx context.Context, scope scopeOf, needs pages.Needs,
 	now time.Time, dayStart int64) shareFlow {
@@ -63,14 +83,13 @@ func (s *Server) shareFlowFor(ctx context.Context, scope scopeOf, needs pages.Ne
 	// A scope that names a row which is gone must show nothing rather than
 	// everything. The empty filter is "the whole panel", which is exactly the
 	// failure scopeOf exists to prevent, so it is checked here as well as
-	// there.
-	// `missing` as well as the empty ids, and this is the one place on the
-	// surface where the two come apart. The log deliberately outlives the rows
-	// it names -- deleting a project must not rewrite an afternoon somebody has
-	// already read -- so a scoped link whose project has been deleted still has
-	// matching rows in this table, where it has no matching sessions anywhere
-	// else. A dashboard that went on drawing them would be a link somebody sent
-	// about one project quietly outliving that project.
+	// there. `missing` as well as the empty ids, and this is the one place on
+	// the surface where the two come apart. The log deliberately outlives the
+	// rows it names -- deleting a project must not rewrite an afternoon
+	// somebody has already read -- so a scoped link whose project has been
+	// deleted still has matching rows in this table, where it has no matching
+	// sessions anywhere else. A dashboard that went on drawing them would be a
+	// link somebody sent about one project quietly outliving that project.
 	if scope.kind != store.ShareWhole &&
 		(scope.missing || (es.ProjectID == "" && es.SessionID == "")) {
 		return shareFlow{Every: shareFlowBucketSeconds, Buckets: []shareFlowBucket{}}
@@ -78,6 +97,19 @@ func (s *Server) shareFlowFor(ctx context.Context, scope scopeOf, needs pages.Ne
 
 	days := daysOr(needs.FlowDays, shareFlowDays)
 	byHour := needs.FlowHours
+
+	// Keyed by scope and window, before the per-link renaming: the ids here
+	// are the panel's own, and a cache on the far side of the renaming would
+	// be keyed by a credential.
+	key := es.ProjectID + "|" + es.SessionID + "|" +
+		strconv.Itoa(days) + "|" + strconv.FormatBool(byHour)
+	s.flowMu.Lock()
+	hit, ok := s.flowCache[key]
+	s.flowMu.Unlock()
+	if ok && time.Since(hit.at) < shareFlowCacheFor {
+		return hit.flow
+	}
+
 	out := shareFlow{WindowDays: days, Buckets: []shareFlowBucket{}}
 
 	if today, err := s.DB.CountSessionEvents(ctx, dayStart, es); err == nil {
@@ -107,12 +139,25 @@ func (s *Server) shareFlowFor(ctx context.Context, scope scopeOf, needs pages.Ne
 	rows, err := s.DB.SessionEventSeries(ctx, since, until, bucket, es)
 	if err != nil {
 		s.Log.Debug("share flow series", "err", err)
+		s.putFlow(key, out)
 		return out
 	}
 	for _, r := range rows {
 		out.Buckets = append(out.Buckets, bucketOfFlow(r.At, flowTotals(r)))
 	}
+	s.putFlow(key, out)
 	return out
+}
+
+// putFlow records a reading. Called with the result in hand, success or not:
+// a failure cached for fifteen seconds is a gap for fifteen seconds, and
+// caching only successes would make a database blip the one thing that runs
+// the queries at full rate.
+func (s *Server) putFlow(key string, flow shareFlow) {
+	if s.flowCache == nil || len(s.flowCache) >= shareFlowCacheMax {
+		s.flowCache = map[string]cachedFlow{}
+	}
+	s.flowCache[key] = cachedFlow{at: time.Now(), flow: flow}
 }
 
 func flowTotals(b store.EventBucket) shareFlowTotals {

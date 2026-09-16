@@ -775,6 +775,59 @@ func TestHookRequiresTheToken(t *testing.T) {
 	}
 }
 
+// The credential a session holds authorizes reporting that session, and
+// nothing else. It used to be one root token in every session's environment,
+// unbound to the session id in the body, so any process in any session could
+// reorder every other one.
+func TestAHookCanReportOnlyItsOwnSession(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	token, err := srv.HookToken(ctx)
+	if err != nil {
+		t.Fatalf("HookToken: %v", err)
+	}
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"hooked"}`)
+	a := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
+	b := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["sleep","60"]}`)
+
+	post := func(tok, sid string) int {
+		t.Helper()
+		body := `{"sessionId":"` + sid + `","state":"waiting"}`
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/hook/state", strings.NewReader(body))
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+tok)
+		res, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatalf("post: %v", err)
+		}
+		res.Body.Close()
+		return res.StatusCode
+	}
+
+	if code := post(hooks.ReportToken(token, a.ID), a.ID); code != http.StatusNoContent {
+		t.Errorf("A's own token on A = %d, want 204", code)
+	}
+	if code := post(hooks.ReportToken(token, a.ID), b.ID); code != http.StatusUnauthorized {
+		t.Errorf("A's token reporting B = %d, want 401", code)
+	}
+	if code := post(hooks.ReportToken(token, "other"), a.ID); code != http.StatusUnauthorized {
+		t.Errorf("a token derived for another id = %d, want 401", code)
+	}
+	// The root token still answers: sessions outlive the panel, and ones
+	// created before report tokens existed hold it in their environment. It
+	// is the legacy credential, not the scoped one, and it leaves with the
+	// session that carries it.
+	if code := post(token, b.ID); code != http.StatusNoContent {
+		t.Errorf("root token on B = %d, want 204", code)
+	}
+}
+
 func TestHookRejectsGarbage(t *testing.T) {
 	ts, srv := newTestServer(t)
 	ctx := context.Background()
@@ -833,13 +886,16 @@ func TestSessionEnvironmentCarriesTheHookVariables(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HookToken: %v", err)
 	}
+	// The pane holds this session's derived token, not the root one: a
+	// session reports itself, not its neighbours. See hooks.ReportToken.
+	want := hooks.ReportToken(token, sess.ID)
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		out, cerr := srv.Tmux.Capture(ctx, sess.TmuxName)
 		if cerr != nil {
 			t.Fatalf("Capture: %v", cerr)
 		}
-		if strings.Contains(out, sess.ID+"|"+token+"|") {
+		if strings.Contains(out, sess.ID+"|"+want+"|") {
 			if !strings.Contains(out, "127.0.0.1") {
 				t.Errorf("VIBEPANEL_URL is not loopback: %q", out)
 			}
@@ -3138,7 +3194,11 @@ func TestATransientFailureDoesNotDisableTheHookTokenForever(t *testing.T) {
 	}
 	broken.Close()
 
-	srv := &Server{DB: broken, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	// DataDir is set because HookToken opens the panel's secrets key under it
+	// since the token is sealed at rest; an empty Cfg would drop secrets.key
+	// in the package directory the test binary runs from.
+	srv := &Server{DB: broken, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Cfg: config.Config{DataDir: dir}}
 	if _, err := srv.HookToken(ctx); err == nil {
 		t.Fatal("the first read was supposed to fail; this test is checking nothing")
 	}

@@ -999,3 +999,46 @@ func TestTheRightSetupTokenClearsWhatGuessingLeftBehind(t *testing.T) {
 			"now waits twice as long for their own next typo", n)
 	}
 }
+
+// The two auth routes live outside the authenticated group, so the origin
+// check RequireAuth makes is made by refuseBlockedWrite inside them. For a
+// cookie, another port on this host is the same site: a page served by an
+// agent's dev server reaches these with the session cookie attached unless
+// the panel refuses the Origin itself.
+func TestLogoutAndPasswordRefuseACrossPortOrigin(t *testing.T) {
+	ts, _ := newTestServer(t)
+
+	evil := "http://127.0.0.1:39999"
+	for _, path := range []string{"/api/auth/logout", "/api/auth/password"} {
+		req, err := http.NewRequest(http.MethodPost, ts.URL+path, strings.NewReader(`{"current":"a","next":"b"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Origin", evil)
+		req.Header.Set("Content-Type", "application/json")
+		res, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatalf("POST %s: %v", path, err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusForbidden {
+			t.Errorf("POST %s from %s = %d, want 403", path, evil, res.StatusCode)
+		}
+	}
+
+	// The signed-in browser itself, whose Origin is the panel's own, still
+	// signs out.
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/auth/logout", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Origin", ts.URL)
+	res, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("same-origin logout: %v", err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNoContent {
+		t.Errorf("same-origin logout = %d, want 204", res.StatusCode)
+	}
+}
