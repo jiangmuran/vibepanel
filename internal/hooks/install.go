@@ -120,10 +120,15 @@ type Status struct {
 
 // events maps a hook event to the state it reports.
 var events = map[string]string{
-	"Notification":     "waiting",
-	"Stop":             "done",
-	"UserPromptSubmit": "working",
-	"PreToolUse":       "working",
+	"Notification": "waiting",
+	// PermissionRequest fires before the prompt is drawn and carries the
+	// tool and its input, which is what a person on a phone needs to see
+	// before answering "allow". Notification fires after, with a sentence
+	// naming the tool; both say waiting, and the server keeps the first.
+	"PermissionRequest": "waiting",
+	"Stop":              "done",
+	"UserPromptSubmit":  "working",
+	"PreToolUse":        "working",
 }
 
 // Inspect reports what is installed without changing anything.

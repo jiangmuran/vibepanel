@@ -95,10 +95,12 @@ func ClaudeSettings(script string) string {
 %s,
 %s,
 %s,
+%s,
 %s
   }
 }`,
 		entry("Notification", "waiting"),
+		entry("PermissionRequest", "waiting"),
 		entry("Stop", "done"),
 		entry("UserPromptSubmit", "working"),
 		entry("PreToolUse", "working"),

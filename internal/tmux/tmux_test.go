@@ -1812,3 +1812,37 @@ func TestALaunchedCommandReportsItsOwnName(t *testing.T) {
 		t.Errorf("pane_current_command = %q, want %q", cmd, "sleep")
 	}
 }
+
+func TestKeysTypeAsAKeyboardWould(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	const name = "vp_keys"
+	if err := c.Create(ctx, CreateOptions{
+		Name: name, Dir: t.TempDir(), Width: 80, Height: 24,
+		Command: []string{"sh", "-c", "stty -echo -icanon min 1 time 0; printf '\\033[?2004h'; exec cat -v"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	time.Sleep(700 * time.Millisecond)
+	if err := c.Keys(ctx, name, "y", "Enter", "Escape"); err != nil {
+		t.Fatalf("Keys: %v", err)
+	}
+	if err := c.Keys(ctx, name); err != nil {
+		t.Fatalf("Keys with nothing to press: %v", err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	out, err := c.Capture(ctx, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The pane asked for bracketed paste and must not have been given the
+	// markers: a "y" at a prompt that arrives as ESC[200~yESC[201~ is not a y.
+	if strings.Contains(out, "^[[200~") {
+		t.Fatalf("keys arrived as a paste:\n%s", out)
+	}
+	// The tty's icrnl turns Enter's carriage return into a newline before cat
+	// sees it, and cat -v shows the escape as ^[.
+	if !strings.Contains(out, "y\n") || !strings.Contains(out, "^[") {
+		t.Fatalf("expected y, Enter and Escape to be typed, got:\n%s", out)
+	}
+}

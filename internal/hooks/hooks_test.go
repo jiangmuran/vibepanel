@@ -149,8 +149,8 @@ func TestInstallCreatesSettingsWhenThereAreNone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InstallClaude: %v", err)
 	}
-	if !st.Installed || len(st.Events) != 4 {
-		t.Fatalf("status = %+v, want four events installed", st)
+	if !st.Installed || len(st.Events) != len(events) {
+		t.Fatalf("status = %+v, want every event installed", st)
 	}
 	doc := readJSON(t, filepath.Join(home, ".claude", "settings.json"))
 	if _, ok := doc["hooks"]; !ok {
@@ -274,7 +274,7 @@ func TestInstallIsIdempotent(t *testing.T) {
 	if len(stop) != 1 {
 		t.Errorf("Stop has %d entries after installing twice, want 1", len(stop))
 	}
-	if len(st.Events) != 4 {
+	if len(st.Events) != len(events) {
 		t.Errorf("events = %v", st.Events)
 	}
 }
@@ -381,7 +381,7 @@ func TestInstallingTwiceDoesNotTouchTheFileAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !st.Installed || len(st.Events) != 4 {
+	if !st.Installed || len(st.Events) != len(events) {
 		t.Errorf("second install reported %+v", st)
 	}
 	after, err := os.Stat(settings)
@@ -596,8 +596,8 @@ func TestTheEventListComesBackInTheSameOrderEveryTime(t *testing.T) {
 			t.Fatalf("call %d returned a different order:\n first %v\n  then %v", i, first, st.Events)
 		}
 	}
-	if len(first) != 4 {
-		t.Fatalf("expected four installed events, got %v", first)
+	if len(first) != len(events) {
+		t.Fatalf("expected %d installed events, got %v", len(events), first)
 	}
 }
 

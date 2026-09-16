@@ -896,6 +896,111 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+	// v25: chat -- what a session said, and the IM peers it is said to.
+	//
+	// session_messages is what an agent's hook reported it said, one row per
+	// report, so the panel has something to send to a phone besides a state
+	// word. Text is what arrived, validated and bounded by the server before it
+	// reaches here (red line 6); the table does not decide that.
+	//
+	// session_transcripts is its own table rather than a column on sessions,
+	// because Session is marshalled to the browser field by field and pinned by
+	// TestTypeScriptRowsMatchWhatIsSent: a path nothing in the UI reads would be
+	// a field in every snapshot, and a path on somebody's disk in every
+	// browser's memory.
+	//
+	// chat_handles is the short number a person types on a phone. Monotonic and
+	// never reused: a number that meant one session on Tuesday and another on
+	// Wednesday is how "y" lands in the wrong shell.
+	//
+	// chat_outbound maps a message the panel sent (by the adapter's own id) to
+	// the session it was about, which is what turns a quoted reply into an
+	// address. chat_status is the one message per (chat, session) an adapter
+	// that can edit keeps editing, so a session's day is one line in the chat
+	// rather than forty.
+	//
+	// None of the chat tables cascade from sessions, for the reason
+	// session_events gives: a session deleted this afternoon must not unmap a
+	// reply somebody is typing right now. Rows that point at nothing are swept.
+	func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`CREATE TABLE IF NOT EXISTS session_messages (
+			     id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			     session_id TEXT NOT NULL,
+			     at         INTEGER NOT NULL,
+			     kind       TEXT NOT NULL,
+			     text       TEXT NOT NULL,
+			     tool       TEXT NOT NULL DEFAULT ''
+			 )`,
+			`CREATE INDEX IF NOT EXISTS session_messages_session ON session_messages (session_id, id)`,
+			`CREATE TABLE IF NOT EXISTS session_transcripts (
+			     session_id TEXT PRIMARY KEY,
+			     tool       TEXT NOT NULL,
+			     path       TEXT NOT NULL,
+			     updated_at INTEGER NOT NULL
+			 )`,
+			`CREATE TABLE IF NOT EXISTS chat_channels (
+			     kind       TEXT PRIMARY KEY,
+			     enabled    INTEGER NOT NULL DEFAULT 0,
+			     config_enc BLOB NOT NULL,
+			     updated_at INTEGER NOT NULL
+			 )`,
+			`CREATE TABLE IF NOT EXISTS chat_peers (
+			     channel           TEXT NOT NULL,
+			     peer_id           TEXT NOT NULL,
+			     display           TEXT NOT NULL DEFAULT '',
+			     status            TEXT NOT NULL,
+			     pairing_code      TEXT NOT NULL DEFAULT '',
+			     mode              TEXT NOT NULL DEFAULT 'normal',
+			     focus_session     TEXT NOT NULL DEFAULT '',
+			     assistant_session TEXT NOT NULL DEFAULT '',
+			     assistant_at      INTEGER NOT NULL DEFAULT 0,
+			     context_token     TEXT NOT NULL DEFAULT '',
+			     created_at        INTEGER NOT NULL,
+			     last_seen_at      INTEGER NOT NULL DEFAULT 0,
+			     PRIMARY KEY (channel, peer_id)
+			 )`,
+			`CREATE TABLE IF NOT EXISTS chat_handles (
+			     session_id TEXT PRIMARY KEY,
+			     handle     INTEGER NOT NULL UNIQUE
+			 )`,
+			`CREATE TABLE IF NOT EXISTS chat_outbound (
+			     channel    TEXT NOT NULL,
+			     peer_id    TEXT NOT NULL,
+			     ref        TEXT NOT NULL,
+			     session_id TEXT NOT NULL,
+			     kind       TEXT NOT NULL,
+			     at         INTEGER NOT NULL,
+			     PRIMARY KEY (channel, peer_id, ref)
+			 )`,
+			`CREATE INDEX IF NOT EXISTS chat_outbound_recent ON chat_outbound (channel, peer_id, at)`,
+			`CREATE TABLE IF NOT EXISTS chat_status (
+			     channel    TEXT NOT NULL,
+			     peer_id    TEXT NOT NULL,
+			     session_id TEXT NOT NULL,
+			     ref        TEXT NOT NULL,
+			     updated_at INTEGER NOT NULL,
+			     PRIMARY KEY (channel, peer_id, session_id)
+			 )`,
+			`CREATE TABLE IF NOT EXISTS chat_mutes (
+			     channel    TEXT NOT NULL,
+			     peer_id    TEXT NOT NULL,
+			     session_id TEXT NOT NULL,
+			     until      INTEGER NOT NULL,
+			     PRIMARY KEY (channel, peer_id, session_id)
+			 )`,
+			`CREATE TABLE IF NOT EXISTS chat_spend (
+			     day   TEXT PRIMARY KEY,
+			     usd   REAL NOT NULL DEFAULT 0,
+			     calls INTEGER NOT NULL DEFAULT 0
+			 )`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	},
 }
 
 // scanner is *sql.Row and *sql.Rows both, so one scan function serves a

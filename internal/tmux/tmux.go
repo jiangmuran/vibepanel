@@ -167,6 +167,25 @@ func (c *Client) Paste(ctx context.Context, name, text string) error {
 	return nil
 }
 
+// Keys presses keys in a pane, in tmux's own key names: "Enter", "Escape",
+// "C-c", "y", "1".
+//
+// The counterpart to Paste for the one thing paste cannot do. An agent at a
+// permission prompt is reading single keystrokes, and a paste of "y" arrives
+// wrapped in bracketed-paste markers on the panes that asked for them, which
+// is exactly the panes an agent's TUI is. send-keys types them as a keyboard
+// would. Nothing here interprets the names: a caller that passes "rm -rf" gets
+// the letters typed and no Enter, which is why the tool profiles in
+// internal/chat hold the names rather than callers building them.
+func (c *Client) Keys(ctx context.Context, name string, keys ...string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	args := append([]string{"send-keys", "-t", target(name)}, keys...)
+	_, err := c.run(ctx, args...)
+	return err
+}
+
 // pasteSeq names each paste's buffer after itself.
 //
 // One constant name was the first version and it loses text. A paste is two
