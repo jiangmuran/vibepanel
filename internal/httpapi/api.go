@@ -146,6 +146,19 @@ type Server struct {
 	tokenMu   sync.Mutex
 	hookToken string
 
+	// tmuxList is the answer the poller's last pollOnce got from tmux, with the
+	// time it was produced. shareUsage reads it instead of forking its own
+	// `tmux list-panes`: a wall polls its share snapshot every pollInterval,
+	// and N walls would mean N forks every two seconds answering one question
+	// the poller already asked. Written only by pollOnce, so the cache holds
+	// exactly what the rest of the panel acts on; a reader finding it older
+	// than shareTmuxListMax -- poller stuck or gone -- forks its own, which is
+	// the behaviour that existed before the cache, bounded by reads rather than
+	// by the poll loop's health.
+	tmuxListMu sync.Mutex
+	tmuxList   []tmux.Info
+	tmuxListAt time.Time
+
 	// lastSnapshot is the most recent state payload that was broadcast. The
 	// poller compares against it so that a tick where nothing changed sends
 	// nothing — otherwise pushing is just polling with extra steps.
@@ -2020,6 +2033,12 @@ func (s *Server) pollOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Published for shareUsage, which would otherwise fork its own tmux per
+	// wall per poll; see the tmuxList field comment.
+	s.tmuxListMu.Lock()
+	s.tmuxList = infos
+	s.tmuxListAt = time.Now()
+	s.tmuxListMu.Unlock()
 	// No early return when tmux reports nothing.
 	//
 	// It was here to skip building an empty map, and it skipped the whole

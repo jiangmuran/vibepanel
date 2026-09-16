@@ -18,6 +18,7 @@ import (
 
 	"github.com/jiangmuran/vibepanel/internal/auth"
 	"github.com/jiangmuran/vibepanel/internal/git"
+	"github.com/jiangmuran/vibepanel/internal/tmux"
 	"github.com/jiangmuran/vibepanel/internal/pages"
 	"github.com/jiangmuran/vibepanel/internal/store"
 )
@@ -1294,4 +1295,28 @@ func TestEditingAShareLinkIsAudited(t *testing.T) {
 		}
 	}
 	t.Error("nothing recorded share.updated")
+}
+
+// shareUsage reads the poller's tmux list instead of forking its own, so the
+// snapshot a wall polls every two seconds costs no process of its own. The
+// cache must answer only while it is young: a stale answer describes sessions
+// as they were, and the fallback to a real fork is the degraded path.
+func TestShareUsageReadsThePollersListWhileItIsYoung(t *testing.T) {
+	_, srv := newTestServer(t)
+
+	infos := []tmux.Info{{Name: "vp_one", PID: 101}, {Name: "vp_two", PID: 102}}
+	srv.tmuxListMu.Lock()
+	srv.tmuxList = infos
+	srv.tmuxListAt = time.Now()
+	srv.tmuxListMu.Unlock()
+	if got := srv.recentTmuxList(); len(got) != 2 {
+		t.Fatalf("recentTmuxList = %v, want the poller's list", got)
+	}
+
+	srv.tmuxListMu.Lock()
+	srv.tmuxListAt = time.Now().Add(-4 * time.Second)
+	srv.tmuxListMu.Unlock()
+	if got := srv.recentTmuxList(); got != nil {
+		t.Errorf("a 4s-old list answered, want nil so the caller forks its own")
+	}
 }
