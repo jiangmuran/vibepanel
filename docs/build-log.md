@@ -22308,3 +22308,129 @@ project directory when the test's cleanup removed it -- on the same commit
 whose `check` run had passed; six local runs passed, and the tag was re-cut
 through `workflow_dispatch` as the workflow's comment says to. The race in
 that test is not fixed here.
+
+## 2026-09-16 — The sharing list, redrawn
+
+The owner's words were 「共享的管理模块 ui 太丑了」 and 「你独立出去的布局也好丑」.
+Both were right, and the first one names the bigger half: moving the list onto
+a page of its own had changed where it lives without changing how it looks.
+
+What was actually wrong, from the photographs rather than from the code:
+
+- **Nothing had a weight.** A page's card carried open, publish, manage,
+  export, versions, fork and delete as seven controls of the same size, four of
+  them bare 13px glyphs. A link's row carried five more. Copying the address —
+  the thing this page exists for — looked exactly like revoking the link.
+- **The facts were a paragraph.** Scope, disclosure, expiry, pinned version,
+  interactive, actions today and the remark were grey words separated by three
+  spaces, on a line under the name. Seven facts, one sentence, no edges.
+- **The header was three things in three places.** The frame drew the title,
+  the list drew the description, and the two buttons sat between them; under
+  that, two settings lines floated loose and read as the first two rows of the
+  list.
+- **A phone truncated a link's name to one character**, because the name, the
+  viewer count and five controls shared a line.
+
+What it is now: a header that owns its title, description and two actions; the
+pages root and the visitor-writes switch in one quiet strip; one card per page
+with a mark, the name, a published chip and the path, then the daily actions in
+words and the rest behind one `⋯`; and under it a **Links** block with a count
+and its own New-link button, where each link is a row of name, viewers and
+three actions over a line of chips.
+
+`components/Menu.tsx` is new, and it is a portal on purpose: the card clips its
+own corners, so an absolutely positioned menu is cut off, and the page scrolls
+under the trigger, so a menu in the flow drifts away from its button. It closes
+on Escape (stopping there, so a dialog underneath survives), on a pointer
+outside, and on any scroll or resize. One item is an `<a download>` rather than
+a button, because export is a download and a button cannot say that.
+
+`components/pages/bits.tsx` holds the four shapes the list is built from: a
+chip, a mark, a block title and an empty state. A chip's tone is the panel's
+own state colour thinned with `color-mix`, and it always carries its word, so
+the tone is never what says it (red line 4).
+
+Two actions that used to be an inline second step — revoke a link, delete a
+page — ask through `askConfirm` now, because an inline pair cannot live in a
+menu. The page delete is the one that cannot be undone; the server still
+refuses it while any link draws the page.
+
+`components/pages/actions.test.ts` is what makes the move safe. Six of these
+actions are not pressed by any browser check, so a redesign that loses one
+produces a card that still draws, still works, and no longer offers fork. It
+counts every action in both files, and it fails when one that belongs in the
+menu is drawn outside it or the other way round. Four mutations were run
+against it — the fork item deleted, the revoke confirmation removed, the lock
+moved back out of the menu, and a chip tone swapped for the ink colour — and
+each went red; the fourth survived the first time, which is why the tone
+mapping is pinned at all.
+
+The screenshots were looked at in both themes and at 390px after every step,
+which is how the doubled title, the bordered glyph with no label on a phone and
+the one-character link name were found.
+
+### Four audits read it back
+
+Four read-only reviewers were given the commit, one dimension each: function
+and logic, security, UI and copy, and elegance. Security found nothing to fix.
+The other three found real things, and the three worst were ones the
+screenshots could not have shown.
+
+- **A menu near the bottom of the window was drawn off it.** It is `fixed`, it
+  was placed at the trigger's bottom edge with no flip, and it closed on any
+  scroll — so the menu of the last card in an ordinary list could not be
+  reached at all, and every action that had just moved into a menu (fork,
+  export, delete, lock, revoke) moved with it. It flips above the trigger now,
+  measured from its real height, and it follows the trigger on every frame
+  while open instead of closing on scroll: the list re-reads itself every five
+  seconds, and a position read once pointed at a different row after a card
+  above it changed.
+- **A locked link was no longer shown anywhere.** The old row's padlock button
+  was the only thing that said so, and it went into the menu. It is a chip in
+  words now, and the row carries `data-locked`.
+- **The expiry chip broke red line 4.** It turned amber inside a day and said
+  "expires 9/22" either way, so tomorrow and next spring differed by colour
+  alone. A second chip that says 快过期了 appears instead.
+
+Smaller ones, all fixed: arrow keys were captured from the whole document while
+a menu was open; choosing an item dropped focus onto `<body>`; the first item
+was focused with no visible highlight after a mouse open; every menu was named
+"More"; the versions toggle did not say it was on; the settings strip drew as
+an empty bordered box until both of its requests landed; the manage dialog's
+two-row header cut the page's own Save button in half; the rotate button, which
+invalidates an address, was dressed exactly like Done; a phone still truncated
+a link's name because the viewers chip stayed on its line; the container
+queries measured the page, so the link row — the narrower box — went inline
+before the card around it did; the page's name was an `h3` under an `h1`; three
+strings were left orphaned; and a page with no name suggested a directory
+called `page-page`.
+
+**The test I wrote first was mostly a tautology**, and the elegance review
+proved it by running mutations against it: deleting the `if (!yes) return`
+before a revoke passed, wrapping the whole menu in `{false && …}` passed, and
+changing a quote style failed. That is the failure this project's mutation
+rule exists for, repeated. What replaced it:
+
+- `confirmThen` in `components/ask.ts`, used by revoke and delete, with a test
+  that answers no and watches nothing run. Its first version survived a
+  mutation too — `void run()` instead of `await run()` — because the test's
+  action yielded only one microtask; it waits on a real timer now.
+- `actions.test.ts` reads the whole directory, classifies only the entries of
+  a menu's `items` array as being in a menu, and says in its header what it
+  cannot see. Its tone check requires a chip whose `tone=` tests a condition to
+  test the same condition in its children, parsed past the `>` inside
+  `link.viewers > 0` rather than cutting there.
+- `pages-check` opens a link's menu, locks it, reads the chip and the server,
+  and unlocks it; and opens a page's menu with 15px of window under the
+  trigger. The first version of that step scrolled the list to put the trigger
+  low, the list was too short to scroll that far, and it passed with the flip
+  deleted — printing the same coordinates both ways. It cuts the window to the
+  trigger now and fails if it could not set up its own condition.
+
+Mutations, final count: ten, all red. Eight at the unit level (confirm ignores
+the answer, confirm does not wait, expiry back to tone-only, locked chip
+removed, every chip grey, the warn token swapped, lock moved out of the menu,
+fork dropped) and two in the browser (the flip removed, the menu never
+rendered). Two survived on the way and are the reason two of those tests look
+the way they do.
+

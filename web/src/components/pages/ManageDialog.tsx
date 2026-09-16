@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { X } from 'lucide-react'
+import { SlidersHorizontal, X } from 'lucide-react'
 
 import { api } from '../../protocol/api'
 import type {
@@ -13,6 +13,7 @@ import type {
 import { t, useLang, type Key } from '../../i18n'
 import { safeText } from '../text'
 import { DataForm } from './DataForm'
+import { BlockTitle } from './bits'
 
 /**
  * Managing one page: its admin page, its data, its sources and secrets, and
@@ -94,20 +95,28 @@ export function ManageDialog({
         role="dialog"
         aria-modal="true"
         aria-label={t('manage.title', { name: safeText(page.name) })}
-        className="vp-panel-in flex w-full max-w-5xl flex-col overflow-hidden rounded-vp border border-hairline bg-surface shadow-xl"
+        className="vp-panel-in flex w-full max-w-5xl flex-col overflow-hidden rounded-vp-lg border border-hairline bg-surface shadow-xl"
       >
-        <header className="flex flex-wrap items-center gap-2 border-b border-hairline px-3 py-2">
-          <span className="min-w-0 truncate text-vp-md font-medium text-ink">
+        {/* One row, and the name is what gives way. It was one row before and
+            a long page name pushed the tabs into the close button, so this
+            spent a second row on the tabs -- which took 46px off a body whose
+            own Save button then sat half under the bottom edge. `min-w-0` and
+            a truncate on the name is the fix that costs nothing. */}
+        <header className="flex items-center gap-2 border-b border-hairline px-4 py-2.5">
+          <SlidersHorizontal size={14} className="shrink-0 text-ink-3" />
+          <h2 className="min-w-0 flex-1 truncate text-vp-md font-medium text-ink">
             {t('manage.title', { name: safeText(page.name) })}
-          </span>
-          <div className="vp-segmented" role="tablist">
+          </h2>
+          <div className="vp-segmented shrink-0" role="tablist" aria-label={t('manage.tabs')}>
             {tabs.map((id) => (
               <button
                 key={id}
                 type="button"
                 role="tab"
+                id={`page-manage-tab-${id}`}
                 data-testid={`page-manage-tab-${id}`}
                 aria-selected={tab === id}
+                aria-controls="page-manage-panel"
                 data-active={tab === id}
                 onClick={() => setTab(id)}
                 className="vp-tab px-3 text-vp-sm whitespace-nowrap"
@@ -116,7 +125,6 @@ export function ManageDialog({
               </button>
             ))}
           </div>
-          <span className="flex-1" />
           <button
             type="button"
             data-testid="page-manage-close"
@@ -128,7 +136,12 @@ export function ManageDialog({
             <X size={14} />
           </button>
         </header>
-        <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        <div
+          id="page-manage-panel"
+          role="tabpanel"
+          aria-labelledby={`page-manage-tab-${tab}`}
+          className="min-h-0 flex-1 overflow-y-auto p-4"
+        >
           {tab === 'admin' && <AdminFrame pageId={page.id} draft={false} />}
           {tab === 'data' && <DataForm pageId={page.id} ns="live" />}
           {tab === 'sources' && <SourcesPanel pageId={page.id} />}
@@ -206,7 +219,9 @@ function SourcesPanel({ pageId }: { pageId: string }) {
         </p>
       )}
       <section>
-        <h4 className="mb-2 font-semibold text-ink-2">{t('sources.title')}</h4>
+        <div className="mb-2">
+          <BlockTitle>{t('sources.title')}</BlockTitle>
+        </div>
         {sources === null ? (
           <p className="text-ink-3">{t('data.loading')}</p>
         ) : sources.length === 0 ? (
@@ -259,7 +274,7 @@ function SourcesPanel({ pageId }: { pageId: string }) {
         )}
       </section>
       <section>
-        <h4 className="mb-1 font-semibold text-ink-2">{t('secrets.title')}</h4>
+        <BlockTitle>{t('secrets.title')}</BlockTitle>
         <p className="mb-2 text-vp-xs text-ink-3">{t('secrets.why')}</p>
         {names.length === 0 ? (
           <p className="text-ink-3">{t('secrets.none')}</p>
