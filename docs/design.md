@@ -355,6 +355,62 @@ Restore is offered, never automatic, unless you asked for it on a particular
 session. A boot that starts two dozen agents at once is a worse failure than a
 list to click through.
 
+## A chat app is a two-way notification, and every reply is addressed
+
+The webhook told a phone that a session was waiting. What it could not do was
+take the answer back. The chat bridge (`internal/chat`) is the reverse
+direction, and three decisions shape it.
+
+**It is three layers, and the seam is a declared capability list.** An adapter
+knows one IM's protocol and nothing about sessions; the bridge knows sessions,
+handles, rules and the write path into a pane, and nothing about any IM. Between
+them is `Adapter` plus `Capabilities`: can it edit a sent message, does it have
+buttons, does a quoted reply carry the quoted message's id or only its text,
+can it speak first. The bridge never asks which IM it is talking to; it asks
+those questions and picks a strategy. Telegram has everything; 飞书 has cards
+and edits and calls the panel back; 微信's iLink has none of it and cannot say
+a word until the person says one first, so the bridge holds the person's last
+context token and counts the pushes it had to drop. A fourth IM is a package
+that registers a factory and declares what it can do.
+
+**Everything is private chat.** No groups, threads or topics exist in the
+types, so an adapter for an IM that has them has nowhere to put them. One
+person, one window, many sessions — which is why every card begins with its
+handle, `[3]`, in every rendering: on the IM that quotes by text rather than by
+id, that is the address a reply is read back from, and at 2am the first four
+characters are all anyone reads.
+
+**Where a reply goes is decided by a rule, in order, and refused when the rule
+does not apply.** A quoted message first; a handle in the text second
+(`3: …`, `#3`, `[3]`); then the focus, but only while exactly one session is
+waiting. Two waiting sessions and a bare "y" is refused with the list, even
+when one of them is focused, because the cost of asking again is one message
+and the cost of guessing is a keystroke in the wrong shell. What "allow" is —
+Enter for Claude Code, `y` for Codex — is a per-tool key profile, editable,
+and a tool without one is refused rather than guessed at. Every delivery comes
+back as a receipt naming the handle.
+
+**Nothing an agent printed can reach the write path through the advanced
+mode.** The headless agent that reads a sentence like "tell the docs one to add
+a changelog entry" runs with no tools and sees only the sentence and a table of
+handles, titles and states; what it returns is an intent that goes through the
+same executor a typed command does, with a confirmation before anything is
+sent. The agent that answers questions runs with read-only MCP tools and no way
+to reach a pane at all. Its tools are five `GET`s under `/api/chat/tools`,
+reachable with a token that exists only in the running process and is refused
+on every other route — the same shape as the share token, narrowed by its route
+list and pinned by a test — and the session views restate their fields, so
+paths, commands and ids are not disclosed by default. The agent's working
+directory is the panel's own, with the hook variables stripped, so it is never
+mistaken for a session.
+
+The hook script forwards the agent's own document now (the last message, the
+prompt it is waiting on, the transcript path) as the request body, with the
+state in the query string, so a document the panel cannot read costs the
+message and never the state. What arrives is bounded, decoded, stripped of
+escape sequences and never interpreted (red line 6), and the panel keeps two
+hundred of them per session.
+
 ## Small decisions that keep being questioned
 
 **Per-session CPU is a share of the whole machine, not top's.** top means "one

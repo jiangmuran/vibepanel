@@ -22134,3 +22134,86 @@ gestures already did, and the owner read it as clutter. The gestures, the
 untouched; what went was the button, its string and the desktop check that
 pressed it.
 
+
+## 2026-09-16 — Sessions on a phone: the chat bridge
+
+The webhook could ring a phone; it could not take the answer. The request was
+three layers — read what every session says, decide how one chat window
+addresses many sessions, and plug in whichever IM the person uses — with 微信
+(iLink), 飞书 and Telegram first, everything as private chat, and an advanced
+mode where a sentence or a voice note is enough.
+
+**What a session says.** The panel had states and bytes and no messages. Every
+agent the panel wires up (Claude Code, Codex, Kimi Code, zcode) pipes a JSON
+document to its hook in Claude Code's shape, and the reporter script threw it
+away. It forwards it now, as the request body, with the state moved to the
+query string so an unreadable document loses the message and never the state;
+`hooks.Extract` is the one place that knows the agents' vocabulary and turns
+it into four kinds and a bounded string. Claude Code gets a `PermissionRequest`
+hook, which carries the command being allowed — the thing a person on a phone
+needs to see before saying yes — and the Notification that follows the same
+prompt is dropped when a prompt landed within five seconds. Two hundred
+messages per session, trimmed on write, in `session_messages`; the transcript
+path in its own table rather than a column on `sessions`, because `Session` is
+marshalled field by field to the browser and pinned by
+`TestTypeScriptRowsMatchWhatIsSent`.
+
+**The bridge.** `internal/chat` is IM-agnostic: handles (monotonic, never
+reused — a number that meant one session on Tuesday and another on Wednesday
+is how "y" lands in the wrong shell), the addressing order in `address.go`
+with the single-waiting rule, routing rules with quiet hours (prompts are never
+held), per-tool key profiles, pairing codes, confirmations with a two-minute
+expiry, and a card that every adapter renders in its own markup but always
+with the glyph and handle first. Changes come in over a bounded channel with a
+non-blocking send, the same contract as the event log, and are held for three
+seconds so a flicker between tool calls is one push. Where an adapter can edit,
+a session's working transitions edit the last message rather than sending
+another; waiting and done are new messages, because a notification only rings
+for those.
+
+**Three adapters, each by a subagent against a fake server, each
+mutation-tested.** Telegram (30 mutants, 3 first-round survivors fixed:
+backoff reset, the on-wire 20 MiB cap, a spurious health failure at shutdown),
+飞书 (40/40, after four survivors: callback dedupe on event_id, the download
+off the request goroutine, PKCS#7 checked byte by byte, a redundant guard
+collapsed), 微信 (31/31 after one: a stale token reported in `errcode` with
+`ret: 0`). The 微信 spec was assembled from the official plugin's shipped
+TypeScript and its issue tracker, and the sources disagree on the one fact
+that decides the product: how long a context token lives (two minutes, eleven
+hours, a day, or ten replies, depending on the month of the report). The
+adapter is built for the worst case and the settings page counts the pushes it
+had to drop for lack of one. Thirteen things can only be verified against a
+real account; they are listed in the adapter's commit.
+
+**Screenshots** are pure Go: `capture-pane -e` parsed into cells, drawn with
+GNU Unifont from a 936 KB embedded `.hex.gz`, because it is the only bitmap
+font that covers CJK and a phone screenshot with tofu where the Chinese output
+should be is worse than none. 198×60 renders in about 20 ms. "auto" attaches
+one only for a pane on its alternate screen, which is what a TUI looks like
+from outside; text is the default because it can be copied.
+
+**The advanced mode** shells out to `claude -p` or `codex exec`. Two calls,
+deliberately unlike: `Translate` has no tools, sees the sentence and a table of
+handles, and returns an intent the bridge runs through its own executor with
+an `ok` before anything is sent; `Ask` has only the panel's read-only MCP tools
+(`vibepanel mcp`, five `GET`s under `/api/chat/tools`, a per-process token
+narrowed by its route list, `TestAChatToolsTokenReachesOnlyTheseRoutes`). The
+hook variables are stripped from the child's environment so it is never taken
+for a session; the launch profile supplies the rest, so an API key is typed
+once, where it already hides. Verified against the installed binaries that
+every flag parses; not verified, because it would spend money, that
+`structured_output` and `total_cost_usd` are spelt as the docs say.
+
+**The page** is `/chat`, for the reason sharing became a page: channels with a
+health line each (when a message last arrived is the only proof a channel
+works), pairing, a rule table with a preview that says which rule would fire
+and who would be told, the advanced mode, the key profiles, and the chat's own
+slice of the audit log. The one dependency added is `qrcode`: 微信 signs in by
+scanning, the thing to scan is a URL, and a Reed–Solomon encoder written here
+would be wrong in a way nobody could see until a phone refused it.
+
+**What is not verified.** Nothing here has spoken to a real Telegram, 飞书 or
+微信 account; every adapter test is against a fake that follows the spec. The
+weixin adapter's commit lists what only a real account can confirm; the 飞书
+adapter lists the spec unknowns it decided. The opencode, Kimi and zcode key
+profiles copy Claude Code's and the page says so.

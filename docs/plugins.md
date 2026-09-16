@@ -215,3 +215,12 @@ Revisit section 4 if and when somebody has a harness that works and is annoyed
 about supervising it. At that point the design is a supervisor and a scoped
 token, both of which are ordinary things to build, and neither of which is a
 plugin system.
+
+## What exists now: chat adapters
+
+The one plugin shape the panel ships is the chat adapter (`internal/chat`,
+`docs/design.md`): a Go package that registers a factory and declares its
+capabilities, and is otherwise given nothing but an HTTP client and its own
+persisted state. That is shape 2 above ("send an event somewhere") with the
+answer coming back, and it is in-process on purpose: the write path into a
+pane is the one thing a plugin must never own, and the bridge keeps it.

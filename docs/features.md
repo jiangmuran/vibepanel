@@ -325,6 +325,60 @@ got built, token spend, a phone glance, or a session wall), published, in the
 same `page-…` directories. The addresses on walls keep working, with the same
 detail level, scope, remark and expiry.
 
+## On a phone, in a chat app
+
+A session that wants you can reach you in Telegram, 飞书 or 微信, and you
+answer from the same window. **Chat** (the link at the bottom of the settings
+rail, or `/chat`) is where it is set up.
+
+**Channels.** One card per app. Telegram wants a bot token from @BotFather;
+飞书 wants an app's id, secret and verification token, and the card shows the
+request URL to paste into the console; 微信 signs in by scanning a QR code.
+Every card has a health line that says when a message last arrived, which is
+the only thing that tells a working channel from a configured one.
+
+**Pairing.** Nobody can talk to the panel until you say so. Whoever messages
+the bot first gets a six-digit code and a *pending* row on the page; enter the
+code, or press *pair*. Each person has a mode: *normal* takes commands and
+addressed replies, *advanced* also takes sentences.
+
+**What you get.** A card per change, always starting with the session's number:
+
+    ▲ [3] fix tmux · vibepanel
+    needs your permission · 2m ago · claude
+
+    Bash: go test ./...
+
+On Telegram and 飞书 a permission prompt has *Allow* and *Deny* buttons; on
+微信 you reply `y` or `n`. When a session is working, the card is edited in
+place rather than sent again where the app allows it.
+
+**Replying.** `3: your words` sends them to session 3; so does quoting its
+card. A bare reply goes to the one session that is waiting, and is refused
+with the list when two are — a "y" typed into the wrong agent is the one
+mistake this cannot make. Every delivery comes back as a receipt naming the
+number. `help` lists the rest: `list`, `screen 3`, `shot 3` (a picture of the
+pane), `open 3` (the panel at that session), `context 3` (the last messages,
+both sides), `focus 3`, `mute 3 2h`, `stop 3` (asks for `ok` first), `usage`,
+`more`.
+
+**Rules** decide who is told what: by project, tool, state or message kind,
+to everyone or to one person, with quiet hours (a prompt is never held) and
+a screenshot policy. *Preview* picks a session and says which rule would fire
+and who would be told.
+
+**Advanced mode** runs a headless Claude Code or Codex on the panel's own
+directory. A sentence — "tell the docs one to add a changelog entry", "the one
+before last, allow" — becomes an intent, and anything that writes waits for
+your `ok`. `ask: what is 3 doing` answers from read-only tools. 微信 voice notes
+arrive transcribed; the agent never sees a pane's output when deciding where
+to send anything. There is a daily budget, and the page shows today's spend.
+
+**Keys** is what "allow" presses per tool. Claude Code takes Enter, Codex takes
+`y`; the others copy Claude Code and are editable.
+
+Nothing here is a group: every conversation is one person, one bot.
+
 ## The first run
 
 A panel with no account prints a one-time token; you paste it, choose a

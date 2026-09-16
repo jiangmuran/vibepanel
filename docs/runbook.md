@@ -979,3 +979,45 @@ vibepanel service start && vibepanel service token
 
 Everything else — projects, sessions, notes — survives that. Passkeys do not:
 they are registered against the account that is being deleted.
+
+## The phone gets nothing, or the bot does not answer
+
+The Chat page (`/chat`) has a health line per channel. Read it before anything
+else: *running* with *last message: never* means the panel is polling and
+nobody has messaged the bot; a red line under it is the last error the IM
+returned, verbatim.
+
+Then, in order:
+
+1. **Is anyone paired?** A stranger who messages the bot gets a six-digit code
+   and a *pending* row; nothing is pushed to or accepted from a pending row.
+   Enter the code on the page or press *pair*.
+2. **微信 cannot speak first.** iLink lets a bot reply only with a context
+   token from the person's last message, and the token expires (the reports
+   disagree on when: minutes to a day). The health line counts pushes dropped
+   for lack of one as *waiting for a hello*. Send the bot anything and the next
+   push goes through.
+3. **Is the session one the rules send?** Pick it in the page's *preview*: it
+   says which rule matched and who would be told after muting and quiet hours.
+   A rule with no destinations silences; a mute typed on the phone
+   (`mute 3 2h`) is per person per session and shows in the preview.
+4. **Did the hook carry a message?** The card body comes from the agent's hook
+   document. `GET /api/chat/tools/sessions/{handle}/messages` (with the
+   process's tools token, or `context 3` from the phone) shows what arrived.
+   Nothing there with hooks installed means the reporter script predates this
+   panel: *Settings → Sessions → reinstall*. The script is rewritten on every
+   install.
+5. **The bridge itself.** `dropped` on the page is the number of changes the
+   bridge's queue refused; a non-zero count means the drain fell behind, which
+   has only ever meant a stuck adapter. Restarting the panel restarts every
+   adapter and loses nothing: peers, handles and cursors are in the database.
+
+**"y" went to the wrong session.** It cannot, by construction, when two are
+waiting — the bridge refuses a bare reply then. If it went to a session that
+was not the one asking, the reply was addressed (`3:`, a quote, or the focus)
+and the receipt (`→ [3] 已送入`) says where. The audit log (`chat.*` events,
+on the page) has the sentence and the handle.
+
+**The advanced mode says the budget is spent.** It is per day in the panel's
+zone; the page shows today's calls and dollars. Codex reports no cost, so with
+Codex the count is the only meter.

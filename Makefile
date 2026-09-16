@@ -66,6 +66,10 @@ render-check: build   ## Drive the real binary with a real browser
 pages-check: build    ## Share pages: the sandbox from inside a page, the editing loop, every template
 	cd web && npm run check:pages
 
+.PHONY: chat-check
+chat-check: build     ## The Chat page: every adapter's card, rules, keys, the doors, layout at three widths
+	cd web && npm run check:chat
+
 .PHONY: stress-check
 stress-check: build   ## Wide characters, full-screen programs, floods, dropouts
 	cd web && npm run check:stress

@@ -25,7 +25,7 @@ cd "$(dirname "$0")/.."
 # Overridable so the collection logic can be exercised without a twenty-minute
 # run. The default is the real list; the order no longer decides anything, see
 # the scheduling note below.
-TARGETS=${VERIFY_TARGETS:-"check panes-check install-check sudo-check head-check first-run-check pages-check render-check stress-check restart-check scale-check tls-check release-check"}
+TARGETS=${VERIFY_TARGETS:-"check panes-check install-check sudo-check head-check first-run-check pages-check chat-check render-check stress-check restart-check scale-check tls-check release-check"}
 
 # ─── how these run at the same time ───────────────────────────────────────
 #

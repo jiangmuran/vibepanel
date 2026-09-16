@@ -207,6 +207,17 @@ Each of these exists because the alternative broke something real.
    poll takes what the background refresh has already produced and reports its
    age, and "not counted yet" is a distinct answer from zero.
 
+   **The chat bridge has two more doors of the same shape.**
+   `POST /api/chat/hooks/{kind}` is where an IM calls back; it is
+   unauthenticated at the panel and the adapter verifies every request itself
+   (signature, verification token). `GET /api/chat/tools/*` is what the
+   advanced mode's agent may read: five `GET`s, a token minted per process
+   and never stored, refused everywhere else and pinned by
+   `TestAChatToolsTokenReachesOnlyTheseRoutes`. The session views there
+   restate their fields; handles, not ids. Nothing an agent printed reaches
+   the write path: the intent translator has no tools, the question answerer
+   has only these, and every write from either waits for the person's `ok`.
+
 ## Conventions
 
 - **Comments explain why, and what breaks otherwise.** Not what the line does.
@@ -243,6 +254,7 @@ Each of these exists because the alternative broke something real.
   | `make stress-check` | wide characters, full-screen programs, scrollback, floods, dropped sockets |
   | `make restart-check` | kill the backend; the sessions and the login must outlive it |
   | `make scale-check` | two dozen sessions: snapshot size, sidebar reachability, poller |
+  | `make chat-check` | the Chat page: a card per adapter, a saved token starting a channel, the 飞书 handshake, rules and their preview, the key table, the tools door, the deep link, layout at three widths in both themes and languages |
   | `make pages-check` | share pages: every escape from inside a sandboxed page, in a signed-in browser; the editing loop through the UI; every template × screen × fixture |
   | `make tls-check` | its own TLS: wss, the Secure cookie, swapping a certificate |
   | `make release-check` | build the archives and run one from a throwaway HOME |
@@ -319,5 +331,8 @@ internal/session/   state enum (source of truth) and, later, the session manager
 internal/store/     SQLite schema, migrations, typed queries
 internal/config/    flags, environment, validation
 internal/id/        opaque id generation
+internal/chat/      the chat bridge: sessions on a phone. One package per IM
+                    under it (telegram, feishu, weixin), the PNG renderer
+                    (shot) and the advanced mode's runner (assistant)
 web/                frontend
 ```

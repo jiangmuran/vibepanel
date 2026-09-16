@@ -127,7 +127,8 @@ command line, Docker, and building from source.
 
 ## Features
 
-[docs/features.md](docs/features.md)
+[docs/features.md](docs/features.md) — including sessions on a phone through
+Telegram, 飞书 or 微信, with replies going back into the session.
 ⚠️ Written by AI ⚠️
 
 ## Flags and troubleshooting
