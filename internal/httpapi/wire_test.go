@@ -410,6 +410,16 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"origin.trusted":   true,
 		"timezone.changed": true,
 		"session.origin":   true,
+		// The chat bridge. One prefix for everything a phone caused or the
+		// Chat page changed, so "what did the chat do" is one GROUP BY. The
+		// bridge's own rows (chat.in, chat.send, chat.approved, chat.denied,
+		// chat.interrupt, chat.image, chat.stranger, chat.paired, chat.intent,
+		// chat.ask) reach the log through a function the server hands it, so
+		// the scan below cannot see them; these four are the handlers' own.
+		"chat.tools.rejected": true,
+		"chat.channel":        true,
+		"chat.assistant":      true,
+		"chat.peer":           true,
 	}
 
 	files, err := filepath.Glob("*.go")

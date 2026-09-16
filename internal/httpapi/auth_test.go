@@ -50,6 +50,11 @@ var openRoutes = map[string]string{
 	"/api/auth/state":                "tells the sign-in page which doors exist; it is what a stranger needs",
 	"/api/auth/passkey/login/begin":  "signing in with a passkey, before there is a session to require",
 	"/api/auth/passkey/login/finish": "the other half of the same",
+	// Where an IM calls the panel back (飞书). The IM cannot sign in; the
+	// adapter verifies every request itself -- signature, verification token
+	// -- and the handler hands the request over and nothing else. 404 for a
+	// kind that is not a running webhook adapter; see chat.go.
+	"/api/chat/hooks/{kind}": "an IM's callback; the adapter verifies the signature and token itself",
 	// A directory preview, and the reason is measured rather than chosen.
 	//
 	// The page is served with `Content-Security-Policy: sandbox`, which is what
