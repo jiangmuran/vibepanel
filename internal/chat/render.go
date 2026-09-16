@@ -105,6 +105,9 @@ func RenderPlain(c *Card) string {
 	if c.URL != "" {
 		b.WriteString("\n" + c.URL)
 	}
+	if c.Hint != "" {
+		b.WriteString("\n" + c.Hint)
+	}
 	return b.String()
 }
 
@@ -126,6 +129,9 @@ func RenderHTML(c *Card) string {
 	if c.URL != "" {
 		fmt.Fprintf(&b, "\n<a href=\"%s\">%s</a>", html.EscapeString(c.URL), html.EscapeString(linkLabel(c)))
 	}
+	if c.Hint != "" {
+		b.WriteString("\n" + html.EscapeString(c.Hint))
+	}
 	return b.String()
 }
 
@@ -145,6 +151,9 @@ func RenderMarkdown(c *Card) string {
 	}
 	if c.URL != "" {
 		fmt.Fprintf(&b, "\n[%s](%s)", mdEscape(linkLabel(c)), c.URL)
+	}
+	if c.Hint != "" {
+		b.WriteString("\n" + mdEscape(c.Hint))
 	}
 	return b.String()
 }

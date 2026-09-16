@@ -499,7 +499,7 @@ func TestAWorkingSessionRefusesTextUntilStopped(t *testing.T) {
 	if keys := r.term.pressed("vp_w"); len(keys) != 1 || keys[0][0] != "Escape" {
 		t.Fatalf("interrupt keys %v", keys)
 	}
-	// Nothing pending now.
+	// Nothing pending now, and an ok after a stop is never a yes.
 	r.say("me", "ok")
 	if !strings.Contains(r.ad.last(), "没有等待确认") {
 		t.Fatalf("reply %q", r.ad.last())
@@ -551,7 +551,7 @@ func TestAStateChangeIsPushedOnceItSettles(t *testing.T) {
 	}
 	// The message is remembered, so a quote of it routes.
 	o, ok, _ := r.db.ChatOutboundByRef(r.ctx, r.ad.kind, "me", "m1")
-	if !ok || o.SessionID != "s1" || o.Kind != store.OutboundStatus {
+	if !ok || o.SessionID != "s1" || o.Kind != store.OutboundRequest {
 		t.Fatalf("outbound record: %+v %v", o, ok)
 	}
 	// Working afterwards edits the same message rather than sending another.
@@ -734,7 +734,7 @@ func TestLongBodiesAreCutAndMoreContinues(t *testing.T) {
 	r.b.SessionChanged(row, session.StateDone)
 	r.waitFor(func() bool { return r.ad.count() == 1 })
 	body := r.ad.sent[0].Card.Body
-	if len([]rune(body)) > doneBodyLimit+60 || !strings.Contains(body, "回复「更多」") {
+	if len([]rune(body)) > doneBodyLimit+60 || !strings.Contains(body, "继续看") {
 		t.Fatalf("body of %d runes: %q", len([]rune(body)), body)
 	}
 	h, _ := r.db.ChatHandle(r.ctx, "s1")
@@ -916,7 +916,7 @@ func TestWordsAreRefusedWhileASessionIsAtAPrompt(t *testing.T) {
 	if len(r.term.pasted("vp_s1")) != 0 || len(r.term.pressed("vp_s1")) != 0 {
 		t.Fatalf("words reached a session at a prompt: %q %v", r.term.pasted("vp_s1"), r.term.pressed("vp_s1"))
 	}
-	if !strings.Contains(r.ad.last(), fmt.Sprintf("「%d: 好」", h)) || !strings.Contains(r.ad.last(), "rm -rf build") {
+	if !strings.Contains(r.ad.last(), fmt.Sprintf("「%d号可以」", h)) || !strings.Contains(r.ad.last(), "rm -rf build") {
 		t.Fatalf("reply %q", r.ad.last())
 	}
 	// A stop confirmed after the session reached a prompt is refused too:
@@ -1022,7 +1022,7 @@ func TestAssistantApproveWaitsForOk(t *testing.T) {
 	r.say("me", "allow it")
 	_, _ = r.db.AddSessionMessage(r.ctx, store.SessionMessage{SessionID: "s1", Kind: "prompt", Text: "run: rm -rf /"})
 	r.say("me", "ok")
-	if keys := r.term.pressed("vp_s1"); len(keys) != 1 || !strings.Contains(r.ad.last(), "rm -rf /") || !strings.Contains(r.ad.last(), "已经过去") {
+	if keys := r.term.pressed("vp_s1"); len(keys) != 1 || !strings.Contains(r.ad.last(), "rm -rf /") || !strings.Contains(r.ad.last(), "已经处理过") {
 		t.Fatalf("an ok for one request answered the next: %v %q", keys, r.ad.last())
 	}
 }

@@ -172,7 +172,7 @@ export function Settings({ openAt, onClose }: { openAt: SettingsSection; onClose
             // wider. Not a select, and never a fold: the point of the rail is
             // that all the names are readable at once, which is what makes a
             // wrong guess cost one press instead of a hunt.
-            className="flex shrink-0 gap-1 overflow-x-auto sm:w-40 sm:flex-col sm:overflow-visible"
+            className="flex shrink-0 items-center gap-1 overflow-x-auto sm:w-40 sm:flex-col sm:items-stretch sm:overflow-visible"
           >
             <div
               role="tablist"

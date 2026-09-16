@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 
 import { api } from '../../protocol/api'
 import type { AuditEntry } from '../../protocol/wire'
-import { t } from '../../i18n'
+import { getLang, t } from '../../i18n'
+import type { Key } from '../../i18n'
 import { safeText } from '../text'
 import { Card, Section } from './Chat'
 
@@ -19,6 +20,58 @@ function when(unix: number): string {
   const today = new Date()
   const sameDay = d.toDateString() === today.toDateString()
   return sameDay ? d.toLocaleTimeString() : d.toLocaleString()
+}
+
+/** The event, in words. An event this page does not know is shown as named. */
+const EVENTS: Record<string, Key> = {
+  'chat.in': 'chat.evIn',
+  'chat.send': 'chat.evSend',
+  'chat.approved': 'chat.evApproved',
+  'chat.denied': 'chat.evDenied',
+  'chat.interrupt': 'chat.evInterrupt',
+  'chat.image': 'chat.evImage',
+  'chat.undelivered': 'chat.evUndelivered',
+  'chat.refused': 'chat.evRefused',
+  'chat.paired': 'chat.evPaired',
+  'chat.peer': 'chat.evPeer',
+  'chat.stranger': 'chat.evStranger',
+  'chat.channel': 'chat.evChannel',
+  'chat.intent': 'chat.evIntent',
+  'chat.ask': 'chat.evAsk',
+}
+
+/**
+ * The server writes the audit log in English, once, for every surface that
+ * reads it. The words a person meets in it here are swapped for the page's.
+ */
+const ZH_DETAIL: [RegExp, string][] = [
+  [/ via only-waiting:/g, ' · 唯一在等的会话：'],
+  [/ via focus:/g, ' · 默认会话：'],
+  [/ via handle:/g, ' · 写了编号：'],
+  [/ via quote:/g, ' · 引用：'],
+  [/ via button:/g, ' · 按钮：'],
+  [/ via assistant:/g, ' · 助手：'],
+  [/: removed$/, '：删掉'],
+  [/: until they write$/, '：等对方先发消息'],
+  [/ enabled=true$/, ' 启用'],
+  [/ enabled=false$/, ' 关闭'],
+]
+
+/** Status words, only in the events that are about a status: a message a
+ *  person sent may say "paired" and is shown as they said it. */
+const ZH_STATUS: [RegExp, string][] = [
+  [/ -> /g, ' → '],
+  [/\bpending\b/g, '待配对'],
+  [/\bpaired\b/g, '已配对'],
+  [/\bblocked\b/g, '已拉黑'],
+]
+
+function detailFor(event: string, detail: string): string {
+  if (getLang() !== 'zh') return detail
+  // Only the tail the server wrote: in "who (channel): words" the words are
+  // the person's, and are left alone.
+  const rules = event === 'chat.peer' ? [...ZH_DETAIL, ...ZH_STATUS] : event === 'chat.in' ? [] : ZH_DETAIL
+  return rules.reduce((s, [re, to]) => s.replace(re, to), detail)
 }
 
 export function Log() {
@@ -47,9 +100,9 @@ export function Log() {
                     date is the day's when it is today's, and the prefix
                     every event shares says nothing. */}
                 <div className="font-mono text-vp-xs text-ink-3">
-                  {when(e.at)} · {e.event.replace(/^chat\./, '')}
+                  {when(e.at)} · {EVENTS[e.event] ? t(EVENTS[e.event]) : e.event.replace(/^chat\./, '')}
                 </div>
-                <div className="text-vp-sm break-all text-ink">{safeText(e.detail)}</div>
+                <div className="text-vp-sm break-all text-ink">{safeText(detailFor(e.event, e.detail))}</div>
               </li>
             ))}
           </ul>

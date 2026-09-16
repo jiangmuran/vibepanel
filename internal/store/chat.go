@@ -348,14 +348,16 @@ func (d *DB) PutChatPeer(ctx context.Context, p ChatPeer) error {
 	return nil
 }
 
-// TouchChatPeer records that a person spoke: when, what they are called and,
+// TouchChatPeer records that a person spoke: when, what they are called (the
+// first name the IM gave, never over a name already there, which may be one
+// the owner chose), and,
 // where the IM needs one, the token that lets the panel answer. Narrow on
 // purpose: the bridge holds a copy of the row read a moment ago, and writing
 // the whole copy back would undo a pairing the settings page made meanwhile.
 func (d *DB) TouchChatPeer(ctx context.Context, channel, peerID, display, contextToken string, at int64) error {
 	_, err := d.sql.ExecContext(ctx,
 		`UPDATE chat_peers SET last_seen_at = ?,
-		     display = CASE WHEN ? = '' THEN display ELSE ? END,
+		     display = CASE WHEN ? = '' OR display != '' THEN display ELSE ? END,
 		     context_token = CASE WHEN ? = '' THEN context_token ELSE ? END
 		 WHERE channel = ? AND peer_id = ?`,
 		at, display, display, contextToken, contextToken, channel, peerID)
@@ -561,6 +563,13 @@ const (
 	OutboundStatus = "status"
 	OutboundReply  = "reply"
 	OutboundScreen = "screen"
+	// OutboundRequest is a message with allow and deny buttons on it, open
+	// until the request is answered, and OutboundAnswered one whose buttons
+	// were taken off. Kept apart from status so the ones still showing
+	// buttons can be found and closed when the request ends some other way,
+	// at the laptop or by the session moving on.
+	OutboundRequest  = "request"
+	OutboundAnswered = "answered"
 )
 
 // RecordChatOutbound remembers a sent message.
@@ -639,15 +648,34 @@ func (d *DB) ChatShown(ctx context.Context, channel, peerID string, messageID in
 	return n > 0, nil
 }
 
-// ChatOutboundsForMessage returns every status message, to anybody, that
-// showed one session message: the copies of a card to retire once it is
-// answered.
+// ChatOutboundsForMessage returns every card or open request, to anybody,
+// that showed one session message: the copies to retire once it is answered.
 func (d *DB) ChatOutboundsForMessage(ctx context.Context, sessionID string, messageID int64) ([]ChatOutbound, error) {
-	rows, err := d.sql.QueryContext(ctx,
-		`SELECT channel, peer_id, ref, session_id, kind, message_id, at FROM chat_outbound
-		 WHERE session_id = ? AND message_id = ? AND kind = ?`, sessionID, messageID, OutboundStatus)
+	return d.chatOutbounds(ctx,
+		`WHERE session_id = ? AND message_id = ? AND kind IN (?, ?)`, sessionID, messageID, OutboundStatus, OutboundRequest)
+}
+
+// OpenChatRequests returns a session's messages that still carry buttons.
+func (d *DB) OpenChatRequests(ctx context.Context, sessionID string) ([]ChatOutbound, error) {
+	return d.chatOutbounds(ctx, `WHERE session_id = ? AND kind = ?`, sessionID, OutboundRequest)
+}
+
+// SetChatOutboundKind changes what a sent message is now: an open request
+// becomes answered once its buttons are gone.
+func (d *DB) SetChatOutboundKind(ctx context.Context, channel, peerID, ref, kind string) error {
+	_, err := d.sql.ExecContext(ctx,
+		`UPDATE chat_outbound SET kind = ? WHERE channel = ? AND peer_id = ? AND ref = ?`, kind, channel, peerID, ref)
 	if err != nil {
-		return nil, fmt.Errorf("store: chat outbounds for message: %w", err)
+		return fmt.Errorf("store: set chat outbound kind: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) chatOutbounds(ctx context.Context, where string, args ...any) ([]ChatOutbound, error) {
+	rows, err := d.sql.QueryContext(ctx,
+		`SELECT channel, peer_id, ref, session_id, kind, message_id, at FROM chat_outbound `+where, args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: chat outbounds: %w", err)
 	}
 	defer rows.Close()
 	var out []ChatOutbound

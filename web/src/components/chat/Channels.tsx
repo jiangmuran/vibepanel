@@ -9,6 +9,7 @@ import { askConfirm } from '../ask'
 import { showToast } from '../toasts'
 import { safeText } from '../text'
 import { Card, Section } from './Chat'
+import { chatError } from './errors'
 import { INPUT, INPUT_SHORT, Primary, Secondary, errText } from './form'
 import { QR } from './QR'
 
@@ -78,7 +79,9 @@ function HealthLine({ ch }: { ch: ChatChannel | null }) {
       {h.needsHello > 0 && (
         <>
           <span className="text-ink-3"> · </span>
-          <span style={{ color: 'var(--vp-state-waiting)' }}>{t('chat.needsHello', { n: String(h.needsHello) })}</span>
+          <span style={{ color: 'var(--vp-state-waiting)' }}>
+            {t('chat.needsHello', { who: (h.waitingOn ?? []).map(safeText).join('、'), n: String(h.needsHello) })}
+          </span>
         </>
       )}
       {erroring && (
@@ -146,9 +149,10 @@ function ChannelCard({
   const toggle = async (on: boolean) => {
     try {
       await api.saveChatChannel(factory.kind, on, {})
+      showToast({ kind: 'success', key: on ? 'chat.channelOn' : 'chat.channelOff', params: { name: factory.label } })
       onChange()
     } catch (e) {
-      showToast({ kind: 'error', key: 'chat.saveFailed', detail: errText(e) })
+      showToast({ kind: 'error', key: 'chat.saveFailed', detail: chatError(e) })
     }
   }
 
@@ -164,7 +168,7 @@ function ChannelCard({
       showToast({ kind: 'success', key: 'chat.saved' })
       onChange()
     } catch (e) {
-      showToast({ kind: 'error', key: 'chat.saveFailed', detail: errText(e) })
+      showToast({ kind: 'error', key: 'chat.saveFailed', detail: chatError(e) })
     } finally {
       setBusy(false)
     }
@@ -176,7 +180,7 @@ function ChannelCard({
       const res = await api.testChatChannel(factory.kind)
       showToast(
         res.error
-          ? { kind: 'error', key: 'chat.testFailed', detail: res.error }
+          ? { kind: 'error', key: 'chat.testFailed', detail: chatError(new Error(res.error)) }
           : { kind: 'success', key: 'chat.testOk', detail: String(res.sent) },
       )
     } catch (e) {
@@ -198,6 +202,7 @@ function ChannelCard({
     try {
       await api.removeChatChannel(factory.kind)
       setValues({})
+      showToast({ kind: 'success', key: 'chat.channelRemoved', params: { name: factory.label } })
       onChange()
     } catch (e) {
       showToast({ kind: 'error', key: 'chat.saveFailed', detail: errText(e) })
@@ -291,9 +296,14 @@ function ChannelCard({
                   <Secondary onClick={() => void sendCode()}>{t('chat.send')}</Secondary>
                 </div>
               )}
-              {(login.status === 'expired' || login.status === 'failed') && (
-                <Secondary onClick={() => void startLogin()}>{t('chat.tryAgain')}</Secondary>
-              )}
+              <div className="flex gap-2">
+                {(login.status === 'expired' || login.status === 'failed') && (
+                  <Secondary onClick={() => void startLogin()}>{t('chat.tryAgain')}</Secondary>
+                )}
+                <Secondary onClick={() => setLogin(null)} data-testid={`chat-login-cancel-${factory.kind}`}>
+                  {t('chat.cancel')}
+                </Secondary>
+              </div>
             </div>
           ) : (
             <Secondary disabled={busy} onClick={() => void startLogin()} data-testid={`chat-login-start-${factory.kind}`}>
@@ -315,9 +325,12 @@ function ChannelCard({
                 type={f.secret ? 'password' : 'text'}
                 autoComplete="off"
                 value={shown(f.name)}
-                placeholder={f.secret && channel?.secretSet[f.name] ? t('chat.secretKept') : hint(f)}
+                placeholder={f.secret && channel?.secretSet[f.name] ? t('chat.secretKept') : ''}
                 onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
               />
+              {/* Under the field, not in it: a placeholder that says where to
+                  find the value read as a value already filled in. */}
+              {hint(f) && <p className="mt-0.5 text-vp-xs text-ink-3">{hint(f)}</p>}
             </div>
           ))}
           {factory.webhook && channel?.webhookUrl && (

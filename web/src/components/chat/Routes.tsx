@@ -4,9 +4,11 @@ import { Check, Plus, Search, Trash2 } from 'lucide-react'
 import { api } from '../../protocol/api'
 import type { ChatRoutePreview, ChatRoutes, ChatRule, ChatSettings } from '../../protocol/wire'
 import { t } from '../../i18n'
+import { askConfirm } from '../ask'
 import { showToast } from '../toasts'
 import { safeText } from '../text'
 import { Card, Section } from './Chat'
+import { chatError } from './errors'
 import { INPUT, Primary, SELECT, Secondary, errText, useServerCopy } from './form'
 
 const STATES = ['waiting', 'working', 'done'] as const
@@ -39,6 +41,19 @@ function kindLabel(k: string): string {
       return t('chat.kindUser')
   }
   return k
+}
+
+/**
+ * Whether a rule, as it stands, silences permission requests: it is on, it
+ * sends to nobody, and nothing in it excludes prompts. The one message that
+ * must not go missing quietly, so saving such a rule asks first.
+ */
+function silencesRequests(rule: ChatRule, paired: Set<string>): boolean {
+  if (!rule.enabled) return false
+  const to = (rule.to ?? []).filter((k) => k === '*' || paired.has(k))
+  const kinds = rule.match.kinds ?? []
+  const states = rule.match.states ?? []
+  return to.length === 0 && (kinds.length === 0 || kinds.includes('prompt')) && (states.length === 0 || states.includes('waiting'))
 }
 
 function newRule(): ChatRule {
@@ -76,6 +91,17 @@ export function Routes({ data, onChange }: { data: ChatSettings; onChange: () =>
   }
 
   const save = async () => {
+    const paired = new Set(peers.map((p) => p.key))
+    if (routes.rules.some((r) => silencesRequests(r, paired))) {
+      const ok = await askConfirm({
+        title: t('chat.saveSilentTitle'),
+        body: t('chat.saveSilentBody'),
+        confirm: t('chat.saveRoutes'),
+        cancel: t('chat.cancel'),
+        destructive: true,
+      })
+      if (!ok) return
+    }
     setBusy(true)
     try {
       const saved = await api.saveChatRoutes(routes)
@@ -84,7 +110,7 @@ export function Routes({ data, onChange }: { data: ChatSettings; onChange: () =>
       showToast({ kind: 'success', key: 'chat.saved' })
       onChange()
     } catch (e) {
-      showToast({ kind: 'error', key: 'chat.saveFailed', detail: errText(e) })
+      showToast({ kind: 'error', key: 'chat.saveFailed', detail: chatError(e) })
     } finally {
       setBusy(false)
     }
@@ -226,6 +252,7 @@ function RuleEditor({
   const setMatch = (patch: Partial<typeof match>) => set({ match: { ...match, ...patch } })
   const to = rule.to ?? []
   const everyone = to.includes('*')
+  const silent = silencesRequests(rule, new Set(peers.map((p) => p.key)))
   // A destination whose person was removed or blocked still sits in the
   // rule and still matches nothing. Shown, so it can be taken out, rather
   // than kept invisibly.
@@ -305,21 +332,35 @@ function RuleEditor({
             {/* The people stay on screen when everyone is chosen: hiding them
                 made "everyone" read as nobody in particular. */}
             {everyone ? (
-              peers.length > 0 && (
-                <span className="self-center text-vp-xs text-ink-3">
-                  {t('chat.everyoneIncludes')} {peers.map((p) => safeText(p.label)).join(', ')}
-                </span>
-              )
+              <span className="self-center text-vp-xs text-ink-3">
+                {peers.length > 0
+                  ? t('chat.everyoneIncludes', { who: peers.map((p) => safeText(p.label)).join('、') })
+                  : t('chat.nobodyPaired')}
+              </span>
             ) : (
               peers.map((p) => (
                 <Toggle key={p.key} list={to} value={p.key} label={safeText(p.label)} onChange={(next) => set({ to: next })} />
               ))
             )}
             {gone.map((k) => (
-              <Toggle key={k} list={to} value={k} label={t('chat.goneDestination', { name: safeText(k) })} onChange={(next) => set({ to: next })} />
+              <button
+                key={k}
+                type="button"
+                className="vp-press flex items-center gap-1 rounded-vp border border-dashed px-2 py-1 text-vp-sm text-ink-2 line-through"
+                style={{ borderColor: 'var(--vp-state-waiting)' }}
+                title={t('chat.goneRemove')}
+                onClick={() => set({ to: to.filter((x) => x !== k) })}
+              >
+                <Trash2 size={12} aria-hidden="true" />
+                {t('chat.goneDestination', { name: safeText(k) })}
+              </button>
             ))}
-            {to.length === 0 && <span className="text-vp-xs" style={{ color: 'var(--vp-state-waiting)' }}>{t('chat.toNobody')}</span>}
           </div>
+          {silent && (
+            <p className="mt-1 flex items-center gap-1 text-vp-sm font-medium" style={{ color: 'var(--vp-state-crashed)' }} data-testid="chat-rule-silent">
+              ▲ {t('chat.ruleSilent')}
+            </p>
+          )}
         </div>
         <div className="grid grid-cols-2 gap-2">
           <label className="min-w-0">

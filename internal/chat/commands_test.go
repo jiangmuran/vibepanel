@@ -49,6 +49,23 @@ func TestParseCommands(t *testing.T) {
 		{"看一下 第十二个", Command{Verb: VerbScreen, Handle: 12}, true},
 		{"更多 5", Command{Verb: VerbMore, Handle: 5}, true},
 		{"全部允许", Command{Verb: VerbAll}, true},
+		{"3 在干嘛", Command{Verb: VerbScreen, Handle: 3}, true},
+		{"3号咋样了", Command{Verb: VerbScreen, Handle: 3}, true},
+		{"看看3", Command{Verb: VerbScreen, Handle: 3}, true},
+		{"4 停", Command{Verb: VerbStop, Handle: 4}, true},
+		{"不切了", Command{Verb: VerbUnfocus}, true},
+		{"取消切到", Command{Verb: VerbUnfocus}, true},
+		{"ok了", Command{Verb: VerbConfirm}, true},
+		{"3 continue", Command{}, false},
+		{"那个，2号先静音半小时吧。", Command{Verb: VerbMute, Handle: 2, Arg: "半小时"}, true},
+		{"静音３号半小时", Command{Verb: VerbMute, Handle: 3, Arg: "半小时"}, true},
+		{"静音3号 半小时", Command{Verb: VerbMute, Handle: 3, Arg: "半小时"}, true},
+		{"取消静音3", Command{Verb: VerbUnmute, Handle: 3}, true},
+		{"屏幕3号", Command{Verb: VerbScreen, Handle: 3}, true},
+		{"静音一下那个测试的", Command{Verb: VerbUnclear, Arg: "静音\x00静音 3 半小时"}, true},
+		{"没问题", Command{Verb: VerbApprove}, true},
+		{"打开3号文件看看", Command{}, false},
+		{"停车场的代码改一下", Command{}, false},
 		{"都允许吧", Command{Verb: VerbAll}, true},
 		// Sentences go to the agent.
 		{"更多的测试", Command{}, false},
@@ -74,6 +91,8 @@ func TestParseCommands(t *testing.T) {
 func TestLoosenReadsSpokenHandlesOnlyForRealSessions(t *testing.T) {
 	cands := []Candidate{{SessionID: "a", Handle: 3}, {SessionID: "b", Handle: 12}}
 	for in, want := range map[string]string{
+		"3号，嗯，选A吧，小改就行。":  "3: 选A吧，小改就行。",
+		"【3】拒绝":           "【3】拒绝",
 		"3 继续":            "3: 继续",
 		"3号 继续":           "3: 继续",
 		"第十二个：加个测试":       "12: 加个测试",

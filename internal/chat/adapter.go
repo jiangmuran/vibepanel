@@ -159,6 +159,8 @@ type Card struct {
 	URL string
 	// LinkLabel is the word the link is drawn as, in the chat's language.
 	LinkLabel string
+	// Hint is a last line saying how to answer, on an IM with no buttons.
+	Hint string
 }
 
 // Button is one choice under a card.

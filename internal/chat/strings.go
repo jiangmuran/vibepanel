@@ -43,19 +43,17 @@ var strs = map[string][2]string{
 		"配对码要在面板的「聊天」页里输入，发到这里没有用。%s",
 		"The pairing code goes into the panel's Chat page, not this chat. %s",
 	},
-	"paired":  {"已配对。回复「帮助」看能做什么。", "Paired. Reply help for what you can do."},
-	"receipt": {"→ [%d] 已送入", "→ [%d] sent"},
-	"receiptFocus": {
-		"→ [%d] 已送入（没写编号的话默认发给它，「切到 编号」可以换）",
-		"→ [%d] sent (bare replies go to it; focus <number> to change)",
-	},
+	"paired":        {"已配对。回复「帮助」看能做什么。", "Paired. Reply help for what you can do."},
+	"receipt":       {"→ [%d] 已送入", "→ [%d] sent"},
+	"receiptFocus":  {"→ [%d] 已送入 · 默认会话", "→ [%d] sent · focus"},
+	"stillWaiting":  {"（%s 还在等你）", "(%s still waiting on you)"},
 	"receiptKey":    {"→ [%d] %s", "→ [%d] %s"},
 	"receiptKeyCmd": {"→ [%d] %s：%s", "→ [%d] %s: %s"},
 	"approved":      {"已允许", "allowed"},
 	"denied":        {"已拒绝", "denied"},
 	"answeredBy":    {"%s（%s）", "%s by %s"},
 	"answeredElsewhere": {
-		"[%d] 已经被 %s %s：%s", "[%d] was %s by %s: %s",
+		"[%[1]d] 已经被 %[2]s %[3]s：%[4]s", "[%[1]d] was %[3]s by %[2]s: %[4]s",
 	},
 	"interrupted": {
 		"已发送中断", "interrupt sent",
@@ -74,31 +72,49 @@ var strs = map[string][2]string{
 	},
 	"gone": {"[%d] 已经结束了。", "[%d] has ended."},
 	"atPrompt": {
-		"[%d] 在等你允许：\n%s\n先回「%d: 好」或「%d: 不」，再发文字。",
-		"[%d] is asking for permission:\n%s\nAnswer %d: yes or %d: no first, then send words.",
+		"没有发送。[%d] 在等你允许：\n%s\n允许回「%d号可以」，拒绝回「%d号不行」。",
+		"Not sent. [%d] is asking for permission:\n%s\nReply %d yes to allow, %d no to deny.",
+	},
+	"stopAtPrompt": {
+		"[%d] 没在工作，在等你允许：\n%s\n不让它做就回「%d号不行」。",
+		"[%d] is not working; it is asking for permission:\n%s\nTo stop it, reply %d no.",
 	},
 	"showPrompt": {
-		"[%d] 要你允许：\n%s\n确定就回「%d: 好」，不行回「%d: 不」。",
-		"[%d] is asking for permission:\n%s\nReply %d: yes to allow, %d: no to deny.",
+		"还没执行，这条你还没看过。[%d] 要你允许：\n%s\n允许回「%d号可以」，拒绝回「%d号不行」。",
+		"Not done yet; you had not seen this. [%d] is asking for permission:\n%s\nReply %d yes to allow, %d no to deny.",
 	},
 	"stalePrompt": {
-		"你回的那条已经过去了。[%d] 现在要你允许：\n%s\n确定就回「%d: 好」，不行回「%d: 不」。",
-		"That request is over. [%d] is now asking:\n%s\nReply %d: yes to allow, %d: no to deny.",
+		"没有执行，你回的那条请求已经处理过了。[%d] 现在要你允许：\n%s\n允许回「%d号可以」，拒绝回「%d号不行」。",
+		"Not done; that request was already handled. [%d] is now asking:\n%s\nReply %d yes to allow, %d no to deny.",
 	},
 	"staleGone": {
-		"你回的那条已经过去了，[%d] 现在没有在等你。",
-		"That request is over; [%d] is not waiting on anything now.",
+		"没有执行，你回的那条请求已经处理过了，[%d] 现在没有在等你。",
+		"Not done; that request was already handled, and [%d] is not waiting on anything now.",
 	},
 	"showQuestion": {
-		"[%d] 在问你：\n%s\n回复「%d: 你的回答」。",
-		"[%d] is asking:\n%s\nReply %d: your answer.",
+		"没有发送，这个问题你还没看过。[%d] 在问你：\n%s\n回「%d: 你的回答」。",
+		"Not sent; you had not seen this question. [%d] is asking:\n%s\nReply %d: your answer.",
 	},
 	"showUnknownWait": {
-		"[%d] 在等你，面板不知道它具体问什么。先「屏幕 %d」看看，再回「%d: 好」。",
-		"[%d] is waiting and the panel does not know on what. Reply screen %d to look, then %d: yes.",
+		"还没执行。[%d] 在等你，面板不知道它具体问什么。先「屏幕 %d」看看，再回「%d号可以」。",
+		"Not done yet. [%d] is waiting and the panel does not know on what. Reply screen %d to look, then %d yes.",
 	},
-	"imageFailed": {"图片没收到。", "The picture did not arrive."},
-	"noShell":     {"[%d] 是一个 shell，没有提示可以回答。", "[%d] is a shell; there is no prompt to answer."},
+	"unclearQuote": {
+		"没有执行。你引用的消息说不清是哪个会话的哪条请求，回「编号号可以」，比如「%d号可以」。",
+		"Not done. The quoted message does not say which request; reply with the number, e.g. %d yes.",
+	},
+	"quotedNotWaiting": {
+		"没有执行。你引用的是 [%d]，它现在没在等你。",
+		"Not done. You quoted [%d], which is not waiting on anything.",
+	},
+	"nothingWaiting": {"没有会话在等你允许。", "No session is waiting for permission."},
+	"unclearCommand": {"没听懂，也没有发给任何会话。%s的说法是：%s", "Not understood, and nothing was sent. %s is: %s"},
+	"hintPrompt":     {"允许回「%d号可以」，拒绝回「%d号不行」", "Reply %d yes to allow, %d no to deny"},
+	"hintQuestion":   {"回「%d: 你的回答」", "Reply %d: your answer"},
+	"handled":        {"已处理", "handled"},
+	"unfocused":      {"不再有默认会话，没写编号的话只发给唯一在等你的那个。", "No focus now; bare replies go only to the one session waiting."},
+	"imageFailed":    {"图片没收到。", "The picture did not arrive."},
+	"noShell":        {"[%d] 是一个 shell，没有提示可以回答。", "[%d] is a shell; there is no prompt to answer."},
 	"noProfile": {
 		"[%d] 跑的是 %s，面板不知道怎么替它按键。在「聊天」页的按键表里加上。",
 		"[%d] runs %s and the panel has no keys for it. Add them on the Chat page.",
@@ -124,6 +140,7 @@ var strs = map[string][2]string{
 	"listEmpty":  {"现在没有会话。", "No sessions right now."},
 	"listHead":   {"会话（回复「编号: 你的话」即可对话）", "Sessions (reply \"number: your words\" to talk to one)"},
 	"listMuted":  {"静音中", "muted"},
+	"listFocus":  {"默认会话", "focus"},
 	"screenHead": {"[%d] 屏幕", "[%d] screen"},
 	"shotUnavailable": {
 		"这个面板不能截图。", "This panel cannot take screenshots.",
@@ -134,14 +151,14 @@ var strs = map[string][2]string{
 	"focused":      {"之后没写编号的话都发给 [%d]。", "Bare replies now go to [%d]."},
 	"open":         {"[%d] 在面板里打开：%s", "[%d] in the panel: %s"},
 	"noPublicURL": {
-		"面板的地址是本机地址，手机打不开。在面板设置里填上外部能访问的地址。",
-		"The panel's address is a local one a phone cannot open. Set a public address in the panel's settings.",
+		"面板的地址是本机地址，手机打不开。在面板的 设置 → 本机 → 怎么访问 里填上域名。",
+		"The panel's address is a local one a phone cannot open. Set a domain in Settings → This panel → How people reach it.",
 	},
 	"contextHead": {
 		"[%d] 最近 %d 条", "[%d] last %d",
 	},
 	"contextEmpty": {"[%d] 还没有记录到任何消息。", "[%d] has no messages recorded yet."},
-	"more":         {"（还有 %d 字，回复「更多」继续看）", "(%d more characters; reply more)"},
+	"more":         {"（还有 %d 字，回「更多 %d」继续看）", "(%d more characters; reply more %d)"},
 	"moreHead":     {"[%d] 续", "[%d] continued"},
 	"moreEnd":      {"（完）", "(end)"},
 	"noMore":       {"没有更多了。", "Nothing more."},
@@ -152,8 +169,11 @@ var strs = map[string][2]string{
 		"要给 [%d] 发送：\n%s\n回复「确认」发送，「取消」放弃。", "Send to [%d]:\n%s\nReply ok to confirm, cancel to drop it.",
 	},
 	"replaced": {
-		"（之前等确认的「%s」作废了）", "(the earlier \"%s\" waiting for ok is dropped)",
+		"（刚才「%s」的确认已作废）", "(the earlier confirmation to %s is dropped)",
 	},
+	"describeStop":   {"打断 [%d]", "interrupt [%d]"},
+	"describeSend":   {"发给 [%d]", "send to [%d]"},
+	"describeAnswer": {"%s [%d]", "%s [%d]"},
 	"nothingPending": {"没有等待确认的操作。", "Nothing is waiting for confirmation."},
 	"cancelled":      {"已取消。", "Cancelled."},
 	"expired":        {"那个操作已经过期了，重新发一次。", "That one has expired; send it again."},
@@ -162,8 +182,8 @@ var strs = map[string][2]string{
 		"While you were away these started waiting (your last message was not run; send it again after reading):",
 	},
 	"usage": {
-		"今天：%d 个会话变过状态，%d 次在等你。\n助手：%d 次调用，$%.2f。",
-		"Today: %d sessions changed state, %d waited on you.\nAssistant: %d calls, $%.2f.",
+		"今天：状态变化 %d 次，其中 %d 次在等你。\n助手：%d 次调用，$%.2f。",
+		"Today: %d state changes, %d of them waiting on you.\nAssistant: %d calls, $%.2f.",
 	},
 	"noAssistant": {
 		"这个聊天没有开高级模式，直接用「编号: 你的话」或「帮助」里的命令。",
@@ -179,14 +199,14 @@ var strs = map[string][2]string{
 		"[%d] is asking:\n%s\nAnswer \"%s\"? Reply ok to confirm, cancel to drop it.",
 	},
 	"help": {
-		"回复「%[1]d: 你的话」把话送进 [%[1]d]。它要你允许时回「%[1]d: 好」或「%[1]d: 不」。\n" +
-			"列表 · 屏幕 %[1]d · 截图 %[1]d · 打开 %[1]d\n" +
-			"上下文 %[1]d 看最近对话 · 切到 %[1]d 之后默认发给它 · 静音 %[1]d 2小时\n" +
-			"停 %[1]d 打断 · 用量 · 更多 看剩下的",
-		"Reply \"%[1]d: your words\" to send them to [%[1]d]. When it asks for permission, %[1]d: yes or %[1]d: no.\n" +
-			"list · screen %[1]d (its pane as text) · shot %[1]d (a picture) · open %[1]d (a link)\n" +
-			"context %[1]d recent messages · focus %[1]d make it the default · mute %[1]d 2h\n" +
-			"stop %[1]d interrupt · usage · more",
+		"回「%[1]d: 你的话」把话送进 [%[1]d]。它要你允许时回「%[1]d号可以」或「%[1]d号不行」。\n" +
+			"列表 · 屏幕 %[1]d · 截图 %[1]d · 打开 %[1]d · 上下文 %[1]d\n" +
+			"切到 %[1]d 之后默认发给它，不切了 取消 · 静音 %[1]d 半小时 · 停 %[1]d 打断 · 用量\n" +
+			"长消息回「更多」往下看",
+		"Reply \"%[1]d: your words\" to send them to [%[1]d]. When it asks for permission, %[1]d yes or %[1]d no.\n" +
+			"list · screen %[1]d · shot %[1]d · open %[1]d · context %[1]d\n" +
+			"focus %[1]d makes it the default, unfocus clears it · mute %[1]d 30m · stop %[1]d interrupt · usage\n" +
+			"more continues a long message",
 	},
 	"helpAdvanced": {
 		"高级模式：直接说你想做什么，或者「问：…」让助手去看。",

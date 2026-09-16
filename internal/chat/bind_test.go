@@ -2,6 +2,8 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -60,7 +62,7 @@ func TestAnOldCardsButtonDoesNotAnswerTheNextRequest(t *testing.T) {
 	if keys := r.term.pressed("vp_s1"); len(keys) != 1 {
 		t.Fatalf("an old card's button allowed the next request: %v", keys)
 	}
-	if !strings.Contains(r.ad.last(), "rm -rf ~") || !strings.Contains(r.ad.last(), "已经过去") {
+	if !strings.Contains(r.ad.last(), "rm -rf ~") || !strings.Contains(r.ad.last(), "已经处理过") {
 		t.Fatalf("the refusal should show the current request: %q", r.ad.last())
 	}
 	// A value that claims the new request on the old message is still the
@@ -112,6 +114,9 @@ func TestQuotingAnOldCardOnWeixinIsNotAnAnswerToTheNewRequest(t *testing.T) {
 	r.prompt("s1", "Bash: npm publish")
 	r.pushed(row, session.StateWaiting, 1)
 	oldCard := r.ad.last()
+	if !strings.Contains(oldCard, "1号可以") {
+		t.Fatalf("a card on an IM without buttons should say what to type: %q", oldCard)
+	}
 	r.prompt("s1", "Bash: npm unpublish everything")
 	before := r.b.Handled()
 	r.ad.inbound(t, Inbound{PeerID: "me", Text: "y", QuotedText: oldCard, ContextToken: "tok"})
@@ -122,12 +127,16 @@ func TestQuotingAnOldCardOnWeixinIsNotAnAnswerToTheNewRequest(t *testing.T) {
 	if !strings.Contains(r.ad.last(), "unpublish everything") {
 		t.Fatalf("reply %q", r.ad.last())
 	}
-	// Quoting a card that shows the current request answers it.
+	// The reply showed the current request, so it is not pushed again, and
+	// quoting that reply answers it.
+	shown := r.ad.last()
 	r.b.SessionChanged(row, session.StateWaiting)
-	r.waitFor(func() bool { return strings.Contains(r.ad.last(), "▲") })
-	newCard := r.ad.last()
+	time.Sleep(testCoalesce + 200*time.Millisecond)
+	if r.ad.last() != shown {
+		t.Fatalf("a request already shown was pushed again: %q", r.ad.last())
+	}
 	before = r.b.Handled()
-	r.ad.inbound(t, Inbound{PeerID: "me", Text: "拒绝", QuotedText: newCard, ContextToken: "tok"})
+	r.ad.inbound(t, Inbound{PeerID: "me", Text: "拒绝", QuotedText: shown, ContextToken: "tok"})
 	r.settleFrom(before)
 	if keys := r.term.pressed("vp_s1"); len(keys) != 1 || keys[0][0] != "Escape" {
 		t.Fatalf("quoting the current card did not answer it: %v", keys)
@@ -153,8 +162,12 @@ func TestAPushDoesNotMoveTheFocus(t *testing.T) {
 	if len(r.term.pasted("vp_s1")) != 0 || len(r.term.pasted("vp_s2")) != 1 {
 		t.Fatalf("words went to %q / %q", r.term.pasted("vp_s1"), r.term.pasted("vp_s2"))
 	}
-	if !strings.Contains(r.ad.last(), "切到") {
-		t.Fatalf("a receipt for a focus delivery should say how to change it: %q", r.ad.last())
+	r.say("me", "列表")
+	if !strings.Contains(r.ad.last(), "默认会话") {
+		t.Fatalf("the list should mark the focus: %q", r.ad.last())
+	}
+	if !strings.Contains(r.ad.last(), "默认会话") {
+		t.Fatalf("a receipt for a focus delivery should say so: %q", r.ad.last())
 	}
 }
 
@@ -229,9 +242,18 @@ func TestARefusedSendIsCountedWithItsReason(t *testing.T) {
 		h := r.b.Healths(r.ctx)
 		return len(h) == 1 && h[0].NeedsHello == 1
 	})
+	// Not an error of the channel: the page names who it waits on.
 	h := r.b.Healths(r.ctx)[0]
-	if h.Failed != 1 || !strings.Contains(h.LastError, "ret -2") {
+	if h.Failed != 0 || h.LastError != "" || len(h.WaitingOn) != 1 || h.WaitingOn[0] != "me" {
 		t.Fatalf("health: %+v", h)
+	}
+	// Once they write, nothing is owed.
+	r.ad.mu.Lock()
+	r.ad.sendErr = nil
+	r.ad.mu.Unlock()
+	r.say("me", "hi")
+	if h := r.b.Healths(r.ctx)[0]; h.NeedsHello != 0 {
+		t.Fatalf("still owed after they wrote: %+v", h)
 	}
 }
 
@@ -355,8 +377,15 @@ func TestADoneWithoutANewMessageIsNotPushed(t *testing.T) {
 	if r.ad.count() != 0 {
 		t.Fatalf("a flicker was pushed: %q", r.ad.texts())
 	}
-	// A session with no hooks at all is still told about.
+	// A session with no hooks is told about once it finished work, and not
+	// for settling into done the moment it was created.
 	row2 := r.session("s2", "plain", "claude", session.StateDone)
+	r.b.SessionChanged(row2, session.StateDone)
+	time.Sleep(testCoalesce + 200*time.Millisecond)
+	if r.ad.count() != 0 {
+		t.Fatalf("a new idle session was pushed: %q", r.ad.texts())
+	}
+	_ = r.db.RecordSessionEvent(r.ctx, store.SessionEvent{At: time.Now().Unix(), SessionID: "s2", ProjectID: "p1", From: session.StateWorking, To: session.StateDone})
 	r.b.SessionChanged(row2, session.StateDone)
 	r.waitFor(func() bool { return r.ad.count() == 1 })
 }
@@ -490,5 +519,93 @@ func TestTheLastInboundOutlivesARestart(t *testing.T) {
 	})
 	if h := r.b.Healths(r.ctx); h[0].LastInbound != r.now.Unix() {
 		t.Fatalf("after a restart: %+v", h[0])
+	}
+}
+
+// "OK" is a yes when nothing is waiting for a confirmation, and not after a
+// stop, where it is the person confirming the stop they expected to be asked
+// about.
+func TestOkIsAYesExceptAfterAStop(t *testing.T) {
+	r := newRig(t, Capabilities{Proactive: true})
+	r.peer("me", store.PeerPaired, store.ModeNormal)
+	r.session("s1", "fix", "claude", session.StateWaiting)
+	h, _ := r.db.ChatHandle(r.ctx, "s1")
+	r.prompt("s1", "Bash: rm -rf build")
+	r.say("me", fmt.Sprintf("停 %d", h))
+	if !strings.Contains(r.ad.last(), "没在工作") || !strings.Contains(r.ad.last(), "rm -rf build") {
+		t.Fatalf("stop at a prompt: %q", r.ad.last())
+	}
+	r.say("me", "OK")
+	if len(r.term.pressed("vp_s1")) != 0 {
+		t.Fatalf("an ok after a stop allowed the prompt: %v", r.term.pressed("vp_s1"))
+	}
+	r.say("me", "OK")
+	if keys := r.term.pressed("vp_s1"); len(keys) != 1 || keys[0][0] != "Enter" {
+		t.Fatalf("a later OK to a seen request: %v %q", keys, r.ad.last())
+	}
+}
+
+// A quoted reply that is not a card, about one session, is that session; a
+// quote that names nobody does not fall back to whoever is waiting.
+func TestAQuoteThatNamesNobodyIsNotAnsweredForSomebodyElse(t *testing.T) {
+	r := newRig(t, Capabilities{})
+	p := r.peer("me", store.PeerPaired, store.ModeNormal)
+	p.ContextToken = "tok"
+	_ = r.db.PutChatPeer(r.ctx, p)
+	r.session("s1", "one", "claude", session.StateWaiting)
+	r.prompt("s1", "Bash: rm -rf assets")
+	r.session("s3", "three", "claude", session.StateDone)
+	h3, _ := r.db.ChatHandle(r.ctx, "s3")
+	r.say("me", "列表") // s1's request is shown
+	quote := func(text, quoted string) {
+		before := r.b.Handled()
+		r.ad.inbound(t, Inbound{PeerID: "me", Text: text, QuotedText: quoted, ContextToken: "tok"})
+		r.settleFrom(before)
+	}
+	quote("可以", fmt.Sprintf("→ [%d] 已拒绝：Bash: delete the .env file", h3))
+	if len(r.term.pressed("vp_s1")) != 0 {
+		t.Fatalf("a quote of [%d] allowed [1]: %q", h3, r.ad.last())
+	}
+	quote("可以", "没有等待确认的操作。")
+	if len(r.term.pressed("vp_s1")) != 0 || !strings.Contains(r.ad.last(), "说不清") {
+		t.Fatalf("a quote naming nobody: %v %q", r.term.pressed("vp_s1"), r.ad.last())
+	}
+}
+
+// Two commands that start the same are different requests.
+func TestAQuotedCardMustShowTheWholeRequest(t *testing.T) {
+	if quoteShows("▲ [3] app\n要你允许\n\nBash: cd /home/zhou/projects/miniapp && rm -rf build/cache", "Bash: cd /home/zhou/projects/miniapp && rm -rf src") {
+		t.Fatal("a card for one command read as the card for another with the same start")
+	}
+	if !quoteShows("▲ [3] app\n要你允许\n\nBash: cd /home/zhou/projects/miniapp &&\n rm -rf src\nhttps://x", "Bash: cd /home/zhou/projects/miniapp && rm -rf src") {
+		t.Fatal("the card for the request did not read as it")
+	}
+}
+
+// A channel whose own settings are refused is not stored and not started.
+func TestAChannelTheAdapterRefusesIsNotSaved(t *testing.T) {
+	r := newRig(t, Capabilities{Proactive: true})
+	rigKinds.Lock()
+	if _, ok := FactoryFor("picky"); !ok {
+		Register(Factory{Kind: "picky", Label: "Picky", New: func(raw json.RawMessage, _ Env) (Adapter, error) {
+			var v map[string]string
+			_ = json.Unmarshal(raw, &v)
+			if v["token"] == "" {
+				return nil, errors.New("picky: a token is required")
+			}
+			return newFake("picky", Capabilities{}), nil
+		}})
+	}
+	rigKinds.Unlock()
+	err := r.b.WriteChannel(r.ctx, "picky", true, ChannelConfig{Values: map[string]string{}})
+	if !errors.Is(err, ErrChannelConfig) || !strings.Contains(err.Error(), "token is required") {
+		t.Fatalf("an empty form: %v", err)
+	}
+	if _, err := r.db.GetChatChannel(r.ctx, "picky"); err != store.ErrNotFound {
+		t.Fatalf("stored anyway: %v", err)
+	}
+	// Off, it may be saved half-filled.
+	if err := r.b.WriteChannel(r.ctx, "picky", false, ChannelConfig{Values: map[string]string{}}); err != nil {
+		t.Fatalf("saving it off: %v", err)
 	}
 }

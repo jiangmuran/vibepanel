@@ -340,7 +340,8 @@ the only thing that tells a working channel from a configured one.
 **Pairing.** Nobody can talk to the panel until you say so. Whoever messages
 the bot first gets a six-digit code and a *pending* row on the page; they tell
 you the code and you enter it. A paired person can see and act on every
-session. Each person has a mode: *normal* takes commands and
+session. Unblocking someone removes their row, so they pair again with a new
+code, and a person can be given a name (微信 gives none). Each person has a mode: *normal* takes commands and
 addressed replies, *advanced* also takes sentences.
 
 **What you get.** A card per change, always starting with the session's number:
@@ -362,7 +363,10 @@ could not reach you is shown when you next write.
 **Replying.** `3: your words` sends them to session 3; so does quoting its
 card. A bare reply goes to the one session that is waiting, and is refused
 with the list when two are — a "y" typed into the wrong agent is the one
-mistake this cannot make. `3 continue`, `3号 continue` and `第三个` work too,
+mistake this cannot make. `focus 3` makes sentences without a number go to 3
+even while something else waits (the receipt says who), and `unfocus` clears
+it; a bare yes still goes to the one that asked. `3 continue`, `3号 continue`
+and `第三个` work too,
 and so do voice-note shapes like 「嗯，好的。」. Every delivery comes back as a
 receipt naming the number. `help` lists the rest (in Chinese when the bot
 speaks Chinese: 列表, 屏幕 3, 停 3): `list`, `screen 3`, `shot 3` (a picture of the

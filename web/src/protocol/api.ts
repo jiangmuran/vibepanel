@@ -898,7 +898,7 @@ export const api = {
     ),
   pairChat: (code: string) =>
     request<ChatPeer>('/api/chat/pair', { method: 'POST', body: JSON.stringify({ code }) }),
-  patchChatPeer: (channel: string, peerId: string, patch: { mode?: ChatPeerMode; status?: ChatPeerStatus }) =>
+  patchChatPeer: (channel: string, peerId: string, patch: { mode?: ChatPeerMode; status?: ChatPeerStatus; display?: string }) =>
     request<ChatPeer>(`/api/chat/peers/${encodeURIComponent(channel)}/${encodeURIComponent(peerId)}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),

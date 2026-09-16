@@ -384,10 +384,15 @@ characters are all anyone reads.
 does not apply.** A quoted card first (a card, not any message with a number
 in it: the list the bridge sends when it refuses also has numbers, and a
 quote of it must not pick the first); a handle in the text second (`3: …`,
-`#3`, `[3]`); then the one session that is waiting, if exactly one is; then
-the focus. Two waiting sessions and a bare "y" is refused with the list, even
-when one of them is focused, because the cost of asking again is one message
-and the cost of guessing is a keystroke in the wrong shell. A session at a
+`#3`, `[3]`); then, for words, the focus the person chose and after it the
+one session that is waiting, and for a bare yes or no the other way round,
+because a yes means the thing that asked. With six sessions something is
+nearly always waiting, and while waiting outranked the focus for everything,
+every push took over the next sentence. Two waiting sessions and a bare "y" is
+refused with the list, even when one of them is focused, because the cost of
+asking again is one message and the cost of guessing is a keystroke in the
+wrong shell. A quote that names no one session (a reply about nothing, a list)
+is never answered for whoever happens to be waiting. A session at a
 permission prompt takes no words at all until the prompt is answered: its
 dialog reads keys, and Enter after a paste is "allow". What "allow" is —
 Enter for Claude Code, `y` for Codex — is a per-tool key profile, editable,
@@ -404,9 +409,14 @@ showed — by record where the IM quotes by id, by the request's words where
 current one shown; an answer that names none (a bare "y", `3: y`) goes through
 only if this person has been shown the current request, and otherwise shows
 it. The person is never one keystroke from allowing a command they have not
-read. Once answered, the request comes off every card that showed it. Pushes
-never move the focus: the focus is what a person chose, and a push that moved
-it put the next sentence into whichever session had spoken last.
+read. A quote by text must carry the whole request as the card showed it:
+Claude Code's commands start with `cd <project> &&`, and a comparison of the
+first two dozen characters read a card for clearing a cache as the card for
+deleting `src`. Once a request ends — answered in a chat, at the laptop, or
+replaced by the next — every message that still offers its buttons is edited
+to say so. Pushes never move the focus: the focus is what a person chose, and
+a push that moved it put the next sentence into whichever session had spoken
+last.
 
 **Nothing an agent printed can reach the write path through the advanced
 mode.** The headless agent that reads a sentence like "tell the docs one to add

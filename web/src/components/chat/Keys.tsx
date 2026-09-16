@@ -6,7 +6,8 @@ import { t } from '../../i18n'
 import { askConfirm } from '../ask'
 import { showToast } from '../toasts'
 import { Card, Section } from './Chat'
-import { INPUT, Primary, Secondary, errText, useServerCopy } from './form'
+import { chatError } from './errors'
+import { INPUT, Primary, Secondary, useServerCopy } from './form'
 import { useState } from 'react'
 
 const FIELDS = ['approve', 'deny', 'interrupt', 'submit'] as const
@@ -47,7 +48,7 @@ export function Keys({ data, onChange }: { data: ChatSettings; onChange: () => v
       showToast({ kind: 'success', key: 'chat.saved' })
       onChange()
     } catch (e) {
-      showToast({ kind: 'error', key: 'chat.saveFailed', detail: errText(e) })
+      showToast({ kind: 'error', key: 'chat.saveFailed', detail: chatError(e) })
     } finally {
       setBusy(false)
     }

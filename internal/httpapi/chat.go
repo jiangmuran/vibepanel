@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 
@@ -375,6 +377,10 @@ func (s *Server) handlePutChatChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Chat.WriteChannel(ctx, kind, req.Enabled, cfg); err != nil {
+		if errors.Is(err, chat.ErrChannelConfig) {
+			writeErr(w, http.StatusBadRequest, errors.Unwrap(err).Error())
+			return
+		}
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -538,8 +544,19 @@ func (s *Server) handleChatPair(w http.ResponseWriter, r *http.Request) {
 }
 
 type patchPeerRequest struct {
-	Mode   *string `json:"mode"`
-	Status *string `json:"status"`
+	Mode    *string `json:"mode"`
+	Status  *string `json:"status"`
+	Display *string `json:"display"`
+}
+
+// peerParams reads a peer's channel and id from the path, decoded. A 微信 id
+// is "someone@im.wechat", which the page escapes to %40 and chi hands over
+// still escaped, so every row with an @ in it answered "not found" to block,
+// mode and remove alike.
+func peerParams(r *http.Request) (string, string, bool) {
+	channel, err1 := url.PathUnescape(chi.URLParam(r, "channel"))
+	peer, err2 := url.PathUnescape(chi.URLParam(r, "peer"))
+	return channel, peer, err1 == nil && err2 == nil && channel != "" && peer != ""
 }
 
 func (s *Server) handlePatchChatPeer(w http.ResponseWriter, r *http.Request) {
@@ -551,13 +568,32 @@ func (s *Server) handlePatchChatPeer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	channel, peer := chi.URLParam(r, "channel"), chi.URLParam(r, "peer")
+	channel, peer, ok := peerParams(r)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "bad peer")
+		return
+	}
+	if req.Display != nil {
+		name := strings.TrimSpace(*req.Display)
+		if utf8.RuneCountInString(name) > 40 {
+			writeErr(w, http.StatusBadRequest, "a name is at most 40 characters")
+			return
+		}
+		if err := s.Chat.SetPeerDisplay(ctx, channel, peer, name); err != nil {
+			s.writeStoreErr(w, err)
+			return
+		}
+	}
 	if req.Mode != nil {
 		if *req.Mode != store.ModeNormal && *req.Mode != store.ModeAdvanced {
 			writeErr(w, http.StatusBadRequest, "mode is normal or advanced")
 			return
 		}
 		if err := s.Chat.SetPeerMode(ctx, channel, peer, *req.Mode); err != nil {
+			if errors.Is(err, chat.ErrPairByCode) {
+				writeErr(w, http.StatusConflict, "pair them with their code first")
+				return
+			}
 			s.writeStoreErr(w, err)
 			return
 		}
@@ -588,12 +624,21 @@ func (s *Server) handleDeleteChatPeer(w http.ResponseWriter, r *http.Request) {
 	if !s.requireChat(w) {
 		return
 	}
-	if err := s.DB.DeleteChatPeer(r.Context(), chi.URLParam(r, "channel"), chi.URLParam(r, "peer")); err != nil {
+	channel, peer, ok := peerParams(r)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "bad peer")
+		return
+	}
+	name := peer
+	if p, err := s.DB.GetChatPeer(r.Context(), channel, peer); err == nil && p.Display != "" {
+		name = p.Display
+	}
+	if err := s.DB.DeleteChatPeer(r.Context(), channel, peer); err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}
 	user, _, _ := s.currentUser(r)
-	s.audit(r.Context(), "chat.peer", user.Username, s.clientIP(r), chi.URLParam(r, "channel")+":"+chi.URLParam(r, "peer")+" removed")
+	s.audit(r.Context(), "chat.peer", user.Username, s.clientIP(r), name+" ("+channel+"): removed")
 	w.WriteHeader(http.StatusNoContent)
 }
 

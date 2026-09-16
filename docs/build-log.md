@@ -22362,3 +22362,61 @@ Every new guard was mutated: 34 mutations, all killed once four tests that
 passed for the wrong reason were fixed (a "yes" that was not a yes word, an
 ok test that could not tell stale from unseen, a spoken handle kept in the
 answer, a redundant check deleted instead of tested).
+
+## 2026-09-16 — The same three people, a second time
+
+The fixes above went back to three of the personas on a fresh rig: the
+Telegram heavy user, the 微信 voice user, and the owner setting it up in a
+browser. They were told what had been fixed and asked to break it the way
+their person would. Two of the fixes held; three things found this time
+would have been as bad as what was fixed.
+
+**Quoting an old card still allowed the new request, when the two commands
+started the same.** The quote was compared on its first twenty-four
+characters, and Claude Code's commands start with `cd <project> && `: quoting
+the card for `rm -rf build/cache` allowed `rm -rf src`. The whole request as
+the card showed it must be in the quote now. A 微信 client that shortens the
+quote makes the card read as old, which shows the current request again.
+Quoting a reply about another session (`→ [3] 已拒绝`) fell back to "the one
+waiting" and allowed [1]; a reply about one session is that session, and a
+quote that names nobody is refused for a yes.
+
+**Blocking and then unblocking a stranger paired them.** "Unblock" set
+`paired`, and a mode could be set on a pending row and was carried over. The
+server now pairs nobody except by code, from any status, and gives no mode to
+anyone unpaired; the page's *unblock* removes the row, so the person starts
+again with a code.
+
+**Focus lost to anything waiting.** Resolution put the one waiting session
+above the focus for every message, and with six sessions something is nearly
+always waiting, so `focus 5` did nothing and each push took the next sentence.
+Words follow the focus now, a bare yes still goes to what asked, the receipt
+says who is still waiting, and `unfocus` (「不切了」) exists: typed before, it
+had gone into the session and run as a task.
+
+**Smaller.** A card answered at the laptop kept its buttons forever; every
+message still offering a request is closed when the request ends, however it
+ended. A reply that shows a request instead of acting starts with "not done"
+and carries the buttons. "OK" with nothing to confirm is a yes, except right
+after a stop, where a stop at a prompt answered "not working" and the ok that
+followed would have allowed the thing being stopped. 「那个，2号先静音半小时吧。」
+and 「静音３号半小时」 parse; a message starting with 静音 that does not is
+refused rather than typed into a session; 「嗯嗯」 is ignored; the person's own
+punctuation is kept; 【3】 is a handle. A card on an IM without buttons says
+what to type. `more` follows a quoted card, and the hint names the handle.
+The done card for a session that had never worked, the reply to a press
+already shown on the card, and a push for a request just shown are gone. 微信
+ids have an `@`, which arrived at the peer routes still escaped: blocking a
+微信 spammer answered "not found". A channel whose adapter refuses its
+settings is not saved. The needs-hello count is what is owed now, by name,
+and not painted as an error. On the page: toasts for block, remove, switch
+and channel removal, confirmations that say what follows, people can be
+renamed, a rule that would send permission requests to nobody is marked and
+asks before saving, a removed person in a rule is shown struck through, server
+refusals and the log read in the page's language, a field's hint sits under
+it rather than in it, and the 微信 sign-in can be cancelled.
+
+Thirty-one mutations of the new guards: twenty-six killed at once, five
+survivors each closed with a test (a quote by ref about nothing, what is
+owed after a request ends, buttons on a shown request, pairing from blocked
+tested only through HTTP, an IM name overwriting one the owner chose).

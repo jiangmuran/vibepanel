@@ -106,6 +106,11 @@ func (b *Bridge) handle(ctx context.Context, ch *channel, in Inbound) {
 	}
 	peer.LastSeenAt = now.Unix()
 
+	// Recorded before anything can stop it, so a message the bridge held
+	// back is in the log too.
+	if in.Text != "" {
+		b.d.Audit(ctx, "chat.in", fmt.Sprintf("%s (%s): %s", who(peer), key, preview(in.Text)))
+	}
 	if b.catchUp(ctx, ch, peer, lang) {
 		return
 	}
@@ -121,7 +126,11 @@ func (b *Bridge) handle(ctx context.Context, ch *channel, in Inbound) {
 	if text == "" {
 		return
 	}
-	b.d.Audit(ctx, "chat.in", fmt.Sprintf("%s (%s): %s", who(peer), key, preview(text)))
+	if isFiller(text) {
+		// "嗯", "哦哦": a voice note that caught a breath. Typed into a
+		// session it becomes a task; answered, it is noise.
+		return
+	}
 
 	// Something waiting for "ok" reads "好的" as that, before any session
 	// can read it as "allow": the person is answering the question the
@@ -152,25 +161,25 @@ func (b *Bridge) handle(ctx context.Context, ch *channel, in Inbound) {
 	// Words for an agent. Where they go is the one decision that can be
 	// wrong in a way a person cannot see, which is why it comes back as a
 	// receipt naming the handle.
-	quoteSession, bound := b.quoted(ctx, ch, in)
+	q := b.quoted(ctx, ch, in)
 	cands, err := b.candidates(ctx)
 	if err != nil {
 		return
 	}
 	text = loosen(text, cands)
-	target, rest, reason := Resolve(text, quoteSession, peer.FocusSession, cands)
+	target, rest, reason := Resolve(text, q.session, peer.FocusSession, cands, false)
 	if reason != "" {
 		if advanced {
 			b.assist(ctx, ch, peer, text, cands, lang)
 			return
 		}
-		b.reply(ctx, ch, peer, b.explain(ctx, reason, text, lang))
+		b.tell(ctx, ch, peer, b.explain(ctx, reason, text, lang))
 		return
 	}
 	// A bare "y" to a quoted prompt is an answer, not text.
 	if a, ok := Parse(rest); ok && a.Handle == 0 && (a.Verb == VerbApprove || a.Verb == VerbDeny) {
 		b.tell(ctx, ch, peer, b.answer(ctx, peer, answerReq{
-			sessionID: target.SessionID, approve: a.Verb == VerbApprove, bound: bound, how: target.How, word: rest,
+			sessionID: target.SessionID, approve: a.Verb == VerbApprove, bound: q.bound, how: target.How, word: rest,
 		}, lang))
 		return
 	}
@@ -336,13 +345,23 @@ func (b *Bridge) tell(ctx context.Context, ch *channel, p store.ChatPeer, s said
 		return
 	}
 	var first string
-	for _, piece := range Split(s.text, ch.caps.MaxText) {
-		ref, err := b.send(ctx, ch, p, Outbound{Text: piece})
+	pieces := Split(s.text, ch.caps.MaxText)
+	for _, piece := range pieces {
+		out := Outbound{Text: piece}
+		kind := store.OutboundReply
+		// A reply that shows a permission request carries the same buttons
+		// the card would have: "not done yet, here it is" with nothing to
+		// press sends the person back to typing a yes they just typed.
+		if s.ask != nil && ch.caps.Buttons && len(pieces) == 1 {
+			out.Buttons = requestButtons(s.ask.session, s.ask.message, b.language())
+			kind = store.OutboundRequest
+		}
+		ref, err := b.send(ctx, ch, p, out)
 		if err != nil {
 			b.d.Log.Warn("chat reply", "channel", p.Channel, "err", err)
 			return
 		}
-		o := store.ChatOutbound{Channel: p.Channel, PeerID: p.PeerID, Ref: ref, Kind: store.OutboundReply}
+		o := store.ChatOutbound{Channel: p.Channel, PeerID: p.PeerID, Ref: ref, Kind: kind}
 		if first == "" {
 			first = ref
 			if len(s.shows) > 0 {
@@ -362,64 +381,103 @@ func (b *Bridge) tell(ctx context.Context, ch *channel, p store.ChatPeer, s said
 	}
 }
 
-// quoted is the session a quoted message was about, and which of its
-// requests: the message id the quoted message showed, 0 when it showed none
-// in particular, and -1 when it showed one that is not the session's
-// current request.
-func (b *Bridge) quoted(ctx context.Context, ch *channel, in Inbound) (string, int64) {
+// quote is what a quoted message said about where a reply goes.
+type quote struct {
+	// session is the session it was about, "" for none.
+	session string
+	// bound is which of its requests: the message id the quoted message
+	// showed, 0 when it showed none in particular, and -1 when it showed
+	// one that is not the session's current request.
+	bound int64
+	// unclear is a quote that was there and names no one session: a reply
+	// the bridge sent about nothing, or a list with several handles in it.
+	// Words may still find their session by the other rules; a yes may not,
+	// because the person pointed at something and it was not that.
+	unclear bool
+}
+
+func (b *Bridge) quoted(ctx context.Context, ch *channel, in Inbound) quote {
 	if ch.caps.QuoteRefs && in.QuotedRef != "" {
 		if o, ok, _ := b.d.DB.ChatOutboundByRef(ctx, in.Channel, in.PeerID, in.QuotedRef); ok && o.SessionID != "" {
-			return o.SessionID, o.MessageID
+			return quote{session: o.SessionID, bound: o.MessageID}
 		}
-		return "", 0
+		return quote{unclear: true}
 	}
 	if in.QuotedText == "" {
-		return "", 0
+		return quote{}
 	}
 	h, ok := HandleInQuote(in.QuotedText)
 	if !ok {
-		return "", 0
+		// Not a card. A reply about exactly one session ("→ [3] 已拒绝",
+		// "[3] 现在要你允许：…") is about that session, and read for its
+		// request like a card is; anything else names nobody.
+		hs := handlesIn(in.QuotedText)
+		if len(hs) != 1 {
+			return quote{unclear: true}
+		}
+		h = hs[0]
 	}
 	id, ok, _ := b.d.DB.SessionByHandle(ctx, h)
 	if !ok {
-		return "", 0
+		return quote{unclear: true}
 	}
 	// 微信 quotes by text, so which request a quoted card showed is read
 	// back from the text: the card carries the request's words, and a card
 	// whose words are not the current request's is an old card.
 	row, err := b.d.DB.GetSession(ctx, id)
 	if err != nil {
-		return id, 0
+		return quote{session: id}
 	}
 	last, has, _ := b.d.DB.LatestSessionMessage(ctx, id)
 	if !has {
-		return id, 0
+		return quote{session: id}
 	}
 	kind := CurrentKind(row, last)
 	if kind != store.MessagePrompt && kind != store.MessageQuestion {
-		return id, -1
+		return quote{session: id, bound: -1}
 	}
 	if quoteShows(in.QuotedText, last.Text) {
-		return id, last.ID
+		return quote{session: id, bound: last.ID}
 	}
-	return id, -1
+	return quote{session: id, bound: -1}
 }
 
-// quoteShows says whether quoted text carries a request's words. The client
-// may shorten a long quote and reflow whitespace, so the comparison is on
-// the first stretch of the request with whitespace squeezed out.
+// handlesIn is every distinct [n] in a text, in order.
+func handlesIn(text string) []int {
+	var out []int
+	seen := map[int]bool{}
+	for _, m := range anyHandle.FindAllStringSubmatch(text, -1) {
+		n, err := strconv.Atoi(m[1])
+		if err != nil || n <= 0 || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	return out
+}
+
+var anyHandle = regexp.MustCompile(`\[\s*(\d{1,4})\s*\]`)
+
+// quoteShows says whether quoted text carries all of a request's words, as
+// the card showed them.
+//
+// All of them. The first version compared the first twenty-four characters,
+// and Claude Code's commands start with "cd <the project> && ", so a card
+// for clearing a cache and a card for deleting src read as the same card and
+// quoting the first allowed the second. A client that shortens a long quote
+// makes the card read as an old one, which shows the current request again:
+// the safe way to be wrong.
 func quoteShows(quoted, request string) bool {
 	squeeze := func(s string) string {
 		return strings.Join(strings.Fields(s), "")
 	}
-	req := []rune(squeeze(request))
-	if len(req) == 0 {
+	shown, _ := cut(request, BodyLimit)
+	req := squeeze(shown)
+	if req == "" {
 		return false
 	}
-	if len(req) > 24 {
-		req = req[:24]
-	}
-	return strings.Contains(squeeze(quoted), string(req))
+	return strings.Contains(squeeze(quoted), req)
 }
 
 func (b *Bridge) candidates(ctx context.Context) ([]Candidate, error) {
@@ -441,15 +499,19 @@ func (b *Bridge) candidates(ctx context.Context) ([]Candidate, error) {
 	return out, nil
 }
 
-func (b *Bridge) explain(ctx context.Context, reason Reason, text string, lang string) string {
+// explain says why nothing was delivered. The list of waiting sessions shows
+// what each asks, and counts as the person having seen it.
+func (b *Bridge) explain(ctx context.Context, reason Reason, text string, lang string) said {
 	switch reason {
 	case ReasonSeveral:
-		return msg(lang, "several", b.list(ctx, lang, true).text)
+		l := b.list(ctx, lang, true)
+		l.text = msg(lang, "several", l.text)
+		return l
 	case ReasonUnknown:
 		h, _, _ := SplitHandle(text)
-		return b.unknownHandle(ctx, h, lang)
+		return plain(b.unknownHandle(ctx, h, lang))
 	}
-	return msg(lang, "none")
+	return plain(msg(lang, "none"))
 }
 
 // unknownHandle tells a handle that never existed from one whose session
@@ -507,7 +569,7 @@ func (b *Bridge) gate(ctx context.Context, p store.ChatPeer, row store.Session, 
 		// Claude Code's dialog ignores typed text and Enter picks the
 		// highlighted choice, so pasting "wait, not that" and pressing
 		// Enter would allow the very thing.
-		return showing(msg(lang, "atPrompt", h, request(cur.Text), h, h), row.ID, cur.ID), false
+		return asking(msg(lang, "atPrompt", h, request(cur.Text), h, h), row.ID, cur.ID), false
 	case store.MessageQuestion:
 		// Only the session that happened to be the one waiting, and a
 		// question this person never saw: a sentence typed for something
@@ -546,10 +608,30 @@ func (b *Bridge) deliver(ctx context.Context, p store.ChatPeer, target Target, t
 	b.d.Audit(ctx, "chat.send", fmt.Sprintf("[%d] %s · %s via %s: %s", h, row.Title, who(p), target.How, preview(text)))
 	if target.How == HowFocus {
 		// The one route a person did not name in the message itself, so the
-		// receipt says why it went there.
-		return plain(msg(lang, "receiptFocus", h))
+		// receipt says so, and says who is still waiting while the words
+		// went elsewhere.
+		text := msg(lang, "receiptFocus", h)
+		if others := b.waitingOthers(ctx, row.ID); others != "" {
+			text += msg(lang, "stillWaiting", others)
+		}
+		return plain(text)
 	}
 	return plain(msg(lang, "receipt", h))
+}
+
+// waitingOthers names the sessions other than one that are waiting: "[1] [4]".
+func (b *Bridge) waitingOthers(ctx context.Context, except string) string {
+	cands, err := b.candidates(ctx)
+	if err != nil {
+		return ""
+	}
+	var hs []string
+	for _, c := range cands {
+		if c.Waiting && c.SessionID != except {
+			hs = append(hs, fmt.Sprintf("[%d]", c.Handle))
+		}
+	}
+	return strings.Join(hs, " ")
 }
 
 // who names a person for the audit log and for the others who were shown
@@ -597,6 +679,9 @@ func (b *Bridge) answer(ctx context.Context, p store.ChatPeer, req answerReq, la
 	}
 	if row.State != session.StateWaiting {
 		if req.bound != 0 {
+			// Answered some other way, at the laptop most likely; the card
+			// that was pressed or quoted should stop offering it.
+			b.sweep(ctx, row)
 			return plain(msg(lang, "staleGone", h))
 		}
 		return plain(msg(lang, "notWaiting", h))
@@ -610,10 +695,11 @@ func (b *Bridge) answer(ctx context.Context, p store.ChatPeer, req answerReq, la
 	switch kind {
 	case store.MessagePrompt:
 		if stale {
-			return showing(msg(lang, "stalePrompt", h, request(cur.Text), h, h), row.ID, cur.ID)
+			b.sweep(ctx, row)
+			return asking(msg(lang, "stalePrompt", h, request(cur.Text), h, h), row.ID, cur.ID)
 		}
 		if req.bound == 0 && !b.seen(ctx, p, cur.ID) {
-			return showing(msg(lang, "showPrompt", h, request(cur.Text), h, h), row.ID, cur.ID)
+			return asking(msg(lang, "showPrompt", h, request(cur.Text), h, h), row.ID, cur.ID)
 		}
 	case store.MessageQuestion, store.MessageAssistant, store.MessageNotice, store.MessageUser:
 		// Not a permission prompt: the keys would pick a menu's first
@@ -653,7 +739,8 @@ func (b *Bridge) answer(ctx context.Context, p store.ChatPeer, req answerReq, la
 	}
 	b.d.Audit(ctx, "chat."+what, fmt.Sprintf("[%d] %s · %s · %s via %s: %s", h, row.Title, tool, who(p), req.how, preview(cur.Text)))
 	if cur.ID > 0 {
-		b.retire(ctx, p, row, h, cur, what, lang)
+		b.close(ctx, row, h, cur.ID, cur.Text, msg(lang, "answeredBy", msg(lang, what), who(p)), &p,
+			msg(lang, "answeredElsewhere", h, who(p), msg(lang, what), preview(cur.Text)))
 		return plain(msg(lang, "receiptKeyCmd", h, msg(lang, what), preview(cur.Text)))
 	}
 	return plain(msg(lang, "receiptKey", h, msg(lang, what)))
@@ -674,12 +761,47 @@ func (b *Bridge) toldSince(ctx context.Context, p store.ChatPeer, row store.Sess
 	return false
 }
 
-// retire takes an answered request off every card that showed it: the
-// buttons go, and the card says who answered. On an IM that cannot edit, the
-// others who were shown it are told in a line, so nobody answers a request
-// that is already over.
-func (b *Bridge) retire(ctx context.Context, by store.ChatPeer, row store.Session, h int, cur store.SessionMessage, what, lang string) {
-	outs, err := b.d.DB.ChatOutboundsForMessage(ctx, row.ID, cur.ID)
+// close takes a request off every message that showed it. Where the IM can
+// edit, the buttons go and the card says what happened (stateText); where it
+// cannot, the others who were shown it by a card get a line, if there is one,
+// so nobody answers a request that is already over. by is who answered,
+// nil when nobody in a chat did.
+func (b *Bridge) close(ctx context.Context, row store.Session, h int, messageID int64, text, stateText string, by *store.ChatPeer, line string) {
+	outs, err := b.d.DB.ChatOutboundsForMessage(ctx, row.ID, messageID)
+	if err != nil {
+		return
+	}
+	told := map[string]bool{}
+	if by != nil {
+		told[chatKey(by.Channel, by.PeerID)] = true
+	}
+	for _, o := range outs {
+		b.closeOne(ctx, row, h, o, text, stateText)
+		ch, ok := b.channel(o.Channel)
+		if !ok || ch.caps.Edit || line == "" || o.Kind != store.OutboundStatus {
+			continue
+		}
+		p, err := b.d.DB.GetChatPeer(ctx, o.Channel, o.PeerID)
+		k := chatKey(o.Channel, o.PeerID)
+		if err != nil || p.Status != store.PeerPaired || told[k] {
+			continue
+		}
+		told[k] = true
+		b.reply(ctx, ch, p, line)
+	}
+}
+
+// closeOne edits one message's buttons away, if it has any.
+func (b *Bridge) closeOne(ctx context.Context, row store.Session, h int, o store.ChatOutbound, text, stateText string) {
+	if o.Kind != store.OutboundRequest {
+		return
+	}
+	_ = b.d.DB.SetChatOutboundKind(ctx, o.Channel, o.PeerID, o.Ref, store.OutboundAnswered)
+	ch, ok := b.channel(o.Channel)
+	if !ok || !ch.caps.Edit {
+		return
+	}
+	p, err := b.d.DB.GetChatPeer(ctx, o.Channel, o.PeerID)
 	if err != nil {
 		return
 	}
@@ -687,34 +809,39 @@ func (b *Bridge) retire(ctx context.Context, by store.ChatPeer, row store.Sessio
 	if pr, perr := b.d.DB.GetProject(ctx, row.ProjectID); perr == nil {
 		project = pr.Name
 	}
-	told := map[string]bool{chatKey(by.Channel, by.PeerID): true}
-	for _, o := range outs {
-		ch, ok := b.channel(o.Channel)
-		if !ok {
+	lang := b.language()
+	body, _ := cut(text, BodyLimit)
+	card := &Card{
+		Handle: h, Title: row.Title, Project: project, State: string(row.State),
+		Glyph: glyph(string(row.State)), StateText: stateText,
+		Body: body, URL: b.sessionURL(row.ID), LinkLabel: msg(lang, "linkLabel"),
+	}
+	if err := ch.ad.Edit(ctx, Peer{ID: p.PeerID, ContextToken: p.ContextToken}, o.Ref, Outbound{Card: card}); err != nil {
+		b.d.Log.Warn("chat close", "channel", o.Channel, "err", err)
+	}
+}
+
+// sweep closes a session's requests that are over without a chat having
+// answered them: allowed at the laptop, or replaced by the next one. A card
+// that keeps its buttons after that invites exactly the stale press the
+// binding exists to refuse, and makes it impossible to tell, scrolling back,
+// what is still open.
+func (b *Bridge) sweep(ctx context.Context, row store.Session) {
+	open, err := b.d.DB.OpenChatRequests(ctx, row.ID)
+	if err != nil || len(open) == 0 {
+		return
+	}
+	var current int64
+	if cur, kind := b.current(ctx, row); kind == store.MessagePrompt {
+		current = cur.ID
+	}
+	h, _ := b.Handle(ctx, row.ID)
+	lang := b.language()
+	for _, o := range open {
+		if o.MessageID == current {
 			continue
 		}
-		p, err := b.d.DB.GetChatPeer(ctx, o.Channel, o.PeerID)
-		if err != nil || p.Status != store.PeerPaired {
-			continue
-		}
-		if ch.caps.Edit {
-			body, _ := cut(cur.Text, BodyLimit)
-			card := &Card{
-				Handle: h, Title: row.Title, Project: project, State: string(session.StateWorking),
-				Glyph: glyph(string(session.StateWorking)), StateText: msg(lang, "answeredBy", msg(lang, what), who(by)),
-				Body: body, URL: b.sessionURL(row.ID), LinkLabel: msg(lang, "linkLabel"),
-			}
-			if err := ch.ad.Edit(ctx, Peer{ID: p.PeerID, ContextToken: p.ContextToken}, o.Ref, Outbound{Card: card}); err != nil {
-				b.d.Log.Warn("chat retire", "channel", o.Channel, "err", err)
-			}
-			continue
-		}
-		k := chatKey(p.Channel, p.PeerID)
-		if told[k] {
-			continue
-		}
-		told[k] = true
-		b.reply(ctx, ch, p, msg(lang, "answeredElsewhere", h, who(by), msg(lang, what), preview(cur.Text)))
+		b.closeOne(ctx, row, h, o, "", msg(lang, "handled"))
 	}
 }
 
@@ -727,7 +854,7 @@ func (b *Bridge) interrupt(ctx context.Context, sessionID string, lang string) s
 	// session may have stopped at a prompt, where the interrupt key is the
 	// deny key. Say so rather than deny something in passing.
 	if cur, kind := b.current(ctx, row); kind == store.MessagePrompt {
-		return showing(msg(lang, "atPrompt", h, request(cur.Text), h, h), row.ID, cur.ID)
+		return asking(msg(lang, "stopAtPrompt", h, request(cur.Text), h), row.ID, cur.ID)
 	}
 	if row.State != session.StateWorking {
 		return plain(msg(lang, "notWorking", h))
@@ -818,13 +945,19 @@ func (b *Bridge) action(ctx context.Context, ch *channel, p store.ChatPeer, a Ac
 	if err := ch.ad.Ack(ctx, a, firstLine(out.text)); err != nil {
 		b.d.Log.Warn("chat ack", "channel", p.Channel, "err", err)
 	}
+	// A press that did what it said is already visible twice: the IM's own
+	// acknowledgement and the card, edited to say who answered. A third
+	// message saying the same is noise; anything else still needs saying.
+	if (verb == "approve" || verb == "deny") && ch.caps.Edit && strings.HasPrefix(out.text, "→") {
+		return
+	}
 	b.tell(ctx, ch, p, out)
 }
 
 func (b *Bridge) image(ctx context.Context, ch *channel, p store.ChatPeer, in Inbound, lang string) {
 	caption := strings.TrimSpace(in.Text)
 	how := HowQuote
-	sessionID, _ := b.quoted(ctx, ch, in)
+	sessionID := b.quoted(ctx, ch, in).session
 	cands, _ := b.candidates(ctx)
 	if sessionID == "" {
 		caption = loosen(caption, cands)
@@ -834,7 +967,7 @@ func (b *Bridge) image(ctx context.Context, ch *channel, p store.ChatPeer, in In
 		}
 	}
 	if sessionID == "" {
-		t, _, reason := Resolve("", "", p.FocusSession, cands)
+		t, _, reason := Resolve("", "", p.FocusSession, cands, false)
 		if reason != "" {
 			b.reply(ctx, ch, p, msg(lang, "imageNoTarget"))
 			return
@@ -973,6 +1106,7 @@ func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in 
 
 	// Verbs that need a session: the handle, the quote, or the focus rule.
 	// Also how it was found and which request a quote named.
+	answerVerb := cmd.Verb == VerbApprove || cmd.Verb == VerbDeny
 	target := func(verb string) (string, How, int64, bool) {
 		if cmd.Handle > 0 {
 			id, ok, _ := b.d.DB.SessionByHandle(ctx, cmd.Handle)
@@ -982,18 +1116,34 @@ func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in 
 			}
 			return id, HowHandle, 0, true
 		}
-		if q, bound := b.quoted(ctx, ch, in); q != "" {
-			return q, HowQuote, bound, true
+		q := b.quoted(ctx, ch, in)
+		if q.session != "" {
+			return q.session, HowQuote, q.bound, true
 		}
 		cands, _ := b.candidates(ctx)
-		t, _, reason := Resolve("", "", p.FocusSession, cands)
-		switch reason {
-		case "":
+		if q.unclear && answerVerb {
+			// The person pointed at a message; falling back to "the one
+			// waiting" would answer something they did not point at.
+			example := 3
+			for _, c := range cands {
+				if c.Waiting {
+					example = c.Handle
+					break
+				}
+			}
+			reply(msg(lang, "unclearQuote", example))
+			return "", "", 0, false
+		}
+		t, _, reason := Resolve("", "", p.FocusSession, cands, answerVerb)
+		switch {
+		case reason == "":
 			return t.SessionID, t.How, 0, true
-		case ReasonSeveral:
+		case reason == ReasonSeveral:
 			// The same refusal a bare sentence gets, with the list: a "y"
 			// with two sessions waiting is the case the rule exists for.
-			reply(b.explain(ctx, reason, "", lang))
+			b.tell(ctx, ch, p, b.explain(ctx, reason, "", lang))
+		case answerVerb:
+			reply(msg(lang, "nothingWaiting"))
 		default:
 			reply(msg(lang, "needHandle", pick(lang, verbWord(verb), verb)))
 		}
@@ -1007,6 +1157,9 @@ func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in 
 		b.tell(ctx, ch, p, b.list(ctx, lang, false, p))
 	case VerbUnknown:
 		reply(msg(lang, "unknownCommand", cmd.Arg))
+	case VerbUnclear:
+		word, example, _ := strings.Cut(cmd.Arg, "\x00")
+		reply(msg(lang, "unclearCommand", word, example))
 	case VerbAll:
 		reply(msg(lang, "refuseAll", b.list(ctx, lang, true).text))
 	case VerbApprove, VerbDeny:
@@ -1094,6 +1247,11 @@ func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in 
 		}
 		h, _ := b.Handle(ctx, id)
 		reply(msg(lang, "focused", h))
+	case VerbUnfocus:
+		if err := b.d.DB.SetChatPeerFocus(ctx, p.Channel, p.PeerID, ""); err != nil {
+			b.d.Log.Warn("chat focus", "err", err)
+		}
+		reply(msg(lang, "unfocused"))
 	case VerbContext:
 		id, _, _, ok := target("context")
 		if !ok {
@@ -1107,14 +1265,33 @@ func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in 
 	case VerbUsage:
 		reply(b.usage(ctx, lang))
 	case VerbMore:
-		reply(b.continueMore(ctx, key, cmd.Handle, lang))
+		handle := cmd.Handle
+		if handle == 0 {
+			// Quoting the long message is saying which one.
+			if q := b.quoted(ctx, ch, in); q.session != "" {
+				handle, _ = b.Handle(ctx, q.session)
+			}
+		}
+		reply(b.continueMore(ctx, key, handle, lang))
 	case VerbConfirm:
 		b.mu.Lock()
 		pd, ok := b.pend[key]
 		delete(b.pend, key)
 		b.mu.Unlock()
 		if !ok {
-			reply(msg(lang, "nothingPending"))
+			// "OK" with nothing to confirm is the most common yes there is,
+			// and a session may well be asking for one. It goes the way any
+			// other yes goes, shown-first rule and all -- unless it follows a
+			// stop; see Bridge.stopped.
+			b.mu.Lock()
+			afterStop := b.d.Now().Before(b.stopped[key].Add(pendingTTL))
+			delete(b.stopped, key)
+			b.mu.Unlock()
+			if afterStop {
+				reply(msg(lang, "nothingPending"))
+				return
+			}
+			b.command(ctx, ch, p, in, Command{Verb: VerbApprove}, lang)
 			return
 		}
 		if b.d.Now().After(pd.expires) {
@@ -1133,6 +1310,9 @@ func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in 
 		}
 		reply(msg(lang, "cancelled"))
 	case VerbStop:
+		b.mu.Lock()
+		b.stopped[key] = b.d.Now()
+		b.mu.Unlock()
 		id, _, _, ok := target("stop")
 		if !ok {
 			return
@@ -1149,7 +1329,7 @@ func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in 
 			b.tell(ctx, ch, p, b.interrupt(ctx, id, lang))
 			return
 		}
-		prefix := b.ask(key, msg(lang, "confirmStop", h), func(ctx context.Context) said { return b.interrupt(ctx, id, lang) }, lang)
+		prefix := b.ask(key, msg(lang, "describeStop", h), func(ctx context.Context) said { return b.interrupt(ctx, id, lang) }, lang)
 		reply(prefix + msg(lang, "confirmStop", h))
 	case VerbAsk:
 		if p.Mode != store.ModeAdvanced || b.assistant() == nil {
@@ -1234,7 +1414,7 @@ func (b *Bridge) continueMore(ctx context.Context, key string, handle int, lang 
 	b.park(key, sessionID, tail)
 	text := msg(lang, "moreHead", h) + "\n" + head + "\n"
 	if tail != "" {
-		return text + msg(lang, "more", len([]rune(tail)))
+		return text + msg(lang, "more", len([]rune(tail)), h)
 	}
 	return text + msg(lang, "moreEnd")
 }
@@ -1248,7 +1428,7 @@ func (b *Bridge) ask(key, describe string, run func(ctx context.Context) said, l
 	defer b.mu.Unlock()
 	prefix := ""
 	if old, ok := b.pend[key]; ok && !b.d.Now().After(old.expires) {
-		prefix = msg(lang, "replaced", preview(old.describe)) + "\n"
+		prefix = msg(lang, "replaced", old.describe) + "\n"
 	}
 	b.pend[key] = pending{describe: describe, run: run, expires: b.d.Now().Add(pendingTTL)}
 	return prefix
@@ -1292,6 +1472,9 @@ func (b *Bridge) list(ctx context.Context, lang string, waitingOnly bool, viewer
 		if len(viewer) > 0 {
 			if until, _ := b.d.DB.ChatMutedUntil(ctx, viewer[0].Channel, viewer[0].PeerID, r.ID, now); until > 0 {
 				muted = " · " + msg(lang, "listMuted")
+			}
+			if viewer[0].FocusSession == r.ID {
+				muted += " · " + msg(lang, "listFocus")
 			}
 		}
 		l := line{
@@ -1471,4 +1654,13 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// isFiller is a message that is only a sound: "嗯", "哦哦", "啊。".
+func isFiller(text string) bool {
+	switch Normalize(text) {
+	case "", "嗯", "哦", "噢", "喔", "啊", "呃", "额", "唔", "哈", "嗯哼", "那个":
+		return true
+	}
+	return false
 }

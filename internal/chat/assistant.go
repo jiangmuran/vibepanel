@@ -125,7 +125,7 @@ func (b *Bridge) assist(ctx context.Context, ch *channel, p store.ChatPeer, text
 		// Named by the assistant, so for the gate it is as if the person
 		// had typed the handle: the confirmation below shows which.
 		target := Target{SessionID: id, How: HowAssistant}
-		prefix := b.ask(key, intent.Text, func(ctx context.Context) said { return b.deliver(ctx, p, target, intent.Text, lang) }, lang)
+		prefix := b.ask(key, msg(lang, "describeSend", intent.Handle), func(ctx context.Context) said { return b.deliver(ctx, p, target, intent.Text, lang) }, lang)
 		reply(prefix + msg(lang, "confirmSend", intent.Handle, intent.Text))
 	case "approve", "deny":
 		// A keystroke the model asked for is a write like any other: the
@@ -148,7 +148,7 @@ func (b *Bridge) assist(ctx context.Context, ch *channel, p store.ChatPeer, text
 		}
 		approve := intent.Verb == "approve"
 		word := pick(lang, map[bool]string{true: "允许", false: "拒绝"}[approve], map[bool]string{true: "allow", false: "deny"}[approve])
-		prefix := b.ask(key, word+" "+preview(cur.Text), func(ctx context.Context) said {
+		prefix := b.ask(key, msg(lang, "describeAnswer", word, h), func(ctx context.Context) said {
 			return b.answer(ctx, p, answerReq{sessionID: id, approve: approve, bound: cur.ID, how: HowAssistant}, lang)
 		}, lang)
 		b.tell(ctx, ch, p, showing(prefix+msg(lang, "confirmAnswer", h, request(cur.Text), word), id, cur.ID))

@@ -313,9 +313,13 @@ func TestPairingAndPeerChangesGoThroughTheBridge(t *testing.T) {
 	if len(peers) != 1 || peers[0].Status != store.PeerPending {
 		t.Fatalf("peers: %+v", peers)
 	}
-	// Not by pressing a button: the code is what says the row is them.
+	// Not by pressing a button: the code is what says the row is them. Nor
+	// by giving a stranger a mode, which pairing used to carry over.
 	if code, _ := doJSON(t, ts, http.MethodPatch, "/api/chat/peers/mem/stranger", `{"status":"paired"}`); code != http.StatusConflict {
 		t.Fatalf("paired without a code: %d", code)
+	}
+	if code, _ := doJSON(t, ts, http.MethodPatch, "/api/chat/peers/mem/stranger", `{"mode":"advanced"}`); code != http.StatusConflict {
+		t.Fatalf("a mode for a stranger: %d", code)
 	}
 	if code, _ := doJSON(t, ts, http.MethodPost, "/api/chat/pair", `{"code":"000000"}`); code != http.StatusNotFound && peers[0].PairingCode != "000000" {
 		t.Fatalf("wrong code: %d", code)
@@ -337,6 +341,21 @@ func TestPairingAndPeerChangesGoThroughTheBridge(t *testing.T) {
 	p, _ := srv.DB.GetChatPeer(ctx, "mem", "stranger")
 	if p.Status != store.PeerBlocked || p.Mode != store.ModeAdvanced {
 		t.Fatalf("peer: %+v", p)
+	}
+	// Unblocking is not a way to paired either.
+	if code, _ = doJSON(t, ts, http.MethodPatch, "/api/chat/peers/mem/stranger", `{"status":"paired"}`); code != http.StatusConflict {
+		t.Fatalf("blocked to paired: %d", code)
+	}
+	// A 微信 id has an @ in it, which arrives escaped.
+	_ = srv.DB.PutChatPeer(ctx, store.ChatPeer{Channel: "mem", PeerID: "spam@im.wechat", Status: store.PeerPending, Mode: store.ModeNormal})
+	if code, body = doJSON(t, ts, http.MethodPatch, "/api/chat/peers/mem/spam%40im.wechat", `{"status":"blocked","display":"  推销  "}`); code != 200 {
+		t.Fatalf("an id with an @: %d %s", code, body)
+	}
+	if q, _ := srv.DB.GetChatPeer(ctx, "mem", "spam@im.wechat"); q.Status != store.PeerBlocked || q.Display != "推销" {
+		t.Fatalf("after patch: %+v", q)
+	}
+	if code, _ = doJSON(t, ts, http.MethodDelete, "/api/chat/peers/mem/spam%40im.wechat", ""); code != http.StatusNoContent {
+		t.Fatalf("delete an id with an @: %d", code)
 	}
 	if code, _ = doJSON(t, ts, http.MethodDelete, "/api/chat/peers/mem/stranger", ""); code != http.StatusNoContent {
 		t.Fatalf("delete: %d", code)

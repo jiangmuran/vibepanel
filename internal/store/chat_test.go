@@ -147,6 +147,18 @@ func TestOutboundsRememberWhichRequestTheyShowed(t *testing.T) {
 	if err != nil || len(outs) != 2 {
 		t.Fatalf("status copies of 7: %+v %v", outs, err)
 	}
+	record("c", "m5", OutboundRequest, 9)
+	open, _ := db.OpenChatRequests(ctx, "s1")
+	if len(open) != 1 || open[0].Ref != "m5" {
+		t.Fatalf("open requests: %+v", open)
+	}
+	if outs, _ := db.ChatOutboundsForMessage(ctx, "s1", 9); len(outs) != 1 {
+		t.Fatalf("a request is a copy of its message: %+v", outs)
+	}
+	_ = db.SetChatOutboundKind(ctx, "t", "c", "m5", OutboundAnswered)
+	if open, _ := db.OpenChatRequests(ctx, "s1"); len(open) != 0 {
+		t.Fatalf("answered is not open: %+v", open)
+	}
 }
 
 func TestChatPeersValidateAndListPendingFirst(t *testing.T) {
@@ -368,5 +380,20 @@ func TestHandlesAreAssignedUnderConcurrency(t *testing.T) {
 		if _, ok := seen[want]; !ok {
 			t.Fatalf("handle %d was never assigned: %v", want, seen)
 		}
+	}
+}
+
+func TestANameIsNotOverwrittenByTheIM(t *testing.T) {
+	db := openTest(t)
+	ctx := context.Background()
+	if err := db.PutChatPeer(ctx, ChatPeer{Channel: "t", PeerID: "1", Status: PeerPaired, Mode: ModeNormal}); err != nil {
+		t.Fatal(err)
+	}
+	// The first name the IM gives is taken.
+	_ = db.TouchChatPeer(ctx, "t", "1", "Lin", "", 5)
+	// A name already there, perhaps one the owner chose, is kept.
+	_ = db.TouchChatPeer(ctx, "t", "1", "lin_2024", "", 6)
+	if p, _ := db.GetChatPeer(ctx, "t", "1"); p.Display != "Lin" || p.LastSeenAt != 6 {
+		t.Fatalf("peer: %+v", p)
 	}
 }

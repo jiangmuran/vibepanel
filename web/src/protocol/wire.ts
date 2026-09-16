@@ -1646,9 +1646,10 @@ export interface ChatHealth {
   received: number
   sent: number
   failed: number
-  /** Pushes dropped because the IM cannot be spoken to until the person
-   *  says something (微信's context token). */
+  /** Requests waiting, now, on people this IM cannot speak to until they
+   *  say something (微信's context token), and who those people are. */
   needsHello: number
+  waitingOn: string[] | null
 }
 
 export interface ChatChannel {

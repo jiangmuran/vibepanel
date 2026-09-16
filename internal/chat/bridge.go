@@ -92,9 +92,13 @@ type Health struct {
 	Received    int64  `json:"received"`
 	Sent        int64  `json:"sent"`
 	Failed      int64  `json:"failed"`
-	// NeedsHello counts pushes dropped because the IM cannot be spoken to
-	// until the person says something (微信's context token).
-	NeedsHello int64 `json:"needsHello"`
+	// NeedsHello is how many requests are waiting, right now, for a person
+	// this IM cannot speak to until they say something (微信's context
+	// token), and WaitingOn who those people are. Current, not a running
+	// total: a count that never went down read as five messages still lost
+	// after the person had come back and seen them all.
+	NeedsHello int64    `json:"needsHello"`
+	WaitingOn  []string `json:"waitingOn"`
 }
 
 type channel struct {
@@ -130,6 +134,9 @@ type pending struct {
 type said struct {
 	text  string
 	shows []shown
+	// ask is the permission request this reply shows, when it shows one
+	// that can be answered with buttons.
+	ask *shown
 }
 
 type shown struct {
@@ -141,6 +148,26 @@ func plain(text string) said { return said{text: text} }
 
 func showing(text, sessionID string, messageID int64) said {
 	return said{text: text, shows: []shown{{session: sessionID, message: messageID}}}
+}
+
+// asking is showing a permission request, with its buttons where the IM has
+// them.
+func asking(text, sessionID string, messageID int64) said {
+	s := showing(text, sessionID, messageID)
+	s.ask = &s.shows[0]
+	return s
+}
+
+// requestButtons are allow, deny and screen for one request. The message id
+// is on each: the press answers this request, and a press on the card of a
+// request since answered is refused rather than allowing the next one.
+func requestButtons(sessionID string, messageID int64, lang string) []Button {
+	suffix := sessionID + ":" + strconv.FormatInt(messageID, 10)
+	return []Button{
+		{Label: pick(lang, "允许", "Allow"), Value: "approve:" + suffix},
+		{Label: pick(lang, "拒绝", "Deny"), Value: "deny:" + suffix, Danger: true},
+		{Label: pick(lang, "看屏幕", "Screen"), Value: "screen:" + suffix},
+	}
 }
 
 // Bridge is the thing. One per panel.
@@ -172,6 +199,13 @@ type Bridge struct {
 	// while it stands, a bare "yes" answers the assistant rather than a
 	// session.
 	clarify map[string]time.Time
+	// stopped is when a person last asked to stop something, whether or
+	// not it parked a confirmation. An "ok" soon after is them confirming
+	// the stop they expect to be asked about, never a yes to a prompt: a
+	// stop at a permission prompt answers "it is not working, it is asking",
+	// and reading the ok that follows as "allow" allows the thing they were
+	// trying to stop.
+	stopped map[string]time.Time
 	handles map[string]int
 	// hello is when each stranger was last answered with a code, so a
 	// stranger who keeps talking is not answered every time. Pruned when it
@@ -232,6 +266,7 @@ func New(d Deps) *Bridge {
 		moreLast: map[string]string{},
 		missed:   map[string]map[string]bool{},
 		clarify:  map[string]time.Time{},
+		stopped:  map[string]time.Time{},
 		handles:  map[string]int{},
 		hello:    map[string]time.Time{},
 		peers:    map[string]*sync.Mutex{},
@@ -445,6 +480,9 @@ func (b *Bridge) push(ctx context.Context, sessionID string) {
 	if !ok || row.ArchivedAt != nil || row.Scratch {
 		return
 	}
+	// Before anything else, whatever the rules say about telling anybody:
+	// a request that ended at the laptop must not keep its buttons.
+	b.sweep(ctx, row)
 	raw, _ := b.d.DB.GetSetting(ctx, RoutesKey, "")
 	d := ParseRoutes(raw).Decide(c, b.d.Now().In(b.d.Zone()))
 	if d.Hold {
@@ -488,6 +526,12 @@ func (b *Bridge) push(ctx context.Context, sessionID string) {
 	if c.State == string(session.StateDone) && c.Kind == "" && !row.Exited {
 		if _, any, _ := b.d.DB.LatestSessionMessage(ctx, sessionID); any {
 			quietDone = true
+		} else {
+			// No hooks: the state is all there is, and "done" is worth a
+			// card only after work. A session created a moment ago settles
+			// into done having done nothing, and six new sessions were six
+			// cards saying so.
+			quietDone = !b.finishedWork(ctx, row)
 		}
 	}
 	card, rest := b.cardFor(row, c, last, handle, project, d.Body, lang)
@@ -512,6 +556,12 @@ func (b *Bridge) push(ctx context.Context, sessionID string) {
 		}
 		if !ch.caps.Proactive && p.ContextToken == "" {
 			b.undelivered(ctx, ch, p, sessionID, c.State, ErrNeedsHello)
+			continue
+		}
+		if c.State == string(session.StateWaiting) && (c.Kind == store.MessagePrompt || c.Kind == store.MessageQuestion) &&
+			last.ID > 0 && b.seen(ctx, p, last.ID) {
+			// Already in front of them: a reply showed it while the push
+			// was being held, or this is the same request pushed again.
 			continue
 		}
 		if err := b.sendCard(ctx, ch, p, row, c, last, card, rest, lang); err != nil {
@@ -553,11 +603,18 @@ func (b *Bridge) cardFor(row store.Session, c Change, last store.SessionMessage,
 		head, more := cut(last.Text, limit)
 		if more {
 			rest = strings.TrimSpace(strings.TrimPrefix(last.Text, head))
-			head += "\n" + msg(lang, "more", len([]rune(rest)))
+			head += "\n" + msg(lang, "more", len([]rune(rest)), handle)
 		}
 		card.Body = head
 	}
 	return card, rest
+}
+
+// finishedWork says whether a session came to done from working, by the
+// transition log.
+func (b *Bridge) finishedWork(ctx context.Context, row store.Session) bool {
+	evs, err := b.d.DB.RecentSessionEvents(ctx, row.StateChangedAt-messageSlack, 1, store.EventScope{SessionID: row.ID})
+	return err == nil && len(evs) > 0 && evs[0].From == session.StateWorking
 }
 
 // doneBodyLimit is how much of a finished turn a card carries.
@@ -573,18 +630,22 @@ func (b *Bridge) sendCard(ctx context.Context, ch *channel, p store.ChatPeer, ro
 	if card.Body != "" {
 		shownID = last.ID
 	}
-	out := Outbound{Card: card}
-	if c.Kind == store.MessagePrompt && c.State == string(session.StateWaiting) && ch.caps.Buttons {
-		// The message id is on the button: the press answers this request,
-		// and a press on the card of a request since answered is refused
-		// rather than allowing the next one.
-		suffix := sessionID + ":" + strconv.FormatInt(last.ID, 10)
-		out.Buttons = []Button{
-			{Label: pick(lang, "允许", "Allow"), Value: "approve:" + suffix},
-			{Label: pick(lang, "拒绝", "Deny"), Value: "deny:" + suffix, Danger: true},
-			{Label: pick(lang, "看屏幕", "Screen"), Value: "screen:" + suffix},
-		}
+	// A copy per person: the hint depends on what this person's IM can do.
+	shownCard := *card
+	out := Outbound{Card: &shownCard}
+	kind := store.OutboundStatus
+	waiting := c.State == string(session.StateWaiting)
+	switch {
+	case waiting && c.Kind == store.MessagePrompt && ch.caps.Buttons:
+		out.Buttons = requestButtons(sessionID, last.ID, lang)
+		kind = store.OutboundRequest
 		shownID = last.ID
+	case waiting && c.Kind == store.MessagePrompt:
+		// No buttons, so the card says what to type. A first-time 微信 user
+		// otherwise learns it only by answering wrong once.
+		shownCard.Hint = msg(lang, "hintPrompt", card.Handle, card.Handle)
+	case waiting && c.Kind == store.MessageQuestion:
+		shownCard.Hint = msg(lang, "hintQuestion", card.Handle)
 	}
 	// The remainder is parked before the card goes out, so "more" typed
 	// the instant the card lands finds it.
@@ -598,7 +659,7 @@ func (b *Bridge) sendCard(ctx context.Context, ch *channel, p store.ChatPeer, ro
 	// message and turns the next edit into a fresh send; both are worth
 	// a line in the log, neither is worth failing the push.
 	if err := b.d.DB.RecordChatOutbound(ctx, store.ChatOutbound{
-		Channel: p.Channel, PeerID: p.PeerID, Ref: ref, SessionID: sessionID, Kind: store.OutboundStatus, MessageID: shownID,
+		Channel: p.Channel, PeerID: p.PeerID, Ref: ref, SessionID: sessionID, Kind: kind, MessageID: shownID,
 	}); err != nil {
 		b.d.Log.Warn("chat outbound record", "err", err)
 	}
@@ -627,15 +688,8 @@ func (b *Bridge) park(key, sessionID, rest string) {
 // because a request nobody saw is the failure this feature exists to
 // prevent.
 func (b *Bridge) undelivered(ctx context.Context, ch *channel, p store.ChatPeer, sessionID, state string, err error) {
-	switch {
-	case !errors.Is(err, ErrNeedsHello):
+	if !errors.Is(err, ErrNeedsHello) {
 		b.d.Log.Warn("chat push", "channel", p.Channel, "err", err)
-	case !errors.Is(err, errSent):
-		// A push that never reached the adapter; send() counts the ones
-		// the adapter refused.
-		ch.mu.Lock()
-		ch.health.NeedsHello++
-		ch.mu.Unlock()
 	}
 	if state != string(session.StateWaiting) {
 		return
@@ -650,7 +704,11 @@ func (b *Bridge) undelivered(ctx context.Context, ch *channel, p store.ChatPeer,
 	b.mu.Unlock()
 	if first {
 		h, _ := b.handleIfAny(sessionID)
-		b.d.Audit(ctx, "chat.undelivered", fmt.Sprintf("[%d] %s: %v", h, key, err))
+		why := err.Error()
+		if errors.Is(err, ErrNeedsHello) {
+			why = "until they write"
+		}
+		b.d.Audit(ctx, "chat.undelivered", fmt.Sprintf("[%d] %s: %s", h, who(p), why))
 	}
 }
 
@@ -691,13 +749,15 @@ func (b *Bridge) send(ctx context.Context, ch *channel, p store.ChatPeer, out Ou
 	}
 	// The page shows the last error next to the counters: "12 failed" with
 	// nothing to say why is a number nobody can act on.
+	if errors.Is(err, ErrNeedsHello) {
+		// Not a failure of the channel: the IM is waiting on the person,
+		// which the page says by name. Painted as an error it read as a
+		// broken channel on a day nothing was wrong.
+		return ref, err
+	}
 	ch.health.Failed++
 	ch.health.LastError = err.Error()
 	ch.health.LastErrorAt = b.d.Now().Unix()
-	if errors.Is(err, ErrNeedsHello) {
-		ch.health.NeedsHello++
-		return ref, fmt.Errorf("%w: %w", errSent, err)
-	}
 	return ref, err
 }
 
@@ -727,10 +787,6 @@ func (b *Bridge) sendShot(ctx context.Context, ch *channel, p store.ChatPeer, ro
 	}
 }
 
-// errSent marks a refusal send() has already counted, so undelivered does
-// not count it twice.
-var errSent = errors.New("chat: counted")
-
 func (b *Bridge) sessionURL(sessionID string) string {
 	base := b.d.PublicURL()
 	if base == "" || !reachable(base) {
@@ -745,8 +801,10 @@ func (b *Bridge) Healths(ctx context.Context) []Health {
 	for _, row := range rows {
 		if ch, ok := b.channel(row.Kind); ok && !ch.placeholder {
 			ch.mu.Lock()
-			out = append(out, ch.health)
+			h := ch.health
 			ch.mu.Unlock()
+			h.NeedsHello, h.WaitingOn = b.owed(ctx, row.Kind)
+			out = append(out, h)
 			continue
 		}
 		h := Health{Kind: row.Kind}
@@ -759,6 +817,43 @@ func (b *Bridge) Healths(ctx context.Context) []Health {
 		out = append(out, h)
 	}
 	return out
+}
+
+// owed counts the missed requests still waiting on the people of one
+// channel, and names those people.
+func (b *Bridge) owed(ctx context.Context, kind string) (int64, []string) {
+	b.mu.Lock()
+	missed := map[string][]string{}
+	for key, ids := range b.missed {
+		if !strings.HasPrefix(key, kind+":") {
+			continue
+		}
+		for id := range ids {
+			missed[key] = append(missed[key], id)
+		}
+	}
+	b.mu.Unlock()
+	var n int64
+	who := []string{}
+	for key, ids := range missed {
+		waiting := 0
+		for _, id := range ids {
+			if row, err := b.d.DB.GetSession(ctx, id); err == nil && Addressable(row) && row.State == session.StateWaiting {
+				waiting++
+			}
+		}
+		if waiting == 0 {
+			continue
+		}
+		n += int64(waiting)
+		name := strings.TrimPrefix(key, kind+":")
+		if p, err := b.d.DB.GetChatPeer(ctx, kind, name); err == nil && p.Display != "" {
+			name = p.Display
+		}
+		who = append(who, name)
+	}
+	sort.Strings(who)
+	return n, who
 }
 
 func (b *Bridge) Handle(ctx context.Context, sessionID string) (int, error) {
@@ -846,48 +941,58 @@ func (b *Bridge) TestSend(ctx context.Context, kind, peerID, text string) (int, 
 	return sent, first
 }
 
-// SetPeerMode changes how a paired person's messages are read.
+// SetPeerMode changes how a paired person's messages are read. Only a paired
+// person has a mode: one set on a stranger was carried into the pairing.
 func (b *Bridge) SetPeerMode(ctx context.Context, channel, peerID, mode string) error {
 	p, err := b.d.DB.GetChatPeer(ctx, channel, peerID)
 	if err != nil {
 		return err
 	}
+	if p.Status != store.PeerPaired {
+		return ErrPairByCode
+	}
 	p.Mode = mode
+	return b.d.DB.PutChatPeer(ctx, p)
+}
+
+// SetPeerDisplay names a person. 微信 gives no name, and two paired people
+// who are both "o9cq…@im.wechat" cannot be told apart on the page, in the
+// log, or in "allowed by".
+func (b *Bridge) SetPeerDisplay(ctx context.Context, channel, peerID, name string) error {
+	p, err := b.d.DB.GetChatPeer(ctx, channel, peerID)
+	if err != nil {
+		return err
+	}
+	p.Display = name
 	return b.d.DB.PutChatPeer(ctx, p)
 }
 
 // ErrPairByCode refuses pairing a pending person without their code.
 var ErrPairByCode = errors.New("chat: a pending person is paired with their code")
 
-// SetPeerStatus blocks a person, or unblocks one, from the settings page.
+// SetPeerStatus blocks a person from the settings page.
 //
-// It does not pair a stranger. The owner being signed in proves who is at
-// the page, not who is on the other end of the chat: anyone who finds the
-// bot gets a pending row, and pairing the newest one pairs whoever wrote
-// last. The code the person reads out is what ties the row to them, so
-// that is the only way from pending to paired.
+// It never pairs anybody. The owner being signed in proves who is at the
+// page, not who is on the other end of the chat: anyone who finds the bot
+// gets a pending row, and pairing the newest one pairs whoever wrote last.
+// The code the person reads out is what ties the row to them, so that is the
+// only way to paired. That includes from blocked: "unblock" paired a
+// stranger who had been blocked while pending, in two clicks. Unblocking is
+// removing the row; the person's next message starts over with a code.
 func (b *Bridge) SetPeerStatus(ctx context.Context, channel, peerID, status string) error {
 	p, err := b.d.DB.GetChatPeer(ctx, channel, peerID)
 	if err != nil {
 		return err
 	}
 	was := p.Status
-	if was == store.PeerPending && status == store.PeerPaired {
+	if status == store.PeerPaired && was != store.PeerPaired {
 		return ErrPairByCode
 	}
 	p.Status = status
-	if status == store.PeerPaired {
-		p.PairingCode = ""
-	}
 	if err := b.d.DB.PutChatPeer(ctx, p); err != nil {
 		return err
 	}
-	b.d.Audit(ctx, "chat.peer", fmt.Sprintf("%s: %s -> %s", chatKey(channel, peerID), was, status))
-	if status == store.PeerPaired && was != store.PeerPaired {
-		if ch, ok := b.channel(channel); ok {
-			b.reply(ctx, ch, p, msg(b.language(), "paired"))
-		}
-	}
+	b.d.Audit(ctx, "chat.peer", fmt.Sprintf("%s (%s): %s -> %s", who(p), channel, was, status))
 	return nil
 }
 
@@ -932,9 +1037,24 @@ func (b *Bridge) open(row store.ChatChannel) (ChannelConfig, error) {
 	return cfg, nil
 }
 
+// ErrChannelConfig is a configuration the adapter itself refuses.
+var ErrChannelConfig = errors.New("chat: the channel's settings are not usable")
+
 func (b *Bridge) WriteChannel(ctx context.Context, kind string, enabled bool, cfg ChannelConfig) error {
-	if _, ok := FactoryFor(kind); !ok {
+	f, ok := FactoryFor(kind)
+	if !ok {
 		return fmt.Errorf("chat: no adapter %q", kind)
+	}
+	if enabled {
+		// Asked before anything is stored: an empty 飞书 form was saved,
+		// answered "saved", switched on, and then sat on the page as an
+		// error the person had just been told was not one. Only what the
+		// adapter can tell from the values; a token that is well formed and
+		// wrong is still found when the channel runs.
+		values, _ := json.Marshal(cfg.Values)
+		if _, err := f.New(values, Env{HTTP: b.d.HTTP, State: cfg.State, PublicURL: b.d.PublicURL()}); err != nil {
+			return fmt.Errorf("%w: %w", ErrChannelConfig, err)
+		}
 	}
 	if b.d.Box == nil {
 		return errors.New("chat: no secret box")
