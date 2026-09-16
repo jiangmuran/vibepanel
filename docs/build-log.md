@@ -21508,3 +21508,16 @@ reported failure happens under these rules: v1.10.0 validated with `sudo -v`,
 which asks for a password whenever any matching rule needs one, before running
 a command sudo would have run without one. On this machine the new version
 shows a button and no field.
+
+## 2026-09-16 — iPad Chrome dropped digits and punctuation
+
+The loss happened before the socket. iOS Chrome and Safari send direct IME
+punctuation and spaces with `keydown.keyCode === 229` even when no composition
+is active. xterm treated that keydown as composition and rejected the following
+composed `input` event, so letters worked while numbers and punctuation
+disappeared.
+
+The terminal now stops only that non-composition keydown before xterm sees it,
+leaves the browser default action alone, and forwards the resulting text or
+editing input to the PTY. Active composition and ordinary keyboard input keep
+their existing path. The rule and listener wiring are pinned by frontend tests.
