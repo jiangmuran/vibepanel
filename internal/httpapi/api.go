@@ -165,6 +165,13 @@ type Server struct {
 	touchOnce     sync.Once
 	touchCooldown *auth.Cooldown
 
+	// flowCache holds one reading of the session-event rollups behind a
+	// share link's flow section, per scope and window. See shareFlowCacheFor
+	// in sharework.go, which carries the reasoning the spend cache already
+	// wrote down and this repeats in shorter form.
+	flowMu    sync.Mutex
+	flowCache map[string]cachedFlow
+
 	// lastSnapshot is the most recent state payload that was broadcast. The
 	// poller compares against it so that a tick where nothing changed sends
 	// nothing — otherwise pushing is just polling with extra steps.
