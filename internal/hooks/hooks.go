@@ -8,11 +8,33 @@ package hooks
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 )
+
+// ReportToken derives the credential one session reports itself with: an HMAC
+// of its own session id under the panel's root hook token.
+//
+// The root token used to go into every session's environment as-is, which made
+// it a credential any process in any session held against every other session
+// -- the endpoint it authenticates never bound the bearer to the session named
+// in the body, so one compromised agent could reorder every other session. A
+// session now holds MAC(root, its own id), which authorizes only itself; the
+// root token stays accepted for sessions that outlived this change, because
+// their environment was stamped at creation and only a restart can re-stamp it.
+func ReportToken(root, sessionID string) string {
+	mac := hmac.New(sha256.New, []byte(root))
+	// The domain prefix keeps a value derived for one purpose from reading as
+	// a value derived for another, should the root token ever mint a second
+	// kind of per-object credential.
+	mac.Write([]byte("vibepanel/report/v1:" + sessionID))
+	return hex.EncodeToString(mac.Sum(nil))
+}
 
 // ReportScript is the shell script installed into the data directory.
 //

@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A development build must not talk itself into installing a release.
@@ -136,7 +137,7 @@ func TestInstallKeepsTheOldBinary(t *testing.T) {
 	// through the same code with a stand-in path.
 	t.Setenv("VIBEPANEL_TEST_SELF", self)
 
-	old, err := installAt(self, []byte("new"))
+	old, err := installAt(self, []byte("new"), nil)
 	if err != nil {
 		t.Fatalf("installAt: %v", err)
 	}
@@ -213,6 +214,212 @@ func releaseServerNamed(t *testing.T, tag, asset string, archive []byte, sum str
 }
 
 var _ = strings.TrimSpace
+
+// A binary that does not start here is refused before the running one is
+// touched.
+//
+// The checksum says the bytes are the published ones; it says nothing about
+// whether they run on this machine. An archive built for the wrong
+// architecture, or a binary directory on a noexec mount, passed every check
+// and was found out by the restart -- by everybody, at once, with the panel
+// gone. The one run of `--version` is what stands in front of that, and this
+// test removes it: a swap that goes ahead over a refusal is a failure here.
+func TestABinaryThatWillNotRunIsNotInstalled(t *testing.T) {
+	dir := t.TempDir()
+	self := filepath.Join(dir, "vibepanel")
+	if err := os.WriteFile(self, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	refused := errors.New("no")
+	_, err := installAt(self, []byte("new"), func(string) error { return refused })
+	if !errors.Is(err, refused) {
+		t.Fatalf("installAt = %v, want the verifier's refusal", err)
+	}
+	if got, _ := os.ReadFile(self); string(got) != "old" {
+		t.Errorf("the binary in place is %q after a refusal; the old one should be untouched", got)
+	}
+	if _, err := os.Stat(self + ".old"); err == nil {
+		t.Error("a .old was left behind by an install that did not happen")
+	}
+	ents, _ := os.ReadDir(dir)
+	for _, e := range ents {
+		if strings.HasPrefix(e.Name(), ".vibepanel-update-") {
+			t.Errorf("the refused binary was left behind as %s", e.Name())
+		}
+	}
+}
+
+// Verify wants the version in the output, not a zero exit.
+//
+// `true` exits zero. So does a shell script that prints nothing, and so does
+// a vibepanel of the wrong version if a release's archive was mislabelled --
+// and each of those is a wrong file in the right place, which is the case a
+// zero exit alone would wave through.
+func TestVerifyWantsTheVersionNotJustAZeroExit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell scripts")
+	}
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	right := write("right", "#!/bin/sh\necho 'vibepanel v9.0.0 (abc, built today)'\n")
+	if err := Verify(right, "v9.0.0"); err != nil {
+		t.Errorf("a binary that reports the version was refused: %v", err)
+	}
+	silent := write("silent", "#!/bin/sh\nexit 0\n")
+	if err := Verify(silent, "v9.0.0"); !errors.Is(err, ErrWillNotRun) {
+		t.Errorf("a zero exit with no version was accepted: %v", err)
+	}
+	other := write("other", "#!/bin/sh\necho 'vibepanel v8.0.0'\n")
+	if err := Verify(other, "v9.0.0"); !errors.Is(err, ErrWillNotRun) {
+		t.Errorf("a different version was accepted: %v", err)
+	}
+	crash := write("crash", "#!/bin/sh\necho 'cannot load shared library' >&2\nexit 127\n")
+	err := Verify(crash, "v9.0.0")
+	if !errors.Is(err, ErrWillNotRun) {
+		t.Fatalf("a binary that fails to start was accepted: %v", err)
+	}
+	// What it said is in the error, because that is the only line the person
+	// reading the settings page gets to see.
+	if !strings.Contains(err.Error(), "shared library") {
+		t.Errorf("err = %q, want it to carry what the binary said", err)
+	}
+	notThere := filepath.Join(dir, "missing")
+	if err := Verify(notThere, "v9.0.0"); !errors.Is(err, ErrWillNotRun) {
+		t.Errorf("a missing file was accepted: %v", err)
+	}
+}
+
+// GitHub's rate limit is named as such, with when it resets.
+//
+// Sixty unauthenticated requests an hour per address, shared with everything
+// else behind the same NAT. The refusal is a 403 with a body about API rate
+// limits, and "GitHub answered 403 Forbidden" sent people looking for a
+// permissions problem.
+func TestARateLimitIsNamedAsOne(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/"+Repo+"/releases/latest", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.Header().Set("X-RateLimit-Reset", fmt.Sprint(time.Now().Add(20*time.Minute).Unix()))
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"message":"API rate limit exceeded"}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := &Client{API: srv.URL}
+	_, err := c.Latest(context.Background(), "v1.0.0")
+	if !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("Latest = %v, want ErrRateLimited", err)
+	}
+	if Kind(err) != "rateLimited" {
+		t.Errorf("Kind = %q, want rateLimited", Kind(err))
+	}
+	if !strings.Contains(err.Error(), "resets in") {
+		t.Errorf("err = %q, want it to say when the limit resets", err)
+	}
+	// A 403 that is not the rate limit is still a 403.
+	mux2 := http.NewServeMux()
+	mux2.HandleFunc("/repos/"+Repo+"/releases/latest", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	})
+	srv2 := httptest.NewServer(mux2)
+	defer srv2.Close()
+	_, err = (&Client{API: srv2.URL}).Latest(context.Background(), "v1.0.0")
+	if errors.Is(err, ErrRateLimited) {
+		t.Errorf("a plain 403 was reported as the rate limit: %v", err)
+	}
+	if Kind(err) != "http" {
+		t.Errorf("Kind(plain 403) = %q, want http", Kind(err))
+	}
+}
+
+// The kinds a page can say something short about.
+func TestTheKindOfAFailureIsReadable(t *testing.T) {
+	// No route: a closed port on localhost is a refused connection, which is
+	// what a box with no network reports for everything.
+	closed := httptest.NewServer(http.NotFoundHandler())
+	url := closed.URL
+	closed.Close()
+	_, err := (&Client{API: url}).Latest(context.Background(), "v1.0.0")
+	if got := Kind(err); got != "offline" {
+		t.Errorf("Kind(refused connection) = %q, want offline: %v", got, err)
+	}
+	_, err = (&Client{API: "http://no-such-host.invalid"}).Latest(context.Background(), "v1.0.0")
+	if got := Kind(err); got != "offline" {
+		t.Errorf("Kind(no such host) = %q, want offline: %v", got, err)
+	}
+
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer slow.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, err = (&Client{API: slow.URL}).Latest(ctx, "v1.0.0")
+	if got := Kind(err); got != "timeout" {
+		t.Errorf("Kind(deadline) = %q, want timeout: %v", got, err)
+	}
+	if Kind(nil) != "" {
+		t.Error("Kind(nil) is not empty")
+	}
+}
+
+// A download reports how far it is, and the total when the server said one,
+// so the page can draw a bar rather than a spinner over a seven-megabyte
+// wait.
+func TestADownloadReportsItsProgress(t *testing.T) {
+	body := strings.Repeat("x", 600<<10)
+	good := tarball(t, body)
+	srv := releaseServer(t, "v9.0.0", good, sha256hex(good))
+	defer srv.Close()
+
+	c := &Client{API: srv.URL}
+	rel, err := c.Latest(context.Background(), "v1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var last, total int64
+	calls := 0
+	bin, err := c.Download(context.Background(), rel, func(done, tot int64) {
+		calls++
+		if done < last {
+			t.Errorf("progress went backwards: %d after %d", done, last)
+		}
+		last, total = done, tot
+	})
+	if err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	if string(bin) != body {
+		t.Error("the binary that came out is not the one that went in")
+	}
+	if calls < 2 {
+		t.Errorf("progress was reported %d times; the page needs a start and an end at least", calls)
+	}
+	if total != int64(len(good)) {
+		t.Errorf("total = %d, want the archive's %d bytes", total, len(good))
+	}
+	if last != total {
+		t.Errorf("the last report was %d of %d", last, total)
+	}
+
+	// And a body the server declares as larger than the ceiling is refused
+	// before a byte of it is read.
+	big := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprint(int64(maxArchive)+1))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer big.Close()
+	if _, err := c.get(context.Background(), big.URL, maxArchive, func(int64, int64) {}); err == nil {
+		t.Error("a download larger than the ceiling was started")
+	}
+}
 
 // TestTheAssetNameMatchesWhatTheReleaseScriptBuilds pins the updater's idea of
 // an archive name to the shell that actually produces one.

@@ -34,11 +34,11 @@ import type {
   SystemSample,
   TokenUsage,
   UsageSample,
-  UpdateCheck,
+  UpdateStatus,
+  UpdateStarted,
+  UpdateRefusal,
   Webhook,
   WebhookTest,
-  UpdateResult,
-  ElevateRefusal,
   TuneStatus,
   RestartResult,
   EnvSettings,
@@ -213,12 +213,12 @@ export class OriginNotTrustedError extends Error {
  * asks for a password, asks for somebody else's, or stops asking -- and a
  * plain Error would leave it one sentence to show for all of them.
  */
-export class ElevateRefusedError extends Error {
-  readonly reason: ElevateRefusal
+export class UpdateRefusedError extends Error {
+  readonly reason: UpdateRefusal
   readonly askedFor: string
-  constructor(message: string, reason: ElevateRefusal, askedFor: string) {
+  constructor(message: string, reason: UpdateRefusal, askedFor: string) {
     super(message)
-    this.name = 'ElevateRefusedError'
+    this.name = 'UpdateRefusedError'
     this.reason = reason
     this.askedFor = askedFor
   }
@@ -624,7 +624,7 @@ export const api = {
 
   /** A link to the page as a zip: the published version, or the directory for a
    *  page never published. A plain GET, so an <a download> with the cookie works. */
-  exportPageURL: (id: string) => `/api/settings/pages/${encodeURIComponent(id)}/export`,
+  exportPageURL: (id: string): `/${string}` => `/api/settings/pages/${encodeURIComponent(id)}/export`,
 
   /** A zip becomes a new, unpublished page under the pages directory. */
   importPage: (file: Blob, name = '') =>
@@ -922,30 +922,47 @@ export const api = {
     request<void>('/api/chat/lang', { method: 'PUT', body: JSON.stringify({ lang }) }),
   chatLog: (n = 100) => request<AuditEntry[]>(`/api/chat/log?n=${n}`),
 
-  checkUpdate: () => request<UpdateCheck>('/api/update'),
+  /** Asks GitHub now. The button. */
+  checkUpdate: () => request<UpdateStatus>('/api/update'),
   /**
+   * What the panel already knows, without asking anybody -- unless the
+   * automatic check is on and the answer is old, in which case the server
+   * asks in the background and this answers with what it has. Cheap enough
+   * to poll: while a job runs, the page reads its progress from here.
+   */
+  updateStatus: () => request<UpdateStatus>('/api/update/status'),
+  setUpdateAutoCheck: (autoCheck: boolean) =>
+    request<{ autoCheck: boolean }>('/api/update/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ autoCheck }),
+    }),
+  /**
+   * `expected` is the version the page showed when the button was pressed;
+   * the server refuses with `changed` if the newest release is now another.
+   *
    * `secret` is only sent when the panel said it cannot replace its own binary
    * and that a helper exists. It is spent on one fixed command and kept
    * nowhere: not in a query string, not in a log, and not in this module
    * beyond the call.
    */
-  applyUpdate: async (secret?: string): Promise<UpdateResult> => {
+  applyUpdate: async (expected: string, secret?: string): Promise<UpdateStarted> => {
     const res = await fetch('/api/update', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(secret ? { password: secret } : {}),
+      body: JSON.stringify(secret ? { password: secret, expected } : { expected }),
     })
     if (!res.ok) {
-      // A refusal from sudo carries a reason; anything else is the ordinary
-      // error shape and goes through the ordinary path, 401 included.
+      // A refusal from sudo, or from the job already running, carries a
+      // reason; anything else is the ordinary error shape and goes through
+      // the ordinary path, 401 included.
       const body = (await res
         .clone()
         .json()
-        .catch(() => null)) as { error?: string; reason?: ElevateRefusal; askedFor?: string } | null
-      if (body?.reason) throw new ElevateRefusedError(body.error ?? '', body.reason, body.askedFor ?? '')
+        .catch(() => null)) as { error?: string; reason?: UpdateRefusal; askedFor?: string } | null
+      if (body?.reason) throw new UpdateRefusedError(body.error ?? '', body.reason, body.askedFor ?? '')
       throw await failure(res)
     }
-    return (await res.json()) as UpdateResult
+    return (await res.json()) as UpdateStarted
   },
 
   /**

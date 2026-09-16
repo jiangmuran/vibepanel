@@ -5,20 +5,9 @@ import { TourAgain } from './TourAgain'
 import type { SettingsInfo } from '../../protocol/wire'
 import { t } from '../../i18n'
 import { safeText } from '../text'
+import { formatBytes } from '../bytes'
 import { UpdateSection } from '../UpdateSection'
 import { Row, Section } from './parts'
-
-function bytes(n: number): string {
-  if (n < 1024) return `${n} B`
-  const units = ['KiB', 'MiB', 'GiB']
-  let v = n / 1024
-  let i = 0
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024
-    i++
-  }
-  return `${v.toFixed(1)} ${units[i]}`
-}
 
 function duration(seconds: number): string {
   const d = Math.floor(seconds / 86400)
@@ -94,7 +83,7 @@ export function PanelGroup({ info }: { info: SettingsInfo | null }) {
                 )}
               </div>
             )}
-            <Row label={t('set.data')} value={`${info.dataDir} · ${bytes(info.dbBytes)}`} />
+            <Row label={t('set.data')} value={`${info.dataDir} · ${formatBytes(info.dbBytes)}`} />
             <Row label={t('set.listening')} value={`${info.addr} → ${info.url}`} />
             <Row
               label={t('set.tls')}

@@ -66,6 +66,26 @@ export async function askConfirm(request: AskRequest): Promise<boolean> {
   return (await ask({ ...request, field: undefined })) !== null
 }
 
+/**
+ * Ask, and run it only if the answer was yes.
+ *
+ * The guard is one line at a call site -- `if (!yes) return` -- and one line
+ * is exactly what an edit drops. It has no home in a browser check either:
+ * the two things that go through here, revoking a link and deleting a page,
+ * are the two a check must not actually do. So the shape is a function rather
+ * than a convention, and `ask.test.ts` answers no and watches nothing happen.
+ *
+ * Returns whether it ran, for a caller that has something to say afterwards.
+ */
+export async function confirmThen(
+  request: AskRequest,
+  run: () => Promise<unknown> | unknown,
+): Promise<boolean> {
+  if (!(await askConfirm(request))) return false
+  await run()
+  return true
+}
+
 /** A name, or null if the question was dismissed. */
 export async function askText(
   request: AskRequest & { field: { label: string; value: string } },

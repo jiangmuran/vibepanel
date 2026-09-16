@@ -640,6 +640,54 @@ func TestConcurrentWritersDoNotCollide(t *testing.T) {
 	}
 }
 
+// A reorder list that omits a project returns it to automatic ordering,
+// inside the same transaction. Leaving a stale explicit position is how a
+// manual order silently reorders itself: two projects sharing an index swap
+// whenever one of them is active, and the drag that caused it said nothing.
+func TestAReorderReturnsTheOmittedToAutomatic(t *testing.T) {
+	ctx := context.Background()
+	db := openTest(t)
+
+	ids := []string{"proj-a", "proj-b", "proj-c", "proj-d"}
+	for i, pid := range ids {
+		if _, err := db.CreateProject(ctx, pid, string(rune('a'+i)), t.TempDir()); err != nil {
+			t.Fatalf("CreateProject %s: %v", pid, err)
+		}
+	}
+	// Two of them carry explicit positions from an earlier arrangement.
+	five, six := 5, 6
+	if err := db.SetProjectSortIndex(ctx, ids[2], &five); err != nil {
+		t.Fatalf("SetProjectSortIndex: %v", err)
+	}
+	if err := db.SetProjectSortIndex(ctx, ids[3], &six); err != nil {
+		t.Fatalf("SetProjectSortIndex: %v", err)
+	}
+
+	if err := db.ReorderProjects(ctx, []string{ids[1], ids[0]}); err != nil {
+		t.Fatalf("ReorderProjects: %v", err)
+	}
+
+	ps, err := db.ListProjects(ctx)
+	if err != nil {
+		t.Fatalf("ListProjects: %v", err)
+	}
+	seen := map[string]*int{}
+	for _, p := range ps {
+		seen[p.ID] = p.SortIndex
+	}
+	if got := seen[ids[1]]; got == nil || *got != 0 {
+		t.Errorf("%s sort_index = %v, want 0", ids[1], got)
+	}
+	if got := seen[ids[0]]; got == nil || *got != 1 {
+		t.Errorf("%s sort_index = %v, want 1", ids[0], got)
+	}
+	for _, pid := range ids[2:] {
+		if seen[pid] != nil {
+			t.Errorf("%s kept sort_index %v; an omitted project returns to automatic", pid, *seen[pid])
+		}
+	}
+}
+
 func TestAutomaticOrderingKeepsTheArrangement(t *testing.T) {
 	// Switching the sidebar to most-active-first used to run
 	// `UPDATE projects SET sort_index = NULL`, so an arrangement somebody sat

@@ -1,5 +1,22 @@
 import { useEffect, useRef, useState } from 'react'
-import { Copy, Eye, ExternalLink, Lock, LockOpen, Monitor, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import {
+  AlarmClock,
+  CalendarClock,
+  Copy,
+  Eye,
+  ExternalLink,
+  Hand,
+  Lock,
+  LockOpen,
+  Monitor,
+  Pencil,
+  Pin,
+  Plus,
+  RefreshCw,
+  ScanEye,
+  Target,
+  Trash2,
+} from 'lucide-react'
 
 import { api } from '../../protocol/api'
 import type {
@@ -13,10 +30,13 @@ import type {
 } from '../../protocol/wire'
 import { t, useLang, type Key } from '../../i18n'
 import { copyTextInGesture } from '../../clipboard'
-import { askConfirm } from '../ask'
+import { askConfirm, confirmThen } from '../ask'
 import { safeText } from '../text'
+import { Menu } from '../Menu'
 import { ParamsForm } from './ParamsForm'
+import { BlockTitle, Chip, Empty, Field, Group, INPUT, IconTile } from './bits'
 import { manifestFor, useNow } from './usePages'
+
 
 /**
  * The links that show one page: making one, copying its address again, and
@@ -27,9 +47,6 @@ import { manifestFor, useNow } from './usePages'
  * question somebody asks before they publish a change to it.
  */
 
-const INPUT =
-  'w-full min-w-0 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent'
-
 /** Expiry choices, in seconds. 0 is a link that does not expire. */
 const EXPIRIES: { seconds: number; label: Key }[] = [
   { seconds: 0, label: 'share.expiryNever' },
@@ -39,47 +56,15 @@ const EXPIRIES: { seconds: number; label: Key }[] = [
 ]
 
 /** How long a name, remark or parameter edit sits still before it is saved:
- *  the screen is the preview, so it lands on finished words, not letters. */
+ *  long enough that typing a caption arrives as a word rather than as letters,
+ *  short enough that a change and looking up at the screen are one gesture. */
 const SAVE_AFTER_MS = 700
 
 /** The server's bound on a remark (store.MaxRemark). */
 const MAX_REMARK = 80
 
-export function Field({
-  label,
-  htmlFor,
-  children,
-}: {
-  label: string
-  htmlFor: string
-  children: React.ReactNode
-}) {
-  return (
-    <div className="min-w-0">
-      <label htmlFor={htmlFor} className="mb-1 block text-vp-sm text-ink-3">
-        {label}
-      </label>
-      {children}
-    </div>
-  )
-}
-
-/**
- * One question the form asks, under its own heading.
- *
- * The form was eight controls and a paragraph in one grid, and the grid put
- * what the link is called, who can see what, and the page's own colours in one
- * run of boxes with a hole in the middle of it. Three headings are the three
- * decisions, and the disclosure one is the one worth reading.
- */
-function Group({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="min-w-0 border-t border-hairline pt-3 first:border-t-0 first:pt-0">
-      <h4 className="mb-2 text-vp-sm font-semibold text-ink-2">{title}</h4>
-      {children}
-    </div>
-  )
-}
+/** A link whose expiry is inside this is called out by name, not by tint. */
+const SOON_S = 86400
 
 function shareURL(token: string): string {
   return `${location.origin}/share/${token}/`
@@ -141,7 +126,6 @@ export function PageLinks({
   const [fresh, setFresh] = useState<Shown | null>(null)
   const [copied, setCopied] = useState(false)
   const [editing, setEditing] = useState<string | null>(null)
-  const [confirming, setConfirming] = useState<string | null>(null)
   const unpublished = page.publishedVersion === 0
 
   const setLock = async (link: ShareLink, locked: boolean) => {
@@ -198,21 +182,60 @@ export function PageLinks({
     }
   }
 
-  const revoke = async (link: ShareLink) => {
-    try {
-      await api.deleteShare(link.id)
-      setConfirming(null)
-      onChanged()
-    } catch (e) {
-      onError(e instanceof Error ? e.message : String(e))
-    }
-  }
+  // Asked in the panel's own dialog rather than by turning the row into two
+  // buttons. The inline pair was there because a browser `confirm` covers a
+  // phone; `askConfirm` is the panel's answer to that and it is what the rest
+  // of this file already uses, so revoking reads like every other question the
+  // panel asks -- and the row keeps its shape while it is being asked.
+  const revoke = (link: ShareLink) =>
+    confirmThen(
+      {
+        title: t('share.revokeTitle', { name: safeText(link.name) }),
+        body: t('share.revokeBody'),
+        confirm: t('share.revoke'),
+        cancel: t('ask.cancel'),
+        destructive: true,
+      },
+      async () => {
+        try {
+          await api.deleteShare(link.id)
+          onChanged()
+        } catch (e) {
+          onError(e instanceof Error ? e.message : String(e))
+        }
+      },
+    )
 
   return (
-    <div data-testid="page-links" className="mt-2 pl-5">
+    // The links a page is shown through, as a block of the page's card rather
+    // than as rows indented under its name. The indent was the only thing
+    // saying these belonged to the page above them, and at a phone's width
+    // there is no room to spend on an indent.
+    <div data-testid="page-links" className="border-t border-hairline px-3 py-3 @md:px-4">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <BlockTitle count={links.length}>{t('page.linksTitle')}</BlockTitle>
+        <span className="flex-1" />
+        {!adding && (
+          <button
+            type="button"
+            data-testid="share-new"
+            disabled={unpublished}
+            onClick={() => setAdding(true)}
+            title={unpublished ? t('share.needsPublish') : undefined}
+            className="vp-press flex shrink-0 items-center gap-1 rounded-vp border border-hairline px-2 py-1 text-vp-sm text-ink-2 transition-colors duration-200 ease-vp hover:border-accent hover:text-ink disabled:opacity-40 disabled:hover:border-hairline"
+          >
+            <Plus size={12} />
+            {t('share.create')}
+          </button>
+        )}
+      </div>
+
       {fresh && (
-        <div data-testid="share-fresh" className="mb-2 rounded-vp border border-hairline bg-surface-2 p-3">
-          <p className="mb-2 text-vp-base text-ink-2" data-testid="share-fresh-kind" data-kind={fresh.kind}>
+        <div
+          data-testid="share-fresh"
+          className="vp-panel-in mb-2 rounded-vp border border-accent/40 bg-surface p-3"
+        >
+          <p className="mb-2 text-vp-sm text-ink-2" data-testid="share-fresh-kind" data-kind={fresh.kind}>
             {fresh.kind === 'new'
               ? t('share.once')
               : fresh.kind === 'rotated'
@@ -224,154 +247,169 @@ export function PageLinks({
           <div className="flex flex-wrap items-center gap-2">
             <code
               data-testid="share-url"
-              className="min-w-0 flex-1 truncate rounded-vp bg-surface px-2 py-1.5 font-mono text-vp-base text-ink"
+              className="min-w-0 flex-1 basis-64 truncate rounded-vp bg-surface-2 px-2 py-1.5 font-mono text-vp-base text-ink"
             >
               {fresh.url}
             </code>
-            <button
-              type="button"
-              data-testid="share-copy"
-              onClick={() => copyTextInGesture(fresh.url, setCopied)}
-              className="vp-press shrink-0 rounded-vp border border-hairline px-2 py-1.5 text-vp-base text-ink-2 hover:text-ink"
-            >
-              {copied ? t('tok.copied') : t('tok.copy')}
-            </button>
-            <a
-              href={fresh.url}
-              target="_blank"
-              rel="noreferrer noopener"
-              title={t('share.open')}
-              aria-label={t('share.open')}
-              data-testid="share-open"
-              className="vp-press shrink-0 rounded-vp border border-hairline p-1.5 text-ink-2 hover:text-ink"
-            >
-              <ExternalLink size={13} />
-            </a>
-            <button
-              type="button"
-              data-testid="share-dismiss"
-              onClick={() => setFresh(null)}
-              className="shrink-0 rounded-vp px-2.5 py-1.5 text-vp-base"
-              style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
-            >
-              {t('tok.done')}
-            </button>
+            <span className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                data-testid="share-copy"
+                onClick={() => copyTextInGesture(fresh.url, setCopied)}
+                className="vp-press shrink-0 rounded-vp border border-hairline px-2 py-1.5 text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+              >
+                {copied ? t('tok.copied') : t('tok.copy')}
+              </button>
+              <a
+                href={fresh.url}
+                target="_blank"
+                rel="noreferrer noopener"
+                title={t('share.open')}
+                aria-label={t('share.open')}
+                data-testid="share-open"
+                className="vp-press shrink-0 rounded-vp border border-hairline p-1.5 text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
+              >
+                <ExternalLink size={13} />
+              </a>
+              <button
+                type="button"
+                data-testid="share-dismiss"
+                onClick={() => setFresh(null)}
+                className="vp-press shrink-0 rounded-vp px-2.5 py-1.5 text-vp-base"
+                style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+              >
+                {t('tok.done')}
+              </button>
+            </span>
           </div>
         </div>
       )}
 
-      {links.map((link) => (
-        <div key={link.id} data-testid="share-row" className="border-t border-hairline py-1.5 text-vp-base first:border-t-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <Monitor size={12} className="shrink-0 text-ink-3" />
-            <span className="min-w-0 flex-1 truncate text-ink">{safeText(link.name)}</span>
-            <span
-              className="shrink-0 text-vp-sm text-ink-2"
-              data-testid="share-row-viewers"
-              data-viewers={link.viewers}
-            >
-              {link.viewers > 0 ? t('share.viewers', { n: link.viewers }) : t('share.noViewers')}
-            </span>
-            {/* Its own line in a narrow container, so the link's name is not
-                the thing that gives way to five buttons: at phone width the
-                row was cut off at the right edge and nothing said so. */}
-            <span className="flex w-full shrink-0 flex-wrap items-center justify-end gap-0.5 @md:w-auto">
-            <button
-              type="button"
-              onClick={() => void copyAddress(link)}
-              title={link.copyable ? t('share.copyAddress') : t('share.newAddress')}
-              aria-label={link.copyable ? t('share.copyAddress') : t('share.newAddress')}
-              data-testid="share-copy-address"
-              data-copyable={link.copyable}
-              className="vp-control"
-            >
-              {link.copyable ? <Copy size={13} /> : <RefreshCw size={13} />}
-            </button>
-            <button
-              type="button"
-              onClick={() => void peek(link, onError)}
-              title={t('share.view')}
-              aria-label={t('share.view')}
-              data-testid="share-view"
-              className="vp-control"
-            >
-              <Eye size={13} />
-            </button>
-            {/* Red line 4: an open padlock and a closed one, and the word in
-                the title. */}
-            <button
-              type="button"
-              onClick={() => void setLock(link, !link.locked)}
-              aria-pressed={link.locked}
-              title={link.locked ? t('share.unlock') : t('share.lock')}
-              aria-label={link.locked ? t('share.unlock') : t('share.lock')}
-              data-testid="share-lock"
+      {links.length === 0 && !adding ? (
+        <Empty icon={Monitor} testid="share-links-empty">
+          {unpublished ? t('share.needsPublish') : t('share.linksNone')}
+        </Empty>
+      ) : (
+        <ul className="grid gap-2">
+          {links.map((link) => (
+            <li
+              key={link.id}
+              data-testid="share-row"
               data-locked={link.locked}
-              className="vp-control vp-press"
+              // A container of its own, so the queries below measure this row
+              // rather than the window. They used to resolve against the page,
+              // which is how the row -- the narrower box -- ended up committing
+              // to an inline layout earlier than the card around it.
+              className="@container rounded-vp border border-hairline bg-surface p-2.5"
             >
-              {link.locked ? <Lock size={13} /> : <LockOpen size={13} />}
-            </button>
-            <button
-              type="button"
-              disabled={link.locked}
-              onClick={() => setEditing(editing === link.id ? null : link.id)}
-              aria-pressed={editing === link.id}
-              title={link.locked ? t('share.lockedRow') : t('share.edit')}
-              aria-label={link.locked ? t('share.lockedRow') : t('share.edit')}
-              data-testid="share-edit"
-              className="vp-control disabled:opacity-40"
-            >
-              <Pencil size={13} />
-            </button>
-            {confirming === link.id ? (
-              <span className="flex shrink-0 items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => void revoke(link)}
-                  data-testid="share-revoke-confirm"
-                  className="vp-press shrink-0 rounded-vp px-2 py-1 text-vp-sm"
-                  style={{ background: 'var(--vp-state-crashed)', color: 'var(--vp-accent-ink)' }}
-                >
-                  {t('share.revokeSure')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirming(null)}
-                  className="vp-press shrink-0 rounded-vp px-2 py-1 text-vp-sm text-ink-2"
-                >
-                  {t('share.keep')}
-                </button>
-              </span>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setConfirming(link.id)}
-                title={t('share.revoke')}
-                aria-label={t('share.revoke')}
-                data-testid="share-revoke"
-                className="vp-control"
-              >
-                <Trash2 size={13} />
-              </button>
-            )}
-            </span>
-          </div>
-          <LinkFacts link={link} />
-          {editing === link.id && (
-            <LinkEditor
-              link={link}
-              detail={detail}
-              visitorWrites={visitorWrites}
-              onRotate={() => void rotate(link)}
-              onSaved={onChanged}
-              onError={onError}
-              onClose={() => setEditing(null)}
-            />
-          )}
-        </div>
-      ))}
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+                <IconTile icon={Monitor} size="sm" />
+                <span className="min-w-0 flex-1 truncate text-vp-md text-ink">{safeText(link.name)}</span>
+                {/* The count and the controls wrap together. The chip stayed on
+                    the name's line when only the buttons wrapped, which left a
+                    phone truncating a name to ten characters above a line that
+                    was half empty. */}
+                <span className="flex w-full shrink-0 items-center justify-end gap-1 @md:w-auto">
+                  {/* How many screens have this open: the one number that
+                      decides whether the screen you are about to change is even
+                      on. An icon and a count, never a colour alone. */}
+                  <Chip
+                    icon={link.viewers > 0 ? ScanEye : undefined}
+                    tone={link.viewers > 0 ? 'accent' : 'plain'}
+                    testid="share-row-viewers"
+                    data-viewers={link.viewers}
+                  >
+                    {link.viewers > 0 ? t('share.viewers', { n: link.viewers }) : t('share.noViewers')}
+                  </Chip>
+                  {/* Three every day, the rest behind one button. This was five
+                      identical 13px glyphs in a row, where copying the address
+                      -- the thing this page exists for -- looked exactly like
+                      revoking the link. */}
+                  <button
+                    type="button"
+                    onClick={() => void copyAddress(link)}
+                    title={link.copyable ? t('share.copyAddress') : t('share.newAddress')}
+                    aria-label={link.copyable ? t('share.copyAddress') : t('share.newAddress')}
+                    data-testid="share-copy-address"
+                    data-copyable={link.copyable}
+                    className="vp-outline text-vp-sm"
+                  >
+                    {link.copyable ? <Copy size={12} /> : <RefreshCw size={12} />}
+                    {/* The label stays at every width. Hiding it on a phone
+                        bought nothing -- the actions already wrap onto a line
+                        of their own there -- and left a bordered box with a
+                        glyph in it beside three borderless ones. */}
+                    {link.copyable ? t('share.copyAddress') : t('share.newAddress')}
+                  </button>
+                  {/* Named, not a glyph. It mints a live fifteen-minute copy
+                      of the address and opens it -- the most consequential
+                      thing in this row -- and it was an unlabelled 13px eye
+                      between a labelled button and a menu. */}
+                  <button
+                    type="button"
+                    onClick={() => void peek(link, onError)}
+                    title={t('share.view')}
+                    aria-label={t('share.viewShort')}
+                    data-testid="share-view"
+                    className="vp-outline text-vp-sm"
+                  >
+                    <Eye size={12} />
+                    {t('share.viewShort')}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={link.locked}
+                    onClick={() => setEditing(editing === link.id ? null : link.id)}
+                    aria-pressed={editing === link.id}
+                    title={link.locked ? t('share.lockedRow') : t('share.edit')}
+                    aria-label={link.locked ? t('share.lockedRow') : t('share.edit')}
+                    data-testid="share-edit"
+                    className="vp-control disabled:opacity-40"
+                  >
+                    <Pencil size={13} />
+                  </button>
+                  <Menu
+                    testid="share-more"
+                    label={t('menu.moreFor', { name: safeText(link.name) })}
+                    items={[
+                      {
+                        // Red line 4: the padlock and the word, never a tint.
+                        label: link.locked ? t('share.unlock') : t('share.lock'),
+                        icon: link.locked ? LockOpen : Lock,
+                        testid: 'share-lock',
+                        onSelect: () => void setLock(link, !link.locked),
+                      },
+                      {
+                        label: t('share.revoke'),
+                        icon: Trash2,
+                        testid: 'share-revoke',
+                        destructive: true,
+                        onSelect: () => void revoke(link),
+                      },
+                    ]}
+                  />
+                </span>
+              </div>
 
-      {adding ? (
+              <LinkFacts link={link} />
+
+              {editing === link.id && (
+                <LinkEditor
+                  link={link}
+                  detail={detail}
+                  visitorWrites={visitorWrites}
+                  onRotate={() => void rotate(link)}
+                  onSaved={onChanged}
+                  onError={onError}
+                  onClose={() => setEditing(null)}
+                />
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {adding && (
         <NewLink
           page={page}
           detail={detail}
@@ -387,18 +425,6 @@ export function PageLinks({
           }}
           onError={onError}
         />
-      ) : (
-        <button
-          type="button"
-          data-testid="share-new"
-          disabled={unpublished}
-          onClick={() => setAdding(true)}
-          title={unpublished ? t('share.needsPublish') : undefined}
-          className="vp-press mt-1 flex items-center gap-1 rounded-vp px-2 py-1 text-vp-sm text-ink-2 hover:text-ink disabled:opacity-40"
-        >
-          <Plus size={12} />
-          {unpublished ? t('share.needsPublish') : t('share.create')}
-        </button>
       )}
     </div>
   )
@@ -406,32 +432,62 @@ export function PageLinks({
 
 function LinkFacts({ link }: { link: ShareLink }) {
   const now = useNow()
+  const trial = link.pinUntil > now
+  const expiring = link.expiresAt !== 0 && link.expiresAt - now < SOON_S
   return (
-    <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-5 text-vp-sm text-ink-2">
-      <code className="font-mono text-ink-3">{link.prefix}…</code>
-      <span data-testid="share-row-scope">{scopeLabel(link)}</span>
-      <span>{link.detail === 'names' ? t('share.detailNames') : t('share.detailCounts')}</span>
-      {link.pinUntil > now ? (
-        <span>{t('page.trialShort', { v: link.pinVersion })}</span>
-      ) : (
-        link.pinVersion > 0 && <span>{t('page.pinned', { v: link.pinVersion })}</span>
+    // Aligned with the name rather than with the mark, so a reader who has
+    // found the name reads straight down.
+    <div className="mt-1.5 flex flex-wrap items-center gap-1 pl-8">
+      {/* A locked link cannot be edited, and the row used to say so only by
+          drawing the pencil at 40% -- a disabled control with a tooltip, which
+          a touch screen never shows at all. */}
+      {link.locked && (
+        <Chip icon={Lock} tone="warn" testid="share-row-locked">
+          {t('share.lockedRow')}
+        </Chip>
       )}
-      <span>
+      <Chip icon={Target} testid="share-row-scope">
+        {scopeLabel(link)}
+      </Chip>
+      <Chip icon={Eye}>{link.detail === 'names' ? t('share.detailNames') : t('share.detailCounts')}</Chip>
+      {/* Two chips when it is nearly over, not one chip in amber. The tone was
+          the only thing separating "expires tomorrow" from "expires in six
+          months" -- the date reads the same either way, and red line 4 is the
+          rule that a colour may not be the whole message. */}
+      {expiring && (
+        <Chip icon={AlarmClock} tone="warn" testid="share-row-soon">
+          {t('share.expiringSoon')}
+        </Chip>
+      )}
+      <Chip icon={CalendarClock}>
         {link.expiresAt === 0
           ? t('share.noExpiry')
           : t('share.expiresOn', { date: new Date(link.expiresAt * 1000).toLocaleDateString() })}
-      </span>
-      {link.interactive && <span data-testid="share-row-interactive">{t('share.interactiveShort')}</span>}
+      </Chip>
+      {trial ? (
+        <Chip icon={Pin} tone="warn">
+          {t('page.trialShort', { v: link.pinVersion })}
+        </Chip>
+      ) : (
+        link.pinVersion > 0 && <Chip icon={Pin}>{t('page.pinned', { v: link.pinVersion })}</Chip>
+      )}
+      {link.interactive && (
+        <Chip icon={Hand} tone="accent" testid="share-row-interactive">
+          {t('share.interactiveShort')}
+        </Chip>
+      )}
       {link.actionsToday > 0 && (
-        <span className="tabular" data-testid="share-row-actions">
-          {t('share.actionsToday', { n: link.actionsToday })}
-        </span>
+        <Chip testid="share-row-actions">{t('share.actionsToday', { n: link.actionsToday })}</Chip>
       )}
       {link.remark !== '' && (
-        <span className="min-w-0 truncate text-ink-3" data-testid="share-row-remark">
+        <span className="min-w-0 truncate text-vp-sm text-ink-3" data-testid="share-row-remark">
           {safeText(link.remark)}
         </span>
       )}
+      <span className="flex-1" />
+      {/* The prefix last and quietest: it identifies a link in the audit log,
+          which is the only place anybody needs it. */}
+      <code className="shrink-0 font-mono text-vp-xs text-ink-3">{link.prefix}…</code>
     </div>
   )
 }
@@ -492,7 +548,14 @@ function NewLink({
   }
 
   return (
-    <div data-testid="share-form" className="mt-2 flex flex-col gap-3 rounded-vp border border-hairline bg-surface-2 p-3">
+    <div
+      data-testid="share-form"
+      className="vp-panel-in mt-2 flex flex-col gap-3 rounded-vp border border-accent/40 bg-surface p-3"
+    >
+      <div className="flex items-center gap-2">
+        <Plus size={13} className="shrink-0 text-ink-3" />
+        <h4 className="text-vp-md font-medium text-ink">{t('share.create')}</h4>
+      </div>
       <Group title={t('share.groupScreen')}>
         <div className="grid grid-cols-1 gap-x-3 gap-y-2 @md:grid-cols-2">
           <Field label={t('share.nameLabel')} htmlFor={`share-name-${id}`}>
@@ -519,7 +582,7 @@ function NewLink({
         </div>
       </Group>
       <Group title={t('share.groupAccess')}>
-        <div className="grid grid-cols-1 gap-x-3 gap-y-2 @md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-x-3 gap-y-2 @md:grid-cols-2 @3xl:grid-cols-3">
           <Field label={t('share.scopeLabel')} htmlFor={`share-scope-${id}`}>
             <select
               id={`share-scope-${id}`}
@@ -587,11 +650,11 @@ function NewLink({
           <ParamsForm specs={manifest.params ?? []} values={params} idPrefix={`share-param-${id}`} onChange={setParams} />
         </Group>
       )}
-      <div className="flex flex-wrap items-center justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2 border-t border-hairline pt-3">
         <button
           type="button"
           onClick={onCancel}
-          className="vp-press rounded-vp px-2 py-1 text-vp-base text-ink-2"
+          className="vp-press rounded-vp px-2 py-1 text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:text-ink"
         >
           {t('share.cancel')}
         </button>
@@ -676,9 +739,14 @@ function LinkEditor({
     )
 
   return (
-    <div data-testid="share-edit-panel" className="mt-2 mb-1 flex flex-col gap-3 rounded-vp border border-hairline bg-surface-2 p-3">
+    // Inset under the row it belongs to, with the accent edge on its left, so
+    // a panel this tall is never read as a sibling of the row below it.
+    <div
+      data-testid="share-edit-panel"
+      className="vp-panel-in mt-2.5 flex flex-col gap-3 rounded-vp border border-hairline border-l-2 border-l-accent bg-surface-2 p-3 @md:ml-8"
+    >
       <Group title={t('share.groupScreen')}>
-        <div className="grid grid-cols-1 gap-x-3 gap-y-2 @md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-x-3 gap-y-2 @md:grid-cols-2 @3xl:grid-cols-3">
           <Field label={t('share.nameLabel')} htmlFor={`share-edit-name-${link.id}`}>
             <input
               id={`share-edit-name-${link.id}`}
@@ -752,13 +820,17 @@ function LinkEditor({
           />
         </Group>
       )}
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-hairline pt-3">
         <button
           type="button"
           onClick={onRotate}
           data-testid="share-rotate"
           title={t('share.rotateBody')}
-          className="vp-press flex items-center gap-1 rounded-vp border border-hairline px-2 py-1 text-vp-sm text-ink-2 hover:text-ink"
+          // Red, like the menu's revoke: this invalidates the address every
+          // screen currently showing the link is on, and it sat at the other
+          // end of the same footer as Done wearing the same clothes.
+          className="vp-outline text-vp-sm"
+          style={{ color: 'var(--vp-state-crashed)' }}
         >
           <RefreshCw size={12} />
           {t('share.newAddress')}
@@ -767,7 +839,7 @@ function LinkEditor({
           type="button"
           onClick={onClose}
           data-testid="share-edit-close"
-          className="vp-press rounded-vp px-2 py-1 text-vp-base text-ink-2"
+          className="vp-press rounded-vp border border-hairline px-2.5 py-1 text-vp-sm text-ink-2 transition-colors duration-200 ease-vp hover:border-accent hover:text-ink"
         >
           {t('share.editDone')}
         </button>

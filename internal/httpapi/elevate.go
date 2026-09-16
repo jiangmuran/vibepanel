@@ -261,7 +261,7 @@ func isLecture(line string) bool {
 
 // applyElevated runs the upgrade through sudo, with the typed password on
 // stdin or, when none was typed, with -n.
-func (s *Server) applyElevated(w http.ResponseWriter, r *http.Request, password string) {
+func (s *Server) applyElevated(w http.ResponseWriter, r *http.Request, password, expected string) {
 	sudo := s.sudoBin()
 	if sudo == "" {
 		writeErr(w, http.StatusConflict, updateByHand(selfupdate.ErrNotWritable))
@@ -341,7 +341,7 @@ func (s *Server) applyElevated(w http.ResponseWriter, r *http.Request, password 
 			if wrote() {
 				if runErr == nil {
 					closeLogs(true)
-					s.elevatedStarted(w, r)
+					s.elevatedStarted(w, r, expected)
 					return
 				}
 				// It got past sudo and then failed, before this loop saw it
@@ -372,7 +372,7 @@ func (s *Server) applyElevated(w http.ResponseWriter, r *http.Request, password 
 			if !wrote() {
 				continue
 			}
-			s.elevatedStarted(w, r)
+			s.elevatedStarted(w, r, expected)
 			go func() {
 				if err := <-done; err != nil {
 					s.Log.Error("elevated upgrade", "err", err, "stdout", stdout.Name(), "stderr", stderr.Name())
@@ -396,7 +396,12 @@ func (s *Server) applyElevated(w http.ResponseWriter, r *http.Request, password 
 }
 
 // elevatedStarted answers the page once sudo has let the upgrade run.
-func (s *Server) elevatedStarted(w http.ResponseWriter, r *http.Request) {
+//
+// The job is recorded as already restarting: the installer is running behind
+// this and ends by restarting the unit, and there is nothing this process
+// can see of its progress. A page that reloads meanwhile still finds out why
+// the socket is about to close.
+func (s *Server) elevatedStarted(w http.ResponseWriter, r *http.Request, expected string) {
 	name := ""
 	if u, ok, err := s.currentUser(r); ok && err == nil {
 		name = u.Username
@@ -404,9 +409,17 @@ func (s *Server) elevatedStarted(w http.ResponseWriter, r *http.Request) {
 	// The event, never the password. The audit log is read on a settings page,
 	// printed into a journal and shipped to whatever collects journals.
 	s.audit(r.Context(), "update.elevated", name, s.clientIP(r), "")
+	job := &updateJob{
+		Stage: "restarting", Version: expected, StartedAt: time.Now().Unix(),
+		Total: -1, Elevated: true, Restarting: true,
+	}
+	s.updates.mu.Lock()
+	s.updates.job = job
+	s.updates.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"elevated":   true,
 		"restarting": true,
+		"job":        s.currentJob(),
 	})
 }
 

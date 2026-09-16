@@ -20,6 +20,7 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/session"
 	"github.com/jiangmuran/vibepanel/internal/store"
 	"github.com/jiangmuran/vibepanel/internal/sysmon"
+	"github.com/jiangmuran/vibepanel/internal/tmux"
 	"github.com/jiangmuran/vibepanel/internal/usage"
 )
 
@@ -1019,18 +1020,45 @@ func (s *Server) buildShareReading(ctx context.Context, link store.ShareLink,
 	return out, nil
 }
 
+// shareTmuxListMax is how stale a poller-produced tmux list may be before
+// shareUsage forks its own. One poll interval and change: on a healthy panel
+// the cache is never older than pollInterval, so the fork here is the
+// degraded path, not the common one.
+const shareTmuxListMax = 3 * time.Second
+
+// recentTmuxList returns the poller's most recent tmux list when it is young
+// enough to act on. See the tmuxList field comment for why this is a read of
+// the poller's answer rather than a fork of its own.
+func (s *Server) recentTmuxList() []tmux.Info {
+	s.tmuxListMu.Lock()
+	defer s.tmuxListMu.Unlock()
+	if time.Since(s.tmuxListAt) > shareTmuxListMax {
+		return nil
+	}
+	return s.tmuxList
+}
+
 // shareUsage samples per-session cost, tolerating a tmux that cannot answer.
 //
 // Split out so the handler reads as the redaction it is. Failure is empty
 // rather than fatal, the same way /api/usage treats it: the meters go blank and
 // everything else on screen is still true.
+//
+// The list comes from the poller's cache. This runs on the request goroutine
+// of a snapshot a wall polls every two seconds; forking tmux here once per
+// link was the first thing on this route that grew with the number of screens
+// looking at it rather than the number of sessions on the machine.
 func (s *Server) shareUsage(ctx context.Context, sessions []store.Session, readable bool) map[string]sysmon.Usage {
 	if !readable {
 		return nil
 	}
-	infos, err := s.Tmux.List(ctx)
-	if err != nil {
-		return nil
+	infos := s.recentTmuxList()
+	if infos == nil {
+		var err error
+		infos, err = s.Tmux.List(ctx)
+		if err != nil {
+			return nil
+		}
 	}
 	pidOf := make(map[string]int, len(infos))
 	for _, i := range infos {

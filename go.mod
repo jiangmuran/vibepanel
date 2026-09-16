@@ -2,6 +2,12 @@ module github.com/jiangmuran/vibepanel
 
 go 1.26
 
+// go1.26.6 fixes five standard-library vulnerabilities reachable from this
+// code (GO-2026-6089 slowloris via net/http, GO-2026-6090 post-handshake TLS,
+// GO-2026-6218, GO-2026-5972, GO-2026-5026); pinned so release binaries are
+// built with the fixed stdlib, not whichever the runner happens to have.
+toolchain go1.26.6
+
 require (
 	github.com/caddyserver/certmagic v0.25.4
 	github.com/coder/websocket v1.8.15

@@ -22134,6 +22134,388 @@ gestures already did, and the owner read it as clutter. The gestures, the
 untouched; what went was the button, its string and the desktop check that
 pressed it.
 
+## 2026-09-16 — The updater, second pass: a job you can watch, a check that happens on its own, and a binary that is run before it is trusted
+
+The first version of the updater was a request. `POST /api/update` downloaded,
+verified, swapped and answered, on the request's own context, and everything
+about that was wrong in a way nobody noticed on a laptop. A phone that put the
+tab to sleep during the download cancelled the download. A page reloaded
+mid-way came back knowing nothing while the process went on without it. A
+second tab, or a second click, was a second download racing the first for the
+same rename. And the HTTP client had `Timeout: 60s`, which bounds the whole
+exchange including the body: on a link slower than about a megabit the
+seven-megabyte archive was cut off and reported as a network failure, on
+exactly the machines a self-hosted panel tends to live on.
+
+**It is a job now.** `POST` checks that there is something newer, starts a
+goroutine with its own fifteen-minute context, and answers `202` with the job
+as it stands. Both `GET`s carry it -- `downloading` with bytes so far and the
+total, `installing`, `restarting`, or `installed` on a panel nothing
+supervises, or `failed` with which step -- until the next one starts. The page
+polls once a second while something is happening and draws the bar from the
+server's numbers, so a reload shows the same bar. There is one job at a time;
+a second press is `409 busy` and carries the job the page should be watching.
+`TestASecondPressDuringAnUpdateIsRefused` holds the archive open to prove it.
+
+**What was confirmed is what gets installed.** The request still cannot name a
+version -- that closes the case of a session cookie that would like the panel
+to run something else -- but it may say which version the page *showed*, and
+if the newest release has changed between the check and the press the answer
+is `409 changed` and the page checks again. Without this, a release that
+landed while somebody was reading the notes for the previous one was the one
+they got.
+
+**The new binary is run before it replaces anything.** The checksum proves the
+bytes are the published ones; it says nothing about whether they run here. An
+archive labelled for this platform and built for another, a binary directory
+on a `noexec` mount, a static build that turned out not to be -- each of those
+passed every check and was found out by the restart, by everybody at once,
+with the panel gone. `selfupdate.Verify` runs the temp file as `--version`
+with a twenty-second budget and refuses it unless the output names the
+release, because `true` exits zero and so does a shell script that prints
+nothing. A refusal costs nothing: the temp file is removed and the running
+binary was never touched. `TestABinaryThatWillNotRunIsNotInstalled` removes
+the call and watches the swap go ahead.
+
+**The panel checks on its own, and there is still no timer.** The rule
+`internal/git/warm.go` set for the wall applies: work happens because a page
+asked and the answer was old. `GET /api/update/status` answers from memory,
+and if the automatic check is on and the last answer is more than six hours
+old (thirty minutes after a failure) it starts one in the background and says
+`checking: true`. The app calls it when the socket opens and every half hour
+after; that call is the only thing that makes the check happen, so a panel
+nobody has open never asks GitHub, and one that is open asks four times a
+day at most. `TestTheStatusEndpointAsksOnItsOwnOnlyWhenTheAnswerIsOld` counts
+the questions, which is the test that would notice a ticker. The setting is
+`update.autoCheck` in the settings table, absent meaning on, with a checkbox
+in the section and a line under it saying what is sent: the version number,
+in the User-Agent, and nothing else about the machine.
+
+The last answer is written through to the settings table, so it survives the
+restart the update causes, and `newer` is recomputed against the running
+version on every read rather than trusted from the record. Without that a
+panel came back from its own upgrade knowing nothing, asked again, and a
+page open across the restart saw the badge go away and come back -- or, with
+the record trusted, saw v1.10.0 announced as newer than the v1.10.0 that was
+running. `TestTheLastCheckOutlivesTheProcess` resets the in-memory state and
+then bumps the version, and asserts both.
+
+**A release is announced outside the dialog.** One line in the sidebar's
+footer, in the slot the "states are guessed" notice uses: the version, a way
+to the section, and "skip this version", which is remembered per browser in
+localStorage. Per browser because the person who skipped v1.10 on their phone
+did not skip it for the laptop; per version because they did not skip v1.11
+either.
+
+**The wait after the restart is one loop, not two.** The restart button and
+the updater each had a copy, and the updater's was the one with the bug -- it
+was written second and left out the pause before the first poll, so it
+believed the old process answering `/api/health` and reloaded into a socket
+that was about to close. `settings/comeback.ts` holds the one loop: it waits
+before the first try, requires health to have been unreachable at least once,
+and also takes a health answer whose build differs from the one that was
+running, because a restart can be quick enough to fall between two polls.
+It gives up after ninety seconds and says so rather than polling forever.
+
+**Smaller things that were wrong.** GitHub's unauthenticated release API is
+sixty requests an hour per address, shared with everything behind the same
+NAT, and the refusal is a 403 that read as "GitHub answered 403 Forbidden"
+and sent people looking for a permissions problem; it is `rateLimited` now,
+with when it resets. The kinds a page can say something short about --
+offline, timeout, rate-limited, an HTTP error -- come from `selfupdate.Kind`,
+and the raw `dial tcp: lookup api.github.com: no such host` is the detail
+under the sentence rather than the sentence. The release notes were a `<pre>`
+of the tag message, hard-wrapped at eighty columns, so on a phone every line
+wrapped once more and a paragraph read as alternating long and short lines;
+`releaseNotes.ts` turns the four shapes a tag message uses into blocks and the
+component draws them as elements, every string through `safeText`, with a
+link's address dropped and the release page linked beside it. The release's
+date is shown, because a version number alone does not say whether you are
+a week or a year behind.
+
+**The copy.** 「看看有没有新版本」 and 「正在问…」 were the panel talking to
+itself. Every `upd.*` string was rewritten in both languages to say what the
+panel found, what it is doing and what it needs, and the prose-length test
+pushed four of them shorter than the first draft, which is what it is for.
+
+**Mutation.** Twenty guards removed one at a time, each against the test
+named for it: the verify call, the rate-limit header, the progress callback,
+the `expected` check, the setting, the age, the recomputed `newer`, the
+write-through, the busy check, both failure reasons, the audit line, the
+restart refusal, the skipped version, the notice during a job, the bar
+without a total, both halves of the comeback loop, and the paragraph join.
+Nineteen killed; the twentieth was a `sed` that matched nothing and the test
+beside it asserts the same thing directly.
+
+
+## 2026-09-16 — Sources on a fake-ip network: the weather never came
+
+The weather widget on a share page fetched nothing, and settings said why:
+"the host resolves to an address a source may not reach". It was the network,
+not the page. Behind the router runs a fake-ip resolver — OpenClash or mihomo,
+by the shape of it — which answers every name out of 198.18.0.0/15 and
+translates the address back to the name when the connection arrives.
+`api.open-meteo.com` was 198.18.0.157, `api.github.com` 198.18.0.7, and asking
+223.5.5.5 directly got the same, so the interception was on the router and
+nothing on the machine could be told to go around it. That block is the
+benchmarking range, on the fetcher's refuse list beside CGNAT and the test
+nets, so every source on every page was refused whatever the owner approved.
+
+The guard's job is to keep a source off the internal network, and on this
+network the block is not a network: it is a handle the proxy hands out and
+takes back. The fix lets the block through when three things hold together
+(`internal/httpapi/pagesources.go`): the address came from a name and not a
+literal in the URL, since a literal is not something the proxy can translate
+back; it is in that block and no other, so the private ranges are exactly as
+refused as before — mihomo's `fake-ip-filter` still returns real addresses for
+some names, and a real 10.0.0.1 is still the LAN; and the resolver, asked for
+a fresh label under `.test`, answers out of the block. RFC 6761 says `.test`
+can never resolve, so a real resolver says NXDOMAIN and a fake-ip proxy hands
+out the next slot without asking upstream. On a network without such a proxy
+the block routes nowhere, and TLS is still verified against the approved name,
+so what a lying resolver could win is a connection to something on that block
+presenting a certificate for a host the owner approved.
+
+Two things about the probe were learned by running it on this machine before
+writing it. `.invalid` was the first choice and answered nothing at all, not
+because the router is honest but because systemd-resolved synthesises NXDOMAIN
+for `.invalid` locally and the question never left the box; `.test` goes
+upstream. And the label is fresh each time, because systemd-resolved keeps a
+negative answer for as long as the SOA allows, and a probe cached on one
+network would answer for the next one the laptop joins. The probe is asked
+once per fetch, only when an address needs it, so a public answer costs
+nothing; on a fake-ip network it is one DNS question a minute per source,
+against a router that is already answering everything.
+
+The fetcher grew a `dial` seam so a test can see which address the guard chose
+without a packet leaving the machine: on the fake network the fake address is
+what is dialled, and the test connects that to a TLS server on loopback and
+checks the body came back. Nine mutations against the new guard, each red:
+the literal allowed, the probe always true, the probe ignoring its answer, the
+block widened to every refused address, the probe asked per address instead of
+per fetch, the probe under `.invalid`, a fixed label, the dial going to the
+name, and NXDOMAIN read as fake. `docs/page-backend.md` §4 says the same in
+fewer words.
+
+The release itself went out twice. v1.17.1 was tagged on v1.17.0 plus this
+fix and pushed before a `git fetch` showed that another session had merged
+the updater and cut v1.18.0 ten minutes earlier; GitHub and the panel's own
+updater take the highest version as latest, so the fix was re-tagged as
+v1.18.1 on the merged main. The first v1.18.1 build failed in
+`TestDeletingAProjectForgetsItsSessions` with "TempDir RemoveAll cleanup:
+directory not empty" -- the session's shell was still writing into the
+project directory when the test's cleanup removed it -- on the same commit
+whose `check` run had passed; six local runs passed, and the tag was re-cut
+through `workflow_dispatch` as the workflow's comment says to. The race in
+that test is not fixed here.
+
+## 2026-09-16 — The sharing list, redrawn
+
+The owner's words were 「共享的管理模块 ui 太丑了」 and 「你独立出去的布局也好丑」.
+Both were right, and the first one names the bigger half: moving the list onto
+a page of its own had changed where it lives without changing how it looks.
+
+What was actually wrong, from the photographs rather than from the code:
+
+- **Nothing had a weight.** A page's card carried open, publish, manage,
+  export, versions, fork and delete as seven controls of the same size, four of
+  them bare 13px glyphs. A link's row carried five more. Copying the address —
+  the thing this page exists for — looked exactly like revoking the link.
+- **The facts were a paragraph.** Scope, disclosure, expiry, pinned version,
+  interactive, actions today and the remark were grey words separated by three
+  spaces, on a line under the name. Seven facts, one sentence, no edges.
+- **The header was three things in three places.** The frame drew the title,
+  the list drew the description, and the two buttons sat between them; under
+  that, two settings lines floated loose and read as the first two rows of the
+  list.
+- **A phone truncated a link's name to one character**, because the name, the
+  viewer count and five controls shared a line.
+
+What it is now: a header that owns its title, description and two actions; the
+pages root and the visitor-writes switch in one quiet strip; one card per page
+with a mark, the name, a published chip and the path, then the daily actions in
+words and the rest behind one `⋯`; and under it a **Links** block with a count
+and its own New-link button, where each link is a row of name, viewers and
+three actions over a line of chips.
+
+`components/Menu.tsx` is new, and it is a portal on purpose: the card clips its
+own corners, so an absolutely positioned menu is cut off, and the page scrolls
+under the trigger, so a menu in the flow drifts away from its button. It closes
+on Escape (stopping there, so a dialog underneath survives), on a pointer
+outside, and on any scroll or resize. One item is an `<a download>` rather than
+a button, because export is a download and a button cannot say that.
+
+`components/pages/bits.tsx` holds the four shapes the list is built from: a
+chip, a mark, a block title and an empty state. A chip's tone is the panel's
+own state colour thinned with `color-mix`, and it always carries its word, so
+the tone is never what says it (red line 4).
+
+Two actions that used to be an inline second step — revoke a link, delete a
+page — ask through `askConfirm` now, because an inline pair cannot live in a
+menu. The page delete is the one that cannot be undone; the server still
+refuses it while any link draws the page.
+
+`components/pages/actions.test.ts` is what makes the move safe. Six of these
+actions are not pressed by any browser check, so a redesign that loses one
+produces a card that still draws, still works, and no longer offers fork. It
+counts every action in both files, and it fails when one that belongs in the
+menu is drawn outside it or the other way round. Four mutations were run
+against it — the fork item deleted, the revoke confirmation removed, the lock
+moved back out of the menu, and a chip tone swapped for the ink colour — and
+each went red; the fourth survived the first time, which is why the tone
+mapping is pinned at all.
+
+The screenshots were looked at in both themes and at 390px after every step,
+which is how the doubled title, the bordered glyph with no label on a phone and
+the one-character link name were found.
+
+### Four audits read it back
+
+Four read-only reviewers were given the commit, one dimension each: function
+and logic, security, UI and copy, and elegance. Security found nothing to fix.
+The other three found real things, and the three worst were ones the
+screenshots could not have shown.
+
+- **A menu near the bottom of the window was drawn off it.** It is `fixed`, it
+  was placed at the trigger's bottom edge with no flip, and it closed on any
+  scroll — so the menu of the last card in an ordinary list could not be
+  reached at all, and every action that had just moved into a menu (fork,
+  export, delete, lock, revoke) moved with it. It flips above the trigger now,
+  measured from its real height, and it follows the trigger on every frame
+  while open instead of closing on scroll: the list re-reads itself every five
+  seconds, and a position read once pointed at a different row after a card
+  above it changed.
+- **A locked link was no longer shown anywhere.** The old row's padlock button
+  was the only thing that said so, and it went into the menu. It is a chip in
+  words now, and the row carries `data-locked`.
+- **The expiry chip broke red line 4.** It turned amber inside a day and said
+  "expires 9/22" either way, so tomorrow and next spring differed by colour
+  alone. A second chip that says 快过期了 appears instead.
+
+Smaller ones, all fixed: arrow keys were captured from the whole document while
+a menu was open; choosing an item dropped focus onto `<body>`; the first item
+was focused with no visible highlight after a mouse open; every menu was named
+"More"; the versions toggle did not say it was on; the settings strip drew as
+an empty bordered box until both of its requests landed; the manage dialog's
+two-row header cut the page's own Save button in half; the rotate button, which
+invalidates an address, was dressed exactly like Done; a phone still truncated
+a link's name because the viewers chip stayed on its line; the container
+queries measured the page, so the link row — the narrower box — went inline
+before the card around it did; the page's name was an `h3` under an `h1`; three
+strings were left orphaned; and a page with no name suggested a directory
+called `page-page`.
+
+**The test I wrote first was mostly a tautology**, and the elegance review
+proved it by running mutations against it: deleting the `if (!yes) return`
+before a revoke passed, wrapping the whole menu in `{false && …}` passed, and
+changing a quote style failed. That is the failure this project's mutation
+rule exists for, repeated. What replaced it:
+
+- `confirmThen` in `components/ask.ts`, used by revoke and delete, with a test
+  that answers no and watches nothing run. Its first version survived a
+  mutation too — `void run()` instead of `await run()` — because the test's
+  action yielded only one microtask; it waits on a real timer now.
+- `actions.test.ts` reads the whole directory, classifies only the entries of
+  a menu's `items` array as being in a menu, and says in its header what it
+  cannot see. Its tone check requires a chip whose `tone=` tests a condition to
+  test the same condition in its children, parsed past the `>` inside
+  `link.viewers > 0` rather than cutting there.
+- `pages-check` opens a link's menu, locks it, reads the chip and the server,
+  and unlocks it; and opens a page's menu with 15px of window under the
+  trigger. The first version of that step scrolled the list to put the trigger
+  low, the list was too short to scroll that far, and it passed with the flip
+  deleted — printing the same coordinates both ways. It cuts the window to the
+  trigger now and fails if it could not set up its own condition.
+
+Mutations, final count: ten, all red. Eight at the unit level (confirm ignores
+the answer, confirm does not wait, expiry back to tone-only, locked chip
+removed, every chip grey, the warn token swapped, lock moved out of the menu,
+fork dropped) and two in the browser (the flip removed, the menu never
+rendered). Two survived on the way and are the reason two of those tests look
+the way they do.
+
+## 2026-09-16 — the audit fixes: one allowlist, two origins, one token bound to its session
+
+An eleven-dimension subagent audit (34 raw findings, adversarially verified
+down to 24) left six worth fixing now, and the fixing found a fifth mirror of
+the state enum that red line 3 did not know about.
+
+### `/preview/{token}` was the capability route that skipped `--allow-from`
+
+requireShareToken checks the operator's address allowlist before it looks at a
+credential, and so do the admin-grant routes. The directory preview route did
+not: token lookup straight to file serving. Creating a preview link was a way
+to serve files to addresses the operator had excluded — and a preview address
+can be a chosen word, which is guessable in a way a share token is not.
+**Fix**: the same check, in the same words, at the top of handleDirPreview.
+
+### Two auth routes had no origin check
+
+`/api/auth/logout` and `/api/auth/password` are registered outside the
+authenticated group, and neither handler ran the `crossOriginWrite` check
+RequireAuth applies to every other write. SameSite=Strict does not separate
+ports, so a page served by an agent's dev server could POST with the session
+cookie attached: forced sign-out, and password guesses that poison the shared
+login throttle from the owner's own IP. handleSetup already checked these
+itself; that pair was the exception no test pinned. **Fix**: a
+`refuseBlockedWrite` helper with the same two questions in the same words,
+called by both handlers.
+
+### The hook token now reports only its own session
+
+One root token went into every session's environment, and handleHookState
+authenticated the bearer without binding it to the session id in the body: any
+process in any session could flip any other session's state. Sessions now hold
+`ReportToken(root, sessionID)` — an HMAC of their own id — and the endpoint
+accepts either that or the root token, the latter for sessions created before
+this change, whose environment was stamped at creation and cannot be re-stamped
+without a restart. The derivation lives in internal/hooks next to
+SessionEnv, because that package is where the credential is built, and the
+CLI's session-create path derives through the same function.
+
+The same token is now sealed at rest under the panel's secrets key
+(`hook_token_sealed`, base64 AES-GCM), with the plaintext row deleted on
+migration — sealed to the same value, so no running session notices. A nil box
+(a key that cannot be read) keeps the historical plaintext behaviour, the same
+tolerance sealShareToken extends. `doctor` reads through PeekHookToken, which
+never creates a token, and accepts a session's env holding either the root or
+its derived value — which is why it needed the tmux-name → session-id map.
+
+### The share snapshot stopped forking tmux per wall
+
+buildShareReading called `Tmux.List` synchronously per link per snapshot per
+two seconds. The poller's `pollOnce` now publishes its list onto the Server,
+and shareUsage reads it; a list older than three seconds (poller stuck or gone)
+falls back to the fork that existed before.
+
+### Toolchain, and the fifth mirror
+
+`toolchain go1.26.6` is pinned in go.mod: govulncheck reported five reachable
+stdlib vulnerabilities (GO-2026-6089 slowloris, GO-2026-6090 TLS handshake,
+6218, 5972, 5026), and the pin clears them — re-run, zero reachable. And
+red line 3 grew by one: the opencode reporter's state literals live in an
+embedded JavaScript file rather than a Go table, so the drift test never saw
+them. It now extracts every `report('...')` call from the plugin and checks
+both directions — nothing invalid, nothing of the enum missing.
+
+Every new guard was mutation-tested: dropping the preview allowlist, the
+logout/password origin checks, the scoped-token accept, the derivation in
+hookEnv, and the plaintext-row deletion each turned its test red before the
+code was restored.
+
+The audit's tail was fixed the next day: the source caches dropped on
+republish, the three last-used stamps throttled to one write a minute
+(their expiries are fixed deadlines; the stamps back dates a person
+reads), idx_sessions_state dropped by a v26 migration -- and the hard
+way learned that `TestTheFirstMigrationIsFrozen` pins schema.sql by
+hash, so removing the index there was never an option -- ReorderProjects
+returning the omitted to automatic, which the function's own comment had
+been asking for in writing, a fifteen-second cache on the share flow
+rollups, a source-watch round budget larger than the worst case of the
+set it runs, and the release tag validated before it reaches a sed
+program. Two new guards mutation-tested red; the frozen-schema test
+caught the schema.sql edit before any database could.
+
 
 ## 2026-09-16 — Sessions on a phone: the chat bridge
 

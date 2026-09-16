@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -69,6 +70,17 @@ type Server struct {
 	// upgradeCommand replaces `<this binary> service upgrade`, for the same
 	// reason. Nil means the real command.
 	upgradeCommand []string
+
+	// install replaces selfupdate.Install, whose real version swaps the
+	// running executable -- in a test, the test binary. Nil means the real
+	// one. restartCmd is restartCommand's stand-in for the same reason: the
+	// real one asks systemd to restart a unit named vibepanel.
+	install    func(bin []byte, version string) (string, error)
+	restartCmd func() (*exec.Cmd, error)
+
+	// updates is what the panel knows about updates between requests: the
+	// last check and the apply in progress. See update.go.
+	updates updateState
 
 	// zone caches the configured time zone. Not a field to set: read it with
 	// s.loc(ctx), which resolves the setting the first time and remembers.
@@ -144,6 +156,32 @@ type Server struct {
 	// HookToken for why the failures are deliberately not cached.
 	tokenMu   sync.Mutex
 	hookToken string
+
+	// tmuxList is the answer the poller's last pollOnce got from tmux, with the
+	// time it was produced. shareUsage reads it instead of forking its own
+	// `tmux list-panes`: a wall polls its share snapshot every pollInterval,
+	// and N walls would mean N forks every two seconds answering one question
+	// the poller already asked. Written only by pollOnce, so the cache holds
+	// exactly what the rest of the panel acts on; a reader finding it older
+	// than shareTmuxListMax -- poller stuck or gone -- forks its own, which is
+	// the behaviour that existed before the cache, bounded by reads rather than
+	// by the poll loop's health.
+	tmuxListMu sync.Mutex
+	tmuxList   []tmux.Info
+	tmuxListAt time.Time
+
+	// touchCooldowns throttles the "this credential was just used" writes:
+	// the auth-session last-seen stamp, the API-token last-used stamp and the
+	// preview-link last-used stamp. See touchCooldowns in auth.go.
+	touchOnce     sync.Once
+	touchCooldown *auth.Cooldown
+
+	// flowCache holds one reading of the session-event rollups behind a
+	// share link's flow section, per scope and window. See shareFlowCacheFor
+	// in sharework.go, which carries the reasoning the spend cache already
+	// wrote down and this repeats in shorter form.
+	flowMu    sync.Mutex
+	flowCache map[string]cachedFlow
 
 	// lastSnapshot is the most recent state payload that was broadcast. The
 	// poller compares against it so that a tick where nothing changed sends
@@ -708,7 +746,15 @@ func (s *Server) HookToken(ctx context.Context) (string, error) {
 	// restart cleared it.
 	read, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	token, err := s.DB.HookToken(read)
+	// The sealing key, or no seal: a key that cannot be read leaves the token
+	// in the plaintext settings row it may have migrated from, which is how
+	// the panel behaves for a share link on the same day.
+	box, berr := s.secretBox()
+	if berr != nil {
+		s.Log.Warn("secrets key unavailable; hook token stays unsealed at rest", "err", berr)
+		box = nil
+	}
+	token, err := s.DB.HookToken(read, box)
 	if err != nil {
 		return "", err
 	}
@@ -736,15 +782,43 @@ type hookStateRequest struct {
 // without affecting anything outside the panel.
 func (s *Server) handleHookState(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	token, err := s.HookToken(ctx)
+	root, err := s.HookToken(ctx)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "hook token unavailable")
 		return
 	}
+
+	// The state travels in the query string and the agent's own document in
+	// the body (see report.sh); a script older than that sends both in the
+	// body. Either way the body is read whole and bounded here, once.
+	body, err := io.ReadAll(io.LimitReader(r.Body, hooks.MaxPayload+1))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "unreadable body")
+		return
+	}
+	var req hookStateRequest
+	if q := r.URL.Query(); q.Get("sessionId") != "" {
+		req.SessionID, req.State, req.Source = q.Get("sessionId"), q.Get("state"), q.Get("source")
+	} else if err := json.Unmarshal(body, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "malformed JSON: "+err.Error())
+		return
+	}
+
 	presented := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	// Constant time: this endpoint is unauthenticated apart from the token, so
-	// a timing oracle on it is a timing oracle on the whole thing.
-	if subtle.ConstantTimeCompare([]byte(presented), []byte(token)) != 1 {
+	// Two credentials are valid here, checked in constant time either way:
+	// this endpoint is unauthenticated apart from the token, so a timing
+	// oracle on it is a timing oracle on the whole thing.
+	//
+	// The session's own derived token -- what a session created since report
+	// tokens exist holds in its environment, and the only thing that
+	// authorizes reporting *this* session id. Or the root token, which
+	// sessions created before it hold; sessions outlive the panel, and their
+	// environment was stamped when they were made. A restart re-stamps each
+	// one with its derived token, so the window where the root token is the
+	// wider credential shrinks on its own.
+	scoped := hooks.ReportToken(root, req.SessionID)
+	if subtle.ConstantTimeCompare([]byte(presented), []byte(root)) != 1 &&
+		subtle.ConstantTimeCompare([]byte(presented), []byte(scoped)) != 1 {
 		// Audited, like the other two paths an unauthenticated caller can
 		// reach. The allowlist refusal and a bad setup token both write a row
 		// through auditFromOutside; this one wrote nothing at all, so the
@@ -765,21 +839,6 @@ func (s *Server) handleHookState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The state travels in the query string and the agent's own document in
-	// the body (see report.sh); a script older than that sends both in the
-	// body. Either way the body is read whole and bounded here, once.
-	body, err := io.ReadAll(io.LimitReader(r.Body, hooks.MaxPayload+1))
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "unreadable body")
-		return
-	}
-	var req hookStateRequest
-	if q := r.URL.Query(); q.Get("sessionId") != "" {
-		req.SessionID, req.State, req.Source = q.Get("sessionId"), q.Get("state"), q.Get("source")
-	} else if err := json.Unmarshal(body, &req); err != nil {
-		writeErr(w, http.StatusBadRequest, "malformed JSON: "+err.Error())
-		return
-	}
 	st := session.State(req.State)
 	if !st.Valid() {
 		writeErr(w, http.StatusBadRequest, "unknown state "+req.State)
@@ -1622,6 +1681,13 @@ func (s *Server) hookEnv(ctx context.Context, sessionID, projectID string) []str
 		s.Log.Warn("hook token unavailable; sessions will fall back to the heuristic", "err", terr)
 		token = ""
 	}
+	// A session is given the credential for itself, not the root token: see
+	// ReportToken for the one compromised agent that used to hold against
+	// every other session. Empty means no token at all, which SessionEnv
+	// drops and the heuristic covers.
+	if token != "" {
+		token = hooks.ReportToken(token, sessionID)
+	}
 	return hooks.SessionEnv(sessionID, projectID, s.Cfg.LoopbackURL(), token)
 }
 
@@ -2035,6 +2101,12 @@ func (s *Server) pollOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Published for shareUsage, which would otherwise fork its own tmux per
+	// wall per poll; see the tmuxList field comment.
+	s.tmuxListMu.Lock()
+	s.tmuxList = infos
+	s.tmuxListAt = time.Now()
+	s.tmuxListMu.Unlock()
 	// No early return when tmux reports nothing.
 	//
 	// It was here to skip building an empty map, and it skipped the whole
