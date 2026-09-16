@@ -130,7 +130,7 @@ func TestEveryStateAHookReportsIsARealState(t *testing.T) {
 		reported = append(reported, m[1])
 	}
 	if len(reported) == 0 {
-		t.Fatal("no report('...') calls found in the opencode plugin; "+
+		t.Fatal("no report('...') calls found in the opencode plugin; " +
 			"the pattern has stopped matching and this test compares nothing")
 	}
 	said := map[string]bool{}

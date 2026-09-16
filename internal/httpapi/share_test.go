@@ -18,9 +18,9 @@ import (
 
 	"github.com/jiangmuran/vibepanel/internal/auth"
 	"github.com/jiangmuran/vibepanel/internal/git"
-	"github.com/jiangmuran/vibepanel/internal/tmux"
 	"github.com/jiangmuran/vibepanel/internal/pages"
 	"github.com/jiangmuran/vibepanel/internal/store"
+	"github.com/jiangmuran/vibepanel/internal/tmux"
 )
 
 // A share link is a second door onto a panel whose first door is one password
