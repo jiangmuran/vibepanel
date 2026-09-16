@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/jiangmuran/vibepanel/internal/auth"
+	"github.com/jiangmuran/vibepanel/internal/chat/shot"
 	"github.com/jiangmuran/vibepanel/internal/config"
 	"github.com/jiangmuran/vibepanel/internal/hooks"
 	"github.com/jiangmuran/vibepanel/internal/httpapi"
@@ -35,6 +36,13 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/tz"
 	"github.com/jiangmuran/vibepanel/internal/usage"
 	"github.com/jiangmuran/vibepanel/internal/version"
+
+	// The chat adapters register themselves on import; this is the list of
+	// IMs the binary can talk to, and an adapter not named here is not
+	// reachable from the Chat page.
+	_ "github.com/jiangmuran/vibepanel/internal/chat/feishu"
+	_ "github.com/jiangmuran/vibepanel/internal/chat/telegram"
+	_ "github.com/jiangmuran/vibepanel/internal/chat/weixin"
 	"github.com/jiangmuran/vibepanel/internal/webui"
 	"github.com/jiangmuran/vibepanel/internal/ws"
 )
@@ -316,6 +324,8 @@ func cmdServe(args []string) error {
 	// The chat bridge, after the poller: it reads the same rows and must
 	// never be the thing the poller waits on. Without a secret key the panel
 	// runs as before and the Chat page says the bridge is off.
+	srv.Shooter = shot.Render
+	srv.NewAssistant = newAssistant(a.cfg, srv)
 	if cerr := srv.StartChat(ctx); cerr != nil {
 		logger.Warn("chat bridge not started", "err", cerr)
 	}

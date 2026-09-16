@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Check, Copy, Link2, LogIn, Send, Trash2 } from 'lucide-react'
 
+import { copyTextInGesture } from '../../clipboard'
 import { api } from '../../protocol/api'
 import type { ChatChannel, ChatFactory, ChatLogin, ChatSettings } from '../../protocol/wire'
 import { t } from '../../i18n'
@@ -217,16 +218,15 @@ function ChannelCard({
     }
   }
 
-  const copy = async () => {
+  const copy = () => {
     if (!channel?.webhookUrl) return
-    try {
-      await navigator.clipboard.writeText(channel.webhookUrl)
+    // Through clipboard.ts, the one module that touches the clipboard: it
+    // knows the http-origin case, where the URL stays on screen to select.
+    copyTextInGesture(channel.webhookUrl, (ok) => {
+      if (!ok) return
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1500)
-    } catch {
-      // The clipboard is denied on http origins; the URL is on screen to
-      // select by hand.
-    }
+    })
   }
 
   const signedIn = factory.login && channel?.configured
@@ -323,7 +323,7 @@ function ChannelCard({
                 <code className="min-w-0 flex-1 truncate rounded-vp bg-surface-2 px-2 py-1 font-mono text-vp-sm text-ink">
                   {channel.webhookUrl}
                 </code>
-                <button type="button" className="vp-control" onClick={() => void copy()} title={t('chat.copy')}>
+                <button type="button" className="vp-control" onClick={copy} title={t('chat.copy')}>
                   {copied ? <Check size={14} /> : <Copy size={14} />}
                 </button>
               </div>
