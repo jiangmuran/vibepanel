@@ -38,7 +38,7 @@ import {
 } from './components/panes'
 import { disambiguatedLabels, projectLabel, sessionLabel } from './components/label'
 import { applyTheme, loadTheme } from './components/theme'
-import { PANEL_PATH, pageToOpen } from './routes'
+import { PANEL_PATH, pageToOpen, sessionToOpen } from './routes'
 import type { ThemeChoice } from './components/theme'
 import { NARROW_QUERY, useMediaQuery } from './hooks/useMediaQuery'
 import { EXIT_VANISHED } from './protocol/wire'
@@ -985,6 +985,20 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     void openPage(pending.id, pending.fresh)
     // openPage is not in the deps on purpose: it is a fresh closure every
     // render and the effect is meant to fire once, on the first open snapshot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, snapshots])
+
+  // A session a chat card linked to (routes.ts). Same shape as the page
+  // hand-over: read once, opened on the first snapshot, taken off the
+  // address so a reload does not reselect it.
+  const sessionHandedOver = useRef(sessionToOpen(location.search))
+  useEffect(() => {
+    if (status !== 'open' || snapshots === 0) return
+    const id = sessionHandedOver.current
+    if (!id) return
+    sessionHandedOver.current = null
+    history.replaceState(null, '', PANEL_PATH)
+    if (state.sessions.some((s) => s.id === id)) setSelected(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, snapshots])
 

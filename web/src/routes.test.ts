@@ -2,7 +2,16 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import { PANEL_PATH, SHARING_PATH, pageToOpen, panelOpeningPage, routeFor } from './routes'
+import {
+  CHAT_PATH,
+  PANEL_PATH,
+  SHARING_PATH,
+  pageToOpen,
+  panelOpeningPage,
+  panelOpeningSession,
+  routeFor,
+  sessionToOpen,
+} from './routes'
 
 /**
  * Which root the address bar builds, and how the two hand over to each other.
@@ -27,11 +36,29 @@ describe('what the address bar decides', () => {
     expect(routeFor(`${SHARING_PATH}/`)).toEqual({ kind: 'sharing' })
   })
 
+  it('builds the chat page for its path and not by prefix', () => {
+    expect(routeFor(CHAT_PATH)).toEqual({ kind: 'chat' })
+    expect(routeFor(`${CHAT_PATH}/`)).toEqual({ kind: 'chat' })
+    expect(routeFor(`${CHAT_PATH}x`)).toEqual({ kind: 'panel' })
+    expect(routeFor(`${CHAT_PATH}/abc`)).toEqual({ kind: 'panel' })
+  })
+
   it('does not match the sharing page by prefix', () => {
     // `/sharing` and `/share/<token>` share five letters, and `/sharingx` is
     // nothing at all; a prefix match would build the wrong root for both.
     expect(routeFor(`${SHARING_PATH}/abcdefghijklmnopqrstuvwx`)).toEqual({ kind: 'panel' })
     expect(routeFor(`${SHARING_PATH}x`)).toEqual({ kind: 'panel' })
+  })
+})
+
+describe('a chat card opening a session', () => {
+  it('round-trips the id and refuses what is not one', () => {
+    const to = panelOpeningSession('abc123')
+    expect(to.startsWith(PANEL_PATH)).toBe(true)
+    expect(sessionToOpen(new URL(to, 'http://x').search)).toBe('abc123')
+    expect(sessionToOpen('')).toBeNull()
+    expect(sessionToOpen('?session=')).toBeNull()
+    expect(sessionToOpen('?session=../x')).toBeNull()
   })
 })
 

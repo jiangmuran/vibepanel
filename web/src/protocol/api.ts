@@ -42,6 +42,16 @@ import type {
   TuneStatus,
   RestartResult,
   EnvSettings,
+  ChatSettings,
+  ChatLogin,
+  ChatTestResult,
+  ChatPeer,
+  ChatPeerMode,
+  ChatPeerStatus,
+  ChatRoutes,
+  ChatRoutePreview,
+  ChatToolProfile,
+  ChatAssistantConfig,
 } from './wire'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -862,6 +872,55 @@ export const api = {
     request<Webhook[]>('/api/settings/webhooks', { method: 'PUT', body: JSON.stringify(list) }),
   testWebhook: (w: Webhook) =>
     request<WebhookTest>('/api/settings/webhooks/test', { method: 'POST', body: JSON.stringify(w) }),
+
+  // ─── chat ────────────────────────────────────────────────────────────────
+  chat: () => request<ChatSettings>('/api/chat'),
+  saveChatChannel: (kind: string, enabled: boolean, values: Record<string, string>) =>
+    request<void>(`/api/chat/channels/${encodeURIComponent(kind)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ enabled, values }),
+    }),
+  removeChatChannel: (kind: string) =>
+    request<void>(`/api/chat/channels/${encodeURIComponent(kind)}`, { method: 'DELETE' }),
+  testChatChannel: (kind: string, peerId?: string) =>
+    request<ChatTestResult>(`/api/chat/channels/${encodeURIComponent(kind)}/test`, {
+      method: 'POST',
+      body: JSON.stringify({ peerId: peerId ?? '' }),
+    }),
+  startChatLogin: (kind: string) =>
+    request<ChatLogin>(`/api/chat/channels/${encodeURIComponent(kind)}/login`, { method: 'POST' }),
+  chatLoginStatus: (kind: string, id: string) =>
+    request<ChatLogin>(`/api/chat/channels/${encodeURIComponent(kind)}/login/${encodeURIComponent(id)}`),
+  chatLoginCode: (kind: string, id: string, code: string) =>
+    request<void>(
+      `/api/chat/channels/${encodeURIComponent(kind)}/login/${encodeURIComponent(id)}/code`,
+      { method: 'POST', body: JSON.stringify({ code }) },
+    ),
+  pairChat: (code: string) =>
+    request<ChatPeer>('/api/chat/pair', { method: 'POST', body: JSON.stringify({ code }) }),
+  patchChatPeer: (channel: string, peerId: string, patch: { mode?: ChatPeerMode; status?: ChatPeerStatus }) =>
+    request<ChatPeer>(`/api/chat/peers/${encodeURIComponent(channel)}/${encodeURIComponent(peerId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  removeChatPeer: (channel: string, peerId: string) =>
+    request<void>(`/api/chat/peers/${encodeURIComponent(channel)}/${encodeURIComponent(peerId)}`, {
+      method: 'DELETE',
+    }),
+  saveChatRoutes: (routes: ChatRoutes) =>
+    request<ChatRoutes>('/api/chat/routes', { method: 'PUT', body: JSON.stringify(routes) }),
+  previewChatRoute: (sessionId: string) =>
+    request<ChatRoutePreview>('/api/chat/routes/preview', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId }),
+    }),
+  saveChatKeys: (tools: Record<string, ChatToolProfile>) =>
+    request<Record<string, ChatToolProfile>>('/api/chat/keys', { method: 'PUT', body: JSON.stringify(tools) }),
+  saveChatAssistant: (cfg: ChatAssistantConfig) =>
+    request<ChatAssistantConfig>('/api/chat/assistant', { method: 'PUT', body: JSON.stringify(cfg) }),
+  saveChatLang: (lang: 'zh' | 'en') =>
+    request<void>('/api/chat/lang', { method: 'PUT', body: JSON.stringify({ lang }) }),
+  chatLog: (n = 100) => request<AuditEntry[]>(`/api/chat/log?n=${n}`),
 
   checkUpdate: () => request<UpdateCheck>('/api/update'),
   /**

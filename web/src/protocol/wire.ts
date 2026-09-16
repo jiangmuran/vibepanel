@@ -1613,3 +1613,164 @@ export interface EnvSettings {
   secrets?: string[]
   secretSet?: Record<string, boolean>
 }
+
+// ─── chat ──────────────────────────────────────────────────────────────────
+
+/** One adapter this build has, and the form it needs. */
+export interface ChatFactory {
+  kind: string
+  label: string
+  fields: ChatField[]
+  /** Signs in by scanning a QR code rather than by a token. */
+  login: boolean
+  /** The IM calls the panel back, so it needs the panel's URL. */
+  webhook: boolean
+}
+
+export interface ChatField {
+  name: string
+  label: string
+  secret: boolean
+  hint?: string
+}
+
+export interface ChatHealth {
+  kind: string
+  running: boolean
+  lastOk: number
+  lastError: string
+  lastErrorAt: number
+  lastInbound: number
+  received: number
+  sent: number
+  failed: number
+  /** Pushes dropped because the IM cannot be spoken to until the person
+   *  says something (微信's context token). */
+  needsHello: number
+}
+
+export interface ChatChannel {
+  kind: string
+  enabled: boolean
+  configured: boolean
+  /** Non-secret values only. */
+  values: Record<string, string>
+  /** Which secret fields hold something. Never the value. */
+  secretSet: Record<string, boolean>
+  health: ChatHealth
+  webhookUrl?: string
+  updatedAt: number
+}
+
+export type ChatPeerStatus = 'pending' | 'paired' | 'blocked'
+export type ChatPeerMode = 'normal' | 'advanced'
+
+export interface ChatPeer {
+  channel: string
+  peerId: string
+  display: string
+  status: ChatPeerStatus
+  pairingCode: string
+  mode: ChatPeerMode
+  focusSession: string
+  createdAt: number
+  lastSeenAt: number
+}
+
+export interface ChatMatch {
+  projects: string[] | null
+  sessions: string[] | null
+  tools: string[] | null
+  states: string[] | null
+  kinds: string[] | null
+}
+
+export type ChatShot = 'auto' | 'always' | 'never'
+
+export interface ChatRule {
+  id: string
+  name: string
+  enabled: boolean
+  match: ChatMatch
+  /** "channel:peer" entries, or "*" for everyone paired. Empty silences. */
+  to: string[] | null
+  screenshot: ChatShot | ''
+  coalesceSeconds: number
+  quietHours: string
+  body: boolean
+}
+
+export interface ChatRoutes {
+  rules: ChatRule[]
+  default: ChatRule
+}
+
+export interface ChatToolProfile {
+  approve: string[] | null
+  deny: string[] | null
+  interrupt: string[] | null
+  submit: string[] | null
+}
+
+export interface ChatAssistantConfig {
+  enabled: boolean
+  harness: 'claude' | 'codex'
+  model: string
+  profileId: string
+  maxTurns: number
+  budgetUsd: number
+  timeoutSeconds: number
+}
+
+export interface ChatSessionRow {
+  id: string
+  handle: number
+  title: string
+  project: string
+  state: SessionState
+  tool: string
+}
+
+/** Everything the Chat page shows: GET /api/chat. */
+export interface ChatSettings {
+  available: boolean
+  factories: ChatFactory[]
+  channels: ChatChannel[]
+  peers: ChatPeer[]
+  routes: ChatRoutes
+  tools: Record<string, ChatToolProfile>
+  assistant: ChatAssistantConfig
+  assistantAvailable: boolean
+  lang: 'zh' | 'en'
+  dropped: number
+  sessions: ChatSessionRow[]
+  projects: Project[]
+  spendToday: number
+  callsToday: number
+}
+
+export interface ChatLogin {
+  id: string
+  qrUrl: string
+  status: 'waiting' | 'scanned' | 'needCode' | 'done' | 'expired' | 'failed'
+  error?: string
+}
+
+export interface ChatTestResult {
+  sent: number
+  error?: string
+}
+
+export interface ChatRoutePreview {
+  decision: {
+    Send: boolean
+    To: string[] | null
+    Screenshot: string
+    Coalesce: number
+    Hold: boolean
+    Body: boolean
+    Rule: string
+  }
+  change: { SessionID: string; ProjectID: string; Tool: string; State: string; Kind: string }
+  peers: string[]
+}

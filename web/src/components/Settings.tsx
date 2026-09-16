@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowUpRight, Bell, Gauge, Share2, Terminal, UserRound, X } from 'lucide-react'
+import { ArrowUpRight, Bell, Gauge, MessageSquare, Share2, Terminal, UserRound, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 import { api } from '../protocol/api'
 import type { SettingsInfo } from '../protocol/wire'
 import { t, useLang } from '../i18n'
-import { SHARING_PATH } from '../routes'
+import { CHAT_PATH, SHARING_PATH } from '../routes'
 import { LanguageSwitch } from './LanguageSwitch'
 import { AccountGroup } from './settings/AccountGroup'
 import { NotificationsGroup } from './settings/NotificationsGroup'
@@ -226,6 +226,15 @@ export function Settings({ openAt, onClose }: { openAt: SettingsSection; onClose
               >
                 <Share2 size={13} className="vp-tab-icon shrink-0" />
                 <span className="text-vp-base">{t('grp.sharing')}</span>
+                <ArrowUpRight size={12} className="ml-auto shrink-0 text-ink-3" aria-hidden="true" />
+              </a>
+              <a
+                href={CHAT_PATH}
+                data-testid="settings-chat-link"
+                className="vp-tab shrink-0 justify-start sm:w-full"
+              >
+                <MessageSquare size={13} className="vp-tab-icon shrink-0" />
+                <span className="text-vp-base">{t('grp.chat')}</span>
                 <ArrowUpRight size={12} className="ml-auto shrink-0 text-ink-3" aria-hidden="true" />
               </a>
             </div>

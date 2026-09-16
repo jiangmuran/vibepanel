@@ -4,6 +4,7 @@ import './styles.css'
 import { App } from './App'
 import { AuthGate } from './components/AuthGate'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { ChatPage } from './components/ChatPage'
 import { SharingPage } from './components/SharingPage'
 import { routeFor } from './routes'
 import { watchSystemTheme } from './components/theme'
@@ -42,6 +43,10 @@ createRoot(root).render(
     {route.kind === 'sharing' ? (
       <ErrorBoundary label="The sharing page">
         <AuthGate>{(auth, signOut) => <SharingPage auth={auth} onSignOut={signOut} />}</AuthGate>
+      </ErrorBoundary>
+    ) : route.kind === 'chat' ? (
+      <ErrorBoundary label="The chat page">
+        <AuthGate>{(auth, signOut) => <ChatPage auth={auth} onSignOut={signOut} />}</AuthGate>
       </ErrorBoundary>
     ) : (
       <ErrorBoundary label="The panel">

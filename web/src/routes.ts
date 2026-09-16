@@ -26,12 +26,16 @@ export const PANEL_PATH = '/'
 
 export const SHARING_PATH = '/sharing'
 
-export type Route = { kind: 'panel' } | { kind: 'sharing' }
+/** The page the chat bridge is set up from: routes.ts is the one place that spells it. */
+export const CHAT_PATH = '/chat'
+
+export type Route = { kind: 'panel' } | { kind: 'sharing' } | { kind: 'chat' }
 
 export function routeFor(pathname: string): Route {
   // With or without a trailing slash, because both arrive: a bookmark keeps
   // whatever was typed, and a proxy may add one.
   if (pathname === SHARING_PATH || pathname === `${SHARING_PATH}/`) return { kind: 'sharing' }
+  if (pathname === CHAT_PATH || pathname === `${CHAT_PATH}/`) return { kind: 'chat' }
   return { kind: 'panel' }
 }
 
@@ -67,4 +71,22 @@ export function pageToOpen(search: string): { id: string; fresh: boolean } | nul
   // rather than to a request the server records as refused.
   if (!id || !/^[A-Za-z0-9_-]+$/.test(id)) return null
   return { id, fresh: q.get(FRESH_PARAM) === '1' }
+}
+
+export const OPEN_SESSION_PARAM = 'session'
+
+/**
+ * The address a chat card carries: the panel, opened at one session. Built
+ * on the server (the bridge's sessionURL) and read here, so the two agree on
+ * the parameter's name through this one constant and its test.
+ */
+export function panelOpeningSession(sessionId: string): string {
+  const q = new URLSearchParams({ [OPEN_SESSION_PARAM]: sessionId })
+  return `${PANEL_PATH}?${q.toString()}`
+}
+
+export function sessionToOpen(search: string): string | null {
+  const id = new URLSearchParams(search).get(OPEN_SESSION_PARAM)
+  if (!id || !/^[A-Za-z0-9_-]+$/.test(id)) return null
+  return id
 }
