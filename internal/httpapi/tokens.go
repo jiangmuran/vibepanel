@@ -177,6 +177,7 @@ func (s *Server) handleTokenUsage(w http.ResponseWriter, r *http.Request) {
 	// let a caller filter on any directory on the machine and learn from the
 	// answer whether an agent had ever run there.
 	var cwdPrefix string
+	var exclude []string
 	if id := q.Get("project"); id != "" {
 		found := false
 		for _, p := range projects {
@@ -189,6 +190,7 @@ func (s *Server) handleTokenUsage(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "no such project")
 			return
 		}
+		exclude = nestedProjects(cwdPrefix, projects)
 	}
 
 	// The panel's clock, not the process's. These have to agree with the day
@@ -198,7 +200,7 @@ func (s *Server) handleTokenUsage(w http.ResponseWriter, r *http.Request) {
 	today := dayIn(loc, now)
 	from := dayShift(loc, now, -(days - 1))
 
-	ranged := store.UsageFilter{From: from, To: today, Tool: tool, CWDPrefix: cwdPrefix}
+	ranged := store.UsageFilter{From: from, To: today, Tool: tool, CWDPrefix: cwdPrefix, Exclude: exclude}
 	// The heatmap is deliberately not narrowed by the range control. It is the
 	// "how has this year gone" view, and a 53-week grid holding seven days of
 	// data is not a smaller version of that -- it is a broken one.
@@ -207,8 +209,9 @@ func (s *Server) handleTokenUsage(w http.ResponseWriter, r *http.Request) {
 		To:        today,
 		Tool:      tool,
 		CWDPrefix: cwdPrefix,
+		Exclude:   exclude,
 	}
-	allTime := store.UsageFilter{Tool: tool, CWDPrefix: cwdPrefix}
+	allTime := store.UsageFilter{Tool: tool, CWDPrefix: cwdPrefix, Exclude: exclude}
 
 	out := tokenUsageResponse{
 		Today: today, From: from, To: today, Days: days,
@@ -346,6 +349,28 @@ func under(path, dir string) bool {
 	dir = strings.TrimSuffix(filepath.Clean(dir), string(filepath.Separator))
 	path = filepath.Clean(path)
 	return path == dir || strings.HasPrefix(path, dir+string(filepath.Separator))
+}
+
+// nestedProjects lists the projects inside dir, other than a project at dir
+// itself.
+//
+// They are what a filter on dir has to leave out for its total to agree with
+// projectFor, which gives work in a nested directory to the innermost project.
+// Compared with under, the same comparison projectFor makes, so the two cannot
+// disagree about which directory is inside which.
+func nestedProjects(dir string, projects []store.Project) []string {
+	if dir == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range projects {
+		if p.Path == "" || filepath.Clean(p.Path) == filepath.Clean(dir) || !under(p.Path, dir) {
+			continue
+		}
+		out = append(out, filepath.Clean(p.Path))
+	}
+	sort.Strings(out)
+	return out
 }
 
 // groupByProject folds per-directory totals into per-project ones, keeping

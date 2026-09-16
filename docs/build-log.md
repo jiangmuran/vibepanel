@@ -22851,3 +22851,129 @@ passed with the prefix left in.
 - Cards closed at the laptop dropped the command.
 - 微信 ids were shown whole.
 - The log still had English channel entries.
+
+## 2026-09-16 — Token counts, audited against the transcripts: half of Claude's output, a Codex parent counted twice
+
+An audit of the token panel, done by reading the transcripts on this machine
+with a separate script and comparing against what `usage_daily` held rather
+than by reading the reader. Three wrong numbers, one stale cursor, and a
+migration that re-reads history so the fix reaches the past as well as the
+future.
+
+### Claude: the first line of a response was the wrong one to keep
+
+`readClaude` deduplicated on `(message.id, requestId)` and kept the first line,
+because every line of a response was supposed to carry the same usage object.
+It was true of the Claude Code this was measured against and is not true now:
+lines written while the response is still streaming carry `output_tokens` of 1
+to 3, and only the line with a `stop_reason` carries the real figure. 25,550 of
+102,575 requests disagreed across their lines, only in `output_tokens` and only
+upwards (no non-monotonic sequence anywhere). The panel's September output was
+14.2M where the transcripts say 31.0M, and August 40.5M against 51.3M.
+
+Nobody saw it because the total did not move: cache reads are 35 billion
+tokens, and output is a rounding error in that. The column that was wrong is
+the one the side panel shows as how much the agents wrote.
+
+Each request now keeps whole the line with the largest `output_tokens`, the
+later line on a tie. Not simply the last line, because a resumed session
+replays its history into the same file, so line order can't be trusted. And not
+the largest value of each field, which was this fix's first version: the review
+found one request in 102,909 whose two lines also disagree on cache figures, and
+taking each field's maximum produced a usage object neither line carried, 10k
+tokens too large. The same pass drops the 1,756 `<synthetic>` records whose
+usage is all zeros, which had been counted as requests.
+
+### Codex: a legacy fork replays its parent's token counts
+
+A Codex thread forked in `history_mode: "legacy"` writes its `session_meta`,
+then every `token_count` the parent ever wrote, all in the same second, and
+only then its first `turn_context`, whose running total carries on from the
+parent's last. Differencing the running total counted the parent's spend a
+second time: six forks on this machine, 366M tokens, 4.8% of everything Codex
+had spent, on the fork's day and under an empty model name (the six rows with
+`model = ''` were exactly this). The 584 replayed totals in one fork were all
+present in its parent's rollout.
+
+On a forked thread that is not `paginated`, the counts before the first
+`turn_context` now set the baseline and add nothing. The condition is kept
+narrow on purpose, because a held-back count shows up as zero spend. "Skip
+everything before a turn_context" on every thread would zero any rollout from a
+Codex that did not write one. "Forked" alone is too wide: every subagent
+rollout carries `forked_from_id` (76 here) and copies no counts, and a subagent
+that died before its first turn must still count. A fork with no history mode at
+all is treated as legacy. Only the first `session_meta` decides: subagents write
+their parent's meta second, and it names no fork.
+
+The comment claiming a decreasing total had never been seen was also wrong:
+two rollouts reset on a resume after a long gap, each with the new total equal
+to that request's own `last_token_usage`, which is what treating it as a fresh
+baseline already did.
+
+### Nested projects: a project's view and its table row disagreed
+
+The project table gives work in a nested directory to the innermost project;
+the `project` filter was a directory prefix and took the nested project's spend
+too. `feishu` read 176M filtered and 99M in the table, because 77M of it was
+`feishu_gongdan_bot`. `UsageFilter.Exclude` now carries the projects inside the
+scope, computed by the same `under` comparison `projectFor` uses, and the
+project-scoped share snapshot does the same. The share cache key includes the
+exclusions, so creating a project inside a scope changes that scope's answer
+immediately instead of when the entry ages out.
+
+### opencode: the cursor watched a file that was not being written
+
+The (size, mtime) stamp was taken from `opencode.db`, but a running opencode
+writes into `opencode.db-wal`, and the main file moves only on a checkpoint.
+The stamp now adds the log's size and takes the later mtime, through one
+function Walk and ReadFile share. If they stamped differently the cursor would
+never match and every pass would re-read 2 GB.
+
+### The upgrade: re-reading unchanged files
+
+None of this would have reached history on its own. The cursor answers "has
+this file changed", so a fixed reader corrects transcripts still being written
+and leaves every finished one with the numbers the broken reader produced.
+
+Migration v28 adds `usage_files.reader`, defaulting to 0, and
+`usage.ReaderVersion` (now 1) is compared along with size and mtime. Existing
+databases therefore re-read everything once on the first pass after upgrade.
+Deleting the cursor in the migration was the simpler alternative and was
+rejected: the panel would show zero until that pass finished, where this way
+each file's old rows stay until its new ones replace them in one transaction.
+Raise `ReaderVersion` in any change that alters what a transcript yields.
+
+Two costs, both accepted. With the log in the stamp, an opencode that is
+writing changes its stamp on every pass, so while it runs the database is
+re-read every 30 seconds someone is watching instead of once per checkpoint.
+That is the 172 ms query, not the 2 GB. And a share wall's burn line
+(`trendKey`, still keyed on the directory) dips once when a project is created
+inside its scope, the same dip midnight causes.
+
+One known gap: a *downgrade* followed by an upgrade. An older binary's upsert
+does not touch `reader`, so a file it re-reads keeps version 1 with old-reader
+rows until the file changes again. Accepted rather than engineered around.
+
+Checked on a copy of this machine's live database, opened by the new binary
+from schema v24 in the panel's own zone (Asia/Taipei — the first try used the
+process's zone, which moved requests across month boundaries and looked like a
+bug): 1,769 of 1,769 transcripts re-read in 5.6 s; Claude input unchanged,
+cache figures moved only by the one mixed request, output up as above, requests
+down 1,755; Codex down 366.1M in July and unchanged in August and September;
+opencode unchanged; the next pass read nothing.
+
+Mutation-tested in two rounds, 30 mutants. The guards mutated: keep the first
+line, keep the last, per-field maximum, ties to the earlier line, count
+synthetic records, count the replay, hold back unforked threads, hold back
+paginated ones, let a later meta decide, never mark a turn, ignore the WAL,
+stamp the WAL in Walk only, skip the reader comparison, don't record the
+version, an upsert that keeps the old version, ignore Exclude, exclude only the
+exact directory, drop Exclude from each of the range, heatmap, months and share
+history, a project excluding itself, and a share cache keyed on the scope
+alone. 29 killed. The survivor swaps `under` for a string prefix in
+`nestedProjects`, and it is equivalent: the only extra directories it excludes
+are siblings like `api-v2`, which were never inside the scope, so excluding
+them removes nothing. A read-only review subagent checked the result against
+the real transcripts. Its findings are the per-field maximum, the fork layout
+(the first draft described two metas on a fork, which is really the subagent
+layout) and the paginated exemption above.

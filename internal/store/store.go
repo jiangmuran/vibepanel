@@ -1019,6 +1019,27 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+
+	// v28: which reader wrote a transcript's rows.
+	//
+	// The cursor was (size, mtime), which answers "has this file changed" and
+	// not "were these rows read correctly". When a reader is fixed, every file
+	// that has not changed since keeps the rows the broken reader wrote, for
+	// ever: the Claude output fix of September 2026 would have corrected new
+	// sessions and left a month of history at half its real output, on a
+	// screen that no longer had any bug to explain it.
+	//
+	// So each file records the reader version that produced its rows, and a
+	// pass re-reads any file whose version is not the current one. Existing
+	// rows default to 0, older than every version, which is what makes the
+	// upgrade re-read everything once without a step here that deletes it.
+	// Deleting instead would be simpler and worse: the panel would report zero
+	// until the first pass finished, where this way each file's old rows stay
+	// on screen until its new ones replace them in one transaction.
+	func(tx *sql.Tx) error {
+		_, err := tx.Exec(`ALTER TABLE usage_files ADD COLUMN reader INTEGER NOT NULL DEFAULT 0`)
+		return err
+	},
 }
 
 // scanner is *sql.Row and *sql.Rows both, so one scan function serves a

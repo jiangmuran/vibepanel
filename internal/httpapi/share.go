@@ -1348,9 +1348,16 @@ type cachedSpend struct {
 // on the screen is still true.
 func (s *Server) spendNow(ctx context.Context, projects []store.Project,
 	cwdPrefix string) spendSnapshot {
+	// The projects nested inside the scope belong to themselves, as they do in
+	// the project table below; see store.UsageFilter.Exclude. They are part of
+	// the cache key because a project created inside the scope changes the
+	// answer without changing the scope.
+	exclude := nestedProjects(cwdPrefix, projects)
+	key := strings.Join(append([]string{cwdPrefix}, exclude...), "\x00")
+
 	s.spendMu.Lock()
 	defer s.spendMu.Unlock()
-	if hit, ok := s.spendCache[cwdPrefix]; ok && time.Since(hit.at) < shareSpendCacheFor {
+	if hit, ok := s.spendCache[key]; ok && time.Since(hit.at) < shareSpendCacheFor {
 		return hit.snap
 	}
 
@@ -1360,7 +1367,7 @@ func (s *Server) spendNow(ctx context.Context, projects []store.Project,
 		// No ingester: nothing has ever been counted and nothing ever will be.
 		// Reported as "not readable" rather than as zero, which is the
 		// distinction the whole flag exists for.
-		s.putSpend(cwdPrefix, snap)
+		s.putSpend(key, snap)
 		return snap
 	}
 
@@ -1379,7 +1386,7 @@ func (s *Server) spendNow(ctx context.Context, projects []store.Project,
 	if pass.At.IsZero() {
 		// A pass has been asked for and none has finished. Everything below
 		// would be a confident zero.
-		s.putSpend(cwdPrefix, snap)
+		s.putSpend(key, snap)
 		return snap
 	}
 	snap.readable, snap.scannedAt = true, pass.At.Unix()
@@ -1393,12 +1400,12 @@ func (s *Server) spendNow(ctx context.Context, projects []store.Project,
 	snap.hoursToday = now.Sub(midnight).Hours()
 	from := dayShift(s.loc(ctx), now, -(shareSpendHistoryDays - 1))
 
-	history := store.UsageFilter{From: from, To: snap.date, CWDPrefix: cwdPrefix}
+	history := store.UsageFilter{From: from, To: snap.date, CWDPrefix: cwdPrefix, Exclude: exclude}
 	days, err := s.DB.UsageByDay(ctx, history)
 	if err != nil {
 		s.Log.Debug("share spend by day", "err", err)
 		empty := emptySpend()
-		s.putSpend(cwdPrefix, empty)
+		s.putSpend(key, empty)
 		return empty
 	}
 	snap.days = days
@@ -1408,7 +1415,7 @@ func (s *Server) spendNow(ctx context.Context, projects []store.Project,
 	// answering it with the last fifty-three weeks of months answers a
 	// different one.
 	if months, merr := s.DB.UsageByMonth(ctx,
-		store.UsageFilter{CWDPrefix: cwdPrefix}); merr == nil {
+		store.UsageFilter{CWDPrefix: cwdPrefix, Exclude: exclude}); merr == nil {
 		snap.months = months
 	} else {
 		s.Log.Debug("share spend by month", "err", merr)
@@ -1418,6 +1425,7 @@ func (s *Server) spendNow(ctx context.Context, projects []store.Project,
 		From:      dayShift(s.loc(ctx), now, -(shareSpendWindowDays - 1)),
 		To:        snap.date,
 		CWDPrefix: cwdPrefix,
+		Exclude:   exclude,
 	}
 	if byTool, terr := s.DB.UsageByTool(ctx, window); terr == nil {
 		// Every agent this panel can read appears, spend or none, so that one
@@ -1458,7 +1466,7 @@ func (s *Server) spendNow(ctx context.Context, projects []store.Project,
 		s.Log.Debug("share spend by directory", "err", derr)
 	}
 
-	s.putSpend(cwdPrefix, snap)
+	s.putSpend(key, snap)
 	return snap
 }
 

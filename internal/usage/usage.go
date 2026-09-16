@@ -172,13 +172,31 @@ type claudeRecord struct {
 // would be wrong here.
 //
 // Deduplication on (message.id, requestId) is the load-bearing part. One API
-// response with several content blocks is written as one line per block, each
-// carrying the *same* usage object, so counting lines counts a thinking block
-// and the text after it as two separate responses. Measured on one real
-// 89 MB transcript: 13,869 usage-bearing lines for 6,563 actual requests, and
-// 14.1M "output tokens" where the truth is 5.95M — inflation of 2.37x, in the
-// direction that flatters. Across every transcript on that machine, 125,102
-// lines for 67,339 requests.
+// response with several content blocks is written as one line per block, so
+// counting lines counts a thinking block and the text after it as two separate
+// responses. Measured on one real 89 MB transcript: 13,869 usage-bearing lines
+// for 6,563 actual requests, and 14.1M "output tokens" where the truth is
+// 5.95M — inflation of 2.37x, in the direction that flatters.
+//
+// Which of those lines to believe is the second half, and it was got wrong
+// for a month. This used to keep the first line on the grounds that every line
+// carried the same usage object, which was true of the Claude Code that was
+// measured and stopped being true: the lines written while the response is
+// still streaming carry a placeholder output_tokens of 1 to 3, and only the
+// last one, the one with a stop_reason, carries the real figure. Measured on
+// this machine in September 2026: 25,550 of 102,575 requests had lines that
+// disagreed, only ever in output_tokens and only ever upwards, and keeping the
+// first line reported 13.1M output tokens for a month that spent 25.1M. The
+// total barely moved — cache reads are 35 billion — so nothing looked wrong.
+//
+// So each request keeps the line with the largest output_tokens, whole. Not
+// "the last line": a resumed session replays its history into the same file,
+// so a placeholder can follow the final figure, and the placeholder never
+// exceeds it. Not the largest value of each field either, which was the first
+// version of this fix: one request in 102,909 here has two lines that differ in
+// their cache figures as well, and a per-field maximum made a usage object
+// that neither line carried, 10k tokens larger than either. Ties go to the
+// later line.
 //
 // The duplicates come in two shapes and only one of them is obvious. 57,296 of
 // them are the adjacent kind above. The other 466 sit exactly 1,787
@@ -189,8 +207,16 @@ type claudeRecord struct {
 // replayed prefix, which is the failure that looks correct.
 func readClaude(r io.Reader, loc *time.Location) (readResult, error) {
 	var out readResult
-	agg := map[key]*Bucket{}
-	seen := map[string]struct{}{}
+	// A request's bucket is decided by the first line seen for it; its counts
+	// are settled only when the file ends, which is why nothing is added to a
+	// bucket until then.
+	type request struct {
+		key key
+		cwd string
+		Counts
+	}
+	byID := map[string]*request{}
+	var order []*request
 
 	err := eachLine(r, &out.skipped, func(line []byte) {
 		// The cheap gate first. Most lines in a transcript are user messages
@@ -208,28 +234,45 @@ func readClaude(r io.Reader, loc *time.Location) (readResult, error) {
 		if rec.Type != "assistant" || rec.Message.Usage == nil {
 			return
 		}
+		u := rec.Message.Usage
+		c := Counts{
+			Input:      u.InputTokens,
+			Output:     u.OutputTokens,
+			CacheRead:  u.CacheReadInputTokens,
+			CacheWrite: u.CacheCreationInputTokens,
+		}
 		dedupe := rec.Message.ID + "\x00" + rec.RequestID
-		if _, dup := seen[dedupe]; dup {
+		if seen := byID[dedupe]; seen != nil {
+			if c.Output >= seen.Output {
+				seen.Counts = c
+			}
 			return
 		}
-		seen[dedupe] = struct{}{}
 
 		day, ok := localDay(rec.Timestamp, loc)
 		if !ok {
 			out.skipped++
 			return
 		}
-		u := rec.Message.Usage
-		add(agg, key{day, rec.SessionID, rec.Message.Model}, rec.CWD, Counts{
-			Input:      u.InputTokens,
-			Output:     u.OutputTokens,
-			CacheRead:  u.CacheReadInputTokens,
-			CacheWrite: u.CacheCreationInputTokens,
-			Requests:   1,
-		})
+		req := &request{key: key{day, rec.SessionID, rec.Message.Model}, cwd: rec.CWD, Counts: c}
+		byID[dedupe] = req
+		order = append(order, req)
 	})
 	if err != nil {
 		return out, err
+	}
+	agg := map[key]*Bucket{}
+	for _, req := range order {
+		if req.Total() == 0 {
+			// Claude Code's own "<synthetic>" messages — an interrupted turn,
+			// an API error shown in the transcript — carry a usage object of
+			// all zeros. 1,756 of them here. No request reached a model, so
+			// none is counted: a request counter they inflate is the
+			// denominator of "tokens per request".
+			continue
+		}
+		req.Requests = 1
+		add(agg, req.key, req.cwd, req.Counts)
 	}
 	out.buckets = flatten(agg)
 	return out, nil
@@ -252,7 +295,11 @@ type codexRecord struct {
 		SessionID string `json:"session_id"`
 		CWD       string `json:"cwd"`
 		Model     string `json:"model"`
-		Info      *struct {
+		// ForkedFrom is set on a thread that began as a copy of another, and
+		// HistoryMode says how it was copied. See readCodex.
+		ForkedFrom  string `json:"forked_from_id"`
+		HistoryMode string `json:"history_mode"`
+		Info        *struct {
 			TotalTokenUsage codexUsage `json:"total_token_usage"`
 		} `json:"info"`
 	} `json:"payload"`
@@ -274,16 +321,40 @@ type codexRecord struct {
 // delta of zero and needs no dedupe table.
 //
 // A decreasing total is treated as a fresh baseline rather than a negative
-// delta. Not observed on 138 rollouts — compaction does not reset it — but the
-// alternative if it ever happens is a negative token count on somebody's
-// dashboard, and there is no reading of "minus four million tokens" that is
-// less wrong than counting the new total once.
+// delta. Compaction does not reset it, but resuming a thread after a long gap
+// does: two of 157 rollouts here, each with the new total equal to that
+// request's own last_token_usage, so counting the new total once is exactly
+// right and not merely the least wrong option.
+//
+// A forked thread starts with a copy of its parent, and in Codex's "legacy"
+// history mode the copy includes every token_count the parent ever wrote,
+// replayed in the same second the fork was made. Differencing those counts
+// the parent's whole spend a second time, on the day of the fork and under no
+// model, because the replay comes before any turn_context. Measured here: six
+// forks, 144 to 594 replayed counts each, 366M tokens counted twice, 4.8% of
+// everything Codex had spent. The replay ends where the fork's own first turn
+// begins, and the fork's own totals carry on from the parent's last one, so on
+// such a thread the counts before the first turn_context set the baseline and
+// add nothing.
+//
+// Narrowly, because holding counts back is how a thread gets reported as
+// nothing. An unforked thread is never held back: an older Codex that wrote no
+// turn_context would count zero. Nor is a "paginated" one, which copies no
+// counts: every subagent rollout carries forked_from_id, 76 of them here, and
+// a subagent that crashed before its first turn_context must still count. A
+// fork that names no history mode is treated as legacy, which is what a Codex
+// from before the field would have been.
 func readCodex(r io.Reader, loc *time.Location) (readResult, error) {
 	var out readResult
 	agg := map[key]*Bucket{}
 
 	var session, cwd, model string
 	var prev codexUsage
+	// metas counts session_meta records. A subagent writes its own and then
+	// its parent's, which has no forked_from_id; only the first says what this
+	// file is.
+	metas := 0
+	replays, turned := false, false
 
 	err := eachLine(r, &out.skipped, func(line []byte) {
 		if !containsCodexMarker(line) {
@@ -296,9 +367,14 @@ func readCodex(r io.Reader, loc *time.Location) (readResult, error) {
 		}
 		switch {
 		case rec.Type == "session_meta":
+			metas++
+			if metas == 1 {
+				replays = rec.Payload.ForkedFrom != "" && rec.Payload.HistoryMode != "paginated"
+			}
 			session = rec.Payload.SessionID
 			cwd = rec.Payload.CWD
 		case rec.Type == "turn_context":
+			turned = true
 			// Later than session_meta and more specific: a turn can run in a
 			// subdirectory of where the thread started, and the model can be
 			// switched mid-thread. session_meta carries no model at all, so
@@ -316,6 +392,11 @@ func readCodex(r io.Reader, loc *time.Location) (readResult, error) {
 				return
 			}
 			total := rec.Payload.Info.TotalTokenUsage
+			if replays && !turned {
+				// The parent's history, replayed. See above.
+				prev = total
+				return
+			}
 			d := delta(prev, total)
 			prev = total
 			if d.Total() == 0 {
@@ -612,16 +693,41 @@ func (s *Scanner) Roots() map[Tool]string {
 // agent has no ledger here" and "this agent spent nothing" are different
 // claims, and only one of them is ever true.
 func statOne(path string, src *Source) ([]Ref, Source, error) {
-	info, err := os.Stat(path)
+	size, modified, err := dbStamp(path)
 	if err != nil {
 		src.Found = false
 		src.Problem = "no " + filepath.Base(path)
 		return nil, *src, nil
 	}
 	src.Files = 1
-	src.Bytes = info.Size()
+	src.Bytes = size
 	src.Complete = true
-	return []Ref{{Path: path, Size: info.Size(), ModifiedAt: info.ModTime().Unix()}}, *src, nil
+	return []Ref{{Path: path, Size: size, ModifiedAt: modified}}, *src, nil
+}
+
+// dbStamp is the cursor's view of a SQLite database: the file and its
+// write-ahead log together.
+//
+// The database file alone is not what changes. A running opencode writes into
+// `opencode.db-wal`, and the main file's size and mtime move only when SQLite
+// checkpoints the log back into it -- so a cursor on the main file alone
+// reports an old answer as current for as long as the log has not been folded
+// in. The log's size and mtime are added in; a log that does not exist is the
+// ordinary state of a database nothing has written to since it was closed.
+//
+// Walk and ReadFile both stamp through here. If they disagreed the cursor would
+// never match and every pass would re-read the whole database.
+func dbStamp(path string) (size, modified int64, err error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, 0, err
+	}
+	size, modified = info.Size(), info.ModTime().Unix()
+	if wal, werr := os.Stat(path + "-wal"); werr == nil {
+		size += wal.Size()
+		modified = max(modified, wal.ModTime().Unix())
+	}
+	return size, modified, nil
 }
 
 func (s *Scanner) Walk(tool Tool) ([]Ref, Source, error) {
@@ -701,19 +807,18 @@ func (s *Scanner) ReadFile(tool Tool, path string) File {
 	// otherwise have its new bytes recorded under the size and mtime they
 	// arrived with, and the next pass would see nothing to do. Taking the
 	// stamp first means a concurrent append leaves the recorded stamp stale,
-	// and the file is read again.
-	info, err := os.Stat(path)
-	if err != nil {
-		f.Problem = err.Error()
-		return f
-	}
-	f.Size = info.Size()
-	f.ModifiedAt = info.ModTime().Unix()
-
-	// Before the open, because this one is a database and not a stream. Reading
-	// it through an *os.File would mean holding 2 GB open to hand a driver a
-	// path it is going to open itself.
+	// and the file is read again. Both branches below do that before reading.
+	//
+	// opencode's branch comes first because it is a database and not a
+	// stream. Reading it through an *os.File would mean holding 2 GB open to
+	// hand a driver a path it is going to open itself.
 	if tool == ToolOpencode {
+		size, modified, err := dbStamp(path)
+		if err != nil {
+			f.Problem = err.Error()
+			return f
+		}
+		f.Size, f.ModifiedAt = size, modified
 		res, rerr := readOpencode(path, s.loc())
 		if rerr != nil {
 			f.Problem = rerr.Error()
@@ -722,6 +827,14 @@ func (s *Scanner) ReadFile(tool Tool, path string) File {
 		f.Buckets, f.Skipped = res.buckets, res.skipped
 		return f
 	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		f.Problem = err.Error()
+		return f
+	}
+	f.Size = info.Size()
+	f.ModifiedAt = info.ModTime().Unix()
 
 	fh, err := os.Open(path)
 	if err != nil {

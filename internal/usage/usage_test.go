@@ -398,3 +398,218 @@ func TestIngestPassCost(t *testing.T) {
 	t.Logf("one %.0f MB transcript changed: %d/%d files read in %v",
 		float64(biggest.Size)/(1<<20), one.Read, one.Seen, one.Duration.Round(time.Millisecond))
 }
+
+// claudeStreamLine is a line written while a response is still streaming: the
+// usage object is there, and its output_tokens is a placeholder.
+func claudeStreamLine(ts, msgID, reqID string, out int64, stop string) string {
+	stopJSON := "null"
+	if stop != "" {
+		stopJSON = fmt.Sprintf("%q", stop)
+	}
+	return fmt.Sprintf(`{"type":"assistant","timestamp":%q,"sessionId":"s1","cwd":"/p",`+
+		`"requestId":%q,"message":{"id":%q,"model":"opus","stop_reason":%s,`+
+		`"usage":{"input_tokens":6,"output_tokens":%d,"cache_creation_input_tokens":300,`+
+		`"cache_read_input_tokens":40000}}}`, ts, reqID, msgID, stopJSON, out)
+}
+
+// The lines of one streamed response do not agree, and the first is the wrong
+// one to keep.
+//
+// The shape is copied from a real transcript of September 2026: a thinking
+// block and three tool calls each written with output_tokens 2, and the last
+// line, the one with a stop_reason, carrying 352. Keeping the first line is how
+// a month that produced 25.1M output tokens was reported as 13.1M.
+func TestAStreamedResponseCountsItsFinalOutputNotItsPlaceholder(t *testing.T) {
+	const ts = "2026-09-15T01:53:34.641Z"
+	body := strings.Join([]string{
+		claudeStreamLine(ts, "msg_1", "req_1", 2, ""),
+		claudeStreamLine(ts, "msg_1", "req_1", 2, ""),
+		claudeStreamLine(ts, "msg_1", "req_1", 2, ""),
+		claudeStreamLine(ts, "msg_1", "req_1", 352, "tool_use"),
+	}, "\n") + "\n"
+
+	got := total(read(t, ToolClaude, body))
+	if got.Output != 352 {
+		t.Errorf("output %d, want 352; a streaming placeholder was kept instead of the "+
+			"figure the response finished with", got.Output)
+	}
+	if got.Requests != 1 {
+		t.Errorf("requests %d, want 1", got.Requests)
+	}
+	if got.Input != 6 || got.CacheRead != 40000 || got.CacheWrite != 300 {
+		t.Errorf("the other fields moved: %+v", got)
+	}
+}
+
+// The final figure wins wherever it sits in the file, including before a
+// replayed placeholder. A resumed session copies its history back into the
+// transcript, so "the last line" is not a rule that can be relied on.
+func TestTheFinalOutputWinsWhateverOrderTheLinesAreIn(t *testing.T) {
+	const ts = "2026-09-15T01:53:34.641Z"
+	body := strings.Join([]string{
+		claudeStreamLine(ts, "msg_1", "req_1", 905, "tool_use"),
+		claudeStreamLine(ts, "msg_2", "req_2", 10, "end_turn"),
+		claudeStreamLine(ts, "msg_1", "req_1", 3, ""),
+	}, "\n") + "\n"
+
+	got := total(read(t, ToolClaude, body))
+	if got.Output != 915 {
+		t.Errorf("output %d, want 915; a later placeholder overwrote a final figure", got.Output)
+	}
+}
+
+// Claude Code's own "<synthetic>" records carry a usage object of zeros: an
+// interrupted turn, an error shown in the transcript. No request reached a
+// model, and counting one moves "tokens per request" for nothing.
+func TestASyntheticRecordWithNoTokensIsNotARequest(t *testing.T) {
+	const ts = "2026-09-15T01:53:34.641Z"
+	body := strings.Join([]string{
+		claudeLine(ts, "s1", "/p", "msg_1", "req_1", "opus", 1, 10, 0, 0),
+		claudeLine(ts, "s1", "/p", "msg_2", "", "<synthetic>", 0, 0, 0, 0),
+	}, "\n") + "\n"
+
+	f := read(t, ToolClaude, body)
+	if got := total(f); got.Requests != 1 {
+		t.Errorf("requests %d, want 1; a record that spent nothing was counted", got.Requests)
+	}
+	for _, b := range f.Buckets {
+		if b.Model == "<synthetic>" {
+			t.Errorf("a bucket was written for a model that never ran: %+v", b)
+		}
+	}
+}
+
+// Lines of one request that disagree about more than output keep one line's
+// usage whole. A request on this machine has (8 out, 139533 cache read, 2058
+// cache write) on one line and (1624, 131527, 0) on the other; taking each
+// field's maximum reported a request neither line describes.
+func TestADisagreeingRequestKeepsOneLinesUsageWhole(t *testing.T) {
+	const ts = "2026-09-10T08:00:00.000Z"
+	body := strings.Join([]string{
+		claudeLine(ts, "s1", "/p", "msg_1", "req_1", "opus", 2, 8, 2058, 139533),
+		claudeLine(ts, "s1", "/p", "msg_1", "req_1", "opus", 2, 1624, 0, 131527),
+	}, "\n") + "\n"
+
+	got := total(read(t, ToolClaude, body))
+	want := Counts{Input: 2, Output: 1624, CacheRead: 131527, CacheWrite: 0, Requests: 1}
+	if got != want {
+		t.Errorf("got %+v, want %+v: the fields of two different lines were combined", got, want)
+	}
+}
+
+func codexForkMeta(ts, id, session, forkedFrom, mode, cwd string) string {
+	return fmt.Sprintf(`{"type":"session_meta","timestamp":%q,"payload":`+
+		`{"id":%q,"session_id":%q,"forked_from_id":%q,"cwd":%q,"history_mode":%q}}`,
+		ts, id, session, forkedFrom, cwd, mode)
+}
+
+func codexTurn(ts, model string) string {
+	return fmt.Sprintf(`{"type":"turn_context","timestamp":%q,"payload":{"model":%q,"cwd":"/p"}}`,
+		ts, model)
+}
+
+// A forked Codex thread replays its parent's token counts, and they are the
+// parent's spend, already counted in the parent's own rollout.
+//
+// The shape is the one on this machine: the fork's one session_meta, the
+// parent's running totals in the same second with no turn_context before them,
+// and then the fork's first turn, whose total carries on from the parent's.
+// Differencing the replay counted six forks' parents again: 366M tokens, on the
+// day of the fork, under no model.
+func TestAForkedCodexThreadDoesNotCountItsParentsHistory(t *testing.T) {
+	body := strings.Join([]string{
+		codexForkMeta("2026-07-19T11:26:32.300Z", "fork", "parent", "parent", "legacy", "/p"),
+		codexTokenCount("2026-07-19T11:26:32.369Z", 5000, 0, 0, 838),
+		codexTokenCount("2026-07-19T11:26:32.370Z", 80000000, 78000000, 0, 159469),
+		codexTokenCount("2026-07-19T11:26:32.371Z", 82000000, 80000000, 0, 159469),
+		codexTurn("2026-07-19T11:26:33.000Z", "gpt-6"),
+		codexTokenCount("2026-07-19T11:26:40.000Z", 82010000, 80008000, 0, 159569),
+	}, "\n") + "\n"
+
+	f := read(t, ToolCodex, body)
+	got := total(f)
+	if got.Total() != 10000+100 {
+		t.Errorf("total %d, want %d; the parent's replayed history was counted as the fork's",
+			got.Total(), 10100)
+	}
+	if got.Requests != 1 {
+		t.Errorf("requests %d, want 1", got.Requests)
+	}
+	for _, b := range f.Buckets {
+		if b.Model == "" {
+			t.Errorf("a bucket with no model: %+v", b)
+		}
+	}
+}
+
+// Holding counts back until the first turn is only for a fork. A rollout that
+// was not forked counts from its first event, turn_context or not: an older
+// Codex that never wrote one would otherwise report nothing at all.
+func TestAnUnforkedCodexThreadCountsBeforeAnyTurnContext(t *testing.T) {
+	body := strings.Join([]string{
+		codexMeta("2026-07-19T11:00:00.000Z", "c1", "/p"),
+		codexTokenCount("2026-07-19T11:00:01.000Z", 1000, 0, 0, 100),
+	}, "\n") + "\n"
+
+	if got := total(read(t, ToolCodex, body)); got.Total() != 1100 {
+		t.Errorf("total %d, want 1100; an unforked thread was treated as a replay", got.Total())
+	}
+}
+
+// A subagent in the newer "paginated" mode copies no counts. It carries
+// forked_from_id like a fork, then its parent's session_meta, and nothing may
+// be held back from it -- including, for a subagent that never got as far as
+// a turn_context, the counts it did write.
+func TestAPaginatedCodexSubagentCountsItsOwnWork(t *testing.T) {
+	for name, lines := range map[string][]string{
+		"with a turn": {
+			codexForkMeta("2026-09-07T01:01:14.679Z", "child", "parent", "parent", "paginated", "/p"),
+			codexForkMeta("2026-09-07T01:01:14.680Z", "parent", "parent", "", "paginated", "/p"),
+			codexTurn("2026-09-07T01:01:14.680Z", "gpt-6"),
+			codexTokenCount("2026-09-07T01:01:21.003Z", 16137, 0, 0, 68),
+		},
+		"without one": {
+			codexForkMeta("2026-09-07T01:01:14.679Z", "child", "parent", "parent", "paginated", "/p"),
+			codexForkMeta("2026-09-07T01:01:14.680Z", "parent", "parent", "", "paginated", "/p"),
+			codexTokenCount("2026-09-07T01:01:21.003Z", 16137, 0, 0, 68),
+		},
+	} {
+		body := strings.Join(lines, "\n") + "\n"
+		if got := total(read(t, ToolCodex, body)); got.Total() != 16205 {
+			t.Errorf("%s: total %d, want 16205", name, got.Total())
+		}
+	}
+}
+
+// Two lines with the same output and different cache figures: the later line
+// is the one kept, which is the tie rule the reader states.
+func TestATiedRequestKeepsTheLaterLine(t *testing.T) {
+	const ts = "2026-09-10T08:00:00.000Z"
+	body := strings.Join([]string{
+		claudeLine(ts, "s1", "/p", "msg_1", "req_1", "opus", 2, 50, 100, 1000),
+		claudeLine(ts, "s1", "/p", "msg_1", "req_1", "opus", 2, 50, 0, 2000),
+	}, "\n") + "\n"
+
+	got := total(read(t, ToolClaude, body))
+	if got.CacheRead != 2000 || got.CacheWrite != 0 {
+		t.Errorf("got %+v, want the second line's cache figures", got)
+	}
+}
+
+// Only the first session_meta says what a file is. A subagent writes its own
+// and then its parent's, which names no fork; if a replaying thread ever
+// carried its parent's meta the same way, the last one must not decide that it
+// replays nothing.
+func TestTheFirstSessionMetaDecidesWhetherAThreadReplays(t *testing.T) {
+	body := strings.Join([]string{
+		codexForkMeta("2026-07-19T11:26:32.300Z", "fork", "parent", "parent", "legacy", "/p"),
+		codexForkMeta("2026-07-19T11:26:32.300Z", "parent", "parent", "", "legacy", "/p"),
+		codexTokenCount("2026-07-19T11:26:32.369Z", 80000000, 78000000, 0, 159469),
+		codexTurn("2026-07-19T11:26:33.000Z", "gpt-6"),
+		codexTokenCount("2026-07-19T11:26:40.000Z", 80010000, 78008000, 0, 159569),
+	}, "\n") + "\n"
+
+	if got := total(read(t, ToolCodex, body)); got.Total() != 10100 {
+		t.Errorf("total %d, want 10100; a later session_meta overrode the first", got.Total())
+	}
+}
