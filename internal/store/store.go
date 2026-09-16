@@ -898,6 +898,20 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+
+	// v26: drop idx_sessions_state.
+	//
+	// It was created with the sessions table and never used: no query filters
+	// by state -- the sidebar reads every row and orders by sort_weight -- so
+	// the index was maintained on every state change, the panel's hottest
+	// write, for no reader at all. The first migration is frozen, so every
+	// database still gains the index at v1 and sheds it here.
+	func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`DROP INDEX IF EXISTS idx_sessions_state`); err != nil {
+			return fmt.Errorf("drop idx_sessions_state: %w", err)
+		}
+		return nil
+	},
 }
 
 // scanner is *sql.Row and *sql.Rows both, so one scan function serves a
