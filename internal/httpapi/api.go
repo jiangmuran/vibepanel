@@ -159,6 +159,12 @@ type Server struct {
 	tmuxList   []tmux.Info
 	tmuxListAt time.Time
 
+	// touchCooldowns throttles the "this credential was just used" writes:
+	// the auth-session last-seen stamp, the API-token last-used stamp and the
+	// preview-link last-used stamp. See touchCooldowns in auth.go.
+	touchOnce     sync.Once
+	touchCooldown *auth.Cooldown
+
 	// lastSnapshot is the most recent state payload that was broadcast. The
 	// poller compares against it so that a tick where nothing changed sends
 	// nothing — otherwise pushing is just polling with extra steps.

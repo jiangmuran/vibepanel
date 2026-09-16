@@ -294,10 +294,11 @@ func (d *DB) ListAPITokens(ctx context.Context) ([]APIToken, error) {
 	return out, rows.Err()
 }
 
-// UserByAPIToken answers who a token belongs to, and stamps it as used.
+// UserByAPIToken answers who a token belongs to.
 //
-// The stamp is best effort for the same reason TouchAuthSession's is: a failure
-// to record that a token was used must not fail the request it was used for.
+// The last-used stamp is a separate TouchAPIToken call, so a caller that is
+// asked several times a second does not take the write lock once per ask;
+// nothing reads last_used_at at that granularity.
 func (d *DB) UserByAPIToken(ctx context.Context, tokenHash []byte) (User, error) {
 	var userID string
 	err := d.sql.QueryRowContext(ctx,
@@ -308,12 +309,21 @@ func (d *DB) UserByAPIToken(ctx context.Context, tokenHash []byte) (User, error)
 		}
 		return User{}, fmt.Errorf("store: api token lookup: %w", err)
 	}
-	if _, err := d.sql.ExecContext(ctx,
-		`UPDATE api_tokens SET last_used_at = ? WHERE token_hash = ?`, now(), tokenHash); err != nil {
-		// Deliberately swallowed. See above.
-		_ = err
-	}
 	return d.UserByID(ctx, userID)
+}
+
+// TouchAPIToken records that a token was used.
+//
+// Best effort by the caller, for the same reason TouchAuthSession's is: a
+// failure to record that a token was used must not fail the request it was
+// used for.
+func (d *DB) TouchAPIToken(ctx context.Context, tokenHash []byte) error {
+	_, err := d.sql.ExecContext(ctx,
+		`UPDATE api_tokens SET last_used_at = ? WHERE token_hash = ?`, now(), tokenHash)
+	if err != nil {
+		return fmt.Errorf("store: touch api token: %w", err)
+	}
+	return nil
 }
 
 func (d *DB) DeleteAPIToken(ctx context.Context, id string) error {

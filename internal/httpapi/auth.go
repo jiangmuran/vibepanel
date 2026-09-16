@@ -134,6 +134,23 @@ func (s *Server) cookieSecureFor(r *http.Request) bool {
 	return requestScheme(r, s.trustedProxies()) == "https"
 }
 
+// credentialTouchWindow is how long one "this credential was just used"
+// stamp is trusted. The stamps back a date a person reads, not an expiry the
+// panel enforces -- auth sessions and API tokens both expire by a fixed
+// deadline -- so a minute of staleness is invisible and a wall polling every
+// two seconds costs one write a minute instead of one a poll.
+const credentialTouchWindow = time.Minute
+
+// touchCooldowns gates the last-used stamps: the auth session's last-seen,
+// the API token's last-used, the preview link's last-used. One store, three
+// buckets, so the pattern is one field rather than three.
+func (s *Server) touchCooldowns() *auth.Cooldown {
+	s.touchOnce.Do(func() {
+		s.touchCooldown = auth.NewCooldown(credentialTouchWindow)
+	})
+	return s.touchCooldown
+}
+
 // ─── middleware ───────────────────────────────────────────────────────────
 
 // RequireAuth rejects requests without a valid session.
@@ -306,12 +323,18 @@ func (s *Server) currentUser(r *http.Request) (store.User, bool, error) {
 	// and it is why they can be revoked one at a time from the settings page,
 	// which a password change cannot do.
 	if bearer := bearerToken(r); bearer != "" {
-		user, err := s.DB.UserByAPIToken(ctx, auth.HashToken(bearer))
+		hash := auth.HashToken(bearer)
+		user, err := s.DB.UserByAPIToken(ctx, hash)
 		if errors.Is(err, store.ErrNotFound) {
 			return store.User{}, false, nil
 		}
 		if err != nil {
 			return store.User{}, false, err
+		}
+		if s.touchCooldowns().Allow("api-token", string(hash), time.Now()) {
+			if terr := s.DB.TouchAPIToken(ctx, hash); terr != nil {
+				s.Log.Debug("touch api token", "err", terr)
+			}
 		}
 		return user, true, nil
 	}
@@ -359,8 +382,18 @@ func (s *Server) currentUser(r *http.Request) (store.User, bool, error) {
 		return store.User{}, false, err
 	}
 	// Best effort; a failed touch must not fail the request.
-	if err := s.DB.TouchAuthSession(ctx, hash); err != nil {
-		s.Log.Debug("touch auth session", "err", err)
+	//
+	// Throttled to one write a minute per session. currentUser runs on every
+	// authenticated request and every open socket's revalidation tick, and a
+	// stamp whose timestamp always changes is a real write -- taking the one
+	// write lock tens of thousands of times a day to maintain a date the
+	// settings page renders. The expiry it does not serve: a session's
+	// expires_at is fixed at creation, so nothing is shortened by noticing a
+	// use late.
+	if s.touchCooldowns().Allow("auth-session", string(hash), time.Now()) {
+		if err := s.DB.TouchAuthSession(ctx, hash); err != nil {
+			s.Log.Debug("touch auth session", "err", err)
+		}
 	}
 	return user, true, nil
 }

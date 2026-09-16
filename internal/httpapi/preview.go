@@ -270,8 +270,13 @@ func (s *Server) handleDirPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.DB.TouchPreviewLink(ctx, link.ID); err != nil {
-		s.Log.Warn("touch preview link", "id", link.ID, "err", err)
+	// One write a minute per link, not one per file a page loads: the handler
+	// runs per asset, and a page referencing a stylesheet and a script would
+	// take the write lock twice per load for a date the settings page renders.
+	if s.touchCooldowns().Allow("preview", link.ID, time.Now()) {
+		if err := s.DB.TouchPreviewLink(ctx, link.ID); err != nil {
+			s.Log.Warn("touch preview link", "id", link.ID, "err", err)
+		}
 	}
 
 	// Every response, not only the HTML ones. A stylesheet or a JSON file

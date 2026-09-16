@@ -408,6 +408,55 @@ func TestAChosenAddressOpensThePreview(t *testing.T) {
 	}
 }
 
+// The last-used stamp is written at most once a minute per link. The handler
+// runs per file a page loads, so an unthrottled stamp is one write per asset
+// per load, taking the single write lock on behalf of a date the settings
+// page renders.
+func TestAPreviewLinkIsStampedAtMostOnceAMinute(t *testing.T) {
+	ts, srv := newTestServer(t)
+	root := t.TempDir()
+	write(t, filepath.Join(root, "index.html"), "<h1>STAMP</h1>")
+
+	made := postJSON[struct {
+		Token string `json:"token"`
+	}](t, ts, "/api/settings/previews",
+		`{"root":`+strconv.Quote(root)+`,"name":"stamp","address":"my-stamp","expiresIn":0}`)
+
+	lastUsed := func() int64 {
+		t.Helper()
+		var at int64
+		if err := srv.DB.SQL().QueryRow(
+			`SELECT last_used_at FROM preview_links WHERE prefix = ?`, made.Token).Scan(&at); err != nil {
+			t.Fatalf("read last_used_at: %v", err)
+		}
+		return at
+	}
+
+	// A first open stamps and spends the link's cooldown.
+	body, code := getRaw(t, ts, "/preview/my-stamp/")
+	if code != http.StatusOK || !strings.Contains(body, "STAMP") {
+		t.Fatalf("the preview answered %d: %s", code, body)
+	}
+	stamped := lastUsed()
+	if stamped == 0 {
+		t.Fatal("the first open did not stamp the link; this test is checking nothing")
+	}
+
+	// Wind the stamp back, open again, and expect the stamp to hold: the
+	// second open within the window must not write.
+	if _, err := srv.DB.SQL().Exec(
+		`UPDATE preview_links SET last_used_at = 12345 WHERE prefix = ?`, made.Token); err != nil {
+		t.Fatal(err)
+	}
+	body, code = getRaw(t, ts, "/preview/my-stamp/")
+	if code != http.StatusOK || !strings.Contains(body, "STAMP") {
+		t.Fatalf("the second open answered %d: %s", code, body)
+	}
+	if got := lastUsed(); got != 12345 {
+		t.Errorf("last_used_at = %d after a second open within the window, want 12345", got)
+	}
+}
+
 // Every other capability route applies the operator's --allow-from list
 // before it looks at a credential; the preview route used to be the one that
 // did not, which made creating a preview link a way to serve files to
