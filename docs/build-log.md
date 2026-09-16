@@ -22296,3 +22296,15 @@ block widened to every refused address, the probe asked per address instead of
 per fetch, the probe under `.invalid`, a fixed label, the dial going to the
 name, and NXDOMAIN read as fake. `docs/page-backend.md` §4 says the same in
 fewer words.
+
+The release itself went out twice. v1.17.1 was tagged on v1.17.0 plus this
+fix and pushed before a `git fetch` showed that another session had merged
+the updater and cut v1.18.0 ten minutes earlier; GitHub and the panel's own
+updater take the highest version as latest, so the fix was re-tagged as
+v1.18.1 on the merged main. The first v1.18.1 build failed in
+`TestDeletingAProjectForgetsItsSessions` with "TempDir RemoveAll cleanup:
+directory not empty" -- the session's shell was still writing into the
+project directory when the test's cleanup removed it -- on the same commit
+whose `check` run had passed; six local runs passed, and the tag was re-cut
+through `workflow_dispatch` as the workflow's comment says to. The race in
+that test is not fixed here.
