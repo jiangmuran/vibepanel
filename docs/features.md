@@ -398,6 +398,14 @@ your `ok`. `ask: what is 3 doing` answers from read-only tools. 微信 voice not
 arrive transcribed; the agent never sees a pane's output when deciding where
 to send anything. There is a daily budget, and the page shows today's spend.
 
+**Questions with options.** When Claude Code asks with a menu, questions
+with options or a plan to approve, the card is the question and its options,
+never allow and deny. Reply a number to choose, `1 3` for several, or write
+your own answer; `2, extra words` chooses with words attached; `skip` leaves
+it. Several questions are asked one after another and submitted together at
+the end. A plan takes `1` (go ahead), `2` (go ahead, approving edits) or
+whatever you want changed. Telegram and 飞书 cards have a button per option.
+
 **The machine.** `system` (「系统」, 「监控」) answers with CPU and load, memory,
 swap, disk, uptime and the sessions using the most. **Alerts** message you when
 CPU stays above a threshold for a while (90% for ten minutes by default), or

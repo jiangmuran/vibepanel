@@ -213,6 +213,8 @@ type Bridge struct {
 	stopped map[string]time.Time
 	// alarms is the alert state per watched number: cpu, mem, disk.
 	alarms map[string]*alarm
+	// menus is how far each session's menu has been answered; see menu.go.
+	menus map[string]menuProgress
 	// missedOther counts, per person, pushes that could not reach them
 	// about sessions not waiting (a finished turn, an answer given by
 	// someone else), so the catch-up can say that more was missed.
@@ -282,6 +284,7 @@ func New(d Deps) *Bridge {
 		clarify:     map[string]time.Time{},
 		stopped:     map[string]time.Time{},
 		alarms:      map[string]*alarm{},
+		menus:       map[string]menuProgress{},
 		missedOther: map[string]int{},
 		handles:     map[string]int{},
 		hello:       map[string]time.Time{},
@@ -619,6 +622,12 @@ func (b *Bridge) cardFor(row store.Session, c Change, last store.SessionMessage,
 		card.Footer = strings.TrimPrefix(card.Footer+" · "+c.Tool, " · ")
 	}
 	rest := ""
+	if m, next := b.menuOf(last); body && m != nil && c.State == string(session.StateWaiting) {
+		// A menu's card is its question and options, not the summary line
+		// the message stores; the person answers from it.
+		card.Body = renderMenu(m, next, lang)
+		return card, ""
+	}
 	if body && last.Text != "" {
 		// A finished turn is a summary to glance at; a request is something
 		// to read before answering, so it gets the room.
@@ -670,6 +679,17 @@ func (b *Bridge) sendCard(ctx context.Context, ch *channel, p store.ChatPeer, ro
 		// No buttons, so the card says what to type. A first-time 微信 user
 		// otherwise learns it only by answering wrong once.
 		shownCard.Hint = msg(lang, "hintPrompt", card.Handle, card.Handle)
+	case waiting && c.Kind == store.MessageQuestion && last.Menu != "":
+		// The body already says how to answer. Buttons where a tap is a
+		// whole answer; a record either way, so the menu counts as seen.
+		if m, next := b.menuOf(last); m != nil && card.Body != "" {
+			if ch.caps.Buttons {
+				if bs := menuButtons(sessionID, last.ID, m, next, lang); len(bs) > 0 {
+					out.Buttons, kind = bs, store.OutboundRequest
+				}
+			}
+			shownID = last.ID
+		}
 	case waiting && c.Kind == store.MessageQuestion:
 		shownCard.Hint = msg(lang, "hintQuestion", card.Handle)
 	}

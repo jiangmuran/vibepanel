@@ -1040,6 +1040,18 @@ var migrations = []func(tx *sql.Tx) error{
 		_, err := tx.Exec(`ALTER TABLE usage_files ADD COLUMN reader INTEGER NOT NULL DEFAULT 0`)
 		return err
 	},
+
+	// v29: a session message can carry the menu it asked with.
+	//
+	// Claude Code's questions with options, and its plan approval, are one
+	// tool call each whose input is the whole menu. Kept beside the text as
+	// JSON rather than in tables of their own: the bridge reads one message's
+	// menu to draw a card and to know which keys an answer is, and nothing
+	// ever queries inside one.
+	func(tx *sql.Tx) error {
+		_, err := tx.Exec(`ALTER TABLE session_messages ADD COLUMN menu TEXT NOT NULL DEFAULT ''`)
+		return err
+	},
 }
 
 // scanner is *sql.Row and *sql.Rows both, so one scan function serves a

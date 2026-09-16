@@ -859,7 +859,12 @@ func (s *Server) handleHookState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(body) <= hooks.MaxPayload {
-		s.recordHookMessage(ctx, prev, body)
+		// PreToolUse reports "working", and for a tool that draws a menu the
+		// session is in fact stopped, waiting on its person; a phone told
+		// nothing until an unrelated notification arrives, if one does.
+		if s.recordHookMessage(ctx, prev, body) && st == session.StateWorking {
+			st = session.StateWaiting
+		}
 	}
 	if req.Source == hooks.CodexLegacySource {
 		s.Detector.ReportNotify(req.SessionID, st, time.Now())

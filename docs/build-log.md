@@ -23071,3 +23071,61 @@ tabs now (the key table sits with the advanced mode it serves), the hash keeps
 the tab, and a section that is its whole tab does not repeat the tab's name
 above itself. Channel cards in a row share a height with their buttons along
 the bottom.
+
+## 2026-09-16 — A question with options is not a permission prompt
+
+The owner sent a photo of the phone: a Claude Code menu (「用量面板最该突出的
+数字是什么？」, three options, a second question, Submit) had arrived as
+「要你允许 · Claude needs your permission」 with Allow and Deny. The live
+database said why. The session called `AskUserQuestion` at 08:12:45; six
+seconds later a Notification of type `permission_prompt` said "Claude needs
+your permission" and nothing else, and the panel stored it as a prompt. Allow
+is Enter, which would have picked the first question's highlighted option and
+left the rest; Deny is Escape, which throws the whole set away. `ExitPlanMode`
+is announced the same way.
+
+The questions exist in one place, the tool call's input, which the
+`PreToolUse` hook carries and every installed Claude Code already sends. A
+`PreToolUse` or `PermissionRequest` for either tool is now a question with its
+menu stored beside the text (migration v29, `session_messages.menu`). The
+session is waiting from that moment rather than from the notification, since
+`PreToolUse` reports "working". The notifications that follow ("needs your
+permission", then "is waiting for your input") only move the menu's time
+forward while it is the latest message; stored, either one replaced it.
+
+The owner's next message: "也有可能我有我自己的回答呀". So the keys were not
+guessed. A real Claude Code 2.1 on its own tmux socket was given one-off
+prompts that call the tool, and every path was driven and read back from what
+the model received:
+
+- a digit picks a single-choice option and moves to the next question;
+- in a multiple-choice question a digit toggles, and the question is left
+  from its Submit row, one below "Type something";
+- an own answer is typed on the "Type something" row, reached with Down;
+  pasting Chinese there works, and Enter submits it;
+- with several questions a review page follows, and 1 is "Submit answers";
+- "Chat about this" is the digit after "Type something", and declines;
+- with previews there is no "Type something": `n` opens notes on the option
+  under the cursor, and Enter inside them submits *notes only*, with no
+  option, so a chosen option's note is closed with Escape before Enter;
+- the plan menu is 1 auto, 2 approve edits, and a third row typed into for
+  what to change, after which Claude revises and asks again.
+
+A card for a menu is its current question with numbered options and one line
+on how to answer, with a button per option on Telegram and 飞书 (a multiple
+choice is answered in text). Replies are read against the question: digits
+choose, "2，words" chooses with words, anything else is the person's own
+answer (with previews, a note), 「跳过」 declines. Several questions go one at a
+time, the next shown in the receipt, and the review page is submitted after the
+last. The shown-first rule is the prompt's: a bare "2" answers only a menu
+this person saw, and a button or a quote of an earlier menu, or of a question
+already answered, shows the current one. A yes to a menu shows the menu. A
+reply to a menu is read as its answer before a leading number can be taken for
+another session's handle. The one screen not answered from a phone is
+previews with multiple choice, which was not measured; it says so.
+
+The first run of the new tests found the button handler broken for every
+button: inserting the menu case had swallowed the `approve`/`deny` line after
+it. Thirteen mutations: ten killed, one did not compile and was rewritten, and
+the two survivors, a stale button from an earlier menu and a menu with too many
+questions, each got a test.

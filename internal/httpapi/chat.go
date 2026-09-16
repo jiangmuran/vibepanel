@@ -1226,10 +1226,13 @@ const promptEcho = 5
 // recordHookMessage keeps what an agent's hook document carried and tells
 // the bridge. Called before the state is written, so the message is never
 // newer than the state change it belongs to (the bridge compares the two).
-func (s *Server) recordHookMessage(ctx context.Context, row store.Session, body []byte) {
+// It reports whether the document put a menu on the screen, which is a
+// session waiting on its person whatever state the hook was configured to
+// send for that event.
+func (s *Server) recordHookMessage(ctx context.Context, row store.Session, body []byte) (menu bool) {
 	rep, ok := hooks.Extract(body)
 	if !ok {
-		return
+		return false
 	}
 	tool := chat.AgentFor(row.LaunchCommand, row.Command)
 	if rep.TranscriptPath != "" {
@@ -1242,7 +1245,19 @@ func (s *Server) recordHookMessage(ctx context.Context, row store.Session, body 
 		text = "(interrupted)"
 	}
 	if text == "" {
-		return
+		return false
+	}
+	// A menu on the screen is announced a few seconds later by a
+	// Notification ("Claude needs your permission", "Claude is waiting for
+	// your input") that says nothing about it. Stored, that sentence became
+	// the latest message and turned the menu into a permission prompt. While
+	// the menu is the latest message it is still what is being asked, so the
+	// announcement only moves its time forward.
+	if rep.Event == "Notification" {
+		if last, ok, _ := s.DB.LatestSessionMessage(ctx, row.ID); ok && last.Menu != "" {
+			_ = s.DB.TouchSessionMessage(ctx, last.ID, time.Now().Unix())
+			return false
+		}
 	}
 	// Claude Code fires PermissionRequest (with the command) and then
 	// Notification (with a sentence about it) for one prompt. The first is
@@ -1250,17 +1265,23 @@ func (s *Server) recordHookMessage(ctx context.Context, row store.Session, body 
 	// prompt already stored, is the same event said twice.
 	if rep.Event == "Notification" && rep.Kind == hooks.KindPrompt {
 		if last, ok, _ := s.DB.LatestSessionMessage(ctx, row.ID); ok && last.Kind == store.MessagePrompt && time.Now().Unix()-last.At <= promptEcho {
-			return
+			return false
 		}
 	}
-	m, err := s.DB.AddSessionMessage(ctx, store.SessionMessage{SessionID: row.ID, Kind: rep.Kind, Text: text, Tool: tool})
+	msg := store.SessionMessage{SessionID: row.ID, Kind: rep.Kind, Text: text, Tool: tool}
+	if rep.Menu != nil {
+		raw, _ := json.Marshal(rep.Menu)
+		msg.Menu = string(raw)
+	}
+	m, err := s.DB.AddSessionMessage(ctx, msg)
 	if err != nil {
 		s.Log.Warn("session message", "err", err)
-		return
+		return false
 	}
 	if s.Chat != nil {
 		s.Chat.SessionSaid(row, m)
 	}
+	return rep.Menu != nil
 }
 
 // chatMonitor is the machine as the chat reads it: the panel's own sample,

@@ -175,6 +175,14 @@ func (b *Bridge) handle(ctx context.Context, ch *channel, in Inbound) {
 	if err != nil {
 		return
 	}
+	// A session showing a menu reads the whole reply as its answer, before
+	// anything reads "2 标题放左边" as handle 2 and some words.
+	if t, rest, reason := Resolve(text, q.session, peer.FocusSession, cands, false); reason == "" {
+		if _, _, _, _, isMenu := b.currentMenu(ctx, t.SessionID); isMenu {
+			b.tell(ctx, ch, peer, b.answerMenu(ctx, peer, t, q.bound, rest, lang))
+			return
+		}
+	}
 	text = loosen(text, cands)
 	target, rest, reason := Resolve(text, q.session, peer.FocusSession, cands, false)
 	if reason != "" {
@@ -633,6 +641,11 @@ func (b *Bridge) gate(ctx context.Context, p store.ChatPeer, row store.Session, 
 		// Enter would allow the very thing.
 		return asking(msg(lang, "atPrompt", h, request(cur.Text), h, h), row.ID, cur.ID), false
 	case store.MessageQuestion:
+		if cur.Menu != "" {
+			if m, next := b.menuOf(cur); m != nil {
+				return showing(msg(lang, "menuNotWords", h)+"\n"+renderMenu(m, next, lang), row.ID, cur.ID), false
+			}
+		}
 		// Only the session that happened to be the one waiting, and a
 		// question this person never saw: a sentence typed for something
 		// else would become the answer.
@@ -806,6 +819,11 @@ func (b *Bridge) answer(ctx context.Context, p store.ChatPeer, req answerReq, la
 	if tool == "shell" {
 		return plain(msg(lang, "noShell", h))
 	}
+	if _, cur, m, next, isMenu := b.currentMenu(ctx, row.ID); isMenu {
+		// A yes to a menu is not an answer to it: Enter would pick whatever
+		// row the cursor is on. The menu is shown with how to answer it.
+		return showing(msg(lang, "menuNotYesNo", h)+"\n"+renderMenu(m, next, lang), row.ID, cur.ID)
+	}
 	cur, kind := b.current(ctx, row)
 	stale := req.bound < 0 || (req.bound > 0 && req.bound != cur.ID)
 	switch kind {
@@ -956,7 +974,7 @@ func (b *Bridge) sweep(ctx context.Context, row store.Session) {
 		return
 	}
 	var current int64
-	if cur, kind := b.current(ctx, row); kind == store.MessagePrompt {
+	if cur, kind := b.current(ctx, row); kind == store.MessagePrompt || (kind == store.MessageQuestion && cur.Menu != "") {
 		current = cur.ID
 	}
 	h, _ := b.Handle(ctx, row.ID)
@@ -1043,8 +1061,11 @@ func (b *Bridge) action(ctx context.Context, ch *channel, p store.ChatPeer, a Ac
 	}
 	verb, sessionID := parts[0], parts[1]
 	var bound int64
+	extra := ""
 	if len(parts) == 3 {
-		bound, _ = strconv.ParseInt(parts[2], 10, 64)
+		var id string
+		id, extra, _ = strings.Cut(parts[2], ":")
+		bound, _ = strconv.ParseInt(id, 10, 64)
 	}
 	// The value came back from the IM's servers, which is not this person.
 	// When the press names the message it was on, that message must be one
@@ -1062,6 +1083,9 @@ func (b *Bridge) action(ctx context.Context, ch *channel, p store.ChatPeer, a Ac
 	}
 	var out said
 	switch verb {
+	case "menu":
+		// menu:<session>:<message>:<question>:<option>, option 0 to skip.
+		out = b.pressMenu(ctx, p, sessionID, bound, extra, lang)
 	case "approve", "deny":
 		if bound == 0 {
 			// A button always names its request; one without is from a

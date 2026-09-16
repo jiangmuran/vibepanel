@@ -260,6 +260,24 @@ func TestAHookReportCarriesTheAgentsMessageAndTranscript(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("the notification was stored twice: %+v", msgs)
 	}
+	// A question menu: PreToolUse reports "working", and the session is in
+	// fact waiting on its person with the menu stored; the notification that
+	// announces it a few seconds later neither replaces the menu nor adds a
+	// message.
+	if code := report("working", `{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Pick","header":"H","options":[{"label":"A"},{"label":"B"}]}]}}`); code != http.StatusNoContent {
+		t.Fatalf("menu report: %d", code)
+	}
+	row, _ := srv.DB.GetSession(ctx, sess.ID)
+	last, _, _ := srv.DB.LatestSessionMessage(ctx, sess.ID)
+	if row.State != session.StateWaiting || last.Kind != "question" || !strings.Contains(last.Menu, `"label":"A"`) {
+		t.Fatalf("menu: state %s, message %+v", row.State, last)
+	}
+	report("waiting", `{"hook_event_name":"Notification","notification_type":"permission_prompt","message":"Claude needs your permission"}`)
+	report("waiting", `{"hook_event_name":"Notification","notification_type":"idle_prompt","message":"Claude is waiting for your input"}`)
+	after, _, _ := srv.DB.LatestSessionMessage(ctx, sess.ID)
+	if after.ID != last.ID {
+		t.Fatalf("a notification replaced the menu: %+v", after)
+	}
 	// An empty body is the old script: the state still lands.
 	if code := report("done", ""); code != http.StatusNoContent {
 		t.Fatalf("empty body: %d", code)
@@ -272,7 +290,7 @@ func TestAHookReportCarriesTheAgentsMessageAndTranscript(t *testing.T) {
 	if res.StatusCode != http.StatusNoContent {
 		t.Fatalf("legacy body: %d", res.StatusCode)
 	}
-	row, _ := srv.DB.GetSession(ctx, sess.ID)
+	row, _ = srv.DB.GetSession(ctx, sess.ID)
 	if row.State != session.StateWorking {
 		t.Fatalf("state %q", row.State)
 	}
@@ -282,7 +300,7 @@ func TestAHookReportCarriesTheAgentsMessageAndTranscript(t *testing.T) {
 		t.Fatalf("huge: %d", code)
 	}
 	msgs, _ = srv.DB.ListSessionMessages(ctx, sess.ID, 0)
-	if len(msgs) != 1 {
+	if len(msgs) != 2 { // the prompt and the menu above
 		t.Fatalf("an over-size message was stored: %d", len(msgs))
 	}
 	// The bridge was told: a Stop with a message reaches the paired peer.

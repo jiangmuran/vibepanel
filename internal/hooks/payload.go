@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -44,6 +45,124 @@ type Report struct {
 	// Interrupted marks an Interrupt event, which carries no text but is worth
 	// a line in the chat.
 	Interrupted bool
+	// Menu is set when the agent is about to show a menu rather than ask for
+	// permission: Claude Code's AskUserQuestion (questions with options) or
+	// ExitPlanMode (approve a plan). Kind is then question.
+	Menu *Menu
+}
+
+// Menu is a choice an agent puts on the screen, read from the tool call that
+// draws it.
+//
+// Claude Code announces both with the same Notification it uses for a
+// permission prompt, "Claude needs your permission", which says nothing
+// about what is being asked; answered with allow and deny, Enter picked the
+// first question's highlighted option and Escape threw the whole set away.
+// The tool call's input, which PreToolUse carries, is the only place the
+// questions and options exist.
+type Menu struct {
+	// Tool is AskUserQuestion or ExitPlanMode.
+	Tool      string         `json:"tool"`
+	Questions []MenuQuestion `json:"questions"`
+	// Plan is the plan text, for ExitPlanMode.
+	Plan string `json:"plan,omitempty"`
+}
+
+// MenuQuestion is one question of a menu.
+type MenuQuestion struct {
+	Header   string       `json:"header,omitempty"`
+	Question string       `json:"question"`
+	Options  []MenuOption `json:"options"`
+	Multi    bool         `json:"multi,omitempty"`
+	// Preview is whether the options carry previews, which changes the
+	// screen: no "Type something" row, and notes on an option instead.
+	Preview bool `json:"preview,omitempty"`
+}
+
+// MenuOption is one choice.
+type MenuOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+}
+
+// Menu tools.
+const (
+	ToolAskUserQuestion = "AskUserQuestion"
+	ToolExitPlanMode    = "ExitPlanMode"
+)
+
+// maxMenuQuestions and maxMenuOptions bound what a hook document can make the
+// panel store and draw; Claude Code asks at most four of each.
+const (
+	maxMenuQuestions = 8
+	maxMenuOptions   = 9
+)
+
+// readMenu reads a menu from a tool call, or nil when the tool is not one or
+// its input is not the shape that draws a menu.
+func readMenu(tool string, input json.RawMessage) *Menu {
+	switch tool {
+	case ToolAskUserQuestion:
+		var in struct {
+			Questions []struct {
+				Header      string `json:"header"`
+				Question    string `json:"question"`
+				MultiSelect bool   `json:"multiSelect"`
+				Options     []struct {
+					Label       string `json:"label"`
+					Description string `json:"description"`
+					Preview     string `json:"preview"`
+				} `json:"options"`
+			} `json:"questions"`
+		}
+		if json.Unmarshal(input, &in) != nil || len(in.Questions) == 0 || len(in.Questions) > maxMenuQuestions {
+			return nil
+		}
+		m := &Menu{Tool: tool}
+		for _, q := range in.Questions {
+			if len(q.Options) == 0 || len(q.Options) > maxMenuOptions {
+				return nil
+			}
+			mq := MenuQuestion{Header: Clean(q.Header, 64), Question: Clean(q.Question, 1024), Multi: q.MultiSelect}
+			for _, o := range q.Options {
+				if o.Preview != "" {
+					mq.Preview = true
+				}
+				mq.Options = append(mq.Options, MenuOption{Label: Clean(o.Label, 256), Description: Clean(o.Description, 512)})
+			}
+			m.Questions = append(m.Questions, mq)
+		}
+		return m
+	case ToolExitPlanMode:
+		var in struct {
+			Plan string `json:"plan"`
+		}
+		_ = json.Unmarshal(input, &in)
+		return &Menu{Tool: tool, Plan: Clean(in.Plan, MaxText)}
+	}
+	return nil
+}
+
+// Summary is a menu as plain text: what "context" shows and what the audit
+// and a phone without the menu's own rendering read.
+func (m *Menu) Summary() string {
+	if m.Tool == ToolExitPlanMode {
+		return "Plan:\n" + m.Plan
+	}
+	var b strings.Builder
+	for i, q := range m.Questions {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		if q.Header != "" {
+			b.WriteString(q.Header + ": ")
+		}
+		b.WriteString(q.Question)
+		for j, o := range q.Options {
+			fmt.Fprintf(&b, "\n%d. %s", j+1, o.Label)
+		}
+	}
+	return b.String()
 }
 
 // The kinds a Report may carry. See Report.Kind.
@@ -118,14 +237,28 @@ func Extract(raw []byte) (Report, bool) {
 		default:
 			r.Kind = KindNotice
 		}
-	case "PermissionRequest":
-		r.Kind, r.Text = KindPrompt, describeTool(doc.ToolName, doc.ToolInput)
 	case "Elicitation":
 		r.Kind, r.Text = KindQuestion, Clean(doc.Prompt, MaxText)
 	case "UserPromptSubmit":
 		r.Kind, r.Text = KindUser, Clean(doc.Prompt, MaxText)
 	case "Interrupt":
 		r.Kind, r.Interrupted = KindNotice, true
+	case "PreToolUse", "PermissionRequest":
+		// A menu is drawn by a tool call; any other tool before it runs is a
+		// state and nothing to show, and a PermissionRequest for any other
+		// tool is the permission prompt above.
+		if m := readMenu(doc.ToolName, doc.ToolInput); m != nil {
+			r.Kind, r.Menu, r.Text = KindQuestion, m, Clean(m.Summary(), MaxText)
+			break
+		}
+		if doc.Event == "PermissionRequest" {
+			r.Kind, r.Text = KindPrompt, describeTool(doc.ToolName, doc.ToolInput)
+			break
+		}
+		if r.TranscriptPath == "" {
+			return Report{}, false
+		}
+		return r, true
 	default:
 		// PreToolUse, PostToolUse, SessionStart and the rest carry a state
 		// and nothing a person asked to be told. The transcript path is
