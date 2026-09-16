@@ -193,6 +193,37 @@ func (s *Server) RequireAuth(next http.Handler) http.Handler {
 	})
 }
 
+// refuseBlockedWrite re-runs the two checks RequireAuth makes ahead of its
+// currentUser lookup, for the auth routes registered outside the
+// authenticated group.
+//
+// They are /api/auth/logout and /api/auth/password. Both change state with the
+// session cookie attached, and SameSite=Strict does not separate ports: a page
+// served by another service on this host can POST here with the cookie riding
+// along. handleSetup, the third route outside the group, already checked these
+// itself; without the same two questions here, that pair was the exception no
+// test pinned and the CSRF that could force you out of your own panel.
+//
+// Same order, same messages, same audit event as the middleware: a second
+// wording for a guard is how the two copies drift.
+func (s *Server) refuseBlockedWrite(ctx context.Context, w http.ResponseWriter, r *http.Request) bool {
+	ip := s.clientIP(r)
+	if s.Auth != nil && !auth.Allowed(ip, s.Auth.Allow) {
+		s.auditFromOutside(ctx, "blocked", "", ip, "address not in the allowlist")
+		writeErr(w, http.StatusForbidden, "not allowed from this address")
+		return true
+	}
+	if allowed := s.publicOrigins(r); crossOriginWrite(r, allowed) {
+		s.auditFromOutside(ctx, "blocked", "", ip,
+			"a write from "+r.Header.Get("Origin")+"; this panel answers to "+strings.Join(allowed, " "))
+		writeErr(w, http.StatusForbidden,
+			"this panel answers to "+strings.Join(allowed, ", ")+", and that request came from "+
+				r.Header.Get("Origin")+". Set VIBEPANEL_DOMAIN, or add it to VIBEPANEL_PUBLIC_ORIGINS.")
+		return true
+	}
+	return false
+}
+
 // stillAuthorized re-runs the checks RequireAuth made, for a request whose
 // connection is still open.
 //
@@ -666,6 +697,12 @@ func (s *Server) auditLoginFailure(ctx context.Context, username, ip, detail str
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	// Registered outside RequireAuth, so the two middleware checks are made
+	// here; refuseBlockedWrite says why. A logout someone else can drive is a
+	// small denial of service, but the check costs less than arguing about it.
+	if s.refuseBlockedWrite(r.Context(), w, r) {
+		return
+	}
 	if token := auth.TokenFromRequest(r); token != "" {
 		if err := s.DB.DeleteAuthSession(r.Context(), auth.HashToken(token)); err != nil {
 			s.Log.Warn("delete auth session", "err", err)
@@ -727,6 +764,14 @@ type changePasswordRequest struct {
 func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	ip := s.clientIP(r)
+
+	// Registered outside RequireAuth, so the two middleware checks are made
+	// here, ahead of the throttle: a cross-origin POST must not be able to
+	// spend the shared limiter on guesses, and the guesses a browser makes run
+	// from the owner's own IP. refuseBlockedWrite says why.
+	if s.refuseBlockedWrite(ctx, w, r) {
+		return
+	}
 
 	// KNOWN GAP, the same discarded error as handleAuthState above, and the
 	// fourth of four callers of currentUser. RequireAuth captures it and
