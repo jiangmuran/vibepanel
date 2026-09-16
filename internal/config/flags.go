@@ -34,6 +34,7 @@ const Commands = `  serve      run the panel (the default with no command)
   service    status, start, stop, logs, token, upgrade, uninstall
   account    create the first account without the browser
   page       make, check, screenshot and publish share pages
+  mcp        serve the chat assistant's read-only tools over stdio (started by the panel)
   doctor     check tmux, the database, disk and isolation
   version    print the version`
 
