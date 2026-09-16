@@ -115,6 +115,10 @@ type Candidate struct {
 	SessionID string
 	Handle    int
 	Waiting   bool
+	// Asking is waiting on a permission request, which is what a bare yes
+	// is an answer to. A question left unanswered for an hour made every
+	// yes ambiguous while it was counted.
+	Asking bool
 }
 
 // Resolve applies the order above to a message. quoteSession is what the
@@ -149,14 +153,21 @@ func Resolve(text string, quoteSession string, focus string, cands []Candidate, 
 			return t, text, ""
 		}
 	}
-	// A yes: the one waiting session, else the focus, and two waiting is
-	// refused, even with a focus, because the person cannot see which one
-	// just asked.
-	var waiting []Candidate
+	// A yes: the one session asking for permission (or, when none is, the
+	// one waiting), and two is refused, even with a focus, because the
+	// person cannot see which one just asked. A yes with nothing waiting is
+	// not for the focus either: there is nothing there to say yes to.
+	var waiting, asking []Candidate
 	for _, c := range cands {
 		if c.Waiting {
 			waiting = append(waiting, c)
 		}
+		if c.Asking {
+			asking = append(asking, c)
+		}
+	}
+	if answer && len(asking) > 0 {
+		waiting = asking
 	}
 	if len(waiting) > 1 {
 		return Target{}, text, ReasonSeveral
@@ -164,7 +175,7 @@ func Resolve(text string, quoteSession string, focus string, cands []Candidate, 
 	if len(waiting) == 1 {
 		return Target{SessionID: waiting[0].SessionID, How: HowOnlyWaiting}, text, ""
 	}
-	if t, ok := focused(); ok {
+	if t, ok := focused(); ok && !answer {
 		return t, text, ""
 	}
 	return Target{}, text, ReasonNone

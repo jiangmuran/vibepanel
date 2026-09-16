@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
@@ -378,7 +379,7 @@ func (s *Server) handlePutChatChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.Chat.WriteChannel(ctx, kind, req.Enabled, cfg); err != nil {
 		if errors.Is(err, chat.ErrChannelConfig) {
-			writeErr(w, http.StatusBadRequest, errors.Unwrap(err).Error())
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -549,6 +550,19 @@ type patchPeerRequest struct {
 	Display *string `json:"display"`
 }
 
+// cleanName drops what a name must not carry: control characters, which
+// break a line in the log and the chat, and format characters such as the
+// right-to-left override, which reorder what is around the name.
+func cleanName(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, s)
+	return strings.TrimSpace(s)
+}
+
 // peerParams reads a peer's channel and id from the path, decoded. A 微信 id
 // is "someone@im.wechat", which the page escapes to %40 and chi hands over
 // still escaped, so every row with an @ in it answered "not found" to block,
@@ -572,17 +586,6 @@ func (s *Server) handlePatchChatPeer(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		writeErr(w, http.StatusBadRequest, "bad peer")
 		return
-	}
-	if req.Display != nil {
-		name := strings.TrimSpace(*req.Display)
-		if utf8.RuneCountInString(name) > 40 {
-			writeErr(w, http.StatusBadRequest, "a name is at most 40 characters")
-			return
-		}
-		if err := s.Chat.SetPeerDisplay(ctx, channel, peer, name); err != nil {
-			s.writeStoreErr(w, err)
-			return
-		}
 	}
 	if req.Mode != nil {
 		if *req.Mode != store.ModeNormal && *req.Mode != store.ModeAdvanced {
@@ -608,6 +611,18 @@ func (s *Server) handlePatchChatPeer(w http.ResponseWriter, r *http.Request) {
 				writeErr(w, http.StatusConflict, "enter the code they were sent")
 				return
 			}
+			s.writeStoreErr(w, err)
+			return
+		}
+	}
+	// The name last, so a request refused above changes nothing.
+	if req.Display != nil {
+		name := cleanName(*req.Display)
+		if utf8.RuneCountInString(name) > 40 {
+			writeErr(w, http.StatusBadRequest, "a name is at most 40 characters")
+			return
+		}
+		if err := s.Chat.SetPeerDisplay(ctx, channel, peer, name); err != nil {
 			s.writeStoreErr(w, err)
 			return
 		}
@@ -673,6 +688,10 @@ type routePreviewResponse struct {
 	// Peers is who would be told, by "channel:peer", after the rule's
 	// destinations are intersected with who is paired and not muted.
 	Peers []string `json:"peers"`
+	// Request and RequestPeers are the same for a permission request from
+	// this session, whatever it is doing now.
+	Request      chat.Decision `json:"request"`
+	RequestPeers []string      `json:"requestPeers"`
 }
 
 func (s *Server) handleChatRoutePreview(w http.ResponseWriter, r *http.Request) {
@@ -688,7 +707,8 @@ func (s *Server) handleChatRoutePreview(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusNotFound, "no such session")
 		return
 	}
-	writeJSON(w, http.StatusOK, routePreviewResponse{Decision: d, Change: c, Peers: who})
+	rd, rwho, _ := s.Chat.PreviewRequest(r.Context(), req.SessionID)
+	writeJSON(w, http.StatusOK, routePreviewResponse{Decision: d, Change: c, Peers: who, Request: rd, RequestPeers: rwho})
 }
 
 func (s *Server) handlePutChatTools(w http.ResponseWriter, r *http.Request) {

@@ -409,10 +409,15 @@ showed — by record where the IM quotes by id, by the request's words where
 current one shown; an answer that names none (a bare "y", `3: y`) goes through
 only if this person has been shown the current request, and otherwise shows
 it. The person is never one keystroke from allowing a command they have not
-read. A quote by text must carry the whole request as the card showed it:
-Claude Code's commands start with `cd <project> &&`, and a comparison of the
-first two dozen characters read a card for clearing a cache as the card for
-deleting `src`. Once a request ends — answered in a chat, at the laptop, or
+read. A quote by text is read for the request it shows: of the session's
+requests whose whole words are in the quote, the longest. Claude Code's
+commands start with `cd <project> &&`, so a prefix comparison read a card for
+clearing a cache as the card for deleting `src`; and a containment check read
+a card for `rm -rf ~/app/tmp` as one for `rm -rf ~`, because narrow-then-broad
+is how an agent escalates a delete. A bare yes goes to the session asking for
+permission, not to one waiting on a question, and never to the focus when
+nothing asks. A person a rule does not send a request to is not shown it by an
+edit of a card they already have either. Once a request ends — answered in a chat, at the laptop, or
 replaced by the next — every message that still offers its buttons is edited
 to say so. Pushes never move the focus: the focus is what a person chose, and
 a push that moved it put the next sentence into whichever session had spoken

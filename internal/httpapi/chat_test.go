@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -75,7 +76,52 @@ func init() {
 				return memCurrent, nil
 			},
 		})
+		chat.Register(chat.Factory{
+			Kind: "picky", Label: "Picky",
+			Fields: []chat.Field{{Name: "key", Label: "Key"}},
+			New: func(raw json.RawMessage, _ chat.Env) (chat.Adapter, error) {
+				var v map[string]string
+				_ = json.Unmarshal(raw, &v)
+				if v["key"] == "" {
+					return nil, errors.New("picky: key is required")
+				}
+				return memCurrent, nil
+			},
+		})
 	})
+}
+
+// An empty form for a channel whose adapter needs a value is a 400 that
+// names the value. It was a panic in the handler, and a 500.
+func TestAChannelFormTheAdapterRefusesIsA400(t *testing.T) {
+	ts, srv := newTestServer(t)
+	attachChat(t, srv)
+	code, body := doJSON(t, ts, http.MethodPut, "/api/chat/channels/picky", `{"enabled":true,"values":{}}`)
+	// The adapter's own words, which the page translates, and nothing else.
+	if code != http.StatusBadRequest || !strings.Contains(string(body), `"picky: key is required"`) {
+		t.Fatalf("empty form: %d %s", code, body)
+	}
+}
+
+// A name loses what would break a line or reorder the text around it, and a
+// refused request changes nothing, the name included.
+func TestPeerNamesAreCleanAndARefusedPatchChangesNothing(t *testing.T) {
+	ts, srv := newTestServer(t)
+	attachChat(t, srv)
+	ctx := context.Background()
+	_ = srv.DB.PutChatPeer(ctx, store.ChatPeer{Channel: "mem", PeerID: "p", Status: store.PeerPending, Mode: store.ModeNormal})
+	if code, _ := doJSON(t, ts, http.MethodPatch, "/api/chat/peers/mem/p", `{"display":"x","status":"paired"}`); code != http.StatusConflict {
+		t.Fatalf("refused patch: %d", code)
+	}
+	if p, _ := srv.DB.GetChatPeer(ctx, "mem", "p"); p.Display != "" {
+		t.Fatalf("a refused patch saved the name: %+v", p)
+	}
+	if code, _ := doJSON(t, ts, http.MethodPatch, "/api/chat/peers/mem/p", "{\"display\":\"Lin\\n\\u202eevil\"}"); code != 200 {
+		t.Fatalf("rename: %d", code)
+	}
+	if p, _ := srv.DB.GetChatPeer(ctx, "mem", "p"); p.Display != "Linevil" {
+		t.Fatalf("name %q", p.Display)
+	}
 }
 
 // attachChat gives a test server a running bridge with one "mem" channel.

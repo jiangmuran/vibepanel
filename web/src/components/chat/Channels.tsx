@@ -181,7 +181,7 @@ function ChannelCard({
       showToast(
         res.error
           ? { kind: 'error', key: 'chat.testFailed', detail: chatError(new Error(res.error)) }
-          : { kind: 'success', key: 'chat.testOk', detail: String(res.sent) },
+          : { kind: 'success', key: 'chat.testOkN', params: { n: res.sent } },
       )
     } catch (e) {
       showToast({ kind: 'error', key: 'chat.testFailed', detail: errText(e) })

@@ -22420,3 +22420,52 @@ Thirty-one mutations of the new guards: twenty-six killed at once, five
 survivors each closed with a test (a quote by ref about nothing, what is
 owed after a request ends, buttons on a shown request, pairing from blocked
 tested only through HTTP, an IM name overwriting one the owner chose).
+
+## 2026-09-16 — A third round, and the same bug from the other side
+
+Two more subagents, one on both phones at once and one as the owner in a
+browser, went over the second round's fixes.
+
+**The quote fix had only closed one direction.** Round two made a quote carry
+the whole current request; the check was "is the current request contained in
+the quote". Narrow-then-broad passes it: the card for `rm -rf
+/home/zhou/projects/miniapp/tmp` contains `rm -rf /home/zhou`, and quoting the
+narrow card allowed the broad request, which is exactly the order an agent
+escalates a delete in. A quote now reads as the longest of the session's
+requests whose whole words it contains, so a card shows the request it was
+written for.
+
+**The fix for empty channel settings panicked.** The error was wrapped with
+two `%w`s, and the handler called `errors.Unwrap` on it, which returns nil for
+a multi-wrap: an empty 飞书 form was a 500. The error is its own type now, and
+the handler shows its text; the test pins the text, because "no panic" alone
+passed with the prefix left in.
+
+**Other things that were still wrong.**
+- An ok after a stop was "nothing to confirm" once and then, ten seconds later,
+  allowed the command being stopped. Within the window it now says what it was
+  not taken as, every time.
+- 「嗯嗯」 while a request waits was silence, and it is the commonest yes on
+  微信. Silence reads as done, so the reply now says it did not count.
+- A bare yes with an unanswered question also waiting was ambiguous. A yes goes
+  to what asks for permission.
+- A yes with nothing asking went to the focus and answered "[5] is not
+  waiting". It now says nothing is asking.
+- An addressed no to a request not yet shown was made to read it first. A no
+  goes through: it is the safe direction.
+- A name the owner gave a person was replaced by their Telegram profile name
+  in memory on every message.
+- A person a rule excluded had their old card edited into the request, command
+  included.
+- The hello clock was reset by every message, so a stranger writing every
+  forty seconds got one code, ever, and someone just unblocked got none.
+- The rule preview answered for the session's current state, so a rule for
+  permission requests looked as if it did not apply. It now also says what a
+  request would do.
+- A refused PATCH still saved the name it carried.
+- Names kept control and bidi characters.
+- One request held for two people counted as two.
+- The catch-up said "your message was not run" after 「在吗」.
+- Cards closed at the laptop dropped the command.
+- 微信 ids were shown whole.
+- The log still had English channel entries.

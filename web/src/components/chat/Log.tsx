@@ -47,14 +47,23 @@ const EVENTS: Record<string, Key> = {
 const ZH_DETAIL: [RegExp, string][] = [
   [/ via only-waiting:/g, ' · 唯一在等的会话：'],
   [/ via focus:/g, ' · 默认会话：'],
-  [/ via handle:/g, ' · 写了编号：'],
   [/ via quote:/g, ' · 引用：'],
   [/ via button:/g, ' · 按钮：'],
   [/ via assistant:/g, ' · 助手：'],
   [/: removed$/, '：删掉'],
+  [/ via handle:/g, ' · 回了编号：'],
+  [/^(telegram|feishu|weixin) removed$/, '$1 已删除'],
+  [/^(telegram|feishu|weixin) signed in$/, '$1 已登录'],
+  [/^(telegram|feishu|weixin) enabled=true$/, '$1 启用'],
+  [/^(telegram|feishu|weixin) enabled=false$/, '$1 关闭'],
+  [/\(telegram\)/g, '（Telegram）'],
+  [/\(feishu\)/g, '（飞书）'],
+  [/\(weixin\)/g, '（微信）'],
+  [/^telegram /, 'Telegram '],
+  [/^feishu /, '飞书 '],
+  [/^weixin /, '微信 '],
+  [/）: /g, '）：'],
   [/: until they write$/, '：等对方先发消息'],
-  [/ enabled=true$/, ' 启用'],
-  [/ enabled=false$/, ' 关闭'],
 ]
 
 /** Status words, only in the events that are about a status: a message a

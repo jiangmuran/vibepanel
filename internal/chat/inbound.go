@@ -101,7 +101,9 @@ func (b *Bridge) handle(ctx context.Context, ch *channel, in Inbound) {
 	if in.ContextToken != "" {
 		peer.ContextToken = in.ContextToken
 	}
-	if in.PeerName != "" {
+	if in.PeerName != "" && peer.Display == "" {
+		// Only a first name: one the owner gave stays, the way the stored
+		// row keeps it (TouchChatPeer).
 		peer.Display = in.PeerName
 	}
 	peer.LastSeenAt = now.Unix()
@@ -111,7 +113,9 @@ func (b *Bridge) handle(ctx context.Context, ch *channel, in Inbound) {
 	if in.Text != "" {
 		b.d.Audit(ctx, "chat.in", fmt.Sprintf("%s (%s): %s", who(peer), key, preview(in.Text)))
 	}
-	if b.catchUp(ctx, ch, peer, lang) {
+	_, isCommand := Parse(in.Text)
+	_, _, addressed := SplitHandle(in.Text)
+	if b.catchUp(ctx, ch, peer, in.Action != nil || isCommand || addressed, lang) {
 		return
 	}
 	if in.Action != nil {
@@ -128,7 +132,12 @@ func (b *Bridge) handle(ctx context.Context, ch *channel, in Inbound) {
 	}
 	if isFiller(text) {
 		// "嗯", "哦哦": a voice note that caught a breath. Typed into a
-		// session it becomes a task; answered, it is noise.
+		// session it becomes a task, so it never is. It is also the most
+		// common yes on 微信, so while something asks for permission the
+		// person is told it did not count; otherwise it is left unanswered.
+		if s, ok := b.notYes(ctx, text, lang); ok {
+			b.tell(ctx, ch, peer, s)
+		}
 		return
 	}
 
@@ -173,7 +182,7 @@ func (b *Bridge) handle(ctx context.Context, ch *channel, in Inbound) {
 			b.assist(ctx, ch, peer, text, cands, lang)
 			return
 		}
-		b.tell(ctx, ch, peer, b.explain(ctx, reason, text, lang))
+		b.tell(ctx, ch, peer, b.explain(ctx, reason, text, false, lang))
 		return
 	}
 	// A bare "y" to a quoted prompt is an answer, not text.
@@ -258,9 +267,13 @@ func (b *Bridge) sayHello(key string, now time.Time) bool {
 			}
 		}
 	}
-	last := b.hello[key]
+	// Only a hello that is said resets the clock. Recording every message
+	// meant a stranger writing every forty seconds was answered once, ever.
+	if now.Sub(b.hello[key]) <= helloEvery {
+		return false
+	}
 	b.hello[key] = now
-	return now.Sub(last) > helloEvery
+	return true
 }
 
 func (b *Bridge) stranger(ctx context.Context, ch *channel, in Inbound, lang string) {
@@ -281,12 +294,14 @@ func (b *Bridge) stranger(ctx context.Context, ch *channel, in Inbound, lang str
 	if err := b.d.DB.PutChatPeer(ctx, p); err != nil {
 		return
 	}
-	// The audit row and the reply are gated the same way: one per person
-	// per helloEvery, never one per message.
-	if !b.sayHello(chatKey(in.Channel, in.PeerID), now) {
-		return
-	}
-	b.d.Audit(ctx, "chat.stranger", chatKey(in.Channel, in.PeerID))
+	// Always answered: a row is only made when there was none, so this is a
+	// new code, and a code nobody was told is a person stuck. That includes
+	// someone just unblocked, whose last hello may be seconds old. The
+	// flood bound is maxPending above.
+	b.mu.Lock()
+	b.hello[chatKey(in.Channel, in.PeerID)] = now
+	b.mu.Unlock()
+	b.d.Audit(ctx, "chat.stranger", fmt.Sprintf("%s (%s)", who(p), in.Channel))
 	b.reply(ctx, ch, p, msg(lang, "pairing", code))
 }
 
@@ -321,7 +336,7 @@ func (b *Bridge) Pair(ctx context.Context, code string) (store.ChatPeer, error) 
 		if err := b.d.DB.PutChatPeer(ctx, p); err != nil {
 			return store.ChatPeer{}, err
 		}
-		b.d.Audit(ctx, "chat.paired", chatKey(p.Channel, p.PeerID))
+		b.d.Audit(ctx, "chat.paired", fmt.Sprintf("%s (%s)", who(p), p.Channel))
 		if ch, ok := b.channel(p.Channel); ok {
 			b.reply(ctx, ch, p, msg(b.language(), "paired"))
 		}
@@ -436,11 +451,44 @@ func (b *Bridge) quoted(ctx context.Context, ch *channel, in Inbound) quote {
 	if kind != store.MessagePrompt && kind != store.MessageQuestion {
 		return quote{session: id, bound: -1}
 	}
-	if quoteShows(in.QuotedText, last.Text) {
+	if b.quotedRequest(ctx, id, in.QuotedText) == last.ID {
 		return quote{session: id, bound: last.ID}
 	}
 	return quote{session: id, bound: -1}
 }
+
+// quotedRequest is which of a session's requests a quoted text shows: of the
+// requests whose whole words are in the quote, the longest, and 0 for none.
+//
+// The longest, not any. "Does the quote contain the current request" is
+// true of a card for rm -rf /home/zhou/projects/app/tmp when the current
+// request is rm -rf /home/zhou, and narrow-then-broad is exactly how an
+// agent escalates a delete: quoting the narrow card allowed the broad one.
+// The card for the narrow request contains both, and the longer is the one it
+// shows. Two requests with identical words read as the later, which is the
+// same command either way.
+func (b *Bridge) quotedRequest(ctx context.Context, sessionID, quoted string) int64 {
+	msgs, err := b.d.DB.ListSessionMessages(ctx, sessionID, store.MessagesKeptPerSession)
+	if err != nil {
+		return 0
+	}
+	var best int64
+	bestLen := 0
+	for _, m := range msgs {
+		if m.Kind != store.MessagePrompt && m.Kind != store.MessageQuestion {
+			continue
+		}
+		if !quoteShows(quoted, m.Text) {
+			continue
+		}
+		if n := len(squeezeSpace(m.Text)); n >= bestLen {
+			best, bestLen = m.ID, n
+		}
+	}
+	return best
+}
+
+func squeezeSpace(s string) string { return strings.Join(strings.Fields(s), "") }
 
 // handlesIn is every distinct [n] in a text, in order.
 func handlesIn(text string) []int {
@@ -494,17 +542,31 @@ func (b *Bridge) candidates(ctx context.Context) ([]Candidate, error) {
 		if err != nil {
 			continue
 		}
-		out = append(out, Candidate{SessionID: r.ID, Handle: h, Waiting: r.State == session.StateWaiting})
+		_, kind := b.current(ctx, r)
+		out = append(out, Candidate{SessionID: r.ID, Handle: h, Waiting: r.State == session.StateWaiting, Asking: kind == store.MessagePrompt})
 	}
 	return out, nil
 }
 
 // explain says why nothing was delivered. The list of waiting sessions shows
 // what each asks, and counts as the person having seen it.
-func (b *Bridge) explain(ctx context.Context, reason Reason, text string, lang string) said {
+func (b *Bridge) explain(ctx context.Context, reason Reason, text string, answer bool, lang string) said {
 	switch reason {
 	case ReasonSeveral:
 		l := b.list(ctx, lang, true)
+		if answer {
+			example := 3
+			if cands, err := b.candidates(ctx); err == nil {
+				for _, c := range cands {
+					if c.Asking {
+						example = c.Handle
+						break
+					}
+				}
+			}
+			l.text = msg(lang, "severalAnswer", example, l.text)
+			return l
+		}
 		l.text = msg(lang, "several", l.text)
 		return l
 	case ReasonUnknown:
@@ -619,6 +681,49 @@ func (b *Bridge) deliver(ctx context.Context, p store.ChatPeer, target Target, t
 	return plain(msg(lang, "receipt", h))
 }
 
+// askingOthers names the sessions other than one that ask for permission.
+func (b *Bridge) askingOthers(ctx context.Context, except string) string {
+	cands, err := b.candidates(ctx)
+	if err != nil {
+		return ""
+	}
+	var hs []string
+	for _, c := range cands {
+		if c.Asking && c.SessionID != except {
+			hs = append(hs, fmt.Sprintf("[%d]", c.Handle))
+		}
+	}
+	return strings.Join(hs, " ")
+}
+
+// notYes tells a person that a word they may have meant as a yes was not
+// taken as one, naming the one request that is asking. ok is false when no
+// one request is.
+func (b *Bridge) notYes(ctx context.Context, word, lang string) (said, bool) {
+	cands, err := b.candidates(ctx)
+	if err != nil {
+		return said{}, false
+	}
+	var one *Candidate
+	for i := range cands {
+		if cands[i].Asking {
+			if one != nil {
+				return said{}, false
+			}
+			one = &cands[i]
+		}
+	}
+	if one == nil {
+		return said{}, false
+	}
+	row, err := b.d.DB.GetSession(ctx, one.SessionID)
+	if err != nil {
+		return said{}, false
+	}
+	cur, _ := b.current(ctx, row)
+	return asking(msg(lang, "notYes", word, one.Handle, request(cur.Text), one.Handle), row.ID, cur.ID), true
+}
+
 // waitingOthers names the sessions other than one that are waiting: "[1] [4]".
 func (b *Bridge) waitingOthers(ctx context.Context, except string) string {
 	cands, err := b.candidates(ctx)
@@ -639,6 +744,11 @@ func (b *Bridge) waitingOthers(ctx context.Context, except string) string {
 func who(p store.ChatPeer) string {
 	if p.Display != "" {
 		return p.Display
+	}
+	// "owner@im.wechat" is an address, and the part before the @ is the
+	// only piece of it a person recognises.
+	if i := strings.IndexByte(p.PeerID, '@'); i > 0 {
+		return p.PeerID[:i]
 	}
 	return p.PeerID
 }
@@ -680,9 +790,15 @@ func (b *Bridge) answer(ctx context.Context, p store.ChatPeer, req answerReq, la
 	if row.State != session.StateWaiting {
 		if req.bound != 0 {
 			// Answered some other way, at the laptop most likely; the card
-			// that was pressed or quoted should stop offering it.
+			// that was pressed or quoted should stop offering it. Whoever
+			// is still asking is named, since the person was trying to
+			// answer something.
 			b.sweep(ctx, row)
-			return plain(msg(lang, "staleGone", h))
+			text := msg(lang, "staleGone", h)
+			if others := b.askingOthers(ctx, row.ID); others != "" {
+				text += "\n" + msg(lang, "othersAsking", others)
+			}
+			return plain(text)
 		}
 		return plain(msg(lang, "notWaiting", h))
 	}
@@ -698,8 +814,16 @@ func (b *Bridge) answer(ctx context.Context, p store.ChatPeer, req answerReq, la
 			b.sweep(ctx, row)
 			return asking(msg(lang, "stalePrompt", h, request(cur.Text), h, h), row.ID, cur.ID)
 		}
-		if req.bound == 0 && !b.seen(ctx, p, cur.ID) {
-			return asking(msg(lang, "showPrompt", h, request(cur.Text), h, h), row.ID, cur.ID)
+		// A deny the person addressed goes through unseen: refusing is the
+		// safe direction, and making them read the thing before refusing it
+		// only delays a no.
+		explicitNo := !req.approve && req.how != HowOnlyWaiting && req.how != HowFocus
+		if req.bound == 0 && !explicitNo && !b.seen(ctx, p, cur.ID) {
+			text := msg(lang, "showPrompt", h, request(cur.Text), h, h)
+			if until, _ := b.d.DB.ChatMutedUntil(ctx, p.Channel, p.PeerID, row.ID, b.d.Now().Unix()); until > 0 {
+				text += msg(lang, "mutedNote", h)
+			}
+			return asking(text, row.ID, cur.ID)
 		}
 	case store.MessageQuestion, store.MessageAssistant, store.MessageNotice, store.MessageUser:
 		// Not a permission prompt: the keys would pick a menu's first
@@ -740,7 +864,7 @@ func (b *Bridge) answer(ctx context.Context, p store.ChatPeer, req answerReq, la
 	b.d.Audit(ctx, "chat."+what, fmt.Sprintf("[%d] %s · %s · %s via %s: %s", h, row.Title, tool, who(p), req.how, preview(cur.Text)))
 	if cur.ID > 0 {
 		b.close(ctx, row, h, cur.ID, cur.Text, msg(lang, "answeredBy", msg(lang, what), who(p)), &p,
-			msg(lang, "answeredElsewhere", h, who(p), msg(lang, what), preview(cur.Text)))
+			msg(lang, "answeredElsewhere", h, who(p), pick(lang, map[string]string{"approved": "允许", "denied": "拒绝"}[what], msg(lang, what)), preview(cur.Text)))
 		return plain(msg(lang, "receiptKeyCmd", h, msg(lang, what), preview(cur.Text)))
 	}
 	return plain(msg(lang, "receiptKey", h, msg(lang, what)))
@@ -837,11 +961,19 @@ func (b *Bridge) sweep(ctx context.Context, row store.Session) {
 	}
 	h, _ := b.Handle(ctx, row.ID)
 	lang := b.language()
+	texts := map[int64]string{}
+	if msgs, err := b.d.DB.ListSessionMessages(ctx, row.ID, store.MessagesKeptPerSession); err == nil {
+		for _, m := range msgs {
+			texts[m.ID] = m.Text
+		}
+	}
 	for _, o := range open {
 		if o.MessageID == current {
 			continue
 		}
-		b.closeOne(ctx, row, h, o, "", msg(lang, "handled"))
+		// The command stays on the card: "handled" alone left no way to
+		// tell, scrolling back, what it was that had been handled.
+		b.closeOne(ctx, row, h, o, texts[o.MessageID], msg(lang, "handled"))
 	}
 }
 
@@ -1040,11 +1172,16 @@ func pruneImages(dir string) {
 // catchUp answers a person's first message after pushes failed to reach them
 // with the requests they missed, and reports whether it did. Their message
 // itself is not run: it was written without having seen these.
-func (b *Bridge) catchUp(ctx context.Context, ch *channel, p store.ChatPeer, lang string) bool {
+//
+// held says whether the message was one that would have done something, so
+// the header says it was held back only when it was.
+func (b *Bridge) catchUp(ctx context.Context, ch *channel, p store.ChatPeer, held bool, lang string) bool {
 	key := chatKey(p.Channel, p.PeerID)
 	b.mu.Lock()
 	ids := b.missed[key]
 	delete(b.missed, key)
+	other := b.missedOther[key]
+	delete(b.missedOther, key)
 	b.mu.Unlock()
 	if len(ids) == 0 {
 		return false
@@ -1071,7 +1208,14 @@ func (b *Bridge) catchUp(ctx context.Context, ch *channel, p store.ChatPeer, lan
 		return false
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].handle < items[j].handle })
-	b.reply(ctx, ch, p, msg(lang, "missed"))
+	head := msg(lang, "missed")
+	if held {
+		head = msg(lang, "missedHeld")
+	}
+	if other > 0 {
+		head = msg(lang, "otherMissed", other) + "\n" + head
+	}
+	b.reply(ctx, ch, p, head)
 	raw, _ := b.d.DB.GetSetting(ctx, RoutesKey, "")
 	routes := ParseRoutes(raw)
 	for _, it := range items {
@@ -1141,7 +1285,7 @@ func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in 
 		case reason == ReasonSeveral:
 			// The same refusal a bare sentence gets, with the list: a "y"
 			// with two sessions waiting is the case the rule exists for.
-			b.tell(ctx, ch, p, b.explain(ctx, reason, "", lang))
+			b.tell(ctx, ch, p, b.explain(ctx, reason, "", answerVerb, lang))
 		case answerVerb:
 			reply(msg(lang, "nothingWaiting"))
 		default:
@@ -1285,9 +1429,16 @@ func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in 
 			// stop; see Bridge.stopped.
 			b.mu.Lock()
 			afterStop := b.d.Now().Before(b.stopped[key].Add(pendingTTL))
-			delete(b.stopped, key)
 			b.mu.Unlock()
 			if afterStop {
+				// Said out loud, and for the whole window: an ok that got
+				// "nothing to confirm" and a second identical ok that
+				// allowed the command was the same word meaning two things
+				// ten seconds apart.
+				if s, ok := b.notYes(ctx, strings.TrimSpace(in.Text), lang); ok {
+					b.tell(ctx, ch, p, s)
+					return
+				}
 				reply(msg(lang, "nothingPending"))
 				return
 			}

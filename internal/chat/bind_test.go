@@ -387,6 +387,12 @@ func TestADoneWithoutANewMessageIsNotPushed(t *testing.T) {
 	}
 	_ = r.db.RecordSessionEvent(r.ctx, store.SessionEvent{At: time.Now().Unix(), SessionID: "s2", ProjectID: "p1", From: session.StateWorking, To: session.StateDone})
 	r.b.SessionChanged(row2, session.StateDone)
+	time.Sleep(testCoalesce + 200*time.Millisecond)
+	if r.ad.count() != 0 {
+		t.Fatalf("a session in its first minute was pushed: %q", r.ad.texts())
+	}
+	r.advance(2 * time.Minute)
+	r.b.SessionChanged(row2, session.StateDone)
 	r.waitFor(func() bool { return r.ad.count() == 1 })
 }
 
@@ -536,9 +542,16 @@ func TestOkIsAYesExceptAfterAStop(t *testing.T) {
 		t.Fatalf("stop at a prompt: %q", r.ad.last())
 	}
 	r.say("me", "OK")
-	if len(r.term.pressed("vp_s1")) != 0 {
-		t.Fatalf("an ok after a stop allowed the prompt: %v", r.term.pressed("vp_s1"))
+	if len(r.term.pressed("vp_s1")) != 0 || !strings.Contains(r.ad.last(), "没有当成允许") {
+		t.Fatalf("an ok after a stop allowed the prompt: %v %q", r.term.pressed("vp_s1"), r.ad.last())
 	}
+	// Not the second time either: the same word must not change meaning
+	// ten seconds later.
+	r.say("me", "OK")
+	if len(r.term.pressed("vp_s1")) != 0 {
+		t.Fatalf("a second ok after a stop allowed the prompt: %v", r.term.pressed("vp_s1"))
+	}
+	r.advance(pendingTTL + time.Second)
 	r.say("me", "OK")
 	if keys := r.term.pressed("vp_s1"); len(keys) != 1 || keys[0][0] != "Enter" {
 		t.Fatalf("a later OK to a seen request: %v %q", keys, r.ad.last())

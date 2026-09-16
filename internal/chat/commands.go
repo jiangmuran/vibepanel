@@ -80,7 +80,7 @@ var verbs = map[string]Verb{
 	"看一下": VerbScreen, "看看屏幕": VerbScreen,
 	"shot": VerbShot, "截图": VerbShot,
 	"open": VerbOpen, "打开": VerbOpen, "链接": VerbOpen,
-	"mute": VerbMute, "静音": VerbMute,
+	"mute": VerbMute, "静音": VerbMute, "静音一下": VerbMute,
 	"unmute": VerbUnmute, "取消静音": VerbUnmute,
 	"focus": VerbFocus, "切到": VerbFocus, "切换": VerbFocus,
 	"unfocus": VerbUnfocus, "取消切到": VerbUnfocus, "不切了": VerbUnfocus, "退出切换": VerbUnfocus, "取消默认": VerbUnfocus,

@@ -1,9 +1,11 @@
 package chat
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jiangmuran/vibepanel/internal/session"
 	"github.com/jiangmuran/vibepanel/internal/store"
@@ -34,7 +36,7 @@ func TestARequestAnsweredAtTheLaptopLosesItsButtons(t *testing.T) {
 	r.ad.mu.Lock()
 	defer r.ad.mu.Unlock()
 	e, ok := r.ad.edits["m1"]
-	if !ok || e.Card == nil || len(e.Buttons) != 0 || !strings.Contains(e.Card.StateText, "已处理") {
+	if !ok || e.Card == nil || len(e.Buttons) != 0 || !strings.Contains(e.Card.StateText, "电脑上处理") || !strings.Contains(e.Card.Body, "deploy to prod") {
 		t.Fatalf("the old card was not closed: %+v", e)
 	}
 	if _, edited := r.ad.edits["m2"]; edited {
@@ -187,5 +189,170 @@ func TestOwedCountsOnlyWhatStillWaits(t *testing.T) {
 	_ = r.db.SetSessionState(r.ctx, "s1", session.StateDone, session.SourceHook)
 	if h := r.b.Healths(r.ctx)[0]; h.NeedsHello != 0 || len(h.WaitingOn) != 0 {
 		t.Fatalf("owed after it stopped waiting: %+v", h)
+	}
+}
+
+// Narrow, then broad: the old card's words contain the new request's.
+func TestQuotingANarrowCardDoesNotAllowTheBroadRequest(t *testing.T) {
+	r := newRig(t, Capabilities{})
+	p := r.peer("me", store.PeerPaired, store.ModeNormal)
+	p.ContextToken = "tok"
+	_ = r.db.PutChatPeer(r.ctx, p)
+	row := r.session("s1", "app", "claude", session.StateWaiting)
+	r.prompt("s1", "Bash: rm -rf /home/zhou/projects/miniapp/tmp")
+	r.pushed(row, session.StateWaiting, 1)
+	oldCard := r.ad.last()
+	r.prompt("s1", "Bash: rm -rf /home/zhou")
+	before := r.b.Handled()
+	r.ad.inbound(t, Inbound{PeerID: "me", Text: "可以", QuotedText: oldCard, ContextToken: "tok"})
+	r.settleFrom(before)
+	if len(r.term.pressed("vp_s1")) != 0 {
+		t.Fatalf("the narrow card allowed the broad request: %q", r.ad.last())
+	}
+	if !strings.Contains(r.ad.last(), "rm -rf /home/zhou\n") {
+		t.Fatalf("the current request should be shown: %q", r.ad.last())
+	}
+}
+
+// Round three: what a yes-like word does when it is not taken as one, a no
+// the person addressed, a stale quote while something else asks, and a
+// question left waiting.
+func TestRoundThreeAnswers(t *testing.T) {
+	r := newRig(t, Capabilities{Proactive: true})
+	r.peer("me", store.PeerPaired, store.ModeNormal)
+	r.session("s1", "asks", "codex", session.StateWaiting)
+	r.prompt("s1", "shell: rm -rf node_modules")
+	r.session("s4", "question", "claude", session.StateWaiting)
+	_, _ = r.db.AddSessionMessage(r.ctx, store.SessionMessage{SessionID: "s4", Kind: store.MessageQuestion, Text: "A or B?"})
+	h1, _ := r.db.ChatHandle(r.ctx, "s1")
+
+	// 嗯嗯 is not a yes, and says so while one request asks.
+	r.say("me", "嗯嗯")
+	if len(r.term.pressed("vp_s1")) != 0 || !strings.Contains(r.ad.last(), "没有当成允许") {
+		t.Fatalf("嗯嗯: %v %q", r.term.pressed("vp_s1"), r.ad.last())
+	}
+	// A bare yes is for the one asking permission, not ambiguous with the
+	// question; it was shown just now, so it goes through.
+	r.say("me", "可以")
+	if keys := r.term.pressed("vp_s1"); len(keys) != 1 || keys[0][0] != "y" {
+		t.Fatalf("a yes with a question also waiting: %v %q", keys, r.ad.last())
+	}
+	// An addressed no needs no showing first.
+	r.prompt("s1", "shell: deploy web to prod")
+	r.say("me", fmt.Sprintf("%d号不行", h1))
+	if keys := r.term.pressed("vp_s1"); len(keys) != 2 || keys[1][0] != "n" {
+		t.Fatalf("an addressed no: %v %q", keys, r.ad.last())
+	}
+}
+
+func TestAYesWithNothingAskingIsNotForTheFocus(t *testing.T) {
+	r := newRig(t, Capabilities{Proactive: true})
+	r.peer("me", store.PeerPaired, store.ModeNormal)
+	r.session("s5", "infra", "claude", session.StateDone)
+	h5, _ := r.db.ChatHandle(r.ctx, "s5")
+	r.say("me", fmt.Sprintf("切到 %d", h5))
+	r.say("me", "好")
+	if !strings.Contains(r.ad.last(), "没有会话在等你允许") {
+		t.Fatalf("reply %q", r.ad.last())
+	}
+}
+
+// A name the owner gave is not replaced by the IM's profile name, in the
+// row or in what the bridge says about the person.
+func TestTheOwnersNameForAPersonSticks(t *testing.T) {
+	r := newRig(t, Capabilities{Proactive: true})
+	p := r.peer("me", store.PeerPaired, store.ModeNormal)
+	p.Display = "老婆"
+	_ = r.db.PutChatPeer(r.ctx, p)
+	r.session("s1", "fix", "codex", session.StateWaiting)
+	r.prompt("s1", "shell: ls")
+	h, _ := r.db.ChatHandle(r.ctx, "s1")
+	before := r.b.Handled()
+	r.ad.inbound(t, Inbound{PeerID: "me", PeerName: "Lin Xiao", Text: fmt.Sprintf("%d号不行", h)})
+	r.settleFrom(before)
+	r.amu.Lock()
+	defer r.amu.Unlock()
+	joined := strings.Join(r.audit, "\n")
+	if strings.Contains(joined, "Lin Xiao") || !strings.Contains(joined, "老婆") {
+		t.Fatalf("audit: %s", joined)
+	}
+}
+
+// A rule that sends a session's requests to one person does not show them to
+// the others by editing a card those others already have.
+func TestAnExcludedPersonsCardIsNotEditedIntoTheRequest(t *testing.T) {
+	r := newRig(t, Capabilities{Proactive: true, Edit: true, Buttons: true, QuoteRefs: true})
+	r.peer("a", store.PeerPaired, store.ModeNormal)
+	r.peer("b", store.PeerPaired, store.ModeNormal)
+	row := r.session("s1", "fix", "claude", session.StateDone)
+	_ = r.db.RecordSessionEvent(r.ctx, store.SessionEvent{At: time.Now().Unix(), SessionID: "s1", ProjectID: "p1", From: session.StateWorking, To: session.StateDone})
+	r.advance(2 * time.Minute)
+	r.pushed(row, session.StateDone, 2) // both get the done card
+	raw, _ := json.Marshal(Routes{
+		Rules:   []Rule{{ID: "1", Enabled: true, Match: Match{Kinds: []string{"prompt"}}, To: []string{r.ad.kind + ":a"}, Body: true}},
+		Default: DefaultRoutes().Default,
+	})
+	_ = r.db.SetSetting(r.ctx, RoutesKey, string(raw))
+	_ = r.db.SetSessionState(r.ctx, "s1", session.StateWaiting, session.SourceHook)
+	r.prompt("s1", "Bash: deploy to prod")
+	r.pushed(row, session.StateWaiting, 3)
+	time.Sleep(testCoalesce)
+	r.ad.mu.Lock()
+	defer r.ad.mu.Unlock()
+	for ref, e := range r.ad.edits {
+		if e.Card != nil && strings.Contains(e.Card.Body, "deploy to prod") {
+			t.Fatalf("card %s was edited to show the request: %+v", ref, e.Card)
+		}
+	}
+}
+
+// A stranger writing every forty seconds is answered once a minute, not once.
+func TestAStrangerWhoKeepsWritingIsAnsweredAgain(t *testing.T) {
+	r := newRig(t, Capabilities{Proactive: true})
+	r.say("new", "hi")
+	r.advance(40 * time.Second)
+	r.say("new", "hello?")
+	r.advance(40 * time.Second)
+	r.say("new", "anyone?")
+	n := 0
+	for _, s := range r.ad.texts() {
+		if strings.Contains(s, "配对码") {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Fatalf("codes sent: %d, %q", n, r.ad.texts())
+	}
+}
+
+// The preview says what a permission request from a session would do, not
+// only what its current state does.
+func TestThePreviewAnswersForARequest(t *testing.T) {
+	r := newRig(t, Capabilities{Proactive: true})
+	r.peer("a", store.PeerPaired, store.ModeNormal)
+	r.peer("b", store.PeerPaired, store.ModeNormal)
+	raw, _ := json.Marshal(Routes{
+		Rules:   []Rule{{ID: "1", Name: "requests to a", Enabled: true, Match: Match{Kinds: []string{"prompt"}}, To: []string{r.ad.kind + ":a"}}},
+		Default: DefaultRoutes().Default,
+	})
+	_ = r.db.SetSetting(r.ctx, RoutesKey, string(raw))
+	r.session("s1", "fix", "claude", session.StateDone)
+	d, who, ok := r.b.PreviewRequest(r.ctx, "s1")
+	if !ok || d.Rule != "requests to a" || len(who) != 1 || who[0] != r.ad.kind+":a" {
+		t.Fatalf("request preview: %+v %v", d, who)
+	}
+}
+
+// One request held for two people is one request.
+func TestOwedCountsRequestsNotPeople(t *testing.T) {
+	r := newRig(t, Capabilities{})
+	r.peer("a", store.PeerPaired, store.ModeNormal)
+	r.peer("b", store.PeerPaired, store.ModeNormal)
+	row := r.session("s1", "fix", "claude", session.StateWaiting)
+	r.prompt("s1", "Bash: ls")
+	r.b.SessionChanged(row, session.StateWaiting)
+	r.waitFor(func() bool { return len(r.b.Healths(r.ctx)[0].WaitingOn) == 2 })
+	if h := r.b.Healths(r.ctx)[0]; h.NeedsHello != 1 {
+		t.Fatalf("health: %+v", h)
 	}
 }

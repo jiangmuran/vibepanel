@@ -56,6 +56,15 @@ function silencesRequests(rule: ChatRule, paired: Set<string>): boolean {
   return to.length === 0 && (kinds.length === 0 || kinds.includes('prompt')) && (states.length === 0 || states.includes('waiting'))
 }
 
+/** A removed person's destination, as readable as what is left of it:
+ *  the app's name and the part of the id before any @. */
+function goneLabel(key: string, data: ChatSettings): string {
+  const [channel, ...rest] = key.split(':')
+  const id = rest.join(':')
+  const label = data.factories.find((f) => f.kind === channel)?.label ?? channel
+  return `${label} · ${id.split('@')[0]}`
+}
+
 function newRule(): ChatRule {
   return {
     id: Math.random().toString(36).slice(2, 10),
@@ -135,6 +144,15 @@ export function Routes({ data, onChange }: { data: ChatSettings; onChange: () =>
     .map((p) => ({ key: `${p.channel}:${p.peerId}`, label: `${labels.get(p.channel) ?? p.channel} · ${p.display || p.peerId}` }))
   // The preview answers in "channel:peer" keys; a person reads names.
   const nameOf = (key: string) => peers.find((p) => p.key === key)?.label ?? key
+  const ruleName = (rule: string) => (rule === 'default' ? t('chat.defaultRule') : safeText(rule))
+  const said = (d: ChatRoutePreview['decision'], who: string[] | null) =>
+    d.send
+      ? d.hold
+        ? t('chat.previewHeld', { rule: ruleName(d.rule) })
+        : (who ?? []).length === 0
+          ? t('chat.previewNobody', { rule: ruleName(d.rule) })
+          : t('chat.previewSent', { rule: ruleName(d.rule), who: (who ?? []).map((k) => safeText(nameOf(k))).join('、') })
+      : t('chat.previewSilent', { rule: ruleName(d.rule) })
 
   return (
     <Section id="routes" title={t('chat.routes')} lead={t('chat.routesLead')}>
@@ -194,15 +212,20 @@ export function Routes({ data, onChange }: { data: ChatSettings; onChange: () =>
         </select>
       </div>
       {preview && (
-        <p className="mt-2 text-vp-sm text-ink-2" data-testid="chat-preview-result">
-          {preview.decision.send
-            ? preview.decision.hold
-              ? t('chat.previewHeld', { rule: safeText(preview.decision.rule) })
-              : preview.peers.length === 0
-                ? t('chat.previewNobody', { rule: safeText(preview.decision.rule) })
-                : t('chat.previewSent', { rule: safeText(preview.decision.rule), who: preview.peers.map((k) => safeText(nameOf(k))).join(', ') })
-            : t('chat.previewSilent', { rule: safeText(preview.decision.rule) })}
-        </p>
+        <div className="mt-2 text-vp-sm text-ink-2" data-testid="chat-preview-result">
+          <p>
+            {t('chat.previewNow')}
+            {said(preview.decision, preview.peers)}
+          </p>
+          {/* A rule for permission requests is the one people check, and
+              the session is rarely asking at the moment it is picked. */}
+          {preview.request && (
+            <p data-testid="chat-preview-request">
+              {t('chat.previewRequest')}
+              {said(preview.request, preview.requestPeers)}
+            </p>
+          )}
+        </div>
       )}
     </Section>
   )
@@ -346,13 +369,14 @@ function RuleEditor({
               <button
                 key={k}
                 type="button"
-                className="vp-press flex items-center gap-1 rounded-vp border border-dashed px-2 py-1 text-vp-sm text-ink-2 line-through"
+                className="vp-press flex items-center gap-1 rounded-vp border border-dashed px-2 py-1 text-vp-sm text-ink-2"
                 style={{ borderColor: 'var(--vp-state-waiting)' }}
                 title={t('chat.goneRemove')}
                 onClick={() => set({ to: to.filter((x) => x !== k) })}
               >
                 <Trash2 size={12} aria-hidden="true" />
-                {t('chat.goneDestination', { name: safeText(k) })}
+                <span className="line-through">{safeText(goneLabel(k, data))}</span>
+                <span>{t('chat.goneMark')}</span>
               </button>
             ))}
           </div>
@@ -378,7 +402,8 @@ function RuleEditor({
               type="number"
               min={0}
               max={600}
-              value={rule.coalesceSeconds}
+              placeholder="3"
+              value={rule.coalesceSeconds || ''}
               onChange={(e) => set({ coalesceSeconds: Math.max(0, Number(e.target.value) || 0) })}
             />
           </label>

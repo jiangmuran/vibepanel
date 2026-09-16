@@ -56,8 +56,10 @@ export function Peers({ data, onChange }: { data: ChatSettings; onChange: () => 
       setCode('')
       showToast({ kind: 'success', key: 'chat.pairedName', params: { name: safeText(nameOf(p)) } })
       onChange()
-    } catch (e) {
-      showToast({ kind: 'error', key: 'chat.pairFailed', detail: chatError(e) })
+    } catch {
+      // The headline is the whole message; a detail repeating it said the
+      // same thing twice.
+      showToast({ kind: 'error', key: 'chat.pairFailed' })
     } finally {
       setBusy(false)
     }

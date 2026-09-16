@@ -206,7 +206,11 @@ type Bridge struct {
 	// and reading the ok that follows as "allow" allows the thing they were
 	// trying to stop.
 	stopped map[string]time.Time
-	handles map[string]int
+	// missedOther counts, per person, pushes that could not reach them
+	// about sessions not waiting (a finished turn, an answer given by
+	// someone else), so the catch-up can say that more was missed.
+	missedOther map[string]int
+	handles     map[string]int
 	// hello is when each stranger was last answered with a code, so a
 	// stranger who keeps talking is not answered every time. Pruned when it
 	// grows past a few hundred entries, which only a flood produces.
@@ -258,21 +262,22 @@ func New(d Deps) *Bridge {
 		// 256: a change is a few bytes and the drain is a timer arm, so the
 		// queue empties faster than any poller fills it; the bound exists so
 		// a stuck bridge cannot grow without limit, not to be reached.
-		events:   make(chan event, 256),
-		chans:    map[string]*channel{},
-		timers:   map[string]*time.Timer{},
-		pend:     map[string]pending{},
-		more:     map[string]string{},
-		moreLast: map[string]string{},
-		missed:   map[string]map[string]bool{},
-		clarify:  map[string]time.Time{},
-		stopped:  map[string]time.Time{},
-		handles:  map[string]int{},
-		hello:    map[string]time.Time{},
-		peers:    map[string]*sync.Mutex{},
-		logins:   map[string]LoginAdapter{},
-		failed:   map[string]string{},
-		lang:     "zh",
+		events:      make(chan event, 256),
+		chans:       map[string]*channel{},
+		timers:      map[string]*time.Timer{},
+		pend:        map[string]pending{},
+		more:        map[string]string{},
+		moreLast:    map[string]string{},
+		missed:      map[string]map[string]bool{},
+		clarify:     map[string]time.Time{},
+		stopped:     map[string]time.Time{},
+		missedOther: map[string]int{},
+		handles:     map[string]int{},
+		hello:       map[string]time.Time{},
+		peers:       map[string]*sync.Mutex{},
+		logins:      map[string]LoginAdapter{},
+		failed:      map[string]string{},
+		lang:        "zh",
 	}
 }
 
@@ -531,7 +536,9 @@ func (b *Bridge) push(ctx context.Context, sessionID string) {
 			// card only after work. A session created a moment ago settles
 			// into done having done nothing, and six new sessions were six
 			// cards saying so.
-			quietDone = !b.finishedWork(ctx, row)
+			// And not in its first minute: a new session's shell starting up
+			// reads as a moment of work followed by done.
+			quietDone = !b.finishedWork(ctx, row) || b.d.Now().Unix()-row.CreatedAt < 60
 		}
 	}
 	card, rest := b.cardFor(row, c, last, handle, project, d.Body, lang)
@@ -542,7 +549,14 @@ func (b *Bridge) push(ctx context.Context, sessionID string) {
 		if !ok {
 			continue
 		}
-		if !d.Send || !Destined(d.To, p.Channel, p.PeerID) || quietDone {
+		if !Destined(d.To, p.Channel, p.PeerID) {
+			// A person the rule does not send this to is not shown it by an
+			// edit either: editing their old "done" card into "needs your
+			// permission" with the command in it told exactly the people a
+			// rule excluded.
+			continue
+		}
+		if !d.Send || quietDone {
 			// Not a push, but a status message that exists is kept true.
 			b.editStatus(ctx, ch, p, sessionID, card)
 			continue
@@ -691,10 +705,13 @@ func (b *Bridge) undelivered(ctx context.Context, ch *channel, p store.ChatPeer,
 	if !errors.Is(err, ErrNeedsHello) {
 		b.d.Log.Warn("chat push", "channel", p.Channel, "err", err)
 	}
+	key := chatKey(p.Channel, p.PeerID)
 	if state != string(session.StateWaiting) {
+		b.mu.Lock()
+		b.missedOther[key]++
+		b.mu.Unlock()
 		return
 	}
-	key := chatKey(p.Channel, p.PeerID)
 	b.mu.Lock()
 	if b.missed[key] == nil {
 		b.missed[key] = map[string]bool{}
@@ -833,27 +850,28 @@ func (b *Bridge) owed(ctx context.Context, kind string) (int64, []string) {
 		}
 	}
 	b.mu.Unlock()
-	var n int64
-	who := []string{}
+	// Requests, not deliveries: one request held for two people is one.
+	requests := map[string]bool{}
+	names := []string{}
 	for key, ids := range missed {
-		waiting := 0
+		waiting := false
 		for _, id := range ids {
 			if row, err := b.d.DB.GetSession(ctx, id); err == nil && Addressable(row) && row.State == session.StateWaiting {
-				waiting++
+				requests[id], waiting = true, true
 			}
 		}
-		if waiting == 0 {
+		if !waiting {
 			continue
 		}
-		n += int64(waiting)
-		name := strings.TrimPrefix(key, kind+":")
-		if p, err := b.d.DB.GetChatPeer(ctx, kind, name); err == nil && p.Display != "" {
-			name = p.Display
+		id := strings.TrimPrefix(key, kind+":")
+		p, err := b.d.DB.GetChatPeer(ctx, kind, id)
+		if err != nil {
+			p = store.ChatPeer{PeerID: id}
 		}
-		who = append(who, name)
+		names = append(names, who(p))
 	}
-	sort.Strings(who)
-	return n, who
+	sort.Strings(names)
+	return int64(len(requests)), names
 }
 
 func (b *Bridge) Handle(ctx context.Context, sessionID string) (int, error) {
@@ -884,6 +902,26 @@ func (b *Bridge) Preview(ctx context.Context, sessionID string) (Decision, Chang
 	if !ok {
 		return Decision{}, Change{}, nil, false
 	}
+	d, who := b.previewChange(ctx, c)
+	return d, c, who, true
+}
+
+// PreviewRequest says what the rules would do if the session asked for
+// permission now. A preview of a session as it stands answered about its
+// last state, and a rule for permission requests read as though it did not
+// apply to the very session it was written for.
+func (b *Bridge) PreviewRequest(ctx context.Context, sessionID string) (Decision, []string, bool) {
+	_, c, _, ok := b.change(ctx, sessionID)
+	if !ok {
+		return Decision{}, nil, false
+	}
+	c.State, c.Kind = string(session.StateWaiting), store.MessagePrompt
+	d, who := b.previewChange(ctx, c)
+	return d, who, true
+}
+
+func (b *Bridge) previewChange(ctx context.Context, c Change) (Decision, []string) {
+	sessionID := c.SessionID
 	raw, _ := b.d.DB.GetSetting(ctx, RoutesKey, "")
 	d := ParseRoutes(raw).Decide(c, b.d.Now().In(b.d.Zone()))
 	who := []string{}
@@ -900,7 +938,7 @@ func (b *Bridge) Preview(ctx context.Context, sessionID string) (Decision, Chang
 			who = append(who, chatKey(p.Channel, p.PeerID))
 		}
 	}
-	return d, c, who, true
+	return d, who
 }
 
 // TestSend sends a line to every paired peer of a channel, or to one, so the
@@ -1040,6 +1078,14 @@ func (b *Bridge) open(row store.ChatChannel) (ChannelConfig, error) {
 // ErrChannelConfig is a configuration the adapter itself refuses.
 var ErrChannelConfig = errors.New("chat: the channel's settings are not usable")
 
+// configError carries the adapter's own words about what is wrong, which is
+// what the page shows; Is makes it an ErrChannelConfig.
+type configError struct{ err error }
+
+func (e *configError) Error() string        { return e.err.Error() }
+func (e *configError) Unwrap() error        { return e.err }
+func (e *configError) Is(target error) bool { return target == ErrChannelConfig }
+
 func (b *Bridge) WriteChannel(ctx context.Context, kind string, enabled bool, cfg ChannelConfig) error {
 	f, ok := FactoryFor(kind)
 	if !ok {
@@ -1053,7 +1099,7 @@ func (b *Bridge) WriteChannel(ctx context.Context, kind string, enabled bool, cf
 		// wrong is still found when the channel runs.
 		values, _ := json.Marshal(cfg.Values)
 		if _, err := f.New(values, Env{HTTP: b.d.HTTP, State: cfg.State, PublicURL: b.d.PublicURL()}); err != nil {
-			return fmt.Errorf("%w: %w", ErrChannelConfig, err)
+			return &configError{err: err}
 		}
 	}
 	if b.d.Box == nil {

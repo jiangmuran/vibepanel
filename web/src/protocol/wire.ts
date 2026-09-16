@@ -1765,6 +1765,9 @@ export interface ChatTestResult {
 }
 
 export interface ChatRoutePreview {
+  /** The same decision for a permission request from this session. */
+  request: ChatRoutePreview['decision']
+  requestPeers: string[] | null
   decision: {
     send: boolean
     to: string[] | null

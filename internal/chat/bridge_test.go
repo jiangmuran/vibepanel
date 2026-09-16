@@ -202,13 +202,16 @@ func (f *fakeTerm) pressed(name string) [][]string {
 
 // rig is a bridge with one fake channel, one paired peer, and a few sessions.
 type rig struct {
-	t     *testing.T
-	ctx   context.Context
-	db    *store.DB
-	b     *Bridge
-	ad    *fakeAdapter
-	term  *fakeTerm
-	now   time.Time
+	t    *testing.T
+	ctx  context.Context
+	db   *store.DB
+	b    *Bridge
+	ad   *fakeAdapter
+	term *fakeTerm
+	now  time.Time
+	// nowMu guards now against the bridge's timers reading it while a test
+	// moves it; the test goroutine's own reads need no lock.
+	nowMu sync.Mutex
 	audit []string
 	amu   sync.Mutex
 }
@@ -252,7 +255,11 @@ func newRig(t *testing.T, caps Capabilities) *rig {
 	// the rig's clock is the real one, frozen at the start.
 	r := &rig{t: t, ctx: ctx, db: db, ad: ad, term: newTerm(), now: time.Now().Truncate(time.Second)}
 	r.b = New(Deps{
-		DB: db, Term: r.term, Box: box, Now: func() time.Time { return r.now },
+		DB: db, Term: r.term, Box: box, Now: func() time.Time {
+			r.nowMu.Lock()
+			defer r.nowMu.Unlock()
+			return r.now
+		},
 		Coalesce:  testCoalesce,
 		PublicURL: func() string { return "https://panel.test" },
 		Shot:      func(string) ([]byte, error) { return []byte("png"), nil },
@@ -369,7 +376,7 @@ func TestAStrangerGetsAPairingCodeAndNothingElse(t *testing.T) {
 			late = p
 		}
 	}
-	r.now = r.now.Add(pairingTTL + time.Minute)
+	r.advance(pairingTTL + time.Minute)
 	if _, err := r.b.Pair(r.ctx, late.PairingCode); err == nil {
 		t.Fatal("an expired code paired")
 	}
@@ -506,7 +513,7 @@ func TestAWorkingSessionRefusesTextUntilStopped(t *testing.T) {
 	}
 	// An expired confirmation is refused.
 	r.say("me", fmt.Sprintf("stop %d", hw))
-	r.now = r.now.Add(pendingTTL + time.Second)
+	r.advance(pendingTTL + time.Second)
 	r.say("me", "ok")
 	if keys := r.term.pressed("vp_w"); len(keys) != 1 {
 		t.Fatalf("an expired ok pressed keys: %v", keys)
@@ -1075,4 +1082,11 @@ func TestOnePersonsMessagesRunInOrder(t *testing.T) {
 	r.ad.inbound(t, Inbound{PeerID: "other", Text: "list"})
 	r.settleFrom(before)
 	release()
+}
+
+// advance moves the rig's clock.
+func (r *rig) advance(d time.Duration) {
+	r.nowMu.Lock()
+	r.now = r.now.Add(d)
+	r.nowMu.Unlock()
 }

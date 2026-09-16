@@ -53,7 +53,7 @@ var strs = map[string][2]string{
 	"denied":        {"已拒绝", "denied"},
 	"answeredBy":    {"%s（%s）", "%s by %s"},
 	"answeredElsewhere": {
-		"[%[1]d] 已经被 %[2]s %[3]s：%[4]s", "[%[1]d] was %[3]s by %[2]s: %[4]s",
+		"[%[1]d] 已被 %[2]s %[3]s：%[4]s", "[%[1]d] was %[3]s by %[2]s: %[4]s",
 	},
 	"interrupted": {
 		"已发送中断", "interrupt sent",
@@ -111,7 +111,7 @@ var strs = map[string][2]string{
 	"unclearCommand": {"没听懂，也没有发给任何会话。%s的说法是：%s", "Not understood, and nothing was sent. %s is: %s"},
 	"hintPrompt":     {"允许回「%d号可以」，拒绝回「%d号不行」", "Reply %d yes to allow, %d no to deny"},
 	"hintQuestion":   {"回「%d: 你的回答」", "Reply %d: your answer"},
-	"handled":        {"已处理", "handled"},
+	"handled":        {"已在电脑上处理", "handled at the computer"},
 	"unfocused":      {"不再有默认会话，没写编号的话只发给唯一在等你的那个。", "No focus now; bare replies go only to the one session waiting."},
 	"imageFailed":    {"图片没收到。", "The picture did not arrive."},
 	"noShell":        {"[%d] 是一个 shell，没有提示可以回答。", "[%d] is a shell; there is no prompt to answer."},
@@ -123,6 +123,17 @@ var strs = map[string][2]string{
 		"有几个会话都在等你，说清楚是哪个：回复「编号: 你的话」，或者引用它的消息。\n%s",
 		"Several sessions are waiting. Say which: reply \"number: your words\" or quote its message.\n%s",
 	},
+	"severalAnswer": {
+		"有几个会话都在等你允许，说清楚是哪个，比如「%d号可以」。\n%s",
+		"Several sessions are asking for permission. Say which, e.g. %d yes.\n%s",
+	},
+	"notYes": {
+		"「%s」没有当成允许。[%d] 还在等：\n%s\n要允许回「%d号可以」。",
+		"\"%s\" was not taken as allow. [%d] still waits:\n%s\nReply %d yes to allow.",
+	},
+	"mutedNote":    {"（[%d] 静音中，所以没推给你）", "([%d] is muted, so it was not sent to you)"},
+	"othersAsking": {"%s 在等你允许。", "%s waiting for permission."},
+	"otherMissed":  {"另有 %d 条通知没送到。", "%d other notices were not delivered."},
 	"none": {
 		"没有会话在等你，也没有默认会话。回复「编号: 你的话」指定一个，或者「列表」看看有哪些。",
 		"No session is waiting and none is in focus. Reply \"number: your words\" to pick one, or list.",
@@ -178,6 +189,10 @@ var strs = map[string][2]string{
 	"cancelled":      {"已取消。", "Cancelled."},
 	"expired":        {"那个操作已经过期了，重新发一次。", "That one has expired; send it again."},
 	"missed": {
+		"你不在的时候，这些在等你：",
+		"While you were away these started waiting:",
+	},
+	"missedHeld": {
 		"你不在的时候，这些在等你（刚才那条没有执行，看完再发一次）：",
 		"While you were away these started waiting (your last message was not run; send it again after reading):",
 	},
