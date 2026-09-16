@@ -22377,3 +22377,16 @@ Every new guard was mutation-tested: dropping the preview allowlist, the
 logout/password origin checks, the scoped-token accept, the derivation in
 hookEnv, and the plaintext-row deletion each turned its test red before the
 code was restored.
+
+The audit's tail was fixed the next day: the source caches dropped on
+republish, the three last-used stamps throttled to one write a minute
+(their expiries are fixed deadlines; the stamps back dates a person
+reads), idx_sessions_state dropped by a v26 migration -- and the hard
+way learned that `TestTheFirstMigrationIsFrozen` pins schema.sql by
+hash, so removing the index there was never an option -- ReorderProjects
+returning the omitted to automatic, which the function's own comment had
+been asking for in writing, a fifteen-second cache on the share flow
+rollups, a source-watch round budget larger than the worst case of the
+set it runs, and the release tag validated before it reaches a sed
+program. Two new guards mutation-tested red; the frozen-schema test
+caught the schema.sql edit before any database could.
