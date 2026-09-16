@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/hooks"
 	"github.com/jiangmuran/vibepanel/internal/session"
 	"github.com/jiangmuran/vibepanel/internal/store"
+	"github.com/jiangmuran/vibepanel/internal/sysmon"
 )
 
 // The chat bridge's HTTP surface: the settings page's API, the two doors an
@@ -129,6 +131,7 @@ func (s *Server) StartChat(ctx context.Context) error {
 		Shot:      s.Shooter,
 		Audit:     func(ctx context.Context, event, detail string) { s.audit(ctx, event, "chat", "", detail) },
 		PastedDir: filepath.Join(s.Cfg.DataDir, "pasted"),
+		Monitor:   s.chatMonitor,
 	})
 	s.Chat.Start(ctx)
 	if err := s.RebuildAssistant(ctx); err != nil {
@@ -154,6 +157,7 @@ func (s *Server) registerChatRoutes(r chi.Router) {
 	r.Put("/chat/keys", s.handlePutChatTools)
 	r.Put("/chat/assistant", s.handlePutChatAssistant)
 	r.Put("/chat/lang", s.handlePutChatLang)
+	r.Put("/chat/alerts", s.handlePutChatAlerts)
 	r.Get("/chat/log", s.handleChatLog)
 }
 
@@ -172,6 +176,7 @@ func (s *Server) registerChatPublicRoutes(r chi.Router) {
 		r.Get("/sessions/{handle}/screen", s.handleChatToolScreen)
 		r.Get("/usage", s.handleChatToolUsage)
 		r.Get("/projects", s.handleChatToolProjects)
+		r.Get("/system", s.handleChatToolSystem)
 	})
 }
 
@@ -227,6 +232,10 @@ type chatSettingsView struct {
 	// ConsentAt is when the owner accepted that configuring chat sends
 	// session content to services outside this machine; zero until then.
 	ConsentAt int64 `json:"consentAt"`
+	// Alerts is when the machine is worth a message, and MonitorAvailable
+	// whether this panel can read the machine at all.
+	Alerts           chat.Alerts `json:"alerts"`
+	MonitorAvailable bool        `json:"monitorAvailable"`
 }
 
 // ChatConsentKey is the settings row recording that acceptance.
@@ -351,6 +360,9 @@ func (s *Server) handleChatSettings(w http.ResponseWriter, r *http.Request) {
 		view.Lang = l
 	}
 	view.Dropped = s.Chat.Dropped()
+	raw, _ = s.DB.GetSetting(ctx, chat.AlertsKey, "")
+	view.Alerts = chat.ParseAlerts(raw)
+	view.MonitorAvailable = s.Sampler != nil
 	if raw, err := s.DB.GetSetting(ctx, ChatConsentKey, ""); err == nil {
 		view.ConsentAt, _ = strconv.ParseInt(raw, 10, 64)
 	}
@@ -905,6 +917,29 @@ func (s *Server) handlePutChatLang(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) handlePutChatAlerts(w http.ResponseWriter, r *http.Request) {
+	var a chat.Alerts
+	if !decode(w, r, &a) {
+		return
+	}
+	if a.To == nil {
+		a.To = []string{}
+	}
+	if err := a.Validate(); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	raw, _ := json.Marshal(a)
+	if err := s.DB.SetSetting(r.Context(), chat.AlertsKey, string(raw)); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	user, _, _ := s.currentUser(r)
+	s.audit(r.Context(), "chat.alerts", user.Username, s.clientIP(r),
+		fmt.Sprintf("enabled=%v cpu=%d%%/%dm mem=%d%% disk=%d%%", a.Enabled, a.CPUPercent, a.CPUMinutes, a.MemPercent, a.DiskPercent))
+	writeJSON(w, http.StatusOK, a)
+}
+
 func (s *Server) handleChatLog(w http.ResponseWriter, r *http.Request) {
 	n, _ := strconv.Atoi(r.URL.Query().Get("n"))
 	entries, err := s.DB.RecentAuditPrefix(r.Context(), "chat.", n)
@@ -1062,6 +1097,56 @@ func (s *Server) handleChatToolScreen(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"text": strings.TrimRight(text, "\n ")})
 }
 
+// toolSystemView is the machine for the advanced mode: the numbers, and the
+// sessions using the most by handle and title. Restated rather than the
+// sample itself, for the reason the session views are: the disk path and a
+// field added to Sample later are not disclosed by default.
+type toolSystemView struct {
+	CPUPercent  *float64          `json:"cpuPercent"`
+	Cores       int               `json:"cores"`
+	Load        [3]float64        `json:"load"`
+	MemUsed     uint64            `json:"memUsedBytes"`
+	MemTotal    uint64            `json:"memTotalBytes"`
+	SwapUsed    uint64            `json:"swapUsedBytes"`
+	SwapTotal   uint64            `json:"swapTotalBytes"`
+	DiskUsed    uint64            `json:"diskUsedBytes"`
+	DiskTotal   uint64            `json:"diskTotalBytes"`
+	UptimeHours float64           `json:"uptimeHours"`
+	Sessions    []toolSessionLoad `json:"sessions"`
+}
+
+type toolSessionLoad struct {
+	Handle     int     `json:"handle"`
+	Title      string  `json:"title"`
+	CPUPercent float64 `json:"cpuPercent"`
+	RSSBytes   uint64  `json:"rssBytes"`
+}
+
+func (s *Server) handleChatToolSystem(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sample, usage := s.chatMonitor(ctx)
+	view := toolSystemView{
+		CPUPercent: sample.CPUPercent, Cores: sample.Cores, Load: [3]float64{sample.Load1, sample.Load5, sample.Load15},
+		MemUsed: sample.MemTotal - sample.MemAvailable, MemTotal: sample.MemTotal,
+		SwapUsed: sample.SwapTotal - sample.SwapFree, SwapTotal: sample.SwapTotal,
+		DiskUsed: sample.DiskTotal - sample.DiskFree, DiskTotal: sample.DiskTotal,
+		UptimeHours: float64(sample.Uptime) / 3600, Sessions: []toolSessionLoad{},
+	}
+	for id, u := range usage {
+		row, err := s.DB.GetSession(ctx, id)
+		if err != nil || !chat.Addressable(row) || s.Chat == nil {
+			continue
+		}
+		h, err := s.Chat.Handle(ctx, id)
+		if err != nil {
+			continue
+		}
+		view.Sessions = append(view.Sessions, toolSessionLoad{Handle: h, Title: row.Title, CPUPercent: u.CPUPercent, RSSBytes: u.RSS})
+	}
+	sort.Slice(view.Sessions, func(i, j int) bool { return view.Sessions[i].CPUPercent > view.Sessions[j].CPUPercent })
+	writeJSON(w, http.StatusOK, view)
+}
+
 type toolUsageView struct {
 	Days           int     `json:"days"`
 	Started        int     `json:"started"`
@@ -1176,4 +1261,19 @@ func (s *Server) recordHookMessage(ctx context.Context, row store.Session, body 
 	if s.Chat != nil {
 		s.Chat.SessionSaid(row, m)
 	}
+}
+
+// chatMonitor is the machine as the chat reads it: the panel's own sample,
+// and each session's process tree where /proc can be read. Nil-safe for a
+// server built without a sampler, which tests do.
+func (s *Server) chatMonitor(ctx context.Context) (sysmon.Sample, map[string]sysmon.Usage) {
+	if s.Sampler == nil {
+		return sysmon.Sample{}, nil
+	}
+	sample := s.Sampler.Sample()
+	if !sysmon.ProcReadable() {
+		return sample, nil
+	}
+	usage, _ := s.sessionUsage(ctx)
+	return sample, usage
 }

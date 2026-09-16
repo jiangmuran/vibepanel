@@ -356,7 +356,7 @@ func TestAPendingPersonSendingTheirCodeIsToldWhereItGoes(t *testing.T) {
 	r.say("new", "hi")
 	peers, _ := r.db.ListChatPeers(r.ctx)
 	r.say("new", peers[0].PairingCode)
-	if !strings.Contains(r.ad.last(), "「聊天」页") || !strings.Contains(r.ad.last(), "https://panel.test") {
+	if !strings.Contains(r.ad.last(), "「消息通道」页") || !strings.Contains(r.ad.last(), "https://panel.test") {
 		t.Fatalf("reply %q", r.ad.last())
 	}
 	spaced := peers[0].PairingCode[:3] + " " + peers[0].PairingCode[3:]

@@ -44,6 +44,9 @@ func fakePanel(t *testing.T, token string) (*httptest.Server, *[]string) {
 		case "/api/chat/tools/projects":
 			w.Header().Set("Content-Type", "application/json")
 			io.WriteString(w, `[{"name":"api","sessions":1}]`)
+		case "/api/chat/tools/system":
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"cores":8,"memTotalBytes":1024}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -220,7 +223,7 @@ func TestMCPToolsListAndEveryToolCall(t *testing.T) {
 			t.Errorf("tool %s: description %q schema %v", tool.Name, tool.Description, tool.InputSchema)
 		}
 	}
-	if got := strings.Join(names, ","); got != "list_sessions,session_messages,session_screen,usage,projects" {
+	if got := strings.Join(names, ","); got != "list_sessions,session_messages,session_screen,usage,system,projects" {
 		t.Errorf("tools = %s", got)
 	}
 
@@ -235,6 +238,7 @@ func TestMCPToolsListAndEveryToolCall(t *testing.T) {
 		{"usage", `{"days":3}`, "/api/chat/tools/usage?days=3", `"days": 3`},
 		{"usage", `{}`, "/api/chat/tools/usage?days=7", `"days": 7`},
 		{"projects", "", "/api/chat/tools/projects", `"name": "api"`},
+		{"system", "{}", "/api/chat/tools/system", `"cores": 8`},
 	}
 	for i, tc := range cases {
 		*seen = nil

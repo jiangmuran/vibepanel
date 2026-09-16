@@ -482,6 +482,7 @@ func TestAChatToolsTokenReachesOnlyTheseRoutes(t *testing.T) {
 		"GET /api/chat/tools/sessions",
 		"GET /api/chat/tools/sessions/{handle}/messages",
 		"GET /api/chat/tools/sessions/{handle}/screen",
+		"GET /api/chat/tools/system",
 		"GET /api/chat/tools/usage",
 	}
 	var got []string
@@ -622,5 +623,30 @@ func TestChatRoutesAnswer503WithoutABridge(t *testing.T) {
 	}
 	if code, _ = doJSON(t, ts, http.MethodPost, "/api/chat/pair", `{"code":"123456"}`); code != http.StatusServiceUnavailable {
 		t.Fatalf("pair without bridge: %d", code)
+	}
+}
+
+func TestChatAlertsAreSavedValidatedAndReported(t *testing.T) {
+	ts, srv := newTestServer(t)
+	attachChat(t, srv)
+	var view struct {
+		Alerts chat.Alerts `json:"alerts"`
+	}
+	_, body := doJSON(t, ts, http.MethodGet, "/api/chat", "")
+	_ = json.Unmarshal(body, &view)
+	if !view.Alerts.Enabled || view.Alerts.CPUMinutes != chat.DefaultAlerts().CPUMinutes {
+		t.Fatalf("defaults: %+v", view.Alerts)
+	}
+	if code, _ := doJSON(t, ts, http.MethodPut, "/api/chat/alerts", `{"enabled":true,"cpuPercent":20,"cpuMinutes":5,"memPercent":90,"diskPercent":90}`); code != http.StatusBadRequest {
+		t.Fatalf("a threshold that alerts all day: %d", code)
+	}
+	code, _ := doJSON(t, ts, http.MethodPut, "/api/chat/alerts", `{"enabled":false,"cpuPercent":85,"cpuMinutes":15,"memPercent":80,"diskPercent":92,"to":["mem:me"]}`)
+	if code != 200 {
+		t.Fatalf("save: %d", code)
+	}
+	_, body = doJSON(t, ts, http.MethodGet, "/api/chat", "")
+	_ = json.Unmarshal(body, &view)
+	if view.Alerts.Enabled || view.Alerts.CPUMinutes != 15 || len(view.Alerts.To) != 1 {
+		t.Fatalf("after save: %+v", view.Alerts)
 	}
 }

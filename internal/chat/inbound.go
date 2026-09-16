@@ -1408,6 +1408,20 @@ func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in 
 		reply(b.context(ctx, id, n, lang))
 	case VerbUsage:
 		reply(b.usage(ctx, lang))
+	case VerbSystem:
+		reply(b.systemReport(ctx, p, lang))
+	case VerbMuteAlerts:
+		d, understood := parseDuration(cmd.Arg, time.Hour)
+		until := b.d.Now().Add(d)
+		_ = b.d.DB.MuteChat(ctx, p.Channel, p.PeerID, systemMute, until.Unix())
+		text := msg(lang, "alertsMuted", until.In(b.d.Zone()).Format("01-02 15:04"))
+		if !understood {
+			text = msg(lang, "mutedDefaultHour", cmd.Arg) + "\n" + text
+		}
+		reply(text)
+	case VerbUnmuteAlerts:
+		_ = b.d.DB.MuteChat(ctx, p.Channel, p.PeerID, systemMute, 0)
+		reply(msg(lang, "alertsUnmuted"))
 	case VerbMore:
 		handle := cmd.Handle
 		if handle == 0 {

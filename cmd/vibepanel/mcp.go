@@ -249,6 +249,11 @@ var mcpTools = []mcpTool{
 		},
 	},
 	{
+		Name:        "system",
+		Description: "The machine the panel runs on: CPU, load, memory, swap and disk use, uptime, and the sessions using the most CPU and memory, by handle.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false},
+	},
+	{
 		Name:        "projects",
 		Description: "The projects the panel knows and how many sessions each has.",
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false},
@@ -409,6 +414,8 @@ func callMCPTool(ctx context.Context, client *mcpClient, name string, rawArgs js
 		query.Set("days", strconv.Itoa(days))
 	case "projects":
 		path = "/projects"
+	case "system":
+		path = "/system"
 	default:
 		return nil, &rpcError{Code: rpcInvalidParams, Message: "unknown tool: " + name}
 	}

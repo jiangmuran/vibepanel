@@ -35,7 +35,10 @@ function ago(unix: number): string {
 export function Channels({ data, onChange }: { data: ChatSettings; onChange: () => void }) {
   return (
     <Section id="channels" title={t('chat.channels')} lead={t('chat.channelsLead')}>
-      <div className="grid grid-cols-1 items-start gap-3 @2xl:grid-cols-2 @5xl:grid-cols-3">
+      {/* Stretched, not started: cards of one row share a height and keep
+          their buttons on one line along the bottom, where three cards of
+          three heights read as three unfinished boxes. */}
+      <div className="grid grid-cols-1 items-stretch gap-3 @2xl:grid-cols-2 @5xl:grid-cols-3">
         {data.factories.map((f) => (
           <ChannelCard
             key={f.kind}
@@ -251,7 +254,7 @@ function ChannelCard({
 
   const signedIn = factory.login && channel?.configured
   return (
-    <Card testid={`chat-channel-${factory.kind}`}>
+    <Card testid={`chat-channel-${factory.kind}`} className="flex flex-col">
       <div className="mb-2 flex items-center gap-2">
         <h3 className="text-vp-md font-semibold text-ink">{factory.label}</h3>
         {paired > 0 && (
@@ -358,7 +361,7 @@ function ChannelCard({
         </div>
       )}
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
+      <div className="mt-auto flex flex-wrap items-center gap-2 pt-3">
         {!factory.login && (
           <Primary disabled={busy} onClick={() => void save()} data-testid={`chat-save-${factory.kind}`}>
             <Check size={14} />

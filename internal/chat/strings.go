@@ -36,12 +36,12 @@ func msg(lang, key string, args ...any) string {
 
 var strs = map[string][2]string{
 	"pairing": {
-		"这个面板还不认识你。配对码 %s，在面板的「聊天」页里输入后就能收到推送和回复。",
-		"This panel does not know you yet. Pairing code %s. Enter it on the panel's Chat page to be paired.",
+		"这个面板还不认识你。配对码 %s，在面板的「消息通道」页里输入后就能收到推送和回复。",
+		"This panel does not know you yet. Pairing code %s. Enter it on the panel's Messaging page to be paired.",
 	},
 	"pairingHere": {
-		"配对码要在面板的「聊天」页里输入，发到这里没有用。%s",
-		"The pairing code goes into the panel's Chat page, not this chat. %s",
+		"配对码要在面板的「消息通道」页里输入，发到这里没有用。%s",
+		"The pairing code goes into the panel's Messaging page, not this chat. %s",
 	},
 	"paired":        {"已配对。回复「帮助」看能做什么。", "Paired. Reply help for what you can do."},
 	"receipt":       {"→ [%d] 已送入", "→ [%d] sent"},
@@ -116,8 +116,8 @@ var strs = map[string][2]string{
 	"imageFailed":    {"图片没收到。", "The picture did not arrive."},
 	"noShell":        {"[%d] 是一个 shell，没有提示可以回答。", "[%d] is a shell; there is no prompt to answer."},
 	"noProfile": {
-		"[%d] 跑的是 %s，面板不知道怎么替它按键。在「聊天」页的按键表里加上。",
-		"[%d] runs %s and the panel has no keys for it. Add them on the Chat page.",
+		"[%d] 跑的是 %s，面板不知道怎么替它按键。在「消息通道」页的按键表里加上。",
+		"[%d] runs %s and the panel has no keys for it. Add them on the Messaging page.",
 	},
 	"several": {
 		"有几个会话都在等你，说清楚是哪个：回复「编号: 你的话」，或者引用它的消息。\n%s",
@@ -241,7 +241,35 @@ var strs = map[string][2]string{
 		"图片要给哪个会话？引用它的消息再发一次，或者先「切到 编号」。",
 		"Which session is the picture for? Quote its message, or focus a number first.",
 	},
-	"linkLabel": {"在面板打开", "open"},
+	"linkLabel":         {"在面板打开", "open"},
+	"systemUnavailable": {"这个面板读不到机器状态。", "This panel cannot read the machine's state."},
+	"systemHead":        {"机器状态 · 已运行 %s", "Machine · up %s"},
+	"systemCPU":         {"CPU %.0f%%（%d 核）· 负载 %.2f / %.2f / %.2f", "CPU %.0f%% (%d cores) · load %.2f / %.2f / %.2f"},
+	"systemCPUWait":     {"CPU 采样中（%d 核）· 负载 %.2f / %.2f / %.2f", "CPU sampling (%d cores) · load %.2f / %.2f / %.2f"},
+	"systemMem":         {"内存 已用 %s / %s（%.0f%%）", "Memory %s / %s used (%.0f%%)"},
+	"systemSwap":        {"交换 已用 %s / %s", "Swap %s / %s used"},
+	"systemDisk":        {"磁盘 已用 %s / %s（%.0f%%），剩 %s", "Disk %s / %s used (%.0f%%), %s free"},
+	"systemTop":         {"最占资源的会话：", "Sessions using the most:"},
+	"systemAlertsOff":   {"告警：关", "Alerts: off"},
+	"systemAlertsOn": {
+		"告警：开 · CPU ≥%d%% 持续 %d 分钟 · 内存 ≥%d%% · 磁盘 ≥%d%%",
+		"Alerts: on · CPU ≥%d%% for %d min · memory ≥%d%% · disk ≥%d%%",
+	},
+	"systemAlertsMuted": {"（你静音到 %s）", " (muted for you until %s)"},
+	"alertCPU":          {"▲ 机器告警：CPU %.0f%%，已持续 %d 分钟。", "▲ Machine alert: CPU at %.0f%% for %d minutes."},
+	"alertMem":          {"▲ 机器告警：内存已用 %.0f%%，只剩 %s。", "▲ Machine alert: memory %.0f%% used, %s left."},
+	"alertDisk":         {"▲ 机器告警：磁盘已用 %.0f%%，只剩 %s（%s）。", "▲ Machine alert: disk %.0f%% used, %s left (%s)."},
+	"alertTopCPU":       {"用得最多：[%d] %s · CPU %.0f%%", "Using the most: [%d] %s · CPU %.0f%%"},
+	"alertTopMem":       {"用得最多：[%d] %s · 内存 %s", "Using the most: [%d] %s · memory %s"},
+	"recoveredCPU":      {"✓ 机器恢复：CPU 降到 %.0f%%。", "✓ Machine recovered: CPU down to %.0f%%."},
+	"recoveredMem":      {"✓ 机器恢复：内存降到 %.0f%%。", "✓ Machine recovered: memory down to %.0f%%."},
+	"recoveredDisk":     {"✓ 机器恢复：磁盘降到 %.0f%%。", "✓ Machine recovered: disk down to %.0f%%."},
+	"alertHint": {
+		"回「系统」看详情，「静音告警 1小时」暂停。", "Reply system for details, mute alerts 1h to pause.",
+	},
+	"alertsMuted":      {"告警已静音到 %s。回「恢复告警」取消。", "Alerts muted until %s. Reply unmute alerts to undo."},
+	"alertsUnmuted":    {"告警已恢复。", "Alerts are back on."},
+	"mutedDefaultHour": {"没看懂「%s」，按一小时算。", "Did not understand \"%s\"; muted for an hour."},
 }
 
 // stateText renders a state, with the message kind sharpening "waiting".

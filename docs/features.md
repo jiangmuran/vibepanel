@@ -328,8 +328,9 @@ detail level, scope, remark and expiry.
 ## On a phone, in a chat app
 
 A session that wants you can reach you in Telegram, 飞书 or 微信, and you
-answer from the same window. **Chat** (the link at the bottom of the settings
-rail, or `/chat`) is where it is set up.
+answer from the same window. **Messaging** (the link at the bottom of the
+settings rail, or `/chat`) is where it is set up, in tabs: channels, people,
+rules, alerts, the advanced mode with its key table, and the log.
 
 **Channels.** One card per app. Telegram wants a bot token from @BotFather;
 飞书 wants an app's id, secret and verification token, and the card shows the
@@ -396,6 +397,16 @@ before last, allow" — becomes an intent, and anything that writes waits for
 your `ok`. `ask: what is 3 doing` answers from read-only tools. 微信 voice notes
 arrive transcribed; the agent never sees a pane's output when deciding where
 to send anything. There is a daily budget, and the page shows today's spend.
+
+**The machine.** `system` (「系统」, 「监控」) answers with CPU and load, memory,
+swap, disk, uptime and the sessions using the most. **Alerts** message you when
+CPU stays above a threshold for a while (90% for ten minutes by default), or
+memory or disk use passes theirs (90%, 95%), naming the session using the most,
+and again when it recovers; a machine sitting on the line is one alert, not one
+a minute. Thresholds and who is told are on the Alerts tab; 「静音告警 1小时」
+(`mute alerts 1h`) pauses them for you and 「恢复告警」 turns them back on. They
+go only through channels already switched on. In the advanced mode, `ask: how
+is the machine` reads the same numbers.
 
 **Keys** is what "allow" presses per tool. Claude Code takes Enter, Codex takes
 `y`; the others copy Claude Code and are editable. A key must be one tmux

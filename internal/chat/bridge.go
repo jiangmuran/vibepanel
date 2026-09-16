@@ -74,6 +74,11 @@ type Deps struct {
 	// Usage answers the "usage" command with whatever the panel knows about
 	// today's tokens; nil means only the bridge's own counters are shown.
 	Usage func(ctx context.Context, lang string) string
+	// Monitor reads the machine for "系统" and the alerts; nil when the panel
+	// has no monitor, and then neither exists.
+	Monitor Monitor
+	// AlertEvery is how often the alerts look; zero takes DefaultAlertEvery.
+	AlertEvery time.Duration
 	// Coalesce is how long a change is held before it is sent, when no rule
 	// says otherwise; zero takes DefaultCoalesce. A field rather than a
 	// package variable so a test can run in milliseconds without writing
@@ -206,6 +211,8 @@ type Bridge struct {
 	// and reading the ok that follows as "allow" allows the thing they were
 	// trying to stop.
 	stopped map[string]time.Time
+	// alarms is the alert state per watched number: cpu, mem, disk.
+	alarms map[string]*alarm
 	// missedOther counts, per person, pushes that could not reach them
 	// about sessions not waiting (a finished turn, an answer given by
 	// someone else), so the catch-up can say that more was missed.
@@ -257,6 +264,9 @@ func New(d Deps) *Bridge {
 	if d.Coalesce <= 0 {
 		d.Coalesce = DefaultCoalesce
 	}
+	if d.AlertEvery <= 0 {
+		d.AlertEvery = DefaultAlertEvery
+	}
 	return &Bridge{
 		d: d,
 		// 256: a change is a few bytes and the drain is a timer arm, so the
@@ -271,6 +281,7 @@ func New(d Deps) *Bridge {
 		missed:      map[string]map[string]bool{},
 		clarify:     map[string]time.Time{},
 		stopped:     map[string]time.Time{},
+		alarms:      map[string]*alarm{},
 		missedOther: map[string]int{},
 		handles:     map[string]int{},
 		hello:       map[string]time.Time{},
@@ -298,6 +309,7 @@ func (b *Bridge) Start(ctx context.Context) {
 		b.mu.Unlock()
 	}
 	go b.loop(ctx)
+	go b.watch(ctx)
 	b.Reload(ctx)
 }
 

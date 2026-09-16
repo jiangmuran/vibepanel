@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -97,18 +98,27 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, out)
 		return
 	}
-
-	sessions, err := s.DB.ListSessions(r.Context())
+	usage, err := s.sessionUsage(r.Context())
 	if err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}
-	infos, err := s.Tmux.List(r.Context())
+	out.Sessions = usage
+	writeJSON(w, http.StatusOK, out)
+}
+
+// sessionUsage is each session's process tree, by session id: what the
+// monitor shows and what the chat's "系统" and alerts name.
+func (s *Server) sessionUsage(ctx context.Context) (map[string]sysmon.Usage, error) {
+	sessions, err := s.DB.ListSessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	infos, err := s.Tmux.List(ctx)
 	if err != nil {
 		// tmux being unreachable is not a reason to fail the page. The meters
 		// go blank; everything else on screen is still true.
-		writeJSON(w, http.StatusOK, out)
-		return
+		return map[string]sysmon.Usage{}, nil
 	}
 	pidOf := make(map[string]int, len(infos))
 	for _, i := range infos {
@@ -120,8 +130,7 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 			panes[sess.ID] = pid
 		}
 	}
-	out.Sessions = s.TreeSampler.Sample(panes)
-	writeJSON(w, http.StatusOK, out)
+	return s.TreeSampler.Sample(panes), nil
 }
 
 func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {

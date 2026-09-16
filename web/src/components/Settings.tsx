@@ -218,7 +218,7 @@ export function Settings({ openAt, onClose }: { openAt: SettingsSection; onClose
                 to be. A link in the rail's own clothes, after a rule, with the
                 arrow that says it leaves: somebody who last saw the list of
                 pages under this word still finds it under this word. */}
-            <div className="flex shrink-0 sm:mt-1 sm:flex-col sm:border-t sm:border-hairline sm:pt-2">
+            <div className="flex shrink-0 gap-1 sm:mt-1 sm:flex-col sm:border-t sm:border-hairline sm:pt-1">
               <a
                 href={SHARING_PATH}
                 data-testid="settings-sharing-link"

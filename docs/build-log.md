@@ -23028,3 +23028,46 @@ naming both places, rather than at the first message from a phone. A launch
 profile's PATH still wins. The tests fake the login shell's answer, so they
 pass on a CI runner with no harness installed, and a greeting-printing fake
 shell pins the marker parsing.
+
+## 2026-09-16 — The machine on a phone, and the Messaging page in tabs
+
+**System status and alerts in the chat.** 「系统」 (`system`, 「监控」) answers
+with what the panel's own monitor reads (CPU and load, memory, swap, disk,
+uptime) and the three sessions using the most, by handle. Alerts watch three
+numbers every thirty seconds: CPU at or over a threshold for a duration (90%
+for ten minutes by default, since a build pegging the cores for a minute is
+the machine working), and memory and disk percent used (90%, 95%) at once.
+Each alert names the session using the most of it, and clears with a recovery
+message only once the number is back under by a margin (10, 5 and 2 points),
+so a machine sitting on the line is one alert rather than one a tick.
+「静音告警 1小时」 pauses them for the person asking, stored in the session
+mutes table under a session id nothing can have; the phrase is parsed before
+the session mute, which would otherwise read 静音 off its front. Thresholds
+and destinations live on the page and `PUT /api/chat/alerts`, validated so a
+threshold that alerts all day is refused. Alerts go only through channels
+already switched on, so they ask nothing new of the consent.
+
+The first test run hung: the alert check held the bridge's lock while naming
+the session behind an alert, and the handle lookup takes the same lock. The
+decisions are made under the lock and the words after it. The race detector
+then flagged tests setting the monitor while the watcher read it, so the
+monitor is set through the bridge (`SetMonitor`) and read under its lock. Eight
+mutations of the alert rules: six killed, and the two survivors, a repeated
+memory alert while still over and a disk threshold's lower bound, each got
+the case that kills it.
+
+The advanced mode's agent can read the same numbers: a sixth tools route,
+`GET /api/chat/tools/system`, with the sessions by handle and the disk path
+left out, and the `system` MCP tool. The route list test and AGENTS.md say
+six now.
+
+**The page.** The settings rail's two page links sat in a container with no
+gap, so they read as a tighter, smaller list under the groups; `chat-check`
+now measures that they are the groups' height and step. The page is called
+消息通道 / Messaging rather than 聊天, which named an app category, not what
+the page configures. Its seven blocks were one long scroll, the thing being
+looked for always several screens down, twice that on a phone; they are six
+tabs now (the key table sits with the advanced mode it serves), the hash keeps
+the tab, and a section that is its whole tab does not repeat the tab's name
+above itself. Channel cards in a row share a height with their buttons along
+the bottom.

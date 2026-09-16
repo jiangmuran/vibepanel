@@ -429,7 +429,7 @@ a changelog entry" runs with no tools and sees only the sentence and a table of
 handles, titles and states; what it returns is an intent that goes through the
 same executor a typed command does, with a confirmation before anything is
 sent. The agent that answers questions runs with read-only MCP tools and no way
-to reach a pane at all. Its tools are five `GET`s under `/api/chat/tools`,
+to reach a pane at all. Its tools are six `GET`s under `/api/chat/tools`,
 reachable with a token that exists only in the running process and is refused
 on every other route — the same shape as the share token, narrowed by its route
 list and pinned by a test — and the session views restate their fields, so
