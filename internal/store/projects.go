@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jiangmuran/vibepanel/internal/session"
 )
@@ -147,21 +148,20 @@ func (d *DB) SetProjectSortIndex(ctx context.Context, id string, idx *int) error
 // where every project below it sits, and sending those one at a time leaves the
 // sidebar briefly showing an order that never existed if any request fails.
 //
-// Ids not present in the list are left exactly as they were, which is not the
-// same as being left on automatic ordering — an earlier version of this comment
-// claimed it was. A project that already carried an explicit position keeps it,
-// so a partial list can leave two projects sharing an index.
-//
-// The ordering query breaks that tie on last_active_at, which means the pair
-// swaps places whenever one of them does something. Manual order is supposed to
-// hold until the user changes it, so for those two it silently stops being
-// manual at all.
+// Ids not present in the list return to automatic ordering, inside this
+// transaction. Leaving them exactly as they were is not the same as leaving
+// them alone: a project that already carried an explicit position keeps it,
+// and two projects sharing an index swap places whenever one of them is
+// active, so manual order silently stops being manual. The list arrives from
+// a viewer looking at the whole sidebar, so an id it omitted is a project the
+// viewer did not see, and "everything I did not drag goes back to automatic"
+// is the order the drag describes.
 //
 // Reachable only from a stale list: two viewers, one reordering while the
-// other's idea of the project set is out of date. The fix is to null the
-// omitted ones inside this transaction, which would also make the original
-// comment true — left undone here because demoting a project somebody else can
-// see is a decision about their sidebar, not a bug fix.
+// other's idea of the project set is out of date. This used to be left undone
+// on the grounds that demoting a project somebody else can see is a decision
+// about their sidebar -- but the panel has one user, and the silent reordering
+// was worse than an explicit demotion.
 func (d *DB) ReorderProjects(ctx context.Context, ids []string) error {
 	tx, err := d.sql.BeginTx(ctx, nil)
 	if err != nil {
@@ -180,6 +180,21 @@ func (d *DB) ReorderProjects(ctx context.Context, ids []string) error {
 		}
 		if n == 0 {
 			return fmt.Errorf("store: reorder: %w: project %s", ErrNotFound, id)
+		}
+	}
+
+	// Everything the list omitted goes back to automatic ordering, after the
+	// listed ids rather than tangled among them.
+	if len(ids) > 0 {
+		placeholders := strings.Repeat("?,", len(ids))
+		placeholders = placeholders[:len(placeholders)-1]
+		args := make([]any, len(ids))
+		for i, id := range ids {
+			args[i] = id
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE projects SET sort_index = NULL WHERE id NOT IN (`+placeholders+`)`, args...); err != nil {
+			return fmt.Errorf("store: reorder omitted: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
