@@ -124,7 +124,7 @@ func RenderHTML(c *Card) string {
 		b.WriteString("\n\n" + html.EscapeString(c.Body))
 	}
 	if c.URL != "" {
-		fmt.Fprintf(&b, "\n<a href=\"%s\">open</a>", html.EscapeString(c.URL))
+		fmt.Fprintf(&b, "\n<a href=\"%s\">%s</a>", html.EscapeString(c.URL), html.EscapeString(linkLabel(c)))
 	}
 	return b.String()
 }
@@ -144,7 +144,7 @@ func RenderMarkdown(c *Card) string {
 		b.WriteString("\n\n" + mdEscape(c.Body))
 	}
 	if c.URL != "" {
-		fmt.Fprintf(&b, "\n[%s](%s)", mdEscape(c.URL), c.URL)
+		fmt.Fprintf(&b, "\n[%s](%s)", mdEscape(linkLabel(c)), c.URL)
 	}
 	return b.String()
 }
@@ -155,4 +155,11 @@ func RenderMarkdown(c *Card) string {
 func mdEscape(s string) string {
 	r := strings.NewReplacer("*", "\\*", "_", "\\_", "`", "\\`", "[", "\\[", "]", "\\]", "<", "\\<", ">", "\\>")
 	return r.Replace(s)
+}
+
+func linkLabel(c *Card) string {
+	if c.LinkLabel != "" {
+		return c.LinkLabel
+	}
+	return "open"
 }

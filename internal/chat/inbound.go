@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -79,6 +80,16 @@ func (b *Bridge) handle(ctx context.Context, ch *channel, in Inbound) {
 		// A pending person's clock is not advanced by their own messages:
 		// the code expires pairingTTL after the message that made it,
 		// however much they keep talking.
+		if isPairingCode(in.Text) && b.sayHello(key+"#code", now) {
+			// They sent the code here, which is the most natural mistake
+			// there is: say where it goes.
+			where := b.d.PublicURL()
+			if !reachable(where) {
+				where = ""
+			}
+			b.reply(ctx, ch, peer, msg(lang, "pairingHere", where))
+			return
+		}
 		if b.sayHello(key, now) {
 			b.reply(ctx, ch, peer, msg(lang, "pairing", peer.PairingCode))
 		}
@@ -90,9 +101,14 @@ func (b *Bridge) handle(ctx context.Context, ch *channel, in Inbound) {
 	if in.ContextToken != "" {
 		peer.ContextToken = in.ContextToken
 	}
+	if in.PeerName != "" {
+		peer.Display = in.PeerName
+	}
 	peer.LastSeenAt = now.Unix()
 
-	reply := func(text string) { b.reply(ctx, ch, peer, text) }
+	if b.catchUp(ctx, ch, peer, lang) {
+		return
+	}
 	if in.Action != nil {
 		b.action(ctx, ch, peer, *in.Action, lang)
 		return
@@ -105,9 +121,30 @@ func (b *Bridge) handle(ctx context.Context, ch *channel, in Inbound) {
 	if text == "" {
 		return
 	}
-	b.d.Audit(ctx, "chat.in", fmt.Sprintf("%s: %s", key, preview(text)))
+	b.d.Audit(ctx, "chat.in", fmt.Sprintf("%s (%s): %s", who(peer), key, preview(text)))
 
+	// Something waiting for "ok" reads "好的" as that, before any session
+	// can read it as "allow": the person is answering the question the
+	// bridge just asked, not one a session asked a while ago.
+	if b.hasPending(key) {
+		switch {
+		case IsConfirm(text):
+			b.command(ctx, ch, peer, in, Command{Verb: VerbConfirm}, lang)
+			return
+		case IsCancel(text):
+			b.command(ctx, ch, peer, in, Command{Verb: VerbCancel}, lang)
+			return
+		}
+	}
+	advanced := peer.Mode == store.ModeAdvanced && b.assistant() != nil
 	if cmd, ok := Parse(text); ok {
+		// The assistant asked which one; "the second one" or "yes" is the
+		// answer to it, not to a session.
+		if advanced && cmd.Handle == 0 && (cmd.Verb == VerbApprove || cmd.Verb == VerbDeny) && b.clarifying(key) {
+			cands, _ := b.candidates(ctx)
+			b.assist(ctx, ch, peer, text, cands, lang)
+			return
+		}
 		b.command(ctx, ch, peer, in, cmd, lang)
 		return
 	}
@@ -115,26 +152,29 @@ func (b *Bridge) handle(ctx context.Context, ch *channel, in Inbound) {
 	// Words for an agent. Where they go is the one decision that can be
 	// wrong in a way a person cannot see, which is why it comes back as a
 	// receipt naming the handle.
-	quoteSession := b.quoted(ctx, ch, in)
+	quoteSession, bound := b.quoted(ctx, ch, in)
 	cands, err := b.candidates(ctx)
 	if err != nil {
 		return
 	}
+	text = loosen(text, cands)
 	target, rest, reason := Resolve(text, quoteSession, peer.FocusSession, cands)
 	if reason != "" {
-		if peer.Mode == store.ModeAdvanced && b.assistant() != nil {
+		if advanced {
 			b.assist(ctx, ch, peer, text, cands, lang)
 			return
 		}
-		reply(b.explain(ctx, reason, text, cands, lang))
+		b.reply(ctx, ch, peer, b.explain(ctx, reason, text, lang))
 		return
 	}
 	// A bare "y" to a quoted prompt is an answer, not text.
-	if a, ok := Parse(rest); ok && (a.Verb == VerbApprove || a.Verb == VerbDeny) {
-		reply(b.answer(ctx, target.SessionID, a.Verb == VerbApprove, lang))
+	if a, ok := Parse(rest); ok && a.Handle == 0 && (a.Verb == VerbApprove || a.Verb == VerbDeny) {
+		b.tell(ctx, ch, peer, b.answer(ctx, peer, answerReq{
+			sessionID: target.SessionID, approve: a.Verb == VerbApprove, bound: bound, how: target.How, word: rest,
+		}, lang))
 		return
 	}
-	if peer.Mode == store.ModeAdvanced && b.assistant() != nil && target.How != HowQuote && target.How != HowHandle {
+	if advanced && target.How != HowQuote && target.How != HowHandle {
 		// Focused delivery is convenient and also the case a sentence
 		// meant for the assistant ("what is 3 doing") lands in a pane. In
 		// advanced mode the assistant reads the sentence first and hands
@@ -142,7 +182,58 @@ func (b *Bridge) handle(ctx context.Context, ch *channel, in Inbound) {
 		b.assist(ctx, ch, peer, text, cands, lang)
 		return
 	}
-	reply(b.deliver(ctx, peer, target.SessionID, rest, lang))
+	b.tell(ctx, ch, peer, b.deliver(ctx, peer, target, rest, lang))
+}
+
+// loosen rewrites a handle written the way people write one on a phone into
+// the form Resolve reads: "3 继续" and "3号 继续" and "第三个 继续" become
+// "3: 继续". Only for a number that is a session right now; "2 files are
+// enough" to a focused session with no [2] stays a sentence.
+func loosen(text string, cands []Candidate) string {
+	if _, _, ok := SplitHandle(text); ok {
+		return text
+	}
+	known := func(n int) bool {
+		for _, c := range cands {
+			if c.Handle == n {
+				return true
+			}
+		}
+		return false
+	}
+	if n, rest, ok := SplitLooseHandle(text); ok && rest != "" && known(n) {
+		return fmt.Sprintf("%d: %s", n, rest)
+	}
+	if m := spacedHandle.FindStringSubmatch(narrow(text)); m != nil {
+		if n, err := strconv.Atoi(m[1]); err == nil && known(n) {
+			return fmt.Sprintf("%d: %s", n, m[2])
+		}
+	}
+	return text
+}
+
+// spacedHandle is "3 继续": a number, a space, and words that do not start
+// with a digit ("3 4 5" is a list of numbers, not an address).
+var spacedHandle = regexp.MustCompile(`^\s*(\d{1,4})\s+([^\d\s].*)$`)
+
+func isPairingCode(text string) bool {
+	return len(pairingDigits(text)) == 6 && len([]rune(strings.TrimSpace(narrow(text)))) <= 8
+}
+
+// pairingDigits keeps the digits of a code as a person typed it: full width
+// from a Chinese keyboard, spaces or dashes from reading it aloud.
+func pairingDigits(code string) string {
+	var b strings.Builder
+	for _, r := range narrow(code) {
+		switch {
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == ' ' || r == '-' || r == '\t':
+		default:
+			return ""
+		}
+	}
+	return b.String()
 }
 
 // sayHello reports whether a stranger or pending person is due the code
@@ -199,8 +290,12 @@ func pairingCode() (string, error) {
 }
 
 // Pair accepts a pending peer by their code. Called from the settings page.
+// The code is read the way it was probably typed: full-width digits, spaces.
 func (b *Bridge) Pair(ctx context.Context, code string) (store.ChatPeer, error) {
-	code = strings.TrimSpace(code)
+	code = pairingDigits(code)
+	if len(code) != 6 {
+		return store.ChatPeer{}, store.ErrNotFound
+	}
 	peers, err := b.d.DB.ListChatPeers(ctx)
 	if err != nil {
 		return store.ChatPeer{}, err
@@ -228,36 +323,103 @@ func (b *Bridge) Pair(ctx context.Context, code string) (store.ChatPeer, error) 
 
 // reply sends plain text to a peer, splitting for the adapter's limit.
 func (b *Bridge) reply(ctx context.Context, ch *channel, p store.ChatPeer, text string) {
-	if text == "" {
+	b.tell(ctx, ch, p, plain(text))
+}
+
+// tell sends a reply and records what it showed. The first message a reply
+// was split into carries the first request it showed; any further requests
+// (a list with two prompts in it) are recorded under derived refs, which no
+// quote or press can name, so they count as seen without becoming
+// addresses.
+func (b *Bridge) tell(ctx context.Context, ch *channel, p store.ChatPeer, s said) {
+	if s.text == "" {
 		return
 	}
-	for _, piece := range Split(text, ch.caps.MaxText) {
+	var first string
+	for _, piece := range Split(s.text, ch.caps.MaxText) {
 		ref, err := b.send(ctx, ch, p, Outbound{Text: piece})
 		if err != nil {
 			b.d.Log.Warn("chat reply", "channel", p.Channel, "err", err)
 			return
 		}
+		o := store.ChatOutbound{Channel: p.Channel, PeerID: p.PeerID, Ref: ref, Kind: store.OutboundReply}
+		if first == "" {
+			first = ref
+			if len(s.shows) > 0 {
+				o.SessionID, o.MessageID = s.shows[0].session, s.shows[0].message
+			}
+		}
+		_ = b.d.DB.RecordChatOutbound(ctx, o)
+	}
+	for i, sh := range s.shows {
+		if i == 0 {
+			continue
+		}
 		_ = b.d.DB.RecordChatOutbound(ctx, store.ChatOutbound{
-			Channel: p.Channel, PeerID: p.PeerID, Ref: ref, Kind: store.OutboundReply,
+			Channel: p.Channel, PeerID: p.PeerID, Ref: fmt.Sprintf("%s#%d", first, i),
+			Kind: store.OutboundReply, SessionID: sh.session, MessageID: sh.message,
 		})
 	}
 }
 
-func (b *Bridge) quoted(ctx context.Context, ch *channel, in Inbound) string {
+// quoted is the session a quoted message was about, and which of its
+// requests: the message id the quoted message showed, 0 when it showed none
+// in particular, and -1 when it showed one that is not the session's
+// current request.
+func (b *Bridge) quoted(ctx context.Context, ch *channel, in Inbound) (string, int64) {
 	if ch.caps.QuoteRefs && in.QuotedRef != "" {
 		if o, ok, _ := b.d.DB.ChatOutboundByRef(ctx, in.Channel, in.PeerID, in.QuotedRef); ok && o.SessionID != "" {
-			return o.SessionID
+			return o.SessionID, o.MessageID
 		}
-		return ""
+		return "", 0
 	}
-	if in.QuotedText != "" {
-		if h, ok := HandleInQuote(in.QuotedText); ok {
-			if id, ok, _ := b.d.DB.SessionByHandle(ctx, h); ok {
-				return id
-			}
-		}
+	if in.QuotedText == "" {
+		return "", 0
 	}
-	return ""
+	h, ok := HandleInQuote(in.QuotedText)
+	if !ok {
+		return "", 0
+	}
+	id, ok, _ := b.d.DB.SessionByHandle(ctx, h)
+	if !ok {
+		return "", 0
+	}
+	// 微信 quotes by text, so which request a quoted card showed is read
+	// back from the text: the card carries the request's words, and a card
+	// whose words are not the current request's is an old card.
+	row, err := b.d.DB.GetSession(ctx, id)
+	if err != nil {
+		return id, 0
+	}
+	last, has, _ := b.d.DB.LatestSessionMessage(ctx, id)
+	if !has {
+		return id, 0
+	}
+	kind := CurrentKind(row, last)
+	if kind != store.MessagePrompt && kind != store.MessageQuestion {
+		return id, -1
+	}
+	if quoteShows(in.QuotedText, last.Text) {
+		return id, last.ID
+	}
+	return id, -1
+}
+
+// quoteShows says whether quoted text carries a request's words. The client
+// may shorten a long quote and reflow whitespace, so the comparison is on
+// the first stretch of the request with whitespace squeezed out.
+func quoteShows(quoted, request string) bool {
+	squeeze := func(s string) string {
+		return strings.Join(strings.Fields(s), "")
+	}
+	req := []rune(squeeze(request))
+	if len(req) == 0 {
+		return false
+	}
+	if len(req) > 24 {
+		req = req[:24]
+	}
+	return strings.Contains(squeeze(quoted), string(req))
 }
 
 func (b *Bridge) candidates(ctx context.Context) ([]Candidate, error) {
@@ -279,110 +441,307 @@ func (b *Bridge) candidates(ctx context.Context) ([]Candidate, error) {
 	return out, nil
 }
 
-func (b *Bridge) explain(ctx context.Context, reason Reason, text string, cands []Candidate, lang string) string {
+func (b *Bridge) explain(ctx context.Context, reason Reason, text string, lang string) string {
 	switch reason {
 	case ReasonSeveral:
-		return msg(lang, "several", b.list(ctx, lang, true))
+		return msg(lang, "several", b.list(ctx, lang, true).text)
 	case ReasonUnknown:
 		h, _, _ := SplitHandle(text)
-		return msg(lang, "unknownHandle", h)
+		return b.unknownHandle(ctx, h, lang)
 	}
 	return msg(lang, "none")
 }
 
-func (b *Bridge) deliver(ctx context.Context, p store.ChatPeer, sessionID, text string, lang string) string {
-	row, h, err := b.sessionAndHandle(ctx, sessionID)
-	if err != nil {
+// unknownHandle tells a handle that never existed from one whose session
+// has ended: "there is no [4]" about the session somebody was talking to an
+// hour ago reads as the panel having lost it.
+func (b *Bridge) unknownHandle(ctx context.Context, h int, lang string) string {
+	if _, ok, _ := b.d.DB.SessionByHandle(ctx, h); ok {
 		return msg(lang, "gone", h)
 	}
-	if row.State == session.StateWorking {
-		return msg(lang, "working", h, h)
+	return msg(lang, "unknownHandle", h)
+}
+
+// current is the session message a waiting session is waiting on, if the
+// panel knows it.
+func (b *Bridge) current(ctx context.Context, row store.Session) (store.SessionMessage, string) {
+	if row.State != session.StateWaiting {
+		return store.SessionMessage{}, ""
 	}
-	// A session at a permission prompt reads keys, not words: Claude Code's
-	// dialog ignores typed text and Enter picks the highlighted choice, so
-	// pasting "wait, not that" and pressing Enter would allow the very
-	// thing. The prompt has to be answered first.
-	if row.State == session.StateWaiting {
-		if last, ok, _ := b.d.DB.LatestSessionMessage(ctx, sessionID); ok && CurrentKind(row, last) == store.MessagePrompt {
-			return msg(lang, "atPrompt", h)
+	last, ok, _ := b.d.DB.LatestSessionMessage(ctx, row.ID)
+	if !ok {
+		return store.SessionMessage{}, ""
+	}
+	kind := CurrentKind(row, last)
+	if kind == "" {
+		return store.SessionMessage{}, ""
+	}
+	return last, kind
+}
+
+func (b *Bridge) seen(ctx context.Context, p store.ChatPeer, messageID int64) bool {
+	ok, _ := b.d.DB.ChatShown(ctx, p.Channel, p.PeerID, messageID)
+	return ok
+}
+
+// request shortens a request's words for a reply that has to show them.
+func request(text string) string {
+	head, more := cut(strings.TrimSpace(text), 600)
+	if more {
+		head += " …"
+	}
+	return head
+}
+
+// gate is what stops words reaching a session that cannot take them: one
+// that is working, and one at a permission prompt, where a paste followed
+// by Enter is "allow". It is also what shows a person the question that a
+// bare sentence would otherwise answer unseen.
+func (b *Bridge) gate(ctx context.Context, p store.ChatPeer, row store.Session, h int, how How, lang string) (said, bool) {
+	if row.State == session.StateWorking {
+		return plain(msg(lang, "working", h, h)), false
+	}
+	cur, kind := b.current(ctx, row)
+	switch kind {
+	case store.MessagePrompt:
+		// Claude Code's dialog ignores typed text and Enter picks the
+		// highlighted choice, so pasting "wait, not that" and pressing
+		// Enter would allow the very thing.
+		return showing(msg(lang, "atPrompt", h, request(cur.Text), h, h), row.ID, cur.ID), false
+	case store.MessageQuestion:
+		// Only the session that happened to be the one waiting, and a
+		// question this person never saw: a sentence typed for something
+		// else would become the answer.
+		if how == HowOnlyWaiting && !b.seen(ctx, p, cur.ID) {
+			return showing(msg(lang, "showQuestion", h, request(cur.Text), h), row.ID, cur.ID), false
 		}
+	}
+	return said{}, true
+}
+
+func (b *Bridge) deliver(ctx context.Context, p store.ChatPeer, target Target, text string, lang string) said {
+	sessionID := target.SessionID
+	row, h, err := b.sessionAndHandle(ctx, sessionID)
+	if err != nil {
+		return plain(msg(lang, "gone", h))
+	}
+	if s, ok := b.gate(ctx, p, row, h, target.How, lang); !ok {
+		return s
 	}
 	tool := AgentFor(row.LaunchCommand, row.Command)
 	prof, ok := b.tools(ctx)[tool]
 	if !ok {
-		return msg(lang, "noProfile", h, tool)
+		return plain(msg(lang, "noProfile", h, tool))
 	}
 	if err := b.d.Term.Paste(ctx, row.TmuxName, text); err != nil {
-		return msg(lang, "gone", h)
+		return plain(msg(lang, "gone", h))
 	}
 	if len(prof.Submit) > 0 {
 		if err := b.d.Term.Keys(ctx, row.TmuxName, prof.Submit...); err != nil {
 			// The words are in the pane and Enter was not: the receipt
 			// must not say "sent" about a line that is waiting to be.
-			return msg(lang, "gone", h)
+			return plain(msg(lang, "gone", h))
 		}
 	}
-	b.d.Audit(ctx, "chat.send", fmt.Sprintf("[%d] %s: %s", h, chatKey(p.Channel, p.PeerID), preview(text)))
-	if err := b.d.DB.SetChatPeerFocus(ctx, p.Channel, p.PeerID, sessionID); err != nil {
-		b.d.Log.Warn("chat focus", "err", err)
+	b.d.Audit(ctx, "chat.send", fmt.Sprintf("[%d] %s · %s via %s: %s", h, row.Title, who(p), target.How, preview(text)))
+	if target.How == HowFocus {
+		// The one route a person did not name in the message itself, so the
+		// receipt says why it went there.
+		return plain(msg(lang, "receiptFocus", h))
 	}
-	return msg(lang, "receipt", h)
+	return plain(msg(lang, "receipt", h))
 }
 
-func (b *Bridge) answer(ctx context.Context, sessionID string, approve bool, lang string) string {
-	row, h, err := b.sessionAndHandle(ctx, sessionID)
+// who names a person for the audit log and for the others who were shown
+// the same request.
+func who(p store.ChatPeer) string {
+	if p.Display != "" {
+		return p.Display
+	}
+	return p.PeerID
+}
+
+// answerReq is one "allow" or "deny". bound is the request it answers, as
+// answerReq's caller learnt it: the message id on a pressed button or a
+// quoted card, -1 for a quoted card about an older request, 0 when the
+// message named no request (a bare "y", "3: y").
+type answerReq struct {
+	sessionID string
+	approve   bool
+	bound     int64
+	how       How
+	// word is what the person typed, for a session waiting on something
+	// other than a permission prompt, where "y" is an answer in words.
+	word string
+}
+
+// HowButton and HowAssistant are the two ways an answer arrives that are not
+// a typed message's address.
+const (
+	HowButton    How = "button"
+	HowAssistant How = "assistant"
+)
+
+// answer presses a tool's allow or deny keys, for exactly the request the
+// person was looking at.
+//
+// A session asks, is answered, and asks again, and the keys are the same
+// both times. So an answer is bound to a request: one that names an older
+// request is refused with the current one shown, and one that names none
+// goes through only if this person has been shown the current one. The
+// person is never one keystroke from allowing a command they have not read.
+func (b *Bridge) answer(ctx context.Context, p store.ChatPeer, req answerReq, lang string) said {
+	row, h, err := b.sessionAndHandle(ctx, req.sessionID)
 	if err != nil {
-		return msg(lang, "gone", h)
+		return plain(msg(lang, "gone", h))
 	}
 	if row.State != session.StateWaiting {
-		return msg(lang, "notWaiting", h)
+		if req.bound != 0 {
+			return plain(msg(lang, "staleGone", h))
+		}
+		return plain(msg(lang, "notWaiting", h))
 	}
 	tool := AgentFor(row.LaunchCommand, row.Command)
 	if tool == "shell" {
-		return msg(lang, "noShell", h)
+		return plain(msg(lang, "noShell", h))
+	}
+	cur, kind := b.current(ctx, row)
+	stale := req.bound < 0 || (req.bound > 0 && req.bound != cur.ID)
+	switch kind {
+	case store.MessagePrompt:
+		if stale {
+			return showing(msg(lang, "stalePrompt", h, request(cur.Text), h, h), row.ID, cur.ID)
+		}
+		if req.bound == 0 && !b.seen(ctx, p, cur.ID) {
+			return showing(msg(lang, "showPrompt", h, request(cur.Text), h, h), row.ID, cur.ID)
+		}
+	case store.MessageQuestion, store.MessageAssistant, store.MessageNotice, store.MessageUser:
+		// Not a permission prompt: the keys would pick a menu's first
+		// choice or submit an empty line. "y" here is an answer in words,
+		// and deliver's gate shows a question the person has not seen.
+		if stale {
+			return showing(msg(lang, "showQuestion", h, request(cur.Text), h), row.ID, cur.ID)
+		}
+		if req.word == "" {
+			return plain(msg(lang, "notWaiting", h))
+		}
+		return b.deliver(ctx, p, Target{SessionID: row.ID, How: req.how}, req.word, lang)
+	default:
+		// Waiting on something the hooks did not describe. A person who
+		// named the session, pressed its button or quoted its card chose
+		// it; a bare "y" must at least follow a card about this wait.
+		if req.how == HowOnlyWaiting || req.how == HowFocus {
+			if !b.toldSince(ctx, p, row) {
+				return plain(msg(lang, "showUnknownWait", h, h, h))
+			}
+		}
 	}
 	prof, ok := b.tools(ctx)[tool]
 	keys := prof.Deny
-	if approve {
+	if req.approve {
 		keys = prof.Approve
 	}
 	if !ok || len(keys) == 0 {
-		return msg(lang, "noProfile", h, tool)
+		return plain(msg(lang, "noProfile", h, tool))
 	}
 	if err := b.d.Term.Keys(ctx, row.TmuxName, keys...); err != nil {
-		return msg(lang, "gone", h)
+		return plain(msg(lang, "gone", h))
 	}
 	what := "denied"
-	if approve {
+	if req.approve {
 		what = "approved"
 	}
-	b.d.Audit(ctx, "chat."+what, fmt.Sprintf("[%d] %s", h, tool))
-	return msg(lang, "receiptKey", h, msg(lang, what))
+	b.d.Audit(ctx, "chat."+what, fmt.Sprintf("[%d] %s · %s · %s via %s: %s", h, row.Title, tool, who(p), req.how, preview(cur.Text)))
+	if cur.ID > 0 {
+		b.retire(ctx, p, row, h, cur, what, lang)
+		return plain(msg(lang, "receiptKeyCmd", h, msg(lang, what), preview(cur.Text)))
+	}
+	return plain(msg(lang, "receiptKey", h, msg(lang, what)))
 }
 
-func (b *Bridge) interrupt(ctx context.Context, sessionID string, lang string) string {
+// toldSince says whether this person was sent anything about a session since
+// it last changed state.
+func (b *Bridge) toldSince(ctx context.Context, p store.ChatPeer, row store.Session) bool {
+	recent, err := b.d.DB.RecentChatOutbound(ctx, p.Channel, p.PeerID, 50)
+	if err != nil {
+		return false
+	}
+	for _, o := range recent {
+		if o.SessionID == row.ID && o.At >= row.StateChangedAt-messageSlack {
+			return true
+		}
+	}
+	return false
+}
+
+// retire takes an answered request off every card that showed it: the
+// buttons go, and the card says who answered. On an IM that cannot edit, the
+// others who were shown it are told in a line, so nobody answers a request
+// that is already over.
+func (b *Bridge) retire(ctx context.Context, by store.ChatPeer, row store.Session, h int, cur store.SessionMessage, what, lang string) {
+	outs, err := b.d.DB.ChatOutboundsForMessage(ctx, row.ID, cur.ID)
+	if err != nil {
+		return
+	}
+	project := ""
+	if pr, perr := b.d.DB.GetProject(ctx, row.ProjectID); perr == nil {
+		project = pr.Name
+	}
+	told := map[string]bool{chatKey(by.Channel, by.PeerID): true}
+	for _, o := range outs {
+		ch, ok := b.channel(o.Channel)
+		if !ok {
+			continue
+		}
+		p, err := b.d.DB.GetChatPeer(ctx, o.Channel, o.PeerID)
+		if err != nil || p.Status != store.PeerPaired {
+			continue
+		}
+		if ch.caps.Edit {
+			body, _ := cut(cur.Text, BodyLimit)
+			card := &Card{
+				Handle: h, Title: row.Title, Project: project, State: string(session.StateWorking),
+				Glyph: glyph(string(session.StateWorking)), StateText: msg(lang, "answeredBy", msg(lang, what), who(by)),
+				Body: body, URL: b.sessionURL(row.ID), LinkLabel: msg(lang, "linkLabel"),
+			}
+			if err := ch.ad.Edit(ctx, Peer{ID: p.PeerID, ContextToken: p.ContextToken}, o.Ref, Outbound{Card: card}); err != nil {
+				b.d.Log.Warn("chat retire", "channel", o.Channel, "err", err)
+			}
+			continue
+		}
+		k := chatKey(p.Channel, p.PeerID)
+		if told[k] {
+			continue
+		}
+		told[k] = true
+		b.reply(ctx, ch, p, msg(lang, "answeredElsewhere", h, who(by), msg(lang, what), preview(cur.Text)))
+	}
+}
+
+func (b *Bridge) interrupt(ctx context.Context, sessionID string, lang string) said {
 	row, h, err := b.sessionAndHandle(ctx, sessionID)
 	if err != nil {
-		return msg(lang, "gone", h)
+		return plain(msg(lang, "gone", h))
 	}
 	// Confirmed up to two minutes after it was asked, by which time the
 	// session may have stopped at a prompt, where the interrupt key is the
 	// deny key. Say so rather than deny something in passing.
-	if row.State == session.StateWaiting {
-		if last, ok, _ := b.d.DB.LatestSessionMessage(ctx, sessionID); ok && CurrentKind(row, last) == store.MessagePrompt {
-			return msg(lang, "atPrompt", h)
-		}
+	if cur, kind := b.current(ctx, row); kind == store.MessagePrompt {
+		return showing(msg(lang, "atPrompt", h, request(cur.Text), h, h), row.ID, cur.ID)
+	}
+	if row.State != session.StateWorking {
+		return plain(msg(lang, "notWorking", h))
 	}
 	tool := AgentFor(row.LaunchCommand, row.Command)
 	prof, ok := b.tools(ctx)[tool]
 	if !ok || len(prof.Interrupt) == 0 {
-		return msg(lang, "noProfile", h, tool)
+		return plain(msg(lang, "noProfile", h, tool))
 	}
 	if err := b.d.Term.Keys(ctx, row.TmuxName, prof.Interrupt...); err != nil {
-		return msg(lang, "gone", h)
+		return plain(msg(lang, "gone", h))
 	}
-	b.d.Audit(ctx, "chat.interrupt", fmt.Sprintf("[%d] %s", h, tool))
-	return msg(lang, "receiptKey", h, msg(lang, "interrupted"))
+	b.d.Audit(ctx, "chat.interrupt", fmt.Sprintf("[%d] %s · %s", h, row.Title, tool))
+	return plain(msg(lang, "receiptKey", h, msg(lang, "interrupted")))
 }
 
 func (b *Bridge) tools(ctx context.Context) map[string]ToolProfile {
@@ -417,54 +776,80 @@ func (b *Bridge) handleIfAny(sessionID string) (int, bool) {
 	return h, ok
 }
 
+// action is a button press: "verb:session:message".
 func (b *Bridge) action(ctx context.Context, ch *channel, p store.ChatPeer, a Action, lang string) {
-	verb, sessionID, _ := strings.Cut(a.Value, ":")
+	parts := strings.SplitN(a.Value, ":", 3)
+	if len(parts) < 2 {
+		return
+	}
+	verb, sessionID := parts[0], parts[1]
+	var bound int64
+	if len(parts) == 3 {
+		bound, _ = strconv.ParseInt(parts[2], 10, 64)
+	}
 	// The value came back from the IM's servers, which is not this person.
 	// When the press names the message it was on, that message must be one
-	// the bridge sent this person about this session; otherwise the press
-	// is refused. An IM without message refs on presses still gets the
-	// session-must-be-waiting check in answer().
+	// the bridge sent this person about this session, and the request it
+	// answers is the one that message showed, not the one the value claims.
+	// An IM without message refs on presses still gets the value's bound
+	// and the session-must-be-waiting check in answer().
 	if a.MessageRef != "" {
 		o, ok, _ := b.d.DB.ChatOutboundByRef(ctx, p.Channel, p.PeerID, a.MessageRef)
 		if !ok || o.SessionID != sessionID {
 			b.d.Audit(ctx, "chat.refused", fmt.Sprintf("%s: press %q on a message that is not theirs", chatKey(p.Channel, p.PeerID), a.Value))
 			return
 		}
+		bound = o.MessageID
 	}
-	var text string
+	var out said
 	switch verb {
 	case "approve", "deny":
-		text = b.answer(ctx, sessionID, verb == "approve", lang)
+		if bound == 0 {
+			// A button always names its request; one without is from a
+			// card sent before requests were named, and is old.
+			bound = -1
+		}
+		out = b.answer(ctx, p, answerReq{sessionID: sessionID, approve: verb == "approve", bound: bound, how: HowButton}, lang)
 	case "screen":
-		text = b.screen(ctx, sessionID, lang)
+		out = plain(b.screen(ctx, sessionID, lang))
 	default:
 		return
 	}
-	if err := ch.ad.Ack(ctx, a, firstLine(text)); err != nil {
+	if err := ch.ad.Ack(ctx, a, firstLine(out.text)); err != nil {
 		b.d.Log.Warn("chat ack", "channel", p.Channel, "err", err)
 	}
-	b.reply(ctx, ch, p, text)
+	b.tell(ctx, ch, p, out)
 }
 
 func (b *Bridge) image(ctx context.Context, ch *channel, p store.ChatPeer, in Inbound, lang string) {
-	sessionID := b.quoted(ctx, ch, in)
+	caption := strings.TrimSpace(in.Text)
+	how := HowQuote
+	sessionID, _ := b.quoted(ctx, ch, in)
+	cands, _ := b.candidates(ctx)
 	if sessionID == "" {
-		if h, _, ok := SplitHandle(in.Text); ok {
+		caption = loosen(caption, cands)
+		if h, rest, ok := SplitHandle(caption); ok {
 			sessionID, _, _ = b.d.DB.SessionByHandle(ctx, h)
+			caption, how = rest, HowHandle
 		}
 	}
 	if sessionID == "" {
-		cands, _ := b.candidates(ctx)
 		t, _, reason := Resolve("", "", p.FocusSession, cands)
 		if reason != "" {
 			b.reply(ctx, ch, p, msg(lang, "imageNoTarget"))
 			return
 		}
-		sessionID = t.SessionID
+		sessionID, how = t.SessionID, t.How
 	}
 	row, h, err := b.sessionAndHandle(ctx, sessionID)
 	if err != nil || b.d.PastedDir == "" {
 		b.reply(ctx, ch, p, msg(lang, "gone", h))
+		return
+	}
+	// A path typed into a permission dialog is keystrokes into it, so the
+	// picture waits on the same checks words do, and before it is fetched.
+	if s, ok := b.gate(ctx, p, row, h, how, lang); !ok {
+		b.tell(ctx, ch, p, s)
 		return
 	}
 	// Fetched only now: the person is paired and the picture has a
@@ -486,13 +871,23 @@ func (b *Bridge) image(ctx context.Context, ch *channel, p store.ChatPeer, in In
 	if err := os.WriteFile(path, img, 0o600); err != nil {
 		return
 	}
-	// Typed, not submitted: the person adds their words and presses Enter,
-	// the same way the panel's own upload works.
+	b.d.Audit(ctx, "chat.image", fmt.Sprintf("[%d] %s", h, filepath.Base(path)))
+	if caption != "" {
+		// A picture with words is one message to the agent, sent the way
+		// words are.
+		s := b.deliver(ctx, p, Target{SessionID: sessionID, How: how}, path+" "+caption, lang)
+		if strings.HasPrefix(s.text, "→") {
+			s = plain(msg(lang, "imageSent", h))
+		}
+		b.tell(ctx, ch, p, s)
+		return
+	}
+	// Typed, not submitted: the person's next words go in after it and
+	// Enter sends both, the same way the panel's own upload works.
 	if err := b.d.Term.Paste(ctx, row.TmuxName, path+" "); err != nil {
 		b.reply(ctx, ch, p, msg(lang, "gone", h))
 		return
 	}
-	b.d.Audit(ctx, "chat.image", fmt.Sprintf("[%d] %s", h, filepath.Base(path)))
 	b.reply(ctx, ch, p, msg(lang, "imageSaved", h))
 }
 
@@ -509,57 +904,135 @@ func pruneImages(dir string) {
 	}
 }
 
+// catchUp answers a person's first message after pushes failed to reach them
+// with the requests they missed, and reports whether it did. Their message
+// itself is not run: it was written without having seen these.
+func (b *Bridge) catchUp(ctx context.Context, ch *channel, p store.ChatPeer, lang string) bool {
+	key := chatKey(p.Channel, p.PeerID)
+	b.mu.Lock()
+	ids := b.missed[key]
+	delete(b.missed, key)
+	b.mu.Unlock()
+	if len(ids) == 0 {
+		return false
+	}
+	type item struct {
+		row    store.Session
+		c      Change
+		last   store.SessionMessage
+		handle int
+	}
+	var items []item
+	for id := range ids {
+		row, c, last, ok := b.change(ctx, id)
+		if !ok || !Addressable(row) || row.State != session.StateWaiting {
+			continue
+		}
+		h, err := b.Handle(ctx, id)
+		if err != nil {
+			continue
+		}
+		items = append(items, item{row, c, last, h})
+	}
+	if len(items) == 0 {
+		return false
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].handle < items[j].handle })
+	b.reply(ctx, ch, p, msg(lang, "missed"))
+	raw, _ := b.d.DB.GetSetting(ctx, RoutesKey, "")
+	routes := ParseRoutes(raw)
+	for _, it := range items {
+		project := ""
+		if pr, err := b.d.DB.GetProject(ctx, it.row.ProjectID); err == nil {
+			project = pr.Name
+		}
+		d := routes.Decide(it.c, b.d.Now().In(b.d.Zone()))
+		card, rest := b.cardFor(it.row, it.c, it.last, it.handle, project, d.Body, lang)
+		_ = b.sendCard(ctx, ch, p, it.row, it.c, it.last, card, rest, lang)
+	}
+	return true
+}
+
+func (b *Bridge) hasPending(key string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	pd, ok := b.pend[key]
+	return ok && !b.d.Now().After(pd.expires)
+}
+
+func (b *Bridge) clarifying(key string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	until, ok := b.clarify[key]
+	return ok && b.d.Now().Before(until)
+}
+
 func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in Inbound, cmd Command, lang string) {
 	key := chatKey(p.Channel, p.PeerID)
 	reply := func(text string) { b.reply(ctx, ch, p, text) }
 
 	// Verbs that need a session: the handle, the quote, or the focus rule.
-	target := func(verb string) (string, bool) {
+	// Also how it was found and which request a quote named.
+	target := func(verb string) (string, How, int64, bool) {
 		if cmd.Handle > 0 {
 			id, ok, _ := b.d.DB.SessionByHandle(ctx, cmd.Handle)
 			if !ok {
 				reply(msg(lang, "unknownHandle", cmd.Handle))
-				return "", false
+				return "", "", 0, false
 			}
-			return id, true
+			return id, HowHandle, 0, true
 		}
-		if q := b.quoted(ctx, ch, in); q != "" {
-			return q, true
+		if q, bound := b.quoted(ctx, ch, in); q != "" {
+			return q, HowQuote, bound, true
 		}
 		cands, _ := b.candidates(ctx)
 		t, _, reason := Resolve("", "", p.FocusSession, cands)
 		switch reason {
 		case "":
-			return t.SessionID, true
+			return t.SessionID, t.How, 0, true
 		case ReasonSeveral:
 			// The same refusal a bare sentence gets, with the list: a "y"
 			// with two sessions waiting is the case the rule exists for.
-			reply(b.explain(ctx, reason, "", cands, lang))
+			reply(b.explain(ctx, reason, "", lang))
 		default:
-			reply(msg(lang, "needHandle", verb))
+			reply(msg(lang, "needHandle", pick(lang, verbWord(verb), verb)))
 		}
-		return "", false
+		return "", "", 0, false
 	}
 
 	switch cmd.Verb {
 	case VerbHelp:
-		reply(msg(lang, "help"))
+		reply(b.help(ctx, p, lang))
 	case VerbList:
-		reply(b.list(ctx, lang, false))
+		b.tell(ctx, ch, p, b.list(ctx, lang, false, p))
+	case VerbUnknown:
+		reply(msg(lang, "unknownCommand", cmd.Arg))
+	case VerbAll:
+		reply(msg(lang, "refuseAll", b.list(ctx, lang, true).text))
 	case VerbApprove, VerbDeny:
-		id, ok := target("y")
+		id, how, bound, ok := target("y")
 		if !ok {
 			return
 		}
-		reply(b.answer(ctx, id, cmd.Verb == VerbApprove, lang))
+		// The word as typed goes along: to a session asking a question
+		// rather than for permission, "y" is the answer in words.
+		word := strings.TrimSpace(in.Text)
+		if n, rest, ok := SplitLooseHandle(word); ok && n == cmd.Handle {
+			word = rest
+		}
+		b.tell(ctx, ch, p, b.answer(ctx, p, answerReq{sessionID: id, approve: cmd.Verb == VerbApprove, bound: bound, how: how, word: word}, lang))
 	case VerbScreen:
-		id, ok := target("screen")
+		id, _, _, ok := target("screen")
 		if !ok {
+			return
+		}
+		if _, h, err := b.sessionAndHandle(ctx, id); err != nil {
+			reply(msg(lang, "gone", h))
 			return
 		}
 		b.replyCode(ctx, ch, p, b.screenHead(ctx, id, lang), b.screenText(ctx, id))
 	case VerbShot:
-		id, ok := target("shot")
+		id, _, _, ok := target("shot")
 		if !ok {
 			return
 		}
@@ -574,24 +1047,33 @@ func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in 
 		}
 		b.sendShot(ctx, ch, p, row, h)
 	case VerbOpen:
-		id, ok := target("open")
+		id, _, _, ok := target("open")
 		if !ok {
 			return
 		}
 		h, _ := b.Handle(ctx, id)
-		reply(msg(lang, "open", h, b.sessionURL(id)))
+		u := b.sessionURL(id)
+		if u == "" {
+			reply(msg(lang, "noPublicURL"))
+			return
+		}
+		reply(msg(lang, "open", h, u))
 	case VerbMute:
-		id, ok := target("mute")
+		id, _, _, ok := target("mute")
 		if !ok {
 			return
 		}
-		d := parseDuration(cmd.Arg, 2*time.Hour)
+		d, understood := parseDuration(cmd.Arg, 2*time.Hour)
 		until := b.d.Now().Add(d)
 		_ = b.d.DB.MuteChat(ctx, p.Channel, p.PeerID, id, until.Unix())
 		h, _ := b.Handle(ctx, id)
-		reply(msg(lang, "muted", h, until.In(b.d.Zone()).Format("15:04"), h))
+		text := msg(lang, "muted", h, until.In(b.d.Zone()).Format("01-02 15:04"), h)
+		if !understood {
+			text = msg(lang, "mutedDefault", cmd.Arg) + "\n" + text
+		}
+		reply(text)
 	case VerbUnmute:
-		id, ok := target("unmute")
+		id, _, _, ok := target("unmute")
 		if !ok {
 			return
 		}
@@ -599,8 +1081,12 @@ func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in 
 		h, _ := b.Handle(ctx, id)
 		reply(msg(lang, "unmuted", h))
 	case VerbFocus:
-		id, ok := target("focus")
+		id, _, _, ok := target("focus")
 		if !ok {
+			return
+		}
+		if _, h, err := b.sessionAndHandle(ctx, id); err != nil {
+			reply(msg(lang, "gone", h))
 			return
 		}
 		if err := b.d.DB.SetChatPeerFocus(ctx, p.Channel, p.PeerID, id); err != nil {
@@ -609,7 +1095,7 @@ func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in 
 		h, _ := b.Handle(ctx, id)
 		reply(msg(lang, "focused", h))
 	case VerbContext:
-		id, ok := target("context")
+		id, _, _, ok := target("context")
 		if !ok {
 			return
 		}
@@ -621,23 +1107,7 @@ func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in 
 	case VerbUsage:
 		reply(b.usage(ctx, lang))
 	case VerbMore:
-		b.mu.Lock()
-		rest := b.more[key]
-		delete(b.more, key)
-		b.mu.Unlock()
-		if rest == "" {
-			reply(msg(lang, "noMore"))
-			return
-		}
-		head, more := cut(rest, BodyLimit)
-		if more {
-			tail := strings.TrimSpace(strings.TrimPrefix(rest, head))
-			b.mu.Lock()
-			b.more[key] = tail
-			b.mu.Unlock()
-			head += "\n" + msg(lang, "more", len([]rune(tail)))
-		}
-		reply(head)
+		reply(b.continueMore(ctx, key, cmd.Handle, lang))
 	case VerbConfirm:
 		b.mu.Lock()
 		pd, ok := b.pend[key]
@@ -651,7 +1121,7 @@ func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in 
 			reply(msg(lang, "expired"))
 			return
 		}
-		reply(pd.run(ctx))
+		b.tell(ctx, ch, p, pd.run(ctx))
 	case VerbCancel:
 		b.mu.Lock()
 		_, ok := b.pend[key]
@@ -663,13 +1133,24 @@ func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in 
 		}
 		reply(msg(lang, "cancelled"))
 	case VerbStop:
-		id, ok := target("stop")
+		id, _, _, ok := target("stop")
 		if !ok {
 			return
 		}
-		h, _ := b.Handle(ctx, id)
-		b.ask(key, msg(lang, "confirmStop", h), func(ctx context.Context) string { return b.interrupt(ctx, id, lang) })
-		reply(msg(lang, "confirmStop", h))
+		row, h, err := b.sessionAndHandle(ctx, id)
+		if err != nil {
+			reply(msg(lang, "gone", h))
+			return
+		}
+		// Asked before the confirmation, not only after: "stop 3" about a
+		// session that has already stopped would otherwise cost a round
+		// trip to learn nothing.
+		if row.State != session.StateWorking {
+			b.tell(ctx, ch, p, b.interrupt(ctx, id, lang))
+			return
+		}
+		prefix := b.ask(key, msg(lang, "confirmStop", h), func(ctx context.Context) said { return b.interrupt(ctx, id, lang) }, lang)
+		reply(prefix + msg(lang, "confirmStop", h))
 	case VerbAsk:
 		if p.Mode != store.ModeAdvanced || b.assistant() == nil {
 			reply(msg(lang, "noAssistant"))
@@ -680,24 +1161,113 @@ func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in 
 	}
 }
 
-// ask parks an action until "ok".
-func (b *Bridge) ask(key, describe string, run func(ctx context.Context) string) {
-	b.mu.Lock()
-	b.pend[key] = pending{describe: describe, run: run, expires: b.d.Now().Add(pendingTTL)}
-	b.mu.Unlock()
+// verbWord is the Chinese command for an English verb, for the one reply
+// that has to name the command back.
+func verbWord(verb string) string {
+	switch verb {
+	case "y":
+		return "好"
+	case "screen":
+		return "屏幕"
+	case "shot":
+		return "截图"
+	case "open":
+		return "打开"
+	case "mute":
+		return "静音"
+	case "unmute":
+		return "取消静音"
+	case "focus":
+		return "切到"
+	case "context":
+		return "上下文"
+	case "stop":
+		return "停"
+	}
+	return verb
 }
 
-// list renders every session for a phone.
-func (b *Bridge) list(ctx context.Context, lang string, waitingOnly bool) string {
+// help is the command list with a handle that exists, so the example can be
+// copied as it stands.
+func (b *Bridge) help(ctx context.Context, p store.ChatPeer, lang string) string {
+	example := 3
+	if cands, err := b.candidates(ctx); err == nil && len(cands) > 0 {
+		example = cands[0].Handle
+		for _, c := range cands {
+			if c.Handle < example {
+				example = c.Handle
+			}
+		}
+	}
+	text := msg(lang, "help", example)
+	if p.Mode == store.ModeAdvanced && b.assistant() != nil {
+		text += "\n" + msg(lang, "helpAdvanced")
+	}
+	return text
+}
+
+// continueMore sends the next part of a long message: the session named, or
+// the one whose message was cut last.
+func (b *Bridge) continueMore(ctx context.Context, key string, handle int, lang string) string {
+	b.mu.Lock()
+	sessionID := b.moreLast[key]
+	b.mu.Unlock()
+	if handle > 0 {
+		id, ok, _ := b.d.DB.SessionByHandle(ctx, handle)
+		if !ok {
+			return msg(lang, "unknownHandle", handle)
+		}
+		sessionID = id
+	}
+	b.mu.Lock()
+	rest := b.more[key+"|"+sessionID]
+	b.mu.Unlock()
+	if sessionID == "" || rest == "" {
+		return msg(lang, "noMore")
+	}
+	h, _ := b.Handle(ctx, sessionID)
+	head, more := cut(rest, BodyLimit)
+	tail := ""
+	if more {
+		tail = strings.TrimSpace(strings.TrimPrefix(rest, head))
+	}
+	b.park(key, sessionID, tail)
+	text := msg(lang, "moreHead", h) + "\n" + head + "\n"
+	if tail != "" {
+		return text + msg(lang, "more", len([]rune(tail)))
+	}
+	return text + msg(lang, "moreEnd")
+}
+
+// ask parks an action until "ok", and returns a line saying which earlier
+// one it replaced, if any: one person has one confirmation at a time, and a
+// second silently taking the first one's place is how "ok" runs the wrong
+// thing.
+func (b *Bridge) ask(key, describe string, run func(ctx context.Context) said, lang string) string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	prefix := ""
+	if old, ok := b.pend[key]; ok && !b.d.Now().After(old.expires) {
+		prefix = msg(lang, "replaced", preview(old.describe)) + "\n"
+	}
+	b.pend[key] = pending{describe: describe, run: run, expires: b.d.Now().Add(pendingTTL)}
+	return prefix
+}
+
+// list renders every session for a phone. A waiting session shows what it is
+// asking, and that counts as the person having seen it.
+func (b *Bridge) list(ctx context.Context, lang string, waitingOnly bool, viewer ...store.ChatPeer) said {
 	rows, err := b.d.DB.ListSessions(ctx)
 	if err != nil {
-		return ""
+		return said{}
 	}
 	type line struct {
 		weight int
 		text   string
+		shows  *shown
 	}
 	var lines []line
+	now := b.d.Now().Unix()
 	for _, r := range rows {
 		if !Addressable(r) {
 			continue
@@ -713,34 +1283,51 @@ func (b *Bridge) list(ctx context.Context, lang string, waitingOnly bool) string
 		if p, perr := b.d.DB.GetProject(ctx, r.ProjectID); perr == nil {
 			project = p.Name
 		}
-		kind := ""
-		if last, ok, _ := b.d.DB.LatestSessionMessage(ctx, r.ID); ok {
-			kind = CurrentKind(r, last)
-		}
+		cur, kind := b.current(ctx, r)
 		since := ""
 		if r.StateChangedAt > 0 {
 			since = " · " + ago(b.d.Now().Sub(time.Unix(r.StateChangedAt, 0)), lang)
 		}
-		lines = append(lines, line{
+		muted := ""
+		if len(viewer) > 0 {
+			if until, _ := b.d.DB.ChatMutedUntil(ctx, viewer[0].Channel, viewer[0].PeerID, r.ID, now); until > 0 {
+				muted = " · " + msg(lang, "listMuted")
+			}
+		}
+		l := line{
 			weight: r.State.SortWeight(),
-			text:   fmt.Sprintf("%s [%d] %s · %s · %s%s", glyph(string(r.State)), h, r.Title, project, stateText(lang, string(r.State), kind), since),
-		})
+			text:   fmt.Sprintf("%s [%d] %s · %s · %s%s%s", glyph(string(r.State)), h, r.Title, project, stateText(lang, string(r.State), kind), since, muted),
+		}
+		if kind == store.MessagePrompt || kind == store.MessageQuestion {
+			words, more := cut(strings.Join(strings.Fields(cur.Text), " "), 120)
+			if more {
+				words += " …"
+			}
+			l.text += "\n    " + words
+			l.shows = &shown{session: r.ID, message: cur.ID}
+		}
+		lines = append(lines, l)
 	}
 	if len(lines) == 0 {
-		return msg(lang, "listEmpty")
+		return plain(msg(lang, "listEmpty"))
 	}
 	sort.SliceStable(lines, func(i, j int) bool { return lines[i].weight < lines[j].weight })
 	if len(lines) > 40 {
 		lines = lines[:40]
 	}
-	var out []string
+	var out said
+	var texts []string
 	if !waitingOnly {
-		out = append(out, msg(lang, "listHead"))
+		texts = append(texts, msg(lang, "listHead"))
 	}
 	for _, l := range lines {
-		out = append(out, l.text)
+		texts = append(texts, l.text)
+		if l.shows != nil {
+			out.shows = append(out.shows, *l.shows)
+		}
 	}
-	return strings.Join(out, "\n")
+	out.text = strings.Join(texts, "\n")
+	return out
 }
 
 func (b *Bridge) screenHead(ctx context.Context, sessionID, lang string) string {
@@ -748,7 +1335,12 @@ func (b *Bridge) screenHead(ctx context.Context, sessionID, lang string) string 
 	return msg(lang, "screenHead", h)
 }
 
-// screenText is the visible pane's last lines, trailing blank lines dropped.
+// screenLines is how much of a pane "screen" sends. A phone shows about
+// twenty lines; the thirty this was sent two screens of scrolling to reach
+// the prompt, which is the line that matters.
+const screenLines = 20
+
+// screenText is the visible pane's last lines, trailing blanks dropped.
 func (b *Bridge) screenText(ctx context.Context, sessionID string) string {
 	row, err := b.d.DB.GetSession(ctx, sessionID)
 	if err != nil {
@@ -759,8 +1351,11 @@ func (b *Bridge) screenText(ctx context.Context, sessionID string) string {
 		return ""
 	}
 	lines := strings.Split(strings.TrimRight(out, "\n "), "\n")
-	if len(lines) > 30 {
-		lines = lines[len(lines)-30:]
+	if len(lines) > screenLines {
+		lines = lines[len(lines)-screenLines:]
+	}
+	for i := range lines {
+		lines[i] = strings.TrimRight(lines[i], " ")
 	}
 	return strings.Join(lines, "\n")
 }
@@ -823,37 +1418,51 @@ func (b *Bridge) usage(ctx context.Context, lang string) string {
 	return text
 }
 
-// parseDuration reads "2h", "30m", "1d", "3天", "2小时", "15分钟", "forever"
-// and plain minutes.
-func parseDuration(s string, def time.Duration) time.Duration {
-	s = strings.TrimSpace(strings.ToLower(s))
+// parseDuration reads a mute's length the way people say it: "2h", "30m",
+// "1d", "3天", "2小时", "两个小时", "半小时", "15分钟", "forever", plain
+// minutes. ok is false when there was something and it was not understood,
+// so the reply can say the default was used rather than silently pick it.
+func parseDuration(s string, def time.Duration) (time.Duration, bool) {
+	s = strings.ReplaceAll(strings.TrimSpace(strings.ToLower(narrow(s))), " ", "")
 	switch s {
 	case "":
-		return def
+		return def, true
 	case "forever", "永久", "一直":
-		return 100 * 365 * 24 * time.Hour // long past any session's life
+		return 100 * 365 * 24 * time.Hour, true // long past any session's life
+	case "半小时", "半个小时", "halfanhour":
+		return 30 * time.Minute, true
+	case "半天":
+		return 12 * time.Hour, true
 	}
 	if d, err := time.ParseDuration(s); err == nil && d > 0 {
-		return d
+		return d, true
 	}
 	for _, u := range []struct {
 		suffix string
 		unit   time.Duration
-	}{{"d", 24 * time.Hour}, {"天", 24 * time.Hour}, {"小时", time.Hour}, {"h", time.Hour}, {"分钟", time.Minute}, {"m", time.Minute}, {"", time.Minute}} {
+	}{
+		{"天", 24 * time.Hour}, {"d", 24 * time.Hour}, {"个小时", time.Hour}, {"小时", time.Hour}, {"h", time.Hour},
+		{"分钟", time.Minute}, {"分", time.Minute}, {"min", time.Minute}, {"m", time.Minute}, {"", time.Minute},
+	} {
 		if !strings.HasSuffix(s, u.suffix) {
 			continue
 		}
-		if n, err := strconv.Atoi(strings.TrimSuffix(s, u.suffix)); err == nil && n > 0 {
-			return time.Duration(n) * u.unit
+		num := strings.TrimSuffix(s, u.suffix)
+		num = strings.ReplaceAll(num, "两", "二")
+		if n := parseNumber(num); n > 0 {
+			return time.Duration(n) * u.unit, true
 		}
 	}
-	return def
+	return def, false
 }
 
 // preview is the first line of text, shortened, for the audit log.
 func preview(s string) string {
-	line := firstLine(s)
-	head, _ := cut(line, 80)
+	line := firstLine(strings.TrimSpace(s))
+	head, more := cut(line, 80)
+	if more {
+		head += " …"
+	}
 	return head
 }
 
@@ -862,163 +1471,4 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
-}
-
-// ─── advanced mode ─────────────────────────────────────────────────────────
-
-// assist hands a sentence to the assistant and runs what it decided, with a
-// confirmation before anything that writes.
-func (b *Bridge) assist(ctx context.Context, ch *channel, p store.ChatPeer, text string, cands []Candidate, lang string) {
-	key := chatKey(p.Channel, p.PeerID)
-	reply := func(text string) { b.reply(ctx, ch, p, text) }
-	if !b.withinBudget(ctx) {
-		reply(msg(lang, "assistantBudget"))
-		return
-	}
-	req := b.assistantRequest(ctx, p, text, cands, lang)
-	if ch.caps.Typing {
-		_ = ch.ad.Typing(ctx, Peer{ID: p.PeerID, ContextToken: p.ContextToken}, true)
-		defer ch.ad.Typing(ctx, Peer{ID: p.PeerID, ContextToken: p.ContextToken}, false) //nolint:errcheck
-	}
-	intent, cost, err := b.assistant().Translate(ctx, req)
-	b.spend(ctx, cost)
-	if err != nil {
-		reply(msg(lang, "assistantFailed", err.Error()))
-		return
-	}
-	b.d.Audit(ctx, "chat.intent", fmt.Sprintf("%s: %s -> %s [%d] %s", key, preview(text), intent.Verb, intent.Handle, preview(intent.Text)))
-	sessionFor := func() (string, bool) {
-		for _, c := range cands {
-			if c.Handle == intent.Handle {
-				return c.SessionID, true
-			}
-		}
-		reply(msg(lang, "unknownHandle", intent.Handle))
-		return "", false
-	}
-	switch intent.Verb {
-	case "send":
-		id, ok := sessionFor()
-		if !ok {
-			return
-		}
-		if strings.TrimSpace(intent.Text) == "" {
-			reply(firstNonEmpty(intent.Say, msg(lang, "none")))
-			return
-		}
-		b.ask(key, intent.Text, func(ctx context.Context) string { return b.deliver(ctx, p, id, intent.Text, lang) })
-		reply(msg(lang, "confirmSend", intent.Handle, intent.Text))
-	case "approve", "deny":
-		// A keystroke the model asked for is a write like any other: the
-		// table it read has titles a pane can set, so it waits for ok.
-		id, ok := sessionFor()
-		if !ok {
-			return
-		}
-		approve := intent.Verb == "approve"
-		b.ask(key, intent.Verb, func(ctx context.Context) string { return b.answer(ctx, id, approve, lang) })
-		reply(msg(lang, "confirmAnswer", intent.Handle, pick(lang, map[bool]string{true: "允许", false: "拒绝"}[approve], map[bool]string{true: "allow", false: "deny"}[approve])))
-	case "stop":
-		id, ok := sessionFor()
-		if !ok {
-			return
-		}
-		b.ask(key, "stop", func(ctx context.Context) string { return b.interrupt(ctx, id, lang) })
-		reply(msg(lang, "confirmStop", intent.Handle))
-	case "screen", "shot", "open", "context", "mute", "unmute", "focus":
-		b.command(ctx, ch, p, Inbound{}, Command{Verb: Verb(intent.Verb), Handle: intent.Handle, Arg: intent.Text}, lang)
-	case "list", "usage":
-		b.command(ctx, ch, p, Inbound{}, Command{Verb: Verb(intent.Verb)}, lang)
-	case "ask":
-		b.askAssistant(ctx, ch, p, firstNonEmpty(intent.Text, text), cands, lang)
-	default:
-		if intent.Say != "" {
-			reply(intent.Say)
-		} else {
-			reply(msg(lang, "none"))
-		}
-	}
-}
-
-func (b *Bridge) askAssistant(ctx context.Context, ch *channel, p store.ChatPeer, question string, cands []Candidate, lang string) {
-	reply := func(text string) { b.reply(ctx, ch, p, text) }
-	if !b.withinBudget(ctx) {
-		reply(msg(lang, "assistantBudget"))
-		return
-	}
-	if ch.caps.Typing {
-		_ = ch.ad.Typing(ctx, Peer{ID: p.PeerID, ContextToken: p.ContextToken}, true)
-		defer ch.ad.Typing(ctx, Peer{ID: p.PeerID, ContextToken: p.ContextToken}, false) //nolint:errcheck
-	}
-	ans, err := b.assistant().Ask(ctx, b.assistantRequest(ctx, p, question, cands, lang))
-	b.spend(ctx, ans.CostUSD)
-	if err != nil {
-		reply(msg(lang, "assistantFailed", err.Error()))
-		return
-	}
-	b.d.Audit(ctx, "chat.ask", fmt.Sprintf("%s: %s", chatKey(p.Channel, p.PeerID), preview(question)))
-	reply(ans.Text)
-}
-
-func (b *Bridge) assistantRequest(ctx context.Context, p store.ChatPeer, text string, cands []Candidate, lang string) AssistantRequest {
-	req := AssistantRequest{Chat: chatKey(p.Channel, p.PeerID), Text: text, Lang: lang}
-	for _, c := range cands {
-		row, err := b.d.DB.GetSession(ctx, c.SessionID)
-		if err != nil {
-			continue
-		}
-		project := ""
-		if pr, perr := b.d.DB.GetProject(ctx, row.ProjectID); perr == nil {
-			project = pr.Name
-		}
-		kind := ""
-		if last, ok, _ := b.d.DB.LatestSessionMessage(ctx, row.ID); ok {
-			kind = CurrentKind(row, last)
-		}
-		req.Sessions = append(req.Sessions, SessionBrief{
-			Handle: c.Handle, Title: row.Title, Project: project, State: string(row.State), Kind: kind,
-			Tool: AgentFor(row.LaunchCommand, row.Command),
-		})
-	}
-	sort.Slice(req.Sessions, func(i, j int) bool { return req.Sessions[i].Handle < req.Sessions[j].Handle })
-	if recent, err := b.d.DB.RecentChatOutbound(ctx, p.Channel, p.PeerID, 10); err == nil {
-		b.mu.Lock()
-		for _, o := range recent {
-			if o.Kind != store.OutboundStatus || o.SessionID == "" {
-				continue
-			}
-			if h, ok := b.handles[o.SessionID]; ok {
-				req.Recent = append(req.Recent, h)
-			}
-		}
-		b.mu.Unlock()
-	}
-	return req
-}
-
-func (b *Bridge) withinBudget(ctx context.Context) bool {
-	a := b.assistant()
-	if a == nil {
-		return false
-	}
-	cap := a.Budget()
-	if cap <= 0 {
-		return true
-	}
-	usd, _, err := b.d.DB.ChatSpend(ctx, b.d.Now().In(b.d.Zone()).Format("2006-01-02"))
-	return err == nil && usd < cap
-}
-
-func (b *Bridge) spend(ctx context.Context, usd float64) {
-	if usd <= 0 {
-		usd = 0
-	}
-	_, _ = b.d.DB.AddChatSpend(ctx, b.d.Now().In(b.d.Zone()).Format("2006-01-02"), usd)
-}
-
-func firstNonEmpty(a, b string) string {
-	if strings.TrimSpace(a) != "" {
-		return a
-	}
-	return b
 }

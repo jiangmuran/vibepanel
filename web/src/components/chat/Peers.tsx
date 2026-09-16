@@ -8,17 +8,32 @@ import { askConfirm } from '../ask'
 import { showToast } from '../toasts'
 import { safeText } from '../text'
 import { Card, Section } from './Chat'
+import { codeDigits } from './code'
 import { INPUT_SHORT, Primary, SELECT, Secondary, errText } from './form'
 
 /**
  * Who may talk to the panel from a chat app.
  *
  * Nobody, until the owner says so: a stranger who messages the bot gets a
- * six-digit code and a row here, and typing the code (or pressing pair)
- * is what turns the row into a person the panel pushes to and listens to.
+ * six-digit code and a row here, and typing the code the person reads out is
+ * what turns the row into a person the panel pushes to and listens to.
+ *
+ * The code is the only way in, and it is not shown on the row. A pending row
+ * says who wrote and when; a "pair" button beside it paired whoever had
+ * written most recently, which on a bot anyone can find is a stranger as
+ * often as it is the owner's own phone. The code proves the row is the
+ * person in front of you.
+ *
  * The mode switch is where the advanced mode is turned on, per person, so
  * one paired phone can talk in sentences while another only gets commands.
  */
+
+function since(unix: number): string {
+  const s = Math.max(0, Math.floor(Date.now() / 1000) - unix)
+  if (s < 60) return t('chat.justNow')
+  if (s < 3600) return t('chat.minutesAgo', { n: String(Math.floor(s / 60)) })
+  return t('chat.hoursAgo', { n: String(Math.floor(s / 3600)) })
+}
 export function Peers({ data, onChange }: { data: ChatSettings; onChange: () => void }) {
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
@@ -27,7 +42,7 @@ export function Peers({ data, onChange }: { data: ChatSettings; onChange: () => 
   const pair = async () => {
     setBusy(true)
     try {
-      await api.pairChat(code.trim())
+      await api.pairChat(codeDigits(code))
       setCode('')
       showToast({ kind: 'success', key: 'chat.pairedOk' })
       onChange()
@@ -99,7 +114,7 @@ export function Peers({ data, onChange }: { data: ChatSettings; onChange: () => 
             onChange={(e) => setCode(e.target.value)}
             data-testid="chat-pair-code"
           />
-          <Primary type="submit" disabled={busy || code.trim().length !== 6}>
+          <Primary type="submit" disabled={busy || codeDigits(code).length !== 6}>
             <UserCheck size={14} />
             {t('chat.pair')}
           </Primary>
@@ -111,6 +126,7 @@ export function Peers({ data, onChange }: { data: ChatSettings; onChange: () => 
             </select>
           </label>
         </form>
+        <p className="mb-3 text-vp-xs text-ink-3">{t('chat.pairScope')}</p>
 
         {data.peers.length === 0 ? (
           <p className="text-vp-sm text-ink-3">{t('chat.noPeers')}</p>
@@ -130,13 +146,9 @@ export function Peers({ data, onChange }: { data: ChatSettings; onChange: () => 
                 </span>
                 {p.status === 'pending' ? (
                   <>
-                    <span className="font-mono text-vp-md text-ink" title={t('chat.pairingCode')}>
-                      {p.pairingCode}
+                    <span className="text-vp-sm text-ink-2" data-testid={`chat-pending-${p.peerId}`}>
+                      {t('chat.pendingSince', { when: since(p.lastSeenAt) })}
                     </span>
-                    <Primary onClick={() => void patch(p, { status: 'paired' })}>
-                      <Check size={14} />
-                      {t('chat.pair')}
-                    </Primary>
                     <Secondary onClick={() => void patch(p, { status: 'blocked' })}>
                       <Ban size={14} />
                       {t('chat.block')}

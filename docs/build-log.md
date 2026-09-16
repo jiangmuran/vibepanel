@@ -22278,3 +22278,87 @@ bridge and `-count=3` on every adapter, no flakes; the security review's
 probe tests under `go test -overlay`, which reproduced the unconfirmed
 `approve`, the token in the error string and the handle race before the
 fixes.
+
+## 2026-09-16 — Four people used the chat bridge from a phone
+
+Four subagents were each given a persona and a real panel wired to fake
+Telegram and 微信 servers (a rig that plays the phone and the laptop): a
+newcomer setting it up, a heavy user with six sessions on Telegram, a 微信
+user who talks in voice notes, and the owner who configures it for a partner.
+They were told to act, not to read code, and to report what surprised them.
+The reviews of the day before had read the code; this read the product, and
+found what code review had no way to see.
+
+**"Allow" did not mean *that* request.** Every blocker was one shape. A card's
+*Allow* button named the session, not the request, so a card for `make test`,
+answered and forgotten, allowed the `rm -rf ~` the session asked next. A bare
+`y` went to "the one waiting session" whose request the person had never been
+shown, because the push was muted or 微信 could not deliver it. A quoted 微信
+card was an address and nothing more, so quoting yesterday's card answered
+today's prompt. The fix is a column: `chat_outbound.message_id` records which
+session message a card, a list line or a reply showed. A button carries the
+id; a quote by ref reads it from the record, a quote by text reads it from the
+request's words in the quoted card. An answer naming an older request is
+refused with the current one shown; one naming none goes through only if this
+person was shown the current request, and otherwise shows it. The assistant's
+confirmation shows the request and its `ok` answers that one. Once answered,
+the request is edited off every card that showed it, or, where the IM cannot
+edit, the others are told in a line. The press path trusts the record over the
+button's value, so an IM replaying a press cannot move it to a newer request.
+
+**Pushes moved the focus.** Being told about a waiting session made it the
+focus, so a person who had said `focus 2` found their next sentence in
+whichever session had pushed last. Pushes no longer touch it, and a receipt
+for a focus delivery says that is where it went and how to change it.
+
+**The person talks the way phones talk.** 「嗯，好的。」, 「好的好的」, `ｙ`,
+`/start`, `2号可以`, 「第二个在干嘛」, 「停一下3号」, `3 继续` were each a
+sentence typed into a pane or a refusal. The parser normalises before it
+looks anything up: full-width narrowed, a leading slash dropped, fillers and
+trailing particles trimmed (not 嘛, which is half of 在干嘛), a doubled word
+halved, spoken handles read. `3 继续` becomes `3: 继续` only when [3] exists,
+so "2 files is fine" to a focused session stays a sentence. An unknown slash
+command is refused rather than delivered, and 「全部允许」 is refused by
+name. 「好的」 while a confirmation is pending confirms it instead of
+approving a prompt, and a second confirmation says which one it replaced.
+
+**What 微信 could not deliver was silent.** A push refused for want of a
+context token (`ret -2`, which is also what a token out of replies gets) was
+a counter on the page. Adapters now wrap `chat.ErrNeedsHello`; the bridge
+audits `chat.undelivered`, keeps the last error on the health line, and on the
+person's next message sends what waited meanwhile before running anything
+they typed without having seen it.
+
+**Smaller things, each reported by somebody who tripped on it.** "done" cards
+between two tool calls (a Stop with no new message, from a session whose hooks
+do report) are not pushed; a finished turn's body is 400 characters, a
+request's 1200. `more` is per session (`more 3`). Questions pass quiet hours
+as prompts did, and quiet hours read `23：00～08：00`. A localhost panel URL
+is not put on cards, and `open` says why. A handle whose session ended says it
+ended. `stop` on a session that is not working says so instead of asking for
+an `ok` that would do nothing. A picture's caption is delivered with it; a
+picture without one waits in the input, and the reply says it is not sent.
+Chinese replies name Chinese commands, and `help` uses a handle that exists.
+Mute durations read 半小时 and 两个小时, and an unreadable one says it used
+two hours. The assistant's replies are stripped of markdown, and its prompt
+asks for open questions naming handles, never yes/no, because a "yes" to the
+assistant is read as the answer to it. The last message time survives a
+restart.
+
+**The page.** Toasts were raised and never drawn: the chat page did not mount
+the stack. A pending row had a *pair* button that paired whoever wrote last,
+which on a bot anyone can find is not proof of anything; pairing is by the
+code only, in the page and in `PATCH /api/chat/peers`, and the row says when
+they wrote. The pair form says a paired person can act on every session. A
+key table typo (`Entr`) was stored and typed as four letters into a
+permission dialog: a key must now be one tmux knows, allow, deny and submit
+may not be empty, and there is *Reset to defaults*. Rules keep the people
+visible when *everyone* is chosen, show a destination whose person is gone,
+and the preview names people. Removing a channel keeps its blocked people
+blocked. Notifications in settings links to the chat page, and the settings
+rail's two page links stack.
+
+Every new guard was mutated: 34 mutations, all killed once four tests that
+passed for the wrong reason were fixed (a "yes" that was not a yes word, an
+ok test that could not tell stale from unseen, a spoken handle kept in the
+answer, a redundant check deleted instead of tested).

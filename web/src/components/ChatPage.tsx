@@ -8,6 +8,7 @@ import { Mark } from './AuthGate'
 import { ConfirmDialog } from './ConfirmDialog'
 import { LanguageSwitch } from './LanguageSwitch'
 import { ThemeToggle } from './ThemeToggle'
+import { Toasts } from './Toasts'
 import { Chat } from './chat/Chat'
 import { safeText } from './text'
 import { applyTheme, loadTheme } from './theme'
@@ -77,6 +78,10 @@ export function ChatPage({ auth, onSignOut }: { auth: AuthState; onSignOut: () =
         <Chat />
       </main>
       <ConfirmDialog />
+      {/* Every save on this page answers with a toast; without the stack
+          mounted here they were raised and never drawn, and a save looked
+          like a button that did nothing. */}
+      <Toasts narrow={false} />
     </div>
   )
 }

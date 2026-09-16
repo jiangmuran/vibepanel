@@ -276,6 +276,7 @@ func TestAKeyProfileWithTextInItIsRefusedOutLoud(t *testing.T) {
 		`{"codex":{"approve":["rm -rf /"],"deny":["n"],"interrupt":["Escape"],"submit":["Enter"]}}`,
 		`{"codex":{"approve":["y"],"deny":["n; reboot"],"interrupt":["Escape"],"submit":["Enter"]}}`,
 		`{"":{"approve":["y"],"deny":["n"],"interrupt":["Escape"],"submit":["Enter"]}}`,
+		`{"claude":{"approve":["Entr"],"deny":["Escape"],"interrupt":["Escape"],"submit":["Enter"]}}`,
 	} {
 		if code, _ := doJSON(t, ts, http.MethodPut, "/api/chat/keys", body); code != http.StatusBadRequest {
 			t.Fatalf("%s accepted with %d", body, code)
@@ -311,6 +312,10 @@ func TestPairingAndPeerChangesGoThroughTheBridge(t *testing.T) {
 	}
 	if len(peers) != 1 || peers[0].Status != store.PeerPending {
 		t.Fatalf("peers: %+v", peers)
+	}
+	// Not by pressing a button: the code is what says the row is them.
+	if code, _ := doJSON(t, ts, http.MethodPatch, "/api/chat/peers/mem/stranger", `{"status":"paired"}`); code != http.StatusConflict {
+		t.Fatalf("paired without a code: %d", code)
 	}
 	if code, _ := doJSON(t, ts, http.MethodPost, "/api/chat/pair", `{"code":"000000"}`); code != http.StatusNotFound && peers[0].PairingCode != "000000" {
 		t.Fatalf("wrong code: %d", code)

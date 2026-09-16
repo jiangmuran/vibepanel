@@ -54,7 +54,7 @@ func TestFirstMatchingRuleDecidesAndAnEmptyToSilences(t *testing.T) {
 	}
 }
 
-func TestQuietHoursHoldEverythingButPrompts(t *testing.T) {
+func TestQuietHoursHoldEverythingButRequests(t *testing.T) {
 	raw, _ := json.Marshal(Routes{Default: Rule{To: []string{"*"}, QuietHours: "23:00-08:00"}})
 	r := ParseRoutes(string(raw))
 	night := time.Date(2026, 9, 15, 2, 30, 0, 0, time.UTC)
@@ -64,6 +64,16 @@ func TestQuietHoursHoldEverythingButPrompts(t *testing.T) {
 	}
 	if d := r.Decide(Change{State: "waiting", Kind: "prompt"}, night); d.Hold {
 		t.Fatalf("a prompt at 2:30 was held: %+v", d)
+	}
+	// A question blocks the session as surely as a prompt does.
+	if d := r.Decide(Change{State: "waiting", Kind: "question"}, night); d.Hold {
+		t.Fatalf("a question at 2:30 was held: %+v", d)
+	}
+	for _, typed := range []string{"23：00～08：00", "23:00 ~ 8:00", "23:00到08:00"} {
+		from, to, err := parseQuiet(typed)
+		if err != nil || from != 23*60 || to != 8*60 {
+			t.Errorf("parseQuiet(%q) = %d %d %v", typed, from, to, err)
+		}
 	}
 	if d := r.Decide(Change{State: "done"}, day); d.Hold {
 		t.Fatalf("held at noon: %+v", d)

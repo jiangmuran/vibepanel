@@ -385,17 +385,20 @@ func (a *Adapter) fetchImage(ctx context.Context, it *imageItem) ([]byte, error)
 // says in words what each would have done.
 func (a *Adapter) Send(ctx context.Context, to chat.Peer, m chat.Outbound) (string, error) {
 	if to.ContextToken == "" {
-		return "", errors.New("weixin: no context token for this person yet")
+		return "", fmt.Errorf("weixin: no context token for this person yet: %w", chat.ErrNeedsHello)
 	}
 	text := m.Text
 	if m.Card != nil {
 		text = chat.RenderPlain(m.Card)
 	}
 	if m.Code != "" {
+		// No fence: the 微信 client draws one as three literal backticks
+		// above and below, which on a phone is two lines of noise around a
+		// screen that is already short of room.
 		if text != "" {
 			text += "\n"
 		}
-		text += "```\n" + strings.TrimRight(m.Code, "\n") + "\n```"
+		text += strings.TrimRight(m.Code, "\n")
 	}
 	text = filterMarkdown(text)
 	if strings.TrimSpace(text) == "" {
@@ -405,7 +408,7 @@ func (a *Adapter) Send(ctx context.Context, to chat.Peer, m chat.Outbound) (stri
 	for _, piece := range chat.Split(text, a.Capabilities().MaxText) {
 		r, err := a.c.sendItem(ctx, to.ID, to.ContextToken, item{Type: itemText, TextItem: &textItem{Text: piece}})
 		if err != nil {
-			return "", err
+			return "", needsHello(err)
 		}
 		ref = r
 	}
@@ -422,7 +425,7 @@ func (a *Adapter) Edit(ctx context.Context, to chat.Peer, ref string, m chat.Out
 // as its own text message, the way the official client sends a caption.
 func (a *Adapter) SendImage(ctx context.Context, to chat.Peer, png []byte, caption string) (string, error) {
 	if to.ContextToken == "" {
-		return "", errors.New("weixin: no context token for this person yet")
+		return "", fmt.Errorf("weixin: no context token for this person yet: %w", chat.ErrNeedsHello)
 	}
 	if strings.TrimSpace(caption) != "" {
 		if _, err := a.Send(ctx, to, chat.Outbound{Text: caption}); err != nil {
@@ -463,7 +466,8 @@ func (a *Adapter) SendImage(ctx context.Context, to chat.Peer, png []byte, capti
 		Media:   &cdnMedia{EncryptQueryParam: param, AESKey: base64Hex(key[:]), EncryptType: 1},
 		MidSize: len(cipherText),
 	}}
-	return a.c.sendItem(ctx, to.ID, to.ContextToken, it)
+	ref, err := a.c.sendItem(ctx, to.ID, to.ContextToken, it)
+	return ref, needsHello(err)
 }
 
 // Typing shows "对方正在输入" on the phone. On: fetch the ticket if the
@@ -576,3 +580,16 @@ func (a *Adapter) ticket(ctx context.Context, to chat.Peer) (string, error) {
 
 // Ack has nothing to acknowledge: there are no buttons.
 func (a *Adapter) Ack(ctx context.Context, act chat.Action, text string) error { return nil }
+
+// needsHello marks a refused send as one only the person can unblock. ret -2
+// "prepare failed" is what the server says for an expired context token and
+// for a token whose replies are used up; both clear when the person writes
+// again, and the text was already split below the length that also causes
+// it, so the bridge's "they have to say something" is the honest reading.
+func needsHello(err error) error {
+	var ae *apiError
+	if errors.As(err, &ae) && ae.code() == -2 {
+		return fmt.Errorf("%w: %w", chat.ErrNeedsHello, err)
+	}
+	return err
+}

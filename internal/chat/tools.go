@@ -2,8 +2,11 @@ package chat
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // The write path into a pane, per agent.
@@ -72,13 +75,71 @@ func ParseTools(raw string) map[string]ToolProfile {
 	return out
 }
 
-// ValidProfile reports whether every key in a profile is a tmux key name,
-// which is what the settings route checks before storing one. ParseTools
-// drops an invalid profile silently because a stored row must never stop
-// the bridge from answering; the route refuses it out loud because a person
-// is there to be told.
-func ValidProfile(p ToolProfile) bool {
-	return validKeys(p.Approve) && validKeys(p.Deny) && validKeys(p.Interrupt) && validKeys(p.Submit)
+// CheckProfile says what is wrong with a profile a person typed, or "" when
+// nothing is. The settings route asks before storing one. ParseTools drops
+// an invalid stored profile silently, because a stored row must never stop
+// the bridge from answering; the route refuses out loud, because a person is
+// there to be told.
+//
+// Stricter than what ParseTools accepts, on purpose. "Entr" is one token and
+// no shell command, and send-keys types it as four letters into a
+// permission dialog, where the first of them may well be a choice. So a
+// typed key must be a name tmux knows or a single character, and the keys a
+// phone relies on -- allow, deny, and the Enter after a pasted line -- may
+// not be left empty for an agent.
+func CheckProfile(tool string, p ToolProfile) string {
+	for field, keys := range map[string][]string{"approve": p.Approve, "deny": p.Deny, "interrupt": p.Interrupt, "submit": p.Submit} {
+		if !validKeys(keys) {
+			return field + " has a key that is not a tmux key name"
+		}
+		for _, k := range keys {
+			if !KnownKey(k) {
+				return fmt.Sprintf("%s: tmux has no key called %q", field, k)
+			}
+		}
+	}
+	if len(p.Submit) == 0 {
+		return "submit needs a key"
+	}
+	if tool != "shell" && (len(p.Approve) == 0 || len(p.Deny) == 0) {
+		return "allow and deny need a key"
+	}
+	return ""
+}
+
+// namedKeys are tmux's key names (key-names in tmux(1)), in the case tmux
+// prints them. tmux also reads them case-insensitively, and so does this.
+var namedKeys = map[string]bool{
+	"enter": true, "escape": true, "tab": true, "btab": true, "space": true, "bspace": true,
+	"up": true, "down": true, "left": true, "right": true, "home": true, "end": true,
+	"ic": true, "dc": true, "insert": true, "delete": true,
+	"pageup": true, "pagedown": true, "ppage": true, "npage": true, "pgup": true, "pgdn": true,
+}
+
+// KnownKey reports whether tmux reads k as a key rather than as text: a
+// named key or a single character, optionally behind C-, M- and S-
+// modifiers.
+func KnownKey(k string) bool {
+	for {
+		if len(k) > 2 && (strings.HasPrefix(k, "C-") || strings.HasPrefix(k, "M-") || strings.HasPrefix(k, "S-")) {
+			k = k[2:]
+			continue
+		}
+		break
+	}
+	if utf8.RuneCountInString(k) == 1 {
+		return true
+	}
+	lower := strings.ToLower(k)
+	if namedKeys[lower] {
+		return true
+	}
+	if len(lower) >= 2 && lower[0] == 'f' {
+		if n, err := strconv.Atoi(lower[1:]); err == nil && n >= 1 && n <= 12 {
+			return true
+		}
+	}
+	return false
 }
 
 // validKeys refuses anything that is not a tmux key name.

@@ -107,6 +107,8 @@ export function Routes({ data, onChange }: { data: ChatSettings; onChange: () =>
   const peers = data.peers
     .filter((p) => p.status === 'paired')
     .map((p) => ({ key: `${p.channel}:${p.peerId}`, label: `${labels.get(p.channel) ?? p.channel} · ${p.display || p.peerId}` }))
+  // The preview answers in "channel:peer" keys; a person reads names.
+  const nameOf = (key: string) => peers.find((p) => p.key === key)?.label ?? key
 
   return (
     <Section id="routes" title={t('chat.routes')} lead={t('chat.routesLead')}>
@@ -172,7 +174,7 @@ export function Routes({ data, onChange }: { data: ChatSettings; onChange: () =>
               ? t('chat.previewHeld', { rule: safeText(preview.decision.rule) })
               : preview.peers.length === 0
                 ? t('chat.previewNobody', { rule: safeText(preview.decision.rule) })
-                : t('chat.previewSent', { rule: safeText(preview.decision.rule), who: preview.peers.map(safeText).join(', ') })
+                : t('chat.previewSent', { rule: safeText(preview.decision.rule), who: preview.peers.map((k) => safeText(nameOf(k))).join(', ') })
             : t('chat.previewSilent', { rule: safeText(preview.decision.rule) })}
         </p>
       )}
@@ -224,6 +226,10 @@ function RuleEditor({
   const setMatch = (patch: Partial<typeof match>) => set({ match: { ...match, ...patch } })
   const to = rule.to ?? []
   const everyone = to.includes('*')
+  // A destination whose person was removed or blocked still sits in the
+  // rule and still matches nothing. Shown, so it can be taken out, rather
+  // than kept invisibly.
+  const gone = to.filter((k) => k !== '*' && !peers.some((p) => p.key === k))
 
   return (
     <div className="grid grid-cols-1 gap-3 @2xl:grid-cols-[1fr_1fr]">
@@ -296,10 +302,22 @@ function RuleEditor({
           <span className="mb-1 block text-vp-xs text-ink-3">{t('chat.to')}</span>
           <div className="flex flex-wrap gap-1">
             <Toggle list={to} value="*" label={t('chat.toEveryone')} onChange={(next) => set({ to: next })} />
-            {!everyone &&
+            {/* The people stay on screen when everyone is chosen: hiding them
+                made "everyone" read as nobody in particular. */}
+            {everyone ? (
+              peers.length > 0 && (
+                <span className="self-center text-vp-xs text-ink-3">
+                  {t('chat.everyoneIncludes')} {peers.map((p) => safeText(p.label)).join(', ')}
+                </span>
+              )
+            ) : (
               peers.map((p) => (
                 <Toggle key={p.key} list={to} value={p.key} label={safeText(p.label)} onChange={(next) => set({ to: next })} />
-              ))}
+              ))
+            )}
+            {gone.map((k) => (
+              <Toggle key={k} list={to} value={k} label={t('chat.goneDestination', { name: safeText(k) })} onChange={(next) => set({ to: next })} />
+            ))}
             {to.length === 0 && <span className="text-vp-xs" style={{ color: 'var(--vp-state-waiting)' }}>{t('chat.toNobody')}</span>}
           </div>
         </div>
@@ -327,11 +345,12 @@ function RuleEditor({
             <span className="mb-1 block text-vp-xs text-ink-3">{t('chat.quietHours')}</span>
             <input
               className={`${INPUT} font-mono`}
-              placeholder="23:00-08:00"
+              placeholder={t('chat.quietExample')}
               value={rule.quietHours}
               onChange={(e) => set({ quietHours: e.target.value })}
             />
           </label>
+          {rule.quietHours && <p className="col-span-2 text-vp-xs text-ink-3">{t('chat.quietNote')}</p>}
           <label className="col-span-2 flex items-center gap-1.5 text-vp-sm text-ink-2">
             <input type="checkbox" checked={rule.body} onChange={(e) => set({ body: e.target.checked })} />
             {t('chat.body')}

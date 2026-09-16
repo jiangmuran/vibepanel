@@ -96,6 +96,9 @@ func TestChatChannelsRoundTripAndDeleteTakesTheirPeers(t *testing.T) {
 	if err := db.PutChatPeer(ctx, ChatPeer{Channel: "telegram", PeerID: "7", Status: PeerPaired, Mode: ModeNormal}); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.PutChatPeer(ctx, ChatPeer{Channel: "telegram", PeerID: "spam", Status: PeerBlocked, Mode: ModeNormal}); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.RecordChatOutbound(ctx, ChatOutbound{Channel: "telegram", PeerID: "7", Ref: "m1", SessionID: "s1", Kind: OutboundStatus}); err != nil {
 		t.Fatal(err)
 	}
@@ -107,6 +110,42 @@ func TestChatChannelsRoundTripAndDeleteTakesTheirPeers(t *testing.T) {
 	}
 	if _, ok, _ := db.ChatOutboundByRef(ctx, "telegram", "7", "m1"); ok {
 		t.Fatal("outbound record survived its channel")
+	}
+	// Removing a channel to fix its token and adding it back must not let
+	// back in the person who was blocked.
+	if p, err := db.GetChatPeer(ctx, "telegram", "spam"); err != nil || p.Status != PeerBlocked {
+		t.Fatalf("a block did not survive its channel: %+v %v", p, err)
+	}
+}
+
+func TestOutboundsRememberWhichRequestTheyShowed(t *testing.T) {
+	db := openTest(t)
+	ctx := context.Background()
+	record := func(peer, ref, kind string, msg int64) {
+		t.Helper()
+		if err := db.RecordChatOutbound(ctx, ChatOutbound{Channel: "t", PeerID: peer, Ref: ref, SessionID: "s1", Kind: kind, MessageID: msg}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record("a", "m1", OutboundStatus, 7)
+	record("b", "m2", OutboundStatus, 7)
+	record("a", "m3", OutboundReply, 7)
+	record("a", "m4", OutboundStatus, 8)
+	if o, ok, _ := db.ChatOutboundByRef(ctx, "t", "a", "m1"); !ok || o.MessageID != 7 {
+		t.Fatalf("by ref: %+v", o)
+	}
+	if ok, _ := db.ChatShown(ctx, "t", "a", 7); !ok {
+		t.Fatal("a was shown 7")
+	}
+	if ok, _ := db.ChatShown(ctx, "t", "b", 8); ok {
+		t.Fatal("b was never shown 8")
+	}
+	if ok, _ := db.ChatShown(ctx, "t", "a", 0); ok {
+		t.Fatal("zero is no request")
+	}
+	outs, err := db.ChatOutboundsForMessage(ctx, "s1", 7)
+	if err != nil || len(outs) != 2 {
+		t.Fatalf("status copies of 7: %+v %v", outs, err)
 	}
 }
 

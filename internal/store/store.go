@@ -969,10 +969,12 @@ var migrations = []func(tx *sql.Tx) error{
 			     ref        TEXT NOT NULL,
 			     session_id TEXT NOT NULL,
 			     kind       TEXT NOT NULL,
+			     message_id INTEGER NOT NULL DEFAULT 0,
 			     at         INTEGER NOT NULL,
 			     PRIMARY KEY (channel, peer_id, ref)
 			 )`,
 			`CREATE INDEX IF NOT EXISTS chat_outbound_recent ON chat_outbound (channel, peer_id, at)`,
+			`CREATE INDEX IF NOT EXISTS chat_outbound_message ON chat_outbound (session_id, message_id)`,
 			`CREATE TABLE IF NOT EXISTS chat_status (
 			     channel    TEXT NOT NULL,
 			     peer_id    TEXT NOT NULL,

@@ -223,7 +223,7 @@ func (rule Rule) decision(c Change, now time.Time, name string) Decision {
 	if d.Screenshot == "" {
 		d.Screenshot = ShotAuto
 	}
-	if rule.QuietHours != "" && c.Kind != store.MessagePrompt {
+	if rule.QuietHours != "" && c.Kind != store.MessagePrompt && c.Kind != store.MessageQuestion {
 		if from, to, err := parseQuiet(rule.QuietHours); err == nil && inQuiet(now, from, to) {
 			d.Hold = true
 		}
@@ -250,9 +250,13 @@ func in(list []string, v string) bool {
 	return false
 }
 
-// parseQuiet reads "HH:MM-HH:MM" into minutes past midnight.
+// parseQuiet reads "HH:MM-HH:MM" into minutes past midnight. The separators
+// a Chinese keyboard produces are read too -- "23：00～08：00", "23:00到8:00" --
+// because a form that refuses what the person typed with "not HH:MM-HH:MM"
+// is asking them to guess which character was wrong.
 func parseQuiet(s string) (from, to int, err error) {
-	parts := strings.Split(s, "-")
+	norm := strings.NewReplacer("：", ":", "～", "-", "~", "-", "—", "-", "–", "-", "到", "-", "至", "-", " ", "").Replace(narrow(s))
+	parts := strings.Split(norm, "-")
 	if len(parts) != 2 {
 		return 0, 0, fmt.Errorf("quiet hours %q is not HH:MM-HH:MM", s)
 	}

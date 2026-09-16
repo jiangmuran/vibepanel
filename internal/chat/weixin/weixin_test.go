@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -785,13 +786,13 @@ func TestSendCarriesTheTokenAndAFreshClientID(t *testing.T) {
 		t.Fatalf("client ids %q %q", id1, id2)
 	}
 	text := sends[1].Body["msg"].(map[string]any)["item_list"].([]any)[0].(map[string]any)["text_item"].(map[string]any)["text"].(string)
-	if text != chat.RenderPlain(card)+"\n```\n$ ls\nmain.go\n```" {
+	if text != chat.RenderPlain(card)+"\n$ ls\nmain.go" {
 		t.Fatalf("card text %q", text)
 	}
 	if _, has := sends[1].Body["msg"].(map[string]any)["buttons"]; has {
 		t.Fatal("buttons were sent")
 	}
-	if _, err := a.Send(ctx, chat.Peer{ID: "u1@im.wechat"}, chat.Outbound{Text: "x"}); err == nil || err.Error() != "weixin: no context token for this person yet" {
+	if _, err := a.Send(ctx, chat.Peer{ID: "u1@im.wechat"}, chat.Outbound{Text: "x"}); !errors.Is(err, chat.ErrNeedsHello) {
 		t.Fatalf("no token: %v", err)
 	}
 	if _, err := a.SendImage(ctx, chat.Peer{ID: "u1@im.wechat"}, []byte("png"), ""); err == nil {
@@ -820,11 +821,14 @@ func TestSendSplitsLongTextAndReportsARefusal(t *testing.T) {
 	f.on("sendmessage", func(*http.Request, map[string]any) (int, any) {
 		return 200, map[string]any{"ret": -2, "errmsg": "prepare failed"}
 	})
-	if _, err := a.Send(ctx, peer, chat.Outbound{Text: "x"}); err == nil || !strings.Contains(err.Error(), "prepare failed") {
+	if _, err := a.Send(ctx, peer, chat.Outbound{Text: "x"}); err == nil || !strings.Contains(err.Error(), "prepare failed") || !errors.Is(err, chat.ErrNeedsHello) {
 		t.Fatalf("refusal: %v", err)
 	}
+	if _, err := a.Send(ctx, chat.Peer{ID: "u1@im.wechat"}, chat.Outbound{Text: "x"}); !errors.Is(err, chat.ErrNeedsHello) {
+		t.Fatalf("no token: %v", err)
+	}
 	f.on("sendmessage", func(*http.Request, map[string]any) (int, any) { return 500, "" })
-	if _, err := a.Send(ctx, peer, chat.Outbound{Text: "x"}); err == nil || !strings.Contains(err.Error(), "http 500") {
+	if _, err := a.Send(ctx, peer, chat.Outbound{Text: "x"}); err == nil || !strings.Contains(err.Error(), "http 500") || errors.Is(err, chat.ErrNeedsHello) {
 		t.Fatalf("http error: %v", err)
 	}
 }

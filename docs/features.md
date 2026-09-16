@@ -338,8 +338,9 @@ Every card has a health line that says when a message last arrived, which is
 the only thing that tells a working channel from a configured one.
 
 **Pairing.** Nobody can talk to the panel until you say so. Whoever messages
-the bot first gets a six-digit code and a *pending* row on the page; enter the
-code, or press *pair*. Each person has a mode: *normal* takes commands and
+the bot first gets a six-digit code and a *pending* row on the page; they tell
+you the code and you enter it. A paired person can see and act on every
+session. Each person has a mode: *normal* takes commands and
 addressed replies, *advanced* also takes sentences.
 
 **What you get.** A card per change, always starting with the session's number:
@@ -350,20 +351,29 @@ addressed replies, *advanced* also takes sentences.
     Bash: go test ./...
 
 On Telegram and 飞书 a permission prompt has *Allow* and *Deny* buttons; on
-微信 you reply `y` or `n`. When a session is working, the card is edited in
-place rather than sent again where the app allows it.
+微信 you reply `y` or `n`. An answer applies to the request you were shown:
+a card for a request that has since been answered no longer allows the next
+one, and a `y` to a request you never saw shows it to you first. When a
+session is working, the card is edited in place rather than sent again where
+the app allows it; once a request is answered, its buttons go.
+微信 can only answer while you have written recently; what waited while it
+could not reach you is shown when you next write.
 
 **Replying.** `3: your words` sends them to session 3; so does quoting its
 card. A bare reply goes to the one session that is waiting, and is refused
 with the list when two are — a "y" typed into the wrong agent is the one
-mistake this cannot make. Every delivery comes back as a receipt naming the
-number. `help` lists the rest: `list`, `screen 3`, `shot 3` (a picture of the
+mistake this cannot make. `3 continue`, `3号 continue` and `第三个` work too,
+and so do voice-note shapes like 「嗯，好的。」. Every delivery comes back as a
+receipt naming the number. `help` lists the rest (in Chinese when the bot
+speaks Chinese: 列表, 屏幕 3, 停 3): `list`, `screen 3`, `shot 3` (a picture of the
 pane), `open 3` (the panel at that session), `context 3` (the last messages,
 both sides), `focus 3`, `mute 3 2h`, `stop 3` (asks for `ok` first), `usage`,
-`more`.
+`more` (or `more 3` for that session's long message). A picture goes to a
+session with its caption, or waits in its input for your next line.
 
 **Rules** decide who is told what: by project, tool, state or message kind,
-to everyone or to one person, with quiet hours (a prompt is never held) and
+to everyone or to one person, with quiet hours (a permission request or a
+question is never held) and
 a screenshot policy. *Preview* picks a session and says which rule would fire
 and who would be told.
 
@@ -375,7 +385,8 @@ arrive transcribed; the agent never sees a pane's output when deciding where
 to send anything. There is a daily budget, and the page shows today's spend.
 
 **Keys** is what "allow" presses per tool. Claude Code takes Enter, Codex takes
-`y`; the others copy Claude Code and are editable.
+`y`; the others copy Claude Code and are editable. A key must be one tmux
+knows, and *Reset to defaults* puts the table back.
 
 Nothing here is a group: every conversation is one person, one bot.
 

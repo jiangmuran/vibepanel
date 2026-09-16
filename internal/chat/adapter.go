@@ -17,6 +17,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -60,6 +61,14 @@ type Capabilities struct {
 // RenderMarkdown are there to share). An earlier version declared a
 // "flavor" here that nothing read, which is the drift the comment above
 // warns about.
+
+// ErrNeedsHello is what an adapter wraps when a message could not go out
+// because the person has to speak first: 微信 answers only inside a context
+// token from the person's last message, and that token expires and runs out
+// of replies. The bridge counts it apart from other failures and, when the
+// person next writes, shows them what they missed rather than pretending it
+// was delivered.
+var ErrNeedsHello = errors.New("chat: the person has to message first")
 
 // Peer is who the bridge is talking to, as an adapter needs to address them.
 type Peer struct {
@@ -145,8 +154,11 @@ type Card struct {
 	Body string
 	// Footer is a short line under the body: how long ago, what tool.
 	Footer string
-	// URL opens the panel at this session.
+	// URL opens the panel at this session. Empty when the panel's address
+	// is one a phone cannot open (localhost), rather than a dead link.
 	URL string
+	// LinkLabel is the word the link is drawn as, in the chat's language.
+	LinkLabel string
 }
 
 // Button is one choice under a card.

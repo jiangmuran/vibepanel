@@ -249,7 +249,7 @@ func (d *DB) ListChatChannels(ctx context.Context) ([]ChatChannel, error) {
 }
 
 // DeleteChatChannel removes a channel and everything that was only meaningful
-// with it: its peers, the messages it sent, its mutes.
+// with it: its paired and pending people, the messages it sent, its mutes.
 func (d *DB) DeleteChatChannel(ctx context.Context, kind string) error {
 	tx, err := d.sql.BeginTx(ctx, nil)
 	if err != nil {
@@ -258,7 +258,9 @@ func (d *DB) DeleteChatChannel(ctx context.Context, kind string) error {
 	defer tx.Rollback() //nolint:errcheck
 	for _, stmt := range []string{
 		`DELETE FROM chat_channels WHERE kind = ?`,
-		`DELETE FROM chat_peers WHERE channel = ?`,
+		// Blocked people stay blocked: removing a channel to fix a token and
+		// adding it back must not let back in the stranger who was shut out.
+		`DELETE FROM chat_peers WHERE channel = ? AND status != 'blocked'`,
 		`DELETE FROM chat_outbound WHERE channel = ?`,
 		`DELETE FROM chat_status WHERE channel = ?`,
 		`DELETE FROM chat_mutes WHERE channel = ?`,
@@ -542,7 +544,16 @@ type ChatOutbound struct {
 	// assistant's "the one before last" resolves over status messages only,
 	// because those are the ones a person means.
 	Kind string
-	At   int64
+	// MessageID is the session message this showed the person: the prompt a
+	// card asked about, the question a list line quoted. Zero for anything
+	// that showed no particular message.
+	//
+	// It is what makes "allow" mean *that* request. A session asks, is
+	// answered, and asks again; a card, a quote or a bare "y" that is about
+	// the first request must not approve the second, and the only thing that
+	// tells them apart is which message the person was looking at.
+	MessageID int64
+	At        int64
 }
 
 // Outbound kinds.
@@ -561,10 +572,10 @@ func (d *DB) RecordChatOutbound(ctx context.Context, o ChatOutbound) error {
 		o.At = now()
 	}
 	_, err := d.sql.ExecContext(ctx,
-		`INSERT INTO chat_outbound (channel, peer_id, ref, session_id, kind, at) VALUES (?, ?, ?, ?, ?, ?)
+		`INSERT INTO chat_outbound (channel, peer_id, ref, session_id, kind, message_id, at) VALUES (?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(channel, peer_id, ref) DO UPDATE SET session_id = excluded.session_id,
-		     kind = excluded.kind, at = excluded.at`,
-		o.Channel, o.PeerID, o.Ref, o.SessionID, o.Kind, o.At)
+		     kind = excluded.kind, message_id = excluded.message_id, at = excluded.at`,
+		o.Channel, o.PeerID, o.Ref, o.SessionID, o.Kind, o.MessageID, o.At)
 	if err != nil {
 		return fmt.Errorf("store: record chat outbound: %w", err)
 	}
@@ -575,9 +586,9 @@ func (d *DB) RecordChatOutbound(ctx context.Context, o ChatOutbound) error {
 func (d *DB) ChatOutboundByRef(ctx context.Context, channel, peerID, ref string) (ChatOutbound, bool, error) {
 	var o ChatOutbound
 	err := d.sql.QueryRowContext(ctx,
-		`SELECT channel, peer_id, ref, session_id, kind, at FROM chat_outbound
+		`SELECT channel, peer_id, ref, session_id, kind, message_id, at FROM chat_outbound
 		 WHERE channel = ? AND peer_id = ? AND ref = ?`, channel, peerID, ref).
-		Scan(&o.Channel, &o.PeerID, &o.Ref, &o.SessionID, &o.Kind, &o.At)
+		Scan(&o.Channel, &o.PeerID, &o.Ref, &o.SessionID, &o.Kind, &o.MessageID, &o.At)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ChatOutbound{}, false, nil
 	}
@@ -594,7 +605,7 @@ func (d *DB) RecentChatOutbound(ctx context.Context, channel, peerID string, n i
 		n = 20
 	}
 	rows, err := d.sql.QueryContext(ctx,
-		`SELECT channel, peer_id, ref, session_id, kind, at FROM chat_outbound
+		`SELECT channel, peer_id, ref, session_id, kind, message_id, at FROM chat_outbound
 		 WHERE channel = ? AND peer_id = ? ORDER BY at DESC, rowid DESC LIMIT ?`, channel, peerID, n)
 	if err != nil {
 		return nil, fmt.Errorf("store: recent chat outbound: %w", err)
@@ -603,7 +614,46 @@ func (d *DB) RecentChatOutbound(ctx context.Context, channel, peerID string, n i
 	var out []ChatOutbound
 	for rows.Next() {
 		var o ChatOutbound
-		if err := rows.Scan(&o.Channel, &o.PeerID, &o.Ref, &o.SessionID, &o.Kind, &o.At); err != nil {
+		if err := rows.Scan(&o.Channel, &o.PeerID, &o.Ref, &o.SessionID, &o.Kind, &o.MessageID, &o.At); err != nil {
+			return nil, fmt.Errorf("store: scan chat outbound: %w", err)
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// ChatShown reports whether a session message was ever shown to this person:
+// a card, a list line or a reply that carried it. A bare "y" may only answer
+// a request the person has seen.
+func (d *DB) ChatShown(ctx context.Context, channel, peerID string, messageID int64) (bool, error) {
+	if messageID <= 0 {
+		return false, nil
+	}
+	var n int
+	err := d.sql.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM chat_outbound WHERE channel = ? AND peer_id = ? AND message_id = ?`,
+		channel, peerID, messageID).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("store: chat shown: %w", err)
+	}
+	return n > 0, nil
+}
+
+// ChatOutboundsForMessage returns every status message, to anybody, that
+// showed one session message: the copies of a card to retire once it is
+// answered.
+func (d *DB) ChatOutboundsForMessage(ctx context.Context, sessionID string, messageID int64) ([]ChatOutbound, error) {
+	rows, err := d.sql.QueryContext(ctx,
+		`SELECT channel, peer_id, ref, session_id, kind, message_id, at FROM chat_outbound
+		 WHERE session_id = ? AND message_id = ? AND kind = ?`, sessionID, messageID, OutboundStatus)
+	if err != nil {
+		return nil, fmt.Errorf("store: chat outbounds for message: %w", err)
+	}
+	defer rows.Close()
+	var out []ChatOutbound
+	for rows.Next() {
+		var o ChatOutbound
+		if err := rows.Scan(&o.Channel, &o.PeerID, &o.Ref, &o.SessionID, &o.Kind, &o.MessageID, &o.At); err != nil {
 			return nil, fmt.Errorf("store: scan chat outbound: %w", err)
 		}
 		out = append(out, o)

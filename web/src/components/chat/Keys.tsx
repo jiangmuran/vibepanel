@@ -3,9 +3,10 @@
 import { api } from '../../protocol/api'
 import type { ChatSettings, ChatToolProfile } from '../../protocol/wire'
 import { t } from '../../i18n'
+import { askConfirm } from '../ask'
 import { showToast } from '../toasts'
 import { Card, Section } from './Chat'
-import { INPUT, Primary, errText, useServerCopy } from './form'
+import { INPUT, Primary, Secondary, errText, useServerCopy } from './form'
 import { useState } from 'react'
 
 const FIELDS = ['approve', 'deny', 'interrupt', 'submit'] as const
@@ -36,10 +37,12 @@ export function Keys({ data, onChange }: { data: ChatSettings; onChange: () => v
     setDirty(true)
   }
 
-  const save = async () => {
+  // An empty table is what the server fills from its defaults, so reset is a
+  // save of nothing rather than a second copy of the defaults in the page.
+  const save = async (table = tools) => {
     setBusy(true)
     try {
-      setTools(await api.saveChatKeys(tools))
+      setTools(await api.saveChatKeys(table))
       setDirty(false)
       showToast({ kind: 'success', key: 'chat.saved' })
       onChange()
@@ -109,9 +112,22 @@ export function Keys({ data, onChange }: { data: ChatSettings; onChange: () => v
           </table>
         </div>
         <p className="mt-2 text-vp-xs text-ink-3">{t('chat.keysHint')}</p>
-        <Primary className="mt-2" disabled={busy || !dirty} onClick={() => void save()}>
-          {t('chat.save')}
-        </Primary>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <Primary disabled={busy || !dirty} onClick={() => void save()}>
+            {t('chat.save')}
+          </Primary>
+          <Secondary
+            disabled={busy}
+            data-testid="chat-keys-reset"
+            onClick={() =>
+              void askConfirm({ title: t('chat.keysResetTitle'), confirm: t('chat.keysReset'), cancel: t('chat.cancel') }).then(
+                (ok) => ok && void save({}),
+              )
+            }
+          >
+            {t('chat.keysReset')}
+          </Secondary>
+        </div>
       </Card>
     </Section>
   )

@@ -394,6 +394,20 @@ Enter for Claude Code, `y` for Codex — is a per-tool key profile, editable,
 and a tool without one is refused rather than guessed at. Every delivery comes
 back as a receipt naming the handle.
 
+**An answer is bound to the request the person saw.** Addressing says which
+session; it does not say which request, and a session asks, is answered, and
+asks again with the same keys. So every card, list line or reply that shows a
+request is recorded against that session message (`chat_outbound.message_id`),
+a button carries the message id, and a quoted card names the request it
+showed — by record where the IM quotes by id, by the request's words where
+微信 quotes by text. An answer that names an older request is refused with the
+current one shown; an answer that names none (a bare "y", `3: y`) goes through
+only if this person has been shown the current request, and otherwise shows
+it. The person is never one keystroke from allowing a command they have not
+read. Once answered, the request comes off every card that showed it. Pushes
+never move the focus: the focus is what a person chose, and a push that moved
+it put the next sentence into whichever session had spoken last.
+
 **Nothing an agent printed can reach the write path through the advanced
 mode.** The headless agent that reads a sentence like "tell the docs one to add
 a changelog entry" runs with no tools and sees only the sentence and a table of

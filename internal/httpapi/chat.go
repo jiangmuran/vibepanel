@@ -568,6 +568,10 @@ func (s *Server) handlePatchChatPeer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.Chat.SetPeerStatus(ctx, channel, peer, *req.Status); err != nil {
+			if errors.Is(err, chat.ErrPairByCode) {
+				writeErr(w, http.StatusConflict, "enter the code they were sent")
+				return
+			}
 			s.writeStoreErr(w, err)
 			return
 		}
@@ -661,8 +665,12 @@ func (s *Server) handlePutChatTools(w http.ResponseWriter, r *http.Request) {
 	// ParseTools would drop such a profile silently and fall back to the
 	// default, which is what made an earlier version of this accept it.
 	for name, p := range tools {
-		if len(name) == 0 || len(name) > 32 || !chat.ValidProfile(p) {
-			writeErr(w, http.StatusBadRequest, "profile "+name+" has a key that is not a tmux key name")
+		if len(name) == 0 || len(name) > 32 {
+			writeErr(w, http.StatusBadRequest, "a profile needs a name")
+			return
+		}
+		if why := chat.CheckProfile(name, p); why != "" {
+			writeErr(w, http.StatusBadRequest, name+": "+why)
 			return
 		}
 	}

@@ -67,6 +67,7 @@ export const SETTINGS_SECTIONS = [
   'tune',
   'paste',
   'browser',
+  'chat',
   'webhooks',
   'password',
   'passkeys',
@@ -99,6 +100,8 @@ export const SECTION_GROUP: Record<SettingsSection, SettingsGroup> = {
   // does, and next to the other things that write outside the panel.
   paste: 'sessions',
   browser: 'notify',
+  // A pointer to the chat page, where people look for "tell my phone".
+  chat: 'notify',
   webhooks: 'notify',
   password: 'account',
   passkeys: 'account',

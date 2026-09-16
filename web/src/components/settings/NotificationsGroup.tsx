@@ -1,6 +1,7 @@
 import { useState } from 'react'
 
 import { t } from '../../i18n'
+import { CHAT_PATH } from '../../routes'
 import {
   notifyEnabled,
   notifySupported,
@@ -69,6 +70,17 @@ export function NotificationsGroup() {
             {t('notify.enable')}
           </button>
         )}
+      </Section>
+
+      {/* The phone is the third way to be told, and the one people look for
+          under this word; it is a page of its own, so this is the way to it. */}
+      <Section id="chat" title={t('grp.chat')}>
+        <p className="text-vp-base leading-relaxed text-ink-2">
+          {t('notify.chatLead')}{' '}
+          <a href={CHAT_PATH} data-testid="notify-chat-link" className="text-accent underline underline-offset-2">
+            {t('notify.chatOpen')}
+          </a>
+        </p>
       </Section>
 
       <Section id="webhooks" title={t('wh.title')}>

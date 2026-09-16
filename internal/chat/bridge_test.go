@@ -29,12 +29,15 @@ type fakeAdapter struct {
 	sent []Outbound
 	refs int
 	// edits are Edit calls, by ref.
-	edits  map[string]Outbound
-	images int
-	acks   []string
-	typing []bool
-	sink   Sink
-	ready  chan struct{}
+	edits     map[string]Outbound
+	images    int
+	acks      []string
+	typing    []bool
+	sink      Sink
+	ready     chan struct{}
+	readyOnce sync.Once
+	// sendErr, when set, is what Send returns instead of sending.
+	sendErr error
 }
 
 func newFake(kind string, caps Capabilities) *fakeAdapter {
@@ -47,13 +50,17 @@ func (f *fakeAdapter) Run(ctx context.Context, sink Sink) error {
 	f.mu.Lock()
 	f.sink = sink
 	f.mu.Unlock()
-	close(f.ready)
+	// Once: a Reload runs the same fake again.
+	f.readyOnce.Do(func() { close(f.ready) })
 	<-ctx.Done()
 	return ctx.Err()
 }
 func (f *fakeAdapter) Send(ctx context.Context, to Peer, m Outbound) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.sendErr != nil {
+		return "", f.sendErr
+	}
 	f.refs++
 	f.sent = append(f.sent, m)
 	return fmt.Sprintf("m%d", f.refs), nil
@@ -485,7 +492,7 @@ func TestAWorkingSessionRefusesTextUntilStopped(t *testing.T) {
 	}
 	// Stop needs a confirmation, and "ok" presses the interrupt keys.
 	r.say("me", fmt.Sprintf("stop %d", hw))
-	if len(r.term.pressed("vp_w")) != 0 || !strings.Contains(r.ad.last(), "回复 ok") {
+	if len(r.term.pressed("vp_w")) != 0 || !strings.Contains(r.ad.last(), "回复「确认」") {
 		t.Fatalf("stop without confirm: %v %q", r.term.pressed("vp_w"), r.ad.last())
 	}
 	r.say("me", "ok")
@@ -535,7 +542,8 @@ func TestAStateChangeIsPushedOnceItSettles(t *testing.T) {
 	if !strings.Contains(card.Card.StateText, "允许") {
 		t.Fatalf("a prompt should read as needing permission: %q", card.Card.StateText)
 	}
-	if len(card.Buttons) != 3 || card.Buttons[0].Value != "approve:s1" || !card.Buttons[1].Danger {
+	msgs, _ := r.db.ListSessionMessages(r.ctx, "s1", 1)
+	if len(card.Buttons) != 3 || card.Buttons[0].Value != fmt.Sprintf("approve:s1:%d", msgs[0].ID) || !card.Buttons[1].Danger {
 		t.Fatalf("buttons: %+v", card.Buttons)
 	}
 	if card.Card.URL != "https://panel.test/?session=s1" {
@@ -682,7 +690,7 @@ func TestCommandsListScreenMuteFocusContext(t *testing.T) {
 		t.Fatalf("unknown handle: %q", r.ad.last())
 	}
 	r.say("me", "help")
-	if !strings.Contains(r.ad.last(), "screen 3") {
+	if !strings.Contains(r.ad.last(), fmt.Sprintf("屏幕 %d", h1)) {
 		t.Fatalf("help: %q", r.ad.last())
 	}
 	r.say("me", "usage")
@@ -726,17 +734,18 @@ func TestLongBodiesAreCutAndMoreContinues(t *testing.T) {
 	r.b.SessionChanged(row, session.StateDone)
 	r.waitFor(func() bool { return r.ad.count() == 1 })
 	body := r.ad.sent[0].Card.Body
-	if len([]rune(body)) > BodyLimit+60 || !strings.Contains(body, "回复 more") {
-		t.Fatalf("body of %d runes: %q", len([]rune(body)), body[len(body)-80:])
+	if len([]rune(body)) > doneBodyLimit+60 || !strings.Contains(body, "回复「更多」") {
+		t.Fatalf("body of %d runes: %q", len([]rune(body)), body)
 	}
-	r.say("me", "more")
-	if !strings.HasPrefix(r.ad.last(), "一二三") {
+	h, _ := r.db.ChatHandle(r.ctx, "s1")
+	r.say("me", "更多")
+	if !strings.HasPrefix(r.ad.last(), fmt.Sprintf("[%d] 续\n一二三", h)) {
 		t.Fatalf("more: %q", r.ad.last())
 	}
 	for i := 0; i < 5; i++ {
 		r.say("me", "more")
 	}
-	if !strings.Contains(r.ad.last(), "没有更多") {
+	if !strings.Contains(r.ad.last(), "没有更多") || !strings.Contains(strings.Join(r.ad.texts(), "\n"), "（完）") {
 		t.Fatalf("after the end: %q", r.ad.last())
 	}
 }
@@ -758,7 +767,7 @@ func TestRoutesDecideWhoIsToldAndTheAuditSaysWhat(t *testing.T) {
 		t.Fatalf("rule with body: %+v", r.ad.sent[0].Card)
 	}
 	row2 := r.session("c", "claude one", "claude", session.StateWaiting)
-	_, _ = r.db.AddSessionMessage(r.ctx, store.SessionMessage{SessionID: "c", Kind: "assistant", Text: "private"})
+	_, _ = r.db.AddSessionMessage(r.ctx, store.SessionMessage{SessionID: "c", Kind: "prompt", Text: "private"})
 	r.b.SessionChanged(row2, session.StateWaiting)
 	r.waitFor(func() bool { return r.ad.count() == 3 })
 	for _, m := range r.ad.sent[1:] {
@@ -766,8 +775,17 @@ func TestRoutesDecideWhoIsToldAndTheAuditSaysWhat(t *testing.T) {
 			t.Fatalf("default without body leaked text: %+v", m.Card)
 		}
 	}
+	// A card without the body showed that something is asked, not what: the
+	// first "y" shows the request, the second answers it.
 	h, _ := r.db.ChatHandle(r.ctx, "c")
 	r.say("a", fmt.Sprintf("%d: y", h))
+	if len(r.term.pressed("vp_c")) != 0 || !strings.Contains(r.ad.last(), "private") {
+		t.Fatalf("a request answered unseen: %v %q", r.term.pressed("vp_c"), r.ad.last())
+	}
+	r.say("a", fmt.Sprintf("%d: y", h))
+	if len(r.term.pressed("vp_c")) != 1 {
+		t.Fatalf("the seen request was not answered: %q", r.ad.texts())
+	}
 	r.amu.Lock()
 	defer r.amu.Unlock()
 	joined := strings.Join(r.audit, "\n")
@@ -810,7 +828,7 @@ func TestAdvancedModeSendsThroughAConfirmationAndStaysWithinBudget(t *testing.T)
 	if len(r.term.pasted("vp_s2")) != 0 {
 		t.Fatal("an assistant send went in without confirmation")
 	}
-	if !strings.Contains(r.ad.last(), "add a changelog entry") || !strings.Contains(r.ad.last(), "回复 ok") {
+	if !strings.Contains(r.ad.last(), "add a changelog entry") || !strings.Contains(r.ad.last(), "回复「确认」") {
 		t.Fatalf("confirmation: %q", r.ad.last())
 	}
 	r.say("me", "ok")
@@ -898,7 +916,7 @@ func TestWordsAreRefusedWhileASessionIsAtAPrompt(t *testing.T) {
 	if len(r.term.pasted("vp_s1")) != 0 || len(r.term.pressed("vp_s1")) != 0 {
 		t.Fatalf("words reached a session at a prompt: %q %v", r.term.pasted("vp_s1"), r.term.pressed("vp_s1"))
 	}
-	if !strings.Contains(r.ad.last(), "y 或 n") {
+	if !strings.Contains(r.ad.last(), fmt.Sprintf("「%d: 好」", h)) || !strings.Contains(r.ad.last(), "rm -rf build") {
 		t.Fatalf("reply %q", r.ad.last())
 	}
 	// A stop confirmed after the session reached a prompt is refused too:
@@ -984,18 +1002,28 @@ func TestAssistantApproveWaitsForOk(t *testing.T) {
 	r.peer("me", store.PeerPaired, store.ModeAdvanced)
 	r.session("s1", "one", "codex", session.StateWaiting)
 	r.session("s2", "two", "codex", session.StateWaiting)
+	_, _ = r.db.AddSessionMessage(r.ctx, store.SessionMessage{SessionID: "s1", Kind: "prompt", Text: "run: make test"})
 	h1, _ := r.db.ChatHandle(r.ctx, "s1")
 	fa.intent = Intent{Verb: "approve", Handle: h1}
 	r.say("me", "allow the first one")
 	if len(r.term.pressed("vp_s1")) != 0 {
 		t.Fatalf("the model's approve pressed keys without ok: %v", r.term.pressed("vp_s1"))
 	}
-	if !strings.Contains(r.ad.last(), "回复 ok") {
-		t.Fatalf("no confirmation asked: %q", r.ad.last())
+	if !strings.Contains(r.ad.last(), "回复「确认」") || !strings.Contains(r.ad.last(), "make test") {
+		t.Fatalf("no confirmation showing the request: %q", r.ad.last())
 	}
-	r.say("me", "ok")
+	// "好的" is the answer to the confirmation, not an approve of its own.
+	r.say("me", "好的")
 	if keys := r.term.pressed("vp_s1"); len(keys) != 1 || keys[0][0] != "y" {
 		t.Fatalf("after ok: %v", keys)
+	}
+	// The ok answers the request that was shown, never one asked since.
+	_, _ = r.db.AddSessionMessage(r.ctx, store.SessionMessage{SessionID: "s1", Kind: "prompt", Text: "run: make deploy"})
+	r.say("me", "allow it")
+	_, _ = r.db.AddSessionMessage(r.ctx, store.SessionMessage{SessionID: "s1", Kind: "prompt", Text: "run: rm -rf /"})
+	r.say("me", "ok")
+	if keys := r.term.pressed("vp_s1"); len(keys) != 1 || !strings.Contains(r.ad.last(), "rm -rf /") || !strings.Contains(r.ad.last(), "已经过去") {
+		t.Fatalf("an ok for one request answered the next: %v %q", keys, r.ad.last())
 	}
 }
 

@@ -50,3 +50,31 @@ func TestToolProfilesRefuseKeysThatAreText(t *testing.T) {
 		t.Fatal("an unparseable row did not fall back to defaults")
 	}
 }
+
+func TestAProfileAPersonTypesMustBeKeysTmuxKnows(t *testing.T) {
+	good := ToolProfile{Approve: []string{"y", "Enter"}, Deny: []string{"C-c"}, Interrupt: []string{"Escape"}, Submit: []string{"enter"}}
+	if why := CheckProfile("codex", good); why != "" {
+		t.Fatalf("good profile refused: %s", why)
+	}
+	for _, k := range []string{"F12", "M-x", "C-M-a", "BSpace", "PageDown", "Up", "中"} {
+		if !KnownKey(k) {
+			t.Errorf("%q is a tmux key", k)
+		}
+	}
+	for name, p := range map[string]ToolProfile{
+		"a typo":          {Approve: []string{"Entr"}, Deny: []string{"n"}, Submit: []string{"Enter"}},
+		"no allow":        {Deny: []string{"n"}, Submit: []string{"Enter"}},
+		"no submit":       {Approve: []string{"y"}, Deny: []string{"n"}},
+		"text":            {Approve: []string{"rm -rf /"}, Deny: []string{"n"}, Submit: []string{"Enter"}},
+		"F13":             {Approve: []string{"F13"}, Deny: []string{"n"}, Submit: []string{"Enter"}},
+		"a bare modifier": {Approve: []string{"C-"}, Deny: []string{"n"}, Submit: []string{"Enter"}},
+	} {
+		if CheckProfile("codex", p) == "" {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	// A shell has no prompt to answer.
+	if why := CheckProfile("shell", ToolProfile{Interrupt: []string{"C-c"}, Submit: []string{"Enter"}}); why != "" {
+		t.Errorf("shell refused: %s", why)
+	}
+}
