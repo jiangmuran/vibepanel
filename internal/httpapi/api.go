@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -21,6 +22,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/jiangmuran/vibepanel/internal/auth"
+	"github.com/jiangmuran/vibepanel/internal/chat"
 	"github.com/jiangmuran/vibepanel/internal/codexlog"
 	"github.com/jiangmuran/vibepanel/internal/config"
 	"github.com/jiangmuran/vibepanel/internal/git"
@@ -127,6 +129,13 @@ type Server struct {
 	// directory, because every test that constructs a Server by hand would
 	// then start a background walk of whoever's machine the tests are on.
 	Tokens *usage.Ingester
+
+	// Chat is the bridge to the person's chat app; nil when the panel was
+	// built without one, and every chat route then answers 503.
+	Chat *chat.Bridge
+	// NewAssistant builds the advanced mode's brain; nil means unavailable.
+	NewAssistant AssistantBuilder
+	chatTools    chatTools
 
 	// hookToken authenticates state reports from agent hooks. Cached after the
 	// first read that succeeds so the hot path does not hit the database; see
@@ -364,6 +373,7 @@ func (s *Server) Routes() http.Handler {
 		s.registerAuthRoutes(r)
 		s.registerPasskeyRoutes(r)
 		r.Post("/hook/state", s.handleHookState)
+		s.registerChatPublicRoutes(r)
 
 		// A read-only share link carries its own capability in the URL and is
 		// resolved against its own table, so it is registered outside the
@@ -412,6 +422,7 @@ func (s *Server) Routes() http.Handler {
 			s.registerGitRoutes(r)
 			s.registerUpdateRoutes(r)
 			s.registerWebhookRoutes(r)
+			s.registerChatRoutes(r)
 			s.registerTokenRoutes(r)
 			s.registerSettingsRoutes(r)
 			// Making and revoking share links is an ordinary settings action
@@ -752,8 +763,19 @@ func (s *Server) handleHookState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The state travels in the query string and the agent's own document in
+	// the body (see report.sh); a script older than that sends both in the
+	// body. Either way the body is read whole and bounded here, once.
+	body, err := io.ReadAll(io.LimitReader(r.Body, hooks.MaxPayload+1))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "unreadable body")
+		return
+	}
 	var req hookStateRequest
-	if !decode(w, r, &req) {
+	if q := r.URL.Query(); q.Get("sessionId") != "" {
+		req.SessionID, req.State, req.Source = q.Get("sessionId"), q.Get("state"), q.Get("source")
+	} else if err := json.Unmarshal(body, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "malformed JSON: "+err.Error())
 		return
 	}
 	st := session.State(req.State)
@@ -774,6 +796,9 @@ func (s *Server) handleHookState(w http.ResponseWriter, r *http.Request) {
 		// plainly rather than treating it as an error to be alarmed by.
 		s.writeStoreErr(w, err)
 		return
+	}
+	if len(body) <= hooks.MaxPayload {
+		s.recordHookMessage(ctx, prev, body)
 	}
 	if req.Source == hooks.CodexLegacySource {
 		s.Detector.ReportNotify(req.SessionID, st, time.Now())

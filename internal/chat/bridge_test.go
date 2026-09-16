@@ -753,7 +753,7 @@ func (f *fakeAssistant) Budget() float64 { return f.budget }
 func TestAdvancedModeSendsThroughAConfirmationAndStaysWithinBudget(t *testing.T) {
 	r := newRig(t, Capabilities{Proactive: true, Typing: true})
 	fa := &fakeAssistant{budget: 0.025}
-	r.b.d.Assistant = fa
+	r.b.SetAssistant(fa)
 	r.peer("me", store.PeerPaired, store.ModeAdvanced)
 	r.session("s1", "fix tmux", "claude", session.StateDone)
 	r.session("s2", "docs", "codex", session.StateDone)

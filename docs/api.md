@@ -683,6 +683,98 @@ rather than from the tick that was clicked. `POST` and `DELETE
 everything it has with their answer and a field only the `GET` carried would
 disappear the moment somebody pressed Install.
 
+## Chat: sessions on a phone
+
+A chat app is a two-way notification: the panel tells you a session wants you
+and you answer from the same window. Everything here is private chat; there
+are no groups. `docs/design.md` has the reasoning and the addressing rules.
+
+### `GET /api/chat`
+
+Everything the Chat page shows: the adapters this build has (`factories`, with
+the form fields each needs), the configured channels with their health (last
+poll, last error, last message received, how many pushes were dropped because
+微信 cannot be spoken to until the person says something), the peers and their
+status (`pending` with a pairing code, `paired`, `blocked`) and mode (`normal`
+or `advanced`), the routing table, the per-tool key profiles, the assistant's
+configuration and today's spend, the chat language, and the sessions with
+their chat handles.
+
+Secrets never come back: a secret field reports `secretSet[name]` and nothing
+else.
+
+### `PUT /api/chat/channels/{kind}`
+### `DELETE /api/chat/channels/{kind}`
+### `POST /api/chat/channels/{kind}/test`
+
+`{"enabled": bool, "values": {field: value}}`. A secret sent empty keeps what
+is stored. The channel restarts on every write. `test` sends one line to every
+paired person on that channel (or `{"peerId"}` for one) and answers
+`{"sent", "error"}`.
+
+### `POST /api/chat/channels/{kind}/login`
+### `GET /api/chat/channels/{kind}/login/{id}`
+### `POST /api/chat/channels/{kind}/login/{id}/code`
+
+For adapters that sign in by QR (微信). Start returns `{"id","qrUrl","status"}`;
+poll the status until it is `done`, `expired` or `failed`; `needCode` means the
+phone showed a number to post as `{"code"}`. On `done` the credentials are
+stored and the channel is enabled.
+
+### `POST /api/chat/pair`
+
+`{"code"}`: accept the pending person who was given this six-digit code by the
+bot. Codes expire ten minutes after the person last spoke.
+
+### `PATCH /api/chat/peers/{channel}/{peer}`
+### `DELETE /api/chat/peers/{channel}/{peer}`
+
+`{"mode": "normal"|"advanced", "status": "paired"|"blocked"}`, either or both.
+
+### `PUT /api/chat/routes`
+### `POST /api/chat/routes/preview`
+
+The routing table (`{"rules": [...], "default": {...}}`), validated before it
+is stored. Preview takes `{"sessionId"}` and answers what the table would do
+about that session right now — the rule that matched, the destinations after
+muting, whether quiet hours would hold it — without sending anything.
+
+### `PUT /api/chat/keys`
+
+Per-tool key profiles: `{"claude": {"approve": ["Enter"], "deny": ["Escape"],
+"interrupt": ["Escape"], "submit": ["Enter"]}, ...}` in tmux key names. A key
+with a space in it is refused: it would be typed as text.
+
+### `PUT /api/chat/assistant`
+### `PUT /api/chat/lang`
+
+The advanced mode's configuration (`enabled`, `harness` claude|codex, `model`,
+`profileId`, `maxTurns`, `budgetUsd`, `timeoutSeconds`) and the language the
+bot speaks (`zh`|`en`).
+
+### `GET /api/chat/log`
+
+The chat's own audit entries (`chat.*`), newest first, `?n=` up to 500.
+
+### `POST /api/chat/hooks/{kind}`
+
+Where an IM that calls back (飞书) delivers events. Unauthenticated at the
+panel's door, because the IM cannot sign in; the adapter verifies every
+request (signature, verification token) and the panel hands the request over
+and nothing else. 404 when no such channel is running.
+
+### `GET /api/chat/tools/sessions`
+### `GET /api/chat/tools/sessions/{handle}/messages`
+### `GET /api/chat/tools/sessions/{handle}/screen`
+### `GET /api/chat/tools/usage`
+### `GET /api/chat/tools/projects`
+
+What the advanced mode's agent may read, through `vibepanel mcp`. These take a
+bearer token that exists only in the running process's memory and reaches
+exactly these five `GET`s and nothing else in the panel; a session cookie or an
+API token is refused here and this token is refused everywhere else. Sessions
+are named by handle; paths, commands, tmux names and ids are not disclosed.
+
 ## Notifications to somewhere else
 
 ### `GET /api/settings/webhooks`

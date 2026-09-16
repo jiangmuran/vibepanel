@@ -745,6 +745,27 @@ func (c *Client) Capture(ctx context.Context, name string) (string, error) {
 	return c.run(ctx, "capture-pane", "-p", "-e", "-J", "-S", "-", "-t", target(name))
 }
 
+// Screen returns the visible pane and nothing above it, with SGR sequences
+// when ansi is set: what a person looking at the pane sees right now, which
+// is what a phone asks for.
+func (c *Client) Screen(ctx context.Context, name string, ansi bool) (string, error) {
+	args := []string{"capture-pane", "-p", "-J"}
+	if ansi {
+		args = append(args, "-e")
+	}
+	args = append(args, "-t", target(name))
+	return c.run(ctx, args...)
+}
+
+// AlternateOn reports whether the pane is on its alternate screen, which is
+// what a full-screen program looks like from outside. An error reads as
+// false: the caller uses it to decide whether a picture is worth more than
+// text, and text is the safe answer.
+func (c *Client) AlternateOn(ctx context.Context, name string) bool {
+	out, err := c.run(ctx, "display-message", "-p", "-t", target(name), "#{alternate_on}")
+	return err == nil && strings.TrimSpace(out) == "1"
+}
+
 // CaptureHistory returns everything above the visible screen.
 //
 // `-E -1` stops one line short of the pane's top row, which is the difference

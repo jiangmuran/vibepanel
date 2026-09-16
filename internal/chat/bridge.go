@@ -186,6 +186,34 @@ func (b *Bridge) Start(ctx context.Context) {
 	b.Reload(ctx)
 }
 
+// SetAssistant swaps the advanced mode's brain, or removes it with nil. The
+// settings page rebuilds it when its configuration changes; a call in flight
+// finishes on the old one.
+func (b *Bridge) SetAssistant(a Assistant) {
+	b.mu.Lock()
+	b.d.Assistant = a
+	b.mu.Unlock()
+}
+
+// SetShooter installs or removes the screenshot renderer.
+func (b *Bridge) SetShooter(s Shooter) {
+	b.mu.Lock()
+	b.d.Shot = s
+	b.mu.Unlock()
+}
+
+func (b *Bridge) assistant() Assistant {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.d.Assistant
+}
+
+func (b *Bridge) shooter() Shooter {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.d.Shot
+}
+
 // Dropped is how many changes the queue refused.
 func (b *Bridge) Dropped() int64 { return b.dropped.Load() }
 
@@ -421,7 +449,7 @@ func (b *Bridge) push(ctx context.Context, sessionID string) {
 			p.FocusSession = sessionID
 			_ = b.d.DB.PutChatPeer(ctx, p)
 		}
-		if ch.caps.Images && b.d.Shot != nil && wantShot(d.Screenshot, b.d.Term.Fullscreen(ctx, row.TmuxName)) {
+		if ch.caps.Images && b.shooter() != nil && wantShot(d.Screenshot, b.d.Term.Fullscreen(ctx, row.TmuxName)) {
 			b.sendShot(ctx, ch, p, row, handle)
 		}
 	}
@@ -481,7 +509,11 @@ func (b *Bridge) sendShot(ctx context.Context, ch *channel, p store.ChatPeer, ro
 	if err != nil {
 		return
 	}
-	png, err := b.d.Shot(ansi)
+	shot := b.shooter()
+	if shot == nil {
+		return
+	}
+	png, err := shot(ansi)
 	if err != nil {
 		b.d.Log.Warn("chat screenshot", "err", err)
 		return
@@ -504,6 +536,11 @@ func (b *Bridge) sessionURL(sessionID string) string {
 	return strings.TrimRight(base, "/") + "/?session=" + sessionID
 }
 
+// Handle returns a session's number, assigning one on first use.
+func (b *Bridge) Handle(ctx context.Context, sessionID string) (int, error) {
+	return b.handleOf(ctx, sessionID)
+}
+
 // handleOf returns a session's number, assigning one on first use.
 func (b *Bridge) handleOf(ctx context.Context, sessionID string) (int, error) {
 	b.mu.Lock()
@@ -523,6 +560,90 @@ func (b *Bridge) handleOf(ctx context.Context, sessionID string) (int, error) {
 }
 
 func chatKey(channel, peer string) string { return channel + ":" + peer }
+
+// Preview says what the rules would do about a session right now, for the
+// settings page's "why did this go here". Nothing is sent.
+func (b *Bridge) Preview(ctx context.Context, sessionID string) (Decision, Change, bool) {
+	_, c, _, ok := b.change(ctx, sessionID)
+	if !ok {
+		return Decision{}, Change{}, false
+	}
+	raw, _ := b.d.DB.GetSetting(ctx, RoutesKey, "")
+	return ParseRoutes(raw).Decide(c, b.d.Now().In(b.d.Zone())), c, true
+}
+
+// TestSend sends a line to every paired peer of a channel, or to one, so the
+// settings page can prove the channel reaches a phone. Returns how many were
+// reached and the first error.
+func (b *Bridge) TestSend(ctx context.Context, kind, peerID, text string) (int, error) {
+	ch, ok := b.channel(kind)
+	if !ok {
+		return 0, fmt.Errorf("chat: %s is not running", kind)
+	}
+	peers, err := b.d.DB.PairedChatPeers(ctx)
+	if err != nil {
+		return 0, err
+	}
+	sent := 0
+	var first error
+	for _, p := range peers {
+		if p.Channel != kind || (peerID != "" && p.PeerID != peerID) {
+			continue
+		}
+		if !ch.caps.Proactive && p.ContextToken == "" {
+			if first == nil {
+				first = fmt.Errorf("chat: %s cannot be reached until they message the bot", p.PeerID)
+			}
+			continue
+		}
+		if _, err := b.send(ctx, ch, p, Outbound{Text: text}); err != nil {
+			if first == nil {
+				first = err
+			}
+			continue
+		}
+		sent++
+	}
+	if sent == 0 && first == nil {
+		first = fmt.Errorf("chat: nobody is paired on %s", kind)
+	}
+	return sent, first
+}
+
+// SetPeerMode changes how a paired person's messages are read.
+func (b *Bridge) SetPeerMode(ctx context.Context, channel, peerID, mode string) error {
+	p, err := b.d.DB.GetChatPeer(ctx, channel, peerID)
+	if err != nil {
+		return err
+	}
+	p.Mode = mode
+	return b.d.DB.PutChatPeer(ctx, p)
+}
+
+// SetPeerStatus pairs or blocks a person from the settings page. The owner
+// is signed in, so this needs no code; the code is for the case where the
+// owner is not looking at the page when the stranger says hello.
+func (b *Bridge) SetPeerStatus(ctx context.Context, channel, peerID, status string) error {
+	p, err := b.d.DB.GetChatPeer(ctx, channel, peerID)
+	if err != nil {
+		return err
+	}
+	was := p.Status
+	p.Status = status
+	if status == store.PeerPaired {
+		p.PairingCode = ""
+	}
+	if err := b.d.DB.PutChatPeer(ctx, p); err != nil {
+		return err
+	}
+	b.d.Audit(ctx, "chat.peer", fmt.Sprintf("%s: %s -> %s", chatKey(channel, peerID), was, status))
+	if status == store.PeerPaired && was != store.PeerPaired {
+		if ch, ok := b.channel(channel); ok {
+			b.reply(ctx, ch, p, msg(b.language(), "paired"))
+		}
+	}
+	return nil
+}
 
 // ─── channels ─────────────────────────────────────────────────────────────
 

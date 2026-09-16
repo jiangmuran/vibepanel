@@ -82,6 +82,11 @@ func (s *Server) setSessionState(ctx context.Context, prev store.Session,
 		return nil
 	}
 	s.noteTransition(prev, st, time.Now())
+	// The chat bridge has the same contract as the event queue: a struct and
+	// a non-blocking send, never a wait on the far side.
+	if s.Chat != nil {
+		s.Chat.SessionChanged(prev, st)
+	}
 	return nil
 }
 

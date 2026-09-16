@@ -100,7 +100,7 @@ func (b *Bridge) handle(ctx context.Context, ch *channel, in Inbound) {
 	}
 	target, rest, reason := Resolve(text, quoteSession, peer.FocusSession, cands)
 	if reason != "" {
-		if peer.Mode == store.ModeAdvanced && b.d.Assistant != nil {
+		if peer.Mode == store.ModeAdvanced && b.assistant() != nil {
 			b.assist(ctx, ch, peer, text, cands, lang)
 			return
 		}
@@ -112,7 +112,7 @@ func (b *Bridge) handle(ctx context.Context, ch *channel, in Inbound) {
 		reply(b.answer(ctx, target.SessionID, a.Verb == VerbApprove, lang))
 		return
 	}
-	if peer.Mode == store.ModeAdvanced && b.d.Assistant != nil && target.How != "quote" && target.How != "handle" {
+	if peer.Mode == store.ModeAdvanced && b.assistant() != nil && target.How != "quote" && target.How != "handle" {
 		// Focused delivery is convenient and also the case a sentence
 		// meant for the assistant ("what is 3 doing") lands in a pane. In
 		// advanced mode the assistant reads the sentence first and hands
@@ -453,7 +453,7 @@ func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in 
 		if !ok {
 			return
 		}
-		if b.d.Shot == nil || !ch.caps.Images {
+		if b.shooter() == nil || !ch.caps.Images {
 			reply(msg(lang, "shotUnavailable"))
 			return
 		}
@@ -560,7 +560,7 @@ func (b *Bridge) command(ctx context.Context, ch *channel, p store.ChatPeer, in 
 		b.ask(key, msg(lang, "confirmStop", h), func(ctx context.Context) string { return b.interrupt(ctx, id, lang) })
 		reply(msg(lang, "confirmStop", h))
 	case VerbAsk:
-		if p.Mode != store.ModeAdvanced || b.d.Assistant == nil {
+		if p.Mode != store.ModeAdvanced || b.assistant() == nil {
 			reply(msg(lang, "noAssistant"))
 			return
 		}
@@ -766,7 +766,7 @@ func (b *Bridge) assist(ctx context.Context, ch *channel, p store.ChatPeer, text
 		_ = ch.ad.Typing(ctx, Peer{ID: p.PeerID, ContextToken: p.ContextToken}, true)
 		defer ch.ad.Typing(ctx, Peer{ID: p.PeerID, ContextToken: p.ContextToken}, false) //nolint:errcheck
 	}
-	intent, cost, err := b.d.Assistant.Translate(ctx, req)
+	intent, cost, err := b.assistant().Translate(ctx, req)
 	b.spend(ctx, cost)
 	if err != nil {
 		reply(msg(lang, "assistantFailed", err.Error()))
@@ -832,7 +832,7 @@ func (b *Bridge) askAssistant(ctx context.Context, ch *channel, p store.ChatPeer
 		_ = ch.ad.Typing(ctx, Peer{ID: p.PeerID, ContextToken: p.ContextToken}, true)
 		defer ch.ad.Typing(ctx, Peer{ID: p.PeerID, ContextToken: p.ContextToken}, false) //nolint:errcheck
 	}
-	ans, err := b.d.Assistant.Ask(ctx, b.assistantRequest(ctx, p, question, cands, lang))
+	ans, err := b.assistant().Ask(ctx, b.assistantRequest(ctx, p, question, cands, lang))
 	b.spend(ctx, ans.CostUSD)
 	if err != nil {
 		reply(msg(lang, "assistantFailed", err.Error()))
@@ -879,7 +879,11 @@ func (b *Bridge) assistantRequest(ctx context.Context, p store.ChatPeer, text st
 }
 
 func (b *Bridge) withinBudget(ctx context.Context) bool {
-	cap := b.d.Assistant.Budget()
+	a := b.assistant()
+	if a == nil {
+		return false
+	}
+	cap := a.Budget()
 	if cap <= 0 {
 		return true
 	}

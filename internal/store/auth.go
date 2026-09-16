@@ -223,6 +223,31 @@ func (d *DB) RecentAudit(ctx context.Context, limit int) ([]AuditEntry, error) {
 	return out, rows.Err()
 }
 
+// RecentAuditPrefix is RecentAudit narrowed to events starting with prefix,
+// which is how the chat page shows its own log without a table of its own.
+func (d *DB) RecentAuditPrefix(ctx context.Context, prefix string, limit int) ([]AuditEntry, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := d.sql.QueryContext(ctx,
+		`SELECT at, event, username, ip, detail FROM audit_log
+		 WHERE event >= ? AND event < ? ORDER BY at DESC, id DESC LIMIT ?`,
+		prefix, prefix+"\uffff", limit)
+	if err != nil {
+		return nil, fmt.Errorf("store: recent audit: %w", err)
+	}
+	defer rows.Close()
+	var out []AuditEntry
+	for rows.Next() {
+		var e AuditEntry
+		if err := rows.Scan(&e.At, &e.Event, &e.Username, &e.IP, &e.Detail); err != nil {
+			return nil, fmt.Errorf("store: scan audit: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // AuditKeep is how many audit rows are worth holding on to.
 //
 // The settings page shows fifty. This is three orders of magnitude more than
