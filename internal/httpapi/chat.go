@@ -658,15 +658,17 @@ func (s *Server) handlePutChatTools(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// ParseTools drops profiles with keys that are not keys; what is stored
-	// is what will be used, so store the parsed form and answer with it.
-	parsed := chat.ParseTools(string(raw))
+	// Refused out loud here, where a person is typing: a key with a space in
+	// it is text send-keys would type, and "rm -rf /" is a valid argument.
+	// ParseTools would drop such a profile silently and fall back to the
+	// default, which is what made an earlier version of this accept it.
 	for name, p := range tools {
-		if got, ok := parsed[name]; !ok || len(got.Approve) != len(p.Approve) {
+		if len(name) == 0 || len(name) > 32 || !chat.ValidProfile(p) {
 			writeErr(w, http.StatusBadRequest, "profile "+name+" has a key that is not a tmux key name")
 			return
 		}
 	}
+	parsed := chat.ParseTools(string(raw))
 	raw, _ = json.Marshal(parsed)
 	if err := s.DB.SetSetting(r.Context(), chat.ToolsKey, string(raw)); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())

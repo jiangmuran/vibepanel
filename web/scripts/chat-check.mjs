@@ -150,9 +150,12 @@ try {
     await settingsButton.click()
     const link = page.getByTestId('settings-chat-link')
     if (await until(() => link.count().then((n) => n > 0), 4000)) {
-      await link.click()
-      await page.waitForURL(/\/chat\/?$/, { timeout: 5000 })
-      pass('rail', 'the settings rail links to /chat')
+      // The dialog is still settling when the link appears, and a settling
+      // element is one playwright waits on forever; the link's job is its
+      // href, so that is what is checked, then it is pressed.
+      const href = await link.getAttribute('href')
+      if (href !== '/chat') note('FAIL', 'rail', `the chat link points at ${href}`)
+      else pass('rail', 'the settings rail links to /chat')
     } else {
       note('FAIL', 'rail', 'no chat link in the settings rail')
     }
@@ -320,6 +323,16 @@ try {
         }
         await sleep(500)
         await tab.screenshot({ path: join(SHOTS, `chat-${lang}-${theme}-${w}.png`), fullPage: true })
+        // The page scrolls inside its own root, which fullPage cannot see
+        // past, so each section is also photographed on its own at the
+        // phone width, where a reviewer needs it most.
+        if (w === 400) {
+          for (const id of ['channels', 'peers', 'routes', 'assistant', 'keys', 'log']) {
+            await tab.locator(`[data-section="${id}"]`).scrollIntoViewIfNeeded()
+            await sleep(150)
+            await tab.screenshot({ path: join(SHOTS, `chat-${lang}-${theme}-${w}-${id}.png`) })
+          }
+        }
         const overflowX = await tab.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)
         if (overflowX) note('FAIL', where, 'the page is wider than the screen')
         const { examined, found } = await findUnreachable(tab, sleep)

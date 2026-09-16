@@ -17,6 +17,10 @@ const POLL_MS = 4000
 export const INPUT =
   'w-full min-w-0 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent'
 
+/** INPUT without the full width, for a code or a number beside a button. */
+export const INPUT_SHORT =
+  'min-w-0 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent'
+
 export const SELECT =
   'min-w-0 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5 text-vp-md text-ink outline-none focus:border-accent'
 

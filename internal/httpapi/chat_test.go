@@ -271,6 +271,28 @@ func TestChatRoutesAreValidatedAndPreviewed(t *testing.T) {
 	}
 }
 
+func TestAKeyProfileWithTextInItIsRefusedOutLoud(t *testing.T) {
+	ts, srv := newTestServer(t)
+	attachChat(t, srv)
+	for _, body := range []string{
+		`{"codex":{"approve":["rm -rf /"],"deny":["n"],"interrupt":["Escape"],"submit":["Enter"]}}`,
+		`{"codex":{"approve":["y"],"deny":["n; reboot"],"interrupt":["Escape"],"submit":["Enter"]}}`,
+		`{"":{"approve":["y"],"deny":["n"],"interrupt":["Escape"],"submit":["Enter"]}}`,
+	} {
+		if code, _ := doJSON(t, ts, http.MethodPut, "/api/chat/keys", body); code != http.StatusBadRequest {
+			t.Fatalf("%s accepted with %d", body, code)
+		}
+	}
+	code, resp := doJSON(t, ts, http.MethodPut, "/api/chat/keys", `{"codex":{"approve":["y","Enter"],"deny":["n"],"interrupt":["C-c"],"submit":["Enter"]}}`)
+	if code != 200 || !strings.Contains(string(resp), `"C-c"`) {
+		t.Fatalf("good profile: %d %s", code, resp)
+	}
+	raw, _ := srv.DB.GetSetting(context.Background(), chat.ToolsKey, "")
+	if !strings.Contains(raw, `"C-c"`) {
+		t.Fatalf("stored: %s", raw)
+	}
+}
+
 func TestPairingAndPeerChangesGoThroughTheBridge(t *testing.T) {
 	ts, srv := newTestServer(t)
 	ad := attachChat(t, srv)

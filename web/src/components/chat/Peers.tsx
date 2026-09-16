@@ -7,7 +7,7 @@ import { t } from '../../i18n'
 import { askConfirm } from '../ask'
 import { showToast } from '../toasts'
 import { safeText } from '../text'
-import { Card, INPUT, Section } from './Chat'
+import { Card, INPUT_SHORT, Section } from './Chat'
 
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
@@ -84,7 +84,7 @@ export function Peers({ data, onChange }: { data: ChatSettings; onChange: () => 
           </label>
           <input
             id="chat-pair-code"
-            className={`${INPUT} w-36 font-mono`}
+            className={`${INPUT_SHORT} w-36 font-mono`}
             inputMode="numeric"
             placeholder="123456"
             value={code}

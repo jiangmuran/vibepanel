@@ -8,7 +8,7 @@ import { t } from '../../i18n'
 import { askConfirm } from '../ask'
 import { showToast } from '../toasts'
 import { safeText } from '../text'
-import { Card, INPUT, Section } from './Chat'
+import { Card, INPUT, INPUT_SHORT, Section } from './Chat'
 import { QR } from './QR'
 
 function ago(unix: number): string {
@@ -268,7 +268,7 @@ function ChannelCard({
               {login.status === 'needCode' && (
                 <div className="flex gap-2">
                   <input
-                    className={`${INPUT} w-32`}
+                    className={`${INPUT_SHORT} w-32`}
                     inputMode="numeric"
                     value={code}
                     onChange={(e) => setCode(e.target.value)}

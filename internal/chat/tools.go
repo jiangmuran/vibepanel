@@ -72,6 +72,15 @@ func ParseTools(raw string) map[string]ToolProfile {
 	return out
 }
 
+// ValidProfile reports whether every key in a profile is a tmux key name,
+// which is what the settings route checks before storing one. ParseTools
+// drops an invalid profile silently because a stored row must never stop
+// the bridge from answering; the route refuses it out loud because a person
+// is there to be told.
+func ValidProfile(p ToolProfile) bool {
+	return validKeys(p.Approve) && validKeys(p.Deny) && validKeys(p.Interrupt) && validKeys(p.Submit)
+}
+
 // validKeys refuses anything that is not a tmux key name.
 //
 // The names go to send-keys, which types anything it does not recognise as
