@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -106,6 +107,30 @@ func (s *Server) ChatToolsToken() (string, error) {
 		s.chatTools.token = t
 	}
 	return s.chatTools.token, nil
+}
+
+// StartChat builds the bridge from what the server already has and runs it
+// until ctx ends. Called once by serve, after the adapters' packages have
+// registered themselves and Shooter / NewAssistant are set. A panel whose
+// secret key cannot be opened runs without a bridge and says so on the page.
+func (s *Server) StartChat(ctx context.Context) error {
+	box, err := s.secretBox()
+	if err != nil {
+		return err
+	}
+	s.Chat = chat.New(chat.Deps{
+		DB: s.DB, Term: ChatTerminal(s.Tmux), Box: box, Log: s.Log,
+		PublicURL: s.Cfg.PublicURL,
+		Zone:      func() *time.Location { return s.loc(ctx) },
+		Shot:      s.Shooter,
+		Audit:     func(ctx context.Context, event, detail string) { s.audit(ctx, event, "chat", "", detail) },
+		PastedDir: filepath.Join(s.Cfg.DataDir, "pasted"),
+	})
+	s.Chat.Start(ctx)
+	if err := s.RebuildAssistant(ctx); err != nil {
+		s.Log.Warn("chat assistant", "err", err)
+	}
+	return nil
 }
 
 func (s *Server) registerChatRoutes(r chi.Router) {

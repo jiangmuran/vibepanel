@@ -312,6 +312,12 @@ func cmdServe(args []string) error {
 		return err
 	}
 	go srv.Poll(ctx)
+	// The chat bridge, after the poller: it reads the same rows and must
+	// never be the thing the poller waits on. Without a secret key the panel
+	// runs as before and the Chat page says the bridge is off.
+	if cerr := srv.StartChat(ctx); cerr != nil {
+		logger.Warn("chat bridge not started", "err", cerr)
+	}
 
 	httpServer := &http.Server{
 		Addr:    a.cfg.Addr,

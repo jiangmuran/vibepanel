@@ -135,7 +135,9 @@ type Server struct {
 	Chat *chat.Bridge
 	// NewAssistant builds the advanced mode's brain; nil means unavailable.
 	NewAssistant AssistantBuilder
-	chatTools    chatTools
+	// Shooter renders a pane to a PNG for "shot"; nil means unavailable.
+	Shooter   chat.Shooter
+	chatTools chatTools
 
 	// hookToken authenticates state reports from agent hooks. Cached after the
 	// first read that succeeds so the hot path does not hit the database; see

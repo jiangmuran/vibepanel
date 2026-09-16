@@ -118,6 +118,9 @@ type Bridge struct {
 
 	events  chan event
 	dropped atomic.Int64
+	// handled counts inbound messages fully dealt with, so a test can wait
+	// for the goroutine handle() runs on rather than sleeping.
+	handled atomic.Int64
 
 	mu       sync.Mutex
 	chans    map[string]*channel
@@ -213,6 +216,9 @@ func (b *Bridge) shooter() Shooter {
 	defer b.mu.Unlock()
 	return b.d.Shot
 }
+
+// Handled is how many inbound messages have been fully dealt with.
+func (b *Bridge) Handled() int64 { return b.handled.Load() }
 
 // Dropped is how many changes the queue refused.
 func (b *Bridge) Dropped() int64 { return b.dropped.Load() }
@@ -427,15 +433,19 @@ func (b *Bridge) push(ctx context.Context, sessionID string) {
 				{Label: pick(lang, "看屏幕", "Screen"), Value: "screen:" + sessionID},
 			}
 		}
+		// The remainder is parked before the card goes out, so "more" typed
+		// the instant the card lands finds it.
+		b.mu.Lock()
+		if rest != "" {
+			b.more[chatKey(p.Channel, p.PeerID)] = rest
+		} else {
+			delete(b.more, chatKey(p.Channel, p.PeerID))
+		}
+		b.mu.Unlock()
 		ref, err := b.send(ctx, ch, p, out)
 		if err != nil {
 			b.d.Log.Warn("chat push", "channel", p.Channel, "err", err)
 			continue
-		}
-		if rest != "" {
-			b.mu.Lock()
-			b.more[chatKey(p.Channel, p.PeerID)] = rest
-			b.mu.Unlock()
 		}
 		_ = b.d.DB.RecordChatOutbound(ctx, store.ChatOutbound{
 			Channel: p.Channel, PeerID: p.PeerID, Ref: ref, SessionID: sessionID, Kind: store.OutboundStatus,
@@ -869,7 +879,10 @@ func (s *sink) Inbound(ctx context.Context, in Inbound) {
 	s.ch.health.LastInbound = s.b.d.Now().Unix()
 	s.ch.mu.Unlock()
 	in.Channel = s.ch.kind
-	go s.b.handle(ctx, s.ch, in)
+	go func() {
+		s.b.handle(ctx, s.ch, in)
+		s.b.handled.Add(1)
+	}()
 }
 
 func (s *sink) Health(ok bool, err error) {

@@ -181,6 +181,7 @@ type rig struct {
 }
 
 var rigKinds sync.Mutex
+var rigAdapters = map[string]*fakeAdapter{}
 
 func newRig(t *testing.T, caps Capabilities) *rig {
 	t.Helper()
@@ -197,8 +198,17 @@ func newRig(t *testing.T, caps Capabilities) *rig {
 	}
 	kind := "fake-" + strings.ToLower(strings.NewReplacer("/", "-", " ", "-").Replace(t.Name()))
 	ad := newFake(kind, caps)
+	// One factory per test name, handing out whichever adapter the current
+	// run made, so -count=3 does not register a kind twice.
 	rigKinds.Lock()
-	Register(Factory{Kind: kind, Label: "Fake", New: func(json.RawMessage, Env) (Adapter, error) { return ad, nil }})
+	rigAdapters[kind] = ad
+	if _, ok := FactoryFor(kind); !ok {
+		Register(Factory{Kind: kind, Label: "Fake", New: func(json.RawMessage, Env) (Adapter, error) {
+			rigKinds.Lock()
+			defer rigKinds.Unlock()
+			return rigAdapters[kind], nil
+		}})
+	}
 	rigKinds.Unlock()
 	// The store stamps rows with the real clock, and the bridge's rule that a
 	// message must be no older than the state change compares the two, so
@@ -251,22 +261,24 @@ func (r *rig) session(id, title, launch string, st session.State) store.Session 
 }
 
 func (r *rig) say(peer, text string) {
+	before := r.b.Handled()
 	r.ad.inbound(r.t, Inbound{PeerID: peer, Text: text, At: r.now})
-	r.settle()
+	r.settleFrom(before)
 }
 
-// settle waits for the bridge's goroutines to finish what they were handed.
-func (r *rig) settle() {
-	deadline := time.Now().Add(2 * time.Second)
-	last := -1
+// settle waits for the bridge to finish with the last inbound message.
+func (r *rig) settle() { r.settleFrom(r.b.Handled() - 1) }
+
+func (r *rig) settleFrom(before int64) {
+	r.t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		time.Sleep(15 * time.Millisecond)
-		n := r.ad.count()
-		if n == last {
+		if r.b.Handled() > before {
 			return
 		}
-		last = n
+		time.Sleep(5 * time.Millisecond)
 	}
+	r.t.Fatalf("the bridge never finished with the message; sent so far: %q", r.ad.texts())
 }
 
 func (r *rig) waitFor(pred func() bool) {
@@ -544,8 +556,9 @@ func TestAButtonPressAnswersThePromptAndIsAcknowledged(t *testing.T) {
 	}
 	// A press for a session that is no longer waiting presses nothing.
 	_ = r.db.SetSessionState(r.ctx, "s1", session.StateDone, session.SourceHook)
+	before := r.b.Handled()
 	r.ad.inbound(t, Inbound{PeerID: "me", Action: &Action{Value: "approve:s1", ID: "cb2"}})
-	r.settle()
+	r.settleFrom(before)
 	if len(r.term.pressed("vp_s1")) != 1 {
 		t.Fatal("a stale approve pressed keys")
 	}
@@ -557,15 +570,17 @@ func TestQuotedRepliesRouteByRefAndByHandleInText(t *testing.T) {
 	r.session("s1", "one", "claude", session.StateWaiting)
 	r.session("s2", "two", "claude", session.StateWaiting)
 	_ = r.db.RecordChatOutbound(r.ctx, store.ChatOutbound{Channel: r.ad.kind, PeerID: "me", Ref: "old", SessionID: "s2", Kind: store.OutboundStatus})
+	before := r.b.Handled()
 	r.ad.inbound(t, Inbound{PeerID: "me", Text: "go ahead", QuotedRef: "old"})
-	r.settle()
+	r.settleFrom(before)
 	if got := r.term.pasted("vp_s2"); len(got) != 1 || got[0] != "go ahead" {
 		t.Fatalf("quote by ref: %q", got)
 	}
 	// 微信 style: only the quoted text, with the card's handle in it.
 	h1, _ := r.db.ChatHandle(r.ctx, "s1")
+	before = r.b.Handled()
 	r.ad.inbound(t, Inbound{PeerID: "me", Text: "y", QuotedText: fmt.Sprintf("▲ [%d] one · vibepanel", h1)})
-	r.settle()
+	r.settleFrom(before)
 	if keys := r.term.pressed("vp_s1"); len(keys) != 1 || keys[0][0] != "Enter" {
 		t.Fatalf("quote by text: %v", keys)
 	}
@@ -662,15 +677,16 @@ func TestANonProactiveChannelNeedsAHelloFirst(t *testing.T) {
 		t.Fatalf("health: %+v", h)
 	}
 	// The person says something: the token is kept and the next push goes.
+	before := r.b.Handled()
 	r.ad.inbound(t, Inbound{PeerID: "me", Text: "list", ContextToken: "tok-1"})
-	r.settle()
+	r.settleFrom(before)
 	p, _ = r.db.GetChatPeer(r.ctx, r.ad.kind, "me")
 	if p.ContextToken != "tok-1" {
 		t.Fatalf("token not kept: %+v", p)
 	}
-	before := r.ad.count()
+	sent := r.ad.count()
 	r.b.SessionChanged(row, session.StateWaiting)
-	r.waitFor(func() bool { return r.ad.count() == before+1 })
+	r.waitFor(func() bool { return r.ad.count() == sent+1 })
 }
 
 func TestLongBodiesAreCutAndMoreContinues(t *testing.T) {
@@ -687,7 +703,7 @@ func TestLongBodiesAreCutAndMoreContinues(t *testing.T) {
 	}
 	r.say("me", "more")
 	if !strings.HasPrefix(r.ad.last(), "一二三") {
-		t.Fatalf("more: %q", r.ad.last()[:40])
+		t.Fatalf("more: %q", r.ad.last())
 	}
 	for i := 0; i < 5; i++ {
 		r.say("me", "more")
@@ -812,8 +828,9 @@ func TestAnInboundPictureLandsNextToTheSessionAsAPath(t *testing.T) {
 	r.session("s1", "fix", "claude", session.StateDone)
 	p.FocusSession = "s1"
 	_ = r.db.PutChatPeer(r.ctx, p)
+	before := r.b.Handled()
 	r.ad.inbound(t, Inbound{PeerID: "me", Image: []byte{0x89, 'P', 'N', 'G', 1, 2, 3}})
-	r.settle()
+	r.settleFrom(before)
 	got := r.term.pasted("vp_s1")
 	if len(got) != 1 || !strings.HasSuffix(strings.TrimSpace(got[0]), ".png") || !strings.HasPrefix(got[0], r.b.d.PastedDir) {
 		t.Fatalf("pasted %q", got)
