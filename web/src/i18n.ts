@@ -931,6 +931,7 @@ const DICT = {
   'toast.passkeyGone': { zh: '这个 passkey 删不掉', en: 'That passkey could not be removed' },
 
   'ask.cancel': { zh: '取消', en: 'Cancel' },
+  'menu.more': { zh: '更多', en: 'More' },
   'ask.remove': { zh: '移除', en: 'Remove' },
   'ask.kill': { zh: '结束它', en: 'Kill it' },
   'ask.add': { zh: '添加', en: 'Add' },
@@ -1033,6 +1034,12 @@ const DICT = {
     en: 'The address is ready. You can copy it again from its row at any time.',
   },
   'share.revoke': { zh: '吊销', en: 'Revoke' },
+  'share.revokeTitle': { zh: '吊销「{name}」？', en: 'Revoke "{name}"?' },
+  'share.revokeBody': {
+    zh: '这个地址立刻失效。正在放着它的屏会看到链接已经没了。',
+    en: 'The address stops working at once, and a screen showing it says the link is gone.',
+  },
+  'share.linksNone': { zh: '还没有链接', en: 'No links yet' },
   'share.revokeSure': { zh: '确定吊销？', en: 'Revoke it?' },
   'share.keep': { zh: '算了', en: 'Keep it' },
   'share.expiresOn': { zh: '{date} 过期', en: 'expires {date}' },
@@ -1070,6 +1077,12 @@ const DICT = {
   'page.history': { zh: '版本', en: 'Versions' },
   'page.fork': { zh: '复制一份', en: 'Fork' },
   'page.delete': { zh: '删除页面', en: 'Delete page' },
+  'page.deleteTitle': { zh: '删除「{name}」？', en: 'Delete "{name}"?' },
+  'page.deleteBody': {
+    zh: '发布过的版本会没，磁盘上的目录留着。还有链接指着它就删不掉。',
+    en: 'Its published versions go and the directory on disk stays. Refused while a link still draws it.',
+  },
+  'page.linksTitle': { zh: '链接', en: 'Links' },
   'page.deleteSure': { zh: '确定删除？', en: 'Delete it?' },
   'page.dirGone': { zh: '目录不在了', en: 'Directory missing' },
   'page.noVersions': { zh: '还没发布过', en: 'Never published' },

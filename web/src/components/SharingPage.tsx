@@ -91,7 +91,9 @@ export function SharingPage({ auth, onSignOut }: { auth: AuthState; onSignOut: (
       </header>
 
       <main className="vp-safe-bottom mx-auto max-w-6xl px-4 pt-6 [--vp-safe-pad:2.5rem] sm:px-6 sm:pt-8">
-        <h1 className="mb-3 text-vp-xl font-semibold tracking-tight text-ink">{t('page.title')}</h1>
+        {/* The heading is the list's own: it belongs with the description and
+            the two buttons beside it, and drawing it here left the three of
+            them stacked in three different places. */}
         <Sharing onOpenPage={(page, fresh) => location.assign(panelOpeningPage(page.id, fresh))} />
       </main>
       <ConfirmDialog />

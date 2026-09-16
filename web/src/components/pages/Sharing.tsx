@@ -28,9 +28,12 @@ import type {
   SharingSettings,
 } from '../../protocol/wire'
 import { t, useLang, type Key, type Lang } from '../../i18n'
+import { askConfirm } from '../ask'
 import { safeText } from '../text'
+import { Menu } from '../Menu'
 import { ManageDialog } from './ManageDialog'
 import { Field, PageLinks } from './PageLinks'
+import { BlockTitle, Chip, Empty, Mark } from './bits'
 
 /**
  * Sharing, as one list: pages, and under each page the links that show it.
@@ -163,30 +166,38 @@ export function Sharing({
 
   return (
     <div data-testid="sharing" className="@container">
-      <div className="mb-4 flex flex-wrap items-start gap-x-6 gap-y-3">
-        <p className="min-w-0 max-w-2xl flex-1 text-vp-base leading-relaxed text-ink-2">
-          {t('page.why')}{' '}
-          <a
-            href={docsURL(lang)}
-            target="_blank"
-            rel="noreferrer noopener"
-            data-testid="sharing-docs"
-            className="inline-flex items-center gap-1 whitespace-nowrap text-accent hover:underline"
-          >
-            <BookOpen size={12} />
-            {t('page.docs')}
-          </a>{' '}
-          <a
-            href={ARCHITECTURE_URL}
-            target="_blank"
-            rel="noreferrer noopener"
-            data-testid="sharing-architecture"
-            className="inline-flex items-center gap-1 whitespace-nowrap text-accent hover:underline"
-          >
-            <ShieldCheck size={12} />
-            {t('page.architecture')}
-          </a>
-        </p>
+      {/* The name of this page, what it is for, and the two things you start
+          from -- on one line at any width with room for it. The title was
+          drawn by the frame while the description was drawn here, which is
+          why the two of them used to sit apart with the buttons stranded
+          between them. */}
+      <header className="mb-4 flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+        <div className="min-w-0 max-w-2xl">
+          <h1 className="text-vp-xl font-semibold tracking-tight text-ink">{t('page.title')}</h1>
+          <p className="mt-1 text-vp-base leading-relaxed text-ink-2">
+            {t('page.why')}{' '}
+            <a
+              href={docsURL(lang)}
+              target="_blank"
+              rel="noreferrer noopener"
+              data-testid="sharing-docs"
+              className="inline-flex items-center gap-1 whitespace-nowrap text-accent hover:underline"
+            >
+              <BookOpen size={12} />
+              {t('page.docs')}
+            </a>{' '}
+            <a
+              href={ARCHITECTURE_URL}
+              target="_blank"
+              rel="noreferrer noopener"
+              data-testid="sharing-architecture"
+              className="inline-flex items-center gap-1 whitespace-nowrap text-accent hover:underline"
+            >
+              <ShieldCheck size={12} />
+              {t('page.architecture')}
+            </a>
+          </p>
+        </div>
         <span className="flex shrink-0 items-center gap-2">
           <input
             ref={importInput}
@@ -205,7 +216,7 @@ export function Sharing({
             data-testid="page-import"
             onClick={() => importInput.current?.click()}
             title={t('page.importWhy')}
-            className="vp-press flex items-center gap-1 rounded-vp border border-hairline px-2.5 py-1.5 text-vp-base text-ink-2 hover:text-ink"
+            className="vp-press flex items-center gap-1 rounded-vp border border-hairline px-2.5 py-1.5 text-vp-base text-ink-2 transition-colors duration-200 ease-vp hover:border-accent hover:text-ink"
           >
             <FileUp size={13} />
             {t('page.import')}
@@ -215,7 +226,7 @@ export function Sharing({
               type="button"
               data-testid="page-new"
               onClick={() => setCreating(true)}
-              className="vp-press flex items-center gap-1 rounded-vp px-3 py-1.5 text-vp-base"
+              className="vp-press flex items-center gap-1 rounded-vp px-3 py-1.5 text-vp-base font-medium"
               style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
             >
               <Plus size={13} />
@@ -223,15 +234,20 @@ export function Sharing({
             </button>
           )}
         </span>
+      </header>
+
+      {/* The two settings that are about sharing rather than about any one
+          page, in one quiet strip. They were two loose lines between the
+          heading and the list, which read as its first two rows. */}
+      <div className="mb-4 flex flex-col gap-2 rounded-vp border border-hairline bg-surface px-3 py-2 @3xl:flex-row @3xl:items-center @3xl:gap-4">
+        <PagesRootLine
+          root={catalogue?.pagesRootInfo ?? null}
+          onChanged={(next) => setCatalogue((c) => (c ? { ...c, pagesRoot: next.dir, pagesRootInfo: next } : c))}
+          onError={fail}
+        />
+        <span className="hidden h-4 w-px shrink-0 bg-hairline @3xl:block" aria-hidden="true" />
+        <VisitorWritesLine settings={sharing} onChanged={setSharing} onError={fail} />
       </div>
-
-      <PagesRootLine
-        root={catalogue?.pagesRootInfo ?? null}
-        onChanged={(next) => setCatalogue((c) => (c ? { ...c, pagesRoot: next.dir, pagesRootInfo: next } : c))}
-        onError={fail}
-      />
-
-      <VisitorWritesLine settings={sharing} onChanged={setSharing} onError={fail} />
 
       {notice && (
         <p className="mb-2 text-vp-base text-ink-2" data-testid="sharing-notice">
@@ -260,15 +276,7 @@ export function Sharing({
       )}
 
       {pages.length === 0 && !creating ? (
-        <div
-          data-testid="pages-empty"
-          className="flex flex-col items-center gap-2 rounded-vp-lg border border-dashed border-hairline-strong px-4 py-10 text-center"
-        >
-          <span className="flex h-10 w-10 items-center justify-center rounded-vp bg-surface-2 text-ink-3">
-            <PanelsTopLeft size={18} />
-          </span>
-          <p className="text-vp-base text-ink-2">{t('page.none')}</p>
-        </div>
+        <Empty icon={PanelsTopLeft}>{t('page.none')}</Empty>
       ) : (
         // One card per page, with its links inside it. Cards rather than
         // rows separated by a rule, because this is a page on the panel's
@@ -336,7 +344,7 @@ function PagesRootLine({
     root.source === 'setting' ? t('page.rootSetting') : root.source === 'default' ? t('page.rootDefault') : t('page.rootFallback')
 
   return (
-    <div data-testid="pages-root" className="mb-3 text-vp-sm text-ink-3">
+    <div data-testid="pages-root" className="min-w-0 flex-1 text-vp-sm text-ink-3">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <FolderCog size={12} className="shrink-0" />
         <span>{t('page.root')}</span>
@@ -439,7 +447,10 @@ function VisitorWritesLine({
     }
   }
   return (
-    <div data-testid="visitor-writes" className="-mt-1 mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-vp-sm text-ink-3">
+    <div
+      data-testid="visitor-writes"
+      className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 text-vp-sm text-ink-3"
+    >
       <label className="flex items-center gap-1.5 text-ink-2" title={t('sharing.visitorWritesWhy')}>
         <input
           type="checkbox"
@@ -494,9 +505,13 @@ function NewPage({
   return (
     <div
       data-testid="page-form"
-      className="vp-panel-in mb-4 rounded-vp-lg border border-hairline bg-surface p-4 shadow-sm"
+      className="vp-panel-in mb-3 rounded-vp-lg border border-accent/40 bg-surface p-4 shadow-sm"
     >
-      <div className="mb-2 grid grid-cols-1 gap-x-3 gap-y-2 @md:grid-cols-2">
+      <div className="mb-3 flex items-center gap-2">
+        <Plus size={14} className="shrink-0 text-ink-3" />
+        <h3 className="text-vp-md font-medium text-ink">{t('page.create')}</h3>
+      </div>
+      <div className="mb-3 grid grid-cols-1 gap-x-3 gap-y-2 @md:grid-cols-2">
         <Field label={t('page.nameLabel')} htmlFor="page-name">
           <input
             id="page-name"
@@ -541,7 +556,7 @@ function NewPage({
           </Field>
         </div>
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-hairline pt-3">
         <label className="flex items-center gap-2 text-vp-sm text-ink-2">
           <input
             type="checkbox"
@@ -593,11 +608,25 @@ function PageCard({
   onError: (e: unknown) => void
 }) {
   const [versions, setVersions] = useState(false)
-  const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
   const [managing, setManaging] = useState(false)
   const caps = detail?.capabilities
   const manageable = caps !== undefined && (caps.data || caps.admin || caps.sources || caps.server)
+
+  // Asked in the panel's own dialog: an inline second step cannot live in a
+  // menu, and this is the one action here that cannot be undone. The server
+  // refuses while any link still draws the page, so the question is about the
+  // versions rather than about a wall going dark.
+  const remove = async () => {
+    const yes = await askConfirm({
+      title: t('page.deleteTitle', { name: safeText(page.name) }),
+      body: t('page.deleteBody'),
+      confirm: t('page.delete'),
+      cancel: t('ask.cancel'),
+      destructive: true,
+    })
+    if (yes) await act(() => api.deletePage(page.id))
+  }
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true)
@@ -612,27 +641,51 @@ function PageCard({
   }
 
   return (
-    <div
+    // One card per page: a header that says which page and what to do with
+    // it, then the links that show it. It was a row of a name, a status, two
+    // buttons and five glyphs, all at one weight, with the links indented
+    // underneath -- which is why nothing on it said what to press.
+    <article
       data-testid="page-row"
       data-page={page.id}
-      className="rounded-vp-lg border border-hairline bg-surface p-3 text-vp-base shadow-sm @md:p-4"
+      className="rounded-vp-lg border border-hairline bg-surface text-vp-base shadow-sm"
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <PanelsTopLeft size={14} className="shrink-0 text-ink-2" />
-        <span className="min-w-0 flex-1 truncate font-medium text-ink">{safeText(page.name)}</span>
-        <span className="shrink-0 text-vp-sm text-ink-2" data-testid="page-status">
-          {page.publishedVersion > 0 ? t('page.published', { v: page.publishedVersion }) : t('page.unpublished')}
-        </span>
-        {/* Its own line in a narrow container, so the page's name is not the
-            thing that gives way to five buttons. */}
-        <span className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1 @xl:w-auto">
+      <header className="flex flex-wrap items-start gap-x-3 gap-y-2 p-3 @md:p-4">
+        <Mark icon={PanelsTopLeft} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="min-w-0 truncate text-vp-md font-medium text-ink">{safeText(page.name)}</h3>
+            {/* Published or not, as a chip beside the name rather than as a
+                word at the far end of the row: it is the first thing somebody
+                needs, because an unpublished page has no links yet. */}
+            <Chip tone={page.publishedVersion > 0 ? 'accent' : 'warn'} testid="page-status">
+              {page.publishedVersion > 0
+                ? t('page.published', { v: page.publishedVersion })
+                : t('page.unpublished')}
+            </Chip>
+          </div>
+          <code className="mt-0.5 block truncate font-mono text-vp-xs text-ink-3" data-testid="page-dir">
+            {safeText(page.sourceDir)}
+          </code>
+          {!page.sourceExists && (
+            <p className="mt-0.5 text-vp-xs" style={{ color: 'var(--vp-state-waiting)' }} data-testid="page-dir-gone">
+              {page.publishedVersion > 0
+                ? t('page.dirGoneRestore', { v: page.publishedVersion })
+                : t('page.dirGone')}
+            </p>
+          )}
+        </div>
+        {/* What somebody does every day, in words; the rest behind one button.
+            Its own line in a narrow card, so the page's name is never the
+            thing that gives way to the buttons. */}
+        <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1.5 @xl:w-auto">
           <button
             type="button"
             data-testid="page-open"
             disabled={busy}
             onClick={onOpen}
             title={page.sourceExists ? t('page.openWhy') : t('page.restoreWhy')}
-            className="vp-press flex items-center gap-1 rounded-vp border border-hairline px-2 py-1 text-vp-sm text-ink hover:border-accent disabled:opacity-40"
+            className="vp-press flex items-center gap-1 rounded-vp border border-accent/50 px-2.5 py-1 text-vp-sm text-accent transition-colors duration-200 ease-vp hover:border-accent disabled:opacity-40"
           >
             <FolderOpen size={12} />
             {page.sourceExists ? t('page.open') : t('page.restore')}
@@ -643,7 +696,7 @@ function PageCard({
             disabled={busy || !page.sourceExists}
             onClick={() => void act(() => api.publishPage(page.id, ''))}
             title={t('page.publishWhy')}
-            className="vp-press flex items-center gap-1 rounded-vp border border-hairline px-2 py-1 text-vp-sm text-ink hover:border-accent disabled:opacity-40"
+            className="vp-press flex items-center gap-1 rounded-vp border border-hairline px-2.5 py-1 text-vp-sm text-ink-2 transition-colors duration-200 ease-vp hover:border-accent hover:text-ink disabled:opacity-40"
           >
             <Upload size={12} />
             {t('page.publish')}
@@ -654,126 +707,82 @@ function PageCard({
               data-testid="page-manage-open"
               onClick={() => setManaging(true)}
               title={t('manage.why')}
-              className="vp-press flex items-center gap-1 rounded-vp border border-hairline px-2 py-1 text-vp-sm text-ink hover:border-accent"
+              className="vp-press flex items-center gap-1 rounded-vp border border-hairline px-2.5 py-1 text-vp-sm text-ink-2 transition-colors duration-200 ease-vp hover:border-accent hover:text-ink"
             >
               <SlidersHorizontal size={12} />
               {t('manage.open')}
             </button>
           )}
-          <a
-            href={api.exportPageURL(page.id)}
-            download
-            title={t('page.export')}
-            aria-label={t('page.export')}
-            data-testid="page-export"
-            className="vp-control"
-          >
-            <Download size={13} />
-          </a>
-          <button
-            type="button"
-            onClick={() => setVersions(!versions)}
-            aria-pressed={versions}
-            title={t('page.history')}
-            aria-label={t('page.history')}
-            data-testid="page-history"
-            className="vp-control"
-          >
-            <History size={13} />
-          </button>
-          <button
-            type="button"
-            disabled={busy || !page.sourceExists}
-            onClick={() => void act(() => api.forkPage(page.id, ''))}
-            title={t('page.fork')}
-            aria-label={t('page.fork')}
-            data-testid="page-fork"
-            className="vp-control disabled:opacity-40"
-          >
-            <GitFork size={13} />
-          </button>
-          {confirming ? (
-            <>
-              <button
-                type="button"
-                onClick={() => {
-                  setConfirming(false)
-                  void act(() => api.deletePage(page.id))
-                }}
-                data-testid="page-delete-confirm"
-                className="vp-press rounded-vp px-2 py-1 text-vp-sm"
-                style={{ background: 'var(--vp-state-crashed)', color: 'var(--vp-accent-ink)' }}
-              >
-                {t('page.deleteSure')}
-              </button>
-              <button
-                type="button"
-                onClick={() => setConfirming(false)}
-                className="vp-press rounded-vp px-2 py-1 text-vp-sm text-ink-2"
-              >
-                {t('share.keep')}
-              </button>
-            </>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setConfirming(true)}
-              title={t('page.delete')}
-              aria-label={t('page.delete')}
-              data-testid="page-delete"
-              className="vp-control"
-            >
-              <Trash2 size={13} />
-            </button>
-          )}
-        </span>
-      </div>
-      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-6 text-vp-sm text-ink-2">
-        <code className="min-w-0 truncate font-mono text-ink-3" data-testid="page-dir">
-          {safeText(page.sourceDir)}
-        </code>
-        {!page.sourceExists && (
-          <span data-testid="page-dir-gone">
-            {page.publishedVersion > 0
-              ? t('page.dirGoneRestore', { v: page.publishedVersion })
-              : t('page.dirGone')}
-          </span>
-        )}
-      </div>
+          <Menu
+            testid="page-more"
+            items={[
+              {
+                label: t('page.history'),
+                icon: History,
+                testid: 'page-history',
+                onSelect: () => setVersions(!versions),
+              },
+              {
+                label: t('page.fork'),
+                icon: GitFork,
+                testid: 'page-fork',
+                disabled: busy || !page.sourceExists,
+                onSelect: () => void act(() => api.forkPage(page.id, '')),
+              },
+              { label: t('page.export'), icon: Download, testid: 'page-export', href: api.exportPageURL(page.id) },
+              {
+                label: t('page.delete'),
+                icon: Trash2,
+                testid: 'page-delete',
+                destructive: true,
+                onSelect: () => void remove(),
+              },
+            ]}
+          />
+        </div>
+      </header>
 
       {versions && detail && (
-        <ul data-testid="page-versions" className="mt-2 space-y-1 pl-6 text-vp-sm">
-          {detail.versions.filter((v) => !v.candidate).length === 0 && (
-            <li className="text-ink-3">{t('page.noVersions')}</li>
-          )}
-          {detail.versions
-            .filter((v) => !v.candidate)
-            .map((v) => (
-              <li key={v.version} className="flex items-center gap-2">
-                <span className="tabular w-8 shrink-0 text-ink">v{v.version}</span>
-                <span className="shrink-0 text-ink-3">{new Date(v.createdAt * 1000).toLocaleString()}</span>
-                {v.commitSha && (
-                  <code className="shrink-0 font-mono text-ink-3">
-                    {v.commitSha.slice(0, 8)}
-                    {v.dirty ? '*' : ''}
-                  </code>
-                )}
-                <span className="min-w-0 flex-1 truncate text-ink-2">{safeText(v.note)}</span>
-                {v.version === detail.page.publishedVersion ? (
-                  <span className="shrink-0 text-ink-2">{t('page.current')}</span>
-                ) : (
-                  <button
-                    type="button"
-                    data-testid="page-rollback"
-                    onClick={() => void act(() => api.rollbackPage(page.id, v.version))}
-                    className="vp-press shrink-0 rounded-vp px-2 py-0.5 text-ink-2 hover:text-ink"
-                  >
-                    {t('page.rollback')}
-                  </button>
-                )}
-              </li>
-            ))}
-        </ul>
+        <div className="border-t border-hairline px-3 py-3 @md:px-4">
+          <BlockTitle>{t('page.history')}</BlockTitle>
+          <ul data-testid="page-versions" className="mt-2 flex flex-col gap-1 text-vp-sm">
+            {detail.versions.filter((v) => !v.candidate).length === 0 && (
+              <li className="text-ink-3">{t('page.noVersions')}</li>
+            )}
+            {detail.versions
+              .filter((v) => !v.candidate)
+              .map((v) => (
+                <li
+                  key={v.version}
+                  className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-vp border border-hairline bg-surface-2 px-2 py-1.5"
+                >
+                  <span className="tabular shrink-0 font-medium text-ink">v{v.version}</span>
+                  <span className="shrink-0 text-vp-xs text-ink-3">
+                    {new Date(v.createdAt * 1000).toLocaleString()}
+                  </span>
+                  {v.commitSha && (
+                    <code className="shrink-0 font-mono text-vp-xs text-ink-3">
+                      {v.commitSha.slice(0, 8)}
+                      {v.dirty ? '*' : ''}
+                    </code>
+                  )}
+                  <span className="min-w-0 flex-1 truncate text-ink-2">{safeText(v.note)}</span>
+                  {v.version === detail.page.publishedVersion ? (
+                    <Chip tone="accent">{t('page.current')}</Chip>
+                  ) : (
+                    <button
+                      type="button"
+                      data-testid="page-rollback"
+                      onClick={() => void act(() => api.rollbackPage(page.id, v.version))}
+                      className="vp-press shrink-0 rounded-vp border border-hairline px-2 py-0.5 text-vp-xs text-ink-2 transition-colors duration-200 ease-vp hover:border-accent hover:text-ink"
+                    >
+                      {t('page.rollback')}
+                    </button>
+                  )}
+                </li>
+              ))}
+          </ul>
+        </div>
       )}
 
       {managing && caps && <ManageDialog page={page} capabilities={caps} onClose={() => setManaging(false)} />}
@@ -788,6 +797,6 @@ function PageCard({
         onChanged={onChanged}
         onError={(m) => onError(new Error(m))}
       />
-    </div>
+    </article>
   )
 }
