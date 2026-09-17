@@ -407,17 +407,6 @@ func (m *Manager) Attach(ctx context.Context, sessionID, tmuxName string, cols, 
 		return nil, fmt.Errorf("session: tmux session %s does not exist", tmuxName)
 	}
 
-	// A bell that rang while no client was attached is latched in the window
-	// flag, and the attach below clears that flag without replaying the byte.
-	// Read it first, and hand it to the detector as if it had come down the
-	// wire — the same read Reconcile makes at startup, covering every attach:
-	// the resources adoption runs between pane creation and this point, and an
-	// agent that asks within that window would otherwise read as working until
-	// something else spoke.
-	if info, gerr := m.tmux.Get(ctx, tmuxName); gerr == nil && info.Bell && m.OnSignals != nil {
-		m.OnSignals(Signals{SessionID: sessionID, Bell: true})
-	}
-
 	// Prime the ring with the pane's history, so that scrolling back reaches
 	// what happened before anybody was watching.
 	//
@@ -451,6 +440,21 @@ func (m *Manager) Attach(ctx context.Context, sessionID, tmuxName string, cols, 
 		// be rewritten -- every line would start where the previous one ended
 		// and the history would arrive as a diagonal.
 		ring.Write([]byte(strings.ReplaceAll(history, "\n", "\r\n") + "\r\n"))
+	}
+
+	// A plain `attach`, not `attach -d`: detaching other clients would be
+	// pointless (we are the only one) and actively harmful if a human is
+	// debugging the same socket from a shell.
+	// A bell that rang while no client was attached is latched in the window
+	// flag, and the attach below clears that flag without replaying the byte.
+	// Read it here — the last step before the attach, after the history
+	// capture — and hand it to the detector as if it had come down the wire:
+	// the same read Reconcile makes at startup, covering every attach. The
+	// resources adoption runs between pane creation and this point, and an
+	// agent that asks within that window would otherwise read as working
+	// until something else spoke.
+	if info, gerr := m.tmux.Get(ctx, tmuxName); gerr == nil && info.Bell && m.OnSignals != nil {
+		m.OnSignals(Signals{SessionID: sessionID, Bell: true})
 	}
 
 	// A plain `attach`, not `attach -d`: detaching other clients would be
