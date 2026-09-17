@@ -301,6 +301,19 @@ export interface SessionUsage {
   rss: number
   /** How many processes were found. 1 is a bare shell. */
   procs: number
+  /** The tree's busiest processes, sorted by cpuPercent then rss. Absent on
+   *  the first sample, same as cpuPercent -- there is nothing to diff yet. */
+  top?: ProcUsage[]
+}
+
+/** One process inside a session's tree. */
+export interface ProcUsage {
+  pid: number
+  start: number
+  name: string
+  rss: number
+  /** Share of the whole machine, cpuPercent's own convention, not top's. */
+  cpuPercent: number
 }
 
 export interface UsageSample {

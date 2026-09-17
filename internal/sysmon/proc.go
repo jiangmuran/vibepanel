@@ -3,6 +3,7 @@ package sysmon
 import (
 	"os"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,7 +33,31 @@ type Usage struct {
 	// Procs is how many processes were found under the pane, which is the
 	// number that says whether the reading means anything: 1 is a bare shell.
 	Procs int `json:"procs"`
+
+	// Top is the tree's busiest processes, for the question the aggregate
+	// above cannot answer: a session reading 80% could be one runaway build or
+	// three ordinary ones, and CPUPercent alone cannot tell those apart. Nil
+	// on the first sample, same as CPUPercent -- there is nothing to diff yet.
+	Top []ProcUsage `json:"top,omitempty"`
 }
+
+// ProcUsage is one process inside a session's tree.
+type ProcUsage struct {
+	PID   int    `json:"pid"`
+	Start uint64 `json:"start"`
+	Name  string `json:"name"`
+	RSS   uint64 `json:"rss"`
+	// CPUPercent is the same share-of-machine convention as Usage.CPUPercent,
+	// not top's. Zero on the first sample rather than absent, because a list
+	// exists to be sorted and a nil percentage sorts nowhere in particular.
+	CPUPercent float64 `json:"cpuPercent"`
+}
+
+// topProcs is how many of a tree's processes are worth naming. A pane with a
+// shell and one child rarely has more than a handful of things running under
+// it; five is enough to find the one responsible without turning every row
+// into a process listing.
+const topProcs = 5
 
 // TreeSampler reports per-process-tree usage, keeping the previous CPU
 // counters so a percentage can be expressed over the interval.
@@ -41,6 +66,12 @@ type TreeSampler struct {
 	prev   map[int]uint64 // pane pid -> cumulative ticks over its tree
 	prevAt time.Time
 	last   map[int]Usage
+
+	// prevProc is every pid's own ticks, not just pane totals -- what Top is
+	// diffed against. Keyed globally rather than per pane: a pid belongs to
+	// exactly one tree in a given sample, so there is no ambiguity, and one
+	// map read at the top of the table is cheaper than one per pane.
+	prevProc map[int]uint64
 }
 
 // clockTicks is USER_HZ, which is 100 on every Linux this will run on.
@@ -101,10 +132,23 @@ func (t *TreeSampler) Sample(paneOf map[string]int) map[string]Usage {
 		}
 		var total uint64
 		u := Usage{}
-		walk(pid, stats, children, func(st procStat) {
+		var procs []ProcUsage
+		walk(pid, stats, children, func(cpid int, st procStat) {
 			total += st.ticks
 			u.RSS += st.rss
 			u.Procs++
+
+			proc := ProcUsage{PID: cpid, Start: st.start, Name: st.comm, RSS: st.rss}
+			if haveprev && elapsed > 0 {
+				if before, ok := t.prevProc[cpid]; ok && st.ticks >= before {
+					used := float64(st.ticks-before) / clockTicks
+					proc.CPUPercent = used / elapsed / float64(runtime.NumCPU()) * 100
+					if proc.CPUPercent > 100 {
+						proc.CPUPercent = 100
+					}
+				}
+			}
+			procs = append(procs, proc)
 		})
 		ticks[pid] = total
 		if haveprev && elapsed > 0 {
@@ -116,13 +160,32 @@ func (t *TreeSampler) Sample(paneOf map[string]int) map[string]Usage {
 				}
 			}
 		}
+		// CPU first, RSS to break a tie -- a quiet tree still names something
+		// rather than an arbitrary /proc directory order, and a busy one names
+		// the process actually responsible rather than merely the largest.
+		sort.Slice(procs, func(i, j int) bool {
+			if procs[i].CPUPercent != procs[j].CPUPercent {
+				return procs[i].CPUPercent > procs[j].CPUPercent
+			}
+			return procs[i].RSS > procs[j].RSS
+		})
+		if len(procs) > topProcs {
+			procs = procs[:topProcs]
+		}
+		u.Top = procs
 		fresh[pid] = u
 		out[id] = u
+	}
+
+	nextProc := make(map[int]uint64, len(stats))
+	for pid, st := range stats {
+		nextProc[pid] = st.ticks
 	}
 
 	t.prev = ticks
 	t.prevAt = now
 	t.last = fresh
+	t.prevProc = nextProc
 	return out
 }
 
@@ -132,7 +195,7 @@ func (t *TreeSampler) Sample(paneOf map[string]int) map[string]Usage {
 // a process can be reparented between reading its stat and reading its
 // children's, and a cycle in the ppid graph is then representable even though
 // the kernel's real tree has none. Without this the walk does not terminate.
-func walk(root int, stats map[int]procStat, children map[int][]int, visit func(procStat)) {
+func walk(root int, stats map[int]procStat, children map[int][]int, visit func(pid int, st procStat)) {
 	seen := make(map[int]bool)
 	stack := []int{root}
 	for len(stack) > 0 {
@@ -146,7 +209,7 @@ func walk(root int, stats map[int]procStat, children map[int][]int, visit func(p
 		if !ok {
 			continue
 		}
-		visit(st)
+		visit(pid, st)
 		stack = append(stack, children[pid]...)
 	}
 }

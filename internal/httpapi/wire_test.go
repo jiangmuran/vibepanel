@@ -72,6 +72,13 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		{"HookStatus", hookStatusResponse{}},
 		{"FileListing", browse.Listing{}},
 		{"SystemSample", sysmon.Sample{}},
+		// The per-session and per-process usage the monitor's detail view
+		// draws. Uncovered until Top was added to it, for no better reason
+		// than nobody had touched this response since the pinning above
+		// was written.
+		{"UsageSample", usageResponse{}},
+		{"SessionUsage", sysmon.Usage{}},
+		{"ProcUsage", sysmon.ProcUsage{}},
 		{"Passkey", store.Credential{}},
 		// Launch profiles. The one row in the panel that can hold somebody
 		// else's credential, so a field this side sends and wire.ts does not

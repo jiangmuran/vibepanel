@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../../protocol/api'
 import type { SystemSample } from '../../protocol/wire'
 import { formatBytes } from './meter'
+import { Trend } from './Trend'
 import { t, useLang } from '../../i18n'
 
 /**
@@ -177,54 +178,6 @@ export function SystemStrip() {
         </div>
       )}
     </div>
-  )
-}
-
-/**
- * Two minutes of one number, as a line.
- *
- * Drawn as an SVG path rather than through a chart library, because it is
- * forty points in a box twelve pixels tall and a dependency for that is a
- * dependency to keep updated forever.
- *
- * Fixed to 0-100 rather than scaled to what has been seen. A CPU that has sat
- * between 3% and 5% would otherwise draw a dramatic mountain range, which is a
- * chart that lies about the thing it is for -- the question is whether the
- * machine is under pressure, and a flat line near the floor is the correct
- * answer to it.
- *
- * One reading is a dot and no reading is nothing: a single point makes no line,
- * and drawing a flat one across the whole width would claim two minutes of
- * history that does not exist yet.
- */
-function Trend({ values, tone }: { values: number[]; tone: string }) {
-  const W = 56
-  const H = 16
-  if (values.length < 2) {
-    return <span className="h-4 min-w-0 flex-1" aria-hidden />
-  }
-  // Stretched to the width rather than plotted against a fixed two-minute
-  // axis. Both were drawn and looked at: growing in from the left is more
-  // honest about how much history there is and, for the first two minutes
-  // after every page load, it is three short marks in the corner of the eye --
-  // which is worse at the only job this has. Nobody reads the x axis of a
-  // 56-pixel line; they read whether it is climbing.
-  const step = W / (values.length - 1)
-  const y = (v: number) => H - (Math.min(100, Math.max(0, v)) / 100) * (H - 1) - 0.5
-  const line = values.map((v, i) => `${i === 0 ? 'M' : 'L'}${(i * step).toFixed(1)},${y(v).toFixed(1)}`).join(' ')
-  return (
-    <svg
-      className="h-4 min-w-0 flex-1"
-      viewBox={`0 0 ${W} ${H}`}
-      preserveAspectRatio="none"
-      aria-hidden
-      focusable="false"
-    >
-      {/* The area under it, faint, so a low line still reads as a line rather
-          than as a stray rule across an empty box. */}
-      <path d={`${line} L${W},${H} L0,${H} Z`} fill={tone} opacity="0.15" />
-      <path d={line} fill="none" stroke={tone} strokeWidth="1" vectorEffect="non-scaling-stroke" />
-    </svg>
   )
 }
 

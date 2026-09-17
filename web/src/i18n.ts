@@ -397,6 +397,7 @@ const DICT = {
   'monitor.network': { zh: '网络', en: 'Network' },
   'monitor.netRate': { zh: '↓ {down} · ↑ {up}', en: '↓ {down} · ↑ {up}' },
   'monitor.netTotal': { zh: '开机以来', en: 'Since boot' },
+  'monitor.manage': { zh: '管理', en: 'Manage' },
 
   'dir.title': { zh: '选一个目录', en: 'Choose a directory' },
   'dir.here': { zh: '当前位置', en: 'Where you are' },

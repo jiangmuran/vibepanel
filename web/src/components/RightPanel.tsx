@@ -104,6 +104,10 @@ interface Props {
   onCollapse: () => void
   /** Opens the full-width token view. The panel is too narrow to hold it. */
   onOpenTokens: () => void
+  /** Opens Settings on this session's Resources row, from the monitor's
+   *  per-session detail. The panel can say which process is responsible;
+   *  ending or freezing it is the settings page's job, not this one's. */
+  onOpenResources: (sessionId: string) => void
   /** The selected session, which a share page's Preview pastes into. */
   currentSession: Session | null
   onPaste: (sessionId: string, text: string, submit: boolean) => void
@@ -444,7 +448,9 @@ export function RightPanel(props: Props) {
 
   /** What an opened block draws, and whether it has a full-width form. */
   const detailBody = (block: DetailBlock, full = false) => {
-    if (block === 'monitor') return <SystemMonitor sessions={props.sessions} density="wide" />
+    if (block === 'monitor') {
+      return <SystemMonitor sessions={props.sessions} density="wide" onManage={props.onOpenResources} />
+    }
     if (block === 'page') {
       if (!page || !project) return null
       const session =

@@ -69,7 +69,7 @@ func TestWalkTerminatesOnAReparentingRace(t *testing.T) {
 	done := make(chan uint64, 1)
 	go func() {
 		var total uint64
-		walk(10, stats, children, func(st procStat) { total += st.ticks })
+		walk(10, stats, children, func(_ int, st procStat) { total += st.ticks })
 		done <- total
 	}()
 
@@ -171,6 +171,52 @@ func TestCPUPercentNeedsTwoSamples(t *testing.T) {
 	}
 	if second.CPUPercent > 100 {
 		t.Errorf("%.2f%% of the machine", second.CPUPercent)
+	}
+}
+
+// The question CPUPercent alone cannot answer: a shell holding one busy child
+// and a dozen idle ones reads the same aggregate as a shell running one
+// moderately busy thing -- Top is what tells them apart.
+func TestTopNamesTheBusiestProcessInTheTree(t *testing.T) {
+	if _, err := os.Stat("/proc/self/stat"); err != nil {
+		t.Skip("no /proc here")
+	}
+	// A quiet parent holding one spinning child and one merely sleeping one,
+	// the shape of a pane where the aggregate is right but naming "the shell"
+	// as the culprit would be useless.
+	parent := exec.Command("sh", "-c", "sleep 30 & (while :; do :; done) & wait")
+	if err := parent.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = parent.Process.Kill()
+		_, _ = parent.Process.Wait()
+	})
+	pane := map[string]int{"s1": parent.Process.Pid}
+
+	var ts TreeSampler
+	// Give the shell time to fork both children before the first sample, so
+	// the window below measures both of them rather than starting mid-fork.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if ts.Sample(pane)["s1"].Procs >= 3 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	time.Sleep(1200 * time.Millisecond)
+	got := ts.Sample(pane)["s1"]
+	if len(got.Top) == 0 {
+		t.Fatal("Top is empty with three live processes to name")
+	}
+	if got.Top[0].CPUPercent <= 0 {
+		t.Errorf("busiest entry read %.2f%%, want the spinning child's share", got.Top[0].CPUPercent)
+	}
+	for i := 1; i < len(got.Top); i++ {
+		if got.Top[i].CPUPercent > got.Top[i-1].CPUPercent {
+			t.Errorf("Top is not sorted: entry %d (%.2f%%) beats entry %d (%.2f%%)",
+				i, got.Top[i].CPUPercent, i-1, got.Top[i-1].CPUPercent)
+		}
 	}
 }
 

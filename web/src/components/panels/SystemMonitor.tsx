@@ -1,15 +1,29 @@
 import { useEffect, useState } from 'react'
+import { ChevronDown, ChevronRight, SlidersHorizontal } from 'lucide-react'
 
 import { api } from '../../protocol/api'
-import type { Session, SessionUsage, SystemSample, UsageSample } from '../../protocol/wire'
+import type { ProcUsage, Session, SessionUsage, SystemSample, UsageSample } from '../../protocol/wire'
 import { t, useLang } from '../../i18n'
 import type { PanelDensity } from '../chrome'
 import { meterText, meterWidth, formatBytes, formatRate } from './meter'
+import { Trend, historyLength } from './Trend'
+import { sessionLabel } from '../label'
 import { StateDot } from '../StateDot'
 import { safeText } from '../text'
 
 /** How often the monitor refreshes while it is on screen. */
 const SAMPLE_MS = 2000
+
+/** Two minutes of readings at this panel's own sampling rate. */
+const HISTORY = historyLength(SAMPLE_MS)
+
+/**
+ * A session is called out as the likely cause rather than left for someone to
+ * spot in a sorted list. Machine CPU past this, and the busiest session's
+ * process list opens on its own -- "which one" is the question the moment the
+ * meter above it turns orange, not a click later.
+ */
+const CULPRIT_CPU = 60
 
 function duration(seconds: number): string {
   const d = Math.floor(seconds / 86400)
@@ -31,21 +45,22 @@ function duration(seconds: number): string {
  * says it exactly. A bar that only changes hue is unreadable to a good number
  * of people and useless in a screenshot.
  *
- * Tighter than it was — the label and the figure share a line with the bar
- * under them and the detail under that, at 2px of separation rather than 12.
- * Four of these used to fill a 500px column on their own, which is most of
- * 「排版满一点」: the panel was not short of information, it was spending its
- * height on gaps between four numbers.
+ * The line under the bar is the same fact over the last two minutes rather
+ * than only now. Opening this out of the strip used to lose it -- the strip
+ * drew a trend and the detail behind it drew four still numbers, which was
+ * information the click removed rather than added.
  */
 function Meter({
   label,
   value,
   detail,
+  history,
   testid,
 }: {
   label: string
   value: number | null
   detail: string
+  history: number[]
   testid?: string
 }) {
   const pct = meterWidth(value)
@@ -60,9 +75,27 @@ function Meter({
       <div className="vp-bar mt-1 h-1.5">
         <span className="vp-bar-fill" style={{ width: `${pct}%`, background: tone }} />
       </div>
+      <div className="mt-1 flex h-3 items-center">
+        <Trend values={history} tone={value === null ? 'var(--vp-state-dead)' : tone} />
+      </div>
       <div className="tabular truncate text-vp-xs text-ink-2" title={detail}>
         {detail}
       </div>
+    </div>
+  )
+}
+
+/** One process inside a session's tree, shown when its row is opened out. */
+function ProcRow({ proc }: { proc: ProcUsage }) {
+  return (
+    <div className="flex min-w-0 items-center gap-2 text-vp-xs" data-testid="session-top-proc">
+      <span className="min-w-0 flex-1 truncate text-ink-2" title={safeText(proc.name)}>
+        {safeText(proc.name)} <span className="text-ink-3">pid {proc.pid}</span>
+      </span>
+      <span className="tabular w-10 shrink-0 text-right text-ink">
+        {proc.cpuPercent.toFixed(proc.cpuPercent < 10 ? 1 : 0)}%
+      </span>
+      <span className="tabular w-16 shrink-0 text-right text-ink-2">{formatBytes(proc.rss)}</span>
     </div>
   )
 }
@@ -83,17 +116,27 @@ function Meter({
  * question: 4% CPU on something that went to `waiting` two hours ago is a very
  * different fact from 4% on something that started working ten seconds ago, and
  * the dot alone cannot tell you which.
+ *
+ * Opens to name the process, not only the session. A session reading 80% could
+ * be one runaway build or three ordinary ones, and CPUPercent alone cannot
+ * tell those apart -- `usage.top` can.
  */
 function SessionRow({
   session,
   usage,
   now,
   density,
+  open,
+  onToggle,
+  onManage,
 }: {
   session: Session
   usage: SessionUsage
   now: number
   density: PanelDensity
+  open: boolean
+  onToggle: () => void
+  onManage?: (id: string) => void
 }) {
   const pct = Math.max(0, Math.min(100, usage.cpuPercent))
   const tone =
@@ -101,12 +144,21 @@ function SessionRow({
   // Sessions restored before the panel started have a change time from before
   // this browser was open; a negative dwell is a clock skew, not a fact.
   const dwell = Math.max(0, now - session.stateChangedAt)
+  const name = sessionLabel(session)
+  const Chevron = open ? ChevronDown : ChevronRight
   return (
-    <div className="py-[3px]" data-testid="session-usage">
-      <div className="flex items-baseline gap-1.5 text-vp-sm">
+    <div className="py-[3px]" data-testid="session-usage" data-session={session.id}>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        data-testid="session-usage-toggle"
+        className="vp-press flex w-full min-w-0 items-center gap-1.5 text-left"
+      >
+        <Chevron size={11} className="shrink-0 text-ink-3" aria-hidden="true" />
         <StateDot state={session.state} size={9} exited={session.exited} exitStatus={session.exitStatus} />
-        <span className="min-w-0 flex-1 truncate text-ink" title={safeText(session.title)}>
-          {safeText(session.title)}
+        <span className="min-w-0 flex-1 truncate text-vp-sm text-ink" title={name}>
+          {name}
         </span>
         {/* Dwell is the first thing dropped when the column narrows: it is the
             slowest-moving of the four and the only one that is about the agent
@@ -127,12 +179,34 @@ function SessionRow({
         >
           ×{usage.procs}
         </span>
-        <span className="tabular w-9 shrink-0 text-right text-ink">{pct.toFixed(pct < 10 ? 1 : 0)}%</span>
-        <span className="tabular w-16 shrink-0 text-right text-ink-2">{formatBytes(usage.rss)}</span>
-      </div>
-      <div className="vp-bar mt-0.5 h-1">
+        <span className="tabular w-9 shrink-0 text-right text-vp-sm text-ink">
+          {pct.toFixed(pct < 10 ? 1 : 0)}%
+        </span>
+        <span className="tabular w-16 shrink-0 text-right text-vp-sm text-ink-2">{formatBytes(usage.rss)}</span>
+      </button>
+      <div className="ml-[15px] mt-0.5 vp-bar h-1">
         <span className="vp-bar-fill" style={{ width: `${pct}%`, background: tone }} />
       </div>
+      {open && (
+        <div className="ml-[15px] mt-1.5 space-y-1" data-testid="session-top">
+          {usage.top && usage.top.length > 0 ? (
+            usage.top.map((p) => <ProcRow key={`${p.pid}-${p.start}`} proc={p} />)
+          ) : (
+            <p className="text-vp-xs text-ink-3">{t('monitor.sampling')}</p>
+          )}
+          {onManage && (
+            <button
+              type="button"
+              data-testid="session-manage"
+              onClick={() => onManage(session.id)}
+              className="vp-outline mt-1 inline-flex items-center gap-1 text-vp-xs"
+            >
+              <SlidersHorizontal size={11} aria-hidden="true" />
+              {t('monitor.manage')}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -150,9 +224,12 @@ function Figure({ label, value, title }: { label: string; value: string; title?:
 export function SystemMonitor({
   sessions,
   density = 'narrow',
+  onManage,
 }: {
   sessions: Session[]
   density?: PanelDensity
+  /** Opens Settings on this session's Resources row, to act on what was found here. */
+  onManage?: (id: string) => void
 }) {
   useLang()
   const [sample, setSample] = useState<SystemSample | null>(null)
@@ -163,6 +240,13 @@ export function SystemMonitor({
   // told, which React's purity rule refuses; and one clock means fifteen rows
   // cannot disagree about what time it is. Same reason GitPanel keeps one.
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000))
+  // Oldest first, one series per meter. See Trend for why network is raw
+  // bytes/sec rather than a percentage.
+  const [history, setHistory] = useState<Record<string, number[]>>({})
+  // A session's open/closed state survives its own re-renders because it is
+  // keyed by id rather than position; a row a person opened does not close
+  // itself when a slower session above it changes rank.
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     // Self-scheduling, and only while this panel is mounted: a monitor nobody
@@ -180,6 +264,18 @@ export function SystemMonitor({
           setUsage(use)
           setNow(Math.floor(Date.now() / 1000))
           setError(null)
+          setHistory((h) => {
+            const memPct = next.memTotal > 0 ? ((next.memTotal - next.memAvailable) / next.memTotal) * 100 : 0
+            const diskPct = next.diskTotal > 0 ? ((next.diskTotal - next.diskFree) / next.diskTotal) * 100 : 0
+            const push = (series: number[] | undefined, v: number) =>
+              [...(series ?? []), v].slice(-HISTORY)
+            return {
+              cpu: push(h.cpu, next.cpuPercent ?? 0),
+              mem: push(h.mem, memPct),
+              disk: push(h.disk, diskPct),
+              net: push(h.net, (next.netRxRate ?? 0) + (next.netTxRate ?? 0)),
+            }
+          })
         }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e))
@@ -220,19 +316,35 @@ export function SystemMonitor({
   const sessionCpu = measured.reduce((n, r) => n + r.usage.cpuPercent, 0)
   const sessionRss = measured.reduce((n, r) => n + r.usage.rss, 0)
 
+  // The busiest session opens on its own once the machine is genuinely under
+  // pressure, so the answer to "which one" is on screen the moment the CPU
+  // meter turns orange rather than a click later. Anyone who closes it stays
+  // closed until they reopen it themselves -- `expanded` always wins once set.
+  const culpritID =
+    sample.cpuReadable && (sample.cpuPercent ?? 0) >= CULPRIT_CPU && measured.length > 0
+      ? measured[0].session.id
+      : null
+
+  const netCombined =
+    sample.netRxRate !== null && sample.netTxRate !== null ? sample.netRxRate + sample.netTxRate : null
+  const netMax = Math.max(1024, ...(history.net ?? []))
+  const netScaled = (history.net ?? []).map((v) => Math.min(100, (v / netMax) * 100))
+
   return (
-    <div className="px-3 py-2" data-testid="system-monitor">
+    <div className="@container px-3 py-2" data-testid="system-monitor">
       {/* Two columns above 380px and one below, which is the whole of what the
-          extra width buys. Four meters stacked in a 500px column is four
-          numbers and 340 pixels of nothing beside them; two by two puts the
-          per-session list — the thing this panel exists for — above the fold
-          instead of below it. */}
-      <div className={`vp-rows grid gap-x-4 gap-y-2 ${density === 'wide' ? 'grid-cols-2' : 'grid-cols-1'}`}>
+          extra width buys in the side panel; four once there is a whole window
+          to spend on it, which is what the "full" state over-the-window is
+          for and the narrow column never reaches. */}
+      <div
+        className={`vp-rows grid gap-x-4 gap-y-2 ${density === 'wide' ? 'grid-cols-2' : 'grid-cols-1'} @3xl:grid-cols-4`}
+      >
         <Meter
           label={t('monitor.cpu')}
           // The first sample has nothing to difference against, so it says so
           // rather than showing a zero that looks like an idle machine.
           value={sample.cpuPercent}
+          history={history.cpu ?? []}
           detail={
             !sample.cpuReadable
               ? // "sampling…" promises an answer. On a machine with no
@@ -255,6 +367,7 @@ export function SystemMonitor({
         <Meter
           label={t('monitor.memory')}
           value={sample.memTotal ? (memUsed / sample.memTotal) * 100 : null}
+          history={history.mem ?? []}
           detail={
             sample.memTotal
               ? t('monitor.of', { used: formatBytes(memUsed), total: formatBytes(sample.memTotal) })
@@ -269,12 +382,17 @@ export function SystemMonitor({
           <Meter
             label={t('monitor.swap')}
             value={(swapUsed / sample.swapTotal) * 100}
+            // Swap has no trend of its own tracked yet; an empty series draws
+            // nothing rather than borrowing memory's, which would be a second
+            // meter claiming to be a first.
+            history={[]}
             detail={t('monitor.of', { used: formatBytes(swapUsed), total: formatBytes(sample.swapTotal) })}
           />
         )}
         <Meter
           label={t('monitor.disk')}
           value={sample.diskTotal ? (diskUsed / sample.diskTotal) * 100 : null}
+          history={history.disk ?? []}
           detail={
             sample.diskTotal
               ? t('monitor.free', { size: formatBytes(sample.diskFree) })
@@ -335,6 +453,15 @@ export function SystemMonitor({
                   : t('monitor.netRate', { down: formatRate(sample.netRxRate), up: formatRate(sample.netTxRate) })
               }
             />
+            {/* Auto-scaled to its own recent peak, same reasoning as the
+                strip's network row: throughput has no ceiling a fixed 0-100
+                could measure it against. */}
+            <div className="mt-0.5 flex h-3 items-center">
+              <Trend
+                values={netScaled}
+                tone={netCombined === null ? 'var(--vp-state-dead)' : 'var(--vp-accent)'}
+              />
+            </div>
             <Figure
               label={t('monitor.netTotal')}
               value={t('monitor.netRate', {
@@ -378,6 +505,14 @@ export function SystemMonitor({
                 usage={u}
                 now={now}
                 density={density}
+                open={expanded[session.id] ?? session.id === culpritID}
+                onToggle={() =>
+                  setExpanded((e) => ({
+                    ...e,
+                    [session.id]: !(e[session.id] ?? session.id === culpritID),
+                  }))
+                }
+                onManage={onManage}
               />
             ))}
           </div>

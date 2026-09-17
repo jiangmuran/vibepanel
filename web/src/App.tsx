@@ -1726,6 +1726,10 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           onWidthChange={setRightSize}
           onCollapse={() => setRightOpen(false)}
           onOpenTokens={() => setTokensOpen(true)}
+          onOpenResources={(id) => {
+            setFocusSession(id)
+            setSettingsAt('usage')
+          }}
           currentSession={current}
           onPaste={pasteToSession}
           previewAsk={previewAsk}

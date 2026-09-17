@@ -23726,3 +23726,41 @@ had. `failureDetail` now prefers stderr (where a harness says "not logged in"
 and "unknown option") and, when it is empty, parses the stdout JSON and carries
 the reason into the error: "claude: exit status 1: You've hit your weekly limit
 · resets Sep 20, 9pm".
+
+## 2026-09-17 — The monitor's detail and full states, and which process it is
+
+「重构一下监控面板的展开和完全展开态 现在少了好多东西 以及cpu满了我看实际上也找不到
+是哪个session 以及详细信息」. Three separate gaps, not one:
+
+- **Opening the block lost the trend.** The strip draws a line under each of
+  its three numbers; the detail behind it drew four still meters and nothing
+  moving. `Trend` moved out of `SystemStrip.tsx` into its own file so the full
+  panel could draw the same line under CPU, memory and disk, and under the
+  network figure, at its own sampling rate — a click was making information
+  disappear rather than adding to it.
+- **The full-screen state was the open state in a bigger box.** `detailBody`
+  already had a `full` argument; the monitor branch never read it. The meter
+  grid now goes to four columns past `@3xl` on its own container query rather
+  than needing a boolean threaded down for it, which is the AGENTS.md-preferred
+  shape and meant nothing else had to change to get there.
+- **CPUPercent could not name a process.** A session reading 80% could be one
+  runaway build or three ordinary ones, and the aggregate cannot tell those
+  apart. `TreeSampler` now keeps a second previous-ticks map, keyed by pid
+  rather than by pane, and diffs every process in the tree the same way it
+  already diffed the tree's total — `Usage.Top` is the five busiest, CPU first
+  and RSS to break a tie. The busiest session's list opens on its own once
+  machine CPU passes 60%, and stays exactly as a person left it once they have
+  touched it themselves. A "Manage" button on the open row hands off to
+  Settings → Resources on that session, mirroring `ResourceAlertBar`'s own
+  `onDetails` — ending or freezing a process is that page's job, not this
+  read-only one's.
+
+Also fixed while in `SessionRow`: it read `session.title` directly instead of
+`sessionLabel`, so a session with no title yet — the ordinary state of a fresh
+shell before anything sets `pane_title` — drew a blank row. Blank was
+plausibly the whole reason "which session" did not resolve to an answer by
+sight.
+
+`UsageSample`, `SessionUsage` and the new `ProcUsage` were not in
+`TestTypeScriptRowsMatchWhatIsSent` either, the same gap `ShareTrend` turned
+out to have last time. Pinned along with everything else here.
