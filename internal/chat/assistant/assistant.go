@@ -407,9 +407,29 @@ func (r *Runner) run(ctx context.Context, args []string) ([]byte, error) {
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("%s timed out after %s%s", r.cfg.Harness, r.cfg.Timeout, stderrTail(stderr.String()))
 		}
-		return nil, fmt.Errorf("%s: %w%s", r.cfg.Harness, err, stderrTail(stderr.String()))
+		return nil, fmt.Errorf("%s: %w%s", r.cfg.Harness, err, failureDetail(stdout.Bytes(), stderr.String()))
 	}
 	return stdout.Bytes(), nil
+}
+
+// failureDetail says why a harness failed. Claude Code writes its reason into
+// its stdout JSON -- "You've hit your weekly limit · resets Sep 20, 9pm"
+// arrives there with is_error true and an empty stderr -- so reading stderr
+// alone surfaced "claude: exit status 1" and the person on the phone had
+// nothing they could act on. stderr still wins when the harness wrote one,
+// because that is where a harness says "not logged in" and "unknown option".
+func failureDetail(stdout []byte, stderr string) string {
+	if tail := stderrTail(stderr); tail != "" {
+		return tail
+	}
+	var out struct {
+		IsError bool   `json:"is_error"`
+		Result  string `json:"result"`
+	}
+	if err := json.Unmarshal(stdout, &out); err == nil && out.IsError && strings.TrimSpace(out.Result) != "" {
+		return stderrTail(out.Result)
+	}
+	return ""
 }
 
 func stderrTail(s string) string {

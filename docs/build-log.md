@@ -23654,3 +23654,75 @@ While touching `shareTrendPoint`, found it was never in
 `TestTypeScriptRowsMatchWhatIsSent` or `TestTheSDKTypesMatchTheSnapshot` at
 all — an existing gap, not something this change opened, but one line away
 from the struct being changed. Pinned it alongside `shareMachine`.
+
+## 2026-09-17 — Claude accounts
+
+A launch profile could already set `CLAUDE_CONFIG_DIR`, and the entry above is
+what happened when somebody did: the tilde. The bigger problem was what worked
+as intended. The directory replaces `~/.claude` whole, so the session had no
+hooks, no skills, no `--resume` and no trust, and the settings page, which reads
+`~/.claude`, said hooks were installed.
+
+Accounts are now a thing the panel makes: `internal/claudeaccount`, a row in
+`claude_accounts`, a directory under the data directory linked back into
+`~/.claude`, and a `claudeAccountId` on a profile and on the session it starts.
+`docs/design.md`, "Claude accounts share everything but the login", has the
+design; what follows is what testing turned up on the way.
+
+- **Measured first, in a throwaway tmux socket with a fake API key** so no
+  real login was involved: writes through file links, `projects/` as a
+  directory link, cross-account `--resume`, hooks and a skill through links,
+  `/model` writing the shared `settings.json`, a key added to `.claude.json`
+  while a session ran surviving its exit, and writes through a *dangling* file
+  link creating the target. The last one decided that missing files are linked
+  and missing directories are created in `~/.claude`: a dangling directory link
+  is not followed by `mkdir`.
+- **`sessions/`, `daemon/` and `jobs/` exist**, hold per-login keys and
+  background agents, and are why the design lists what is shared rather than
+  what is private.
+- **macOS names the Keychain entry after the directory's path.** Read out of
+  the binary, not measured on a Mac. It is why the directory is derived from the
+  id and never stored, and why removal logs out first.
+- **`CLAUDE_SECURESTORAGE_CONFIG_DIR` was found and not used.** Set alone,
+  `claude auth status` reports `~/.claude` and not logged in. Undocumented, and
+  it leaves one `.claude.json` for every login.
+- **Restore reads the account from the session, not the profile**, and refuses
+  when it is gone. The profile's environment keeps its old rule (looked up
+  again, dropped if deleted); an account is whose subscription a conversation
+  goes to, and dropping it would be a restore under a different person's login.
+  The refusal happens before the scrollback archive is written.
+- **A profile with an account may not carry a credential** —
+  `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` with a
+  value — or set either config directory variable. Checked after secrets are
+  merged, so a stored key the browser sends back blank still counts.
+- **Display preferences are not copied into an account's `.claude.json`.**
+  The first version copied `theme`; the end-to-end run found it gone again,
+  because 2.1.274 moves `theme`, `editorMode` and the rest into `settings.json`
+  at startup. That file is shared, so the copy was a write per launch that
+  Claude Code undid.
+- **End to end, on a built binary** with a throwaway HOME, data directory and
+  tmux socket and a real `claude` (fake API key): an account and a profile made
+  through the settings page, a session from the profile with
+  `CLAUDE_CONFIG_DIR` at the account, the hook reporting its state to the panel
+  through the shared `settings.json`, the transcript and the prompt landing in
+  the shared `~/.claude`, and the delete refused while the profile uses it.
+- **Status is `claude auth status --json`**, asked with those three variables
+  blanked, because the panel's own environment is not the pane's and a key
+  exported there would read as every account being logged in.
+- **Not done:** token accounting for isolated accounts (the scanner has one
+  root per tool; the page says so), syncing trust back into `~/.claude.json`,
+  and a sign-in button, since signing in is Claude Code's flow in a terminal the
+  panel already has.
+
+
+## 2026-09-17 — A failed harness says why, not just that it failed
+
+「助手没答上来：claude: exit status 1」. The assistant was answering from a
+subscription that had hit its weekly limit, and Claude Code says that on its
+stdout — a result JSON with `is_error` true and the sentence a person needs in
+`result` — while exiting 1 with an empty stderr. The runner read only stderr on
+failure, so the message reached nobody and the exit status was all the phone
+had. `failureDetail` now prefers stderr (where a harness says "not logged in"
+and "unknown option") and, when it is empty, parses the stdout JSON and carries
+the reason into the error: "claude: exit status 1: You've hit your weekly limit
+· resets Sep 20, 9pm".

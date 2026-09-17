@@ -845,3 +845,35 @@ func TestContextCancellationIsNotRetried(t *testing.T) {
 		t.Errorf("thread after a cancelled call = %q; a cancel is not a failed resume", got)
 	}
 }
+
+func TestAFailedHarnessSaysWhyOnItsStdout(t *testing.T) {
+	f := newFake(t, "claude", claudeHelp)
+	// What the real one does on a subscription limit: exit 1, nothing on
+	// stderr, and the only human-readable reason in the stdout JSON.
+	f.set("exit", "1")
+	f.set("reply", `{"result":"You've hit your weekly limit · resets Sep 20, 9pm (America/Los_Angeles)","is_error":true}`)
+	dir := filepath.Join(t.TempDir(), "assistant")
+	cfg := Config{Harness: "claude", Binary: f.bin, WorkDir: dir, SelfBinary: "/x", Env: []string{"FAKE_OUT=" + f.dir}, Timeout: 10 * time.Second}
+	r, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = r.Translate(context.Background(), chat.AssistantRequest{Text: "list", Lang: "en"})
+	if err == nil {
+		t.Fatal("the harness failed and the runner did not say so")
+	}
+	if !strings.Contains(err.Error(), "weekly limit") || !strings.Contains(err.Error(), "resets Sep 20") {
+		t.Fatalf("the reason was lost: %v", err)
+	}
+
+	// stderr still wins when there is one: that is where "not logged in"
+	// and "unknown option" are said.
+	f.set("stderr", "Please run /login to authenticate")
+	_, _, err = r.Translate(context.Background(), chat.AssistantRequest{Text: "list", Lang: "en"})
+	if err == nil || !strings.Contains(err.Error(), "/login") {
+		t.Fatalf("a stderr reason was buried: %v", err)
+	}
+	if strings.Contains(err.Error(), "weekly limit") {
+		t.Fatalf("the stdout reason was shown beside stderr's: %v", err)
+	}
+}

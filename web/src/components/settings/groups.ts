@@ -67,6 +67,7 @@ export const GROUP_TITLE: Record<SettingsGroup, Key> = {
  */
 export const SETTINGS_SECTIONS = [
   'timezone',
+  'accounts',
   'profiles',
   'reporting',
   'tune',
@@ -99,6 +100,9 @@ export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]
  * deep link that opens the wrong group, and nothing on screen says so.
  */
 export const SECTION_GROUP: Record<SettingsSection, SettingsGroup> = {
+  // Above profiles, because a profile is where an account is chosen: it is
+  // made here first.
+  accounts: 'sessions',
   profiles: 'sessions',
   reporting: 'sessions',
   // Beside reporting, because both edit the same file in somebody else's home

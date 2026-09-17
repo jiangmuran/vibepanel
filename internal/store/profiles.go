@@ -83,6 +83,9 @@ type LaunchProfile struct {
 	Command []string `json:"command"`
 	// Env is the variables to start it with, in the order they are shown.
 	Env []LaunchEnvVar `json:"env"`
+	// ClaudeAccountID starts the command under a Claude account the panel
+	// manages (internal/claudeaccount) instead of ~/.claude. Empty for none.
+	ClaudeAccountID string `json:"claudeAccountId"`
 	// Overridden marks a built-in that has been edited: the row is what you
 	// see, the catalogue entry is what it came from, and deleting the row puts
 	// the original back.
@@ -298,10 +301,48 @@ func ValidateLaunchProfile(p LaunchProfile) (LaunchProfile, error) {
 		env = append(env, clean)
 	}
 	p.Env = env
+	p.ClaudeAccountID = strings.TrimSpace(p.ClaudeAccountID)
+	if p.ClaudeAccountID != "" {
+		for _, v := range p.Env {
+			if err := accountEnvConflict(v); err != nil {
+				return p, err
+			}
+		}
+	}
 	if p.Command == nil {
 		p.Command = []string{}
 	}
 	return p, nil
+}
+
+// accountEnvConflict refuses a variable that would make a profile's Claude
+// account decoration.
+//
+// The account works by setting CLAUDE_CONFIG_DIR, so a profile setting it too
+// is two answers to one question; LaunchEnv's ordering would make the account
+// win, and the form would go on showing a value that does nothing.
+// CLAUDE_SECURESTORAGE_CONFIG_DIR moves where the login is read from
+// independently of that directory (measured on 2.1.274: set alone, `claude
+// auth status` reports ~/.claude and not logged in), so it would detach the
+// account from its own login.
+//
+// The three credentials are refused only with a value, because the built-in
+// Claude Code profile names two of them empty and an empty value is not
+// passed. With a value, Claude Code uses the key or token in preference to the
+// login -- the session starts, says nothing, and bills something other than
+// the account the picker named.
+func accountEnvConflict(v LaunchEnvVar) error {
+	switch v.Name {
+	case "CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR":
+		return fmt.Errorf("%s is what the Claude account sets; a profile with an account "+
+			"cannot set it too", v.Name)
+	case "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN":
+		if v.Value != "" || v.HasValue {
+			return fmt.Errorf("%s would be used instead of the Claude account's login; "+
+				"clear it or choose no account", v.Name)
+		}
+	}
+	return nil
 }
 
 // EnvPairs renders the variables to hand tmux, as "K=V".
@@ -421,9 +462,9 @@ func (d *DB) CreateLaunchProfile(ctx context.Context, id string, p LaunchProfile
 		return LaunchProfile{}, err
 	}
 	_, err = d.sql.ExecContext(ctx,
-		`INSERT INTO launch_profiles (id, name, command, env, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		p.ID, p.Name, cmd, env, p.CreatedAt, p.UpdatedAt)
+		`INSERT INTO launch_profiles (id, name, command, env, claude_account_id, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		p.ID, p.Name, cmd, env, p.ClaudeAccountID, p.CreatedAt, p.UpdatedAt)
 	if err != nil {
 		return LaunchProfile{}, fmt.Errorf("store: insert launch profile: %w", err)
 	}
@@ -437,8 +478,9 @@ func (d *DB) UpdateLaunchProfile(ctx context.Context, id string, p LaunchProfile
 		return err
 	}
 	return d.exec1(ctx,
-		`UPDATE launch_profiles SET name = ?, command = ?, env = ?, updated_at = ? WHERE id = ?`,
-		p.Name, cmd, env, now(), id)
+		`UPDATE launch_profiles SET name = ?, command = ?, env = ?, claude_account_id = ?,
+		 updated_at = ? WHERE id = ?`,
+		p.Name, cmd, env, p.ClaudeAccountID, now(), id)
 }
 
 // DeleteLaunchProfile removes one.
@@ -515,7 +557,7 @@ func (d *DB) ListLaunchProfiles(ctx context.Context) ([]LaunchProfile, error) {
 
 func (d *DB) listLaunchRows(ctx context.Context) ([]LaunchProfile, error) {
 	rows, err := d.sql.QueryContext(ctx, `
-		SELECT id, name, command, env, created_at, updated_at
+		SELECT id, name, command, env, claude_account_id, created_at, updated_at
 		FROM launch_profiles ORDER BY name COLLATE NOCASE ASC, created_at ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("store: list launch profiles: %w", err)
@@ -545,7 +587,7 @@ func (d *DB) GetLaunchProfile(ctx context.Context, id string) (LaunchProfile, er
 		}
 	}
 	row := d.sql.QueryRowContext(ctx, `
-		SELECT id, name, command, env, created_at, updated_at
+		SELECT id, name, command, env, claude_account_id, created_at, updated_at
 		FROM launch_profiles WHERE id = ?`, id)
 	p, err := scanLaunch(row)
 	if err != nil {
@@ -557,7 +599,7 @@ func (d *DB) GetLaunchProfile(ctx context.Context, id string) (LaunchProfile, er
 func scanLaunch(row scanner) (LaunchProfile, error) {
 	var p LaunchProfile
 	var cmd, env string
-	err := row.Scan(&p.ID, &p.Name, &cmd, &env, &p.CreatedAt, &p.UpdatedAt)
+	err := row.Scan(&p.ID, &p.Name, &cmd, &env, &p.ClaudeAccountID, &p.CreatedAt, &p.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return LaunchProfile{}, ErrNotFound
 	}
@@ -738,12 +780,13 @@ func (d *DB) UpsertLaunchProfile(ctx context.Context, id string, p LaunchProfile
 	}
 	n := now()
 	_, err = d.sql.ExecContext(ctx, `
-		INSERT INTO launch_profiles (id, name, command, env, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO launch_profiles (id, name, command, env, claude_account_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 		  name = excluded.name, command = excluded.command,
-		  env = excluded.env, updated_at = excluded.updated_at`,
-		id, p.Name, cmd, env, n, n)
+		  env = excluded.env, claude_account_id = excluded.claude_account_id,
+		  updated_at = excluded.updated_at`,
+		id, p.Name, cmd, env, p.ClaudeAccountID, n, n)
 	if err != nil {
 		return fmt.Errorf("store: upsert launch profile: %w", err)
 	}

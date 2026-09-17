@@ -3,7 +3,7 @@ import { Copy, GripVertical, Pencil, Plus, RotateCcw, Sliders, Trash2, Wand2 } f
 
 import { useDragList } from '../hooks/useDragList'
 
-import type { LaunchEnvVar, LaunchProfile } from '../protocol/wire'
+import type { ClaudeAccount, LaunchEnvVar, LaunchProfile } from '../protocol/wire'
 import { api } from '../protocol/api'
 import { envCount, envTemplateFor, looksSecret, profileLabel } from './profiles'
 import { joinArgv, splitArgv } from '../shell'
@@ -18,6 +18,7 @@ interface Draft {
   name: string
   command: string
   env: LaunchEnvVar[]
+  claudeAccountId: string
 }
 
 function draftOf(p: LaunchProfile, id: string, name: string): Draft {
@@ -29,10 +30,11 @@ function draftOf(p: LaunchProfile, id: string, name: string): Draft {
     // empty one on the way back means "keep the stored value", which is what
     // stops renaming a profile from wiping every key in it.
     env: p.env.map((v) => ({ ...v })),
+    claudeAccountId: p.claudeAccountId ?? '',
   }
 }
 
-const EMPTY: Draft = { id: '', name: '', command: '', env: [] }
+const EMPTY: Draft = { id: '', name: '', command: '', env: [], claudeAccountId: '' }
 
 /**
  * Making and editing launch profiles.
@@ -57,10 +59,22 @@ export function LaunchProfiles() {
   const [profiles, setProfiles] = useState<LaunchProfile[]>([])
   const [draft, setDraft] = useState<Draft | null>(null)
   const [error, setError] = useState('')
-
+  // For the account picker and the tag on a row. Fetched again whenever the
+  // editor opens: the accounts section above is where one is made, a moment
+  // before somebody comes down here to use it.
+  const [accounts, setAccounts] = useState<ClaudeAccount[]>([])
 
   const reload = async () => {
     setProfiles(await api.launchProfiles())
+  }
+
+  const loadAccounts = () => {
+    api.claudeAccounts().then(setAccounts, () => setAccounts([]))
+  }
+  useEffect(loadAccounts, [])
+  const openEditor = (d: Draft) => {
+    loadAccounts()
+    setDraft(d)
   }
 
   // The order is the owner's, and it covers built-ins too -- which is why it
@@ -100,6 +114,7 @@ export function LaunchProfiles() {
       name: draft.name,
       command: splitArgv(draft.command),
       env: draft.env,
+      claudeAccountId: draft.claudeAccountId,
     }
     try {
       if (draft.id) await api.updateLaunchProfile(draft.id, body)
@@ -203,6 +218,11 @@ export function LaunchProfiles() {
               all was that the catalogue a release ships would quietly stop
               being the catalogue people have; this is the part that stops it
               being quiet. */}
+          {p.claudeAccountId && (
+            <span className="shrink-0 truncate text-vp-sm text-ink-2" data-testid="profile-account">
+              {safeText(accounts.find((a) => a.id === p.claudeAccountId)?.name ?? t('acct.gone'))}
+            </span>
+          )}
           {p.overridden && (
             <span className="shrink-0 text-vp-sm text-ink-3">{t('profile.overriddenTag')}</span>
           )}
@@ -211,7 +231,7 @@ export function LaunchProfiles() {
           )}
           <button
             type="button"
-            onClick={() => setDraft(draftOf(p, '', t('profile.copySuffix', { name: profileLabel(p) })))}
+            onClick={() => openEditor(draftOf(p, '', t('profile.copySuffix', { name: profileLabel(p) })))}
             title={t('profile.duplicate')}
             data-testid="profile-duplicate"
             className="vp-control vp-press"
@@ -220,7 +240,7 @@ export function LaunchProfiles() {
           </button>
           <button
             type="button"
-            onClick={() => setDraft(draftOf(p, p.id, profileLabel(p)))}
+            onClick={() => openEditor(draftOf(p, p.id, profileLabel(p)))}
             title={t('profile.edit')}
             data-testid="profile-edit"
             className="vp-control vp-press"
@@ -242,7 +262,7 @@ export function LaunchProfiles() {
       {!draft && (
         <button
           type="button"
-          onClick={() => setDraft({ ...EMPTY })}
+          onClick={() => openEditor({ ...EMPTY })}
           data-testid="profile-new"
           className="vp-press mt-3 flex items-center gap-1.5 rounded-vp px-3 py-1.5 text-vp-base"
           style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
@@ -277,6 +297,7 @@ export function LaunchProfiles() {
           key={draft.id || 'new'}
           draft={draft}
           catalogue={profiles}
+          accounts={accounts}
           onChange={setDraft}
           onSave={() => void save()}
           onCancel={() => setDraft(null)}
@@ -292,6 +313,7 @@ function Editor({
   onSave,
   onCancel,
   catalogue,
+  accounts,
 }: {
   draft: Draft
   onChange: (d: Draft) => void
@@ -299,6 +321,7 @@ function Editor({
   onCancel: () => void
   /** What the server offers, which is where the variable names come from. */
   catalogue: LaunchProfile[]
+  accounts: ClaudeAccount[]
 }) {
   useLang()
   // Recomputed as the command is typed, so it appears the moment somebody
@@ -367,6 +390,31 @@ function Editor({
         />
       </div>
       <p className="mb-3 text-vp-sm text-ink-3">{t('profile.commandHint')}</p>
+
+      {/* Only where it means something: a command that runs claude, or a
+          profile that already has an account, so one set earlier and a
+          command changed since does not become invisible and stay applied. */}
+      {(runsClaude(draft.command) || draft.claudeAccountId !== '') && (
+        <label className="mb-3 flex flex-wrap items-center gap-2 text-vp-base text-ink-2">
+          {t('acct.pick')}
+          <select
+            value={draft.claudeAccountId}
+            onChange={(e) => onChange({ ...draft, claudeAccountId: e.target.value })}
+            data-testid="profile-account-select"
+            className="min-w-0 rounded-vp border border-hairline bg-surface-2 px-2 py-1 text-vp-base text-ink"
+          >
+            <option value="">{t('acct.none')}</option>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+            {draft.claudeAccountId !== '' && !accounts.some((a) => a.id === draft.claudeAccountId) && (
+              <option value={draft.claudeAccountId}>{t('acct.gone')}</option>
+            )}
+          </select>
+        </label>
+      )}
 
       <p className="mb-1 text-vp-sm font-semibold tracking-wide text-ink-2 uppercase">
         {t('profile.env')}
@@ -472,4 +520,10 @@ function Editor({
       </div>
     </div>
   )
+}
+
+/** Whether a typed command starts Claude Code, by the program's name. */
+function runsClaude(command: string): boolean {
+  const first = splitArgv(command)[0] ?? ''
+  return first.slice(first.lastIndexOf('/') + 1) === 'claude'
 }

@@ -47,10 +47,33 @@ type profileRequest struct {
 	Name    string               `json:"name"`
 	Command []string             `json:"command"`
 	Env     []store.LaunchEnvVar `json:"env"`
+	// ClaudeAccountID is written whole like the rest: absent is "no account".
+	ClaudeAccountID string `json:"claudeAccountId"`
 }
 
 func (req profileRequest) profile() store.LaunchProfile {
-	return store.LaunchProfile{Name: req.Name, Command: req.Command, Env: req.Env}
+	return store.LaunchProfile{Name: req.Name, Command: req.Command, Env: req.Env,
+		ClaudeAccountID: req.ClaudeAccountID}
+}
+
+// checkProfileAccount refuses a profile naming an account that does not exist.
+//
+// At save rather than only at launch: the launch refuses too, but a profile
+// that saves and then cannot start anything is a form that said yes and meant
+// no.
+func (s *Server) checkProfileAccount(w http.ResponseWriter, r *http.Request, p store.LaunchProfile) bool {
+	if p.ClaudeAccountID == "" {
+		return true
+	}
+	if _, err := s.DB.GetClaudeAccount(r.Context(), p.ClaudeAccountID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusBadRequest, "that Claude account does not exist")
+		} else {
+			s.writeStoreErr(w, err)
+		}
+		return false
+	}
+	return true
 }
 
 func (s *Server) handleCreateProfile(w http.ResponseWriter, r *http.Request) {
@@ -71,6 +94,9 @@ func (s *Server) handleCreateProfile(w http.ResponseWriter, r *http.Request) {
 	p, err := store.ValidateLaunchProfile(req.profile())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !s.checkProfileAccount(w, r, p) {
 		return
 	}
 	rec, err := s.DB.CreateLaunchProfile(ctx, id.New(), p)
@@ -115,6 +141,9 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, verr.Error())
 			return
 		}
+		if !s.checkProfileAccount(w, r, p) {
+			return
+		}
 		if err := s.DB.UpsertLaunchProfile(ctx, profileID, p); err != nil {
 			s.writeStoreErr(w, err)
 			return
@@ -133,6 +162,9 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 	p, err := store.ValidateLaunchProfile(store.MergeLaunchSecrets(req.profile(), prev))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !s.checkProfileAccount(w, r, p) {
 		return
 	}
 	if err := s.DB.UpdateLaunchProfile(ctx, profileID, p); err != nil {

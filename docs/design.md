@@ -355,6 +355,84 @@ Restore is offered, never automatic, unless you asked for it on a particular
 session. A boot that starts two dozen agents at once is a worse failure than a
 list to click through.
 
+## Claude accounts share everything but the login
+
+A second Claude Code account is `CLAUDE_CONFIG_DIR`, and that variable moves far
+more than a login. Measured on 2.1.274, the directory it names replaces
+`~/.claude` whole and takes `~/.claude.json` with it: the panel's hooks in
+`settings.json`, `CLAUDE.md`, skills, every transcript that `--resume` and token
+accounting read, the up-arrow history, user MCP servers, which projects are
+trusted. A profile that set it by hand ran an agent that reported nothing,
+resumed nothing and asked to trust every repository again, under a settings page
+that said hooks were installed.
+
+So an account is a directory the panel makes
+(`<data dir>/claude-accounts/<id>`) whose habits are symlinks into `~/.claude`,
+and whose login and `.claude.json` are its own. Each piece of that was measured
+with a real `claude` in a throwaway tmux rather than assumed:
+
+- Claude Code writes *through* a symlinked file (`/model` into `settings.json`,
+  startup and exit into `.claude.json`); the link survives. It follows a link to
+  a file that does not exist yet and creates the file at the target. It does
+  not do that for a directory, so the panel creates missing directories in
+  `~/.claude` before linking.
+- A symlinked `projects/` works both ways: a second account's `--resume` lists
+  and opens the first account's conversation.
+- Hooks in the shared `settings.json` fire, with `CLAUDE_CONFIG_DIR` set to the
+  account.
+- A running session re-reads `.claude.json` before writing it: a key added from
+  outside survived that session's exit.
+
+**What is shared is a list, not what is private.** `sessions/` holds a live
+session's peer key; `daemon/` and `jobs/` belong to background agents. Sharing
+either lets one login's session talk to, or run under, another's. Neither
+existed a few releases ago, and the next one will appear in a release nobody
+here reads. A list of private entries would share it silently; a list of shared
+entries keeps it private until somebody adds it, which costs a habit rather than
+a login. `claudeaccount.Shared` is the list, grouped by why.
+
+**`.claude.json` is a copy, merged at every launch, and the merge only adds.**
+It cannot be a link: `/login` writes `oauthAccount` (email, organisation, rate
+tier) into it, and one file would describe whoever logged in last to everyone.
+MCP servers the account lacks, a project's trust from false to true, allowed
+tools as a union, and finished onboarding are copied; nothing is removed
+and nothing the account has is overwritten. That is what makes a race with a
+running session harmless: the loser is an addition, and the next launch makes it
+again. It goes one way. The panel does not write `~/.claude.json`, a file
+Claude Code's own sessions are writing all day, to save somebody pressing Enter
+on a trust prompt.
+
+**Isolated accounts** keep conversations, history and memory apart, for a work
+account whose conversations belong to an organisation. Resuming a work
+conversation under a personal login sends that code to a different
+organisation's data policy, and the default of sharing makes that one keypress
+away. It is fixed at creation: turning it on later leaves links to a history the
+account is meant not to see, and turning it off has to pick between two
+directories. Token accounting reads `~/.claude/projects` only, so an isolated
+account's usage is not counted, and the page says so.
+
+**A session keeps the account it started with.** A profile's variables are
+looked up again on restore, because following an edit to an endpoint is what
+people mean. An account is whose subscription and whose organisation a
+conversation goes to, so a session copies the id at creation, a restore uses the
+copy, and an account removed since is a refusal rather than a restore under
+`~/.claude`'s login.
+
+**The directory never moves.** On macOS the login is a Keychain entry named
+`Claude Code-credentials-<first 8 hex of sha256(dir)>` (read out of 2.1.274).
+A moved directory is a logged-out account with its token left behind under a
+name nothing looks up; for the same reason removal runs `claude auth logout`
+before deleting, and reports a logout that failed.
+
+**What was not done.** `CLAUDE_SECURESTORAGE_CONFIG_DIR`, set alone, moves only
+where the login is read from, and would share everything with no links at all.
+It is undocumented, and `.claude.json` would still be one file with one
+`oauthAccount`. A long-lived `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`
+in a profile needs no code, and is an inference-only token that the account's
+own `/login` is not. And the panel does not choose accounts for anybody: nothing
+switches account when one reaches its limit, because that is a way around the
+limit rather than a way to use two accounts.
+
 ## A chat app is a two-way notification, and every reply is addressed
 
 The webhook told a phone that a session was waiting. What it could not do was

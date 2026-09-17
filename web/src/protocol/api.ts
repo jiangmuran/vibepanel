@@ -9,6 +9,8 @@ import type {
   HookAgent,
   HookStatus,
   LaunchProfile,
+  ClaudeAccount,
+  ClaudeAccountStatus,
   SettingsInfo,
   Note,
   PanelState,
@@ -889,12 +891,32 @@ export const api = {
   // Not under /api/settings, because the picker fetches this on every page
   // load. See registerLaunchProfileRoutes.
   launchProfiles: () => request<LaunchProfile[]>('/api/launch-profiles'),
-  createLaunchProfile: (p: Pick<LaunchProfile, 'name' | 'command' | 'env'>) =>
+  createLaunchProfile: (p: Pick<LaunchProfile, 'name' | 'command' | 'env' | 'claudeAccountId'>) =>
     request<LaunchProfile>('/api/launch-profiles', { method: 'POST', body: JSON.stringify(p) }),
-  updateLaunchProfile: (id: string, p: Pick<LaunchProfile, 'name' | 'command' | 'env'>) =>
-    request<void>(`/api/launch-profiles/${id}`, { method: 'PATCH', body: JSON.stringify(p) }),
+  updateLaunchProfile: (
+    id: string,
+    p: Pick<LaunchProfile, 'name' | 'command' | 'env' | 'claudeAccountId'>,
+  ) => request<void>(`/api/launch-profiles/${id}`, { method: 'PATCH', body: JSON.stringify(p) }),
   deleteLaunchProfile: (id: string) =>
     request<void>(`/api/launch-profiles/${id}`, { method: 'DELETE' }),
+
+  claudeAccounts: () => request<ClaudeAccount[]>('/api/settings/claude-accounts'),
+  createClaudeAccount: (a: { name: string; isolated: boolean }) =>
+    request<ClaudeAccount>('/api/settings/claude-accounts', {
+      method: 'POST',
+      body: JSON.stringify(a),
+    }),
+  renameClaudeAccount: (id: string, name: string) =>
+    request<void>(`/api/settings/claude-accounts/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+  /** logoutError is set when the directory went but `claude auth logout` failed. */
+  deleteClaudeAccount: (id: string) =>
+    request<{ logoutError?: string }>(`/api/settings/claude-accounts/${id}`, { method: 'DELETE' }),
+  /** Runs `claude auth status` once: about a second. Never on a timer. */
+  claudeAccountStatus: (id: string) =>
+    request<ClaudeAccountStatus>(`/api/settings/claude-accounts/${id}/status`),
 
   webhooks: () => request<Webhook[]>('/api/settings/webhooks'),
   saveWebhooks: (list: Webhook[]) =>

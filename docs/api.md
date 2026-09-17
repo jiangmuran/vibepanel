@@ -468,6 +468,62 @@ client say the profile is gone rather than imply the session still has it.
 
 Creating, editing and removing are audited as `profile.created`,
 `profile.updated` and `profile.deleted`.
+
+## Claude accounts
+
+A Claude account is a second Claude Code login the panel keeps beside
+`~/.claude`. A profile with `"claudeAccountId"` starts its command with
+`CLAUDE_CONFIG_DIR` pointed at the account's directory, and that directory links
+everything that is a habit back to `~/.claude` — `settings.json` and the panel's
+hooks, `CLAUDE.md`, skills, agents, commands, plugins, and unless the account is
+`isolated`, the conversations, prompt history and memory. The login and
+`.claude.json` are the account's own. `docs/design.md`, "Claude accounts", has
+what was measured.
+
+### `GET /api/settings/claude-accounts`
+### `POST /api/settings/claude-accounts`
+### `PATCH /api/settings/claude-accounts/{accountID}`
+### `DELETE /api/settings/claude-accounts/{accountID}`
+### `GET /api/settings/claude-accounts/{accountID}/status`
+
+```sh
+curl -sX POST .../api/settings/claude-accounts -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"name": "work", "isolated": true}'
+# {"id":"…","name":"work","isolated":true,"createdAt":1735689600,"updatedAt":1735689600,
+#  "dir":"/home/you/.local/share/vibepanel/claude-accounts/…","profiles":[],"running":0}
+```
+
+There is no login endpoint. Signing in is Claude Code's own flow, in a terminal:
+start a session from a profile that uses the account and type `/login`, or run
+`CLAUDE_CONFIG_DIR=<dir> claude` anywhere. `status` asks `claude auth status
+--json` under the account and returns what it says (`loggedIn`, `authMethod`,
+`email`, `orgName`, `subscriptionType`) with the state of each shared entry:
+`linked`, `private` for an isolated account's history, or `blocked` when
+something else was already there and has been left alone. It runs `claude`, so
+it takes about a second; nothing should poll it.
+
+`PATCH` takes `{"name": …}` only. `isolated` is decided at creation.
+
+A profile with an account may not set `CLAUDE_CONFIG_DIR` or
+`CLAUDE_SECURESTORAGE_CONFIG_DIR`, nor give a value to `ANTHROPIC_API_KEY`,
+`ANTHROPIC_AUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN` — each would be used instead
+of the account's login — and naming an account that does not exist is a `400`.
+
+A session records the account as `claudeAccountId`, copied from the profile
+when it starts. Unlike the profile's variables this is not looked up again: a
+restore brings the session back under the account it started with, and if that
+account has been removed, the restore **refuses** rather than bringing the
+conversation back under `~/.claude`'s login.
+
+`DELETE` is a `409` while a profile uses the account or a session started under
+it still has a tmux session, and the message names them. Otherwise it runs
+`claude auth logout` under the account and removes the directory; links are
+removed, never followed. A failed logout does not stop the removal and is
+returned as `logoutError`: on macOS the login is a Keychain entry named after
+the directory's path, and nothing else will ever say it is still there.
+
+Audited as `claude_account.created`, `claude_account.renamed` and
+`claude_account.deleted`, with the name only.
 ## The repository
 
 ### `GET /api/projects/{id}/git`

@@ -27,6 +27,7 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/auth"
 	"github.com/jiangmuran/vibepanel/internal/cgroup"
 	"github.com/jiangmuran/vibepanel/internal/chat/shot"
+	"github.com/jiangmuran/vibepanel/internal/claudeaccount"
 	"github.com/jiangmuran/vibepanel/internal/config"
 	"github.com/jiangmuran/vibepanel/internal/hooks"
 	"github.com/jiangmuran/vibepanel/internal/httpapi"
@@ -736,6 +737,25 @@ func cmdSession(args []string) error {
 		if len(argv) == 0 && prof != nil {
 			argv = prof.Command
 		}
+		// The account, through the function the HTTP path uses, for the same
+		// reason as everything else in this block.
+		var accountID string
+		var accountEnv []string
+		if prof != nil && prof.ClaudeAccountID != "" {
+			home, herr := os.UserHomeDir()
+			if herr != nil {
+				return fmt.Errorf("session new: %w", herr)
+			}
+			accountID = prof.ClaudeAccountID
+			accountEnv, err = claudeaccount.PrepareByID(ctx, a.db, a.cfg.DataDir,
+				claudeaccount.Main{Home: home}, accountID)
+			if errors.Is(err, store.ErrNotFound) {
+				return fmt.Errorf("session new: the profile's Claude account has been removed")
+			}
+			if err != nil {
+				return fmt.Errorf("session new: %w", err)
+			}
+		}
 
 		err = a.tmux.Create(ctx, tmux.CreateOptions{
 			Name:    tmuxName,
@@ -744,7 +764,7 @@ func cmdSession(args []string) error {
 			// The panel's own last: tmux takes the last -e when two name the
 			// same variable, so this is what stops a profile redirecting a
 			// session's state reports.
-			Env:    store.LaunchEnv(prof, env),
+			Env:    store.LaunchEnv(prof, append(accountEnv, env...)),
 			Width:  *cols,
 			Height: *rows,
 		})
@@ -775,6 +795,7 @@ func cmdSession(args []string) error {
 			// — the same asymmetry that made this path miss the hook token.
 			LaunchCommand:   argv,
 			LaunchProfileID: profileID(prof),
+			ClaudeAccountID: accountID,
 		})
 		if err != nil {
 			// The tmux session exists but we cannot track it. Removing it is

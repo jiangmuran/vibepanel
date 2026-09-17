@@ -382,17 +382,22 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"passkey.removed":         true,
 		"password.change_refused": true,
 		"password.changed":        true,
-		"profile.created":         true,
-		"profile.deleted":         true,
-		"profile.updated":         true,
-		"profile.restored":        true,
-		"setup.completed":         true,
-		"share.created":           true,
-		"share.locked":            true,
-		"share.rejected":          true,
-		"share.revoked":           true,
-		"share.unlocked":          true,
-		"share.updated":           true,
+		// An account and the profiles that use it are separate lists on the
+		// settings page, so they are separate prefixes.
+		"claude_account.created": true,
+		"claude_account.deleted": true,
+		"claude_account.renamed": true,
+		"profile.created":        true,
+		"profile.deleted":        true,
+		"profile.updated":        true,
+		"profile.restored":       true,
+		"setup.completed":        true,
+		"share.created":          true,
+		"share.locked":           true,
+		"share.rejected":         true,
+		"share.revoked":          true,
+		"share.unlocked":         true,
+		"share.updated":          true,
 		// What a link draws and its page's settings on it. `share.` rather
 		// than `page.`: the question they answer is "what did this screen
 		// start showing", which is a question about the link.
