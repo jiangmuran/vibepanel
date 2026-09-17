@@ -4,7 +4,7 @@ import { api } from '../../protocol/api'
 import type { Session, SessionUsage, SystemSample, UsageSample } from '../../protocol/wire'
 import { t, useLang } from '../../i18n'
 import type { PanelDensity } from '../chrome'
-import { meterText, meterWidth, formatBytes } from './meter'
+import { meterText, meterWidth, formatBytes, formatRate } from './meter'
 import { StateDot } from '../StateDot'
 import { safeText } from '../text'
 
@@ -320,6 +320,29 @@ export function SystemMonitor({
             Same zero-means-unknown as the meters above. */}
         {sample.uptime > 0 && (
           <Figure label={t('monitor.machine')} value={t('monitor.up', { d: duration(sample.uptime) })} />
+        )}
+        {/* Gated on netReadable rather than the totals being nonzero: a
+            freshly-up interface that has carried nothing yet is a real
+            reading of 0 B, and only darwin's absent /proc/net/dev is
+            "nothing to show here". */}
+        {sample.netReadable && (
+          <>
+            <Figure
+              label={t('monitor.network')}
+              value={
+                sample.netRxRate === null || sample.netTxRate === null
+                  ? t('monitor.sampling')
+                  : t('monitor.netRate', { down: formatRate(sample.netRxRate), up: formatRate(sample.netTxRate) })
+              }
+            />
+            <Figure
+              label={t('monitor.netTotal')}
+              value={t('monitor.netRate', {
+                down: formatBytes(sample.netRxBytes),
+                up: formatBytes(sample.netTxBytes),
+              })}
+            />
+          </>
         )}
       </div>
 

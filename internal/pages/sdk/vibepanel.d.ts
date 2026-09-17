@@ -166,6 +166,15 @@ export interface Machine {
   swapFree: number
   diskTotal: number
   diskFree: number
+  /** No /proc/net/dev on this build, same story as cpuReadable. */
+  netReadable: boolean
+  /** Bytes per second across every interface except loopback. Null when
+   *  there is no previous sample to measure against — not 0. */
+  netRxRate: number | null
+  netTxRate: number | null
+  /** Bytes, since the interfaces came up rather than since this page opened. */
+  netRxBytes: number
+  netTxBytes: number
   /** Seconds. */
   uptime: number
 }
@@ -293,6 +302,9 @@ export interface TrendPoint {
   cpu: number | null
   memory: number
   load: number
+  /** Bytes per second, or null where /proc could not be read. */
+  netRx: number | null
+  netTx: number | null
   /** Running total of today's tokens; differences are the rate. */
   tokens: number
 }

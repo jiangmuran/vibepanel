@@ -57,6 +57,10 @@ export function SystemStrip() {
               cpu: push(h.cpu, next.cpuPercent ?? 0),
               mem: push(h.mem, memPct),
               disk: push(h.disk, diskPct),
+              // Raw bytes/sec, not yet a percentage: network has no natural
+              // ceiling, so the render below scales this against its own
+              // recent peak instead of against a fixed 0-100.
+              net: push(h.net, (next.netRxRate ?? 0) + (next.netTxRate ?? 0)),
             }
           })
         }
@@ -78,6 +82,15 @@ export function SystemStrip() {
 
   const memUsed = sample.memTotal - sample.memAvailable
   const diskUsed = sample.diskTotal - sample.diskFree
+  const netCombined =
+    sample.netRxRate !== null && sample.netTxRate !== null ? sample.netRxRate + sample.netTxRate : null
+  // Scaled to its own recent peak rather than a fixed 0-100: unlike CPU, memory
+  // and disk, throughput has no ceiling a line can be measured against. Floored
+  // at 1 KiB/s so a quiet link does not turn its own noise into a mountain
+  // range -- the same reasoning Trend's own comment gives for fixing the other
+  // three axes instead of scaling them to what has been seen.
+  const netMax = Math.max(1024, ...(history.net ?? []))
+  const netScaled = (history.net ?? []).map((v) => Math.min(100, (v / netMax) * 100))
   const rows: Array<{ key: string; label: string; pct: number | null; detail: string }> = [
     {
       key: 'cpu',
@@ -145,6 +158,24 @@ export function SystemStrip() {
           </span>
         </div>
       ))}
+      {/* Its own row rather than a fourth entry in `rows`: it has no percentage
+          to draw a bar against, and its tone is not "pressure" -- a link
+          maxed out is not a problem the way a full disk is, so it never turns
+          the warning colours the other three use. */}
+      {sample.netReadable && (
+        <div className="flex items-center gap-2 py-[3px]" data-testid="system-strip-network">
+          <span className="w-12 shrink-0 truncate text-vp-xs text-ink-2">{t('monitor.network')}</span>
+          <Trend values={netScaled} tone={netCombined === null ? 'var(--vp-state-dead)' : 'var(--vp-accent)'} />
+          <span className="w-9 shrink-0 text-right tabular text-vp-xs text-ink-2">
+            {netCombined === null ? '—' : formatRateCompact(netCombined)}
+          </span>
+          <span className="w-[88px] shrink-0 text-right tabular whitespace-nowrap text-vp-xs text-ink-2">
+            {sample.netRxRate === null || sample.netTxRate === null
+              ? ''
+              : `↓${formatRateCompact(sample.netRxRate)} ↑${formatRateCompact(sample.netTxRate)}`}
+          </span>
+        </div>
+      )}
     </div>
   )
 }
@@ -195,4 +226,27 @@ function Trend({ values, tone }: { values: number[]; tone: string }) {
       <path d={line} fill="none" stroke={tone} strokeWidth="1" vectorEffect="non-scaling-stroke" />
     </svg>
   )
+}
+
+/**
+ * A throughput at strip width: "1.4M", not "1.4 MiB/s".
+ *
+ * The strip's detail column is 88px and shared with the down and up figures
+ * on the same line -- "↓1.4 MiB/s ↑220 KiB/s" is 22 characters and wraps the
+ * row, which is exactly the failure the comment above this row's rendering
+ * points at for the other three. The unit and the per-second are both cut:
+ * this is the corner-of-the-eye number, and formatRate in the full panel
+ * still spells it out.
+ */
+function formatRateCompact(n: number): string {
+  const v = Math.max(0, n)
+  if (v < 1024) return `${Math.round(v)}B`
+  const units = ['K', 'M', 'G', 'T']
+  let x = v / 1024
+  let i = 0
+  while (x >= 1024 && i < units.length - 1) {
+    x /= 1024
+    i++
+  }
+  return `${x < 10 ? x.toFixed(1) : Math.round(x)}${units[i]}`
 }
