@@ -123,6 +123,13 @@ func newUnconfiguredServer(t *testing.T) (*httptest.Server, *Server) {
 		Sampler:        &sysmon.Sampler{DiskPath: dir},
 		Auth:           &Auth{Throttle: auth.NewThrottle(), SetupToken: "test-setup-token"},
 		Log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+		// Claude accounts link into ~/.claude and run `claude`. Neither may
+		// be the real one: a test would create directories in somebody's
+		// configuration and log somebody's account out.
+		claudeHome: filepath.Join(dir, "home"),
+		claudeRun: func(context.Context, []string, ...string) ([]byte, error) {
+			return []byte(`{"loggedIn":false,"authMethod":"none"}`), nil
+		},
 		// Pointed at empty directories under the test's own tree, never at the
 		// running user's home. Without this every test that touches the token
 		// endpoints would start a background walk of whoever's machine the

@@ -10,6 +10,7 @@ const p = (id: string, command: string[], env: string[], builtin = true): Launch
   builtin,
   command,
   env: env.map((name) => ({ name, value: '', secret: /KEY|TOKEN/.test(name), hasValue: false })),
+  claudeAccountId: '',
   createdAt: 0,
   updatedAt: 0,
 })

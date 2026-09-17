@@ -319,6 +319,18 @@ func (s *Server) restoreSession(ctx context.Context, rec store.Session) error {
 		return err
 	}
 
+	// The account, read from the session rather than the profile, and the
+	// opposite call to the profile's environment below. A profile gone means
+	// an endpoint gone, and restoring without it is the lesser loss. An account
+	// gone means the conversation would come back under ~/.claude's login --
+	// somebody else's subscription, possibly somebody else's organisation. So
+	// this refuses, and before the archive is written out, which a refusal
+	// further down would leave behind.
+	accountEnv, err := s.claudeAccountEnv(ctx, rec.ClaudeAccountID)
+	if err != nil {
+		return err
+	}
+
 	now := time.Now()
 
 	// The archive, plus the banner, in one file the pane cats and deletes.
@@ -375,7 +387,7 @@ func (s *Server) restoreSession(ctx context.Context, rec store.Session) error {
 		Name:    rec.TmuxName,
 		Dir:     dir,
 		Command: argv,
-		Env:     store.LaunchEnv(profile, s.hookEnv(ctx, rec.ID, rec.ProjectID)),
+		Env:     store.LaunchEnv(profile, append(accountEnv, s.hookEnv(ctx, rec.ID, rec.ProjectID)...)),
 		Width:   rec.Cols,
 		Height:  rec.Rows,
 	}); err != nil {

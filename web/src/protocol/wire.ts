@@ -176,6 +176,12 @@ export interface Session {
    * rather than implying the session still has it.
    */
   launchProfileId: string
+  /**
+   * The Claude account this session was started under, empty for ~/.claude.
+   * Copied from the profile at creation and kept: a restore brings the session
+   * back under this account, or refuses if it has been removed.
+   */
+  claudeAccountId: string
   /** Rebuild this session at startup without asking, if its tmux session is gone. */
   restoreOnBoot: boolean
   /**
@@ -1622,8 +1628,57 @@ export interface LaunchProfile {
   overridden?: boolean
   command: string[]
   env: LaunchEnvVar[]
+  /** Start under this Claude account instead of ~/.claude. Empty for none. */
+  claudeAccountId: string
   createdAt: number
   updatedAt: number
+}
+
+/**
+ * A Claude Code login the panel keeps beside ~/.claude.
+ *
+ * Its directory links everything that is a habit -- settings and hooks,
+ * CLAUDE.md, skills, conversations -- back to ~/.claude and keeps the login
+ * and .claude.json to itself. internal/claudeaccount says what and why.
+ */
+export interface ClaudeAccount {
+  id: string
+  name: string
+  /** Conversations, prompt history and memory kept apart. Fixed at creation. */
+  isolated: boolean
+  /** `CLAUDE_CONFIG_DIR=<dir> claude` uses it from any terminal. */
+  dir: string
+  /** Names of the launch profiles that start with it. */
+  profiles: string[]
+  /** Sessions under it whose tmux session exists. */
+  running: number
+  createdAt: number
+  updatedAt: number
+}
+
+/** One shared entry in an account directory, as the last launch left it. */
+export interface ClaudeAccountLink {
+  name: string
+  /**
+   * linked: shared with ~/.claude. private: an isolated account's own.
+   * blocked: something else is there and was left alone.
+   */
+  state: 'linked' | 'private' | 'blocked'
+}
+
+/** What `claude auth status` says, and how the directory looks. */
+export interface ClaudeAccountStatus {
+  status: {
+    loggedIn: boolean
+    authMethod: string
+    email?: string
+    orgName?: string
+    subscriptionType?: string
+    configDirectory?: string
+  } | null
+  /** Why Claude Code could not be asked, when it could not. */
+  error?: string
+  links: ClaudeAccountLink[]
 }
 
 /** One outbound notification destination. */

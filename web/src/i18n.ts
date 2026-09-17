@@ -804,6 +804,53 @@ const DICT = {
 
   'set.status': { zh: '状态', en: 'Status' },
 
+  'acct.title': { zh: 'Claude 账号', en: 'Claude accounts' },
+  'acct.why': {
+    zh: '另一个 Claude 登录，设置、钩子和对话仍与 ~/.claude 共用',
+    en: 'Another Claude login that still shares settings, hooks and conversations with ~/.claude',
+  },
+  'acct.new': { zh: '新建账号', en: 'New account' },
+  'acct.name': { zh: '名字，比如“工作”', en: 'Name, e.g. “work”' },
+  'acct.isolated': { zh: '对话记录独立', en: 'Keep conversations separate' },
+  'acct.isolatedHint': {
+    zh: '公司账号用这个。它的 Token 用量暂不统计',
+    en: 'For a work account. Its token usage is not counted yet',
+  },
+  'acct.isolatedTag': { zh: '对话独立', en: 'separate' },
+  'acct.create': { zh: '创建', en: 'Create' },
+  'acct.cancel': { zh: '取消', en: 'Cancel' },
+  'acct.checking': { zh: '正在问 Claude Code…', en: 'Asking Claude Code…' },
+  'acct.loggedIn': { zh: '已登录 {who}', en: 'Signed in as {who}' },
+  'acct.loggedOut': { zh: '未登录', en: 'Not signed in' },
+  'acct.otherAuth': { zh: '用的不是账号登录：{method}', en: 'Not using a login: {method}' },
+  'acct.howToLogin': {
+    zh: '在启动配置里选它，开一个会话，输入 /login',
+    en: 'Choose it in a launch profile, start a session and type /login',
+  },
+  'acct.statusError': { zh: '问不到状态：{error}', en: 'Could not read its status: {error}' },
+  'acct.refresh': { zh: '重新检查', en: 'Check again' },
+  'acct.blocked': {
+    zh: '这些没有共用，里面已有别的东西：{names}',
+    en: 'Not shared, something else is already there: {names}',
+  },
+  'acct.dir': { zh: '目录', en: 'Directory' },
+  'acct.copyDir': { zh: '复制目录', en: 'Copy directory' },
+  'acct.usedBy': { zh: '启动配置：{names}', en: 'Profiles: {names}' },
+  'acct.running': { zh: '{n} 个会话在用', en: '{n} sessions running' },
+  'acct.rename': { zh: '改名', en: 'Rename' },
+  'acct.remove': { zh: '删掉', en: 'Remove' },
+  'acct.removeTitle': { zh: '删掉账号「{name}」？', en: 'Remove the account “{name}”?' },
+  'acct.removeBody': {
+    zh: '会先登出，再删除它的目录。共用的设置和对话不受影响',
+    en: 'It is signed out and its directory removed. Shared settings and conversations stay',
+  },
+  'acct.logoutFailed': {
+    zh: '已删除，但登出失败：{error}',
+    en: 'Removed, but signing out failed: {error}',
+  },
+  'acct.none': { zh: '不用（~/.claude）', en: 'None (~/.claude)' },
+  'acct.pick': { zh: 'Claude 账号', en: 'Claude account' },
+  'acct.gone': { zh: '账号已删除', en: 'account removed' },
   'profile.title': { zh: '启动配置', en: 'Launch profiles' },
   'profile.why': {
     zh: '一套启动参数和环境变量，起个名字。新建会话时挑一个。',

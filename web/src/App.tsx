@@ -930,6 +930,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           builtin: true,
           command: [],
           env: [],
+          claudeAccountId: '',
           createdAt: 0,
           updatedAt: 0,
         },

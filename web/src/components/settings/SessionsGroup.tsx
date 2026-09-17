@@ -12,6 +12,7 @@ import {
 import { t } from '../../i18n'
 import { copyTextInGesture } from '../../clipboard'
 import { LaunchProfiles } from '../LaunchProfiles'
+import { ClaudeAccounts } from '../ClaudeAccounts'
 import { Row, Section } from './parts'
 import { TuneClaude } from './TuneClaude'
 import { PasteSettings } from './PasteSettings'
@@ -26,6 +27,9 @@ import { PasteSettings } from './PasteSettings'
 export function SessionsGroup() {
   return (
     <>
+      <Section id="accounts" title={t('acct.title')}>
+        <ClaudeAccounts />
+      </Section>
       <Section id="profiles" title={t('profile.title')}>
         <LaunchProfiles />
       </Section>

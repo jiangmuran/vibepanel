@@ -24,6 +24,7 @@ import (
 
 	"github.com/jiangmuran/vibepanel/internal/auth"
 	"github.com/jiangmuran/vibepanel/internal/chat"
+	"github.com/jiangmuran/vibepanel/internal/claudeaccount"
 	"github.com/jiangmuran/vibepanel/internal/claudelog"
 	"github.com/jiangmuran/vibepanel/internal/codexlog"
 	"github.com/jiangmuran/vibepanel/internal/config"
@@ -87,6 +88,13 @@ type Server struct {
 	// real one asks systemd to restart a unit named vibepanel.
 	install    func(bin []byte, version string) (string, error)
 	restartCmd func() (*exec.Cmd, error)
+
+	// claudeHome is the home directory Claude accounts share ~/.claude from,
+	// and claudeRun runs `claude` for them. Empty and nil mean the real ones;
+	// tests set both, because the real ones are somebody's ~/.claude and
+	// somebody's login.
+	claudeHome string
+	claudeRun  claudeaccount.Runner
 
 	// updates is what the panel knows about updates between requests: the
 	// last check and the apply in progress. See update.go.
@@ -468,6 +476,7 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/sessions/restore", s.handleRestoreSessions)
 
 			s.registerLaunchProfileRoutes(r)
+			s.registerClaudeAccountRoutes(r)
 			s.registerPanelRoutes(r)
 			s.registerGitRoutes(r)
 			s.registerUpdateRoutes(r)
@@ -1619,6 +1628,23 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		argv = profile.Command
 	}
 
+	// Resolved before the tmux session exists, so an account that has been
+	// deleted is a refusal rather than a session started under ~/.claude's
+	// login -- the substitution launchProfileFor refuses for the same reason.
+	var accountID string
+	if profile != nil {
+		accountID = profile.ClaudeAccountID
+	}
+	accountEnv, err := s.claudeAccountEnv(ctx, accountID)
+	if errors.Is(err, errClaudeAccountGone) {
+		writeErr(w, http.StatusConflict, "that launch profile's Claude account has been removed")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	sid := id.New()
 	tmuxName := id.TmuxName(sid)
 
@@ -1635,7 +1661,9 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		// same variable, so ordering is what stops a profile pointing a
 		// session's state reports at somebody else's address with the panel's
 		// hook token attached. store.LaunchEnv is the one place that knows it.
-		Env:    store.LaunchEnv(profile, s.hookEnv(ctx, sid, p.ID)),
+		// The account between the two: after the profile, so it cannot be
+		// overridden by a variable validation missed; before the panel's own.
+		Env:    store.LaunchEnv(profile, append(accountEnv, s.hookEnv(ctx, sid, p.ID)...)),
 		Width:  req.Cols,
 		Height: req.Rows,
 	})
@@ -1659,6 +1687,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		// restore -- see LaunchProfileID.
 		LaunchCommand:   argv,
 		LaunchProfileID: req.LaunchProfileID,
+		ClaudeAccountID: accountID,
 	})
 	if err != nil {
 		// Untracked tmux session: remove it rather than orphan a process the
@@ -1851,6 +1880,19 @@ func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request) {
 		if info, ierr := s.Tmux.Get(ctx, rec.TmuxName); ierr == nil && !info.Dead {
 			writeErr(w, http.StatusConflict,
 				"that session is running again; reload before restarting it")
+			return
+		}
+		// The pane keeps the environment it was created with, so respawning
+		// runs under the same account without being told. What it does not
+		// get on its own is a directory that still exists and is linked: an
+		// account deleted since would be recreated, empty and logged out, by
+		// the first thing Claude Code writes.
+		if _, aerr := s.claudeAccountEnv(ctx, rec.ClaudeAccountID); aerr != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(aerr, errClaudeAccountGone) {
+				status = http.StatusConflict
+			}
+			writeErr(w, status, "cannot restart: "+aerr.Error())
 			return
 		}
 		if err := s.Tmux.Respawn(ctx, rec.TmuxName); err != nil {

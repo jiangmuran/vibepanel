@@ -11,6 +11,7 @@ function profile(p: Partial<LaunchProfile>): LaunchProfile {
     builtin: false,
     command: [],
     env: [],
+    claudeAccountId: '',
     createdAt: 0,
     updatedAt: 0,
     ...p,

@@ -1052,6 +1052,37 @@ var migrations = []func(tx *sql.Tx) error{
 		_, err := tx.Exec(`ALTER TABLE session_messages ADD COLUMN menu TEXT NOT NULL DEFAULT ''`)
 		return err
 	},
+
+	// v30: Claude accounts, and which one a profile and a session use.
+	//
+	// The account is a row and a directory (internal/claudeaccount); the
+	// directory's path is derived from the id, never stored, because on macOS
+	// the login lives in a Keychain entry named after a hash of that path and a
+	// stored path is one that can be edited into a different login.
+	//
+	// sessions.claude_account_id is copied from the profile when the session
+	// is created and read from the session on restore, unlike the profile's
+	// environment, which is looked up again. A profile edited to use another
+	// account must not bring an existing session back under a different
+	// person's subscription.
+	func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`CREATE TABLE IF NOT EXISTS claude_accounts (
+			     id         TEXT PRIMARY KEY,
+			     name       TEXT NOT NULL,
+			     isolated   INTEGER NOT NULL DEFAULT 0,
+			     created_at INTEGER NOT NULL,
+			     updated_at INTEGER NOT NULL
+			 )`,
+			`ALTER TABLE launch_profiles ADD COLUMN claude_account_id TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE sessions ADD COLUMN claude_account_id TEXT NOT NULL DEFAULT ''`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	},
 }
 
 // scanner is *sql.Row and *sql.Rows both, so one scan function serves a

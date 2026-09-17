@@ -887,7 +887,11 @@ func (s *Server) buildAssistant(ctx context.Context, cfg AssistantConfig) (chat.
 		if err != nil {
 			return nil, fmt.Errorf("launch profile: %w", err)
 		}
-		env = store.LaunchEnv(&profile, nil)
+		accountEnv, err := s.claudeAccountEnv(ctx, profile.ClaudeAccountID)
+		if err != nil {
+			return nil, fmt.Errorf("launch profile: %w", err)
+		}
+		env = store.LaunchEnv(&profile, accountEnv)
 	}
 	token, err := s.ChatToolsToken()
 	if err != nil {
