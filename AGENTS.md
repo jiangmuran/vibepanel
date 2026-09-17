@@ -165,9 +165,12 @@ Each of these exists because the alternative broke something real.
    whole live-update feature cost the share surface nothing. If the next
    request sounds like it needs a write here, ask first where the person making
    the change actually is. The same answer covers "let me see what that link
-   shows": the token is hash-only, so the owner's session mints a
-   fifteen-minute copy of the link (`POST /api/settings/shares/{id}/view`)
-   rather than anything under the token learning to be read back.
+   shows": the owner's session mints a fifteen-minute copy of the link
+   (`POST /api/settings/shares/{id}/view`) rather than anything under the
+   token learning to be read back. The token is resolved by hash; a sealed
+   copy is kept only so the signed-in owner can copy the address again
+   (`handleShareURL`), which means the database together with `secrets.key`
+   yields live links, and the database alone does not.
 
    Two things a viewer *does* send, on the query string of the snapshot: an
    opaque per-tab id and its viewport, for the owner's "how many screens have

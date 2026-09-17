@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -317,9 +318,30 @@ func (p LaunchProfile) EnvPairs() []string {
 		if v.Value == "" {
 			continue
 		}
-		out = append(out, v.Name+"="+v.Value)
+		out = append(out, v.Name+"="+expandTilde(v.Value))
 	}
 	return out
+}
+
+// expandTilde resolves a leading ~ the way the shell would have if the
+// variable had been typed at a prompt.
+//
+// tmux -e hands the value to the session as it is; no shell sees it. A profile
+// with CLAUDE_CONFIG_DIR=~/.claude-work made claude create a directory named
+// "~" inside whatever project the session opened in, and put the account's
+// credentials and history there: untracked, not ignored, one `git add -A` from
+// a commit. Only the forms a shell expands are touched -- "~" and "~/..." at
+// the start -- so a URL or a token containing a tilde is left alone, and
+// ~otheruser is not guessed at.
+func expandTilde(v string) string {
+	if v != "~" && !strings.HasPrefix(v, "~/") {
+		return v
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return v
+	}
+	return home + v[1:]
 }
 
 // LaunchEnv puts a profile's variables before the panel's own.

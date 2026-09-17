@@ -459,3 +459,27 @@ func TestMigrationV13AddsProfilesAndTheColumnThatRestoresThem(t *testing.T) {
 			got.LaunchProfileID)
 	}
 }
+
+// tmux -e does not go through a shell, so a ~ in a profile reached the agent
+// as a literal and claude made a directory called "~" inside the project,
+// credentials included.
+func TestATildeInAProfileIsTheHomeDirectory(t *testing.T) {
+	t.Setenv("HOME", "/home/someone")
+	p := LaunchProfile{Env: []LaunchEnvVar{
+		{Name: "CLAUDE_CONFIG_DIR", Value: "~/.claude-work"},
+		{Name: "ALONE", Value: "~"},
+		{Name: "URL", Value: "https://example.com/~user/x"},
+		{Name: "OTHER", Value: "~other/dir"},
+		{Name: "TOKEN", Value: "a~b"},
+	}}
+	want := []string{
+		"CLAUDE_CONFIG_DIR=/home/someone/.claude-work",
+		"ALONE=/home/someone",
+		"URL=https://example.com/~user/x",
+		"OTHER=~other/dir",
+		"TOKEN=a~b",
+	}
+	if got := p.EnvPairs(); !reflect.DeepEqual(got, want) {
+		t.Errorf("EnvPairs = %v, want %v", got, want)
+	}
+}

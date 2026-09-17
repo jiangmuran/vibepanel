@@ -364,15 +364,14 @@ func (d *DB) SetSessionState(ctx context.Context, id string, st session.State, s
 	if !st.Valid() {
 		return fmt.Errorf("store: invalid state %q", st)
 	}
-	_, err := d.sql.ExecContext(ctx, `
-		UPDATE sessions
-		SET state = ?,
-		    state_source = ?,
-		    state_changed_at = CASE WHEN state != ? THEN ? ELSE state_changed_at END
-		WHERE id = ?`, st, src, st, now(), id)
+	// One transaction: a session whose new state is recorded while its
+	// project's ordering is not has nothing that would ever notice the
+	// difference.
+	tx, err := d.sql.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: set session state: %w", err)
 	}
+	defer func() { _ = tx.Rollback() }()
 
 	// A session changing state is the project being active.
 	//
@@ -384,13 +383,29 @@ func (d *DB) SetSessionState(ctx context.Context, id string, st session.State, s
 	// nobody would think to question: a project that has a session waiting for
 	// a human does not come to the top, which is the one thing this list is for.
 	//
-	// State changes rather than output. Output would mean a write per chunk;
-	// state changes are already debounced by only being written when the state
-	// actually differs, and they are the events a person cares about.
-	if _, terr := d.sql.ExecContext(ctx, `
+	// State changes rather than output, and only real changes. The hook path
+	// reports on every event an agent fires, most of them repeating the state
+	// already stored; touching the project on each of those was a write per
+	// hook and moved a project to the top for a session that had done nothing
+	// new. Written first, and as a write rather than a read of the old state,
+	// so the transaction takes the write lock at its first statement: a read
+	// that later upgrades is the SQLITE_BUSY_SNAPSHOT busy_timeout does not
+	// wait out.
+	if _, err := tx.ExecContext(ctx, `
 		UPDATE projects SET last_active_at = ?
-		WHERE id = (SELECT project_id FROM sessions WHERE id = ?)`, now(), id); terr != nil {
-		return fmt.Errorf("store: touch project for session state: %w", terr)
+		WHERE id = (SELECT project_id FROM sessions WHERE id = ? AND state != ?)`, now(), id, st); err != nil {
+		return fmt.Errorf("store: touch project for session state: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE sessions
+		SET state = ?,
+		    state_source = ?,
+		    state_changed_at = CASE WHEN state != ? THEN ? ELSE state_changed_at END
+		WHERE id = ?`, st, src, st, now(), id); err != nil {
+		return fmt.Errorf("store: set session state: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: set session state: %w", err)
 	}
 	return nil
 }

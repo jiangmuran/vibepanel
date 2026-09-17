@@ -486,6 +486,48 @@ func TestSessionStateChangeMakesItsProjectRecent(t *testing.T) {
 	}
 }
 
+// A hook reports on every event an agent fires, and most repeat the state
+// already stored. Each of those used to touch the project, so a session doing
+// nothing new moved its project to the top.
+func TestARepeatedStateDoesNotMakeItsProjectRecent(t *testing.T) {
+	db := openTest(t)
+	ctx := context.Background()
+	first, err := db.CreateProject(ctx, "p-first", "first", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := db.CreateSession(ctx, Session{
+		ID: "s-same", ProjectID: first.ID, TmuxName: "vp_same", State: session.StateWorking,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	second, err := db.CreateProject(ctx, "p-second", "second", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	if err := db.SetSessionState(ctx, sess.ID, session.StateWorking, session.SourceHook); err != nil {
+		t.Fatal(err)
+	}
+	after, err := db.ListProjects(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after[0].ID != second.ID {
+		t.Errorf("a report of the state already stored moved its project to position %d",
+			indexOfProject(after, first.ID))
+	}
+	got, err := db.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StateSource != session.SourceHook {
+		t.Errorf("the source was not recorded: %q", got.StateSource)
+	}
+}
+
 func indexOfProject(list []Project, id string) int {
 	for i, p := range list {
 		if p.ID == id {

@@ -23587,3 +23587,35 @@ then decided on it.
 
 Tests pin the pane, the zero, the OOM count, the boost, the policy refusal and
 the notification; each fails with its fix removed.
+
+## 2026-09-17 — A tilde in a profile, and what the audit left
+
+**A profile's `~` was never expanded.** `tmux -e` hands a variable to the
+session as it is, with no shell in between, so a launch profile setting
+`CLAUDE_CONFIG_DIR=~/.claude-account-apple` gave claude the literal string, and
+claude created a directory named `~` inside whatever project the session opened
+in: the account's `.credentials.json`, history and transcripts, in the working
+tree, untracked and not ignored. Found in this repository's own root and in a
+worktree beside it. `LaunchProfile.EnvPairs` now expands `~` and `~/…` at the
+start of a value, the forms a shell expands, and nothing else (a tilde inside a
+URL or a token, and `~user`, are left alone). `/~/` is in `.gitignore` for the
+directories already made. Sessions started before the fix keep the literal
+value until they are restarted.
+
+**Audit item 7.** The share surface's header comment, `pageopen.go` and
+AGENTS.md still said the database keeps only a link token's hash and nothing
+can read a link back. Copyable addresses changed that: a sealed copy is kept so
+the owner can copy the address again, and the database together with
+`secrets.key` yields every live link. The comments now say so; the design did
+not change.
+
+**Audit item 13.** `SetSessionState` touched `projects.last_active_at` on every
+call. The hook path calls it on every report, most of which repeat the stored
+state, so a session doing nothing new moved its project to the top, at a write
+per hook. The touch now happens only when the state differs, and the two
+updates are one transaction. The project update goes first so the transaction
+takes the write lock at its first statement rather than upgrading from a read.
+
+Still open from the audit: server.js running the published version under a
+pinned link's contract (10), the subscriber queue bounded in events rather than
+bytes (19), and x/crypto's advisories, which have no fixed release (21).
