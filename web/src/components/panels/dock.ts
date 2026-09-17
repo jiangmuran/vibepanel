@@ -28,7 +28,7 @@ export const DOCK_META: Record<DockBlock, { icon: typeof Activity; key: Key }> =
  * same moment.
  */
 export const DETAIL_META: Record<DetailBlock, { icon: typeof Activity; key: Key }> = {
-  ...DOCK_META,
+  monitor: DOCK_META.monitor,
   repo: { icon: GitBranch, key: 'panel.git' },
   page: { icon: PanelsTopLeft, key: 'panel.page' },
 }

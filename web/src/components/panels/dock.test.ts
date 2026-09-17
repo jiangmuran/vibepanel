@@ -36,6 +36,9 @@ describe('what each openable block is called', () => {
     // Drift nobody would notice, because the two are never on screen at the
     // same moment: the compact block is replaced by the opened one.
     for (const block of DOCK_BLOCKS) {
+      // Tokens open the full view rather than a detail, so there is no
+      // header of this kind to agree with.
+      if (block === 'tokens') continue
       expect(DETAIL_META[block].key, block).toBe(DOCK_META[block].key)
       expect(DETAIL_META[block].icon, block).toBe(DOCK_META[block].icon)
     }

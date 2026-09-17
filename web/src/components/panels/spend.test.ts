@@ -1,7 +1,20 @@
 import { describe, expect, it } from 'vitest'
 
 import type { TokenUsage, UsageDay } from '../../protocol/wire'
-import { dayBefore, dayTotal, outputTotal, projectTotal, toolShares, windowTotal, daySeries } from './spend'
+import {
+  axisTicks,
+  dayBefore,
+  dayPoints,
+  dayValue,
+  daySeries,
+  pace,
+  projectFigures,
+  rank,
+  shortDay,
+  sinceFirst,
+  toolShares,
+  windowValue,
+} from './spend'
 
 /** A day row, with the four token columns spelled out. */
 function day(d: string, over: Partial<UsageDay> = {}): UsageDay {
@@ -64,30 +77,30 @@ describe('a window of days', () => {
 
   it('is closed at the near end', () => {
     // Seven days ending on the 10th reaches back to the 4th, inclusive.
-    expect(windowTotal(days, '2026-03-10', 7)).toBe(PER_DAY * 4)
+    expect(windowValue(days, '2026-03-10', 7, 'total')).toBe(PER_DAY * 4)
   })
 
   it('leaves out a day older than the window', () => {
     // Three days reaches back to the 8th, so the 4th and the 5th are out. A
     // payload's range is longer than this window by design, and counting all
     // of it is how "this week" becomes "this month".
-    expect(windowTotal(days, '2026-03-10', 3)).toBe(PER_DAY * 2)
+    expect(windowValue(days, '2026-03-10', 3, 'total')).toBe(PER_DAY * 2)
   })
 
   it('leaves out a day the server has not reached', () => {
     // A browser clock a day ahead of the server's, or a row from a machine in
     // another timezone. Tomorrow has not happened.
     const withFuture = [...days, day('2026-03-11')]
-    expect(windowTotal(withFuture, '2026-03-10', 7)).toBe(PER_DAY * 4)
+    expect(windowValue(withFuture, '2026-03-10', 7, 'total')).toBe(PER_DAY * 4)
   })
 
   it('is zero rather than everything when the date is unreadable', () => {
-    expect(windowTotal(days, 'not-a-date', 7)).toBe(0)
+    expect(windowValue(days, 'not-a-date', 7, 'total')).toBe(0)
   })
 
   it('answers for one day too', () => {
-    expect(dayTotal(days, '2026-03-10')).toBe(PER_DAY)
-    expect(dayTotal(days, '2026-03-06')).toBe(0)
+    expect(dayValue(days, '2026-03-10', 'total')).toBe(PER_DAY)
+    expect(dayValue(days, '2026-03-06', 'total')).toBe(0)
   })
 })
 
@@ -98,21 +111,17 @@ describe('this project', () => {
     ],
   })
 
-  it('is the row for the project that is selected', () => {
-    expect(projectTotal(data, 'p1')).toBe(10)
+  it('is the row for the project that is selected, as both readings', () => {
+    expect(projectFigures(data, 'p1')).toEqual({ total: 10, output: 2 })
   })
 
   it('is nothing at all when no project is selected', () => {
-    // A total with nothing scoping it, under a heading saying "this project",
-    // is the panel answering a question it was not asked.
-    expect(projectTotal(data, null)).toBeNull()
-    expect(projectTotal(data, '')).toBeNull()
+    expect(projectFigures(data, null)).toBeNull()
+    expect(projectFigures(data, '')).toBeNull()
   })
 
   it('is nothing rather than zero for a project the range never saw', () => {
-    // The row is absent because the window does not reach whatever was spent
-    // in it. An em dash says that; a zero says the project cost nothing.
-    expect(projectTotal(data, 'p2')).toBeNull()
+    expect(projectFigures(data, 'p2')).toBeNull()
   })
 })
 
@@ -153,20 +162,12 @@ describe('what was produced', () => {
   const days = [day('2026-03-09'), day('2026-03-10')]
 
   it('is the output column and not the total', () => {
-    // The panel's reading of 「字数」. Input, cache read and cache write are
-    // all the cost of *asking*; output is the only one of the four that is
-    // unambiguously production, and it is labelled output rather than words
-    // because a token is not a character in any language.
-    expect(outputTotal(days, '2026-03-10', 30)).toBe(2)
-    expect(outputTotal(days, '2026-03-10', 30)).not.toBe(windowTotal(days, '2026-03-10', 30))
-  })
-
-  it('is measured over the same window as everything else', () => {
-    expect(outputTotal(days, '2026-03-10', 1)).toBe(1)
+    expect(windowValue(days, '2026-03-10', 30, 'output')).toBe(2)
+    expect(windowValue(days, '2026-03-10', 30, 'total')).toBe(PER_DAY * 2)
   })
 
   it('is zero rather than everything when the date is unreadable', () => {
-    expect(outputTotal(days, '', 30)).toBe(0)
+    expect(windowValue(days, '', 30, 'output')).toBe(0)
   })
 })
 
@@ -191,5 +192,89 @@ describe('the day series behind the sparkline', () => {
 
   it('is all zeros where nothing has been recorded', () => {
     expect(daySeries([], '2026-08-22', 4)).toEqual([0, 0, 0, 0])
+  })
+})
+
+describe('the two readings', () => {
+  const days = [day('2026-03-09', { output: 7 }), day('2026-03-10', { output: 3 })]
+  it('reads a day and a window as total or output', () => {
+    expect(dayValue(days, '2026-03-10', 'total')).toBe(10 + 3 + 100 + 5)
+    expect(dayValue(days, '2026-03-10', 'output')).toBe(3)
+    expect(dayValue(days, '2026-03-01', 'output')).toBe(0)
+    expect(windowValue(days, '2026-03-10', 2, 'output')).toBe(10)
+    expect(windowValue(days, '2026-03-10', 1, 'output')).toBe(3)
+  })
+
+  it('fills the chart\'s gaps with zero days, oldest first', () => {
+    const points = dayPoints([day('2026-03-08', { output: 4 })], '2026-03-10', 3, 'output')
+    expect(points).toEqual([
+      { day: '2026-03-08', value: 4 },
+      { day: '2026-03-09', value: 0 },
+      { day: '2026-03-10', value: 0 },
+    ])
+  })
+})
+
+describe('today against the average', () => {
+  it('leaves today and empty days out of the average', () => {
+    const p = pace(
+      [
+        { day: '2026-03-07', value: 10 },
+        { day: '2026-03-08', value: 0 },
+        { day: '2026-03-09', value: 30 },
+        { day: '2026-03-10', value: 40 },
+      ],
+      '2026-03-10',
+    )
+    expect(p).toEqual({ average: 20, ratio: 2 })
+  })
+
+  it('has no answer with nothing before today', () => {
+    expect(pace([{ day: '2026-03-10', value: 9 }], '2026-03-10')).toBeNull()
+  })
+})
+
+describe('the chart\'s edges', () => {
+  const pts = (vals: number[]) => vals.map((value, i) => ({ day: `d${i}`, value }))
+
+  it('cuts the days before the first reading', () => {
+    expect(sinceFirst(pts([0, 0, 0, 5, 0, 6]), 2).map((p) => p.value)).toEqual([5, 0, 6])
+  })
+
+  it('keeps the minimum when the first reading is recent', () => {
+    expect(sinceFirst(pts([0, 0, 0, 0, 0, 6]), 3)).toHaveLength(3)
+  })
+
+  it('leaves a series with no readings alone', () => {
+    expect(sinceFirst(pts([0, 0, 0]), 2)).toHaveLength(3)
+  })
+
+  it('puts dates at both ends and evenly between', () => {
+    expect(axisTicks(30, 6)).toEqual([0, 6, 12, 17, 23, 29])
+    expect(axisTicks(3, 6)).toEqual([0, 1, 2])
+    expect(axisTicks(1, 6)).toEqual([0])
+    expect(axisTicks(0, 6)).toEqual([])
+    expect(shortDay('2026-09-04')).toBe('9/4')
+  })
+})
+
+describe('a ranking', () => {
+  const t = (output: number, cacheRead: number) => ({ input: 0, output, cacheRead, cacheWrite: 0, requests: 1 })
+  const rows = [
+    { key: 'a', label: 'a', hint: '', t: t(1, 900) },
+    { key: 'b', label: 'b', hint: '', t: t(9, 100) },
+    { key: 'c', label: 'c', hint: '', t: t(0, 0) },
+  ]
+
+  it('orders by the reading asked for and drops what spent nothing', () => {
+    expect(rank(rows, 'total').map((r) => r.key)).toEqual(['a', 'b'])
+    expect(rank(rows, 'output').map((r) => r.key)).toEqual(['b', 'a'])
+  })
+
+  it('gives each row its share of that reading', () => {
+    const out = rank(rows, 'output')
+    expect(out[0].share).toBeCloseTo(0.9)
+    expect(out[1].share).toBeCloseTo(0.1)
+    expect(out[0].total).toBe(109)
   })
 })

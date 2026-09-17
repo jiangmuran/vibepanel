@@ -136,6 +136,21 @@ func newUnconfiguredServer(t *testing.T) (*httptest.Server, *Server) {
 			DB: db,
 		},
 	}
+	// A share snapshot or a token-usage GET can start an ingest pass in the
+	// background, and nothing waits for it. Left running, it holds a database
+	// connection past db.Close, and the connection's write-ahead log is removed
+	// while t.TempDir is removing the directory -- which failed a release build
+	// with "unlinkat ...: directory not empty" on a test that had passed.
+	// Registered after the database's cleanup, so it runs before it.
+	t.Cleanup(func() {
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, running := srv.Tokens.Status(); !running {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	})
 	mgr.OnSignals = srv.HandleSignals
 	mgr.OnInput = srv.HandleInput
 	ts := httptest.NewServer(srv.Routes())

@@ -109,7 +109,7 @@ export type DockBlock = (typeof DOCK_BLOCKS)[number]
 // the repository is -- it is about the directory -- and it is the one block
 // that is mostly a picture of something else, which is why its full form is
 // the one that earns the window.
-export const DETAIL_BLOCKS = ['repo', 'page', 'tokens', 'monitor'] as const
+export const DETAIL_BLOCKS = ['repo', 'page', 'monitor'] as const
 
 export type DetailBlock = (typeof DETAIL_BLOCKS)[number]
 

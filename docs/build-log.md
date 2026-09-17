@@ -23001,6 +23001,75 @@ they ship inside the new licence with their notice kept at the end of the file.
 The README said the source was "100% open". Under a noncommercial licence that
 reads as a claim to open source, which this is no longer; it now says the
 source is public, in both languages.
+
+## 2026-09-16 — The usage panel, redrawn: two readings, one way in
+
+「重构一下整个用量面板，现在看着感觉又乱又抓不住重点，而且感觉 UI 好丑。布局也很乱」.
+Screenshots of the three surfaces on this machine's real transcripts showed
+why.
+
+- **The same figures three times.** The dock block, a side-panel detail, and
+  the full view each restated today, this week and the range. The detail was
+  twenty label–value rows at one weight, with nothing ranked above anything.
+- **The headline was mostly cache.** Today's 1.4B was 97% cache reads. The
+  figure people glance at moved with how much context was re-read, and the
+  output (61.8M over 30 days against 21.6B) was a footer.
+- **One long column.** The full view stacked projects above models at full
+  width, with hairline bars, an axis-less trend, a `365 天` button that wrapped
+  to two lines, and no opencode in the tool filter.
+- **Filler.** "本项目消耗 — 没选项目", "opencode 0 · 0", a data-sources section,
+  and a line explaining whose ledger this is.
+
+Two choices were the user's: which figure leads, and which surfaces stay.
+Total and output side by side; the dock block and the full view, with no detail
+in between.
+
+**The dock block** is a small table: total and output across, today, this week
+and (with a project selected) that project down. Today's row is one size up.
+A fortnight's spark and the per-agent bar sit under it. The header opens the
+full view directly. `tokens` left `DETAIL_BLOCKS`, and `panels/TokenUsage.tsx`
+is gone.
+
+**The full view** is cards on a tinted body, laid out by container queries:
+
+- total and output for today, each with its daily average and today's ratio;
+- a composition bar, whose cache-read segment is the explanation for the gap
+  between those two figures, so no sentence is needed;
+- a per-day chart with a date axis, a dashed average and a readout of the
+  hovered day, toggled between total and output. The toggle also re-ranks every
+  list below it, so a share always refers to what the chart draws;
+- projects down the left, models and tools stacked on the right (a tool card
+  of its own the height of the project list was mostly empty). Under a project
+  filter the one-row project card is dropped;
+- the heatmap only at 1 year, and the session table with fixed columns, the
+  directory's last segment and "first model +N".
+
+Two numbers changed meaning on purpose. The daily average leaves out today (a
+half day pulls the baseline down every morning) and empty days. A year chart
+starts at the first day with a reading: two months of history on a 365-day
+axis was ten months of blank. A project the range never saw is still an em
+dash, not a zero. The first draft of the new block drew 0 there, and
+`projectFigures` keeps the rule `projectTotal` had.
+
+The old helpers (`dayTotal`, `windowTotal`, `outputTotal`, `projectTotal`)
+went. Their edge-case tests now run against `dayValue`, `windowValue` and
+`projectFigures`, so the window's closed ends and the unreadable-date zero are
+still pinned. New tests cover `pace`, `sinceFirst`, `axisTicks` and `rank`.
+Eleven mutants against them, all killed.
+
+render-check gained `tokens/view`. It checks that the dock header opens the
+view and not a detail, that both figure cards and at least a week of bars
+render, that the output toggle changes the readout, that no range button wraps,
+that nothing scrolls sideways, and that Escape closes the view. The rank
+assertions in render-check and panes-check now expect two heroes of one size
+over pairs of one smaller size, and the contrast probe runs over the open view.
+
+Two things the first render-check run found. The column headers in the dock
+used `ink-3`, 2.97:1 in light, so the view's tertiary text is `ink-2`
+throughout. And the new check measured an empty chart: the view opens scoped
+to the selected session's project, and the check's transcript was in none, so
+it now clears the filter before measuring.
+
 ## 2026-09-16 — The panel stalled with the session that ran out of memory
 
 "面板已经停止记录会话在做什么。store: get session: context canceled", on the

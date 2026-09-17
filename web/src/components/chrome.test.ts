@@ -314,11 +314,14 @@ describe('the tabs that divide their own height', () => {
 })
 
 describe('the blocks that open out of their compact form', () => {
-  it('has every dock block in the openable list', () => {
+  it('has every dock block but tokens in the openable list', () => {
     // The dock's header is the press target and PanelDetail is what it opens.
     // A block in one list and not the other is a control that presses and
-    // draws nothing.
-    for (const b of DOCK_BLOCKS) expect(DETAIL_BLOCKS).toContain(b)
+    // draws nothing -- except tokens, whose header opens the full view.
+    for (const b of DOCK_BLOCKS) {
+      if (b === 'tokens') expect(DETAIL_BLOCKS).not.toContain(b)
+      else expect(DETAIL_BLOCKS).toContain(b)
+    }
   })
 
   it('has two that are not in the dock, and knows them', () => {
