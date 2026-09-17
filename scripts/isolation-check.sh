@@ -16,8 +16,9 @@
 #   blocked   the root step failing (busctl gone) does not stop the panel
 #             starting; it runs with the sessions where they were.
 #
-# Why these versions: 249 refuses User= on a scope (the helper hands the
-# cgroup over itself), 252 is Debian 12, 259 is what this was built on.
+# Why these versions: the handover of a delegated scope's files behaves
+# differently across them (the helper chowns them itself on all of it now,
+# which 249 needed first), 252 is Debian 12, and 259 is what this was built on.
 #
 # Needs docker that can run a privileged container. Not part of `check`; run it
 # whenever internal/resources, internal/cgroup, prepare.go or deploy/ changes.

@@ -23526,3 +23526,46 @@ panel group and read the page links against it. The Resources group went
 between them, so the measured pair was two rows apart and the check reported
 a 64px step beside 32px links that match every neighbor. The step now comes
 from the first two groups in the rail, whatever they are.
+
+## 2026-09-17 — The memory governor, where a failed read became a decision
+
+A review of the resources work found a family of the same mistake: a read that
+failed was carried on as a zero, a default or a stale value, and something was
+then decided on it.
+
+- `cgroup.Dir.KeyValues` swallowed its error. A `memory.stat` read that failed
+  made the pool hold nothing, and the budget built on that zero dropped the pool
+  to its floor with every session still in it; the kernel killed them before the
+  next tick put the limit back. It now returns the error. The budget is not
+  applied on an unknown held figure, the growth window does not take a zero
+  sample (which picked a culprit), the OOM count keeps its last reading (a zero
+  in between reported every OOM the session ever had as new), and the refault
+  rate keeps its previous sample.
+- The stored resources policy, read and failed, was the default policy, and both
+  write paths save on top of what they read: a boost or a mode change on a flaky
+  read persisted Balanced with auto-act on over somebody's Performance. The
+  governor still gets the default, uncached; the two write routes answer 503
+  and save nothing.
+- A pane the poller could not list (its tmux query failing under the very
+  pressure being decided about) had PID 0, which marked every process in the
+  session a child, the agent included, and so eligible for a countdown. An
+  unknown pane now protects every process.
+- An answer landing while a tick read `/proc` was overwritten by the question it
+  answered, and could be acted on. The tick re-reads the answer deadline before
+  raising the question and before acting.
+- A boost is not offered under machine pressure: it widens the sessions' pool,
+  which is nothing to a host short for its own reasons.
+- The phone notification was deduped by question id, and a warning escalates to
+  critical, with its countdown, on the same id. It now notifies again on that
+  escalation, once; a level flapping at the threshold does not buzz each time.
+- Adoption. The scope is never created with `User=`: systemd 252+ chown the
+  delegation files as part of the job, handing the account the inside of the
+  scope before the moves into it had been checked. `Adopt` hands it over itself,
+  last, on every version. A pid reused mid-move goes back to the panel's own
+  unit, not where the process had been, which the account chooses when the
+  "tmux server" is a fake on the panel's socket and would get a root process
+  written into it. A user unit's half-failed adoption, which never re-ran, is
+  swept from the panel's own cgroup on the tick.
+
+Tests pin the pane, the zero, the OOM count, the boost, the policy refusal and
+the notification; each fails with its fix removed.
