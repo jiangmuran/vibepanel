@@ -73,6 +73,7 @@ export function PanesHarness() {
         onWidthChange={setWidth}
         onCollapse={() => {}}
         onOpenTokens={() => {}}
+        onOpenResources={() => {}}
         currentSession={null}
         onPaste={() => {}}
       />
