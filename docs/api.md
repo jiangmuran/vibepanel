@@ -752,7 +752,7 @@ are no groups. `docs/design.md` has the reasoning and the addressing rules.
 
 ### `GET /api/chat`
 
-Everything the Chat page shows: the adapters this build has (`factories`, with
+Everything the Messaging page shows: the adapters this build has (`factories`, with
 the form fields each needs), the configured channels with their health (last
 poll, last error, last message received, how many pushes were dropped because
 微信 cannot be spoken to until the person says something), the peers and their
@@ -763,6 +763,18 @@ their chat handles.
 
 Secrets never come back: a secret field reports `secretSet[name]` and nothing
 else.
+
+### `POST /api/chat/consent`
+
+Records that the owner accepts what configuring chat means: session titles,
+what agents say, the commands they ask to run and screenshots go through the
+servers of the chat service configured, and the advanced mode hands a person's
+words and the session table to a model provider. Answered `200
+{"consentAt"}`, the first acceptance's time, kept on later calls and audited
+once. Until it is recorded, switching a channel on, starting a sign-in and
+switching the advanced mode on answer `409`; saving a channel switched off,
+reading, pairing and everything a running channel does are not affected.
+`GET /api/chat` reports it as `consentAt`, zero until then.
 
 ### `PUT /api/chat/channels/{kind}`
 ### `DELETE /api/chat/channels/{kind}`
@@ -818,6 +830,19 @@ The advanced mode's configuration (`enabled`, `harness` claude|codex, `model`,
 bot speaks (`zh`|`en`). A configuration the harness cannot be built from is
 answered `400` and nothing is stored.
 
+### `PUT /api/chat/alerts`
+
+When the machine is worth a message: `{"enabled", "cpuPercent", "cpuMinutes",
+"memPercent", "diskPercent", "to"}`. CPU alerts after being at or above its
+threshold for `cpuMinutes`; memory and disk (percent used) when they reach
+theirs; each clears with a recovery message once back under by a margin (10,
+5 and 2 points), so a machine sitting on the line is one alert. Percentages
+are 50..100 and minutes 1..120, else `400`. `to` is the routing rules' form,
+`"*"` or `"channel:peer"`. Alerts go only through channels already switched on
+and to paired people who have not muted them (「静音告警 1小时」 in the chat).
+`GET /api/chat` reports it as `alerts`, with the defaults (on, 90% for ten
+minutes, 90%, 95%, everyone) until saved, and `monitorAvailable`.
+
 ### `GET /api/chat/log`
 
 The chat's own audit entries (`chat.*`), newest first, `?n=` up to 500 (a
@@ -837,10 +862,11 @@ and nothing else. 404 when no such channel is running.
 ### `GET /api/chat/tools/sessions/{handle}/screen`
 ### `GET /api/chat/tools/usage`
 ### `GET /api/chat/tools/projects`
+### `GET /api/chat/tools/system`
 
 What the advanced mode's agent may read, through `vibepanel mcp`. These take a
 bearer token that exists only in the running process's memory and reaches
-exactly these five `GET`s and nothing else in the panel; a session cookie or an
+exactly these six `GET`s and nothing else in the panel; a session cookie or an
 API token is refused here and this token is refused everywhere else. Sessions
 are named by handle; paths, commands, tmux names and ids are not disclosed.
 

@@ -211,7 +211,7 @@ Each of these exists because the alternative broke something real.
    `POST /api/chat/hooks/{kind}` is where an IM calls back; it is
    unauthenticated at the panel and the adapter verifies every request itself
    (signature, verification token). `GET /api/chat/tools/*` is what the
-   advanced mode's agent may read: five `GET`s, a token minted per process
+   advanced mode's agent may read: six `GET`s, a token minted per process
    and never stored, refused everywhere else and pinned by
    `TestAChatToolsTokenReachesOnlyTheseRoutes`. The session views there
    restate their fields; handles, not ids. Nothing an agent printed reaches

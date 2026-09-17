@@ -42,6 +42,7 @@ import type {
   TuneStatus,
   RestartResult,
   EnvSettings,
+  ChatAlerts,
   ChatSettings,
   ChatLogin,
   ChatTestResult,
@@ -924,6 +925,9 @@ export const api = {
       `/api/chat/channels/${encodeURIComponent(kind)}/login/${encodeURIComponent(id)}/code`,
       { method: 'POST', body: JSON.stringify({ code }) },
     ),
+  saveChatAlerts: (alerts: ChatAlerts) =>
+    request<ChatAlerts>('/api/chat/alerts', { method: 'PUT', body: JSON.stringify(alerts) }),
+  chatConsent: () => request<{ consentAt: number }>('/api/chat/consent', { method: 'POST' }),
   pairChat: (code: string) =>
     request<ChatPeer>('/api/chat/pair', { method: 'POST', body: JSON.stringify({ code }) }),
   patchChatPeer: (channel: string, peerId: string, patch: { mode?: ChatPeerMode; status?: ChatPeerStatus; display?: string }) =>

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/hooks"
 	"github.com/jiangmuran/vibepanel/internal/session"
 	"github.com/jiangmuran/vibepanel/internal/store"
+	"github.com/jiangmuran/vibepanel/internal/sysmon"
 )
 
 // The chat bridge's HTTP surface: the settings page's API, the two doors an
@@ -123,12 +125,13 @@ func (s *Server) StartChat(ctx context.Context) error {
 		return err
 	}
 	s.Chat = chat.New(chat.Deps{
-		DB: s.DB, Term: ChatTerminal(s.Tmux), Box: box, Log: s.Log,
+		DB: s.DB, Term: s.chatTerminal(), Box: box, Log: s.Log,
 		PublicURL: s.Cfg.PublicURL,
 		Zone:      func() *time.Location { return s.loc(ctx) },
 		Shot:      s.Shooter,
 		Audit:     func(ctx context.Context, event, detail string) { s.audit(ctx, event, "chat", "", detail) },
 		PastedDir: filepath.Join(s.Cfg.DataDir, "pasted"),
+		Monitor:   s.chatMonitor,
 	})
 	s.Chat.Start(ctx)
 	if err := s.RebuildAssistant(ctx); err != nil {
@@ -145,6 +148,7 @@ func (s *Server) registerChatRoutes(r chi.Router) {
 	r.Post("/chat/channels/{kind}/login", s.handleChatLoginStart)
 	r.Get("/chat/channels/{kind}/login/{id}", s.handleChatLoginStatus)
 	r.Post("/chat/channels/{kind}/login/{id}/code", s.handleChatLoginCode)
+	r.Post("/chat/consent", s.handleChatConsent)
 	r.Post("/chat/pair", s.handleChatPair)
 	r.Patch("/chat/peers/{channel}/{peer}", s.handlePatchChatPeer)
 	r.Delete("/chat/peers/{channel}/{peer}", s.handleDeleteChatPeer)
@@ -153,6 +157,7 @@ func (s *Server) registerChatRoutes(r chi.Router) {
 	r.Put("/chat/keys", s.handlePutChatTools)
 	r.Put("/chat/assistant", s.handlePutChatAssistant)
 	r.Put("/chat/lang", s.handlePutChatLang)
+	r.Put("/chat/alerts", s.handlePutChatAlerts)
 	r.Get("/chat/log", s.handleChatLog)
 }
 
@@ -171,6 +176,7 @@ func (s *Server) registerChatPublicRoutes(r chi.Router) {
 		r.Get("/sessions/{handle}/screen", s.handleChatToolScreen)
 		r.Get("/usage", s.handleChatToolUsage)
 		r.Get("/projects", s.handleChatToolProjects)
+		r.Get("/system", s.handleChatToolSystem)
 	})
 }
 
@@ -223,6 +229,60 @@ type chatSettingsView struct {
 	Projects           []store.Project   `json:"projects"`
 	SpendToday         float64           `json:"spendToday"`
 	CallsToday         int               `json:"callsToday"`
+	// ConsentAt is when the owner accepted that configuring chat sends
+	// session content to services outside this machine; zero until then.
+	ConsentAt int64 `json:"consentAt"`
+	// Alerts is when the machine is worth a message, and MonitorAvailable
+	// whether this panel can read the machine at all.
+	Alerts           chat.Alerts `json:"alerts"`
+	MonitorAvailable bool        `json:"monitorAvailable"`
+}
+
+// ChatConsentKey is the settings row recording that acceptance.
+const ChatConsentKey = "chat.consentAt"
+
+// chatConsented reports whether the owner has accepted what configuring chat
+// means. Asked before anything that makes the panel talk to an IM or a model
+// provider for the first time: switching a channel on, a 微信 sign-in, the
+// advanced mode. Not before reading, saving a channel switched off, or
+// anything a channel already running keeps doing.
+//
+// On the server, not only in the page: an API token can configure a channel
+// too, and a consent the page asks for and the API skips is a checkbox, not a
+// gate. Until a channel is configured the chat code connects to nothing, which
+// is what this acceptance is about losing.
+func (s *Server) chatConsented(ctx context.Context) bool {
+	raw, err := s.DB.GetSetting(ctx, ChatConsentKey, "")
+	return err == nil && raw != "" && raw != "0"
+}
+
+// refuseWithoutConsent answers 409 when the owner has not accepted yet, and
+// reports whether it did.
+func (s *Server) refuseWithoutConsent(w http.ResponseWriter, r *http.Request) bool {
+	if s.chatConsented(r.Context()) {
+		return false
+	}
+	writeErr(w, http.StatusConflict, "chat consent required: accept that session content is sent to outside services first")
+	return true
+}
+
+func (s *Server) handleChatConsent(w http.ResponseWriter, r *http.Request) {
+	if !s.requireChat(w) {
+		return
+	}
+	ctx := r.Context()
+	at := time.Now().Unix()
+	if raw, err := s.DB.GetSetting(ctx, ChatConsentKey, ""); err == nil && raw != "" && raw != "0" {
+		at, _ = strconv.ParseInt(raw, 10, 64)
+	} else {
+		if err := s.DB.SetSetting(ctx, ChatConsentKey, strconv.FormatInt(at, 10)); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		user, _, _ := s.currentUser(r)
+		s.audit(ctx, "chat.consent", user.Username, s.clientIP(r), "accepted that chat sends session content to outside services")
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"consentAt": at})
 }
 
 func (s *Server) assistantConfig(ctx context.Context) AssistantConfig {
@@ -300,6 +360,12 @@ func (s *Server) handleChatSettings(w http.ResponseWriter, r *http.Request) {
 		view.Lang = l
 	}
 	view.Dropped = s.Chat.Dropped()
+	raw, _ = s.DB.GetSetting(ctx, chat.AlertsKey, "")
+	view.Alerts = chat.ParseAlerts(raw)
+	view.MonitorAvailable = s.Sampler != nil
+	if raw, err := s.DB.GetSetting(ctx, ChatConsentKey, ""); err == nil {
+		view.ConsentAt, _ = strconv.ParseInt(raw, 10, 64)
+	}
 	if usd, calls, err := s.DB.ChatSpend(ctx, dayIn(s.loc(ctx), time.Now())); err == nil {
 		view.SpendToday, view.CallsToday = usd, calls
 	}
@@ -377,6 +443,9 @@ func (s *Server) handlePutChatChannel(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "sign in first")
 		return
 	}
+	if req.Enabled && s.refuseWithoutConsent(w, r) {
+		return
+	}
 	if err := s.Chat.WriteChannel(ctx, kind, req.Enabled, cfg); err != nil {
 		if errors.Is(err, chat.ErrChannelConfig) {
 			writeErr(w, http.StatusBadRequest, err.Error())
@@ -450,6 +519,10 @@ func (s *Server) handleChatLoginStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	kind := chi.URLParam(r, "kind")
+	// A sign-in is the first request to the IM's servers.
+	if s.refuseWithoutConsent(w, r) {
+		return
+	}
 	la, err := s.Chat.LoginAdapter(kind)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err.Error())
@@ -760,6 +833,11 @@ func (s *Server) handlePutChatAssistant(w http.ResponseWriter, r *http.Request) 
 	if cfg.Harness == "" {
 		cfg.Harness = "claude"
 	}
+	// The advanced mode hands a person's words and the session table to a
+	// model provider, which is outside this machine as much as an IM is.
+	if cfg.Enabled && s.refuseWithoutConsent(w, r) {
+		return
+	}
 	// Built before it is stored: a configuration the harness refuses is
 	// answered 400 and nothing changes, rather than saved and off.
 	if cfg.Enabled && s.NewAssistant != nil {
@@ -837,6 +915,29 @@ func (s *Server) handlePutChatLang(w http.ResponseWriter, r *http.Request) {
 		s.Chat.SetLang(req.Lang)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handlePutChatAlerts(w http.ResponseWriter, r *http.Request) {
+	var a chat.Alerts
+	if !decode(w, r, &a) {
+		return
+	}
+	if a.To == nil {
+		a.To = []string{}
+	}
+	if err := a.Validate(); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	raw, _ := json.Marshal(a)
+	if err := s.DB.SetSetting(r.Context(), chat.AlertsKey, string(raw)); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	user, _, _ := s.currentUser(r)
+	s.audit(r.Context(), "chat.alerts", user.Username, s.clientIP(r),
+		fmt.Sprintf("enabled=%v cpu=%d%%/%dm mem=%d%% disk=%d%%", a.Enabled, a.CPUPercent, a.CPUMinutes, a.MemPercent, a.DiskPercent))
+	writeJSON(w, http.StatusOK, a)
 }
 
 func (s *Server) handleChatLog(w http.ResponseWriter, r *http.Request) {
@@ -996,6 +1097,56 @@ func (s *Server) handleChatToolScreen(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"text": strings.TrimRight(text, "\n ")})
 }
 
+// toolSystemView is the machine for the advanced mode: the numbers, and the
+// sessions using the most by handle and title. Restated rather than the
+// sample itself, for the reason the session views are: the disk path and a
+// field added to Sample later are not disclosed by default.
+type toolSystemView struct {
+	CPUPercent  *float64          `json:"cpuPercent"`
+	Cores       int               `json:"cores"`
+	Load        [3]float64        `json:"load"`
+	MemUsed     uint64            `json:"memUsedBytes"`
+	MemTotal    uint64            `json:"memTotalBytes"`
+	SwapUsed    uint64            `json:"swapUsedBytes"`
+	SwapTotal   uint64            `json:"swapTotalBytes"`
+	DiskUsed    uint64            `json:"diskUsedBytes"`
+	DiskTotal   uint64            `json:"diskTotalBytes"`
+	UptimeHours float64           `json:"uptimeHours"`
+	Sessions    []toolSessionLoad `json:"sessions"`
+}
+
+type toolSessionLoad struct {
+	Handle     int     `json:"handle"`
+	Title      string  `json:"title"`
+	CPUPercent float64 `json:"cpuPercent"`
+	RSSBytes   uint64  `json:"rssBytes"`
+}
+
+func (s *Server) handleChatToolSystem(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sample, usage := s.chatMonitor(ctx)
+	view := toolSystemView{
+		CPUPercent: sample.CPUPercent, Cores: sample.Cores, Load: [3]float64{sample.Load1, sample.Load5, sample.Load15},
+		MemUsed: sample.MemTotal - sample.MemAvailable, MemTotal: sample.MemTotal,
+		SwapUsed: sample.SwapTotal - sample.SwapFree, SwapTotal: sample.SwapTotal,
+		DiskUsed: sample.DiskTotal - sample.DiskFree, DiskTotal: sample.DiskTotal,
+		UptimeHours: float64(sample.Uptime) / 3600, Sessions: []toolSessionLoad{},
+	}
+	for id, u := range usage {
+		row, err := s.DB.GetSession(ctx, id)
+		if err != nil || !chat.Addressable(row) || s.Chat == nil {
+			continue
+		}
+		h, err := s.Chat.Handle(ctx, id)
+		if err != nil {
+			continue
+		}
+		view.Sessions = append(view.Sessions, toolSessionLoad{Handle: h, Title: row.Title, CPUPercent: u.CPUPercent, RSSBytes: u.RSS})
+	}
+	sort.Slice(view.Sessions, func(i, j int) bool { return view.Sessions[i].CPUPercent > view.Sessions[j].CPUPercent })
+	writeJSON(w, http.StatusOK, view)
+}
+
 type toolUsageView struct {
 	Days           int     `json:"days"`
 	Started        int     `json:"started"`
@@ -1075,10 +1226,11 @@ const promptEcho = 5
 // recordHookMessage keeps what an agent's hook document carried and tells
 // the bridge. Called before the state is written, so the message is never
 // newer than the state change it belongs to (the bridge compares the two).
-func (s *Server) recordHookMessage(ctx context.Context, row store.Session, body []byte) {
+// What it reports is about menus; see hookNote.
+func (s *Server) recordHookMessage(ctx context.Context, row store.Session, body []byte) (note hookNote) {
 	rep, ok := hooks.Extract(body)
 	if !ok {
-		return
+		return note
 	}
 	tool := chat.AgentFor(row.LaunchCommand, row.Command)
 	if rep.TranscriptPath != "" {
@@ -1091,7 +1243,20 @@ func (s *Server) recordHookMessage(ctx context.Context, row store.Session, body 
 		text = "(interrupted)"
 	}
 	if text == "" {
-		return
+		return note
+	}
+	// A menu on the screen is announced a few seconds later by a
+	// Notification ("Claude needs your permission", "Claude is waiting for
+	// your input") that says nothing about it. Stored, that sentence became
+	// the latest message and turned the menu into a permission prompt. While
+	// the menu is the latest message it is still what is being asked, so the
+	// announcement only moves its time forward.
+	if rep.Event == "Notification" {
+		if last, ok, _ := s.DB.LatestSessionMessage(ctx, row.ID); ok && last.Menu != "" {
+			_ = s.DB.TouchSessionMessage(ctx, last.ID, time.Now().Unix())
+			note.questionsOpen = strings.Contains(last.Menu, `"tool":"`+hooks.ToolAskUserQuestion+`"`)
+			return note
+		}
 	}
 	// Claude Code fires PermissionRequest (with the command) and then
 	// Notification (with a sentence about it) for one prompt. The first is
@@ -1099,15 +1264,47 @@ func (s *Server) recordHookMessage(ctx context.Context, row store.Session, body 
 	// prompt already stored, is the same event said twice.
 	if rep.Event == "Notification" && rep.Kind == hooks.KindPrompt {
 		if last, ok, _ := s.DB.LatestSessionMessage(ctx, row.ID); ok && last.Kind == store.MessagePrompt && time.Now().Unix()-last.At <= promptEcho {
-			return
+			return note
 		}
 	}
-	m, err := s.DB.AddSessionMessage(ctx, store.SessionMessage{SessionID: row.ID, Kind: rep.Kind, Text: text, Tool: tool})
+	msg := store.SessionMessage{SessionID: row.ID, Kind: rep.Kind, Text: text, Tool: tool}
+	if rep.Menu != nil {
+		raw, _ := json.Marshal(rep.Menu)
+		msg.Menu = string(raw)
+	}
+	m, err := s.DB.AddSessionMessage(ctx, msg)
 	if err != nil {
 		s.Log.Warn("session message", "err", err)
-		return
+		return note
 	}
 	if s.Chat != nil {
 		s.Chat.SessionSaid(row, m)
 	}
+	note.newMenu = rep.Menu != nil
+	return note
+}
+
+// hookNote is what storing a hook's message found out about menus.
+type hookNote struct {
+	// newMenu: the document put a menu on the screen, which is a session
+	// waiting on its person whatever state the hook reports for the event.
+	newMenu bool
+	// questionsOpen: the document announced a question menu already stored,
+	// which one keystroke does not answer.
+	questionsOpen bool
+}
+
+// chatMonitor is the machine as the chat reads it: the panel's own sample,
+// and each session's process tree where /proc can be read. Nil-safe for a
+// server built without a sampler, which tests do.
+func (s *Server) chatMonitor(ctx context.Context) (sysmon.Sample, map[string]sysmon.Usage) {
+	if s.Sampler == nil {
+		return sysmon.Sample{}, nil
+	}
+	sample := s.Sampler.Sample()
+	if !sysmon.ProcReadable() {
+		return sample, nil
+	}
+	usage, _ := s.sessionUsage(ctx)
+	return sample, usage
 }

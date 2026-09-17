@@ -91,11 +91,67 @@ func init() {
 	})
 }
 
+// Nothing that makes the panel talk to an outside service for the first time
+// happens before the owner accepts that it will: switching a channel on, a
+// 微信 sign-in, the advanced mode. Saving a channel switched off does not
+// talk to anything and needs no acceptance.
+func TestChatNeedsConsentBeforeItTalksToAnyone(t *testing.T) {
+	ts, srv := newTestServer(t)
+	attachChat(t, srv)
+	ctx := context.Background()
+	var view struct {
+		ConsentAt int64 `json:"consentAt"`
+	}
+	_, body := doJSON(t, ts, http.MethodGet, "/api/chat", "")
+	_ = json.Unmarshal(body, &view)
+	if view.ConsentAt != 0 {
+		t.Fatalf("consent before anyone gave it: %d", view.ConsentAt)
+	}
+	for _, c := range []struct{ method, path, body string }{
+		{http.MethodPut, "/api/chat/channels/mem", `{"enabled":true,"values":{"name":"x"}}`},
+		{http.MethodPut, "/api/chat/assistant", `{"enabled":true,"harness":"claude","maxTurns":6,"budgetUsd":1,"timeoutSeconds":60}`},
+		{http.MethodPost, "/api/chat/channels/mem/login", ""},
+	} {
+		if code, b := doJSON(t, ts, c.method, c.path, c.body); code != http.StatusConflict || !strings.Contains(string(b), "consent") {
+			t.Fatalf("%s %s without consent: %d %s", c.method, c.path, code, b)
+		}
+	}
+	if code, _ := doJSON(t, ts, http.MethodPut, "/api/chat/channels/mem", `{"enabled":false,"values":{"name":"x"}}`); code != http.StatusNoContent {
+		t.Fatalf("saving it off: %d", code)
+	}
+	code, body := doJSON(t, ts, http.MethodPost, "/api/chat/consent", "")
+	_ = json.Unmarshal(body, &view)
+	if code != 200 || view.ConsentAt == 0 {
+		t.Fatalf("consent: %d %s", code, body)
+	}
+	first := view.ConsentAt
+	// Accepting again keeps the first time: it is a record, not a refresh.
+	_, body = doJSON(t, ts, http.MethodPost, "/api/chat/consent", "")
+	_ = json.Unmarshal(body, &view)
+	if view.ConsentAt != first {
+		t.Fatalf("consent time moved: %d -> %d", first, view.ConsentAt)
+	}
+	if code, _ := doJSON(t, ts, http.MethodPut, "/api/chat/channels/mem", `{"enabled":true,"values":{"name":"x"}}`); code != http.StatusNoContent {
+		t.Fatalf("after consent: %d", code)
+	}
+	entries, _ := srv.DB.RecentAudit(ctx, 50)
+	found := 0
+	for _, e := range entries {
+		if e.Event == "chat.consent" {
+			found++
+		}
+	}
+	if found != 1 {
+		t.Fatalf("consent audited %d times", found)
+	}
+}
+
 // An empty form for a channel whose adapter needs a value is a 400 that
 // names the value. It was a panic in the handler, and a 500.
 func TestAChannelFormTheAdapterRefusesIsA400(t *testing.T) {
 	ts, srv := newTestServer(t)
 	attachChat(t, srv)
+	doJSON(t, ts, http.MethodPost, "/api/chat/consent", "")
 	code, body := doJSON(t, ts, http.MethodPut, "/api/chat/channels/picky", `{"enabled":true,"values":{}}`)
 	// The adapter's own words, which the page translates, and nothing else.
 	if code != http.StatusBadRequest || !strings.Contains(string(body), `"picky: key is required"`) {
@@ -204,6 +260,24 @@ func TestAHookReportCarriesTheAgentsMessageAndTranscript(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("the notification was stored twice: %+v", msgs)
 	}
+	// A question menu: PreToolUse reports "working", and the session is in
+	// fact waiting on its person with the menu stored; the notification that
+	// announces it a few seconds later neither replaces the menu nor adds a
+	// message.
+	if code := report("working", `{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Pick","header":"H","options":[{"label":"A"},{"label":"B"}]}]}}`); code != http.StatusNoContent {
+		t.Fatalf("menu report: %d", code)
+	}
+	row, _ := srv.DB.GetSession(ctx, sess.ID)
+	last, _, _ := srv.DB.LatestSessionMessage(ctx, sess.ID)
+	if row.State != session.StateWaiting || last.Kind != "question" || !strings.Contains(last.Menu, `"label":"A"`) {
+		t.Fatalf("menu: state %s, message %+v", row.State, last)
+	}
+	report("waiting", `{"hook_event_name":"Notification","notification_type":"permission_prompt","message":"Claude needs your permission"}`)
+	report("waiting", `{"hook_event_name":"Notification","notification_type":"idle_prompt","message":"Claude is waiting for your input"}`)
+	after, _, _ := srv.DB.LatestSessionMessage(ctx, sess.ID)
+	if after.ID != last.ID {
+		t.Fatalf("a notification replaced the menu: %+v", after)
+	}
 	// An empty body is the old script: the state still lands.
 	if code := report("done", ""); code != http.StatusNoContent {
 		t.Fatalf("empty body: %d", code)
@@ -216,7 +290,7 @@ func TestAHookReportCarriesTheAgentsMessageAndTranscript(t *testing.T) {
 	if res.StatusCode != http.StatusNoContent {
 		t.Fatalf("legacy body: %d", res.StatusCode)
 	}
-	row, _ := srv.DB.GetSession(ctx, sess.ID)
+	row, _ = srv.DB.GetSession(ctx, sess.ID)
 	if row.State != session.StateWorking {
 		t.Fatalf("state %q", row.State)
 	}
@@ -226,7 +300,7 @@ func TestAHookReportCarriesTheAgentsMessageAndTranscript(t *testing.T) {
 		t.Fatalf("huge: %d", code)
 	}
 	msgs, _ = srv.DB.ListSessionMessages(ctx, sess.ID, 0)
-	if len(msgs) != 1 {
+	if len(msgs) != 2 { // the prompt and the menu above
 		t.Fatalf("an over-size message was stored: %d", len(msgs))
 	}
 	// The bridge was told: a Stop with a message reaches the paired peer.
@@ -272,6 +346,7 @@ func TestChatSettingsRedactSecretsAndMergeThemOnWrite(t *testing.T) {
 		t.Fatalf("health: %+v", ch.Health)
 	}
 	// A write with the secret left empty keeps it; a new name replaces it.
+	doJSON(t, ts, http.MethodPost, "/api/chat/consent", "")
 	code, _ = doJSON(t, ts, http.MethodPut, "/api/chat/channels/mem", `{"enabled":true,"values":{"token":"","name":"renamed"}}`)
 	if code != http.StatusNoContent {
 		t.Fatalf("PUT: %d", code)
@@ -425,6 +500,7 @@ func TestAChatToolsTokenReachesOnlyTheseRoutes(t *testing.T) {
 		"GET /api/chat/tools/sessions",
 		"GET /api/chat/tools/sessions/{handle}/messages",
 		"GET /api/chat/tools/sessions/{handle}/screen",
+		"GET /api/chat/tools/system",
 		"GET /api/chat/tools/usage",
 	}
 	var got []string
@@ -565,5 +641,30 @@ func TestChatRoutesAnswer503WithoutABridge(t *testing.T) {
 	}
 	if code, _ = doJSON(t, ts, http.MethodPost, "/api/chat/pair", `{"code":"123456"}`); code != http.StatusServiceUnavailable {
 		t.Fatalf("pair without bridge: %d", code)
+	}
+}
+
+func TestChatAlertsAreSavedValidatedAndReported(t *testing.T) {
+	ts, srv := newTestServer(t)
+	attachChat(t, srv)
+	var view struct {
+		Alerts chat.Alerts `json:"alerts"`
+	}
+	_, body := doJSON(t, ts, http.MethodGet, "/api/chat", "")
+	_ = json.Unmarshal(body, &view)
+	if !view.Alerts.Enabled || view.Alerts.CPUMinutes != chat.DefaultAlerts().CPUMinutes {
+		t.Fatalf("defaults: %+v", view.Alerts)
+	}
+	if code, _ := doJSON(t, ts, http.MethodPut, "/api/chat/alerts", `{"enabled":true,"cpuPercent":20,"cpuMinutes":5,"memPercent":90,"diskPercent":90}`); code != http.StatusBadRequest {
+		t.Fatalf("a threshold that alerts all day: %d", code)
+	}
+	code, _ := doJSON(t, ts, http.MethodPut, "/api/chat/alerts", `{"enabled":false,"cpuPercent":85,"cpuMinutes":15,"memPercent":80,"diskPercent":92,"to":["mem:me"]}`)
+	if code != 200 {
+		t.Fatalf("save: %d", code)
+	}
+	_, body = doJSON(t, ts, http.MethodGet, "/api/chat", "")
+	_ = json.Unmarshal(body, &view)
+	if view.Alerts.Enabled || view.Alerts.CPUMinutes != 15 || len(view.Alerts.To) != 1 {
+		t.Fatalf("after save: %+v", view.Alerts)
 	}
 }

@@ -459,6 +459,8 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"resources.policy":      true,
 		"resources.boost":       true,
 		"resources.boost_ended": true,
+		"chat.consent":          true,
+		"chat.alerts":           true,
 	}
 
 	files, err := filepath.Glob("*.go")

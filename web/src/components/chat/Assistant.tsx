@@ -6,6 +6,7 @@ import { t } from '../../i18n'
 import { showToast } from '../toasts'
 import { safeText } from '../text'
 import { Card, Section } from './Chat'
+import { ensureChatConsent } from './consent'
 import { INPUT, Primary, SELECT, errText, useServerCopy } from './form'
 
 /**
@@ -33,6 +34,7 @@ export function Assistant({ data, onChange }: { data: ChatSettings; onChange: ()
   }
 
   const save = async () => {
+    if (cfg.enabled && !(await ensureChatConsent(data.consentAt))) return
     setBusy(true)
     try {
       setCfg(await api.saveChatAssistant(cfg))

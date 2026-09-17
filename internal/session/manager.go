@@ -81,8 +81,10 @@ type Live struct {
 	ID       string
 	TmuxName string
 
-	// onInput is Manager.OnInput, captured when the attachment was made.
+	// onInput is Manager.OnInput, captured when the attachment was made; onKey
+	// likewise.
 	onInput func(sessionID string)
+	onKey   func(sessionID string)
 
 	mu   sync.RWMutex
 	ptmx *os.File
@@ -296,6 +298,13 @@ type Manager struct {
 	// an agent announced the end of has been followed by another.
 	OnInput func(sessionID string)
 
+	// OnKey, if set, is called when a viewer sends a session anything that is
+	// not an escape sequence: a line, or a single key. A permission menu takes
+	// `1` without Enter, and that keystroke is the only sign it was answered.
+	// Escape sequences are left out because arrow keys moving through the menu,
+	// and the focus reports a terminal sends on its own, answer nothing.
+	OnKey func(sessionID string)
+
 	// Log, if set, receives non-fatal problems.
 	Log *slog.Logger
 
@@ -464,6 +473,7 @@ func (m *Manager) Attach(ctx context.Context, sessionID, tmuxName string, cols, 
 		reconfiguredAt: time.Now(),
 		now:            time.Now,
 		onInput:        m.OnInput,
+		onKey:          m.OnKey,
 		// Before the pump starts, because the pump is what answers tmux's
 		// colour queries and it answers them on the first chunk. See lastDark.
 		dark: m.lastDark.Load(),
@@ -1026,6 +1036,9 @@ func (l *Live) Write(clientID string, p []byte) (int, error) {
 	l.mu.Unlock()
 	if l.onInput != nil && bytes.ContainsAny(p, "\r\n") {
 		l.onInput(l.ID)
+	}
+	if l.onKey != nil && len(p) > 0 && p[0] != 0x1b {
+		l.onKey(l.ID)
 	}
 	return ptmx.Write(p)
 }

@@ -80,10 +80,18 @@ type tracker struct {
 	// once, when a turn ends, so it can say "waiting" and nothing else: no
 	// later report will ever replace it. See Evaluate.
 	hookLegacy bool
+	// hookAgent is the subagent the standing report came from, empty for the
+	// main thread; hookAnswerable says a keystroke answers the standing
+	// prompt. See HookReport.
+	hookAgent      string
+	hookAnswerable bool
 
 	// lastInput is when somebody last sent a line to the session: a keystroke
 	// with Enter in it, from any viewer.
 	lastInput time.Time
+	// lastKey is when somebody last pressed a key that was not an escape
+	// sequence: a line, or a single `1` on a permission menu.
+	lastKey time.Time
 
 	// logState is what the agent's own session log says it is doing, for an
 	// agent with no hook installed (Codex's rollout file; see internal/codexlog).
@@ -128,10 +136,134 @@ func (d *Detector) Observe(id string, sig Signals, now time.Time) {
 // Report records a state a hook declared. Hooks are the only precise source:
 // the agent itself saying what it is doing.
 func (d *Detector) Report(id string, st State, now time.Time) {
-	if !st.Valid() {
+	d.Hook(id, HookReport{State: st}, now)
+}
+
+// HookReport is one hook report with what its document said about it. See
+// hooks.Reading, which is where these come from.
+type HookReport struct {
+	State State
+
+	// Legacy marks Codex's old `notify` line. See ReportNotify.
+	Legacy bool
+
+	// Agent is the subagent that reported, empty for the main thread. Claude
+	// Code sets agent_id on every hook fired from inside a subagent.
+	Agent string
+
+	// Answerable marks a waiting report that a keystroke answers: a permission
+	// prompt, which is a menu. Not a question dialog, which takes a keystroke
+	// per question and reports itself through PostToolUse the moment the last
+	// one is answered, and not a failed turn, where Enter on an empty prompt
+	// answers nothing.
+	Answerable bool
+}
+
+// lateReport is how soon after a waiting report a working report is taken to
+// have been sent before it and delivered after. PreToolUse and
+// PermissionRequest for one call leave Claude Code 17 ms apart, each through
+// its own shell and curl, and a parallel tool's PostToolUse can land the same
+// way. Nobody answers a prompt in under a second; if they do, the keystroke
+// releases it anyway.
+const lateReport = time.Second
+
+// Hook records a hook report and says whether it was taken.
+//
+// Reports replace the one before, with two exceptions, both sequences measured
+// on a real Claude Code:
+//
+//   - A working report within lateReport of a waiting one was sent before it.
+//     Taken, the dialog on screen read working.
+//
+//   - A subagent's working report does not answer another agent's prompt.
+//     Seven background agents calling tools while the main thread asked a
+//     question overwrote the one state that needed a person. The main thread's
+//     reports are always taken: a subagent whose prompt was denied never
+//     reports again, and refusing the main thread over it held a whole turn at
+//     waiting.
+//
+// What the rules no longer do is as deliberate. The first version of this let
+// Claude's idle notification settle a session and held some reports against
+// it; a review found three ways that produced the wrong state -- a background
+// agent's unanswered prompt settled to done among them -- and the idle
+// notification had no case left that nothing else covered. hooks.Read now
+// drops it.
+func (d *Detector) Hook(id string, r HookReport, now time.Time) bool {
+	if !r.State.Valid() {
+		return false
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	t := d.get(id)
+	if r.State == StateWorking && t.hookState == StateWaiting {
+		if now.Sub(t.hookAt) < lateReport {
+			return false
+		}
+		if r.Agent != "" && r.Agent != t.hookAgent {
+			return false
+		}
+	}
+	answerable := r.Answerable
+	// Claude announces one prompt twice: PermissionRequest, then a
+	// Notification six seconds later if nobody has answered. The notification
+	// cannot say which tool it is about, so it keeps what the request said.
+	if r.State == StateWaiting && t.hookState == StateWaiting && r.Agent == t.hookAgent && !r.Legacy {
+		answerable = answerable || t.hookAnswerable
+	}
+	t.hookState, t.hookAt, t.hookLegacy = r.State, now, r.Legacy
+	t.hookAgent, t.hookAnswerable = r.Agent, answerable && r.State == StateWaiting
+	// A hook report is fresh evidence, so an older manual override no longer
+	// describes the situation.
+	t.manualState, t.manualAt = "", time.Time{}
+	return true
+}
+
+// interruptSkew is how much earlier than the standing report an interrupt may
+// be stamped and still count. The report's time is when the panel received it;
+// the interrupt's is when Claude wrote it, and a hook fired before the Escape
+// can arrive after it.
+const interruptSkew = 500 * time.Millisecond
+
+// Interrupted records that the agent's own transcript shows the person
+// stopping it, at the time the transcript says.
+//
+// Escape during an answer, or on a question or permission dialog, fires no
+// hook at all -- not Stop, and not the idle notification a minute later,
+// measured on 2.1.273. (During a running tool the hook schema has
+// PostToolUseFailure with is_interrupt, which hooks.Read reads.) Without this the last
+// report stood: working forever after an interrupted answer, waiting forever
+// after a dismissed question. The transcript is written the moment it happens.
+//
+// Only an interruption not older than the standing report counts, so the
+// poller can hand over the same entry on every tick.
+func (d *Detector) Interrupted(id string, at time.Time) {
+	if at.IsZero() {
 		return
 	}
-	d.report(id, st, now, false)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	t, ok := d.track[id]
+	if !ok || t.hookState == "" || t.hookState == StateDone || !at.After(t.hookAt.Add(-interruptSkew)) {
+		return
+	}
+	// Read again on the next tick, the same entry finds the report at done and
+	// is ignored above, so hookAt can simply become the interrupt's time.
+	t.hookState, t.hookAt, t.hookLegacy = StateDone, at, false
+	t.hookAgent, t.hookAnswerable = "", false
+	if at.After(t.manualAt) {
+		t.manualState, t.manualAt = "", time.Time{}
+	}
+}
+
+// HookState is the standing hook report, empty when there is none. The poller
+// reads it to decide whether a transcript is worth looking at.
+func (d *Detector) HookState(id string) State {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if t, ok := d.track[id]; ok {
+		return t.hookState
+	}
+	return ""
 }
 
 // ReportNotify records a report from Codex's legacy `notify` line.
@@ -143,20 +275,7 @@ func (d *Detector) Report(id string, st State, now time.Time) {
 // work would say "waiting" for the rest of its life -- which is what every
 // Codex session did before the panel installed Codex's real hooks.
 func (d *Detector) ReportNotify(id string, st State, now time.Time) {
-	if !st.Valid() {
-		return
-	}
-	d.report(id, st, now, true)
-}
-
-func (d *Detector) report(id string, st State, now time.Time, legacy bool) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	t := d.get(id)
-	t.hookState, t.hookAt, t.hookLegacy = st, now, legacy
-	// A hook report is fresh evidence, so an older manual override no longer
-	// describes the situation.
-	t.manualState, t.manualAt = "", time.Time{}
+	d.Hook(id, HookReport{State: st, Legacy: true}, now)
 }
 
 // MarkNotify flags a restored hook state as one from the legacy notify line, so
@@ -170,11 +289,21 @@ func (d *Detector) MarkNotify(id string) {
 	}
 }
 
-// Input records that somebody sent a line to the session.
+// Input records that somebody sent a line to the session. A line is also a
+// key.
 func (d *Detector) Input(id string, now time.Time) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.get(id).lastInput = now
+	t := d.get(id)
+	t.lastInput, t.lastKey = now, now
+}
+
+// Key records that somebody pressed a key in the session that was not an
+// escape sequence. Claude Code's permission menu takes `1` without Enter.
+func (d *Detector) Key(id string, now time.Time) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.get(id).lastKey = now
 }
 
 // ReportLog records what an agent's own session log says, at the time the log
@@ -340,7 +469,7 @@ func (d *Detector) Evaluate(id string, obs Observation, now time.Time) (State, S
 	//
 	// A bell rung since the click is the exception, and it has to be one.
 	//
-	// Report already treats a hook's "waiting for you" as fresh evidence and
+	// Hook already treats a hook's "waiting for you" as fresh evidence and
 	// throws the override away; a bell is the same statement from an agent
 	// with no hooks installed, which is the entire population this heuristic
 	// exists for. Without this the click was permanent rather than sticky:
@@ -380,13 +509,11 @@ func (d *Detector) Evaluate(id string, obs Observation, now time.Time) (State, S
 	// Advanced is a line feed that did not come from a repaint (see advanced()
 	// in manager.go), so an agent that resumed work inside a full-screen TUI
 	// would never advance and this report would stand forever.
-	// It cannot get stuck, because hookState is non-empty only when the hooks
-	// are installed, and an agent with hooks installed reports its other
-	// transitions too — UserPromptSubmit and PreToolUse arrive the moment it
-	// starts again. The grace therefore stops being a timer and becomes "until
-	// the agent says otherwise, or the screen actually moves", which is what it
-	// was trying to express. The manual rule above has no such backstop, which
-	// is why stickiness is a real cost there and only a phrasing here.
+	// It was argued here that it cannot get stuck, because an agent with hooks
+	// installed reports its other transitions too. Measured on Claude Code
+	// 2.1.273 that is false in two places -- Escape fires no hook, and
+	// approving a prompt fires none until the tool has finished -- which is
+	// what Interrupted and the prompt release below are for.
 	//
 	// The grace is gone, and the argument above is what removes it. Measured on
 	// a live panel, twice, before and after an unrelated change to `advanced()`:
@@ -405,11 +532,11 @@ func (d *Detector) Evaluate(id string, obs Observation, now time.Time) (State, S
 	// says why it does not need one: hookState is non-empty only when hooks are
 	// installed, and an agent with hooks installed reports every transition --
 	// UserPromptSubmit and PreToolUse arrive the moment it starts again. The
-	// report is superseded by the next report, which is the only thing that
-	// knows better.
+	// report is superseded by the next report, or by one of the facts that
+	// stand in for a report the agent never sends: an interrupt in its
+	// transcript (Interrupted) and a keystroke on a prompt (below).
 	//
-	// Two things can make it stale anyway, and both are facts rather than
-	// timers. A dead pane is handled at the top of this function. The other is
+	// Two more things make it stale, and both are facts rather than timers. A dead pane is handled at the top of this function. The other is
 	// the agent no longer being there: if the foreground process is back to a
 	// plain shell then whatever it last said about itself is over, and the
 	// fall-through below is the honest answer.
@@ -423,14 +550,37 @@ func (d *Detector) Evaluate(id string, obs Observation, now time.Time) (State, S
 	// left is the fall-through below.
 	releasedNotify := t.hookLegacy && (t.lastAdvance.After(t.hookAt.Add(notifyGrace)) || t.lastInput.After(t.hookAt))
 
+	// A prompt is answered by somebody pressing a key, and nothing the agent
+	// reports says so until the approved tool has finished.
+	//
+	// This used to be pinned the other way, on the argument above: the report
+	// is superseded by the next report. For a permission prompt the next report
+	// is PostToolUse, which fires when the tool *ends* -- so approving a twenty-
+	// minute build left a triangle on the session for twenty minutes, sorted
+	// above everything that really was waiting, and pushed to a phone as a
+	// question nobody could answer. Claude Code sends nothing at the moment of
+	// approval; measured on 2.1.273 with every hook event logged.
+	//
+	// Only a prompt a keystroke answers: see HookReport.Answerable for the two
+	// waits a keystroke does not end.
+	releasedPrompt := t.hookAnswerable && t.hookState == StateWaiting && t.lastKey.After(t.hookAt)
+
 	// The agent's own log, for an agent with no hooks. Newer than any hook
 	// report, it is the more recent statement of the two; the poller only
 	// feeds it while no hook has reported for a while.
 	if t.logState != "" && !obs.ShellOnly && (t.hookState == "" || releasedNotify || t.logAt.After(t.hookAt)) {
+		// Except against a bell rung since. Codex writes no approval into its
+		// rollout -- 60,000 entries on this machine and not one -- so the log
+		// goes on saying working while Codex rings and waits for a y. Without
+		// hooks the bell is the only thing that knows, and the log is only
+		// allowed to outrank the bell because it is usually the more precise.
+		if t.logState == StateWorking && t.lastBell.After(t.logAt) && t.ringing(bellGrace) {
+			return StateWaiting, SourceHeuristic
+		}
 		return t.logState, SourceHook
 	}
 
-	if t.hookState != "" && !obs.ShellOnly && !releasedNotify {
+	if t.hookState != "" && !obs.ShellOnly && !releasedNotify && !releasedPrompt {
 		return t.hookState, SourceHook
 	}
 
@@ -469,7 +619,7 @@ func (d *Detector) Evaluate(id string, obs Observation, now time.Time) (State, S
 	// So "the screen advanced" separates an agent that went back to work from
 	// one that is redrawing while it waits, and neither case needs a timer to
 	// guess with.
-	if !obs.ShellOnly && !t.lastBell.IsZero() && !t.lastAdvance.After(t.lastBell.Add(bellGrace)) {
+	if !obs.ShellOnly && t.ringing(bellGrace) {
 		return StateWaiting, SourceHeuristic
 	}
 
@@ -499,6 +649,12 @@ func (d *Detector) Evaluate(id string, obs Observation, now time.Time) (State, S
 	// A plain shell: whether it echoed a keystroke a moment ago changes
 	// nothing worth showing.
 	return StateDone, SourceHeuristic
+}
+
+// ringing reports whether a bell has rung and the screen has not moved forward
+// since, beyond the redraw the ring itself caused.
+func (t *tracker) ringing(grace time.Duration) bool {
+	return !t.lastBell.IsZero() && !t.lastAdvance.After(t.lastBell.Add(grace))
 }
 
 // IsShellCommand reports whether a pane's foreground process is a plain shell.

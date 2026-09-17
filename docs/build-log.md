@@ -23177,3 +23177,319 @@ place mapping errors to reasons and one lock per set of fields.
 Thirty-seven mutations of the new guards, Go and frontend, all killed; each was
 checked to compile, and the three that did not at first were rewritten and
 killed again. The two root-helper guards were mutated through `isolation-check`.
+## 2026-09-16 — Claude Code states, read from what the hook says
+
+「cc cx 都会经常出现错报、误报、上报不及时或者状态错误」. The live panel's own
+transition log said how often before anything was changed. In seven days, 2,071
+transitions; 421 were done → waiting, and 401 of those came 59–62 seconds after
+the done. Another 67 were a done that went back to working within two seconds.
+13 of the 36 open sessions were sitting on a state somebody had clicked.
+
+Nothing here was reasoned from the code. A throwaway tmux ran Claude Code
+2.1.273 with a settings file that hooked every event it has and logged each
+document with a timestamp, and each case below is a sequence it produced.
+
+**The minute after every turn.** Stop at 08:49:01, Notification at 08:50:01
+with `notification_type: idle_prompt` and "Claude is waiting for your input".
+Claude sends that a minute into any idle, and the panel had one Notification
+hook reporting waiting for all fifteen notification types. So every finished
+session became a triangle, sorted to the top, pushed to a phone as a question
+with a hint on how to answer it. `hooks.Read` now reads the type: idle_prompt
+and the news types (`auth_success`, `push_notification`, quota and
+computer-use notices) change nothing, and a type nobody has listed keeps
+meaning waiting. The idle notice is no longer stored as a question message.
+
+**Background agents.** Stop fires when the main thread's turn ends, including a
+turn that ended by launching agents. Its `background_tasks` lists them
+(08:51:11, a `subagent` `running`), and the agents go on calling tools, each
+PreToolUse reporting working. Hence done, working, done. A Stop listing a
+running or pending `subagent` or `workflow` now reports working. Shells and
+monitors deliberately do not count: a background shell is as often
+`npm run dev` as a build, and Claude's own footer says "done · 1 shell still
+running". Types nobody has listed do not count either, because a teammate or a
+remote agent might never report back.
+
+**Escape fires nothing.** Escape during an answer, and on a question or a
+permission dialog: no Stop and no idle notice, waited for past two minutes.
+The session read working, or waiting, until its next prompt. (Escape during a
+running tool was not captured, because the model refused to run a long
+foreground command. The hook schema has `PostToolUseFailure.is_interrupt` for
+it, which is read.) The transcript records every interrupt at once, as a user
+entry `[Request interrupted by user]` or `… for tool use]`, and the hooks
+already say where the transcript is. `internal/claudelog` tails it, reading
+only what was appended, and only for sessions a hook says are working or
+waiting. Only the marker as the entry's whole content counts, never a line
+quoting it, and never a sidechain.
+
+**Seventeen milliseconds.** PreToolUse at .913 and PermissionRequest at .932
+for one AskUserQuestion, each through its own `sh` and `curl`. Delivered in
+the other order, the dialog read working. A working report within a second of
+a waiting one is now taken as sent before it. A subagent's working report does
+not answer another agent's prompt either: seven background agents calling
+tools while the main thread asked a question overwrote the one state that
+needed a person.
+
+**Approving sends nothing.** After "yes" the next hook is PostToolUse, when the
+tool *ends*. A twenty-minute build approved from a phone stayed a triangle for
+twenty minutes. A key pressed after a permission menu now releases it: `1` on
+the menu, a line, or the chat bridge's `Keys`, which went straight to tmux and
+had never counted as input. Only a menu counts. AskUserQuestion also arrives as
+a PermissionRequest, but it takes a keystroke per question and reports
+PostToolUse the moment the last one is answered; a StopFailure's Enter on an
+empty prompt answers nothing. `TestAHookReportIsNotReleasedLikeANotify` used to
+assert that nothing releases a hook report. It was written on the argument that
+the next report supersedes the last, before anybody measured when the next
+report comes.
+
+**Events that were never installed.** PostToolUse (the end of an approved
+tool), PostToolUseFailure, StopFailure (a turn that died on an API error read
+working forever), and SessionStart (a fresh `claude` read working from the
+heuristic until its first prompt; `source: compact` fires mid-turn and is
+ignored). This machine's settings had four of the old five: it predated
+PermissionRequest, and the settings page counted any one event as installed.
+`UpgradeClaude` runs on start and appends what is missing.
+
+It went wrong the first time, on this machine. The end-to-end run started a
+second panel from a scratch data directory with the real HOME, so that Claude
+Code would be signed in. `Inspect` recognises the panel's entries by the
+script's *name*, so that it still finds them after a data directory moves. The
+scratch panel found the production panel's four entries, called them
+installed, and re-pointed all nine at its own throwaway script. The file was
+restored from the backup the installer had written, byte for byte, about two
+minutes later. An upgrade on start now needs every entry of the panel's to
+call exactly this panel's script path.
+
+**The first version of the rules, and what review did to it.** It let the idle
+notice settle a working session to done, held some reports against it, and
+joined PreToolUse to its PermissionRequest by a hash of tool and input. Three
+read-only reviews (logic, security, readability) turned up these problems:
+
+- A background agent's unanswered permission prompt settled to done by the
+  idle notice.
+- The first Enter in a two-question dialog released it.
+- A subagent's denied prompt refused every main-thread report for the rest of
+  the turn.
+- A parallel tool's PostToolUse slipped past the hash.
+- Re-merging on start deleted a person's own hook that shared an entry group
+  with the panel's, matcher and all, and replaced a symlinked `settings.json`
+  with a file.
+- A `Stat` before `Open` left a window to swap a FIFO in and hang the poller.
+- A tail that started exactly on a line skipped that line.
+- A transcript line stamped in the future hid every later interrupt.
+
+Measured against the rest of the rules, the idle notice turned out to have no
+case left that nothing else covers, so it is dropped outright and the holds
+went with it. The late-report rule is now any working report within a second.
+The main thread is never refused. The upgrade appends and refuses a symlink.
+The transcript is opened `O_NONBLOCK|O_NOCTTY` and checked after opening, and
+the last interrupt *written* wins, not the latest stamped.
+
+**Codex, while here.** The rollout fallback outranked the bell, and Codex
+writes no approval into its rollout: 59,897 `item_completed` entries on this
+machine and not one approval event. A Codex with untrusted hooks, which is
+this machine's, read working while it rang for a y. A bell rung after the
+log's working entry now wins until the screen moves.
+
+End to end, on a panel built from this branch after the review: five real
+Claude Code sessions on a throwaway socket, with the row read from the database
+every 300 ms. The real `settings.json` was hashed before and after.
+
+- Each session opened at done (SessionStart).
+- A one-word answer was done, and still done after its idle notice.
+- A two-question AskUserQuestion stayed waiting through the first two Enters
+  and went working, then done, when submitted.
+- Escape during an essay was done about a second later.
+- A background agent running `sleep 100` in the foreground read working from
+  launch to report-back (111 s), with no done in between, through the idle
+  notice.
+- A manual-mode permission prompt answered with `1` through tmux stayed waiting
+  until PostToolUse. That is expected: tmux is not the panel's input path. The
+  browser and chat paths are what release it, and those are tested through
+  `Live.Write` and the handler.
+
+Mutation-tested, two rounds. The first version: 52 mutants and 5 survivors,
+each fixed. After the rework: 64 mutants over `hooks.Read`, the detector,
+`Live.Write`, `claudelog`, the handler, the chat terminal and the upgrade.
+One of them did not compile, and was rewritten and killed. Five survived. A
+refused subagent report written to the row anyway, and the agent id dropped on
+the way to the detector, both went through the handler test unnoticed. That
+test now puts a background agent's PostToolUse over a question and reads the
+row before the poller does, which kills both.
+
+The other three survivors were equivalent, and two of them showed code that
+was not doing anything:
+
+- `IsRegular` after opening the transcript. `ReadAt` is refused by a FIFO or a
+  terminal, and a device reads as size zero, so the check was removed.
+- Moving the interrupt's time past the report. The report is already at done by
+  then, which ignores a re-read, so that was removed too.
+- The upgrade appending instead of merging. The two are the same for an event
+  with none of the panel's entries in it, which is every event it touches.
+  Append is kept, because it cannot drop anything, and a comment says why.
+
+## 2026-09-16 — Chat asks before it talks to anyone, and the README says so
+
+Chat is advertised in both READMEs now, with the privacy side stated as a
+claim: until a channel is switched on, the chat code connects to no outside
+service. A claim like that in a README is a promise, so it has a test.
+`TestChatConnectsToNothingUntilAChannelIsSwitchedOn` builds a bridge with every
+real adapter this build ships, configures each with credentials and leaves it
+off, pairs a person, and has a session go waiting with a prompt, all over an
+HTTP transport that dials nothing and records every attempt: zero requests.
+Then it switches Telegram on and waits for the same transport to see a
+request, which is what shows the recorder would have caught one. Starting the
+channels regardless of their switch fails it with a list of the Telegram,
+飞书 and 微信 URLs that were tried.
+
+"All components offline" was checked rather than assumed: the three adapters
+are plain HTTP clients with no SDK in go.mod, the 微信 QR code is drawn in the
+browser by the bundled `qrcode` package from a URL, and the screenshot
+renderer's font is `go:embed`ded.
+
+The other half of the request was a confirmation the first time chat is
+configured, naming what leaves the machine. It is a gate on the server, not
+only a dialog: switching a channel on, starting a 微信 sign-in and switching
+the advanced mode on answer 409 until `POST /api/chat/consent` has recorded an
+acceptance. A dialog the API skips is a checkbox. Saving a channel switched
+off, reading, pairing and everything an already-running channel does are
+untouched, so a panel upgraded from v1.20.0 with channels running keeps
+running and is asked the next time something is switched on. The time of the
+first acceptance is kept and audited once. The dialog's text is the one string
+excused from the prose budget: a consent that does not say what is sent and to
+whom is consent to something unnamed.
+
+## 2026-09-16 — The assistant could not find `claude` under systemd
+
+The first advanced-mode message on the owner's own panel, v1.20.0 installed as
+a system unit, came back as `助手没答上来：claude: exec: "claude": executable
+file not found in $PATH`. The running service's environment said why:
+`PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/snap/bin`, and
+`claude` and `codex` are in `~/.local/bin`. Sessions never hit this, because
+their tmux server is started from a login shell (`startServerWithProfile`);
+the assistant runs the harness directly, with the service's PATH.
+
+The runner now asks what a session's pane would: the panel's PATH first, then
+the login shell's, read by running it with a marker line so a profile that
+prints a greeting does not get parsed as the answer. The PATH that found the
+harness is also the child's PATH, since Claude Code is a node program. A
+harness found nowhere is refused when the advanced mode is switched on,
+naming both places, rather than at the first message from a phone. A launch
+profile's PATH still wins. The tests fake the login shell's answer, so they
+pass on a CI runner with no harness installed, and a greeting-printing fake
+shell pins the marker parsing.
+
+## 2026-09-16 — The machine on a phone, and the Messaging page in tabs
+
+**System status and alerts in the chat.** 「系统」 (`system`, 「监控」) answers
+with what the panel's own monitor reads (CPU and load, memory, swap, disk,
+uptime) and the three sessions using the most, by handle. Alerts watch three
+numbers every thirty seconds: CPU at or over a threshold for a duration (90%
+for ten minutes by default, since a build pegging the cores for a minute is
+the machine working), and memory and disk percent used (90%, 95%) at once.
+Each alert names the session using the most of it, and clears with a recovery
+message only once the number is back under by a margin (10, 5 and 2 points),
+so a machine sitting on the line is one alert rather than one a tick.
+「静音告警 1小时」 pauses them for the person asking, stored in the session
+mutes table under a session id nothing can have; the phrase is parsed before
+the session mute, which would otherwise read 静音 off its front. Thresholds
+and destinations live on the page and `PUT /api/chat/alerts`, validated so a
+threshold that alerts all day is refused. Alerts go only through channels
+already switched on, so they ask nothing new of the consent.
+
+The first test run hung: the alert check held the bridge's lock while naming
+the session behind an alert, and the handle lookup takes the same lock. The
+decisions are made under the lock and the words after it. The race detector
+then flagged tests setting the monitor while the watcher read it, so the
+monitor is set through the bridge (`SetMonitor`) and read under its lock. Eight
+mutations of the alert rules: six killed, and the two survivors, a repeated
+memory alert while still over and a disk threshold's lower bound, each got
+the case that kills it.
+
+The advanced mode's agent can read the same numbers: a sixth tools route,
+`GET /api/chat/tools/system`, with the sessions by handle and the disk path
+left out, and the `system` MCP tool. The route list test and AGENTS.md say
+six now.
+
+**The page.** The settings rail's two page links sat in a container with no
+gap, so they read as a tighter, smaller list under the groups; `chat-check`
+now measures that they are the groups' height and step. The page is called
+消息通道 / Messaging rather than 聊天, which named an app category, not what
+the page configures. Its seven blocks were one long scroll, the thing being
+looked for always several screens down, twice that on a phone; they are six
+tabs now (the key table sits with the advanced mode it serves), the hash keeps
+the tab, and a section that is its whole tab does not repeat the tab's name
+above itself. Channel cards in a row share a height with their buttons along
+the bottom.
+
+## 2026-09-16 — A question with options is not a permission prompt
+
+The owner sent a photo of the phone: a Claude Code menu (「用量面板最该突出的
+数字是什么？」, three options, a second question, Submit) had arrived as
+「要你允许 · Claude needs your permission」 with Allow and Deny. The live
+database said why. The session called `AskUserQuestion` at 08:12:45; six
+seconds later a Notification of type `permission_prompt` said "Claude needs
+your permission" and nothing else, and the panel stored it as a prompt. Allow
+is Enter, which would have picked the first question's highlighted option and
+left the rest; Deny is Escape, which throws the whole set away. `ExitPlanMode`
+is announced the same way.
+
+The questions exist in one place, the tool call's input, which the
+`PreToolUse` hook carries and every installed Claude Code already sends. A
+`PreToolUse` or `PermissionRequest` for either tool is now a question with its
+menu stored beside the text (migration v29, `session_messages.menu`). The
+session is waiting from that moment rather than from the notification, since
+`PreToolUse` reports "working". The notifications that follow ("needs your
+permission", then "is waiting for your input") only move the menu's time
+forward while it is the latest message; stored, either one replaced it.
+
+The owner's next message: "也有可能我有我自己的回答呀". So the keys were not
+guessed. A real Claude Code 2.1 on its own tmux socket was given one-off
+prompts that call the tool, and every path was driven and read back from what
+the model received:
+
+- a digit picks a single-choice option and moves to the next question;
+- in a multiple-choice question a digit toggles, and the question is left
+  from its Submit row, one below "Type something";
+- an own answer is typed on the "Type something" row, reached with Down;
+  pasting Chinese there works, and Enter submits it;
+- with several questions a review page follows, and 1 is "Submit answers";
+- "Chat about this" is the digit after "Type something", and declines;
+- with previews there is no "Type something": `n` opens notes on the option
+  under the cursor, and Enter inside them submits *notes only*, with no
+  option, so a chosen option's note is closed with Escape before Enter;
+- the plan menu is 1 auto, 2 approve edits, and a third row typed into for
+  what to change, after which Claude revises and asks again.
+
+A card for a menu is its current question with numbered options and one line
+on how to answer, with a button per option on Telegram and 飞书 (a multiple
+choice is answered in text). Replies are read against the question: digits
+choose, "2，words" chooses with words, anything else is the person's own
+answer (with previews, a note), 「跳过」 declines. Several questions go one at a
+time, the next shown in the receipt, and the review page is submitted after the
+last. The shown-first rule is the prompt's: a bare "2" answers only a menu
+this person saw, and a button or a quote of an earlier menu, or of a question
+already answered, shows the current one. A yes to a menu shows the menu. A
+reply to a menu is read as its answer before a leading number can be taken for
+another session's handle. The one screen not answered from a phone is
+previews with multiple choice, which was not measured; it says so.
+
+The first run of the new tests found the button handler broken for every
+button: inserting the menu case had swallowed the `approve`/`deny` line after
+it. Thirteen mutations: ten killed, one did not compile and was rewritten, and
+the two survivors, a stale button from an earlier menu and a menu with too many
+questions, each got a test.
+
+## 2026-09-16 — Menus meet the hook reading from main
+
+Merging main brought `hooks.Read`, which decides a report's state from its
+document, and the detector's idea of an *answerable* prompt, one a keystroke
+from a phone ends. Two things had to be joined rather than merged. The menu's
+"a tool that draws a menu is waiting, whatever PreToolUse reports" now applies
+to the state `hooks.Read` produced, not to the raw reported one. And the
+`permission_prompt` notification that announces a question menu read as
+answerable (main's reading excludes `AskUserQuestion` only on
+`PermissionRequest`, which this panel's older installs never sent); a menu of
+questions is not ended by its first key, so while a stored question menu is the
+latest message that notification is not answerable. A test draws a
+two-question menu, announces it, presses one key through the chat terminal,
+and expects waiting; each of the two corrections, removed, fails it.

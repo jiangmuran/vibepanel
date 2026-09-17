@@ -156,6 +156,27 @@ try {
       const href = await link.getAttribute('href')
       if (href !== '/chat') note('FAIL', 'rail', `the chat link points at ${href}`)
       else pass('rail', 'the settings rail links to /chat')
+      // The two page links are rail items like the groups above them: the
+      // same height, and the same step from one to the next. They were
+      // packed tighter and read as a different, smaller list.
+      await sleep(400)
+      const boxes = await page.evaluate(() => {
+        const box = (id) => document.querySelector(`[data-testid="${id}"]`)?.getBoundingClientRect()
+        return ['settings-group-account', 'settings-group-panel', 'settings-sharing-link', 'settings-chat-link'].map((id) => {
+          const b = box(id)
+          return b ? { top: b.top, left: b.left, height: b.height } : null
+        })
+      })
+      if (boxes.some((b) => !b)) note('FAIL', 'rail', 'a rail item is missing')
+      else {
+        const [a, p, s, c] = boxes
+        const tabStep = p.top - a.top
+        const linkStep = c.top - s.top
+        if (Math.abs(s.height - p.height) > 1 || Math.abs(linkStep - tabStep) > 1) {
+          note('FAIL', 'rail', `page links are ${s.height}px tall a ${linkStep}px step; tabs are ${p.height}px a ${tabStep}px step`)
+        } else pass('rail', `page links match the tabs: ${s.height}px, ${linkStep}px apart`)
+      }
+      await page.screenshot({ path: join(SHOTS, 'settings-rail-1400.png') })
     } else {
       note('FAIL', 'rail', 'no chat link in the settings rail')
     }
@@ -166,18 +187,41 @@ try {
   if (!(await until(() => page.getByTestId('chat').count().then((n) => n > 0)))) {
     throw new Error('the chat page did not render')
   }
-  for (const id of ['channels', 'peers', 'routes', 'assistant', 'keys', 'log']) {
-    if ((await page.locator(`[data-section="${id}"]`).count()) === 0) note('FAIL', 'sections', `no ${id} section`)
+  // One tab at a time now; each tab puts its sections on screen.
+  const TABS = { channels: ['channels'], peers: ['peers'], routes: ['routes'], alerts: ['alerts'], assistant: ['assistant', 'keys'], log: ['log'] }
+  const openTab = async (p, id) => {
+    await p.getByTestId(`chat-tab-${id}`).click()
+    await until(() => p.locator(`[data-section="${TABS[id][0]}"]`).count().then((n) => n > 0), 4000)
   }
-  pass('sections', 'all six sections are on screen')
+  for (const [tabId, ids] of Object.entries(TABS)) {
+    await openTab(page, tabId)
+    for (const id of ids) {
+      if ((await page.locator(`[data-section="${id}"]`).count()) === 0) note('FAIL', 'sections', `no ${id} section under the ${tabId} tab`)
+    }
+  }
+  pass('sections', 'every tab puts its sections on screen')
+  await openTab(page, 'channels')
   for (const kind of ['telegram', 'feishu', 'weixin']) {
     if ((await page.getByTestId(`chat-channel-${kind}`).count()) === 0) note('FAIL', 'channels', `no ${kind} card`)
   }
   pass('channels', 'a card per adapter')
 
+  // ── Consent: nothing reaches an outside service before the owner accepts ─
+  const refused = await api('PUT', '/api/chat/channels/telegram', { enabled: true, values: { token: '1:x' } })
+  if (refused.status !== 409) note('FAIL', 'consent', `switching a channel on without consent answered ${refused.status}`)
+  else pass('consent', 'the server refuses to switch a channel on before consent')
+
   // ── Telegram: a fake token becomes a channel whose health line speaks ────
   await page.fill('#chat-telegram-token', '123456:not-a-real-token')
   await page.getByTestId('chat-save-telegram').click()
+  const asked = await until(() => page.getByTestId('confirm-dialog').count().then((n) => n > 0), 5000)
+  if (!asked) note('FAIL', 'consent', 'saving the first channel did not ask for consent')
+  else {
+    const body = (await page.getByTestId('confirm-body').textContent()) ?? ''
+    if (!/Telegram/.test(body)) note('FAIL', 'consent', `the consent does not name where content goes: ${body}`)
+    else pass('consent', 'the first channel asks, naming the services')
+    await page.getByTestId('confirm-yes').click()
+  }
   const health = page.getByTestId('chat-health-telegram')
   const spoke = await until(async () => {
     const text = await health.textContent().catch(() => '')
@@ -195,6 +239,8 @@ try {
   await page.fill('#chat-feishu-app_secret', 'secret')
   await page.fill('#chat-feishu-verification_token', 'verify')
   await page.getByTestId('chat-save-feishu').click()
+  await page.waitForTimeout(300)
+  if ((await page.getByTestId('confirm-dialog').count()) > 0) note('FAIL', 'consent', 'asked again after it was accepted')
   const urlShown = await until(() => page.locator('[data-testid="chat-channel-feishu"] code').count().then((n) => n > 0), 8000)
   if (!urlShown) note('FAIL', 'feishu', 'no request URL after saving')
   else {
@@ -251,6 +297,7 @@ try {
 
   // ── rules: add, save, preview ───────────────────────────────────────────
   await page.reload({ waitUntil: 'networkidle' })
+  await openTab(page, 'routes')
   await page.getByText('加一条规则').click()
   const rule = page.getByTestId('chat-rule-0')
   await rule.locator('input[placeholder="规则名"]').fill('test rule')
@@ -266,7 +313,19 @@ try {
   if (bogus.status !== 400) note('FAIL', 'routes', `a bad table was accepted: ${bogus.status}`)
   else pass('routes', 'a bad table is refused')
 
+  // ── alerts: thresholds save, nonsense is refused ────────────────────────
+  await openTab(page, 'alerts')
+  await page.getByTestId('chat-alert-cpuMinutes').fill('15')
+  await page.getByTestId('chat-save-alerts').click()
+  const alertsSaved = await until(async () => (await must('GET', '/api/chat')).alerts.cpuMinutes === 15)
+  if (!alertsSaved) note('FAIL', 'alerts', 'the alert thresholds did not save')
+  else pass('alerts', 'alert thresholds save')
+  const silly = await api('PUT', '/api/chat/alerts', { enabled: true, cpuPercent: 5, cpuMinutes: 1, memPercent: 90, diskPercent: 90, to: ['*'] })
+  if (silly.status !== 400) note('FAIL', 'alerts', `a threshold of 5% was accepted: ${silly.status}`)
+  else pass('alerts', 'a threshold that would alert all day is refused')
+
   // ── keys and the advanced mode's form ───────────────────────────────────
+  await openTab(page, 'assistant')
   await page.getByTestId('chat-key-codex-approve').fill('y Enter')
   await page.locator('[data-testid="chat-keys"] button', { hasText: '保存' }).click()
   const keysSaved = await until(async () => {
@@ -279,6 +338,7 @@ try {
   if (evil.status !== 400) note('FAIL', 'keys', `a key with a space was accepted: ${evil.status}`)
   else pass('keys', 'a key that is text is refused')
 
+  await openTab(page, 'peers')
   await page.getByTestId('chat-lang').selectOption('en')
   const langSaved = await until(async () => (await must('GET', '/api/chat')).lang === 'en')
   if (!langSaved) note('FAIL', 'assistant', 'the bot language did not save')
@@ -327,11 +387,12 @@ try {
         // past, so each section is also photographed on its own at the
         // phone width, where a reviewer needs it most.
         if (w === 400) {
-          for (const id of ['channels', 'peers', 'routes', 'assistant', 'keys', 'log']) {
-            await tab.locator(`[data-section="${id}"]`).scrollIntoViewIfNeeded()
-            await sleep(150)
-            await tab.screenshot({ path: join(SHOTS, `chat-${lang}-${theme}-${w}-${id}.png`) })
+          for (const id of Object.keys(TABS)) {
+            await openTab(tab, id)
+            await sleep(200)
+            await tab.screenshot({ path: join(SHOTS, `chat-${lang}-${theme}-${w}-${id}.png`), fullPage: true })
           }
+          await openTab(tab, 'channels')
         }
         const overflowX = await tab.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)
         if (overflowX) note('FAIL', where, 'the page is wider than the screen')

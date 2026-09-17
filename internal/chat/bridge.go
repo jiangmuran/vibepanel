@@ -74,6 +74,11 @@ type Deps struct {
 	// Usage answers the "usage" command with whatever the panel knows about
 	// today's tokens; nil means only the bridge's own counters are shown.
 	Usage func(ctx context.Context, lang string) string
+	// Monitor reads the machine for "系统" and the alerts; nil when the panel
+	// has no monitor, and then neither exists.
+	Monitor Monitor
+	// AlertEvery is how often the alerts look; zero takes DefaultAlertEvery.
+	AlertEvery time.Duration
 	// Coalesce is how long a change is held before it is sent, when no rule
 	// says otherwise; zero takes DefaultCoalesce. A field rather than a
 	// package variable so a test can run in milliseconds without writing
@@ -206,6 +211,10 @@ type Bridge struct {
 	// and reading the ok that follows as "allow" allows the thing they were
 	// trying to stop.
 	stopped map[string]time.Time
+	// alarms is the alert state per watched number: cpu, mem, disk.
+	alarms map[string]*alarm
+	// menus is how far each session's menu has been answered; see menu.go.
+	menus map[string]menuProgress
 	// missedOther counts, per person, pushes that could not reach them
 	// about sessions not waiting (a finished turn, an answer given by
 	// someone else), so the catch-up can say that more was missed.
@@ -257,6 +266,9 @@ func New(d Deps) *Bridge {
 	if d.Coalesce <= 0 {
 		d.Coalesce = DefaultCoalesce
 	}
+	if d.AlertEvery <= 0 {
+		d.AlertEvery = DefaultAlertEvery
+	}
 	return &Bridge{
 		d: d,
 		// 256: a change is a few bytes and the drain is a timer arm, so the
@@ -271,6 +283,8 @@ func New(d Deps) *Bridge {
 		missed:      map[string]map[string]bool{},
 		clarify:     map[string]time.Time{},
 		stopped:     map[string]time.Time{},
+		alarms:      map[string]*alarm{},
+		menus:       map[string]menuProgress{},
 		missedOther: map[string]int{},
 		handles:     map[string]int{},
 		hello:       map[string]time.Time{},
@@ -298,6 +312,7 @@ func (b *Bridge) Start(ctx context.Context) {
 		b.mu.Unlock()
 	}
 	go b.loop(ctx)
+	go b.watch(ctx)
 	b.Reload(ctx)
 }
 
@@ -607,6 +622,12 @@ func (b *Bridge) cardFor(row store.Session, c Change, last store.SessionMessage,
 		card.Footer = strings.TrimPrefix(card.Footer+" · "+c.Tool, " · ")
 	}
 	rest := ""
+	if m, next := b.menuOf(last); body && m != nil && c.State == string(session.StateWaiting) {
+		// A menu's card is its question and options, not the summary line
+		// the message stores; the person answers from it.
+		card.Body = renderMenu(m, next, lang)
+		return card, ""
+	}
 	if body && last.Text != "" {
 		// A finished turn is a summary to glance at; a request is something
 		// to read before answering, so it gets the room.
@@ -658,6 +679,17 @@ func (b *Bridge) sendCard(ctx context.Context, ch *channel, p store.ChatPeer, ro
 		// No buttons, so the card says what to type. A first-time 微信 user
 		// otherwise learns it only by answering wrong once.
 		shownCard.Hint = msg(lang, "hintPrompt", card.Handle, card.Handle)
+	case waiting && c.Kind == store.MessageQuestion && last.Menu != "":
+		// The body already says how to answer. Buttons where a tap is a
+		// whole answer; a record either way, so the menu counts as seen.
+		if m, next := b.menuOf(last); m != nil && card.Body != "" {
+			if ch.caps.Buttons {
+				if bs := menuButtons(sessionID, last.ID, m, next, lang); len(bs) > 0 {
+					out.Buttons, kind = bs, store.OutboundRequest
+				}
+			}
+			shownID = last.ID
+		}
 	case waiting && c.Kind == store.MessageQuestion:
 		shownCard.Hint = msg(lang, "hintQuestion", card.Handle)
 	}

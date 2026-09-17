@@ -1937,6 +1937,21 @@ export interface ChatSettings {
   projects: Project[]
   spendToday: number
   callsToday: number
+  /** When the owner accepted that chat sends session content to outside
+   *  services; 0 until then. */
+  consentAt: number
+  alerts: ChatAlerts
+  monitorAvailable: boolean
+}
+
+export interface ChatAlerts {
+  enabled: boolean
+  cpuPercent: number
+  cpuMinutes: number
+  memPercent: number
+  diskPercent: number
+  /** "*" or "channel:peer", as in the routing rules. */
+  to: string[] | null
 }
 
 export interface ChatLogin {

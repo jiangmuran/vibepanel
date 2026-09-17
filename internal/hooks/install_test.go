@@ -154,3 +154,184 @@ func TestInspectNamesEveryAgentsFileAndSnippet(t *testing.T) {
 		}
 	}
 }
+
+// This machine's settings.json had four of the panel's five events -- an
+// install from before PermissionRequest -- and the settings page said
+// installed, so nothing was ever going to add the fifth.
+func TestUpgradeAddsTheEventsAnOlderInstallIsMissing(t *testing.T) {
+	home := withFakeHome(t)
+	script, err := InstallScript(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := `{"model":"opus","hooks":{"Stop":[{"hooks":[{"type":"command","command":"` + command(script, "done") + `"}]}],` +
+		`"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"their-own-guard.sh"}]}]}}`
+	if err := os.WriteFile(settings, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	added, err := UpgradeClaude(script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(added) != len(events)-1 {
+		t.Fatalf("added %v, want every event but Stop", added)
+	}
+	st, _ := Inspect(script)
+	if len(st.Events) != len(events) {
+		t.Fatalf("after the upgrade %d of %d events are installed", len(st.Events), len(events))
+	}
+	doc := readJSON(t, settings)
+	if doc["model"] != "opus" {
+		t.Errorf("the rest of the file was not kept: %v", doc)
+	}
+	if !strings.Contains(string(mustRead(t, settings)), "their-own-guard.sh") {
+		t.Error("the person's own PreToolUse hook was dropped")
+	}
+
+	// And a second start changes nothing.
+	again, err := UpgradeClaude(script)
+	if err != nil || len(again) != 0 {
+		t.Fatalf("second upgrade added %v, %v", again, err)
+	}
+}
+
+// A file the panel was never installed into is not the panel's to edit.
+func TestUpgradeLeavesAFileWithoutThePanelsHooksAlone(t *testing.T) {
+	home := withFakeHome(t)
+	script, err := InstallScript(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const theirs = `{"model":"opus","hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}}`
+	if err := os.WriteFile(settings, []byte(theirs), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	added, err := UpgradeClaude(script)
+	if err != nil || len(added) != 0 {
+		t.Fatalf("added %v, %v to a file with no install", added, err)
+	}
+	if got := string(mustRead(t, settings)); got != theirs {
+		t.Fatalf("the file was rewritten:\n%s", got)
+	}
+
+	// Nor is a machine with no settings file at all.
+	if err := os.Remove(settings); err != nil {
+		t.Fatal(err)
+	}
+	if added, err := UpgradeClaude(script); err != nil || len(added) != 0 {
+		t.Fatalf("added %v, %v with no file", added, err)
+	}
+	if _, err := os.Stat(settings); err == nil {
+		t.Fatal("a settings file was created")
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// A second panel -- a test run from a scratch data directory -- finds the
+// production panel's entries by name. They are not its install to upgrade: the
+// first version of UpgradeClaude re-pointed all of them at the scratch script.
+func TestUpgradeLeavesAnotherPanelsInstallAlone(t *testing.T) {
+	home := withFakeHome(t)
+	production, err := InstallScript(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	scratch, err := InstallScript(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	theirs := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"` + command(production, "done") + `"}]}]}}`
+	if err := os.WriteFile(settings, []byte(theirs), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := Inspect(scratch); !st.Installed {
+		t.Fatal("setup: Inspect no longer finds entries by name, so this test is not testing the case it is about")
+	}
+	added, err := UpgradeClaude(scratch)
+	if err != nil || len(added) != 0 {
+		t.Fatalf("added %v, %v to another panel's install", added, err)
+	}
+	if got := string(mustRead(t, settings)); got != theirs {
+		t.Fatalf("another panel's install was rewritten:\n%s", got)
+	}
+}
+
+// The person's own hook in the same entry group as one of the panel's, with a
+// matcher. Re-merging drops the whole group; an upgrade on start must not.
+func TestUpgradeKeepsAHookSharingAGroupWithOurs(t *testing.T) {
+	home := withFakeHome(t)
+	script, err := InstallScript(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"their-guard.sh"},{"type":"command","command":"` + command(script, "working") + `"}]}]}}`
+	if err := os.WriteFile(settings, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	added, err := UpgradeClaude(script)
+	if err != nil || len(added) != len(events)-1 {
+		t.Fatalf("added %v, %v", added, err)
+	}
+	doc := readJSON(t, settings)
+	groups := doc["hooks"].(map[string]any)["PreToolUse"].([]any)
+	first, _ := groups[0].(map[string]any)
+	if first["matcher"] != "Bash" || !strings.Contains(string(mustRead(t, settings)), "their-guard.sh") {
+		t.Fatalf("the shared group was rewritten: %v", groups)
+	}
+}
+
+// A settings.json kept in a dotfiles repository and linked into place. Writing
+// renames a file over the link.
+func TestUpgradeDoesNotReplaceASymlink(t *testing.T) {
+	home := withFakeHome(t)
+	script, err := InstallScript(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(t.TempDir(), "settings.json")
+	partial := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"` + command(script, "done") + `"}]}]}}`
+	if err := os.WriteFile(real, []byte(partial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	settings := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, settings); err != nil {
+		t.Fatal(err)
+	}
+	if added, err := UpgradeClaude(script); err == nil || len(added) != 0 {
+		t.Fatalf("added %v, err %v; want a refusal that says why", added, err)
+	}
+	if info, err := os.Lstat(settings); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("the symlink was replaced")
+	}
+	if string(mustRead(t, real)) != partial {
+		t.Fatal("the linked file was changed")
+	}
+}

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"io"
 	"os"
 	"testing"
 	"time"
@@ -24,6 +25,28 @@ func TestALiveCallsOnInputForALine(t *testing.T) {
 	}
 	if len(got) != 1 || got[0] != "s" {
 		t.Errorf("onInput calls = %v, want one for the carriage return", got)
+	}
+}
+
+// A key reaches the detector for anything that is not an escape sequence: `1`
+// on a permission menu answers it, and arrow keys or a focus report do not.
+func TestALiveCallsOnKeyForKeysAndNotEscapeSequences(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close() //nolint:errcheck
+	defer w.Close() //nolint:errcheck
+	go func() { _, _ = io.Copy(io.Discard, r) }()
+	var got []string
+	l := &Live{ID: "s", ptmx: w, onKey: func(id string) { got = append(got, string(rune('0'+len(got)))) }}
+	for _, p := range []string{"1", "\x1b[B", "\x1b[I", "\r", "\x1b"} {
+		if _, err := l.Write("viewer", []byte(p)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(got) != 2 {
+		t.Errorf("onKey calls = %d, want two: the `1` and the carriage return", len(got))
 	}
 }
 
@@ -63,16 +86,21 @@ func TestALegacyNotifyIsReleasedWhenTheNextTurnStarts(t *testing.T) {
 	})
 }
 
-// The same inputs against a real hook report must change nothing: that report
-// is superseded by the next report, which is TestAnAnimationDoesNotDiscardAHookReport's
-// whole argument.
+// The screen moving is not a real hook report's release: an agent's TUI moves
+// all the time, and the report is superseded by the next report. Input is, for
+// a prompt -- TestAnsweringAPromptEndsTheWait says why, and this test used to
+// assert the opposite, before anybody measured when the next report comes.
 func TestAHookReportIsNotReleasedLikeANotify(t *testing.T) {
 	d := NewDetector()
 	d.Report("s", StateWaiting, at(0))
 	d.Observe("s", Signals{Visible: true, Advanced: true}, at(10*time.Second))
-	d.Input("s", at(20*time.Second))
 	if st, src := d.Evaluate("s", Observation{}, at(time.Minute)); st != StateWaiting || src != SourceHook {
-		t.Errorf("state = %q from %q, want waiting from the hook: the release is for notify alone", st, src)
+		t.Errorf("state = %q from %q, want waiting from the hook: the screen moving releases notify alone", st, src)
+	}
+	d.Report("s", StateDone, at(2*time.Minute))
+	d.Input("s", at(3*time.Minute))
+	if st, src := d.Evaluate("s", Observation{}, at(4*time.Minute)); st != StateDone || src != SourceHook {
+		t.Errorf("state = %q from %q, want done from the hook: a line typed at a finished session is its next prompt, which reports itself", st, src)
 	}
 }
 

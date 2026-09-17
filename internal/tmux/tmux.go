@@ -653,6 +653,11 @@ func (c *Client) runDirect(ctx context.Context, name string, args ...string) (st
 	return stdout.String(), nil
 }
 
+// LoginShell is loginShell, for the other things the panel starts that need
+// the person's environment rather than the service's: the chat assistant runs
+// `claude` or `codex` directly, not in a pane.
+func LoginShell() string { return loginShell() }
+
 // loginShell is the shell whose profile should be loaded, or "".
 //
 // $SHELL first, because that is what the person's session says they use, then

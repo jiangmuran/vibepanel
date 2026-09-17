@@ -44,6 +44,12 @@ const (
 	VerbConfirm Verb = "confirm"
 	VerbCancel  Verb = "cancel"
 	VerbStop    Verb = "stop"
+	// VerbSystem is the machine: CPU, memory, disk, who is using them, and
+	// the alerts. VerbMuteAlerts and VerbUnmuteAlerts pause the alerts for
+	// the person asking; the argument is how long.
+	VerbSystem       Verb = "system"
+	VerbMuteAlerts   Verb = "mutealerts"
+	VerbUnmuteAlerts Verb = "unmutealerts"
 	// VerbAsk is the advanced mode's explicit "ask the assistant"; the text
 	// after it is the question.
 	VerbAsk Verb = "ask"
@@ -92,6 +98,10 @@ var verbs = map[string]Verb{
 	"stop": VerbStop, "中断": VerbStop, "esc": VerbStop, "停": VerbStop, "停一下": VerbStop,
 	"打断": VerbStop, "停止": VerbStop,
 	"ask": VerbAsk, "问": VerbAsk,
+	"system": VerbSystem, "sys": VerbSystem, "monitor": VerbSystem, "系统": VerbSystem, "系统状态": VerbSystem,
+	"监控": VerbSystem, "机器": VerbSystem, "负载": VerbSystem, "机器状态": VerbSystem, "服务器状态": VerbSystem,
+	"静音告警": VerbMuteAlerts, "mutealerts": VerbMuteAlerts, "暂停告警": VerbMuteAlerts,
+	"取消静音告警": VerbUnmuteAlerts, "恢复告警": VerbUnmuteAlerts, "unmutealerts": VerbUnmuteAlerts,
 }
 
 // Words that answer a prompt. Kept short: a longer sentence that happens to
@@ -352,6 +362,18 @@ func Parse(text string) (Command, bool) {
 		return Command{Verb: VerbAll}, true
 	}
 
+	// The alerts' mute, before the session mute can read 静音 off its front:
+	// "静音告警1小时", "mute alerts 2h".
+	for _, w := range []string{"静音告警", "暂停告警", "mute alerts", "mutealerts"} {
+		if rest, ok := strings.CutPrefix(s, w); ok {
+			return Command{Verb: VerbMuteAlerts, Arg: strings.TrimSpace(rest)}, true
+		}
+	}
+	for _, w := range []string{"取消静音告警", "恢复告警", "unmute alerts", "unmutealerts"} {
+		if s == w {
+			return Command{Verb: VerbUnmuteAlerts}, true
+		}
+	}
 	if c, ok := gluedCommand(s); ok {
 		return c, true
 	}
@@ -407,7 +429,10 @@ func Parse(text string) (Command, bool) {
 		// word, punctuation and all.
 		q := strings.TrimSpace(raw[len(strings.Fields(raw)[0]):])
 		return Command{Verb: VerbAsk, Arg: q}, q != ""
-	case VerbHelp, VerbUsage, VerbConfirm, VerbCancel, VerbUnfocus:
+	case VerbMuteAlerts:
+		c.Arg = strings.Join(rest, " ")
+		return c, true
+	case VerbHelp, VerbUsage, VerbConfirm, VerbCancel, VerbUnfocus, VerbSystem, VerbUnmuteAlerts:
 		// Whole-message commands: anything after them means it was a
 		// sentence, and a sentence goes to the agent.
 		return c, len(rest) == 0

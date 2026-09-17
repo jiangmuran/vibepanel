@@ -30,6 +30,8 @@ type SessionMessage struct {
 	// Tool is which agent said it, by the panel's own name for it (claude,
 	// codex, opencode, kimi, zcode), or empty when the report did not say.
 	Tool string `json:"tool"`
+	// Menu is the menu the agent asked with, as JSON (hooks.Menu), or empty.
+	Menu string `json:"menu,omitempty"`
 }
 
 // The kinds a SessionMessage may carry. Strings rather than an enum type so
@@ -79,8 +81,8 @@ func (d *DB) AddSessionMessage(ctx context.Context, m SessionMessage) (SessionMe
 		m.At = now()
 	}
 	res, err := d.sql.ExecContext(ctx,
-		`INSERT INTO session_messages (session_id, at, kind, text, tool) VALUES (?, ?, ?, ?, ?)`,
-		m.SessionID, m.At, m.Kind, m.Text, m.Tool)
+		`INSERT INTO session_messages (session_id, at, kind, text, tool, menu) VALUES (?, ?, ?, ?, ?, ?)`,
+		m.SessionID, m.At, m.Kind, m.Text, m.Tool, m.Menu)
 	if err != nil {
 		return SessionMessage{}, fmt.Errorf("store: add session message: %w", err)
 	}
@@ -101,8 +103,8 @@ func (d *DB) ListSessionMessages(ctx context.Context, sessionID string, n int) (
 		n = MessagesKeptPerSession
 	}
 	rows, err := d.sql.QueryContext(ctx,
-		`SELECT id, session_id, at, kind, text, tool FROM (
-		     SELECT id, session_id, at, kind, text, tool FROM session_messages
+		`SELECT id, session_id, at, kind, text, tool, menu FROM (
+		     SELECT id, session_id, at, kind, text, tool, menu FROM session_messages
 		     WHERE session_id = ? ORDER BY id DESC LIMIT ?)
 		 ORDER BY id ASC`, sessionID, n)
 	if err != nil {
@@ -112,7 +114,7 @@ func (d *DB) ListSessionMessages(ctx context.Context, sessionID string, n int) (
 	var out []SessionMessage
 	for rows.Next() {
 		var m SessionMessage
-		if err := rows.Scan(&m.ID, &m.SessionID, &m.At, &m.Kind, &m.Text, &m.Tool); err != nil {
+		if err := rows.Scan(&m.ID, &m.SessionID, &m.At, &m.Kind, &m.Text, &m.Tool, &m.Menu); err != nil {
 			return nil, fmt.Errorf("store: scan session message: %w", err)
 		}
 		out = append(out, m)
@@ -124,9 +126,9 @@ func (d *DB) ListSessionMessages(ctx context.Context, sessionID string, n int) (
 func (d *DB) LatestSessionMessage(ctx context.Context, sessionID string) (SessionMessage, bool, error) {
 	var m SessionMessage
 	err := d.sql.QueryRowContext(ctx,
-		`SELECT id, session_id, at, kind, text, tool FROM session_messages
+		`SELECT id, session_id, at, kind, text, tool, menu FROM session_messages
 		 WHERE session_id = ? ORDER BY id DESC LIMIT 1`, sessionID).
-		Scan(&m.ID, &m.SessionID, &m.At, &m.Kind, &m.Text, &m.Tool)
+		Scan(&m.ID, &m.SessionID, &m.At, &m.Kind, &m.Text, &m.Tool, &m.Menu)
 	if errors.Is(err, sql.ErrNoRows) {
 		return SessionMessage{}, false, nil
 	}
@@ -134,6 +136,15 @@ func (d *DB) LatestSessionMessage(ctx context.Context, sessionID string) (Sessio
 		return SessionMessage{}, false, fmt.Errorf("store: latest session message: %w", err)
 	}
 	return m, true, nil
+}
+
+// TouchSessionMessage moves a message's time forward: an agent that announces
+// a menu it already reported is still asking it, now.
+func (d *DB) TouchSessionMessage(ctx context.Context, id, at int64) error {
+	if _, err := d.sql.ExecContext(ctx, `UPDATE session_messages SET at = ? WHERE id = ?`, at, id); err != nil {
+		return fmt.Errorf("store: touch session message: %w", err)
+	}
+	return nil
 }
 
 // SweepSessionMessages removes reports for sessions that no longer exist.

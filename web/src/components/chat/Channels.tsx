@@ -9,6 +9,7 @@ import { askConfirm } from '../ask'
 import { showToast } from '../toasts'
 import { safeText } from '../text'
 import { Card, Section } from './Chat'
+import { ensureChatConsent } from './consent'
 import { chatError } from './errors'
 import { INPUT, INPUT_SHORT, Primary, Secondary, errText } from './form'
 import { QR } from './QR'
@@ -34,13 +35,17 @@ function ago(unix: number): string {
 export function Channels({ data, onChange }: { data: ChatSettings; onChange: () => void }) {
   return (
     <Section id="channels" title={t('chat.channels')} lead={t('chat.channelsLead')}>
-      <div className="grid grid-cols-1 items-start gap-3 @2xl:grid-cols-2 @5xl:grid-cols-3">
+      {/* Stretched, not started: cards of one row share a height and keep
+          their buttons on one line along the bottom, where three cards of
+          three heights read as three unfinished boxes. */}
+      <div className="grid grid-cols-1 items-stretch gap-3 @2xl:grid-cols-2 @5xl:grid-cols-3">
         {data.factories.map((f) => (
           <ChannelCard
             key={f.kind}
             factory={f}
             channel={data.channels.find((c) => c.kind === f.kind) ?? null}
             paired={data.peers.filter((p) => p.channel === f.kind && p.status === 'paired').length}
+            consentAt={data.consentAt}
             onChange={onChange}
           />
         ))}
@@ -97,11 +102,13 @@ function ChannelCard({
   factory,
   channel,
   paired,
+  consentAt,
   onChange,
 }: {
   factory: ChatFactory
   channel: ChatChannel | null
   paired: number
+  consentAt: number
   onChange: () => void
 }) {
   const [values, setValues] = useState<Record<string, string>>({})
@@ -147,6 +154,7 @@ function ChannelCard({
   // only exists once there is a channel to switch. A new channel is
   // created on by Save.
   const toggle = async (on: boolean) => {
+    if (on && !(await ensureChatConsent(consentAt))) return
     try {
       await api.saveChatChannel(factory.kind, on, {})
       showToast({ kind: 'success', key: on ? 'chat.channelOn' : 'chat.channelOff', params: { name: factory.label } })
@@ -157,9 +165,11 @@ function ChannelCard({
   }
 
   const save = async () => {
+    const enabled = channel?.enabled ?? true
+    if (enabled && !(await ensureChatConsent(consentAt))) return
     setBusy(true)
     try {
-      await api.saveChatChannel(factory.kind, channel?.enabled ?? true, values)
+      await api.saveChatChannel(factory.kind, enabled, values)
       setValues((v) => {
         const next = { ...v }
         for (const f of factory.fields) if (f.secret) delete next[f.name]
@@ -210,6 +220,7 @@ function ChannelCard({
   }
 
   const startLogin = async () => {
+    if (!(await ensureChatConsent(consentAt))) return
     setBusy(true)
     try {
       setLogin(await api.startChatLogin(factory.kind))
@@ -243,7 +254,7 @@ function ChannelCard({
 
   const signedIn = factory.login && channel?.configured
   return (
-    <Card testid={`chat-channel-${factory.kind}`}>
+    <Card testid={`chat-channel-${factory.kind}`} className="flex flex-col">
       <div className="mb-2 flex items-center gap-2">
         <h3 className="text-vp-md font-semibold text-ink">{factory.label}</h3>
         {paired > 0 && (
@@ -350,7 +361,7 @@ function ChannelCard({
         </div>
       )}
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
+      <div className="mt-auto flex flex-wrap items-center gap-2 pt-3">
         {!factory.login && (
           <Primary disabled={busy} onClick={() => void save()} data-testid={`chat-save-${factory.kind}`}>
             <Check size={14} />

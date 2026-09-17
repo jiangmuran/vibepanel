@@ -328,14 +328,24 @@ detail level, scope, remark and expiry.
 ## On a phone, in a chat app
 
 A session that wants you can reach you in Telegram, 飞书 or 微信, and you
-answer from the same window. **Chat** (the link at the bottom of the settings
-rail, or `/chat`) is where it is set up.
+answer from the same window. **Messaging** (the link at the bottom of the
+settings rail, or `/chat`) is where it is set up, in tabs: channels, people,
+rules, alerts, the advanced mode with its key table, and the log.
 
 **Channels.** One card per app. Telegram wants a bot token from @BotFather;
 飞书 wants an app's id, secret and verification token, and the card shows the
 request URL to paste into the console; 微信 signs in by scanning a QR code.
 Every card has a health line that says when a message last arrived, which is
 the only thing that tells a working channel from a configured one.
+
+**Privacy.** The chat code connects to nothing until a channel is switched
+on: the adapters are written in-house with no SDK and ship in the binary, the
+微信 QR code is drawn in your browser, and the screenshot font is bundled. The
+first time you switch a channel or the advanced mode on, the panel says what
+will pass through outside servers (session titles, what agents say, the
+commands they ask to run, screenshots; for the advanced mode, your words and
+the session list to the model provider) and goes ahead only once you agree.
+The server holds that answer, so an API token cannot skip it either.
 
 **Pairing.** Nobody can talk to the panel until you say so. Whoever messages
 the bot first gets a six-digit code and a *pending* row on the page; they tell
@@ -387,6 +397,24 @@ before last, allow" — becomes an intent, and anything that writes waits for
 your `ok`. `ask: what is 3 doing` answers from read-only tools. 微信 voice notes
 arrive transcribed; the agent never sees a pane's output when deciding where
 to send anything. There is a daily budget, and the page shows today's spend.
+
+**Questions with options.** When Claude Code asks with a menu, questions
+with options or a plan to approve, the card is the question and its options,
+never allow and deny. Reply a number to choose, `1 3` for several, or write
+your own answer; `2, extra words` chooses with words attached; `skip` leaves
+it. Several questions are asked one after another and submitted together at
+the end. A plan takes `1` (go ahead), `2` (go ahead, approving edits) or
+whatever you want changed. Telegram and 飞书 cards have a button per option.
+
+**The machine.** `system` (「系统」, 「监控」) answers with CPU and load, memory,
+swap, disk, uptime and the sessions using the most. **Alerts** message you when
+CPU stays above a threshold for a while (90% for ten minutes by default), or
+memory or disk use passes theirs (90%, 95%), naming the session using the most,
+and again when it recovers; a machine sitting on the line is one alert, not one
+a minute. Thresholds and who is told are on the Alerts tab; 「静音告警 1小时」
+(`mute alerts 1h`) pauses them for you and 「恢复告警」 turns them back on. They
+go only through channels already switched on. In the advanced mode, `ask: how
+is the machine` reads the same numbers.
 
 **Keys** is what "allow" presses per tool. Claude Code takes Enter, Codex takes
 `y`; the others copy Claude Code and are editable. A key must be one tmux

@@ -76,6 +76,25 @@ see what the wall will see before you hang it. Pages live beside the panel's own
 data unless you say otherwise, and travel between panels as a zip. ~~Fine, I
 know this is a niche feature. I still think it matters.~~
 
+The other thing I use every day is sessions in the chat app on your phone:
+Telegram, 飞书 or personal 微信, private chats only. When an agent stops to ask
+permission for a command or asks you a question, a card arrives that starts
+with the session's number, and you answer in the same chat: "3 yes", "3: add a
+test", or the Allow and Deny buttons on Telegram and 飞书. It understands the
+way people actually type on a phone, so leaving your desk stops being a reason
+for an agent to wait.
+
+I take the privacy side of this seriously. The three chat integrations are
+written in-house with no third-party SDK and ship inside the same binary; the
+微信 sign-in QR code is drawn locally in your browser, and the font screenshots
+are rendered with is bundled too, so nothing is fetched at run time. **Until you
+configure and switch on a channel, the chat feature connects to no outside
+service at all**, and a test holds it to that. The first time you switch one on,
+the panel tells you plainly what will pass through whose servers and waits for
+you to agree. A stranger who messages the bot gets a pairing code and nothing
+else until you enter it on the panel, and every "allow" applies only to the
+request you actually saw, so an old card can never approve a new command.
+
 I will say this plainly: this is **not AI slop**. It is a terminal I use hard
 every day and it is genuinely nice to use. I hope it saves you some time and
 that you enjoy it. It is early, so come and join in if you have ideas or
@@ -143,7 +162,8 @@ command line, Docker, and building from source.
 
 ## Features
 
-[docs/features.md](docs/features.md) — including sessions on a phone through
+[docs/features.md](docs/features.md) — including
+[sessions in a chat app](docs/features.md#on-a-phone-in-a-chat-app) through
 Telegram, 飞书 or 微信, with replies going back into the session.
 ⚠️ Written by AI ⚠️
 
