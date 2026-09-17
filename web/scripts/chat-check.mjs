@@ -161,11 +161,13 @@ try {
       // packed tighter and read as a different, smaller list.
       await sleep(400)
       const boxes = await page.evaluate(() => {
-        const box = (id) => document.querySelector(`[data-testid="${id}"]`)?.getBoundingClientRect()
-        return ['settings-group-account', 'settings-group-panel', 'settings-sharing-link', 'settings-chat-link'].map((id) => {
-          const b = box(id)
-          return b ? { top: b.top, left: b.left, height: b.height } : null
-        })
+        // The step is read between two adjacent groups. account and panel
+        // stopped being adjacent when Resources got its own group, and a
+        // pair two rows apart reads as a double step.
+        const box = (el) => { const r = el.getBoundingClientRect(); return { top: r.top, left: r.left, height: r.height } }
+        const groups = [...document.querySelectorAll('[data-testid^="settings-group-"]')].slice(0, 2)
+        const named = ['settings-sharing-link', 'settings-chat-link'].map((id) => document.querySelector(`[data-testid="${id}"]`))
+        return [...groups, ...named].map((el) => (el ? box(el) : null))
       })
       if (boxes.some((b) => !b)) note('FAIL', 'rail', 'a rail item is missing')
       else {

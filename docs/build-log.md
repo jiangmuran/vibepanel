@@ -23518,3 +23518,11 @@ questions is not ended by its first key, so while a stored question menu is the
 latest message that notification is not answerable. A test draws a
 two-question menu, announces it, presses one key through the chat terminal,
 and expects waiting; each of the two corrections, removed, fails it.
+
+## 2026-09-16 — The rail check reads its step between adjacent groups
+
+chat-check measured the settings rail's step from the account group to the
+panel group and read the page links against it. The Resources group went
+between them, so the measured pair was two rows apart and the check reported
+a 64px step beside 32px links that match every neighbor. The step now comes
+from the first two groups in the rail, whatever they are.
