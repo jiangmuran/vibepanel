@@ -143,6 +143,10 @@ func newUnconfiguredServer(t *testing.T) (*httptest.Server, *Server) {
 	// with "unlinkat ...: directory not empty" on a test that had passed.
 	// Registered after the database's cleanup, so it runs before it.
 	t.Cleanup(func() {
+		// Some tests take the ingester away to see the endpoint refuse.
+		if srv.Tokens == nil {
+			return
+		}
 		deadline := time.Now().Add(10 * time.Second)
 		for time.Now().Before(deadline) {
 			if _, running := srv.Tokens.Status(); !running {
