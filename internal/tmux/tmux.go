@@ -287,6 +287,7 @@ func (c *Client) EnsureServer(ctx context.Context) error {
 	}
 	if c.ServerRunning(ctx) {
 		c.advertiseTruecolor(ctx)
+		c.watchBells(ctx)
 		return nil
 	}
 	if err := c.startServerWithProfile(ctx); err != nil {
@@ -298,6 +299,7 @@ func (c *Client) EnsureServer(ctx context.Context) error {
 		}
 	}
 	c.advertiseTruecolor(ctx)
+	c.watchBells(ctx)
 	// Stamp what the server was started with.
 	//
 	// `-f` is read once, at start-server, and the panel never kills its server
@@ -381,6 +383,28 @@ func (c *Client) RunningConfigStamp(ctx context.Context) string {
 // panel over a colour capability would trade every session for one box.
 func (c *Client) advertiseTruecolor(ctx context.Context) {
 	_, _ = c.run(ctx, "set-environment", "-g", "COLORTERM", "truecolor")
+}
+
+// watchBells installs the alert-bell hook on a server that may predate it.
+//
+// Here as well as in vibepanel.conf for the reason advertiseTruecolor gives:
+// the config is read once, when the server starts, and the panel never
+// restarts its server. A panel upgraded onto a server an older one started
+// would otherwise never get the hook, and that is the machine most people
+// have.
+//
+// The error is dropped for the same reason: a server that cannot take
+// set-hook is broken in a way the next command reports properly, and a panel
+// that refuses to start over it trades every session for one signal.
+func (c *Client) watchBells(ctx context.Context) {
+	_, _ = c.run(ctx, "set-hook", "-g", "alert-bell", `set -wF @vp_bell "#{window_activity}"`)
+}
+
+// ClearBell consumes the bell the alert-bell hook recorded, so that the next
+// read is a new bell rather than this one again.
+func (c *Client) ClearBell(ctx context.Context, name string) error {
+	_, err := c.run(ctx, "set", "-wu", "-t", target(name), "@vp_bell")
+	return err
 }
 
 // ServerRunning reports whether our tmux server is up.
@@ -920,7 +944,18 @@ type Info struct {
 	// the PTY is what the scanner picks up. Both halves are true; the comment
 	// only stated the second one and then told the next reader to delete the
 	// first.
-	Bell        bool
+	Bell bool
+	// BellAt is #{@vp_bell}, the window option the alert-bell hook writes:
+	// unix seconds of a bell that rang, whether or not a client was attached.
+	//
+	// Bell above is erased by the attach that follows it, which is the race
+	// this exists to close -- see the alert-bell hook in vibepanel.conf. Unlike
+	// the flag, nothing clears this but the panel, so a reader must unset it
+	// (ClearBell) or every later read is the same bell again.
+	//
+	// Zero on a server started by a panel older than the hook, where the flag
+	// is still the only answer. Both are read.
+	BellAt      int64
 	Width       int
 	Height      int
 	Activity    int64 // #{session_activity} — unix seconds
@@ -973,6 +1008,7 @@ var infoFields = []string{
 	"#{pane_dead_status}",
 	"#{pane_dead_signal}",
 	"#{pane_id}",
+	"#{@vp_bell}",
 }
 
 var infoFormat = strings.Join(infoFields, fieldSep)
@@ -1059,6 +1095,7 @@ func parseInfo(line string) (Info, error) {
 		Activity:    int64(atoi(f[9])),
 		AlternateOn: f[10] == "1",
 		PaneID:      f[13],
+		BellAt:      int64(atoi(f[14])),
 	}, nil
 }
 

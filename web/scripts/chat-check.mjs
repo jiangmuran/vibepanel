@@ -366,7 +366,14 @@ try {
     for (const theme of ['light', 'dark']) {
       for (const [w, h] of [[400, 800], [820, 1000], [1400, 950]]) {
         const where = `layout/${lang}/${theme}/${w}`
-        const ctx = await browser.newContext({ viewport: { width: w, height: h } })
+        // hasTouch at the phone width, because that is the device the scan
+        // below is about: the 44px floor in styles.css is behind
+        // `(pointer: coarse)`, so a narrow window with a mouse measures the
+        // desktop sizes and reports every header control as a small target --
+        // four warnings that said nothing about a phone, while a control that
+        // really is small on one (a link that the floor did not cover) sat
+        // among them unnoticed.
+        const ctx = await browser.newContext({ viewport: { width: w, height: h }, hasTouch: w === 400 })
         const tab = await ctx.newPage()
         const tabErrors = []
         tab.on('pageerror', (e) => tabErrors.push(String(e)))

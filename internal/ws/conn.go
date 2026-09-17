@@ -690,6 +690,12 @@ func (c *Conn) pumpStream(ctx context.Context, s *stream) {
 		case <-ctx.Done():
 			return
 		case ev, ok := <-s.sub.Events:
+			if ok {
+				// Before anything below returns early: the subscriber's byte
+				// bound counts what it is holding, and an event this loop has
+				// taken is not held any more.
+				s.sub.Took(ev)
+			}
 			if !ok {
 				// Deregister first, and only then tell the client.
 				//

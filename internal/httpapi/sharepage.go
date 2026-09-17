@@ -505,6 +505,10 @@ func (s *Server) buildShareSnapshot(ctx context.Context, sc shareContext) (share
 		return out, http.StatusServiceUnavailable, "the panel cannot reach its own database"
 	}
 	var manifest pages.Manifest
+	// The published version this link draws, 0 for a draft preview: the code
+	// transform runs comes from it, as the manifest above does. See
+	// serverProgram.
+	drawnVersion := 0
 	ref := &shareSnapshotPage{ID: shareID(sc.secret, page.ID)}
 	if link.Purpose == store.SharePurposePreview {
 		raw, rerr := readDraftManifest(page.SourceDir)
@@ -530,6 +534,7 @@ func (s *Server) buildShareSnapshot(ctx context.Context, sc shareContext) (share
 			return out, http.StatusServiceUnavailable, "the panel cannot reach its own database"
 		}
 		manifest = pages.DecodeStored(v.Manifest)
+		drawnVersion = version
 		ref.Version = version
 		memoKey = link.ID + "|v" + strconv.Itoa(version)
 	}
@@ -581,7 +586,7 @@ func (s *Server) buildShareSnapshot(ctx context.Context, sc shareContext) (share
 	out.Scope, out.ScopeName = dash.Scope, dash.ScopeName
 	out.ScopeRepoOwner, out.ScopeRepoName = dash.ScopeRepoOwner, dash.ScopeRepoName
 	// Last, so transform sees the snapshot it is transforming.
-	out.Server = s.serverTransform(ctx, page, ns, manifest, out)
+	out.Server = s.serverTransform(ctx, page, ns, manifest, out, drawnVersion)
 	return out, http.StatusOK, ""
 }
 

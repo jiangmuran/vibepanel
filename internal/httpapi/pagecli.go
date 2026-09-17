@@ -158,7 +158,7 @@ func RunPageServer(ctx context.Context, db *store.DB, page store.SharePage, what
 		if visitor {
 			who = map[string]any{"id": "cli", "link": "cli"}
 		}
-		return finish(s.runAction(ctx, page, ns, m, name, action, input, "cli", who, visitor))
+		return finish(s.runAction(ctx, page, ns, m, name, action, input, "cli", who, visitor, 0))
 	}
 	return out, fmt.Errorf("run transform, schedule or action, not %q", what)
 }

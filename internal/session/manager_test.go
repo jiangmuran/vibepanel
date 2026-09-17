@@ -1656,6 +1656,53 @@ func TestALoneViewerGetsTheGridEvenAfterSomebodyElseHeldIt(t *testing.T) {
 	}
 }
 
+// A viewer that is behind is measured in bytes as well as in events.
+//
+// The pump reads the PTY in 32 KiB chunks and every queued event owns its
+// copy, so a queue bounded only at 256 events let one subscribed terminal hold
+// 8 MiB -- four times the ring it complements, per hidden terminal, per
+// viewer. The count still applies; this is the bound in the unit that costs
+// memory.
+func TestAViewerIsDroppedByBytesBeforeItsQueueIsFullOfEvents(t *testing.T) {
+	live := attachedFor(t, "vp_arb_bytes")
+	sub, _ := live.Subscribe("desktop")
+
+	chunk := make([]byte, 32*1024)
+	sent := 0
+	for i := 0; i < subscriberQueue; i++ {
+		live.broadcast(Event{Kind: EventOutput, Data: chunk})
+		if sub.Dropped() {
+			break
+		}
+		sent++
+	}
+	if !sub.Dropped() {
+		t.Fatalf("a viewer holding %d bytes was not dropped; the bound is still the "+
+			"event count alone", sent*len(chunk))
+	}
+	if held := sent * len(chunk); held > subscriberBytes {
+		t.Errorf("the viewer was holding %d bytes before it was dropped, over the %d bound",
+			held, subscriberBytes)
+	}
+
+	// And what the reader has taken is not held: a viewer that keeps up is not
+	// dropped for the total it has been sent.
+	fast, _ := live.Subscribe("phone")
+	for i := 0; i < subscriberQueue*4; i++ {
+		live.broadcast(Event{Kind: EventOutput, Data: chunk})
+		select {
+		case ev := <-fast.Events:
+			fast.Took(ev)
+		default:
+			t.Fatalf("nothing queued for a viewer that is keeping up, at event %d", i)
+		}
+		if fast.Dropped() {
+			t.Fatalf("a viewer that read every event was dropped at event %d: the bytes it "+
+				"took are still being counted against it", i)
+		}
+	}
+}
+
 func TestAViewerDroppedForFallingBehindGivesUpTheGrid(t *testing.T) {
 	// The grid owner's phone locks while the session is producing output, its
 	// queue fills, and the broadcaster cuts it loose -- which deletes it from

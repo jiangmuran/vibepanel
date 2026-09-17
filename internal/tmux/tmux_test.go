@@ -998,6 +998,86 @@ func TestTheBellFlagLatchesWhenNobodyIsAttached(t *testing.T) {
 	}
 }
 
+// TestARecordedBellSurvivesTheAttachThatSpendsTheFlag is the other half of the
+// test above, and it exists because the flag's "spent by attaching" property
+// is also a race the panel kept losing.
+//
+// Attach reads the flag and then starts a client; a bell landing between those
+// two is latched (no client yet) and then cleared by the attach (never
+// forwarded), so it is gone in both directions. Measured on a loaded machine,
+// restart-check failed on exactly that about one run in three.
+//
+// The alert-bell hook records the bell in a window option instead, which tmux
+// never clears -- so the same bell is still there for the next poll to find --
+// and stamps it with the window's activity time, so a late reader still knows
+// when it rang. ClearBell is what consumes it; without that the record would
+// be read as a new bell on every poll, which is the failure the flag test
+// above guards against from the other side.
+func TestARecordedBellSurvivesTheAttachThatSpendsTheFlag(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	if err := c.EnsureServer(ctx); err != nil {
+		t.Fatalf("EnsureServer: %v", err)
+	}
+	const name = "vp_bellrec"
+	before := time.Now().Add(-2 * time.Second).Unix()
+	if err := c.Create(ctx, CreateOptions{
+		Name: name, Dir: t.TempDir(), Width: 80, Height: 24,
+		Command: []string{"sh", "-c", "sleep 0.3; printf 'needs you\\a'; exec sleep 30"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	time.Sleep(1500 * time.Millisecond)
+
+	got, err := c.Get(ctx, name)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.BellAt == 0 {
+		t.Fatal("the alert-bell hook recorded nothing; a bell that rings while the panel " +
+			"is between its flag read and its client is lost with no trace")
+	}
+	if got.BellAt < before || got.BellAt > time.Now().Unix()+1 {
+		t.Errorf("the recorded bell is stamped %d, outside the window it rang in (%d..%d)",
+			got.BellAt, before, time.Now().Unix())
+	}
+
+	// The attach spends the flag, as the test above measures. The record is
+	// not the flag, and that is the whole point of it.
+	cmd := exec.CommandContext(ctx, c.Bin, c.args(c.AttachArgs(name)...)...)
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	f, err := pty.Start(cmd)
+	if err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	time.Sleep(1500 * time.Millisecond)
+	_ = f.Close()
+	_ = cmd.Process.Kill()
+	_, _ = cmd.Process.Wait()
+	time.Sleep(500 * time.Millisecond)
+
+	after, err := c.Get(ctx, name)
+	if err != nil {
+		t.Fatalf("Get after attach: %v", err)
+	}
+	if after.BellAt != got.BellAt {
+		t.Fatalf("attaching changed the recorded bell from %d to %d; the record has to "+
+			"outlive the attach or it is no better than the flag", got.BellAt, after.BellAt)
+	}
+
+	if err := c.ClearBell(ctx, name); err != nil {
+		t.Fatalf("ClearBell: %v", err)
+	}
+	cleared, err := c.Get(ctx, name)
+	if err != nil {
+		t.Fatalf("Get after clear: %v", err)
+	}
+	if cleared.BellAt != 0 {
+		t.Errorf("the record survived being consumed (%d), so every poll would read the "+
+			"same bell again and the session would never stop waiting", cleared.BellAt)
+	}
+}
+
 // TestTmuxSwallowsDesktopNotificationSequences records which of the documented
 // "a human is needed" signals can actually arrive.
 //

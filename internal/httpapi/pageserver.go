@@ -76,11 +76,20 @@ type serverLogLine struct {
 // and onSchedule is not a failure.
 var errNoHook = errors.New("server.js does not define this hook")
 
-// serverProgram compiles server.js for a namespace -- the published version's
+// serverProgram compiles server.js for a namespace -- a published version's
 // for live, the draft directory's for draft -- and returns it with a key that
 // names that exact code. A compiled program is reused until the code changes;
 // a runtime never is.
-func (s *Server) serverProgram(ctx context.Context, page store.SharePage, ns string, m pages.Manifest) (*goja.Program, string, error) {
+//
+// version is which published version's code to run; 0 means the page's
+// current one. It exists because a link can be pinned to an older version,
+// and everything else about such a call already comes from that version: the
+// manifest, the action, its input schema and the keys it may write. The code
+// came from the published version regardless, so a visitor's request was
+// checked against the contract they were shown and then handed to whatever
+// server.js the owner published since -- hooks the pinned manifest never
+// declared, running with the pinned manifest's authority.
+func (s *Server) serverProgram(ctx context.Context, page store.SharePage, ns string, m pages.Manifest, version int) (*goja.Program, string, error) {
 	if m.Server == nil {
 		return nil, "", errors.New("this page has no server.js")
 	}
@@ -94,11 +103,15 @@ func (s *Server) serverProgram(ctx context.Context, page store.SharePage, ns str
 		sum := sha256.Sum256(f.Data)
 		src, key = f.Data, page.ID+"|draft|"+hex.EncodeToString(sum[:8])
 	} else {
-		_, data, err := s.DB.SharePageFileData(ctx, page.ID, page.PublishedVersion, m.Server.Entry)
+		v := version
+		if v == 0 {
+			v = page.PublishedVersion
+		}
+		_, data, err := s.DB.SharePageFileData(ctx, page.ID, v, m.Server.Entry)
 		if err != nil {
 			return nil, "", fmt.Errorf("%s: %w", m.Server.Entry, err)
 		}
-		src, key = data, page.ID+"|v"+strconv.Itoa(page.PublishedVersion)
+		src, key = data, page.ID+"|v"+strconv.Itoa(v)
 	}
 	st := &s.pb.server
 	st.mu.Lock()
@@ -168,6 +181,9 @@ type serverCall struct {
 	visitor map[string]any
 	writes  map[string]bool
 	by      string
+	// version is the published version whose server.js runs; 0 is the page's
+	// current one. See serverProgram.
+	version int
 }
 
 // runServer runs one hook in a fresh runtime and commits its data writes if,
@@ -175,7 +191,7 @@ type serverCall struct {
 // cap. Writes are buffered against a working copy until then, so a hook that
 // throws halfway has changed nothing.
 func (s *Server) runServer(ctx context.Context, c serverCall) (any, error) {
-	prog, _, err := s.serverProgram(ctx, c.page, c.ns, c.m)
+	prog, _, err := s.serverProgram(ctx, c.page, c.ns, c.m, c.version)
 	defer s.flushServerLog(c.page)
 	if err != nil {
 		s.serverLog(c.page.ID, "error", "compile: "+err.Error())
@@ -364,11 +380,11 @@ func (s *Server) serverCtx(ctx context.Context, vm *goja.Runtime, c serverCall) 
 // serverTransform is what server.js's transform returned for a snapshot, or
 // nil. Memoised by the exact code and input: a wall polling every two seconds
 // runs it again only when what it would see has changed.
-func (s *Server) serverTransform(ctx context.Context, page store.SharePage, ns string, m pages.Manifest, snap shareSnapshot) any {
+func (s *Server) serverTransform(ctx context.Context, page store.SharePage, ns string, m pages.Manifest, snap shareSnapshot, version int) any {
 	if m.Server == nil {
 		return nil
 	}
-	_, codeKey, err := s.serverProgram(ctx, page, ns, m)
+	_, codeKey, err := s.serverProgram(ctx, page, ns, m, version)
 	if err != nil {
 		return nil
 	}
@@ -402,8 +418,8 @@ func (s *Server) serverTransform(ctx context.Context, page store.SharePage, ns s
 
 // runServerHook runs onVisitorAction or onAdminAction for an action.
 func (s *Server) runServerHook(ctx context.Context, page store.SharePage, ns string, m pages.Manifest,
-	hook, name string, input, visitor map[string]any, action *pages.ActionSpec, by string) (any, error) {
-	c := serverCall{page: page, ns: ns, m: m, hook: hook, args: []any{name, input}, budget: adminBudget, by: by}
+	hook, name string, input, visitor map[string]any, action *pages.ActionSpec, by string, version int) (any, error) {
+	c := serverCall{page: page, ns: ns, m: m, hook: hook, args: []any{name, input}, budget: adminBudget, by: by, version: version}
 	if hook == "onVisitorAction" {
 		c.budget, c.visitor, c.writes = visitorBudget, visitor, map[string]bool{}
 		if c.visitor == nil {

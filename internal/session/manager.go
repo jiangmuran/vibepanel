@@ -44,6 +44,21 @@ var ErrNotAttached = errors.New("session: not attached")
 // and replays from the ring buffer, which is exactly what the ring is for.
 const subscriberQueue = 256
 
+// subscriberBytes is the other half of that bound, and the one that is
+// measured in the thing that actually costs memory.
+//
+// The pump reads the PTY in 32 KiB chunks and each queued event owns its copy,
+// so 256 events is 8 MiB per subscribed terminal per viewer — four times the
+// ring it complements, and a viewer keeps hidden terminals subscribed on
+// purpose (SubscribeHidden), so one tab behind on a flood held tens of MiB
+// across them. Nothing here was leaking; the ceiling was simply set in the
+// wrong unit.
+//
+// Set to the ring's size, because that is what a drop costs: a viewer that
+// falls a ring behind is replayed from the ring when it reconnects, so a
+// deeper queue buys it nothing it would not be handed anyway.
+const subscriberBytes = DefaultRingSize
+
 // controllerGrace is how long a departed controller's grid stays frozen for
 // them.
 //
@@ -70,6 +85,22 @@ type Subscriber struct {
 	hidden bool
 
 	dropped atomic.Bool
+
+	// queued is how many bytes of output are sitting in Events. The pump adds
+	// on the way in and Took subtracts on the way out; see subscriberBytes.
+	queued atomic.Int64
+}
+
+// Took tells the subscriber that an event has left its queue, so that the byte
+// bound tracks what is really held rather than only growing.
+//
+// Called by whoever reads Events, which is one place (internal/ws). A reader
+// that forgets costs this viewer its subscription and nothing else: the count
+// only ever rises, and the pump drops the viewer, which reconnects.
+func (s *Subscriber) Took(ev Event) {
+	if n := len(ev.Data); n > 0 {
+		s.queued.Add(-int64(n))
+	}
 }
 
 // Dropped reports whether this subscriber fell too far behind and was cut off.
@@ -202,6 +233,26 @@ type Live struct {
 // that real output is not lost: the worst case is a session that printed in
 // that window reading as quiet a couple of seconds early.
 const settleWindow = 250 * time.Millisecond
+
+// observeLatchedBell hands the detector a bell tmux recorded while nothing was
+// listening, and consumes the record so the next read is a new bell.
+//
+// The flag is not consumed, because attaching is what consumes it, and it is
+// read for the server a panel older than the alert-bell hook started, where it
+// is the only answer there is.
+func (m *Manager) observeLatchedBell(ctx context.Context, sessionID, tmuxName string) {
+	if m.OnSignals == nil {
+		return
+	}
+	info, err := m.tmux.Get(ctx, tmuxName)
+	if err != nil || (!info.Bell && info.BellAt == 0) {
+		return
+	}
+	if info.BellAt != 0 {
+		_ = m.tmux.ClearBell(ctx, tmuxName)
+	}
+	m.OnSignals(Signals{SessionID: sessionID, Bell: true})
+}
 
 // Signals is what the pump observed in a slice of output. The manager hands it
 // to whatever is deciding session state.
@@ -442,20 +493,19 @@ func (m *Manager) Attach(ctx context.Context, sessionID, tmuxName string, cols, 
 		ring.Write([]byte(strings.ReplaceAll(history, "\n", "\r\n") + "\r\n"))
 	}
 
-	// A plain `attach`, not `attach -d`: detaching other clients would be
-	// pointless (we are the only one) and actively harmful if a human is
-	// debugging the same socket from a shell.
-	// A bell that rang while no client was attached is latched in the window
-	// flag, and the attach below clears that flag without replaying the byte.
-	// Read it here — the last step before the attach, after the history
-	// capture — and hand it to the detector as if it had come down the wire:
-	// the same read Reconcile makes at startup, covering every attach. The
-	// resources adoption runs between pane creation and this point, and an
-	// agent that asks within that window would otherwise read as working
-	// until something else spoke.
-	if info, gerr := m.tmux.Get(ctx, tmuxName); gerr == nil && info.Bell && m.OnSignals != nil {
-		m.OnSignals(Signals{SessionID: sessionID, Bell: true})
-	}
+	// A bell that rang while no client was attached, handed to the detector as
+	// if it had come down the wire: the same read Reconcile makes at startup,
+	// covering every attach. The resources adoption runs between pane creation
+	// and this point, and an agent that asks within that window would
+	// otherwise read as working until something else spoke.
+	//
+	// Two sources, because the window flag alone left a race this could not
+	// win: it is cleared by the attach a few lines below, so a bell landing
+	// between the read and the client reaching the server was erased without
+	// ever being forwarded. The alert-bell hook records the same bell in a
+	// window option nothing but the panel clears, so a bell that lands in that
+	// window is still there on the next poll. See vibepanel.conf.
+	m.observeLatchedBell(ctx, sessionID, tmuxName)
 
 	// A plain `attach`, not `attach -d`: detaching other clients would be
 	// pointless (we are the only one) and actively harmful if a human is
@@ -1011,8 +1061,19 @@ func (l *Live) broadcast(ev Event) {
 // which has to write the ring and deliver in one critical section.
 func (l *Live) broadcastLocked(ev Event) {
 	for sub := range l.subs {
+		// The byte bound, checked before the queue is offered the event: a
+		// viewer under the event count can still be holding megabytes.
+		n := int64(len(ev.Data))
+		if sub.queued.Load()+n > subscriberBytes {
+			sub.dropped.Store(true)
+			delete(l.subs, sub)
+			close(sub.Events)
+			l.releaseControlLocked(sub)
+			continue
+		}
 		select {
 		case sub.Events <- ev:
+			sub.queued.Add(n)
 		default:
 			// Full queue: this viewer cannot keep up. Cut it loose rather than
 			// slowing the pump; it will reconnect and replay.
