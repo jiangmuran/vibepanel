@@ -242,3 +242,44 @@ func TestOpencodeWalkFindsOneDatabase(t *testing.T) {
 		t.Fatalf("source: found=%v files=%d complete=%v", src.Found, src.Files, src.Complete)
 	}
 }
+
+// opencode writes into its write-ahead log, and the database file does not move
+// until SQLite checkpoints. A cursor on the main file alone reports an old
+// answer as current until then.
+func TestAnOpencodeWriteThatOnlyReachedTheLogIsNoticed(t *testing.T) {
+	root := t.TempDir()
+	path := opencodeDB(t, root, nil, nil)
+	s := &Scanner{OpencodeRoot: root, Loc: time.UTC}
+
+	refs, _, err := s.Walk(ToolOpencode)
+	if err != nil || len(refs) != 1 {
+		t.Fatalf("walk: %v %v", refs, err)
+	}
+	before := refs[0]
+
+	// A log that has grown, with the main file untouched: what a running
+	// opencode looks like between checkpoints.
+	wal := path + "-wal"
+	if err := os.WriteFile(wal, make([]byte, 4096), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	later := time.Unix(before.ModifiedAt+60, 0)
+	if err := os.Chtimes(wal, later, later); err != nil {
+		t.Fatal(err)
+	}
+
+	refs, _, _ = s.Walk(ToolOpencode)
+	after := refs[0]
+	if after.Size == before.Size && after.ModifiedAt == before.ModifiedAt {
+		t.Fatal("the stamp did not move when only the write-ahead log changed; " +
+			"the cursor would skip the database until the next checkpoint")
+	}
+
+	// The walk and the read must stamp the same way, or the cursor never
+	// matches and every pass re-reads a 2 GB database.
+	f := s.ReadFile(ToolOpencode, path)
+	if f.Size != after.Size || f.ModifiedAt != after.ModifiedAt {
+		t.Errorf("ReadFile stamped (%d, %d), Walk stamped (%d, %d)",
+			f.Size, f.ModifiedAt, after.Size, after.ModifiedAt)
+	}
+}

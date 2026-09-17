@@ -189,8 +189,22 @@ opencode reports reasoning tokens separately and they are folded into `output`.
 clamped to 1–3660 and defaulting to 30. `heatmap` is always the last 371 days
 (53 whole weeks) and `byMonth` is always every month. A range control should
 not be able to make a year grid into a broken one. `project` is a project id,
-never a path; `tool` is `claude` or `codex`. An unknown value of either is a
-400 rather than an empty chart.
+never a path; `tool` is `claude`, `codex` or `opencode`. An unknown value of
+either is a 400 rather than an empty chart.
+
+A `project` filter covers the project's directory **except the projects nested
+inside it**, which is the same attribution as the `projects` rows: work in a
+nested directory belongs to the innermost project. A filtered `total` is
+therefore equal to that project's row in an unfiltered response, and the
+filtered views of every project add up to no more than was spent. Share links
+scoped to a project count the same way.
+
+Each Claude request is counted once, from whichever of its transcript lines has
+the largest `output_tokens`: lines written mid-stream carry a placeholder. Records with no tokens at all (Claude Code's `<synthetic>`)
+are not requests. A forked Codex thread does not count the parent history it
+replays. When a reader changes what it produces, every transcript is read again
+on the next pass, and the old numbers stay on screen until each file's new ones
+replace them.
 
 `sessions` is capped at `sessionLimit`, biggest first, with `sessionCount`
 saying how many there were.

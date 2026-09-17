@@ -326,3 +326,52 @@ func TestTheSpendFreshnessWindowAgreesWithTheFrontend(t *testing.T) {
 			"figure with nothing saying so.", got, want)
 	}
 }
+
+// Rows written by an older reader are re-read even though the file has not
+// changed, and replaced rather than added to.
+//
+// This is the upgrade path. The cursor answers "has this file changed", so
+// without the reader version a fixed reader corrects only transcripts that are
+// still being written, and a month of history keeps the numbers the broken one
+// produced -- on a screen with no bug left to explain them.
+func TestRowsFromAnOlderReaderAreReadAgain(t *testing.T) {
+	root := t.TempDir()
+	path := writeTranscript(t, root, "a.jsonl",
+		claudeLine("2026-08-20T10:00:00.000Z", "s1", "/p", "m1", "r1", "opus", 1, 10, 0, 0)+"\n")
+	in, db := ingester(t, root)
+	ctx := context.Background()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What an upgraded database holds: the current stamp, a row the old
+	// reader got wrong, and the version every row had before there were
+	// versions.
+	if err := db.ReplaceUsageFile(ctx, store.UsageFile{
+		Path: path, Tool: "claude", Size: info.Size(), ModifiedAt: info.ModTime().Unix(),
+		Reader: 0,
+		Rows: []store.UsageRow{{Day: "2026-08-20", Tool: "claude", Session: "s1", CWD: "/p",
+			Model: "opus", Input: 1, Output: 2, Requests: 1}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	p := in.RunNow(ctx)
+	if p.Read != 1 {
+		t.Fatalf("read %d transcripts, want 1; a file stamped by an older reader was skipped "+
+			"because its size and mtime had not moved", p.Read)
+	}
+	days, err := db.UsageByDay(ctx, store.UsageFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(days) != 1 || days[0].Output != 10 || days[0].Requests != 1 {
+		t.Errorf("got %+v, want one day with output 10 and one request", days)
+	}
+
+	if again := in.RunNow(ctx); again.Read != 0 {
+		t.Errorf("the pass after re-read %d transcripts; the new version was not recorded",
+			again.Read)
+	}
+}

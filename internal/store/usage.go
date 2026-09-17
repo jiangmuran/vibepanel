@@ -23,6 +23,10 @@ type UsageStamp struct {
 	// forget everything the walk did not see, and a root that was momentarily
 	// unreadable takes every rollup for that agent with it.
 	Tool string
+	// Reader is the version of the reader that wrote this file's rows. See
+	// migration v28: a stamp that matches the file on disk but not the
+	// current reader is a file that has to be read again.
+	Reader int
 }
 
 // UsageFile is one transcript's contribution, as it goes into the database.
@@ -33,7 +37,9 @@ type UsageFile struct {
 	ModifiedAt int64
 	Skipped    int
 	Problem    string
-	Rows       []UsageRow
+	// Reader is the reader version these rows came from.
+	Reader int
+	Rows   []UsageRow
 }
 
 // UsageRow is one (day, agent session, model) bucket.
@@ -52,7 +58,7 @@ type UsageRow struct {
 
 // UsageStamps returns every transcript the last pass recorded.
 func (d *DB) UsageStamps(ctx context.Context) (map[string]UsageStamp, error) {
-	rows, err := d.sql.QueryContext(ctx, `SELECT path, size, modified_at, tool FROM usage_files`)
+	rows, err := d.sql.QueryContext(ctx, `SELECT path, size, modified_at, tool, reader FROM usage_files`)
 	if err != nil {
 		return nil, fmt.Errorf("store: list usage files: %w", err)
 	}
@@ -62,7 +68,7 @@ func (d *DB) UsageStamps(ctx context.Context) (map[string]UsageStamp, error) {
 	for rows.Next() {
 		var p string
 		var s UsageStamp
-		if err := rows.Scan(&p, &s.Size, &s.ModifiedAt, &s.Tool); err != nil {
+		if err := rows.Scan(&p, &s.Size, &s.ModifiedAt, &s.Tool, &s.Reader); err != nil {
 			return nil, fmt.Errorf("store: scan usage file: %w", err)
 		}
 		out[p] = s
@@ -86,16 +92,17 @@ func (d *DB) ReplaceUsageFile(ctx context.Context, f UsageFile) error {
 	defer tx.Rollback() //nolint:errcheck // no-op after a commit
 
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO usage_files (path, tool, size, modified_at, scanned_at, skipped, problem)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO usage_files (path, tool, size, modified_at, scanned_at, skipped, problem, reader)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(path) DO UPDATE SET
 			tool        = excluded.tool,
 			size        = excluded.size,
 			modified_at = excluded.modified_at,
 			scanned_at  = excluded.scanned_at,
 			skipped     = excluded.skipped,
-			problem     = excluded.problem`,
-		f.Path, f.Tool, f.Size, f.ModifiedAt, now(), f.Skipped, f.Problem); err != nil {
+			problem     = excluded.problem,
+			reader      = excluded.reader`,
+		f.Path, f.Tool, f.Size, f.ModifiedAt, now(), f.Skipped, f.Problem, f.Reader); err != nil {
 		return fmt.Errorf("store: put usage file %s: %w", f.Path, err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM usage_daily WHERE path = ?`, f.Path); err != nil {
@@ -162,6 +169,17 @@ type UsageFilter struct {
 	// and a LIKE pattern built from user data is a filter that quietly matches
 	// the wrong directories.
 	CWDPrefix string
+	// Exclude removes directories inside CWDPrefix that belong to somebody
+	// else: the projects nested in the one asked for. Each is a directory in
+	// the same form as CWDPrefix.
+	//
+	// Without it a project's own view and its row in the project table are
+	// two different numbers. The table gives nested work to the innermost
+	// project, so a parent's row leaves its child out, while a prefix filter
+	// alone takes the child's spend too. Measured here: a project whose
+	// filtered total was 176M, 77M of which the table put on the project
+	// inside it. The sum of the per-project views was more than was spent.
+	Exclude []string
 }
 
 func (f UsageFilter) where() (string, []any) {
@@ -190,6 +208,11 @@ func (f UsageFilter) where() (string, []any) {
 		// on a wall, from a filter that looked right in ASCII tests.
 		clauses = append(clauses, "(cwd = ? OR substr(cwd, 1, length(?)) = ?)")
 		args = append(args, p, under, under)
+	}
+	for _, x := range f.Exclude {
+		x = strings.TrimSuffix(x, "/")
+		clauses = append(clauses, "NOT (cwd = ? OR substr(cwd, 1, length(?)) = ?)")
+		args = append(args, x, x+"/", x+"/")
 	}
 	if len(clauses) == 0 {
 		return "", nil

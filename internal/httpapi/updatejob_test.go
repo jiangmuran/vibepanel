@@ -33,6 +33,8 @@ type fakeGitHub struct {
 	hits atomic.Int32
 	// hold, when non-nil, is waited on before the archive is served.
 	hold chan struct{}
+	// slow is how long a question about the latest release takes to answer.
+	slow time.Duration
 }
 
 func newFakeGitHub(t *testing.T, tag, binary string) *fakeGitHub {
@@ -47,6 +49,7 @@ func newFakeGitHub(t *testing.T, tag, binary string) *fakeGitHub {
 	asset := selfupdate.AssetName(tag)
 	mux.HandleFunc("/repos/"+selfupdate.Repo+"/releases/latest", func(w http.ResponseWriter, _ *http.Request) {
 		f.hits.Add(1)
+		time.Sleep(f.slow)
 		fmt.Fprintf(w, `{"tag_name":%q,"html_url":"https://example/releases/%s","body":"## What changed\n\n- a thing\n",
 			"published_at":"2026-09-01T10:00:00Z",
 			"assets":[{"name":%q,"browser_download_url":%q}]}`,
@@ -479,6 +482,12 @@ func TestTheLastCheckOutlivesTheProcess(t *testing.T) {
 // Two checks at once are one question.
 func TestConcurrentChecksAreOneQuestion(t *testing.T) {
 	gh := newFakeGitHub(t, "v99.0.0", "new")
+	// A real answer takes a round trip; the fake's took microseconds. On a
+	// loaded CI runner the eight requests then arrived one after another,
+	// each finding no check in flight, and this failed on main with eight
+	// questions for eight requests -- single-flight working, with nothing to
+	// fly with. Half a second is the window they have to overlap in.
+	gh.slow = 500 * time.Millisecond
 	ts, _, _ := updatable(t, gh)
 	var wg sync.WaitGroup
 	for range 8 {

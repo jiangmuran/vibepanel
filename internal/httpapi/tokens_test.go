@@ -356,3 +356,94 @@ func TestTheSourcesListIsNeverNull(t *testing.T) {
 		t.Fatalf("sources came back as null; the browser calls .filter() on it: %s", body)
 	}
 }
+
+// A project's own view and its row in the project table are one number.
+//
+// The table gives work in a nested directory to the innermost project, so a
+// filter on the outer project has to leave the inner one out. Before it did, a
+// project on this machine read 176M in its own view and 99M in the table, and
+// the per-project views added up to more than had been spent.
+func TestAProjectsFilteredTotalAgreesWithItsRowInTheTable(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	for _, p := range []struct{ id, path string }{
+		{"p_outer", "/work"}, {"p_inner", "/work/api"}, {"p_sibling", "/work/api-v2"},
+	} {
+		if _, err := srv.DB.CreateProject(ctx, p.id, p.id, p.path); err != nil {
+			t.Fatalf("create project: %v", err)
+		}
+	}
+	today := time.Now().Format("2006-01-02")
+	seedTranscript(t, srv, "outer", "/work/docs", today, 5)
+	seedTranscript(t, srv, "inner", "/work/api/web", today, 10)
+	seedTranscript(t, srv, "sibling", "/work/api-v2", today, 7)
+
+	get := func(query string) tokenUsageResponse {
+		t.Helper()
+		res, err := ts.Client().Get(ts.URL + "/api/token-usage" + query)
+		if err != nil {
+			t.Fatalf("GET: %v", err)
+		}
+		defer res.Body.Close() //nolint:errcheck // test
+		var out tokenUsageResponse
+		if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return out
+	}
+
+	all := get("")
+	rows := map[string]int64{}
+	for _, p := range all.Projects {
+		rows[p.ID] = p.Output
+	}
+	for _, id := range []string{"p_outer", "p_inner", "p_sibling"} {
+		scoped := get("?project=" + id)
+		if scoped.Total.Output != rows[id] {
+			t.Errorf("%s: filtered output %d, table row %d", id, scoped.Total.Output, rows[id])
+		}
+		var heat int64
+		for _, d := range scoped.Heatmap {
+			heat += d.Output
+		}
+		var months int64
+		for _, m := range scoped.ByMonth {
+			months += m.Output
+		}
+		if heat != rows[id] || months != rows[id] {
+			t.Errorf("%s: heatmap %d and months %d, table row %d", id, heat, months, rows[id])
+		}
+	}
+	if rows["p_outer"] != 5 {
+		t.Errorf("outer row %d, want 5", rows["p_outer"])
+	}
+}
+
+// The share side scopes the same way, and a project created inside a scope
+// changes that scope's answer at once rather than when a cache entry keyed on
+// the scope alone happens to expire.
+func TestAShareScopeLeavesOutTheProjectsNestedInIt(t *testing.T) {
+	_, srv := newTestServer(t)
+	ctx := context.Background()
+	today := time.Now().Format("2006-01-02")
+	seedTranscript(t, srv, "outer", "/work/docs", today, 5)
+	seedTranscript(t, srv, "inner", "/work/api/web", today, 10)
+
+	sum := func(snap spendSnapshot) int64 {
+		var n int64
+		for _, d := range snap.days {
+			n += d.Output
+		}
+		return n
+	}
+	outer := store.Project{ID: "p_outer", Name: "outer", Path: "/work"}
+	inner := store.Project{ID: "p_inner", Name: "inner", Path: "/work/api"}
+
+	if got := sum(srv.spendNow(ctx, []store.Project{outer}, "/work")); got != 15 {
+		t.Fatalf("with no nested project the scope holds %d, want 15", got)
+	}
+	if got := sum(srv.spendNow(ctx, []store.Project{outer, inner}, "/work")); got != 5 {
+		t.Errorf("with a nested project the scope holds %d, want 5; the nested project's "+
+			"spend was counted in its parent, or an answer cached before it existed was served", got)
+	}
+}

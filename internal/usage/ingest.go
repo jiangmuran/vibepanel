@@ -22,6 +22,21 @@ import (
 // does nothing at all.
 const MinInterval = 30 * time.Second
 
+// ReaderVersion names what the readers in this package currently produce.
+//
+// Raise it in the same change as anything that alters the rows a transcript
+// yields -- a field read differently, a record newly skipped or newly counted.
+// The cursor only notices files that changed on disk, so without this a fixed
+// reader corrects the sessions that come after it and leaves every unchanged
+// transcript with the rows the old one wrote. Every file stamped with another
+// version is read again on the next pass.
+//
+//	1  Claude keeps the final output_tokens of a streamed response rather than
+//	   its first placeholder, and skips all-zero "<synthetic>" records; a
+//	   forked Codex thread no longer counts its parent's replayed history;
+//	   opencode's cursor includes its write-ahead log.
+const ReaderVersion = 1
+
 // sessionLimit bounds the per-session table an API response carries.
 const sessionLimit = 200
 
@@ -183,7 +198,11 @@ func (in *Ingester) run(ctx context.Context) Pass {
 			// every pass read all 2.16 GB and then decided most of it had not
 			// changed, which is the incremental design costing exactly as much
 			// as no incremental design at all.
-			if s, ok := stamps[path]; ok && s.Size == ref.Size && s.ModifiedAt == ref.ModifiedAt {
+			//
+			// The reader version is part of the same comparison: rows written
+			// by an older reader are stale however still the file has been.
+			if s, ok := stamps[path]; ok && s.Size == ref.Size && s.ModifiedAt == ref.ModifiedAt &&
+				s.Reader == ReaderVersion {
 				continue
 			}
 			f := in.Scanner.ReadFile(tool, path)
@@ -199,7 +218,7 @@ func (in *Ingester) run(ctx context.Context) Pass {
 			}
 			if err := in.DB.ReplaceUsageFile(ctx, store.UsageFile{
 				Path: path, Tool: string(tool), Size: f.Size, ModifiedAt: f.ModifiedAt,
-				Skipped: f.Skipped, Problem: f.Problem, Rows: rows,
+				Skipped: f.Skipped, Problem: f.Problem, Reader: ReaderVersion, Rows: rows,
 			}); err != nil {
 				// One unreadable transcript is a gap, not a reason to abandon
 				// the other four hundred.

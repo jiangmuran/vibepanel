@@ -231,3 +231,24 @@ func TestTheSessionListSaysHowManyItLeftOut(t *testing.T) {
 		t.Error("the capped list is not the biggest sessions, so the cap hides the wrong ones")
 	}
 }
+
+// An excluded directory takes its subdirectories with it, and nothing that
+// merely shares its name as a prefix.
+func TestAnExcludedDirectoryIsADirectoryNotAPrefix(t *testing.T) {
+	db := openTest(t)
+	ctx := context.Background()
+
+	put(t, db, "/t/a.jsonl", "claude", row("2026-08-20", "s1", "/w", "opus", 0, 1))
+	put(t, db, "/t/b.jsonl", "claude", row("2026-08-20", "s2", "/w/api", "opus", 0, 10))
+	put(t, db, "/t/c.jsonl", "claude", row("2026-08-20", "s3", "/w/api/web", "opus", 0, 100))
+	put(t, db, "/t/d.jsonl", "claude", row("2026-08-20", "s4", "/w/api-v2", "opus", 0, 1000))
+
+	days, err := db.UsageByDay(ctx, UsageFilter{CWDPrefix: "/w", Exclude: []string{"/w/api/"}})
+	if err != nil {
+		t.Fatalf("by day: %v", err)
+	}
+	if len(days) != 1 || days[0].Output != 1001 {
+		t.Errorf("got %+v, want output 1001: the directory and its sibling, "+
+			"not the excluded directory or anything below it", days)
+	}
+}
