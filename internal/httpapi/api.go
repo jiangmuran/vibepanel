@@ -1678,8 +1678,9 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Attach now, not at the next poll. A session can ring the bell within a
-	// second of starting, and anything that happens before the pump is running
-	// is simply not seen.
+	// second of starting, and the flag read just below is what keeps one that
+	// rang before the pump started from being simply not seen.
+	s.observeLatchedBell(ctx, sid, tmuxName)
 	if _, aerr := s.Manager.Attach(ctx, sid, tmuxName, req.Cols, req.Rows); aerr != nil {
 		s.Log.Warn("attach new session", "session", sid, "err", aerr)
 	}
@@ -2053,6 +2054,25 @@ func (s *Server) Reconcile(ctx context.Context) error {
 	return nil
 }
 
+// observeLatchedBell feeds the detector a bell that rang while no pump was
+// attached. The byte itself is gone: tmux latches it in the window flag and
+// clears the flag the moment a client attaches, without replaying it, so the
+// read has to come before the attach this precedes — the same read Reconcile
+// makes at startup, for the same reason. Anything that delays the first
+// attach widens the window: a pane that rang within its first moments (the
+// adoption between pane creation and pump takes a moment) would otherwise
+// read as working until something else spoke.
+func (s *Server) observeLatchedBell(ctx context.Context, id, tmuxName string) {
+	if s.Detector == nil {
+		return
+	}
+	info, err := s.Tmux.Get(ctx, tmuxName)
+	s.Log.Warn("DEBUG latched bell", "tmux", tmuxName, "bell", info.Bell, "err", err)
+	if err == nil && info.Bell {
+		s.Detector.Observe(id, session.Signals{Bell: true}, time.Now())
+	}
+}
+
 // pollInterval is how often tmux is asked what changed.
 //
 // Two seconds is a compromise: each tick shells out to tmux once, and the
@@ -2272,6 +2292,9 @@ func (s *Server) pollOnce(ctx context.Context) error {
 		// megabytes and a handful of small processes.
 		live, attached := s.Manager.Get(row.ID)
 		if !attached {
+			// Same read as at creation: the pump was down, so a bell that rang
+			// while it was is latched and the attach below would clear it.
+			s.observeLatchedBell(ctx, row.ID, row.TmuxName)
 			if l, aerr := s.Manager.Attach(ctx, row.ID, row.TmuxName, row.Cols, row.Rows); aerr != nil {
 				s.Log.Debug("attach for monitoring", "session", row.ID, "err", aerr)
 			} else {

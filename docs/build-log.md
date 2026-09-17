@@ -23526,3 +23526,21 @@ panel group and read the page links against it. The Resources group went
 between them, so the measured pair was two rows apart and the check reported
 a 64px step beside 32px links that match every neighbor. The step now comes
 from the first two groups in the rail, whatever they are.
+
+## 2026-09-17 — A bell that rings before the pump attaches is recovered
+
+The restart-check persistence assertion failed on every merged tree and never
+on the released one, paired A/B under equal load, two rounds each. The
+mechanism came out of the running system: an agent that asks within moments of
+its pane starting rings a bell that no client has attached to hear, so tmux
+latches it in the window flag — and the panel's first attach clears that flag
+without replaying the byte. The resources adoption runs exactly in that window
+(Place between pane creation and pump), and the chat merge pushed the ask
+there; the wedge from 4412555 was this same race at a different width.
+
+The fix mirrors Reconcile: read the window's bell flag before attaching, and
+feed the detector what latched. Wired at creation and at the poller's
+re-attach, the two other places a pump comes up under a pane that has been
+alive without one. Pinned by a test that detaches the pump, rings through
+tmux, and expects waiting from the next poll; mutating the read away turns it
+red.

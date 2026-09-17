@@ -1047,6 +1047,56 @@ func TestBellMarksASessionWaiting(t *testing.T) {
 	}
 }
 
+func TestABellThatRangWhileThePumpWasDownIsSeen(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"bell"}`)
+
+	// A python, so the fall-through reads working and the bell is the only
+	// thing that can move the row to waiting. It rings on the line it reads,
+	// which the test types below.
+	sess := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["python3","-u","-c","import sys,time\nwhile True:\n    sys.stdin.readline()\n    print(chr(7))\n    time.sleep(60)"]}`)
+
+	// The bell fires while no pump is attached: tmux latches the flag instead
+	// of forwarding, and the attach clears it without replaying the byte
+	// (pinned against real tmux as
+	// TestTheBellFlagLatchesWhenNobodyIsAttached). This is the pane the
+	// resources adoption creates — its move runs between pane creation and
+	// the first attach — and a bell lost there read as working forever after.
+	srv.Manager.Detach(sess.ID)
+	if err := srv.Tmux.Keys(ctx, sess.TmuxName, "print(chr(7))", "Enter"); err != nil {
+		t.Fatalf("send bell: %v", err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		info, err := srv.Tmux.Get(ctx, sess.TmuxName)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if info.Bell {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the bell flag did not latch; the test is not testing what it is about")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	if err := srv.pollOnce(ctx); err != nil {
+		t.Fatalf("pollOnce: %v", err)
+	}
+	rec, err := srv.DB.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if rec.State != session.StateWaiting {
+		t.Fatalf("state = %q, want %q: a bell that rang with the pump down was not seen",
+			rec.State, session.StateWaiting)
+	}
+}
+
 func TestManualOverrideSurvivesThePoller(t *testing.T) {
 	ts, srv := newTestServer(t)
 	ctx := context.Background()
