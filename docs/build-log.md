@@ -23069,3 +23069,28 @@ used `ink-3`, 2.97:1 in light, so the view's tertiary text is `ink-2`
 throughout. And the new check measured an empty chart: the view opens scoped
 to the selected session's project, and the check's transcript was in none, so
 it now clears the filter before measuring.
+
+## 2026-09-16 — The dock block goes back to what it was
+
+After v1.21.0 the verdict on the compact block was 「缩略版我还是喜欢之前的」.
+The total-and-output table is taken out, and the block from before the redraw
+is back as it was: today with its fortnight spark, this week and this project
+as a pair, the agent bar, and the output-and-requests footer. The only changes
+from that file are the helpers it calls. `dayTotal`, `windowTotal`,
+`projectTotal` and `outputTotal` went with the redraw, and `dayValue`,
+`windowValue` and `projectFigures` answer the same questions, with the same
+tests on their edges. The rank assertions in render-check and panes-check are
+the old ones again.
+
+What stays from the redraw: the header opens the full view directly (the
+side-panel detail it used to open is gone and is not wanted back), and the
+full view itself is unchanged.
+
+The rerun of render-check for this change failed `tokens/view` with an empty
+chart at 8pm Pacific, and passed the same check at 4pm the day before. The
+seeded transcript was stamped at noon on today's *UTC* date. From 5pm Pacific
+that date is tomorrow, so the record sat in the future, and the block's own
+footer quietly read `Output 0` all along. It is stamped seconds before the run
+now. The same evening, the cleanup wait added for a release-build flake
+(2d01be1) panicked on the one test that sets the ingester to nil and turned
+main red; e7768b2 skips it.
