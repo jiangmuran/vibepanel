@@ -394,6 +394,9 @@ const DICT = {
   'monitor.total': { zh: '合计', en: 'Total' },
   'monitor.machine': { zh: '这台机器', en: 'Machine' },
   'monitor.state': { zh: '状态时长', en: 'In this state' },
+  'monitor.network': { zh: '网络', en: 'Network' },
+  'monitor.netRate': { zh: '↓ {down} · ↑ {up}', en: '↓ {down} · ↑ {up}' },
+  'monitor.netTotal': { zh: '开机以来', en: 'Since boot' },
 
   'dir.title': { zh: '选一个目录', en: 'Choose a directory' },
   'dir.here': { zh: '当前位置', en: 'Where you are' },

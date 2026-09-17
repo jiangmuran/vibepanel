@@ -240,6 +240,11 @@ type trendPoint struct {
 	// memory and swap are the fraction in use, 0..1.
 	memory float64
 	load   float64
+	// netRx and netTx are bytes per second, or -1 where /proc could not be
+	// read -- cpu's convention above, so an unreadable machine and a quiet one
+	// do not draw the same line.
+	netRx float64
+	netTx float64
 	// tokens is the running total for the day, within this link's scope. The
 	// widget draws the differences; the total is what survives a sample being
 	// dropped, and a difference would not.
@@ -260,12 +265,18 @@ func (t *trendRing) observe(now time.Time, p trendPoint) {
 
 // trendFrom builds the point one reading describes.
 func trendFrom(now time.Time, sample sysmon.Sample, tokens int64) trendPoint {
-	p := trendPoint{at: now.Unix(), cpu: -1, load: sample.Load1, tokens: tokens}
+	p := trendPoint{at: now.Unix(), cpu: -1, netRx: -1, netTx: -1, load: sample.Load1, tokens: tokens}
 	if sample.CPUReadable && sample.CPUPercent != nil {
 		p.cpu = *sample.CPUPercent
 	}
 	if sample.MemTotal > 0 {
 		p.memory = float64(sample.MemTotal-sample.MemAvailable) / float64(sample.MemTotal)
+	}
+	if sample.NetReadable && sample.NetRxRate != nil {
+		p.netRx = *sample.NetRxRate
+	}
+	if sample.NetReadable && sample.NetTxRate != nil {
+		p.netTx = *sample.NetTxRate
 	}
 	return p
 }

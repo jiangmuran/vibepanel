@@ -459,6 +459,20 @@ export interface SystemSample {
   diskTotal: number
   diskFree: number
   diskPath: string
+  /**
+   * Whether the counters exist here at all -- cpuReadable's story again: no
+   * /proc/net/dev means no rate, which is a different fact from a machine
+   * sitting at 0 B/s.
+   */
+  netReadable: boolean
+  /** Bytes per second across every interface except loopback, since the
+   *  previous sample. Null on the first sample and on nothing to compare yet. */
+  netRxRate: number | null
+  netTxRate: number | null
+  /** The kernel's own running counters: since the interfaces came up, not
+   *  since this browser tab opened. */
+  netRxBytes: number
+  netTxBytes: number
   uptime: number
 }
 
@@ -1145,6 +1159,11 @@ export interface ShareMachine {
   swapFree: number
   diskTotal: number
   diskFree: number
+  netReadable: boolean
+  netRxRate: number | null
+  netTxRate: number | null
+  netRxBytes: number
+  netTxBytes: number
   uptime: number
 }
 
@@ -1338,6 +1357,10 @@ export interface ShareTrendPoint {
   /** Fractions in use, 0..1. */
   memory: number
   load: number
+  /** Bytes per second, or null where /proc could not be read -- cpu's
+   *  convention above. */
+  netRx: number | null
+  netTx: number | null
   /** The running total for the server's local day, within this link's scope.
    *  A rate is drawn from the differences; the total is what survives a
    *  dropped sample. */

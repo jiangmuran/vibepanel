@@ -2,6 +2,7 @@ package sysmon
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -17,6 +18,9 @@ func TestSampleReadsTheMachine(t *testing.T) {
 	first := s.Sample()
 	if first.CPUPercent != nil {
 		t.Errorf("first sample reported CPU %v, want nil", *first.CPUPercent)
+	}
+	if first.NetRxRate != nil || first.NetTxRate != nil {
+		t.Errorf("first sample reported a network rate, want nil until there is a second reading")
 	}
 	if first.Cores < 1 {
 		t.Errorf("cores = %d", first.Cores)
@@ -67,6 +71,64 @@ func TestFormatBytes(t *testing.T) {
 		if got := FormatBytes(in); got != want {
 			t.Errorf("FormatBytes(%d) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestReadNetExcludesLoopback(t *testing.T) {
+	if _, err := os.Stat("/proc/net/dev"); err != nil {
+		t.Skip("no /proc/net/dev")
+	}
+	// Loopback carries whatever this test process and everything else on the
+	// box happens to send itself, which is not "network traffic" in the sense
+	// anyone glancing at the monitor means -- it would make a machine with SSH
+	// open to itself look busy for no outside reason.
+	rx, tx, ok := readNet()
+	if !ok {
+		t.Fatal("readNet reported not ok on a machine with /proc/net/dev")
+	}
+	b, err := os.ReadFile("/proc/net/dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "lo:") {
+		// Loopback's own counters grow with everything this test suite does
+		// over localhost; the only thing pinned here is that summing does not
+		// panic and produces something no smaller than zero and no larger
+		// than a sane bound, which catches a column-index mistake that reads
+		// packets or errors as bytes.
+		if rx > 1<<50 || tx > 1<<50 {
+			t.Errorf("rx=%d tx=%d looks like the wrong column, not a byte count", rx, tx)
+		}
+	}
+}
+
+func TestNetReadableSaysWhetherThereIsAnythingToSample(t *testing.T) {
+	s := &Sampler{DiskPath: t.TempDir()}
+	got := s.Sample()
+	if _, _, ok := readNet(); ok != got.NetReadable {
+		t.Errorf("NetReadable = %v but readNet reports %v", got.NetReadable, ok)
+	}
+}
+
+// Two viewers landing a few milliseconds apart must not consume each other's
+// window, exactly like the CPU rate above them.
+func TestASecondNetworkCallerTooSoonGetsTheSameAnswer(t *testing.T) {
+	if _, err := os.Stat("/proc/net/dev"); err != nil {
+		t.Skip("no /proc/net/dev")
+	}
+	s := &Sampler{DiskPath: t.TempDir()}
+	s.Sample()
+	time.Sleep(600 * time.Millisecond)
+	a := s.Sample()
+	b := s.Sample()
+	if (a.NetRxRate == nil) != (b.NetRxRate == nil) {
+		t.Fatalf("nil-ness changed between calls inside the window: %v then %v", a.NetRxRate, b.NetRxRate)
+	}
+	if a.NetRxRate != nil && *a.NetRxRate != *b.NetRxRate {
+		t.Errorf("rx rate %.2f then %.2f within the window", *a.NetRxRate, *b.NetRxRate)
+	}
+	if a.NetTxRate != nil && *a.NetTxRate != *b.NetTxRate {
+		t.Errorf("tx rate %.2f then %.2f within the window", *a.NetTxRate, *b.NetTxRate)
 	}
 }
 

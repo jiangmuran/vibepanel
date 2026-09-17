@@ -23244,3 +23244,37 @@ was not doing anything:
 - The upgrade appending instead of merging. The two are the same for an event
   with none of the panel's entries in it, which is every event it touches.
   Append is kept, because it cannot drop anything, and a comment says why.
+
+## 2026-09-17 — Network traffic joins the machine reading
+
+CPU, memory, disk and load had a rate; the network interfaces did not. Added
+the same shape everywhere the other four already live, rather than a new one:
+
+- `internal/sysmon`: `readNet` sums `/proc/net/dev` across every interface
+  except loopback, and `Sampler` keeps its own previous-counters window for it,
+  independent of the CPU one, computed the same way — a rate is nil on the
+  first sample and repeated rather than recomputed inside `minCPUWindow`, and
+  `NetReadable` is false rather than a rate of zero on a build with no
+  `/proc/net/dev` (this ships a darwin build; `CPUReadable`'s own comment says
+  why that distinction exists at all).
+- The strip (`SystemStrip.tsx`) draws a fourth line, scaled to its own recent
+  peak rather than the fixed 0–100 the other three use — throughput has no
+  ceiling to measure a bar against — and never turns the pressure colours the
+  other three do, because a busy link is not a full disk. Its 88px detail
+  column is shared by both directions on one line, so the number there is
+  compact (`52K`, not `52.1 KiB/s`); the full reading is one click away.
+- The full panel (`SystemMonitor.tsx`) gets two rows next to Load and Mount:
+  the current rate and the total transferred since the interfaces came up,
+  gated on `netReadable` rather than the totals being nonzero, because zero
+  bytes on a fresh interface is a real reading and an absent `/proc` is not.
+- The wall data source (`shareMachine`, `shareTrendPoint` in
+  `internal/httpapi/share.go` and `sharelive.go`) got the same fields,
+  restated field by field like every other number that crosses that
+  boundary. None of the five shipped templates draw CPU or memory either, so
+  this stops at making the numbers available rather than adding a widget
+  nothing else has.
+
+While touching `shareTrendPoint`, found it was never in
+`TestTypeScriptRowsMatchWhatIsSent` or `TestTheSDKTypesMatchTheSnapshot` at
+all — an existing gap, not something this change opened, but one line away
+from the struct being changed. Pinned it alongside `shareMachine`.

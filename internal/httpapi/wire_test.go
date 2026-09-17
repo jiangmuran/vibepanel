@@ -85,6 +85,11 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		// vibepanel.d.ts by TestTheSDKTypesMatchTheSnapshot instead.
 		{"ShareLink", store.ShareLink{}},
 		{"ShareMachine", shareMachine{}},
+		// The moving line beside the machine reading. Uncovered until network
+		// rates were added to it, for no better reason than nobody had touched
+		// it since the pinning above was written.
+		{"ShareTrend", shareTrend{}},
+		{"ShareTrendPoint", shareTrendPoint{}},
 		{"ShareCounts", shareCounts{}},
 		{"ShareProject", shareProject{}},
 		{"ShareSession", shareSession{}},

@@ -47,6 +47,21 @@ type Sample struct {
 	DiskFree  uint64 `json:"diskFree"`
 	DiskPath  string `json:"diskPath"`
 
+	// NetReadable is CPUReadable's story again: /proc/net/dev is Linux's, so a
+	// darwin build has nothing to sample and must say so rather than render a
+	// rate of zero, which is a real and very different reading.
+	NetReadable bool `json:"netReadable"`
+	// NetRxRate and NetTxRate are bytes per second across every interface
+	// except loopback, since the previous sample. Nil on the first sample, and
+	// on any sample too soon after it to measure -- see minCPUWindow.
+	NetRxRate *float64 `json:"netRxRate"`
+	NetTxRate *float64 `json:"netTxRate"`
+	// NetRxBytes and NetTxBytes are the kernel's own running counters, so they
+	// are since the interfaces came up rather than since this process started
+	// watching them -- the same "survives a restart" property Uptime has.
+	NetRxBytes uint64 `json:"netRxBytes"`
+	NetTxBytes uint64 `json:"netTxBytes"`
+
 	Uptime int64 `json:"uptime"`
 }
 
@@ -63,6 +78,18 @@ type Sampler struct {
 	prevAt   time.Time
 	lastPct  *float64
 	haveprev bool
+
+	// Network counters keep their own window rather than sharing the CPU
+	// one above. Both are read in the same Sample() call, but a second
+	// caller inside minCPUWindow of the first must repeat both rates
+	// unchanged, and giving the two their own state is what lets a future
+	// reader delete one without reading the other's fields to be sure.
+	prevRxBytes uint64
+	prevTxBytes uint64
+	prevNetAt   time.Time
+	lastRxRate  *float64
+	lastTxRate  *float64
+	haveNetPrev bool
 }
 
 // minCPUWindow is the shortest interval a CPU percentage may be computed over.
@@ -119,6 +146,38 @@ func (s *Sampler) Sample() Sample {
 		s.mu.Unlock()
 	}
 
+	if rx, tx, ok := readNet(); ok {
+		out.NetReadable = true
+		out.NetRxBytes, out.NetTxBytes = rx, tx
+		now := time.Now()
+		s.mu.Lock()
+		switch {
+		case s.haveNetPrev && now.Sub(s.prevNetAt) < minCPUWindow:
+			// Same "too soon to measure" rule as the CPU window: repeat the
+			// last answer rather than dividing by a handful of milliseconds.
+			if s.lastRxRate != nil {
+				v := *s.lastRxRate
+				out.NetRxRate = &v
+			}
+			if s.lastTxRate != nil {
+				v := *s.lastTxRate
+				out.NetTxRate = &v
+			}
+		case s.haveNetPrev && (rx >= s.prevRxBytes) && (tx >= s.prevTxBytes):
+			secs := now.Sub(s.prevNetAt).Seconds()
+			rxRate := float64(rx-s.prevRxBytes) / secs
+			txRate := float64(tx-s.prevTxBytes) / secs
+			out.NetRxRate, out.NetTxRate = &rxRate, &txRate
+			s.lastRxRate, s.lastTxRate = &rxRate, &txRate
+			s.prevRxBytes, s.prevTxBytes, s.prevNetAt, s.haveNetPrev = rx, tx, now, true
+		default:
+			// First sample, or a counter went backwards (an interface came
+			// back up and reset). Nothing to report yet; start the window here.
+			s.prevRxBytes, s.prevTxBytes, s.prevNetAt, s.haveNetPrev = rx, tx, now, true
+		}
+		s.mu.Unlock()
+	}
+
 	out.Load1, out.Load5, out.Load15 = readLoad()
 	out.MemTotal, out.MemAvailable, out.SwapTotal, out.SwapFree = readMem()
 	out.Uptime = readUptime()
@@ -165,6 +224,51 @@ func readCPU() (idle, all uint64, ok bool) {
 		}
 	}
 	return idle, all, true
+}
+
+// readNet returns cumulative received and transmitted bytes summed across
+// every interface except loopback, which never carries traffic to or from
+// anywhere and would otherwise make an idle machine with SSH open to itself
+// look busy.
+func readNet() (rx, tx uint64, ok bool) {
+	f, err := os.Open("/proc/net/dev")
+	if err != nil {
+		return 0, 0, false
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	line := 0
+	for sc.Scan() {
+		line++
+		if line <= 2 {
+			// Two header lines: the split of "Receive" / "Transmit" over the
+			// column names, which is why the columns cannot be counted by
+			// position from the top of the file.
+			continue
+		}
+		name, rest, found := strings.Cut(sc.Text(), ":")
+		if !found {
+			continue
+		}
+		if strings.TrimSpace(name) == "lo" {
+			continue
+		}
+		fields := strings.Fields(rest)
+		// Column 0 is received bytes; column 8 is transmitted bytes, after the
+		// seven other receive-side counters (packets, errs, drop, fifo,
+		// frame, compressed, multicast).
+		if len(fields) < 9 {
+			continue
+		}
+		if v, err := strconv.ParseUint(fields[0], 10, 64); err == nil {
+			rx += v
+		}
+		if v, err := strconv.ParseUint(fields[8], 10, 64); err == nil {
+			tx += v
+		}
+	}
+	return rx, tx, true
 }
 
 func readLoad() (l1, l5, l15 float64) {

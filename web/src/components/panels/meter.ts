@@ -45,3 +45,14 @@ export function formatBytes(n: number): string {
   }
   return `${v.toFixed(1)} ${units[i]}`
 }
+
+/**
+ * A throughput: "1.5 MiB/s".
+ *
+ * The unit is not translated, same as formatBytes's -- "MiB" reads the same in
+ * both languages already, and a per-second suffix on a byte count is notation
+ * rather than prose.
+ */
+export function formatRate(n: number): string {
+  return `${formatBytes(Math.max(0, n))}/s`
+}

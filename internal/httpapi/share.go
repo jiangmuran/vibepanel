@@ -252,6 +252,15 @@ type shareMachine struct {
 	DiskTotal uint64 `json:"diskTotal"`
 	DiskFree  uint64 `json:"diskFree"`
 
+	// NetReadable, NetRxRate and NetTxRate are CPUReadable and CPUPercent's
+	// story again: no interface counters on this build means no rate, and a
+	// wall must be able to tell that apart from a machine sitting at 0 B/s.
+	NetReadable bool     `json:"netReadable"`
+	NetRxRate   *float64 `json:"netRxRate"`
+	NetTxRate   *float64 `json:"netTxRate"`
+	NetRxBytes  uint64   `json:"netRxBytes"`
+	NetTxBytes  uint64   `json:"netTxBytes"`
+
 	Uptime int64 `json:"uptime"`
 }
 
@@ -270,6 +279,8 @@ func shareMachineFrom(sample sysmon.Sample) shareMachine {
 		MemTotal: sample.MemTotal, MemAvailable: sample.MemAvailable,
 		SwapTotal: sample.SwapTotal, SwapFree: sample.SwapFree,
 		DiskTotal: sample.DiskTotal, DiskFree: sample.DiskFree,
+		NetReadable: sample.NetReadable, NetRxRate: sample.NetRxRate, NetTxRate: sample.NetTxRate,
+		NetRxBytes: sample.NetRxBytes, NetTxBytes: sample.NetTxBytes,
 		Uptime: sample.Uptime,
 	}
 	if out.Cores == 0 {
@@ -387,6 +398,11 @@ type shareTrendPoint struct {
 	CPU    *float64 `json:"cpu"`
 	Memory float64  `json:"memory"`
 	Load   float64  `json:"load"`
+	// NetRx and NetTx are bytes per second, or null where /proc could not be
+	// read -- CPU's rule again, so a quiet machine and an unreadable one do not
+	// draw the same flat line.
+	NetRx *float64 `json:"netRx"`
+	NetTx *float64 `json:"netTx"`
 	// Tokens is the running total for the server's local day, within this
 	// link's scope. The differences are what a rate is drawn from; the total is
 	// what survives a dropped sample, and a difference would not.
@@ -1012,6 +1028,14 @@ func (s *Server) buildShareReading(ctx context.Context, link store.ShareLink,
 			if pt.cpu >= 0 {
 				cpu := pt.cpu
 				p.CPU = &cpu
+			}
+			if pt.netRx >= 0 {
+				rx := pt.netRx
+				p.NetRx = &rx
+			}
+			if pt.netTx >= 0 {
+				tx := pt.netTx
+				p.NetTx = &tx
 			}
 			trend.Points = append(trend.Points, p)
 		}
