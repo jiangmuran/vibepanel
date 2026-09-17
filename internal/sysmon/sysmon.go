@@ -251,3 +251,11 @@ func FormatBytes(n uint64) string {
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTP"[exp])
 }
+
+// Memory reads MemTotal and MemAvailable, for callers that want the two numbers
+// without taking a CPU sample -- which would move the shared counters under
+// every other viewer's window. See minCPUWindow.
+func Memory() (total, available uint64) {
+	total, available, _, _ = readMem()
+	return total, available
+}

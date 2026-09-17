@@ -1,5 +1,5 @@
 import { decodeData, encodeData } from './wire'
-import type { ClientMessage, PanelState, ServerMessage, StateMessage } from './wire'
+import type { ClientMessage, PanelState, ResourceAction, ResourceAlert, ServerMessage, StateMessage } from './wire'
 
 /** What a subscriber to one session receives. */
 export interface StreamHandlers {
@@ -129,6 +129,7 @@ export class PanelSocket {
 
   private stateListeners = new Set<(s: PanelState) => void>()
   private panelListeners = new Set<(projectId: string, kind: string) => void>()
+  private resourceListeners = new Set<(alert: ResourceAlert | null, acted: ResourceAction | null) => void>()
   private errorListeners = new Set<(sessionId: string, message: string) => void>()
 
   constructor() {
@@ -303,6 +304,11 @@ export class PanelSocket {
         }
         break
       }
+      case 'resources': {
+        const m = msg as { alert?: ResourceAlert | null; acted?: ResourceAction | null }
+        for (const fn of this.resourceListeners) fn(m.alert ?? null, m.acted ?? null)
+        break
+      }
       case 'state': {
         const st = msg as unknown as StateMessage
         for (const fn of this.stateListeners) {
@@ -311,6 +317,7 @@ export class PanelSocket {
             sessions: st.sessions,
             live: st.live,
             fullscreen: st.fullscreen ?? [],
+            frozen: st.frozen ?? [],
             projectOrder: st.projectOrder,
             stale: st.stale ?? '',
             hasProjectOrder: st.hasProjectOrder ?? false,
@@ -373,6 +380,17 @@ export class PanelSocket {
     this.panelListeners.add(fn)
     return () => {
       this.panelListeners.delete(fn)
+    }
+  }
+
+  /**
+   * Called when the memory question changes: a new one, a countdown starting,
+   * or null when it has been answered or has gone away on its own.
+   */
+  onResourceAlert(fn: (alert: ResourceAlert | null, acted: ResourceAction | null) => void) {
+    this.resourceListeners.add(fn)
+    return () => {
+      this.resourceListeners.delete(fn)
     }
   }
 

@@ -55,12 +55,22 @@ The user unit sets `CPUWeight`, `IOWeight` and `ManagedOOMPreference` instead,
 and the installer enables lingering for it. Without lingering the unit stops
 when your last login session ends.
 
-Both units carry `MemoryAccounting=yes`, `MemoryMax=70%` and
-`MemorySwapMax=0`. The limit is relative to physical RAM, leaves roughly 30%
-for the host and other services, and does not let the session tree turn spare
-swap into a sustained reclaim throttle. `MemorySwapMax=0` makes reaching the
-limit a cgroup OOM instead. Tune the pair for a host that needs a different
-balance.
+Sessions do not run in the panel's unit. The panel moves the tmux server and
+every session into a scope of their own (`vibepanel-sessions.scope`, or
+`vibepanel-sessions-<uid>.scope` for the system unit), so a
+session that runs out of memory stalls the sessions and not the panel. A user
+unit does this itself; the system unit does it with
+`ExecStartPre=-+vibepanel service prepare`, which runs as root because moving a
+process out of a system service needs it, and whose failure never stops the
+panel starting. How much of the machine the sessions get, and what happens when
+they want more, is set in Settings → Resources; see `docs/design.md`.
+
+Both units carry `MemoryAccounting=yes`, `MemoryMax=95%` and `MemorySwapMax=0`.
+That is the backstop for when the sessions could not be moved, not the
+sessions' budget: the panel keeps that below it. `MemorySwapMax=0` makes
+reaching a limit an OOM kill rather than a sustained swap-backed throttle.
+`--isolation=off` (`VIBEPANEL_ISOLATION=off`) keeps sessions in the panel's
+unit, as before.
 
 The installer writes the shipped unit on every install and re-run, including
 `vibepanel service upgrade`; editing `/etc/systemd/system/vibepanel.service`

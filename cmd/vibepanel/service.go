@@ -403,6 +403,14 @@ func serviceUsage(out *os.File) {
 }
 
 func cmdService(args []string) error {
+	// Before the shared flags, which do not know --as. Not in serviceCommands:
+	// nobody types it; the system unit runs it. See prepare.go.
+	if len(args) > 0 && args[0] == "prepare" {
+		return servicePrepare(args[1:])
+	}
+	if len(args) > 0 && args[0] == "anchor" {
+		return serviceAnchor()
+	}
 	fs := flag.NewFlagSet("vibepanel service", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	var (

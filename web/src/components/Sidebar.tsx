@@ -4,6 +4,7 @@ import {
   Clock,
   GripVertical,
   ListOrdered,
+  Pause,
   Pin,
   PinOff,
   Plus,
@@ -33,6 +34,12 @@ export interface SidebarProps {
    */
   labels: Map<string, string>
   live: string[]
+  /**
+   * Sessions paused from the resources page. Marked here because a paused
+   * session's terminal just stops responding, and one that looks like every
+   * other session reads as a hung agent.
+   */
+  frozen: string[]
   selected: string | null
   expanded: boolean
   /** Overlay mode: the sidebar floats above the content instead of taking a column. */
@@ -462,6 +469,17 @@ export function Sidebar(props: SidebarProps) {
                       else setRenaming((cur) => (cur === s.id ? null : cur))
                     }}
                   />
+                  {props.frozen.includes(s.id) && (
+                    <span
+                      data-testid="session-frozen"
+                      title={t('res.frozen')}
+                      className="inline-flex shrink-0 items-center gap-0.5 text-vp-xs"
+                      style={{ color: 'var(--vp-state-waiting)' }}
+                    >
+                      <Pause size={11} aria-hidden="true" />
+                      <span className="sr-only">{t('res.frozen')}</span>
+                    </span>
+                  )}
                   {/* The glyph says "gone" and this says how. A shape cannot
                       carry an exit code, and 3 vs 0 is the difference between
                       "it crashed" and "it finished and closed". */}

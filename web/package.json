@@ -15,7 +15,8 @@
     "check:first-run": "node scripts/first-run-check.mjs",
     "check:panes": "node scripts/panes-check.mjs",
     "check:pages": "node scripts/pages-check.mjs",
-    "check:chat": "node scripts/chat-check.mjs"
+    "check:chat": "node scripts/chat-check.mjs",
+    "check:resources": "node scripts/resources-check.mjs"
   },
   "dependencies": {
     "@types/qrcode": "^1.5.5",

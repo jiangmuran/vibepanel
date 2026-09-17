@@ -15,6 +15,7 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/browse"
 	"github.com/jiangmuran/vibepanel/internal/git"
 	"github.com/jiangmuran/vibepanel/internal/pages"
+	"github.com/jiangmuran/vibepanel/internal/resources"
 	"github.com/jiangmuran/vibepanel/internal/store"
 	"github.com/jiangmuran/vibepanel/internal/sysmon"
 )
@@ -156,6 +157,19 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		{"TokenUsageTool", store.UsageToolTotals{}},
 		{"UsageDay", store.UsageDay{}},
 		{"UsageTotals", store.UsageTotals{}},
+		// Resources. The page acts on these: a kill carries the pid and start
+		// the page was shown, and a field renamed on one side is a button that
+		// sends undefined.
+		{"ResourcesView", resources.View{}},
+		{"ResourcePolicy", resources.Policy{}},
+		{"ResourceParams", resources.Params{}},
+		{"ResourceBounds", resources.Bounds{}},
+		{"ResourceIsolation", resources.Isolation{}},
+		{"ResourcePool", resources.PoolView{}},
+		{"ResourceSession", resources.SessionView{}},
+		{"ResourceProc", resources.ProcView{}},
+		{"ResourceAlert", resources.Alert{}},
+		{"ResourceAction", resources.Action{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sent := jsonKeys(t, tc.row)
@@ -182,6 +196,20 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 // anywhere — a normal thing to do — made this report that "the server does not
 // send them" about fields the server sends whenever they are not empty. The
 // remedy it named was to delete a correct line from wire.ts.
+// Every reason the sessions are not isolated has words on the page. A code the
+// page has no entry for is shown as the code itself.
+func TestEveryIsolationReasonHasWords(t *testing.T) {
+	src, err := os.ReadFile("../../web/src/i18n.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, code := range resources.Reasons {
+		if !strings.Contains(string(src), "'res.why."+code+"':") {
+			t.Errorf("no res.why.%s in web/src/i18n.ts", code)
+		}
+	}
+}
+
 func jsonKeys(t *testing.T, v any) []string {
 	t.Helper()
 	out := collectTags(t, reflect.TypeOf(v))
@@ -425,6 +453,12 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"chat.channel":        true,
 		"chat.assistant":      true,
 		"chat.peer":           true,
+		// Memory. The governor's own rows (resources.kill, .freeze, .thaw and
+		// the .auto forms) reach the log through AuditResources, which the
+		// scan cannot see; these two are the handlers'.
+		"resources.policy":      true,
+		"resources.boost":       true,
+		"resources.boost_ended": true,
 	}
 
 	files, err := filepath.Glob("*.go")

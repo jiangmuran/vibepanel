@@ -18,10 +18,11 @@
 #
 # What it buys, and what it does not. The panel is small and must stay up; the
 # tmux server it starts inherits this score and holds every session, which is
-# the thing actually worth protecting. So do the agents, and that is the cost:
-# an agent that eats the machine is protected too. MemoryMax below is what
-# bounds that -- the cgroup's own OOM killer picks the largest process inside,
-# which is the runaway agent rather than tmux or the panel.
+# the thing actually worth protecting. The agents inherit it too, and an agent
+# that eats the machine used to be protected along with them: the panel now
+# raises each session's processes back to 0 as it sorts them into their own
+# cgroups (internal/resources), so a machine-wide OOM prefers them to the panel
+# and the tmux server again.
 #
 # The user unit remains the right default. Use this one if the machine runs
 # close to its memory, or if you want the panel up before anyone logs in
@@ -42,6 +43,16 @@ User=__USER__
 Environment=HOME=__HOME__
 ExecStart=__BIN__ serve
 EnvironmentFile=-__HOME__/.config/vibepanel.env
+# As root ("+"), and never able to stop the panel starting ("-"): moves the tmux
+# server and every session into a scope of their own before the panel runs.
+# The panel cannot do this itself from a system unit -- its cgroup and the
+# scope meet at system.slice, which only root may move processes across. A user
+# unit's panel does it in-process and needs no line like this.
+# cmd/vibepanel/prepare.go is what it may and may not do as root.
+ExecStartPre=-+__BIN__ service prepare --as __USER__
+# Tells the panel that a tmux server it finds outside the scope is fixed by
+# restarting, which re-runs the line above.
+Environment=VIBEPANEL_SESSIONS_PREPARED=1
 WorkingDirectory=__HOME__
 
 Restart=always
@@ -63,11 +74,13 @@ OOMScoreAdjust=-500
 # A hint to systemd-oomd, which is a different mechanism from the kernel's own
 # killer and not running on every distribution. Harmless where it is absent.
 ManagedOOMPreference=avoid
-# Above the default 100, so the panel and the agents get scheduled ahead of
-# background work when the machine is contended. Weights, not nice levels:
-# negative nice needs privileges the service does not keep after User=.
-CPUWeight=200
-IOWeight=200
+# Above the default 100, so the panel gets scheduled ahead of everything else
+# when the machine is contended. Weights, not nice levels: negative nice needs
+# privileges the service does not keep after User=. 1000 since the sessions
+# moved to a scope of their own: the weight is the panel's alone now, and the
+# panel is small.
+CPUWeight=1000
+IOWeight=1000
 
 # No sandboxing, on this unit or the user one, and that is the rule rather
 # than a list of exceptions to it: **the unit confines nothing a shell can
@@ -143,8 +156,24 @@ IOWeight=200
 # panel: GOMEMLIMIT in this unit's environment bounds its heap and cannot touch
 # anything it hosts. Nothing measured says it needs one -- it sits at about
 # half a gigabyte -- so there is none.
+# Where the sessions actually are, since sessions got a cgroup of their own.
+#
+# The panel moves the tmux server and every session into a transient scope,
+# vibepanel-sessions-<uid>.scope, and sets the sessions' budget inside it
+# (internal/resources, and the Resources tab). Before that, everything shared
+# this unit's cgroup, and one compile growing to 17 GiB held it at its limit
+# for minutes: the kernel evicted the panel's own binary and database pages
+# with everything else, and the panel stopped answering along with the session
+# that caused it. The limit below is therefore no longer the sessions' limit
+# when isolation is working; it is the backstop when it is not, and a bound on
+# the charges of processes that were running here before an upgrade moved them
+# (a moved process keeps its old charges until it frees them).
+#
+# 95% rather than 70%: the sessions' own budget is set below this by the panel,
+# and at 70% the charges an upgrade leaves behind could put the panel itself
+# back at a limit.
 MemoryAccounting=yes
-MemoryMax=70%
+MemoryMax=95%
 MemorySwapMax=0
 # Do not stop the unit because something inside it was OOM-killed. The panel
 # and the tmux server are usually not the victim -- an agent is -- and taking

@@ -155,7 +155,50 @@ type procStat struct {
 	ppid  int
 	ticks uint64 // utime + stime
 	rss   uint64 // bytes
+	comm  string
+	// start is field 22, starttime, in clock ticks since boot. With the pid it
+	// names one process for good: a pid is reused, a pid and its start time
+	// are not, which is what a kill aimed at "the process the person saw"
+	// has to check before it sends anything.
+	start uint64
 }
+
+// Proc is one row of the process table.
+type Proc struct {
+	PID   int
+	PPID  int
+	Comm  string
+	Start uint64
+	RSS   uint64
+	Ticks uint64
+}
+
+// ProcTable reads every process once.
+func ProcTable() map[int]Proc {
+	stats := readProcTable()
+	out := make(map[int]Proc, len(stats))
+	for pid, st := range stats {
+		out[pid] = Proc{PID: pid, PPID: st.ppid, Comm: st.comm, Start: st.start, RSS: st.rss, Ticks: st.ticks}
+	}
+	return out
+}
+
+// ReadProc reads one process, for the check made immediately before acting on
+// it.
+func ReadProc(pid int) (Proc, bool) {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return Proc{}, false
+	}
+	st, ok := parseStat(string(b))
+	if !ok {
+		return Proc{}, false
+	}
+	return Proc{PID: pid, PPID: st.ppid, Comm: st.comm, Start: st.start, RSS: st.rss, Ticks: st.ticks}, true
+}
+
+// ClockTicks is USER_HZ; see clockTicks.
+const ClockTicks = clockTicks
 
 func readProcTable() map[int]procStat {
 	dir, err := os.Open("/proc")
@@ -212,10 +255,15 @@ func parseStat(line string) (procStat, bool) {
 	utime, err1 := strconv.ParseUint(f[11], 10, 64)
 	stime, err2 := strconv.ParseUint(f[12], 10, 64)
 	pages, err3 := strconv.ParseUint(f[21], 10, 64)
-	if err1 != nil || err2 != nil || err3 != nil {
+	start, err4 := strconv.ParseUint(f[19], 10, 64)
+	if err1 != nil || err2 != nil || err3 != nil || err4 != nil {
 		return procStat{}, false
 	}
-	return procStat{ppid: ppid, ticks: utime + stime, rss: pages * uint64(os.Getpagesize())}, true
+	comm := ""
+	if open := strings.Index(line, "("); open >= 0 && open < end {
+		comm = line[open+1 : end]
+	}
+	return procStat{ppid: ppid, ticks: utime + stime, rss: pages * uint64(os.Getpagesize()), comm: comm, start: start}, true
 }
 
 // ProcReadable says whether per-process sampling is possible at all here.

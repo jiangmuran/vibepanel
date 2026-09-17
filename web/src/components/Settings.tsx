@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowUpRight, Bell, Gauge, MessageSquare, Share2, Terminal, UserRound, X } from 'lucide-react'
+import { ArrowUpRight, Bell, Gauge, MemoryStick, MessageSquare, Share2, Terminal, UserRound, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 import { api } from '../protocol/api'
-import type { SettingsInfo } from '../protocol/wire'
+import type { Session, SettingsInfo } from '../protocol/wire'
 import { t, useLang } from '../i18n'
 import { CHAT_PATH, SHARING_PATH } from '../routes'
 import { LanguageSwitch } from './LanguageSwitch'
 import { AccountGroup } from './settings/AccountGroup'
 import { NotificationsGroup } from './settings/NotificationsGroup'
 import { PanelGroup } from './settings/PanelGroup'
+import { ResourcesGroup } from './settings/ResourcesGroup'
 import { SessionsGroup } from './settings/SessionsGroup'
 import {
   GROUP_TITLE,
@@ -24,6 +25,7 @@ const GROUP_ICON: Record<SettingsGroup, LucideIcon> = {
   sessions: Terminal,
   notify: Bell,
   account: UserRound,
+  resources: MemoryStick,
   panel: Gauge,
 }
 
@@ -38,7 +40,7 @@ const GROUP_ICON: Record<SettingsGroup, LucideIcon> = {
  * "states are being guessed" notice asks for state reporting and lands on
  * whichever rail item holds it today.
  *
- * The rail is the same four buttons and one link at every width; below `sm`
+ * The rail is the same five buttons and two links at every width; below `sm`
  * it is a row
  * above the body that scrolls sideways instead of a column beside it. That is
  * a CSS branch and not a JavaScript one, on purpose: `components/chrome.ts`
@@ -46,7 +48,19 @@ const GROUP_ICON: Record<SettingsGroup, LucideIcon> = {
  * rearranges the layout under somebody's finger, and the cheapest way to keep
  * that promise here is for there to be nothing to get wrong.
  */
-export function Settings({ openAt, onClose }: { openAt: SettingsSection; onClose: () => void }) {
+export function Settings({
+  openAt,
+  onClose,
+  sessions,
+  focusSession,
+}: {
+  openAt: SettingsSection
+  onClose: () => void
+  /** The snapshot's sessions, for names and states on the resources page. */
+  sessions: Session[]
+  /** A session the resources page opens on, when the memory question sent somebody here. */
+  focusSession?: string
+}) {
   // Subscribed to the language, so the switch in the header redraws every
   // string in this dialog and not only its own two.
   useLang()
@@ -257,6 +271,7 @@ export function Settings({ openAt, onClose }: { openAt: SettingsSection; onClose
             {group === 'sessions' && <SessionsGroup />}
             {group === 'notify' && <NotificationsGroup />}
             {group === 'account' && <AccountGroup info={info} />}
+            {group === 'resources' && <ResourcesGroup sessions={sessions} focus={focusSession} />}
             {group === 'panel' && <PanelGroup info={info} />}
           </div>
         </div>

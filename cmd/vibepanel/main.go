@@ -16,18 +16,22 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
 
 	"github.com/jiangmuran/vibepanel/internal/auth"
+	"github.com/jiangmuran/vibepanel/internal/cgroup"
 	"github.com/jiangmuran/vibepanel/internal/chat/shot"
 	"github.com/jiangmuran/vibepanel/internal/config"
 	"github.com/jiangmuran/vibepanel/internal/hooks"
 	"github.com/jiangmuran/vibepanel/internal/httpapi"
 	"github.com/jiangmuran/vibepanel/internal/id"
+	"github.com/jiangmuran/vibepanel/internal/resources"
 	"github.com/jiangmuran/vibepanel/internal/secret"
 	sessionpkg "github.com/jiangmuran/vibepanel/internal/session"
 	"github.com/jiangmuran/vibepanel/internal/store"
@@ -308,6 +312,12 @@ func cmdServe(args []string) error {
 	if cerr := srv.ConvertBoardLinks(ctx); cerr != nil {
 		logger.Warn("board links were not converted", "err", cerr)
 	}
+	// Memory. Before Reconcile and the restore it can trigger, so the tmux
+	// server is in the sessions' own scope before any session is created in it
+	// -- see internal/resources for why that is the whole fix for a panel that
+	// stalled with the session that ran out of memory.
+	srv.Resources = startResources(ctx, a, srv, logger, restartCh)
+
 	// The pump reports output and bells straight into the server, which is how
 	// last_output_at stays honest and, from M4, how session state is decided.
 	mgr.OnSignals = srv.HandleSignals
@@ -483,6 +493,54 @@ func cmdServe(args []string) error {
 	}
 	fmt.Println("\nstopped; tmux sessions keep running")
 	return nil
+}
+
+// startResources builds the memory governor and ticks it once before
+// returning, so a user unit's sessions are moved before the panel creates any.
+func startResources(ctx context.Context, a *app, srv *httpapi.Server, logger *slog.Logger, restartCh chan<- struct{}) *resources.Governor {
+	if !resources.Supported() {
+		return nil
+	}
+	env := resources.Env{
+		Log:       logger,
+		Prepared:  a.cfg.SessionsPrepared,
+		Disabled:  a.cfg.Isolation == "off",
+		ServerPID: a.tmux.ServerPID,
+		Panes:     srv.ResourcePanes,
+		Sessions:  srv.ResourceSessions,
+		Policy:    srv.ResourcePolicy,
+		Emit:      srv.EmitResources,
+		Audit:     srv.AuditResources,
+		Restart: func() {
+			select {
+			case restartCh <- struct{}{}:
+			default:
+			}
+		},
+	}
+	if exe, err := os.Executable(); err == nil {
+		env.Anchor = []string{exe, "service", "anchor"}
+	}
+	if v, err := strconv.ParseUint(os.Getenv("VIBEPANEL_DEBUG_SCOPE_MEMORY_MAX"), 10, 64); err == nil {
+		env.ScopeMemoryMax = v
+	}
+	if rel, err := cgroup.Of(0); err == nil {
+		if m, ok := cgroup.ServiceManager(rel); ok {
+			env.Manager, env.Unit = m, cgroup.At(rel)
+		}
+	}
+	env.Scope = cgroup.ScopeName(env.Manager, os.Getuid(), a.cfg.TmuxSocket)
+	gov := resources.New(env)
+	a.tmux.AfterStart = func(ctx context.Context, pid int) { gov.ServerStarted(ctx, pid) }
+	a.tmux.AfterCreate = func(name string, pid int, _ string) { gov.Place(name, pid) }
+	gov.Tick(ctx)
+	if iso := gov.Isolation(); iso.State == resources.Isolated {
+		logger.Info("sessions run in their own scope", "scope", iso.Scope)
+	} else {
+		logger.Info("sessions share the panel's cgroup", "reason", iso.Reason, "detail", iso.Detail)
+	}
+	go gov.Run(ctx)
+	return gov
 }
 
 // ─── project ──────────────────────────────────────────────────────────────
@@ -983,6 +1041,28 @@ func cmdDoctor(args []string) error {
 		fmt.Printf("       older than %d.%d, so allow-passthrough is not applied and the\n",
 			tmux.MinMajor, tmux.MinMinor)
 		fmt.Printf("       sequences agent TUIs use for progress and notifications are lost\n")
+	}
+
+	// Where the sessions are. Asked of the tmux server rather than of the
+	// panel: this is what somebody runs when the panel is the thing not
+	// answering, and the server's cgroup is readable either way.
+	if tErr == nil && runtime.GOOS == "linux" {
+		if pid, perr := tm.ServerPID(ctx); perr == nil {
+			rel, _ := cgroup.Of(pid)
+			scope := cgroup.ScopeName(cgroup.User, os.Getuid(), cfg.TmuxSocket)
+			if strings.HasPrefix(rel, "/system.slice/") {
+				scope = cgroup.ScopeName(cgroup.System, os.Getuid(), cfg.TmuxSocket)
+			}
+			if rel == "" {
+				fmt.Printf("[--  ] sessions           cannot read where the tmux server is\n")
+			} else if strings.Contains(rel+"/", "/"+scope+"/") {
+				fmt.Printf("[ok  ] sessions           in their own scope, %s\n", rel)
+			} else {
+				fmt.Printf("[--  ] sessions           share a cgroup with whatever started tmux: %s\n", rel)
+				fmt.Printf("       a session that runs out of memory can stall the panel too; Settings →\n")
+				fmt.Printf("       Resources says why they were not moved\n")
+			}
+		}
 	}
 
 	dirsOK := true

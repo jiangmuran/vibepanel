@@ -218,6 +218,14 @@ Each of these exists because the alternative broke something real.
    the write path: the intent translator has no tools, the question answerer
    has only these, and every write from either waits for the person's `ok`.
 
+9. **The sessions' memory limit is never on a cgroup the panel is in.** One
+   session filling a shared limit evicted the panel's own pages with everything
+   else, and the panel stopped answering exactly when there was something to
+   look at. Sessions live in a `vibepanel-sessions*.scope`; the panel's unit holds
+   the panel. And **never enable controllers on a cgroup systemd spawns into**:
+   that was the first design, and `systemctl restart vibepanel` failed with
+   EBUSY while any session lived. `docs/design.md` has both measurements.
+
 ## Conventions
 
 - **Comments explain why, and what breaks otherwise.** Not what the line does.
@@ -254,6 +262,8 @@ Each of these exists because the alternative broke something real.
   | `make stress-check` | wide characters, full-screen programs, scrollback, floods, dropped sockets |
   | `make restart-check` | kill the backend; the sessions and the login must outlive it |
   | `make scale-check` | two dozen sessions: snapshot size, sidebar reachability, poller |
+  | `make resources-check` | the Resources tab and a session that really runs out of memory: isolation, modes, the question across the console, ending a process from it, the countdown, the panel answering throughout, layout at three widths. Needs a user manager for the pressure half |
+  | `make isolation-check` | sessions moved into a scope of their own against real systemd 249, 252 and 259 as PID 1: fresh system unit, upgrade from the old layout, a failing root step, a user unit. Needs docker |
   | `make chat-check` | the Chat page: a card per adapter, a saved token starting a channel, the 飞书 handshake, rules and their preview, the key table, the tools door, the deep link, layout at three widths in both themes and languages |
   | `make pages-check` | share pages: every escape from inside a sandboxed page, in a signed-in browser; the editing loop through the UI; every template × screen × fixture |
   | `make tls-check` | its own TLS: wss, the Secure cookie, swapping a certificate |
@@ -331,6 +341,9 @@ internal/session/   state enum (source of truth) and, later, the session manager
 internal/store/     SQLite schema, migrations, typed queries
 internal/config/    flags, environment, validation
 internal/id/        opaque id generation
+internal/cgroup/    cgroup v2 files and the systemd scope the sessions live in
+internal/resources/ placement, budget and the memory question (docs/design.md,
+                    "Sessions run in a scope of their own")
 internal/chat/      the chat bridge: sessions on a phone. One package per IM
                     under it (telegram, feishu, weixin), the PNG renderer
                     (shot) and the advanced mode's runner (assistant)

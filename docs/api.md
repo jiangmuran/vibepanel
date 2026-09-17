@@ -683,6 +683,53 @@ rather than from the tick that was clicked. `POST` and `DELETE
 everything it has with their answer and a field only the `GET` carried would
 disappear the moment somebody pressed Install.
 
+## Resources: memory, and what happens when it runs out
+
+### `GET /api/resources`
+### `GET /api/resources/alert`
+### `PUT /api/resources/policy`
+### `POST /api/resources/boost`
+### `POST /api/resources/kill`
+### `POST /api/resources/sessions/{id}/freeze`
+### `POST /api/resources/sessions/{id}/thaw`
+### `POST /api/resources/alerts/{id}/snooze`
+
+`GET /api/resources` is the governor's last reading (`internal/resources`,
+every two seconds), plus each session's five largest processes read at the
+moment of the request. `isolation.state` is `isolated` when the sessions run in
+a systemd scope of their own; otherwise `reason` says why (`not-a-service`,
+`unit-outdated`, `cgroup-v1`, ...). `pool` is the sessions' budget: `current`
+counts page cache and `held` does not, and it is `held` the thresholds compare.
+`alert` is the question standing now, or `null`. `GET /api/resources/alert`
+is that alone, `{"alert": ...}`, for a page that has just opened: the whole view
+reads every session's processes to answer.
+
+`PUT /api/resources/policy` takes `{"mode": "conservative" | "balanced" |
+"performance" | "custom", ...}`. The numbers are read only for `custom`
+(`poolPercent` 30–95, `askPercent` 50–100, `autoAct`, `graceSeconds` 10–1800)
+and a value out of range is a `400` rather than a clamp. The answer is the new
+`GET`.
+
+`POST /api/resources/boost` takes `{"minutes": n}` (at most 720) and runs the
+performance preset until then; `0` ends a boost.
+
+`POST /api/resources/kill` takes `{"sessionId", "pid", "start"}`. `start` is the
+process's start time as the page was given it: a pid is reused, a pid and a
+start time are not, so a process that has exited since is `410` rather than a
+signal sent to whatever has the number now. A process that is not in that
+session is `403`. It sends SIGTERM, then SIGKILL five seconds later if the same
+process is still there.
+
+`freeze` and `thaw` use the cgroup freezer, and answer `409` when the sessions
+are not isolated. `snooze` takes `{"sessionId", "minutes"}` and stops a warning
+about that session (or about anything, for an empty `sessionId`) being raised
+again; a stall is raised regardless. `410` means the question has already gone.
+
+The question itself arrives on the WebSocket as `{"t": "resources", "alert":
+...}` when it is raised, changes level, starts a countdown or goes away, with
+`"acted": {...}` beside it when the panel -- or the kernel -- has just ended a
+process.
+
 ## Chat: sessions on a phone
 
 A chat app is a two-way notification: the panel tells you a session wants you

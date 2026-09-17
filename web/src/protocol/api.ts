@@ -52,6 +52,10 @@ import type {
   ChatRoutePreview,
   ChatToolProfile,
   ChatAssistantConfig,
+  ResourceAction,
+  ResourceAlert,
+  ResourcePolicy,
+  ResourcesView,
 } from './wire'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -854,6 +858,30 @@ export const api = {
     ),
 
   system: () => request<SystemSample>('/api/system'),
+
+  resources: () => request<ResourcesView>('/api/resources'),
+  /** The question alone, for a page that has just opened. */
+  resourceAlert: () => request<{ alert: ResourceAlert | null }>('/api/resources/alert'),
+  setResourcePolicy: (p: ResourcePolicy) =>
+    request<ResourcesView>('/api/resources/policy', { method: 'PUT', body: JSON.stringify(p) }),
+  /** Performance for this long; 0 ends a boost early. */
+  boostResources: (minutes: number) =>
+    request<ResourcesView>('/api/resources/boost', { method: 'POST', body: JSON.stringify({ minutes }) }),
+  killProcess: (sessionId: string, proc: { pid: number; start: number }) =>
+    request<ResourceAction>('/api/resources/kill', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId, pid: proc.pid, start: proc.start }),
+    }),
+  freezeSession: (sessionId: string, on: boolean) =>
+    request<ResourceAction>(
+      `/api/resources/sessions/${encodeURIComponent(sessionId)}/${on ? 'freeze' : 'thaw'}`,
+      { method: 'POST' },
+    ),
+  snoozeResourceAlert: (alertId: string, sessionId: string, minutes: number) =>
+    request<void>(`/api/resources/alerts/${encodeURIComponent(alertId)}/snooze`, {
+      method: 'POST',
+      body: JSON.stringify({ sessionId, minutes }),
+    }),
 
   usage: () => request<UsageSample>('/api/usage'),
 

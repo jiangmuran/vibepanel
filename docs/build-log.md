@@ -22851,3 +22851,111 @@ passed with the prefix left in.
 - Cards closed at the laptop dropped the command.
 - 微信 ids were shown whole.
 - The log still had English channel entries.
+
+## 2026-09-16 — The panel stalled with the session that ran out of memory
+
+"面板已经停止记录会话在做什么。store: get session: context canceled", on the
+machine the panel is developed on, while a session's typst compile grew to 17
+GiB, was OOM-killed, and was run again by its agent. Every session and the panel
+shared one cgroup and one `MemoryMax`. The unit's own accounting said what
+happened: 6.9 million hits on the limit, 460 million file pages evicted and read
+back, 49% of five minutes with every task stalled on I/O, 37 kills. The kernel
+keeps reclaiming while reclaim makes progress, and evicting the panel's binary
+and database pages counted as progress. A higher limit moves the moment and
+changes nothing about it; the machine was already at 95%.
+
+**The fix is placement, measured first.** Two throwaway units, a stand-in panel
+probing 400 MiB of its file pages every 20 ms, a stand-in session holding most
+of a 2 GiB limit beside a reader whose working set did not fit: sharing a cgroup
+the probe got through 458-529 of ~1480 rounds; in a sibling cgroup, 1469-1471,
+with the session side thrashing identically. The first attempt to reproduce did
+not thrash at all -- the test files' page cache was charged to the shell that
+wrote them, not to the unit -- and a second killed its own shell, `pkill -f`
+matching the command that started it.
+
+**The first design could not be restarted.** `Delegate=yes` and
+`DelegateSubgroup=panel` on the panel's unit, sessions in a sibling subgroup:
+with a session alive, `systemctl --user restart` failed with "Failed to spawn
+executor: Device or resource busy". systemd 259 spawns the main process into the
+unit's own cgroup before moving it (`execute.c` says so), and cgroup v2 refuses
+that once the subtree has controllers. A panel that does not come back is the
+one outcome this was for, so the sessions went into a transient scope instead,
+which nothing is ever spawned into. Proved in containers with systemd as PID 1:
+root can make a scope with `User=` on 252 and 259 and the account can then split
+it; 249 refuses `User=` on a scope and the delegation files are chowned by hand.
+
+**Three things found by running it rather than reading it.**
+- tmux 3.6 moves every new pane into a `tmux-spawn-*.scope` of the user manager.
+  Under a user unit every pane was beside the sessions' scope, not in it. The
+  panel pulls panes back from scopes of exactly that name.
+- `busctl --user` needs the user's D-Bus bus, which Ubuntu 22.04's minimal image
+  does not have while `systemctl --user` works. A user manager's scope is made by
+  running `vibepanel service anchor` in it through `systemd-run --user --scope`.
+- After the process that caused a stall was ended, the pool still read 89% full
+  -- page cache -- and the panel asked again about nothing. Thresholds use anon
+  plus shmem.
+
+**What the browser check found.** A poll in flight when a mode was saved
+answered with the old mode and put it back under the cursor; custom numbers
+were refused because the form sent two fields the server does not take; and on
+a phone the bar's last two answers were past the right edge while the bar's own
+box fitted, which is what the first version of the check measured.
+
+End to end, with a session filling a 2 GiB pool until it stalled: asked at the
+limit, critical at 21% stall, the process ended after the grace period, stall
+back under 1% within ten seconds, and the panel's `/api/state` at 3 ms p95
+throughout. `scripts/isolation-check.sh` passes fresh install, upgrade from the
+old layout, a failing root step, and a user unit on systemd 249, 252 and 259.
+
+## 2026-09-16 — Four reviews and two people on the resources feature
+
+Four read-only reviews (logic, security, UI, code) and two subagents using a
+bench panel as people -- one new to it, one running a dozen sessions and trying
+to break it -- went over the first version. What they found, and what changed:
+
+**The root helper was a way to root.** The system unit reads the account's own
+env file, and that environment reached `vibepanel service prepare`, which runs
+as root: a `PATH` line made it run the account's own "systemctl" (shown with a
+fake one), and systemd's reply was trusted as a path to chown. It also moved into
+the account's delegated scope whatever pid the tmux query answered -- which the
+account controls -- and cgroup v2 then lets the account `cgroup.kill` it. Now the
+environment is read for two values and cleared, PATH is fixed, every process is
+checked to be wholly the account's before and after it is moved, the scope is
+handed over only if everything in it is, the cgroup path is checked, the system
+scope name carries the uid, and `--isolation=off` is honoured. `isolation-check`
+has a hostile env file and a root process in the unit on all three systemd
+versions, and removing the clearing or the uid check makes each fail.
+
+**The logic review reproduced eight bugs with overlay tests.** A system unit whose
+helper kept failing restarted the panel every minute forever; it now restarts
+only for a tmux server started after the panel. A stall hovering around the
+threshold restarted the countdown on every dip, so nothing was ever ended and
+forty questions were pushed; the countdown now survives a dip. A snoozed session
+left a critical bar up with a countdown that could never run. Host pressure
+counted a small session as responsible when a pool existed. The dynamic budget
+counted the pool's cache twice and could never shrink. An I/O stall read as a
+memory stall for any cache-full pool; it now also needs pages coming back after
+reclaim. Pausing did not stop a countdown in the paused session. A kill the
+kernel refused was retried every two seconds.
+
+**What the two people found that nobody reading code did.** The bar offered to
+end a session's main process in one tap and named a 200 MiB shell while two
+sessions held gigabytes. "Later" hid a running countdown, so a process was ended
+with nothing on screen. Two same-sized workers took turns being named, so the
+button pressed was not the one read. The session somebody was typing into got a
+ten-second countdown. Ending a session left its background workers holding
+memory with no session to end them from. A paused session looked like a hung one
+everywhere but the page. The kernel's own OOM kills were invisible. The custom
+fields turned an emptied box into 0 and the next keystroke into "015".
+
+All of those are fixed: the agent itself is never ended unasked, a session in use
+is asked about and never acted on, the named process sticks while it is still
+among the largest, "Don't ask for 15 min" is offered only for a warning, ending a
+session ends its cgroup, the sidebar marks a paused session, the kernel's kills
+are recorded and toasted, and the fields are text. The governor was split into
+four files along the way (placement, sessions, deciding, the rest), with one
+place mapping errors to reasons and one lock per set of fields.
+
+Thirty-seven mutations of the new guards, Go and frontend, all killed; each was
+checked to compile, and the three that did not at first were rewritten and
+killed again. The two root-helper guards were mutated through `isolation-check`.

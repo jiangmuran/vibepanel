@@ -444,6 +444,187 @@ message and never the state. What arrives is bounded, decoded, stripped of
 escape sequences and never interpreted (red line 6), and the panel keeps two
 hundred of them per session.
 
+## Sessions run in a scope of their own, and the panel budgets it
+
+Until this existed the tmux server and every session lived in the panel's own
+unit, under one `MemoryMax`. On 2026-09-16 a typst compile in one session grew
+to 17 GiB, was OOM-killed, was re-run by its agent, and did it again. The unit's
+cgroup sat at its limit for minutes: `memory.events max` 6,922,896,
+`workingset_refault_file` 464,893,737, `io.pressure full avg300` 49%, 37 OOM
+kills. The kernel does not OOM-kill while reclaim makes progress, and evicting
+file pages always looks like progress -- including the panel's own binary and
+its SQLite pages. So the panel stalled with the session, the database calls
+timed out, and the page said "store: get session: context canceled". Raising
+the limit from 70% to 95% moves the moment; it does not change what happens at
+it.
+
+**Placement.** Sessions are moved out of the panel's unit into a transient
+scope -- `vibepanel-sessions.scope` under a user manager,
+`vibepanel-sessions-<uid>.scope` under the system one, where every account's
+units share a namespace, and a socket suffix for any socket but the default --
+with this inside it:
+
+    vibepanel-sessions.scope/   MemoryMax backstop (95%), MemorySwapMax=0
+    └── pool/                   memory.max = the budget the panel sets
+        ├── tmux/               the server; memory.min 256 MiB, cpu.weight 1000
+        ├── other/              what cannot be traced to a session
+        └── s-<tmux name>/      one per session: memory, pressure, freezer
+
+Measured before building it: a stand-in panel probing its file pages kept 1470
+of ~1480 probes while the sessions beside it thrashed (33-41 million refaults),
+against 458-529 when they shared a cgroup.
+
+**Why a scope and not a delegated service.** The first design was
+`Delegate=yes` and `DelegateSubgroup=panel` on the panel's own unit. It cannot
+be restarted: systemd spawns a service's main process into the unit's cgroup and
+only then moves it into the subgroup (`src/core/execute.c`), and cgroup v2
+refuses a process in a cgroup whose subtree has controllers enabled. With a
+session alive, `systemctl restart vibepanel` failed with "Failed to spawn
+executor: Device or resource busy" on systemd 259. A scope has no main process
+and is never spawned into, so the panel's unit stays an ordinary, restartable
+one, and the sessions are not inside it at all.
+
+**Why a pool inside the scope.** Delegation hands over the inside of a cgroup,
+not its own limits: the scope's `memory.max` stays root's (or systemd's) to
+write. The budget the person sets goes one level down, where the panel may
+change it without root, and the scope's `MemoryMax` is the backstop for when the
+panel is not running.
+
+**Who moves the processes.** cgroup v2 checks write access on the common
+ancestor of the two cgroups a process moves between.
+
+- A **user unit** does it itself: both cgroups are under `user@<uid>.service`,
+  which is the user's. The scope is created by running `vibepanel service
+  anchor` in it through `systemd-run --user --scope`, not with `busctl --user`:
+  a server without `dbus-user-session` (Ubuntu 22.04's minimal image) answers
+  `systemctl --user` and has no user bus. The anchor also keeps the scope
+  alive while no tmux server is.
+- A **system unit** cannot: the two cgroups meet at `system.slice`. So the unit
+  runs `ExecStartPre=-+vibepanel service prepare --as <user>` -- as root, and
+  never able to stop the panel starting. It starts tmux as the account if there
+  is none, creates the scope with `busctl` (with `User=`, or by chowning the
+  delegation files itself on systemd 249, which refuses `User=` on a scope), and
+  moves everything left in the unit's cgroup into it. That last step is the
+  upgrade: a machine whose sessions were in the panel's unit has them moved at
+  the first restart after the new unit is written, without any of them
+  restarting.
+
+  It is root, and the unit it runs in reads the account's own env file, so it
+  trusts nothing the account controls. The security review found two ways the
+  first version did: a `PATH` line in that file made root run the account's
+  own "systemctl", and root moved whatever pid the tmux query answered -- which
+  the account decides -- into a cgroup the account can then `cgroup.kill`. Now
+  the environment is read for two values and cleared, `PATH` is fixed, the
+  account comes from `--as` in the unit file, every process is checked to be
+  wholly the account's (all four uids) before and after it is moved, the scope
+  is handed over only if everything in it is, and the cgroup path systemd
+  reports is checked to be under `system.slice` before anything is chowned.
+- A panel that is not a service -- started by hand, or from inside one of its
+  own sessions -- moves nothing. That is read from its own cgroup path, not
+  from `INVOCATION_ID`, which a shell inherits.
+
+`scripts/isolation-check.sh` runs all of this against real systemd 249, 252
+and 259 as PID 1.
+
+**tmux moves panes too.** tmux built with systemd support puts each new pane in
+a `tmux-spawn-<uuid>.scope` of the user manager, where it can reach the user
+bus -- under a user unit, every pane escaped the sessions' scope. The panel pulls
+a pane back from a scope of exactly that name beside its own, and nothing else.
+
+**Sorting.** A process belongs to the session whose pane process it descends
+from; one that has left the tree (nohup, setsid, a double fork) still carries
+`TMUX_PANE`, checked against `TMUX`'s server pid so a pane of the person's own
+tmux is never taken. Each sorted process gets its `oom_score_adj` raised back to
+0: the system unit's -500 was inherited by every agent, which left a machine-wide
+OOM with no preference between the panel and the thing eating the machine.
+Raising a score needs no privilege.
+
+**What is measured, and why "held".** `memory.current` counts page cache, and a
+pool whose sessions have read files sits at its limit indefinitely with nothing
+wrong: right after the process that caused a stall was ended, the pool still read
+89% full, all of it cache, and the panel asked again about nothing. The
+thresholds use anon plus shmem -- what only leaves when a process does.
+
+**When the panel asks, and when it acts.**
+
+- *Warn* when held memory reaches the mode's percentage of the budget, when the
+  machine is below its reserve (5% of RAM, floor 768 MiB), or when the pool's
+  memory stall (`memory.pressure full avg10`) reaches 10%.
+- *Critical* at 20% stall, or half the reserve. The pool's I/O stall counts as
+  memory stall only while the pool is at 95% of its limit *and* pages are coming
+  back from disk after reclaim (`workingset_refault_file`, 2000 a second): that
+  is a thrash; the same I/O stall without refaults is an `npm install` on a slow
+  disk, which a review showed reading as critical. Deliberate thrash tests read
+  20-60; an ordinary busy build reads 0-2.
+- The host stalling or short while the sessions are not is its own reason,
+  *machine*, and is judged against the machine rather than the pool.
+- A question is a bar across the console and a notification when the page is not
+  focused. It names a session only if it holds a quarter of what the pool holds
+  (a twentieth of the machine without a pool): naming a 200 MiB shell beside two
+  sessions holding gigabytes sent somebody to end the wrong thing. A paused
+  session is never named.
+- The same session and process is the same question: its level changing updates
+  it and keeps its countdown. A stall hovering around 20 -- the incident's
+  pattern -- restarted the countdown on every dip in the first version, so the
+  panel never acted and pushed forty questions. A countdown is forgotten after
+  30 seconds of warning, and the question is taken down after two readings of OK.
+- The panel ends a process on its own only when all of these hold: critical;
+  the mode allows it (Performance never does); the grace period has passed with
+  no answer; the session holds half of the pool (a twentieth of the machine for
+  the machine reason); and the process is not the session's own. The agent is
+  never ended unasked -- the page offers that, with a confirmation.
+- A process the kernel refuses to let the panel signal (a `sudo` in a session)
+  is not tried again, and is not offered again.
+- Ending, pausing or loosening -- from the bar, the page or the panel itself --
+  takes the question down and keeps the next one back for twenty seconds while
+  the ten-second average falls.
+- "Don't ask for 15 min" silences a warning and is not offered for a stall or a
+  countdown: a bar that went away while its countdown ran was a process ended
+  with nothing on screen.
+- What it names is the largest process in the session that grew most in the
+  last minute, passing over the pane's own process for a child at least half its
+  size.
+- A kill carries the pid and the start time the page was shown. A pid is reused;
+  the two together are not.
+- A paused session is marked in the sidebar as well as on the page: its terminal
+  just stops, and one that looks like every other session reads as hung.
+
+**A system unit restarts itself only for a server started after it.** The
+unit's root step runs before the panel, so a server older than the panel is one
+that step failed on, and a restart fails the same way. The first version
+restarted regardless, and a unit whose account the helper refuses restarted
+every minute, dropping every terminal each time. A server newer than the panel
+-- the old one died and the panel started another -- is fixed by a restart, at
+most once in ten minutes.
+
+**Turning it off lets go.** `--isolation=off` after a panel that managed the
+scope sets the pool's limit back to unlimited and thaws every session: the scope
+outlives the panel, and a budget nobody adjusts, or a pause nobody can resume,
+is worse than either.
+
+**The budget moves.** In Conservative, Balanced and Custom the pool may have
+what it holds plus whatever the host has above its reserve, and no more, so a
+container or a desktop elsewhere on the machine squeezes the sessions -- which
+the panel can see and ask about -- rather than the whole machine. "What it holds"
+is held memory, not `memory.current`: MemAvailable already counts the pool's
+cache, and adding it twice gave a cache-full pool a budget that could never
+shrink. The floor is held memory plus 256 MiB, so the squeeze lands on cache. Performance does not follow the host; somebody who chose it said
+the sessions come first.
+
+**CPU.** The session somebody typed into in the last two minutes, or that is
+waiting on them, gets `cpu.weight` 400 against the others' 100. A session that
+has taken 40% of every core for a minute while the machine is short of CPU
+(`/proc/pressure/cpu some avg10` at 25% or more) is moved down to 25, and back
+once either stops being true; one somebody is using is never moved down. Weights
+only matter under contention, which is when they should, and nothing here ends
+or pauses anything for CPU: a slow build is not an emergency.
+
+**What it never does.** It never freezes a session on its own: a frozen agent
+mid-request is a failure somebody has to explain. It never ends the tmux server
+or the panel. It never asks tmux anything on the request path or on its own
+tick, beyond the server's pid when it has changed -- the moment the page matters
+is the moment tmux is slowest to answer.
+
 ## Small decisions that keep being questioned
 
 **Per-session CPU is a share of the whole machine, not top's.** top means "one

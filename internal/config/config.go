@@ -67,6 +67,17 @@ type Config struct {
 	// never see, resize or kill the user's own tmux sessions.
 	TmuxSocket string
 
+	// Isolation is "auto" or "off". Auto moves the sessions into a systemd scope
+	// of their own when the panel runs as a service; see internal/resources.
+	// Off is for a host where something else already manages the cgroups the
+	// panel would create, and for tests that must not create scopes.
+	Isolation string
+
+	// SessionsPrepared is set by the system unit, whose ExecStartPre builds the
+	// sessions' scope as root. It tells the panel that a tmux server found
+	// outside the scope is fixed by restarting, rather than by nothing.
+	SessionsPrepared bool
+
 	// StaticDir serves the frontend from disk instead of the embedded copy.
 	// Used during development; empty means use the embedded build.
 	StaticDir string
@@ -143,6 +154,7 @@ func Default() Config {
 		Addr:       fmt.Sprintf(":%d", DefaultPort),
 		TLSMode:    TLSOff,
 		TmuxSocket: "vibepanel",
+		Isolation:  "auto",
 	}
 }
 
@@ -192,6 +204,9 @@ func (c *Config) envOverlay() {
 	str(&c.ACMEDNSProvider, "VIBEPANEL_ACME_DNS_PROVIDER", "VIBEPANEL_ACME_DNS")
 	str(&c.TmuxSocket, "VIBEPANEL_TMUX_SOCKET")
 	str(&c.StaticDir, "VIBEPANEL_STATIC_DIR")
+	str(&c.Isolation, "VIBEPANEL_ISOLATION")
+	seen["VIBEPANEL_SESSIONS_PREPARED"] = true
+	c.SessionsPrepared = os.Getenv("VIBEPANEL_SESSIONS_PREPARED") == "1"
 
 	for _, key := range []string{"VIBEPANEL_TLS_MODE", "VIBEPANEL_TLS"} {
 		seen[key] = true
@@ -353,6 +368,11 @@ func (c Config) Validate() error {
 		}
 	default:
 		return fmt.Errorf("config: unknown tls mode %q", c.TLSMode)
+	}
+	switch c.Isolation {
+	case "auto", "off":
+	default:
+		return fmt.Errorf("config: --isolation must be auto or off, not %q", c.Isolation)
 	}
 	if c.Domain != "" && net.ParseIP(c.Domain) != nil {
 		return fmt.Errorf("config: --domain must be a hostname, not the IP %q; "+

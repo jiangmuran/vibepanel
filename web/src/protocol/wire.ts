@@ -89,6 +89,8 @@ export interface ServerMessage {
     | 'state'
     // A project's note or todo list changed in another viewer.
     | 'panel'
+    // The memory question changed: `alert` is the new one, or null.
+    | 'resources'
   sessionId?: string
   ref?: number
   cols?: number
@@ -229,6 +231,8 @@ export interface PanelState {
    * looks like any other output on the wire.
    */
   fullscreen: string[]
+  /** Sessions paused from the resources page or the memory question. */
+  frozen: string[]
   /** 'auto' orders projects by recent activity; 'manual' by explicit position. */
   projectOrder: 'auto' | 'manual'
   /**
@@ -435,6 +439,137 @@ export interface TokenUsage {
   sessions: TokenUsageSession[]
   sessionCount: number
   sessionLimit: number
+}
+
+// ─── resources ─────────────────────────────────────────────────────────────
+// Mirrors internal/resources. TestTypeScriptRowsMatchWhatIsSent compares every
+// interface here with what the server marshals.
+
+export type ResourceMode = 'conservative' | 'balanced' | 'performance' | 'custom'
+
+export interface ResourcePolicy {
+  mode: ResourceMode
+  poolPercent: number
+  askPercent: number
+  autoAct: boolean
+  graceSeconds: number
+  boostUntil?: number
+}
+
+export interface ResourceParams {
+  mode: ResourceMode
+  poolPercent: number
+  askPercent: number
+  autoAct: boolean
+  graceSeconds: number
+  dynamic: boolean
+  boosted: boolean
+}
+
+export interface ResourceBounds {
+  minPool: number
+  maxPool: number
+  minAsk: number
+  maxAsk: number
+  minGrace: number
+  maxGrace: number
+}
+
+/** internal/resources Reasons; each has a res.why.<code> string. */
+export type IsolationReason =
+  | 'disabled'
+  | 'platform'
+  | 'cgroup-v1'
+  | 'not-a-service'
+  | 'no-server'
+  | 'unit-outdated'
+  | 'prepare-failed'
+  | 'restarting'
+  | 'not-delegated'
+  | 'failed'
+
+export interface ResourceIsolation {
+  state: 'isolated' | 'none'
+  reason?: IsolationReason
+  scope?: string
+  detail?: string
+}
+
+export interface ResourceProc {
+  pid: number
+  start: number
+  name: string
+  rss: number
+  /** The pane's own process: ending it ends the session. */
+  root?: boolean
+}
+
+export interface ResourceSession {
+  id: string
+  memory: number
+  /** What only leaves when a process does; the rest is cache. */
+  held: number
+  cpuPercent: number
+  procs: number
+  frozen: boolean
+  priority: 'normal' | 'high' | 'low'
+  top?: ResourceProc[]
+}
+
+export interface ResourceAlert {
+  id: string
+  level: 'warn' | 'critical'
+  reason: 'pool' | 'machine' | 'stall'
+  /** Absent when no session holds enough to be the cause. */
+  sessionId?: string
+  proc?: ResourceProc
+  poolCurrent: number
+  poolMax: number
+  available: number
+  total: number
+  /** When the panel ends `proc` on its own; absent when it will not. */
+  autoAt?: number
+  canPause?: boolean
+  canBoost?: boolean
+}
+
+export interface ResourceAction {
+  at: number
+  kind: 'kill' | 'freeze' | 'thaw' | 'boost' | 'boost_ended' | 'oom'
+  auto: boolean
+  sessionId?: string
+  /** The session's name when this happened, for after it has gone. */
+  session?: string
+  name?: string
+  rss?: number
+  who?: string
+}
+
+export interface ResourcePool {
+  current: number
+  held: number
+  /** memory.max in force; 0 when there is no pool. */
+  max: number
+  stall: number
+}
+
+export interface ResourcesView {
+  supported: boolean
+  isolation: ResourceIsolation
+  policy: ResourcePolicy
+  params: ResourceParams
+  presets: ResourceParams[]
+  bounds: ResourceBounds
+  level: 'ok' | 'warn' | 'critical'
+  total: number
+  available: number
+  pool: ResourcePool
+  panel: number
+  tmux: number
+  sessions: ResourceSession[]
+  alert: ResourceAlert | null
+  actions: ResourceAction[]
+  at: number
 }
 
 export interface SystemSample {

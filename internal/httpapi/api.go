@@ -29,6 +29,7 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/git"
 	"github.com/jiangmuran/vibepanel/internal/hooks"
 	"github.com/jiangmuran/vibepanel/internal/id"
+	"github.com/jiangmuran/vibepanel/internal/resources"
 	"github.com/jiangmuran/vibepanel/internal/selfupdate"
 	"github.com/jiangmuran/vibepanel/internal/session"
 	"github.com/jiangmuran/vibepanel/internal/store"
@@ -53,6 +54,11 @@ type Server struct {
 	// no hook is reporting. The zero value reads the real /proc.
 	codexLogs codexlog.Watcher
 	Sampler   *sysmon.Sampler
+
+	// Resources is the memory governor. Nil where there is nothing to govern
+	// (not Linux) and in tests that do not build one.
+	Resources *resources.Governor
+	res       resourcesState
 
 	// installable answers whether this binary can be replaced in place. A
 	// field so a test can force the answer: the real one asks about the
@@ -465,6 +471,7 @@ func (s *Server) Routes() http.Handler {
 			s.registerChatRoutes(r)
 			s.registerTokenRoutes(r)
 			s.registerSettingsRoutes(r)
+			s.registerResourceRoutes(r)
 			// Making and revoking share links is an ordinary settings action
 			// and needs the ordinary session. A share token cannot mint another
 			// one, which is the property that keeps one leaked link from
@@ -906,6 +913,7 @@ func (s *Server) HandleInput(sessionID string) {
 	if s.Detector != nil {
 		s.Detector.Input(sessionID, time.Now())
 	}
+	s.noteResourceInput(sessionID)
 }
 
 // HandleSignals records what the PTY pump observed. Wired to
@@ -984,6 +992,12 @@ type stateResponse struct {
 	// reported: "滚动条一滑就滑到在执行 claude 之前的记录了".
 	Fullscreen []string `json:"fullscreen"`
 
+	// Frozen is the sessions paused through the resources page or the memory
+	// question. Here and not only on that page: a paused session's terminal
+	// simply stops responding, and one that looks like every other session in
+	// the sidebar reads as a hung agent.
+	Frozen []string `json:"frozen"`
+
 	// ProjectOrder is "auto" (most recently active first) or "manual". The UI
 	// offers "sort by activity" only when that would change something, rather
 	// than showing a control that does nothing.
@@ -1045,6 +1059,7 @@ func (s *Server) buildState(ctx context.Context) (stateResponse, error) {
 		Sessions:        emptyIfNil(sessions),
 		Live:            emptyIfNil(s.Manager.LiveIDs()),
 		Fullscreen:      emptyIfNil(fullscreenNow(&s.fullscreen)),
+		Frozen:          emptyIfNil(s.frozenNow()),
 		ProjectOrder:    orderMode(manual),
 		HasProjectOrder: hasOrder,
 		StateGuessed:    s.stateIsGuessed(sessions),
@@ -1356,6 +1371,13 @@ func (s *Server) handlePatchProject(w http.ResponseWriter, r *http.Request) {
 func (s *Server) tearDownSession(ctx context.Context, id, tmuxName string) error {
 	if err := s.Tmux.Kill(ctx, tmuxName); err != nil {
 		return err
+	}
+	// And whatever the pane left running in the background. tmux ends the
+	// pane's process group; a `nohup`ed or `&`ed child is not in it, and a
+	// tester ended a session and found twelve of its workers still holding
+	// the sessions' memory with no session left on any page to end them from.
+	if s.Resources != nil {
+		s.Resources.EndSession(tmuxName)
 	}
 	s.Manager.Detach(id)
 	// Without this the detector keeps a tracker per session for the life of the
@@ -2123,6 +2145,7 @@ func (s *Server) pollOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	s.publishResourceSessions(rows)
 	if s.Detector != nil {
 		ids := make([]string, 0, len(rows))
 		for _, row := range rows {

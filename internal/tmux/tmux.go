@@ -81,6 +81,19 @@ type Client struct {
 
 	// Bin is the tmux executable; overridable for tests and odd installs.
 	Bin string
+
+	// AfterStart runs once a server this client started is up, before any
+	// session is created in it. It is where the server is moved into the
+	// sessions' own cgroup (internal/resources): a pane forked before the move
+	// would be born in the panel's cgroup, and the memory it touched there
+	// stays charged to the panel after it is moved.
+	AfterStart func(ctx context.Context, serverPID int)
+
+	// AfterCreate runs once a pane has been created or respawned, with its
+	// process. Same reason as AfterStart, one level down: a session's agent
+	// allocates most of its startup memory in its first second, and whatever
+	// cgroup it is in for that second keeps the charge.
+	AfterCreate func(name string, panePID int, paneID string)
 }
 
 // New returns a Client for the given socket, keeping its config file in dir.
@@ -279,6 +292,11 @@ func (c *Client) EnsureServer(ctx context.Context) error {
 	if err := c.startServerWithProfile(ctx); err != nil {
 		return err
 	}
+	if c.AfterStart != nil {
+		if pid, err := c.ServerPID(ctx); err == nil {
+			c.AfterStart(ctx, pid)
+		}
+	}
 	c.advertiseTruecolor(ctx)
 	// Stamp what the server was started with.
 	//
@@ -311,6 +329,19 @@ const configStampOption = "@vibepanel-conf"
 func ConfigStamp() string {
 	sum := sha256.Sum256(Config)
 	return hex.EncodeToString(sum[:8])
+}
+
+// ServerPID is the process id of the server on this socket.
+func (c *Client) ServerPID(ctx context.Context) (int, error) {
+	out, err := c.run(ctx, "display-message", "-p", "#{pid}")
+	if err != nil {
+		return 0, err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil || pid <= 0 {
+		return 0, fmt.Errorf("tmux: server pid %q", out)
+	}
+	return pid, nil
 }
 
 // RunningConfigStamp reports the config the running server was started with.
@@ -460,8 +491,20 @@ func (c *Client) Create(ctx context.Context, o CreateOptions) error {
 	if len(o.Command) > 0 {
 		argv = append(argv, LaunchArgv(o.Command)...)
 	}
-	_, err := c.run(ctx, argv...)
-	return err
+	if _, err := c.run(ctx, argv...); err != nil {
+		return err
+	}
+	c.afterCreate(ctx, o.Name)
+	return nil
+}
+
+func (c *Client) afterCreate(ctx context.Context, name string) {
+	if c.AfterCreate == nil {
+		return
+	}
+	if info, err := c.Get(ctx, name); err == nil && info.PID > 0 {
+		c.AfterCreate(name, info.PID, info.PaneID)
+	}
 }
 
 // LaunchArgv wraps a session's command in a login shell.
@@ -821,6 +864,7 @@ func (c *Client) Respawn(ctx context.Context, name string) error {
 	if err != nil {
 		return fmt.Errorf("tmux: respawn %s: %w", name, err)
 	}
+	c.afterCreate(ctx, name)
 	return nil
 }
 
@@ -853,6 +897,10 @@ type Info struct {
 	// "exited with status 0" — the same as one that finished its work. On a
 	// machine running a couple of dozen agents that is not a rare distinction.
 	DeadSignal int
+	// PaneID is #{pane_id}, "%12". A process started in the pane carries it in
+	// TMUX_PANE for life, which is how internal/resources finds a session's
+	// process after it has left the pane's process tree.
+	PaneID string
 	// Bell is #{window_bell_flag}, and it is load-bearing exactly once: at
 	// startup, before anything attaches.
 	//
@@ -919,6 +967,7 @@ var infoFields = []string{
 	// Appended rather than inserted: parseInfo indexes this slice positionally.
 	"#{pane_dead_status}",
 	"#{pane_dead_signal}",
+	"#{pane_id}",
 }
 
 var infoFormat = strings.Join(infoFields, fieldSep)
@@ -1004,6 +1053,7 @@ func parseInfo(line string) (Info, error) {
 		Height:      atoi(f[8]),
 		Activity:    int64(atoi(f[9])),
 		AlternateOn: f[10] == "1",
+		PaneID:      f[13],
 	}, nil
 }
 

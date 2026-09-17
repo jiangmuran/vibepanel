@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 import { api } from '../../protocol/api'
 import type { AuditEntry, SettingsInfo } from '../../protocol/wire'
+import { safeText } from '../text'
 import { t } from '../../i18n'
 import { ApiTokens } from '../ApiTokens'
 import { PasskeysSection } from './Passkeys'
@@ -161,8 +162,10 @@ function AuditSection() {
             </span>
             <span className="w-40 shrink-0 truncate text-ink">{e.event}</span>
             <span className="w-24 shrink-0 truncate text-ink-2">{e.username || '—'}</span>
-            <span className="min-w-0 flex-1 truncate text-ink-2" title={e.detail}>
-              {e.ip} {e.detail}
+            {/* safeText: a memory row carries a process name, which anything
+                running in a session chooses, bidi characters included. */}
+            <span className="min-w-0 flex-1 truncate text-ink-2" title={safeText(e.detail)}>
+              {e.ip} {safeText(e.detail)}
             </span>
           </div>
         ))}

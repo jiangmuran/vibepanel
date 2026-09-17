@@ -70,6 +70,10 @@ pages-check: build    ## Share pages: the sandbox from inside a page, the editin
 chat-check: build     ## The Chat page: every adapter's card, rules, keys, the doors, layout at three widths
 	cd web && npm run check:chat
 
+.PHONY: resources-check
+resources-check: build ## The Resources tab and a session that really runs out of memory
+	cd web && npm run check:resources
+
 .PHONY: stress-check
 stress-check: build   ## Wide characters, full-screen programs, floods, dropouts
 	cd web && npm run check:stress
@@ -128,6 +132,15 @@ install-check:        ## Drive deploy/install.sh down every branch it has
 .PHONY: sudo-check
 sudo-check:           ## The elevated upgrade against real sudo and sudo-rs, every sudoers variant
 	scripts/sudo-check.sh
+
+# A few minutes, and docker: sessions in a scope of their own against real
+# systemd 249, 252 and 259 as PID 1 -- a fresh system unit, an upgrade from the
+# old layout, the root step failing, and a user unit. Run it whenever
+# internal/resources, internal/cgroup, cmd/vibepanel/prepare.go or deploy/
+# changes.
+.PHONY: isolation-check
+isolation-check:      ## Sessions moved into their own scope, against real systemd in containers
+	scripts/isolation-check.sh
 
 .PHONY: head-check
 head-check:           ## Build and test a clean worktree at HEAD, not this tree

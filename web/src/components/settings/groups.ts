@@ -4,12 +4,12 @@ import type { Key } from '../../i18n'
  * What the settings dialog is divided into, and what lives in each part.
  *
  * The dialog was twelve sections stacked in one scroll — 「太长太恶心了」 — and
- * the fix is not a shorter page but a rail: four names on the left, one group
+ * the fix is not a shorter page but a rail: five names on the left, one group
  * on screen. That only helps if the names predict their contents, so the test
  * a grouping has to pass is that somebody who wants to change one thing can
  * guess which name it is under *without reading the other three*.
  *
- * The four, and what each answers:
+ * The five, and what each answers:
  *
  *   - **Sessions** — what a session is started with, and how the panel learns
  *     what it is doing. Launch profiles and state reporting are two halves of
@@ -23,6 +23,10 @@ import type { Key } from '../../i18n'
  *     tokens, activity log. A token is a credential you make and revoke one at
  *     a time, which is the same object as a passkey and belongs beside it
  *     rather than beside the webhooks it used to sit next to.
+ *   - **Resources** — how much of the machine the sessions get, what each is
+ *     using, and what the panel does when memory runs short. Its own name
+ *     because the question it answers is "why is everything slow", and none of
+ *     the other four is where anybody would look for that.
  *   - **This panel** — facts about the installation. Version, what an update
  *     would do, uptime, tmux socket, listening address, certificate. Named for
  *     the machine rather than 「面板」, which is what the *side* panel is called
@@ -40,7 +44,7 @@ import type { Key } from '../../i18n'
  * on screen. Somebody hunting for it cannot read the rail — that is why they
  * are hunting for it.
  */
-export const SETTINGS_GROUPS = ['sessions', 'notify', 'account', 'panel'] as const
+export const SETTINGS_GROUPS = ['sessions', 'notify', 'account', 'resources', 'panel'] as const
 
 export type SettingsGroup = (typeof SETTINGS_GROUPS)[number]
 
@@ -48,6 +52,7 @@ export const GROUP_TITLE: Record<SettingsGroup, Key> = {
   sessions: 'grp.sessions',
   notify: 'grp.notify',
   account: 'grp.account',
+  resources: 'grp.resources',
   panel: 'grp.panel',
 }
 
@@ -73,6 +78,10 @@ export const SETTINGS_SECTIONS = [
   'passkeys',
   'tokens',
   'activity',
+  'memory',
+  'allocation',
+  'usage',
+  'recent',
   'update',
   'status',
   'env',
@@ -107,6 +116,10 @@ export const SECTION_GROUP: Record<SettingsSection, SettingsGroup> = {
   passkeys: 'account',
   tokens: 'account',
   activity: 'account',
+  memory: 'resources',
+  allocation: 'resources',
+  usage: 'resources',
+  recent: 'resources',
   update: 'panel',
   status: 'panel',
   // Above the restart button on purpose: these take effect on the next start,

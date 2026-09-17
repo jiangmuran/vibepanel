@@ -63,6 +63,7 @@ func Load(args []string, out io.Writer) (Config, error) {
 	fs.StringVar(&c.ACMEDirectory, "acme-directory", c.ACMEDirectory, "ACME directory URL; empty means Let's Encrypt production")
 	fs.StringVar(&c.ACMEDNSProvider, "acme-dns", c.ACMEDNSProvider, "DNS-01 provider for ACME, e.g. cloudflare")
 	fs.StringVar(&c.TmuxSocket, "tmux-socket", c.TmuxSocket, "tmux -L socket name; keep it dedicated to stay isolated from your own sessions")
+	fs.StringVar(&c.Isolation, "isolation", c.Isolation, "auto | off: run sessions in a systemd scope of their own when the panel is a service")
 	fs.StringVar(&c.StaticDir, "static-dir", c.StaticDir, "serve the frontend from this directory instead of the embedded build")
 	proxies := fs.String("trusted-proxies", "", "comma-separated CIDRs whose X-Forwarded-For is trusted")
 	allowFrom := fs.String("allow-from", "", "comma-separated CIDRs allowed to reach the panel; empty allows all")

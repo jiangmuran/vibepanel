@@ -211,6 +211,11 @@ const (
 	// This arrived as a bare string in the sender while its nine siblings had
 	// constants, which is the drift this file exists to prevent.
 	MsgPanel = "panel"
+
+	// MsgResources carries the memory question: the alert the governor is
+	// raising, or null when it has gone. An event rather than part of the
+	// snapshot, for the reason MsgPanel is one.
+	MsgResources = "resources"
 )
 
 // AllServerMessages and AllClientMessages exist so the two ends of this
@@ -224,7 +229,7 @@ const (
 var (
 	AllServerMessages = []string{
 		MsgSubscribed, MsgSize, MsgClipboard, MsgTitle, MsgExit,
-		MsgDropped, MsgError, MsgPong, MsgState, MsgPanel,
+		MsgDropped, MsgError, MsgPong, MsgState, MsgPanel, MsgResources,
 	}
 	AllClientMessages = []string{
 		MsgSubscribe, MsgUnsubscribe, MsgResize, MsgTakeControl, MsgPing,

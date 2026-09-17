@@ -180,8 +180,13 @@ KillMode=process
 #
 # CPUWeight and IOWeight are cgroup v2 knobs and need no privileges. Negative
 # Nice= would; positive is allowed and is the wrong direction.
-CPUWeight=200
-IOWeight=200
+#
+# 1000 rather than the default 100: the sessions are in a scope of their own,
+# so this weight is now the panel's alone, and it is small enough that
+# preferring it costs the agents nothing they would notice. What it buys is a
+# console that answers while a build has every core.
+CPUWeight=1000
+IOWeight=1000
 ManagedOOMPreference=avoid
 
 # Not MemoryHigh, and this is the fourth entry on the list above rather than a
@@ -211,8 +216,24 @@ ManagedOOMPreference=avoid
 # panel: GOMEMLIMIT in this unit's environment bounds its heap and cannot touch
 # anything it hosts. Nothing measured says it needs one -- it sits at about
 # half a gigabyte -- so there is none.
+# Where the sessions actually are, since sessions got a cgroup of their own.
+#
+# The panel moves the tmux server and every session into a transient scope,
+# vibepanel-sessions.scope, and sets the sessions' budget inside it
+# (internal/resources, and the Resources tab). Before that, everything shared
+# this unit's cgroup, and one compile growing to 17 GiB held it at its limit
+# for minutes: the kernel evicted the panel's own binary and database pages
+# with everything else, and the panel stopped answering along with the session
+# that caused it. The limit below is therefore no longer the sessions' limit
+# when isolation is working; it is the backstop when it is not, and a bound on
+# the charges of processes that were running here before an upgrade moved them
+# (a moved process keeps its old charges until it frees them).
+#
+# 95% rather than 70%: the sessions' own budget is set below this by the panel,
+# and at 70% the charges an upgrade leaves behind could put the panel itself
+# back at a limit.
 MemoryAccounting=yes
-MemoryMax=70%
+MemoryMax=95%
 MemorySwapMax=0
 
 # When a session's process is killed for memory, only that process should die.

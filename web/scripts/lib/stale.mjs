@@ -38,7 +38,7 @@ import { join } from 'node:path'
 // was sitting in /tmp. Giving it a pid to make the checks safe to run at the
 // same time is what made it sweepable, and harness.test.ts failed the moment
 // the prefix existed and this line did not know it.
-const HARNESS_SOCKET = /^vp(firstrun|render|stress|restart|scale|tls|clip|probe|check|release|shots|board|pages|chat)-(\d+)$/
+const HARNESS_SOCKET = /^vp(firstrun|render|stress|restart|scale|tls|clip|probe|check|release|shots|board|pages|chat|res)-(\d+)$/
 
 export function sweepStaleSockets(log = () => {}) {
   const dir = join(process.env.TMUX_TMPDIR || '/tmp', `tmux-${process.getuid()}`)
@@ -72,6 +72,15 @@ export function sweepStaleSockets(log = () => {}) {
       // Already dead, or a socket file with no server behind it.
     }
     killOrphanedPanel(name, log)
+    // resources-check runs its panel as a user service, which moves the tmux
+    // server into a scope held open by an anchor process. Killing the server
+    // leaves the anchor, and the scope, for good. Stopping the scope ends
+    // both; for every other harness there is no such scope and this is a no-op.
+    try {
+      execSync(`systemctl --user stop vibepanel-sessions-${name}.scope vp-resources-check-${pid}.service`, { stdio: 'ignore' })
+    } catch {
+      // No user manager, or nothing by that name.
+    }
     // tmux removes its own socket when it shuts down cleanly; one killed any
     // other way leaves the file behind forever. Forty-eight of them had
     // accumulated in /tmp before anybody looked. Safe here for the same reason

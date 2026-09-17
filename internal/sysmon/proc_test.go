@@ -35,6 +35,14 @@ func TestParseStatSurvivesAProcessNamedAnything(t *testing.T) {
 		if st.rss != 64*pageSize {
 			t.Errorf("%s: rss = %d, want %d", comm, st.rss, 64*pageSize)
 		}
+		// The start time is half of what names a process for a kill, and the
+		// name is shown to a person: both have to come out of the same line.
+		if st.start != 900 {
+			t.Errorf("%s: start = %d, want 900", comm, st.start)
+		}
+		if want := comm[1 : len(comm)-1]; st.comm != want {
+			t.Errorf("%s: comm = %q, want %q", comm, st.comm, want)
+		}
 	}
 }
 

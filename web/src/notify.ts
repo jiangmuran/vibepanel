@@ -1,6 +1,8 @@
-import type { Session } from './protocol/wire'
+import type { ResourceAlert, Session } from './protocol/wire'
 import { t } from './i18n'
 import { sessionLabel } from './components/label'
+import { formatBytes } from './components/bytes'
+import { safeText } from './components/text'
 
 /**
  * Telling you an agent is waiting, when you are not looking at the panel.
@@ -112,3 +114,48 @@ export function notifyOnWaiting(sessions: Session[], focused: boolean) {
     })
 }
 
+
+/**
+ * The memory question, when the panel is not being looked at.
+ *
+ * Once per question: the governor keeps the same id while the question is the
+ * same one, so a countdown ticking or the numbers moving does not notify again.
+ * The countdown is in it, because the person who is away is exactly the one
+ * whose process is about to be ended.
+ */
+let lastResourceAlert = ''
+
+export function notifyOnResourceAlert(alert: ResourceAlert | null, sessions: Session[], focused: boolean) {
+  if (!alert) {
+    lastResourceAlert = ''
+    return
+  }
+  if (alert.id === lastResourceAlert) return
+  lastResourceAlert = alert.id
+  if (focused) return
+  if (!notifyEnabled() || !notifySupported() || Notification.permission !== 'granted') return
+  const session = alert.sessionId ? sessions.find((s) => s.id === alert.sessionId) : undefined
+  const proc = alert.proc ? safeText(alert.proc.name) : ''
+  const lines: string[] = []
+  if (alert.proc && session) {
+    lines.push(`${t('res.alert.culprit', { session: sessionLabel(session), proc })} ${formatBytes(alert.proc.rss)}`)
+  } else if (alert.poolMax) {
+    lines.push(t('res.alert.noCulprit', { used: formatBytes(alert.poolCurrent), max: formatBytes(alert.poolMax) }))
+  } else {
+    lines.push(t('res.alert.machineNumbers', { free: formatBytes(alert.available), total: formatBytes(alert.total) }))
+  }
+  if (alert.autoAt && proc) {
+    lines.push(t('res.notify.auto', { n: Math.max(0, alert.autoAt - Math.floor(Date.now() / 1000)), proc }))
+  }
+  void navigator.serviceWorker.ready
+    .then((reg) =>
+      reg.showNotification(t(`res.alert.${alert.reason}`), {
+        body: lines.join('\n'),
+        icon: '/icon-192.png',
+        badge: '/icon-192.png',
+        tag: 'vibepanel-memory',
+        data: alert.sessionId ? { sessionId: alert.sessionId } : undefined,
+      }),
+    )
+    .catch(() => {})
+}

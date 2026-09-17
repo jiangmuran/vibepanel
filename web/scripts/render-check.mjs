@@ -2974,9 +2974,9 @@ browser = await chromium.launch({ headless: true })
       } else {
         const tabs = touch.locator('[data-testid="settings-rail"] [role="tab"]')
         const count = await tabs.count()
-        if (count !== 4) {
+        if (count !== 5) {
           note('FAIL', 'mobile',
-            `the settings rail has ${count} groups on a phone and 4 on a laptop; a control set ` +
+            `the settings rail has ${count} groups on a phone and 5 on a laptop; a control set ` +
             'that changes with the viewport is the complaint chrome.ts exists for')
         }
         // The way to the sharing page is on the rail too, and on a phone the
@@ -4463,12 +4463,12 @@ browser = await chromium.launch({ headless: true })
 
     // ── settings ───────────────────────────────────────────────────────────
     //
-    // Four groups on a rail, one on screen, and a link to the sharing page.
+    // Five groups on a rail, one on screen, and a link to the sharing page.
     // Every block below says which one it needs; the gear opens on Sessions,
     // which is where the hooks are.
     const rail = await page.locator('[data-testid="settings-rail"] [role="tab"]').count()
-    if (rail !== 4) {
-      note('FAIL', 'settings', `the settings rail has ${rail} groups on it, expected 4`)
+    if (rail !== 5) {
+      note('FAIL', 'settings', `the settings rail has ${rail} groups on it, expected 5`)
     }
     // Sharing is a page now, and the rail still says the word: as a link to
     // the page, not as a fifth tab.

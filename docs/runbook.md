@@ -14,6 +14,7 @@ failure. A machine with three problems used to take three runs to find them.
 | line | what a failure means |
 |---|---|
 | `tmux binary` | missing is fatal; older than 3.3 is `--`, and says which sequences are lost |
+| `sessions` | `--` when the tmux server is not in its sessions scope, so a session that runs out of memory can stall the panel too. Settings → Resources says why; see "Where the sessions are" below |
 | `data dir` | the directory cannot be created or written |
 | `running panel` | whether something already holds the data directory, and its pid |
 | `hook endpoint` | whether anything answers where this configuration says the panel is — the address every session's hooks post to. Skipped when no panel is running, because nothing answering is then the expected state |
@@ -564,6 +565,44 @@ it once: a bound that applies only at startup is no bound at all on a panel
 meant to run for months.
 
 ## Memory
+
+### Where the sessions are
+
+```sh
+vibepanel doctor                           # "[ok  ] sessions  in their own scope, …"
+systemctl status vibepanel-sessions-$(id -u).scope   # system unit
+systemctl --user status vibepanel-sessions.scope      # user unit
+```
+
+`pool/` is the sessions' budget, `pool/tmux` the server, `pool/s-<name>` one per
+session. Settings → Resources shows the same, and if the sessions are *not* in
+their scope it says why:
+
+- **unit-outdated** — a system unit written before this existed. `sudo
+  vibepanel service upgrade` rewrites it; the first restart after that moves
+  every running session without restarting any of them.
+- **not-a-service** — the panel was started by hand. Nothing is moved.
+- **restarting** — the tmux server died and the panel started a new one outside
+  the scope; it restarts itself once so the unit's root step can move it.
+- **prepare-failed** — the root step ran and did not move them. `journalctl -u
+  vibepanel` has its line, starting `vibepanel: sessions were not moved`. The
+  panel does not restart itself over this; a restart would fail the same way.
+- **failed** — the detail is the error. The panel runs as before.
+
+After an upgrade the panel's own unit can still show a large `MemoryCurrent`:
+a moved process keeps the charges it made before it moved until it frees them.
+They drain as those processes exit.
+
+`VIBEPANEL_ISOLATION=off` puts everything back in the panel's unit.
+
+### The panel ended a process
+
+It says so in Settings → Resources under recent actions, and in the activity
+log as `resources.kill.auto`. It only does this when the sessions have been
+stalled on memory for the whole grace period with nobody answering; choose
+Performance, or turn "act when stalled" off in Custom, and it never will.
+
+### Reading the two numbers
 
 Look in both places, and know which is which.
 

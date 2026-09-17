@@ -12,13 +12,14 @@ import {
 import { api, UnauthorizedError } from './protocol/api'
 import { PanelSocket } from './protocol/socket'
 import type { SocketStatus } from './protocol/socket'
-import type { AuthState, PanelState, Project, Session, UpdateStatus } from './protocol/wire'
+import type { AuthState, PanelState, Project, ResourceAlert, Session, UpdateStatus } from './protocol/wire'
 import { TerminalView } from './components/Terminal'
 import { StateDot } from './components/StateDot'
 import { Sidebar } from './components/Sidebar'
 import { BottomTerminals } from './components/BottomTerminals'
 import { RightPanel } from './components/RightPanel'
 import { Settings } from './components/Settings'
+import { ResourceAlertBar } from './components/resources/ResourceAlert'
 import { ThemeToggle } from './components/ThemeToggle'
 import { SETTINGS_HOME } from './components/settings/groups'
 import type { SettingsSection } from './components/settings/groups'
@@ -45,6 +46,7 @@ import { EXIT_VANISHED } from './protocol/wire'
 import { shellQuote } from './shell'
 import type { LaunchProfile } from './protocol/wire'
 import { safeText } from './components/text'
+import { formatBytes } from './components/bytes'
 import { DirectoryPicker } from './components/DirectoryPicker'
 import { Toasts } from './components/Toasts'
 import { ConfirmDialog } from './components/ConfirmDialog'
@@ -55,7 +57,7 @@ import { RestoreDialog } from './components/RestoreDialog'
 import { LaunchPicker } from './components/LaunchPicker'
 import { filesFrom, uploadErrorText } from './components/upload'
 import { copyTextInGesture } from './clipboard'
-import { notifyOnWaiting } from './notify'
+import { notifyOnResourceAlert, notifyOnWaiting } from './notify'
 import { readSkipped, shouldNotice, writeSkipped } from './components/updateView'
 import { t, useLang } from './i18n'
 
@@ -254,6 +256,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     sessions: [],
     live: [],
     fullscreen: [],
+    frozen: [],
     projectOrder: 'auto',
     stale: '',
     hasProjectOrder: false,
@@ -382,6 +385,56 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   // Pushed updates are the primary path.
   useEffect(() => socket.onState(applyState), [socket, applyState])
 
+
+  // The memory question. Asked for once on mount, so a page opened while one is
+  // already standing shows it, and then kept current by the socket.
+  const [resourceAlert, setResourceAlert] = useState<ResourceAlert | null>(null)
+  const [dismissedAlert, setDismissedAlert] = useState('')
+  const [focusSession, setFocusSession] = useState<string | undefined>(undefined)
+  // For naming a session in a push that arrives on the socket's own schedule.
+  const sessionsRef = useRef<Session[]>([])
+  useEffect(() => {
+    sessionsRef.current = state.sessions
+  }, [state.sessions])
+  useEffect(() => {
+    let gone = false
+    api
+      .resourceAlert()
+      .then((v) => {
+        if (!gone) setResourceAlert(v.alert)
+      })
+      .catch(() => {})
+    return () => {
+      gone = true
+    }
+  }, [])
+  useEffect(
+    () =>
+      socket.onResourceAlert((alert, acted) => {
+        setResourceAlert(alert)
+        // The panel ended something on its own. The question it was asking
+        // goes away at the same moment, and without this nothing on screen
+        // said why.
+        if (acted?.auto && acted.kind === 'kill') {
+          showToast({
+            kind: 'info',
+            key: 'res.acted',
+            params: { proc: safeText(acted.name ?? ''), n: formatBytes(acted.rss ?? 0) },
+          })
+        }
+        if (acted?.kind === 'oom') {
+          const s = sessionsRef.current.find((x) => x.id === acted.sessionId)
+          showToast({ kind: 'error', key: 'res.actedOom', params: { session: s ? sessionLabel(s) : '' } })
+        }
+      }),
+    [socket],
+  )
+  // Deduplicated by the question's id inside, so the sessions changing under
+  // a standing question does not notify twice.
+  useEffect(
+    () => notifyOnResourceAlert(resourceAlert, state.sessions, document.hasFocus()),
+    [resourceAlert, state.sessions],
+  )
 
   // What the server says went wrong, said to the person it happened to.
   //
@@ -1043,6 +1096,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           sessions={mainSessions}
           labels={labels}
           live={state.live}
+          frozen={state.frozen}
           selected={selected}
           expanded={narrow ? true : docked}
           overlay={showOverlay}
@@ -1351,6 +1405,19 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           </div>
         )}
 
+        {resourceAlert && resourceAlert.id !== dismissedAlert && (
+          <ResourceAlertBar
+            alert={resourceAlert}
+            sessions={state.sessions}
+            frozen={state.frozen}
+            onDetails={(id) => {
+              setFocusSession(id)
+              setSettingsAt('usage')
+            }}
+            onDismiss={() => setDismissedAlert(resourceAlert.id)}
+          />
+        )}
+
         {state.stale && (
           <div
             data-testid="stale-notice"
@@ -1581,8 +1648,11 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
       {settingsAt && (
         <Settings
           openAt={settingsAt}
+          sessions={state.sessions}
+          focusSession={focusSession}
           onClose={() => {
             setSettingsAt(null)
+            setFocusSession(undefined)
             loadProfiles()
             // The section may have checked, or started an install; the
             // notice in the sidebar should agree with it.
