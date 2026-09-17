@@ -171,9 +171,10 @@ const peekLinkTTL = 15 * time.Minute
 // handleViewShare mints a short-lived link that shows what a handed-out link
 // shows.
 //
-// The panel keeps only a hash of a link's token, so it cannot open the link
-// itself for its owner -- that is the property the hash is for. What it can do
-// is make another link with the same page, pin, trial, parameters, detail and
+// Not the link's own address, even where a sealed copy of it is kept
+// (handleShareURL): an older link has none, and a peek left open in a tab
+// should not be a second copy of the credential somebody was handed. So it
+// makes another link with the same page, pin, trial, parameters, detail and
 // scope, which draws the same screen through the same route. Not listed, not
 // editable, and swept when it expires, like a preview link.
 func (s *Server) handleViewShare(w http.ResponseWriter, r *http.Request) {

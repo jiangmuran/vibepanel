@@ -39,3 +39,7 @@ node_modules/
 # works. They land in whatever directory the check pointed at, and one of them
 # reached a commit.
 web/pasted-*.png
+
+# A literal "~" directory: an agent handed an unexpanded ~/... config path
+# creates it in its working directory, credentials inside.
+/~/

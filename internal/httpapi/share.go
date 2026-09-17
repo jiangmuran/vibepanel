@@ -30,9 +30,15 @@ import (
 //
 // Four properties, and each is enforced by structure rather than by care:
 //
-//  1. It is a capability. The credential is 32 bytes of crypto/rand in the URL
-//     and the database keeps only its SHA-256, exactly as store.APIToken does.
-//     Nothing anywhere can read a link back out.
+//  1. It is a capability. The credential is 32 bytes of crypto/rand in the URL,
+//     and a request is resolved by its SHA-256, exactly as store.APIToken is.
+//     The database also keeps a copy sealed under the panel's secrets key
+//     (TokenEnc), so a signed-in owner can copy a link's address again
+//     (handleShareURL). That is a real change to the leak model and worth
+//     stating rather than hiding: a copy of the database *together with*
+//     secrets.key, which sits beside it in the data directory, yields every
+//     live link. The database alone still yields none, and a link made before
+//     addresses were kept has no sealed copy at all.
 //
 //  2. It is read-only because of where it is registered, not because a handler
 //     checks a flag. registerShareRoutes mounts the v1 snapshot below its own
