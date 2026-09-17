@@ -118,20 +118,29 @@ export function notifyOnWaiting(sessions: Session[], focused: boolean) {
 /**
  * The memory question, when the panel is not being looked at.
  *
- * Once per question: the governor keeps the same id while the question is the
- * same one, so a countdown ticking or the numbers moving does not notify again.
- * The countdown is in it, because the person who is away is exactly the one
- * whose process is about to be ended.
+ * Once per question, and once for each change a person away from the panel
+ * has to know about: the governor escalates a warning to critical on the same
+ * id, and the countdown that starts there is the one the person who is away
+ * is exactly the one whose process is about to be ended. Deduped by id alone
+ * that second notification never came, and the panel ended a process with
+ * nothing on the phone.
  */
 let lastResourceAlert = ''
+let lastResourceLevel = ''
 
 export function notifyOnResourceAlert(alert: ResourceAlert | null, sessions: Session[], focused: boolean) {
   if (!alert) {
     lastResourceAlert = ''
+    lastResourceLevel = ''
     return
   }
-  if (alert.id === lastResourceAlert) return
-  lastResourceAlert = alert.id
+  // The level half is one-way: a stall hovering around the threshold flaps
+  // between warn and critical, and each flap must not buzz again.
+  const gotWorse = alert.level === 'critical' && lastResourceLevel !== 'critical'
+  const key = `${alert.id}:${alert.autoAt ?? 0}`
+  if (key === lastResourceAlert && !gotWorse) return
+  lastResourceAlert = key
+  lastResourceLevel = alert.level
   if (focused) return
   if (!notifyEnabled() || !notifySupported() || Notification.permission !== 'granted') return
   const session = alert.sessionId ? sessions.find((s) => s.id === alert.sessionId) : undefined

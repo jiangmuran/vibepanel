@@ -162,9 +162,14 @@ func plausibleScopeCgroup(m Manager, name, rel string) bool {
 // ScopeProps are the unit-level properties a scope is created with. They are
 // the backstop, not the policy: the panel's policy lives on cgroups inside the
 // scope, which it can change without root.
+//
+// There is deliberately no User here. systemd 252 and later chown a scope's
+// delegation files to User= as part of the StartTransientUnit job -- before
+// and while the PIDs are being attached -- so the account owns the inside of
+// the scope before every move into it has been checked. The caller hands the
+// scope over itself, with chownTree, once everything in it is the account's;
+// see Adoption.Adopt.
 type ScopeProps struct {
-	// User is who the delegated cgroup is handed to, on the system manager.
-	User string
 	// MemoryMax bounds everything in the scope; 0 leaves it unset.
 	MemoryMax uint64
 	// NoSwap sets MemorySwapMax=0. See deploy/vibepanel-system.service for the
@@ -172,11 +177,6 @@ type ScopeProps struct {
 	// reclaim throttle on every session instead of an OOM kill.
 	NoSwap bool
 }
-
-// ErrUserUnsupported means systemd refused User= on a scope, which systemd
-// before 252 does. The scope was still created; its delegation files belong to
-// root and the caller hands them over itself.
-var ErrUserUnsupported = errors.New("cgroup: this systemd does not take User= on a scope")
 
 // StartScope creates a delegated scope holding pids.
 //
@@ -191,44 +191,33 @@ func StartScope(ctx context.Context, m Manager, name string, pids []int, p Scope
 	if len(pids) == 0 {
 		return errors.New("cgroup: a scope needs at least one process")
 	}
-	build := func(withUser bool) []string {
-		props := [][]string{
-			append([]string{"PIDs", "au", strconv.Itoa(len(pids))}, itoa(pids)...),
-			{"Delegate", "b", "true"},
-			{"Description", "s", "vibepanel sessions"},
-			// Collected as soon as the last process exits, failed or not: a
-			// failed scope left behind would make the next StartTransientUnit
-			// under the same name refuse.
-			{"CollectMode", "s", "inactive-or-failed"},
-		}
-		if p.MemoryMax > 0 {
-			props = append(props, []string{"MemoryMax", "t", strconv.FormatUint(p.MemoryMax, 10)})
-		}
-		if p.NoSwap {
-			props = append(props, []string{"MemorySwapMax", "t", "0"})
-		}
-		if withUser && p.User != "" {
-			props = append(props, []string{"User", "s", p.User})
-		}
-		args := []string{}
-		if m == User {
-			args = append(args, "--user")
-		}
-		args = append(args, "call", "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
-			"org.freedesktop.systemd1.Manager", "StartTransientUnit", "ssa(sv)a(sa(sv))",
-			name, "fail", strconv.Itoa(len(props)))
-		for _, pr := range props {
-			args = append(args, pr...)
-		}
-		return append(args, "0")
+	props := [][]string{
+		append([]string{"PIDs", "au", strconv.Itoa(len(pids))}, itoa(pids)...),
+		{"Delegate", "b", "true"},
+		{"Description", "s", "vibepanel sessions"},
+		// Collected as soon as the last process exits, failed or not: a
+		// failed scope left behind would make the next StartTransientUnit
+		// under the same name refuse.
+		{"CollectMode", "s", "inactive-or-failed"},
 	}
-	_, err := run(ctx, "busctl", build(true)...)
-	userRefused := false
-	if err != nil && p.User != "" && strings.Contains(err.Error(), "User") {
-		userRefused = true
-		_, err = run(ctx, "busctl", build(false)...)
+	if p.MemoryMax > 0 {
+		props = append(props, []string{"MemoryMax", "t", strconv.FormatUint(p.MemoryMax, 10)})
 	}
-	if err != nil {
+	if p.NoSwap {
+		props = append(props, []string{"MemorySwapMax", "t", "0"})
+	}
+	args := []string{}
+	if m == User {
+		args = append(args, "--user")
+	}
+	args = append(args, "call", "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+		"org.freedesktop.systemd1.Manager", "StartTransientUnit", "ssa(sv)a(sa(sv))",
+		name, "fail", strconv.Itoa(len(props)))
+	for _, pr := range props {
+		args = append(args, pr...)
+	}
+	args = append(args, "0")
+	if _, err := run(ctx, "busctl", args...); err != nil {
 		return err
 	}
 	deadline := time.Now().Add(5 * time.Second)
@@ -245,9 +234,6 @@ func StartScope(ctx context.Context, m Manager, name string, pids []int, p Scope
 			return ctx.Err()
 		case <-time.After(50 * time.Millisecond):
 		}
-	}
-	if userRefused {
-		return ErrUserUnsupported
 	}
 	return nil
 }

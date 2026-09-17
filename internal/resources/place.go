@@ -73,6 +73,9 @@ func (g *Governor) place(ctx context.Context, ro roster, procs Procs) (Isolation
 		iso.Reason, iso.Detail = noneReason(err)
 		return iso, nil
 	}
+	if g.env.Manager == cgroup.User {
+		g.sweepUnit(procs, layout)
+	}
 	for _, p := range ro.list {
 		layout.Reclaim(p)
 	}
@@ -170,6 +173,39 @@ func (g *Governor) adopt(ctx context.Context, server procKey, procs Procs) (Layo
 		return Find(g.env.Scope, server.PID)
 	}
 	return Layout{}, ErrNotInScope
+}
+
+// sweepUnit moves what a partial adoption left in the panel's own cgroup into
+// the scope.
+//
+// A user unit's adoption can fail half-way -- one process's move refused, the
+// rest moved -- and the failure is only logged, because the server moving is
+// what makes Find succeed and the adoption that reads the unit's cgroup never
+// runs again. Whatever stayed behind then sits beside the panel's own pages for
+// the life of the process: outside the budget, unmeasured, never named in any
+// question. The system manager's answer is the root step failing loudly; a user
+// manager has nobody to be loud at, so the tick sweeps.
+//
+// The adoption back-off applies, and Sort -- which place calls after this --
+// attributes what lands here from the other leaf.
+func (g *Governor) sweepUnit(procs Procs, l Layout) {
+	now := time.Now()
+	if now.Sub(g.t.adoptTry) < adoptBackoff {
+		return
+	}
+	left := Leftovers(g.env.Unit, os.Getpid(), procs)
+	if len(left) == 0 {
+		return
+	}
+	g.t.adoptTry = now
+	other := l.Other()
+	for _, pid := range left {
+		if err := other.Move(pid); err == nil {
+			raiseOOMScore(pid)
+		} else {
+			g.env.Log.Warn("sweeping a process the adoption left behind", "pid", pid, "err", err)
+		}
+	}
 }
 
 // release undoes the panel's hold on a scope it has been told not to manage.

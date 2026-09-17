@@ -555,3 +555,106 @@ func TestTheNamedProcessDoesNotSwapWithOneTheSameSize(t *testing.T) {
 		t.Fatalf("kept a process that is not listed: %d", got.PID)
 	}
 }
+
+func TestABoostIsNotOfferedForTheMachine(t *testing.T) {
+	w := &world{sessions: []SessionMeta{{ID: "a", TmuxName: "vp_a"}}}
+	g := New(w.env())
+	g.tickDecide(time.Now(), Presets[Balanced], Warn, ReasonPool, poolReading, heavy)
+	if a := g.View().Alert; a == nil || !a.CanBoost {
+		t.Fatalf("a full pool must offer a boost: %+v", a)
+	}
+	g = New(w.env())
+	g.tickDecide(time.Now(), Presets[Balanced], Warn, ReasonMachine, poolReading, heavy)
+	if a := g.View().Alert; a == nil || a.CanBoost {
+		t.Fatalf("a boost offered for a host that is short on its own: %+v", a)
+	}
+}
+
+// fakePool is a layout on a temp directory standing in for the cgroup mount,
+// with session "vp_a"'s leaf created and holding pids.
+func fakePool(t *testing.T, pids ...int) (*Layout, cgroup.Dir) {
+	t.Helper()
+	old := cgroup.Mount
+	cgroup.Mount = t.TempDir()
+	t.Cleanup(func() { cgroup.Mount = old })
+	l := &Layout{Scope: cgroup.At("/s.scope"), Pool: cgroup.At("/s.scope/pool")}
+	leaf, _ := l.Session("vp_a")
+	if err := os.MkdirAll(string(leaf), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var procs []string
+	for _, p := range pids {
+		procs = append(procs, strconv.Itoa(p))
+	}
+	if err := os.WriteFile(string(leaf)+"/cgroup.procs", []byte(strings.Join(procs, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return l, leaf
+}
+
+// The poller's tmux query failing under pressure leaves no pane to tell the
+// agent from its children; every process in the leaf is then the agent.
+func TestAnUnknownPaneProtectsEveryProcess(t *testing.T) {
+	_, child := spawnPane(t)
+	l, _ := fakePool(t, child)
+	w := &world{sessions: []SessionMeta{{ID: "a", TmuxName: "vp_a"}}}
+	g := New(w.env())
+	now := time.Now()
+	decide := func(at time.Time) {
+		g.tickMu.Lock()
+		defer g.tickMu.Unlock()
+		g.decide(at, Presets[Balanced], Critical, ReasonStall, poolReading, heavy, l, g.roster(), LazyProcs())
+	}
+	decide(now)
+	a := g.View().Alert
+	if a == nil || a.Proc == nil || a.Proc.PID != child || !a.Proc.Root || a.AutoAt != 0 {
+		t.Fatalf("%+v", a)
+	}
+	decide(now.Add(time.Hour))
+	if !alive(child) {
+		t.Fatal("ended a process with no pane to say it was not the agent")
+	}
+}
+
+// A stat that cannot be read is unknown, not zero: a zero in the growth
+// window reads as a session that released everything, and an OOM count read
+// back from zero counts every OOM the session ever had.
+func TestAnUnreadableStatIsNotAZero(t *testing.T) {
+	l, leaf := fakePool(t)
+	write := func(name, s string) {
+		t.Helper()
+		if err := os.WriteFile(string(leaf)+"/"+name, []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, ok := held(leaf); ok {
+		t.Fatal("a missing memory.stat read as a reading")
+	}
+	w := &world{sessions: []SessionMeta{{ID: "a", TmuxName: "vp_a"}}}
+	g := New(w.env())
+	now := time.Now()
+	read := func(at time.Time) {
+		g.tickMu.Lock()
+		defer g.tickMu.Unlock()
+		g.readSessions(l, g.roster(), at)
+	}
+
+	write("memory.stat", "anon 1073741824\nshmem 0\n")
+	write("memory.events.local", "oom_kill 2\n")
+	read(now)
+	if err := os.Remove(string(leaf) + "/memory.stat"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(string(leaf) + "/memory.events.local"); err != nil {
+		t.Fatal(err)
+	}
+	read(now.Add(2 * time.Second))
+	if s := g.t.growth["a"]; len(s) != 1 || s[0].cur != 1<<30 {
+		t.Fatalf("a failed read went into the growth window: %+v", s)
+	}
+	write("memory.events.local", "oom_kill 2\n")
+	read(now.Add(4 * time.Second))
+	if n := w.emits(); n != 0 {
+		t.Fatalf("an OOM reported after a failed read, with none new: %d", n)
+	}
+}

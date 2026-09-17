@@ -128,14 +128,16 @@ func (s *Server) noteResourceInput(sessionID string) {
 	s.res.mu.Unlock()
 }
 
-// ResourcePolicy reads the stored policy, cached: the governor asks every two
-// seconds and the answer changes when somebody presses a button.
-func (s *Server) ResourcePolicy(ctx context.Context) resources.Policy {
+// storedPolicy reads the stored policy, cached, and says when the read failed.
+//
+// A failed read is not a policy of Balanced with auto-act on: the callers that
+// write back what they read have to be able to refuse rather than save that.
+func (s *Server) storedPolicy(ctx context.Context) (resources.Policy, error) {
 	s.res.mu.Lock()
 	if s.res.policy != nil {
 		p := *s.res.policy
 		s.res.mu.Unlock()
-		return p
+		return p, nil
 	}
 	s.res.mu.Unlock()
 	raw, err := s.DB.GetSetting(ctx, resourcesPolicyKey, "")
@@ -144,8 +146,7 @@ func (s *Server) ResourcePolicy(ctx context.Context) resources.Policy {
 		// symptom -- "context canceled" -- and caching the default here
 		// switched somebody's Performance, or their Custom with auto off, to
 		// Balanced with auto on until the next save.
-		s.Log.Warn("reading the resources policy", "err", err)
-		return resources.DefaultPolicy()
+		return resources.Policy{}, err
 	}
 	p := resources.DefaultPolicy()
 	if raw != "" {
@@ -157,6 +158,21 @@ func (s *Server) ResourcePolicy(ctx context.Context) resources.Policy {
 	s.res.mu.Lock()
 	s.res.policy = &p
 	s.res.mu.Unlock()
+	return p, nil
+}
+
+// ResourcePolicy reads the stored policy, cached: the governor asks every two
+// seconds and the answer changes when somebody presses a button.
+//
+// The governor's answer on a failed read is the default, uncached: the tick has
+// to run whatever the database is doing, and caching a failure would outlive
+// it. Only the write paths refuse -- see storedPolicy.
+func (s *Server) ResourcePolicy(ctx context.Context) resources.Policy {
+	p, err := s.storedPolicy(ctx)
+	if err != nil {
+		s.Log.Warn("reading the resources policy", "err", err)
+		return resources.DefaultPolicy()
+	}
 	return p
 }
 
@@ -235,7 +251,15 @@ func (s *Server) handlePutResourcePolicy(w http.ResponseWriter, r *http.Request)
 	defer s.res.write.Unlock()
 	// A boost is its own route, with its own bound. Carried over rather than
 	// taken from the body, so saving the mode does not end one or start one.
-	req.BoostUntil = s.ResourcePolicy(r.Context()).BoostUntil
+	// Refused rather than defaulted when the stored policy cannot be read:
+	// saving over a policy that could not be read is how a stored Performance
+	// became Balanced with auto-act on, silently, on a flaky read.
+	prev, err := s.storedPolicy(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, "the stored policy could not be read; nothing was saved")
+		return
+	}
+	req.BoostUntil = prev.BoostUntil
 	if err := req.Validate(); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -244,7 +268,6 @@ func (s *Server) handlePutResourcePolicy(w http.ResponseWriter, r *http.Request)
 		// The preset's numbers are the preset's; storing whatever the page
 		// happened to send beside the mode would show stale custom values the
 		// next time somebody picks Custom. Keep the custom ones as they were.
-		prev := s.ResourcePolicy(r.Context())
 		req.PoolPercent, req.AskPercent, req.AutoAct, req.GraceSeconds =
 			prev.PoolPercent, prev.AskPercent, prev.AutoAct, prev.GraceSeconds
 	}
@@ -272,7 +295,14 @@ func (s *Server) handleResourceBoost(w http.ResponseWriter, r *http.Request) {
 	}
 	s.res.write.Lock()
 	defer s.res.write.Unlock()
-	p := s.ResourcePolicy(r.Context())
+	// Refused on a failed read rather than boosted over: the policy this read
+	// is the one the boost would be saved on top of, and defaulting it here
+	// persisted Balanced with auto-act on over whatever was stored.
+	p, err := s.storedPolicy(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, "the stored policy could not be read; nothing was saved")
+		return
+	}
 	until := time.Now().Add(d)
 	p.BoostUntil = until.Unix()
 	if req.Minutes == 0 {

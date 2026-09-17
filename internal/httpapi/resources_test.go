@@ -118,3 +118,36 @@ func TestTheQuestionAloneIsItsOwnRoute(t *testing.T) {
 		t.Fatalf("%s", b)
 	}
 }
+
+// A policy that cannot be read is not the default one: both write paths save
+// on top of what they read, and saving on top of the default turned a stored
+// Performance into Balanced with auto-act on.
+func TestAPolicyThatCannotBeReadIsNotSavedOver(t *testing.T) {
+	ts, srv := newTestServer(t)
+	if code, b := doJSON(t, ts, http.MethodPut, "/api/resources/policy",
+		`{"mode":"custom","poolPercent":60,"askPercent":70,"autoAct":false,"graceSeconds":45}`); code != http.StatusOK {
+		t.Fatalf("custom: %d %s", code, b)
+	}
+	ctx := context.Background()
+	// The cache would answer without the database; what is under test is the
+	// read that fails.
+	srv.res.mu.Lock()
+	srv.res.policy = nil
+	srv.res.mu.Unlock()
+	if _, err := srv.DB.SQL().ExecContext(ctx, "ALTER TABLE settings RENAME TO settings_away"); err != nil {
+		t.Fatal(err)
+	}
+	if code, b := doJSON(t, ts, http.MethodPost, "/api/resources/boost", `{"minutes":30}`); code != http.StatusServiceUnavailable {
+		t.Fatalf("boost over an unread policy: %d %s", code, b)
+	}
+	if code, b := doJSON(t, ts, http.MethodPut, "/api/resources/policy", `{"mode":"balanced"}`); code != http.StatusServiceUnavailable {
+		t.Fatalf("mode over an unread policy: %d %s", code, b)
+	}
+	if _, err := srv.DB.SQL().ExecContext(ctx, "ALTER TABLE settings_away RENAME TO settings"); err != nil {
+		t.Fatal(err)
+	}
+	got := srv.ResourcePolicy(ctx)
+	if got.Mode != resources.Custom || got.AutoAct || got.PoolPercent != 60 || got.BoostUntil != 0 {
+		t.Fatalf("the stored policy changed: %+v", got)
+	}
+}

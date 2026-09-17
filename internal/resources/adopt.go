@@ -2,7 +2,6 @@ package resources
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -77,9 +76,12 @@ type Adoption struct {
 	Manager cgroup.Manager
 	Scope   string
 	Props   cgroup.ScopeProps
-	// Owner is who the delegation files are handed to when systemd would not
-	// do it (a scope on systemd before 252). Negative means leave them alone,
-	// which is right for a user manager: everything under it is the user's.
+	// Unit is the panel's own cgroup, where a pid that was reused mid-move is
+	// put back. Set by the root helper; see back.
+	Unit cgroup.Dir
+	// OwnerUID is who the delegation files are handed to, by Adopt itself and
+	// last, on every systemd version. Negative means leave them alone, which
+	// is right for a user manager: everything under it is the user's.
 	OwnerUID, OwnerGID int
 	// Anchor, when set, creates the scope by running this command in it
 	// (cgroup.StartAnchoredScope) instead of by handing systemd the server's
@@ -126,10 +128,10 @@ func (a Adoption) Adopt(ctx context.Context, serverPID int, pids []int) error {
 		} else {
 			serr = cgroup.StartScope(ctx, a.Manager, a.Scope, []int{serverPID}, a.Props)
 			if a.OwnerUID >= 0 {
-				stillSame(server, serverFrom)
+				stillSame(server, a.back(serverFrom))
 			}
 		}
-		if serr != nil && !errors.Is(serr, cgroup.ErrUserUnsupported) {
+		if serr != nil {
 			return fmt.Errorf("resources: create %s: %w", a.Scope, serr)
 		}
 		if info, err = cgroup.Scope(ctx, a.Manager, a.Scope); err != nil {
@@ -162,7 +164,7 @@ func (a Adoption) Adopt(ctx context.Context, serverPID int, pids []int) error {
 		if err := to.Move(pid); err != nil {
 			return err
 		}
-		if a.OwnerUID >= 0 && !stillSame(key, from) {
+		if a.OwnerUID >= 0 && !stillSame(key, a.back(from)) {
 			return fmt.Errorf("exited while being moved")
 		}
 		return nil
@@ -180,7 +182,13 @@ func (a Adoption) Adopt(ctx context.Context, serverPID int, pids []int) error {
 		}
 	}
 
-	// Handed over last, and only if everything in it is the account's.
+	// Handed over last, and only if everything in it is the account's. On
+	// every systemd version, because the scope is never created with User=:
+	// systemd 252 and later chown the delegation files as part of the
+	// StartTransientUnit job, which hands the account the inside of the scope
+	// while the moves are still being checked. Without User= the files stay
+	// root's and chownTree below is the handover, after every check has
+	// passed.
 	if a.OwnerUID >= 0 {
 		if err := onlyOwnedIn(scope, a.OwnerUID); err != nil {
 			return err
@@ -231,16 +239,31 @@ func ownedBy(pid, uid int) (procKey, string, bool) {
 	return procKey{}, "", false
 }
 
+// back is where a pid that was reused mid-move goes. Not where the checked
+// process had been: that place is the account's to choose when the "tmux
+// server" is a fake on the panel's socket, run from the account's login, and
+// cgroup v2 lets root write a process into it -- which would hand the account
+// a root process to kill. The panel's own unit is root's.
+func (a Adoption) back(from string) cgroup.Dir {
+	if a.Unit != "" {
+		return a.Unit
+	}
+	if from != "" {
+		return cgroup.At(from)
+	}
+	return ""
+}
+
 // stillSame checks, after a move, that the pid is the process that was
-// checked. If it is not -- the process exited and its number was reused in
-// between -- whatever now has the number is put back where it was.
-func stillSame(k procKey, from string) bool {
+// checked, and puts it back where it came from if it is not -- the process
+// exited and its number was reused in between.
+func stillSame(k procKey, back cgroup.Dir) bool {
 	p, ok := sysmon.ReadProc(k.PID)
 	if ok && p.Start == k.Start {
 		return true
 	}
-	if ok && from != "" {
-		_ = cgroup.At(from).Move(k.PID)
+	if ok && back != "" {
+		_ = back.Move(k.PID)
 	}
 	return false
 }

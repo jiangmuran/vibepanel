@@ -407,6 +407,17 @@ func (m *Manager) Attach(ctx context.Context, sessionID, tmuxName string, cols, 
 		return nil, fmt.Errorf("session: tmux session %s does not exist", tmuxName)
 	}
 
+	// A bell that rang while no client was attached is latched in the window
+	// flag, and the attach below clears that flag without replaying the byte.
+	// Read it first, and hand it to the detector as if it had come down the
+	// wire — the same read Reconcile makes at startup, covering every attach:
+	// the resources adoption runs between pane creation and this point, and an
+	// agent that asks within that window would otherwise read as working until
+	// something else spoke.
+	if info, gerr := m.tmux.Get(ctx, tmuxName); gerr == nil && info.Bell && m.OnSignals != nil {
+		m.OnSignals(Signals{SessionID: sessionID, Bell: true})
+	}
+
 	// Prime the ring with the pane's history, so that scrolling back reaches
 	// what happened before anybody was watching.
 	//

@@ -51,7 +51,10 @@ func (g *Governor) decide(now time.Time, params Params, level Level, reason Reas
 	next := &Alert{
 		Level: level.String(), Reason: reason,
 		PoolCurrent: r.PoolCurrent, PoolMax: r.PoolMax, Available: r.Available, Total: r.Total,
-		CanBoost: params.Mode != Performance,
+		// Not under machine pressure either: a boost widens the sessions' pool,
+		// which is nothing to a host that is short for its own reasons, and the
+		// button would be an answer that does not answer.
+		CanBoost: params.Mode != Performance && reason != ReasonMachine,
 	}
 	if culprit != nil && Named(culprit.Held, r) {
 		next.SessionID = culprit.ID
@@ -95,9 +98,15 @@ func (g *Governor) decide(now time.Time, params Params, level Level, reason Reas
 			next.AutoAt = 0
 		}
 	}
+	// An answer landed while the reads above were being made: raising the
+	// question it answered, or acting on it, is the stale half of this tick
+	// overwriting the person's half.
+	if g.quietened() {
+		return
+	}
 	g.setAlert(next, now)
 
-	if next.AutoAt == 0 || level != Critical || now.Unix() < next.AutoAt {
+	if next.AutoAt == 0 || level != Critical || now.Unix() < next.AutoAt || g.quietened() {
 		return
 	}
 	act, err := g.kill(culprit.ID, next.Proc.PID, next.Proc.Start, "", true, l, ro, procs)
@@ -216,7 +225,11 @@ func (g *Governor) top(tmuxName string, l *Layout, ro roster, procs Procs, n int
 		if !ok || skip[procKey{pid, p.Start}] {
 			continue
 		}
-		out = append(out, ProcView{PID: pid, Start: p.Start, Name: p.Comm, RSS: p.RSS, Root: pid == pane})
+		// An unknown pane (a stale listing -- the poller's tmux query failing
+		// under the very pressure this decides about) protects every process:
+		// Root is what stops the panel ending the agent unasked, and a zero
+		// pane marked every process a child, countdowns included.
+		out = append(out, ProcView{PID: pid, Start: p.Start, Name: p.Comm, RSS: p.RSS, Root: pane == 0 || pid == pane})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].RSS > out[j].RSS })
 	if len(out) > n {
