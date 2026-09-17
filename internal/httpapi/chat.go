@@ -123,7 +123,7 @@ func (s *Server) StartChat(ctx context.Context) error {
 		return err
 	}
 	s.Chat = chat.New(chat.Deps{
-		DB: s.DB, Term: ChatTerminal(s.Tmux), Box: box, Log: s.Log,
+		DB: s.DB, Term: s.chatTerminal(), Box: box, Log: s.Log,
 		PublicURL: s.Cfg.PublicURL,
 		Zone:      func() *time.Location { return s.loc(ctx) },
 		Shot:      s.Shooter,

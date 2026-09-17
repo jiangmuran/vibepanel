@@ -239,6 +239,40 @@ knows (`task_started`, `task_complete`, `turn_aborted`, approval requests) --
 a Codex whose rollout format changed. macOS has no `/proc`, so there the hooks
 are the only precise source.
 
+## A Claude Code session shows the wrong state
+
+First, which events are installed. The panel installs nine:
+
+```sh
+python3 -c "import json;print(sorted(json.load(open('$HOME/.claude/settings.json'))['hooks']))"
+```
+
+An older install has fewer. The panel appends the missing ones when it starts,
+but only if every entry of its own calls this panel's script (entries pointing
+at another data directory's copy are left alone, silently) and only if
+`settings.json` is not a symlink (the log says `claude code hooks were not
+upgraded`; press install on the settings page instead). Claude
+Code reads hooks when it starts, so a session started before the upgrade keeps
+the old set until it is restarted.
+
+What each symptom was, when it was measured:
+
+- **Done, then waiting a minute later**: the idle notification read as a
+  question. Fixed by reading `notification_type`; a panel older than this still
+  does it.
+- **Done and working alternating while agents run in the background**: fixed by
+  reading `background_tasks` on Stop. Only subagents and workflows keep a
+  session at working; background *shells* do not, on purpose.
+- **Working forever after Escape**: no hook fires on an interrupt. The panel reads
+  the transcript for it, at the path the hooks sent. `sqlite3 ~/.local/share/vibepanel/vibepanel.db
+  "select * from session_transcripts where session_id='<id>'"` shows which
+  file; if the row is missing, no hook has reported a document for that session.
+- **Waiting while an approved command runs**: released by the next key pressed on
+  a permission menu from the browser or the chat bridge. An approval typed into
+  a terminal attached to tmux some other way is not seen, and the state holds
+  until PostToolUse. A question dialog (AskUserQuestion) is not released by
+  keys at all; it reports itself when the last question is answered.
+
 ## Kimi Code and zcode sessions never report their state
 
 Both are wired through Settings → State reporting like the other agents, each

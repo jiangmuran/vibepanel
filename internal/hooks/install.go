@@ -129,6 +129,17 @@ var events = map[string]string{
 	"Stop":              "done",
 	"UserPromptSubmit":  "working",
 	"PreToolUse":        "working",
+	// The four below were added after measuring what a Claude Code session
+	// actually emits (see hooks.Read). Without PostToolUse an approved prompt
+	// stood until the next tool started; without StopFailure a turn that died
+	// on an API error read working forever; without SessionStart a fresh
+	// `claude` read working, from the heuristic, until its first prompt.
+	// PostToolUseFailure is the only event an Escape during a running tool
+	// produces, and is how a failed tool ends a prompt too.
+	"PostToolUse":        "working",
+	"PostToolUseFailure": "working",
+	"StopFailure":        "waiting",
+	"SessionStart":       "done",
 }
 
 // Inspect reports what is installed without changing anything.
@@ -220,6 +231,99 @@ func Inspect(scriptPath string) (Status, error) {
 	sort.Strings(st.Events)
 	st.Installed = len(st.Events) > 0
 	return st, nil
+}
+
+// UpgradeClaude brings an install from an older build up to this one's events,
+// and does nothing to a file the panel has never been installed into.
+//
+// Installed has meant "any of our events is there", so an install from before
+// an event was added reads as installed forever while missing it: this
+// machine's settings had four of five, no PermissionRequest, and the settings
+// page said installed. The script beside it is rewritten on every start for
+// the same reason; the entries that call it were not.
+//
+// It runs without anybody pressing anything, so it does less than the install
+// button, and each thing it does not do is a way the first version went wrong:
+//
+//   - It only appends an entry for each missing event. InstallClaude re-merges
+//     every event, and re-merging drops an entry group that has any hook of
+//     ours in it -- with a hook of the person's own in the same group, and its
+//     matcher. On a button press that is a merge somebody asked for; on every
+//     restart it is a quiet edit to somebody's file.
+//
+//   - Only an install that is this panel's own: every entry of ours must call
+//     this script, at this path. Inspect recognises the panel's entries by
+//     name, and a second panel started from a scratch data directory, to test
+//     this very change, found the production panel's four entries, called them
+//     installed, and re-pointed all nine at its own throwaway script.
+//
+//   - Not through a symlink. writeSettings renames a new file into place, which
+//     replaces the link with a file and leaves a dotfiles repository's copy
+//     behind; that is an error, so the log says why nothing was added.
+//
+// An event somebody removed by hand from a partial install comes back, and
+// that is the one case this cannot tell apart from an older build's install.
+func UpgradeClaude(scriptPath string) (added []string, err error) {
+	editMu.Lock()
+	defer editMu.Unlock()
+	settingsPath, err := ClaudeSettingsPath()
+	if err != nil {
+		return nil, err
+	}
+	doc, err := readSettings(settingsPath)
+	if err != nil {
+		// Missing or unreadable: nothing is installed that could be upgraded.
+		return nil, nil
+	}
+	hooks, _ := doc["hooks"].(map[string]any)
+	var missing []string
+	for event := range events {
+		if !entriesFor(hooks, event, scriptPath) {
+			missing = append(missing, event)
+		}
+	}
+	if len(missing) == 0 || len(missing) == len(events) || !allOursCall(hooks, scriptPath) {
+		return nil, nil
+	}
+	if info, lerr := os.Lstat(settingsPath); lerr == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("hooks: %s is a symlink; install from the settings page to add %s", settingsPath, strings.Join(missing, ", "))
+	}
+	sort.Strings(missing)
+	for _, event := range missing {
+		list, _ := hooks[event].([]any)
+		// Appended, not merged. The two do the same for an event with none of
+		// ours in it, which is every event here, and append cannot drop anything.
+		hooks[event] = append(list, ourEntry(scriptPath, events[event]))
+	}
+	doc["hooks"] = hooks
+	if err := backup(settingsPath); err != nil {
+		return nil, err
+	}
+	if err := writeSettings(settingsPath, doc); err != nil {
+		return nil, err
+	}
+	return missing, nil
+}
+
+// allOursCall reports whether every hook of the panel's in a settings file's
+// hooks block runs exactly scriptPath.
+func allOursCall(hooks map[string]any, scriptPath string) bool {
+	prefix := shellWord(scriptPath) + " "
+	for _, list := range hooks {
+		items, _ := list.([]any)
+		for _, item := range items {
+			entry, _ := item.(map[string]any)
+			inner, _ := entry["hooks"].([]any)
+			for _, h := range inner {
+				hook, _ := h.(map[string]any)
+				cmd, _ := hook["command"].(string)
+				if (hook["_source"] == marker || containsMarker(cmd)) && !strings.HasPrefix(cmd, prefix) {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
 
 // InstallClaude merges the panel's hooks into the user's settings.
@@ -513,7 +617,12 @@ func mergeEvent(existing any, scriptPath, state string) any {
 			out = append(out, item)
 		}
 	}
-	return append(out, map[string]any{
+	return append(out, ourEntry(scriptPath, state))
+}
+
+// ourEntry is the entry group the panel adds for one event.
+func ourEntry(scriptPath, state string) map[string]any {
+	return map[string]any{
 		"hooks": []any{
 			map[string]any{
 				"type":    "command",
@@ -523,7 +632,7 @@ func mergeEvent(existing any, scriptPath, state string) any {
 				"_source": marker,
 			},
 		},
-	})
+	}
 }
 
 func removeOurs(existing any, scriptPath string) any {

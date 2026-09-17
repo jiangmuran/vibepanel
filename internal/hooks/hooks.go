@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 )
 
 // ReportToken derives the credential one session reports itself with: an HMAC
@@ -93,9 +95,11 @@ func InstallScript(dir string) (string, error) {
 
 // ClaudeSettings renders the hooks block for ~/.claude/settings.json.
 //
-// The four events map onto the three states the panel shows. Notification is
-// the one that matters: it is what Claude Code emits when it has stopped and
-// wants a person.
+// Built from the events map the installer merges, not from a list of its own.
+// It was a list of its own -- five hand-written entries -- and every event added
+// to the map had to be remembered here too, and
+// TestTheSnippetPromisesNothingTheInstallerWillNotWrite is what noticed when
+// one was not.
 //
 // The command goes through the same command() the installer writes, rather than
 // a %s of its own. Building it twice meant a data directory with a space in it
@@ -103,30 +107,24 @@ func InstallScript(dir string) (string, error) {
 // this snippet's whole job is the promise that what you read is what gets
 // merged.
 func ClaudeSettings(script string) string {
-	entry := func(event, state string) string {
-		return fmt.Sprintf(`    "%s": [
+	names := make([]string, 0, len(events))
+	for event := range events {
+		names = append(names, event)
+	}
+	// Sorted, for the reason Inspect sorts: the page shows this, and a map
+	// walks in a different order every time.
+	sort.Strings(names)
+	entries := make([]string, 0, len(names))
+	for _, event := range names {
+		entries = append(entries, fmt.Sprintf(`    "%s": [
       {
         "hooks": [
           { "type": "command", "command": "%s" }
         ]
       }
-    ]`, event, command(script, state))
+    ]`, event, command(script, events[event])))
 	}
-	return fmt.Sprintf(`{
-  "hooks": {
-%s,
-%s,
-%s,
-%s,
-%s
-  }
-}`,
-		entry("Notification", "waiting"),
-		entry("PermissionRequest", "waiting"),
-		entry("Stop", "done"),
-		entry("UserPromptSubmit", "working"),
-		entry("PreToolUse", "working"),
-	)
+	return "{\n  \"hooks\": {\n" + strings.Join(entries, ",\n") + "\n  }\n}"
 }
 
 // SessionEnv is what a session needs in its environment for its agent's hooks
