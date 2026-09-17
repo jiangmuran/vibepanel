@@ -324,7 +324,13 @@ mkdirSync(join(FAKE_HOME, '.claude'), { recursive: true })
 // an assistant message. Two lines, so a per-request average is not a division
 // by one.
 {
-  const day = new Date().toISOString().slice(0, 10)
+  // Now, rather than noon on today's UTC date. For eight hours of every day the
+  // UTC date is already tomorrow on a machine west of Greenwich, so a record
+  // stamped at its noon is in the future: no range reaches it, the block reads
+  // zero, and the full view's chart check failed at 8pm Pacific and passed at
+  // 4. Seconds ago also keeps it on the server's today, which the chart's
+  // readout reads, except for a run started in the minute before midnight.
+  const at = new Date(Date.now() - 5000).toISOString()
   const dir = join(FAKE_HOME, '.claude', 'projects', 'render-check')
   mkdirSync(dir, { recursive: true })
   // id and requestId matter: the reader deduplicates on the pair, because one
@@ -333,7 +339,7 @@ mkdirSync(join(FAKE_HOME, '.claude'), { recursive: true })
   // first version of this seed produced a block with nothing in it.
   const line = (n, input, output) => JSON.stringify({
     type: 'assistant',
-    timestamp: `${day}T12:00:00.000Z`,
+    timestamp: at,
     sessionId: 'render-check',
     cwd: FAKE_HOME,
     requestId: `req-${n}`,
@@ -1378,24 +1384,17 @@ browser = await chromium.launch({ headless: true })
           label: v.getAttribute('data-rank'),
           size: parseFloat(getComputedStyle(v).fontSize),
         })))
-      if (ranks.length < 4) {
+      if (ranks.length < 3) {
         note('FAIL', 'panel/spend', `only ${ranks.length} figures in the block`)
       } else {
-        // Today's total and output first and one size; everything below them
-        // one size smaller.
-        const heroes = ranks.filter((r) => r.label === 'hero')
-        const pair = ranks.filter((r) => r.label !== 'hero')
-        if (heroes.length !== 2 || heroes[0].size !== heroes[1].size) {
-          note('FAIL', 'panel/spend',
-            `today's two figures are not one rank: ${JSON.stringify(ranks)}`)
-        }
-        if (!pair.every((p) => p.size < heroes[0].size)) {
+        const [hero, ...pair] = ranks
+        if (!(hero.size > pair[0].size)) {
           note('FAIL', 'panel/spend',
             `today is not the largest figure: ${JSON.stringify(ranks)}`)
         }
-        if (new Set(pair.map((p) => p.size)).size !== 1) {
+        if (pair.length >= 2 && pair[0].size !== pair[1].size) {
           note('FAIL', 'panel/spend',
-            `the context figures are different sizes: ${JSON.stringify(ranks)}`)
+            `the two context figures are different sizes: ${JSON.stringify(ranks)}`)
         }
         // Three ranks and no more. Four sizes in a block this small is the
         // "nine font sizes" complaint the scale exists for, one layer up.

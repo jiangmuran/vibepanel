@@ -1617,7 +1617,6 @@ const DICT = {
   // there", and every one of those cases needs its own sentence.
   'spend.title': { zh: 'Token 用量', en: 'Token usage' },
   'spend.totalLabel': { zh: '总量', en: 'Total' },
-  'spend.outputShort': { zh: '输出 {v}', en: '{v} output' },
   'spend.todayShort': { zh: '今天', en: 'Today' },
   'spend.rangeYear': { zh: '1 年', en: '1y' },
   'spend.rangeValue': { zh: '近 {n} 天 {v}', en: '{v} in {n}d' },
@@ -1629,7 +1628,9 @@ const DICT = {
   'spend.showLess': { zh: '收起', en: 'Show fewer' },
   'spend.close': { zh: '关闭', en: 'Close' },
   'spend.rangeDays': { zh: '近 {n} 天', en: 'Last {n} days' },
-  'spend.week': { zh: '本周', en: 'This week' },
+  'spend.today': { zh: '今日消耗', en: 'Today' },
+  'spend.week': { zh: '本周消耗', en: 'This week' },
+  'spend.noProject': { zh: '没选项目', en: 'no project selected' },
   'spend.thisProject': { zh: '本项目消耗', en: 'This project' },
   'spend.sessionCount': { zh: '{n} 个 agent 会话', en: '{n} agent sessions' },
   'spend.breakdown': { zh: '构成', en: 'Breakdown' },

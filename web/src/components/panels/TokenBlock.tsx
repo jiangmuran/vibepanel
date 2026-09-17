@@ -4,7 +4,7 @@ import type { PanelDensity } from '../chrome'
 import { safeText } from '../text'
 import { formatAgo, spendIsStale } from './ago'
 import { Spark } from '../spark'
-import { compact, exact, totalOf } from './tokens'
+import { compact, exact } from './tokens'
 import { dayValue, daySeries, projectFigures, toolShares, windowValue } from './spend'
 import type { ToolShare } from './spend'
 
@@ -27,29 +27,44 @@ function toolTitle(x: ToolShare): string {
 }
 
 /**
- * What the agents are costing, in the corner of the eye.
+ * What the agents are costing, in the height of about six lines.
  *
- * A small table: today, this week and (when one is selected) this project down
- * the side, total and output across the top. The two columns are the two
- * readings that tell different stories -- the total is nearly all cache reads
- * and moves with how much context was re-read, the output moves with how much
- * was produced -- and a column each keeps them from being read as one number.
- * Today's row is the larger size; everything else is one step down.
+ * 「几个数字 有布局（本周消耗、本项目消耗、今日消耗、分应用消耗、时间、字数）
+ * 好看一点」 — and the layout is the whole of it, because the six are not six
+ * equal things and a three-by-two grid of identical cards says they are.
  *
- * Under it, a fortnight of the total as a trend and the split by agent.
- * Nothing here is pressable: the header row above opens the full view.
+ *   今日消耗    the hero. It is the figure somebody glances at ten times a day
+ *              and the only one whose answer changes while you watch. First,
+ *              largest, and on its own line at every width.
+ *   本周 / 本项目  context for the hero, and a pair rather than two cards: they
+ *              are read against it and against each other, so they are the
+ *              same size as each other and smaller than it.
+ *   分应用消耗  not a number at all. Three totals in a column is arithmetic the
+ *              reader has to do; one bar divided three ways is the same fact
+ *              already done. It reuses `.vp-bar`, so it is the same object as
+ *              every meter in the monitor below it.
+ *   时间 / 字数  qualifiers. They say what the five figures above mean rather
+ *              than adding a sixth, so they are a quiet footer line and not
+ *              cards. See the module comment in spend.ts for what each of them
+ *              is a reading of.
+ *
+ * The hierarchy is ratio, not a new type size. The scale tops out at
+ * `text-vp-lg` for the panel on purpose — `text-vp-xl` and up are for a
+ * figure that is the whole point of a view — so the hero is `lg`, the pair is `md`,
+ * and everything else is `xs`. Three steps is enough to rank three ranks.
  */
 export function TokenBlock({
   data,
   projectId,
   projectName,
   span,
+  density,
   now,
 }: {
   data: Usage
   projectId: string | null
   projectName: string | null
-  /** Days the project row and the footer cover. Stated, never guessed. */
+  /** Days the figures cover. Stated in the footer, never left to be guessed. */
   span: number
   density: PanelDensity
   /** One clock for the whole panel; see the monitor for why it is a prop. */
@@ -57,68 +72,86 @@ export function TokenBlock({
 }) {
   useLang()
 
-  // Never read is not zero. Until a pass has finished every figure is null.
+  // Never read is not zero, and the difference is the whole feature. Until a
+  // pass has finished there is no figure to show at all — so every one of them
+  // is null rather than the arithmetic's honest 0.
   const known = data.scannedAt > 0
-  const at = (v: number) => (known ? v : null)
-  const project = projectFigures(data, projectId)
+  const today = known ? dayValue(data.byDay, data.today, 'total') : null
+  const week = known ? windowValue(data.byDay, data.today, 7, 'total') : null
+  const project = known ? (projectFigures(data, projectId)?.total ?? null) : null
+  const output = known ? windowValue(data.byDay, data.today, span, 'output') : null
   const tools = known ? toolShares(data) : []
-  // A fortnight: thirty points across a column this narrow read as texture.
+  // Fourteen days rather than the thirty the footer names. A fortnight is what
+  // fits legibly in a strip this wide -- thirty points across 120px is two
+  // pixels each and reads as texture -- and it is the window over which "is
+  // today unusual" is answerable by looking.
   const series = known ? daySeries(data.byDay, data.today, 14) : []
   const seriesMax = Math.max(1, ...series)
 
-  const head = 'truncate text-vp-xs text-ink-2'
-  const side = 'truncate text-vp-xs text-ink-2'
   return (
-    <div className="px-3 pb-2.5 pt-1" data-testid="token-block">
-      <div className="grid grid-cols-[minmax(2.5rem,auto)_1fr_1fr] items-baseline gap-x-3 gap-y-0.5">
-        <span />
-        <span className={head}>{t('spend.totalLabel')}</span>
-        <span className={head}>{t('spend.output')}</span>
+    <div className="px-3 py-2" data-testid="token-block">
+      {/* One row above 380px, two below. The hero keeps its own line either
+          way: it is the answer, and an answer that has to share a line with
+          its own context is an answer somebody has to look for. */}
+      <div
+        className={`grid gap-x-4 gap-y-1 ${
+          density === 'wide' ? 'grid-cols-[1.4fr_1fr_1fr]' : 'grid-cols-2'
+        }`}
+      >
+        {/* The hero with its trend on the same line.
 
-        <span className={side}>{t('spend.todayShort')}</span>
-        <Figure value={at(dayValue(data.byDay, data.today, 'total'))} rank="hero" />
-        <Figure value={at(dayValue(data.byDay, data.today, 'output'))} rank="hero" />
-
-        <span className={side}>{t('spend.week')}</span>
-        <Figure value={at(windowValue(data.byDay, data.today, 7, 'total'))} rank="pair" />
-        <Figure value={at(windowValue(data.byDay, data.today, 7, 'output'))} rank="pair" />
-
-        {projectId && (
-          <>
-            <span
-              className={`${side} max-w-[6rem]`}
-              title={`${projectName ?? ''} · ${t('spend.rangeDays', { n: span })}`}
+            The block was four figures and a bar in 275x165 and the complaint
+            was that it looks empty -- which it was: every figure was one number
+            with no way to tell an ordinary day from a remarkable one. Thirty
+            days of the series were already on the payload and nothing drew
+            any of it. */}
+        <div className={`flex items-end gap-2 ${density === 'wide' ? '' : 'col-span-2'}`}>
+          <Figure label={t('spend.today')} value={today} rank="hero" />
+          {series.length > 1 && (
+            <div
+              className="h-7 min-w-0 flex-1 pb-1 opacity-80"
+              data-testid="token-spark"
+              title={t('spend.sparkDays', { n: series.length })}
             >
-              {safeText(projectName ?? t('spend.thisProject'))}
-            </span>
-            <Figure value={project && known ? project.total : null} rank="pair" />
-            <Figure value={project && known ? project.output : null} rank="pair" />
-          </>
-        )}
-      </div>
-
-      {series.length > 1 && (
-        <div
-          className="mt-2 h-7 opacity-80"
-          data-testid="token-spark"
-          title={t('spend.sparkDays', { n: series.length })}
-        >
-          <Spark values={series} max={seriesMax} tone="var(--vp-accent)" testid="token-spark-svg" />
+              <Spark
+                values={series}
+                max={seriesMax}
+                tone="var(--vp-accent)"
+                testid="token-spark-svg"
+              />
+            </div>
+          )}
         </div>
-      )}
+        <Figure label={t('spend.week')} value={week} rank="pair" />
+        <Figure
+          label={t('spend.thisProject')}
+          value={project}
+          rank="pair"
+          // Which project, so the figure is not a total wearing a scope. With
+          // no project selected the label says so rather than the number
+          // quietly meaning something else.
+          note={projectName ?? t('spend.noProject')}
+        />
+      </div>
 
       {tools.length > 0 && <ToolBar tools={tools} />}
 
+      {/* The qualifiers, in the order they qualify: how much was produced, over
+          what period, as of when. Every figure above is a lower bound if the
+          reader has not been told when it was measured. */}
       <p
         data-testid="token-block-footer"
-        className="tabular mt-2 truncate text-vp-xs text-ink-2"
-        title={`${exact(totalOf(data.total))} ${t('spend.tokens')}`}
+        className="tabular mt-1.5 truncate text-vp-xs text-ink-2"
+        title={output === null ? undefined : `${exact(output)} ${t('spend.tokens')}`}
       >
-        {t('spend.rangeDays', { n: span })} {compact(totalOf(data.total))}
+        {t('spend.output')} {output === null ? '—' : compact(output)}
         {' · '}
-        {t('spend.outputShort', { v: compact(data.total.output) })}
-        {' · '}
+        {/* Requests, because it is the other axis of the same story: the same
+            spend over ten requests and over ten thousand are different days,
+            and the payload has carried the number all along. */}
         {t('spend.requestsShort', { n: compact(data.total.requests) })}
+        {' · '}
+        {t('spend.rangeDays', { n: span })}
         {spendIsStale(data.scannedAt, now) && (
           <> · {t('spend.scannedAgo', { ago: formatAgo(data.scannedAt, now) })}</>
         )}
@@ -133,20 +166,48 @@ export function TokenBlock({
   )
 }
 
-/** One figure, at one of two ranks. `null` is an em dash and never a zero. */
-function Figure({ value, rank }: { value: number | null; rank: 'hero' | 'pair' }) {
+/**
+ * One figure and its label, at one of two ranks.
+ *
+ * `null` is an em dash and never a zero. There is no formatting trick that
+ * makes a zero mean "not known", so it does not get to try — the same rule the
+ * meters follow.
+ */
+function Figure({
+  label,
+  value,
+  rank,
+  note,
+  className,
+}: {
+  label: string
+  value: number | null
+  rank: 'hero' | 'pair'
+  note?: string
+  className?: string
+}) {
+  const hero = rank === 'hero'
   return (
-    // `data-rank` is what the browser checks measure font sizes against.
-    <span
-      data-testid="spend-figure"
-      data-rank={rank}
-      className={`tabular min-w-0 truncate text-ink ${
-        rank === 'hero' ? 'text-vp-xl font-semibold tracking-tight' : 'text-vp-md'
-      }`}
-      title={value === null ? undefined : `${exact(value)} ${t('spend.tokens')}`}
-    >
-      {value === null ? '—' : compact(value)}
-    </span>
+    <div className={`min-w-0 ${className ?? ''}`}>
+      <div className="truncate text-vp-xs text-ink-2">{label}</div>
+      {/* Named, because the thing being asserted about this block is its
+          *hierarchy* and a check that finds the figures by walking the DOM
+          finds whatever else happens to be laid out like one. `data-rank` is
+          what the browser checks measure font sizes against. */}
+      <div
+        data-testid="spend-figure"
+        data-rank={rank}
+        className={`tabular truncate ${hero ? 'text-vp-lg text-ink' : 'text-vp-md text-ink'}`}
+        title={value === null ? undefined : `${exact(value)} tokens`}
+      >
+        {value === null ? '—' : compact(value)}
+      </div>
+      {note !== undefined && (
+        <div className="truncate text-vp-xs text-ink-2" title={note}>
+          {safeText(note)}
+        </div>
+      )}
+    </div>
   )
 }
 

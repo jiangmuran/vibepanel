@@ -303,10 +303,11 @@ note((await page.locator('.vp-swap').first().getAttribute('data-dir')) === 'back
       'token spend sits above the monitor, which is where it was asked for')
   }
 
-  // A small table: total and output across, today / this week / this project
-  // down. What is measured is the hierarchy rather than the presence of the
-  // numbers: today's two figures are one size and the largest, every other
-  // figure is one size below, and there is no third size in between.
+  // Six figures, three ranks. The instruction was 「有布局」 and 「好看一点」,
+  // and the mistake it is warning against is six identical cards — so this
+  // measures the hierarchy rather than the presence of the numbers: today is
+  // the largest, its two pieces of context are the same size as each other and
+  // smaller than it, and there is no third size hiding in between.
   await stacked.locator(`[data-testid="panel-tab-${TABS[0]}"]`).click()
   await sleep(600)
   {
@@ -318,22 +319,16 @@ note((await page.locator('.vp-swap').first().getAttribute('data-dir')) === 'back
         value: (v.textContent ?? '').trim(),
         size: parseFloat(getComputedStyle(v).fontSize),
       })))
-    note(ranks.length === 4 || ranks.length === 6,
-      `a figure per cell: two rows, or three with a project (saw ${ranks.length})`)
-    if (ranks.length >= 4) {
-      const heroes = ranks.filter((r) => r.rank === 'hero')
-      const pairs = ranks.filter((r) => r.rank !== 'hero')
-      const shape = JSON.stringify(ranks.map((r) => [r.rank, r.size]))
-      note(heroes.length === 2 && ranks[0].rank === 'hero' && ranks[1].rank === 'hero',
-        `today's total and output come first (${shape})`)
-      note(heroes.length === 2 && heroes[0].size === heroes[1].size,
-        `and are one size (${shape})`)
-      note(pairs.length >= 2 && pairs.every((r) => r.size < heroes[0].size),
-        `and larger than everything under them (${shape})`)
+    note(ranks.length === 3, `three figures in the block (saw ${ranks.length})`)
+    if (ranks.length === 3) {
+      note(ranks[0].rank === 'hero' && ranks[0].size > ranks[1].size,
+        `today is first and largest (${JSON.stringify(ranks.map((r) => [r.rank, r.size]))})`)
+      note(ranks[1].size === ranks[2].size,
+        'and its two pieces of context are one rank')
       note(new Set(ranks.map((r) => r.size)).size === 2,
         'two sizes and no third hiding between them')
-      note(ranks.slice(0, 4).every((r) => r.value !== '—'),
-        `today and this week have numbers (${ranks.map((r) => r.value).join(', ')})`)
+      note(ranks.every((r) => r.value !== '—'),
+        `every figure has a number (${ranks.map((r) => r.value).join(', ')})`)
     }
     // 分应用消耗 as a divided bar rather than three numbers, and readable
     // without colour: every segment is named in the legend with its share.
