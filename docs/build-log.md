@@ -22978,6 +22978,248 @@ the real transcripts. Its findings are the per-field maximum, the fork layout
 (the first draft described two metas on a fork, which is really the subagent
 layout) and the paginated exemption above.
 
+## 2026-09-16 — The licence becomes PolyForm Noncommercial
+
+vibepanel moves from MIT to PolyForm Noncommercial 1.0.0: noncommercial use is
+free, and commercial use needs a separate licence, asked for at
+jmr@jiangmuran.com. PolyForm rather than the Business Source License because it
+says exactly that, with no change date and no additional-use grant to write.
+
+It carries attribution terms on top, in `LICENSE` under *Attribution*: a copy
+or a derivative keeps every credit and `Required Notice:` line unaltered, and a
+derivative says it is based on vibepanel. Modifying the code stays allowed for
+noncommercial use; what may not be modified is the credit. That makes the
+whole a PolyForm licence with added conditions rather than stock PolyForm, so
+tools that detect licences by matching the text will not name it.
+
+Two things the change cannot do, which `LICENSE` says out loud. It cannot
+reach back: v1.20.1 and earlier were published under MIT, and a copy obtained
+under MIT keeps it. And contributions merged under MIT (niuniu-869's deployment
+memory limits among them) stay under MIT's terms; MIT permits sublicensing, so
+they ship inside the new licence with their notice kept at the end of the file.
+
+The README said the source was "100% open". Under a noncommercial licence that
+reads as a claim to open source, which this is no longer; it now says the
+source is public, in both languages.
+
+## 2026-09-16 — The usage panel, redrawn: two readings, one way in
+
+「重构一下整个用量面板，现在看着感觉又乱又抓不住重点，而且感觉 UI 好丑。布局也很乱」.
+Screenshots of the three surfaces on this machine's real transcripts showed
+why.
+
+- **The same figures three times.** The dock block, a side-panel detail, and
+  the full view each restated today, this week and the range. The detail was
+  twenty label–value rows at one weight, with nothing ranked above anything.
+- **The headline was mostly cache.** Today's 1.4B was 97% cache reads. The
+  figure people glance at moved with how much context was re-read, and the
+  output (61.8M over 30 days against 21.6B) was a footer.
+- **One long column.** The full view stacked projects above models at full
+  width, with hairline bars, an axis-less trend, a `365 天` button that wrapped
+  to two lines, and no opencode in the tool filter.
+- **Filler.** "本项目消耗 — 没选项目", "opencode 0 · 0", a data-sources section,
+  and a line explaining whose ledger this is.
+
+Two choices were the user's: which figure leads, and which surfaces stay.
+Total and output side by side; the dock block and the full view, with no detail
+in between.
+
+**The dock block** is a small table: total and output across, today, this week
+and (with a project selected) that project down. Today's row is one size up.
+A fortnight's spark and the per-agent bar sit under it. The header opens the
+full view directly. `tokens` left `DETAIL_BLOCKS`, and `panels/TokenUsage.tsx`
+is gone.
+
+**The full view** is cards on a tinted body, laid out by container queries:
+
+- total and output for today, each with its daily average and today's ratio;
+- a composition bar, whose cache-read segment is the explanation for the gap
+  between those two figures, so no sentence is needed;
+- a per-day chart with a date axis, a dashed average and a readout of the
+  hovered day, toggled between total and output. The toggle also re-ranks every
+  list below it, so a share always refers to what the chart draws;
+- projects down the left, models and tools stacked on the right (a tool card
+  of its own the height of the project list was mostly empty). Under a project
+  filter the one-row project card is dropped;
+- the heatmap only at 1 year, and the session table with fixed columns, the
+  directory's last segment and "first model +N".
+
+Two numbers changed meaning on purpose. The daily average leaves out today (a
+half day pulls the baseline down every morning) and empty days. A year chart
+starts at the first day with a reading: two months of history on a 365-day
+axis was ten months of blank. A project the range never saw is still an em
+dash, not a zero. The first draft of the new block drew 0 there, and
+`projectFigures` keeps the rule `projectTotal` had.
+
+The old helpers (`dayTotal`, `windowTotal`, `outputTotal`, `projectTotal`)
+went. Their edge-case tests now run against `dayValue`, `windowValue` and
+`projectFigures`, so the window's closed ends and the unreadable-date zero are
+still pinned. New tests cover `pace`, `sinceFirst`, `axisTicks` and `rank`.
+Eleven mutants against them, all killed.
+
+render-check gained `tokens/view`. It checks that the dock header opens the
+view and not a detail, that both figure cards and at least a week of bars
+render, that the output toggle changes the readout, that no range button wraps,
+that nothing scrolls sideways, and that Escape closes the view. The rank
+assertions in render-check and panes-check now expect two heroes of one size
+over pairs of one smaller size, and the contrast probe runs over the open view.
+
+Two things the first render-check run found. The column headers in the dock
+used `ink-3`, 2.97:1 in light, so the view's tertiary text is `ink-2`
+throughout. And the new check measured an empty chart: the view opens scoped
+to the selected session's project, and the check's transcript was in none, so
+it now clears the filter before measuring.
+
+## 2026-09-16 — Claude Code states, read from what the hook says
+
+「cc cx 都会经常出现错报、误报、上报不及时或者状态错误」. The live panel's own
+transition log said how often before anything was changed. In seven days, 2,071
+transitions; 421 were done → waiting, and 401 of those came 59–62 seconds after
+the done. Another 67 were a done that went back to working within two seconds.
+13 of the 36 open sessions were sitting on a state somebody had clicked.
+
+Nothing here was reasoned from the code. A throwaway tmux ran Claude Code
+2.1.273 with a settings file that hooked every event it has and logged each
+document with a timestamp, and each case below is a sequence it produced.
+
+**The minute after every turn.** Stop at 08:49:01, Notification at 08:50:01
+with `notification_type: idle_prompt` and "Claude is waiting for your input".
+Claude sends that a minute into any idle, and the panel had one Notification
+hook reporting waiting for all fifteen notification types. So every finished
+session became a triangle, sorted to the top, pushed to a phone as a question
+with a hint on how to answer it. `hooks.Read` now reads the type: idle_prompt
+and the news types (`auth_success`, `push_notification`, quota and
+computer-use notices) change nothing, and a type nobody has listed keeps
+meaning waiting. The idle notice is no longer stored as a question message.
+
+**Background agents.** Stop fires when the main thread's turn ends, including a
+turn that ended by launching agents. Its `background_tasks` lists them
+(08:51:11, a `subagent` `running`), and the agents go on calling tools, each
+PreToolUse reporting working. Hence done, working, done. A Stop listing a
+running or pending `subagent` or `workflow` now reports working. Shells and
+monitors deliberately do not count: a background shell is as often
+`npm run dev` as a build, and Claude's own footer says "done · 1 shell still
+running". Types nobody has listed do not count either, because a teammate or a
+remote agent might never report back.
+
+**Escape fires nothing.** Escape during an answer, and on a question or a
+permission dialog: no Stop and no idle notice, waited for past two minutes.
+The session read working, or waiting, until its next prompt. (Escape during a
+running tool was not captured, because the model refused to run a long
+foreground command. The hook schema has `PostToolUseFailure.is_interrupt` for
+it, which is read.) The transcript records every interrupt at once, as a user
+entry `[Request interrupted by user]` or `… for tool use]`, and the hooks
+already say where the transcript is. `internal/claudelog` tails it, reading
+only what was appended, and only for sessions a hook says are working or
+waiting. Only the marker as the entry's whole content counts, never a line
+quoting it, and never a sidechain.
+
+**Seventeen milliseconds.** PreToolUse at .913 and PermissionRequest at .932
+for one AskUserQuestion, each through its own `sh` and `curl`. Delivered in
+the other order, the dialog read working. A working report within a second of
+a waiting one is now taken as sent before it. A subagent's working report does
+not answer another agent's prompt either: seven background agents calling
+tools while the main thread asked a question overwrote the one state that
+needed a person.
+
+**Approving sends nothing.** After "yes" the next hook is PostToolUse, when the
+tool *ends*. A twenty-minute build approved from a phone stayed a triangle for
+twenty minutes. A key pressed after a permission menu now releases it: `1` on
+the menu, a line, or the chat bridge's `Keys`, which went straight to tmux and
+had never counted as input. Only a menu counts. AskUserQuestion also arrives as
+a PermissionRequest, but it takes a keystroke per question and reports
+PostToolUse the moment the last one is answered; a StopFailure's Enter on an
+empty prompt answers nothing. `TestAHookReportIsNotReleasedLikeANotify` used to
+assert that nothing releases a hook report. It was written on the argument that
+the next report supersedes the last, before anybody measured when the next
+report comes.
+
+**Events that were never installed.** PostToolUse (the end of an approved
+tool), PostToolUseFailure, StopFailure (a turn that died on an API error read
+working forever), and SessionStart (a fresh `claude` read working from the
+heuristic until its first prompt; `source: compact` fires mid-turn and is
+ignored). This machine's settings had four of the old five: it predated
+PermissionRequest, and the settings page counted any one event as installed.
+`UpgradeClaude` runs on start and appends what is missing.
+
+It went wrong the first time, on this machine. The end-to-end run started a
+second panel from a scratch data directory with the real HOME, so that Claude
+Code would be signed in. `Inspect` recognises the panel's entries by the
+script's *name*, so that it still finds them after a data directory moves. The
+scratch panel found the production panel's four entries, called them
+installed, and re-pointed all nine at its own throwaway script. The file was
+restored from the backup the installer had written, byte for byte, about two
+minutes later. An upgrade on start now needs every entry of the panel's to
+call exactly this panel's script path.
+
+**The first version of the rules, and what review did to it.** It let the idle
+notice settle a working session to done, held some reports against it, and
+joined PreToolUse to its PermissionRequest by a hash of tool and input. Three
+read-only reviews (logic, security, readability) turned up these problems:
+
+- A background agent's unanswered permission prompt settled to done by the
+  idle notice.
+- The first Enter in a two-question dialog released it.
+- A subagent's denied prompt refused every main-thread report for the rest of
+  the turn.
+- A parallel tool's PostToolUse slipped past the hash.
+- Re-merging on start deleted a person's own hook that shared an entry group
+  with the panel's, matcher and all, and replaced a symlinked `settings.json`
+  with a file.
+- A `Stat` before `Open` left a window to swap a FIFO in and hang the poller.
+- A tail that started exactly on a line skipped that line.
+- A transcript line stamped in the future hid every later interrupt.
+
+Measured against the rest of the rules, the idle notice turned out to have no
+case left that nothing else covers, so it is dropped outright and the holds
+went with it. The late-report rule is now any working report within a second.
+The main thread is never refused. The upgrade appends and refuses a symlink.
+The transcript is opened `O_NONBLOCK|O_NOCTTY` and checked after opening, and
+the last interrupt *written* wins, not the latest stamped.
+
+**Codex, while here.** The rollout fallback outranked the bell, and Codex
+writes no approval into its rollout: 59,897 `item_completed` entries on this
+machine and not one approval event. A Codex with untrusted hooks, which is
+this machine's, read working while it rang for a y. A bell rung after the
+log's working entry now wins until the screen moves.
+
+End to end, on a panel built from this branch after the review: five real
+Claude Code sessions on a throwaway socket, with the row read from the database
+every 300 ms. The real `settings.json` was hashed before and after.
+
+- Each session opened at done (SessionStart).
+- A one-word answer was done, and still done after its idle notice.
+- A two-question AskUserQuestion stayed waiting through the first two Enters
+  and went working, then done, when submitted.
+- Escape during an essay was done about a second later.
+- A background agent running `sleep 100` in the foreground read working from
+  launch to report-back (111 s), with no done in between, through the idle
+  notice.
+- A manual-mode permission prompt answered with `1` through tmux stayed waiting
+  until PostToolUse. That is expected: tmux is not the panel's input path. The
+  browser and chat paths are what release it, and those are tested through
+  `Live.Write` and the handler.
+
+Mutation-tested, two rounds. The first version: 52 mutants and 5 survivors,
+each fixed. After the rework: 64 mutants over `hooks.Read`, the detector,
+`Live.Write`, `claudelog`, the handler, the chat terminal and the upgrade.
+One of them did not compile, and was rewritten and killed. Five survived. A
+refused subagent report written to the row anyway, and the agent id dropped on
+the way to the detector, both went through the handler test unnoticed. That
+test now puts a background agent's PostToolUse over a question and reads the
+row before the poller does, which kills both.
+
+The other three survivors were equivalent, and two of them showed code that
+was not doing anything:
+
+- `IsRegular` after opening the transcript. `ReadAt` is refused by a FIFO or a
+  terminal, and a device reads as size zero, so the check was removed.
+- Moving the interrupt's time past the report. The report is already at done by
+  then, which ignores a re-read, so that was removed too.
+- The upgrade appending instead of merging. The two are the same for an event
+  with none of the panel's entries in it, which is every event it touches.
+  Append is kept, because it cannot drop anything, and a comment says why.
+
 ## 2026-09-16 — Chat asks before it talks to anyone, and the README says so
 
 Chat is advertised in both READMEs now, with the privacy side stated as a
@@ -23129,3 +23371,18 @@ button: inserting the menu case had swallowed the `approve`/`deny` line after
 it. Thirteen mutations: ten killed, one did not compile and was rewritten, and
 the two survivors, a stale button from an earlier menu and a menu with too many
 questions, each got a test.
+
+## 2026-09-16 — Menus meet the hook reading from main
+
+Merging main brought `hooks.Read`, which decides a report's state from its
+document, and the detector's idea of an *answerable* prompt, one a keystroke
+from a phone ends. Two things had to be joined rather than merged. The menu's
+"a tool that draws a menu is waiting, whatever PreToolUse reports" now applies
+to the state `hooks.Read` produced, not to the raw reported one. And the
+`permission_prompt` notification that announces a question menu read as
+answerable (main's reading excludes `AskUserQuestion` only on
+`PermissionRequest`, which this panel's older installs never sent); a menu of
+questions is not ended by its first key, so while a stored question menu is the
+latest message that notification is not answerable. A test draws a
+two-question menu, announces it, presses one key through the chat terminal,
+and expects waiting; each of the two corrections, removed, fails it.

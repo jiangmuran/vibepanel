@@ -232,7 +232,18 @@ func Extract(raw []byte) (Report, bool) {
 		switch doc.NotificationType {
 		case "permission_prompt":
 			r.Kind = KindPrompt
-		case "idle_prompt", "agent_needs_input", "elicitation_dialog", "elicitation_url_dialog":
+		case "idle_prompt":
+			// Not a question. Claude Code says it sixty seconds after every
+			// turn it finished, and as a question it went to a phone as one:
+			// "Claude is waiting for your input", a minute after the answer
+			// it is waiting about, with a hint saying how to reply. The answer
+			// itself was already sent, from Stop. Like a tool call, it is kept
+			// for the transcript path alone.
+			if r.TranscriptPath == "" {
+				return Report{}, false
+			}
+			return Report{Event: r.Event, TranscriptPath: r.TranscriptPath}, true
+		case "agent_needs_input", "elicitation_dialog", "elicitation_url_dialog":
 			r.Kind = KindQuestion
 		default:
 			r.Kind = KindNotice

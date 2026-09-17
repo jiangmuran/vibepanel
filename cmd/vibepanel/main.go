@@ -308,10 +308,22 @@ func cmdServe(args []string) error {
 	if cerr := srv.ConvertBoardLinks(ctx); cerr != nil {
 		logger.Warn("board links were not converted", "err", cerr)
 	}
+	// Claude Code hooks installed by an older build are missing the events
+	// added since, and nothing else would add them: the settings page counted
+	// a partial install as installed. Only an install that exists is touched.
+	if script, serr := hooks.InstallScript(filepath.Join(a.cfg.DataDir, "hooks")); serr == nil {
+		if added, uerr := hooks.UpgradeClaude(script); uerr != nil {
+			logger.Warn("claude code hooks were not upgraded", "err", uerr)
+		} else if len(added) > 0 {
+			logger.Info("claude code hooks upgraded; sessions started before this pick them up when restarted",
+				"added", strings.Join(added, ","))
+		}
+	}
 	// The pump reports output and bells straight into the server, which is how
 	// last_output_at stays honest and, from M4, how session state is decided.
 	mgr.OnSignals = srv.HandleSignals
 	mgr.OnInput = srv.HandleInput
+	mgr.OnKey = srv.HandleKey
 	// Before Reconcile, which re-derives every session from what is running
 	// right now. A bell that rang before the restart is not on the wire any
 	// more, and nothing else will say a session was asking for a human.

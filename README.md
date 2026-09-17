@@ -9,7 +9,7 @@ once. Stable, private, quick, and good to look at.**
 
 [![check](https://github.com/jiangmuran/vibepanel/actions/workflows/check.yml/badge.svg)](https://github.com/jiangmuran/vibepanel/actions/workflows/check.yml)
 [![Go 1.26](https://img.shields.io/badge/go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
-[![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![license: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial-orange)](LICENSE)
 
 **English** · [简体中文](README.zh-CN.md)
 
@@ -31,8 +31,8 @@ in the application layer does not cost you a session. The interface is a web
 page, which means you can point it at a development box and reach it from
 whatever device is in your hand.
 
-On the security side, the source is 100% open and every release is packaged by
-a public GitHub Action. What comes out is one Go binary with no dependencies
+On the security side, every line of the source is public and every release is
+packaged by a public GitHub Action. What comes out is one Go binary with no dependencies
 that never phones home, which is about as much as I can do for safety,
 portability and speed at the same time. Upgrading or restarting the panel does
 not touch a single session or a single running agent. It terminates its own
@@ -49,6 +49,22 @@ there to look at a file or run something while the agent is still going, and it
 saves you from interrupting the agent to ask. There is a separate interface
 built for phones, and you can turn on system notifications or point them at a
 channel of your own. Leaving the house stops being a reason to stop shipping.
+
+And you do not even need the page open. Pair the panel with a Telegram bot, a
+飞书 app or 微信 and a session that wants you sends a card there: which session,
+what it is waiting for, and on Telegram and 飞书 an *Allow* and a *Deny* button
+right under it. Reply `3: run the tests again` and the words go into session 3;
+`shot 3` sends back a picture of the pane. Turn on the advanced mode and you can
+just say "tell the docs one to add a changelog entry", and a headless Claude
+Code or Codex works out which session you mean, then waits for your `ok` before
+it types anything.
+
+The panel knows when an agent is actually done, not only when it has gone
+quiet: one click installs a hook into Claude Code, Codex, Kimi Code, zcode or
+opencode, showing you what it will write and backing the file up first. And
+upgrading is a button too: Settings → Updates downloads the release, checks it
+against `SHA256SUMS`, runs the new binary once before trusting it, swaps it in
+and restarts, with every session still running afterwards.
 
 The other thing I am fond of is share links. Put the whole system's status on a
 monitor, or put tokens spent against code produced on a big screen so whoever
@@ -219,4 +235,13 @@ photographing it.
 
 ## License
 
-[MIT](LICENSE).
+[PolyForm Noncommercial 1.0.0](LICENSE), with attribution terms. Personal use,
+study, research and other noncommercial use are free, including changing it and
+sharing what you changed, as long as the author credit and license notices stay
+exactly as they are and your version says it is based on vibepanel. Commercial
+use, whether inside a company, as a hosted service or bundled into a product,
+needs a separate license: write to
+[jmr@jiangmuran.com](mailto:jmr@jiangmuran.com).
+
+Releases up to and including v1.20.1 were published under the MIT License, and
+copies obtained under it keep it.

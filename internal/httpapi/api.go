@@ -24,6 +24,7 @@ import (
 
 	"github.com/jiangmuran/vibepanel/internal/auth"
 	"github.com/jiangmuran/vibepanel/internal/chat"
+	"github.com/jiangmuran/vibepanel/internal/claudelog"
 	"github.com/jiangmuran/vibepanel/internal/codexlog"
 	"github.com/jiangmuran/vibepanel/internal/config"
 	"github.com/jiangmuran/vibepanel/internal/git"
@@ -52,7 +53,10 @@ type Server struct {
 	// codexLogs follows the rollout file of each Codex session, for the ones
 	// no hook is reporting. The zero value reads the real /proc.
 	codexLogs codexlog.Watcher
-	Sampler   *sysmon.Sampler
+	// claudeLogs follows each Claude Code session's transcript for the one
+	// thing its hooks never report, an interrupt.
+	claudeLogs claudelog.Watcher
+	Sampler    *sysmon.Sampler
 
 	// installable answers whether this binary can be replaced in place. A
 	// field so a test can force the answer: the real one asks about the
@@ -781,6 +785,10 @@ type hookStateRequest struct {
 // output heuristic, which is why the hook script can be installed globally
 // without affecting anything outside the panel.
 func (s *Server) handleHookState(w http.ResponseWriter, r *http.Request) {
+	// Taken before anything that can wait on the database. It is compared with
+	// the time Claude stamped an interrupt in its transcript, and a report the
+	// handler sat on would read as newer than an Escape that followed it.
+	received := time.Now()
 	ctx := r.Context()
 	root, err := s.HookToken(ctx)
 	if err != nil {
@@ -839,8 +847,7 @@ func (s *Server) handleHookState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	st := session.State(req.State)
-	if !st.Valid() {
+	if !session.State(req.State).Valid() {
 		writeErr(w, http.StatusBadRequest, "unknown state "+req.State)
 		return
 	}
@@ -858,18 +865,48 @@ func (s *Server) handleHookState(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreErr(w, err)
 		return
 	}
+	var note hookNote
 	if len(body) <= hooks.MaxPayload {
-		// PreToolUse reports "working", and for a tool that draws a menu the
-		// session is in fact stopped, waiting on its person; a phone told
-		// nothing until an unrelated notification arrives, if one does.
-		if s.recordHookMessage(ctx, prev, body) && st == session.StateWorking {
-			st = session.StateWaiting
-		}
+		note = s.recordHookMessage(ctx, prev, body)
 	}
-	if req.Source == hooks.CodexLegacySource {
-		s.Detector.ReportNotify(req.SessionID, st, time.Now())
-	} else {
-		s.Detector.Report(req.SessionID, st, time.Now())
+	// What the hook was installed to report, corrected by what its document
+	// says happened. See hooks.Read for the cases, each one measured.
+	reading := hooks.Read(req.State, body)
+	if reading.State == "" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// Validated again: the reading is a second producer of state strings, and
+	// red line 6 is about what reaches the store, not what reached the door.
+	// A failure here is the panel's bug, not the caller's.
+	st := session.State(reading.State)
+	if !st.Valid() {
+		s.Log.Error("hooks.Read produced an unknown state", "state", reading.State)
+		writeErr(w, http.StatusInternalServerError, "unknown state")
+		return
+	}
+	// PreToolUse reports "working", and for a tool that draws a menu the
+	// session is in fact stopped, waiting on its person; a phone would be told
+	// nothing until the notification that follows, if one does.
+	if note.newMenu && st == session.StateWorking {
+		st = session.StateWaiting
+	}
+	// The "permission_prompt" that announces a question menu reads as a menu
+	// one keystroke answers, and a menu of questions is not: the first key
+	// moves to the second question with the menu still on screen.
+	if note.questionsOpen {
+		reading.Answerable = false
+	}
+	if !s.Detector.Hook(req.SessionID, session.HookReport{
+		State:      st,
+		Legacy:     req.Source == hooks.CodexLegacySource,
+		Agent:      reading.Agent,
+		Answerable: reading.Answerable,
+	}, received) {
+		// Heard and not taken: see Detector.Hook. The row keeps what the
+		// report would have replaced, which is the point.
+		w.WriteHeader(http.StatusNoContent)
+		return
 	}
 	// The row is kept rather than discarded because the transition has to be
 	// recorded from here. A hook is the *accurate* path -- the agent said so
@@ -910,6 +947,14 @@ func (s *Server) handleHookState(w http.ResponseWriter, r *http.Request) {
 func (s *Server) HandleInput(sessionID string) {
 	if s.Detector != nil {
 		s.Detector.Input(sessionID, time.Now())
+	}
+}
+
+// HandleKey records that a viewer pressed a key in a session. Wired to
+// session.Manager.OnKey; runs on the viewer's goroutine.
+func (s *Server) HandleKey(sessionID string) {
+	if s.Detector != nil {
+		s.Detector.Key(sessionID, time.Now())
 	}
 }
 
@@ -1113,6 +1158,37 @@ func (s *Server) stateIsGuessed(sessions []store.Session) bool {
 	}
 	return true
 }
+
+// readInterrupt tells the detector about an interrupt the session's Claude Code
+// transcript recorded after its last hook report.
+//
+// Only while a hook report says the session is busy or asking: that is the
+// state an interrupt leaves wrong, and a session at done has nothing to
+// correct, so an idle panel reads no transcripts at all.
+func (s *Server) readInterrupt(ctx context.Context, row store.Session) {
+	st := s.Detector.HookState(row.ID)
+	if st != session.StateWorking && st != session.StateWaiting {
+		return
+	}
+	// Not narrowed to sessions whose tool reads as claude. That name comes from
+	// the pane's process, and Claude Code started through a wrapper, or through
+	// node, is not called claude there. Any other agent's transcript simply has
+	// no line in Claude's shape to find.
+	tr, ok, err := s.DB.GetSessionTranscript(ctx, row.ID)
+	if err != nil || !ok {
+		return
+	}
+	at, ok := s.claudeLogs.Interrupted(row.ID, tr.Path)
+	// A stamp from the future would end every report until the transcript
+	// changed: a clock stepped back, or a line somebody wrote there.
+	if ok && !at.After(time.Now().Add(interruptSkew)) {
+		s.Detector.Interrupted(row.ID, at)
+	}
+}
+
+// interruptSkew bounds how far in the future a transcript's interrupt may be
+// stamped and still be believed.
+const interruptSkew = 5 * time.Second
 
 // readCodexLog says whether a pane's state should come from its Codex rollout:
 // a Codex, with no hook report for codexLogAfter.
@@ -2135,6 +2211,7 @@ func (s *Server) pollOnce(ctx context.Context) error {
 		}
 		s.Detector.Retain(ids)
 		s.codexLogs.Retain(ids)
+		s.claudeLogs.Retain(ids)
 	}
 	// Which panes have a full-screen program drawing in them.
 	//
@@ -2231,6 +2308,7 @@ func (s *Server) pollOnce(ctx context.Context) error {
 			}
 		}
 		if s.Detector != nil {
+			s.readInterrupt(ctx, row)
 			st, src := s.Detector.Evaluate(row.ID, session.Observation{
 				Dead: info.Dead,
 				// The launch argv as well as the pane's current command, for

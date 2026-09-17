@@ -1,4 +1,4 @@
-import type { TokenUsage, UsageDay } from '../../protocol/wire'
+import type { TokenUsage, UsageDay, UsageTotals } from '../../protocol/wire'
 import { totalOf } from './tokens'
 
 /**
@@ -49,43 +49,22 @@ export function dayBefore(today: string, back: number): string {
 }
 
 /**
- * Everything spent in the `span` days ending at `today`, inclusive.
+ * What this project spent over the range, as both readings, or null when
+ * there is no answer.
  *
- * String comparison on YYYY-MM-DD is a date comparison, which is the one thing
- * that format is for. The window is closed at both ends: a payload whose range
- * is longer than the window must not have its older days counted, and a clock
- * ahead of the server's must not pull in a day the server calls tomorrow.
+ * Two different absences, and neither is a zero. No project selected is null:
+ * a figure with nothing scoping it, beside a project's name, is the panel
+ * answering a question it was not asked. A project the payload's range never
+ * saw is null as well: the row is absent because the window does not reach
+ * whatever was spent in it, which an em dash says and a zero does not.
  */
-export function windowTotal(days: UsageDay[], today: string, span: number): number {
-  const from = dayBefore(today, span - 1)
-  if (from === '') return 0
-  let sum = 0
-  for (const d of days) {
-    if (d.day >= from && d.day <= today) sum += totalOf(d)
-  }
-  return sum
-}
-
-/** Everything one day cost, or 0 for a day with no row. */
-export function dayTotal(days: UsageDay[], day: string): number {
-  const found = days.find((d) => d.day === day)
-  return found ? totalOf(found) : 0
-}
-
-/**
- * What this project cost over the range, or null when there is no answer.
- *
- * Two different absences, and neither is a zero. No project selected is null —
- * a total with nothing scoping it, under a heading saying "this project", is
- * the panel answering a question it was not asked. A project the payload's
- * range never saw is also null rather than 0: the row is absent because the
- * window does not reach whatever was spent in it, which an em dash says and a
- * zero does not.
- */
-export function projectTotal(data: TokenUsage, projectId: string | null): number | null {
+export function projectFigures(
+  data: TokenUsage,
+  projectId: string | null,
+): { total: number; output: number } | null {
   if (!projectId) return null
   const row = data.projects.find((p) => p.id === projectId)
-  return row ? totalOf(row) : null
+  return row ? { total: totalOf(row), output: row.output } : null
 }
 
 /** One agent's share of the range. */
@@ -136,32 +115,6 @@ export function toolShares(data: TokenUsage): ToolShare[] {
 }
 
 /**
- * How much the agents *produced* over the range.
- *
- * This is the panel's reading of 「字数」, and it is a reading rather than the
- * thing itself, so it is worth being exact about. The panel cannot count
- * characters or lines: what reaches it is a token ledger read out of the
- * agents' own transcripts, and a token is not a character in any language and
- * is nothing like one in Chinese. Turning output tokens into a character count
- * would need a per-model tokeniser the panel does not have and a ratio it
- * would be inventing.
- *
- * Output tokens are the closest true answer to "how much did it write", and
- * they are the one column of the four that is unambiguously production —
- * input, cache read and cache write are all the cost of *asking*. So the
- * figure is output, and it is labelled output.
- */
-export function outputTotal(days: UsageDay[], today: string, span: number): number {
-  const from = dayBefore(today, span - 1)
-  if (from === '') return 0
-  let sum = 0
-  for (const d of days) {
-    if (d.day >= from && d.day <= today) sum += d.output
-  }
-  return sum
-}
-
-/**
  * The last `span` days as a series, oldest first, with gaps as zeros.
  *
  * Gaps matter: `byDay` only carries days that had something on them, so a
@@ -177,4 +130,145 @@ export function daySeries(days: UsageDay[], today: string, span: number): number
     out.push(day === '' ? 0 : (by.get(day) ?? 0))
   }
   return out
+}
+
+/**
+ * Which reading of a row a figure is.
+ *
+ * Two, and they are shown side by side rather than one standing in for the
+ * other. `total` is what the agents were billed for and is almost entirely
+ * cache reads -- 97% on the machine this was written on -- so on its own it
+ * moves with how much context was re-read, not with how much work was done.
+ * `output` is what the models produced. Neither is the right one to drop.
+ */
+export type Metric = 'total' | 'output'
+
+/** One row read as `metric`. */
+function valueOf(t: UsageTotals, metric: Metric): number {
+  return metric === 'output' ? t.output : totalOf(t)
+}
+
+/** One day's value, or 0 for a day with no row. */
+export function dayValue(days: UsageDay[], day: string, metric: Metric): number {
+  const found = days.find((d) => d.day === day)
+  return found ? valueOf(found, metric) : 0
+}
+
+/**
+ * One reading over the `span` days ending at `today`, inclusive.
+ *
+ * String comparison on YYYY-MM-DD is a date comparison, which is the one thing
+ * that format is for. The window is closed at both ends: a payload whose range
+ * is longer than the window must not have its older days counted, and a clock
+ * ahead of the server's must not pull in a day the server calls tomorrow.
+ *
+ * `output` is the panel's reading of 「字数」, and a reading rather than the
+ * thing: a token is not a character in any language, and turning one into the
+ * other would need a per-model tokeniser the panel does not have. It is the one
+ * column of the four that is unambiguously production, and it is labelled
+ * output.
+ */
+export function windowValue(days: UsageDay[], today: string, span: number, metric: Metric): number {
+  const from = dayBefore(today, span - 1)
+  if (from === '') return 0
+  let sum = 0
+  for (const d of days) {
+    if (d.day >= from && d.day <= today) sum += valueOf(d, metric)
+  }
+  return sum
+}
+
+/** A day on the chart: its label and its value, gaps filled with zero. */
+export interface DayPoint {
+  day: string
+  value: number
+}
+
+/**
+ * The last `span` days as points, oldest first. See daySeries for why gaps are
+ * zeros rather than absences.
+ */
+export function dayPoints(days: UsageDay[], today: string, span: number, metric: Metric): DayPoint[] {
+  const by = new Map(days.map((d) => [d.day, valueOf(d, metric)]))
+  const out: DayPoint[] = []
+  for (let i = span - 1; i >= 0; i--) {
+    const day = dayBefore(today, i)
+    if (day !== '') out.push({ day, value: by.get(day) ?? 0 })
+  }
+  return out
+}
+
+/**
+ * The average of the finished days that have anything on them, and today
+ * against it.
+ *
+ * Today is left out of the average: it is half a day, and folding it in pulls
+ * the baseline down every morning and makes every afternoon look unusual.
+ * Empty days are left out as well, so a week off does not halve the average
+ * of the weeks worked. Null when there is nothing to compare against.
+ */
+export function pace(points: DayPoint[], today: string): { average: number; ratio: number } | null {
+  const past = points.filter((p) => p.day !== today && p.value > 0)
+  if (past.length === 0) return null
+  const average = past.reduce((n, p) => n + p.value, 0) / past.length
+  const now = points.find((p) => p.day === today)?.value ?? 0
+  return { average, ratio: average > 0 ? now / average : 0 }
+}
+
+/**
+ * The points from the first one with a value, keeping at least `min` at the
+ * end. What comes before the first reading is not a quiet stretch; it is
+ * before there was anything to read.
+ */
+export function sinceFirst(points: DayPoint[], min: number): DayPoint[] {
+  const first = points.findIndex((p) => p.value > 0)
+  if (first < 0) return points
+  return points.slice(Math.min(first, Math.max(0, points.length - min)))
+}
+
+/** `2026-09-14` as `9/14`, for an axis. */
+export function shortDay(day: string): string {
+  const [, m, d] = day.split('-').map(Number)
+  if (!Number.isFinite(m) || !Number.isFinite(d)) return day
+  return `${m}/${d}`
+}
+
+/**
+ * Which points get a date under them: the first, the last, and evenly between,
+ * at most `count` in all. Indices, oldest first.
+ */
+export function axisTicks(length: number, count: number): number[] {
+  if (length <= 0) return []
+  if (length === 1 || count <= 1) return [length - 1]
+  const n = Math.min(count, length)
+  const out = new Set<number>()
+  for (let i = 0; i < n; i++) out.add(Math.round((i * (length - 1)) / (n - 1)))
+  return [...out]
+}
+
+/** A ranked row, with its share of the rows shown. */
+export interface Ranked {
+  key: string
+  label: string
+  hint: string
+  total: number
+  output: number
+  share: number
+}
+
+/**
+ * Rows largest first by `metric`, empty ones dropped, each with its share of
+ * the whole list -- not of the rows kept after a cut, so "top six" still reads
+ * as a fraction of everything.
+ */
+export function rank(
+  rows: { key: string; label: string; hint: string; t: UsageTotals }[],
+  metric: Metric,
+): Ranked[] {
+  const kept = rows
+    .map((r) => ({ key: r.key, label: r.label, hint: r.hint, total: totalOf(r.t), output: r.t.output, v: valueOf(r.t, metric) }))
+    .filter((r) => r.v > 0)
+    .sort((a, b) => b.v - a.v)
+  const sum = kept.reduce((n, r) => n + r.v, 0)
+  return kept.map(({ v, ...r }) => ({ ...r, share: sum > 0 ? v / sum : 0 }))
 }

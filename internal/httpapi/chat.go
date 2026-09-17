@@ -125,7 +125,7 @@ func (s *Server) StartChat(ctx context.Context) error {
 		return err
 	}
 	s.Chat = chat.New(chat.Deps{
-		DB: s.DB, Term: ChatTerminal(s.Tmux), Box: box, Log: s.Log,
+		DB: s.DB, Term: s.chatTerminal(), Box: box, Log: s.Log,
 		PublicURL: s.Cfg.PublicURL,
 		Zone:      func() *time.Location { return s.loc(ctx) },
 		Shot:      s.Shooter,
@@ -1226,13 +1226,11 @@ const promptEcho = 5
 // recordHookMessage keeps what an agent's hook document carried and tells
 // the bridge. Called before the state is written, so the message is never
 // newer than the state change it belongs to (the bridge compares the two).
-// It reports whether the document put a menu on the screen, which is a
-// session waiting on its person whatever state the hook was configured to
-// send for that event.
-func (s *Server) recordHookMessage(ctx context.Context, row store.Session, body []byte) (menu bool) {
+// What it reports is about menus; see hookNote.
+func (s *Server) recordHookMessage(ctx context.Context, row store.Session, body []byte) (note hookNote) {
 	rep, ok := hooks.Extract(body)
 	if !ok {
-		return false
+		return note
 	}
 	tool := chat.AgentFor(row.LaunchCommand, row.Command)
 	if rep.TranscriptPath != "" {
@@ -1245,7 +1243,7 @@ func (s *Server) recordHookMessage(ctx context.Context, row store.Session, body 
 		text = "(interrupted)"
 	}
 	if text == "" {
-		return false
+		return note
 	}
 	// A menu on the screen is announced a few seconds later by a
 	// Notification ("Claude needs your permission", "Claude is waiting for
@@ -1256,7 +1254,8 @@ func (s *Server) recordHookMessage(ctx context.Context, row store.Session, body 
 	if rep.Event == "Notification" {
 		if last, ok, _ := s.DB.LatestSessionMessage(ctx, row.ID); ok && last.Menu != "" {
 			_ = s.DB.TouchSessionMessage(ctx, last.ID, time.Now().Unix())
-			return false
+			note.questionsOpen = strings.Contains(last.Menu, `"tool":"`+hooks.ToolAskUserQuestion+`"`)
+			return note
 		}
 	}
 	// Claude Code fires PermissionRequest (with the command) and then
@@ -1265,7 +1264,7 @@ func (s *Server) recordHookMessage(ctx context.Context, row store.Session, body 
 	// prompt already stored, is the same event said twice.
 	if rep.Event == "Notification" && rep.Kind == hooks.KindPrompt {
 		if last, ok, _ := s.DB.LatestSessionMessage(ctx, row.ID); ok && last.Kind == store.MessagePrompt && time.Now().Unix()-last.At <= promptEcho {
-			return false
+			return note
 		}
 	}
 	msg := store.SessionMessage{SessionID: row.ID, Kind: rep.Kind, Text: text, Tool: tool}
@@ -1276,12 +1275,23 @@ func (s *Server) recordHookMessage(ctx context.Context, row store.Session, body 
 	m, err := s.DB.AddSessionMessage(ctx, msg)
 	if err != nil {
 		s.Log.Warn("session message", "err", err)
-		return false
+		return note
 	}
 	if s.Chat != nil {
 		s.Chat.SessionSaid(row, m)
 	}
-	return rep.Menu != nil
+	note.newMenu = rep.Menu != nil
+	return note
+}
+
+// hookNote is what storing a hook's message found out about menus.
+type hookNote struct {
+	// newMenu: the document put a menu on the screen, which is a session
+	// waiting on its person whatever state the hook reports for the event.
+	newMenu bool
+	// questionsOpen: the document announced a question menu already stored,
+	// which one keystroke does not answer.
+	questionsOpen bool
 }
 
 // chatMonitor is the machine as the chat reads it: the panel's own sample,

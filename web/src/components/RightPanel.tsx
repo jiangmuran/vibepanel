@@ -23,7 +23,6 @@ import { ErrorBoundary } from './ErrorBoundary'
 import { PanelDock } from './panels/PanelDock'
 import { DETAIL_META } from './panels/dock'
 import { PanelDetail } from './PanelDetail'
-import { TokenUsage } from './panels/TokenUsage'
 import { useSpend } from './panels/useSpend'
 import {
   PANEL_MAX_WIDTH,
@@ -191,10 +190,8 @@ export function RightPanel(props: Props) {
    * short version is that this is a thing you are doing rather than a thing you
    * built, and the pane layout is the other kind.
    *
-   * `full` for tokens is not drawn here at all — it hands over to the panel's
-   * existing full-width token view, which is a purpose-built analysis screen
-   * and strictly better than the same block stretched. The gesture is the same
-   * in all three blocks: press to open, press again for the window.
+   * Tokens are not in here: their dock header opens the full-width token view
+   * directly.
    */
   const [opened, setDetail] = useState<{ block: DetailBlock; full: boolean } | null>(null)
   const openDetail = useCallback((block: DetailBlock) => setDetail({ block, full: false }), [])
@@ -206,8 +203,8 @@ export function RightPanel(props: Props) {
     setDetail({ block: 'page', full: false })
   }
 
-  // One reading of the token ledger for the compact block and the opened one,
-  // so expanding does not restart the poll under the figures you pressed.
+  // One reading of the token ledger for the dock block, above the pane layout
+  // so switching tabs does not restart the poll.
   const spend = useSpend()
 
   // A project that has gone takes its detail with it. `repo` is about a
@@ -405,7 +402,10 @@ export function RightPanel(props: Props) {
         density={density}
         projectId={projectId}
         projectName={project?.name ?? null}
-        onOpen={openDetail}
+        // Tokens open straight into the full view. The side-panel detail they
+        // used to open first was the same figures a third time, in a column
+        // too narrow to lay them out.
+        onOpen={(block) => (block === 'tokens' ? props.onOpenTokens() : openDetail(block))}
       />
     </ErrorBoundary>
   )
@@ -450,16 +450,6 @@ export function RightPanel(props: Props) {
       const session =
         props.currentSession && props.currentSession.projectId === project.id ? props.currentSession : null
       return <PagePreview page={page} session={session} full={full} onPaste={props.onPaste} />
-    }
-    if (block === 'tokens') {
-      return (
-        <TokenUsage
-          spend={spend}
-          projectId={projectId}
-          projectName={project?.name ?? null}
-          density={density}
-        />
-      )
     }
     if (!project) return null
     return <GitPanel projectId={project.id} sessions={props.sessions} />
@@ -537,11 +527,7 @@ export function RightPanel(props: Props) {
             // year grid and four tables and could never be this column. The
             // other two grow into an overlay of the same shape they already
             // have. Either way the press means "give this the window".
-            onFull={
-              detail.block === 'tokens'
-                ? () => props.onOpenTokens()
-                : () => setDetail({ block: detail.block, full: true })
-            }
+            onFull={() => setDetail({ block: detail.block, full: true })}
           >
             <ErrorBoundary label={`The ${detail.block} detail`}>
               {detailBody(detail.block)}
@@ -587,8 +573,7 @@ export function RightPanel(props: Props) {
 
       {/* The third state, over the window rather than in the column. Rendered
           as a sibling of the panel's own box so it is not clipped by the
-          panel's width, and only for the blocks that have one — tokens go to
-          the full-width view App already owns. */}
+          panel's width. */}
       {detail !== null && detail.full && (
         <PanelDetail
           block={detail.block}
