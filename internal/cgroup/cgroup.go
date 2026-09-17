@@ -254,9 +254,17 @@ func (d Dir) SetUint(file string, v uint64) error {
 
 // KeyValues reads a flat "key value" file: memory.events, cgroup.events,
 // cpu.stat, and the subset of memory.stat anything here uses.
-func (d Dir) KeyValues(file string) map[string]uint64 {
-	s, _ := d.Read(file)
-	return parseKeyValues(s)
+//
+// The error is carried rather than swallowed because a failed read and a real
+// zero are different facts: memory.stat read as empty made the sessions' held
+// memory zero, and the budget built on that zero dropped the pool to its floor
+// with every session still in it.
+func (d Dir) KeyValues(file string) (map[string]uint64, error) {
+	s, err := d.Read(file)
+	if err != nil {
+		return nil, err
+	}
+	return parseKeyValues(s), nil
 }
 
 func parseKeyValues(s string) map[string]uint64 {
@@ -313,8 +321,12 @@ func ParsePressure(s string) Pressure {
 	return p
 }
 
-// Frozen reports whether cgroup.freeze has taken effect.
-func (d Dir) Frozen() bool { return d.KeyValues("cgroup.events")["frozen"] == 1 }
+// Frozen reports whether cgroup.freeze has taken effect. A cgroup that cannot
+// be read is treated as not frozen, the safe direction for a resume decision.
+func (d Dir) Frozen() bool {
+	st, _ := d.KeyValues("cgroup.events")
+	return st["frozen"] == 1
+}
 
 // Freeze stops, or resumes, every process in the cgroup.
 //
@@ -332,8 +344,9 @@ func (d Dir) Freeze(on bool) error {
 // Chown hands the delegation files of a cgroup to a user, which is what
 // systemd does itself for a unit with Delegate=yes and User=.
 //
-// Needed for a scope on systemd before 252, which refuses User= on a scope
-// (measured on 249) and so leaves a delegated scope owned by root.
+// The handover on every systemd version, not a fallback: creating a scope
+// with User= makes systemd chown the files as part of the job, before the
+// moves into it have finished being checked. See ScopeProps.
 func (d Dir) Chown(uid, gid int) error {
 	for _, f := range []string{"", "cgroup.procs", "cgroup.subtree_control", "cgroup.threads"} {
 		if err := os.Chown(filepath.Join(string(d), f), uid, gid); err != nil {

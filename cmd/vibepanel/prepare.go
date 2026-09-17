@@ -166,12 +166,19 @@ func prepare(ctx context.Context, as string) error {
 	a := resources.Adoption{
 		Manager: cgroup.System,
 		Scope:   cgroup.ScopeName(cgroup.System, uid, socket),
+		// No User here, on any systemd version: 252+ chown the delegation
+		// files as part of creating the scope, which hands the account the
+		// inside of it before the moves have finished being checked. The scope
+		// stays root's and Adopt hands it over itself, last.
 		Props: cgroup.ScopeProps{
-			User:      as,
 			MemoryMax: total / 100 * resources.MaxPoolPercent,
 			NoSwap:    true,
 		},
 		OwnerUID: uid, OwnerGID: gid,
+		// Where a pid that was reused mid-move goes back to. Root's, and not
+		// where the process had been, which is the account's to choose when
+		// the "tmux server" is a fake on the panel's socket.
+		Unit: cgroup.At(rel),
 	}
 	left := resources.Leftovers(cgroup.At(rel), os.Getpid(), resources.LazyProcs())
 	if err := a.Adopt(ctx, server, left); err != nil {

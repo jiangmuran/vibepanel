@@ -210,7 +210,9 @@ type Alert struct {
 	// it will not.
 	AutoAt int64 `json:"autoAt,omitempty"`
 	// CanPause and CanBoost say which answers mean anything now: pausing needs
-	// the sessions isolated, and a boost is nothing under Performance.
+	// the sessions isolated, a boost is nothing under Performance, and neither
+	// is a boost under machine pressure, which is about the host and not the
+	// pool a boost widens.
 	CanPause bool `json:"canPause,omitempty"`
 	CanBoost bool `json:"canBoost,omitempty"`
 }
@@ -434,8 +436,15 @@ func (g *Governor) Tick(ctx context.Context) {
 	r := Reading{Total: total, Available: avail, HostStall: hostPressure("memory").Full10}
 	pool := PoolView{}
 	if layout != nil {
-		pool.Held = held(layout.Pool)
-		g.applyBudget(layout, Budget(params, total, avail, pool.Held, limitOf(layout.Scope)))
+		// A memory.stat that cannot be read is not a pool that holds nothing:
+		// a budget built on that zero fell to its floor with every session
+		// still in it, and the kernel killed them before the next tick's
+		// successful read put the limit back.
+		poolHeld, heldOK := held(layout.Pool)
+		if heldOK {
+			g.applyBudget(layout, Budget(params, total, avail, poolHeld, limitOf(layout.Scope)))
+		}
+		pool.Held = poolHeld
 		pool.Current, _ = layout.Pool.Uint("memory.current")
 		pool.Max = limitOf(layout.Pool)
 		mem, _ := layout.Pool.Pressure("memory")
@@ -478,8 +487,17 @@ func (g *Governor) Tick(ctx context.Context) {
 }
 
 // refaultRate is workingset_refault_file per second since the last tick.
+//
+// A read that fails keeps the previous sample rather than storing zero: a zero
+// followed by the real cumulative counter computed a refault rate of everything
+// the pool had ever refaulted over two seconds, and an npm install on a slow
+// disk read as the memory stall this rate exists to rule out.
 func (g *Governor) refaultRate(d cgroup.Dir, now time.Time) float64 {
-	cur := d.KeyValues("memory.stat")["workingset_refault_file"]
+	st, err := d.KeyValues("memory.stat")
+	if err != nil {
+		return 0
+	}
+	cur := st["workingset_refault_file"]
 	prev := g.t.refaults
 	g.t.refaults = memSample{at: now, cur: cur}
 	if prev.at.IsZero() || cur < prev.cur {
@@ -593,6 +611,17 @@ func (g *Governor) setAlert(a *Alert, now time.Time) {
 	}
 }
 
+// quietened re-reads the answer deadline during a tick that is already past
+// its first read. The reads between -- the culprit's process list out of /proc,
+// which is the slow part of a tick on exactly the machine this runs on -- take
+// real time, and an answer that lands inside them must not be overwritten by
+// the question it answered, or acted on.
+func (g *Governor) quietened() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return time.Now().Before(g.quiet)
+}
+
 // answered takes the question down after somebody acted on the session it
 // names, and keeps the next one back while the pressure falls.
 func (g *Governor) answered(sessionID string) {
@@ -673,10 +702,15 @@ func limitOf(d cgroup.Dir) uint64 {
 }
 
 // held is anon plus shmem from memory.stat: what a cgroup holds that reclaim
-// cannot take back while swap is off.
-func held(d cgroup.Dir) uint64 {
-	st := d.KeyValues("memory.stat")
-	return st["anon"] + st["shmem"]
+// cannot take back while swap is off. The bool says the stat was read: false
+// means unknown, not zero, and callers that build anything on the number must
+// keep what they had rather than act on the zero.
+func held(d cgroup.Dir) (uint64, bool) {
+	st, err := d.KeyValues("memory.stat")
+	if err != nil {
+		return 0, false
+	}
+	return st["anon"] + st["shmem"], true
 }
 
 // ownMemory is what the panel's own cgroup holds, or its RSS where that

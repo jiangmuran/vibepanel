@@ -24,13 +24,21 @@ func (g *Governor) readSessions(l *Layout, ro roster, now time.Time) []SessionVi
 	seen := map[string]bool{}
 	for _, m := range ro.metas {
 		v := SessionView{ID: m.ID, TmuxName: m.TmuxName, Priority: PriorityNormal}
+		// heldKnown says the growth sample below is a reading rather than a
+		// read that failed: a zero sample in the window reads as the session
+		// having just released everything, and growth picks culprit.
+		heldKnown := true
 		if l != nil {
 			leaf, ok := l.Session(m.TmuxName)
 			if !ok || !leaf.Exists() {
 				continue
 			}
 			v.Memory, _ = leaf.Uint("memory.current")
-			v.Held = held(leaf)
+			if h, ok := held(leaf); ok {
+				v.Held = h
+			} else {
+				heldKnown = false
+			}
 			v.Frozen = leaf.Frozen()
 			pids, _ := leaf.Procs()
 			v.Procs = len(pids)
@@ -42,13 +50,15 @@ func (g *Governor) readSessions(l *Layout, ro roster, now time.Time) []SessionVi
 				v.Frozen = false
 			}
 			g.noteOOM(m.ID, leaf)
-			usage := leaf.KeyValues("cpu.stat")["usage_usec"]
-			if prev, ok := g.t.cpuPrev[m.ID]; ok && usage >= prev.usage {
-				if el := now.Sub(prev.at).Seconds(); el > 0 {
-					v.CPUPercent = float64(usage-prev.usage) / 1e6 / el / float64(runtime.NumCPU()) * 100
+			if st, err := leaf.KeyValues("cpu.stat"); err == nil {
+				usage := st["usage_usec"]
+				if prev, ok := g.t.cpuPrev[m.ID]; ok && usage >= prev.usage {
+					if el := now.Sub(prev.at).Seconds(); el > 0 {
+						v.CPUPercent = float64(usage-prev.usage) / 1e6 / el / float64(runtime.NumCPU()) * 100
+					}
 				}
+				g.t.cpuPrev[m.ID] = cpuSample{at: now, usage: usage}
 			}
-			g.t.cpuPrev[m.ID] = cpuSample{at: now, usage: usage}
 		} else {
 			pane, ok := ro.panes[m.TmuxName]
 			if !ok || pane.PID <= 0 {
@@ -66,7 +76,9 @@ func (g *Governor) readSessions(l *Layout, ro roster, now time.Time) []SessionVi
 			v.Priority = PriorityHigh
 		}
 		seen[m.ID] = true
-		g.t.growth[m.ID] = appendSample(g.t.growth[m.ID], memSample{at: now, cur: v.Held}, now)
+		if heldKnown {
+			g.t.growth[m.ID] = appendSample(g.t.growth[m.ID], memSample{at: now, cur: v.Held}, now)
+		}
 		out = append(out, v)
 	}
 	for id := range g.t.growth {
@@ -85,8 +97,15 @@ func (g *Governor) readSessions(l *Layout, ro roster, now time.Time) []SessionVi
 // memory.events.local, not memory.events: the latter counts the leaf's
 // descendants too, and a session leaf has none, but the local file says what
 // is meant.
+//
+// A read that fails keeps the previous count rather than storing zero: the
+// next successful read would count every OOM the session has ever had as new.
 func (g *Governor) noteOOM(sessionID string, leaf cgroup.Dir) {
-	n := leaf.KeyValues("memory.events.local")["oom_kill"]
+	st, err := leaf.KeyValues("memory.events.local")
+	if err != nil {
+		return
+	}
+	n := st["oom_kill"]
 	prev, seen := g.t.ooms[sessionID]
 	g.t.ooms[sessionID] = n
 	if !seen || n <= prev {
