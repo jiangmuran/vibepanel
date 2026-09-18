@@ -23825,3 +23825,47 @@ what a drop costs: a viewer that falls a ring behind is replayed from the ring
 when it reconnects.
 
 Audit 21 (x/crypto's ssh advisories) still has no fixed release to move to.
+
+## 2026-09-18 — x/crypto, and the advisory that has no fix
+
+Audit 21 said `golang.org/x/crypto v0.55.0` carried two ssh DoS advisories and
+the unmaintained-openpgp one, with no fix to move to. There is now: v0.57.0
+clears both ssh advisories, and govulncheck reports zero vulnerabilities in the
+packages this code imports — the panel only ever called `argon2` out of that
+module, which is why this was low in the first place.
+
+GO-2026-5932 (openpgp, unmaintained) is still `Fixed in: N/A` and still not
+called; it is the one thing left from that audit, and it is a property of the
+module rather than of this code.
+
+`go.mod` says `go 1.26.0` rather than `go 1.26` because the upgraded x/tools
+requires the three-part form, and `go build` refuses to run until it is
+written that way.
+
+## 2026-09-16 — iPad Chrome dropped digits and punctuation
+
+The loss happened before the socket. iOS Chrome and Safari send direct IME
+punctuation and spaces with `keydown.keyCode === 229` even when no composition
+is active. xterm treated that keydown as composition and rejected the following
+composed `input` event, so letters worked while numbers and punctuation
+disappeared.
+
+The terminal now stops only that non-composition keydown before xterm sees it,
+leaves the browser default action alone, and forwards the resulting text or
+editing input to the PTY. Active composition and ordinary keyboard input keep
+their existing path. The rule and listener wiring are pinned by frontend tests.
+
+Merged from pull #18 on 2026-09-18; the entry above is the contributor's,
+and the date on it is when the work was done.
+
+One thing was tightened on the way in. The flag that tells the input listener
+"this character is already being handled here" was cleared only by a keyup,
+and iOS drops keyups around autocorrect -- so a flag left armed would send the
+*next* ordinary keystroke to the PTY twice, once from xterm's own keydown and
+once from the `input` event that follows it. Any other keydown disarms it now,
+which keeps the window no wider than the keystroke that opened it and leaves
+the space-to-punctuation pair (no keydown in between) working. Reviewing the
+desktop side of the same rule: a Chinese IME's first keydown is also 229 with
+`isComposing` false, and bypassing it is harmless because xterm's own handler
+for that case defers to a timeout that bails once composition has started --
+which it has, by then.

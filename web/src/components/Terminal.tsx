@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { attachTouchSelection } from './mobile/touchSelect'
+import { iosInputText, shouldBypassXtermKeydown } from './iosInput'
 import { liveTerminals } from './terminals'
 import { copyText, copyTextInGesture } from '../clipboard'
 import { isBrowserCopy, isBrowserPaste } from './clipboardKeys'
@@ -281,6 +282,45 @@ export function TerminalView({
     // prompt the session is sitting at.
     const replayQueue = new TerminalReplay(term)
 
+    // iOS Chrome/Safari emits direct punctuation and space input as a keydown
+    // with keyCode 229 but no active composition. xterm marks that keydown as
+    // composition, then rejects the following composed input event, so digits
+    // and punctuation disappear from the PTY. Stop the keydown on the parent
+    // before xterm's target listener sees it, but leave the default action alone:
+    // the textarea must still update for the input event below.
+    let forwardingIOSInput = false
+    const bypassIOSKeydown = (event: KeyboardEvent) => {
+      if (!shouldBypassXtermKeydown(event)) {
+        // Any other key closes the window this opened, as well as the keyup
+        // below. The keyup is what iOS sends after a space-to-punctuation
+        // pair, so it is the one that ends the pair -- but a keyup that never
+        // arrives (iOS drops them around autocorrect) would leave this armed,
+        // and then an ordinary keystroke is sent twice: once by xterm, which
+        // sees its own keydown, and once here off the `input` event that
+        // follows it. Bounded to the keystroke it belongs to.
+        forwardingIOSInput = false
+        return
+      }
+      forwardingIOSInput = true
+      event.stopPropagation()
+    }
+    const forwardIOSInput = (event: Event) => {
+      if (!forwardingIOSInput) return
+      const text = iosInputText(event as InputEvent)
+      if (text === null) return
+      if (replayQueue.replaying) return
+      socket.writeText(sessionId, text)
+      // Prevent xterm's own input listener from seeing the same character. The
+      // keyup clears the flag after iOS finishes a space-to-punctuation pair.
+      event.stopPropagation()
+    }
+    const finishIOSInput = () => {
+      forwardingIOSInput = false
+    }
+    host.addEventListener('keydown', bypassIOSKeydown, true)
+    host.addEventListener('input', forwardIOSInput, true)
+    host.addEventListener('keyup', finishIOSInput, true)
+
     const dataSub = term.onData((data) => {
       if (replayQueue.replaying) return
       socket.write(sessionId, encoder.encode(data))
@@ -377,6 +417,9 @@ export function TerminalView({
 
     return () => {
       liveTerminals.delete(sessionId)
+      host.removeEventListener('keydown', bypassIOSKeydown, true)
+      host.removeEventListener('input', forwardIOSInput, true)
+      host.removeEventListener('keyup', finishIOSInput, true)
       detachTouch?.()
       host.removeEventListener('pointerup', copyOnSelect)
       selSub.dispose()
