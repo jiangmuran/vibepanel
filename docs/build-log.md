@@ -23763,6 +23763,15 @@ covered. It is now (an inline link in prose is untouched: `min-height` does
 nothing to a non-replaced inline box), and the check emulates touch at the
 phone width.
 
+Emulating it was not enough, and the reason is worth writing down because it
+makes every later tap-target scan silently meaningless: a `fullPage`
+screenshot re-applies the page's device metrics *without* the context's touch
+emulation. Measured in the run -- `maxTouchPoints` 1 on the new page, 0 after
+the first screenshot, with `(pointer: coarse)` false from then on. The scan
+runs before the screenshots now. With the floor's `a[href]` removed again the
+check reports exactly one control, the back link, which is what says the scan
+is measuring a phone rather than reporting the desktop sizes of everything.
+
 **Audit 10.** A share link pinned to a version drew that version's manifest,
 action list, input schema and write list — and ran the *published* `server.js`.
 A visitor's request was checked against the contract they were shown and handed
