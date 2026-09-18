@@ -43,4 +43,14 @@ describe('and the terminal installs the workaround', () => {
   it('does not cancel the browser default input', () => {
     expect(code).not.toMatch(/bypassIOSKeydown[\s\S]{0,500}preventDefault\(\)/)
   })
+
+  // The flag is what tells the input listener that this character is already
+  // being handled here. Left armed -- a keyup iOS did not send -- the next
+  // ordinary keystroke goes to the PTY twice, once from xterm's own keydown
+  // and once from the input event after it. Any other key disarms it, so the
+  // window is never wider than the keystroke that opened it.
+  it('disarms on any other keydown, not only on keyup', () => {
+    const bypass = code.slice(code.indexOf('const bypassIOSKeydown'), code.indexOf('const forwardIOSInput'))
+    expect(bypass).toMatch(/shouldBypassXtermKeydown\(event\)\)\s*\{[\s\S]*forwardingIOSInput = false/)
+  })
 })

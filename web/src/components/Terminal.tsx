@@ -290,7 +290,17 @@ export function TerminalView({
     // the textarea must still update for the input event below.
     let forwardingIOSInput = false
     const bypassIOSKeydown = (event: KeyboardEvent) => {
-      if (!shouldBypassXtermKeydown(event)) return
+      if (!shouldBypassXtermKeydown(event)) {
+        // Any other key closes the window this opened, as well as the keyup
+        // below. The keyup is what iOS sends after a space-to-punctuation
+        // pair, so it is the one that ends the pair -- but a keyup that never
+        // arrives (iOS drops them around autocorrect) would leave this armed,
+        // and then an ordinary keystroke is sent twice: once by xterm, which
+        // sees its own keydown, and once here off the `input` event that
+        // follows it. Bounded to the keystroke it belongs to.
+        forwardingIOSInput = false
+        return
+      }
       forwardingIOSInput = true
       event.stopPropagation()
     }

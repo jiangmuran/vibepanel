@@ -23857,3 +23857,15 @@ their existing path. The rule and listener wiring are pinned by frontend tests.
 
 Merged from pull #18 on 2026-09-18; the entry above is the contributor's,
 and the date on it is when the work was done.
+
+One thing was tightened on the way in. The flag that tells the input listener
+"this character is already being handled here" was cleared only by a keyup,
+and iOS drops keyups around autocorrect -- so a flag left armed would send the
+*next* ordinary keystroke to the PTY twice, once from xterm's own keydown and
+once from the `input` event that follows it. Any other keydown disarms it now,
+which keeps the window no wider than the keystroke that opened it and leaves
+the space-to-punctuation pair (no keydown in between) working. Reviewing the
+desktop side of the same rule: a Chinese IME's first keydown is also 229 with
+`isComposing` false, and bypassing it is harmless because xterm's own handler
+for that case defers to a timeout that bails once composition has started --
+which it has, by then.
