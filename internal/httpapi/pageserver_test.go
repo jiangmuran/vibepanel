@@ -92,6 +92,49 @@ func pageValues(t *testing.T, ts interface{ Client() *http.Client }, url string)
 	return values
 }
 
+// A link pinned to a version runs that version's server.js, not the one
+// published since.
+//
+// Everything else about a visitor's action already comes from the pinned
+// version: the manifest, whether the action is declared for visitors, its
+// input schema and the keys it may write. The code did not, so a visitor's
+// request was checked against the contract they were shown and then handed to
+// whatever the owner published afterwards -- a hook the pinned manifest never
+// declared, running under the pinned manifest's authority. Both sides are the
+// owner's own code, which is why this is a mismatch rather than a way in, and
+// a trial link exists precisely so that what it draws does not move.
+func TestAPinnedLinkRunsThePinnedVersionsServerJS(t *testing.T) {
+	ts, _ := newTestServer(t)
+	files := map[string]string{
+		"admin/index.html": `<!doctype html><p>admin</p>`,
+		"server.js":        `function onVisitorAction(name, payload, ctx) { return 'v1' }`,
+	}
+	p := newPublishedPage(t, ts, serverManifest, files)
+	pinned := pageLink(t, ts, p.page.ID, `,"interactive":true`)
+	latest := pageLink(t, ts, p.page.ID, `,"interactive":true`)
+
+	writeTestFile(t, filepath.Join(p.dir, "server.js"),
+		`function onVisitorAction(name, payload, ctx) { return 'v2' }`)
+	postJSON[map[string]int](t, ts, "/api/settings/pages/"+p.page.ID+"/publish", `{"note":"second"}`)
+	// Pinned after the second publish, because a version has to exist to be
+	// pinned to -- which is also the only way a link is ever pinned: an owner
+	// fixes a wall to what it is drawing now and publishes on.
+	if status, out := callJSON(t, ts, http.MethodPut, "/api/settings/shares/"+pinned.ID+"/page",
+		`{"pageId":"`+p.page.ID+`","pinVersion":1}`); status != http.StatusNoContent {
+		t.Fatalf("pin = %d %s", status, out)
+	}
+
+	code, out, _ := visitorAction(t, ts, pinned.Token, "echo", `{"msg":"hi"}`)
+	if code != http.StatusOK || out.Result != "v1" {
+		t.Fatalf("a link pinned to version 1 ran %v (status %d); the contract it draws is "+
+			"version 1's and the code has to be too", out.Result, code)
+	}
+	code, out, _ = visitorAction(t, ts, latest.Token, "echo", `{"msg":"hi"}`)
+	if code != http.StatusOK || out.Result != "v2" {
+		t.Fatalf("an unpinned link ran %v (status %d), not the published version", out.Result, code)
+	}
+}
+
 func TestServerJSWritesOnlyWhatItsActionAllowsAndOnlyOnSuccess(t *testing.T) {
 	ts, _ := newTestServer(t)
 	p := newPublishedPage(t, ts, serverManifest, serverFiles)

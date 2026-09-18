@@ -539,6 +539,14 @@ body {
  * As a rule about buttons rather than a class on each, for the same reason the
  * 16px font rule is: a class holds only until somebody adds the next button.
  *
+ * Links that are laid out as buttons are in it too, and were not: the rule
+ * said `button, [role="button"]`, so the chat page's back control -- an <a>
+ * with the same class as the buttons beside it -- stayed 28px tall on a phone
+ * while its neighbours grew. An inline link in a paragraph is unaffected,
+ * because min-height does nothing to a non-replaced inline box; what this
+ * reaches is the links that were already flex or block, which is the ones
+ * that look like buttons.
+ *
  * min-width is left alone deliberately. 44x44 is the guideline, but a row of
  * eighteen keys at 44 wide does not fit a phone, and a target that is 32 wide
  * and 44 tall between two other targets is a different proposition from one
@@ -548,6 +556,7 @@ body {
  * content that no longer fits its container. */
 @media (pointer: coarse) {
   button,
+  a[href],
   [role='button'] {
     min-height: 2.75rem;
   }

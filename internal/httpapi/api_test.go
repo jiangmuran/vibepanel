@@ -1104,6 +1104,84 @@ func TestABellThatRangWhileThePumpWasDownIsSeen(t *testing.T) {
 	}
 }
 
+// A bell that lands in the gap the window flag cannot cover, and is then
+// spent exactly once.
+//
+// Attach reads the flag and starts a client; a bell in between is latched with
+// no client to forward to and cleared by the attach without being replayed.
+// The alert-bell hook records it in a window option instead, which nothing but
+// the panel clears — and that is the hazard on the other side: a record read
+// twice is a session that never stops waiting, which is what the flag's own
+// "spent by attaching" property prevents for the flag.
+func TestARecordedBellIsSeenOnceAfterTheFlagIsSpent(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	project := postJSON[store.Project](t, ts, "/api/projects",
+		`{"path":"`+t.TempDir()+`","name":"bellrec"}`)
+
+	// A python, so the fall-through reads working: the bell is the only thing
+	// that can make this row waiting, and a line that is not "b" moves the
+	// screen forward without ringing.
+	sess := postJSON[store.Session](t, ts, "/api/sessions",
+		`{"projectId":"`+project.ID+`","command":["python3","-u","-c","import sys\nwhile True:\n    l=sys.stdin.readline()\n    sys.stdout.write(chr(7) if l.strip()=='b' else 'moving on\\n')\n    sys.stdout.flush()"]}`)
+
+	srv.Manager.Detach(sess.ID)
+	if err := srv.Tmux.Keys(ctx, sess.TmuxName, "b", "Enter"); err != nil {
+		t.Fatalf("send bell: %v", err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		info, err := srv.Tmux.Get(ctx, sess.TmuxName)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if info.BellAt != 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the alert-bell hook recorded nothing; the test is not testing what it is about")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	// The attach spends the flag, as it does in production. What is left is
+	// the record.
+	if _, err := srv.Manager.Attach(ctx, sess.ID, sess.TmuxName, 80, 24); err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	if err := srv.pollOnce(ctx); err != nil {
+		t.Fatalf("pollOnce: %v", err)
+	}
+	rec, err := srv.DB.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if rec.State != session.StateWaiting {
+		t.Fatalf("state = %q, want %q: a bell that rang before the client attached was lost",
+			rec.State, session.StateWaiting)
+	}
+
+	// And it is spent. A record nothing clears is read again on every poll,
+	// which pins a session at waiting for as long as it lives — the failure
+	// the flag avoids by being cleared by the attach itself, and the one this
+	// record has to avoid on purpose. What clears the state once it is spent
+	// is the session's own screen moving on, which the detector's own tests
+	// cover (TestWorkResumingClearsTheBell).
+	for i := 0; i < 3; i++ {
+		if err := srv.pollOnce(ctx); err != nil {
+			t.Fatalf("pollOnce: %v", err)
+		}
+		info, err := srv.Tmux.Get(ctx, sess.TmuxName)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if info.BellAt != 0 {
+			t.Fatalf("the recorded bell is still there after poll %d (%d): every poll would "+
+				"observe it again and the session would never stop waiting", i+1, info.BellAt)
+		}
+	}
+}
+
 func TestManualOverrideSurvivesThePoller(t *testing.T) {
 	ts, srv := newTestServer(t)
 	ctx := context.Background()

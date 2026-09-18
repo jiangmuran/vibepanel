@@ -23764,3 +23764,64 @@ sight.
 `UsageSample`, `SessionUsage` and the new `ProcUsage` were not in
 `TestTypeScriptRowsMatchWhatIsSent` either, the same gap `ShareTrend` turned
 out to have last time. Pinned along with everything else here.
+
+## 2026-09-17 — A bell recorded where attaching cannot erase it, and the audit's last three
+
+**The bell, for the third time.** v1.22.1 moved the window-flag read to the
+last step before the client spawns, which shrank the race rather than closing
+it: the flag is latched only while nothing is attached and is cleared by the
+attach itself, so a bell landing between the read and the client reaching the
+server is erased in both directions at once. Four runs of `restart-check` at
+v1.22.1 on a machine at load 24-28 passed, so the window is now small enough
+not to reproduce by hand — which is not the same as gone.
+
+tmux's `alert-bell` hook fires whether or not a client is attached, and a
+window user option is not alert state, so nothing clears it but the panel. The
+hook writes `@vp_bell` with `#{window_activity}` — the bell's own moment, so a
+consumer reading it a tick or a restart later still places it correctly — and
+`Attach`, `Reconcile` and the poller each consume it and unset it. Consuming is
+the other half of the bound: a record nothing clears is a session pinned at
+waiting forever, which is exactly what the flag avoids by being spent on
+attach. The hook is installed from `vibepanel.conf` and from `EnsureServer`, the
+same pair `advertiseTruecolor` uses and for the same reason: the config is read
+once, at server start, and the panel never restarts its server.
+
+`TestARecordedBellSurvivesTheAttachThatSpendsTheFlag` measures all three
+properties against a real tmux, and `TestARecordedBellIsSeenOnceAfterTheFlagIsSpent`
+walks the panel's own path. Removing the hook, or either consumer's unset,
+turns one of them red.
+
+**Tap targets on the chat page.** `chat-check` warned about four 28px controls
+at 400px, and both halves of that were wrong in an interesting way: the check
+opened a narrow window with a mouse, so the `(pointer: coarse)` floor never
+applied and it was measuring the desktop sizes — while the one control that
+really is small on a phone, the back link, sat in the list unnoticed. The floor
+said `button, [role="button"]`, and an `<a>` laid out as a button was not
+covered. It is now (an inline link in prose is untouched: `min-height` does
+nothing to a non-replaced inline box), and the check emulates touch at the
+phone width.
+
+Emulating it was not enough, and the reason is worth writing down because it
+makes every later tap-target scan silently meaningless: a `fullPage`
+screenshot re-applies the page's device metrics *without* the context's touch
+emulation. Measured in the run -- `maxTouchPoints` 1 on the new page, 0 after
+the first screenshot, with `(pointer: coarse)` false from then on. The scan
+runs before the screenshots now. With the floor's `a[href]` removed again the
+check reports exactly one control, the back link, which is what says the scan
+is measuring a phone rather than reporting the desktop sizes of everything.
+
+**Audit 10.** A share link pinned to a version drew that version's manifest,
+action list, input schema and write list — and ran the *published* `server.js`.
+A visitor's request was checked against the contract they were shown and handed
+to whatever the owner published since. `serverProgram` takes the version the
+caller resolved; the snapshot's transform and a visitor action pass the link's,
+everything else passes the page's current one.
+
+**Audit 19.** The subscriber queue was bounded at 256 events, which at the
+pump's 32 KiB chunks is 8 MiB per subscribed terminal per viewer — four times
+the ring it complements, and a browser keeps hidden terminals subscribed on
+purpose. It is bounded in bytes too now, at the ring's size, because that is
+what a drop costs: a viewer that falls a ring behind is replayed from the ring
+when it reconnects.
+
+Audit 21 (x/crypto's ssh advisories) still has no fixed release to move to.

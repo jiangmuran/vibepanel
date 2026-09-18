@@ -366,7 +366,24 @@ try {
     for (const theme of ['light', 'dark']) {
       for (const [w, h] of [[400, 800], [820, 1000], [1400, 950]]) {
         const where = `layout/${lang}/${theme}/${w}`
-        const ctx = await browser.newContext({ viewport: { width: w, height: h } })
+        // Touch emulation at the phone width, because that is the device the
+        // scan below is about: the 44px floor in styles.css is behind
+        // `(pointer: coarse)`, so a narrow window with a mouse measures the
+        // desktop sizes and reports every header control as a small target --
+        // four warnings that said nothing about a phone, while a control that
+        // really is small on one (a link that the floor did not cover) sat
+        // among them unnoticed.
+        //
+        // hasTouch *and* isMobile: Chromium reports `(pointer: coarse)` only
+        // under real touch emulation, and hasTouch alone did not produce it --
+        // the four warnings came back unchanged, which is how the first
+        // version of this was found to be measuring nothing new.
+        const phone = w === 400
+        const ctx = await browser.newContext({
+          viewport: { width: w, height: h },
+          hasTouch: phone,
+          isMobile: phone,
+        })
         const tab = await ctx.newPage()
         const tabErrors = []
         tab.on('pageerror', (e) => tabErrors.push(String(e)))
@@ -384,6 +401,15 @@ try {
           continue
         }
         await sleep(500)
+        // Before the screenshots: a fullPage screenshot re-applies the page's
+        // device metrics without the touch emulation this context was made
+        // with, so `(pointer: coarse)` is false from then on and the scan
+        // below measures a narrow desktop instead of a phone. Measured --
+        // maxTouchPoints 1 before the first screenshot and 0 after it.
+        if (w === 400) {
+          const { small } = await findSmallTargets(tab, 32)
+          if (small.length) note('WARN', where, `small tap targets: ${small.slice(0, 5).join(', ')}`)
+        }
         await tab.screenshot({ path: join(SHOTS, `chat-${lang}-${theme}-${w}.png`), fullPage: true })
         // The page scrolls inside its own root, which fullPage cannot see
         // past, so each section is also photographed on its own at the
@@ -405,10 +431,6 @@ try {
         if (unnamed.length) note('FAIL', where, `controls with no name: ${unnamed.slice(0, 5).join(', ')}`)
         const faded = await findFadedControls(tab)
         if (faded.length) note('FAIL', where, `faded controls: ${faded.slice(0, 5).join(', ')}`)
-        if (w === 400) {
-          const { small } = await findSmallTargets(tab, 32)
-          if (small.length) note('WARN', where, `small tap targets: ${small.slice(0, 5).join(', ')}`)
-        }
         if (tabErrors.length) note('FAIL', where, `errors: ${tabErrors.slice(0, 3).join(' | ')}`)
         if (!overflowX && !found.length && !unnamed.length && !faded.length && !tabErrors.length) pass(where, 'clean')
         await ctx.close()

@@ -2060,14 +2060,14 @@ func (s *Server) Reconcile(ctx context.Context) error {
 		if err := s.DB.UpdateSessionRuntime(ctx, row.ID, info.Path, info.Command); err != nil {
 			s.Log.Warn("reconcile runtime", "session", row.ID, "err", err)
 		}
-		// A bell that rang while the panel was down is still latched, because
-		// tmux only clears the flag when a client views the window and there
-		// was no client. Read it before attaching, which clears it: otherwise
-		// restarting the panel loses every "this needs you" raised while it
-		// was gone — exactly when the user was not watching.
-		if info.Bell && s.Detector != nil {
-			s.Detector.Observe(row.ID, session.Signals{Bell: true}, time.Now())
-		}
+		// A bell that rang while the panel was down is still there: latched in
+		// the window flag, because tmux only clears that when a client views
+		// the window and there was no client, and recorded by the alert-bell
+		// hook in a window option that nothing but the panel clears. Read
+		// before attaching, which clears the flag: otherwise restarting the
+		// panel loses every "this needs you" raised while it was gone —
+		// exactly when the user was not watching.
+		s.consumeLatchedBell(ctx, row.ID, info)
 		// Attach at startup too, so state is being watched from the moment the
 		// panel is up rather than from the first poll.
 		if _, aerr := s.Manager.Attach(ctx, row.ID, row.TmuxName, row.Cols, row.Rows); aerr != nil {
@@ -2093,6 +2093,29 @@ func (s *Server) Reconcile(ctx context.Context) error {
 	// would race the loop's own writes.
 	s.RestoreFlagged(ctx)
 	return nil
+}
+
+// consumeLatchedBell hands the detector a bell tmux recorded while nothing was
+// listening, and unsets the record so that the next read is a new bell.
+//
+// At the bell's own time, not now: the hook stores the window's activity time,
+// so a bell read a tick or a restart later is still placed when it rang. The
+// window flag carries no time and is read as now, which is the best there is
+// for a server started by a panel older than the hook.
+func (s *Server) consumeLatchedBell(ctx context.Context, id string, info tmux.Info) {
+	if s.Detector == nil || (!info.Bell && info.BellAt == 0) {
+		return
+	}
+	at := time.Now()
+	if info.BellAt != 0 {
+		at = time.Unix(info.BellAt, 0)
+		if err := s.Tmux.ClearBell(ctx, info.Name); err != nil {
+			// Left set rather than dropped: the next tick reads it again,
+			// which is one bell observed twice and not a bell lost.
+			s.Log.Debug("clearing a recorded bell", "session", id, "err", err)
+		}
+	}
+	s.Detector.Observe(id, session.Signals{Bell: true}, at)
 }
 
 // pollInterval is how often tmux is asked what changed.
@@ -2312,6 +2335,13 @@ func (s *Server) pollOnce(ctx context.Context) error {
 		// The cost is one tmux client and one replay buffer per session. For
 		// the couple of dozen sessions this is built for, that is a few tens of
 		// megabytes and a handful of small processes.
+		// A bell the hook recorded, whether or not anything was attached to
+		// hear it. The one it exists for rang between Attach's read of the
+		// window flag and the client reaching the server, where the flag was
+		// cleared without the byte ever being forwarded; this tick is what
+		// finds it. Consumed here, so a bell is read once.
+		s.consumeLatchedBell(ctx, row.ID, info)
+
 		live, attached := s.Manager.Get(row.ID)
 		if !attached {
 			if l, aerr := s.Manager.Attach(ctx, row.ID, row.TmuxName, row.Cols, row.Rows); aerr != nil {

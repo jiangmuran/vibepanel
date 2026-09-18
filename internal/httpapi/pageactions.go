@@ -219,6 +219,9 @@ func (s *Server) handleVisitorAction(w http.ResponseWriter, r *http.Request) {
 	}
 	ns := store.PageDataLive
 	var m pages.Manifest
+	// The version the link draws, which is what the contract below comes from
+	// -- and, in runAction, the version whose server.js runs.
+	version := 0
 	if link.Purpose == store.SharePurposePreview {
 		ns = store.PageDataDraft
 		if m, err = draftManifest(page.SourceDir); err != nil {
@@ -226,7 +229,8 @@ func (s *Server) handleVisitorAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		v, verr := s.DB.SharePageVersionByNumber(ctx, page.ID, link.ResolvePageVersion(page.PublishedVersion, now.Unix()))
+		version = link.ResolvePageVersion(page.PublishedVersion, now.Unix())
+		v, verr := s.DB.SharePageVersionByNumber(ctx, page.ID, version)
 		if verr != nil {
 			writeAction(w, http.StatusGone, actionAnswer{Error: "this page has no published version"})
 			return
@@ -273,7 +277,7 @@ func (s *Server) handleVisitorAction(w http.ResponseWriter, r *http.Request) {
 	}
 	// 7. The effect, with its own limits.
 	visitor := map[string]any{"id": shareID(sc.secret, "visitor:"+ip), "link": link.Name}
-	result, err := s.runAction(ctx, page, ns, m, name, action, input, "visitor", visitor, true)
+	result, err := s.runAction(ctx, page, ns, m, name, action, input, "visitor", visitor, true, version)
 	var de dataError
 	switch {
 	case errors.As(err, &de):
@@ -322,7 +326,7 @@ func (s *Server) handleAdminAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := s.adminUsername(r.Context(), a)
-	result, err := s.runAction(r.Context(), page, ns, m, name, action, input, user, nil, false)
+	result, err := s.runAction(r.Context(), page, ns, m, name, action, input, user, nil, false, 0)
 	var de dataError
 	switch {
 	case errors.As(err, &de):
@@ -337,8 +341,10 @@ func (s *Server) handleAdminAction(w http.ResponseWriter, r *http.Request) {
 }
 
 // runAction applies an action's effect. visitor is nil for an admin.
+// version is the published version the caller resolved the manifest from, and
+// so the one whose server.js runs; 0 means the page's current one.
 func (s *Server) runAction(ctx context.Context, page store.SharePage, ns string, m pages.Manifest, name string,
-	action *pages.ActionSpec, input map[string]any, by string, visitor map[string]any, fromVisitor bool) (any, error) {
+	action *pages.ActionSpec, input map[string]any, by string, visitor map[string]any, fromVisitor bool, version int) (any, error) {
 	key := action.Effect.Key
 	var op pageDataOp
 	switch action.Effect.Kind {
@@ -356,7 +362,7 @@ func (s *Server) runAction(ctx context.Context, page store.SharePage, ns string,
 		if fromVisitor {
 			hook = "onVisitorAction"
 		}
-		return s.runServerHook(ctx, page, ns, m, hook, name, input, visitor, action, by)
+		return s.runServerHook(ctx, page, ns, m, hook, name, input, visitor, action, by, version)
 	default:
 		return nil, dataErrorf("this action has no effect")
 	}
