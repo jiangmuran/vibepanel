@@ -23825,3 +23825,19 @@ what a drop costs: a viewer that falls a ring behind is replayed from the ring
 when it reconnects.
 
 Audit 21 (x/crypto's ssh advisories) still has no fixed release to move to.
+
+## 2026-09-18 — x/crypto, and the advisory that has no fix
+
+Audit 21 said `golang.org/x/crypto v0.55.0` carried two ssh DoS advisories and
+the unmaintained-openpgp one, with no fix to move to. There is now: v0.57.0
+clears both ssh advisories, and govulncheck reports zero vulnerabilities in the
+packages this code imports — the panel only ever called `argon2` out of that
+module, which is why this was low in the first place.
+
+GO-2026-5932 (openpgp, unmaintained) is still `Fixed in: N/A` and still not
+called; it is the one thing left from that audit, and it is a property of the
+module rather than of this code.
+
+`go.mod` says `go 1.26.0` rather than `go 1.26` because the upgraded x/tools
+requires the three-part form, and `go build` refuses to run until it is
+written that way.
