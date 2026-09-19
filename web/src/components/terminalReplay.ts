@@ -33,6 +33,7 @@ export class TerminalReplay {
     private readonly term: ReplayTerminal,
     private readonly schedule: Schedule = (callback) => requestAnimationFrame(callback),
     private readonly cancel: Cancel = (handle) => cancelAnimationFrame(handle),
+    private readonly onReplayDone?: () => void,
   ) {}
 
   /**
@@ -85,6 +86,9 @@ export class TerminalReplay {
       if (this.disposed) return
       this.active = false
       this.activeReplay = false
+      if (job.replay && !this.queue.some((queued) => queued.replay)) {
+        this.onReplayDone?.()
+      }
       if (this.queue.length === 0) return
 
       // Only replay chunks need a paint boundary. Live output should stay

@@ -164,6 +164,12 @@ type ServerMessage struct {
 	Text      string `json:"text,omitempty"`
 	Message   string `json:"message,omitempty"`
 
+	// ReplayBytes and ReplayChunks describe the snapshot that follows a
+	// subscription. They let a client report transfer progress instead of
+	// showing an indeterminate spinner while a phone receives a large replay.
+	ReplayBytes  int `json:"replayBytes,omitempty"`
+	ReplayChunks int `json:"replayChunks,omitempty"`
+
 	// Controlling tells the viewer whether it owns the grid, so the UI can show
 	// a "take control" affordance instead of silently ignoring resizes.
 	Controlling bool `json:"controlling,omitempty"`

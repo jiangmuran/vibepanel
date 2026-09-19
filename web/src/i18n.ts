@@ -1163,6 +1163,9 @@ const DICT = {
     zh: '另一个观看端拥有这个网格（{cols}×{rows}），你这边能放下 {mine}。接管会让所有人重排。',
     en: 'Another viewer owns this grid ({cols}x{rows}); this window fits {mine}. Taking over reflows it for everyone.',
   },
+  'term.loadingConnecting': { zh: '连接终端', en: 'Connecting terminal' },
+  'term.loadingReplay': { zh: '加载终端内容', en: 'Loading terminal content' },
+  'term.loadingScroll': { zh: '滚动到最新内容', en: 'Scrolling to latest content' },
 
   'notify.waitingTitle': { zh: '有 agent 在等你', en: 'An agent is waiting' },
   'notify.waitingBody': { zh: '{name} 停下来等你处理了', en: '{name} has stopped and needs you' },

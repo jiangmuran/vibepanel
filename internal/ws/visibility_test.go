@@ -194,7 +194,10 @@ func TestAReplayReachesTheBrowserInBoundedFrames(t *testing.T) {
 		`i=0; while [ $i -lt 1500 ]; do printf '%064d\n' $i; i=$((i+1)); done`)
 	v := dialViewer(t, s, "replay-viewer")
 	v.send(map[string]any{"t": MsgSubscribe, "sessionId": "s1", "cols": 80, "rows": 24})
-	v.await(MsgSubscribed)
+	confirmed := v.await(MsgSubscribed)
+	if confirmed.ReplayBytes <= replayChunk || confirmed.ReplayChunks < 2 {
+		t.Fatalf("subscription did not announce the replay accurately: %d bytes in %d chunks", confirmed.ReplayBytes, confirmed.ReplayChunks)
+	}
 
 	var frames [][]byte
 	for quiet := false; !quiet; {

@@ -624,10 +624,14 @@ func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int, 
 	c.byID[sessionID] = s
 	c.mu.Unlock()
 
+	// Build the frame list before the confirmation so the browser knows the
+	// exact replay work it is about to receive.
+	frames := replayFrames(ref, replay)
 	gridCols, gridRows := live.Size()
 	c.sendJSON(ServerMessage{
 		Type: MsgSubscribed, SessionID: sessionID, Ref: ref,
 		Cols: gridCols, Rows: gridRows,
+		ReplayBytes: len(replay), ReplayChunks: len(frames),
 		Controlling: live.Controller() == c.clientID,
 	})
 
@@ -635,7 +639,6 @@ func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int, 
 	// snapshot under the same lock that registered the subscriber, so the two
 	// join up exactly with nothing lost or repeated.
 	replayStarted := time.Now()
-	frames := replayFrames(ref, replay)
 	var firstFrameMS int64
 	for i, frame := range frames {
 		c.sendBinary(frame)

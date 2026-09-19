@@ -19,6 +19,8 @@ export interface StreamHandlers {
    * terminal shows its whole history twice.
    */
   onReset?: () => void
+  /** Called before replay frames arrive, with the exact snapshot size. */
+  onSubscribed?: (info: { replayBytes: number; replayChunks: number }) => void
 }
 
 interface Stream {
@@ -249,6 +251,10 @@ export class PanelSocket {
         stream.confirmed = true
         stream.ref = msg.ref
         this.byRef.set(msg.ref, stream)
+        stream.handlers.onSubscribed?.({
+          replayBytes: msg.replayBytes ?? 0,
+          replayChunks: msg.replayChunks ?? 0,
+        })
         if (msg.cols && msg.rows) {
           stream.handlers.onSize(msg.cols, msg.rows, msg.controlling ?? false)
         }

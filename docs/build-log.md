@@ -23964,3 +23964,29 @@ names are over 60 characters, and a test among them that starts tmux gets a
 shortened socket name that keeps its first 53 characters. `TestASocketNameStaysInsideSunPath`
 needs no tmux, and three mutations of the helper (no bound, truncation with no
 hash, the limit raised to 100) each turn it red.
+
+## 2026-09-19 — A terminal says how much of itself has arrived
+
+Opening a session on a phone was a blank rectangle for as long as the replay
+took, with nothing to tell a slow link from a dead one. The subscription
+confirmation now carries `replayBytes` and `replayChunks`, computed from the
+same frame list that is about to be sent, so the browser knows the exact size
+before the first binary frame. The bar has two phases: 1/2 is bytes received
+against that figure, 2/2 is the scroll to the bottom, held for at least eight
+paint boundaries and one xterm render so it can be seen on a phone. A reconnect
+skips 1/2, because the content under it is already on screen.
+
+This ran on one machine from 13 to 17 September as an uncommitted edit, and a
+deploy built from a clean checkout took it away with nothing to say so. That is
+the reason it is a commit now. Two things were wrong with it and are fixed here:
+
+- `TerminalReplay` reports "done" whenever its queue empties. On a link slower
+  than the paint, which on a phone is the usual case, the queue empties after
+  every chunk, so phase two started after the first 64 KiB and the bar was gone
+  while most of the history was still in flight. Done now also requires the
+  announced byte count to have arrived.
+- A terminal switched away from mid-load is `display:none`, and xterm renders
+  nothing there, so the scroll phase waiting for a render asked for another
+  animation frame every frame for as long as the session stayed in the
+  background. A hidden terminal draws no bar, so it waits for the eight frames
+  only.

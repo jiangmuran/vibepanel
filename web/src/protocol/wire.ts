@@ -98,6 +98,10 @@ export interface ServerMessage {
   text?: string
   message?: string
   controlling?: boolean
+  /** Exact replay size announced before the binary snapshot arrives. */
+  replayBytes?: number
+  /** Number of replay frames that follow this subscription confirmation. */
+  replayChunks?: number
 }
 
 // ── REST shapes, mirroring internal/store ──────────────────────────────────

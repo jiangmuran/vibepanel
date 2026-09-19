@@ -55,15 +55,16 @@ function frames() {
 function setup() {
   const term = new FakeTerminal()
   const clock = frames()
-  const queue = new TerminalReplay(term, clock.schedule, clock.cancel)
-  return { term, clock, queue }
+  const done: Array<() => void> = []
+  const queue = new TerminalReplay(term, clock.schedule, clock.cancel, () => done.push(() => {}))
+  return { term, clock, queue, done }
 }
 
 const bytes = (n: number) => new Uint8Array([n])
 
 describe('TerminalReplay', () => {
   it('paints replay chunks one frame apart and keeps live bytes ordered', () => {
-    const { term, clock, queue } = setup()
+    const { term, clock, queue, done } = setup()
 
     queue.enqueue(bytes(1), true)
     queue.enqueue(bytes(2), true)
@@ -81,6 +82,7 @@ describe('TerminalReplay', () => {
     expect([...term.writes[2]]).toEqual([3])
     term.finish()
     expect(queue.replaying).toBe(false)
+    expect(done).toHaveLength(1)
   })
 
   it('resets once before the next replay and drops queued old bytes', () => {

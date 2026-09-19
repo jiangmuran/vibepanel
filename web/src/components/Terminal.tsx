@@ -73,6 +73,20 @@ interface Props {
   hidden?: boolean
 }
 
+type LoadPhase = 'connecting' | 'replay' | 'scroll' | 'ready'
+
+const loadCopyKey = {
+  connecting: 'term.loadingConnecting',
+  replay: 'term.loadingReplay',
+  scroll: 'term.loadingScroll',
+} as const
+
+const loadStage = {
+  connecting: '0/2',
+  replay: '1/2',
+  scroll: '2/2',
+} as const
+
 /**
  * One xterm instance bound to one session.
  *
@@ -119,6 +133,18 @@ export function TerminalView({
   // passive, and only so the offer to take over can be withheld when there is
   // nothing to gain by it.
   const [ownFit, setOwnFit] = useState({ cols: 0, rows: 0 })
+  const [loadPhase, setLoadPhase] = useState<LoadPhase>('connecting')
+  const [loadPercent, setLoadPercent] = useState(4)
+  const replayTotalRef = useRef(0)
+  const replayReceivedRef = useRef(0)
+  const replayDoneRef = useRef(false)
+  const sizedRef = useRef(false)
+  const scrollStartedRef = useRef(false)
+  // A reconnect must not replay the whole 1/2 bar over already visible
+  // content, but its final scroll still needs a visible phase. Keeping this
+  // as a mode rather than a boolean lets us suppress only the duplicate
+  // replay phase and still report the scroll the user is waiting for.
+  const loadProgressModeRef = useRef<'initial' | 'reconnect' | 'ready'>('initial')
   // Held in a ref for the same reason onTitle/onExit are not in the effect's
   // deps: a new callback identity must not rebuild the terminal.
   const onSelectionRef = useRef(onSelectionChange)
@@ -276,11 +302,79 @@ export function TerminalView({
 
     const encoder = new TextEncoder()
 
+    let disposed = false
+    const scrollFrames: number[] = []
+    const scrollRenderSubs: Array<{ dispose: () => void }> = []
+    const beginScrollPhase = () => {
+      if (disposed || !replayDoneRef.current || !sizedRef.current || scrollStartedRef.current) return
+      scrollStartedRef.current = true
+      const reportProgress = loadProgressModeRef.current !== 'ready'
+      if (reportProgress) {
+        setLoadPhase('scroll')
+        setLoadPercent(72)
+      }
+      term.scrollToBottom()
+      // Scrolling is its own user-visible phase: wait for xterm to emit a
+      // render after the scroll and keep at least eight paint boundaries. A
+      // three-frame chain was technically correct but too brief to see on a
+      // phone, so the bar appeared to skip phase two entirely.
+      let rendered = false
+      let frames = 0
+      const renderSub = term.onRender(() => {
+        rendered = true
+      })
+      scrollRenderSubs.push(renderSub)
+      term.refresh(0, Math.max(0, term.rows - 1))
+      const advance = () => {
+        if (disposed) return
+        frames++
+        if (reportProgress) setLoadPercent(Math.min(94, 72 + Math.round((frames / 8) * 22)))
+        // A hidden terminal is display:none, and xterm does not render one, so
+        // waiting for a render there spun this loop every frame for as long as
+        // the session stayed in the background. The bar is not drawn while
+        // hidden, so eight frames is all the wait there needs.
+        if (frames < 8 || (!rendered && !hiddenRef.current)) {
+          const next = requestAnimationFrame(advance)
+          scrollFrames.push(next)
+          return
+        }
+        renderSub.dispose()
+        if (reportProgress) {
+          loadProgressModeRef.current = 'ready'
+          setLoadPhase('ready')
+          setLoadPercent(100)
+        }
+      }
+      const first = requestAnimationFrame(advance)
+      scrollFrames.push(first)
+    }
+
+    // The last replay byte can arrive before xterm finishes its queued write.
+    // Keep checking at paint boundaries and enter phase two only when the
+    // parser is actually idle, so the bar cannot freeze at 68%.
+    const waitForReplayDrain = () => {
+      if (disposed) return
+      if (!replayQueue.replaying) {
+        replayDoneRef.current = true
+        beginScrollPhase()
+        return
+      }
+      const frame = requestAnimationFrame(waitForReplayDrain)
+      scrollFrames.push(frame)
+    }
+
     // While scrollback is being parsed, anything the terminal wants to send
     // back is an answer to a question that was asked minutes ago and has
     // already been answered. Letting it through types the reply at whatever
     // prompt the session is sitting at.
-    const replayQueue = new TerminalReplay(term)
+    const replayQueue = new TerminalReplay(term, undefined, undefined, () => {
+      // The queue drains between frames whenever the link is slower than the
+      // paint, which on a phone is most of the time, so an empty queue is not
+      // the end of the snapshot. Only the byte count the server announced is.
+      if (replayReceivedRef.current < replayTotalRef.current) return
+      replayDoneRef.current = true
+      beginScrollPhase()
+    })
 
     // iOS Chrome/Safari emits direct punctuation and space input as a keydown
     // with keyCode 229 but no active composition. xterm marks that keydown as
@@ -345,14 +439,53 @@ export function TerminalView({
       // terminal that still had something worth reading in it.
       onReset: () => {
         replayQueue.restart()
+        replayDoneRef.current = false
+        scrollStartedRef.current = false
+        sizedRef.current = false
+        replayReceivedRef.current = 0
+        if (loadProgressModeRef.current === 'ready') {
+          loadProgressModeRef.current = 'reconnect'
+          return
+        }
+        setLoadPhase('replay')
+        setLoadPercent(8)
+      },
+      onSubscribed: ({ replayBytes }) => {
+        replayTotalRef.current = replayBytes
+        replayReceivedRef.current = 0
+        replayDoneRef.current = replayBytes === 0
+        if (loadProgressModeRef.current === 'reconnect') return
+        setLoadPhase('replay')
+        setLoadPercent(replayBytes === 0 ? 68 : 8)
+        beginScrollPhase()
       },
       onData: (bytes, replay) => {
+        // Enqueue before checking the drain state. The final replay frame can
+        // arrive while xterm is idle; checking first would observe an empty
+        // queue, advance the UI, and then append the frame after phase two had
+        // already started. On a fast connection that race is what left the
+        // visible progress label parked at 68% for some sessions.
+        if (replay) {
+          replayReceivedRef.current += bytes.byteLength
+          const total = replayTotalRef.current
+          const ratio = total > 0 ? Math.min(1, replayReceivedRef.current / total) : 1
+          if (loadProgressModeRef.current === 'initial') {
+            setLoadPhase('replay')
+            setLoadPercent(Math.round(8 + ratio * 60))
+          }
+        }
         replayQueue.enqueue(bytes, replay)
+        if (replay && replayTotalRef.current > 0 && replayReceivedRef.current >= replayTotalRef.current) {
+          waitForReplayDrain()
+        }
       },
       onSize: (cols, rows, isControlling) => {
         controllingRef.current = isControlling
         setControlling(isControlling)
         setGrid({ cols, rows })
+        sizedRef.current = cols > 0 && rows > 0
+        if (!replayDoneRef.current) setLoadPhase('replay')
+        beginScrollPhase()
         if (term.cols !== cols || term.rows !== rows) term.resize(cols, rows)
       },
       onTitle: (t) => onTitle?.(t),
@@ -416,6 +549,9 @@ export function TerminalView({
       : undefined
 
     return () => {
+      disposed = true
+      for (const frame of scrollFrames) cancelAnimationFrame(frame)
+      for (const sub of scrollRenderSubs) sub.dispose()
       liveTerminals.delete(sessionId)
       host.removeEventListener('keydown', bypassIOSKeydown, true)
       host.removeEventListener('input', forwardIOSInput, true)
@@ -618,6 +754,27 @@ export function TerminalView({
       data-fullscreen={fullscreen ? 'true' : undefined}
       className={`relative overflow-hidden ${className ?? ''}`}
     >
+      {!hidden && loadPhase !== 'ready' && (
+        <div
+          className="pointer-events-none absolute inset-x-0 top-0 z-20"
+          data-testid="terminal-load-progress"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={loadPercent}
+          aria-label={`${loadStage[loadPhase]} ${t(loadCopyKey[loadPhase])}`}
+        >
+          <div className="h-1 w-full bg-black/10 dark:bg-white/10">
+            <div
+              className="h-full bg-emerald-500 transition-[width] duration-150 ease-out"
+              style={{ width: `${loadPercent}%` }}
+            />
+          </div>
+          <span className="absolute top-1 right-2 rounded-vp bg-elevated/90 px-1.5 py-0.5 text-vp-xs text-ink-2 shadow-sm">
+            {loadStage[loadPhase]} · {t(loadCopyKey[loadPhase])} {loadPercent}%
+          </span>
+        </div>
+      )}
       {/* touch-action: none wherever the drag-to-scroll handler is attached,
           and without it that handler does nothing on a real phone.
        *
