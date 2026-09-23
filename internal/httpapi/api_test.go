@@ -77,8 +77,8 @@ func newUnconfiguredServer(t *testing.T) (*httptest.Server, *Server) {
 	ctx := context.Background()
 	dir := t.TempDir()
 
-	socket := "vibepanel-api-" + strconv.Itoa(os.Getpid()) + "-" +
-		strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
+	socket := tmux.BoundSocketName("vibepanel-api-" + strconv.Itoa(os.Getpid()) + "-" +
+		strings.NewReplacer("/", "_", " ", "_").Replace(t.Name()))
 	tm := tmux.New(socket, dir)
 	// Point the suite at another tmux without editing anything:
 	//	TEST_TMUX_BIN=/path/to/tmux go test ./...

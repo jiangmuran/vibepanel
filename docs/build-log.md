@@ -23869,3 +23869,37 @@ desktop side of the same rule: a Chinese IME's first keydown is also 229 with
 `isComposing` false, and bypassing it is harmless because xterm's own handler
 for that case defers to a timeout that bails once composition has started --
 which it has, by then.
+
+## 2026-09-23 — A socket name one character too long, depending on the pid
+
+Two `internal/httpapi` tests failed on macOS with
+
+    EnsureServer: tmux: start server: tmux: no server running on socket
+
+and passed on other runs. Starting tmux by hand on the same socket name gave the
+real error, `error connecting to /private/tmp/tmux-501/... (File name too
+long)`, which `run()` folds into `ErrNoServer` because it contains "error
+connecting". A unix socket path has to fit in `sun_path`, 104 bytes on macOS
+against 108 on Linux, terminator included, and tmux binds under the resolved
+directory, so on a Mac `/tmp` arrives as `/private/tmp` with eight characters
+nothing in the name accounts for.
+
+The suites name a socket `<prefix>-<pid>-<test name>`. Of the 349 tests in
+`internal/httpapi`, two have names long enough that the path tmux binds is 103
+characters with a four-digit pid and 104 with a five-digit one, and tmux run
+directly on those names starts at 103 and refuses at 104. So they fail whenever
+the test binary's pid has five digits and pass when it has four. The session
+suite's longest path is 101. `TestElevatedUpgrade` already kept its subtest names
+short for the same reason, with a comment saying tmux cannot bind a path past
+about a hundred bytes.
+
+`tmux.BoundSocketName` keeps a name within 60 characters, truncating and
+appending six hex characters of the full name's SHA-256 so two long names
+sharing a prefix still get two sockets. The four suites that build a socket
+name from `t.Name()` -- tmux, session, ws and httpapi -- go through it, and the
+comment above `TestElevatedUpgrade` now says its subtest names no longer have to
+be short. With a five-digit pid, 234 of the four suites' 542 test function
+names are over 60 characters, and a test among them that starts tmux gets a
+shortened socket name that keeps its first 53 characters. `TestASocketNameStaysInsideSunPath`
+needs no tmux, and three mutations of the helper (no bound, truncation with no
+hash, the limit raised to 100) each turn it red.

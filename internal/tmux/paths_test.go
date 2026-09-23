@@ -79,3 +79,37 @@ func TestSessionsSurviveControlCharactersInTheirPath(t *testing.T) {
 		}
 	}
 }
+
+// A socket name built from a long test name still fits in sun_path; see
+// socketNameLimit. Two httpapi tests' socket paths came to 104 characters
+// under /private/tmp/tmux-501/ with a five-digit pid, so they failed only on
+// those runs.
+func TestASocketNameStaysInsideSunPath(t *testing.T) {
+	// The tightest case this has to survive: macOS resolves /tmp, and a uid
+	// from a directory service can run to ten digits.
+	const dir = "/private/tmp/tmux-4294967295/"
+	// 104 bytes including the terminator, so 103 characters of path.
+	const sunPath = 103
+
+	if got := BoundSocketName("vibepanel"); got != "vibepanel" {
+		t.Errorf("BoundSocketName(%q) = %q, want it left alone", "vibepanel", got)
+	}
+
+	long := "vibepanel-api-99999-TestWithoutAnIngesterTheEndpointRefusesRatherThanReportingZero"
+	bounded := BoundSocketName(long)
+	if len(bounded) > socketNameLimit {
+		t.Errorf("bounded name is %d characters, over the %d limit: %q",
+			len(bounded), socketNameLimit, bounded)
+	}
+	if n := len(dir) + len(bounded); n > sunPath {
+		t.Errorf("%s%s is %d characters, and sun_path allows %d", dir, bounded, n, sunPath)
+	}
+
+	// Truncation alone would collide two tests sharing a long prefix, and a
+	// collision here is two tests sharing one tmux server.
+	a := BoundSocketName(long + "First")
+	b := BoundSocketName(long + "Second")
+	if a == b {
+		t.Errorf("two names bounded to the same socket: %q", a)
+	}
+}

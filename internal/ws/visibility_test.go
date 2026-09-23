@@ -42,7 +42,7 @@ func serveSession(t *testing.T, name, script string) served {
 		t.Skip("tmux not installed")
 	}
 	ctx := context.Background()
-	socket := "vibepanel-ws-" + strconv.Itoa(os.Getpid()) + "-" + t.Name()
+	socket := tmux.BoundSocketName("vibepanel-ws-" + strconv.Itoa(os.Getpid()) + "-" + t.Name())
 	tm := tmux.New(socket, t.TempDir())
 	if err := tm.EnsureServer(ctx); err != nil {
 		t.Fatalf("EnsureServer: %v", err)

@@ -25,7 +25,7 @@ func newTestClient(t *testing.T) *Client {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
 	}
-	socket := "vibepanel-test-" + strconv.Itoa(os.Getpid()) + "-" + t.Name()
+	socket := BoundSocketName("vibepanel-test-" + strconv.Itoa(os.Getpid()) + "-" + t.Name())
 	socket = strings.NewReplacer("/", "_", " ", "_").Replace(socket)
 	c := New(socket, t.TempDir())
 	// So the suite can be pointed at another tmux without editing anything.
