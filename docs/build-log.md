@@ -23869,3 +23869,35 @@ desktop side of the same rule: a Chinese IME's first keydown is also 229 with
 `isComposing` false, and bypassing it is harmless because xterm's own handler
 for that case defers to a timeout that bails once composition has started --
 which it has, by then.
+
+## 2026-09-23 — The frontend did not build on a case-insensitive disk
+
+`make build` stopped at `tsc -b` on a Mac with its default APFS volume, which
+is case-insensitive. Each of the component's two importers got the same pair;
+`App.tsx`'s:
+
+    src/App.tsx(51,10): error TS2724: '"./components/Toasts"' has no exported
+      member named 'Toasts'. Did you mean 'Toast'?
+    src/App.tsx(51,24): error TS1149: File name '.../components/Toasts.ts'
+      differs from already included file name '.../components/toasts.ts' only
+      in casing.
+
+`web/src/components/Toasts.tsx` was the toast stack, and `toasts.ts` beside it
+is the store the stack reads. tsc resolves `./Toasts` by trying `Toasts.ts` before
+`Toasts.tsx`, and a case-insensitive disk answers yes to `Toasts.ts` because
+`toasts.ts` is there. So both importers got the store under a second spelling:
+TS1149 is tsc noticing that file is already in the program as `toasts.ts`, and
+TS2724 is the import finding no `Toasts` in it. The same commit built cleanly on
+a case-sensitive APFS volume on the same machine, with the same Node and Go. CI
+is Linux, where there is no `Toasts.ts` to find, and never sees it.
+
+The component is `ToastStack.tsx` now, named for what it draws: the comments
+where `App.tsx` and `ChatPage.tsx` mount it already call it the stack. Both
+import it by that name. The bundle is byte for byte what it was, because the
+bundler puts every module in one chunk and the minifier renames the component,
+so `internal/webui/dist` does not change.
+
+`no-names-differing-only-in-case.test.ts` fails on two modules in one directory
+whose names differ only in case. It reads file names rather than asking the
+disk, so it fails on Linux CI too, where the build itself never would. With the
+rename reverted it fails naming `components/Toasts and components/toasts`.

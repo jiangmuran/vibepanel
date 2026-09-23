@@ -48,7 +48,7 @@ import type { LaunchProfile } from './protocol/wire'
 import { safeText } from './components/text'
 import { formatBytes } from './components/bytes'
 import { DirectoryPicker } from './components/DirectoryPicker'
-import { Toasts } from './components/Toasts'
+import { ToastStack } from './components/ToastStack'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { askConfirm } from './components/ask'
 import { dismissToast, setToastProgress, showToast } from './components/toasts'
@@ -1566,8 +1566,8 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         </div>
 
         {/* Before the phone's compose box and key bar, and after the terminal:
-            on a narrow screen the stack anchors itself here. See Toasts. */}
-        <Toasts narrow={narrow} />
+            on a narrow screen the stack anchors itself here. See ToastStack. */}
+        <ToastStack narrow={narrow} />
 
         {current && narrow && (
           <>

@@ -47,7 +47,7 @@ const TINT: Record<ToastKind, string> = {
  * the dismiss buttons take it back, so a toast over the terminal never eats the
  * click aimed at what is underneath it.
  */
-export function Toasts({ narrow }: { narrow: boolean }) {
+export function ToastStack({ narrow }: { narrow: boolean }) {
   useLang()
   const toasts = useSyncExternalStore(subscribeToasts, toastsSnapshot, toastsSnapshot)
   if (toasts.length === 0) return null
