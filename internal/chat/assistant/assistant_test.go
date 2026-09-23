@@ -134,10 +134,17 @@ const claudeHelp = `Usage: claude [options]
 
 func newClaudeRunner(t *testing.T, f *fake, extra ...string) (*Runner, Config) {
 	t.Helper()
+	// Through EvalSymlinks because the harness records the working directory
+	// the OS hands it, and /var is a symlink to /private/var on macOS: the
+	// recorded cwd and the configured one are then two spellings of one path.
+	work, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	cfg := Config{
 		Harness:    "claude",
 		Binary:     f.bin,
-		WorkDir:    filepath.Join(t.TempDir(), "assistant"),
+		WorkDir:    filepath.Join(work, "assistant"),
 		PanelURL:   "https://127.0.0.1:18443",
 		ToolsToken: "tok-secret",
 		SelfBinary: "/opt/vibepanel/bin/vibepanel",

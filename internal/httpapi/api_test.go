@@ -1220,7 +1220,13 @@ func TestManualOverrideSurvivesThePoller(t *testing.T) {
 func TestScratchTerminalInheritsTheParentDirectory(t *testing.T) {
 	ts, srv := newTestServer(t)
 	ctx := context.Background()
-	root := t.TempDir()
+	// Through EvalSymlinks because the cwd comes back from tmux, which reports
+	// the pane's resolved directory, and /var is a symlink to /private/var on
+	// macOS.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	sub := filepath.Join(root, "worktree")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
