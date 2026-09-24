@@ -1,5 +1,5 @@
 import { decodeData, encodeData } from './wire'
-import type { ClientMessage, PanelState, ResourceAction, ResourceAlert, ServerMessage, StateMessage } from './wire'
+import type { ClientMessage, LoadTiming, PanelState, ResourceAction, ResourceAlert, ServerMessage, StateMessage } from './wire'
 
 /** What a subscriber to one session receives. */
 export interface StreamHandlers {
@@ -504,6 +504,12 @@ export class PanelSocket {
     if (!stream || stream.hidden === hidden) return
     stream.hidden = hidden
     this.send({ t: 'visibility', sessionId, hidden })
+  }
+
+  /** Reports how long a terminal took to load. See LoadTiming. */
+  reportLoadTiming(sessionId: string, timing: LoadTiming) {
+    if (!this.streams.has(sessionId)) return
+    this.send({ t: 'loadTiming', sessionId, timing })
   }
 
   /**

@@ -23990,3 +23990,43 @@ the reason it is a commit now. Two things were wrong with it and are fixed here:
   animation frame every frame for as long as the session stayed in the
   background. A hidden terminal draws no bar, so it waits for the eight frames
   only.
+
+## 2026-09-25 — The load bar measures the parse, and says where the time went
+
+"It gets to 68% and it is already loaded." Measured against the 19 September
+bar with five sessions of 2.6 MB of agent-shaped output, switching on a
+desktop: bytes received (8-68%) took about a quarter of the wait, the bar then
+sat at 68% while xterm parsed for more than half of it, and the last part, the
+"2/2 scroll" at 72-94%, was eight animation frames held so that it could be
+seen -- `scrollToBottom` is synchronous. The screen filled while the bar was
+not moving, then the bar moved while nothing was happening.
+
+- The bar is now bytes *parsed* against the announced total, reported by
+  `TerminalReplay` from xterm's write callback. Received bytes are the lighter
+  track behind it, because on a slow link that is the figure that explains the
+  wait. The label carries both counts. Capped at 99 until the terminal is
+  sized and scrolled, which is when it disappears.
+- The scroll phase is gone, and with it the frame loop.
+- A reconnect shows the bar too. It was hidden there on the grounds that the
+  content was already on screen, but the snapshot that follows resets the
+  terminal from the top, so the content is not there for most of it.
+- A restart increments a generation in `TerminalReplay`: the chunk xterm is
+  still parsing when a reconnect throws its snapshot away calls back anyway,
+  and without this its bytes were credited to the new one.
+
+Timing. The complaint was about 20 seconds; the synthetic load above takes
+0.6 s, and 2-3 s with the CPU throttled six times, so the wait is somewhere
+the test does not reach -- the network, the server on a host that was
+OOM-killing inside its cgroup that day, or real agent output. The browser now
+records four marks per load (confirmed, first byte, all received, ready),
+logs them to the console, and sends them as `loadTiming`; the server logs
+them as `terminal load` next to its own `terminal subscribe` line, under the
+same `VIBEPANEL_DEBUG_TIMING` gate, only for a session the connection is
+watching and only with numbers inside a plausible range. Off by default for
+the reason `debug.go` gives.
+
+One thing the marks already showed on the test machine: `received_ms` is
+close to `ready_ms` even on loopback, because the socket's messages are
+delivered on the same main thread that is parsing, so "the network" in these
+numbers includes waiting for the parse. The gap between first byte and
+received is an upper bound on the network, not a measurement of it.

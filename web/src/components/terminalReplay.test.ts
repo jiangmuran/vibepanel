@@ -153,3 +153,43 @@ describe('TerminalReplay', () => {
     expect(term.writes).toHaveLength(0)
   })
 })
+
+describe('parsed-byte reporting', () => {
+  function counting() {
+    const term = new FakeTerminal()
+    const clock = frames()
+    const parsed: number[] = []
+    const queue = new TerminalReplay(term, clock.schedule, clock.cancel, undefined, (n) => parsed.push(n))
+    return { term, clock, queue, parsed }
+  }
+
+  it('reports each snapshot chunk once xterm has parsed it, not when it arrives', () => {
+    const { term, clock, queue, parsed } = counting()
+    queue.enqueue(new Uint8Array(10), true)
+    queue.enqueue(new Uint8Array(20), true)
+    expect(parsed).toEqual([])
+    term.finish()
+    expect(parsed).toEqual([10])
+    clock.flush()
+    term.finish()
+    expect(parsed).toEqual([10, 20])
+  })
+
+  it('does not count live output', () => {
+    const { term, queue, parsed } = counting()
+    queue.enqueue(new Uint8Array(5), false)
+    term.finish()
+    expect(parsed).toEqual([])
+  })
+
+  it('does not credit the next snapshot with a chunk from the one a restart discarded', () => {
+    const { term, queue, parsed } = counting()
+    queue.enqueue(new Uint8Array(64), true)
+    queue.restart()
+    term.finish()
+    expect(parsed).toEqual([])
+    queue.enqueue(new Uint8Array(7), true)
+    term.finish()
+    expect(parsed).toEqual([7])
+  })
+})

@@ -1165,7 +1165,6 @@ const DICT = {
   },
   'term.loadingConnecting': { zh: '连接终端', en: 'Connecting terminal' },
   'term.loadingReplay': { zh: '加载终端内容', en: 'Loading terminal content' },
-  'term.loadingScroll': { zh: '滚动到最新内容', en: 'Scrolling to latest content' },
 
   'notify.waitingTitle': { zh: '有 agent 在等你', en: 'An agent is waiting' },
   'notify.waitingBody': { zh: '{name} 停下来等你处理了', en: '{name} has stopped and needs you' },

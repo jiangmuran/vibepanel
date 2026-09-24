@@ -30,8 +30,9 @@ func (oneSession) RecordSize(context.Context, string, int, int) error { return n
 
 // served is a real tmux session behind a real socket handler.
 type served struct {
-	url  string
-	live *session.Live
+	url     string
+	live    *session.Live
+	handler *Handler
 }
 
 // serveSession starts a tmux session on a throwaway socket, lets script finish
@@ -78,9 +79,10 @@ func serveSession(t *testing.T, name, script string) served {
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	srv := httptest.NewServer(&Handler{Manager: m, Resolve: oneSession{name}})
+	h := &Handler{Manager: m, Resolve: oneSession{name}}
+	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	return served{url: "ws" + strings.TrimPrefix(srv.URL, "http"), live: live}
+	return served{url: "ws" + strings.TrimPrefix(srv.URL, "http"), live: live, handler: h}
 }
 
 type received struct {

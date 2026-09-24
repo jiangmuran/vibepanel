@@ -51,8 +51,10 @@ export function decodeData(
 }
 
 export interface ClientMessage {
-  t: 'subscribe' | 'unsubscribe' | 'resize' | 'takeControl' | 'ping' | 'paste' | 'scheme' | 'visibility'
+  t: 'subscribe' | 'unsubscribe' | 'resize' | 'takeControl' | 'ping' | 'paste' | 'scheme' | 'visibility' | 'loadTiming'
   sessionId?: string
+  /** MsgLoadTiming only. */
+  timing?: LoadTiming
   /**
    * MsgSubscribe and MsgVisibility: this terminal is mounted off-screen, kept
    * so that switching back to it is instant. A hidden terminal does not hold
@@ -74,6 +76,23 @@ export interface ClientMessage {
    * answer before the pane has a chance to ask.
    */
   dark?: boolean
+}
+
+/**
+ * How long one terminal took to load, reported back so it lands in the
+ * server's log next to the server's own half of the same subscribe.
+ *
+ * Milliseconds from the subscribe (or, on a reconnect, from the restart), -1
+ * for a mark that never happened. Mirrors ws.LoadTiming.
+ */
+export interface LoadTiming {
+  bytes: number
+  subscribedMs: number
+  firstByteMs: number
+  receivedMs: number
+  readyMs: number
+  reconnect: boolean
+  hidden: boolean
 }
 
 export interface ServerMessage {

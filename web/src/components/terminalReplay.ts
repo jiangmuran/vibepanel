@@ -7,6 +7,8 @@ export interface ReplayTerminal {
 interface Job {
   data: Uint8Array
   replay: boolean
+  /** Which snapshot this belongs to. See restart. */
+  generation: number
 }
 
 type Schedule = (callback: () => void) => number
@@ -28,12 +30,22 @@ export class TerminalReplay {
   private yieldHandle: number | null = null
   private resetBeforeReplay = false
   private disposed = false
+  private generation = 0
 
   constructor(
     private readonly term: ReplayTerminal,
     private readonly schedule: Schedule = (callback) => requestAnimationFrame(callback),
     private readonly cancel: Cancel = (handle) => cancelAnimationFrame(handle),
     private readonly onReplayDone?: () => void,
+    /**
+     * Bytes of snapshot xterm has finished parsing, reported per chunk.
+     *
+     * This is what the load bar measures. Counting bytes as they *arrived*
+     * put 68% on the bar the moment the network was done, and then held it
+     * there for the part that actually took the time: on a fast link the
+     * parse is most of the wait, and it had four percent of the bar.
+     */
+    private readonly onReplayParsed?: (bytes: number) => void,
   ) {}
 
   /**
@@ -48,12 +60,16 @@ export class TerminalReplay {
   }
 
   enqueue(data: Uint8Array, replay: boolean): void {
-    this.queue.push({ data, replay })
+    this.queue.push({ data, replay, generation: this.generation })
     this.drain()
   }
 
   /** Drop queued output after a reconnect and reset before the next snapshot. */
   restart(): void {
+    // The chunk xterm is parsing right now still finishes, and still calls
+    // back. It belongs to the snapshot being thrown away, so its bytes must
+    // not be counted toward the one that replaces it.
+    this.generation++
     this.queue = []
     this.resetBeforeReplay = true
     // A yield still pending would hold the new snapshot back a frame, behind
@@ -86,6 +102,7 @@ export class TerminalReplay {
       if (this.disposed) return
       this.active = false
       this.activeReplay = false
+      if (job.replay && job.generation === this.generation) this.onReplayParsed?.(job.data.byteLength)
       if (job.replay && !this.queue.some((queued) => queued.replay)) {
         this.onReplayDone?.()
       }

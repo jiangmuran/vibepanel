@@ -103,6 +103,33 @@ type ClientMessage struct {
 	// Hidden rides on MsgSubscribe and MsgVisibility: the viewer is keeping
 	// this terminal mounted off-screen. See session.Live.SetHidden.
 	Hidden bool `json:"hidden,omitempty"`
+
+	// Timing carries a MsgLoadTiming body.
+	Timing *LoadTiming `json:"timing,omitempty"`
+}
+
+// LoadTiming is the browser's half of one terminal load: milliseconds from the
+// subscribe (or from the restart, after a reconnect) to each mark, -1 for a
+// mark that never happened. Mirrors LoadTiming in web/src/protocol/wire.ts.
+type LoadTiming struct {
+	Bytes        int  `json:"bytes"`
+	SubscribedMS int  `json:"subscribedMs"`
+	FirstByteMS  int  `json:"firstByteMs"`
+	ReceivedMS   int  `json:"receivedMs"`
+	ReadyMS      int  `json:"readyMs"`
+	Reconnect    bool `json:"reconnect"`
+	Hidden       bool `json:"hidden"`
+}
+
+// valid bounds what a browser can put in the log. The numbers arrive from the
+// client, so a negative byte count or a nine-digit wait is refused rather than
+// recorded as a measurement.
+func (t *LoadTiming) valid() bool {
+	const maxMS = 10 * 60 * 1000
+	inRange := func(ms int) bool { return ms >= -1 && ms <= maxMS }
+	return t.Bytes >= 0 && t.Bytes <= 64<<20 &&
+		inRange(t.SubscribedMS) && inRange(t.FirstByteMS) && inRange(t.ReceivedMS) &&
+		t.ReadyMS >= 0 && t.ReadyMS <= maxMS
 }
 
 // Client message types.
@@ -145,6 +172,13 @@ const (
 	// that an application asking the terminal what colour it is gets an answer
 	// that matches what the person is looking at. See Live.dark.
 	MsgScheme = "scheme"
+
+	// MsgLoadTiming reports how long a terminal took to load, from the
+	// browser's side. Logged beside the server's own subscribe timing when
+	// VIBEPANEL_DEBUG_TIMING is set, and otherwise dropped: the server's half
+	// alone cannot see the network or the parse, which is where a slow switch
+	// usually is.
+	MsgLoadTiming = "loadTiming"
 
 	// MsgPing keeps intermediaries from closing an idle connection. Mobile
 	// networks and reverse proxies both do this on quiet sockets.
@@ -239,6 +273,6 @@ var (
 	}
 	AllClientMessages = []string{
 		MsgSubscribe, MsgUnsubscribe, MsgResize, MsgTakeControl, MsgPing,
-		MsgPaste, MsgScheme, MsgVisibility,
+		MsgPaste, MsgScheme, MsgVisibility, MsgLoadTiming,
 	}
 )

@@ -542,6 +542,27 @@ func (c *Conn) handleControl(ctx context.Context, msg ClientMessage) {
 			c.h.logger().Warn("persist size", "session", msg.SessionID, "err", rerr)
 		}
 
+	case MsgLoadTiming:
+		// Only for a session this connection is watching, and only with
+		// numbers that could be a measurement. See LoadTiming.valid.
+		c.mu.Lock()
+		s := c.byID[msg.SessionID]
+		c.mu.Unlock()
+		if s == nil || msg.Timing == nil || !msg.Timing.valid() || !debugTiming {
+			return
+		}
+		t := msg.Timing
+		c.h.logger().Info("terminal load",
+			"session", msg.SessionID,
+			"hidden", t.Hidden,
+			"reconnect", t.Reconnect,
+			"replay_bytes", t.Bytes,
+			"subscribed_ms", t.SubscribedMS,
+			"first_byte_ms", t.FirstByteMS,
+			"received_ms", t.ReceivedMS,
+			"ready_ms", t.ReadyMS,
+		)
+
 	case MsgVisibility:
 		c.mu.Lock()
 		s := c.byID[msg.SessionID]
