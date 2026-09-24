@@ -104,6 +104,13 @@ type ClientMessage struct {
 	// this terminal mounted off-screen. See session.Live.SetHidden.
 	Hidden bool `json:"hidden,omitempty"`
 
+	// Stream and Since ride on MsgSubscribe from a viewer whose terminal
+	// already shows that stream up to byte offset Since, as the last
+	// MsgSubscribed told it. The server then sends only what came after, if it
+	// still has it. Since is a pointer because offset 0 is a real position.
+	Stream string `json:"stream,omitempty"`
+	Since  *int64 `json:"since,omitempty"`
+
 	// Timing carries a MsgLoadTiming body.
 	Timing *LoadTiming `json:"timing,omitempty"`
 }
@@ -118,6 +125,7 @@ type LoadTiming struct {
 	ReceivedMS   int  `json:"receivedMs"`
 	ReadyMS      int  `json:"readyMs"`
 	Reconnect    bool `json:"reconnect"`
+	Resumed      bool `json:"resumed"`
 	Hidden       bool `json:"hidden"`
 }
 
@@ -203,6 +211,16 @@ type ServerMessage struct {
 	// showing an indeterminate spinner while a phone receives a large replay.
 	ReplayBytes  int `json:"replayBytes,omitempty"`
 	ReplayChunks int `json:"replayChunks,omitempty"`
+
+	// ReplayStream and ReplayOffset place the replay in the session's output:
+	// which attachment it is from, and the stream offset of its first byte.
+	// The viewer adds every byte it receives after that, and sends both back
+	// on its next subscribe to resume instead of starting over.
+	ReplayStream string `json:"replayStream,omitempty"`
+	ReplayOffset int64  `json:"replayOffset,omitempty"`
+	// Resumed means the replay continues the viewer's terminal from where it
+	// stopped, so the viewer must not clear it first.
+	Resumed bool `json:"resumed,omitempty"`
 
 	// Controlling tells the viewer whether it owns the grid, so the UI can show
 	// a "take control" affordance instead of silently ignoring resizes.

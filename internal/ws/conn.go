@@ -484,7 +484,7 @@ func (c *Conn) handleControl(ctx context.Context, msg ClientMessage) {
 		c.sendJSON(ServerMessage{Type: MsgPong})
 
 	case MsgSubscribe:
-		if err := c.subscribe(ctx, msg.SessionID, msg.Cols, msg.Rows, msg.Hidden); err != nil {
+		if err := c.subscribe(ctx, msg.SessionID, msg.Cols, msg.Rows, msg.Hidden, msg.resume()); err != nil {
 			c.sendError(msg.SessionID, err.Error())
 			return
 		}
@@ -556,6 +556,7 @@ func (c *Conn) handleControl(ctx context.Context, msg ClientMessage) {
 			"session", msg.SessionID,
 			"hidden", t.Hidden,
 			"reconnect", t.Reconnect,
+			"resumed", t.Resumed,
 			"replay_bytes", t.Bytes,
 			"subscribed_ms", t.SubscribedMS,
 			"first_byte_ms", t.FirstByteMS,
@@ -605,7 +606,7 @@ func (c *Conn) handleControl(ctx context.Context, msg ClientMessage) {
 
 // subscribe attaches (if needed), registers a viewer and starts pumping its
 // events onto the socket.
-func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int, hidden bool) error {
+func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int, hidden bool, from session.Resume) error {
 	subscribeStarted := time.Now()
 	if sessionID == "" {
 		return errors.New("subscribe: missing sessionId")
@@ -630,11 +631,8 @@ func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int, 
 		return fmt.Errorf("subscribe: %w", err)
 	}
 	attachedAt := time.Now()
-	subscribeAs := live.Subscribe
-	if hidden {
-		subscribeAs = live.SubscribeHidden
-	}
-	sub, replay := subscribeAs(c.clientID)
+	sub, snap := live.SubscribeFrom(c.clientID, hidden, from)
+	replay := snap.Data
 
 	c.mu.Lock()
 	c.nextRef++
@@ -653,6 +651,7 @@ func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int, 
 		Type: MsgSubscribed, SessionID: sessionID, Ref: ref,
 		Cols: gridCols, Rows: gridRows,
 		ReplayBytes: len(replay), ReplayChunks: len(frames),
+		ReplayStream: snap.Stream, ReplayOffset: snap.Offset, Resumed: snap.Continued,
 		Controlling: live.Controller() == c.clientID,
 	})
 
@@ -674,6 +673,7 @@ func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int, 
 		c.h.logger().Info("terminal subscribe",
 			"session", sessionID,
 			"hidden", hidden,
+			"resumed", snap.Continued,
 			"attach_ms", attachedAt.Sub(subscribeStarted).Milliseconds(),
 			"replay_bytes", len(replay),
 			"replay_chunks", len(frames),
@@ -685,6 +685,15 @@ func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int, 
 
 	go c.pumpStream(sctx, s)
 	return nil
+}
+
+// resume is the subscribe's resume point, or the zero value when the viewer
+// did not send one.
+func (m ClientMessage) resume() session.Resume {
+	if m.Stream == "" || m.Since == nil || *m.Since < 0 {
+		return session.Resume{}
+	}
+	return session.Resume{Stream: m.Stream, Since: *m.Since}
 }
 
 // replayChunk bounds the payload of one replay frame.

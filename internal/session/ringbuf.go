@@ -111,7 +111,43 @@ func (r *RingBuffer) Write(p []byte) (int, error) {
 func (r *RingBuffer) Snapshot() []byte {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	return r.snapshotLocked()
+}
 
+// SnapshotFrom is Snapshot for a viewer that already has everything up to
+// byte offset since of this buffer's stream.
+//
+// When the buffer still holds every byte after since, only those are
+// returned, and continued is true: they carry on exactly where the viewer's
+// terminal left off, so nothing is trimmed and nothing is cleared. Otherwise
+// -- the gap has been evicted, or since is not an offset this buffer ever
+// had -- it is the whole snapshot, as Snapshot would give it.
+//
+// start is the stream offset of the first returned byte either way, so the
+// viewer can keep counting from it.
+//
+// This is what makes a reconnect cheap. Every resubscribe used to be the
+// whole two megabytes, parsed from a cleared screen, for a terminal that was
+// missing a few seconds of output.
+func (r *RingBuffer) SnapshotFrom(since int64) (data []byte, start int64, continued bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if oldest := r.total - int64(r.size); since >= oldest && since <= r.total {
+		n := int(r.total - since)
+		out := make([]byte, n)
+		capacity := len(r.buf)
+		from := (r.start + r.size - n) % capacity
+		first := copy(out, r.buf[from:min(from+n, capacity)])
+		if first < n {
+			copy(out[first:], r.buf[:n-first])
+		}
+		return out, since, true
+	}
+	out := r.snapshotLocked()
+	return out, r.total - int64(len(out)), false
+}
+
+func (r *RingBuffer) snapshotLocked() []byte {
 	out := make([]byte, r.size)
 	capacity := len(r.buf)
 	first := copy(out, r.buf[r.start:min(r.start+r.size, capacity)])

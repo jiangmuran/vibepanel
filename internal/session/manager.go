@@ -16,6 +16,7 @@ import (
 
 	"github.com/creack/pty"
 
+	"github.com/jiangmuran/vibepanel/internal/id"
 	"github.com/jiangmuran/vibepanel/internal/tmux"
 )
 
@@ -122,6 +123,14 @@ type Live struct {
 	cmd  *exec.Cmd
 	ring *RingBuffer
 	subs map[*Subscriber]struct{}
+
+	// stream names this attachment's output, for a viewer resuming it. An
+	// offset into the ring means something only within one attachment: a
+	// re-attach -- the panel restarting, the session detaching -- starts a new
+	// ring whose offsets count from the history primed into it, and a viewer
+	// resuming at its old offset would splice two unrelated streams together.
+	// Random rather than a counter because it has to differ across processes.
+	stream string
 
 	cols, rows int
 
@@ -529,6 +538,7 @@ func (m *Manager) Attach(ctx context.Context, sessionID, tmuxName string, cols, 
 		ptmx:           ptmx,
 		cmd:            cmd,
 		ring:           ring,
+		stream:         id.New(),
 		subs:           map[*Subscriber]struct{}{},
 		cols:           cols,
 		rows:           rows,
@@ -880,7 +890,8 @@ func (m *Manager) DetachAll() {
 // The snapshot is taken under the same lock that registers the subscriber, so
 // no output can slip between the two and be lost.
 func (l *Live) Subscribe(clientID string) (*Subscriber, []byte) {
-	return l.subscribe(clientID, false)
+	sub, r := l.subscribe(clientID, false, Resume{})
+	return sub, r.Data
 }
 
 // SubscribeHidden is Subscribe for a viewer that starts off-screen. A browser
@@ -892,19 +903,54 @@ func (l *Live) Subscribe(clientID string) (*Subscriber, []byte) {
 // every reconnect would restart the grace period on a grid its owner walked
 // away from an hour ago.
 func (l *Live) SubscribeHidden(clientID string) (*Subscriber, []byte) {
-	return l.subscribe(clientID, true)
+	sub, r := l.subscribe(clientID, true, Resume{})
+	return sub, r.Data
 }
 
-func (l *Live) subscribe(clientID string, hidden bool) (*Subscriber, []byte) {
+// Resume is where a viewer's terminal already is: the stream it was watching
+// and the offset of the next byte it has not seen. The zero value asks for
+// the whole snapshot.
+type Resume struct {
+	Stream string
+	Since  int64
+}
+
+// Replay is what a subscribe hands the viewer to render before live output.
+type Replay struct {
+	Data []byte
+	// Stream and Offset say where Data sits: the stream it belongs to and the
+	// offset of its first byte. The viewer counts on from there, and sends
+	// both back when it resumes.
+	Stream string
+	Offset int64
+	// Continued means Data carries on from the viewer's Resume, so the
+	// terminal keeps what it has. Otherwise it is the whole snapshot and the
+	// terminal starts again from a clear screen.
+	Continued bool
+}
+
+// SubscribeFrom is Subscribe or SubscribeHidden for a viewer that may already
+// hold most of the snapshot. See RingBuffer.SnapshotFrom.
+func (l *Live) SubscribeFrom(clientID string, hidden bool, from Resume) (*Subscriber, Replay) {
+	return l.subscribe(clientID, hidden, from)
+}
+
+func (l *Live) subscribe(clientID string, hidden bool, from Resume) (*Subscriber, Replay) {
 	sub := &Subscriber{Events: make(chan Event, subscriberQueue), ClientID: clientID, hidden: hidden}
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.closed {
 		close(sub.Events)
-		return sub, nil
+		return sub, Replay{Stream: l.stream}
 	}
-	replay := l.ring.Snapshot()
+	var replay Replay
+	replay.Stream = l.stream
+	if from.Stream != "" && from.Stream == l.stream {
+		replay.Data, replay.Offset, replay.Continued = l.ring.SnapshotFrom(from.Since)
+	} else {
+		replay.Data, replay.Offset, _ = l.ring.SnapshotFrom(-1)
+	}
 	l.subs[sub] = struct{}{}
 
 	// A session nobody has ever driven goes to whoever opened it. Without this

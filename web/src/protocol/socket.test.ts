@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { PanelSocket } from './socket'
+import { encodeData, FRAME_REPLAY } from './wire'
 import type { ClientMessage, ServerMessage } from './wire'
 
 /**
@@ -201,6 +202,86 @@ describe('replay metadata', () => {
       replayChunks: 2,
     })
 
-    expect(seen).toEqual([{ replayBytes: 123456, replayChunks: 2 }])
+    expect(seen).toEqual([{ replayBytes: 123456, replayChunks: 2, resumed: false }])
+  })
+})
+
+/**
+ * Resuming instead of replaying.
+ *
+ * A reconnect used to resubscribe every mounted terminal from nothing: the
+ * server sent its whole ring, and the terminal cleared itself and parsed it
+ * again, for the sake of the few seconds of output it had missed.
+ */
+describe('resuming a stream', () => {
+  function openSocket() {
+    const sock = newSocket()
+    ;(sock as unknown as { dark: () => boolean }).dark = () => false
+    const sent: ClientMessage[] = []
+    ;(sock as unknown as { ws: unknown }).ws = {
+      readyState: WebSocket.OPEN,
+      send: (s: string) => sent.push(JSON.parse(s) as ClientMessage),
+    }
+    return { sock, sent }
+  }
+
+  function frame(ref: number, bytes: number, replay: boolean): ArrayBuffer {
+    const f = encodeData(ref, new Uint8Array(bytes))
+    if (replay) f[0] = FRAME_REPLAY
+    return f.buffer.slice(f.byteOffset, f.byteOffset + f.byteLength) as ArrayBuffer
+  }
+
+  function receive(sock: PanelSocket, buf: ArrayBuffer) {
+    ;(sock as unknown as { handleFrame(b: ArrayBuffer): void }).handleFrame(buf)
+  }
+
+  it('asks to resume from the offset after every byte it received, replay and live', () => {
+    const { sock, sent } = openSocket()
+    const resets: number[] = []
+    sock.subscribe('s1', 80, 24, { onData: () => {}, onSize: () => {}, onReset: () => resets.push(1) })
+    deliver(sock, { t: 'subscribed', sessionId: 's1', ref: 1, replayBytes: 300, replayStream: 'abc', replayOffset: 1000 })
+    receive(sock, frame(1, 200, true))
+    receive(sock, frame(1, 100, true))
+    receive(sock, frame(1, 42, false))
+    sent.length = 0
+
+    deliver(sock, { t: 'dropped', sessionId: 's1' })
+
+    expect(sent).toEqual([expect.objectContaining({ t: 'subscribe', sessionId: 's1', stream: 'abc', since: 1342 })])
+  })
+
+  it('keeps the terminal when the server resumes, and clears it when it does not', () => {
+    const { sock } = openSocket()
+    let resets = 0
+    const seen: boolean[] = []
+    sock.subscribe('s1', 80, 24, {
+      onData: () => {},
+      onSize: () => {},
+      onReset: () => resets++,
+      onSubscribed: (info) => seen.push(info.resumed),
+    })
+    deliver(sock, { t: 'subscribed', sessionId: 's1', ref: 1, replayStream: 'abc', replayOffset: 0 })
+    deliver(sock, { t: 'subscribed', sessionId: 's1', ref: 2, replayStream: 'abc', replayOffset: 0, resumed: true })
+    expect(resets).toBe(0)
+
+    deliver(sock, { t: 'subscribed', sessionId: 's1', ref: 3, replayStream: 'abc', replayOffset: 0 })
+    expect(resets).toBe(1)
+    expect(seen).toEqual([false, true, false])
+  })
+
+  it('does not believe a resume for a stream it was not counting', () => {
+    const { sock } = openSocket()
+    let resets = 0
+    sock.subscribe('s1', 80, 24, { onData: () => {}, onSize: () => {}, onReset: () => resets++ })
+    deliver(sock, { t: 'subscribed', sessionId: 's1', ref: 1, replayStream: 'abc', replayOffset: 0 })
+    deliver(sock, { t: 'subscribed', sessionId: 's1', ref: 2, replayStream: 'xyz', replayOffset: 0, resumed: true })
+    expect(resets).toBe(1)
+  })
+
+  it('sends no resume point before it has one', () => {
+    const { sock, sent } = openSocket()
+    sock.subscribe('s1', 80, 24, { onData: () => {}, onSize: () => {} })
+    expect(sent[0]).not.toHaveProperty('since')
+    expect(sent[0]).not.toHaveProperty('stream')
   })
 })

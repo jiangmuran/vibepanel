@@ -54,13 +54,15 @@ export class LoadTimer {
   private firstByte = -1
   private received = -1
   private reconnect = false
+  private resumed = false
 
   constructor(private readonly now: () => number = () => performance.now()) {}
 
-  begin(reconnect: boolean): void {
+  begin(reconnect: boolean, resumed = false): void {
     this.start = this.now()
     this.subscribed = this.firstByte = this.received = -1
     this.reconnect = reconnect
+    this.resumed = resumed
   }
 
   markSubscribed(): void {
@@ -81,6 +83,7 @@ export class LoadTimer {
       receivedMs: this.received,
       readyMs: this.since(),
       reconnect: this.reconnect,
+      resumed: this.resumed,
       hidden,
     }
   }

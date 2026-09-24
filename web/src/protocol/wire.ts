@@ -56,6 +56,12 @@ export interface ClientMessage {
   /** MsgLoadTiming only. */
   timing?: LoadTiming
   /**
+   * MsgSubscribe only: this terminal already shows `stream` up to offset
+   * `since`, so the server need send only what came after.
+   */
+  stream?: string
+  since?: number
+  /**
    * MsgSubscribe and MsgVisibility: this terminal is mounted off-screen, kept
    * so that switching back to it is instant. A hidden terminal does not hold
    * the grid.
@@ -92,6 +98,8 @@ export interface LoadTiming {
   receivedMs: number
   readyMs: number
   reconnect: boolean
+  /** Only the output missed while away was sent, not the whole snapshot. */
+  resumed: boolean
   hidden: boolean
 }
 
@@ -121,6 +129,15 @@ export interface ServerMessage {
   replayBytes?: number
   /** Number of replay frames that follow this subscription confirmation. */
   replayChunks?: number
+  /**
+   * Which attachment the replay is from, and the stream offset of its first
+   * byte. Sent back on the next subscribe, with every byte received since
+   * added, to resume instead of starting over.
+   */
+  replayStream?: string
+  replayOffset?: number
+  /** The replay continues this viewer's terminal: do not clear it. */
+  resumed?: boolean
 }
 
 // ── REST shapes, mirroring internal/store ──────────────────────────────────

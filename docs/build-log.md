@@ -24030,3 +24030,48 @@ close to `ready_ms` even on loopback, because the socket's messages are
 delivered on the same main thread that is parsing, so "the network" in these
 numbers includes waiting for the parse. The gap between first byte and
 received is an upper bound on the network, not a measurement of it.
+
+## 2026-09-25 — A reconnect resumes the stream instead of replaying it
+
+Every reconnect resubscribed every mounted terminal from nothing: the server
+sent its whole ring, up to 2 MiB per session, and each terminal cleared itself
+and parsed all of it again, for the sake of however many seconds of output it
+had missed. The nginx log for one desktop browser on 24 September has its
+WebSocket reopening every few minutes to every twenty, so this was not rare,
+and it is a switch-time complaint as well as a reconnect one: a reconnect that
+lands while you click is a full reload of the session you clicked.
+
+A subscribe can now say where its terminal is. The subscription confirmation
+names the attachment (`replayStream`) and the stream offset of the first
+replay byte (`replayOffset`); the browser adds every byte it receives for that
+subscription, replay and live, and a later subscribe sends `stream` and
+`since`. `RingBuffer.SnapshotFrom` returns only the bytes after `since` when it
+still holds all of them, the confirmation says `resumed`, and the terminal
+keeps its screen and appends. Anything else -- the gap evicted, an offset the
+ring never had -- is the whole snapshot and a clear, as before.
+
+Three things that make the offset trustworthy, each checked rather than
+assumed:
+
+- The ring and the broadcast are the same bytes under the same lock (the pump
+  writes `chunk` to one and a copy of it to the other), so counting what
+  arrives counts ring offsets.
+- A frame is either delivered whole or the connection is closed
+  (`sendBinary` closes on a failed write), so the browser never counts a byte
+  it did not get.
+- The stream id is random per attachment. A re-attach starts a new ring whose
+  offsets count from its own primed history, so a browser that held offset N
+  across a panel restart would otherwise splice two unrelated streams
+  together; with a different id it gets the whole snapshot. The browser also
+  refuses a `resumed` for a stream it was not counting.
+
+Measured in a browser against the built binary, forcing the connection down
+with the browser offline for two seconds while the session printed: both
+mounted terminals resubscribed with `resumed=true`, the visible one received
+31 bytes instead of 2 MiB, no frame in eight seconds of sampling showed the
+terminal cleared or the bar, and the output from while it was away was on
+screen 385 ms after the network came back.
+
+What this does not cover: a terminal that has been unmounted, because it fell
+out of the recently-viewed window, has no screen left to append to, so opening
+it again is still a full load.

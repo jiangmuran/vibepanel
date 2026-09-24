@@ -76,6 +76,13 @@ interface Props {
 
 type LoadPhase = 'connecting' | 'replay' | 'ready'
 
+/**
+ * A resumed gap smaller than this is parsed without a bar. About a tenth of a
+ * second of parse on the desktop this was measured on; above it the wait is
+ * long enough to be worth saying so.
+ */
+const RESUME_BAR_BYTES = 256 << 10
+
 const loadCopyKey = {
   connecting: 'term.loadingConnecting',
   replay: 'term.loadingReplay',
@@ -421,7 +428,33 @@ export function TerminalView({
         timer.begin(true)
         setLoadPhase('replay')
       },
-      onSubscribed: ({ replayBytes }) => {
+      onSubscribed: ({ replayBytes, resumed }) => {
+        if (resumed) {
+          // Only what was missed while the connection was down, appended to
+          // what is on screen. onReset was not called, so the size and the
+          // screen are still good.
+          if (finishedRef.current) {
+            // A terminal that had finished loading counts the gap on its own.
+            // No bar for a small one: a reconnect is usually seconds of
+            // output, and a bar flashing over a terminal that is already
+            // right would be the old full-replay behaviour's shadow.
+            finishedRef.current = false
+            replayReceivedRef.current = 0
+            replayParsedRef.current = 0
+            replayTotalRef.current = replayBytes
+            timer.begin(true, true)
+            if (replayBytes > RESUME_BAR_BYTES) setLoadPhase('replay')
+          } else {
+            // Cut off during its first load: the gap continues that load.
+            replayTotalRef.current = replayReceivedRef.current + replayBytes
+          }
+          timer.markSubscribed()
+          replayDoneRef.current =
+            replayReceivedRef.current >= replayTotalRef.current && !replayQueue.replaying
+          showCounts()
+          finishLoad()
+          return
+        }
         timer.markSubscribed()
         replayTotalRef.current = replayBytes
         replayReceivedRef.current = 0

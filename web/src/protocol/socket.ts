@@ -19,8 +19,14 @@ export interface StreamHandlers {
    * terminal shows its whole history twice.
    */
   onReset?: () => void
-  /** Called before replay frames arrive, with the exact snapshot size. */
-  onSubscribed?: (info: { replayBytes: number; replayChunks: number }) => void
+  /**
+   * Called before replay frames arrive, with the exact snapshot size.
+   *
+   * `resumed` means the replay carries on from what the terminal already
+   * shows, and onReset was not called: it is the output missed while the
+   * connection was down, not the whole buffer again.
+   */
+  onSubscribed?: (info: { replayBytes: number; replayChunks: number; resumed: boolean }) => void
 }
 
 interface Stream {
@@ -42,6 +48,13 @@ interface Stream {
    * arriving. See setHidden.
    */
   hidden: boolean
+  /**
+   * Where this terminal is in the session's output: the stream the server
+   * named, and the offset of the next byte not yet received. Every frame for
+   * this stream advances it, replay and live alike, because the server's ring
+   * holds exactly the bytes it broadcasts. Null until the first confirmation.
+   */
+  position: { stream: string; next: number } | null
 }
 
 /** Connection state, for the UI to show honestly rather than pretending. */
@@ -190,14 +203,7 @@ export class PanelSocket {
       // terminals repaint themselves rather than sitting frozen.
       for (const stream of this.streams.values()) {
         stream.ref = null
-        this.send({
-          t: 'subscribe',
-          sessionId: stream.sessionId,
-          cols: stream.cols,
-          rows: stream.rows,
-          dark: this.dark(),
-          hidden: stream.hidden,
-        })
+        this.sendSubscribe(stream)
       }
       this.startPing()
     }
@@ -206,9 +212,7 @@ export class PanelSocket {
       // Any frame, of any kind, is proof the connection is alive.
       this.lastSeenAt = Date.now()
       if (ev.data instanceof ArrayBuffer) {
-        const frame = decodeData(ev.data)
-        if (!frame) return
-        this.byRef.get(frame.ref)?.handlers.onData(frame.payload, frame.replay)
+        this.handleFrame(ev.data)
         return
       }
       let msg: ServerMessage
@@ -238,6 +242,15 @@ export class PanelSocket {
     }
   }
 
+  private handleFrame(buf: ArrayBuffer) {
+    const frame = decodeData(buf)
+    if (!frame) return
+    const stream = this.byRef.get(frame.ref)
+    if (!stream) return
+    if (stream.position) stream.position.next += frame.payload.byteLength
+    stream.handlers.onData(frame.payload, frame.replay)
+  }
+
   private handleControl(msg: ServerMessage) {
     switch (msg.t) {
       case 'subscribed': {
@@ -247,13 +260,22 @@ export class PanelSocket {
         // restarted, so the replay that follows is the whole buffer again.
         // Clearing here rather than on the replay frame keeps this correct
         // whether the snapshot arrives in one frame or several.
-        if (stream.confirmed) stream.handlers.onReset?.()
+        //
+        // Unless the server resumed it, in which case the replay is only what
+        // was missed and the terminal keeps what it has. Believed only for the
+        // stream this terminal was actually counting: anything else is the
+        // whole buffer, whatever the flag says.
+        const resumed =
+          msg.resumed === true && stream.position !== null && stream.position.stream === msg.replayStream
+        if (stream.confirmed && !resumed) stream.handlers.onReset?.()
         stream.confirmed = true
         stream.ref = msg.ref
+        stream.position = msg.replayStream ? { stream: msg.replayStream, next: msg.replayOffset ?? 0 } : null
         this.byRef.set(msg.ref, stream)
         stream.handlers.onSubscribed?.({
           replayBytes: msg.replayBytes ?? 0,
           replayChunks: msg.replayChunks ?? 0,
+          resumed,
         })
         if (msg.cols && msg.rows) {
           stream.handlers.onSize(msg.cols, msg.rows, msg.controlling ?? false)
@@ -284,14 +306,7 @@ export class PanelSocket {
         const stream = msg.sessionId ? this.streams.get(msg.sessionId) : undefined
         if (!stream) return
         stream.ref = null
-        this.send({
-          t: 'subscribe',
-          sessionId: stream.sessionId,
-          cols: stream.cols,
-          rows: stream.rows,
-          dark: this.dark(),
-          hidden: stream.hidden,
-        })
+        this.sendSubscribe(stream)
         break
       }
       case 'exit': {
@@ -434,9 +449,26 @@ export class PanelSocket {
   }
 
   subscribe(sessionId: string, cols: number, rows: number, handlers: StreamHandlers, hidden = false) {
-    const stream: Stream = { sessionId, handlers, ref: null, cols, rows, confirmed: false, hidden }
+    const stream: Stream = { sessionId, handlers, ref: null, cols, rows, confirmed: false, hidden, position: null }
     this.streams.set(sessionId, stream)
-    this.send({ t: 'subscribe', sessionId, cols, rows, dark: this.dark(), hidden })
+    this.sendSubscribe(stream)
+  }
+
+  /**
+   * One subscribe, first or again. Again, it says where the terminal is, and
+   * a reconnect costs the output missed while away rather than the whole two
+   * megabytes parsed onto a cleared screen for every mounted terminal.
+   */
+  private sendSubscribe(stream: Stream) {
+    this.send({
+      t: 'subscribe',
+      sessionId: stream.sessionId,
+      cols: stream.cols,
+      rows: stream.rows,
+      dark: this.dark(),
+      hidden: stream.hidden,
+      ...(stream.position ? { stream: stream.position.stream, since: stream.position.next } : {}),
+    })
   }
 
   unsubscribe(sessionId: string) {

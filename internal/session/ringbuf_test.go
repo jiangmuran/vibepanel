@@ -245,3 +245,41 @@ func TestTheReplayIsSmallEnoughToClickThrough(t *testing.T) {
 			"down to something that is bearable uncompressed.", DefaultRingSize)
 	}
 }
+
+func TestSnapshotFromContinuesAcrossTheWrap(t *testing.T) {
+	r := NewRingBuffer(8)
+	_, _ = r.Write([]byte("abcdef")) // offsets 0-5
+	_, _ = r.Write([]byte("ghij"))   // 6-9; the buffer now holds "cdefghij"
+
+	got, start, continued := r.SnapshotFrom(5)
+	if !continued || start != 5 || string(got) != "fghij" {
+		t.Errorf("SnapshotFrom(5) = %q, %d, %v; want the five bytes after offset 5, continued", got, start, continued)
+	}
+	// Exactly caught up: nothing to send, and still a continuation, so the
+	// terminal is not cleared for the sake of zero bytes.
+	got, start, continued = r.SnapshotFrom(10)
+	if !continued || start != 10 || len(got) != 0 {
+		t.Errorf("SnapshotFrom(10) = %q, %d, %v; want empty and continued", got, start, continued)
+	}
+	// The oldest byte still held.
+	if got, _, continued = r.SnapshotFrom(2); !continued || string(got) != "cdefghij" {
+		t.Errorf("SnapshotFrom(2) = %q, %v; want the whole buffer as a continuation", got, continued)
+	}
+}
+
+func TestSnapshotFromFallsBackToTheWholeSnapshot(t *testing.T) {
+	r := NewRingBuffer(8)
+	_, _ = r.Write([]byte("abcdefghij"))
+	for _, since := range []int64{-1, 0, 1, 11, 1 << 40} {
+		got, start, continued := r.SnapshotFrom(since)
+		if continued {
+			t.Errorf("SnapshotFrom(%d) claimed to continue from an offset the buffer does not hold", since)
+		}
+		if want := r.Snapshot(); string(got) != string(want) {
+			t.Errorf("SnapshotFrom(%d) = %q, want the whole snapshot %q", since, got, want)
+		}
+		if start != r.Total()-int64(len(got)) {
+			t.Errorf("SnapshotFrom(%d) start = %d, want the offset of its first byte, %d", since, start, r.Total()-int64(len(got)))
+		}
+	}
+}

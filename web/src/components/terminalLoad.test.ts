@@ -46,6 +46,7 @@ describe('LoadTimer', () => {
       receivedMs: 900,
       readyMs: 1400,
       reconnect: false,
+      resumed: false,
       hidden: false,
     })
   })
