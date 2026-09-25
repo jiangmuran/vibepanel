@@ -200,7 +200,13 @@ func TestOpencodeReadsItsLedger(t *testing.T) {
 // TestOpencodeWalkFindsOneDatabase pins the shape of the walk: a directory
 // listing found no ledger here once already, and concluded there was none.
 func TestOpencodeWalkFindsOneDatabase(t *testing.T) {
-	home := t.TempDir()
+	// Through EvalSymlinks because Walk reports every Ref under a root it has
+	// resolved itself, and /var is a symlink to /private/var on macOS: without
+	// this the comparison below is two spellings of the same file.
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	s := DefaultScanner(home)
 	root := s.Roots()[ToolOpencode]
 

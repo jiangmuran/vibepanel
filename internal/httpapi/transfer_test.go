@@ -227,9 +227,20 @@ func TestFileTransfer(t *testing.T) {
 			if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
 				t.Fatal(err)
 			}
+			// Against the resolved root: the handler answers with a path joined
+			// under the directory browse.Resolve returned, which is resolved,
+			// and on macOS t.TempDir() is under /var, a symlink to /private/var,
+			// so against the unresolved root a write that landed inside reads as
+			// an escape. The project keeps the unresolved spelling, so on macOS
+			// every request in this test still reaches browse.Resolve with a
+			// root that has a symlink in it.
+			realRoot, err := filepath.EvalSymlinks(root)
+			if err != nil {
+				t.Fatal(err)
+			}
 			for _, p := range out.Paths {
-				if !strings.HasPrefix(p, root+string(filepath.Separator)) {
-					t.Errorf("wrote %s, which is outside %s", p, root)
+				if !strings.HasPrefix(p, realRoot+string(filepath.Separator)) {
+					t.Errorf("wrote %s, which is outside %s", p, realRoot)
 				}
 			}
 		}

@@ -23869,3 +23869,32 @@ desktop side of the same rule: a Chinese IME's first keydown is also 229 with
 `isComposing` false, and bypassing it is harmless because xterm's own handler
 for that case defers to a timeout that bails once composition has started --
 which it has, by then.
+
+## 2026-09-23 — Four tests compared /var with /private/var
+
+On macOS `/var` is a symlink to `/private/var`, and `t.TempDir()` hands out the
+unresolved spelling. Four tests compared a directory made that way with a path
+something else had already resolved, and failed on two spellings of one place:
+
+    transfer_test.go:232: wrote /private/var/folders/.../anywhere.txt,
+      which is outside /var/folders/...
+
+The other side came back resolved: from tmux reporting a pane's cwd
+(`TestScratchTerminalInheritsTheParentDirectory`), from the fake harness's `pwd`,
+which gets its directory from the OS (`TestClaudeTranslateArgvAndParsing`), from
+the upload handler, which answers with a path joined under the directory
+`browse.Resolve` returned (`TestFileTransfer`), and from `Scanner.Walk`, which
+resolves its root before it walks (`TestOpencodeWalkFindsOneDatabase`). The code these four exercise was right. In
+the transfer test the file landed inside the root and the assertion that nothing
+was written above it passed; only the textual prefix check disagreed.
+
+Three of them resolve their temp directory through `filepath.EvalSymlinks`
+before using it, as `TestBrowseOpensAtHomeAndCanLeaveIt` already does, with a
+comment saying /tmp is a symlink on more than one platform. For the assistant
+that happens in `newClaudeRunner`, which eleven other tests also call; none of
+them reads the recorded cwd. `TestFileTransfer` resolves only the root its
+prefix check compares against, so on macOS its project stays registered under
+a path with a symlink in it and every request still reaches `browse.Resolve`
+with that root. CI runs on ubuntu-24.04, where nothing in the temp directory's
+path is a symlink, so `EvalSymlinks` returns its argument unchanged; that is
+also why CI never saw these.
