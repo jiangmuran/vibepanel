@@ -481,8 +481,9 @@ func (r *sudoRig) checkRecords(t *testing.T) {
 	}
 }
 
-// Subtest names are short on purpose: the test server's tmux socket path carries
-// the full test name, and past about a hundred bytes tmux cannot bind it.
+// The test server's tmux socket is named after the test, subtests included;
+// tmux.BoundSocketName keeps that name inside sun_path, so these subtest names
+// no longer have to be short to leave tmux room to bind.
 func TestElevatedUpgrade(t *testing.T) {
 	for _, impl := range []string{"classic", "sudo-rs"} {
 		t.Run(impl, func(t *testing.T) {

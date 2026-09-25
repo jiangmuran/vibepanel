@@ -761,6 +761,31 @@ func (c *Client) SocketPath() string {
 	return filepath.Join(dir, fmt.Sprintf("tmux-%d", os.Getuid()), c.Socket)
 }
 
+// socketNameLimit is the longest -L name BoundSocketName leaves alone.
+//
+// tmux binds at <dir>/tmux-<uid>/<name>, and the whole path has to fit in
+// sun_path: 104 bytes on macOS and 108 on Linux, terminator included. tmux
+// resolves the directory first, so on macOS /tmp becomes /private/tmp and a
+// path of 96 characters as written is 104 once resolved. tmux's refusal is
+// "error connecting to <path> (File name too long)", and run() folds that
+// into ErrNoServer, so what a caller sees says nothing about the length. A uid
+// is 32 bits, and one from a directory service can use ten digits of it; then
+// the directory is 29 characters and a name can be 74, and 60 leaves 14 more
+// for a TMUX_TMPDIR deeper than /tmp.
+const socketNameLimit = 60
+
+// BoundSocketName shortens a name longer than socketNameLimit. The tests name
+// a socket after the test so that each test gets a server of its own; the
+// tail is a hash of the whole name because truncation alone would give two
+// tests sharing a long prefix one tmux server.
+func BoundSocketName(name string) string {
+	if len(name) <= socketNameLimit {
+		return name
+	}
+	sum := sha256.Sum256([]byte(name))
+	return name[:socketNameLimit-7] + "-" + hex.EncodeToString(sum[:])[:6]
+}
+
 // AttachArgs returns the argv (after the binary) for attaching to a session.
 //
 // The caller runs this itself on a PTY it owns, rather than going through
