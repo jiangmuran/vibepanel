@@ -51,8 +51,16 @@ export function decodeData(
 }
 
 export interface ClientMessage {
-  t: 'subscribe' | 'unsubscribe' | 'resize' | 'takeControl' | 'ping' | 'paste' | 'scheme' | 'visibility'
+  t: 'subscribe' | 'unsubscribe' | 'resize' | 'takeControl' | 'ping' | 'paste' | 'scheme' | 'visibility' | 'loadTiming'
   sessionId?: string
+  /** MsgLoadTiming only. */
+  timing?: LoadTiming
+  /**
+   * MsgSubscribe only: this terminal already shows `stream` up to offset
+   * `since`, so the server need send only what came after.
+   */
+  stream?: string
+  since?: number
   /**
    * MsgSubscribe and MsgVisibility: this terminal is mounted off-screen, kept
    * so that switching back to it is instant. A hidden terminal does not hold
@@ -74,6 +82,25 @@ export interface ClientMessage {
    * answer before the pane has a chance to ask.
    */
   dark?: boolean
+}
+
+/**
+ * How long one terminal took to load, reported back so it lands in the
+ * server's log next to the server's own half of the same subscribe.
+ *
+ * Milliseconds from the subscribe (or, on a reconnect, from the restart), -1
+ * for a mark that never happened. Mirrors ws.LoadTiming.
+ */
+export interface LoadTiming {
+  bytes: number
+  subscribedMs: number
+  firstByteMs: number
+  receivedMs: number
+  readyMs: number
+  reconnect: boolean
+  /** Only the output missed while away was sent, not the whole snapshot. */
+  resumed: boolean
+  hidden: boolean
 }
 
 export interface ServerMessage {
@@ -98,6 +125,19 @@ export interface ServerMessage {
   text?: string
   message?: string
   controlling?: boolean
+  /** Exact replay size announced before the binary snapshot arrives. */
+  replayBytes?: number
+  /** Number of replay frames that follow this subscription confirmation. */
+  replayChunks?: number
+  /**
+   * Which attachment the replay is from, and the stream offset of its first
+   * byte. Sent back on the next subscribe, with every byte received since
+   * added, to resume instead of starting over.
+   */
+  replayStream?: string
+  replayOffset?: number
+  /** The replay continues this viewer's terminal: do not clear it. */
+  resumed?: boolean
 }
 
 // ── REST shapes, mirroring internal/store ──────────────────────────────────
