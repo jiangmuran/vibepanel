@@ -30,8 +30,9 @@ func (oneSession) RecordSize(context.Context, string, int, int) error { return n
 
 // served is a real tmux session behind a real socket handler.
 type served struct {
-	url  string
-	live *session.Live
+	url     string
+	live    *session.Live
+	handler *Handler
 }
 
 // serveSession starts a tmux session on a throwaway socket, lets script finish
@@ -78,9 +79,10 @@ func serveSession(t *testing.T, name, script string) served {
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	srv := httptest.NewServer(&Handler{Manager: m, Resolve: oneSession{name}})
+	h := &Handler{Manager: m, Resolve: oneSession{name}}
+	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	return served{url: "ws" + strings.TrimPrefix(srv.URL, "http"), live: live}
+	return served{url: "ws" + strings.TrimPrefix(srv.URL, "http"), live: live, handler: h}
 }
 
 type received struct {
@@ -194,7 +196,10 @@ func TestAReplayReachesTheBrowserInBoundedFrames(t *testing.T) {
 		`i=0; while [ $i -lt 1500 ]; do printf '%064d\n' $i; i=$((i+1)); done`)
 	v := dialViewer(t, s, "replay-viewer")
 	v.send(map[string]any{"t": MsgSubscribe, "sessionId": "s1", "cols": 80, "rows": 24})
-	v.await(MsgSubscribed)
+	confirmed := v.await(MsgSubscribed)
+	if confirmed.ReplayBytes <= replayChunk || confirmed.ReplayChunks < 2 {
+		t.Fatalf("subscription did not announce the replay accurately: %d bytes in %d chunks", confirmed.ReplayBytes, confirmed.ReplayChunks)
+	}
 
 	var frames [][]byte
 	for quiet := false; !quiet; {

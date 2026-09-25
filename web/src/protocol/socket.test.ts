@@ -174,3 +174,33 @@ describe('hidden terminals', () => {
     }
   })
 })
+
+describe('replay metadata', () => {
+  it('delivers the exact replay size before binary frames are parsed', () => {
+    const { sock } = (() => {
+      const sock = newSocket()
+      ;(sock as unknown as { dark: () => boolean }).dark = () => false
+      ;(sock as unknown as { ws: unknown }).ws = {
+        readyState: WebSocket.OPEN,
+        send: () => {},
+      }
+      return { sock }
+    })()
+    const seen: Array<{ replayBytes: number; replayChunks: number }> = []
+    sock.subscribe('s1', 80, 24, {
+      onData: () => {},
+      onSize: () => {},
+      onSubscribed: (info) => seen.push(info),
+    })
+
+    deliver(sock, {
+      t: 'subscribed',
+      sessionId: 's1',
+      ref: 7,
+      replayBytes: 123456,
+      replayChunks: 2,
+    })
+
+    expect(seen).toEqual([{ replayBytes: 123456, replayChunks: 2 }])
+  })
+})

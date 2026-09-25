@@ -6,6 +6,7 @@ import { copyText, copyTextInGesture } from '../clipboard'
 import { isBrowserCopy, isBrowserPaste } from './clipboardKeys'
 import { rendererPreference } from './renderer'
 import { TerminalReplay } from './terminalReplay'
+import { LoadTimer, formatLoadBytes, loadPercents } from './terminalLoad'
 import { Terminal as Xterm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
@@ -73,6 +74,13 @@ interface Props {
   hidden?: boolean
 }
 
+type LoadPhase = 'connecting' | 'replay' | 'ready'
+
+const loadCopyKey = {
+  connecting: 'term.loadingConnecting',
+  replay: 'term.loadingReplay',
+} as const
+
 /**
  * One xterm instance bound to one session.
  *
@@ -119,6 +127,14 @@ export function TerminalView({
   // passive, and only so the offer to take over can be withheld when there is
   // nothing to gain by it.
   const [ownFit, setOwnFit] = useState({ cols: 0, rows: 0 })
+  const [loadPhase, setLoadPhase] = useState<LoadPhase>('connecting')
+  const [loadCounts, setLoadCounts] = useState({ total: 0, received: 0, parsed: 0 })
+  const replayTotalRef = useRef(0)
+  const replayReceivedRef = useRef(0)
+  const replayParsedRef = useRef(0)
+  const replayDoneRef = useRef(false)
+  const sizedRef = useRef(false)
+  const finishedRef = useRef(false)
   // Held in a ref for the same reason onTitle/onExit are not in the effect's
   // deps: a new callback identity must not rebuild the terminal.
   const onSelectionRef = useRef(onSelectionChange)
@@ -276,11 +292,60 @@ export function TerminalView({
 
     const encoder = new TextEncoder()
 
+    let disposed = false
+    const timer = new LoadTimer()
+    timer.begin(false)
+    const showCounts = () =>
+      setLoadCounts({
+        total: replayTotalRef.current,
+        received: replayReceivedRef.current,
+        parsed: replayParsedRef.current,
+      })
+    // Ready needs both halves: the whole snapshot parsed, and the grid size,
+    // without which scrolling to the bottom scrolls a terminal of the wrong
+    // height. Either can arrive last.
+    //
+    // There used to be a third phase here, eight animation frames of "2/2
+    // scrolling" at 72-94%, which was there to be seen rather than because
+    // anything took that long: scrollToBottom is synchronous. It is gone, and
+    // the bar ends when the work does.
+    const finishLoad = () => {
+      if (disposed || !replayDoneRef.current || !sizedRef.current || finishedRef.current) return
+      finishedRef.current = true
+      term.scrollToBottom()
+      setLoadPhase('ready')
+      const timing = timer.finish(replayTotalRef.current, hiddenRef.current)
+      socket.reportLoadTiming(sessionId, timing)
+      if (!timing.hidden) {
+        console.info(
+          `[vibepanel] terminal ${sessionId} ready in ${timing.readyMs} ms ` +
+            `(${timing.bytes} bytes; confirmed ${timing.subscribedMs}, first byte ${timing.firstByteMs}, ` +
+            `all received ${timing.receivedMs}${timing.reconnect ? ', after a reconnect' : ''})`,
+        )
+      }
+    }
+
     // While scrollback is being parsed, anything the terminal wants to send
     // back is an answer to a question that was asked minutes ago and has
     // already been answered. Letting it through types the reply at whatever
     // prompt the session is sitting at.
-    const replayQueue = new TerminalReplay(term)
+    const replayQueue = new TerminalReplay(
+      term,
+      undefined,
+      undefined,
+      () => {
+        // The queue drains between frames whenever the link is slower than the
+        // paint, which on a phone is most of the time, so an empty queue is not
+        // the end of the snapshot. Only the byte count the server announced is.
+        if (replayReceivedRef.current < replayTotalRef.current) return
+        replayDoneRef.current = true
+        finishLoad()
+      },
+      (bytes) => {
+        replayParsedRef.current += bytes
+        showCounts()
+      },
+    )
 
     // iOS Chrome/Safari emits direct punctuation and space input as a keydown
     // with keyCode 229 but no active composition. xterm marks that keydown as
@@ -345,15 +410,44 @@ export function TerminalView({
       // terminal that still had something worth reading in it.
       onReset: () => {
         replayQueue.restart()
+        replayDoneRef.current = false
+        finishedRef.current = false
+        sizedRef.current = false
+        replayReceivedRef.current = 0
+        replayParsedRef.current = 0
+        // Shown on a reconnect as well. The snapshot that follows replaces the
+        // screen from the top, so there is real waiting to account for; hiding
+        // the bar there only made the blank terminal look broken.
+        timer.begin(true)
+        setLoadPhase('replay')
+      },
+      onSubscribed: ({ replayBytes }) => {
+        timer.markSubscribed()
+        replayTotalRef.current = replayBytes
+        replayReceivedRef.current = 0
+        replayParsedRef.current = 0
+        replayDoneRef.current = replayBytes === 0
+        setLoadPhase('replay')
+        showCounts()
+        finishLoad()
       },
       onData: (bytes, replay) => {
+        if (replay) {
+          replayReceivedRef.current += bytes.byteLength
+          timer.markByte(replayReceivedRef.current >= replayTotalRef.current)
+          showCounts()
+        }
+        // After the count, never before: the chunk's parse callback is what
+        // decides the snapshot is finished, and it compares against it.
         replayQueue.enqueue(bytes, replay)
       },
       onSize: (cols, rows, isControlling) => {
         controllingRef.current = isControlling
         setControlling(isControlling)
         setGrid({ cols, rows })
+        sizedRef.current = cols > 0 && rows > 0
         if (term.cols !== cols || term.rows !== rows) term.resize(cols, rows)
+        finishLoad()
       },
       onTitle: (t) => onTitle?.(t),
       onClipboard: (text) => {
@@ -416,6 +510,7 @@ export function TerminalView({
       : undefined
 
     return () => {
+      disposed = true
       liveTerminals.delete(sessionId)
       host.removeEventListener('keydown', bypassIOSKeydown, true)
       host.removeEventListener('input', forwardIOSInput, true)
@@ -618,6 +713,42 @@ export function TerminalView({
       data-fullscreen={fullscreen ? 'true' : undefined}
       className={`relative overflow-hidden ${className ?? ''}`}
     >
+      {!hidden && loadPhase !== 'ready' && (() => {
+        const pct = loadPercents(loadCounts)
+        const shown = loadPhase === 'connecting' ? 0 : pct.parsed
+        const label = t(loadCopyKey[loadPhase])
+        return (
+          <div
+            className="pointer-events-none absolute inset-x-0 top-0 z-20"
+            data-testid="terminal-load-progress"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={shown}
+            aria-label={label}
+          >
+            <div className="relative h-1 w-full bg-black/10 dark:bg-white/10">
+              {/* What has arrived, behind what has been drawn. On a slow link
+                  the gap between the two is the network; on a fast one it is
+                  the parse. */}
+              <div
+                className="absolute inset-y-0 left-0 bg-emerald-500/30 transition-[width] duration-150 ease-out"
+                style={{ width: `${loadPhase === 'connecting' ? 0 : pct.received}%` }}
+              />
+              <div
+                className="absolute inset-y-0 left-0 bg-emerald-500 transition-[width] duration-150 ease-out"
+                style={{ width: `${shown}%` }}
+              />
+            </div>
+            <span className="absolute top-1 right-2 rounded-vp bg-elevated/90 px-1.5 py-0.5 text-vp-xs text-ink-2 shadow-sm tabular-nums">
+              {label} {shown}%
+              {loadPhase === 'replay' && loadCounts.total > 0 && (
+                <> · {formatLoadBytes(loadCounts.received, loadCounts.total)}</>
+              )}
+            </span>
+          </div>
+        )
+      })()}
       {/* touch-action: none wherever the drag-to-scroll handler is attached,
           and without it that handler does nothing on a real phone.
        *

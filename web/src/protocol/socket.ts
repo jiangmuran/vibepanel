@@ -1,5 +1,5 @@
 import { decodeData, encodeData } from './wire'
-import type { ClientMessage, PanelState, ResourceAction, ResourceAlert, ServerMessage, StateMessage } from './wire'
+import type { ClientMessage, LoadTiming, PanelState, ResourceAction, ResourceAlert, ServerMessage, StateMessage } from './wire'
 
 /** What a subscriber to one session receives. */
 export interface StreamHandlers {
@@ -19,6 +19,8 @@ export interface StreamHandlers {
    * terminal shows its whole history twice.
    */
   onReset?: () => void
+  /** Called before replay frames arrive, with the exact snapshot size. */
+  onSubscribed?: (info: { replayBytes: number; replayChunks: number }) => void
 }
 
 interface Stream {
@@ -249,6 +251,10 @@ export class PanelSocket {
         stream.confirmed = true
         stream.ref = msg.ref
         this.byRef.set(msg.ref, stream)
+        stream.handlers.onSubscribed?.({
+          replayBytes: msg.replayBytes ?? 0,
+          replayChunks: msg.replayChunks ?? 0,
+        })
         if (msg.cols && msg.rows) {
           stream.handlers.onSize(msg.cols, msg.rows, msg.controlling ?? false)
         }
@@ -498,6 +504,12 @@ export class PanelSocket {
     if (!stream || stream.hidden === hidden) return
     stream.hidden = hidden
     this.send({ t: 'visibility', sessionId, hidden })
+  }
+
+  /** Reports how long a terminal took to load. See LoadTiming. */
+  reportLoadTiming(sessionId: string, timing: LoadTiming) {
+    if (!this.streams.has(sessionId)) return
+    this.send({ t: 'loadTiming', sessionId, timing })
   }
 
   /**

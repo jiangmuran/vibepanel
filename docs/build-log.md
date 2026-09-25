@@ -23964,3 +23964,69 @@ names are over 60 characters, and a test among them that starts tmux gets a
 shortened socket name that keeps its first 53 characters. `TestASocketNameStaysInsideSunPath`
 needs no tmux, and three mutations of the helper (no bound, truncation with no
 hash, the limit raised to 100) each turn it red.
+
+## 2026-09-19 — A terminal says how much of itself has arrived
+
+Opening a session on a phone was a blank rectangle for as long as the replay
+took, with nothing to tell a slow link from a dead one. The subscription
+confirmation now carries `replayBytes` and `replayChunks`, computed from the
+same frame list that is about to be sent, so the browser knows the exact size
+before the first binary frame. The bar has two phases: 1/2 is bytes received
+against that figure, 2/2 is the scroll to the bottom, held for at least eight
+paint boundaries and one xterm render so it can be seen on a phone. A reconnect
+skips 1/2, because the content under it is already on screen.
+
+This ran on one machine from 13 to 17 September as an uncommitted edit, and a
+deploy built from a clean checkout took it away with nothing to say so. That is
+the reason it is a commit now. Two things were wrong with it and are fixed here:
+
+- `TerminalReplay` reports "done" whenever its queue empties. On a link slower
+  than the paint, which on a phone is the usual case, the queue empties after
+  every chunk, so phase two started after the first 64 KiB and the bar was gone
+  while most of the history was still in flight. Done now also requires the
+  announced byte count to have arrived.
+- A terminal switched away from mid-load is `display:none`, and xterm renders
+  nothing there, so the scroll phase waiting for a render asked for another
+  animation frame every frame for as long as the session stayed in the
+  background. A hidden terminal draws no bar, so it waits for the eight frames
+  only.
+
+## 2026-09-25 — The load bar measures the parse, and says where the time went
+
+"It gets to 68% and it is already loaded." Measured against the 19 September
+bar with five sessions of 2.6 MB of agent-shaped output, switching on a
+desktop: bytes received (8-68%) took about a quarter of the wait, the bar then
+sat at 68% while xterm parsed for more than half of it, and the last part, the
+"2/2 scroll" at 72-94%, was eight animation frames held so that it could be
+seen -- `scrollToBottom` is synchronous. The screen filled while the bar was
+not moving, then the bar moved while nothing was happening.
+
+- The bar is now bytes *parsed* against the announced total, reported by
+  `TerminalReplay` from xterm's write callback. Received bytes are the lighter
+  track behind it, because on a slow link that is the figure that explains the
+  wait. The label carries both counts. Capped at 99 until the terminal is
+  sized and scrolled, which is when it disappears.
+- The scroll phase is gone, and with it the frame loop.
+- A reconnect shows the bar too. It was hidden there on the grounds that the
+  content was already on screen, but the snapshot that follows resets the
+  terminal from the top, so the content is not there for most of it.
+- A restart increments a generation in `TerminalReplay`: the chunk xterm is
+  still parsing when a reconnect throws its snapshot away calls back anyway,
+  and without this its bytes were credited to the new one.
+
+Timing. The complaint was about 20 seconds; the synthetic load above takes
+0.6 s, and 2-3 s with the CPU throttled six times, so the wait is somewhere
+the test does not reach -- the network, the server on a host that was
+OOM-killing inside its cgroup that day, or real agent output. The browser now
+records four marks per load (confirmed, first byte, all received, ready),
+logs them to the console, and sends them as `loadTiming`; the server logs
+them as `terminal load` next to its own `terminal subscribe` line, under the
+same `VIBEPANEL_DEBUG_TIMING` gate, only for a session the connection is
+watching and only with numbers inside a plausible range. Off by default for
+the reason `debug.go` gives.
+
+One thing the marks already showed on the test machine: `received_ms` is
+close to `ready_ms` even on loopback, because the socket's messages are
+delivered on the same main thread that is parsing, so "the network" in these
+numbers includes waiting for the parse. The gap between first byte and
+received is an upper bound on the network, not a measurement of it.

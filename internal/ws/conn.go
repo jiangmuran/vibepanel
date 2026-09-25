@@ -542,6 +542,27 @@ func (c *Conn) handleControl(ctx context.Context, msg ClientMessage) {
 			c.h.logger().Warn("persist size", "session", msg.SessionID, "err", rerr)
 		}
 
+	case MsgLoadTiming:
+		// Only for a session this connection is watching, and only with
+		// numbers that could be a measurement. See LoadTiming.valid.
+		c.mu.Lock()
+		s := c.byID[msg.SessionID]
+		c.mu.Unlock()
+		if s == nil || msg.Timing == nil || !msg.Timing.valid() || !debugTiming {
+			return
+		}
+		t := msg.Timing
+		c.h.logger().Info("terminal load",
+			"session", msg.SessionID,
+			"hidden", t.Hidden,
+			"reconnect", t.Reconnect,
+			"replay_bytes", t.Bytes,
+			"subscribed_ms", t.SubscribedMS,
+			"first_byte_ms", t.FirstByteMS,
+			"received_ms", t.ReceivedMS,
+			"ready_ms", t.ReadyMS,
+		)
+
 	case MsgVisibility:
 		c.mu.Lock()
 		s := c.byID[msg.SessionID]
@@ -624,10 +645,14 @@ func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int, 
 	c.byID[sessionID] = s
 	c.mu.Unlock()
 
+	// Build the frame list before the confirmation so the browser knows the
+	// exact replay work it is about to receive.
+	frames := replayFrames(ref, replay)
 	gridCols, gridRows := live.Size()
 	c.sendJSON(ServerMessage{
 		Type: MsgSubscribed, SessionID: sessionID, Ref: ref,
 		Cols: gridCols, Rows: gridRows,
+		ReplayBytes: len(replay), ReplayChunks: len(frames),
 		Controlling: live.Controller() == c.clientID,
 	})
 
@@ -635,7 +660,6 @@ func (c *Conn) subscribe(ctx context.Context, sessionID string, cols, rows int, 
 	// snapshot under the same lock that registered the subscriber, so the two
 	// join up exactly with nothing lost or repeated.
 	replayStarted := time.Now()
-	frames := replayFrames(ref, replay)
 	var firstFrameMS int64
 	for i, frame := range frames {
 		c.sendBinary(frame)
