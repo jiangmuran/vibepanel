@@ -24415,3 +24415,179 @@ now resets that state when it starts, and its cleanup takes the cover down.
 
 render-check now asks the question directly after its phone sections, rather
 than leaving it to a later click to time out on.
+
+## 2026-09-28 — Typing into Claude Code without waiting for the round trip
+
+「打字太卡了」, from an iPad on a panel in another place. Measured before
+anything was changed, with a real Claude Code in a panel on this machine and a
+TCP proxy in front of it holding every chunk for a fixed time each way, from
+the keydown to the first frame in which the character is on screen:
+
+```
+direct, no delay           median  40 ms   p95  50 ms
+300 ms round trip          median 332 ms   p95 340 ms
+```
+
+Forty milliseconds with no network at all is Claude Code redrawing its input
+box, tmux, and the panel; the rest is the round trip, paid on every character.
+
+### What it does now
+
+The character is drawn in the browser, at the cursor, in the same frame as the
+keydown, and the keystroke goes to the server exactly as before
+(`components/localEcho.ts`, drawn by `localEchoLayer.ts`). mosh and VS Code's
+terminal typeahead do this for every program by guessing; this does it for one
+program whose behaviour is known, which is what makes it small. Only Claude
+Code, because a local echo is a claim about what the program will draw, and a
+shell reading a password draws nothing.
+
+```
+                           panel's own work   on screen (median / worst)
+direct                     0.8 ms             6 / 15 ms
+300 ms round trip          1.1 ms             7 / 15 ms
+800 ms round trip          0.9 ms             6 / 15 ms
+300 ms, 25 keys a second   0.5 ms             9 / 15 ms
+```
+
+The worst case is one display refresh at 60 Hz and does not move with the
+network any more. The panel's own share -- keydown to the page changed -- is
+under 2.5 ms in every run.
+
+### What went wrong on the way, in the order it was found
+
+- **Claude Code is a full-screen program now.** It draws on the alternate
+  screen with mouse support, so the panel lists it in `fullscreen`, and the
+  first version, which excluded full-screen programs to stay out of vim's way,
+  excluded the one program it was for. Its cursor still sits exactly in the
+  input box (checked with `display -p '#{cursor_x},#{cursor_y}'` while typing,
+  wide characters included), so the check is the cursor, not the screen.
+- **Its process is not called `claude`.** The native install runs
+  `~/.local/share/claude/versions/2.1.283`, so tmux reports the pane's command
+  as `2.1.283`. `isClaudeCode` accepts a bare version number for that reason;
+  it is also the only way to recognise Claude Code started by hand in a shell.
+- **Buffer rows moved on every keystroke.** The panel keeps tmux's client off
+  the alternate screen, so a redraw scrolls the browser's buffer a line while
+  every cell stays where it was on screen. Positions are screen rows now.
+- **A frame arrives in pieces.** tmux writes one of Claude Code's frames in
+  several chunks and the cursor is wherever the frame is being drawn until the
+  last one. Checking after each chunk saw it a row up and dropped the
+  prediction nearly every time. Predictions are checked once output has been
+  quiet for 20 ms; until then the character on screen is the predicted one,
+  which is the same character in the same cell.
+- **A backspace showed the line going backwards.** Predicting keystrokes one at
+  a time and confirming each against its echo put a character already taken
+  back on screen for a round trip: the server echoes the "c", then a round trip
+  later its deletion. A frame-by-frame check caught it ("abc" → "ab" → "abxy"
+  on the way to "axy"). The prediction is now the whole line from where typing
+  started, drawn over whatever the server shows until the server shows exactly
+  that.
+- **And then the server passed through the final state early.** On its way to
+  "abc" it stops at "ab", which is also where the typist ends up after the
+  backspace, and the prediction was dropped with the "c" and its deletion still
+  on the wire. A match is believed only once a round trip has passed since the
+  last keystroke, measured from the first output after an idle keystroke; the
+  estimate goes up at once and down slowly, because too short shows the line
+  going backwards and too long costs nothing anybody can see.
+- **Clicking into the terminal switched prediction off** for the first
+  characters typed: the focus report xterm sends on a click went down the same
+  path as keystrokes and read as an unpredictable key.
+
+Keys that are not a character or a backspace at the end of the input -- Enter,
+arrows, Escape, Tab, a paste, and `!` `#` `?` on an empty input, which Claude
+Code reads as mode switches and draws nothing for -- drop the prediction, and
+prediction stays off until the typist has paused long enough for the server to
+have caught up, so nothing is anchored on a screen that is about to change. A
+prediction the server never agrees with is dropped two seconds after the last
+keystroke. `localStorage['vibepanel.localEcho']` is `'off'` to disable it on a
+device and `'debug'` to log every dropped prediction and why.
+
+The frame-by-frame check -- type, backspace twice, type, a wide character,
+full-width punctuation, backspace, more punctuation, and record every distinct
+state the input line shows -- passed twelve runs out of twelve across 0, 300
+and 800 ms round trips at two typing speeds. `localEcho.test.ts` holds each of
+the failures above as a case, and removing the round-trip wait fails it.
+
+## 2026-09-28 — The same for Codex and opencode
+
+Both agents were read off in tmux the same way Claude Code was -- cursor
+position while typing, wide characters, backspace, and every character that
+can start an input -- and both keep the real cursor exactly where the next
+character goes. What differs between the three is small enough to be a table
+(`AGENTS` in `components/localEcho.ts`):
+
+| | marker | mode keys on an empty input | input region |
+|---|---|---|---|
+| Claude Code | `❯` | `!` bash, `#` memory, `?` help | the row |
+| Codex | `›` | `!` shell, `?` shortcuts | the row |
+| opencode | `┃` | `!` shell | a box with its own background |
+
+Every other first character is echoed, `/` `@` `$` `#` included: their menus
+open above or below the input row without moving it.
+
+Two things opencode needed that the other two did not:
+
+- **Its hint is not dim.** Claude Code and Codex draw "Try …" and "Ask Codex to
+  do anything" with SGR 2; opencode draws "Ask anything…" in a grey from its
+  theme. So an empty input is recognised by the marker instead -- nothing but
+  blanks between it and the cursor -- and on an empty input whatever follows
+  the cursor is the hint and is covered.
+- **Its input is a box.** It has its own background (a lighter grey than the
+  page) and wraps at its edge, not the terminal's. The input region is the run
+  of cells with the cursor cell's background; predictions stop short of its
+  end, and the layer draws in the cell's own colours. Before that, a predicted
+  character sat on the terminal's background as a dark block inside the box.
+  Codex tints its composer too, in a light theme, which the same code covers.
+
+Measured the same way as Claude Code, through a 300 ms round trip:
+
+```
+                 before       after (median / worst)   panel's own work
+Codex            348 ms       8 / 15 ms                0.9 ms
+opencode         331 ms       9 / 15 ms                0.8 ms
+```
+
+The frame-by-frame check (type, backspace twice, type, a wide character,
+full-width punctuation, backspace, more) passes on both at two typing speeds,
+and a screenshot taken while the prediction is on screen at an 800 ms round
+trip is the same row as the server's own echo a moment later, background
+included. One visible difference remains: opencode sets a block cursor and the
+layer draws a bar for the moment before the echo lands.
+
+Two measurements worth keeping. The first predicted character after a page
+load cost 28-33 ms while every later one cost under 2 ms: under the WebGL
+renderer nothing had laid out the terminal font as DOM text yet, and the
+layer now lays it out once, invisibly, when it attaches. And a first keystroke
+right after taking control of a session still sometimes shows 30-40 ms --
+measured as the time before *any* handler ran, so the browser's queue behind
+the redraw that taking control causes, not this code, which ran in about a
+millisecond once it was reached.
+
+## 2026-09-28 — A held backspace that deleted the last characters twice
+
+Reported as: deleting fast, the line empties, then the last three characters
+come back and delete themselves again. Reproduced with a held backspace --
+one press every 30 ms, carrying on past the start of the input the way key
+repeat does -- through a 300 ms round trip, recording every state the input
+line showed. Two causes, found one after the other:
+
+- **A space inside the input read as the start of it.** Erasing text the
+  server already had moved the anchor left one cell at a time, and stopped
+  when the cell before it was blank -- which is what the padding after the
+  marker looks like, and also what the space in "hello world" looks like. The
+  prediction was dropped at "hello", and the server's line, five keystrokes
+  behind, came back as "hello world". The start of the input is now the
+  marker's column plus the agent's padding, found when the prediction starts,
+  and a backspace past it is absorbed rather than ending anything.
+- **A frame moves the cursor before it redraws the row.** With the key held a
+  little slower, the line went "" → "h" → "". The backspace that reached the
+  start read the cursor at the start while the row still held the "h": the
+  server's frame had moved the cursor and not yet rewritten the line. Ending
+  the prediction there showed the "h". It now ends only on a backspace typed
+  on an input that was already empty with nothing predicted; otherwise the
+  empty line is held until the server's whole frame agrees, a round trip
+  after the last key, like every other prediction. An emptied opencode input
+  shows its grey hint again, and that counts as agreeing.
+
+Checked on all three agents: a held backspace at 30, 60 and 100 ms a press,
+three runs each, plus the mixed typing check, 33 runs, and the line only ever
+got shorter. `localEcho.test.ts` holds both cases.
