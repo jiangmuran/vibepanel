@@ -1,19 +1,20 @@
 import type { Session } from '../protocol/wire'
 
 /**
- * Typing into Claude Code at the speed of the device you are holding.
+ * Typing into a coding agent at the speed of the device you are holding.
  *
  * Every keystroke used to be a round trip before it was a character: browser,
- * network, panel, tmux, Claude Code redrawing its input box, and back.
- * Measured on this machine with nothing in between that was 40 ms a
+ * network, panel, tmux, the agent redrawing its input box, and back. Measured
+ * on this machine against Claude Code with nothing in between that was 40 ms a
  * character; through a 300 ms round trip it was 332 ms, every character,
  * which is what 「打字太卡了」 was about.
  *
  * So the character is drawn here first, at the cursor, in the same frame as
  * the keydown, and the keystroke goes to the server exactly as before. The
  * approach is mosh's and VS Code's terminal typeahead; what makes it simple
- * here is doing it for one program whose behaviour is known rather than
- * guessing at every program.
+ * here is doing it for a few programs whose behaviour is known -- Claude Code,
+ * Codex and opencode, each described in AGENTS below -- rather than guessing
+ * at every program.
  *
  * **What is predicted is the input line, not the keystrokes.** The first
  * version predicted characters one at a time and confirmed each against the
@@ -26,11 +27,11 @@ import type { Session } from '../protocol/wire'
  * -- until the server's line *is* that. Every frame is then a state the typist
  * actually typed.
  *
- * Why only Claude Code. A local echo is a claim about what the program will
+ * Why only these agents. A local echo is a claim about what the program will
  * draw, and a shell reading a password draws nothing: echoing there puts the
- * password on the screen. Claude Code's input box always echoes and keeps the
- * real cursor where the next character goes, so the claim is safe to make and
- * cheap to check.
+ * password on the screen. These three always echo into their input box and
+ * keep the real cursor where the next character goes, so the claim is safe to
+ * make and cheap to check.
  *
  * Anything that is not a plain character or a backspace at the end of the
  * input -- Enter, arrows, Escape, Tab, control keys, a paste -- drops the
@@ -65,6 +66,33 @@ const MOUSE_REPORT = /^(\x1b\[<\d+;\d+;\d+[Mm])+$/
 const INITIAL_RTT_MS = 300
 
 /**
+ * What differs between the agents, all of it read off each one in tmux with
+ * `display -p '#{cursor_x},#{cursor_y}'` while typing.
+ *
+ * - `marker` is the character the input line starts with. Everything between
+ *   it and the cursor being blank is how an empty input is recognised, and on
+ *   an empty input whatever sits after the cursor is the agent's hint ("Try
+ *   …", "Ask Codex to do anything", "Ask anything…") rather than typed text.
+ *   Claude Code and Codex draw that hint dim; opencode draws it in a grey of
+ *   its theme, which is why the test is the marker and not the style.
+ * - `modeKeys` are read as mode switches on an empty input and draw no
+ *   character: Claude Code's `!` bash, `#` memory and `?` help; Codex's `!`
+ *   shell and `?` shortcuts; opencode's `!` shell. Every other first
+ *   character is echoed, including `/` and `@`, whose menus open above or
+ *   below the input row without moving it.
+ * - `margin` is how far before the end of the input region text wraps.
+ *   opencode's input is a box in the middle of the screen with padding inside
+ *   it; the other two use the whole row.
+ */
+export const AGENTS = {
+  claude: { marker: '❯', modeKeys: '!#?', margin: 1 },
+  codex: { marker: '›', modeKeys: '!?', margin: 1 },
+  opencode: { marker: '┃', modeKeys: '!', margin: 3 },
+} as const
+
+export type EchoAgent = keyof typeof AGENTS
+
+/**
  * How many cells a character takes, or null for one this does not predict.
  *
  * Deliberately a short list rather than a Unicode width table: ASCII, Latin
@@ -93,6 +121,15 @@ export function predictWidth(cp: number): 1 | 2 | null {
   return null
 }
 
+/** One cell, as much as the predictor needs of it. */
+export interface EchoCell {
+  /** The cell's characters, '' for an empty cell. */
+  chars: string
+  dim: boolean
+  /** The background, as an opaque key: equal keys are the same colour. */
+  bg?: string
+}
+
 /** What the predictor needs to know about the terminal, and nothing else. */
 export interface EchoScreen {
   cols: number
@@ -109,8 +146,7 @@ export interface EchoScreen {
   cursorY: number
   /** Whether the program has hidden the cursor, when that is known. */
   cursorHidden?: boolean
-  /** The cell's characters ('' for an empty cell) and whether it is dim. */
-  cell(x: number, y: number): { chars: string; dim: boolean } | null
+  cell(x: number, y: number): EchoCell | null
 }
 
 export interface Predicted {
@@ -124,13 +160,16 @@ export interface EchoView {
   row: number
   chars: Predicted[]
   /** Where the drawn cursor goes, which is also where the cover starts: from
-   *  here to the end of the row the line is predicted empty. */
+   *  here to `end` the line is predicted empty. */
   cursorX: number
+  /** One past the last cell of the input region: the end of the row, or of
+   *  opencode's box. The cover stops here. */
+  end: number
 }
 
 /** A cell that shows nothing a person would read as typed text: empty, a
- *  space, or dim (Claude Code's "Try …" hint and its inline suggestions). */
-function blankish(c: { chars: string; dim: boolean } | null): boolean {
+ *  space, or dim (the hints and Claude Code's inline suggestions). */
+function blankish(c: EchoCell | null): boolean {
   return !c || c.chars.trim() === '' || c.chars === ' ' || c.dim
 }
 
@@ -139,6 +178,8 @@ export class EchoPredictor {
   private text: { ch: string; w: 1 | 2 }[] = []
   private anchor = 0
   private row = -1
+  /** One past the input region, found when the prediction starts. */
+  private end = 0
   private lastKey = -Infinity
   /** Predictions are off until the typist pauses; see `suspend`. */
   private suspended = false
@@ -152,6 +193,16 @@ export class EchoPredictor {
   /** Why the last prediction was dropped, for the debug switch. */
   lastReset = ''
   private resets = 0
+
+  constructor(private agent: EchoAgent = 'claude') {}
+
+  /** The program in the pane changed; what was predicted for the old one
+   *  means nothing for the new one. */
+  setAgent(agent: EchoAgent): void {
+    if (agent === this.agent) return
+    this.agent = agent
+    this.reset('agent changed')
+  }
 
   get active(): boolean {
     return this.row >= 0
@@ -194,7 +245,7 @@ export class EchoPredictor {
       chars.push({ ch: c.ch, x, w: c.w })
       x += c.w
     }
-    return { row: this.row, chars, cursorX: x }
+    return { row: this.row, chars, cursorX: x, end: this.end }
   }
 
   /**
@@ -208,9 +259,9 @@ export class EchoPredictor {
     // starts typing, and treating it as an unpredictable key switched
     // prediction off for exactly the first characters typed.
     if (FOCUS_REPORT.test(data)) return this.active
-    // A mouse report can move Claude Code's cursor, so the line typed so far
-    // is no longer anchored anywhere -- but it is not a keystroke either, and
-    // the next one should still be predicted.
+    // A mouse report can move the agent's cursor, so the line typed so far is
+    // no longer anchored anywhere -- but it is not a keystroke either, and the
+    // next one should still be predicted.
     if (MOUSE_REPORT.test(data)) {
       this.reset('mouse')
       return false
@@ -236,16 +287,28 @@ export class EchoPredictor {
         this.suspend('key ' + JSON.stringify(ch))
         return false
       }
-      // No prediction across the edge: where Claude Code wraps a long input
-      // is its own layout decision, and guessing it wrong puts a character on
-      // a row it will never be on.
-      if (this.anchor + this.width() + w > screen.cols - 1) {
+      // No prediction across the edge: where the agent wraps a long input is
+      // its own layout decision, and guessing it wrong puts a character on a
+      // row it will never be on.
+      if (this.anchor + this.width() + w > this.end - AGENTS[this.agent].margin) {
         this.suspend('edge')
         return false
       }
       this.text.push({ ch, w })
     }
     return this.active
+  }
+
+  /** Whether the input is empty: nothing but blanks between the agent's
+   *  marker and the cursor. */
+  private emptyInput(screen: EchoScreen, x: number, y: number): boolean {
+    const marker = AGENTS[this.agent].marker
+    for (let i = x - 1; i >= 0 && i >= x - 4; i--) {
+      const c = screen.cell(i, y)
+      if (c?.chars === marker) return true
+      if (!blankish(c) || c?.dim) return false
+    }
+    return false
   }
 
   /** Anchor a new prediction at the server's cursor, if typing there is
@@ -257,24 +320,31 @@ export class EchoPredictor {
       this.suspend('cursor hidden')
       return false
     }
+    // The input region runs to the end of the row, or, for an input drawn as
+    // a box with its own background, to where that background stops.
+    const bg = screen.cell(x, y)?.bg
+    let end = x
+    while (end < screen.cols && screen.cell(end, y)?.bg === bg) end++
+    const empty = this.emptyInput(screen, x, y)
     // Only typing at the end of the input. With text after the cursor --
     // the arrows moved it back -- the rest of the line shifts on every key,
-    // and that is Claude Code's layout, not this file's.
-    for (let i = x; i < screen.cols; i++) {
-      if (!blankish(screen.cell(i, y))) {
-        this.suspend('text after cursor')
-        return false
+    // and that is the agent's layout, not this file's. On an empty input what
+    // follows the cursor is the hint, which the first character replaces.
+    if (!empty) {
+      for (let i = x; i < end; i++) {
+        if (!blankish(screen.cell(i, y))) {
+          this.suspend('text after cursor')
+          return false
+        }
       }
     }
-    // Claude Code reads these three at the start of an empty input as mode
-    // switches (bash, memory, help) and draws no character for them.
-    const prompt = screen.cell(x - 2, y)?.chars === '❯' && blankish(screen.cell(x - 1, y))
-    if (prompt && (ch === '!' || ch === '#' || ch === '?')) {
+    if (empty && AGENTS[this.agent].modeKeys.includes(ch)) {
       this.suspend('mode key ' + ch)
       return false
     }
     this.anchor = x
     this.row = y
+    this.end = end
     this.text = []
     this.probe = this.lastKey
     return true
@@ -300,10 +370,10 @@ export class EchoPredictor {
         prev = wide
       }
     }
-    // At the start of the input there is only the prompt before the cursor
-    // and Claude Code ignores the key; predicting an erase there would blank
-    // the prompt.
-    if (x < 0 || blankish(prev) || prev?.chars === '❯') {
+    // At the start of the input there is only the marker before the cursor
+    // and the agent ignores the key; predicting an erase there would blank
+    // the marker.
+    if (x < 0 || blankish(prev) || prev?.chars === AGENTS[this.agent].marker) {
       this.suspend('backspace at start')
       return false
     }
@@ -375,7 +445,7 @@ export class EchoPredictor {
       x += c.w
     }
     if (screen.cursorX !== x) return false
-    for (let i = x; i < screen.cols; i++) if (!blankish(screen.cell(i, this.row))) return false
+    for (let i = x; i < this.end; i++) if (!blankish(screen.cell(i, this.row))) return false
     return true
   }
 
@@ -390,21 +460,33 @@ export class EchoPredictor {
   }
 }
 
+type Launch = Pick<Session, 'launchProfileId' | 'launchCommand' | 'command'>
+
 /**
- * Whether a session is Claude Code.
+ * Which agent a session is running, if it is one of the three this predicts
+ * for.
  *
  * Three ways in, because a session remembers how it was started and not what
- * is running now: the built-in profile, a launch command that is `claude`, or
- * the process in the pane. The last one has a wrinkle worth knowing: Claude
- * Code's native install runs a binary named after its version
+ * is running now: the built-in profile, the launch command, or the process in
+ * the pane. The last one has a wrinkle worth knowing: Claude Code's native
+ * install runs a binary named after its version
  * (`~/.local/share/claude/versions/2.1.283`), so tmux reports the pane's
  * command as `2.1.283` and never as `claude`. That is also the only way to
- * recognise Claude Code started by hand from a shell session.
+ * recognise an agent started by hand from a shell session.
  */
-export function isClaudeCode(s: Pick<Session, 'launchProfileId' | 'launchCommand' | 'command'> | undefined): boolean {
-  if (!s) return false
-  if (s.launchProfileId === 'builtin:claude') return true
-  const argv0 = s.launchCommand[0] ?? ''
-  if (argv0.split('/').pop() === 'claude') return true
-  return s.command === 'claude' || /^\d+\.\d+\.\d+$/.test(s.command)
+export function echoAgent(s: Launch | undefined): EchoAgent | null {
+  if (!s) return null
+  for (const agent of ['claude', 'codex', 'opencode'] as const) {
+    if (s.launchProfileId === `builtin:${agent}`) return agent
+  }
+  const argv0 = (s.launchCommand[0] ?? '').split('/').pop()
+  if (argv0 === 'claude' || argv0 === 'codex' || argv0 === 'opencode') return argv0
+  if (s.command === 'claude' || /^\d+\.\d+\.\d+$/.test(s.command)) return 'claude'
+  if (s.command === 'codex' || s.command === 'opencode') return s.command
+  return null
+}
+
+/** Whether a session is Claude Code. */
+export function isClaudeCode(s: Launch | undefined): boolean {
+  return echoAgent(s) === 'claude'
 }

@@ -1,6 +1,6 @@
-import type { Terminal as Xterm } from '@xterm/xterm'
+import type { IBufferCell, ITheme, Terminal as Xterm } from '@xterm/xterm'
 
-import { EchoPredictor, PREDICTION_TIMEOUT_MS, type EchoScreen } from './localEcho'
+import { EchoPredictor, PREDICTION_TIMEOUT_MS, type EchoAgent, type EchoScreen } from './localEcho'
 
 /**
  * Draws EchoPredictor's characters over the terminal. localEcho.ts has the
@@ -47,11 +47,50 @@ function cursorHidden(term: Xterm): boolean {
   return core?.coreService?.isCursorHidden === true
 }
 
+/** The sixteen theme colours, in palette order. */
+const ANSI: (keyof ITheme)[] = [
+  'black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white',
+  'brightBlack', 'brightRed', 'brightGreen', 'brightYellow', 'brightBlue', 'brightMagenta', 'brightCyan', 'brightWhite',
+]
+
+/** A 256-colour palette entry above the sixteen, as xterm computes it. */
+function paletteColour(i: number): string {
+  if (i >= 232) {
+    const v = 8 + (i - 232) * 10
+    return `rgb(${v},${v},${v})`
+  }
+  const n = i - 16
+  const step = (c: number) => (c === 0 ? 0 : 55 + c * 40)
+  return `rgb(${step(Math.floor(n / 36))},${step(Math.floor(n / 6) % 6)},${step(n % 6)})`
+}
+
+/**
+ * A cell's foreground or background as CSS, or null for the terminal's
+ * default.
+ *
+ * Needed because an input is not always on the terminal's own background:
+ * opencode draws its input as a box in a lighter grey, and a predicted
+ * character on the default background showed as a dark block in it.
+ */
+function cellColour(term: Xterm, c: IBufferCell, which: 'fg' | 'bg'): string | null {
+  // Inverse swaps them, which is how some agents draw their own cursor.
+  const side = c.isInverse() ? (which === 'fg' ? 'bg' : 'fg') : which
+  const rgb = side === 'fg' ? c.isFgRGB() : c.isBgRGB()
+  const pal = side === 'fg' ? c.isFgPalette() : c.isBgPalette()
+  const v = side === 'fg' ? c.getFgColor() : c.getBgColor()
+  if (rgb) return '#' + v.toString(16).padStart(6, '0')
+  if (pal) {
+    if (v < 16) return (term.options.theme?.[ANSI[v]] as string | undefined) ?? null
+    return paletteColour(v)
+  }
+  return null
+}
+
 /** How long the output has to be quiet before predictions are checked
  *  against it. A frame arrives in bursts well under this. */
 const SETTLE_QUIET_MS = 20
 
-export function attachLocalEcho(term: Xterm, enabled: () => boolean): LocalEcho {
+export function attachLocalEcho(term: Xterm, agent: () => EchoAgent | null): LocalEcho {
   const predictor = new EchoPredictor()
   const screenEl = term.element?.querySelector<HTMLElement>('.xterm-screen') ?? null
   const layer = document.createElement('div')
@@ -59,6 +98,20 @@ export function attachLocalEcho(term: Xterm, enabled: () => boolean): LocalEcho 
   layer.setAttribute('aria-hidden', 'true')
   layer.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:5;overflow:hidden'
   screenEl?.appendChild(layer)
+
+  // Lay the terminal's font out once now, Latin and CJK, invisibly. Under the
+  // WebGL renderer nothing on the page has used that font as DOM text, and
+  // the first predicted character paid for the browser preparing it: 28 to
+  // 33 ms on the first keystroke after a page load, against under 2 ms for
+  // every one after it.
+  const warm = document.createElement('span')
+  warm.style.cssText =
+    `position:absolute;visibility:hidden;white-space:pre;` +
+    `font:${term.options.fontSize ?? 13}px ${term.options.fontFamily ?? 'monospace'}`
+  warm.textContent = 'aA1 你好！'
+  layer.appendChild(warm)
+  void warm.offsetWidth
+  warm.remove()
 
   const screen = (): EchoScreen => {
     const buf = term.buffer.active
@@ -69,19 +122,20 @@ export function attachLocalEcho(term: Xterm, enabled: () => boolean): LocalEcho 
       cursorHidden: cursorHidden(term),
       cell(x, y) {
         const c = buf.getLine(buf.baseY + y)?.getCell(x)
-        return c ? { chars: c.getChars(), dim: c.isDim() !== 0 } : null
+        if (!c) return null
+        return { chars: c.getChars(), dim: c.isDim() !== 0, bg: cellColour(term, c, 'bg') ?? 'default' }
       },
     }
   }
 
-  // Predictions only where they can be right: the program is Claude Code and
-  // the view is at the bottom -- scrolled up, the cursor's row is not where
+  // Predictions only where they can be right: the program is one of the
+  // agents this knows, and the view is at the bottom -- scrolled up, the cursor's row is not where
   // it would be drawn. Whether the cursor is showing is the predictor's
   // question, and only when it starts: Claude Code hides it while it draws a
   // frame, and a keystroke landing mid-frame must not drop the line typed so
   // far.
   const usable = () => {
-    if (!enabled() || setting() === 'off' || !screenEl) return false
+    if (!agent() || setting() === 'off' || !screenEl) return false
     const buf = term.buffer.active
     return buf.viewportY === buf.baseY
   }
@@ -119,8 +173,15 @@ export function attachLocalEcho(term: Xterm, enabled: () => boolean): LocalEcho 
     const ch = screenEl.offsetHeight / term.rows
     const top = view.row * ch
     const theme = term.options.theme ?? {}
-    const fg = theme.foreground ?? '#000'
-    const bg = theme.background ?? '#fff'
+    // The input's own colours: its background where typing starts, and the
+    // foreground of the padding at the end of the input region, which is the
+    // colour typed text is drawn in -- the cell under the cursor is often the
+    // hint, in its own grey.
+    const row = term.buffer.active.getLine(term.buffer.active.baseY + view.row)
+    const at = row?.getCell(view.chars[0]?.x ?? view.cursorX)
+    const tail = row?.getCell(Math.max(0, view.end - 1))
+    const bg = (at && cellColour(term, at, 'bg')) ?? theme.background ?? '#fff'
+    const fg = (tail && cellColour(term, tail, 'fg')) ?? theme.foreground ?? '#000'
     const font = `${term.options.fontSize ?? 13}px ${term.options.fontFamily ?? 'monospace'}`
     const box = (x: number, w: number): HTMLSpanElement => {
       const s = document.createElement('span')
@@ -133,11 +194,11 @@ export function attachLocalEcho(term: Xterm, enabled: () => boolean): LocalEcho 
     const out: HTMLElement[] = []
     // The line from the anchor is predicted to be exactly these characters
     // and nothing after them, so the cover runs from the anchor to the end of
-    // the row: whatever the server is showing there in the meantime -- the
-    // dim hint, a character already taken back -- is a state the typist has
+    // the input: whatever the server is showing there in the meantime -- the
+    // hint, a character already taken back -- is a state the typist has
     // already left.
     const from = view.chars[0]?.x ?? view.cursorX
-    out.push(box(from, term.cols - from))
+    out.push(box(from, view.end - from))
     for (const p of view.chars) {
       const s = box(p.x, p.w)
       s.textContent = p.ch
@@ -153,7 +214,7 @@ export function attachLocalEcho(term: Xterm, enabled: () => boolean): LocalEcho 
     layer.replaceChildren(...out)
     // The row as a person sees it, overlay included: what the browser checks
     // read, since the characters drawn here are in no text node xterm owns.
-    const line = term.buffer.active.getLine(term.buffer.active.baseY + view.row)
+    const line = row
     if (line) {
       const cells: string[] = []
       for (let x = 0; x < term.cols; x++) {
@@ -163,7 +224,7 @@ export function attachLocalEcho(term: Xterm, enabled: () => boolean): LocalEcho 
         cells.push(c?.getWidth() === 0 ? '' : c?.getChars() || ' ')
       }
       const from = view.chars[0]?.x ?? view.cursorX
-      for (let x = from; x < term.cols; x++) cells[x] = ' '
+      for (let x = from; x < view.end; x++) cells[x] = ' '
       for (const p of view.chars) {
         cells[p.x] = p.ch
         if (p.w === 2) cells[p.x + 1] = ''
@@ -211,13 +272,15 @@ export function attachLocalEcho(term: Xterm, enabled: () => boolean): LocalEcho 
 
   return {
     input(data) {
-      if (!usable()) {
+      const which = agent()
+      if (!which || !usable()) {
         if (predictor.active) {
           predictor.reset()
           draw()
         }
         return
       }
+      predictor.setAgent(which)
       predictor.input(data, screen(), performance.now())
       draw()
       armExpiry()

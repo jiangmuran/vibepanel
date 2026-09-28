@@ -26736,3 +26736,58 @@ full-width punctuation, backspace, more punctuation, and record every distinct
 state the input line shows -- passed twelve runs out of twelve across 0, 300
 and 800 ms round trips at two typing speeds. `localEcho.test.ts` holds each of
 the failures above as a case, and removing the round-trip wait fails it.
+
+## 2026-09-28 — The same for Codex and opencode
+
+Both agents were read off in tmux the same way Claude Code was -- cursor
+position while typing, wide characters, backspace, and every character that
+can start an input -- and both keep the real cursor exactly where the next
+character goes. What differs between the three is small enough to be a table
+(`AGENTS` in `components/localEcho.ts`):
+
+| | marker | mode keys on an empty input | input region |
+|---|---|---|---|
+| Claude Code | `❯` | `!` bash, `#` memory, `?` help | the row |
+| Codex | `›` | `!` shell, `?` shortcuts | the row |
+| opencode | `┃` | `!` shell | a box with its own background |
+
+Every other first character is echoed, `/` `@` `$` `#` included: their menus
+open above or below the input row without moving it.
+
+Two things opencode needed that the other two did not:
+
+- **Its hint is not dim.** Claude Code and Codex draw "Try …" and "Ask Codex to
+  do anything" with SGR 2; opencode draws "Ask anything…" in a grey from its
+  theme. So an empty input is recognised by the marker instead -- nothing but
+  blanks between it and the cursor -- and on an empty input whatever follows
+  the cursor is the hint and is covered.
+- **Its input is a box.** It has its own background (a lighter grey than the
+  page) and wraps at its edge, not the terminal's. The input region is the run
+  of cells with the cursor cell's background; predictions stop short of its
+  end, and the layer draws in the cell's own colours. Before that, a predicted
+  character sat on the terminal's background as a dark block inside the box.
+  Codex tints its composer too, in a light theme, which the same code covers.
+
+Measured the same way as Claude Code, through a 300 ms round trip:
+
+```
+                 before       after (median / worst)   panel's own work
+Codex            348 ms       8 / 15 ms                0.9 ms
+opencode         331 ms       9 / 15 ms                0.8 ms
+```
+
+The frame-by-frame check (type, backspace twice, type, a wide character,
+full-width punctuation, backspace, more) passes on both at two typing speeds,
+and a screenshot taken while the prediction is on screen at an 800 ms round
+trip is the same row as the server's own echo a moment later, background
+included. One visible difference remains: opencode sets a block cursor and the
+layer draws a bar for the moment before the echo lands.
+
+Two measurements worth keeping. The first predicted character after a page
+load cost 28-33 ms while every later one cost under 2 ms: under the WebGL
+renderer nothing had laid out the terminal font as DOM text yet, and the
+layer now lays it out once, invisibly, when it attaches. And a first keystroke
+right after taking control of a session still sometimes shows 30-40 ms --
+measured as the time before *any* handler ran, so the browser's queue behind
+the redraw that taking control causes, not this code, which ran in about a
+millisecond once it was reached.

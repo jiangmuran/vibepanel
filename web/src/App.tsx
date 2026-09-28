@@ -82,7 +82,7 @@ import { publishHostState } from './components/plugins/hostRuntime'
 import { notePluginsRev } from './components/plugins/rev'
 import { withKnown } from './components/panes'
 import { PANEL_TABS } from './components/chrome'
-import { isClaudeCode } from './components/localEcho'
+import { echoAgent } from './components/localEcho'
 
 /**
  * Safety net only.
@@ -1935,10 +1935,10 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
                   readOnly={narrow}
                   touchSelect={narrow || coarsePointer}
                   fullscreen={state.fullscreen.includes(id)}
-                  // Not excluded when full-screen: Claude Code draws on the
-                  // alternate screen now and is still exactly where its cursor
-                  // says. localEchoLayer checks the cursor is showing instead.
-                  predictEcho={isClaudeCode(state.sessions.find((x) => x.id === id))}
+                  // Not excluded when full-screen: Claude Code and opencode
+                  // draw on the alternate screen and are still exactly where
+                  // their cursor says. The predictor checks the cursor instead.
+                  predictEcho={echoAgent(state.sessions.find((x) => x.id === id))}
                   onSelectionChange={setSelection}
                   onClipboard={(text, ok) => setBlockedClip(ok ? '' : text)}
                   className="h-full w-full py-2 pr-1 pl-2"

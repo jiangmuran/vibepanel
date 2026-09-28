@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { EchoPredictor, PREDICTION_TIMEOUT_MS, isClaudeCode, predictWidth, type EchoScreen } from './localEcho'
+import { EchoPredictor, PREDICTION_TIMEOUT_MS, echoAgent, isClaudeCode, predictWidth, type EchoCell, type EchoScreen } from './localEcho'
 
 /**
  * A screen that behaves like Claude Code's input line: "❯ " then the input,
@@ -217,6 +217,126 @@ describe('EchoPredictor', () => {
     // Well past the timeout since the first key, but not since the last.
     expect(p.expire(now + 10)).toBe(false)
     expect(shown(p, claude())).toBe('a slow link and a fast typist')
+  })
+})
+
+/**
+ * Codex's input line: "› " and the input, the hint dim, the whole row.
+ */
+function codex(typed = '', hint = 'Ask Codex to do anything') {
+  const s = claude(typed, { hint })
+  const row = s.cursorY
+  return {
+    ...s,
+    cell: (x: number, y: number) => {
+      const c = s.cell(x, y)
+      return y === row && x === 0 ? { ...c!, chars: '\u203a' } : c
+    },
+  } satisfies EchoScreen
+}
+
+/**
+ * opencode's input: a box from column 5 to 30 on its own background, "┃  "
+ * then the input, and the hint in a grey rather than dim -- the case that
+ * made the marker the test for an empty input instead of the style.
+ */
+function opencode(typed = '', hint = 'Ask anything…') {
+  const row = 7
+  const cells: EchoCell[] = []
+  for (let x = 0; x < 40; x++) cells.push({ chars: '', dim: false, bg: x >= 5 && x < 30 ? 'box' : 'page' })
+  cells[5] = { chars: '\u2503', dim: false, bg: 'box' }
+  let x = 8
+  for (const ch of typed) {
+    const w = predictWidth(ch.codePointAt(0) ?? 0) ?? 1
+    cells[x] = { chars: ch, dim: false, bg: 'box' }
+    if (w === 2) cells[x + 1] = { chars: '', dim: false, bg: 'box' }
+    x += w
+  }
+  const cursorX = x
+  if (!typed) {
+    for (const ch of hint) {
+      cells[x] = { chars: ch, dim: false, bg: 'box' }
+      x++
+    }
+  }
+  return {
+    cols: 40,
+    cursorX,
+    cursorY: row,
+    cell: (cx: number, y: number) => (y === row ? (cells[cx] ?? null) : { chars: '', dim: false, bg: 'page' }),
+  } satisfies EchoScreen
+}
+
+describe('EchoPredictor with Codex', () => {
+  it('predicts on "›" and covers the dim hint', () => {
+    const p = new EchoPredictor('codex')
+    expect(p.input('hi', codex(), 0)).toBe(true)
+    expect(p.view()?.chars.map((c) => c.x)).toEqual([2, 3])
+  })
+
+  it('leaves "!" (shell) and "?" (shortcuts) to Codex, and types "#"', () => {
+    expect(new EchoPredictor('codex').input('!', codex(), 0)).toBe(false)
+    expect(new EchoPredictor('codex').input('?', codex(), 0)).toBe(false)
+    expect(new EchoPredictor('codex').input('#', codex(), 0)).toBe(true)
+  })
+})
+
+describe('EchoPredictor with opencode', () => {
+  it('treats the grey hint as a hint because the input is empty, not because it is dim', () => {
+    const p = new EchoPredictor('opencode')
+    expect(p.input('a', opencode(), 0)).toBe(true)
+    expect(p.view()?.chars[0]?.x).toBe(8)
+  })
+
+  it('keeps the input inside the box: it ends where the box background does', () => {
+    const p = new EchoPredictor('opencode')
+    p.input('a', opencode(), 0)
+    expect(p.view()?.end).toBe(30)
+    // 30 minus the padding opencode keeps inside the box.
+    const long = new EchoPredictor('opencode')
+    expect(long.input('x'.repeat(16), opencode(), 0)).toBe(true)
+    expect(long.input('x'.repeat(4), opencode(), 10)).toBe(false)
+  })
+
+  it('confirms against the box, not the page beside it', () => {
+    const p = new EchoPredictor('opencode')
+    p.input('a', opencode(), 0)
+    p.output(100)
+    expect(p.settle(opencode('a'), 1000)).toBe(true)
+    expect(p.active).toBe(false)
+  })
+
+  it('leaves "!" (shell) to opencode and types "?"', () => {
+    expect(new EchoPredictor('opencode').input('!', opencode(), 0)).toBe(false)
+    expect(new EchoPredictor('opencode').input('?', opencode(), 0)).toBe(true)
+  })
+
+  it('does not predict over typed text after the cursor inside the box', () => {
+    const s = opencode('abc')
+    expect(new EchoPredictor('opencode').input('x', { ...s, cursorX: 9 }, 0)).toBe(false)
+  })
+})
+
+describe('echoAgent', () => {
+  const s = (over: Partial<{ launchProfileId: string; launchCommand: string[]; command: string }>) => ({
+    launchProfileId: '',
+    launchCommand: [],
+    command: 'bash',
+    ...over,
+  })
+
+  it('knows each agent by its built-in profile, its launch command or its process', () => {
+    expect(echoAgent(s({ launchProfileId: 'builtin:codex' }))).toBe('codex')
+    expect(echoAgent(s({ launchCommand: ['/opt/bin/opencode'] }))).toBe('opencode')
+    expect(echoAgent(s({ command: 'codex' }))).toBe('codex')
+    expect(echoAgent(s({ command: 'opencode' }))).toBe('opencode')
+    expect(echoAgent(s({ command: '2.1.283' }))).toBe('claude')
+  })
+
+  it('is null for anything else', () => {
+    expect(echoAgent(s({}))).toBe(null)
+    expect(echoAgent(s({ command: 'kimi' }))).toBe(null)
+    expect(echoAgent(undefined)).toBe(null)
   })
 })
 
