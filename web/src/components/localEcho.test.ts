@@ -1,0 +1,249 @@
+import { describe, expect, it } from 'vitest'
+
+import { EchoPredictor, PREDICTION_TIMEOUT_MS, isClaudeCode, predictWidth, type EchoScreen } from './localEcho'
+
+/**
+ * A screen that behaves like Claude Code's input line: "❯ " then the input,
+ * with the cursor after it. `typed` is what the server has echoed so far.
+ */
+function claude(typed = '', opts: { cols?: number; row?: number; hint?: string; hidden?: boolean } = {}) {
+  const cols = opts.cols ?? 40
+  const row = opts.row ?? 10
+  const cells: { chars: string; dim: boolean }[] = []
+  const put = (s: string, dim = false) => {
+    for (const ch of s) {
+      const w = predictWidth(ch.codePointAt(0) ?? 0) ?? 1
+      cells.push({ chars: ch, dim })
+      if (w === 2) cells.push({ chars: '', dim })
+    }
+  }
+  put('❯ ')
+  put(typed)
+  const cursorX = cells.length
+  if (!typed && opts.hint) put(opts.hint, true)
+  const screen: EchoScreen = {
+    cols,
+    cursorX,
+    cursorY: row,
+    cursorHidden: opts.hidden,
+    cell: (x, y) => (y === row ? (cells[x] ?? { chars: '', dim: false }) : { chars: '', dim: false }),
+  }
+  return screen
+}
+
+/** The line as the layer would draw it: the server's cells, overlaid. */
+function shown(p: EchoPredictor, s: EchoScreen): string {
+  const v = p.view()
+  const out: string[] = []
+  for (let x = 0; x < s.cols; x++) {
+    const c = s.cell(x, s.cursorY)
+    out.push(c?.dim ? ' ' : c?.chars || ' ')
+  }
+  if (v) {
+    const from = v.chars[0]?.x ?? v.cursorX
+    for (let x = from; x < s.cols; x++) out[x] = ' '
+    for (const c of v.chars) {
+      out[c.x] = c.ch
+      if (c.w === 2) out[c.x + 1] = ''
+    }
+  }
+  return out.join('').slice(2).trimEnd()
+}
+
+describe('EchoPredictor', () => {
+  it('draws a keystroke at once, before the server has echoed it', () => {
+    const p = new EchoPredictor()
+    const s = claude()
+    p.input('h', s, 0)
+    p.input('i', s, 10)
+    expect(shown(p, s)).toBe('hi')
+    expect(p.view()?.cursorX).toBe(4)
+  })
+
+  it('covers the dim "Try …" hint rather than typing over it', () => {
+    const p = new EchoPredictor()
+    const s = claude('', { hint: 'Try "how do I log an error?"' })
+    p.input('f', s, 0)
+    expect(shown(p, s)).toBe('f')
+  })
+
+  it('draws wide characters two cells wide', () => {
+    const p = new EchoPredictor()
+    const s = claude()
+    p.input('修复！', s, 0)
+    const v = p.view()
+    expect(v?.chars.map((c) => [c.ch, c.x, c.w])).toEqual([
+      ['修', 2, 2],
+      ['复', 4, 2],
+      ['！', 6, 2],
+    ])
+    expect(v?.cursorX).toBe(8)
+  })
+
+  // The bug the whole-line model exists for. The server echoes "c" and only
+  // a round trip later its deletion; a prediction that tracked keystrokes let
+  // the "c" come back on screen in between.
+  it('never shows a state the typist has left while the server catches up', () => {
+    const p = new EchoPredictor()
+    let now = 0
+    p.input('a', claude(), now)
+    p.output((now += 300)) // measures a 300 ms round trip
+    for (const k of ['b', 'c', '\x7f', '\x7f', 'x', 'y']) p.input(k, claude(), (now += 150))
+    // The server's screen at each point on the way to the final line.
+    for (const server of ['a', 'ab', 'abc', 'ab', 'a', 'ax', 'axy']) {
+      p.settle(claude(server), (now += 20))
+      expect(shown(p, claude(server))).toBe('axy')
+    }
+  })
+
+  // The second half of the same bug: the server passes through the very
+  // state the typist ended in, with keystrokes still on the wire. Believed at
+  // once, the prediction was dropped and the "c" reappeared.
+  it('does not believe a match until a round trip after the last keystroke', () => {
+    const p = new EchoPredictor()
+    p.input('a', claude(), 0)
+    p.output(300)
+    p.input('b', claude(), 300)
+    p.input('c', claude(), 450)
+    p.input('\x7f', claude(), 460)
+    // At 480 the server shows "ab" on its way to "abc": looks finished, is not.
+    expect(p.settle(claude('ab'), 480)).toBe(false)
+    expect(p.active).toBe(true)
+    expect(p.confirmDelay(480)).toBeGreaterThan(0)
+    // A round trip after the last key, the server has "ab" for real.
+    expect(p.settle(claude('ab'), 460 + 420)).toBe(true)
+    expect(p.active).toBe(false)
+  })
+
+  it('checks against the frame once it is whole, not the chunk that moved the cursor', () => {
+    const p = new EchoPredictor()
+    p.input('a', claude(), 0)
+    // Mid-frame the cursor is on another row; settle is only called once the
+    // output is quiet, and by then it is back. A settle on the moved row is a
+    // real move and drops the prediction.
+    expect(p.settle({ ...claude('a'), cursorY: 9 }, 400)).toBe(true)
+    expect(p.active).toBe(false)
+    expect(p.lastReset).toContain('row 10->9')
+  })
+
+  it('erases a character the server already has', () => {
+    const p = new EchoPredictor()
+    const s = claude('ab')
+    p.input('\x7f', s, 0)
+    expect(shown(p, s)).toBe('a')
+    p.input('\x7f', s, 10)
+    expect(shown(p, s)).toBe('')
+  })
+
+  it('erases a wide character as one', () => {
+    const p = new EchoPredictor()
+    const s = claude('好')
+    p.input('\x7f', s, 0)
+    expect(shown(p, s)).toBe('')
+    expect(p.view()?.cursorX).toBe(2)
+  })
+
+  it('does not erase the prompt', () => {
+    const p = new EchoPredictor()
+    expect(p.input('\x7f', claude(), 0)).toBe(false)
+    expect(p.active).toBe(false)
+  })
+
+  it('leaves the mode keys to Claude Code on an empty input', () => {
+    for (const k of ['!', '#', '?']) {
+      const p = new EchoPredictor()
+      expect(p.input(k, claude(), 0)).toBe(false)
+    }
+    // Anywhere else they are just characters.
+    const p = new EchoPredictor()
+    expect(p.input('?', claude('why'), 0)).toBe(true)
+  })
+
+  it('stops at Enter, and waits for the server before predicting again', () => {
+    const p = new EchoPredictor()
+    p.input('a', claude(), 0)
+    p.output(100)
+    expect(p.input('\r', claude('a'), 200)).toBe(false)
+    expect(p.active).toBe(false)
+    // Typed straight after: the server has not cleared the input yet.
+    expect(p.input('b', claude('a'), 220)).toBe(false)
+    // After a pause long enough for it to have caught up, prediction resumes.
+    expect(p.input('b', claude(), 220 + 1000)).toBe(true)
+  })
+
+  it('ignores focus reports, which every click into the terminal sends', () => {
+    const p = new EchoPredictor()
+    p.input('\x1b[I', claude(), 0)
+    expect(p.input('a', claude(), 5)).toBe(true)
+  })
+
+  it('drops the line on a mouse report but keeps predicting', () => {
+    const p = new EchoPredictor()
+    p.input('a', claude(), 0)
+    p.input('\x1b[<0;10;5M\x1b[<0;10;5m', claude(), 10)
+    expect(p.active).toBe(false)
+    expect(p.input('b', claude(), 20)).toBe(true)
+  })
+
+  it('does not predict pastes, emoji, or past the edge', () => {
+    expect(new EchoPredictor().input('x'.repeat(40), claude(), 0)).toBe(false)
+    expect(new EchoPredictor().input('\u{1f600}', claude(), 0)).toBe(false)
+    const narrow = new EchoPredictor()
+    expect(narrow.input('abcdef', claude('', { cols: 8 }), 0)).toBe(false)
+  })
+
+  it('does not predict over text after the cursor', () => {
+    const s = claude('abc')
+    const moved = { ...s, cursorX: 3 }
+    expect(new EchoPredictor().input('x', moved, 0)).toBe(false)
+  })
+
+  it('does not start while the program has the cursor hidden', () => {
+    expect(new EchoPredictor().input('a', claude('', { hidden: true }), 0)).toBe(false)
+  })
+
+  it('gives up if the server never agrees', () => {
+    const p = new EchoPredictor()
+    p.input('a', claude(), 0)
+    expect(p.expire(PREDICTION_TIMEOUT_MS - 1)).toBe(false)
+    expect(p.expire(PREDICTION_TIMEOUT_MS + 1)).toBe(true)
+    expect(p.active).toBe(false)
+  })
+
+  it('keeps showing what is typed for as long as typing goes on', () => {
+    const p = new EchoPredictor()
+    let now = 0
+    for (const k of 'a slow link and a fast typist') p.input(k, claude(), (now += 150))
+    // Well past the timeout since the first key, but not since the last.
+    expect(p.expire(now + 10)).toBe(false)
+    expect(shown(p, claude())).toBe('a slow link and a fast typist')
+  })
+})
+
+describe('isClaudeCode', () => {
+  const s = (over: Partial<{ launchProfileId: string; launchCommand: string[]; command: string }>) => ({
+    launchProfileId: '',
+    launchCommand: [],
+    command: 'bash',
+    ...over,
+  })
+
+  it('knows the built-in profile, the launch command and the process', () => {
+    expect(isClaudeCode(s({ launchProfileId: 'builtin:claude' }))).toBe(true)
+    expect(isClaudeCode(s({ launchCommand: ['/usr/local/bin/claude', '--resume'] }))).toBe(true)
+    expect(isClaudeCode(s({ command: 'claude' }))).toBe(true)
+  })
+
+  // Claude Code's native install runs a binary named after its version, so
+  // that is what tmux reports -- including for claude started from a shell.
+  it('knows the native install, whose process is named after its version', () => {
+    expect(isClaudeCode(s({ command: '2.1.283' }))).toBe(true)
+  })
+
+  it('leaves everything else alone, shells above all', () => {
+    expect(isClaudeCode(s({}))).toBe(false)
+    expect(isClaudeCode(s({ command: 'codex' }))).toBe(false)
+    expect(isClaudeCode(s({ launchCommand: ['sudo', 'passwd'] }))).toBe(false)
+    expect(isClaudeCode(undefined)).toBe(false)
+  })
+})

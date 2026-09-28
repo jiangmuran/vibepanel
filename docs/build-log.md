@@ -26644,3 +26644,95 @@ redraws only on SIGWINCH. A
 second, passive viewer at a fractional pixel ratio switches away and back
 three times, checking both the local row count against the server's and the
 footer itself, without resizing the window to repair it first.
+
+
+## 2026-09-28 — Typing into Claude Code without waiting for the round trip
+
+「打字太卡了」, from an iPad on a panel in another place. Measured before
+anything was changed, with a real Claude Code in a panel on this machine and a
+TCP proxy in front of it holding every chunk for a fixed time each way, from
+the keydown to the first frame in which the character is on screen:
+
+```
+direct, no delay           median  40 ms   p95  50 ms
+300 ms round trip          median 332 ms   p95 340 ms
+```
+
+Forty milliseconds with no network at all is Claude Code redrawing its input
+box, tmux, and the panel; the rest is the round trip, paid on every character.
+
+### What it does now
+
+The character is drawn in the browser, at the cursor, in the same frame as the
+keydown, and the keystroke goes to the server exactly as before
+(`components/localEcho.ts`, drawn by `localEchoLayer.ts`). mosh and VS Code's
+terminal typeahead do this for every program by guessing; this does it for one
+program whose behaviour is known, which is what makes it small. Only Claude
+Code, because a local echo is a claim about what the program will draw, and a
+shell reading a password draws nothing.
+
+```
+                           panel's own work   on screen (median / worst)
+direct                     0.8 ms             6 / 15 ms
+300 ms round trip          1.1 ms             7 / 15 ms
+800 ms round trip          0.9 ms             6 / 15 ms
+300 ms, 25 keys a second   0.5 ms             9 / 15 ms
+```
+
+The worst case is one display refresh at 60 Hz and does not move with the
+network any more. The panel's own share -- keydown to the page changed -- is
+under 2.5 ms in every run.
+
+### What went wrong on the way, in the order it was found
+
+- **Claude Code is a full-screen program now.** It draws on the alternate
+  screen with mouse support, so the panel lists it in `fullscreen`, and the
+  first version, which excluded full-screen programs to stay out of vim's way,
+  excluded the one program it was for. Its cursor still sits exactly in the
+  input box (checked with `display -p '#{cursor_x},#{cursor_y}'` while typing,
+  wide characters included), so the check is the cursor, not the screen.
+- **Its process is not called `claude`.** The native install runs
+  `~/.local/share/claude/versions/2.1.283`, so tmux reports the pane's command
+  as `2.1.283`. `isClaudeCode` accepts a bare version number for that reason;
+  it is also the only way to recognise Claude Code started by hand in a shell.
+- **Buffer rows moved on every keystroke.** The panel keeps tmux's client off
+  the alternate screen, so a redraw scrolls the browser's buffer a line while
+  every cell stays where it was on screen. Positions are screen rows now.
+- **A frame arrives in pieces.** tmux writes one of Claude Code's frames in
+  several chunks and the cursor is wherever the frame is being drawn until the
+  last one. Checking after each chunk saw it a row up and dropped the
+  prediction nearly every time. Predictions are checked once output has been
+  quiet for 20 ms; until then the character on screen is the predicted one,
+  which is the same character in the same cell.
+- **A backspace showed the line going backwards.** Predicting keystrokes one at
+  a time and confirming each against its echo put a character already taken
+  back on screen for a round trip: the server echoes the "c", then a round trip
+  later its deletion. A frame-by-frame check caught it ("abc" → "ab" → "abxy"
+  on the way to "axy"). The prediction is now the whole line from where typing
+  started, drawn over whatever the server shows until the server shows exactly
+  that.
+- **And then the server passed through the final state early.** On its way to
+  "abc" it stops at "ab", which is also where the typist ends up after the
+  backspace, and the prediction was dropped with the "c" and its deletion still
+  on the wire. A match is believed only once a round trip has passed since the
+  last keystroke, measured from the first output after an idle keystroke; the
+  estimate goes up at once and down slowly, because too short shows the line
+  going backwards and too long costs nothing anybody can see.
+- **Clicking into the terminal switched prediction off** for the first
+  characters typed: the focus report xterm sends on a click went down the same
+  path as keystrokes and read as an unpredictable key.
+
+Keys that are not a character or a backspace at the end of the input -- Enter,
+arrows, Escape, Tab, a paste, and `!` `#` `?` on an empty input, which Claude
+Code reads as mode switches and draws nothing for -- drop the prediction, and
+prediction stays off until the typist has paused long enough for the server to
+have caught up, so nothing is anchored on a screen that is about to change. A
+prediction the server never agrees with is dropped two seconds after the last
+keystroke. `localStorage['vibepanel.localEcho']` is `'off'` to disable it on a
+device and `'debug'` to log every dropped prediction and why.
+
+The frame-by-frame check -- type, backspace twice, type, a wide character,
+full-width punctuation, backspace, more punctuation, and record every distinct
+state the input line shows -- passed twelve runs out of twelve across 0, 300
+and 800 ms round trips at two typing speeds. `localEcho.test.ts` holds each of
+the failures above as a case, and removing the round-trip wait fails it.
