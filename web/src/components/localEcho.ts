@@ -80,14 +80,16 @@ const INITIAL_RTT_MS = 300
  *   shell and `?` shortcuts; opencode's `!` shell. Every other first
  *   character is echoed, including `/` and `@`, whose menus open above or
  *   below the input row without moving it.
+ * - `pad` is the cells between the marker and the first typed character, so
+ *   the marker's column says where the input starts.
  * - `margin` is how far before the end of the input region text wraps.
  *   opencode's input is a box in the middle of the screen with padding inside
  *   it; the other two use the whole row.
  */
 export const AGENTS = {
-  claude: { marker: '❯', modeKeys: '!#?', margin: 1 },
-  codex: { marker: '›', modeKeys: '!?', margin: 1 },
-  opencode: { marker: '┃', modeKeys: '!', margin: 3 },
+  claude: { marker: '❯', pad: 1, modeKeys: '!#?', margin: 1 },
+  codex: { marker: '›', pad: 1, modeKeys: '!?', margin: 1 },
+  opencode: { marker: '┃', pad: 2, modeKeys: '!', margin: 3 },
 } as const
 
 export type EchoAgent = keyof typeof AGENTS
@@ -180,6 +182,10 @@ export class EchoPredictor {
   private row = -1
   /** One past the input region, found when the prediction starts. */
   private end = 0
+  /** The input's first column, or -1 when the marker was not found. */
+  private inputStart = -1
+  /** Whether the prediction was started by the keystroke being handled. */
+  private fresh = false
   private lastKey = -Infinity
   /** Predictions are off until the typist pauses; see `suspend`. */
   private suspended = false
@@ -279,9 +285,12 @@ export class EchoPredictor {
     for (const ch of data) {
       if (!this.active && !this.start(ch, screen)) return false
       if (ch === '\x7f') {
-        if (!this.backspace(screen)) return false
+        const ok = this.backspace(screen)
+        this.fresh = false
+        if (!ok) return false
         continue
       }
+      this.fresh = false
       const w = predictWidth(ch.codePointAt(0) ?? 0)
       if (w === null) {
         this.suspend('key ' + JSON.stringify(ch))
@@ -345,9 +354,21 @@ export class EchoPredictor {
     this.anchor = x
     this.row = y
     this.end = end
+    this.inputStart = this.findStart(screen, x, y)
+    this.fresh = true
     this.text = []
     this.probe = this.lastKey
     return true
+  }
+
+  /** The column the input starts at: the nearest marker to the left of the
+   *  cursor, and the agent's padding after it. -1 if there is none. */
+  private findStart(screen: EchoScreen, x: number, y: number): number {
+    const { marker, pad } = AGENTS[this.agent]
+    for (let i = x - 1; i >= 0; i--) {
+      if (screen.cell(i, y)?.chars === marker) return i + 1 + pad
+    }
+    return -1
   }
 
   /** Take back the last predicted character, or erase the one before the
@@ -357,24 +378,42 @@ export class EchoPredictor {
       this.text.pop()
       return true
     }
+    // Nothing left to erase. The agent ignores the key here, and so does
+    // this: a held backspace goes on past the start of the input, and
+    // dropping the prediction at that point put back on screen everything
+    // the server had not deleted yet, which then deleted itself again.
+    if (this.inputStart >= 0 && this.anchor <= this.inputStart) {
+      // A backspace on an input that was already empty, with nothing
+      // predicted before it: nothing to hold on to.
+      //
+      // Only then. Mid-way through a held backspace the cursor can read as
+      // at the start while the server is still drawing the line -- a frame
+      // moves the cursor first and rewrites the row after -- and ending the
+      // prediction on that showed the last undeleted character come back.
+      if (this.fresh) {
+        this.lastReset = `#${++this.resets} backspace on an empty input`
+        this.text = []
+        this.row = -1
+        return false
+      }
+      return true
+    }
     // Erasing text the server already has: move the anchor back over it, and
     // the line from there is predicted empty. The cell before the anchor may
     // be the second half of a wide character, which xterm stores as an empty
     // cell after the character itself.
     let x = this.anchor - 1
-    let prev = screen.cell(x, this.row)
+    const prev = screen.cell(x, this.row)
     if (prev && prev.chars === '' && x > 0) {
       const wide = screen.cell(x - 1, this.row)
-      if (wide && predictWidth(wide.chars.codePointAt(0) ?? 0) === 2) {
-        x -= 1
-        prev = wide
-      }
+      if (wide && predictWidth(wide.chars.codePointAt(0) ?? 0) === 2) x -= 1
     }
-    // At the start of the input there is only the marker before the cursor
-    // and the agent ignores the key; predicting an erase there would blank
-    // the marker.
-    if (x < 0 || blankish(prev) || prev?.chars === AGENTS[this.agent].marker) {
-      this.suspend('backspace at start')
+    // Where the input starts is known from the marker, not from what the cell
+    // before the anchor looks like: a space inside the input looks exactly
+    // like the padding before it, and treating it as the start dropped the
+    // prediction in the middle of a held backspace.
+    if (this.inputStart < 0 || x < this.inputStart) {
+      this.suspend('backspace without a known start')
       return false
     }
     this.anchor = x
@@ -428,6 +467,7 @@ export class EchoPredictor {
     }
     if (this.confirmDelay(now) === 0 && this.matches(screen)) {
       // The server has caught up with everything typed.
+      this.lastReset = `#${++this.resets} confirmed (round trip ${Math.round(this.rtt)} ms)`
       this.text = []
       this.row = -1
       return true
@@ -437,6 +477,12 @@ export class EchoPredictor {
 
   /** Whether the server's line from the anchor is exactly the prediction. */
   private matches(screen: EchoScreen): boolean {
+    // Predicted empty, and the server's input is empty: whatever follows the
+    // cursor is the agent's hint, which for opencode is not dim and would
+    // otherwise never match.
+    if (this.text.length === 0 && this.anchor === this.inputStart && screen.cursorX === this.anchor) {
+      if (this.emptyInput(screen, screen.cursorX, this.row)) return true
+    }
     let x = this.anchor
     for (const c of this.text) {
       const cell = screen.cell(x, this.row)

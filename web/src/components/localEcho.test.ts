@@ -143,6 +143,64 @@ describe('EchoPredictor', () => {
     expect(p.view()?.cursorX).toBe(2)
   })
 
+  // A held backspace through "hello world": key repeat is faster than the
+  // round trip, so the server is still showing most of the line when the
+  // local one is empty. The space in the middle once read as the start of
+  // the input and dropped the prediction, and the line grew back to "hello
+  // world" before deleting itself a second time.
+  it('never lets the line grow back under a held backspace', () => {
+    for (const [agent, screen] of [
+      ['claude', claude],
+      ['codex', codex],
+      ['opencode', opencode],
+    ] as const) {
+      const p = new EchoPredictor(agent)
+      p.output(300)
+      let now = 1000
+      let last = 'hello world'.length
+      const serverStates = ['hello world', 'hello world', 'hello worl', 'hello wor', 'hello wo', 'hello w']
+      for (let i = 0; i < 16; i++) {
+        // The server is five keystrokes behind, and then stops at the start.
+        const server = screen(serverStates[Math.min(i, serverStates.length - 1)])
+        p.input('\x7f', server, (now += 30))
+        p.settle(server, now + 20)
+        const raw = shown(p, server)
+        // opencode's row starts with its box; the input is what follows "┃".
+        const line = (raw.includes('┃') ? raw.slice(raw.indexOf('┃') + 1) : raw).trim()
+        expect(line.length, `${agent} after ${i + 1} backspaces: "${line}"`).toBeLessThanOrEqual(last)
+        last = line.length
+      }
+      expect(last, agent).toBe(0)
+      expect(p.active, agent).toBe(true)
+    }
+  })
+
+  // The half-drawn frame that ended a held backspace early: the cursor is
+  // already back at the start while the row still shows the last character.
+  it('holds an emptied line through a frame whose cursor is ahead of its text', () => {
+    const p = new EchoPredictor()
+    p.output(300)
+    let now = 1000
+    for (let i = 0; i < 3; i++) p.input('\x7f', claude('abc'), (now += 60))
+    expect(shown(p, claude('abc'))).toBe('')
+    const midFrame = { ...claude('h'), cursorX: 2 }
+    expect(p.input('\x7f', midFrame, (now += 60))).toBe(true)
+    expect(p.active).toBe(true)
+    expect(shown(p, midFrame)).toBe('')
+    // Once the server really is empty and a round trip has passed, it ends.
+    expect(p.settle(claude(''), now + 1000)).toBe(true)
+    expect(p.active).toBe(false)
+  })
+
+  it('confirms an emptied opencode input showing its grey hint again', () => {
+    const p = new EchoPredictor('opencode')
+    p.output(100)
+    p.input('\x7f', opencode('a'), 1000)
+    expect(p.active).toBe(true)
+    expect(p.settle(opencode(''), 2000)).toBe(true)
+    expect(p.active).toBe(false)
+  })
+
   it('does not erase the prompt', () => {
     const p = new EchoPredictor()
     expect(p.input('\x7f', claude(), 0)).toBe(false)

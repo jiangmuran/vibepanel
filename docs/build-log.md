@@ -26791,3 +26791,33 @@ right after taking control of a session still sometimes shows 30-40 ms --
 measured as the time before *any* handler ran, so the browser's queue behind
 the redraw that taking control causes, not this code, which ran in about a
 millisecond once it was reached.
+
+## 2026-09-28 — A held backspace that deleted the last characters twice
+
+Reported as: deleting fast, the line empties, then the last three characters
+come back and delete themselves again. Reproduced with a held backspace --
+one press every 30 ms, carrying on past the start of the input the way key
+repeat does -- through a 300 ms round trip, recording every state the input
+line showed. Two causes, found one after the other:
+
+- **A space inside the input read as the start of it.** Erasing text the
+  server already had moved the anchor left one cell at a time, and stopped
+  when the cell before it was blank -- which is what the padding after the
+  marker looks like, and also what the space in "hello world" looks like. The
+  prediction was dropped at "hello", and the server's line, five keystrokes
+  behind, came back as "hello world". The start of the input is now the
+  marker's column plus the agent's padding, found when the prediction starts,
+  and a backspace past it is absorbed rather than ending anything.
+- **A frame moves the cursor before it redraws the row.** With the key held a
+  little slower, the line went "" → "h" → "". The backspace that reached the
+  start read the cursor at the start while the row still held the "h": the
+  server's frame had moved the cursor and not yet rewritten the line. Ending
+  the prediction there showed the "h". It now ends only on a backspace typed
+  on an input that was already empty with nothing predicted; otherwise the
+  empty line is held until the server's whole frame agrees, a round trip
+  after the last key, like every other prediction. An emptied opencode input
+  shows its grey hint again, and that counts as agreeing.
+
+Checked on all three agents: a held backspace at 30, 60 and 100 ms a press,
+three runs each, plus the mixed typing check, 33 runs, and the line only ever
+got shorter. `localEcho.test.ts` holds both cases.
