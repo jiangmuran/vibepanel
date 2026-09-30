@@ -24441,3 +24441,30 @@ meant as a sentinel, which made every search tool here treat the file as
 binary and skip it. Searching for where the warning came from found nothing
 until the file was read directly. It is `'\u0000none'` now: the same string,
 written so the file is text.
+
+## 2026-09-29 — A 413 that was nginx's, a service worker in the way, and "413 "
+
+"Why does uploading a slightly bigger file fail with 413?" The panel's upload
+limit is 256 MiB; the nginx in front of this panel had `client_max_body_size
+50m`, and its log had the two uploads, 52.5 MB and 55 MB, refused there. That
+was fixed on the machine, not here -- with one trap worth writing down, now in
+the runbook: its config is bind-mounted as a single read-only file, `sed -i`
+replaced the file, and the container went on reading the old one until it was
+restarted.
+
+Then "413 service worker 拦截". The worker did not refuse anything -- its fetch
+handler was `respondWith(fetch(event.request))` for every request -- but that
+put it in the middle of every upload, and it cost two things. XMLHttpRequest's
+upload progress measured the hand-over to the worker, which is instant, so a
+large file's bar ran to the end and waited there; and DevTools listed every
+response, nginx's 413 included, as "from ServiceWorker". Non-GET requests now go
+to the network without it. A GET still passes through, which is the fetch
+handler installability asks for. render-check asserts both on a page the worker
+controls; a probe against the old worker saw the POST through it, and against
+the new one, not.
+
+And what the person was shown was "413 " -- nginx's answer is an HTML page, and
+over HTTP/2 there is no status text. A 413 without the panel's JSON reason is
+now a failure of its own, `tooLarge`, which says a proxy in front of the panel
+refused the file and that its limit is what to raise. The panel's own 413 still
+shows its own reason.

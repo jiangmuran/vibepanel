@@ -242,12 +242,25 @@ export class UpdateRefusedError extends Error {
  * the kind into a sentence; see uploadErrorText.
  */
 export class UploadTransportError extends Error {
-  readonly kind: 'network' | 'aborted' | 'timeout'
-  constructor(kind: 'network' | 'aborted' | 'timeout') {
+  readonly kind: UploadFailure
+  constructor(kind: UploadFailure) {
     super(kind)
     this.name = 'UploadTransportError'
     this.kind = kind
   }
+}
+
+/**
+ * How an upload failed before the panel could say why. `tooLarge` is a 413
+ * that is not the panel's: a proxy in front of it with a smaller body limit
+ * than the panel's 256 MiB. nginx's default is 1 MB, and its answer is an HTML
+ * page, so what reached the person was "413 " and nothing else.
+ */
+export type UploadFailure = 'network' | 'aborted' | 'timeout' | 'tooLarge'
+
+/** A 413 the panel did not send: no JSON reason in the body. */
+export function refusedByProxy(status: number, body: { error?: string } | null): boolean {
+  return status === 413 && body?.error === undefined
 }
 
 export class UnauthorizedError extends Error {
@@ -1149,6 +1162,12 @@ export const api = {
           // Now it is done, and the bar says so.
           onProgress?.(1)
           resolve({ paths: body.paths })
+          return
+        }
+        // The panel's own refusals are JSON with a reason; a 413 without one
+        // came from something in front of it. See UploadFailure.
+        if (refusedByProxy(xhr.status, body)) {
+          reject(new UploadTransportError('tooLarge'))
           return
         }
         const message = body?.error ?? `${xhr.status} ${xhr.statusText}`

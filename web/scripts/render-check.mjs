@@ -3846,6 +3846,33 @@ browser = await chromium.launch({ headless: true })
         'offer and no notification on Android, where the Notification constructor is refused')
     } else {
       note('PASS', 'pwa', 'the manifest is complete and the service worker registers')
+
+      // A write goes to the network, not through the worker. An upload
+      // through it had its progress measured to the worker -- instant -- and
+      // every failure, a proxy's 413 included, read as the worker's doing.
+      // Asked of a page the worker actually controls, or it proves nothing.
+      if (!(await pwa.evaluate(() => navigator.serviceWorker.controller !== null))) {
+        await pwa.reload({ waitUntil: 'networkidle' })
+      }
+      const controlled = await pwa.evaluate(() => navigator.serviceWorker.controller !== null)
+      if (!controlled) {
+        note('FAIL', 'pwa', 'the service worker never took control of the page, so what it intercepts cannot be checked')
+      } else {
+        const [write] = await Promise.all([
+          pwa.waitForResponse((r) => r.url().includes('/upload?path=') && r.request().method() === 'POST'),
+          pwa.evaluate(() => fetch('/api/projects/none/upload?path=', { method: 'POST', body: 'x' }).catch(() => null)),
+        ])
+        const [read] = await Promise.all([
+          pwa.waitForResponse((r) => r.url().endsWith('/api/health')),
+          pwa.evaluate(() => fetch('/api/health').catch(() => null)),
+        ])
+        if (write.fromServiceWorker()) {
+          note('FAIL', 'pwa', 'a POST went through the service worker; uploads report progress to it and not to the server')
+        }
+        if (!read.fromServiceWorker()) {
+          note('WARN', 'pwa', 'a GET did not go through the service worker either; its fetch handler is what installability asks for')
+        }
+      }
     }
     await pwaCtx.close()
   }
