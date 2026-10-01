@@ -285,3 +285,75 @@ describe('resuming a stream', () => {
     expect(sent[0]).not.toHaveProperty('stream')
   })
 })
+
+/**
+ * A session killed under a watching browser and then restored from its row.
+ *
+ * The server ends the old stream with `exit`; the restore creates a new tmux
+ * session under the same id and pushes a state in which the row is running
+ * again. The terminal is still mounted and nothing else will ask for the
+ * session, so the client has to. Measured before this existed: the terminal
+ * kept the old stream's last frame, "[exited]", typing reached nothing, and a
+ * reload was the only way out.
+ */
+describe('a session that comes back', () => {
+  const handlers = { onData: () => {}, onSize: () => {} }
+
+  function openSocket() {
+    const sock = newSocket()
+    ;(sock as unknown as { dark: () => boolean }).dark = () => false
+    const sent: ClientMessage[] = []
+    ;(sock as unknown as { ws: unknown }).ws = {
+      readyState: WebSocket.OPEN,
+      send: (s: string) => sent.push(JSON.parse(s) as ClientMessage),
+    }
+    return { sock, sent }
+  }
+
+  const state = (exited: boolean) =>
+    ({ t: 'state', projects: [], sessions: [{ id: 's1', exited }], live: [] }) as unknown as ServerMessage
+
+  it('subscribes again, from the start, once the state shows it running', () => {
+    const { sock, sent } = openSocket()
+    sock.subscribe('s1', 80, 24, handlers)
+    deliver(sock, { t: 'subscribed', sessionId: 's1', ref: 1, replayStream: 'a', replayOffset: 10 })
+    deliver(sock, { t: 'exit', sessionId: 's1', ref: 1 })
+    sent.length = 0
+
+    // Still gone: the restore dialog has not been pressed yet.
+    deliver(sock, state(true))
+    expect(sent).toEqual([])
+
+    deliver(sock, state(false))
+    expect(sent).toEqual([expect.objectContaining({ t: 'subscribe', sessionId: 's1' })])
+    // From the start: the new attachment is a new stream, and a resume point
+    // from the old one would be believed by nothing.
+    expect(sent[0]).not.toHaveProperty('stream')
+    expect(sent[0]).not.toHaveProperty('since')
+
+    // Once. The next state push describes the same running session, and the
+    // stream is no longer one that ended.
+    deliver(sock, state(false))
+    expect(sent).toHaveLength(1)
+  })
+
+  it('leaves a stream that never ended alone', () => {
+    const { sock, sent } = openSocket()
+    sock.subscribe('s1', 80, 24, handlers)
+    deliver(sock, { t: 'subscribed', sessionId: 's1', ref: 1 })
+    sent.length = 0
+    deliver(sock, state(false))
+    expect(sent).toEqual([])
+  })
+
+  it('resets the terminal on the confirmation that follows', () => {
+    const { sock } = openSocket()
+    let resets = 0
+    sock.subscribe('s1', 80, 24, { ...handlers, onReset: () => resets++ })
+    deliver(sock, { t: 'subscribed', sessionId: 's1', ref: 1 })
+    deliver(sock, { t: 'exit', sessionId: 's1', ref: 1 })
+    deliver(sock, state(false))
+    deliver(sock, { t: 'subscribed', sessionId: 's1', ref: 2 })
+    expect(resets).toBe(1)
+  })
+})

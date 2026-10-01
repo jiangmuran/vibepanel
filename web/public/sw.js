@@ -23,6 +23,18 @@ self.addEventListener('activate', (event) => {
 })
 
 self.addEventListener('fetch', (event) => {
+  // Anything that is not a GET goes to the network without this worker in the
+  // way: returning without respondWith is the browser's own request, as if no
+  // worker were registered.
+  //
+  // It used to pass everything through, writes included, and an upload is the
+  // one request where that costs something. The page hands the whole body to
+  // the worker, which sends it again; XMLHttpRequest's upload progress then
+  // measures the hand-over, which is instant, so a large file's bar ran to the
+  // end and sat there until the real transfer finished. And every response --
+  // a proxy's bare 413 included -- showed in DevTools as "from ServiceWorker",
+  // which read as this worker being what refused the file.
+  if (event.request.method !== 'GET') return
   // Required for installability, and otherwise a pass-through. Written out
   // rather than left empty so that the next person to open this file sees the
   // decision instead of an apparent omission.

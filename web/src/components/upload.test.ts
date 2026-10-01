@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { filesFrom, uploadFiles } from './upload'
-import { api } from '../protocol/api'
+import { filesFrom, uploadErrorText, uploadFiles } from './upload'
+import { api, refusedByProxy, UploadTransportError } from '../protocol/api'
 import { setLang } from '../i18n'
 
 /** A DataTransfer as the two events actually hand it over. */
@@ -92,5 +92,20 @@ describe('uploading and saying so', () => {
     // And no note either: a drop that carried nothing is not an event worth
     // reporting, it is a mis-aimed gesture.
     expect(notes).toEqual([])
+  })
+})
+
+describe('a file refused by a proxy in front of the panel', () => {
+  it('is told apart from a refusal the panel wrote', () => {
+    // nginx's page: HTML, so no parsed body at all.
+    expect(refusedByProxy(413, null)).toBe(true)
+    // The panel's own 413 carries its reason, which is the better answer.
+    expect(refusedByProxy(413, { error: 'an upload is at most 256 MiB' })).toBe(false)
+    expect(refusedByProxy(400, null)).toBe(false)
+  })
+  it('says so in words rather than "413 "', () => {
+    const text = uploadErrorText(new UploadTransportError('tooLarge'))
+    expect(text).toContain('413')
+    expect(text).not.toBe('tooLarge')
   })
 })

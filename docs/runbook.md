@@ -416,6 +416,31 @@ tmux -L vibepanel show-environment -t =vp_x: VIBEPANEL_URL   # what one session 
 curl -sk "$(tmux -L vibepanel show-environment -t =vp_x: VIBEPANEL_URL | cut -d= -f2-)/api/health"
 ```
 
+## An upload fails with 413, or "a proxy in front of the panel refused"
+
+The panel takes an upload of up to 256 MiB, and its own refusal says so in
+words. A bare 413, or the panel saying a proxy refused the file, is the reverse
+proxy in front of it: its request-body limit is smaller than the panel's.
+nginx's default `client_max_body_size` is **1 MB**; a value somebody set by hand
+is often 50 MB. The proxy answers before the request reaches the panel, so
+nothing about it is in the panel's log -- nginx logs it as `client intended to
+send too large body: <bytes>`.
+
+Raise it above the panel's limit, so the panel is what decides:
+
+```nginx
+client_max_body_size 300m;
+```
+
+If nginx runs in a container with its config bind-mounted as a single file,
+editing the file with `sed -i` or most editors writes a new file, and the
+container keeps the old one: `nginx -s reload` changes nothing, and `nginx -T`
+inside the container still shows the old value. Restart the container.
+
+In Chrome's DevTools every request shows as passing through the panel's
+service worker; before v1.24.2 uploads did too, which made a proxy's 413 look
+like the worker's. It has never refused anything.
+
 ## Passkeys will not register
 
 WebAuthn needs a secure context and a Relying Party ID that is a registrable

@@ -453,6 +453,10 @@ const DICT = {
   'upload.network': { zh: '没有连上面板', en: 'The panel could not be reached' },
   'upload.aborted': { zh: '上传已取消', en: 'Upload cancelled' },
   'upload.timeout': { zh: '上传超时', en: 'Upload timed out' },
+  'upload.tooLarge': {
+    zh: '面板前面的代理拒收了这个文件（413），要调大它的上传上限',
+    en: 'A proxy in front of the panel refused a file this size (413); raise its upload limit',
+  },
   'upload.progress': { zh: '上传进度', en: 'Upload progress' },
 
   'preview.title': { zh: '预览', en: 'Preview' },
