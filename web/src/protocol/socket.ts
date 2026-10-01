@@ -55,6 +55,16 @@ interface Stream {
    * holds exactly the bytes it broadcasts. Null until the first confirmation.
    */
   position: { stream: string; next: number } | null
+  /**
+   * The server said this stream's attachment ended, and nothing has replaced
+   * it: the tmux session was killed, or went with the machine. The terminal
+   * is still mounted and still wants the session, so when a state push shows
+   * the session running again -- restored, under the same id -- the
+   * subscription is sent again. Without this a restored session showed the
+   * old stream's last frame, "[exited]", until the page was reloaded, and
+   * typing into it went nowhere.
+   */
+  ended: boolean
 }
 
 /** Connection state, for the UI to show honestly rather than pretending. */
@@ -269,6 +279,7 @@ export class PanelSocket {
           msg.resumed === true && stream.position !== null && stream.position.stream === msg.replayStream
         if (stream.confirmed && !resumed) stream.handlers.onReset?.()
         stream.confirmed = true
+        stream.ended = false
         stream.ref = msg.ref
         stream.position = msg.replayStream ? { stream: msg.replayStream, next: msg.replayOffset ?? 0 } : null
         this.byRef.set(msg.ref, stream)
@@ -311,6 +322,7 @@ export class PanelSocket {
       }
       case 'exit': {
         const stream = msg.sessionId ? this.streams.get(msg.sessionId) : undefined
+        if (stream) stream.ended = true
         stream?.handlers.onExit?.()
         break
       }
@@ -332,6 +344,20 @@ export class PanelSocket {
       }
       case 'state': {
         const st = msg as unknown as StateMessage
+        // A session this client watched to its end is running again: restored
+        // from its row, with the same id, so the mounted terminal is the right
+        // one and only its stream is stale. Subscribe again, from the start --
+        // the new attachment is a new stream, so there is nothing to resume --
+        // and the confirmation that follows resets the terminal, the same path
+        // a reconnect takes.
+        for (const stream of this.streams.values()) {
+          if (!stream.ended) continue
+          const row = st.sessions.find((x) => x.id === stream.sessionId)
+          if (!row || row.exited) continue
+          stream.ended = false
+          stream.position = null
+          this.sendSubscribe(stream)
+        }
         for (const fn of this.stateListeners) {
           fn({
             projects: st.projects,
@@ -450,7 +476,7 @@ export class PanelSocket {
   }
 
   subscribe(sessionId: string, cols: number, rows: number, handlers: StreamHandlers, hidden = false) {
-    const stream: Stream = { sessionId, handlers, ref: null, cols, rows, confirmed: false, hidden, position: null }
+    const stream: Stream = { sessionId, handlers, ref: null, cols, rows, confirmed: false, hidden, position: null, ended: false }
     this.streams.set(sessionId, stream)
     this.sendSubscribe(stream)
   }

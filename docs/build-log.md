@@ -24468,3 +24468,70 @@ over HTTP/2 there is no status text. A 413 without the panel's JSON reason is
 now a failure of its own, `tooLarge`, which says a proxy in front of the panel
 refused the file and that its limit is what to raise. The panel's own 413 still
 shows its own reason.
+
+## 2026-10-01 — The launch-profile drop mark, drawn in the wrong place
+
+「拖动启动配置时显示预览蓝色长方体错位」. The launch-profile list reorders by
+drag and draws the gap the row would land in, the way the sidebar does for
+projects. The sidebar's bar is an ordinary block before the row. This one was
+`absolute -mt-2 h-0.5 w-24` inside a flex row that was not positioned, so its
+containing block was the dialog and, with no offsets, it took its static
+position: centred in the row by `items-center`, then nudged up 8px. The result
+was a short blue slab across the grip of the row it was meant to be *above*,
+and nothing at all for a drop below the last row, because no row owns that
+gap.
+
+The row is `relative` now and the bar is `inset-x-2 top-0 -translate-y-1/2`,
+so it sits on the row's top edge at full width; a second bar after the list
+covers the last gap. Both carry `data-testid="profile-drop-mark"`. Measured in
+a real browser at 1280px and 390px: the mark's centre is on row 0's top edge
+to the pixel while dragging the last row up, and under the last row's bottom
+edge while dragging there; the drop still reorders. The first run of that
+measurement found no mark at all, which was `make check` passing against a
+binary that still embedded the previous bundle -- the AGENTS note about `make
+build` before a commit, seen from the other side.
+
+Reported in the same breath: 「pi agent 使用的时候老是无法使用中文输入法」.
+Not reproduced. With Chrome's own IME emulation (CDP `Input.imeSetComposition`
+and `Input.insertText`, with and without the keyCode-229 keydowns a real IME
+produces) against a throwaway panel, the browser sent exactly the committed
+UTF-8 for 你好 and 世界 to a `cat` session, to a session streaming output
+during the composition, and to a real `pi 0.99.2`, which displayed them in its
+editor. xterm's composition preview sat at the buffer cursor, which pi parks
+on its editor line, so the candidate window has somewhere sensible to be. pi
+asks for the kitty keyboard protocol and modifyOtherKeys at startup; the
+installed xterm implements neither, the panel's tmux has `extended-keys off`,
+and pi falls back to legacy input, which is what the test exercised. Whatever
+the person is hitting needs their browser, their OS and the exact symptom.
+
+## 2026-10-01 — A restored session stayed "[exited]" until the page was reloaded
+
+「从重启恢复 agent 不显示，必须刷新」. Reproduced against a throwaway panel:
+a session on screen, its tmux session killed from a shell, the row marked
+vanished, then restored through the same API the dialog calls. The pane came
+back with the banner and the archived scrollback; the browser kept showing the
+old stream's last frame, "[exited]", typing reached nothing, and a reload was
+the only way out.
+
+The server was right at every step. Killing the tmux session ended the
+attachment, so the viewer's stream was deregistered and told `exit`; the
+restore attached again under the same id. What nobody did was ask again. The
+terminal is mounted per session and rebuilds only when the session changes,
+and the socket client resubscribes only on a reconnect or a `dropped` -- the
+one case where the server itself says "ask again". A session that ended and
+came back was not one of them.
+
+The socket client now remembers that a stream ended (`ended`, set on `exit`,
+cleared by the next confirmation) and, on the state push that shows that
+session running again, subscribes once more from the start: the new attachment
+is a new stream, so a resume point from the old one would be believed by
+nothing, and the confirmation that follows takes the reconnect path, which
+resets the terminal before the replay. A `dropped` is still handled where it
+was; `exit` for a session that stays exited sends nothing; a stream that never
+ended is left alone. Three tests in `socket.test.ts`, and the loop removed
+turns the first one red. Measured end to end: after the restore the terminal
+shows the banner and the archived output within half a second, and a line
+typed into it reaches the new pane.
+
+The one other sender of `exit` is deleting a session, whose row leaves the
+state push, so nothing resubscribes to it.

@@ -183,14 +183,25 @@ export function LaunchProfiles() {
           ref={(el) => drag.register(p.id, el)}
           data-testid="profile-row"
           data-profile={p.id}
-          className={`flex items-center gap-2 border-t border-hairline py-2 text-vp-base first:border-t-0 transition-opacity duration-200 ease-vp ${
+          className={`relative flex items-center gap-2 border-t border-hairline py-2 text-vp-base first:border-t-0 transition-opacity duration-200 ease-vp ${
             drag.draggingId === p.id ? 'opacity-40' : ''
           }`}
         >
           {/* The gap it would land in, drawn the same way the sidebar draws
-              it: where it goes matters, where your finger is does not. */}
+              it: where it goes matters, where your finger is does not.
+
+              Absolute against this row, which is `relative` for that reason.
+              Without it the bar's containing block was the dialog, and an
+              absolute child of a flex row with no offsets sits at its static
+              position: vertically centred in the row by `items-center`, then
+              nudged up 8px. So the bar sat across the grip of the row it was
+              meant to be above, a short blue slab a third of the way across,
+              and nothing at all was drawn for a drop below the last row. */}
           {drag.overIndex === index && drag.draggingId !== null && (
-            <div className="pointer-events-none absolute -mt-2 h-0.5 w-24 rounded-full bg-accent" />
+            <div
+              data-testid="profile-drop-mark"
+              className="pointer-events-none absolute inset-x-2 top-0 h-0.5 -translate-y-1/2 rounded-full bg-accent"
+            />
           )}
           <span
             {...drag.handleProps(p.id)}
@@ -258,6 +269,10 @@ export function LaunchProfiles() {
           </button>
         </div>
       ))}
+      {/* Below the last row, the one gap no row owns. */}
+      {drag.overIndex === profiles.length && drag.draggingId !== null && (
+        <div data-testid="profile-drop-mark" className="mx-2 h-0.5 rounded-full bg-accent" />
+      )}
 
       {!draft && (
         <button
