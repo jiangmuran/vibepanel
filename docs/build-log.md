@@ -24535,3 +24535,43 @@ typed into it reaches the new pane.
 
 The one other sender of `exit` is deleting a session, whose row leaves the
 state push, so nothing resubscribes to it.
+
+## 2026-10-02 — pi 1.0 went full-screen, and the wheel was a twentieth of itself
+
+「对新版 pi agent 的兼容仍然是地狱 无法滚动 无法点击 输入法经常加载不出来」. pi
+1.0.0 changed its default to a full-screen TUI: the alternate screen, SGR
+mouse reporting with button tracking, the hardware cursor hidden, its own
+transcript viewport. Every pi pane on this machine has `alternate_on=1` and
+the mouse flags up. Under 0.99 none of that was on, which is why the earlier
+look at pi and an input method found nothing.
+
+What that changes in the panel, measured against pi 1.0.0 in a throwaway
+panel with a real browser, at 1280px, on a 390px phone with a touch screen,
+and on an 820px tablet:
+
+- **Scrolling is pi's now, not xterm's.** With mouse reporting on, xterm hands
+  the wheel to the application and pi moves its transcript. It moved one line
+  per report, and xterm sends one report per wheel *event* once enough pixels
+  have accumulated for a row -- so six notches of a mouse moved six lines, and
+  320px of trackpad travel moved six lines too. A terminal emulator sends one
+  report per row of travel. `wheel.ts` does that arithmetic for the pointer,
+  with a carry across events so a trackpad's 8px deltas are not each rounded
+  away and a change of direction drops the remainder; `Terminal.tsx` attaches
+  it through `attachCustomWheelEventHandler`, only while the application is
+  tracking the mouse, and sends the reports in one frame -- pi treats reports
+  closer than five milliseconds as one notch, a line each. The same 320px of
+  trackpad now sends 21 reports. The touch path was already right about this
+  (`WHEEL_NOTCH_ROWS`), and a swipe on the phone moved pi's transcript before
+  and after.
+- **Clicks reach pi.** A click sends press and release; a drag sends the
+  motion, pi highlights the range and owns the selection, and xterm selects
+  nothing, which is how every terminal behaves with mouse reporting on. On the
+  phone the terminal is a display and a tap sends nothing, by design.
+- **The input method commits.** Chrome's IME emulation composed 你好 at pi's
+  editor line, with the hardware cursor hidden and tmux still placing it
+  there, idle and while pi was re-rendering a streaming command; the commit
+  reached the pane every time. The phone's compose box reached pi too.
+
+The last two were not reproduced, and the first is the one the panel owed.
+A way out that costs nothing: `pi --tui-mode regular` is the 0.99 layout,
+normal scrollback and no mouse, and a launch profile can carry it.

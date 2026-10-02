@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { attachTouchSelection } from './mobile/touchSelect'
+import { attachTouchSelection, cellAt, wheelReport } from './mobile/touchSelect'
+import { wheelReports } from './wheel'
 import { iosInputText, shouldBypassXtermKeydown } from './iosInput'
 import { liveTerminals } from './terminals'
 import { copyText, copyTextInGesture } from '../clipboard'
@@ -383,6 +384,32 @@ export function TerminalView({
         showCounts()
       },
     )
+
+    // The wheel, for an application that asked for the mouse.
+    //
+    // xterm's own report is one per event; wheel.ts says why that is a third
+    // to a twentieth of what a terminal emulator sends and what that did to pi
+    // 1.0's full-screen transcript. Measured in the same pixels the event is
+    // in, from the element both renderers draw into, because the DOM renderer's
+    // rows element is empty under WebGL. Returning false keeps xterm from
+    // adding its own report on top.
+    let wheelCarry = 0
+    term.attachCustomWheelEventHandler((ev) => {
+      if (term.modes.mouseTrackingMode === 'none') return true
+      const screen = host.querySelector('.xterm-screen')
+      const box = screen?.getBoundingClientRect()
+      if (!box || box.height === 0 || box.width === 0) return true
+      const plan = wheelReports(ev.deltaY, ev.deltaMode, box.height / term.rows, term.rows, wheelCarry)
+      wheelCarry = plan.carry
+      ev.preventDefault()
+      if (plan.count === 0 || replayQueue.replaying) return false
+      const cell = cellAt({ x: ev.clientX, y: ev.clientY }, box, term.cols, term.rows)
+      // One frame rather than one per report: they arrive together either way,
+      // and pi treats reports closer than five milliseconds as one notch, a
+      // line each, which is the rate this was sized for.
+      socket.writeText(sessionId, wheelReport(plan.up, cell.col, cell.row).repeat(plan.count))
+      return false
+    })
 
     // iOS Chrome/Safari emits direct punctuation and space input as a keydown
     // with keyCode 229 but no active composition. xterm marks that keydown as
