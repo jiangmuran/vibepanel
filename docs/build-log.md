@@ -24612,3 +24612,78 @@ Ruled out, for the record: focus. xterm calls `focus()` on mousedown before
 it decides whether the event is a report, so a click into a mouse-tracking
 terminal takes the keyboard like any other, and an IME composition started
 after one reached pi.
+
+## 2026-10-02 — The modes that fell out of the ring
+
+pi 1.0 runs full-screen: it enters the alternate screen, turns mouse reporting
+on, turns autowrap off, hides the cursor. tmux tells its client about a pane's
+private modes once, when they change. The ring keeps the last two megabytes of
+what the client was told, and a full-screen program redraws the whole screen
+on every wheel notch, so after an afternoon the `ESC[?1002h` and `ESC[?7l` it
+sent at startup have been evicted. A viewer that subscribes after that without
+a resume point inside the ring -- a new tab, a reconnect whose last offset is
+also gone -- gets the screen and not the modes. xterm then does not know the
+pane wants the mouse: the wheel scrolls xterm's own scrollback through replayed
+redraw fragments, a click selects text instead of reaching the program, a
+paste arrives unbracketed. Measured in a throwaway panel with a shell that set
+the modes and then pushed exactly 2,097,152 bytes of redraws: a fresh tab
+replayed the ring and sent no mouse report at all. This is the scroll/click
+half of the earlier "无法滚动 无法点击" on pi 1.0, from a second device or
+after a reload, and a reload does not fix it because the reload replays the
+same ring.
+
+`internal/session/modes.go` follows `CSI ? Pm h/l` in the same stream the ring
+stores, across read boundaries, and a snapshot that does not continue the
+viewer's own stream is prefixed with the modes whose last setting differs from
+a terminal's default: set modes as `h`, and the two that start on -- the cursor
+and wrap -- as `l` when reset. A continued snapshot is not prefixed, because
+that viewer saw the original. The alternate screen is never replayed (tmux
+never sends it here, and a stray one would move the replay to a buffer with no
+scrollback), nor is synchronized output, which brackets single frames.
+`Replay.Offset` moves back by the prefix's length so the viewer's resume point
+still counts real bytes. `TestALateViewerIsToldThePanesModes` runs the
+eviction against real tmux with a 4 KiB ring; the prefix removed, it is red.
+In the browser, the fresh tab now reports the mouse.
+
+Not this, and said so rather than claimed: the doubled "Working" footer in the
+reported screenshot was not reproduced. The guess that a lost autowrap made the
+full-width footer wrap was tested against the un-fixed binary and did not
+double -- a full-width line written with absolute cursor positioning fills the
+row and parks in pending-wrap without advancing. A second idle viewer of a real
+pi session rendered identically to tmux's truth, before and after a reload.
+That footer is xterm state diverging from the byte stream over a long session,
+which a fresh replay re-syncs -- which is why a reload fixes it -- and its
+trigger is still open. The mode fix is the scroll/click bug, not that one.
+
+## 2026-10-02 — Tracking the live jailbreak session: tmux is clean, the browser is not
+
+The reported doubled footer, caught live. A pi 1.0 session that had been
+"Working" on a `while ps -p …` wait loop for fourteen minutes showed four
+stacked "Working" footer bars in the browser. Captured from the running panel,
+read-only:
+
+- `tmux capture-pane` on that session's grid: exactly ONE footer. tmux's model
+  of the screen is correct.
+- `tmux pipe-pane` of pi's own output for eight seconds: 48,996 bytes, and
+  every cursor move is an absolute `CSI row;1 H` to row 29 or 30, max row 30 on
+  a 30-row pane. Zero line feeds, zero IND/RI/NEL, zero `CSI S/T`, zero DECSTBM,
+  zero erase, zero soft reset. pi only ever rewrites its footer in place.
+
+So pi and tmux are both correct, and the four bars are the browser's xterm
+having diverged from the byte stream over a long session -- which is why a
+reload, replaying into a fresh xterm, re-syncs it.
+
+What the trigger is NOT: a first guess that a resize desynced the relay was
+reproduced with a synthetic footer app and looked convincing -- until the app
+was made faithful. The synthetic app cached its size at startup and kept
+drawing the footer at the old rows after a resize; that was the app failing to
+handle SIGWINCH, not the panel. An app that recomputes its layout and does a
+full clear+repaint on SIGWINCH, the way pi does, survives seven resizes with
+the browser matching tmux exactly. Resize is ruled out.
+
+The trigger is still open. pi's live output is clean, so the divergence is
+introduced on the tmux->client->ring->xterm path and accumulates only under
+conditions a short synthetic run has not hit. Nailing it needs the bytes the
+panel actually delivered to that browser over those fourteen minutes, which is
+not in pi's output and not in tmux's grid. `pi --tui-mode regular` sidesteps
+the whole alternate-screen class in the meantime.

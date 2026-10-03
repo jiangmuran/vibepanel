@@ -1886,3 +1886,65 @@ func zombieChildren() (pids []string, ok bool) {
 	}
 	return pids, true
 }
+
+// TestALateViewerIsToldThePanesModes: the mouse mode a pane set at startup
+// has been evicted from the ring by the output that followed, and a viewer
+// subscribing afterwards is told about it anyway, ahead of the screen. The
+// offset moves back by the same number of bytes, so the viewer's resume point
+// still counts real bytes.
+func TestALateViewerIsToldThePanesModes(t *testing.T) {
+	ctx := context.Background()
+	tm := newTestTmux(t)
+	const name = "vp_modes"
+	if err := tm.Create(ctx, tmux.CreateOptions{
+		Name: name, Dir: t.TempDir(), Width: 80, Height: 24,
+		Command: []string{"sh", "-c",
+			`printf '\033[?1002h\033[?1006h'; sleep 1; i=0; while [ $i -lt 400 ]; do i=$((i+1)); printf '\033[%d;1H%078d\n' $((i%20+1)) $i; done; echo MODES_FLOOD_DONE; sleep 30`},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	// A ring far smaller than the flood, so the mode bytes are long gone.
+	m := NewManager(tm, 4<<10)
+	defer m.DetachAll()
+
+	live, err := m.Attach(ctx, "s1", name, 80, 24)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	first, _ := live.Subscribe("client-a")
+	if got := collect(t, first, "MODES_FLOOD_DONE", 10*time.Second); !strings.Contains(got, "MODES_FLOOD_DONE") {
+		t.Fatalf("the flood never finished: %q", got)
+	}
+	live.Unsubscribe(first)
+
+	late, replay := live.SubscribeFrom("client-b", false, Resume{})
+	defer live.Unsubscribe(late)
+	// The leading run of mode sequences. tmux adds modes of its own around
+	// the pane's (application cursor keys, focus reporting), so what is pinned
+	// is that the pane's two are among them, not the exact run.
+	lead := 0
+	for lead < len(replay.Data) {
+		n, _, _, complete := parsePrivateMode(replay.Data[lead:])
+		if !complete || n == 0 {
+			break
+		}
+		lead += n
+	}
+	modes, screen := string(replay.Data[:lead]), string(replay.Data[lead:])
+	if !strings.Contains(modes, "\x1b[?1002h") || !strings.Contains(modes, "\x1b[?1006h") {
+		t.Fatalf("late viewer's replay does not start with the pane's modes: %q", modes)
+	}
+	if strings.Contains(screen, "\x1b[?1002h") {
+		t.Fatalf("the original mode bytes are still in the ring, so this test floods too little to prove anything")
+	}
+	if got, want := replay.Offset+int64(len(replay.Data)), live.ring.Total(); got != want {
+		t.Fatalf("offset + data = %d, ring total = %d: the resume arithmetic is off by the prefix", got, want)
+	}
+
+	// A viewer that already has the stream is not told again.
+	cont, again := live.SubscribeFrom("client-c", false, Resume{Stream: replay.Stream, Since: replay.Offset + int64(len(replay.Data))})
+	defer live.Unsubscribe(cont)
+	if !again.Continued || strings.Contains(string(again.Data), "\x1b[?1002h") {
+		t.Fatalf("a continued replay carried the modes again: continued=%v data=%q", again.Continued, string(again.Data))
+	}
+}

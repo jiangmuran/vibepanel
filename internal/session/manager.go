@@ -197,8 +197,11 @@ type Live struct {
 	now func() time.Time
 
 	scanner *oscScanner
-	done    chan struct{}
-	closed  bool
+	// The pane's private modes, for a snapshot that does not continue the
+	// viewer's stream. See modeTracker.
+	modes  *modeTracker
+	done   chan struct{}
+	closed bool
 
 	// pumped is closed by the pump goroutine as it returns. close() waits on
 	// it so that "the attachment has ended" also means "no further callbacks".
@@ -543,6 +546,7 @@ func (m *Manager) Attach(ctx context.Context, sessionID, tmuxName string, cols, 
 		cols:           cols,
 		rows:           rows,
 		scanner:        newOSCScanner(),
+		modes:          newModeTracker(),
 		done:           make(chan struct{}),
 		pumped:         make(chan struct{}),
 		reconfiguredAt: time.Now(),
@@ -660,6 +664,7 @@ func (m *Manager) pump(l *Live) {
 			l.mu.Lock()
 			l.ring.Write(chunk)
 			l.scanner.feed(chunk)
+			l.modes.feed(chunk)
 			bell, clips, titles = l.scanner.drain()
 			cols, rows = l.cols, l.rows
 			l.broadcastLocked(Event{Kind: EventOutput, Data: out})
@@ -950,6 +955,16 @@ func (l *Live) subscribe(clientID string, hidden bool, from Resume) (*Subscriber
 		replay.Data, replay.Offset, replay.Continued = l.ring.SnapshotFrom(from.Since)
 	} else {
 		replay.Data, replay.Offset, _ = l.ring.SnapshotFrom(-1)
+	}
+	if !replay.Continued {
+		// The modes first, then the screen. Offset moves back by the same
+		// amount: the viewer counts every byte it receives from Offset to find
+		// its resume point, and these bytes are not in the stream, so without
+		// the shift its next resume would skip that many real ones.
+		if prefix := l.modes.prefix(); len(prefix) > 0 {
+			replay.Data = append(prefix, replay.Data...)
+			replay.Offset -= int64(len(prefix))
+		}
 	}
 	l.subs[sub] = struct{}{}
 
