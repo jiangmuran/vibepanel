@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { attachTouchSelection, cellAt, wheelReport } from './mobile/touchSelect'
 import { wheelReports } from './wheel'
+import { sgrMouseReport, wantsReport } from './mouseReport'
 import { iosInputText, shouldBypassXtermKeydown } from './iosInput'
 import { liveTerminals } from './terminals'
 import { copyText, copyTextInGesture } from '../clipboard'
@@ -385,6 +386,67 @@ export function TerminalView({
       },
     )
 
+    // The pointer, for an application that asked for the mouse, while this
+    // viewer is scaled.
+    //
+    // mouseReport.ts has the measurement: at 0.69 scale xterm reported a click
+    // on column 40 as column 28, because it divides by the cell size it
+    // rendered at and the transform is applied after. Only while scaled, and
+    // only for the SGR encoding; everywhere else xterm's own reports are
+    // right and this stays out of the way. Capture on the host runs before
+    // xterm's listener on its element, and stopping the event there is what
+    // keeps xterm from sending a second, wrong report. xterm would have
+    // focused the terminal on that mousedown, so this does too.
+    const scaledMouse = () => {
+      const t = host.style.transform
+      if (t === '' || t === 'none') return false
+      if (term.modes.mouseTrackingMode === 'none') return false
+      // The encoding is not in the public modes. Read from the core, and
+      // every field optional: if an upgrade moves it this stays out of the
+      // way and the scaled viewer is back to xterm's reports, which
+      // mouseReport.test.ts will say by reading the installed bundle.
+      const core = (term as unknown as { _core?: { coreMouseService?: { activeEncoding?: string } } })._core
+      return core?.coreMouseService?.activeEncoding === 'SGR'
+    }
+    const mouseCell = (ev: MouseEvent) => {
+      const box = host.querySelector('.xterm-screen')?.getBoundingClientRect()
+      if (!box || box.width === 0 || box.height === 0) return null
+      return cellAt({ x: ev.clientX, y: ev.clientY }, box, term.cols, term.rows)
+    }
+    const mods = (ev: MouseEvent) => ({ shift: ev.shiftKey, alt: ev.altKey, ctrl: ev.ctrlKey })
+    let heldButton = -1
+    const sendMouse = (kind: 'down' | 'up' | 'move', ev: MouseEvent) => {
+      if (replayQueue.replaying) return
+      const cell = mouseCell(ev)
+      if (!cell) return
+      const button = kind === 'move' ? heldButton : ev.button
+      socket.writeText(sessionId, sgrMouseReport(kind, button, cell.col, cell.row, mods(ev)))
+    }
+    const scaledMouseMove = (ev: MouseEvent) => {
+      if (!wantsReport(term.modes.mouseTrackingMode, 'move', heldButton >= 0)) return
+      sendMouse('move', ev)
+    }
+    const scaledMouseUp = (ev: MouseEvent) => {
+      document.removeEventListener('mousemove', scaledMouseMove, true)
+      document.removeEventListener('mouseup', scaledMouseUp, true)
+      if (wantsReport(term.modes.mouseTrackingMode, 'up', true)) sendMouse('up', ev)
+      heldButton = -1
+      ev.stopPropagation()
+    }
+    const scaledMouseDown = (ev: MouseEvent) => {
+      // The right button keeps xterm's own handling: it is the paste menu,
+      // not a report.
+      if (!scaledMouse() || ev.button === 2) return
+      ev.preventDefault()
+      ev.stopPropagation()
+      term.focus()
+      heldButton = ev.button
+      if (wantsReport(term.modes.mouseTrackingMode, 'down', true)) sendMouse('down', ev)
+      document.addEventListener('mousemove', scaledMouseMove, true)
+      document.addEventListener('mouseup', scaledMouseUp, true)
+    }
+    host.addEventListener('mousedown', scaledMouseDown, true)
+
     // The wheel, for an application that asked for the mouse.
     //
     // xterm's own report is one per event; wheel.ts says why that is a third
@@ -628,6 +690,9 @@ export function TerminalView({
       detachIme()
       detachTouch?.()
       host.removeEventListener('pointerup', copyOnSelect)
+      host.removeEventListener('mousedown', scaledMouseDown, true)
+      document.removeEventListener('mousemove', scaledMouseMove, true)
+      document.removeEventListener('mouseup', scaledMouseUp, true)
       selSub.dispose()
       dataSub.dispose()
       binarySub.dispose()

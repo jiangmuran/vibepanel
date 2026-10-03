@@ -24575,3 +24575,40 @@ and on an 820px tablet:
 The last two were not reproduced, and the first is the one the panel owed.
 A way out that costs nothing: `pi --tui-mode regular` is the 0.99 layout,
 normal scrollback and no mouse, and a launch profile can carry it.
+
+## 2026-10-02 — A scaled viewer's clicks landed on the wrong cell
+
+「找一下可能的问题」, after the wheel. Two more things pi 1.0's full-screen
+mode exposes, measured in a throwaway panel with two browsers on one session.
+
+**The one fixed.** The second browser is passive: it renders the owner's grid
+and is scaled with a CSS transform to fit (0.69 here). xterm maps a pointer to
+a cell by dividing its distance from the screen's edge by the cell size it
+rendered at, and the transform is applied after, so a click on column 40, row
+10 was reported to pi as column 28, row 7. Nothing in pi could be clicked
+from that browser, and a drag selected the wrong text. The touch path never
+had this problem, because it measures the box the finger is in
+(`touchSelect.ts`, `cellAt`). `mouseReport.ts` is the same arithmetic for a
+pointer in the SGR encoding, and `Terminal.tsx` uses it only while the host
+is scaled, the application is tracking the mouse and the encoding is SGR: a
+capture-phase mousedown on the host, which runs before xterm's listener on
+its element, stops the event there, focuses the terminal as xterm would have,
+and sends press, motion while held, and release from the scaled box. The
+encoding is not in xterm's public `modes`, so it is read from the core with
+every field optional, and `mouseReport.test.ts` reads the installed bundle
+for the names so an upgrade that moves them is noticed rather than quietly
+returning the scaled viewer to the wrong cells. Measured after: the scaled
+browser reports the cell under the pointer, and a drag sends press, motion
+and release at scaled cells.
+
+**The one noted.** pi copies on selection by writing OSC 52. The panel
+receives it outside any gesture, the browser refuses the write, and the
+"Copied N characters — click to put them on your clipboard" offer appears
+after every drag. Correct, and noisy. Chrome keeps transient activation for a
+few seconds after a click, so a real browser may well accept the write that
+the headless one refused; not changed.
+
+Ruled out, for the record: focus. xterm calls `focus()` on mousedown before
+it decides whether the event is a report, so a click into a mouse-tracking
+terminal takes the keyboard like any other, and an IME composition started
+after one reached pi.
