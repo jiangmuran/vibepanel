@@ -24687,3 +24687,21 @@ conditions a short synthetic run has not hit. Nailing it needs the bytes the
 panel actually delivered to that browser over those fourteen minutes, which is
 not in pi's output and not in tmux's grid. `pi --tui-mode regular` sidesteps
 the whole alternate-screen class in the meantime.
+
+## 2026-10-04 — The restore offer stays dismissed, per session
+
+「那个没能活过重启的提示我关了就关了，你能不能不要持久化显示」. The strip that
+offers to rebuild sessions whose tmux went with a reboot was dismissed per
+visit: a reload brought it back. That was deliberate once -- a permanent
+dismissal could lose a day's sessions silently -- but it meant the strip
+returned after every refresh for sessions already decided about.
+
+Remembered by id now (`vibepanel.restoreDismissed` in localStorage): a session
+dismissed stays dismissed across reloads, while a session that vanishes *after*
+the dismissal still raises the offer, so nothing new is missed. The stored set
+is replaced with the currently-vanished ids on each dismissal, which also
+prunes ids of sessions since restored or deleted. Nothing is lost either way --
+every gone row keeps its own restart button; this only silences the top strip.
+Verified in a browser: the strip shows for two vanished sessions, hides on
+dismiss, stays hidden across a reload, and returns when a third session
+vanishes.

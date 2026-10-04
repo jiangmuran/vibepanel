@@ -103,6 +103,9 @@ const RIGHT_OPEN_KEY = 'vibepanel.rightOpen'
 // preset. Notes and todo are one tab now, so there is no arrangement that key
 // could seed; it is left alone in whatever browsers still have it.
 const RIGHT_TAB_KEY = 'vibepanel.rightTab'
+// The vanished sessions whose restore offer has been dismissed, by id, so
+// "later" stays later across reloads. See useState below.
+const RESTORE_DISMISSED_KEY = 'vibepanel.restoreDismissed'
 const RIGHT_DEFAULT_WIDTH = 280
 
 
@@ -332,13 +335,24 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   const [settingsAt, setSettingsAt] = useState<SettingsSection | null>(null)
   const [tokensOpen, setTokensOpen] = useState(false)
   const [restoreOpen, setRestoreOpen] = useState(false)
-  // Dismissing the offer is per visit, not remembered.
+  // Which vanished sessions the restore offer has been dismissed for, by id.
   //
-  // A remembered dismissal is how somebody loses a day's sessions for good: the
-  // notice never comes back, the rows keep saying "gone", and the archived
-  // scrollback sits in the database until the row is deleted. Reloading brings
-  // the offer back, which is the behaviour a person expects from "later".
-  const [restoreDismissed, setRestoreDismissed] = useState(false)
+  // Dismissing used to be per visit: a reload brought the whole offer back, so
+  // that a permanent dismissal could not lose a day's sessions silently. But
+  // the banner then returned after every refresh for sessions already decided
+  // about, which is its own kind of nagging -- 「我关了就关了」. Remembered by id
+  // instead: a session dismissed stays dismissed across reloads, while a
+  // *newly* vanished one still raises the offer, so nothing new is missed. The
+  // sessions are not lost either way -- each gone row keeps its own restart
+  // button; this only silences the strip at the top.
+  const [restoreDismissed, setRestoreDismissed] = useState<Set<string>>(() => {
+    try {
+      const raw = readStored(RESTORE_DISMISSED_KEY)
+      return new Set(raw ? (JSON.parse(raw) as string[]) : [])
+    } catch {
+      return new Set()
+    }
+  })
 
   // The attribute is written synchronously here rather than from an effect.
   //
@@ -626,6 +640,22 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     () => mainSessions.filter((s) => s.exited && s.exitStatus === EXIT_VANISHED),
     [mainSessions],
   )
+  // The offer is about the ones not already dismissed. A session that comes
+  // back (restored, or no longer vanished) drops out of `restorable` on its
+  // own, so this needs no cleanup of its own.
+  const pendingRestorable = useMemo(
+    () => restorable.filter((x) => !restoreDismissed.has(x.id)),
+    [restorable, restoreDismissed],
+  )
+  // Dismiss every session the offer is currently about, and remember them, so
+  // the strip does not come back for them on the next load. Stored as exactly
+  // the vanished ids seen now, which also prunes ids of sessions that have
+  // since been restored or deleted.
+  const dismissRestore = useCallback(() => {
+    const ids = restorable.map((x) => x.id)
+    setRestoreDismissed(new Set(ids))
+    writeStored(RESTORE_DISMISSED_KEY, JSON.stringify(ids))
+  }, [restorable])
   const labelOf = (s: Session) => labels.get(s.id) ?? sessionLabel(s)
   // Sorted by age, not by the order they arrive in.
   //
@@ -1519,7 +1549,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             Every row read "gone", the restart button on each of them started a
             login shell, and there was no way to find out that was what it did
             until you typed at it. */}
-        {restorable.length > 0 && !restoreDismissed && (
+        {pendingRestorable.length > 0 && (
           <div
             data-testid="restore-notice"
             className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-hairline px-4 py-2 text-vp-base"
@@ -1527,7 +1557,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           >
             <span className="font-semibold text-ink">{t('restore.title')}</span>
             <span className="min-w-0 flex-1 text-ink-2">
-              {t('restore.body', { n: String(restorable.length) })}
+              {t('restore.body', { n: String(pendingRestorable.length) })}
             </span>
             <button
               type="button"
@@ -1540,7 +1570,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             </button>
             <button
               type="button"
-              onClick={() => setRestoreDismissed(true)}
+              onClick={dismissRestore}
               className="vp-press shrink-0 rounded-vp px-2 py-1 text-vp-base text-ink-2 transition-colors duration-150 ease-vp hover:text-ink"
             >
               {t('restore.later')}
@@ -1784,17 +1814,14 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
         />
       )}
 
-      {restoreOpen && restorable.length > 0 && (
+      {restoreOpen && pendingRestorable.length > 0 && (
         <RestoreDialog
-          sessions={restorable}
+          sessions={pendingRestorable}
           projects={state.projects}
           profiles={profiles}
           labels={labels}
           onClose={() => setRestoreOpen(false)}
-          onDone={() => {
-            setRestoreOpen(false)
-            setRestoreDismissed(false)
-          }}
+          onDone={() => setRestoreOpen(false)}
         />
       )}
 
