@@ -397,16 +397,32 @@ export function TerminalView({
     // xterm's listener on its element, and stopping the event there is what
     // keeps xterm from sending a second, wrong report. xterm would have
     // focused the terminal on that mousedown, so this does too.
+    // Whether the application is tracking the mouse AND encoding reports as
+    // SGR (1006). Both the wheel path and the scaled-pointer path only act for
+    // SGR: `sgrMouseReport`/`wheelReport` emit the SGR form, and sending that
+    // to an app that asked for the legacy X10 encoding is garbage it reads as
+    // stray keystrokes. For anything but SGR, xterm's own reports are correct
+    // and both paths return the event to it untouched.
+    //
+    // The encoding is not in the public modes. Read from the core, every field
+    // optional: an upgrade that moves it leaves this quiet and hands the event
+    // back to xterm, and mouseReport.test.ts reads the installed bundle for the
+    // names so that is noticed.
+    const sgrMouse = () => {
+      if (term.modes.mouseTrackingMode === 'none') return false
+      const core = (term as unknown as { _core?: { coreMouseService?: { activeEncoding?: string } } })._core
+      return core?.coreMouseService?.activeEncoding === 'SGR'
+    }
+    // The CSS scale a passive viewer is rendered at, parsed from the transform
+    // the scaling effect sets (`scale(x)`), or 1 when it owns the grid.
+    const hostScale = () => {
+      const m = /scale\(([0-9.]+)\)/.exec(host.style.transform)
+      return m ? parseFloat(m[1]) || 1 : 1
+    }
     const scaledMouse = () => {
       const t = host.style.transform
       if (t === '' || t === 'none') return false
-      if (term.modes.mouseTrackingMode === 'none') return false
-      // The encoding is not in the public modes. Read from the core, and
-      // every field optional: if an upgrade moves it this stays out of the
-      // way and the scaled viewer is back to xterm's reports, which
-      // mouseReport.test.ts will say by reading the installed bundle.
-      const core = (term as unknown as { _core?: { coreMouseService?: { activeEncoding?: string } } })._core
-      return core?.coreMouseService?.activeEncoding === 'SGR'
+      return sgrMouse()
     }
     const mouseCell = (ev: MouseEvent) => {
       const box = host.querySelector('.xterm-screen')?.getBoundingClientRect()
@@ -457,11 +473,17 @@ export function TerminalView({
     // adding its own report on top.
     let wheelCarry = 0
     term.attachCustomWheelEventHandler((ev) => {
-      if (term.modes.mouseTrackingMode === 'none') return true
+      // Only for SGR; a legacy-encoding app gets xterm's own, correct report.
+      if (!sgrMouse()) return true
       const screen = host.querySelector('.xterm-screen')
       const box = screen?.getBoundingClientRect()
       if (!box || box.height === 0 || box.width === 0) return true
-      const plan = wheelReports(ev.deltaY, ev.deltaMode, box.height / term.rows, term.rows, wheelCarry)
+      // The row height is unscaled: deltaY is in page pixels the CSS transform
+      // does not touch, while the box is the scaled-down size, so dividing by
+      // the scaled cell height made a shrunk passive viewer scroll 1/scale too
+      // far. A wheel notch is a fixed number of rows at any zoom.
+      const rowHeight = box.height / hostScale() / term.rows
+      const plan = wheelReports(ev.deltaY, ev.deltaMode, rowHeight, term.rows, wheelCarry)
       wheelCarry = plan.carry
       ev.preventDefault()
       if (plan.count === 0 || replayQueue.replaying) return false

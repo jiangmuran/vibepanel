@@ -640,21 +640,37 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     () => mainSessions.filter((s) => s.exited && s.exitStatus === EXIT_VANISHED),
     [mainSessions],
   )
-  // The offer is about the ones not already dismissed. A session that comes
-  // back (restored, or no longer vanished) drops out of `restorable` on its
-  // own, so this needs no cleanup of its own.
+  // Forget a dismissal once its session leaves the vanished set -- restored or
+  // deleted -- so the same session vanishing a second time (restored, then
+  // lost in the next reboot) raises the offer again rather than being silently
+  // held back, and the stored set cannot grow without bound. Pruned during
+  // render, the React way to adjust state from changing inputs: an effect that
+  // called setState would double-render and is lint-refused. `seenRestorable`
+  // is the guard that stops it looping; it tracks the id set it last pruned
+  // against.
+  const restorableIds = restorable.map((x) => x.id).join(',')
+  const [seenRestorable, setSeenRestorable] = useState(restorableIds)
+  if (restorableIds !== seenRestorable) {
+    setSeenRestorable(restorableIds)
+    if (restoreDismissed.size > 0) {
+      const live = restorable.filter((x) => restoreDismissed.has(x.id)).map((x) => x.id)
+      if (live.length !== restoreDismissed.size) setRestoreDismissed(new Set(live))
+    }
+  }
+  // Persisted whenever it changes, by effect rather than at every call site, so
+  // the prune above and the dismiss below each only touch the state.
+  useEffect(() => {
+    writeStored(RESTORE_DISMISSED_KEY, JSON.stringify([...restoreDismissed]))
+  }, [restoreDismissed])
+  // The offer is about the vanished sessions not already dismissed.
   const pendingRestorable = useMemo(
     () => restorable.filter((x) => !restoreDismissed.has(x.id)),
     [restorable, restoreDismissed],
   )
-  // Dismiss every session the offer is currently about, and remember them, so
-  // the strip does not come back for them on the next load. Stored as exactly
-  // the vanished ids seen now, which also prunes ids of sessions that have
-  // since been restored or deleted.
+  // Dismiss every session the offer is currently about: remember them so the
+  // strip does not return for them on the next load.
   const dismissRestore = useCallback(() => {
-    const ids = restorable.map((x) => x.id)
-    setRestoreDismissed(new Set(ids))
-    writeStored(RESTORE_DISMISSED_KEY, JSON.stringify(ids))
+    setRestoreDismissed(new Set(restorable.map((x) => x.id)))
   }, [restorable])
   const labelOf = (s: Session) => labels.get(s.id) ?? sessionLabel(s)
   // Sorted by age, not by the order they arrive in.

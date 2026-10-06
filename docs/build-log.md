@@ -24705,3 +24705,46 @@ every gone row keeps its own restart button; this only silences the top strip.
 Verified in a browser: the strip shows for two vanished sessions, hides on
 dismiss, stays hidden across a reload, and returns when a third session
 vanishes.
+
+## 2026-10-06 — Review of the pi 1.0 terminal fixes: two held, three did not
+
+A code review of v1.24.2..HEAD (the wheel, scaled-pointer, mode-replay and
+restore-dismiss changes) raised five points. Two were real and are fixed; the
+mode-replay Go side (the offset arithmetic, chunk boundaries, default-mode
+suppression) checked out, and three frontend points did not survive a look.
+
+Fixed:
+
+- **A scaled passive viewer over-scrolled.** The wheel row height was taken
+  from the on-screen `.xterm-screen` box, which is the CSS-scaled size, while
+  `deltaY` is in page pixels the transform does not touch. Dividing one by the
+  other made a viewer at 0.69 scale move 1/scale too many rows per notch. The
+  row height is unscaled now (`box.height / hostScale() / rows`), and a notch
+  moves the same rows at any zoom. Measured: owner 8 reports/notch, scaled
+  viewer 8, where it was ~12 before.
+- **A dismissed restore offer never returned for a second disappearance.** A
+  session dismissed from the strip kept its id forever, so one restored and
+  then lost in the next reboot -- this machine reboots -- would be held back
+  silently, exactly what the per-visit behaviour used to prevent. The
+  dismissed set is now pruned, during render, of ids no longer vanished, so a
+  re-vanish raises the offer again and the set cannot grow without bound.
+  Measured: dismiss hides it, a restore-then-re-vanish brings it back.
+
+Not bugs, with the reason:
+
+- **"The wheel always sends SGR regardless of the app's encoding."** True of
+  the bytes, but every pane is behind tmux, and tmux negotiates SGR with the
+  outer terminal whatever the inner app asked for -- it translates coordinates
+  to the app's own encoding itself. So xterm's `activeEncoding` is always SGR
+  here, and SGR is the correct thing to send. The guard (`sgrMouse`) is kept as
+  the same defensive check the scaled-pointer path already makes.
+- **1003 any-motion hover is not reported on a scaled viewer** unless a button
+  is held. True, and left: full-screen agents use 1002 (button motion), the
+  scaled-viewer path exists for clicking pi from a second screen, and adding a
+  constant buttonless-motion report to that path for a mode nothing here uses
+  is not worth the hot-path cost.
+- **`getBoundingClientRect` per wheel/mouse event is layout thrash.** The box
+  changes only on resize, so it could be cached. Left: during a scroll the
+  terminal's layout is a stable WebGL canvas, the read is cheap against it, and
+  a cache with its own invalidation is more to get wrong than the thrash is to
+  pay.
