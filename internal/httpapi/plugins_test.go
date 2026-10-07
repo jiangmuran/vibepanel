@@ -376,3 +376,25 @@ func TestTheThemeSheetNeedsASession(t *testing.T) {
 		t.Errorf("anonymous theme css: %d", res.StatusCode)
 	}
 }
+
+// The plugins page polls every five seconds; ?detail=1 is the list with
+// every card's detail in the one answer, so the poll is one request.
+func TestTheListCarriesDetailOnRequest(t *testing.T) {
+	ts, _ := newTestServer(t)
+	installPane(t, ts, []string{"read:panel"})
+	status, body := doJSON(t, ts, http.MethodGet, "/api/settings/plugins?detail=1", "")
+	if status != http.StatusOK {
+		t.Fatalf("%d %s", status, body)
+	}
+	var list []map[string]any
+	if err := json.Unmarshal(body, &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0]["screen"] == nil || list[0]["settings"] == nil || list[0]["id"] != "pane" {
+		t.Fatalf("detail list: %s", body)
+	}
+	status, body = doJSON(t, ts, http.MethodGet, "/api/settings/plugins", "")
+	if status != http.StatusOK || strings.Contains(string(body), `"screen"`) {
+		t.Fatalf("the plain list carries the screen: %d %s", status, body)
+	}
+}

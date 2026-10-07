@@ -25217,3 +25217,27 @@ disabled in the shared file, both `TestAHookIsBoundedInTimeAndSize` (plugin)
 and `TestServerJSWritesOnlyWhatItsActionAllowsAndOnlyOnSuccess` (page) go
 red, which is the point -- a fix to the cap now reaches both or neither.
 
+## 2026-10-07 — Plugins, optimisation round 2: once per change, one request per poll
+
+Two hot paths, both of the shape "N things each doing the whole job":
+
+- **The view's state is built once per change.** Every open event stream
+  -- one per frame, and a panel with a pane, a settings section, a header
+  item and a page open in three tabs has a dozen -- rebuilt `buildState`
+  (every table) on every bump, and the SDK's polling fallback did the same
+  on every `GET view`. `pluginState` memoises it on the bus generation (a
+  counter `bump` increments) with a one-second ceiling: one build per bump,
+  a dozen cuts of it. Exact rather than approximate, because every change
+  the panel notices is a bump; the ceiling is for the frame that polls
+  without a stream. `TestThePluginViewIsBuiltOncePerChange` counts the slow
+  path -- three views, one build; a bump, two -- and goes red with the memo
+  made to always miss.
+- **The plugins page polls in one request.** Its five-second refresh was
+  the list and then one detail request per card. `GET
+  /api/settings/plugins?detail=1` is the list as `PluginDetail` rows, and
+  the page asks for that. `TestTheListCarriesDetailOnRequest` pins both
+  shapes: the plain list still without the screen, the detail list with it.
+
+Neither changed what a plugin sees; the SDK pin and the compat corpus are
+the proof of that, and they ran unchanged.
+

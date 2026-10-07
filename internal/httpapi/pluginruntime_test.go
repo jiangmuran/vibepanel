@@ -486,3 +486,27 @@ func TestAGrantIsMintedForASessionOnly(t *testing.T) {
 		t.Errorf("a bearer token minted a grant: %d", res.StatusCode)
 	}
 }
+
+// A dozen frames open on a change are a dozen cuts of one state, not a
+// dozen reads of every table: the view's state is built once per bus
+// generation, and again after the next bump.
+func TestThePluginViewIsBuiltOncePerChange(t *testing.T) {
+	ts, srv := newTestServer(t)
+	g := installPane(t, ts, []string{"read:panel"})
+	before := srv.prt.stateBuilds
+	for range 3 {
+		if status, body := anonJSON(t, ts, http.MethodGet, g.API+"view", ""); status != http.StatusOK {
+			t.Fatalf("view: %d %s", status, body)
+		}
+	}
+	if n := srv.prt.stateBuilds - before; n != 1 {
+		t.Fatalf("three views in one generation built the state %d times, want 1", n)
+	}
+	srv.bumpPluginWatchers()
+	if status, _ := anonJSON(t, ts, http.MethodGet, g.API+"view", ""); status != http.StatusOK {
+		t.Fatal("view after a bump")
+	}
+	if n := srv.prt.stateBuilds - before; n != 2 {
+		t.Fatalf("a view after a bump built the state %d times in all, want 2", n)
+	}
+}

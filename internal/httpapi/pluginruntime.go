@@ -85,13 +85,53 @@ type pluginRuntime struct {
 	saltMu sync.Mutex
 	salt   []byte
 	bus    pluginBus
+	// The panel state the views are cut from, built once per change for
+	// every open stream and poll rather than once per stream: see
+	// pluginState.
+	stateMu  sync.Mutex
+	stateGen uint64
+	stateAt  time.Time
+	state    stateResponse
+	// stateBuilds counts the slow path, for the test that says it is one.
+	stateBuilds int
+}
+
+// pluginStateTTL bounds the memo in time as well as by generation: a change
+// nothing bumped for is seen within this long by a frame that polls.
+const pluginStateTTL = time.Second
+
+// pluginState is buildState memoised on the bus generation. Every change the
+// panel notices bumps the bus, so one build per bump is exact; a dozen open
+// frames on a change are a dozen cuts of one state rather than a dozen
+// reads of every table.
+func (s *Server) pluginState(ctx context.Context) (stateResponse, error) {
+	gen := s.prt.bus.generation()
+	s.prt.stateMu.Lock()
+	defer s.prt.stateMu.Unlock()
+	if s.prt.stateAt.IsZero() || s.prt.stateGen != gen || time.Since(s.prt.stateAt) > pluginStateTTL {
+		st, err := s.buildState(ctx)
+		if err != nil {
+			return stateResponse{}, err
+		}
+		s.prt.state, s.prt.stateGen, s.prt.stateAt = st, gen, time.Now()
+		s.prt.stateBuilds++
+	}
+	return s.prt.state, nil
 }
 
 // pluginBus wakes every open event stream when anything changed. Closing a
 // channel is the broadcast; the next one is made for the next change.
 type pluginBus struct {
-	mu sync.Mutex
-	ch chan struct{}
+	mu  sync.Mutex
+	ch  chan struct{}
+	gen uint64
+}
+
+// generation counts bumps; the state memo is keyed on it.
+func (b *pluginBus) generation() uint64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.gen
 }
 
 func (b *pluginBus) wait() <-chan struct{} {
@@ -109,6 +149,7 @@ func (b *pluginBus) bump() {
 	if b.ch != nil {
 		close(b.ch)
 	}
+	b.gen++
 	b.ch = make(chan struct{})
 }
 
@@ -596,7 +637,7 @@ func (s *Server) pluginCapsList(c pluginCred) []string {
 }
 
 func (s *Server) buildPluginView(ctx context.Context, c pluginCred) (pluginView, error) {
-	st, err := s.buildState(ctx)
+	st, err := s.pluginState(ctx)
 	if err != nil {
 		return pluginView{}, err
 	}

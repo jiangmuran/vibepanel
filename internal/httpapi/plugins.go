@@ -221,6 +221,25 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreErr(w, err)
 		return
 	}
+	// ?detail=1 is the plugins page's poll: every card's detail in the one
+	// request, rather than the list and then one request per card every
+	// five seconds.
+	if r.URL.Query().Get("detail") == "1" {
+		out := make([]PluginDetail, 0, len(list))
+		for _, p := range list {
+			d, err := s.pluginDetailFor(ctx, p)
+			if errors.Is(err, store.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				s.writeStoreErr(w, err)
+				return
+			}
+			out = append(out, d)
+		}
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
 	out := make([]PluginRow, 0, len(list))
 	for _, p := range list {
 		row, _, _, err := s.pluginRowFor(ctx, p)

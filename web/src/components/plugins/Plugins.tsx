@@ -50,11 +50,13 @@ export function Plugins({ onOpenProject }: { onOpenProject?: (projectId: string)
 
   const refresh = useCallback(async () => {
     try {
-      const list = await api.listPlugins()
-      setPlugins(list)
+      // One request for the list and every card's detail: this runs every
+      // five seconds while the page is open, and it used to be one request
+      // per card on top of the list.
+      const read = await api.listPluginDetails()
+      setPlugins(read)
       refreshPlugins()
-      const read = await Promise.all(list.map((p) => api.plugin(p.id).catch(() => null)))
-      setDetails(Object.fromEntries(read.filter((d) => d !== null).map((d) => [d.id, d])))
+      setDetails(Object.fromEntries(read.map((d) => [d.id, d])))
     } catch (e) {
       fail(e)
     }

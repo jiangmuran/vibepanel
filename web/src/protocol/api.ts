@@ -346,6 +346,8 @@ export const api = {
 
   // ─── plugins (docs/plugins.md) ─────────────────────────────────────────
   listPlugins: () => request<PluginRow[]>('/api/settings/plugins'),
+  /** The list with every card's detail, in one request: the plugins page's poll. */
+  listPluginDetails: () => request<PluginDetail[]>('/api/settings/plugins?detail=1'),
   plugin: (id: string) => request<PluginDetail>(`/api/settings/plugins/${encodeURIComponent(id)}`),
   pluginThemes: () => request<PluginThemeRow[]>('/api/settings/plugin-themes'),
   pluginTemplates: () => request<PluginTemplate[]>('/api/settings/plugin-templates'),

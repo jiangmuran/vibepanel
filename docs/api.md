@@ -1790,6 +1790,9 @@ Every plugin, as the list draws it: the row (`id`, `enabled`,
 `wanted`, each `secrets` entry with whether it is `set`, `latestVersion`, the
 `problems` the card says in both languages, and `theme` when the plugin has
 one.
+`?detail=1` answers the same list as `PluginDetail` rows (the screen, the
+versions, the settings), so the plugins page's five-second poll is one
+request rather than one per card.
 
 ### `POST /api/settings/plugins`
 
