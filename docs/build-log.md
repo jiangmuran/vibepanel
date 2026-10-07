@@ -25269,3 +25269,17 @@ interface did not, and `rev.test.ts` has the baseline, the change, the
 repeat, the sheet swap through a stand-in holder, and a listener that
 throws without stopping the next.
 
+## 2026-10-07 — Plugins: what head-check found that four fast gates had not
+
+`make head-check` on the committed tree failed one Go test that `make
+check` had passed four times that day: `TestAProcessStartsWithItsTokenAndSecret`
+read the process status the instant `Running` turned true and found an
+empty output ring, because the status says running when the process is
+spawned and its first lines arrive through the pump a moment later. On an
+idle machine the pump wins; under head-check's full `go test ./...` it
+did not. `taskset -c 0` made it fail 29 runs in 30, which is the
+reproduction a timing flake needs before it is fixed, and the fix is in the
+test -- wait for what the script prints, not for the start -- after which
+fifteen runs of every process test on one CPU pass. The product was right;
+the test asked its question too early.
+

@@ -79,7 +79,14 @@ func TestAProcessStartsWithItsTokenAndSecret(t *testing.T) {
 	ts, srv := newTestServer(t)
 	installProcess(t, ts, srv, []string{"read:panel", "read:notes"},
 		"echo greeting=$GREETING; echo state=$VIBEPANEL_PLUGIN_STATE; echo url=$VIBEPANEL_PLUGIN_URL > $VIBEPANEL_PLUGIN_STATE/url; echo pwd=$PWD; env | grep -c VIBEPANEL; sleep 60")
-	waitFor(t, "the process to start", 5000, func() bool { return processStatus(t, ts).Running })
+	// Wait for what the script prints, not for Running: the status says
+	// running the instant the process is spawned, and its first lines arrive
+	// through the output pump a moment later. On one CPU that moment is
+	// most of the time (29 of 30 runs under taskset -c 0 read an empty ring).
+	waitFor(t, "the process to print", 5000, func() bool {
+		st := processStatus(t, ts)
+		return st.Running && strings.Contains(st.Output, "pwd=")
+	})
 	st := processStatus(t, ts)
 	if !strings.Contains(st.Output, "greeting=hello-from-the-owner") {
 		t.Errorf("the secret did not reach the environment:\n%s", st.Output)
