@@ -106,6 +106,7 @@ func (s *Server) handleArchiveProject(w http.ResponseWriter, r *http.Request) {
 	}
 	if u, ok := currentUserFrom(r); ok {
 		s.audit(ctx, "project.archived", u.Username, s.clientIP(r), p.Name+" ("+p.Path+")")
+		s.pluginEventRaised(pluginEvent{Name: "project.archived", ProjectID: p.ID})
 	}
 	s.notifyState()
 	writeJSON(w, http.StatusOK, p)

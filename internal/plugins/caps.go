@@ -77,6 +77,13 @@ var OpenRoutes = []string{
 	"POST /data/{key}/increment",
 	"POST /data/{key}/append",
 	"DELETE /data/{key}",
+	// The plugin's own routes (server.routes), by any method: what each
+	// does is the plugin's server.js, under the capabilities it was granted.
+	"GET /x/*",
+	"POST /x/*",
+	"PUT /x/*",
+	"PATCH /x/*",
+	"DELETE /x/*",
 }
 
 // capabilities is the table, in the order the screen draws them within a

@@ -55,6 +55,10 @@ var openRoutes = map[string]string{
 	// -- and the handler hands the request over and nothing else. 404 for a
 	// kind that is not a running webhook adapter; see chat.go.
 	"/api/chat/hooks/{kind}": "an IM's callback; the adapter verifies the signature and token itself",
+	// A plugin's inbound route: the internet calls it, and the handler
+	// verifies the body against the plugin's declared secret before any of
+	// the plugin's code runs. 404 for a plugin with no inbound route.
+	"/api/plugin-hook/{pluginID}/{path}": "a plugin's inbound route; verified against its declared secret before anything runs",
 	// A directory preview, and the reason is measured rather than chosen.
 	//
 	// The page is served with `Content-Security-Policy: sandbox`, which is what

@@ -87,6 +87,9 @@ func (s *Server) setSessionState(ctx context.Context, prev store.Session,
 	if s.Chat != nil {
 		s.Chat.SessionChanged(prev, st)
 	}
+	// So do the plugins: a non-blocking send to each subscriber's queue.
+	s.pluginEventRaised(pluginEvent{Name: "session.state", SessionID: prev.ID, ProjectID: prev.ProjectID,
+		State: string(st), Previous: string(prev.State)})
 	return nil
 }
 

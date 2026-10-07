@@ -380,6 +380,17 @@ it never sees a session's id, and never a path unless you ticked that box.
 What a frame may ask of the panel is a toast (`ui:notify`), to open a session
 (`ui:open`), the panel's own confirm dialog, and its height.
 
+**A plugin's service.** A plugin with a `server.js` runs code inside the
+panel: on the events it subscribes to (a session changing state, created or
+gone, a project archived, a note or checklist changed), on a schedule, and
+when one of its own routes is called -- from its frames, or by you at
+`/api/ext/<id>/…` with the panel's session or an API token. It may declare
+one route the internet can call, behind a secret you store. Each call runs in
+a fresh sandbox with a time budget and a cap on what it returns; its `ctx`
+has exactly the members of the capabilities you granted, so a script can be
+read for what it asks. The card's *Service* block shows its log, how many
+events it dropped because it could not keep up, and each source's last fetch.
+
 **Dev mode.** A plugin read from a directory has a *Dev* button on its card:
 on, the directory's `plugin.json` and files are what runs, under the grants
 you already gave that id, and a change to a file reloads every one of its

@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { BookOpen, Download, FileUp, FolderInput, Hammer, Puzzle, ShieldCheck, SlidersHorizontal, Trash2 } from 'lucide-react'
+import { BookOpen, Download, FileUp, FolderInput, Hammer, Puzzle, ScrollText, ShieldCheck, SlidersHorizontal, Trash2 } from 'lucide-react'
 
 import { t, useLang } from '../../i18n'
 import type { Lang } from '../../i18n'
 import { api } from '../../protocol/api'
-import type { PluginDetail, PluginRow } from '../../protocol/wire'
+import type { PluginDetail, PluginRow, PluginSourceRow, SharePageServerLogLine } from '../../protocol/wire'
 import { confirmThen } from '../ask'
 import { Chip, Empty, INPUT, IconTile } from '../pages/bits'
 import { safeText } from '../text'
@@ -256,6 +256,7 @@ function PluginCard({
   const lang = useLang()
   const [busy, setBusy] = useState(false)
   const [open, setOpen] = useState(false)
+  const [logOpen, setLogOpen] = useState(false)
   const state = stateOf(row)
   const name = safeText(textIn(row.name, lang))
   const hasSettings = (detail?.settings.fields.length ?? 0) > 0 || row.secrets.length > 0
@@ -378,6 +379,12 @@ function PluginCard({
               {t('plg.dev')}
             </button>
           )}
+          {row.rungs.service && (
+            <button type="button" data-testid="plugin-log" aria-pressed={logOpen} onClick={() => setLogOpen((v) => !v)} className="vp-outline text-vp-sm">
+              <ScrollText size={12} />
+              {t('plg.service')}
+            </button>
+          )}
           {hasSettings && (
             <button type="button" data-testid="plugin-settings" aria-pressed={open} onClick={() => setOpen((v) => !v)} className="vp-outline text-vp-sm">
               <SlidersHorizontal size={12} />
@@ -398,6 +405,86 @@ function PluginCard({
           <PluginSettingsForm plugin={detail} onChanged={onChanged} onError={onError} />
         </div>
       )}
+      {logOpen && <ServiceBlock id={row.id} onError={onError} />}
     </article>
+  )
+}
+
+/**
+ * What a service did: its log, how many events it dropped, and each source's
+ * last fetch. Polled while open, because a log is read to watch something
+ * happen.
+ */
+function ServiceBlock({ id, onError }: { id: string; onError: (e: unknown) => void }) {
+  const [log, setLog] = useState<{ lines: SharePageServerLogLine[]; dropped: number } | null>(null)
+  const [sources, setSources] = useState<PluginSourceRow[]>([])
+  // The clock is read when the poll answers, not during render: "fetched
+  // 12s ago" is true of the moment the reading arrived.
+  const [now, setNow] = useState(0)
+  useEffect(() => {
+    let cancelled = false
+    const read = () => {
+      if (document.hidden) return
+      Promise.all([api.pluginServerLog(id), api.pluginSources(id)]).then(
+        ([l, srcs]) => {
+          if (cancelled) return
+          setLog(l)
+          setSources(srcs)
+          setNow(Math.floor(Date.now() / 1000))
+        },
+        (e: unknown) => {
+          if (!cancelled) onError(e)
+        },
+      )
+    }
+    read()
+    const timer = window.setInterval(read, 3000)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [id, onError])
+  const ago = (unix: number) => {
+    const d = Math.max(0, now - unix)
+    return d < 60 ? `${d}s` : d < 3600 ? `${Math.floor(d / 60)}m` : `${Math.floor(d / 3600)}h`
+  }
+  return (
+    <div className="grid gap-3 border-t border-hairline p-3 @md:p-4" data-testid="plugin-service">
+      {sources.length > 0 && (
+        <div className="grid gap-1">
+          <h3 className="text-vp-xs font-semibold tracking-wide text-ink-3 uppercase">{t('plg.service.sources')}</h3>
+          {sources.map((src) => (
+            <div key={src.key} className="flex flex-wrap items-baseline gap-x-3 text-vp-sm" data-testid={`plugin-source-${src.key}`}>
+              <code className="font-mono text-ink">{safeText(src.key)}</code>
+              <span className="min-w-0 truncate text-ink-3">{safeText(src.host)}</span>
+              <span className="text-vp-xs" style={{ color: !src.granted ? 'var(--vp-state-waiting)' : src.ok ? 'var(--vp-state-done)' : src.fetchedAt ? 'var(--vp-state-crashed)' : 'var(--vp-ink-3)' }}>
+                {!src.granted
+                  ? t('plg.service.notGranted')
+                  : !src.fetchedAt
+                    ? t('plg.service.notFetched')
+                    : src.ok
+                      ? t('plg.service.fetched', { ago: ago(src.fetchedAt) })
+                      : safeText(src.error)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="grid gap-1">
+        <h3 className="text-vp-xs font-semibold tracking-wide text-ink-3 uppercase">{t('plg.service.log')}</h3>
+        {log && log.dropped > 0 && (
+          <p className="text-vp-xs" style={{ color: 'var(--vp-state-waiting)' }} data-testid="plugin-dropped">
+            {t('plg.service.dropped', { n: log.dropped })}
+          </p>
+        )}
+        {log && log.lines.length === 0 ? (
+          <p className="text-vp-sm text-ink-3">{t('plg.service.empty')}</p>
+        ) : (
+          <pre className="max-h-64 overflow-auto rounded-vp bg-surface-2 p-2 font-mono text-vp-xs leading-relaxed text-ink" data-testid="plugin-log-lines">
+            {(log?.lines ?? []).map((l) => `${new Date(l.at * 1000).toLocaleTimeString()} ${l.level} ${safeText(l.text)}`).join('\n')}
+          </pre>
+        )}
+      </div>
+    </div>
   )
 }

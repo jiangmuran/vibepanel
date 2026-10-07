@@ -1961,6 +1961,54 @@ manual mark like the sidebar's.
 
 `read:terminal`. `{"text"}`: the pane's visible screen, as text.
 
+### `GET /api/plugin/{cred}/v1/x/*`
+### `POST /api/plugin/{cred}/v1/x/*`
+### `PUT /api/plugin/{cred}/v1/x/*`
+### `PATCH /api/plugin/{cred}/v1/x/*`
+### `DELETE /api/plugin/{cred}/v1/x/*`
+
+The plugin's own routes, declared in `server.routes` and run by its
+`server.js` (`docs/plugins.md` §5, rung 2): `GET /digest` in the manifest is
+`GET …/v1/x/digest` here. Open to every credential of that plugin; what the
+handler does is under the capabilities the plugin was granted. The body is
+JSON of at most 64 KiB; the answer is `{"result"}`; four handlers run at a
+time per plugin and a fifth waits up to the 500 ms budget. `404` for a
+route the manifest does not declare or a function `server.js` does not
+define.
+
+### `GET /api/ext/{pluginID}/*`
+### `POST /api/ext/{pluginID}/*`
+### `PUT /api/ext/{pluginID}/*`
+### `PATCH /api/ext/{pluginID}/*`
+### `DELETE /api/ext/{pluginID}/*`
+
+The same routes for the owner, under the session like every settings route:
+the panel's UI, a `curl` with an API token, another of the owner's scripts.
+`req.caller` is `"owner"` here and `"frame"` above. `409` for a plugin that
+is not enabled.
+
+### `POST /api/plugin-hook/{pluginID}/{path}`
+
+A plugin's inbound route, when its manifest declares one: the one door the
+internet reaches. Open at the panel and verified here before any of the
+plugin's code runs, against the secret the owner stored under the declared
+name, as `Authorization: Bearer <secret>` or `X-Signature-256: sha256=<hex
+HMAC of the body>` (GitHub's shape). Sixty calls a minute per plugin; a
+failed check is `401` and audited `plugin.inbound_rejected`; `404` for a
+plugin with no such route. The handler is `onInbound(req, ctx)`.
+
+### `GET /api/settings/plugins/{pluginID}/server/log`
+
+The plugin's server log: the last 200 lines (`ctx.log` as `info`, failures
+as `error`), and how many events were `dropped` because the plugin could
+not keep up.
+
+### `GET /api/settings/plugins/{pluginID}/sources`
+
+Each source the manifest declares: its host, whether `net:<host>` is
+granted, and the last fetch's `ok`, `fetchedAt`, `status` and `error`. Never
+a secret value.
+
 ### `GET /api/plugin/{cred}/v1/resources`
 ### `GET /api/plugin/{cred}/v1/usage`
 ### `GET /api/plugin/{cred}/v1/projects/{h}/git`

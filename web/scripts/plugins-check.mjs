@@ -101,6 +101,8 @@ writeFileSync(join(PLUGIN_DIR, 'plugin.json'), JSON.stringify({
     { slot: 'header.item', entry: 'header.html', title: { en: 'Waiting count', 'zh-CN': '等待数' } },
   ],
   capabilities: ['read:panel', 'write:todos', 'sessions:input', 'ui:notify'],
+  data: { events: { type: 'counter' } },
+  server: { entry: 'server.js', on: ['session.created', 'session.state'], routes: { 'GET /digest': 'digest' } },
   settings: { fields: [
     { key: 'quiet', type: 'bool', default: true, label: { en: 'Quiet hours', 'zh-CN': '安静时段' } },
     { key: 'channel', type: 'enum', values: ['slack', 'email'], default: 'slack', label: { en: 'Channel', 'zh-CN': '渠道' } },
@@ -131,6 +133,7 @@ writeFileSync(join(PLUGIN_DIR, 'pane.html'), `<!doctype html>
 <p>status: <span id="status">-</span> · caps: <span id="caps"></span></p>
 <ul id="sessions" class="vp-list"></ul>
 <button id="notify" class="vp-button">notify</button>
+<p>digest: <span id="digest">-</span></p>
 <script>
   var vp = VibePanel.plugin()
   vp.on('status', function (s) { document.getElementById('status').textContent = s })
@@ -145,6 +148,8 @@ writeFileSync(join(PLUGIN_DIR, 'pane.html'), `<!doctype html>
       ul.appendChild(li)
     })
   })
+  function digest() { vp.route('GET', 'digest').then(function (r) { document.getElementById('digest').textContent = r.result.sessions + ' sessions, ' + r.result.events + ' events' }) }
+  vp.on('view', digest)
   document.getElementById('notify').onclick = function () {
     vp.ui.notify('hello from paper').then(function (ok) { window.parent.postMessage({ type: 'probe', name: 'notify-answer', ok: ok }, '*') })
   }
@@ -162,6 +167,10 @@ writeFileSync(join(PLUGIN_DIR, 'pane.html'), `<!doctype html>
   document.addEventListener('securitypolicyviolation', function (e) { report('csp-' + e.violatedDirective.split(' ')[0], false, e.blockedURI) })
 </script>
 </body></html>`)
+writeFileSync(join(PLUGIN_DIR, 'server.js'), `
+function onEvent(ev, ctx) { ctx.data.increment('events'); ctx.log('event ' + ev.name) }
+function digest(req, ctx) { return { sessions: ctx.panel.view().sessions.length, events: ctx.data.get('events') } }
+`)
 writeFileSync(join(PLUGIN_DIR, 'section.html'), `<!doctype html><html><head><link rel="stylesheet" href="vibepanel-ui.css"><script src="vibepanel-plugin.js"></script></head>
 <body class="vp-section"><h2>Paper settings</h2><p id="s">-</p><script>var vp = VibePanel.plugin(); vp.settings().then(function (s) { document.getElementById('s').textContent = 'quiet=' + s.values.quiet })</script></body></html>`)
 writeFileSync(join(PLUGIN_DIR, 'page.html'), `<!doctype html><html><head><link rel="stylesheet" href="vibepanel-ui.css"><script src="vibepanel-plugin.js"></script></head>
@@ -383,6 +392,26 @@ try {
     else pass('pane', 'the pane mounts, goes live and draws the view through handles')
     await page.screenshot({ path: join(SHOTS, 'pane.png') })
 
+    // The service: the pane calls the plugin's own route through the frame's
+    // door and gets server.js's answer; an event raised by the panel reaches
+    // onEvent and the counter it keeps moves.
+    const digestShown = await until(async () => ((await inner.locator('#digest').textContent()) ?? '').includes('1 sessions'), 8000)
+    if (!digestShown) note('fail', 'service', `the route's answer did not reach the pane: ${await inner.locator('#digest').textContent()}`)
+    const eventsBefore = Number((/(\d+) events/.exec((await inner.locator('#digest').textContent()) ?? '') ?? [])[1] ?? 0)
+    await api('POST', '/api/sessions', { projectId: project.id, command: ['sleep', '600'] })
+    const moved = await until(async () => {
+      const txt = (await inner.locator('#digest').textContent()) ?? ''
+      const n = Number((/(\d+) events/.exec(txt) ?? [])[1] ?? 0)
+      return n > eventsBefore
+    }, 8000)
+    if (!moved) note('fail', 'service', 'session.created did not reach onEvent (the counter did not move)')
+    else pass('service', "a route answers through the frame's door and an event reaches onEvent")
+    const log = await api('GET', '/api/settings/plugins/paper/server/log')
+    if (!JSON.stringify(log.body).includes('event session.created')) note('fail', 'service', `the server log lacks the event: ${JSON.stringify(log.body).slice(0, 200)}`)
+    const owner = await api('GET', '/api/ext/paper/digest')
+    if (owner.status !== 200 || !owner.body?.result) note('fail', 'service', `the owner's door: ${owner.status} ${JSON.stringify(owner.body)}`)
+    else pass('service', "the owner's door answers the same route")
+
     // The probes: every one must have failed.
     await until(() => Object.keys(probes).length >= 7, 5000)
     for (const name of ['cookie', 'storage', 'origin', 'api-state', 'api-plugins', 'outside', 'ws', 'popup', 'frame-panel']) {
@@ -431,11 +460,20 @@ try {
   // The page slot.
   await page.goto(`${BASE}/x/standup`)
   const pf = page.frameLocator('[data-testid="plugin-frame-paper-2"]')
-  if (!(await until(async () => (await pf.locator('#n').textContent())?.includes('1 sessions') ?? false, 10000))) note('fail', 'page', 'the plugin page did not draw the view')
+  if (!(await until(async () => /\d+ sessions/.test((await pf.locator('#n').textContent()) ?? ''), 10000))) note('fail', 'page', 'the plugin page did not draw the view')
   else pass('page', '/x/standup mounts the page with the view')
   await page.screenshot({ path: join(SHOTS, 'page.png') })
   await page.goto(`${BASE}/x/nothing-here`)
   if (!(await until(() => page.getByTestId('plugin-page-missing').isVisible(), 5000))) note('fail', 'page', 'an unknown page path does not say so')
+
+  // The card's Service block shows the log and the dropped count.
+  await page.goto(`${BASE}/plugins`)
+  await until(() => page.getByTestId('plugin-row').isVisible())
+  await page.getByTestId('plugin-log').click()
+  const lines = page.getByTestId('plugin-log-lines')
+  if (!(await until(async () => ((await lines.textContent().catch(() => '')) ?? '').includes('event session.created'), 5000))) note('fail', 'service', 'the card does not show the server log')
+  else pass('service', 'the card shows the server log')
+  await page.screenshot({ path: join(SHOTS, 'service.png'), fullPage: true })
 
   // Dev mode: the draft directory is what runs, and a change reloads.
   await page.goto(`${BASE}/plugins`)

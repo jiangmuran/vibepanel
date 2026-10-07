@@ -24953,3 +24953,65 @@ Two things the browser check found:
 
 `TestTheSDKTypesMatchThePluginView` is not written yet; the `.d.ts` is
 hand-kept against `pluginView` for now and is the next thing to pin.
+
+## 2026-10-07 — Plugins, step 2: a service is server.js with more hooks
+
+Rung 2 of `docs/plugins.md`: a plugin's `server.js` runs inside the panel
+with the page runtime's shape and a `ctx` that is the capability table made
+into an object.
+
+What exists (`internal/httpapi/pluginservice.go`):
+
+- **Hooks.** `onEvent(ev, ctx)` for `session.state`, `session.created`,
+  `session.gone`, `project.archived`, `note.changed`, `todo.changed`;
+  `onSchedule(ctx)` on the manifest's `every`; a function per
+  `server.routes` entry, `(req, ctx)`; `onInbound(req, ctx)` behind the
+  declared secret. Budgets of 500 ms enforced by `vm.Interrupt`, a fresh
+  runtime per call from a program compiled once per version, data writes
+  committed only on a clean return through the same `applyDataOps` the
+  routes use, a 64 KiB result cap, a 200-line log written to
+  `.vibepanel/server.log` in dev mode.
+- **`ctx` is the grants.** `data`, `settings`, `secret`, `sources`, `now`,
+  `log`, `caps` for every service; `panel.view` with `read:panel`;
+  `notes.get`/`set`, `todos.list`/`add`/`set`/`remove`, `sessions.state`,
+  `sessions.screen` each with its capability; `fetch` only when some
+  `net:<host>` is granted, refusing any other host before the request and
+  going through the share page's guarded fetcher after (https, resolved
+  address checked, no redirects, bounded, within what is left of the
+  budget). A member not granted is absent, which `TestCtxHasOneMemberPerCapability`
+  checks with `typeof`, so `vibepanel plugin check` can one day read a script
+  for what it asks.
+- **Events never run on the poller.** `pluginEventRaised` is a non-blocking
+  send into a bounded channel per subscribing plugin, called from the same
+  places the flow log and the chat bridge are told: `setSessionState`,
+  session create and delete, `markVanished`, the archive handler,
+  `notifyPanel`. A full queue drops the oldest and counts it; the card shows
+  the count. Workers follow the installed set (`ensurePluginWorkers`, called
+  from `pluginsChanged`), and the clock for schedules and sources is a
+  goroutine beside the event drain, started from `Poll`.
+- **Two doors and one open one.** A route answers at
+  `/api/plugin/{cred}/v1/x/…` for the plugin's own frames (open to every
+  credential in the capability table, because what the handler does is under
+  the grants) and at `/api/ext/{id}/…` for the owner's session;
+  `req.caller` says which. `POST /api/plugin-hook/{id}/{path}` is the one
+  route the internet reaches: sixty a minute per plugin, verified as a
+  bearer or as `sha256=` HMAC of the body before any of the plugin's code
+  runs, and the failure audited `plugin.inbound_rejected`. It is on the
+  open-routes list in `auth_test.go` with its reason, which is the same
+  shape the chat bridge's callback has.
+- **Sources per plugin.** The host approval is the `net:<host>` tick on the
+  install screen, so there is no second approval list; results and ages are
+  on the card.
+
+What was duplicated rather than shared, and why: the goja call (`compile,
+budget, run, cap, commit`) is written again here rather than lifted out of
+`pageserver.go` into a package both use. The two differ in every parameter
+-- what is compiled from where, which data table, what `ctx` holds, who is
+audited -- and the honest generalisation is a type with eight callbacks. It
+is the first thing on the optimisation list, once both have been run in
+anger and the shared shape is visible rather than guessed.
+
+Not here: `vibepanel plugin run`, which the page CLI has, because it needs the
+server's own context to build `ctx`; the owner's door with an API token
+covers running a route from a shell, and the log route covers reading what
+happened.

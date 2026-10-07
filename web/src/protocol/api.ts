@@ -62,6 +62,7 @@ import type {
   PluginDetail,
   PluginRow,
   PluginSettings,
+  PluginSourceRow,
   PluginThemeRow,
 } from './wire'
 
@@ -414,6 +415,12 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ dev, sourceDir }),
     }),
+  pluginServerLog: (id: string) =>
+    request<{ lines: SharePageServerLogLine[]; dropped: number }>(
+      `/api/settings/plugins/${encodeURIComponent(id)}/server/log`,
+    ),
+  pluginSources: (id: string) =>
+    request<PluginSourceRow[]>(`/api/settings/plugins/${encodeURIComponent(id)}/sources`),
   /** Cheap: sizes and times, hashed. Asked twice a second while a frame is in dev mode. */
   pluginFingerprint: (id: string) =>
     request<{ fingerprint: string }>(`/api/settings/plugins/${encodeURIComponent(id)}/draft/fingerprint`),

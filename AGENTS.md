@@ -252,9 +252,16 @@ Each of these exists because the alternative broke something real.
    `TestAPluginCredentialReachesOnlyTheseRoutes` and
    `TestEveryCapabilityOpensOnlyItsRoutes`), `web/src/components/plugins/`
    (`PluginFrame` is the only thing that talks to a frame, and `host.ts`
-   rebuilds every message from checked fields), `vibepanel plugin`. The
-   services, processes and the module come next (`docs/plugins.md` §13) and
-   each adds its routes to this rule and its tests to `plugins-check`.
+   rebuilds every message from checked fields), `vibepanel plugin`; and rung
+   2, `internal/httpapi/pluginservice.go`: `server.js` in goja with a budget,
+   a `ctx` whose members are the granted capabilities and nothing else, the
+   plugin's routes through two doors (`/api/plugin/{cred}/v1/x/` for its
+   frames, `/api/ext/{id}/` for the owner's session) and one open door
+   (`POST /api/plugin-hook/{id}/{path}`, verified against the plugin's
+   declared secret before any of its code runs). Events are a bounded
+   channel per plugin, fed by a non-blocking send where the flow log is fed;
+   there is no veto. The processes and the module come next
+   (`docs/plugins.md` §13).
 
 ## Conventions
 

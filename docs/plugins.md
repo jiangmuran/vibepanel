@@ -6,9 +6,12 @@ settings routes, the plugins page, the CLI, a theme end to end; and rung 1:
 grants, `/plugin/{grant}/` with the sandbox, `/api/plugin/{cred}/v1/` with
 the capability matrix, the view and its handles, the event stream, the SDK,
 `vibepanel-ui.css`, the bridge, the side-panel, settings, page and header
-slots, and dev mode with the fingerprint reload. The session and project
-action slots, the services, the processes and the module are not, and each
-section below that describes one says what it will be. This document replaces the earlier version of
+slots, and dev mode with the fingerprint reload; and rung 2: `server.js`
+with `onEvent`, `onSchedule`, the plugin's routes through both doors,
+`onInbound` behind a secret, a `ctx` with one member per granted capability,
+`ctx.fetch` through the guarded fetcher, per-plugin sources and the server
+log. The session and project action slots, the processes and the module are
+not, and each section below that describes one says what it will be. This document replaces the earlier version of
 this file, which argued that the panel should not have a plugin runtime at all.
 §14 keeps that argument and says which parts of it still hold; the short
 version is that share pages built, one feature at a time, the three things it

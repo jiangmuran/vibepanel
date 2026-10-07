@@ -1943,6 +1943,14 @@ const DICT = {
   'plg.page.missing': { zh: '没有插件在这个地址上。', en: 'No plugin mounts a page here.' },
   'plg.notice': { zh: '插件 {name}：{text}', en: '{name}: {text}' },
   'plg.ok': { zh: '确定', en: 'OK' },
+  'plg.service': { zh: '服务', en: 'Service' },
+  'plg.service.log': { zh: '服务日志', en: 'Server log' },
+  'plg.service.empty': { zh: '还没有日志。', en: 'Nothing logged yet.' },
+  'plg.service.dropped': { zh: '来不及处理而丢弃的事件：{n}', en: 'Events dropped because the plugin could not keep up: {n}' },
+  'plg.service.sources': { zh: '数据源', en: 'Sources' },
+  'plg.service.notGranted': { zh: '未授予', en: 'not granted' },
+  'plg.service.notFetched': { zh: '尚未抓取', en: 'not fetched yet' },
+  'plg.service.fetched': { zh: '{ago} 前抓取', en: 'fetched {ago} ago' },
 } satisfies Record<string, Entry>
 
 export type Key = keyof typeof DICT

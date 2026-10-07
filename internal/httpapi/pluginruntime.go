@@ -171,6 +171,11 @@ func (s *Server) pluginHandlers() map[string]http.HandlerFunc {
 		"GET /resources":             s.handlePluginResources,
 		"GET /usage":                 s.handlePluginUsage,
 		"GET /projects/{h}/git":      s.handlePluginGit,
+		"GET /x/*":                   s.handlePluginFrameRoute,
+		"POST /x/*":                  s.handlePluginFrameRoute,
+		"PUT /x/*":                   s.handlePluginFrameRoute,
+		"PATCH /x/*":                 s.handlePluginFrameRoute,
+		"DELETE /x/*":                s.handlePluginFrameRoute,
 	}
 }
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { t, useLang } from '../../i18n'
 import { api } from '../../protocol/api'
@@ -98,7 +98,10 @@ export function PluginFrame({
   const wantKey = session || project ? `${session ?? ''}|${project ?? ''}` : ''
   // What the slot is showing, as the plugin's handles: the last answer for
   // this exact session and project, and nothing while there is none.
-  const handles = fetched && fetched.for === wantKey ? fetched : { session: null, project: null }
+  const handles = useMemo(
+    () => (fetched && fetched.for === wantKey ? { session: fetched.session, project: fetched.project } : { session: null, project: null }),
+    [fetched, wantKey],
+  )
   const name = textIn(plugin.name, lang)
 
   useEffect(() => {

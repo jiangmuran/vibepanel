@@ -996,4 +996,5 @@ func (s *Server) handlePluginThemesCSS(w http.ResponseWriter, r *http.Request) {
 // table on this; today the browser re-reads the list on its next poll.
 func (s *Server) pluginsChanged() {
 	s.notifyState()
+	s.pluginsChangedServices()
 }

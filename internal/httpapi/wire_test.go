@@ -111,6 +111,7 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		{"PluginPanelSpec", plugins.PanelSpec{}},
 		{"PluginRungs", plugins.Rungs{}},
 		{"PluginText", plugins.Text{}},
+		{"PluginSourceRow", pluginSourceRow{}},
 		{"ShareMachine", shareMachine{}},
 		// The moving line beside the machine reading. Uncovered until network
 		// rates were added to it, for no better reason than nobody had touched
@@ -505,9 +506,11 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		// Dev mode switched; a frame credential presented after it ended.
 		"plugin.dev":      true,
 		"plugin.rejected": true,
-		"chat.channel":    true,
-		"chat.assistant":  true,
-		"chat.peer":       true,
+		// An inbound call that failed its signature check.
+		"plugin.inbound_rejected": true,
+		"chat.channel":            true,
+		"chat.assistant":          true,
+		"chat.peer":               true,
 		// Memory. The governor's own rows (resources.kill, .freeze, .thaw and
 		// the .auto forms) reach the log through AuditResources, which the
 		// scan cannot see; these two are the handlers'.

@@ -105,8 +105,13 @@ type Server struct {
 	zone zoneCache
 
 	// prt is the plugin frames' in-memory state: the handle salt and the
-	// bus that wakes every open event stream. See pluginruntime.go.
-	prt pluginRuntime
+	// bus that wakes every open event stream. See pluginruntime.go. psv is
+	// the services': compiled programs, logs, event workers, schedules and
+	// sources. See pluginservice.go. serviceCtx is the context the workers
+	// run under, set by Poll.
+	prt        pluginRuntime
+	psv        pluginServiceState
+	serviceCtx context.Context
 
 	// Restart asks the process to stop and be brought back by whatever
 	// supervises it. Nil in tests and in the admin CLI, which is also what the
@@ -456,6 +461,9 @@ func (s *Server) Routes() http.Handler {
 		// placement, and which routes answer is the capability table's
 		// decision. See pluginruntime.go and red line 10.
 		s.registerPluginAPIRoutes(r)
+		// Where the internet calls a plugin: verified against the plugin's
+		// declared secret before anything runs. See pluginservice.go.
+		s.registerPluginInboundRoute(r)
 
 		// Everything else needs a session. This panel hands out a writable
 		// terminal; there is no such thing as a harmless unauthenticated
@@ -510,6 +518,10 @@ func (s *Server) Routes() http.Handler {
 			// plugins. docs/plugins.md §6.
 			s.registerPluginRoutes(r)
 			s.registerPluginDevRoutes(r)
+			s.registerPluginServiceRoutes(r)
+			// A plugin's own routes for the owner: /api/ext/{id}/…, under the
+			// session like everything else here.
+			s.registerPluginExtRoutes(r)
 		})
 
 		r.NotFound(func(w http.ResponseWriter, r *http.Request) {
@@ -715,6 +727,7 @@ func (s *Server) snapshot(ctx context.Context) []byte {
 // updated and the second save overwrote the first.
 func (s *Server) notifyPanel(projectID, kind string) {
 	s.bumpPluginWatchers()
+	s.pluginEventRaised(pluginEvent{Name: map[string]string{"note": "note.changed", "todos": "todo.changed"}[kind], ProjectID: projectID, Kind: kind})
 	if s.Hub == nil {
 		return
 	}
@@ -1762,6 +1775,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if err := s.DB.TouchProject(ctx, p.ID); err != nil {
 		s.Log.Warn("touch project", "project", p.ID, "err", err)
 	}
+	s.pluginEventRaised(pluginEvent{Name: "session.created", SessionID: sid, ProjectID: p.ID})
 
 	// Attach now, not at the next poll. A session can ring the bell within a
 	// second of starting, and the latched-flag read in Attach is what keeps
@@ -2013,6 +2027,7 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreErr(w, err)
 		return
 	}
+	s.pluginEventRaised(pluginEvent{Name: "session.gone", SessionID: rec.ID, ProjectID: rec.ProjectID})
 	s.notifyState()
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -2241,6 +2256,11 @@ func (s *Server) Poll(ctx context.Context) {
 	// events.go: the producer side is a non-blocking send precisely so that
 	// nothing on this goroutine ever waits for that write.
 	go s.drainEvents(ctx)
+	// The plugin services' clock and event workers, for the same reason the
+	// drain is a goroutine of its own: nothing a plugin does runs here.
+	s.serviceCtx = ctx
+	s.ensurePluginWorkers(ctx)
+	go s.pluginServiceLoop(ctx)
 	for {
 		select {
 		case <-ctx.Done():
@@ -2321,6 +2341,7 @@ func (s *Server) markVanished(ctx context.Context, row store.Session) error {
 	if err := s.DB.SetSessionExit(ctx, row.ID, true, store.ExitStatusVanished); err != nil {
 		return err
 	}
+	s.pluginEventRaised(pluginEvent{Name: "session.gone", SessionID: row.ID, ProjectID: row.ProjectID})
 	if row.State == session.StateDone {
 		return nil
 	}

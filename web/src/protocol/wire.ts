@@ -2326,3 +2326,16 @@ export interface PluginDetail {
   dropped: string[]
   settings: PluginSettings
 }
+
+/** A plugin's source as the owner sees it: never a secret value. */
+export interface PluginSourceRow {
+  key: string
+  url: string
+  host: string
+  granted: boolean
+  every: string
+  ok: boolean
+  fetchedAt: number
+  status: number
+  error: string
+}
