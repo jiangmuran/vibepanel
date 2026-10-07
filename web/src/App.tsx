@@ -74,6 +74,7 @@ import { PluginHeaderItems, usePlugins } from './components/plugins/slots'
 import { extTabs as pluginTabs } from './components/plugins/host'
 import { onOpen as onPluginOpen } from './components/plugins/open'
 import { publishHostState } from './components/plugins/hostRuntime'
+import { notePluginsRev } from './components/plugins/rev'
 import { withKnown } from './components/panes'
 import { PANEL_TABS } from './components/chrome'
 
@@ -282,6 +283,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     hasProjectOrder: false,
     stateGuessed: false,
     hooksInstalled: false,
+    pluginsRev: 0,
   })
   const [selected, setSelected] = useState<string | null>(() => readStored(SELECTED_KEY))
   const [error, setError] = useState<string | null>(null)
@@ -417,6 +419,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   const applyState = useCallback((next: PanelState) => {
     // For rung-4 modules' host.state.subscribe (docs/plugins.md §7).
     publishHostState(next)
+    notePluginsRev(next.pluginsRev)
     setSnapshots((n) => n + 1)
     setState(next)
     // Every snapshot, because the transition it looks for is only visible by

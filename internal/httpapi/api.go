@@ -1115,6 +1115,13 @@ type stateResponse struct {
 	// install the reporter, or reload the sessions that started before it.
 	HooksInstalled bool `json:"hooksInstalled"`
 
+	// PluginsRev rises on every change to the plugins: an install, an
+	// enable, dev mode, a removal. The list itself is not in the snapshot --
+	// it changes rarely and every viewer gets every snapshot -- but one
+	// integer lets a page re-read the list and the theme sheet the moment
+	// it changes instead of on a timer. docs/plugins.md §5a.
+	PluginsRev uint64 `json:"pluginsRev"`
+
 	// Stale is why the panel has stopped keeping its records up to date, and
 	// empty when it has not. A full disk is the case this was written for: the
 	// terminals keep working, so nothing else on screen looks wrong.
@@ -1174,6 +1181,7 @@ func (s *Server) buildState(ctx context.Context) (stateResponse, error) {
 		Live:            emptyIfNil(s.Manager.LiveIDs()),
 		Fullscreen:      emptyIfNil(fullscreenNow(&s.fullscreen)),
 		Frozen:          emptyIfNil(s.frozenNow()),
+		PluginsRev:      s.prt.pluginsRev.Load(),
 		ProjectOrder:    orderMode(manual),
 		HasProjectOrder: hasOrder,
 		StateGuessed:    s.stateIsGuessed(sessions),

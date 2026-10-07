@@ -303,6 +303,8 @@ export interface PanelState {
   fullscreen: string[]
   /** Sessions paused from the resources page or the memory question. */
   frozen: string[]
+  /** Rises on every change to the plugins; the page re-reads the list and the theme sheet when it does. */
+  pluginsRev: number
   /** 'auto' orders projects by recent activity; 'manual' by explicit position. */
   projectOrder: 'auto' | 'manual'
   /**

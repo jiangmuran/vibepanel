@@ -1,9 +1,7 @@
-import { useEffect, useState } from 'react'
 import { Monitor, Moon, Palette, Sun } from 'lucide-react'
 
 import { t, useLang } from '../i18n'
-import { api } from '../protocol/api'
-import type { PluginThemeRow } from '../protocol/wire'
+import { usePluginThemes } from './pluginThemes'
 import { isPluginTheme } from './theme'
 import type { ThemeChoice } from './theme'
 
@@ -17,11 +15,9 @@ import type { ThemeChoice } from './theme'
  *
  * The plugin themes are read once per page load, here rather than by each
  * root, because the three roots would otherwise each need to know the list
- * exists; a theme installed while a tab is open joins the cycle on the next
- * load, which is also when its stylesheet arrives (index.html links it).
+ * exists; a theme installed while a tab is open joins the cycle when the
+ * plugins revision changes (rev.ts), which also re-requests its stylesheet.
  */
-let cached: PluginThemeRow[] | null = null
-
 export function ThemeToggle({
   theme,
   onChange,
@@ -30,21 +26,7 @@ export function ThemeToggle({
   onChange: (t: ThemeChoice) => void
 }) {
   const lang = useLang()
-  const [themes, setThemes] = useState<PluginThemeRow[]>(cached ?? [])
-  useEffect(() => {
-    if (cached) return
-    let cancelled = false
-    api.pluginThemes().then(
-      (list) => {
-        cached = list
-        if (!cancelled) setThemes(list)
-      },
-      () => {},
-    )
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  const themes = usePluginThemes()
 
   const cycle: ThemeChoice[] = ['system', 'light', 'dark', ...themes.map((x) => x.attr as ThemeChoice)]
   // A chosen plugin theme that is no longer installed is still the choice on

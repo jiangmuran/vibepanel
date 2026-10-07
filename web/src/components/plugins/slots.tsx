@@ -15,6 +15,7 @@ import type { ThemeChoice } from '../theme'
 import type { SettingsGroup } from '../settings/groups'
 import { PluginFrame } from './PluginFrame'
 import { entriesAt, pageEntry } from './host'
+import { onPluginsRev } from './rev'
 import { textIn } from './screen'
 
 /**
@@ -23,10 +24,15 @@ import { textIn } from './screen'
  * The list of installed plugins is read here, once per page and again every
  * half minute or when a frame asks, rather than pushed over the socket: it
  * changes when somebody installs something, which is rare, and the snapshot
- * every viewer receives on every change should not carry it.
+ * every viewer receives on every change should not carry it -- it carries
+ * one integer, the plugins revision, and the list is re-read when that moves.
  */
 
-const PLUGINS_MS = 30_000
+/**
+ * The fallback re-read. The prompt one is the plugins revision on the state
+ * snapshot (rev.ts); this is for a tab whose socket missed the change.
+ */
+const PLUGINS_MS = 5 * 60_000
 
 let cached: PluginRow[] | null = null
 const listeners = new Set<() => void>()
@@ -40,6 +46,8 @@ function publish(list: PluginRow[]) {
 export function refreshPlugins() {
   api.listPlugins().then(publish, () => {})
 }
+
+onPluginsRev(refreshPlugins)
 
 /** The installed plugins, shared by every slot on the page. */
 export function usePlugins(): PluginRow[] {

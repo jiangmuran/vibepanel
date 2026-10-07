@@ -25241,3 +25241,31 @@ Two hot paths, both of the shape "N things each doing the whole job":
 Neither changed what a plugin sees; the SDK pin and the compat corpus are
 the proof of that, and they ran unchanged.
 
+## 2026-10-07 — Plugins, optimisation round 3: a revision instead of two timers
+
+Two caches on the page knew about plugins and neither knew when they
+changed. The slot list (`usePlugins`) re-read itself every thirty seconds,
+so a plugin enabled on the plugins page took up to half a minute to appear
+in the side panel of a tab beside it; the theme toggle's list was read once
+and never again, and the comment on it said so -- a theme installed while a
+tab is open joined the cycle on the next load, when its stylesheet also
+arrived.
+
+The snapshot now carries `pluginsRev`, one integer that `pluginsChanged`
+raises on every install, enable, disable, dev switch and removal. The list
+itself stays out of the snapshot for the reason the slots file gives --
+every viewer gets every snapshot, and the list changes rarely -- but one
+number is what lets `rev.ts` fire its listeners the moment it moves: the
+slot list re-reads, the theme list re-reads, and the `<link>` to
+`/plugin-themes.css` gets a new query string so the new theme's rules
+arrive without a reload. The thirty-second timer became a five-minute
+fallback for a tab whose socket missed the change, and the theme toggle's
+cache moved into `pluginThemes.ts` as a hook that subscribes.
+
+Pinned at both ends: `TestThePluginsRevisionRisesOnEveryChange` (install
+and disable each raise it; a read does not), `TestTypeScriptRowsMatchWhatIsSent`
+caught `PanelState` the moment the Go struct had the field and the
+interface did not, and `rev.test.ts` has the baseline, the change, the
+repeat, the sheet swap through a stand-in holder, and a listener that
+throws without stopping the next.
+

@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -94,6 +95,8 @@ type pluginRuntime struct {
 	state    stateResponse
 	// stateBuilds counts the slow path, for the test that says it is one.
 	stateBuilds int
+	// pluginsRev is stateResponse.PluginsRev: bumped by pluginsChanged.
+	pluginsRev atomic.Uint64
 }
 
 // pluginStateTTL bounds the memo in time as well as by generation: a change

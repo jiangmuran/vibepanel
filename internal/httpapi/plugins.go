@@ -1014,6 +1014,7 @@ func (s *Server) handlePluginThemesCSS(w http.ResponseWriter, r *http.Request) {
 // runtimes that exist later -- frames, services, processes -- re-read the
 // table on this; today the browser re-reads the list on its next poll.
 func (s *Server) pluginsChanged() {
+	s.prt.pluginsRev.Add(1)
 	s.notifyState()
 	s.pluginsChangedServices()
 }

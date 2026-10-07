@@ -398,3 +398,34 @@ func TestTheListCarriesDetailOnRequest(t *testing.T) {
 		t.Fatalf("the plain list carries the screen: %d %s", status, body)
 	}
 }
+
+// The snapshot carries one integer about plugins, and it moves on every
+// change: that is what lets a page re-read the list and the theme sheet
+// the moment something is installed rather than on a timer.
+func TestThePluginsRevisionRisesOnEveryChange(t *testing.T) {
+	ts, _ := newTestServer(t)
+	rev := func() float64 {
+		_, body := doJSON(t, ts, http.MethodGet, "/api/state", "")
+		var st struct {
+			PluginsRev float64 `json:"pluginsRev"`
+		}
+		_ = json.Unmarshal(body, &st)
+		return st.PluginsRev
+	}
+	r0 := rev()
+	installPane(t, ts, []string{"read:panel"})
+	r1 := rev()
+	if r1 <= r0 {
+		t.Fatalf("after add+install: %v, was %v", r1, r0)
+	}
+	if status, _ := doJSON(t, ts, http.MethodPost, "/api/settings/plugins/pane/disable", `{}`); status != http.StatusOK {
+		t.Fatal("disable")
+	}
+	if r2 := rev(); r2 <= r1 {
+		t.Fatalf("after disable: %v, was %v", r2, r1)
+	}
+	r2 := rev()
+	if r3 := rev(); r3 != r2 {
+		t.Fatalf("a read moved it: %v → %v", r2, r3)
+	}
+}
