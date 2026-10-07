@@ -1,0 +1,39 @@
+{
+  "plugin": 1,
+  "id": "compat-svc",
+  "name": {
+    "en": "Compat service"
+  },
+  "version": "1.0.0",
+  "panel": ">=1.26",
+  "capabilities": [
+    "read:panel",
+    "write:todos",
+    "read:todos"
+  ],
+  "data": {
+    "events": {
+      "type": "counter"
+    },
+    "last": {
+      "type": "text",
+      "max": 100
+    }
+  },
+  "server": {
+    "entry": "server.js",
+    "every": "1h",
+    "on": [
+      "session.created",
+      "session.state"
+    ],
+    "routes": {
+      "GET /digest": "digest",
+      "POST /echo": "echo"
+    }
+  },
+  "inbound": {
+    "path": "hook",
+    "secret": "HOOK_SECRET"
+  }
+}

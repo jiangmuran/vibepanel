@@ -1,0 +1,16 @@
+{
+  "plugin": 1,
+  "id": "compat-theme",
+  "name": {
+    "en": "Compat theme"
+  },
+  "version": "1.0.0",
+  "panel": ">=1.26",
+  "theme": {
+    "file": "theme.css",
+    "name": {
+      "en": "Compat theme"
+    },
+    "scheme": "dark"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "frozen": "1.26.0",
+  "caps": [
+    "read:panel",
+    "write:todos",
+    "read:todos"
+  ],
+  "secrets": {
+    "HOOK_SECRET": "s"
+  },
+  "routes": [
+    {
+      "method": "GET",
+      "path": "digest",
+      "want": "\"caller\":\"owner\""
+    },
+    {
+      "method": "POST",
+      "path": "echo",
+      "body": "{\"a\":1}",
+      "want": "\"body\":{\"a\":1}"
+    }
+  ],
+  "event": {
+    "name": "session.created",
+    "data": "events",
+    "want": 1
+  }
+}

@@ -16,8 +16,9 @@ loaded on the panel's origin behind the panel-wide switch, the `host`
 object, two slots, `host.css`, safe mode and `disable --all`; and the
 scaffold of §9: **New plugin** on the plugins page and `vibepanel plugin
 init`, five templates, `AGENTS.md` for the agent, the directory registered
-in dev mode and handed to the launch picker. The session and project action
-slots, `host.override`, `vibepanel plugin shot` and `plugin run` are not,
+in dev mode and handed to the launch picker; and the three pins of §10: the
+SDK types against the view, the contract list, and the compat corpus. The
+session and project action slots, `host.override`, `vibepanel plugin shot` and `plugin run` are not,
 and each section below that describes one says what it will be. This document replaces the earlier version of
 this file, which argued that the panel should not have a plugin runtime at all.
 §14 keeps that argument and says which parts of it still hold; the short
@@ -607,9 +608,12 @@ contract has a number the manifest names:
 **Contracts only grow.** A field, a slot, a capability, a `ctx` member or a
 CSS class is added and never renamed, retyped or removed within a version;
 `TestTheSDKTypesMatchThePluginView` pins the view both ways, and a committed
-list pins the slots, the classes and the base `:root` token names
-(`TestNothingAPluginCanNameWasRemoved`), so removing one is a red test and a
-decision rather than a surprise on somebody's panel. When a contract must
+list, `internal/plugins/testdata/contract-v1.txt`, pins the slots, the
+classes, the base `:root` token names, the capability names and the settings
+groups (`TestNothingAPluginCanNameWasRemoved`: a name in the list and not in
+the source is red, and so is a name in the source and not in the list, so a
+contract is made out loud and never by accident), so removing one is a red
+test and a decision rather than a surprise on somebody's panel. When a contract must
 change shape, `v2` is served beside `v1` for at least three minor releases,
 the release notes carry a plugins line, and the card says *uses API v1,
 which ends in 1.29*.
@@ -622,11 +626,13 @@ dropped is disabled with a sentence naming it, not run half-way.
 
 **A corpus of fixture plugins is the compatibility test.**
 `internal/plugins/testdata/compat/` holds one small plugin per rung and per
-contract version, frozen at the release that introduced it, and
-`TestEveryCompatFixtureStillInstallsAndRuns` installs each, mounts its
-panels, runs its `server.js` hooks against a fixture view, starts its
-process against a fake command, and compares the result to the one recorded
-when the fixture was frozen. A change to the panel that breaks a two-year-old
+contract version, frozen at the release that introduced it (five for v1:
+`theme`, `pane`, `service`, `process`, `full`), each with an `expect.json`
+saying what it did when frozen. `TestEveryCompatFixtureStillInstallsAndRuns`
+takes each through the real routes: adds, installs with the capabilities it
+asks for, sets its secrets, enables, serves its frames and theme, answers
+its SDK calls on a grant, calls its routes through the owner's door,
+delivers it an event and runs its process, and compares with `expect.json`. A change to the panel that breaks a two-year-old
 plugin fails this test on the branch that made it. The fixtures are also the
 examples the documentation points at, so the examples cannot rot.
 

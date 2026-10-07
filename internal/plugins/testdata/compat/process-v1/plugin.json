@@ -1,0 +1,22 @@
+{
+  "plugin": 1,
+  "id": "compat-proc",
+  "name": {
+    "en": "Compat process"
+  },
+  "version": "1.0.0",
+  "panel": ">=1.26",
+  "process": {
+    "command": [
+      "sh",
+      "run.sh"
+    ],
+    "restart": "never",
+    "capabilities": [
+      "read:panel"
+    ],
+    "env": [
+      "TOKEN"
+    ]
+  }
+}

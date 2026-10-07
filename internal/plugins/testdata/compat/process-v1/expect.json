@@ -1,0 +1,12 @@
+{
+  "frozen": "1.26.0",
+  "caps": [
+    "read:panel"
+  ],
+  "secrets": {
+    "TOKEN": "t0k"
+  },
+  "process": {
+    "output": "token=t0k"
+  }
+}

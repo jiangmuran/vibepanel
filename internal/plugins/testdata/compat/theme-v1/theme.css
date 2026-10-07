@@ -1,0 +1,6 @@
+:root[data-theme='ext-compat-theme'] {
+  color-scheme: dark;
+  --vp-bg: #101418;
+  --vp-ink: #e6e9ee;
+  --vp-accent: #7fb3ff;
+}

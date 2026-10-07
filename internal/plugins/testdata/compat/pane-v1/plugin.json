@@ -1,0 +1,56 @@
+{
+  "plugin": 1,
+  "id": "compat-pane",
+  "name": {
+    "en": "Compat pane"
+  },
+  "version": "1.0.0",
+  "panel": ">=1.26",
+  "panels": [
+    {
+      "slot": "sidepanel.pane",
+      "entry": "pane.html",
+      "title": {
+        "en": "Pane"
+      }
+    },
+    {
+      "slot": "settings.section",
+      "entry": "settings.html",
+      "title": {
+        "en": "Pane"
+      },
+      "group": "panel"
+    },
+    {
+      "slot": "page",
+      "entry": "page.html",
+      "title": {
+        "en": "Page"
+      },
+      "path": "compat"
+    },
+    {
+      "slot": "header.item",
+      "entry": "header.html",
+      "title": {
+        "en": "Item"
+      }
+    }
+  ],
+  "capabilities": [
+    "read:panel",
+    "read:notes",
+    "ui:open",
+    "ui:notify"
+  ],
+  "data": {
+    "votes": {
+      "type": "counter"
+    },
+    "note": {
+      "type": "text",
+      "max": 40
+    }
+  }
+}

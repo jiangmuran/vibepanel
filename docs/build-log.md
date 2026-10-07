@@ -25166,3 +25166,32 @@ Deferred, and said so in §9: `vibepanel plugin shot` and `plugin run`, and
 the session/project action slots, which wait for a sidebar menu to put them
 in.
 
+## 2026-10-07 — Plugins, step 6: the three pins §10 promised
+
+Three tests the design named before anything was built, now built, each
+checked by removing what it guards and watching it go red:
+
+- **`TestTheSDKTypesMatchThePluginView`** reads the `export interface`
+  blocks out of `vibepanel-plugin.d.ts` with the same parser `wire.ts` is
+  pinned with, and compares them both ways with the Go structs that are
+  sent: `PluginView`, `PluginIdentity`, the project and session rows, `Note`
+  and `Todo`. Renaming `pinned` in the `.d.ts` is four failures.
+- **`TestNothingAPluginCanNameWasRemoved`** is a committed list,
+  `internal/plugins/testdata/contract-v1.txt`: 6 slots, 22 classes in
+  `vibepanel-ui.css`, 43 base tokens, 16 capabilities, 5 settings groups.
+  Both directions are red -- a name removed from the source, and a name
+  added to the source without a line in the file -- because the second is
+  how a contract gets made by accident. `VP_WRITE_CONTRACT=1` rewrites the
+  file; that is the deliberate step.
+- **`TestEveryCompatFixtureStillInstallsAndRuns`** walks
+  `internal/plugins/testdata/compat/`: five plugins frozen against contract
+  v1, one per rung and one with everything (six settings field types, a
+  log, a `net:` capability, two languages, a `panel` constraint), each with
+  an `expect.json`. Every fixture goes through the real routes in its own
+  test server: add, install, secrets, enable, theme sheet, frames on a
+  grant, SDK calls, routes through `/api/ext/`, an event delivered to
+  `onEvent`, a process run to its output. The corpus found its first thing
+  on the first run: a `log` item is an object, and the fixture appended a
+  string. That was the fixture's mistake, and it is the kind the corpus is
+  for, because a plugin author makes it next.
+

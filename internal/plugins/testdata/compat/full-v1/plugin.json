@@ -1,0 +1,123 @@
+{
+  "plugin": 1,
+  "id": "compat-full",
+  "name": {
+    "en": "Compat full",
+    "zh-CN": "\u517c\u5bb9\u5168\u5957"
+  },
+  "version": "2.3.4",
+  "panel": ">=1.26",
+  "description": {
+    "en": "Everything at once"
+  },
+  "author": "tests",
+  "homepage": "https://example.com/x",
+  "theme": {
+    "file": "theme.css",
+    "name": {
+      "en": "Full"
+    },
+    "scheme": "light"
+  },
+  "panels": [
+    {
+      "slot": "sidepanel.pane",
+      "entry": "pane.html",
+      "title": {
+        "en": "Full"
+      },
+      "icon": "sparkles"
+    }
+  ],
+  "capabilities": [
+    "read:panel",
+    "read:paths",
+    "read:resources",
+    "read:usage",
+    "read:git",
+    "net:api.example.com"
+  ],
+  "settings": {
+    "group": "panel",
+    "fields": [
+      {
+        "key": "greeting",
+        "type": "text",
+        "default": "hi",
+        "label": {
+          "en": "Greeting"
+        }
+      },
+      {
+        "key": "count",
+        "type": "number",
+        "default": 3,
+        "min": 0,
+        "max": 10,
+        "label": {
+          "en": "Count"
+        }
+      },
+      {
+        "key": "loud",
+        "type": "bool",
+        "default": false,
+        "label": {
+          "en": "Loud"
+        }
+      },
+      {
+        "key": "mode",
+        "type": "enum",
+        "values": [
+          "a",
+          "b"
+        ],
+        "default": "a",
+        "label": {
+          "en": "Mode"
+        }
+      },
+      {
+        "key": "tint",
+        "type": "color",
+        "default": "#ff0000",
+        "label": {
+          "en": "Tint"
+        }
+      },
+      {
+        "key": "tags",
+        "type": "list",
+        "default": [],
+        "label": {
+          "en": "Tags"
+        }
+      }
+    ]
+  },
+  "data": {
+    "clicks": {
+      "type": "counter"
+    },
+    "log": {
+      "type": "log",
+      "item": {
+        "type": "object",
+        "fields": {
+          "what": {
+            "type": "text",
+            "max": 80
+          }
+        }
+      },
+      "max": 50
+    }
+  },
+  "server": {
+    "entry": "server.js",
+    "routes": {
+      "POST /click": "click"
+    }
+  }
+}

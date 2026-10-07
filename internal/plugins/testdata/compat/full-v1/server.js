@@ -1,0 +1,1 @@
+function click(req, ctx) { ctx.data.increment('clicks'); ctx.data.append('log', { what: 'click' }); return { clicks: ctx.data.get('clicks'), greeting: ctx.settings.greeting, count: ctx.settings.count } }

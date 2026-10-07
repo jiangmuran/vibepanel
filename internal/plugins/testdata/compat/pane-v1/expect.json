@@ -1,0 +1,38 @@
+{
+  "frozen": "1.26.0",
+  "caps": [
+    "read:panel",
+    "read:notes",
+    "ui:open",
+    "ui:notify"
+  ],
+  "frames": [
+    "pane.html",
+    "settings.html",
+    "page.html",
+    "header.html"
+  ],
+  "api": [
+    {
+      "method": "GET",
+      "path": "view",
+      "want": "\"sessions\""
+    },
+    {
+      "method": "GET",
+      "path": "data",
+      "want": "\"votes\""
+    },
+    {
+      "method": "POST",
+      "path": "data/votes/increment",
+      "body": "{\"by\":2}",
+      "want": "2"
+    },
+    {
+      "method": "GET",
+      "path": "notes/nope",
+      "status": 404
+    }
+  ]
+}

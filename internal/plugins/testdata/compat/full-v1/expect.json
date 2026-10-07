@@ -1,0 +1,38 @@
+{
+  "frozen": "1.26.0",
+  "caps": [
+    "read:panel",
+    "read:paths",
+    "read:resources",
+    "read:usage",
+    "read:git",
+    "net:api.example.com"
+  ],
+  "theme": true,
+  "frames": [
+    "pane.html"
+  ],
+  "routes": [
+    {
+      "method": "POST",
+      "path": "click",
+      "body": "{}",
+      "want": "\"greeting\":\"hi\""
+    }
+  ],
+  "api": [
+    {
+      "method": "GET",
+      "path": "settings",
+      "want": "\"count\":3"
+    },
+    {
+      "method": "GET",
+      "path": "resources"
+    },
+    {
+      "method": "GET",
+      "path": "usage"
+    }
+  ]
+}
