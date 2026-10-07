@@ -114,12 +114,16 @@ var capabilities = []Capability{
 		[]string{"POST /projects/{h}/todos", "PATCH /todos/{h}", "DELETE /todos/{h}"}},
 	{CapWriteState, KindWrite, Text{EN: "can mark a session working, waiting or done", ZH: "能把会话标成 working、waiting 或 done"},
 		[]string{"PATCH /sessions/{h}/state"}},
-	// The three below open nothing yet: their routes arrive with the process
-	// rung (docs/plugins.md §13, step 3), and until then a grant holding one
-	// of them reaches nothing more than one without.
-	{CapSessionsControl, KindWrite, Text{EN: "can restart and end sessions", ZH: "能重启和结束会话"}, nil},
-	{CapSessionsCreate, KindDanger, Text{EN: "can start programs in your projects", ZH: "能在你的项目里启动程序"}, nil},
-	{CapSessionsInput, KindDanger, Text{EN: "can type into any of your terminals", ZH: "能往你的任何终端里输入"}, nil},
+	// The two below are the rungs writable-links.md refuses at any setting
+	// for a URL. Here the credential is a grant or a process's token, and
+	// the sentence is in red on the screen; the routes run the panel's own
+	// handlers, so what they do is exactly what the sidebar does.
+	{CapSessionsControl, KindWrite, Text{EN: "can restart and end sessions", ZH: "能重启和结束会话"},
+		[]string{"POST /sessions/{h}/restart", "DELETE /sessions/{h}"}},
+	{CapSessionsCreate, KindDanger, Text{EN: "can start programs in your projects", ZH: "能在你的项目里启动程序"},
+		[]string{"POST /sessions"}},
+	{CapSessionsInput, KindDanger, Text{EN: "can type into any of your terminals", ZH: "能往你的任何终端里输入"},
+		[]string{"POST /sessions/{h}/input"}},
 	// Frame messages, not routes: the SPA refuses them for a grant without.
 	{CapUIOpen, KindUI, Text{EN: "can ask the panel to open a session, project or settings page", ZH: "能请面板打开某个会话、项目或设置页"}, nil},
 	{CapUINotify, KindUI, Text{EN: "can show a toast or a notification", ZH: "能显示 toast 或通知"}, nil},

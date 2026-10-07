@@ -2339,3 +2339,20 @@ export interface PluginSourceRow {
   status: number
   error: string
 }
+
+/** A plugin's supervised process, as the card shows it. */
+export interface PluginProcessStatus {
+  declared: boolean
+  running: boolean
+  pid: number
+  since: number
+  restarts: number
+  stopped: boolean
+  stopWhy: string
+  lastExit: string
+  exitedAt: number
+  /** The last 64 KiB of what it printed. */
+  output: string
+  command: string
+  onPath: boolean
+}

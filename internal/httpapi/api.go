@@ -111,6 +111,7 @@ type Server struct {
 	// run under, set by Poll.
 	prt        pluginRuntime
 	psv        pluginServiceState
+	ppr        pluginProcessState
 	serviceCtx context.Context
 
 	// Restart asks the process to stop and be brought back by whatever
@@ -519,6 +520,7 @@ func (s *Server) Routes() http.Handler {
 			s.registerPluginRoutes(r)
 			s.registerPluginDevRoutes(r)
 			s.registerPluginServiceRoutes(r)
+			s.registerPluginProcessRoutes(r)
 			// A plugin's own routes for the owner: /api/ext/{id}/…, under the
 			// session like everything else here.
 			s.registerPluginExtRoutes(r)
@@ -2260,6 +2262,7 @@ func (s *Server) Poll(ctx context.Context) {
 	// drain is a goroutine of its own: nothing a plugin does runs here.
 	s.serviceCtx = ctx
 	s.ensurePluginWorkers(ctx)
+	s.ensurePluginProcesses(ctx)
 	go s.pluginServiceLoop(ctx)
 	for {
 		select {

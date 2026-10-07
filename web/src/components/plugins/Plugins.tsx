@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { BookOpen, Download, FileUp, FolderInput, Hammer, Puzzle, ScrollText, ShieldCheck, SlidersHorizontal, Trash2 } from 'lucide-react'
+import { BookOpen, Cpu, Download, FileUp, FolderInput, Hammer, Puzzle, ScrollText, ShieldCheck, SlidersHorizontal, Trash2 } from 'lucide-react'
 
 import { t, useLang } from '../../i18n'
 import type { Lang } from '../../i18n'
 import { api } from '../../protocol/api'
-import type { PluginDetail, PluginRow, PluginSourceRow, SharePageServerLogLine } from '../../protocol/wire'
+import type { PluginDetail, PluginProcessStatus, PluginRow, PluginSourceRow, SharePageServerLogLine } from '../../protocol/wire'
 import { confirmThen } from '../ask'
 import { Chip, Empty, INPUT, IconTile } from '../pages/bits'
 import { safeText } from '../text'
@@ -257,6 +257,7 @@ function PluginCard({
   const [busy, setBusy] = useState(false)
   const [open, setOpen] = useState(false)
   const [logOpen, setLogOpen] = useState(false)
+  const [procOpen, setProcOpen] = useState(false)
   const state = stateOf(row)
   const name = safeText(textIn(row.name, lang))
   const hasSettings = (detail?.settings.fields.length ?? 0) > 0 || row.secrets.length > 0
@@ -379,6 +380,12 @@ function PluginCard({
               {t('plg.dev')}
             </button>
           )}
+          {row.rungs.process && row.installedVersion > 0 && (
+            <button type="button" data-testid="plugin-proc" aria-pressed={procOpen} onClick={() => setProcOpen((v) => !v)} className="vp-outline text-vp-sm">
+              <Cpu size={12} />
+              {t('plg.proc')}
+            </button>
+          )}
           {row.rungs.service && (
             <button type="button" data-testid="plugin-log" aria-pressed={logOpen} onClick={() => setLogOpen((v) => !v)} className="vp-outline text-vp-sm">
               <ScrollText size={12} />
@@ -406,6 +413,7 @@ function PluginCard({
         </div>
       )}
       {logOpen && <ServiceBlock id={row.id} onError={onError} />}
+      {procOpen && <ProcessBlock id={row.id} onError={onError} />}
     </article>
   )
 }
@@ -485,6 +493,73 @@ function ServiceBlock({ id, onError }: { id: string; onError: (e: unknown) => vo
           </pre>
         )}
       </div>
+    </div>
+  )
+}
+
+/** The supervised process: its state in a sentence, its output, a restart. */
+function ProcessBlock({ id, onError }: { id: string; onError: (e: unknown) => void }) {
+  const [st, setSt] = useState<PluginProcessStatus | null>(null)
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    const read = () => {
+      if (document.hidden) return
+      api.pluginProcess(id).then(
+        (p) => {
+          if (!cancelled) setSt(p)
+        },
+        (e: unknown) => {
+          if (!cancelled) onError(e)
+        },
+      )
+    }
+    read()
+    const timer = window.setInterval(read, 2000)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [id, onError])
+  const restart = async () => {
+    setBusy(true)
+    try {
+      setSt(await api.restartPluginProcess(id))
+    } catch (e) {
+      onError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+  if (!st) return null
+  const line = st.running
+    ? t('plg.proc.running', { pid: st.pid, n: st.restarts })
+    : st.stopped
+      ? t('plg.proc.stopped', { why: safeText(st.stopWhy) })
+      : t('plg.proc.waiting', { exit: st.lastExit ? t('plg.proc.lastExit', { exit: safeText(st.lastExit) }) : '' })
+  const bin = st.command.split(' ')[0] ?? ''
+  return (
+    <div className="grid gap-2 border-t border-hairline p-3 @md:p-4" data-testid="plugin-process">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-vp-sm">
+        <code className="font-mono text-ink">{safeText(st.command)}</code>
+        <span data-testid="plugin-process-state" style={{ color: st.running ? 'var(--vp-state-done)' : st.stopped ? 'var(--vp-state-crashed)' : 'var(--vp-state-waiting)' }}>
+          {line}
+        </span>
+        {!st.onPath && (
+          <span style={{ color: 'var(--vp-state-crashed)' }}>{t('plg.proc.notOnPath', { bin: safeText(bin) })}</span>
+        )}
+        <button type="button" disabled={busy} onClick={() => void restart()} data-testid="plugin-process-restart" className="vp-outline ml-auto text-vp-sm disabled:opacity-40">
+          {t('plg.proc.restart')}
+        </button>
+      </div>
+      <h3 className="text-vp-xs font-semibold tracking-wide text-ink-3 uppercase">{t('plg.proc.output')}</h3>
+      {st.output === '' ? (
+        <p className="text-vp-sm text-ink-3">{t('plg.proc.noOutput')}</p>
+      ) : (
+        <pre className="max-h-64 overflow-auto rounded-vp bg-surface-2 p-2 font-mono text-vp-xs leading-relaxed text-ink" data-testid="plugin-process-output">
+          {safeText(st.output.slice(-8000))}
+        </pre>
+      )}
     </div>
   )
 }

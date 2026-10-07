@@ -1951,6 +1951,15 @@ const DICT = {
   'plg.service.notGranted': { zh: '未授予', en: 'not granted' },
   'plg.service.notFetched': { zh: '尚未抓取', en: 'not fetched yet' },
   'plg.service.fetched': { zh: '{ago} 前抓取', en: 'fetched {ago} ago' },
+  'plg.proc': { zh: '进程', en: 'Process' },
+  'plg.proc.running': { zh: '运行中，pid {pid}，重启 {n} 次', en: 'Running, pid {pid}, {n} restarts' },
+  'plg.proc.stopped': { zh: '已停止：{why}', en: 'Stopped: {why}' },
+  'plg.proc.waiting': { zh: '未运行{exit}', en: 'Not running{exit}' },
+  'plg.proc.lastExit': { zh: '，上次退出：{exit}', en: ', last exit: {exit}' },
+  'plg.proc.notOnPath': { zh: '{bin} 不在 PATH 上', en: '{bin} is not on PATH' },
+  'plg.proc.restart': { zh: '重启进程', en: 'Restart process' },
+  'plg.proc.output': { zh: '输出', en: 'Output' },
+  'plg.proc.noOutput': { zh: '还没有输出。', en: 'Nothing printed yet.' },
 } satisfies Record<string, Entry>
 
 export type Key = keyof typeof DICT

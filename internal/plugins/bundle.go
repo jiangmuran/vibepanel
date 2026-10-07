@@ -33,14 +33,21 @@ import (
 // pages.ReadBounded so there is one definition of "a PNG is a PNG".
 
 // servable is what a plugin may contain, by extension. The page's list plus
-// the module forms a process or a rung-4 module is written in. Still an
+// the module forms a process or a rung-4 module is written in, and the
+// scripts and configuration a process is made of -- all text, all sniffed as
+// text. Still an
 // allowlist: a file a frame could be served must be a type the sandbox knows
 // how to refuse, and a file a process reads is still stored in SQLite and
 // checked out, so a binary is a thing to install with a package manager.
 var servable = map[string]string{
-	".cjs": "text/javascript; charset=utf-8",
-	".map": "application/json",
-	".md":  "text/markdown; charset=utf-8",
+	".cjs":  "text/javascript; charset=utf-8",
+	".map":  "application/json",
+	".md":   "text/markdown; charset=utf-8",
+	".sh":   "text/x-shellscript; charset=utf-8",
+	".py":   "text/x-python; charset=utf-8",
+	".toml": "text/plain; charset=utf-8",
+	".yaml": "text/plain; charset=utf-8",
+	".yml":  "text/plain; charset=utf-8",
 }
 
 // ContentTypeFor reports the type a path would be served as, or "".

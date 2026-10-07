@@ -1227,6 +1227,28 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+
+	// Plugin processes: docs/plugins.md §5, rung 3.
+	//
+	// A token is the credential a supervised process holds, in its
+	// environment, minted when it starts and deleted when the plugin stops.
+	// Its own table rather than a row in api_tokens: an API token is the
+	// owner, a plugin token reaches /api/plugin/{cred}/v1/ and nothing else,
+	// and currentUser consults neither this table nor plugin_grants.
+	func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`CREATE TABLE IF NOT EXISTS plugin_tokens (
+			     token_hash BLOB PRIMARY KEY,
+			     plugin_id  TEXT NOT NULL REFERENCES plugins(id) ON DELETE CASCADE,
+			     created_at INTEGER NOT NULL
+			 )`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	},
 }
 
 // scanner is *sql.Row and *sql.Rows both, so one scan function serves a

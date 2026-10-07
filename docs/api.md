@@ -2009,6 +2009,35 @@ Each source the manifest declares: its host, whether `net:<host>` is
 granted, and the last fetch's `ok`, `fetchedAt`, `status` and `error`. Never
 a secret value.
 
+### `POST /api/plugin/{cred}/v1/sessions/{h}/restart`
+### `DELETE /api/plugin/{cred}/v1/sessions/{h}`
+
+`sessions:control`. The panel's own restart and kill handlers, by handle,
+audited as the plugin.
+
+### `POST /api/plugin/{cred}/v1/sessions`
+
+`sessions:create`, in red on the install screen. `{"project": h, "title",
+"command": [...]}` starts a program in that project through the panel's own
+create handler; `201` with the new session as the view shows it.
+
+### `POST /api/plugin/{cred}/v1/sessions/{h}/input`
+
+`sessions:input`, in red on the install screen. `{"text", "submit"}` pastes
+into the pane and presses Enter when asked -- the two tmux calls the chat
+bridge makes. Every use is audited `plugin.input` with the byte count.
+
+### `GET /api/settings/plugins/{pluginID}/process`
+### `POST /api/settings/plugins/{pluginID}/process/restart`
+
+A plugin's supervised process: whether it is `running`, its `pid`, `since`,
+`restarts`, whether the supervisor `stopped` it and `stopWhy`, the
+`lastExit`, the last 64 KiB of `output`, the `command` and whether its first
+word is `onPath`. Restart ends it and brings it straight back, clearing a
+stop; audited `plugin.process_restarted`. The supervisor restarts a failing
+process with backoff from a second to a minute and stops it after ten
+failures in ten minutes, audited `plugin.crashed`.
+
 ### `GET /api/plugin/{cred}/v1/resources`
 ### `GET /api/plugin/{cred}/v1/usage`
 ### `GET /api/plugin/{cred}/v1/projects/{h}/git`

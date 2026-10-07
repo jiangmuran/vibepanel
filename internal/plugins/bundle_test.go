@@ -158,7 +158,7 @@ func TestAnArchiveIsReadByThePublishRules(t *testing.T) {
 }
 
 func TestValidPath(t *testing.T) {
-	for _, ok := range []string{"a.html", "lib/a.cjs", "img/x.png", "deep/er/x.json", "README2.md"} {
+	for _, ok := range []string{"a.html", "lib/a.cjs", "img/x.png", "deep/er/x.json", "README2.md", "bot/run.sh", "bot/main.py", "config.toml"} {
 		if !ValidPath(ok) {
 			t.Errorf("%s refused", ok)
 		}

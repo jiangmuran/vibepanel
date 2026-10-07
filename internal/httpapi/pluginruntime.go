@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -11,6 +12,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/http/httptest"
 	"runtime"
 	"sort"
 	"strconv"
@@ -171,6 +173,10 @@ func (s *Server) pluginHandlers() map[string]http.HandlerFunc {
 		"GET /resources":             s.handlePluginResources,
 		"GET /usage":                 s.handlePluginUsage,
 		"GET /projects/{h}/git":      s.handlePluginGit,
+		"POST /sessions/{h}/restart": s.handlePluginSessionRestart,
+		"DELETE /sessions/{h}":       s.handlePluginSessionDelete,
+		"POST /sessions":             s.handlePluginSessionCreate,
+		"POST /sessions/{h}/input":   s.handlePluginSessionInput,
 		"GET /x/*":                   s.handlePluginFrameRoute,
 		"POST /x/*":                  s.handlePluginFrameRoute,
 		"PUT /x/*":                   s.handlePluginFrameRoute,
@@ -220,9 +226,20 @@ func (s *Server) requirePluginCred(next http.Handler) http.Handler {
 // resolvePluginCred turns a presented credential into what a handler needs,
 // or (false, nil) for one that resolves to nothing.
 func (s *Server) resolvePluginCred(ctx context.Context, token string) (pluginCred, bool, error) {
-	grant, err := s.DB.PluginGrantByToken(ctx, auth.HashToken(token))
+	hash := auth.HashToken(token)
+	grant, err := s.DB.PluginGrantByToken(ctx, hash)
+	process := false
 	if errors.Is(err, store.ErrNotFound) {
-		return pluginCred{}, false, nil
+		// Not a grant: a process's token, which has the plugin's grants
+		// narrowed to the list its process declared.
+		id, terr := s.DB.PluginTokenByHash(ctx, hash)
+		if errors.Is(terr, store.ErrNotFound) {
+			return pluginCred{}, false, nil
+		}
+		if terr != nil {
+			return pluginCred{}, false, terr
+		}
+		grant, err, process = store.PluginGrant{PluginID: id}, nil, true
 	}
 	if err != nil {
 		return pluginCred{}, false, err
@@ -250,13 +267,23 @@ func (s *Server) resolvePluginCred(ctx context.Context, token string) (pluginCre
 	for _, c := range caps {
 		// A grant is a decision about the manifest that was shown; a
 		// capability the running manifest no longer asks for is not held.
-		if contains(wanted, c.Cap) {
-			granted[c.Cap] = true
+		if !contains(wanted, c.Cap) {
+			continue
 		}
+		// A process holds only what its own list declares, of what the owner
+		// granted: the frame's ui:* never, and nothing the process did not
+		// say it would use.
+		if process && (m.Process == nil || !contains(m.Process.Capabilities, c.Cap)) {
+			continue
+		}
+		granted[c.Cap] = true
 	}
-	user := grant.UserID
-	if u, err := s.DB.UserByID(ctx, grant.UserID); err == nil {
-		user = u.Username
+	user := "plugin:" + p.ID
+	if !process {
+		user = grant.UserID
+		if u, err := s.DB.UserByID(ctx, grant.UserID); err == nil {
+			user = u.Username
+		}
 	}
 	return pluginCred{grant: grant, plugin: p, manifest: m, ns: ns, caps: granted, user: user}, true, nil
 }
@@ -1285,4 +1312,138 @@ func (s *Server) handlePluginFingerprint(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"fingerprint": fp})
+}
+
+// ─── sessions:control, sessions:create, sessions:input ───────────────────
+//
+// Through the panel's own handlers, by an internal request with the real id
+// substituted for the handle: what a plugin does to a session is exactly
+// what the sidebar does, audited the same way, refused the same way, and a
+// change to the handler is a change here. The response is copied back as
+// it came, with the real id replaced by the handle wherever it appears.
+
+func (s *Server) internally(ctx context.Context, c pluginCred, handler http.HandlerFunc, method, path string,
+	params map[string]string, body []byte, w http.ResponseWriter, replace map[string]string) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(method, path, bytes.NewReader(body)).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	rctx := chi.NewRouteContext()
+	for k, v := range params {
+		rctx.URLParams.Add(k, v)
+	}
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	// The handlers that audit read the user from the context; a plugin's
+	// writes are audited as the plugin.
+	req = req.WithContext(context.WithValue(req.Context(), userContextKey, store.User{ID: c.grant.UserID, Username: c.user}))
+	handler(rec, req)
+	out := rec.Body.Bytes()
+	for real, handle := range replace {
+		out = bytes.ReplaceAll(out, []byte(real), []byte(handle))
+	}
+	for k, v := range rec.Header() {
+		if k == "Content-Type" {
+			w.Header()[k] = v
+		}
+	}
+	w.WriteHeader(rec.Code)
+	_, _ = w.Write(out)
+}
+
+func (s *Server) handlePluginSessionRestart(w http.ResponseWriter, r *http.Request) {
+	c, sess, ok := s.pluginSessionArg(w, r)
+	if !ok {
+		return
+	}
+	s.internally(r.Context(), c, s.handleRestartSession, http.MethodPost, "/api/sessions/"+sess.ID+"/restart",
+		map[string]string{"id": sess.ID}, nil, w, map[string]string{sess.ID: chi.URLParam(r, "h")})
+}
+
+func (s *Server) handlePluginSessionDelete(w http.ResponseWriter, r *http.Request) {
+	c, sess, ok := s.pluginSessionArg(w, r)
+	if !ok {
+		return
+	}
+	s.internally(r.Context(), c, s.handleDeleteSession, http.MethodDelete, "/api/sessions/"+sess.ID,
+		map[string]string{"id": sess.ID}, nil, w, map[string]string{sess.ID: chi.URLParam(r, "h")})
+}
+
+// handlePluginSessionCreate starts a program in a project the plugin names
+// by handle. The argv is the plugin's; the directory is the project's.
+func (s *Server) handlePluginSessionCreate(w http.ResponseWriter, r *http.Request) {
+	c, _ := pluginCredFrom(r)
+	var req struct {
+		Project string   `json:"project"`
+		Title   string   `json:"title"`
+		Command []string `json:"command"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	p, ok, err := s.pluginProjectByHandle(r.Context(), c.plugin.ID, req.Project)
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	if !ok {
+		writeErr(w, http.StatusNotFound, "no such project")
+		return
+	}
+	body, _ := json.Marshal(createSessionRequest{ProjectID: p.ID, Title: req.Title, Command: req.Command})
+	rec := httptest.NewRecorder()
+	s.internally(r.Context(), c, s.handleCreateSession, http.MethodPost, "/api/sessions", nil, body, rec, nil)
+	if rec.Code != http.StatusCreated {
+		w.WriteHeader(rec.Code)
+		_, _ = w.Write(rec.Body.Bytes())
+		return
+	}
+	var made store.Session
+	_ = json.Unmarshal(rec.Body.Bytes(), &made)
+	v, err := s.buildPluginView(r.Context(), c)
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	h := s.pluginHandle(r.Context(), c.plugin.ID, made.ID)
+	for _, row := range v.Sessions {
+		if row.ID == h {
+			writeJSON(w, http.StatusCreated, row)
+			return
+		}
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"id": h, "projectId": req.Project})
+}
+
+// handlePluginSessionInput types into a pane: a paste, and Enter when asked.
+// The same two tmux calls the chat bridge makes.
+func (s *Server) handlePluginSessionInput(w http.ResponseWriter, r *http.Request) {
+	c, sess, ok := s.pluginSessionArg(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Text   string `json:"text"`
+		Submit bool   `json:"submit"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if len(req.Text) > 64<<10 {
+		writeErr(w, http.StatusRequestEntityTooLarge, "input is at most 64 KiB")
+		return
+	}
+	ctx := r.Context()
+	if req.Text != "" {
+		if err := s.Tmux.Paste(ctx, sess.TmuxName, req.Text); err != nil {
+			writeErr(w, http.StatusConflict, "the pane did not take the input: "+err.Error())
+			return
+		}
+	}
+	if req.Submit {
+		if err := s.Tmux.Keys(ctx, sess.TmuxName, "Enter"); err != nil {
+			writeErr(w, http.StatusConflict, "the pane did not take Enter: "+err.Error())
+			return
+		}
+	}
+	s.audit(ctx, "plugin.input", c.user, s.clientIP(r), fmt.Sprintf("%s typed %d bytes into %s", c.plugin.ID, len(req.Text), chi.URLParam(r, "h")))
+	w.WriteHeader(http.StatusNoContent)
 }

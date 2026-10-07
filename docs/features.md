@@ -391,6 +391,20 @@ has exactly the members of the capabilities you granted, so a script can be
 read for what it asks. The card's *Service* block shows its log, how many
 events it dropped because it could not keep up, and each source's last fetch.
 
+**A plugin's process.** A plugin with a `process` runs a command the panel
+supervises -- a bot, a bridge to somewhere, anything already written in
+whatever language -- from the installed version's own directory, with a
+cleared environment plus the secrets it named, its own credential in
+`VIBEPANEL_PLUGIN_URL` (reaching the plugin API, narrowed to the
+capabilities the process declared, and nothing else on the panel) and a
+state directory of its own. The install screen shows the exact command and
+says *Run this as you*. It is restarted with backoff when it fails and
+stopped after ten failures in ten minutes, which the card says; the card's
+*Process* block shows what it printed and restarts it. It is ended when the
+panel stops. Where the sessions run in a scope of their own, the process
+is placed beside them, so a plugin that leaks is measured with the
+sessions rather than with the panel.
+
 **Dev mode.** A plugin read from a directory has a *Dev* button on its card:
 on, the directory's `plugin.json` and files are what runs, under the grants
 you already gave that id, and a change to a file reloads every one of its

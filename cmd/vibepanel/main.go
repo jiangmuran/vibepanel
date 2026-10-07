@@ -486,6 +486,10 @@ func cmdServe(args []string) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = httpServer.Shutdown(shutdownCtx)
+	// Plugin processes are the panel's children on purpose (docs/plugins.md
+	// §5, rung 3): SIGTERM now, SIGKILL after the grace, before the panel
+	// goes. Sessions are untouched; they were never children.
+	srv.StopPluginProcesses(shutdownCtx)
 
 	// One last capture of every session, before detaching.
 	//

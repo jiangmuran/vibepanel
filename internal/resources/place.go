@@ -313,3 +313,37 @@ func (g *Governor) EndSession(tmuxName string) {
 		_ = syscall.Kill(pid, syscall.SIGKILL)
 	}
 }
+
+// PlacePlugin moves a plugin's process into a leaf of its own beside the
+// sessions' (docs/plugins.md §5, rung 3): the resources page measures it,
+// and a plugin that leaks evicts the sessions' cache before the panel's own
+// pages, which is the incident red line 9 is about, kept on the right side.
+// A panel that manages no scope moves nothing.
+func (g *Governor) PlacePlugin(id string, pid int) {
+	g.mu.Lock()
+	l := g.layout
+	g.mu.Unlock()
+	if l == nil {
+		return
+	}
+	leaf, ok := l.Plugin(id)
+	if !ok || leaf.Ensure() != nil {
+		return
+	}
+	if leaf.Move(pid) == nil {
+		raiseOOMScore(pid)
+	}
+}
+
+// EndPlugin removes a plugin's leaf once its process has ended.
+func (g *Governor) EndPlugin(id string) {
+	g.mu.Lock()
+	l := g.layout
+	g.mu.Unlock()
+	if l == nil {
+		return
+	}
+	if leaf, ok := l.Plugin(id); ok {
+		_ = leaf.Remove()
+	}
+}

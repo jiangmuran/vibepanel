@@ -60,6 +60,7 @@ import type {
   ResourcePolicy,
   ResourcesView,
   PluginDetail,
+  PluginProcessStatus,
   PluginRow,
   PluginSettings,
   PluginSourceRow,
@@ -419,6 +420,13 @@ export const api = {
     request<{ lines: SharePageServerLogLine[]; dropped: number }>(
       `/api/settings/plugins/${encodeURIComponent(id)}/server/log`,
     ),
+  pluginProcess: (id: string) =>
+    request<PluginProcessStatus>(`/api/settings/plugins/${encodeURIComponent(id)}/process`),
+  restartPluginProcess: (id: string) =>
+    request<PluginProcessStatus>(`/api/settings/plugins/${encodeURIComponent(id)}/process/restart`, {
+      method: 'POST',
+      body: '{}',
+    }),
   pluginSources: (id: string) =>
     request<PluginSourceRow[]>(`/api/settings/plugins/${encodeURIComponent(id)}/sources`),
   /** Cheap: sizes and times, hashed. Asked twice a second while a frame is in dev mode. */

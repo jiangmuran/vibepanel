@@ -10,8 +10,10 @@ slots, and dev mode with the fingerprint reload; and rung 2: `server.js`
 with `onEvent`, `onSchedule`, the plugin's routes through both doors,
 `onInbound` behind a secret, a `ctx` with one member per granted capability,
 `ctx.fetch` through the guarded fetcher, per-plugin sources and the server
-log. The session and project action slots, the processes and the module are
-not, and each section below that describes one says what it will be. This document replaces the earlier version of
+log; and rung 3: `plugin_tokens`, the supervisor with its three tests, the
+cgroup leaf, and the three red capabilities' routes. The session and project
+action slots and the module are not, and each section below that describes
+one says what it will be. This document replaces the earlier version of
 this file, which argued that the panel should not have a plugin runtime at all.
 §14 keeps that argument and says which parts of it still hold; the short
 version is that share pages built, one feature at a time, the three things it

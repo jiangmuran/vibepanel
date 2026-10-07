@@ -76,3 +76,49 @@ func (d *DB) SweepPluginGrants(ctx context.Context) error {
 	}
 	return nil
 }
+
+// CreatePluginToken records a process's token. The previous ones for the
+// plugin go first: a process has one token, the one in its environment.
+func (d *DB) CreatePluginToken(ctx context.Context, tokenHash []byte, pluginID string) error {
+	tx, err := d.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: create plugin token: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // a no-op after Commit
+	if _, err := tx.ExecContext(ctx, `DELETE FROM plugin_tokens WHERE plugin_id = ?`, pluginID); err != nil {
+		return fmt.Errorf("store: create plugin token: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO plugin_tokens (token_hash, plugin_id, created_at) VALUES (?, ?, ?)`,
+		tokenHash, pluginID, now()); err != nil {
+		if isForeignKey(err) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("store: create plugin token: %w", err)
+	}
+	return tx.Commit()
+}
+
+// PluginTokenByHash resolves a process's token: the plugin must still be
+// enabled or in dev mode, which is what makes disabling the off switch.
+func (d *DB) PluginTokenByHash(ctx context.Context, tokenHash []byte) (string, error) {
+	var id string
+	err := d.sql.QueryRowContext(ctx, `
+		SELECT t.plugin_id FROM plugin_tokens t
+		JOIN plugins p ON p.id = t.plugin_id AND (p.enabled = 1 OR p.dev = 1)
+		WHERE t.token_hash = ?`, tokenHash).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("store: plugin token: %w", err)
+	}
+	return id, nil
+}
+
+// DeletePluginTokens forgets a plugin's token: its process has stopped.
+func (d *DB) DeletePluginTokens(ctx context.Context, pluginID string) error {
+	if _, err := d.sql.ExecContext(ctx, `DELETE FROM plugin_tokens WHERE plugin_id = ?`, pluginID); err != nil {
+		return fmt.Errorf("store: delete plugin tokens: %w", err)
+	}
+	return nil
+}

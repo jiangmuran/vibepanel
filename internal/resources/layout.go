@@ -35,6 +35,7 @@ const (
 	tmuxLeaf    = "tmux"
 	otherLeaf   = "other"
 	sessionLeaf = "s-"
+	pluginLeaf  = "p-"
 )
 
 // wantControllers are enabled wherever they are available. io is often not
@@ -58,6 +59,15 @@ func (l Layout) Tmux() cgroup.Dir { return l.Pool.Child(tmuxLeaf) }
 
 // Other is where unattributed processes wait.
 func (l Layout) Other() cgroup.Dir { return l.Pool.Child(otherLeaf) }
+
+// Plugin is a plugin process's leaf, by plugin id. `p-` so Prune, which
+// removes `s-` leaves of sessions that have gone, never touches it.
+func (l Layout) Plugin(id string) (cgroup.Dir, bool) {
+	if !leafName.MatchString(id) {
+		return "", false
+	}
+	return l.Pool.Child(pluginLeaf + id), true
+}
 
 // Session is a session's leaf, by tmux name.
 func (l Layout) Session(tmuxName string) (cgroup.Dir, bool) {

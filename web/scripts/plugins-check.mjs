@@ -103,6 +103,7 @@ writeFileSync(join(PLUGIN_DIR, 'plugin.json'), JSON.stringify({
   capabilities: ['read:panel', 'write:todos', 'sessions:input', 'ui:notify'],
   data: { events: { type: 'counter' } },
   server: { entry: 'server.js', on: ['session.created', 'session.state'], routes: { 'GET /digest': 'digest' } },
+  process: { command: ['sh', 'bot.sh'], capabilities: ['read:panel'] },
   settings: { fields: [
     { key: 'quiet', type: 'bool', default: true, label: { en: 'Quiet hours', 'zh-CN': '安静时段' } },
     { key: 'channel', type: 'enum', values: ['slack', 'email'], default: 'slack', label: { en: 'Channel', 'zh-CN': '渠道' } },
@@ -171,6 +172,7 @@ writeFileSync(join(PLUGIN_DIR, 'server.js'), `
 function onEvent(ev, ctx) { ctx.data.increment('events'); ctx.log('event ' + ev.name) }
 function digest(req, ctx) { return { sessions: ctx.panel.view().sessions.length, events: ctx.data.get('events') } }
 `)
+writeFileSync(join(PLUGIN_DIR, 'bot.sh'), 'i=0; while :; do i=$((i+1)); echo "tick $i"; sleep 1; done\n')
 writeFileSync(join(PLUGIN_DIR, 'section.html'), `<!doctype html><html><head><link rel="stylesheet" href="vibepanel-ui.css"><script src="vibepanel-plugin.js"></script></head>
 <body class="vp-section"><h2>Paper settings</h2><p id="s">-</p><script>var vp = VibePanel.plugin(); vp.settings().then(function (s) { document.getElementById('s').textContent = 'quiet=' + s.values.quiet })</script></body></html>`)
 writeFileSync(join(PLUGIN_DIR, 'page.html'), `<!doctype html><html><head><link rel="stylesheet" href="vibepanel-ui.css"><script src="vibepanel-plugin.js"></script></head>
@@ -246,11 +248,11 @@ try {
   // among the capabilities, and the button says "Install and grant".
   const capCodes = await screen.locator('[data-testid="plugin-screen-cap"] li').evaluateAll((els) => els.map((e) => e.dataset.code))
   if (capCodes[0] !== 'sessions:input') note('fail', 'screen', `the danger line is not first: ${capCodes}`)
-  for (const heading of ['what', 'rung', 'cap', 'keeps']) {
+  for (const heading of ['what', 'rung', 'cap', 'runs', 'keeps']) {
     if (!(await screen.getByTestId(`plugin-screen-${heading}`).isVisible())) note('fail', 'screen', `no ${heading} section`)
   }
   const button = screen.getByTestId('plugin-screen-confirm')
-  if ((await button.textContent())?.trim() !== 'Install and grant') note('fail', 'screen', `button says "${await button.textContent()}"`)
+  if ((await button.textContent())?.trim() !== 'Run this as you') note('fail', 'screen', `button says "${await button.textContent()}"`)
   else pass('screen', 'the sections and the button')
   await page.screenshot({ path: join(SHOTS, 'screen-en.png'), fullPage: true })
 
@@ -261,7 +263,7 @@ try {
   await page.getByTestId('plugins-lang-zh').click()
   await page.getByTestId('plugin-install').click()
   await until(() => screen.isVisible())
-  if ((await button.textContent())?.trim() !== '安装并授权') note('fail', 'screen', `zh button says "${await button.textContent()}"`)
+  if ((await button.textContent())?.trim() !== '以你的身份运行') note('fail', 'screen', `zh button says "${await button.textContent()}"`)
   const zhDanger = await screen.locator('[data-code="sessions:input"]').textContent()
   if (!zhDanger?.includes('能往你的任何终端里输入')) note('fail', 'screen', `zh danger line: ${zhDanger}`)
   else pass('screen', 'the same screen in Chinese')
@@ -474,6 +476,15 @@ try {
   if (!(await until(async () => ((await lines.textContent().catch(() => '')) ?? '').includes('event session.created'), 5000))) note('fail', 'service', 'the card does not show the server log')
   else pass('service', 'the card shows the server log')
   await page.screenshot({ path: join(SHOTS, 'service.png'), fullPage: true })
+
+  // The process: started as the owner after enabling, its output on the card.
+  await page.getByTestId('plugin-proc').click()
+  const procState = page.getByTestId('plugin-process-state')
+  if (!(await until(async () => ((await procState.textContent().catch(() => '')) ?? '').includes('Running'), 8000))) note('fail', 'process', `the process is not running: ${await procState.textContent().catch(() => '?')}`)
+  const out = page.getByTestId('plugin-process-output')
+  if (!(await until(async () => ((await out.textContent().catch(() => '')) ?? '').includes('tick'), 8000))) note('fail', 'process', 'the process output did not reach the card')
+  else pass('process', 'the supervised process runs and its output is on the card')
+  await page.screenshot({ path: join(SHOTS, 'process.png'), fullPage: true })
 
   // Dev mode: the draft directory is what runs, and a change reloads.
   await page.goto(`${BASE}/plugins`)

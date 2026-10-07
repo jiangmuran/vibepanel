@@ -260,8 +260,15 @@ Each of these exists because the alternative broke something real.
    (`POST /api/plugin-hook/{id}/{path}`, verified against the plugin's
    declared secret before any of its code runs). Events are a bounded
    channel per plugin, fed by a non-blocking send where the flow log is fed;
-   there is no veto. The processes and the module come next
-   (`docs/plugins.md` §13).
+   there is no veto. Rung 3, `internal/httpapi/pluginprocess.go`: a
+   supervised process is the panel's child on purpose (it holds no session,
+   so red line 2 is not about it), started from the version's checked-out
+   directory with a cleared environment and a token of its own in
+   `plugin_tokens` that `resolvePluginCred` narrows to the capabilities the
+   process declared; restarted with backoff and stopped at ten failures in
+   ten minutes; moved into a `p-<id>` leaf of the sessions' pool where one
+   exists (red line 9, kept on the right side); ended at shutdown before the
+   panel goes. The module comes next (`docs/plugins.md` §13).
 
 ## Conventions
 

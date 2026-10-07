@@ -25015,3 +25015,53 @@ Not here: `vibepanel plugin run`, which the page CLI has, because it needs the
 server's own context to build `ctx`; the owner's door with an API token
 covers running a route from a shell, and the log route covers reading what
 happened.
+
+## 2026-10-07 — Plugins, step 3: a process is a supervised command
+
+Rung 3 of `docs/plugins.md`, which the earlier version of that document
+called the only part worth building: a supervisor, not a runtime, and the
+three tests it asked for.
+
+What exists (`internal/httpapi/pluginprocess.go`):
+
+- **Start.** From the installed version checked out to
+  `<data dir>/plugins/<id>/v<N>/` (once; the files are immutable), or the
+  draft directory in dev mode; a cleared environment plus `PATH`, `HOME`,
+  `LANG`, `VIBEPANEL_PLUGIN_URL` (the v1 prefix with a fresh token minted at
+  every start), `VIBEPANEL_PLUGIN_STATE`, `VIBEPANEL_PLUGIN_ID`, and each
+  secret the manifest's `env` names; its own process group, so a signal
+  reaches what it forked; `cmd.Cancel` sends SIGTERM and `WaitDelay` the
+  SIGKILL five seconds later.
+- **The token** is a row in `plugin_tokens`, resolved by `resolvePluginCred`
+  when the hash is not a grant's, and narrowed to the capabilities the
+  process itself declared of what the owner granted -- a plugin's frame and
+  its process are two credentials with two lists. Presented as a bearer on
+  the panel it is 401; disabling the plugin ends it (the lookup joins the
+  plugin's enabled/dev row); a stopped process has its token deleted.
+- **The three tests**: a process that never exits (`trap '' TERM`) is ended
+  at shutdown within the grace; one that crashes in a loop is restarted with
+  backoff and stopped at the cap, audited `plugin.crashed`, and the owner's
+  restart clears the stop; one that prints in a loop fills a 64 KiB ring and
+  nothing else. The backoff and the cap are fields on the state so the loop
+  test takes milliseconds.
+- **The leaf.** `Governor.PlacePlugin` moves the pid into `p-<id>` under the
+  sessions' pool where a layout exists; `Prune` removes only `s-` leaves,
+  so the plugin's survives a sweep; `EndPlugin` removes it when the process
+  ends. A panel that manages no scope moves nothing.
+- **The red capabilities' routes.** `sessions:control`, `sessions:create`
+  and `sessions:input` open now, through the panel's own handlers by an
+  internal request with the real id substituted for the handle (`internally`),
+  so what a plugin does to a session is exactly what the sidebar does and a
+  change to the handler is a change here. Every `input` is audited with the
+  byte count.
+- The card's *Process* block: the state in a sentence, the output, a
+  restart. `plugins-check` installs a `sh` loop and reads its ticks off the
+  card.
+
+What the first run of the tests found: **a shell script is not a file a
+plugin could carry.** The bundle's allowlist was the share page's, which has
+no reason to know `.sh`, so `cmd.sh` was listed as ignored and the process
+started without it -- `sh: cannot open cmd.sh`, ten times, stopped. The
+allowlist gained `.sh`, `.py`, `.toml`, `.yaml` and `.yml`, all sniffed as
+text; the lesson is the one the design already states for themes, that an
+install screen should say what was left out, and the `ignored` list does.

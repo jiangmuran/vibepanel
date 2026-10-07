@@ -286,11 +286,9 @@ func (s *Server) pluginEventWorker(ctx context.Context, id string, w *pluginWork
 // installed set, and a program cache for a version that no longer runs is
 // left to age out.
 func (s *Server) pluginsChangedServices() {
-	ctx := s.serviceCtx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := s.serviceContext()
 	s.ensurePluginWorkers(ctx)
+	s.ensurePluginProcesses(ctx)
 }
 
 // ─── schedule and sources ─────────────────────────────────────────────────
