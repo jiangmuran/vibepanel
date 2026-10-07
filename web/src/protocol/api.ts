@@ -1,5 +1,7 @@
 import type {
   ApiToken,
+  HeadlessSettings,
+  HeadlessSettingsUpdate,
   AuditEntry,
   DirListing,
   AuthState,
@@ -424,6 +426,9 @@ export const api = {
     }>('/api/health'),
 
   listTokens: () => request<ApiToken[]>('/api/settings/tokens'),
+  headlessSettings: () => request<HeadlessSettings>('/api/settings/headless'),
+  saveHeadlessSettings: (s: HeadlessSettingsUpdate) =>
+    request<HeadlessSettings>('/api/settings/headless', { method: 'PUT', body: JSON.stringify(s) }),
   createToken: (name: string) =>
     request<ApiToken & { token: string }>('/api/settings/tokens', {
       method: 'POST',

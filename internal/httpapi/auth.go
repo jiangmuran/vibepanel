@@ -168,7 +168,12 @@ func (s *Server) RequireAuth(next http.Handler) http.Handler {
 		// handler. SameSite=Strict does not cover this: for a cookie, another
 		// port on this host is the same site, so a page served there can POST
 		// here with the session cookie attached.
-		if allowed := s.publicOrigins(r); crossOriginWrite(r, allowed) {
+		//
+		// The headless assistant's allowed origins pass too, for
+		// /api/headless/* only: a page there authenticates with a Bearer
+		// token (headlessCORS removed any cookie), so the forgery this check
+		// exists for has nothing to ride on.
+		if allowed := s.publicOrigins(r); crossOriginWrite(r, allowed) && !s.headlessOriginAllowed(r) {
 			s.auditFromOutside(ctx, "blocked", "", s.clientIP(r),
 				"a write from "+r.Header.Get("Origin")+"; this panel answers to "+strings.Join(allowed, " "))
 			// The message names both sides. A bare 403 in a browser console is

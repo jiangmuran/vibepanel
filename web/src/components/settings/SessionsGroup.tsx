@@ -17,6 +17,7 @@ import { Row, Section } from './parts'
 import { TuneClaude } from './TuneClaude'
 import { PasteSettings } from './PasteSettings'
 import { ArchiveSettings } from './ArchiveSettings'
+import { HeadlessSettings } from './HeadlessSettings'
 
 /**
  * What a session is started with, and how the panel learns what it is doing.
@@ -38,6 +39,7 @@ export function SessionsGroup() {
       <TuneClaude />
       <PasteSettings />
       <ArchiveSettings />
+      <HeadlessSettings />
     </>
   )
 }

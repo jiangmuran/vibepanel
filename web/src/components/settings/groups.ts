@@ -73,6 +73,7 @@ export const SETTINGS_SECTIONS = [
   'tune',
   'paste',
   'archive',
+  'headless',
   'browser',
   'chat',
   'webhooks',
@@ -116,6 +117,9 @@ export const SECTION_GROUP: Record<SettingsSection, SettingsGroup> = {
   // When a project leaves the sidebar on its own: about where sessions are
   // listed, and the only other setting that changes the sidebar.
   archive: 'sessions',
+  // The glasses' assistant runs `claude -p` with a launch profile, in a
+  // project: it is about what an agent is started with, like the two above.
+  headless: 'sessions',
   browser: 'notify',
   // A pointer to the chat page, where people look for "tell my phone".
   chat: 'notify',

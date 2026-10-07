@@ -903,6 +903,40 @@ export interface HookStatus {
   opencodeInstalled: boolean
 }
 
+/** One entry in the headless assistant's model picker. */
+export interface HeadlessModel {
+  id: string
+  label: string
+}
+
+/**
+ * The headless assistant's settings (GET /api/settings/headless). The
+ * speech-to-text key is never sent; `asr.hasKey` says whether one is stored.
+ */
+export interface HeadlessSettings {
+  enabled: boolean
+  allowedOrigins: string[]
+  defaultModel: string
+  models: HeadlessModel[]
+  defaultPermissionMode: string
+  launchProfileId: string
+  assistantDir: string
+  persona: string
+  memoryInjection: boolean
+  maxConcurrent: number
+  timeoutMinutes: number
+  asr: { baseUrl: string; model: string; language: string; prompt: string; hasKey: boolean }
+  /** The project on the assistant directory; the server's, ignored on PUT. */
+  assistantProjectId: string
+  /** What an empty persona means. */
+  defaultPersona: string
+}
+
+/** What PUT /api/settings/headless takes: the same, with the key write-only. */
+export type HeadlessSettingsUpdate = Omit<HeadlessSettings, 'asr' | 'assistantProjectId' | 'defaultPersona'> & {
+  asr: Omit<HeadlessSettings['asr'], 'hasKey'> & { apiKey?: string; clearKey?: boolean }
+}
+
 /** A credential a program uses instead of the session cookie. */
 export interface ApiToken {
   id: string

@@ -345,6 +345,15 @@ type Server struct {
 	// a log line on a machine nobody reads is not where this should first be
 	// noticed.
 	CertExpiry func() time.Time
+
+	// hl is the headless assistant's runs; see headless.go.
+	hl headlessState
+	// HeadlessBinary replaces the claude found on PATH for headless runs.
+	// Tests point it at a fake; nothing else sets it.
+	HeadlessBinary string
+	// HeadlessHTTP is the client the speech-to-text proxy uses; nil means
+	// http.DefaultClient.
+	HeadlessHTTP *http.Client
 }
 
 // Routes builds the router.
@@ -448,6 +457,14 @@ func (s *Server) Routes() http.Handler {
 		// An admin page's API: its own credential, its own table, the same
 		// placement as the share routes. See admingrants.go.
 		s.registerAdminAPIRoutes(r)
+		// The headless assistant's CORS preflight. A preflight carries no
+		// credential by design, so it cannot sit below RequireAuth; it
+		// answers headers and nothing else. See headless.go.
+		s.registerHeadlessPublicRoutes(r)
+		// The headless client routes: their own group, so the CORS headers
+		// are set before RequireAuth can answer 401 -- an opaque CORS
+		// failure tells the glasses nothing. RequireAuth is inside it.
+		s.registerHeadlessRoutes(r)
 
 		// Everything else needs a session. This panel hands out a writable
 		// terminal; there is no such thing as a harmless unauthenticated
@@ -486,6 +503,7 @@ func (s *Server) Routes() http.Handler {
 			s.registerChatRoutes(r)
 			s.registerTokenRoutes(r)
 			s.registerSettingsRoutes(r)
+			s.registerHeadlessSettingsRoutes(r)
 			s.registerResourceRoutes(r)
 			// Making and revoking share links is an ordinary settings action
 			// and needs the ordinary session. A share token cannot mint another

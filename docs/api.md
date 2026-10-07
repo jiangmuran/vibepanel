@@ -970,6 +970,185 @@ exactly these six `GET`s and nothing else in the panel; a session cookie or an
 API token is refused here and this token is refused everywhere else. Sessions
 are named by handle; paths, commands, tmux names and ids are not disclosed.
 
+## Headless assistant: the G2 glasses
+
+A personal assistant the Even G2 glasses talk to: `claude -p` runs started over
+HTTP with an API token and streamed back as server-sent events, in a workspace
+of its own (`assistantDir`, default `~/vibeagent-assistant`) holding a persona,
+a memory (`memories/USER.md`, `memories/MEMORY.md`) and skills
+(`.claude/skills/`). The glasses app's side of the contract is
+`docs/headless-api.md` in the even_vibeagent repository; this section is the
+panel's.
+
+**Runs default to `--permission-mode bypassPermissions`.** That was the
+owner's explicit decision for an assistant whose job is to act, and it means
+an API token that reaches these routes is full authority over the machine as
+the panel's user. The chat bridge's advanced mode never bypasses and is
+unaffected. Make a token for the glasses alone, so it can be revoked alone.
+
+Auth and CORS. Every route below except the preflight is behind the ordinary
+session check, and from another origin only `Authorization: Bearer <api
+token>` counts: a cookie on a cross-origin request to `/api/headless/*` is
+removed before the check reads it. Origins listed in the settings'
+`allowedOrigins` (exact match; `null` only if listed; never `*`) get the
+Origin reflected with `Vary: Origin`, `Access-Control-Allow-Headers:
+Authorization, Content-Type, Last-Event-ID`, `Access-Control-Allow-Methods:
+GET, POST, DELETE, OPTIONS` and `Access-Control-Max-Age: 600`, on every answer
+including a `401`; no credentials mode. The same origins pass the
+cross-origin-write check, for `/api/headless/*` only. Times are Unix seconds,
+like everywhere else here.
+
+### `OPTIONS /api/headless/*`
+
+The preflight, answered `204` outside auth. An origin not on the list gets the
+`204` without any `Access-Control-*` header, which is the browser's refusal.
+
+### `GET /api/settings/headless`
+### `PUT /api/settings/headless`
+
+The settings page's pair; cookie or Bearer, same-origin like every other
+setting.
+
+```json
+{ "enabled": true, "allowedOrigins": ["http://192.168.1.20:5173"],
+  "defaultModel": "opus",
+  "models": [{"id": "fable", "label": "Fable"}, {"id": "opus", "label": "Opus"},
+             {"id": "sonnet", "label": "Sonnet"}, {"id": "haiku", "label": "Haiku"}],
+  "defaultPermissionMode": "bypassPermissions", "launchProfileId": "",
+  "assistantDir": "~/vibeagent-assistant", "persona": "", "memoryInjection": true,
+  "maxConcurrent": 3, "timeoutMinutes": 30,
+  "asr": {"baseUrl": "https://api.siliconflow.cn/v1", "model": "FunAudioLLM/SenseVoiceSmall",
+          "language": "zh", "prompt": "", "hasKey": true},
+  "assistantProjectId": "…", "defaultPersona": "<the built-in persona>" }
+```
+
+`PUT` takes the same shape; a field left out keeps its value, and `hasKey`,
+`assistantProjectId` and `defaultPersona` are ignored (the first is the key's
+state, the second the server's, the third a constant). `asr.apiKey` sets the
+speech-to-text key, sealed under the panel's secrets key like every other
+stored secret and never sent back; `asr.clearKey: true` removes it. `400` for
+an origin that is not `scheme://host[:port]`, a model id that is not a model
+name, a default model not in the list, a permission mode not in
+`bypassPermissions|auto|acceptEdits|dontAsk|plan`, a missing launch profile,
+`maxConcurrent` outside 1..10 or `timeoutMinutes` outside 1..240. With
+`enabled: true` the assistant directory is created (no existing file is ever
+overwritten) and a project named 助理 is made on it, or the existing project on
+that directory reused; its id is `assistantProjectId`. Audited as
+`headless.settings`.
+
+### `GET /api/headless/config`
+
+```json
+{ "enabled": true, "version": "1.24.3",
+  "models": [{"id":"opus","label":"Opus"}], "defaultModel": "opus",
+  "permissionModes": ["bypassPermissions","auto","acceptEdits","dontAsk","plan"],
+  "defaultPermissionMode": "bypassPermissions",
+  "asr": true, "assistantProjectId": "…", "host": "jmr-server" }
+```
+
+Answers whether the switch is on; every other `/api/headless/*` route answers
+`503 {"error":"headless is disabled in settings"}` while it is off. `asr` is
+whether speech-to-text is configured (base URL, model and key).
+
+### `GET /api/headless/projects`
+
+`{"projects":[{"id","name","path","lastActiveAt","assistant"}]}`: the
+unarchived projects, the assistant's first, then most recently active.
+
+### `GET /api/headless/sessions?projectId=`
+
+`{"sessions":[{"id","title","updatedAt","turns","running","live"}]}`: Claude
+Code's transcripts for that project's directory, read from the
+`CLAUDE_CONFIG_DIR` the headless launch profile (and its Claude account) sets,
+else `~/.claude`, newest first, at most 50. `title` is the first thing the
+person said (a leading `[…]` time stamp removed, at most 80 characters),
+`turns` how many things they said. `running` means a headless run is in
+progress on it; `live` (best effort) that its transcript and a panel session in
+the project have both been written in the last two minutes, i.e. somebody is
+probably at a terminal in it. `400` without `projectId`, `404` for an unknown
+project, `409` when the launch profile or its Claude account has been removed.
+
+### `GET /api/headless/sessions/{sid}?projectId=&limit=40`
+
+`{"id","messages":[{"role":"user"|"assistant","text","tools":[{"name","summary"}],"at"}]}`:
+the last `limit` (1..500) messages. Tool results, meta and sidechain lines are
+left out, and one assistant turn's text blocks and tool calls are one message.
+`sid` must be a UUID (`400`); `404` when that project has no such transcript.
+
+### `POST /api/headless/runs`
+
+```json
+{ "projectId": "…", "prompt": "帮我查一下明天上海的天气", "sessionId": "",
+  "model": "opus", "permissionMode": "bypassPermissions",
+  "context": "设备：Even G2 眼镜；输入：语音识别" }
+```
+
+→ `201 {"runId":"r_…","sessionId":"<uuid>","new":true}`. An empty `sessionId`
+starts a new conversation with a server-made UUID (`--session-id`); a UUID
+continues one (`--resume`). `model` and `permissionMode` default from the
+settings and must be in their lists; `prompt` is required and at most 8 KiB,
+`context` at most 2 KiB. The run is
+
+```
+claude -p <prompt> --output-format stream-json --verbose --include-partial-messages
+  (--session-id|--resume) <id> --model <m> --permission-mode <pm>
+  --append-system-prompt <persona + memory snapshot + 当前工作目录：<name> (<path>)；服务器：<host> + context>
+```
+
+in the project's directory, in its own process group, with the panel's
+allowlisted environment (the same list the chat assistant gets: no hook
+variables, nothing of the panel's own secrets) plus the launch profile's and
+its Claude account's variables. `400` for a bad field or a project directory
+that is gone, `404` unknown project, `409` archived project, a session that
+already has a run in progress, or a removed profile/account, `429` past
+`maxConcurrent`, `503` when no `claude` can be found. Audited as
+`headless.run` with the project, model and permission mode; the prompt is
+never recorded.
+
+### `GET /api/headless/runs?projectId=`
+
+`{"runs":[{"runId","sessionId","projectId","state","startedAt","endedAt","prompt"}]}`,
+newest first, `state` one of `running|done|error|stopped`, `prompt` cut to 120
+characters. Finished runs are kept 30 minutes; runs live in the panel's memory
+and a restart forgets them.
+
+### `GET /api/headless/runs/{runId}/events?after=`
+
+`text/event-stream`: the buffered events with an id above `after` (or the
+`Last-Event-ID` header), then live ones, and the stream ends after the
+terminal event. `: ping` every 15 seconds. Each event is `id: <seq>` and one
+`data:` line of JSON with `t`:
+
+- `init` `{"sessionId","model"}`
+- `text` `{"d"}`, a delta of the top-level answer (a subagent's working is
+  not sent)
+- `tool` `{"id","name","summary"}`, summary the call's path, command, query,
+  URL or pattern, at most 80 characters
+- `tool_done` `{"id","ok"}`, `ok` false when the tool reported an error
+- `result` `{"text","isError","costUsd","ms","turns"}`
+- `error` `{"message"}`: the process failed, exited without a result, or ran
+  past `timeoutMinutes`
+- `stopped` `{}`
+
+Exactly one of `result`, `error` and `stopped` ends a run. A run keeps 5,000
+events; past that, text deltas in the older half are merged. `404` for an
+unknown run.
+
+### `DELETE /api/headless/runs/{runId}`
+
+`SIGTERM` to the run's process group, `SIGKILL` three seconds later if
+anything is left; the run ends with `stopped`. `204`, `404` for an unknown run.
+
+### `POST /api/headless/transcribe?prompt=`
+
+The body is raw PCM, signed 16-bit little-endian (`Content-Type: audio/L16;
+rate=16000`, `channels=` optional) or a WAV file (`audio/wav`), at most 4 MiB
+(`413`). PCM is wrapped in a WAV header and posted as multipart to
+`<asr.baseUrl>/audio/transcriptions` with `file`, `model`, `language` and
+`prompt` (the settings' prompt, then `?prompt=`). → `{"text","ms"}`. `415` for
+another type, `503` when speech-to-text is not configured, `502` with the
+upstream's message when it fails.
+
 ## Notifications to somewhere else
 
 ### `GET /api/settings/webhooks`

@@ -27,6 +27,13 @@
 //   - Never --dangerously-skip-permissions, never bypassPermissions, never
 //     Codex's --dangerously-bypass-approvals-and-sandbox.
 //
+// That rule is this package's and stays here. internal/headless (the G2
+// glasses assistant) reuses FindHarness and HarnessEnv but deliberately
+// defaults to bypassPermissions: it is the owner's own personal assistant,
+// driven by the owner's API token, and its whole job is to act -- the owner
+// chose that explicitly. This runner is the opposite case: it reads what
+// agents printed on screens, so it must never be able to act on it.
+//
 // What this package cannot promise, and says so: Codex's `exec` always has a
 // shell inside its read-only sandbox, and both harnesses load the person's
 // own MCP servers from their home unless told not to (Claude Code is told,
@@ -192,6 +199,13 @@ var loginPath = shellPath
 // child too, because Claude Code is a node program and node lives on the
 // same PATH.
 func findHarness(name string) (string, string, error) {
+	return FindHarness(name)
+}
+
+// FindHarness is findHarness for the other headless caller, the G2 glasses
+// assistant in internal/headless: the same service-PATH problem, the same
+// answer, one copy of it.
+func FindHarness(name string) (string, string, error) {
 	if p, err := exec.LookPath(name); err == nil {
 		return p, "", nil
 	}
@@ -320,22 +334,32 @@ func (r *Runner) env() []string {
 	// child that can run a shell (Codex's Ask has one, read-only) could be
 	// talked into printing them. What the harness needs is where it lives,
 	// how to reach the network, and what the launch profile says.
+	return HarnessEnv(r.path, r.cfg.Env)
+}
+
+// HarnessEnv is the environment a headless harness child gets: the panel's
+// allowlisted variables (never the hook variables), PATH replaced by
+// loginPath when that is where the harness was found, then extra -- a launch
+// profile's variables -- last, so a PATH it sets wins. Shared with
+// internal/headless, which runs `claude -p` for the glasses assistant and has
+// exactly the same reasons not to hand the panel's own secrets to a child
+// that can run a shell.
+func HarnessEnv(loginPath string, extra []string) []string {
 	var out []string
 	for _, kv := range os.Environ() {
 		k, _, _ := strings.Cut(kv, "=")
 		if isHookVar(k) || !inheritEnv(k) {
 			continue
 		}
-		if k == "PATH" && r.path != "" {
+		if k == "PATH" && loginPath != "" {
 			continue
 		}
 		out = append(out, kv)
 	}
-	if r.path != "" {
-		out = append(out, "PATH="+r.path)
+	if loginPath != "" {
+		out = append(out, "PATH="+loginPath)
 	}
-	// The launch profile's last, so a PATH it sets wins.
-	return append(out, r.cfg.Env...)
+	return append(out, extra...)
 }
 
 // inheritEnv is the list of variables a harness child gets from the panel.

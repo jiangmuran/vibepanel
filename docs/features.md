@@ -430,6 +430,41 @@ knows, and *Reset to defaults* puts the table back.
 
 Nothing here is a group: every conversation is one person, one bot.
 
+## A personal assistant for the G2 glasses
+
+The Even G2 glasses can talk to a personal assistant that lives on this
+machine: each question is a `claude -p` run started over HTTP with an API
+token, and the answer streams back to the glasses as it is written. It is set
+up under **Settings → Sessions → Headless assistant**, and it is off until you
+switch it on there.
+
+**The workspace.** Switching it on creates a directory (by default
+`~/vibeagent-assistant`) and a project named 助理 on it. The directory holds
+the assistant's memory, `memories/USER.md` and `memories/MEMORY.md`, which it
+edits itself when it learns something worth keeping and which are read into its
+instructions when a conversation starts; its skills, in `.claude/skills/`,
+which Claude Code loads by itself; and `notes/` for scratch work. Nothing
+already there is ever overwritten. From the glasses you can also point it at
+any other project to have it work there.
+
+**What it is allowed to do.** By default a run asks for no permission at all
+(`bypassPermissions`): the assistant's job is to do things, and that was the
+deliberate choice. It means the API token you give the glasses is full control
+of this machine as your user, so make it a token of its own, under
+**Account → API tokens**, which you can revoke on its own. The settings page
+also takes the persona (its system prompt; empty means the built-in one), the
+models the glasses may pick from, the launch profile whose environment and
+Claude account it runs with, how many runs at once and for how long, and the
+web origins the glasses app is served from, which are the only pages allowed to
+call it.
+
+**Speech.** The glasses can send their microphone's audio to the panel, which
+passes it to an OpenAI-compatible transcription service (SiliconFlow by
+default) with the key you store on the same page. The key is sealed at rest and
+never shown again.
+
+The routes are in `docs/api.md`, "Headless assistant".
+
 ## The first run
 
 A panel with no account prints a one-time token; you paste it, choose a

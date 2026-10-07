@@ -486,6 +486,11 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"project.archived_idle": true,
 		"project.restored":      true,
 		"project.archive_idle":  true,
+		// The headless assistant: a run started (project, model, permission
+		// mode -- never the prompt) and its settings changed. One prefix, so
+		// "what did the glasses do" is one GROUP BY.
+		"headless.run":      true,
+		"headless.settings": true,
 	}
 
 	files, err := filepath.Glob("*.go")

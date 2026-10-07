@@ -90,6 +90,12 @@ var openRoutes = map[string]string{
 	"/pages/{pageID}/admin/": "the same route, with its slash",
 	"/page-admin/{grant}":    "an unknown grant is a static gone page; a live grant is the capability",
 	"/page-admin/{grant}/*":  "the same route, with a path under it",
+	// The headless assistant's CORS preflight, and only OPTIONS is registered
+	// on this pattern: a preflight carries no credential by design and this
+	// answers headers and a 204, nothing else. Every headless GET, POST and
+	// DELETE is its own route behind RequireAuth, and the walk checks each.
+	// TestAHeadlessPreflightAnswersOnlyHeaders stands over it.
+	"/api/headless/*": "a CORS preflight; headers and 204, no data; see headless.go",
 }
 
 // `/api/share/{token}/v1/snapshot` is deliberately NOT in the list above, and the

@@ -24748,3 +24748,53 @@ Not bugs, with the reason:
   terminal's layout is a stable WebGL canvas, the read is cheap against it, and
   a cache with its own invalidation is more to get wrong than the thrash is to
   pay.
+
+## 2026-10-07 — A headless assistant for the G2 glasses
+
+The Even G2 glasses wanted a personal assistant rather than a terminal: say a
+question, get an answer on a 576×288 screen, with something on the server able
+to search, run scripts and remember. That is `claude -p` started over HTTP, so
+the panel grew `/api/headless/*` (contract: `docs/headless-api.md` in the
+even_vibeagent repo; here `docs/api.md`, "Headless assistant") and
+`internal/headless`.
+
+Decisions worth finding later:
+
+- **bypassPermissions by default, on purpose.** The chat assistant's rule --
+  never bypass -- exists because that runner reads what agents printed on
+  screens. This one is the owner's own assistant, started by the owner's token,
+  and its whole job is to act; asking for permission on a pair of glasses has
+  nobody to answer. The owner chose it. The consequence is said everywhere it
+  matters: the token is full authority, so it gets its own token, and the
+  settings page says so beside the switch. `assistant.go`'s comment now names
+  the difference so nobody "fixes" one into the other.
+- **Shared, not copied.** `assistant.FindHarness` (the service-PATH problem)
+  and `assistant.HarnessEnv` (the env allowlist without hook variables) are
+  exported and reused. The launch environment is `store.LaunchEnv(profile,
+  accountEnv)` with no `hookEnv`: a run is not a session.
+- **CORS is an exact list, and the cookie does not cross it.** The preflight is
+  `OPTIONS /api/headless/*` outside auth; the client routes are their own group
+  with the CORS middleware ahead of `RequireAuth`, so a 401 reaches the page as
+  a readable answer. That middleware deletes the Cookie header from any request
+  whose Origin is not the panel's own: an allowed origin on another port of
+  this host is same-site, and without that it could ride the owner's session
+  through a route that runs commands. The allowed origins pass the
+  cross-origin-write check for `/api/headless/*` only, tested by a write to
+  `/api/projects` from the same origin being refused.
+- **Runs are in memory.** A run's events (normalised from stream-json: init,
+  top-level text deltas, tool, tool_done, result/error/stopped) are buffered for
+  replay with `after=` and kept 30 minutes after the end; a restart forgets
+  them, and the transcript in `~/.claude/projects` is the durable record, which
+  `GET /api/headless/sessions` reads. The process group is the unit: stop and
+  timeout signal `-pgid`, and `WaitDelay` stops a backgrounded shell holding
+  stdout from wedging `Wait`.
+- **Transcript directory names were checked, not guessed.** `/home/jmr/.local/
+  share/vibepanel/assistant` is `-home-jmr--local-share-vibepanel-assistant` in
+  a real `~/.claude/projects`. Claude Code replaces over a UTF-16 string, so a
+  Chinese character is one dash, not three.
+
+Smoke-tested against a second panel on a throwaway data directory and tmux
+socket, with a real `claude -p --model haiku`: a tool call and its result
+arrived as events, `--resume` continued the conversation, the session list and
+history read it back, and DELETE ended a `sleep 60` with `stopped` and nothing
+left running.
