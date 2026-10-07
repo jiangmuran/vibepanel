@@ -69,11 +69,14 @@
         var t = localStorage.getItem('vibepanel.theme')
         // 'light', 'dark', or a plugin theme's 'ext-<id>' (theme.ts owns the
         // shape); 'system' sets nothing.
-        if (t === 'light' || t === 'dark' || /^ext-[a-z0-9-]+$/.test(t)) document.documentElement.dataset.theme = t
+        // ?safe=1 is the way back from a plugin that broke the page
+        // (docs/plugins.md §7): no plugin theme and no module for this tab.
+        var safe = /[?&]safe=1(&|$)/.test(location.search)
+        if (t === 'light' || t === 'dark' || (!safe && /^ext-[a-z0-9-]+$/.test(t))) document.documentElement.dataset.theme = t
       } catch (e) { /* private mode: fall through to the system preference */ }
     </script>
-    <script type="module" crossorigin src="/assets/index-AdpLQ3rX.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-BrzIWg4H.css">
+    <script type="module" crossorigin src="/assets/index-DfkGrBaQ.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-Mv3gncvk.css">
   </head>
   <body>
     <!-- What is on screen before any of this has loaded.

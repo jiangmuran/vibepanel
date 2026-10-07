@@ -544,6 +544,10 @@ export function Sidebar(props: SidebarProps) {
                   {!isLive && !s.exited && (
                     <span className="shrink-0 text-vp-xs text-ink-2">idle</span>
                   )}
+                  {/* Where an unsandboxed plugin may draw beside a session
+                      (docs/plugins.md §7, host.slots.add): a placeholder the
+                      host runtime fills, empty and sizeless otherwise. */}
+                  <span data-host-slot="sidebar.sessionRow.trailing" data-session={s.id} className="contents" />
                   {/* Always visible, unlike pin and kill: a dead session is a
                       thing to act on, not an affordance to discover on hover —
                       and hover does not exist on the phone. */}

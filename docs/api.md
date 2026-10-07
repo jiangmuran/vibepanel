@@ -2038,6 +2038,22 @@ stop; audited `plugin.process_restarted`. The supervisor restarts a failing
 process with backoff from a second to a minute and stops it after ten
 failures in ten minutes, audited `plugin.crashed`.
 
+### `GET /api/settings/plugin-unsandboxed`
+### `PUT /api/settings/plugin-unsandboxed`
+
+The panel-wide switch for rung-4 modules (`docs/plugins.md` §7): `{"enabled":
+bool}`, off by default. Nothing under `/plugin-code/` is served while it is
+off. Audited `plugins.unsandboxed`.
+
+### `GET /api/settings/plugin-modules`
+
+The modules the panel's page loads: `[{plugin, url, name, tested, within}]`
+-- empty while the switch is off, so a page that never asks about the switch
+loads nothing. `within` is whether this panel is inside the range the
+module says it was tested on. The files themselves are at
+`/plugin-code/{pluginID}/<file>`, outside the API, under the session and
+the switch, from the installed version only and never from a draft.
+
 ### `GET /api/plugin/{cred}/v1/resources`
 ### `GET /api/plugin/{cred}/v1/usage`
 ### `GET /api/plugin/{cred}/v1/projects/{h}/git`

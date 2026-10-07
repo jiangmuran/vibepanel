@@ -104,6 +104,7 @@ writeFileSync(join(PLUGIN_DIR, 'plugin.json'), JSON.stringify({
   data: { events: { type: 'counter' } },
   server: { entry: 'server.js', on: ['session.created', 'session.state'], routes: { 'GET /digest': 'digest' } },
   process: { command: ['sh', 'bot.sh'], capabilities: ['read:panel'] },
+  unsandboxed: { entry: 'main.mjs', tested: '0.0.0 - 99.0.x' },
   settings: { fields: [
     { key: 'quiet', type: 'bool', default: true, label: { en: 'Quiet hours', 'zh-CN': '安静时段' } },
     { key: 'channel', type: 'enum', values: ['slack', 'email'], default: 'slack', label: { en: 'Channel', 'zh-CN': '渠道' } },
@@ -171,6 +172,13 @@ writeFileSync(join(PLUGIN_DIR, 'pane.html'), `<!doctype html>
 writeFileSync(join(PLUGIN_DIR, 'server.js'), `
 function onEvent(ev, ctx) { ctx.data.increment('events'); ctx.log('event ' + ev.name) }
 function digest(req, ctx) { return { sessions: ctx.panel.view().sessions.length, events: ctx.data.get('events') } }
+`)
+writeFileSync(join(PLUGIN_DIR, 'main.mjs'), `export default function (host) {
+  host.css('[data-testid="plugins-page"], [data-testid="right-panel"] { outline: 2px solid var(--vp-accent) }')
+  host.slots.add('header.item', () => { const b = document.createElement('span'); b.dataset.testid = 'mod-header'; b.textContent = 'mod v' + host.v; return b })
+  host.slots.add('sidebar.sessionRow.trailing', (ctx) => { const b = document.createElement('span'); b.dataset.testid = 'mod-row'; b.textContent = '★'; return b })
+  host.state.subscribe((s) => { document.documentElement.dataset.modSessions = String(s.sessions.length) })
+}
 `)
 writeFileSync(join(PLUGIN_DIR, 'bot.sh'), 'i=0; while :; do i=$((i+1)); echo "tick $i"; sleep 1; done\n')
 writeFileSync(join(PLUGIN_DIR, 'section.html'), `<!doctype html><html><head><link rel="stylesheet" href="vibepanel-ui.css"><script src="vibepanel-plugin.js"></script></head>
@@ -248,7 +256,7 @@ try {
   // among the capabilities, and the button says "Install and grant".
   const capCodes = await screen.locator('[data-testid="plugin-screen-cap"] li').evaluateAll((els) => els.map((e) => e.dataset.code))
   if (capCodes[0] !== 'sessions:input') note('fail', 'screen', `the danger line is not first: ${capCodes}`)
-  for (const heading of ['what', 'rung', 'cap', 'runs', 'keeps']) {
+  for (const heading of ['what', 'rung', 'cap', 'runs', 'keeps', 'danger']) {
     if (!(await screen.getByTestId(`plugin-screen-${heading}`).isVisible())) note('fail', 'screen', `no ${heading} section`)
   }
   const button = screen.getByTestId('plugin-screen-confirm')
@@ -485,6 +493,33 @@ try {
   if (!(await until(async () => ((await out.textContent().catch(() => '')) ?? '').includes('tick'), 8000))) note('fail', 'process', 'the process output did not reach the card')
   else pass('process', 'the supervised process runs and its output is on the card')
   await page.screenshot({ path: join(SHOTS, 'process.png'), fullPage: true })
+
+  // Rung 4: nothing loads until the switch is on; then the module draws into
+  // the header and the rows and sees the state; ?safe=1 loads none of it.
+  await page.goto(`${BASE}/`)
+  await until(() => page.getByTestId('panel-tab-ext:paper:0').isVisible(), 8000)
+  await sleep(500)
+  if (await page.getByTestId('mod-header').isVisible().catch(() => false)) note('fail', 'module', 'a module loaded with the switch off')
+  const sw = await api('GET', '/api/settings/plugin-unsandboxed')
+  if (sw.body?.enabled !== false) note('fail', 'module', `the switch defaults to ${JSON.stringify(sw.body)}`)
+  await page.goto(`${BASE}/plugins`)
+  await until(() => page.getByTestId('plugins-unsandboxed-switch').isVisible(), 5000)
+  await page.getByTestId('plugins-unsandboxed-switch').check()
+  await until(async () => (await api('GET', '/api/settings/plugin-unsandboxed')).body?.enabled === true, 5000)
+  await page.goto(`${BASE}/`)
+  if (!(await until(() => page.getByTestId('mod-header').isVisible(), 10000))) note('fail', 'module', 'the module did not draw into the header slot')
+  if (!(await until(() => page.getByTestId('mod-row').first().isVisible(), 5000))) note('fail', 'module', 'the module did not draw into a session row')
+  const modSessions = await page.evaluate(() => document.documentElement.dataset.modSessions)
+  if (!modSessions || Number(modSessions) < 1) note('fail', 'module', `host.state did not reach the module: ${modSessions}`)
+  else pass('module', 'the switch on, the module draws into two slots and sees the state')
+  await page.screenshot({ path: join(SHOTS, 'module.png') })
+  await page.goto(`${BASE}/?safe=1`)
+  await until(() => page.getByTestId('panel-tab-ext:paper:0').isVisible(), 8000)
+  await sleep(800)
+  if (await page.getByTestId('mod-header').isVisible().catch(() => false)) note('fail', 'module', 'safe mode loaded the module')
+  else pass('module', 'safe mode loads no module')
+  await page.getByTestId('plugins-unsandboxed-switch').isVisible().catch(() => false)
+  await api('PUT', '/api/settings/plugin-unsandboxed', { enabled: false })
 
   // Dev mode: the draft directory is what runs, and a change reloads.
   await page.goto(`${BASE}/plugins`)

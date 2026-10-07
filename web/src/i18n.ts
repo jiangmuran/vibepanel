@@ -1960,6 +1960,12 @@ const DICT = {
   'plg.proc.restart': { zh: '重启进程', en: 'Restart process' },
   'plg.proc.output': { zh: '输出', en: 'Output' },
   'plg.proc.noOutput': { zh: '还没有输出。', en: 'Nothing printed yet.' },
+  'plg.unsandboxed.title': { zh: '允许无沙箱插件', en: 'Allow unsandboxed plugins' },
+  'plg.unsandboxed.why': { zh: '它们以你的身份运行在面板页面上，面板无法限制。', en: 'They run on the panel\'s page as you; the panel cannot limit them.' },
+  'plg.unsandboxed.back': { zh: '退路：地址加 ?safe=1，或 plugin disable --all', en: 'The way back: ?safe=1 on the address, or vibepanel plugin disable --all' },
+  'plg.safe': { zh: '安全模式：这一页没有加载插件主题和模块。', en: 'Safe mode: no plugin themes or modules were loaded on this page.' },
+  'plg.module.failed': { zh: '插件 {name} 的模块没有加载：{why}', en: 'The module of {name} did not load: {why}' },
+  'plg.module.outside': { zh: '插件 {name} 在 {tested} 上测试过，当前面板不在范围内。', en: '{name} was tested on {tested}; this panel is outside it.' },
 } satisfies Record<string, Entry>
 
 export type Key = keyof typeof DICT

@@ -7,6 +7,8 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { ChatPage } from './components/ChatPage'
 import { PluginsPage } from './components/PluginsPage'
 import { PluginPageRoot } from './components/plugins/slots'
+import { loadModules, safeMode } from './components/plugins/hostRuntime'
+import { showToast } from './components/toasts'
 import { SharingPage } from './components/SharingPage'
 import { routeFor } from './routes'
 import { watchSystemTheme } from './components/theme'
@@ -65,3 +67,16 @@ createRoot(root).render(
     )}
   </StrictMode>,
 )
+
+// Rung-4 modules (docs/plugins.md §7): on the panel's own page only, after
+// the first render, never under ?safe=1 -- which is the way back from a
+// module that broke the page, and says so once it has loaded without them.
+if (route.kind === 'panel') {
+  if (safeMode()) {
+    window.addEventListener('load', () => showToast({ kind: 'info', key: 'plg.safe' }))
+  } else {
+    window.addEventListener('load', () => {
+      void loadModules()
+    })
+  }
+}

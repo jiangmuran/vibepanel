@@ -36,7 +36,7 @@ const pluginUsage = `usage: vibepanel plugin <command> [flags] [dir|file.zip]
   add       store dir or a zip as a version; nothing runs until it is installed
   install   add, then install: --grant cap,cap (default: nothing) [--version N] [--enable]
   enable    turn an installed plugin on: enable <id>
-  disable   turn one off: disable <id>
+  disable   turn one off: disable <id>; --all turns every plugin and the module switch off
   remove    delete a plugin, its versions, grants, settings and secrets: remove <id>
   export    write a plugin as a zip: export <id> [--version N] [-o file.zip]
   caps      print the capability table, with the sentence each puts on the screen`
@@ -317,8 +317,10 @@ func orDash(s string) string {
 }
 
 func pluginSwitch(args []string, on bool) error {
-	if len(args) != 1 {
-		return errors.New("one plugin id")
+	fs := flag.NewFlagSet("plugin switch", flag.ContinueOnError)
+	all := fs.Bool("all", false, "every plugin (disable only): the way back when a module broke the page")
+	if err := fs.Parse(args); err != nil {
+		return err
 	}
 	ctx := context.Background()
 	_, db, err := openDB(ctx)
@@ -326,7 +328,33 @@ func pluginSwitch(args []string, on bool) error {
 		return err
 	}
 	defer db.Close()
-	p, err := db.PluginByID(ctx, args[0])
+	if *all {
+		if on {
+			return errors.New("--all is for disable: enabling everything at once is not a thing to do blind")
+		}
+		list, err := db.ListPlugins(ctx)
+		if err != nil {
+			return err
+		}
+		for _, p := range list {
+			if err := db.SetPluginEnabled(ctx, p.ID, false); err != nil {
+				return err
+			}
+			_ = db.Audit(ctx, store.AuditEntry{At: time.Now().Unix(), Event: "plugin.disabled", Username: "cli", Detail: p.ID + " (--all)"})
+			fmt.Printf("disabled %s\n", p.ID)
+		}
+		// And the module switch, which is what --all exists for.
+		if err := db.SetSetting(ctx, "plugins.unsandboxed", "0"); err != nil {
+			return err
+		}
+		_ = db.Audit(ctx, store.AuditEntry{At: time.Now().Unix(), Event: "plugins.unsandboxed", Username: "cli", Detail: "off (--all)"})
+		fmt.Println("unsandboxed plugins: off. Restart the panel, or wait for its next poll, for running services to stop.")
+		return nil
+	}
+	if fs.NArg() != 1 {
+		return errors.New("one plugin id, or --all")
+	}
+	p, err := db.PluginByID(ctx, fs.Arg(0))
 	if err != nil {
 		return err
 	}

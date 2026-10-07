@@ -521,6 +521,7 @@ func (s *Server) Routes() http.Handler {
 			s.registerPluginDevRoutes(r)
 			s.registerPluginServiceRoutes(r)
 			s.registerPluginProcessRoutes(r)
+			s.registerPluginModuleRoutes(r)
 			// A plugin's own routes for the owner: /api/ext/{id}/…, under the
 			// session like everything else here.
 			s.registerPluginExtRoutes(r)
@@ -584,6 +585,8 @@ func (s *Server) Routes() http.Handler {
 	// A plugin frame's files: the grant serves them, sandboxed. Before the
 	// catch-all for the same reason the share routes are.
 	s.registerPluginFrameRoutes(r)
+	// A rung-4 module's files, under the session and the panel-wide switch.
+	s.registerPluginCodeRoute(r)
 
 	r.Handle("/*", webui.Handler(s.Cfg.StaticDir))
 	return r

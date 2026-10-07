@@ -112,7 +112,7 @@ export function InstallScreen({
                   const text = safeText(textIn(l.text, lang))
                   if (heading === 'danger') {
                     return (
-                      <li key={i} className="rounded-vp border-l-4 px-3 py-2 text-vp-base leading-relaxed" style={{ borderColor: 'var(--vp-state-crashed)', background: 'color-mix(in srgb, var(--vp-state-crashed) 10%, transparent)' }} data-testid="plugin-screen-danger">
+                      <li key={i} className="rounded-vp border-l-4 px-3 py-2 text-vp-base leading-relaxed" style={{ borderColor: 'var(--vp-state-crashed)', background: 'color-mix(in srgb, var(--vp-state-crashed) 10%, transparent)' }} data-testid="plugin-screen-danger-text">
                         {text}
                       </li>
                     )

@@ -73,6 +73,7 @@ import { t, useLang } from './i18n'
 import { PluginHeaderItems, usePlugins } from './components/plugins/slots'
 import { extTabs as pluginTabs } from './components/plugins/host'
 import { onOpen as onPluginOpen } from './components/plugins/open'
+import { publishHostState } from './components/plugins/hostRuntime'
 import { withKnown } from './components/panes'
 import { PANEL_TABS } from './components/chrome'
 
@@ -414,6 +415,8 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   // snapshot, so the render that sees the count sees the sessions.
   const [snapshots, setSnapshots] = useState(0)
   const applyState = useCallback((next: PanelState) => {
+    // For rung-4 modules' host.state.subscribe (docs/plugins.md §7).
+    publishHostState(next)
     setSnapshots((n) => n + 1)
     setState(next)
     // Every snapshot, because the transition it looks for is only visible by
@@ -1459,6 +1462,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
               />
             )}
             <PluginHeaderItems />
+            <span data-host-slot="header.item" className="contents" />
             <button
               type="button"
               data-testid="settings-open"

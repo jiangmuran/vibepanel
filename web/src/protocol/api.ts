@@ -60,6 +60,7 @@ import type {
   ResourcePolicy,
   ResourcesView,
   PluginDetail,
+  PluginModule,
   PluginProcessStatus,
   PluginRow,
   PluginSettings,
@@ -420,6 +421,10 @@ export const api = {
     request<{ lines: SharePageServerLogLine[]; dropped: number }>(
       `/api/settings/plugins/${encodeURIComponent(id)}/server/log`,
     ),
+  unsandboxed: () => request<{ enabled: boolean }>('/api/settings/plugin-unsandboxed'),
+  setUnsandboxed: (enabled: boolean) =>
+    request<{ enabled: boolean }>('/api/settings/plugin-unsandboxed', { method: 'PUT', body: JSON.stringify({ enabled }) }),
+  pluginModules: () => request<PluginModule[]>('/api/settings/plugin-modules'),
   pluginProcess: (id: string) =>
     request<PluginProcessStatus>(`/api/settings/plugins/${encodeURIComponent(id)}/process`),
   restartPluginProcess: (id: string) =>

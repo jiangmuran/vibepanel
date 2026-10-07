@@ -405,6 +405,20 @@ panel stops. Where the sessions run in a scope of their own, the process
 is placed beside them, so a plugin that leaks is measured with the
 sessions rather than with the panel.
 
+**An unsandboxed module.** The one rung the panel cannot limit: a plugin's
+`main.mjs` loaded on the panel's own page as you, for changing how a piece
+of the panel behaves rather than adding beside it. It is off until you turn
+on *Allow unsandboxed plugins* on the plugins page, where the red sentence
+is; the install screen carries the same paragraph and the button says *Run
+this as you*. A module gets a small `host` object -- a stylesheet to inject,
+two places to draw into (beside a session's name, in the header), the live
+state, the panel's API, a toast, a way to open a session -- and may import
+anything else, which is the point and the risk. The card says which panel
+versions it was tested on and goes amber outside them. Two ways back that
+need no working page: `?safe=1` on the address loads no plugin theme and no
+module for that tab, and `vibepanel plugin disable --all` turns every plugin
+and the switch off from a shell.
+
 **Dev mode.** A plugin read from a directory has a *Dev* button on its card:
 on, the directory's `plugin.json` and files are what runs, under the grants
 you already gave that id, and a change to a file reloads every one of its

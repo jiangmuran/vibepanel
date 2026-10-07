@@ -25065,3 +25065,48 @@ started without it -- `sh: cannot open cmd.sh`, ten times, stopped. The
 allowlist gained `.sh`, `.py`, `.toml`, `.yaml` and `.yml`, all sniffed as
 text; the lesson is the one the design already states for themes, that an
 install screen should say what was left out, and the `ignored` list does.
+
+## 2026-10-07 — Plugins, step 4: the module, loud and with two ways back
+
+Rung 4 of `docs/plugins.md`: a plugin's `main.mjs` on the panel's own origin,
+as the owner. The design refused to pretend this can be bounded, and the
+build keeps to that: what was built bounds the blast radius and says the
+rest out loud.
+
+What exists:
+
+- **Three gates, none of them a capability.** `/plugin-code/{id}/<file>` is
+  served only while the panel-wide switch (`plugins.unsandboxed`, a setting,
+  off by default, audited) is on, only for a plugin that is installed and
+  enabled, only under the owner's session -- and only from the installed
+  version, never from a draft, which a test pins by turning dev mode on,
+  changing the draft and reading the installed bytes back. The list the SPA
+  loads from (`/api/settings/plugin-modules`) is empty while the switch is
+  off, so a page that never asks about the switch loads nothing.
+- **The host object** (`hostRuntime.ts`): `v`, `plugin`, `api`, `lang`,
+  `theme`, `state.subscribe`/`current`, `slots.add` for two placeholders the
+  SPA renders (`sidebar.sessionRow.trailing`, `header.item`), `css`, a
+  prefixed `i18n`, `toast`, `open`. The slots are DOM placeholders filled by
+  a MutationObserver rather than by React, so the module's element is its
+  own and React never reconciles inside it; every renderer runs in a
+  try/catch, so a throw is one empty box. `host.override` is not built:
+  `host.css` turned out to cover what "change how a piece looks" meant, and
+  a list of replaceable components is a contract to write once there is a
+  plugin asking for it.
+- **The one dynamic `import()` in the codebase**, in `loadModules`, after
+  the SPA's own render, on the panel's page only. A module that fails to
+  import is a toast naming it; one outside its `tested` range loads with a
+  toast saying so.
+- **Two ways back that need no working page.** `?safe=1` is read by the
+  pre-paint script (no plugin theme) and by `main.tsx` (no module), and the
+  page says it is in safe mode once it has loaded; `vibepanel plugin disable
+  --all` turns every plugin and the switch off from a shell. The switch's
+  strip on the plugins page carries the red sentence and names both.
+- `plugins-check`: nothing loads with the switch off; on, the module draws
+  into both slots and sees the state; `?safe=1` loads none of it.
+
+Two small things the browser check caught: the install screen's danger
+paragraph and its section shared a test id, which is a strict-mode
+violation in Playwright and a hint that the two were one thing to the eye;
+and the earlier assertion that the plugin page shows "1 sessions" was true
+only until the service check started a second one.

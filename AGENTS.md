@@ -268,7 +268,13 @@ Each of these exists because the alternative broke something real.
    process declared; restarted with backoff and stopped at ten failures in
    ten minutes; moved into a `p-<id>` leaf of the sessions' pool where one
    exists (red line 9, kept on the right side); ended at shutdown before the
-   panel goes. The module comes next (`docs/plugins.md` §13).
+   panel goes. Rung 4, `internal/httpapi/pluginmodule.go` and
+   `web/src/components/plugins/hostRuntime.ts`: a module is served only
+   behind the panel-wide switch (`plugins.unsandboxed`, off by default,
+   audited), only from an installed version and never a draft, only under
+   the owner's session; the SPA loads it after its own render, never under
+   `?safe=1`, and `vibepanel plugin disable --all` is the way back from a
+   shell. `host.v` is the only contract it is given.
 
 ## Conventions
 

@@ -42,6 +42,7 @@ export function Plugins() {
   const [dir, setDir] = useState('')
   const [busy, setBusy] = useState(false)
   const [screenFor, setScreenFor] = useState<string | null>(null)
+  const [unsandboxed, setUnsandboxed] = useState<boolean | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
 
   const fail = useCallback((e: unknown) => setError(e instanceof Error ? e.message : String(e)), [])
@@ -57,6 +58,10 @@ export function Plugins() {
       fail(e)
     }
   }, [fail])
+
+  useEffect(() => {
+    api.unsandboxed().then((v) => setUnsandboxed(v.enabled), () => {})
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -183,6 +188,40 @@ export function Plugins() {
           <button type="button" disabled={busy || !dir.trim()} onClick={() => void addDir()} data-testid="plugin-dir-read" className="vp-outline text-vp-base disabled:opacity-40">
             {t('plg.read')}
           </button>
+        </div>
+      )}
+
+      {/* The panel-wide switch for rung-4 modules (docs/plugins.md §7): one
+          strip, the red sentence beside it, and the way back in words. Only
+          drawn when some plugin has a module, or the switch is already on:
+          a control for a thing nobody has is a question nobody asked. */}
+      {unsandboxed !== null && (unsandboxed || plugins.some((p) => p.rungs.unsandboxed)) && (
+        <div className="mb-4 flex flex-col gap-2 rounded-vp border px-3 py-2 @3xl:flex-row @3xl:items-center @3xl:gap-4" style={{ borderColor: 'color-mix(in srgb, var(--vp-state-crashed) 50%, transparent)' }} data-testid="plugins-unsandboxed">
+          <label className="flex items-center gap-2 text-vp-base text-ink">
+            <input
+              type="checkbox"
+              data-testid="plugins-unsandboxed-switch"
+              checked={unsandboxed}
+              onChange={(e) => {
+                const next = e.target.checked
+                setUnsandboxed(next)
+                api.setUnsandboxed(next).then(
+                  (v) => {
+                    setUnsandboxed(v.enabled)
+                    void refresh()
+                  },
+                  (err: unknown) => {
+                    setUnsandboxed(!next)
+                    fail(err)
+                  },
+                )
+              }}
+              className="accent-[var(--vp-state-crashed)]"
+            />
+            <span className="font-medium">{t('plg.unsandboxed.title')}</span>
+          </label>
+          <span className="text-vp-sm" style={{ color: 'var(--vp-state-crashed)' }}>{t('plg.unsandboxed.why')}</span>
+          <code className="font-mono text-vp-xs text-ink-3">{t('plg.unsandboxed.back')}</code>
         </div>
       )}
 

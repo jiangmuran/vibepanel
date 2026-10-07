@@ -2356,3 +2356,12 @@ export interface PluginProcessStatus {
   command: string
   onPath: boolean
 }
+
+/** A rung-4 module the panel's page loads (docs/plugins.md §7). */
+export interface PluginModule {
+  plugin: string
+  url: string
+  name: PluginText
+  tested: string
+  within: boolean
+}
