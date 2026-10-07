@@ -70,6 +70,7 @@ export function PanesHarness() {
         socket={{ onPanelChange: () => () => {} } as unknown as PanelSocket}
         layout={layout}
         onLayout={setLayout}
+      extTabs={[]}
         onRefocus={() => {}}
         width={width}
         onWidthChange={setWidth}

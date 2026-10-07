@@ -27,10 +27,28 @@ type PageDatum struct {
 	UpdatedBy string
 }
 
+// dataTable is one of the two tables with this shape: a page's data and a
+// plugin's. The SQL is written once and the owner column is the difference.
+type dataTable struct{ name, owner string }
+
+var (
+	pageDataTable   = dataTable{"share_page_data", "page_id"}
+	pluginDataTable = dataTable{"plugin_data", "plugin_id"}
+)
+
 // PageData reads every stored key of a page's namespace.
 func (d *DB) PageData(ctx context.Context, pageID, ns string) (map[string]PageDatum, error) {
+	return d.readData(ctx, pageDataTable, pageID, ns)
+}
+
+// PluginData reads every stored key of a plugin's namespace.
+func (d *DB) PluginData(ctx context.Context, pluginID, ns string) (map[string]PageDatum, error) {
+	return d.readData(ctx, pluginDataTable, pluginID, ns)
+}
+
+func (d *DB) readData(ctx context.Context, t dataTable, owner, ns string) (map[string]PageDatum, error) {
 	rows, err := d.sql.QueryContext(ctx,
-		`SELECT key, value, updated_at, updated_by FROM share_page_data WHERE page_id = ? AND ns = ?`, pageID, ns)
+		`SELECT key, value, updated_at, updated_by FROM `+t.name+` WHERE `+t.owner+` = ? AND ns = ?`, owner, ns)
 	if err != nil {
 		return nil, fmt.Errorf("store: page data: %w", err)
 	}
@@ -67,6 +85,18 @@ var ErrPageDataTooManyKeys = errors.New("store: page data would have too many ke
 // what the namespace holds afterwards.
 func (d *DB) WritePageData(ctx context.Context, pageID, ns string, writes []PageDataWrite,
 	by string, maxBytes, maxKeys int) error {
+	return d.writeData(ctx, pageDataTable, pageID, ns, writes, by, maxBytes, maxKeys)
+}
+
+// WritePluginData is WritePageData for a plugin's own data.
+func (d *DB) WritePluginData(ctx context.Context, pluginID, ns string, writes []PageDataWrite,
+	by string, maxBytes, maxKeys int) error {
+	return d.writeData(ctx, pluginDataTable, pluginID, ns, writes, by, maxBytes, maxKeys)
+}
+
+func (d *DB) writeData(ctx context.Context, t dataTable, owner, ns string, writes []PageDataWrite,
+	by string, maxBytes, maxKeys int) error {
+	pageID := owner
 	if !ValidPageDataNamespace(ns) {
 		return fmt.Errorf("store: unknown page data namespace %q", ns)
 	}
@@ -79,15 +109,15 @@ func (d *DB) WritePageData(ctx context.Context, pageID, ns string, writes []Page
 	for _, w := range writes {
 		if w.Value == nil {
 			if _, err := tx.ExecContext(ctx,
-				`DELETE FROM share_page_data WHERE page_id = ? AND ns = ? AND key = ?`, pageID, ns, w.Key); err != nil {
+				`DELETE FROM `+t.name+` WHERE `+t.owner+` = ? AND ns = ? AND key = ?`, pageID, ns, w.Key); err != nil {
 				return fmt.Errorf("store: delete page data: %w", err)
 			}
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO share_page_data (page_id, ns, key, value, updated_at, updated_by)
+			INSERT INTO `+t.name+` (`+t.owner+`, ns, key, value, updated_at, updated_by)
 			VALUES (?, ?, ?, ?, ?, ?)
-			ON CONFLICT (page_id, ns, key) DO UPDATE SET
+			ON CONFLICT (`+t.owner+`, ns, key) DO UPDATE SET
 			    value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
 			pageID, ns, w.Key, string(w.Value), n, by); err != nil {
 			if isForeignKey(err) {
@@ -98,7 +128,7 @@ func (d *DB) WritePageData(ctx context.Context, pageID, ns string, writes []Page
 	}
 	var total, keys int
 	if err := tx.QueryRowContext(ctx,
-		`SELECT COALESCE(SUM(LENGTH(CAST(value AS BLOB)) + LENGTH(CAST(key AS BLOB))), 0), COUNT(*) FROM share_page_data WHERE page_id = ? AND ns = ?`,
+		`SELECT COALESCE(SUM(LENGTH(CAST(value AS BLOB)) + LENGTH(CAST(key AS BLOB))), 0), COUNT(*) FROM `+t.name+` WHERE `+t.owner+` = ? AND ns = ?`,
 		pageID, ns).Scan(&total, &keys); err != nil {
 		return fmt.Errorf("store: size page data: %w", err)
 	}
@@ -116,8 +146,17 @@ func (d *DB) WritePageData(ctx context.Context, pageID, ns string, writes []Page
 
 // ClearPageData deletes every key of a namespace.
 func (d *DB) ClearPageData(ctx context.Context, pageID, ns string) error {
+	return d.clearData(ctx, pageDataTable, pageID, ns)
+}
+
+// ClearPluginData deletes every key of a plugin's namespace.
+func (d *DB) ClearPluginData(ctx context.Context, pluginID, ns string) error {
+	return d.clearData(ctx, pluginDataTable, pluginID, ns)
+}
+
+func (d *DB) clearData(ctx context.Context, t dataTable, owner, ns string) error {
 	if _, err := d.sql.ExecContext(ctx,
-		`DELETE FROM share_page_data WHERE page_id = ? AND ns = ?`, pageID, ns); err != nil {
+		`DELETE FROM `+t.name+` WHERE `+t.owner+` = ? AND ns = ?`, owner, ns); err != nil {
 		return fmt.Errorf("store: clear page data: %w", err)
 	}
 	return nil

@@ -502,9 +502,12 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"plugin.settings_changed":    true,
 		"plugin.secret_set":          true,
 		"plugin.secret_deleted":      true,
-		"chat.channel":               true,
-		"chat.assistant":             true,
-		"chat.peer":                  true,
+		// Dev mode switched; a frame credential presented after it ended.
+		"plugin.dev":      true,
+		"plugin.rejected": true,
+		"chat.channel":    true,
+		"chat.assistant":  true,
+		"chat.peer":       true,
 		// Memory. The governor's own rows (resources.kill, .freeze, .thaw and
 		// the .auto forms) reach the log through AuditResources, which the
 		// scan cannot see; these two are the handlers'.

@@ -152,78 +152,9 @@ func (s *Server) applyPageData(ctx context.Context, pageID, ns string, m pages.M
 	if err != nil {
 		return nil, err
 	}
-	current, _ := resolvePageData(m, rows, true)
-	changed := map[string]any{}
-	writes := map[string][]byte{}
-	resets := map[string]bool{}
-	for _, op := range ops {
-		spec := m.Data[op.Key]
-		if spec == nil {
-			return nil, dataErrorf("this page declares no data %q", op.Key)
-		}
-		var next any
-		switch op.Kind {
-		case "set":
-			if spec.Type == pages.DataLog || spec.Type == pages.DataCounter && !allowSetAny {
-				return nil, dataErrorf("%s is a %s; it changes by %s, not by setting it", op.Key, spec.Type,
-					map[string]string{pages.DataLog: "append", pages.DataCounter: "increment"}[spec.Type])
-			}
-			clean, cerr := spec.Check(op.Value, visitor)
-			if cerr != nil {
-				return nil, dataErrorf("%s %s", op.Key, cerr.Error())
-			}
-			next = clean
-		case "increment":
-			if spec.Type != pages.DataCounter {
-				return nil, dataErrorf("%s is not a counter", op.Key)
-			}
-			if op.By != math.Trunc(op.By) || math.Abs(op.By) > 1e9 {
-				return nil, dataErrorf("increment by a whole number")
-			}
-			n := current[op.Key].(float64) + op.By
-			if n < 0 {
-				n = 0
-			}
-			next = n
-		case "append":
-			if spec.Type != pages.DataLog {
-				return nil, dataErrorf("%s is not a log", op.Key)
-			}
-			fields, cerr := pages.CheckInput(pages.ItemFields(spec.Item), op.Item, visitor)
-			if cerr != nil {
-				return nil, dataErrorf("%s item %s", op.Key, cerr.Error())
-			}
-			entries := append([]any{}, current[op.Key].([]any)...)
-			entries = append(entries, pages.NewLogEntry(fields, time.Now().Unix()))
-			if limit := spec.LogLimit(); len(entries) > limit {
-				entries = entries[len(entries)-limit:]
-			}
-			next = entries
-		case "reset":
-			next = spec.Zero()
-			resets[op.Key] = true
-			delete(writes, op.Key)
-			current[op.Key] = next
-			changed[op.Key] = next
-			continue
-		default:
-			return nil, dataErrorf("unknown change %q", op.Kind)
-		}
-		raw, jerr := json.Marshal(next)
-		if jerr != nil {
-			return nil, dataErrorf("%s is not JSON", op.Key)
-		}
-		writes[op.Key] = raw
-		delete(resets, op.Key)
-		current[op.Key] = next
-		changed[op.Key] = next
-	}
-	batch := make([]store.PageDataWrite, 0, len(writes)+len(resets))
-	for k, raw := range writes {
-		batch = append(batch, store.PageDataWrite{Key: k, Value: raw})
-	}
-	for k := range resets {
-		batch = append(batch, store.PageDataWrite{Key: k})
+	changed, batch, err := applyDataOps(m, rows, ops, visitor, allowSetAny)
+	if err != nil {
+		return nil, err
 	}
 	if len(batch) == 0 {
 		return changed, nil
@@ -239,6 +170,88 @@ func (s *Server) applyPageData(ctx context.Context, pageID, ns string, m pages.M
 	}
 	s.bumpPageData(pageID, ns)
 	return changed, nil
+}
+
+// applyDataOps checks a batch of changes against the manifest and what is
+// stored, and returns every changed key's new value with the writes to make.
+// Pure: no database, so a plugin's data (plugin_data) and a page's
+// (share_page_data) are checked by the same code.
+func applyDataOps(m pages.Manifest, rows map[string]store.PageDatum, ops []pageDataOp,
+	visitor, allowSetAny bool) (map[string]any, []store.PageDataWrite, error) {
+	current, _ := resolvePageData(m, rows, true)
+	changed := map[string]any{}
+	writes := map[string][]byte{}
+	resets := map[string]bool{}
+	for _, op := range ops {
+		spec := m.Data[op.Key]
+		if spec == nil {
+			return nil, nil, dataErrorf("this page declares no data %q", op.Key)
+		}
+		var next any
+		switch op.Kind {
+		case "set":
+			if spec.Type == pages.DataLog || spec.Type == pages.DataCounter && !allowSetAny {
+				return nil, nil, dataErrorf("%s is a %s; it changes by %s, not by setting it", op.Key, spec.Type,
+					map[string]string{pages.DataLog: "append", pages.DataCounter: "increment"}[spec.Type])
+			}
+			clean, cerr := spec.Check(op.Value, visitor)
+			if cerr != nil {
+				return nil, nil, dataErrorf("%s %s", op.Key, cerr.Error())
+			}
+			next = clean
+		case "increment":
+			if spec.Type != pages.DataCounter {
+				return nil, nil, dataErrorf("%s is not a counter", op.Key)
+			}
+			if op.By != math.Trunc(op.By) || math.Abs(op.By) > 1e9 {
+				return nil, nil, dataErrorf("increment by a whole number")
+			}
+			n := current[op.Key].(float64) + op.By
+			if n < 0 {
+				n = 0
+			}
+			next = n
+		case "append":
+			if spec.Type != pages.DataLog {
+				return nil, nil, dataErrorf("%s is not a log", op.Key)
+			}
+			fields, cerr := pages.CheckInput(pages.ItemFields(spec.Item), op.Item, visitor)
+			if cerr != nil {
+				return nil, nil, dataErrorf("%s item %s", op.Key, cerr.Error())
+			}
+			entries := append([]any{}, current[op.Key].([]any)...)
+			entries = append(entries, pages.NewLogEntry(fields, time.Now().Unix()))
+			if limit := spec.LogLimit(); len(entries) > limit {
+				entries = entries[len(entries)-limit:]
+			}
+			next = entries
+		case "reset":
+			next = spec.Zero()
+			resets[op.Key] = true
+			delete(writes, op.Key)
+			current[op.Key] = next
+			changed[op.Key] = next
+			continue
+		default:
+			return nil, nil, dataErrorf("unknown change %q", op.Kind)
+		}
+		raw, jerr := json.Marshal(next)
+		if jerr != nil {
+			return nil, nil, dataErrorf("%s is not JSON", op.Key)
+		}
+		writes[op.Key] = raw
+		delete(resets, op.Key)
+		current[op.Key] = next
+		changed[op.Key] = next
+	}
+	batch := make([]store.PageDataWrite, 0, len(writes)+len(resets))
+	for k, raw := range writes {
+		batch = append(batch, store.PageDataWrite{Key: k, Value: raw})
+	}
+	for k := range resets {
+		batch = append(batch, store.PageDataWrite{Key: k})
+	}
+	return changed, batch, nil
 }
 
 // ─── which manifest a namespace answers to ────────────────────────────────

@@ -1188,6 +1188,45 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+
+	// Plugin frames: docs/plugins.md §5, rung 1.
+	//
+	// plugin_grants has the admin grant's shape and the admin grant's
+	// revocation: the lookup joins on auth_sessions, so a grant whose session
+	// was signed out resolves to nothing on its next request. What a grant may
+	// reach is read from plugin_caps at each request rather than copied onto
+	// the row, so a box unticked on the settings page is withdrawn from every
+	// open frame at once rather than at its next mint.
+	//
+	// plugin_data is the share page's data table with a plugin for an owner:
+	// the same two namespaces (live for the installed version, draft for dev
+	// mode), the same shapes, checked by the same code.
+	func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`CREATE TABLE IF NOT EXISTS plugin_grants (
+			     token_hash   BLOB PRIMARY KEY,
+			     plugin_id    TEXT NOT NULL REFERENCES plugins(id) ON DELETE CASCADE,
+			     user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			     session_hash BLOB NOT NULL,
+			     created_at   INTEGER NOT NULL,
+			     expires_at   INTEGER NOT NULL
+			 )`,
+			`CREATE TABLE IF NOT EXISTS plugin_data (
+			     plugin_id  TEXT NOT NULL REFERENCES plugins(id) ON DELETE CASCADE,
+			     ns         TEXT NOT NULL,
+			     key        TEXT NOT NULL,
+			     value      TEXT NOT NULL,
+			     updated_at INTEGER NOT NULL,
+			     updated_by TEXT NOT NULL DEFAULT '',
+			     PRIMARY KEY (plugin_id, ns, key)
+			 )`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	},
 }
 
 // scanner is *sql.Row and *sql.Rows both, so one scan function serves a

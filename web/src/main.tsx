@@ -6,6 +6,7 @@ import { AuthGate } from './components/AuthGate'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { ChatPage } from './components/ChatPage'
 import { PluginsPage } from './components/PluginsPage'
+import { PluginPageRoot } from './components/plugins/slots'
 import { SharingPage } from './components/SharingPage'
 import { routeFor } from './routes'
 import { watchSystemTheme } from './components/theme'
@@ -52,6 +53,10 @@ createRoot(root).render(
     ) : route.kind === 'plugins' ? (
       <ErrorBoundary label="The plugins page">
         <AuthGate>{(auth, signOut) => <PluginsPage auth={auth} onSignOut={signOut} />}</AuthGate>
+      </ErrorBoundary>
+    ) : route.kind === 'plugin-page' ? (
+      <ErrorBoundary label="A plugin's page">
+        <AuthGate>{(auth, signOut) => <PluginPageRoot path={route.path} auth={auth} onSignOut={signOut} />}</AuthGate>
       </ErrorBoundary>
     ) : (
       <ErrorBoundary label="The panel">

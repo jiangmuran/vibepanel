@@ -2222,6 +2222,8 @@ export interface PluginRow {
   /** Sentences for the card, in both languages; empty is nothing to say. */
   problems: PluginText[]
   theme?: PluginThemeRow
+  /** Where the plugin's frames mount, from the manifest that runs. */
+  panels: PluginPanelSpec[]
 }
 
 export interface PluginVersion {
@@ -2316,6 +2318,7 @@ export interface PluginDetail {
   latestVersion: number
   problems: PluginText[]
   theme?: PluginThemeRow
+  panels: PluginPanelSpec[]
   manifest: PluginManifest
   versions: PluginVersion[]
   screen: PluginScreen

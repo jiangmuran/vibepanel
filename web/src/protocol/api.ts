@@ -394,6 +394,29 @@ export const api = {
     }),
   /** The installed version as a zip. A plain GET, so an <a download> works. */
   exportPluginURL: (id: string): `/${string}` => `/api/settings/plugins/${encodeURIComponent(id)}/export`,
+  /** A grant for the owner's session, for a frame: the cookie only. */
+  mintPluginGrant: (id: string) =>
+    request<{ grant: string; base: string; api: string; expiresAt: number; dev: boolean }>(
+      `/api/settings/plugins/${encodeURIComponent(id)}/grant`,
+      { method: 'POST', body: '{}' },
+    ),
+  /** The plugin's handles for a session and a project, to name them to a frame. */
+  pluginHandles: (id: string, session?: string, project?: string) => {
+    const q = new URLSearchParams()
+    if (session) q.set('session', session)
+    if (project) q.set('project', project)
+    return request<{ session?: string; project?: string }>(
+      `/api/settings/plugins/${encodeURIComponent(id)}/handles?${q.toString()}`,
+    )
+  },
+  setPluginDev: (id: string, dev: boolean, sourceDir = '') =>
+    request<PluginDetail>(`/api/settings/plugins/${encodeURIComponent(id)}/dev`, {
+      method: 'PUT',
+      body: JSON.stringify({ dev, sourceDir }),
+    }),
+  /** Cheap: sizes and times, hashed. Asked twice a second while a frame is in dev mode. */
+  pluginFingerprint: (id: string) =>
+    request<{ fingerprint: string }>(`/api/settings/plugins/${encodeURIComponent(id)}/draft/fingerprint`),
 
   audit: () => request<AuditEntry[]>('/api/settings/audit'),
 

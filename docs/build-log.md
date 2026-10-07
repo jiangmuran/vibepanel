@@ -24878,3 +24878,78 @@ What is deliberately not here: any route under `/api/plugin/`, any frame, any
 goja call, any process. A panel rung in the manifest is accepted, listed on
 the screen and stored; it does nothing yet, and the card does not pretend
 otherwise.
+
+## 2026-10-07 — Plugins, step 1: a frame, a grant, and the capability matrix
+
+Rung 1 of `docs/plugins.md`: a plugin's HTML at a slot, in a frame with the
+admin page's shape -- `sandbox allow-scripts allow-forms`, an opaque origin,
+a grant in the path as the only credential, a `connect-src` naming that
+grant's API and nothing else -- and a v1 API under `/api/plugin/{cred}/v1/`
+where which routes answer is the capability table's decision and nobody
+else's.
+
+What exists:
+
+- **The table decides the router.** `plugins.RouteTable()` is built from
+  `caps.go`: each capability lists the routes it opens, and seven routes
+  (`me`, `settings`, the plugin's own data) are open to every credential.
+  `registerPluginAPIRoutes` registers exactly that map and panics at startup
+  on a route with no handler. `TestEveryCapabilityOpensOnlyItsRoutes` mints
+  a grant holding one capability at a time and sends it to every route:
+  what the table names answers, everything else is 403 naming the missing
+  capability. `TestAPluginCredentialReachesOnlyTheseRoutes` is the list for
+  both prefixes, and `TestAPluginGrantDoesNotCrossSurfaces` presents a grant
+  as a cookie, a bearer and a path segment on the panel's, the share and the
+  admin routes and gets 401 from all of them.
+- **Grants** have the admin grant's shape and revocation (the lookup joins
+  `auth_sessions`), plus one more join: the plugin must be enabled or in dev
+  mode. What a grant may reach is read from `plugin_caps` at every request
+  rather than copied onto the row, so a box unticked on the settings page is
+  withdrawn from an open frame at its next request -- a test unticks
+  `read:panel` and watches `/view` turn 403 while `/me` still answers.
+- **Handles.** A plugin never sees the panel's ids: `HMAC(salt + plugin id,
+  id)`, sixteen hex characters, resolved back by scanning the lists the
+  plugin may see. `TestTheViewWithoutReadPathsCarriesNoPath` walks the view's
+  structs by reflection rather than by a list of field names, so a path
+  field added later is caught too.
+- **The view** is a restated struct (`pluginView`), built from the same
+  `buildState` the panel pushes, so archived projects are absent here as
+  they are there; `read:paths` fills `cwd`, `command` and a project's path.
+  `GET /events` is a server-sent stream fed by a bus that `notifyState` and
+  `notifyPanel` bump -- a closed channel per change, costing nothing with no
+  listener -- re-resolving the credential on every send so a signed-out
+  grant ends the stream rather than the next page load.
+- **The SDK** (`vibepanel-plugin.js`, served from the binary) and
+  `vibepanel-ui.css` (the tokens, with the enabled plugin themes appended at
+  serve time, and a short list of stable classes). The share SDK's
+  formatting and `honest()` are copied rather than shared: two scripts with
+  no build step cannot import one another, and the plugin SDK is its own
+  contract.
+- **The host.** `PluginFrame` is the only component that talks to a frame:
+  it mints the grant, posts `context` (handles, theme, language, slot),
+  accepts a message only from its own frame's window, rebuilds it from
+  checked fields (`host.ts`, with a test per shape), re-reads the plugin's
+  grants before honouring a gated message, and answers. Four slots:
+  `sidepanel.pane` (the pane tab union opened with a `known` parameter so
+  every existing test reads as before), `settings.section`, `page` at
+  `/x/<path>`, `header.item`. `session.action` and `project.action` wait for
+  a menu on the sidebar's rows, which the render check pins as buttons.
+- **Dev mode**: the draft directory's manifest and files run under the
+  grants already given; the fingerprint is polled twice a second and the
+  frame reloads when two readings agree on something new.
+
+Two things the browser check found:
+
+- **The fingerprint baseline has to be taken at mount, not at the first
+  tick.** The check writes the file right after the frame goes live, inside
+  the half second before the first reading, so the reading that became the
+  baseline was already the changed one and no change was ever seen. The
+  symptom was invisible from the polls (loaded and current agreed), and only
+  a script that watched the frame's body text while writing showed that the
+  same sequence with a second's pause worked. A real agent is unlikely to
+  hit the window; the fix costs one request.
+- **A visibility question to a frame mid-navigation throws.** The check
+  reads the frame's body text instead.
+
+`TestTheSDKTypesMatchThePluginView` is not written yet; the `.d.ts` is
+hand-kept against `pluginView` for now and is the next thing to pin.

@@ -368,6 +368,25 @@ theme button on every page (system, light, dark, then each theme), is applied
 before first paint on a reload, and recolours the terminal with everything
 else, because a theme is the tokens the terminal palette is read from.
 
+**A plugin's panes.** A plugin with a `sidepanel.pane` entry is a third tab
+in the side panel's strip, with the icon and title from its manifest, movable
+and stackable like Files and Notes; one with a `settings.section` entry is a
+block at the end of the settings group it names; a `page` entry is a page of
+its own at `/x/<path>`, with the panel's header around it; a `header.item`
+is a small box in the panel's header. Each is the plugin's HTML in a sandboxed
+frame with no cookie and no storage, holding a grant that reaches that
+plugin's own API and nothing else, and it draws the panel through handles:
+it never sees a session's id, and never a path unless you ticked that box.
+What a frame may ask of the panel is a toast (`ui:notify`), to open a session
+(`ui:open`), the panel's own confirm dialog, and its height.
+
+**Dev mode.** A plugin read from a directory has a *Dev* button on its card:
+on, the directory's `plugin.json` and files are what runs, under the grants
+you already gave that id, and a change to a file reloads every one of its
+frames within a second -- an agent in a session beside it edits and sees. Off,
+the installed version runs again. A draft asking for a capability you have
+not granted runs without it, and the card says so.
+
 **Upgrading** reads a newer version of the same id and draws the screen again
 with the boxes as you left them and any new line unticked; the old version
 keeps running until you confirm. **Removing** takes the versions, grants,

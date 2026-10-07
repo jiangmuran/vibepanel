@@ -32,7 +32,33 @@
 // thing you can learn in one glance rather than four.
 export const PANEL_TABS = ['files', 'notes'] as const
 
-export type PanelTab = (typeof PANEL_TABS)[number]
+export type BuiltinTab = (typeof PANEL_TABS)[number]
+
+/**
+ * A pane a plugin adds (docs/plugins.md §5): `ext:<plugin id>:<n>`, the n-th
+ * `sidepanel.pane` entry of that plugin's manifest. Prefixed so it can collide
+ * with neither a built-in tab nor another plugin's, and typed as a shape
+ * rather than listed, because the list is whatever is installed today.
+ */
+export type ExtTab = `ext:${string}`
+
+export type PanelTab = BuiltinTab | ExtTab
+
+export function isExtTab(v: string): v is ExtTab {
+  return /^ext:[a-z][a-z0-9-]{2,39}:\d{1,2}$/.test(v)
+}
+
+/** The id of a plugin's n-th pane. */
+export function extTab(plugin: string, n: number): ExtTab {
+  return `ext:${plugin}:${n}`
+}
+
+/** Which plugin an ext tab belongs to, and which of its panes it is. */
+export function extTabParts(tab: string): { plugin: string; n: number } | null {
+  if (!isExtTab(tab)) return null
+  const [, plugin, n] = tab.split(':')
+  return { plugin, n: Number(n) }
+}
 
 /**
  * Tab ids that a build before this one could have written into localStorage.
@@ -69,7 +95,10 @@ export const RETIRED_TABS = ['git', 'todos', 'vnc', 'monitor', 'tokens'] as cons
 export const STACKED_TABS = ['files', 'notes'] as const
 
 export function tabOwnsHeight(tab: PanelTab): boolean {
-  return (STACKED_TABS as readonly string[]).includes(tab)
+  // A plugin's pane is a frame that fills the pane, so it owns the height
+  // for the same reason a stack does: a box whose height is its content's
+  // gives a frame nothing to fill.
+  return (STACKED_TABS as readonly string[]).includes(tab) || isExtTab(tab)
 }
 
 /**
@@ -213,14 +242,14 @@ export function panelFocusOrder(_width: number, tab: PanelTab): string[] {
  * Returns null for every other key, which is what tells the handler to leave
  * the event alone — the panel below the strip has its own keys.
  */
-export function tabFromKey(key: string, current: PanelTab): PanelTab | null {
-  const at = PANEL_TABS.indexOf(current)
+export function tabFromKey(key: string, current: PanelTab, order: readonly PanelTab[] = PANEL_TABS): PanelTab | null {
+  const at = order.indexOf(current)
   if (at < 0) return null
-  const n = PANEL_TABS.length
-  if (key === 'ArrowRight') return PANEL_TABS[(at + 1) % n]
-  if (key === 'ArrowLeft') return PANEL_TABS[(at - 1 + n) % n]
-  if (key === 'Home') return PANEL_TABS[0]
-  if (key === 'End') return PANEL_TABS[n - 1]
+  const n = order.length
+  if (key === 'ArrowRight') return order[(at + 1) % n]
+  if (key === 'ArrowLeft') return order[(at - 1 + n) % n]
+  if (key === 'Home') return order[0]
+  if (key === 'End') return order[n - 1]
   return null
 }
 
@@ -231,8 +260,8 @@ export function tabFromKey(key: string, current: PanelTab): PanelTab | null {
  * Anything that reads as a movement has to agree with the movement that caused
  * it, or it reads as a glitch instead.
  */
-export function swapDirection(from: PanelTab, to: PanelTab): 'forward' | 'back' {
-  return PANEL_TABS.indexOf(to) >= PANEL_TABS.indexOf(from) ? 'forward' : 'back'
+export function swapDirection(from: PanelTab, to: PanelTab, order: readonly PanelTab[] = PANEL_TABS): 'forward' | 'back' {
+  return order.indexOf(to) >= order.indexOf(from) ? 'forward' : 'back'
 }
 
 /** One arrow key is a nudge; with shift it is a shove. */

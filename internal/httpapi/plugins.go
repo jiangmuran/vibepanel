@@ -93,6 +93,9 @@ type PluginRow struct {
 	// secret, a panel too old. Empty is a plugin with nothing to say.
 	Problems []plugins.Text  `json:"problems"`
 	Theme    *pluginThemeRow `json:"theme,omitempty"`
+	// Panels is where the plugin's frames mount, for the panel to draw its
+	// tabs and sections from the list rather than from every detail.
+	Panels []plugins.PanelSpec `json:"panels"`
 }
 
 type pluginSecretRow struct {
@@ -145,6 +148,16 @@ func (s *Server) pluginRowFor(ctx context.Context, p store.Plugin) (PluginRow, p
 	if err != nil {
 		return PluginRow{}, plugins.Manifest{}, nil, err
 	}
+	// In dev mode the draft directory's manifest is what runs, so it is what
+	// the card and the slots are drawn from; a draft that does not parse
+	// leaves the stored manifest on screen with a problem line.
+	if p.Dev && p.SourceDir != "" {
+		if draft, _, derr := s.pluginRunningManifest(ctx, p); derr == nil {
+			m = draft
+		} else {
+			dropped = append(dropped, "draft: "+strings.TrimPrefix(derr.Error(), store.ErrNotFound.Error()+": "))
+		}
+	}
 	caps, err := s.DB.PluginCaps(ctx, p.ID)
 	if err != nil {
 		return PluginRow{}, plugins.Manifest{}, nil, err
@@ -167,7 +180,7 @@ func (s *Server) pluginRowFor(ctx context.Context, p store.Plugin) (PluginRow, p
 	}
 	row := PluginRow{Plugin: p, Name: m.Name, Version: m.Version, Description: m.Description, Author: m.Author,
 		Rungs: m.Rungs(), Granted: granted, Wanted: m.AllCapabilities(), Secrets: []pluginSecretRow{},
-		LatestVersion: latest, Problems: []plugins.Text{}}
+		LatestVersion: latest, Problems: []plugins.Text{}, Panels: append([]plugins.PanelSpec{}, m.Panels...)}
 	for _, name := range m.SecretNames() {
 		_, ok := set[name]
 		row.Secrets = append(row.Secrets, pluginSecretRow{Name: name, Set: ok})
@@ -215,7 +228,8 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 			// A row with no version: made and never given files. Shown so it
 			// can be removed, rather than hidden.
 			row = PluginRow{Plugin: p, Name: plugins.Text{EN: p.ID}, Granted: []string{}, Wanted: []string{},
-				Secrets: []pluginSecretRow{}, Problems: []plugins.Text{{EN: "no version stored", ZH: "没有存储的版本"}}}
+				Secrets: []pluginSecretRow{}, Problems: []plugins.Text{{EN: "no version stored", ZH: "没有存储的版本"}},
+				Panels: []plugins.PanelSpec{}}
 			err = nil
 		}
 		if err != nil {

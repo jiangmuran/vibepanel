@@ -1869,6 +1869,106 @@ Audited `plugin.secret_set` / `plugin.secret_deleted`, by name.
 The installed version (or `?version=N`) as a zip with `plugin.json` at the
 top, the same archive `POST /api/settings/plugins` reads.
 
+### `POST /api/settings/plugins/{pluginID}/grant`
+
+Mints a **plugin grant** for the owner's session, for the panel to mount a
+frame with: `201 {"grant", "base", "api", "expiresAt", "dev"}`. The session
+cookie only — a bearer token has no session to bind to — and only for a
+plugin that is enabled or in dev mode. A grant lives eight hours and dies
+with the session that minted it; what it may reach is read from the plugin's
+grants at every request, so a box unticked is withdrawn from every open frame
+at once. `docs/plugins.md` §5.
+
+### `GET /api/settings/plugins/{pluginID}/handles`
+
+`?session=&project=` → the plugin's handles for those ids, for the panel to
+name them to a frame. A plugin never sees the panel's ids: a handle is
+`HMAC(salt + plugin id, id)`, stable for one plugin and different between
+plugins.
+
+### `PUT /api/settings/plugins/{pluginID}/dev`
+
+`{"dev": bool, "sourceDir": "/dir"}` switches dev mode: the draft directory's
+manifest and files are what the plugin's frames run, under the grants already
+given to this id. The directory's `plugin.json` must parse and name this
+plugin. Audited `plugin.dev`.
+
+### `GET /api/settings/plugins/{pluginID}/draft/fingerprint`
+
+Sizes and times of the draft directory, hashed: what the panel polls twice
+a second while a frame is in dev mode, reloading it when two readings agree
+on something new.
+
+## A plugin's own API
+
+`/api/plugin/{cred}/v1/`, reachable with a plugin grant (and, once the
+process rung exists, a plugin token) and nothing else; a grant presented
+anywhere else is an unknown string. **Which routes answer is decided by the
+capability table** (`internal/plugins/caps.go`, red line 10): a route named
+by a capability answers `403 {"error", "cap"}` to a credential without it,
+and a route named by none is open to every credential. Every id in a
+response is the plugin's handle. CORS is `*`, never credentials — the
+credential is in the path.
+
+### `GET /api/plugin/{cred}/v1/me`
+### `GET /api/plugin/{cred}/v1/settings`
+
+Open to every credential. `me` is the plugin's identity, the capabilities
+granted and its settings' values; `settings` is the values alone. A
+secret-typed setting is `true`/`false` for set, never a value.
+
+### `GET /api/plugin/{cred}/v1/data`
+### `PUT /api/plugin/{cred}/v1/data/{key}`
+### `POST /api/plugin/{cred}/v1/data/{key}/increment`
+### `POST /api/plugin/{cred}/v1/data/{key}/append`
+### `DELETE /api/plugin/{cred}/v1/data/{key}`
+
+The plugin's own data, declared in its manifest with the share page's
+vocabulary and checked by the same code (`docs/page-backend.md` §2). Open to
+every credential. The `live` namespace for the installed version, `draft`
+in dev mode.
+
+### `GET /api/plugin/{cred}/v1/view`
+### `GET /api/plugin/{cred}/v1/events`
+
+`read:panel` (or `read:paths`). The view: `{v, at, plugin, caps, projects,
+sessions}`, a restated struct that embeds nothing — `cwd`, `command` and a
+project's `path` are `""` without `read:paths`. `events` is a server-sent
+stream carrying a `view` event within the panel's coalesce window of any
+change, a comment every 25 seconds, and `revoked` when the credential stops
+resolving.
+
+### `GET /api/plugin/{cred}/v1/projects/{h}/notes`
+### `PUT /api/plugin/{cred}/v1/projects/{h}/notes`
+
+`read:notes` / `write:notes`. `PUT` takes `{"content", "baseRev"?}` and
+answers `409` when the note changed elsewhere.
+
+### `GET /api/plugin/{cred}/v1/projects/{h}/todos`
+### `POST /api/plugin/{cred}/v1/projects/{h}/todos`
+### `PATCH /api/plugin/{cred}/v1/todos/{h}`
+### `DELETE /api/plugin/{cred}/v1/todos/{h}`
+
+`read:todos` / `write:todos`. The same shapes as the panel's own routes, by
+handle.
+
+### `PATCH /api/plugin/{cred}/v1/sessions/{h}/state`
+
+`write:state`. `{"state": "working" | "waiting" | "done"}`, recorded as a
+manual mark like the sidebar's.
+
+### `GET /api/plugin/{cred}/v1/sessions/{h}/screen`
+
+`read:terminal`. `{"text"}`: the pane's visible screen, as text.
+
+### `GET /api/plugin/{cred}/v1/resources`
+### `GET /api/plugin/{cred}/v1/usage`
+### `GET /api/plugin/{cred}/v1/projects/{h}/git`
+
+`read:resources`, `read:usage`, `read:git`. The machine reading without its
+disk path; each session's process tree by handle; a repository's counts and
+branch, never a path, a subject or a sha.
+
 ## Authentication
 
 ### `POST /api/auth/setup`

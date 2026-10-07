@@ -6,6 +6,8 @@ import {
   CHAT_PATH,
   PANEL_PATH,
   PLUGINS_PATH,
+  pluginPageOf,
+  pluginPagePath,
   SHARING_PATH,
   pageToOpen,
   panelOpeningPage,
@@ -49,6 +51,15 @@ describe('what the address bar decides', () => {
     expect(routeFor(`${PLUGINS_PATH}/`)).toEqual({ kind: 'plugins' })
     expect(routeFor(`${PLUGINS_PATH}x`)).toEqual({ kind: 'panel' })
     expect(routeFor(`${PLUGINS_PATH}/abc`)).toEqual({ kind: 'panel' })
+  })
+
+  it("builds a plugin's page under its prefix and refuses anything else there", () => {
+    expect(routeFor(pluginPagePath('standup'))).toEqual({ kind: 'plugin-page', path: 'standup' })
+    expect(routeFor(`${pluginPagePath('standup')}/`)).toEqual({ kind: 'plugin-page', path: 'standup' })
+    expect(routeFor('/x/')).toEqual({ kind: 'panel' })
+    expect(routeFor('/x/Stand Up')).toEqual({ kind: 'panel' })
+    expect(routeFor('/x/a/b')).toEqual({ kind: 'panel' })
+    expect(pluginPageOf('/xray')).toBeNull()
   })
 
   it('does not match the sharing page by prefix', () => {

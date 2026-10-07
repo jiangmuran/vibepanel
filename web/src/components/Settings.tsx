@@ -7,6 +7,7 @@ import type { Session, SettingsInfo } from '../protocol/wire'
 import { t, useLang } from '../i18n'
 import { CHAT_PATH, PLUGINS_PATH, SHARING_PATH } from '../routes'
 import { LanguageSwitch } from './LanguageSwitch'
+import { PluginSections } from './plugins/slots'
 import { AccountGroup } from './settings/AccountGroup'
 import { NotificationsGroup } from './settings/NotificationsGroup'
 import { PanelGroup } from './settings/PanelGroup'
@@ -282,6 +283,10 @@ export function Settings({
             {group === 'account' && <AccountGroup info={info} />}
             {group === 'resources' && <ResourcesGroup sessions={sessions} focus={focusSession} />}
             {group === 'panel' && <PanelGroup info={info} />}
+            {/* What plugins add under this rail item: a frame per
+                settings.section entry whose group is this one, after the
+                panel's own sections. docs/plugins.md §5. */}
+            <PluginSections group={group} />
           </div>
         </div>
       </div>

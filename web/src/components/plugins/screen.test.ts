@@ -52,7 +52,7 @@ describe('a plugin card', () => {
   const row = (over: Partial<PluginRow>): PluginRow => ({
     id: 'x', enabled: false, installedVersion: 0, sourceDir: '', dev: false, createdAt: 0, updatedAt: 0,
     name: { en: 'X' }, version: '1.0.0', rungs: { theme: true, panel: false, service: true, process: false, unsandboxed: false },
-    granted: [], wanted: [], secrets: [], latestVersion: 1, problems: [],
+    granted: [], wanted: [], secrets: [], latestVersion: 1, problems: [], panels: [],
     ...over,
   })
 

@@ -31,6 +31,7 @@ import { ResourceAlertBar } from './components/resources/ResourceAlert'
 import { ThemeToggle } from './components/ThemeToggle'
 import { SETTINGS_HOME } from './components/settings/groups'
 import type { SettingsSection } from './components/settings/groups'
+import { SETTINGS_SECTIONS } from './components/settings/groups'
 import { TokenUsageView } from './components/TokenUsageView'
 import { MobileKeyBar } from './components/mobile/MobileKeyBar'
 import { ComposeInput } from './components/mobile/ComposeInput'
@@ -69,6 +70,11 @@ import { copyTextInGesture } from './clipboard'
 import { notifyOnArchivedWaiting, notifyOnResourceAlert, notifyOnWaiting } from './notify'
 import { readSkipped, shouldNotice, writeSkipped } from './components/updateView'
 import { t, useLang } from './i18n'
+import { PluginHeaderItems, usePlugins } from './components/plugins/slots'
+import { extTabs as pluginTabs } from './components/plugins/host'
+import { onOpen as onPluginOpen } from './components/plugins/open'
+import { withKnown } from './components/panes'
+import { PANEL_TABS } from './components/chrome'
 
 /**
  * Safety net only.
@@ -321,9 +327,26 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   const [layoutKey, setLayoutKey] = useState(() =>
     layoutStorageKey(window.innerWidth, window.innerHeight),
   )
-  const [paneLayout, setPaneLayout] = useState<PaneLayout>(() =>
+  const [storedLayout, setPaneLayoutState] = useState<PaneLayout>(() =>
     seedLayout(layoutStorageKey(window.innerWidth, window.innerHeight)),
   )
+  // The panes plugins add (docs/plugins.md §5). The layout is re-read
+  // against the installed set whenever it changes, so a plugin installed in
+  // another tab gets its pane here on the next poll and a removed one goes.
+  const plugins = usePlugins()
+  const extTabs = pluginTabs(plugins)
+  const knownKey = extTabs.map((x) => x.id).join('|')
+  // Derived rather than written back: the stored layout is what the person
+  // arranged, and the installed set is laid over it at render. withKnown
+  // returns the same object when nothing needs doing, so this memo is the
+  // identity the panel's own effects key on.
+  const paneLayout = useMemo(
+    () => withKnown(storedLayout, [...PANEL_TABS, ...extTabs.map((x) => x.id)]),
+    // knownKey is the list's identity; the array is rebuilt every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [storedLayout, knownKey],
+  )
+  const setPaneLayout = setPaneLayoutState
   // Which block of the settings dialog is open, and null for closed.
   //
   // A section rather than a boolean, because two things open this dialog and
@@ -1166,6 +1189,38 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, snapshots])
 
+  // A frame asking the panel to open something (docs/plugins.md §5): a
+  // handle, resolved against what the panel is showing by asking the server
+  // for the same handle of every candidate would be a round trip per row, so
+  // the frame's handles are matched against the ones the panel already asked
+  // for -- the selected session and project -- and otherwise the settings
+  // dialog is opened by name. A handle the panel cannot match opens nothing.
+  useEffect(() => {
+    return onPluginOpen((req) => {
+      if (req.settings) {
+        const section = req.settings as SettingsSection
+        if ((SETTINGS_SECTIONS as readonly string[]).includes(section)) setSettingsAt(section)
+        return
+      }
+      void (async () => {
+        const rows = req.session ? state.sessions : state.projects
+        for (const row of rows) {
+          const h = await api.pluginHandles(req.plugin, req.session ? row.id : undefined, req.session ? undefined : row.id)
+          if ((req.session && h.session === req.session) || (req.project && h.project === req.project)) {
+            if (req.session) selectSession(row.id)
+            else {
+              const first = state.sessions.find((x) => x.projectId === row.id && !x.scratch)
+              if (first) selectSession(first.id)
+            }
+            return
+          }
+        }
+      })()
+    })
+    // selectSession and state are read at the time of the request.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.sessions, state.projects])
+
   // A session a chat card linked to (routes.ts). Same shape as the page
   // hand-over: read once, opened on the first snapshot, taken off the
   // address so a reload does not reselect it.
@@ -1403,6 +1458,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
                 onFiles={(files) => void uploadInto(files)}
               />
             )}
+            <PluginHeaderItems />
             <button
               type="button"
               data-testid="settings-open"
@@ -1848,6 +1904,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           socket={socket}
           layout={paneLayout}
           onLayout={setPaneLayout}
+          extTabs={extTabs}
           onRefocus={() => {
             if (current) focusTerminal(current.id)
           }}

@@ -104,6 +104,10 @@ type Server struct {
 	// s.loc(ctx), which resolves the setting the first time and remembers.
 	zone zoneCache
 
+	// prt is the plugin frames' in-memory state: the handle salt and the
+	// bus that wakes every open event stream. See pluginruntime.go.
+	prt pluginRuntime
+
 	// Restart asks the process to stop and be brought back by whatever
 	// supervises it. Nil in tests and in the admin CLI, which is also what the
 	// handler reports to somebody running the panel from a terminal: nothing
@@ -448,6 +452,10 @@ func (s *Server) Routes() http.Handler {
 		// An admin page's API: its own credential, its own table, the same
 		// placement as the share routes. See admingrants.go.
 		s.registerAdminAPIRoutes(r)
+		// A plugin frame's API: its own credential, its own table, the same
+		// placement, and which routes answer is the capability table's
+		// decision. See pluginruntime.go and red line 10.
+		s.registerPluginAPIRoutes(r)
 
 		// Everything else needs a session. This panel hands out a writable
 		// terminal; there is no such thing as a harmless unauthenticated
@@ -501,6 +509,7 @@ func (s *Server) Routes() http.Handler {
 			// other credential, which is what keeps a plugin from installing
 			// plugins. docs/plugins.md §6.
 			s.registerPluginRoutes(r)
+			s.registerPluginDevRoutes(r)
 		})
 
 		r.NotFound(func(w http.ResponseWriter, r *http.Request) {
@@ -558,6 +567,9 @@ func (s *Server) Routes() http.Handler {
 	s.registerAdminPageRoutes(r)
 	// The enabled plugin themes, as one stylesheet index.html links.
 	s.registerPluginThemeRoute(r)
+	// A plugin frame's files: the grant serves them, sandboxed. Before the
+	// catch-all for the same reason the share routes are.
+	s.registerPluginFrameRoutes(r)
 
 	r.Handle("/*", webui.Handler(s.Cfg.StaticDir))
 	return r
@@ -702,6 +714,7 @@ func (s *Server) snapshot(ctx context.Context) []byte {
 // panels work at all in a second window, where before they simply never
 // updated and the second save overwrote the first.
 func (s *Server) notifyPanel(projectID, kind string) {
+	s.bumpPluginWatchers()
 	if s.Hub == nil {
 		return
 	}
@@ -724,6 +737,9 @@ func (s *Server) notifyPanel(projectID, kind string) {
 }
 
 func (s *Server) notifyState() {
+	// Plugin frames first: their bus is a closed channel and costs nothing
+	// when nobody is listening.
+	s.bumpPluginWatchers()
 	if s.Hub == nil {
 		return
 	}

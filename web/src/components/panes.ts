@@ -121,15 +121,23 @@ export function dropKindAt(offsetY: number, height: number): DropKind {
   return 'join'
 }
 
-export function defaultLayout(): PaneLayout {
+export function defaultLayout(known: KnownTabs = PANEL_TABS): PaneLayout {
   return {
     version: PANE_LAYOUT_VERSION,
-    groups: [{ tabs: [...PANEL_TABS], active: PANEL_TABS[0], size: 1 }],
+    groups: [{ tabs: [...known], active: known[0], size: 1 }],
   }
 }
 
-function isTab(v: unknown): v is PanelTab {
-  return typeof v === 'string' && (PANEL_TABS as readonly string[]).includes(v)
+/**
+ * The tabs a layout may hold: the two built in, plus whatever panes the
+ * installed plugins add (docs/plugins.md §5). Every function below takes the
+ * list and defaults to the built-ins, so a caller with no plugins -- and
+ * every test written before plugins existed -- reads as it always did.
+ */
+export type KnownTabs = readonly PanelTab[]
+
+function isTab(v: unknown, known: KnownTabs): v is PanelTab {
+  return typeof v === 'string' && (known as readonly string[]).includes(v)
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -195,46 +203,63 @@ function withSizes(groups: PaneGroup[]): PaneGroup[] {
  * each arrangement that is still valid, which is the half somebody built. See
  * RETIRED_TABS in chrome.ts for the names, and the tests that use them.
  */
-export function parseLayout(raw: unknown): PaneLayout {
-  if (!isRecord(raw)) return defaultLayout()
-  if (raw.version !== PANE_LAYOUT_VERSION) return defaultLayout()
-  if (!Array.isArray(raw.groups)) return defaultLayout()
+export function parseLayout(raw: unknown, known: KnownTabs = PANEL_TABS): PaneLayout {
+  if (!isRecord(raw)) return defaultLayout(known)
+  if (raw.version !== PANE_LAYOUT_VERSION) return defaultLayout(known)
+  if (!Array.isArray(raw.groups)) return defaultLayout(known)
 
   const seen = new Set<PanelTab>()
   const groups: PaneGroup[] = []
   for (const g of raw.groups) {
-    if (groups.length >= MAX_PANES) break
+    // One group per tab is as far as it can go, because a group needs a tab:
+    // the cap is the known list's length, not a constant.
+    if (groups.length >= known.length) break
     if (!isRecord(g)) continue
     const tabs: PanelTab[] = []
     if (Array.isArray(g.tabs)) {
       for (const t of g.tabs) {
-        if (!isTab(t) || seen.has(t)) continue
+        if (!isTab(t, known) || seen.has(t)) continue
         seen.add(t)
         tabs.push(t)
       }
     }
     if (tabs.length === 0) continue
-    const active = isTab(g.active) && tabs.includes(g.active) ? g.active : tabs[0]
+    const active = isTab(g.active, known) && tabs.includes(g.active) ? g.active : tabs[0]
     const size = typeof g.size === 'number' ? g.size : Number.NaN
     groups.push({ tabs, active, size })
   }
-  if (groups.length === 0) return defaultLayout()
+  if (groups.length === 0) return defaultLayout(known)
 
-  const missing = PANEL_TABS.filter((t) => !seen.has(t))
+  // A tab this build has and the layout does not -- a plugin installed since
+  // the layout was stored -- joins the last pane, where the built-ins went
+  // before plugins existed.
+  const missing = known.filter((t) => !seen.has(t))
   if (missing.length > 0) groups[groups.length - 1].tabs.push(...missing)
 
   return { version: PANE_LAYOUT_VERSION, groups: withSizes(groups) }
 }
 
 /** The same, from the string localStorage actually hands back. */
-export function readLayout(json: string | null): PaneLayout {
-  if (!json) return defaultLayout()
+export function readLayout(json: string | null, known: KnownTabs = PANEL_TABS): PaneLayout {
+  if (!json) return defaultLayout(known)
   try {
-    return parseLayout(JSON.parse(json))
+    return parseLayout(JSON.parse(json), known)
   } catch {
     // Truncated, or somebody's editor put a BOM in it. Not a crash.
-    return defaultLayout()
+    return defaultLayout(known)
   }
+}
+
+/**
+ * The same layout against a changed list of tabs: a plugin installed or
+ * removed. Returns the same object when nothing needs doing, so a poll that
+ * found no change does not rewrite storage or remount the panes.
+ */
+export function withKnown(layout: PaneLayout, known: KnownTabs): PaneLayout {
+  const have = layout.groups.flatMap((g) => g.tabs)
+  const same = have.length === known.length && have.every((t) => (known as readonly string[]).includes(t))
+  if (same) return layout
+  return parseLayout(layout, known)
 }
 
 export function serialiseLayout(layout: PaneLayout): string {

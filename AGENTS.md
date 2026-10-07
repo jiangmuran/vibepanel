@@ -245,12 +245,16 @@ Each of these exists because the alternative broke something real.
    sentence above, and the install screen says so in the words of
    `docs/plugins.md` §7.
 
-   What exists today is rung 0 and the screen: `internal/plugins`,
-   `internal/store/plugins.go`, `internal/httpapi/plugins.go`,
-   `web/src/components/plugins/`, `vibepanel plugin`. The runtimes --
-   frames, services, processes, the module -- come in that order
-   (`docs/plugins.md` §13) and each adds its routes to this rule and its
-   tests to `plugins-check`.
+   What exists today is rungs 0 and 1: `internal/plugins`,
+   `internal/store/plugins.go`, `internal/httpapi/plugins.go` (the owner's
+   side), `internal/httpapi/pluginruntime.go` (the frame's: a grant reaches
+   `/plugin/{grant}/` and the v1 routes the table names, pinned by
+   `TestAPluginCredentialReachesOnlyTheseRoutes` and
+   `TestEveryCapabilityOpensOnlyItsRoutes`), `web/src/components/plugins/`
+   (`PluginFrame` is the only thing that talks to a frame, and `host.ts`
+   rebuilds every message from checked fields), `vibepanel plugin`. The
+   services, processes and the module come next (`docs/plugins.md` §13) and
+   each adds its routes to this rule and its tests to `plugins-check`.
 
 ## Conventions
 
@@ -291,7 +295,7 @@ Each of these exists because the alternative broke something real.
   | `make scale-check` | two dozen sessions: snapshot size, sidebar reachability, poller |
   | `make resources-check` | the Resources tab and a session that really runs out of memory: isolation, modes, the question across the console, ending a process from it, the countdown, the panel answering throughout, layout at three widths. Needs a user manager for the pressure half |
   | `make isolation-check` | sessions moved into a scope of their own against real systemd 249, 252 and 259 as PID 1: fresh system unit, upgrade from the old layout, a failing root step, a user unit. Needs docker |
-  | `make plugins-check` | plugins: a plugin arrives from a directory, the install screen in both languages with the danger line first, a box unticked is a grant withheld, a missing secret installs it disabled, the settings the panel draws, a plugin theme in the toggle and before first paint, layout at three widths in both themes, remove takes everything |
+  | `make plugins-check` | plugins: a plugin arrives from a directory, the install screen in both languages with the danger line first, a box unticked is a grant withheld, a missing secret installs it disabled, the settings the panel draws, a plugin theme in the toggle and before first paint; a pane frame goes live and draws the view through handles, every escape from inside the sandbox refused (cookie, storage, origin, the panel's API, another host, the socket, a popup, framing the panel), `ui:notify` honoured when granted and answered with nothing when withheld, the settings section, the page at `/x/`, the header item, a draft change reloading the frame in dev mode; layout at three widths in both themes; remove takes everything |
   | `make chat-check` | the Chat page: a card per adapter, a saved token starting a channel, the 飞书 handshake, rules and their preview, the key table, the tools door, the deep link, layout at three widths in both themes and languages |
   | `make pages-check` | share pages: every escape from inside a sandboxed page, in a signed-in browser; the editing loop through the UI; every template × screen × fixture |
   | `make tls-check` | its own TLS: wss, the Secure cookie, swapping a certificate |

@@ -1934,6 +1934,15 @@ const DICT = {
   'plg.sourceDir': { zh: '草稿目录', en: 'Draft directory' },
   'plg.close': { zh: '关闭', en: 'Close' },
   'plg.listItem': { zh: '每行一项', en: 'One item per line' },
+  'plg.dev': { zh: '开发模式', en: 'Dev mode' },
+  'plg.devOn': { zh: '开发中：跑草稿目录', en: 'Dev: running the draft' },
+  'plg.devWhy': { zh: '用草稿目录的文件运行，改了即刷新', en: 'Run the draft directory; a change reloads the frame' },
+  'plg.frame.loading': { zh: '加载中…', en: 'Loading…' },
+  'plg.frame.failed': { zh: '这个插件的页面没有打开。', en: "This plugin's page did not open." },
+  'plg.frame.noGrant': { zh: '插件未启用或无法运行。', en: 'The plugin is not enabled or cannot run.' },
+  'plg.page.missing': { zh: '没有插件在这个地址上。', en: 'No plugin mounts a page here.' },
+  'plg.notice': { zh: '插件 {name}：{text}', en: '{name}: {text}' },
+  'plg.ok': { zh: '确定', en: 'OK' },
 } satisfies Record<string, Entry>
 
 export type Key = keyof typeof DICT

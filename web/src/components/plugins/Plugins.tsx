@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { BookOpen, Download, FileUp, FolderInput, Puzzle, ShieldCheck, SlidersHorizontal, Trash2 } from 'lucide-react'
+import { BookOpen, Download, FileUp, FolderInput, Hammer, Puzzle, ShieldCheck, SlidersHorizontal, Trash2 } from 'lucide-react'
 
 import { t, useLang } from '../../i18n'
 import type { Lang } from '../../i18n'
@@ -11,6 +11,7 @@ import { safeText } from '../text'
 import { InstallScreen } from './InstallScreen'
 import { PluginSettingsForm } from './PluginSettingsForm'
 import { rungsOf, stateOf, textIn } from './screen'
+import { refreshPlugins } from './slots'
 
 /**
  * Plugins, as one list: a card per plugin, and under each the install screen
@@ -49,6 +50,7 @@ export function Plugins() {
     try {
       const list = await api.listPlugins()
       setPlugins(list)
+      refreshPlugins()
       const read = await Promise.all(list.map((p) => api.plugin(p.id).catch(() => null)))
       setDetails(Object.fromEntries(read.filter((d) => d !== null).map((d) => [d.id, d])))
     } catch (e) {
@@ -300,6 +302,11 @@ function PluginCard({
             <Chip tone={state.tone} testid="plugin-state">
               {t(stateKey, { v: state.v })}
             </Chip>
+            {row.dev && (
+              <Chip tone="warn" testid="plugin-dev">
+                {t('plg.devOn')}
+              </Chip>
+            )}
             {rungsOf(row).map((r) => (
               <Chip key={r} tone={r === 'unsandboxed' ? 'warn' : 'plain'} testid={`plugin-rung-${r}`}>
                 {t(`plg.rung.${r}`)}
@@ -354,6 +361,21 @@ function PluginCard({
               className="vp-outline text-vp-sm"
             >
               {row.enabled ? t('plg.disable') : t('plg.enable')}
+            </button>
+          )}
+          {row.sourceDir && (
+            <button
+              type="button"
+              data-testid={row.dev ? 'plugin-dev-off' : 'plugin-dev-on'}
+              disabled={busy}
+              aria-pressed={row.dev}
+              onClick={() => void act(() => api.setPluginDev(row.id, !row.dev))}
+              title={t('plg.devWhy')}
+              className="vp-outline text-vp-sm"
+              style={row.dev ? { borderColor: 'color-mix(in srgb, var(--vp-state-waiting) 60%, transparent)', color: 'var(--vp-state-waiting)' } : undefined}
+            >
+              <Hammer size={12} />
+              {t('plg.dev')}
             </button>
           )}
           {hasSettings && (

@@ -94,8 +94,13 @@ writeFileSync(join(PLUGIN_DIR, 'plugin.json'), JSON.stringify({
   plugin: 1, id: 'paper', name: { en: 'Paper', 'zh-CN': '纸' }, version: '1.2.0',
   description: { en: 'A warm theme and a stand-up pane.', 'zh-CN': '一个暖色主题和一个站会 pane。' },
   theme: { file: 'theme.css', name: { en: 'Paper', 'zh-CN': '纸' }, scheme: 'light' },
-  panels: [{ slot: 'sidepanel.pane', entry: 'pane.html', title: { en: 'Stand-up', 'zh-CN': '站会' } }],
-  capabilities: ['read:panel', 'write:todos', 'sessions:input'],
+  panels: [
+    { slot: 'sidepanel.pane', entry: 'pane.html', title: { en: 'Stand-up', 'zh-CN': '站会' }, icon: 'list-checks' },
+    { slot: 'settings.section', entry: 'section.html', title: { en: 'Paper settings', 'zh-CN': '纸的设置' }, group: 'panel' },
+    { slot: 'page', entry: 'page.html', title: { en: 'Stand-up page', 'zh-CN': '站会页' }, path: 'standup' },
+    { slot: 'header.item', entry: 'header.html', title: { en: 'Waiting count', 'zh-CN': '等待数' } },
+  ],
+  capabilities: ['read:panel', 'write:todos', 'sessions:input', 'ui:notify'],
   settings: { fields: [
     { key: 'quiet', type: 'bool', default: true, label: { en: 'Quiet hours', 'zh-CN': '安静时段' } },
     { key: 'channel', type: 'enum', values: ['slack', 'email'], default: 'slack', label: { en: 'Channel', 'zh-CN': '渠道' } },
@@ -116,7 +121,53 @@ writeFileSync(join(PLUGIN_DIR, 'theme.css'), `/* Paper */
   --vp-accent: #a0522d;
 }
 `)
-writeFileSync(join(PLUGIN_DIR, 'pane.html'), '<!doctype html><p>stand-up</p>')
+// The pane: draws the view through the SDK, and probes every escape from
+// inside the sandbox, posting what happened to the parent. A probe that
+// *succeeds* is the failure; each is asserted by how it failed.
+writeFileSync(join(PLUGIN_DIR, 'pane.html'), `<!doctype html>
+<html><head><link rel="stylesheet" href="vibepanel-ui.css"><script src="vibepanel-plugin.js"></script></head>
+<body class="vp-section">
+<h2>Stand-up</h2>
+<p>status: <span id="status">-</span> · caps: <span id="caps"></span></p>
+<ul id="sessions" class="vp-list"></ul>
+<button id="notify" class="vp-button">notify</button>
+<script>
+  var vp = VibePanel.plugin()
+  vp.on('status', function (s) { document.getElementById('status').textContent = s })
+  vp.on('view', function (v) {
+    document.getElementById('caps').textContent = v.caps.join(',')
+    var ul = document.getElementById('sessions'); ul.innerHTML = ''
+    v.sessions.forEach(function (s) {
+      var li = document.createElement('li'); li.className = 'vp-item'
+      var b = document.createElement('span'); vp.badge(b, s.state); li.appendChild(b)
+      var t = document.createElement('span'); vp.text(t, s.name); li.appendChild(t)
+      if (s.cwd) { var c = document.createElement('code'); vp.text(c, s.cwd); li.appendChild(c) }
+      ul.appendChild(li)
+    })
+  })
+  document.getElementById('notify').onclick = function () {
+    vp.ui.notify('hello from paper').then(function (ok) { window.parent.postMessage({ type: 'probe', name: 'notify-answer', ok: ok }, '*') })
+  }
+  // The probes. Results go to the parent as {type:'probe', name, ok, detail}.
+  function report(name, ok, detail) { window.parent.postMessage({ type: 'probe', name: name, ok: ok, detail: String(detail || '').slice(0, 120) }, '*') }
+  try { var c = document.cookie; report('cookie', true, c) } catch (e) { report('cookie', false, e.message) }
+  try { localStorage.setItem('x', '1'); report('storage', true) } catch (e) { report('storage', false, e.message) }
+  report('origin', self.origin !== 'null', self.origin)
+  fetch(location.origin + '/api/state', { credentials: 'include' }).then(function (r) { report('api-state', r.ok, r.status) }, function (e) { report('api-state', false, e.message) })
+  fetch(location.origin + '/api/settings/plugins').then(function (r) { report('api-plugins', r.ok, r.status) }, function (e) { report('api-plugins', false, e.message) })
+  fetch('https://example.com/').then(function (r) { report('outside', true, r.status) }, function (e) { report('outside', false, e.message) })
+  try { var ws = new WebSocket(location.origin.replace('http', 'ws') + '/ws'); ws.onopen = function () { report('ws', true) }; ws.onerror = function () { report('ws', false, 'refused') } } catch (e) { report('ws', false, e.message) }
+  try { var w = window.open(location.origin + '/'); report('popup', !!w, w ? 'opened' : 'null') } catch (e) { report('popup', false, e.message) }
+  try { var f = document.createElement('iframe'); f.src = location.origin + '/'; f.onload = function () { try { var d = f.contentDocument.title; report('frame-panel', true, d) } catch (e) { report('frame-panel', false, 'opaque') } }; f.onerror = function () { report('frame-panel', false, 'blocked') }; document.body.appendChild(f); setTimeout(function () { report('frame-panel', false, 'no load') }, 1500) } catch (e) { report('frame-panel', false, e.message) }
+  document.addEventListener('securitypolicyviolation', function (e) { report('csp-' + e.violatedDirective.split(' ')[0], false, e.blockedURI) })
+</script>
+</body></html>`)
+writeFileSync(join(PLUGIN_DIR, 'section.html'), `<!doctype html><html><head><link rel="stylesheet" href="vibepanel-ui.css"><script src="vibepanel-plugin.js"></script></head>
+<body class="vp-section"><h2>Paper settings</h2><p id="s">-</p><script>var vp = VibePanel.plugin(); vp.settings().then(function (s) { document.getElementById('s').textContent = 'quiet=' + s.values.quiet })</script></body></html>`)
+writeFileSync(join(PLUGIN_DIR, 'page.html'), `<!doctype html><html><head><link rel="stylesheet" href="vibepanel-ui.css"><script src="vibepanel-plugin.js"></script></head>
+<body class="vp-section"><h1 id="h">Stand-up page</h1><p id="n">-</p><script>var vp = VibePanel.plugin(); vp.on('view', function (v) { document.getElementById('n').textContent = v.sessions.length + ' sessions' })</script></body></html>`)
+writeFileSync(join(PLUGIN_DIR, 'header.html'), `<!doctype html><html><head><link rel="stylesheet" href="vibepanel-ui.css"><script src="vibepanel-plugin.js"></script></head>
+<body style="margin:0;padding:0 8px;line-height:28px"><span id="w">·</span><script>var vp = VibePanel.plugin(); vp.on('view', function (v) { document.getElementById('w').textContent = v.sessions.filter(function (s) { return s.state === 'waiting' }).length + ' waiting' })</script></body></html>`)
 writeFileSync(join(PLUGIN_DIR, 'AGENTS.md'), '# not published')
 
 try {
@@ -156,7 +207,9 @@ try {
   const errors = []
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
   page.on('console', (m) => {
-    if (m.type() === 'error') errors.push(`console: ${m.text()}`)
+    // The sandbox probes are refused by CSP on purpose, and the browser logs
+    // each refusal as an error; those are the pass, not a failure.
+    if (m.type() === 'error' && !/Content Security Policy|Refused to connect|violates|sandboxed frame/.test(m.text())) errors.push(`console: ${m.text()}`)
   })
 
   // ── 1. The way in: the rail link ──────────────────────────────────────
@@ -220,10 +273,10 @@ try {
   await until(async () => (await row.getAttribute('data-state')) === 'disabled')
   if ((await row.getAttribute('data-state')) !== 'disabled') note('fail', 'install', `after install the card says ${await row.getAttribute('data-state')}; a missing secret installs disabled`)
   const granted = await page.getByTestId('plugin-granted').textContent()
-  if (!granted?.includes('2 of 3')) note('fail', 'install', `granted reads "${granted}", want 2 of 3`)
+  if (!granted?.includes('3 of 4')) note('fail', 'install', `granted reads "${granted}", want 3 of 4`)
   else pass('install', 'installed disabled with the unticked box withheld')
   const detail = await api('GET', '/api/settings/plugins/paper')
-  if (detail.body.granted.join(',') !== 'read:panel,write:todos') note('fail', 'install', `server granted ${detail.body.granted}`)
+  if (detail.body.granted.join(',') !== 'read:panel,ui:notify,write:todos') note('fail', 'install', `server granted ${detail.body.granted}`)
 
   // Enable is refused by name until the secret is set.
   const refused = await api('POST', '/api/settings/plugins/paper/enable', {})
@@ -295,6 +348,120 @@ try {
   else pass('theme', 'survives a reload without a flash')
   // Back to system for the layout shots.
   await page.evaluate(() => { localStorage.setItem('vibepanel.theme', 'system') })
+
+  // ── 4b. The frames: the pane, the probes, the section, the page, dev mode ──
+  // A project and a session for the view to show.
+  const projectDir = join(work, 'proj')
+  mkdirSync(projectDir, { recursive: true })
+  const project = (await api('POST', '/api/projects', { path: projectDir, name: 'paperproj' })).body
+  const session = (await api('POST', '/api/sessions', { projectId: project.id, command: ['sleep', '600'] })).body
+  await api('PATCH', `/api/sessions/${session.id}`, { title: 'write the digest' })
+
+  await page.goto(`${BASE}/`)
+  const probes = {}
+  await page.exposeFunction('vpProbe', (name, ok, detail) => { probes[name] = { ok, detail } })
+  await page.evaluate(() => {
+    window.addEventListener('message', (e) => {
+      if (e.data && e.data.type === 'probe') window.vpProbe(e.data.name, e.data.ok, e.data.detail)
+    })
+  })
+  const extTab = page.getByTestId('panel-tab-ext:paper:0')
+  if (!(await until(() => extTab.isVisible(), 10000))) {
+    note('fail', 'pane', 'the plugin pane is not in the side panel strip')
+  } else {
+    await extTab.click()
+    const frame = page.getByTestId('plugin-frame-paper-0')
+    if (!(await until(() => frame.isVisible()))) note('fail', 'pane', 'the frame did not mount')
+    const inner = page.frameLocator('[data-testid="plugin-frame-paper-0"]')
+    const live = await until(async () => (await inner.locator('#status').textContent()) === 'live', 10000)
+    if (!live) note('fail', 'pane', `the SDK never went live: ${await inner.locator('#status').textContent().catch(() => '?')}`)
+    const caps = await inner.locator('#caps').textContent()
+    if (!caps?.includes('read:panel') || caps.includes('sessions:input')) note('fail', 'pane', `caps in the frame: ${caps}`)
+    const names = await inner.locator('#sessions').textContent()
+    if (!names?.includes('write the digest')) note('fail', 'pane', `the view did not reach the frame: ${names}`)
+    else if (names.includes(projectDir)) note('fail', 'pane', 'the view carries a path without read:paths')
+    else pass('pane', 'the pane mounts, goes live and draws the view through handles')
+    await page.screenshot({ path: join(SHOTS, 'pane.png') })
+
+    // The probes: every one must have failed.
+    await until(() => Object.keys(probes).length >= 7, 5000)
+    for (const name of ['cookie', 'storage', 'origin', 'api-state', 'api-plugins', 'outside', 'ws', 'popup', 'frame-panel']) {
+      const p = probes[name]
+      if (!p) note('fail', `sandbox ${name}`, 'no result from the probe')
+      else if (p.ok) note('fail', `sandbox ${name}`, `the frame escaped: ${p.detail}`)
+    }
+    if (Object.values(probes).every((p) => !p.ok)) pass('sandbox', `every escape refused: ${Object.keys(probes).sort().join(', ')}`)
+
+    // ui:notify was ticked, so a toast arrives with the plugin's name.
+    await inner.locator('#notify').click()
+    const shown = await until(async () => (await page.locator('body').textContent())?.includes('hello from paper') ?? false, 5000)
+    if (!shown) note('fail', 'notify', 'the toast did not show')
+    else pass('notify', 'a granted ui:notify reaches the panel as a toast')
+    // Untick ui:notify: the same message is answered null and shows nothing.
+    await api('PUT', '/api/settings/plugins/paper/caps', { caps: ['read:panel', 'write:todos'] })
+    await sleep(300)
+    delete probes['notify-answer']
+    await inner.locator('#notify').click()
+    await until(() => !!probes['notify-answer'], 3000)
+    if (probes['notify-answer']?.ok !== false && probes['notify-answer']?.ok !== null) note('fail', 'notify', `after unticking ui:notify the frame got ${JSON.stringify(probes['notify-answer'])}`)
+    else pass('notify', 'withheld ui:notify is answered with nothing')
+    await api('PUT', '/api/settings/plugins/paper/caps', { caps: ['read:panel', 'write:todos', 'ui:notify'] })
+  }
+
+  // The header item and the settings section.
+  const headerItem = page.getByTestId('plugin-header-item')
+  if (!(await headerItem.isVisible())) note('fail', 'header', 'no header item')
+  else {
+    const h = page.frameLocator('[data-testid="plugin-frame-paper-3"]')
+    if (!(await until(async () => (await h.locator('#w').textContent())?.includes('waiting') ?? false, 8000))) note('fail', 'header', 'the header frame drew nothing')
+    else pass('header', 'the header item draws from the view')
+  }
+  await page.getByTestId('settings-open').click()
+  await page.getByTestId('settings-group-panel').click()
+  const section = page.getByTestId('plugin-section')
+  if (!(await until(() => section.isVisible(), 5000))) note('fail', 'section', 'no settings section for the plugin')
+  else {
+    const sf = page.frameLocator('[data-testid="plugin-frame-paper-1"]')
+    if (!(await until(async () => (await sf.locator('#s').textContent())?.includes('quiet=') ?? false, 8000))) note('fail', 'section', 'the section frame did not read its settings')
+    else pass('section', 'the settings section mounts under its group and reads the settings')
+    await page.screenshot({ path: join(SHOTS, 'section.png') })
+  }
+  await page.getByTestId('settings-close').click()
+
+  // The page slot.
+  await page.goto(`${BASE}/x/standup`)
+  const pf = page.frameLocator('[data-testid="plugin-frame-paper-2"]')
+  if (!(await until(async () => (await pf.locator('#n').textContent())?.includes('1 sessions') ?? false, 10000))) note('fail', 'page', 'the plugin page did not draw the view')
+  else pass('page', '/x/standup mounts the page with the view')
+  await page.screenshot({ path: join(SHOTS, 'page.png') })
+  await page.goto(`${BASE}/x/nothing-here`)
+  if (!(await until(() => page.getByTestId('plugin-page-missing').isVisible(), 5000))) note('fail', 'page', 'an unknown page path does not say so')
+
+  // Dev mode: the draft directory is what runs, and a change reloads.
+  await page.goto(`${BASE}/plugins`)
+  await until(() => page.getByTestId('plugin-row').isVisible())
+  await page.getByTestId('plugin-dev-on').click()
+  await until(() => page.getByTestId('plugin-dev').isVisible(), 5000)
+  await page.goto(`${BASE}/`)
+  await page.getByTestId('panel-tab-ext:paper:0').click()
+  const devInner = page.frameLocator('[data-testid="plugin-frame-paper-0"]')
+  await until(async () => (await devInner.locator('#status').textContent()) === 'live', 10000)
+  const fpBefore = (await api('GET', '/api/settings/plugins/paper/draft/fingerprint')).body
+  writeFileSync(join(PLUGIN_DIR, 'pane.html'), '<!doctype html><p id="changed">changed by the agent</p>')
+  // Read as text rather than by visibility: a frame mid-navigation answers a
+  // visibility question with a throw, and the body's words are the fact.
+  const reloaded = await until(
+    async () => ((await devInner.locator('body').textContent().catch(() => '')) ?? '').includes('changed by the agent'),
+    10000,
+  )
+  if (!reloaded) {
+    const fpAfter = (await api('GET', '/api/settings/plugins/paper/draft/fingerprint')).body
+    note('fail', 'dev', `the frame did not reload after the draft changed: fp ${JSON.stringify(fpBefore)} → ${JSON.stringify(fpAfter)}`)
+  } else pass('dev', 'a draft change reloads the frame')
+  await page.goto(`${BASE}/plugins`)
+  await until(() => page.getByTestId('plugin-row').isVisible())
+  await page.getByTestId('plugin-dev-off').click()
+  await until(() => page.getByTestId('plugin-dev-on').isVisible(), 5000)
 
   // ── 5. Layout at three widths, both themes ────────────────────────────
   for (const [name, width] of [['phone', 390], ['tablet', 820], ['desktop', 1400]]) {

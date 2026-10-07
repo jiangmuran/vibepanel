@@ -1,10 +1,14 @@
 # Plugins: five rungs, one capability table, and an install screen that says what it means
 
-**What is built:** the foundations and rung 0 (§13, step 0) -- the manifest,
-the capability table, the install screen, the theme lint, the bundle reader,
-the tables, the settings routes, the plugins page, the CLI, and a theme end to
-end. The runtimes for rungs 1-4 are not, and each section below that describes
-one says what it will be. This document replaces the earlier version of
+**What is built:** steps 0 and 1 of §13 -- the manifest, the capability
+table, the install screen, the theme lint, the bundle reader, the tables, the
+settings routes, the plugins page, the CLI, a theme end to end; and rung 1:
+grants, `/plugin/{grant}/` with the sandbox, `/api/plugin/{cred}/v1/` with
+the capability matrix, the view and its handles, the event stream, the SDK,
+`vibepanel-ui.css`, the bridge, the side-panel, settings, page and header
+slots, and dev mode with the fingerprint reload. The session and project
+action slots, the services, the processes and the module are not, and each
+section below that describes one says what it will be. This document replaces the earlier version of
 this file, which argued that the panel should not have a plugin runtime at all.
 §14 keeps that argument and says which parts of it still hold; the short
 version is that share pages built, one feature at a time, the three things it
@@ -264,8 +268,8 @@ plugin's name and not a blank panel:
 |---|---|---|
 | `sidepanel.pane` | a tab in the side panel, beside Files and Notes | the selected session and project |
 | `settings.section` | a `Section` in the named settings group, **only when a declarative `settings` schema is not enough** (§5a) | nothing |
-| `session.action` | an item in a per-session *more* menu (`Menu.tsx`, which the sidebar does not use yet), opening the entry in a dialog | that session |
-| `project.action` | the same on a project heading | that project |
+| `session.action` | an item in a per-session *more* menu (`Menu.tsx`, which the sidebar does not use yet), opening the entry in a dialog -- **not built yet**: the sidebar has no menu to put it in, and a row of buttons is what the render check pins | that session |
+| `project.action` | the same on a project heading -- **not built yet**, for the same reason | that project |
 | `page` | `/x/<path>`, a root of its own behind `AuthGate`, like `/sharing` | nothing |
 | `header.item` | a small frame in the header, for a counter or a badge | nothing |
 
