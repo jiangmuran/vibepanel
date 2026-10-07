@@ -1,0 +1,15 @@
+{
+  "plugin": 1,
+  "id": "__ID__",
+  "name": {
+    "en": "__NAME__"
+  },
+  "version": "0.1.0",
+  "theme": {
+    "file": "theme.css",
+    "name": {
+      "en": "__NAME__"
+    },
+    "scheme": "light"
+  }
+}

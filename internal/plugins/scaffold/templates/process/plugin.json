@@ -1,0 +1,19 @@
+{
+  "plugin": 1,
+  "id": "__ID__",
+  "name": {
+    "en": "__NAME__"
+  },
+  "version": "0.1.0",
+  "process": {
+    "command": [
+      "sh",
+      "bot.sh"
+    ],
+    "restart": "on-failure",
+    "capabilities": [
+      "read:panel"
+    ],
+    "env": []
+  }
+}

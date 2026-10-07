@@ -2045,6 +2045,24 @@ The panel-wide switch for rung-4 modules (`docs/plugins.md` §7): `{"enabled":
 bool}`, off by default. Nothing under `/plugin-code/` is served while it is
 off. Audited `plugins.unsandboxed`.
 
+### `GET /api/settings/plugin-templates`
+
+The templates `New plugin` offers: `[{id, rungs}]`, lowest rung first.
+
+### `POST /api/settings/plugin-new`
+
+`{name, template, path?}`. Scaffolds a plugin from the template into `path`
+(an empty or missing directory; the default is
+`<data dir>/plugins/dev/plugin-<slug>`), with `AGENTS.md`, `CLAUDE.md`,
+`README.md`, the SDK and its types, makes it a git repository, stores the
+directory as a version, turns **dev mode** on, and finds or makes the
+project at that directory, called `plugin-<slug>`. 201 with
+`{plugin, projectId, dir}`; 409 when a plugin of that id exists; 400 for a
+non-empty directory or an unknown template. Audited `plugin.created`. The
+plugins page hands `projectId` to the panel, which opens the launch picker
+with the first line typed. Not under `/settings/plugins/`: every word there
+is a valid plugin id.
+
 ### `GET /api/settings/plugin-modules`
 
 The modules the panel's page loads: `[{plugin, url, name, tested, within}]`

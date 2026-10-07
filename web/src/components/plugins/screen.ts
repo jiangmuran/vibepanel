@@ -1,5 +1,5 @@
 import type { Lang } from '../../i18n'
-import type { PluginLine, PluginRow, PluginScreen, PluginText } from '../../protocol/wire'
+import type { PluginLine, PluginRow, PluginScreen, PluginText, PluginRungs } from '../../protocol/wire'
 
 /**
  * The install screen's arithmetic, without React, so it has a test.
@@ -71,7 +71,7 @@ export function stateOf(p: PluginRow): { key: 'enabled' | 'disabled' | 'new' | '
 }
 
 /** Which rungs a plugin climbs, by their words, in ladder order. */
-export function rungsOf(p: PluginRow): ('theme' | 'panel' | 'service' | 'process' | 'unsandboxed')[] {
+export function rungsOf(p: { rungs: PluginRungs }): ('theme' | 'panel' | 'service' | 'process' | 'unsandboxed')[] {
   const r = p.rungs
   const out: ('theme' | 'panel' | 'service' | 'process' | 'unsandboxed')[] = []
   if (r.theme) out.push('theme')

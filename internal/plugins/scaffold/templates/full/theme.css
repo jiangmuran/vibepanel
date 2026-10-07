@@ -1,0 +1,16 @@
+/* A theme is one rule of the panel's tokens and nothing else: no other
+   selector, no url(), no @import. The tokens the panel defines are the
+   `--vp-*` names in web/src/styles.css; styles.css's base :root is the list. */
+:root[data-theme='ext-__ID__'] {
+  color-scheme: light;
+  --vp-bg: #f4f1ea;
+  --vp-surface: #fbf9f4;
+  --vp-surface-2: #efeadf;
+  --vp-elevated: rgb(251 249 244 / 0.8);
+  --vp-terminal-bg: #fffdf8;
+  --vp-ink: #2a2520;
+  --vp-ink-2: rgb(42 37 32 / 0.72);
+  --vp-ink-3: rgb(42 37 32 / 0.5);
+  --vp-accent: #a0522d;
+  --vp-accent-ink: #ffffff;
+}

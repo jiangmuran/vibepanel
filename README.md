@@ -225,7 +225,7 @@ the ones that do:
 | `make restart-check` | kill the backend; the sessions and the login must outlive it |
 | `make scale-check` | two dozen sessions: snapshot size, sidebar reachability, poller |
 | `make pages-check` | share pages: the sandbox from inside a page, the editing loop, every template |
-| `make plugins-check` | plugins: arrive, the install screen in both languages, a grant withheld, settings, a theme, layout at three widths |
+| `make plugins-check` | plugins: arrive, the install screen in both languages, a grant withheld, settings, a theme, a new plugin from a template, layout at three widths |
 | `make tls-check` | its own TLS: wss, the Secure cookie, swapping a certificate |
 | `make install-check` | both installers down every branch, in both languages |
 | `make release-check` | build the archives and run one from a throwaway HOME |

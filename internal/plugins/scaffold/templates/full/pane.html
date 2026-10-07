@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="vibepanel-ui.css">
+  <script src="vibepanel-plugin.js"></script>
+</head>
+<body class="vp-section">
+  <h2>__NAME__</h2>
+  <p id="g" class="vp-muted"></p>
+  <button id="b" class="vp-button vp-primary">click</button>
+  <p>clicks: <span id="c">-</span></p>
+  <script>
+    var vp = VibePanel.plugin()
+    vp.settings().then(function (s) { vp.text(document.getElementById('g'), s.values.greeting) })
+    document.getElementById('b').onclick = function () {
+      vp.route('POST', 'click').then(function (r) {
+        vp.text(document.getElementById('c'), r.result.clicks)
+        vp.ui.notify(r.result.greeting + ' #' + r.result.clicks)
+      })
+    }
+  </script>
+</body>
+</html>

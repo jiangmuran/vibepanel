@@ -1,0 +1,28 @@
+{
+  "plugin": 1,
+  "id": "__ID__",
+  "name": {
+    "en": "__NAME__"
+  },
+  "version": "0.1.0",
+  "panels": [
+    {
+      "slot": "sidepanel.pane",
+      "entry": "pane.html",
+      "title": {
+        "en": "__NAME__"
+      },
+      "icon": "list-checks"
+    }
+  ],
+  "capabilities": [
+    "read:panel",
+    "ui:open"
+  ],
+  "data": {
+    "notes": {
+      "type": "text",
+      "max": 2000
+    }
+  }
+}

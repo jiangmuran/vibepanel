@@ -1,0 +1,61 @@
+{
+  "plugin": 1,
+  "id": "__ID__",
+  "name": {
+    "en": "__NAME__"
+  },
+  "version": "0.1.0",
+  "theme": {
+    "file": "theme.css",
+    "name": {
+      "en": "__NAME__"
+    },
+    "scheme": "light"
+  },
+  "panels": [
+    {
+      "slot": "sidepanel.pane",
+      "entry": "pane.html",
+      "title": {
+        "en": "__NAME__"
+      },
+      "icon": "sparkles"
+    },
+    {
+      "slot": "settings.section",
+      "entry": "settings.html",
+      "title": {
+        "en": "__NAME__"
+      },
+      "group": "panel"
+    }
+  ],
+  "capabilities": [
+    "read:panel",
+    "ui:notify"
+  ],
+  "settings": {
+    "group": "panel",
+    "fields": [
+      {
+        "key": "greeting",
+        "type": "text",
+        "default": "hello",
+        "label": {
+          "en": "Greeting"
+        }
+      }
+    ]
+  },
+  "data": {
+    "clicks": {
+      "type": "counter"
+    }
+  },
+  "server": {
+    "entry": "server.js",
+    "routes": {
+      "POST /click": "click"
+    }
+  }
+}

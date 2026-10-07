@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="vibepanel-ui.css">
+  <script src="vibepanel-plugin.js"></script>
+</head>
+<body class="vp-section">
+  <p class="vp-muted">A settings section a plugin draws itself. Most plugins need only the
+  <code>settings</code> schema in the manifest, which the panel draws; this frame is for the case a form cannot cover.</p>
+  <div class="vp-row"><span class="vp-label">clicks</span><span class="vp-value" id="c">-</span></div>
+  <script>
+    var vp = VibePanel.plugin()
+    vp.on('view', function () { vp.data.get().then(function (d) { vp.text(document.getElementById('c'), d.values.clicks) }) })
+  </script>
+</body>
+</html>

@@ -426,15 +426,23 @@ frames within a second -- an agent in a session beside it edits and sees. Off,
 the installed version runs again. A draft asking for a capability you have
 not granted runs without it, and the card says so.
 
+**New plugin** is the start of that loop: a name and a template -- `theme`,
+`pane`, `service`, `process` or `full` -- and the panel scaffolds the
+directory under its data directory (or one you name) with `AGENTS.md`,
+`CLAUDE.md`, the SDK and its types, makes it a git repository, registers it
+as a project called `plugin-<name>` already in dev mode, and opens the
+launch picker for it with the first line typed at the agent's prompt. The
+templates are plugins the panel's tests install and run.
+
 **Upgrading** reads a newer version of the same id and draws the screen again
 with the boxes as you left them and any new line unticked; the old version
 keeps running until you confirm. **Removing** takes the versions, grants,
 settings and secrets with it. Everything is in the activity log under
 `plugin.`.
 
-From a shell, `vibepanel plugin list | check | describe | add | install
---grant … | enable | disable | remove | export | caps` do the same things with
-the same words, and a grant made that way is audited as the user `cli`.
+From a shell, `vibepanel plugin list | init | check | describe | add |
+install --grant … | enable | disable | remove | export | caps` do the same
+things with the same words (`init --dev` is the button), and a grant made that way is audited as the user `cli`.
 
 ## On a phone, in a chat app
 

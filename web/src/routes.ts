@@ -102,6 +102,25 @@ export function pageToOpen(search: string): { id: string; fresh: boolean } | nul
   return { id, fresh: q.get(FRESH_PARAM) === '1' }
 }
 
+export const OPEN_PROJECT_PARAM = 'project'
+
+/**
+ * The address the plugins page hands a new plugin's project over on: the
+ * panel, opening the launch picker for that project with the plugin's first
+ * line typed (docs/plugins.md §9). The same shape as a page's hand-over, for
+ * the same reason: the two roots share only the address.
+ */
+export function panelOpeningProject(projectId: string): string {
+  const q = new URLSearchParams({ [OPEN_PROJECT_PARAM]: projectId })
+  return `${PANEL_PATH}?${q.toString()}`
+}
+
+export function projectToOpen(search: string): string | null {
+  const id = new URLSearchParams(search).get(OPEN_PROJECT_PARAM)
+  if (!id || !/^[A-Za-z0-9_-]+$/.test(id)) return null
+  return id
+}
+
 export const OPEN_SESSION_PARAM = 'session'
 
 /**

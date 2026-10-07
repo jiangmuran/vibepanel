@@ -522,6 +522,7 @@ func (s *Server) Routes() http.Handler {
 			s.registerPluginServiceRoutes(r)
 			s.registerPluginProcessRoutes(r)
 			s.registerPluginModuleRoutes(r)
+			s.registerPluginNewRoutes(r)
 			// A plugin's own routes for the owner: /api/ext/{id}/…, under the
 			// session like everything else here.
 			s.registerPluginExtRoutes(r)

@@ -114,6 +114,8 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		{"PluginSourceRow", pluginSourceRow{}},
 		{"PluginProcessStatus", pluginProcessStatus{}},
 		{"PluginModule", pluginModule{}},
+		{"PluginTemplate", plugins.Template{}},
+		{"NewPluginResult", newPluginResult{}},
 		{"ShareMachine", shareMachine{}},
 		// The moving line beside the machine reading. Uncovered until network
 		// rates were added to it, for no better reason than nobody had touched
@@ -507,6 +509,7 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"plugin.secret_deleted":      true,
 		// Dev mode switched; a frame credential presented after it ended.
 		"plugin.dev":      true,
+		"plugin.created":  true,
 		"plugin.rejected": true,
 		// An inbound call that failed its signature check.
 		"plugin.inbound_rejected": true,

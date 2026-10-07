@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { BookOpen, Cpu, Download, FileUp, FolderInput, Hammer, Puzzle, ScrollText, ShieldCheck, SlidersHorizontal, Trash2 } from 'lucide-react'
+import { BookOpen, Cpu, Download, FileUp, FolderInput, Hammer, Plus, Puzzle, ScrollText, ShieldCheck, SlidersHorizontal, Trash2 } from 'lucide-react'
 
-import { t, useLang } from '../../i18n'
+import { t, tKey, useLang } from '../../i18n'
 import type { Lang } from '../../i18n'
 import { api } from '../../protocol/api'
-import type { PluginDetail, PluginProcessStatus, PluginRow, PluginSourceRow, SharePageServerLogLine } from '../../protocol/wire'
+import type { NewPluginResult, PluginDetail, PluginProcessStatus, PluginRow, PluginSourceRow, PluginTemplate, SharePageServerLogLine } from '../../protocol/wire'
 import { confirmThen } from '../ask'
-import { Chip, Empty, INPUT, IconTile } from '../pages/bits'
+import { Chip, Empty, Field, INPUT, IconTile } from '../pages/bits'
 import { safeText } from '../text'
 import { InstallScreen } from './InstallScreen'
 import { PluginSettingsForm } from './PluginSettingsForm'
@@ -32,8 +32,9 @@ function docsURL(lang: Lang): string {
   return lang === 'zh' ? `${DOCS_URL}#1-the-shape` : DOCS_URL
 }
 
-export function Plugins() {
+export function Plugins({ onOpenProject }: { onOpenProject?: (projectId: string) => void } = {}) {
   const lang = useLang()
+  const [newOpen, setNewOpen] = useState(false)
   const [plugins, setPlugins] = useState<PluginRow[]>([])
   const [details, setDetails] = useState<Record<string, PluginDetail>>({})
   const [notice, setNotice] = useState('')
@@ -150,9 +151,25 @@ export function Plugins() {
           />
           <button
             type="button"
+            data-testid="plugin-new"
+            disabled={busy}
+            onClick={() => {
+              setNewOpen((v) => !v)
+              setDirOpen(false)
+            }}
+            className="vp-outline text-vp-base"
+          >
+            <Plus size={13} />
+            {t('plg.new')}
+          </button>
+          <button
+            type="button"
             data-testid="plugin-add-dir"
             disabled={busy}
-            onClick={() => setDirOpen((v) => !v)}
+            onClick={() => {
+              setDirOpen((v) => !v)
+              setNewOpen(false)
+            }}
             className="vp-outline text-vp-base"
           >
             <FolderInput size={13} />
@@ -172,6 +189,21 @@ export function Plugins() {
           </button>
         </span>
       </header>
+
+      {newOpen && (
+        <NewPlugin
+          onCancel={() => setNewOpen(false)}
+          onMade={(made) => {
+            setNewOpen(false)
+            added(made.plugin)
+            onOpenProject?.(made.projectId)
+          }}
+          onError={(e) => {
+            setNotice('')
+            fail(e)
+          }}
+        />
+      )}
 
       {dirOpen && (
         <div className="mb-4 flex flex-wrap items-center gap-2 rounded-vp border border-hairline bg-surface px-3 py-2">
@@ -599,6 +631,130 @@ function ProcessBlock({ id, onError }: { id: string; onError: (e: unknown) => vo
           {safeText(st.output.slice(-8000))}
         </pre>
       )}
+    </div>
+  )
+}
+
+/**
+ * New plugin (docs/plugins.md §9): a name and a template. The server
+ * scaffolds the directory, stores it in dev mode and finds or makes the
+ * project at it; the page then hands that project to the panel, which opens
+ * the launch picker with the first line typed. Templates come from the
+ * server, lowest rung first, so the list here is never a second copy.
+ */
+function NewPlugin({
+  onCancel,
+  onMade,
+  onError,
+}: {
+  onCancel: () => void
+  onMade: (made: NewPluginResult) => void
+  onError: (e: unknown) => void
+}) {
+  const [name, setName] = useState('')
+  const [template, setTemplate] = useState('pane')
+  const [dir, setDir] = useState('')
+  const [templates, setTemplates] = useState<PluginTemplate[]>([])
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    api.pluginTemplates().then(setTemplates, () => {})
+  }, [])
+
+  const create = async () => {
+    const trimmed = name.trim()
+    if (!trimmed) return
+    setBusy(true)
+    try {
+      onMade(await api.newPlugin({ name: trimmed, template, path: dir.trim() }))
+    } catch (e) {
+      onError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div data-testid="plugin-new-form" className="vp-panel-in mb-4 rounded-vp-lg border border-accent/40 bg-surface p-4 shadow-sm">
+      <div className="mb-1 flex items-center gap-2">
+        <Plus size={14} className="shrink-0 text-ink-3" />
+        <h3 className="text-vp-md font-medium text-ink">{t('plg.new')}</h3>
+      </div>
+      <p className="mb-3 text-vp-sm text-ink-3">{t('plg.newWhy')}</p>
+      <div className="mb-3 grid grid-cols-1 gap-x-3 gap-y-2 @md:grid-cols-2">
+        <Field label={t('plg.newName')} htmlFor="plugin-new-name">
+          <input
+            id="plugin-new-name"
+            data-testid="plugin-new-name"
+            value={name}
+            maxLength={64}
+            autoFocus
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void create()
+            }}
+            className={`${INPUT} w-full`}
+          />
+        </Field>
+        <Field label={t('plg.newDir')} htmlFor="plugin-new-dir">
+          <input
+            id="plugin-new-dir"
+            data-testid="plugin-new-dir"
+            value={dir}
+            placeholder={t('plg.newDirHint')}
+            onChange={(e) => setDir(e.target.value)}
+            className={`${INPUT} w-full`}
+          />
+        </Field>
+      </div>
+      <fieldset className="mb-3">
+        <legend className="mb-1 block text-vp-sm text-ink-3">{t('plg.newTemplate')}</legend>
+        <div className="grid grid-cols-1 gap-1.5 @md:grid-cols-2 @3xl:grid-cols-3">
+          {templates.map((tp) => (
+            <label
+              key={tp.id}
+              data-testid={`plugin-new-tpl-${tp.id}`}
+              className={`flex cursor-pointer items-start gap-2 rounded-vp border px-2.5 py-2 text-vp-base ${
+                template === tp.id ? 'border-accent bg-accent/5' : 'border-hairline hover:bg-surface-2'
+              }`}
+            >
+              <input
+                type="radio"
+                name="plugin-new-template"
+                value={tp.id}
+                checked={template === tp.id}
+                onChange={() => setTemplate(tp.id)}
+                className="mt-1 accent-[var(--vp-accent)]"
+              />
+              <span className="min-w-0">
+                <span className="block font-medium text-ink">{tp.id}</span>
+                <span className="block text-vp-sm text-ink-3">{tKey(`plg.tpl.${tp.id}`) ?? tp.id}</span>
+                <span className="mt-1 flex flex-wrap gap-1">
+                  {rungsOf(tp).map((r) => (
+                    <Chip key={r}>{t(`plg.rung.${r}`)}</Chip>
+                  ))}
+                </span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <button type="button" onClick={onCancel} className="vp-outline text-vp-base">
+          {t('dir.cancel')}
+        </button>
+        <button
+          type="button"
+          data-testid="plugin-new-create"
+          disabled={busy || !name.trim()}
+          onClick={() => void create()}
+          className="vp-press flex items-center gap-1 rounded-vp px-3 py-1.5 text-vp-base font-medium disabled:opacity-40"
+          style={{ background: 'var(--vp-accent)', color: 'var(--vp-accent-ink)' }}
+        >
+          <Plus size={13} />
+          {t('plg.create')}
+        </button>
+      </div>
     </div>
   )
 }

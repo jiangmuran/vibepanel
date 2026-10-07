@@ -25110,3 +25110,59 @@ paragraph and its section shared a test id, which is a strict-mode
 violation in Playwright and a hint that the two were one thing to the eye;
 and the earlier assertion that the plugin page shows "1 sessions" was true
 only until the service check started a second one.
+
+## 2026-10-07 — Plugins, step 5: the scaffold, and the templates are tests
+
+§9 of `docs/plugins.md`: 「agent 自己实时加功能」 needs somewhere for the agent
+to start. The page workflow already had the answer -- a template, a
+directory, a project, the launch picker with the first line typed -- so this
+step is that loop with a plugin in it and the panel itself as the preview.
+
+What exists:
+
+- **`internal/plugins/scaffold.go`**: five templates (`theme`, `pane`,
+  `service`, `process`, `full`), each a working plugin with `__ID__` and
+  `__NAME__` filled in, plus `AGENTS.md` (what the sandbox enforces and what
+  is not the agent's to do: install, grant, enable), `CLAUDE.md`,
+  `README.md`, the SDK and its types, and a `.gitignore`. Written only into
+  an empty or missing directory, every file with `O_EXCL`: the directory
+  may be somebody's work. `Slug` makes an id from a name; `Templates()`
+  reads each template's rungs from its own manifest, so the gallery has no
+  second list.
+- **`POST /api/settings/plugin-new`** and **`GET
+  /api/settings/plugin-templates`**, beside `/settings/plugins` rather than
+  under it, because every word under it is a valid plugin id and
+  `/settings/plugins/new` would shadow a plugin called `new`. The handler
+  scaffolds, `git init`s, stores the directory as a version, turns dev mode
+  on, and finds or makes the project at that directory (`projectForDir`:
+  the one there, an archived one restored, or a new `plugin-<id>`), then
+  answers `{plugin, projectId, dir}`. Audited `plugin.created`.
+- **The hand-over** is the page's, with a project instead of a page:
+  `panelOpeningProject` / `projectToOpen` on `?project=`, read once on the
+  first open snapshot and taken off the address, then the launch picker for
+  that project with `plg.firstPrompt` typed. The snapshot may predate a
+  project made a moment ago on another page, so the opener asks the server
+  before saying it is gone.
+- **`vibepanel plugin init <dir> --template … [--name] [--dev]`**: the same
+  scaffold from a shell; `--dev` also registers it, which is what the button
+  does, and without it nothing in the panel changes, for a machine with no
+  panel on it.
+
+The templates are tests. `TestEveryTemplateIsAPluginThatInstalls` scaffolds
+each, reads it back through the bundle reader, puts it through the install
+screen, lints its theme and refuses anything the reader would silently
+ignore; the httpapi test takes each through the real route and then installs
+the `service` one and calls its route; `plugins-check` does the same through
+the page and watches the launch picker open. The templates were checked
+against the SDK, the manifest and the service `ctx` by reading those files
+before the first test ran, and the first run still had something to say:
+the bundle reader ignores the scaffold's own copies of `AGENTS.md` and the
+SDK, with the reason "the panel provides its own", and the test now accepts
+an ignored file by that reason and no other. `tsc` found the one real
+mistake: `rungsOf` took a whole `PluginRow` when all it reads is `rungs`,
+so the template gallery could not use it until it asked for only that.
+
+Deferred, and said so in §9: `vibepanel plugin shot` and `plugin run`, and
+the session/project action slots, which wait for a sidebar menu to put them
+in.
+

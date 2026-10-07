@@ -13,9 +13,12 @@ with `onEvent`, `onSchedule`, the plugin's routes through both doors,
 log; and rung 3: `plugin_tokens`, the supervisor with its three tests, the
 cgroup leaf, and the three red capabilities' routes; and rung 4: the module
 loaded on the panel's origin behind the panel-wide switch, the `host`
-object, two slots, `host.css`, safe mode and `disable --all`. The session
-and project action slots, and `host.override`, are not, and each section
-below that describes one says what it will be. This document replaces the earlier version of
+object, two slots, `host.css`, safe mode and `disable --all`; and the
+scaffold of §9: **New plugin** on the plugins page and `vibepanel plugin
+init`, five templates, `AGENTS.md` for the agent, the directory registered
+in dev mode and handed to the launch picker. The session and project action
+slots, `host.override`, `vibepanel plugin shot` and `plugin run` are not,
+and each section below that describes one says what it will be. This document replaces the earlier version of
 this file, which argued that the panel should not have a plugin runtime at all.
 §14 keeps that argument and says which parts of it still hold; the short
 version is that share pages built, one feature at a time, the three things it

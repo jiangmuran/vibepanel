@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="vibepanel-ui.css">
+  <script src="vibepanel-plugin.js"></script>
+</head>
+<body class="vp-section">
+  <h2>__NAME__</h2>
+  <p class="vp-muted">status: <span id="status">connecting</span></p>
+  <ul id="sessions" class="vp-list"></ul>
+  <script>
+    var vp = VibePanel.plugin()
+    vp.on('status', function (s) { vp.text(document.getElementById('status'), s) })
+    vp.on('view', function (v) {
+      var ul = document.getElementById('sessions')
+      ul.innerHTML = ''
+      v.sessions.forEach(function (s) {
+        var li = document.createElement('li')
+        li.className = 'vp-item'
+        var mark = document.createElement('span'); vp.badge(mark, s.state)
+        var name = document.createElement('span'); vp.text(name, s.name)
+        var open = document.createElement('button'); open.className = 'vp-button'; open.textContent = 'open'
+        open.onclick = function () { vp.ui.open({ session: s.id }) }
+        li.appendChild(mark); li.appendChild(name); li.appendChild(open)
+        ul.appendChild(li)
+      })
+    })
+  </script>
+</body>
+</html>

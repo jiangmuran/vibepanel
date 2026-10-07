@@ -48,7 +48,7 @@ import {
 } from './components/panes'
 import { disambiguatedLabels, projectLabel, sessionLabel } from './components/label'
 import { applyTheme, loadTheme } from './components/theme'
-import { PANEL_PATH, pageToOpen, sessionToOpen } from './routes'
+import { PANEL_PATH, pageToOpen, projectToOpen, sessionToOpen } from './routes'
 import type { ThemeChoice } from './components/theme'
 import { NARROW_QUERY, useMediaQuery } from './hooks/useMediaQuery'
 import { EXIT_VANISHED } from './protocol/wire'
@@ -1189,6 +1189,36 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     void openPage(pending.id, pending.fresh)
     // openPage is not in the deps on purpose: it is a fresh closure every
     // render and the effect is meant to fire once, on the first open snapshot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, snapshots])
+
+  // A new plugin's project, handed over from the plugins page the same way
+  // (docs/plugins.md §9): the launch picker opens for it with the plugin's
+  // first line typed. Read once and taken off the address for the same
+  // reasons as a page.
+  const openProject = async (id: string) => {
+    // The project was made a moment ago by another page, so the first
+    // snapshot may predate it: ask the server before saying it is gone.
+    const project =
+      state.projects.find((p) => p.id === id) ?? (await api.state()).projects.find((p) => p.id === id)
+    if (!project) {
+      setError(t('plg.projectGone'))
+      return
+    }
+    if (!narrow) setRightOpen(true)
+    pagePrompt.current = { projectId: project.id, text: t('plg.firstPrompt') }
+    setLaunchFor(project)
+  }
+  const handedProject = useRef(projectToOpen(location.search))
+  useEffect(() => {
+    if (status !== 'open' || snapshots === 0) return
+    const id = handedProject.current
+    if (!id) return
+    handedProject.current = null
+    history.replaceState(null, '', PANEL_PATH)
+    void openProject(id)
+    // openProject is a fresh closure every render; the effect fires once, on
+    // the first open snapshot, like a page's hand-over.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, snapshots])
 

@@ -2186,6 +2186,19 @@ export interface PluginRungs {
   unsandboxed: boolean
 }
 
+/** One template `New plugin` offers, with the rungs it climbs (GET /api/settings/plugin-templates). */
+export interface PluginTemplate {
+  id: string
+  rungs: PluginRungs
+}
+
+/** What POST /api/settings/plugin-new answers: the plugin, in dev mode, and the project at its directory. */
+export interface NewPluginResult {
+  plugin: PluginDetail
+  projectId: string
+  dir: string
+}
+
 export interface PluginThemeRow {
   plugin: string
   /** The data-theme value: ext-<id>. */

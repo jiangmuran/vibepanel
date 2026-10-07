@@ -3,7 +3,7 @@ import { ArrowLeft, LogOut } from 'lucide-react'
 
 import { t, useLang } from '../i18n'
 import type { AuthState } from '../protocol/wire'
-import { PANEL_PATH } from '../routes'
+import { PANEL_PATH, panelOpeningProject } from '../routes'
 import { Mark } from './AuthGate'
 import { ConfirmDialog } from './ConfirmDialog'
 import { LanguageSwitch } from './LanguageSwitch'
@@ -74,7 +74,7 @@ export function PluginsPage({ auth, onSignOut }: { auth: AuthState; onSignOut: (
       </header>
 
       <main className="vp-safe-bottom mx-auto max-w-6xl px-4 pt-6 [--vp-safe-pad:2.5rem] sm:px-6 sm:pt-8">
-        <Plugins />
+        <Plugins onOpenProject={(id) => location.assign(panelOpeningProject(id))} />
       </main>
       <ConfirmDialog />
     </div>

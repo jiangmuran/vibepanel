@@ -66,6 +66,8 @@ import type {
   PluginSettings,
   PluginSourceRow,
   PluginThemeRow,
+  PluginTemplate,
+  NewPluginResult,
 } from './wire'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -346,6 +348,10 @@ export const api = {
   listPlugins: () => request<PluginRow[]>('/api/settings/plugins'),
   plugin: (id: string) => request<PluginDetail>(`/api/settings/plugins/${encodeURIComponent(id)}`),
   pluginThemes: () => request<PluginThemeRow[]>('/api/settings/plugin-themes'),
+  pluginTemplates: () => request<PluginTemplate[]>('/api/settings/plugin-templates'),
+  /** Scaffold a plugin from a template, in dev mode, with a project at it (docs/plugins.md §9). */
+  newPlugin: (req: { name: string; template: string; path: string }) =>
+    request<NewPluginResult>('/api/settings/plugin-new', { method: 'POST', body: JSON.stringify(req) }),
   /** A zip becomes a stored version; nothing runs until it is installed. */
   addPluginZip: (file: Blob) =>
     request<{ plugin: PluginDetail; ignored: { path: string; reason: string }[]; created: boolean }>(

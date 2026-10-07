@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jiangmuran/vibepanel/internal/httpapi"
+	"github.com/jiangmuran/vibepanel/internal/pages"
 	"github.com/jiangmuran/vibepanel/internal/plugins"
 	"github.com/jiangmuran/vibepanel/internal/store"
 	"github.com/jiangmuran/vibepanel/internal/version"
@@ -31,6 +32,7 @@ import (
 const pluginUsage = `usage: vibepanel plugin <command> [flags] [dir|file.zip]
 
   list      list plugins and what each may do
+  init      scaffold a new plugin: init <dir> --template theme|pane|service|process|full [--name N] [--dev]
   check     report what is wrong with the plugin in dir (the current directory by default)
   describe  print the install screen for dir or a zip, without storing anything
   add       store dir or a zip as a version; nothing runs until it is installed
@@ -50,6 +52,8 @@ func cmdPlugin(args []string) error {
 	switch sub {
 	case "list", "ls":
 		return pluginList(rest)
+	case "init", "new":
+		return pluginInit(rest)
 	case "check":
 		return pluginCheck(rest)
 	case "describe":
@@ -454,4 +458,68 @@ func pluginCaps(args []string) error {
 	n := plugins.NetCapability("<host>")
 	fmt.Fprintf(tw, "%s\t%s\t%s\n", n.Name, n.Kind, n.Words.In(lang))
 	return tw.Flush()
+}
+
+// pluginInit is New plugin from a shell (docs/plugins.md §9): the same
+// scaffold, into a directory of the person's choosing. --dev also stores the
+// directory as a version and turns dev mode on, which is what the button
+// does; without it the files are written and nothing in the panel changes,
+// for a machine that has no panel on it.
+func pluginInit(args []string) error {
+	fs := flag.NewFlagSet("plugin init", flag.ContinueOnError)
+	tpl := fs.String("template", "pane", "theme, pane, service, process or full")
+	name := fs.String("name", "", "the plugin's name; the id is made from it (default: the directory's name)")
+	pid := fs.String("id", "", "the plugin's id, when the one made from the name is not wanted")
+	dev := fs.Bool("dev", false, "also register it with the panel in dev mode, as the New plugin button does")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("one directory: vibepanel plugin init <dir> --template <t>")
+	}
+	dir, err := filepath.Abs(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if *name == "" {
+		*name = strings.TrimPrefix(filepath.Base(dir), httpapi.PluginDirPrefix)
+	}
+	if *pid == "" {
+		*pid = plugins.Slug(*name)
+	}
+	if err := plugins.Scaffold(dir, *tpl, *pid, *name); err != nil {
+		return err
+	}
+	ctx := context.Background()
+	pages.GitInit(ctx, dir)
+	fmt.Printf("wrote a %s plugin %s to %s\n", *tpl, *pid, dir)
+	if !*dev {
+		fmt.Println("next: read AGENTS.md there; `vibepanel plugin check` and `vibepanel plugin describe` as you go;")
+		fmt.Println("      `vibepanel plugin init --dev` or Settings → Plugins → From a directory + Dev mode to see it live")
+		return nil
+	}
+	_, db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	owner, err := db.FirstUserID(ctx)
+	if err != nil {
+		return errors.New("the panel has no account yet; finish setup first")
+	}
+	b, err := plugins.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	p, _, err := httpapi.AddPluginBundle(ctx, db, owner, b, dir, "cli")
+	if err != nil {
+		return err
+	}
+	if err := db.UpdatePluginSource(ctx, p.ID, dir, true); err != nil {
+		return err
+	}
+	_ = db.Audit(ctx, store.AuditEntry{At: time.Now().Unix(), Event: "plugin.created", Username: "cli", Detail: p.ID + " from " + *tpl + " (" + dir + ")"})
+	fmt.Printf("registered %s in dev mode: the card is on Settings → Plugins, running this directory\n", p.ID)
+	fmt.Println("the panel picks the row up on its next poll; `vibepanel plugin install --grant …` when it is ready")
+	return nil
 }

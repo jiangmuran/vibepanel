@@ -300,11 +300,16 @@ tab 不加载任何插件主题和模块；`vibepanel plugin disable --all` 从 
 是运行的东西，权限仍是你已经授予这个 id 的那些；改一个文件，它的每个 frame 一秒内重载——旁边会话里
 的 agent 边改边看。关掉就回到已安装的版本。草稿多要的、你没授予的能力，它拿不到，卡片会说。
 
+**新建插件**是这个循环的起点：起个名字、选个模板（`theme`、`pane`、`service`、`process`、
+`full`），面板就在数据目录下（或你指定的目录）生成这个插件，带 `AGENTS.md`、`CLAUDE.md`、SDK 和类型
+声明，初始化成 git 仓库，注册为叫 `plugin-<名字>` 的项目并直接进入开发模式，然后打开启动器，
+第一句话已经敲在 agent 的提示符里。模板本身就是面板测试会安装并运行的插件。
+
 **升级**是读入同一 id 的新版本，安装页按你上次的勾选再画一遍，新出现的行不勾；确认之前旧版本
 照跑。**删除**把版本、授权、设置和 secret 一起带走。所有这些在活动日志里都在 `plugin.` 前缀下。
 
-命令行里 `vibepanel plugin list | check | describe | add | install --grant … | enable | disable |
-remove | export | caps` 做同样的事、说同样的话，这样做出的授权审计为用户 `cli`。
+命令行里 `vibepanel plugin list | init | check | describe | add | install --grant … | enable |
+disable | remove | export | caps` 做同样的事、说同样的话（`init --dev` 就是那个按钮），这样做出的授权审计为用户 `cli`。
 
 ## 手机上的聊天
 

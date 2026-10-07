@@ -591,6 +591,42 @@ try {
   if (sheet.includes('ext-paper')) note('fail', 'remove', 'the theme is still served after removing')
   else pass('remove', 'the row, the grants, the secret and the theme are gone')
 
+  // ── 7. New plugin: a name and a template become a project the panel opens ──
+  // Last, because it leaves a second plugin and a project behind, and every
+  // step above addresses `plugin-row` as the one row there is.
+  await page.getByTestId('plugin-new').click()
+  await until(() => page.getByTestId('plugin-new-tpl-service').isVisible(), 5000)
+  await page.getByTestId('plugin-new-name').fill('Standup board')
+  await page.getByTestId('plugin-new-tpl-service').click()
+  await page.getByTestId('plugin-new-create').click()
+  await until(() => page.getByTestId('launch-picker').isVisible(), 15000)
+  if (!page.url().startsWith(`${BASE}/`) || page.url().includes('project=')) {
+    note('fail', 'new', `the address still carries the hand-over: ${page.url()}`)
+  }
+  const named = await page.getByText('plugin-standup-board').first().isVisible().catch(() => false)
+  if (!named) note('fail', 'new', 'the sidebar has no project called plugin-standup-board')
+  else pass('new', 'the panel opened the launch picker for the new project')
+  await page.keyboard.press('Escape')
+  const made = await page.evaluate(async () => {
+    const r = await fetch('/api/settings/plugins/standup-board')
+    return r.ok ? r.json() : { status: r.status }
+  })
+  if (!made.dev || !made.sourceDir?.endsWith('/plugin-standup-board') || !made.rungs?.service) {
+    note('fail', 'new', `the plugin is not a dev-mode service at its directory: ${JSON.stringify(made).slice(0, 200)}`)
+  } else {
+    // Installed with what the template asks for, the scaffolded server.js answers.
+    const ok = await page.evaluate(async () => {
+      const i = await fetch('/api/settings/plugins/standup-board/install', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ caps: ['read:panel'] }),
+      })
+      if (!i.ok) return `install ${i.status}`
+      const r = await fetch('/api/ext/standup-board/summary')
+      return r.ok ? JSON.stringify(await r.json()) : `summary ${r.status}`
+    })
+    if (!ok.includes('"sessions"')) note('fail', 'new', `the template's route did not answer: ${ok}`)
+    else pass('new', `the scaffolded service answers its own route: ${ok.slice(0, 80)}`)
+  }
+
   if (errors.length) note('fail', 'console', errors.slice(0, 5).join('\n'))
 } catch (e) {
   note('fail', 'script', e instanceof Error ? e.stack ?? e.message : String(e))

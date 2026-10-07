@@ -11,7 +11,9 @@ import {
   SHARING_PATH,
   pageToOpen,
   panelOpeningPage,
+  panelOpeningProject,
   panelOpeningSession,
+  projectToOpen,
   routeFor,
   sessionToOpen,
 } from './routes'
@@ -78,6 +80,17 @@ describe('a chat card opening a session', () => {
     expect(sessionToOpen('')).toBeNull()
     expect(sessionToOpen('?session=')).toBeNull()
     expect(sessionToOpen('?session=../x')).toBeNull()
+  })
+})
+
+describe('handing a new plugin project over to the panel', () => {
+  it('round-trips the project id and refuses what is not one', () => {
+    const to = panelOpeningProject('pr_abc-DEF_1')
+    expect(to.startsWith(PANEL_PATH)).toBe(true)
+    expect(projectToOpen(new URL(to, 'http://x').search)).toBe('pr_abc-DEF_1')
+    expect(projectToOpen('')).toBeNull()
+    expect(projectToOpen('?project=')).toBeNull()
+    expect(projectToOpen('?project=../x')).toBeNull()
   })
 })
 

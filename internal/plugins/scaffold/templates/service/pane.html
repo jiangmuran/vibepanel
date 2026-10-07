@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="vibepanel-ui.css">
+  <script src="vibepanel-plugin.js"></script>
+</head>
+<body class="vp-section">
+  <h2>__NAME__</h2>
+  <div class="vp-row"><span class="vp-label">sessions</span><span class="vp-value" id="n">-</span></div>
+  <div class="vp-row"><span class="vp-label">waiting</span><span class="vp-value" id="w">-</span></div>
+  <div class="vp-row"><span class="vp-label">transitions seen</span><span class="vp-value" id="t">-</span></div>
+  <script>
+    var vp = VibePanel.plugin()
+    vp.on('view', function () {
+      vp.route('GET', 'summary').then(function (r) {
+        vp.text(document.getElementById('n'), r.result.sessions)
+        vp.text(document.getElementById('w'), r.result.waiting)
+        vp.text(document.getElementById('t'), r.result.transitions)
+      })
+    })
+  </script>
+</body>
+</html>
