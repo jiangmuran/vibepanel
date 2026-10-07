@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import {
   CHAT_PATH,
   PANEL_PATH,
+  PLUGINS_PATH,
   SHARING_PATH,
   pageToOpen,
   panelOpeningPage,
@@ -41,6 +42,13 @@ describe('what the address bar decides', () => {
     expect(routeFor(`${CHAT_PATH}/`)).toEqual({ kind: 'chat' })
     expect(routeFor(`${CHAT_PATH}x`)).toEqual({ kind: 'panel' })
     expect(routeFor(`${CHAT_PATH}/abc`)).toEqual({ kind: 'panel' })
+  })
+
+  it('builds the plugins page for its path and not by prefix', () => {
+    expect(routeFor(PLUGINS_PATH)).toEqual({ kind: 'plugins' })
+    expect(routeFor(`${PLUGINS_PATH}/`)).toEqual({ kind: 'plugins' })
+    expect(routeFor(`${PLUGINS_PATH}x`)).toEqual({ kind: 'panel' })
+    expect(routeFor(`${PLUGINS_PATH}/abc`)).toEqual({ kind: 'panel' })
   })
 
   it('does not match the sharing page by prefix', () => {

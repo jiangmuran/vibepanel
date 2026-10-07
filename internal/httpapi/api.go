@@ -496,6 +496,11 @@ func (s *Server) Routes() http.Handler {
 			// here, by somebody signed in. Nothing about a page is editable
 			// through a share token.
 			s.registerPageRoutes(r)
+			// Plugins: installed, granted and enabled from here, by somebody
+			// signed in. Nothing about a plugin is installable through any
+			// other credential, which is what keeps a plugin from installing
+			// plugins. docs/plugins.md §6.
+			s.registerPluginRoutes(r)
 		})
 
 		r.NotFound(func(w http.ResponseWriter, r *http.Request) {
@@ -551,6 +556,8 @@ func (s *Server) Routes() http.Handler {
 	// A page's admin page: the session mints a grant here, and the grant
 	// serves the page. Before the catch-all for the same reason.
 	s.registerAdminPageRoutes(r)
+	// The enabled plugin themes, as one stylesheet index.html links.
+	s.registerPluginThemeRoute(r)
 
 	r.Handle("/*", webui.Handler(s.Cfg.StaticDir))
 	return r

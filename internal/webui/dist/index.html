@@ -16,6 +16,12 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="theme-color" content="#0d0d10" />
     <link rel="apple-touch-icon" href="/icon-180.png" />
+    <!-- Themes installed as plugins, as one stylesheet the panel serves
+         (docs/plugins.md §5). A link rather than something React injects,
+         so a chosen plugin theme is in the document before first paint like
+         the panel's own; the route answers an empty sheet when nothing is
+         installed, and 401 on the sign-in page, which the browser ignores. -->
+    <link rel="stylesheet" href="/plugin-themes.css" />
     <title>vibepanel</title>
     <style>
       .vp-boot {
@@ -61,11 +67,13 @@
       // brief, but on a dark-room phone it is genuinely unpleasant.
       try {
         var t = localStorage.getItem('vibepanel.theme')
-        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t
+        // 'light', 'dark', or a plugin theme's 'ext-<id>' (theme.ts owns the
+        // shape); 'system' sets nothing.
+        if (t === 'light' || t === 'dark' || /^ext-[a-z0-9-]+$/.test(t)) document.documentElement.dataset.theme = t
       } catch (e) { /* private mode: fall through to the system preference */ }
     </script>
-    <script type="module" crossorigin src="/assets/index-BYDZ1hFd.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-Bf3nyrrB.css">
+    <script type="module" crossorigin src="/assets/index-EoyyTucX.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-BpSUeU2l.css">
   </head>
   <body>
     <!-- What is on screen before any of this has loaded.

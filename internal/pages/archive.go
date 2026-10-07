@@ -20,7 +20,7 @@ import (
 //
 // Export and import go through the same rules as a publish. An archive is a
 // file somebody was sent, so it is read the way a directory an agent wrote is
-// read -- every path through ValidPath, every file through sniffOK, every limit
+// read -- every path through ValidPath, every file through SniffOK, every limit
 // an error -- and not unpacked first and checked afterwards.
 
 // MaxArchiveBytes bounds an uploaded archive. A page is at most MaxBytes of
@@ -132,7 +132,7 @@ func ReadArchive(data []byte) (Bundle, error) {
 			return Bundle{}, fmt.Errorf("%s: %w", name, rerr)
 		}
 		ct := ContentTypeFor(name)
-		if !sniffOK(ct, body) {
+		if !SniffOK(ct, body) {
 			return Bundle{}, fmt.Errorf("%s does not contain what its name says", name)
 		}
 		b.Bytes += int64(len(body))

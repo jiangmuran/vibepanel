@@ -74,6 +74,10 @@ pages-check: build    ## Share pages: the sandbox from inside a page, the editin
 chat-check: build     ## The Chat page: every adapter's card, rules, keys, the doors, layout at three widths
 	cd web && npm run check:chat
 
+.PHONY: plugins-check
+plugins-check: build  ## Plugins: arrive, the install screen in both languages, grants withheld, settings, the theme, layout at three widths
+	cd web && npm run check:plugins
+
 .PHONY: resources-check
 resources-check: build ## The Resources tab and a session that really runs out of memory
 	cd web && npm run check:resources

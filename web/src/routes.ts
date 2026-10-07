@@ -29,13 +29,17 @@ export const SHARING_PATH = '/sharing'
 /** The page the chat bridge is set up from: routes.ts is the one place that spells it. */
 export const CHAT_PATH = '/chat'
 
-export type Route = { kind: 'panel' } | { kind: 'sharing' } | { kind: 'chat' }
+/** The page plugins are installed, granted and switched from (docs/plugins.md). */
+export const PLUGINS_PATH = '/plugins'
+
+export type Route = { kind: 'panel' } | { kind: 'sharing' } | { kind: 'chat' } | { kind: 'plugins' }
 
 export function routeFor(pathname: string): Route {
   // With or without a trailing slash, because both arrive: a bookmark keeps
   // whatever was typed, and a proxy may add one.
   if (pathname === SHARING_PATH || pathname === `${SHARING_PATH}/`) return { kind: 'sharing' }
   if (pathname === CHAT_PATH || pathname === `${CHAT_PATH}/`) return { kind: 'chat' }
+  if (pathname === PLUGINS_PATH || pathname === `${PLUGINS_PATH}/`) return { kind: 'plugins' }
   return { kind: 'panel' }
 }
 

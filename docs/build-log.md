@@ -24748,3 +24748,133 @@ Not bugs, with the reason:
   terminal's layout is a stable WebGL canvas, the read is cheap against it, and
   a cache with its own invalidation is more to get wrong than the thrash is to
   pay.
+
+## 2026-10-07 — Plugins: the design, replacing the argument against one
+
+Issue #30 asked for a plugin system in the owner's words: frontend and
+backend, for different needs and levels of trust, a development spec, one
+packaged file, an install screen that shows permissions, hosts and whether a
+command runs, permissions that do not interfere between plugins, and real
+freedom — themes, features, routes, changing how a piece of the panel
+behaves. Then, mid-design: the settings panel and the shared components
+should have one extension path that does not conflict, and a big or breaking
+update should not break plugins.
+
+`docs/plugins.md` used to be the argument that the API already was the plugin
+system and that an in-process runtime should not be built. That argument was
+written before share pages, which built every piece it said was too
+expensive — HTML the panel did not write on its own origin under a response
+header sandbox, goja with a budget and a `ctx`, host-approved outbound
+fetches with a resolved-address guard, session-bound grants, a per-page data
+store, a live dev loop. So the document is rewritten as the design, with the
+old reasoning kept in §14 and what still holds named: no veto, no tmux
+socket, a supervisor rather than a runtime for processes, capabilities
+decided in one file, and same-origin code said out loud on the screen rather
+than mitigated by a message allowlist.
+
+The decisions, in the order they cost something to get wrong:
+
+- **Five rungs, one word each on the install screen**: theme (tokens only),
+  panel (a sandboxed frame with a grant, the admin page's shape), service
+  (`server.js` with events, a schedule, routes), process (a supervised
+  command in the sessions' scope), unsandboxed (a module on the panel's
+  origin, as the owner). One plugin may combine 0–3; rung 4 is its own
+  kind and its screen carries the red paragraph.
+- **One capability table**, `internal/plugins/caps.go`: name, sentence in
+  both languages, the routes it opens, the `ctx` members it adds. Pinned by
+  a test that mints each capability alone and walks the router. `sessions:
+  create` and `sessions:input` are on the list in bold, because the
+  credential is a grant or a token rather than a URL; what `writable-links`
+  refused for a URL is kept as loudness, not as a refusal.
+- **Credentials narrowed by route, not by a flag** — red line 8's shape,
+  drafted as red line 10: a grant or plugin token reaches
+  `/api/plugin/{cred}/v1/` and nothing else; `currentUser` consults neither
+  table; scoped API tokens are not needed, because a plugin never holds one.
+- **Declare, and the panel draws.** Settings are a schema the panel renders
+  with its own `Section`/`Row`; a frame gets `vibepanel-ui.css` (tokens and
+  a short list of stable classes) and six SDK behaviours (`confirm`, `menu`,
+  `toast`, `badge`, `text`, `fmt`), not a widget vocabulary — the board was
+  a vocabulary and lost to HTML. That is what makes a redesign of the
+  settings modal move nothing a plugin wrote.
+- **Surviving updates** is a section, not a sentence: every contract has a
+  number the manifest names, contracts only grow (a committed list of slot
+  names, classes and base tokens, `TestNothingAPluginCanNameWasRemoved`),
+  `v2` beside `v1` for three minor releases, manifests strict in and
+  lenient out, a corpus of frozen fixture plugins installed and run by a
+  test, and the update screen naming each plugin the new version cannot
+  run before it is installed. The rungs are also the stability order.
+- **No interference** is namespaces the id owns — data, settings, routes,
+  credentials, hosts, secrets, an event channel, a handler semaphore, a
+  cgroup leaf, slot ids, one active theme — not rules a plugin follows.
+- **Live development** is the page workflow with the panel as the preview:
+  scaffold into `<data dir>/plugins/dev/`, a `plugin-<name>` project, the
+  fingerprint reload, dev mode under the grants already given to that id
+  with an amber line for what the draft asks and has not got.
+- **Build order** 0–4, each shipping alone; foundations and themes first,
+  because the screen, the words and the audit rows are what needs testing
+  before any runtime exists.
+
+Nothing is built. `docs/api.md`'s harness section and `share-pages.md`'s
+reference to the old §3 are updated to point at the new document.
+
+## 2026-10-07 — Plugins, step 0: the screen, the words, a theme end to end
+
+The first step of `docs/plugins.md` §13, built as the design said to build it:
+no credential, no frame, no runtime -- the install screen, the audit rows, the
+tables and a theme, because the screen and its words are what the rest of the
+system will be judged by and are the thing to test before any runtime exists.
+
+What exists:
+
+- `internal/plugins`: the manifest (strict in, lenient out -- `DecodeStored`
+  drops the section a validation error names and says which), the capability
+  table with its sentence in both languages, `Describe` (the install screen as
+  a pure function; `TestEveryCapabilityHasWordsOnTheScreen` fails the build
+  on a capability with no words), `LintTheme` (one rule, tokens the base
+  `:root` defines, no `url()`, no escape, no at-rule; `BaseTokens` is a
+  committed list pinned both ways against `styles.css` by
+  `TestNothingAThemeCanNameWasRemoved`), the bundle reader (the page's rules
+  with a plugin's names and limits; `pages.SniffOK` and `pages.ReadBounded`
+  exported so there is one definition of "a PNG is a PNG"), and version
+  arithmetic for `"panel": ">=1.26"` and a rung-4 `tested` range.
+- Tables: `plugins`, `plugin_versions`, `plugin_files` (in the page's blob
+  table -- `gcPageBlobs` now reads both file tables, and a test publishes a
+  page to prove it does not sweep a plugin's files), `plugin_caps` (the grant
+  decision, attached to the id), `plugin_settings`, `plugin_secrets`.
+- Routes under the session, documented in `docs/api.md`: arrive (zip or a
+  directory, one `POST`, decided by the body's type, because every word under
+  `/settings/plugins/` is a valid plugin id), install with the boxes as
+  ticked, enable/disable, grants, settings, secrets, export, the enabled
+  themes as a list and as one stylesheet. Ten `plugin.` audit events.
+- `/plugin-themes.css`, linked from `index.html`, so a chosen plugin theme is
+  in the document before first paint like the panel's own; the pre-paint
+  script honours `ext-<id>`.
+- The plugins page (`/plugins`, linked from the settings rail like Sharing
+  and Chat): the card, the install screen, the settings form the panel draws
+  from the schema, secrets. `vibepanel plugin` with the same code and words.
+- `make plugins-check`, in `make verify`.
+
+Two things the browser check found that the Go tests could not:
+
+- **A controlled checkbox that waits for the server reads as one that did
+  not take.** The settings form saved on change and showed the new value
+  when the answer came back; Playwright's `uncheck` saw no change and said
+  so. The form now shows the value at once and replaces it with what the
+  server kept, reverting on an error -- which is also what a person expects
+  of a toggle.
+- **The language switch is behind the dialog.** The install screen is a
+  modal over the page whose header holds the switch, so switching languages
+  while reading the permissions means closing the screen. Left as it is --
+  the screen is reopened from the card in one press, and a second switch
+  inside the dialog is a second copy of a control -- and the check does the
+  same.
+
+A choice worth recording: `settings.fields` is an **array** in the manifest,
+not the object the design sketched, for the reason a page's `params` are: the
+form draws the fields in the author's order and a JSON object's order does
+not survive a Go map. The design document says so now.
+
+What is deliberately not here: any route under `/api/plugin/`, any frame, any
+goja call, any process. A panel rung in the manifest is accepted, listed on
+the screen and stored; it does nothing yet, and the card does not pretend
+otherwise.

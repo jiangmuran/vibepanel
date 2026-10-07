@@ -353,7 +353,7 @@ already show them.
 
 Out of scope, with the reason already written elsewhere: no write route for a
 page (`writable-links.md`); no page with the owner's authority
-(`plugins.md` §3); no server-side code in a page.
+(`plugins.md` §7 and §14: that is a plugin's rung 4, installed by the owner after a screen that says what it means, never a page); no server-side code in a page beyond `server.js`.
 
 ## 8. Checks
 

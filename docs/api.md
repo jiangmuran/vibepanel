@@ -1775,6 +1775,100 @@ parameters moved.
 
 `POST /api/settings/shares` takes the same `pageId` and `params`.
 
+## Plugins
+
+Installing, granting, enabling and removing plugins: `docs/plugins.md`. Every
+route is behind the ordinary session. Nothing here is reachable with a share
+token, an admin grant, a chat tools token or a plugin's own credential, which
+is what keeps a plugin from installing plugins.
+
+### `GET /api/settings/plugins`
+
+Every plugin, as the list draws it: the row (`id`, `enabled`,
+`installedVersion`, `sourceDir`, `dev`), the manifest's `name`, `version`,
+`description`, `author` and `rungs`, what is `granted` and what the manifest
+`wanted`, each `secrets` entry with whether it is `set`, `latestVersion`, the
+`problems` the card says in both languages, and `theme` when the plugin has
+one.
+
+### `POST /api/settings/plugins`
+
+A plugin arrives. With `Content-Type: application/zip` the body is the
+archive (at most 21 MiB); with `application/json` the body is
+`{"path": "/dir"}`, a directory on this machine, which is also recorded as
+the plugin's draft directory. Either is read by the publish rules
+(`internal/plugins.ReadArchive`, `ReadDir`): every path checked, every file
+sniffed, every entry the manifest names present, the theme linted, every
+limit an error. The result is stored as the first version of a new plugin
+(`201`) or the next version of an existing one (`200`); a bundle identical to
+the newest version stores nothing. **Nothing is installed or enabled**: the
+answer carries `plugin` (the detail below, with the install screen) and
+`ignored`, and the install route is the confirmation. Audited as
+`plugin.imported`.
+
+### `GET /api/settings/plugin-themes`
+
+The enabled plugins' themes: `[{plugin, attr, name, scheme}]`, for the theme
+picker. `attr` is the `data-theme` value, `ext-<id>`.
+
+### `GET /api/settings/plugins/{pluginID}`
+
+The row plus the decoded `manifest`, `versions` (newest first), the
+`screen` — `internal/plugins.Describe` over the newest version against the
+current grants — what this build `dropped` from the stored manifest, and the
+`settings` the panel draws (`fields` from the schema, `values` with defaults
+filled; a secret's value is `true`/`false` for set). `404` for an unknown id.
+
+### `POST /api/settings/plugins/{pluginID}/install`
+
+The confirmation. `{"version": N, "caps": [...]}`: `version` defaults to the
+newest; `caps` is exactly the boxes the owner left ticked, and a name the
+manifest never asked for is `400`. Records the grants, makes the version the
+one that runs, and enables the plugin when every secret it needs is set —
+otherwise it is installed disabled and the answer's `needsSecrets` lists what
+to fill. `409` when the manifest needs a newer panel. Audited as
+`plugin.installed` the first time and `plugin.updated` after.
+
+### `POST /api/settings/plugins/{pluginID}/enable`
+### `POST /api/settings/plugins/{pluginID}/disable`
+
+The switch. Enabling a plugin that has not been installed, or whose secrets
+are not all set, is `409` saying which. Audited `plugin.enabled` /
+`plugin.disabled`.
+
+### `DELETE /api/settings/plugins/{pluginID}`
+
+Removes the plugin, its versions, grants, settings and secrets. `204`.
+Audited `plugin.removed`.
+
+### `PUT /api/settings/plugins/{pluginID}/caps`
+
+`{"caps": [...]}` replaces the grant decision, under the same rule as
+install. Audited `plugin.permissions_changed`.
+
+### `GET /api/settings/plugins/{pluginID}/settings`
+### `PUT /api/settings/plugins/{pluginID}/settings/{key}`
+### `DELETE /api/settings/plugins/{pluginID}/settings/{key}`
+
+The settings the manifest declares, drawn by the panel. `PUT` takes
+`{"value": …}`, checked against the field (`400` naming the field otherwise);
+`DELETE` puts a field back to its default. A `secret` field is set through
+the secrets routes, by its upper-case name. Audited `plugin.settings_changed`
+with the key, never the value.
+
+### `PUT /api/settings/plugins/{pluginID}/secrets/{name}`
+### `DELETE /api/settings/plugins/{pluginID}/secrets/{name}`
+
+`{"value": "…"}` stores a secret the manifest names (a process's `env`, an
+inbound route's secret, a secret-typed setting, a `${secret:NAME}` in a
+source), sealed under `secrets.key`. Never read back through any route.
+Audited `plugin.secret_set` / `plugin.secret_deleted`, by name.
+
+### `GET /api/settings/plugins/{pluginID}/export`
+
+The installed version (or `?version=N`) as a zip with `plugin.json` at the
+top, the same archive `POST /api/settings/plugins` reads.
+
 ## Authentication
 
 ### `POST /api/auth/setup`
@@ -1854,11 +1948,13 @@ features until somebody asked for a plugin system.
    goroutine the poller never waits for — so a harness that wants to *act*
    holds a token from (1) and calls back.
 
-That composition is the plugin system. There is no in-process one, and
-[docs/plugins.md](plugins.md) is the argument for why: every capability such a
-runtime would grant is one this token already has, and the parts it could add
-that the token cannot — code on the panel's own origin, a synchronous veto in
-the poller's path — are the two that must not exist.
+That composition is still the supported way to attach a harness, and it is
+the shape a *process* plugin takes: [docs/plugins.md](plugins.md) is the
+design for plugins — themes, sandboxed panels, `server.js` services,
+supervised processes — none of which is built yet. A plugin holds a grant or
+a plugin token on its own prefix rather than an API token, and the one thing
+that document keeps from the earlier argument is that nothing a plugin does
+may wait on the poller: there is no veto.
 
 ## What is not here
 

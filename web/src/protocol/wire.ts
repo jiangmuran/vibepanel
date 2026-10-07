@@ -2163,3 +2163,163 @@ export interface ChatRoutePreview {
   /** Who would be told, as "channel:peer", after pairing and mutes. */
   peers: string[]
 }
+
+// ─── plugins (docs/plugins.md) ───────────────────────────────────────────
+//
+// Pinned field by field against the Go structs by TestTypeScriptRowsMatchWhatIsSent,
+// like every row above: an interface here that declares a field the server
+// stopped sending type-checks and is `undefined` at runtime.
+
+/** A string in both languages a plugin hands the panel to draw. */
+export interface PluginText {
+  en: string
+  'zh-CN'?: string
+}
+
+export type PluginRung = 'theme' | 'panel' | 'service' | 'process' | 'unsandboxed'
+
+export interface PluginRungs {
+  theme: boolean
+  panel: boolean
+  service: boolean
+  process: boolean
+  unsandboxed: boolean
+}
+
+export interface PluginThemeRow {
+  plugin: string
+  /** The data-theme value: ext-<id>. */
+  attr: string
+  name: PluginText
+  scheme: string
+}
+
+export interface PluginSecretRow {
+  name: string
+  set: boolean
+}
+
+/** A plugin as the list shows it. */
+export interface PluginRow {
+  id: string
+  enabled: boolean
+  /** The version that runs; 0 is one that has not been through the install screen. */
+  installedVersion: number
+  sourceDir: string
+  dev: boolean
+  createdAt: number
+  updatedAt: number
+  name: PluginText
+  version: string
+  description?: PluginText
+  author?: string
+  rungs: PluginRungs
+  /** The owner's decision, and what the manifest asks for. */
+  granted: string[]
+  wanted: string[]
+  secrets: PluginSecretRow[]
+  latestVersion: number
+  /** Sentences for the card, in both languages; empty is nothing to say. */
+  problems: PluginText[]
+  theme?: PluginThemeRow
+}
+
+export interface PluginVersion {
+  version: number
+  manifest: unknown
+  note: string
+  bytes: number
+  files: number
+  hash: string
+  createdAt: number
+}
+
+/** One line of the install screen. internal/plugins/describe.go. */
+export interface PluginLine {
+  kind: 'what' | 'rung' | 'cap' | 'host' | 'runs' | 'keeps' | 'danger'
+  tone: 'plain' | 'amber' | 'red' | 'enforced'
+  text: PluginText
+  code?: string
+  granted?: boolean
+  checkable?: boolean
+}
+
+export interface PluginScreen {
+  lines: PluginLine[]
+  confirm: 'install' | 'grant' | 'run'
+  refused?: PluginLine
+}
+
+export interface PluginFieldSpec {
+  key: string
+  type: 'text' | 'number' | 'bool' | 'enum' | 'color' | 'list' | 'secret'
+  label: PluginText
+  hint?: PluginText
+  default?: unknown
+  min?: number
+  max?: number
+  values?: string[]
+}
+
+export interface PluginSettings {
+  fields: PluginFieldSpec[]
+  values: Record<string, unknown>
+}
+
+export interface PluginPanelSpec {
+  slot: string
+  entry: string
+  title: PluginText
+  icon?: string
+  group?: string
+  path?: string
+}
+
+export interface PluginManifest {
+  plugin: number
+  id: string
+  name: PluginText
+  version: string
+  panel?: string
+  description?: PluginText
+  author?: string
+  homepage?: string
+  theme?: { file: string; name: PluginText; scheme?: string }
+  panels?: PluginPanelSpec[]
+  capabilities?: string[]
+  settings?: { group?: string; fields: PluginFieldSpec[] }
+  data?: Record<string, unknown>
+  sources?: unknown[]
+  server?: { entry: string; every?: string; on?: string[]; routes?: Record<string, string> }
+  inbound?: { path: string; secret: string }
+  process?: { command: string[]; restart?: string; capabilities?: string[]; env?: string[]; hosts?: string[] }
+  unsandboxed?: { entry: string; tested: string; hosts?: string[] }
+}
+
+/** One plugin with everything the page draws: the row, flat, plus the rest. */
+export interface PluginDetail {
+  id: string
+  enabled: boolean
+  installedVersion: number
+  sourceDir: string
+  dev: boolean
+  createdAt: number
+  updatedAt: number
+  name: PluginText
+  version: string
+  description?: PluginText
+  author?: string
+  rungs: PluginRungs
+  granted: string[]
+  wanted: string[]
+  secrets: PluginSecretRow[]
+  latestVersion: number
+  problems: PluginText[]
+  theme?: PluginThemeRow
+  manifest: PluginManifest
+  versions: PluginVersion[]
+  screen: PluginScreen
+  /** What this build no longer reads from the stored manifest. */
+  dropped: string[]
+  settings: PluginSettings
+}

@@ -58,7 +58,7 @@ const IndexFile = "index.html"
 //
 // An allowlist, and by extension rather than sniffed, for the reason
 // preview.go gives: sniffing is how a file somebody thought was data becomes a
-// document. The bytes are then checked against the claim (see sniffOK), so an
+// document. The bytes are then checked against the claim (see SniffOK), so an
 // extension is necessary and not sufficient.
 var servable = map[string]string{
 	".html":  "text/html; charset=utf-8",
@@ -254,7 +254,7 @@ func ReadManifestFile(root string) ([]byte, error) {
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s must be a regular file", ManifestFile)
 	}
-	return readBounded(p, MaxFileBytes)
+	return ReadBounded(p, MaxFileBytes)
 }
 
 // Has reports whether the bundle contains a path.
@@ -308,12 +308,12 @@ func readPageFile(abs, rel string) (File, error) {
 	if info.Size() > MaxFileBytes {
 		return File{}, fmt.Errorf("%s is larger than %d MiB", rel, MaxFileBytes>>20)
 	}
-	data, err := readBounded(abs, MaxFileBytes)
+	data, err := ReadBounded(abs, MaxFileBytes)
 	if err != nil {
 		return File{}, fmt.Errorf("%s: %w", rel, err)
 	}
 	ct := ContentTypeFor(rel)
-	if !sniffOK(ct, data) {
+	if !SniffOK(ct, data) {
 		return File{}, fmt.Errorf("%s does not contain what its name says", rel)
 	}
 	sum := sha256.Sum256(data)
@@ -321,11 +321,12 @@ func readPageFile(abs, rel string) (File, error) {
 		SHA256: hex.EncodeToString(sum[:]), Data: data}, nil
 }
 
-// readBounded reads at most limit bytes and fails on more.
+// ReadBounded reads at most limit bytes and fails on more. Exported for
+// internal/plugins, whose files are read by the same rule.
 //
 // LimitReader as well as the Stat before it: an agent may be writing this file
 // right now, so the size that was checked is not the size that arrives.
-func readBounded(p string, limit int64) ([]byte, error) {
+func ReadBounded(p string, limit int64) ([]byte, error) {
 	f, err := os.Open(p) //nolint:gosec // callers resolved p inside a root
 	if err != nil {
 		return nil, err
@@ -341,14 +342,15 @@ func readBounded(p string, limit int64) ([]byte, error) {
 	return data, nil
 }
 
-// sniffOK checks the bytes against the type the extension claims.
+// SniffOK checks the bytes against the type the extension claims. Exported
+// for internal/plugins, whose files are checked by the same rule.
 //
 // Text types must be UTF-8 with no NUL, which is the test browse.IsText already
 // uses; images must carry their own magic; fonts theirs. A PNG named .js is
 // refused, and so is a script named .png -- the second one is the one that
 // matters, because nosniff is what stops a browser second-guessing the type
 // and this is what stops the type being wrong in the first place.
-func sniffOK(ct string, data []byte) bool {
+func SniffOK(ct string, data []byte) bool {
 	switch {
 	case strings.HasPrefix(ct, "text/"), ct == "application/json", ct == "image/svg+xml":
 		return browse.IsText(data)

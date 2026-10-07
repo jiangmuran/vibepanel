@@ -113,6 +113,7 @@ func init() {
 		"service": cmdService,
 		"account": cmdAccount,
 		"page":    cmdPage,
+		"plugin":  cmdPlugin,
 		"mcp":     cmdMCP,
 		"version": func([]string) error { fmt.Println("vibepanel", version.String()); return nil },
 	}

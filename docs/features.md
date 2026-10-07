@@ -333,6 +333,51 @@ got built, token spend, a phone glance, or a session wall), published, in the
 same `page-…` directories. The addresses on walls keep working, with the same
 detail level, scope, remark and expiry.
 
+## Plugins
+
+Settings → Plugins, or `/plugins`. A plugin is a directory with a
+`plugin.json`, or that directory as a zip, and what it does is one or more
+rungs of a ladder: a **theme** (a stylesheet of the panel's colour tokens and
+nothing else), a **panel** (HTML in a sandboxed frame at a slot), a
+**service** (`server.js` inside the panel), a **process** (a command the panel
+supervises) or an **unsandboxed** module. The design, the capability table and
+what each rung may reach are in [plugins.md](plugins.md); this section is what
+you see.
+
+**Arriving is not installing.** *Install from zip* or *From a directory* reads
+the plugin by the publish rules and stores it. Nothing runs. What opens is the
+install screen: what it is, which rungs, what it may do (one box per
+capability, the two that touch a process in red and first), where it reaches
+(each host, marked *enforced* or *declared*), what it runs, what it keeps. The
+button says *Install* for a theme, *Install and grant* for a panel or service,
+*Run this as you* for a process or module. Untick a box and the plugin does not
+get that capability; it sees what was granted and degrades. The same screen,
+in both languages, is what `vibepanel plugin describe` prints.
+
+**Secrets first.** A plugin that needs a secret (a process's environment, a
+secret-typed setting) is installed disabled until every one is set, in the
+card's *Settings*. A secret is typed once and never read back; the field says
+only whether it is set.
+
+**Settings the panel draws.** A plugin declares its settings as a schema and
+the panel draws the form with its own controls, in your language, in the
+current theme. A redesign of this page moves nothing a plugin wrote.
+
+**A theme joins the toggle.** An enabled plugin theme is in the cycle of the
+theme button on every page (system, light, dark, then each theme), is applied
+before first paint on a reload, and recolours the terminal with everything
+else, because a theme is the tokens the terminal palette is read from.
+
+**Upgrading** reads a newer version of the same id and draws the screen again
+with the boxes as you left them and any new line unticked; the old version
+keeps running until you confirm. **Removing** takes the versions, grants,
+settings and secrets with it. Everything is in the activity log under
+`plugin.`.
+
+From a shell, `vibepanel plugin list | check | describe | add | install
+--grant … | enable | disable | remove | export | caps` do the same things with
+the same words, and a grant made that way is audited as the user `cli`.
+
 ## On a phone, in a chat app
 
 A session that wants you can reach you in Telegram, 飞书 or 微信, and you

@@ -15,6 +15,7 @@ import (
 	"github.com/jiangmuran/vibepanel/internal/browse"
 	"github.com/jiangmuran/vibepanel/internal/git"
 	"github.com/jiangmuran/vibepanel/internal/pages"
+	"github.com/jiangmuran/vibepanel/internal/plugins"
 	"github.com/jiangmuran/vibepanel/internal/resources"
 	"github.com/jiangmuran/vibepanel/internal/store"
 	"github.com/jiangmuran/vibepanel/internal/sysmon"
@@ -93,6 +94,23 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		// know had been added. The snapshot around them is pinned to
 		// vibepanel.d.ts by TestTheSDKTypesMatchTheSnapshot instead.
 		{"ShareLink", store.ShareLink{}},
+		// Plugins. The row and the detail are what the plugins page draws;
+		// the screen is the install screen, whose lines are the permission
+		// decision, so a field added to a line that wire.ts does not know is
+		// a thing the screen would not draw.
+		{"PluginRow", PluginRow{}},
+		{"PluginDetail", PluginDetail{}},
+		{"PluginVersion", store.PluginVersion{}},
+		{"PluginThemeRow", pluginThemeRow{}},
+		{"PluginSecretRow", pluginSecretRow{}},
+		{"PluginLine", plugins.Line{}},
+		{"PluginScreen", plugins.Screen{}},
+		{"PluginFieldSpec", plugins.FieldSpec{}},
+		{"PluginSettings", pluginSettingsBody{}},
+		{"PluginManifest", plugins.Manifest{}},
+		{"PluginPanelSpec", plugins.PanelSpec{}},
+		{"PluginRungs", plugins.Rungs{}},
+		{"PluginText", plugins.Text{}},
 		{"ShareMachine", shareMachine{}},
 		// The moving line beside the machine reading. Uncovered until network
 		// rates were added to it, for no better reason than nobody had touched
@@ -281,7 +299,9 @@ func interfaceFields(t *testing.T, src, name, path string) []string {
 	}
 	body := rest[:end]
 
-	prop := regexp.MustCompile(`(?m)^\s{2}([A-Za-z_][A-Za-z0-9_]*)\??:`)
+	// A quoted property name ('zh-CN') is one a Go tag spells with a dash;
+	// the quotes come off so the two compare.
+	prop := regexp.MustCompile(`(?m)^\s{2}'?([A-Za-z_][A-Za-z0-9_-]*)'?\??:`)
 	var out []string
 	for _, line := range strings.Split(body, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -468,9 +488,23 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		// chat.ask) reach the log through a function the server hands it, so
 		// the scan below cannot see them; these four are the handlers' own.
 		"chat.tools.rejected": true,
-		"chat.channel":        true,
-		"chat.assistant":      true,
-		"chat.peer":           true,
+		// Plugins: docs/plugins.md §6. One prefix for everything the owner
+		// decided about a plugin -- arrived, installed, upgraded, switched,
+		// granted, configured, removed -- so "what did I let this plugin do"
+		// is one GROUP BY. A secret is audited by name and never by value.
+		"plugin.imported":            true,
+		"plugin.installed":           true,
+		"plugin.updated":             true,
+		"plugin.enabled":             true,
+		"plugin.disabled":            true,
+		"plugin.removed":             true,
+		"plugin.permissions_changed": true,
+		"plugin.settings_changed":    true,
+		"plugin.secret_set":          true,
+		"plugin.secret_deleted":      true,
+		"chat.channel":               true,
+		"chat.assistant":             true,
+		"chat.peer":                  true,
 		// Memory. The governor's own rows (resources.kill, .freeze, .thaw and
 		// the .auto forms) reach the log through AuditResources, which the
 		// scan cannot see; these two are the handlers'.

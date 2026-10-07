@@ -164,7 +164,9 @@ command line, Docker, and building from source.
 
 [docs/features.md](docs/features.md) — including
 [sessions in a chat app](docs/features.md#on-a-phone-in-a-chat-app) through
-Telegram, 飞书 or 微信, with replies going back into the session.
+Telegram, 飞书 or 微信, with replies going back into the session, and
+[plugins](docs/features.md#plugins): themes, panels, services and processes,
+each installed from a screen that says in words what it may do.
 ⚠️ Written by AI ⚠️
 
 ## Flags and troubleshooting
@@ -223,6 +225,7 @@ the ones that do:
 | `make restart-check` | kill the backend; the sessions and the login must outlive it |
 | `make scale-check` | two dozen sessions: snapshot size, sidebar reachability, poller |
 | `make pages-check` | share pages: the sandbox from inside a page, the editing loop, every template |
+| `make plugins-check` | plugins: arrive, the install screen in both languages, a grant withheld, settings, a theme, layout at three widths |
 | `make tls-check` | its own TLS: wss, the Secure cookie, swapping a certificate |
 | `make install-check` | both installers down every branch, in both languages |
 | `make release-check` | build the archives and run one from a throwaway HOME |

@@ -36,7 +36,18 @@ export function terminalTheme(): ITheme {
   }
 }
 
-export type ThemeChoice = 'system' | 'light' | 'dark'
+/**
+ * `system`, the panel's two, or a theme a plugin installed: `ext-<id>`, the
+ * `data-theme` value its stylesheet redefines the tokens under
+ * (docs/plugins.md §5). The shape is pinned here and read by index.html's
+ * pre-paint script, which honours the same three forms.
+ */
+export type ThemeChoice = 'system' | 'light' | 'dark' | `ext-${string}`
+
+/** Whether a string is a plugin theme's data-theme value. */
+export function isPluginTheme(v: string): v is `ext-${string}` {
+  return /^ext-[a-z0-9-]+$/.test(v)
+}
 
 /**
  * Where the theme choice is remembered.
@@ -55,6 +66,7 @@ export function loadTheme(): ThemeChoice {
   try {
     const v = localStorage.getItem(STORAGE_KEY)
     if (v === 'light' || v === 'dark' || v === 'system') return v
+    if (v && isPluginTheme(v)) return v
   } catch {
     /* private mode */
   }

@@ -1108,6 +1108,86 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+
+	// Plugins: docs/plugins.md.
+	//
+	// A plugin's id is the manifest's id, not a generated one: it is the
+	// namespace everything else is keyed by (routes, data, settings, the
+	// theme attribute, a cgroup leaf), and a second install of the same
+	// plugin is an upgrade of the first rather than a second row.
+	//
+	// Versions and files have the share page's shape, and files share the
+	// page's content-addressed blob table: one file stored once however many
+	// versions of however many things carry it. gcPageBlobs reads both file
+	// tables for that reason.
+	//
+	// plugin_caps is the grant decision -- what the owner ticked on the
+	// install screen -- attached to the id, so a newer version cannot widen
+	// it by being newer. installed_version is the version that runs; 0 is
+	// a plugin that arrived (an import, a draft) and has not been through
+	// the screen. enabled is the switch; both are read by whatever serves a
+	// plugin, and neither is read by currentUser.
+	func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`CREATE TABLE IF NOT EXISTS plugins (
+			     id                TEXT PRIMARY KEY,
+			     user_id           TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			     enabled           INTEGER NOT NULL DEFAULT 0,
+			     installed_version INTEGER NOT NULL DEFAULT 0,
+			     source_dir        TEXT NOT NULL DEFAULT '',
+			     dev               INTEGER NOT NULL DEFAULT 0,
+			     created_at        INTEGER NOT NULL,
+			     updated_at        INTEGER NOT NULL
+			 )`,
+			`CREATE TABLE IF NOT EXISTS plugin_versions (
+			     plugin_id  TEXT NOT NULL REFERENCES plugins(id) ON DELETE CASCADE,
+			     version    INTEGER NOT NULL,
+			     manifest   TEXT NOT NULL,
+			     note       TEXT NOT NULL DEFAULT '',
+			     bytes      INTEGER NOT NULL DEFAULT 0,
+			     files      INTEGER NOT NULL DEFAULT 0,
+			     hash       TEXT NOT NULL DEFAULT '',
+			     created_at INTEGER NOT NULL,
+			     PRIMARY KEY (plugin_id, version)
+			 )`,
+			`CREATE TABLE IF NOT EXISTS plugin_files (
+			     plugin_id    TEXT NOT NULL,
+			     version      INTEGER NOT NULL,
+			     path         TEXT NOT NULL,
+			     content_type TEXT NOT NULL,
+			     sha256       BLOB NOT NULL REFERENCES share_page_blobs(sha256),
+			     PRIMARY KEY (plugin_id, version, path),
+			     FOREIGN KEY (plugin_id, version)
+			         REFERENCES plugin_versions(plugin_id, version) ON DELETE CASCADE
+			 )`,
+			`CREATE TABLE IF NOT EXISTS plugin_caps (
+			     plugin_id  TEXT NOT NULL REFERENCES plugins(id) ON DELETE CASCADE,
+			     cap        TEXT NOT NULL,
+			     granted_at INTEGER NOT NULL,
+			     granted_by TEXT NOT NULL DEFAULT '',
+			     PRIMARY KEY (plugin_id, cap)
+			 )`,
+			`CREATE TABLE IF NOT EXISTS plugin_settings (
+			     plugin_id  TEXT NOT NULL REFERENCES plugins(id) ON DELETE CASCADE,
+			     key        TEXT NOT NULL,
+			     value      TEXT NOT NULL,
+			     updated_at INTEGER NOT NULL,
+			     PRIMARY KEY (plugin_id, key)
+			 )`,
+			`CREATE TABLE IF NOT EXISTS plugin_secrets (
+			     plugin_id TEXT NOT NULL REFERENCES plugins(id) ON DELETE CASCADE,
+			     name      TEXT NOT NULL,
+			     value_enc BLOB NOT NULL,
+			     set_at    INTEGER NOT NULL,
+			     PRIMARY KEY (plugin_id, name)
+			 )`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	},
 }
 
 // scanner is *sql.Row and *sql.Rows both, so one scan function serves a

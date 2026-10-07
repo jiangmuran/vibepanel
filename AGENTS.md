@@ -229,6 +229,29 @@ Each of these exists because the alternative broke something real.
    that was the first design, and `systemctl restart vibepanel` failed with
    EBUSY while any session lived. `docs/design.md` has both measurements.
 
+10. **A plugin credential is narrowed by its route list and the capability
+   table, never by a flag a handler reads.** `internal/plugins/caps.go` is
+   the whole permission model: a capability has a name, a sentence in both
+   languages, and -- once the runtimes exist -- the routes it opens under
+   `/api/plugin/{cred}/v1/` and the `ctx` members a `server.js` gets.
+   `currentUser` consults neither `plugin_grants` nor `plugin_tokens`. The
+   install screen is `plugins.Describe`, a pure function over the manifest,
+   and `TestEveryCapabilityHasWordsOnTheScreen` fails the build when a
+   capability has no sentence: a permission nobody is told about is the
+   failure this rule exists for. Nothing that installs, grants or enables a
+   plugin is reachable with any credential but the owner's session, which is
+   what keeps a plugin from installing plugins. Nothing a plugin does runs on
+   the poller's goroutine. A rung-4 module is the one exception to every
+   sentence above, and the install screen says so in the words of
+   `docs/plugins.md` §7.
+
+   What exists today is rung 0 and the screen: `internal/plugins`,
+   `internal/store/plugins.go`, `internal/httpapi/plugins.go`,
+   `web/src/components/plugins/`, `vibepanel plugin`. The runtimes --
+   frames, services, processes, the module -- come in that order
+   (`docs/plugins.md` §13) and each adds its routes to this rule and its
+   tests to `plugins-check`.
+
 ## Conventions
 
 - **Comments explain why, and what breaks otherwise.** Not what the line does.
@@ -268,6 +291,7 @@ Each of these exists because the alternative broke something real.
   | `make scale-check` | two dozen sessions: snapshot size, sidebar reachability, poller |
   | `make resources-check` | the Resources tab and a session that really runs out of memory: isolation, modes, the question across the console, ending a process from it, the countdown, the panel answering throughout, layout at three widths. Needs a user manager for the pressure half |
   | `make isolation-check` | sessions moved into a scope of their own against real systemd 249, 252 and 259 as PID 1: fresh system unit, upgrade from the old layout, a failing root step, a user unit. Needs docker |
+  | `make plugins-check` | plugins: a plugin arrives from a directory, the install screen in both languages with the danger line first, a box unticked is a grant withheld, a missing secret installs it disabled, the settings the panel draws, a plugin theme in the toggle and before first paint, layout at three widths in both themes, remove takes everything |
   | `make chat-check` | the Chat page: a card per adapter, a saved token starting a channel, the 飞书 handshake, rules and their preview, the key table, the tools door, the deep link, layout at three widths in both themes and languages |
   | `make pages-check` | share pages: every escape from inside a sandboxed page, in a signed-in browser; the editing loop through the UI; every template × screen × fixture |
   | `make tls-check` | its own TLS: wss, the Secure cookie, swapping a certificate |
@@ -351,5 +375,8 @@ internal/resources/ placement, budget and the memory question (docs/design.md,
 internal/chat/      the chat bridge: sessions on a phone. One package per IM
                     under it (telegram, feishu, weixin), the PNG renderer
                     (shot) and the advanced mode's runner (assistant)
+internal/plugins/   what a plugin may be: the manifest, the capability table,
+                    the install screen, the theme lint, the bundle reader
+                    (docs/plugins.md)
 web/                frontend
 ```

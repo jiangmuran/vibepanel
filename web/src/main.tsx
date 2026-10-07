@@ -5,6 +5,7 @@ import { App } from './App'
 import { AuthGate } from './components/AuthGate'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { ChatPage } from './components/ChatPage'
+import { PluginsPage } from './components/PluginsPage'
 import { SharingPage } from './components/SharingPage'
 import { routeFor } from './routes'
 import { watchSystemTheme } from './components/theme'
@@ -47,6 +48,10 @@ createRoot(root).render(
     ) : route.kind === 'chat' ? (
       <ErrorBoundary label="The chat page">
         <AuthGate>{(auth, signOut) => <ChatPage auth={auth} onSignOut={signOut} />}</AuthGate>
+      </ErrorBoundary>
+    ) : route.kind === 'plugins' ? (
+      <ErrorBoundary label="The plugins page">
+        <AuthGate>{(auth, signOut) => <PluginsPage auth={auth} onSignOut={signOut} />}</AuthGate>
       </ErrorBoundary>
     ) : (
       <ErrorBoundary label="The panel">

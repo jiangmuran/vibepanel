@@ -28,10 +28,23 @@ describe('the pre-paint theme script', () => {
 
   it('honours only the values theme.ts can store', () => {
     // 'system' deliberately sets no attribute — the CSS treats its absence as
-    // "follow prefers-color-scheme" — so the script must not write it.
+    // "follow prefers-color-scheme" — so the script must not write it. A
+    // plugin theme's `ext-<id>` is the third form, and the shape the script
+    // tests is the one theme.ts's isPluginTheme accepts.
     expect(html).toMatch(/'light'|"light"/)
     expect(html).toMatch(/'dark'|"dark"/)
+    expect(html).toMatch(/\^ext-\[a-z0-9-\]\+\$/)
     expect(html).not.toMatch(/dataset\.theme\s*=\s*['"]system['"]/)
+  })
+
+  it('links the plugin theme stylesheet before the app script', () => {
+    // A chosen plugin theme has to be in the document before first paint for
+    // the reason the pre-paint script is inline: otherwise the first frame is
+    // the base palette and the second is the plugin's.
+    const link = html.indexOf('href="/plugin-themes.css"')
+    const module = html.indexOf('src/main.tsx')
+    expect(link).toBeGreaterThan(-1)
+    expect(link).toBeLessThan(module)
   })
 
   it('runs before the app script', () => {

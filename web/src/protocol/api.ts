@@ -59,6 +59,10 @@ import type {
   ResourceAlert,
   ResourcePolicy,
   ResourcesView,
+  PluginDetail,
+  PluginRow,
+  PluginSettings,
+  PluginThemeRow,
 } from './wire'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -334,6 +338,62 @@ export const api = {
   deletePasskey: (id: string) => request<void>(`/api/auth/passkeys/${id}`, { method: 'DELETE' }),
 
   settings: () => request<SettingsInfo>('/api/settings'),
+
+  // ─── plugins (docs/plugins.md) ─────────────────────────────────────────
+  listPlugins: () => request<PluginRow[]>('/api/settings/plugins'),
+  plugin: (id: string) => request<PluginDetail>(`/api/settings/plugins/${encodeURIComponent(id)}`),
+  pluginThemes: () => request<PluginThemeRow[]>('/api/settings/plugin-themes'),
+  /** A zip becomes a stored version; nothing runs until it is installed. */
+  addPluginZip: (file: Blob) =>
+    request<{ plugin: PluginDetail; ignored: { path: string; reason: string }[]; created: boolean }>(
+      '/api/settings/plugins',
+      { method: 'POST', body: file, headers: { 'Content-Type': 'application/zip' } },
+    ),
+  /** The same from a directory on the panel's machine, which is also recorded as the draft. */
+  addPluginDir: (path: string) =>
+    request<{ plugin: PluginDetail; ignored: { path: string; reason: string }[]; created: boolean }>(
+      '/api/settings/plugins',
+      { method: 'POST', body: JSON.stringify({ path }) },
+    ),
+  /** The confirmation: the boxes as ticked, and the version to run. */
+  installPlugin: (id: string, caps: string[], version = 0) =>
+    request<{ plugin: PluginDetail; needsSecrets: string[] }>(
+      `/api/settings/plugins/${encodeURIComponent(id)}/install`,
+      { method: 'POST', body: JSON.stringify({ caps, version }) },
+    ),
+  enablePlugin: (id: string) =>
+    request<PluginDetail>(`/api/settings/plugins/${encodeURIComponent(id)}/enable`, { method: 'POST', body: '{}' }),
+  disablePlugin: (id: string) =>
+    request<PluginDetail>(`/api/settings/plugins/${encodeURIComponent(id)}/disable`, { method: 'POST', body: '{}' }),
+  deletePlugin: (id: string) =>
+    request<void>(`/api/settings/plugins/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  setPluginCaps: (id: string, caps: string[]) =>
+    request<PluginDetail>(`/api/settings/plugins/${encodeURIComponent(id)}/caps`, {
+      method: 'PUT',
+      body: JSON.stringify({ caps }),
+    }),
+  pluginSettings: (id: string) =>
+    request<PluginSettings>(`/api/settings/plugins/${encodeURIComponent(id)}/settings`),
+  setPluginSetting: (id: string, key: string, value: unknown) =>
+    request<{ value: unknown }>(
+      `/api/settings/plugins/${encodeURIComponent(id)}/settings/${encodeURIComponent(key)}`,
+      { method: 'PUT', body: JSON.stringify({ value }) },
+    ),
+  resetPluginSetting: (id: string, key: string) =>
+    request<void>(`/api/settings/plugins/${encodeURIComponent(id)}/settings/${encodeURIComponent(key)}`, {
+      method: 'DELETE',
+    }),
+  setPluginSecret: (id: string, name: string, value: string) =>
+    request<void>(`/api/settings/plugins/${encodeURIComponent(id)}/secrets/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ value }),
+    }),
+  deletePluginSecret: (id: string, name: string) =>
+    request<void>(`/api/settings/plugins/${encodeURIComponent(id)}/secrets/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    }),
+  /** The installed version as a zip. A plain GET, so an <a download> works. */
+  exportPluginURL: (id: string): `/${string}` => `/api/settings/plugins/${encodeURIComponent(id)}/export`,
 
   audit: () => request<AuditEntry[]>('/api/settings/audit'),
 

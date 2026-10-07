@@ -17,7 +17,8 @@
     "check:pages": "node scripts/pages-check.mjs",
     "check:chat": "node scripts/chat-check.mjs",
     "check:resources": "node scripts/resources-check.mjs",
-    "check:archive": "node scripts/archive-check.mjs"
+    "check:archive": "node scripts/archive-check.mjs",
+    "check:plugins": "node scripts/plugins-check.mjs"
   },
   "dependencies": {
     "@types/qrcode": "^1.5.5",

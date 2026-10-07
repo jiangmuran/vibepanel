@@ -434,10 +434,15 @@ func (d *DB) SharePageFileData(ctx context.Context, pageID string, version int, 
 }
 
 // gcPageBlobs deletes the blobs no version refers to any more.
+//
+// Both file tables: plugins keep their files in the same blob table (see the
+// plugins migration), so a sweep that read only the page files would delete
+// every plugin's files the first time a page was published.
 func gcPageBlobs(ctx context.Context, tx *sql.Tx) error {
 	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM share_page_blobs
-		WHERE sha256 NOT IN (SELECT DISTINCT sha256 FROM share_page_files)`); err != nil {
+		WHERE sha256 NOT IN (SELECT DISTINCT sha256 FROM share_page_files)
+		  AND sha256 NOT IN (SELECT DISTINCT sha256 FROM plugin_files)`); err != nil {
 		return fmt.Errorf("store: sweep page blobs: %w", err)
 	}
 	return nil
