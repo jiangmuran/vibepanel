@@ -25195,3 +25195,25 @@ checked by removing what it guards and watching it go red:
   string. That was the fixture's mistake, and it is the kind the corpus is
   for, because a plugin author makes it next.
 
+## 2026-10-07 — Plugins, optimisation round 1: one runner for every server.js
+
+The step-2 entry said sharing the goja core between `pageserver.go` and
+`pluginservice.go` was the first thing on the optimisation list, and it was
+the first thing done once the system was whole. The forty lines that make
+`server.js` a sandbox -- a fresh runtime per call, the stack cap, the budget
+as an interrupt, the request's end as an interrupt, the hook looked up by
+name, the result as JSON under a 64 KiB cap -- were in both files, as was
+the whole of `ctx.data` (get/set/increment/append/reset over a working copy,
+checked as written) and `ctx.now`/`ctx.log`/`ctx.sources`. They are
+`internal/httpapi/jsrun.go` now: `runJS` over a `jsCall`, `jsDataObject`
+with an optional guard on `set` (the visitor-action `writes` list, which is
+the one thing the page's data object did that the plugin's did not), and
+`jsCommon`. 271 lines gone, 28 added at the two call sites; what stays with
+each caller is what actually differs -- where the program comes from, what
+else `ctx` carries, how the ops are committed.
+
+Checked the way a refactor of a sandbox should be: with the result cap
+disabled in the shared file, both `TestAHookIsBoundedInTimeAndSize` (plugin)
+and `TestServerJSWritesOnlyWhatItsActionAllowsAndOnlyOnSuccess` (page) go
+red, which is the point -- a fix to the cap now reaches both or neither.
+

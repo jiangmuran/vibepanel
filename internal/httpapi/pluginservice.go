@@ -487,53 +487,16 @@ func (s *Server) runPluginHook(ctx context.Context, c pluginCred, hook string, a
 		s.pluginLog(c.plugin.ID, "error", "compile: "+err.Error())
 		return nil, dataErrorf("server.js does not compile: %s", firstLine(err.Error()))
 	}
-	vm := goja.New()
-	vm.SetMaxCallStackSize(256)
-	timer := time.AfterFunc(budget, func() {
-		vm.Interrupt(fmt.Sprintf("%s ran past its %v budget", what, budget))
-	})
-	defer timer.Stop()
-	stop := context.AfterFunc(ctx, func() { vm.Interrupt("the request ended") })
-	defer stop()
-
-	failed := func(err error) error {
-		msg := jsError(err)
-		s.pluginLog(c.plugin.ID, "error", what+": "+msg)
-		return dataErrorf("server.js %s failed: %s", what, firstLine(msg))
-	}
-	if _, err := vm.RunProgram(prog); err != nil {
-		return nil, failed(err)
-	}
-	fn, ok := goja.AssertFunction(vm.Get(hook))
-	if !ok {
-		return nil, errNoHook
-	}
-	jsArgs := make([]goja.Value, 0, len(args)+1)
-	for _, a := range args {
-		jsArgs = append(jsArgs, vm.ToValue(jsonRoundTrip(a)))
-	}
-	obj, ops, err := s.pluginCtx(ctx, vm, c, budget)
+	var ops *[]pageDataOp
+	result, err := runJS(ctx, prog, jsCall{hook: hook, what: what, args: args, budget: budget,
+		log: func(level, text string) { s.pluginLog(c.plugin.ID, level, text) },
+		ctx: func(vm *goja.Runtime) (*goja.Object, error) {
+			obj, buffered, err := s.pluginCtx(ctx, vm, c, budget)
+			ops = buffered
+			return obj, err
+		}})
 	if err != nil {
 		return nil, err
-	}
-	jsArgs = append(jsArgs, obj)
-
-	out, err := fn(goja.Undefined(), jsArgs...)
-	if err != nil {
-		return nil, failed(err)
-	}
-	var result any
-	if out != nil && !goja.IsUndefined(out) && !goja.IsNull(out) {
-		raw, jerr := json.Marshal(out.Export())
-		if jerr != nil {
-			s.pluginLog(c.plugin.ID, "error", what+": its result is not JSON")
-			return nil, dataErrorf("server.js %s returned something that is not JSON", what)
-		}
-		if len(raw) > pages.MaxServerResult {
-			s.pluginLog(c.plugin.ID, "error", fmt.Sprintf("%s: returned %d bytes, over the %d KiB cap", what, len(raw), pages.MaxServerResult>>10))
-			return nil, dataErrorf("server.js %s returned more than %d KiB", what, pages.MaxServerResult>>10)
-		}
-		_ = json.Unmarshal(raw, &result)
 	}
 	if len(*ops) > 0 {
 		rows, err := s.DB.PluginData(ctx, c.plugin.ID, c.ns)
@@ -570,72 +533,9 @@ func (s *Server) pluginCtx(ctx context.Context, vm *goja.Runtime, c pluginCred, 
 	ops := &[]pageDataOp{}
 	throw := func(msg string) { panic(vm.NewTypeError(msg)) }
 	pid := c.plugin.ID
-
-	record := func(op pageDataOp) {
-		spec := c.manifest.Data[op.Key]
-		if spec == nil {
-			throw("data." + op.Key + " is not declared")
-		}
-		switch op.Kind {
-		case "set":
-			if spec.Type == pages.DataLog {
-				throw("data." + op.Key + " is a log: append to it")
-			}
-			clean, err := spec.Check(op.Value, false)
-			if err != nil {
-				throw("data." + op.Key + " " + err.Error())
-			}
-			working[op.Key] = clean
-		case "increment":
-			if spec.Type != pages.DataCounter {
-				throw("data." + op.Key + " is not a counter")
-			}
-			n, _ := working[op.Key].(float64)
-			if n += op.By; n < 0 {
-				n = 0
-			}
-			working[op.Key] = n
-		case "append":
-			if spec.Type != pages.DataLog {
-				throw("data." + op.Key + " is not a log")
-			}
-			entries, _ := working[op.Key].([]any)
-			working[op.Key] = append(append([]any{}, entries...), pages.NewLogEntry(op.Item, time.Now().Unix()))
-		case "reset":
-			working[op.Key] = spec.Zero()
-		}
-		*ops = append(*ops, op)
-	}
-
-	data := vm.NewObject()
-	_ = data.Set("get", func(key string) goja.Value {
-		v, ok := working[key]
-		if !ok {
-			return goja.Undefined()
-		}
-		return vm.ToValue(jsonRoundTrip(v))
-	})
-	_ = data.Set("set", func(key string, value goja.Value) {
-		record(pageDataOp{Kind: "set", Key: key, Value: exportJSON(value)})
-	})
-	_ = data.Set("increment", func(key string, by goja.Value) {
-		n := 1.0
-		if by != nil && !goja.IsUndefined(by) {
-			n = by.ToFloat()
-		}
-		record(pageDataOp{Kind: "increment", Key: key, By: n})
-	})
-	_ = data.Set("append", func(key string, item goja.Value) {
-		fields, ok := exportJSON(item).(map[string]any)
-		if !ok {
-			throw("data." + key + ": append takes an object")
-		}
-		record(pageDataOp{Kind: "append", Key: key, Item: fields})
-	})
-	_ = data.Set("reset", func(key string) { record(pageDataOp{Kind: "reset", Key: key}) })
-
+	data := jsDataObject(vm, c.manifest.Data, working, ops, nil)
 	obj := vm.NewObject()
-	_ = obj.Set("data", data)
+	jsCommon(vm, obj, data, s.pluginSourceResults(c), func(text string) { s.pluginLog(pid, "info", text) })
 	settings, _ := s.pluginSettingsBody(ctx, pid, c.manifest)
 	_ = obj.Set("settings", vm.ToValue(jsonRoundTrip(settings.Values)))
 	_ = obj.Set("secret", func(name string) goja.Value {
@@ -647,25 +547,6 @@ func (s *Server) pluginCtx(ctx context.Context, vm *goja.Runtime, c pluginCred, 
 			return goja.Undefined()
 		}
 		return vm.ToValue(v)
-	})
-	_ = obj.Set("sources", vm.ToValue(jsonRoundTrip(s.pluginSourceResults(c))))
-	_ = obj.Set("now", func() goja.Value {
-		d, _ := vm.New(vm.Get("Date"), vm.ToValue(time.Now().UnixMilli()))
-		return d
-	})
-	_ = obj.Set("log", func(call goja.FunctionCall) goja.Value {
-		parts := make([]string, 0, len(call.Arguments))
-		for _, a := range call.Arguments {
-			if _, isString := a.Export().(string); !isString {
-				if b, err := json.Marshal(a.Export()); err == nil {
-					parts = append(parts, string(b))
-					continue
-				}
-			}
-			parts = append(parts, a.String())
-		}
-		s.pluginLog(pid, "info", strings.Join(parts, " "))
-		return goja.Undefined()
 	})
 	_ = obj.Set("caps", vm.ToValue(s.pluginCapsList(c)))
 
