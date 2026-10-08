@@ -67,6 +67,11 @@ type Manifest struct {
 
 	Process     *ProcessSpec     `json:"process,omitempty"`
 	Unsandboxed *UnsandboxedSpec `json:"unsandboxed,omitempty"`
+	// Downloads are large files the plugin needs and the package does not
+	// carry -- a model, a native runtime -- fetched by the panel, verified
+	// against the hash written here, unpacked under the plugin's assets
+	// directory. docs/plugins.md §5, "declared downloads".
+	Downloads []DownloadSpec `json:"downloads,omitempty"`
 }
 
 // ThemeSpec is rung 0: a stylesheet of tokens.
@@ -162,6 +167,70 @@ type ProcessSpec struct {
 	// HTTP mounts the process on the panel's port: docs/plugins.md §5,
 	// "a process on the panel's port".
 	HTTP *ProcessHTTPSpec `json:"http,omitempty"`
+}
+
+// DownloadSpec is one declared download. The hash is the approval: the
+// install screen shows it, the panel refuses anything else, so an author
+// replacing the upstream file later changes nothing on the owner's disk.
+type DownloadSpec struct {
+	// Name is the directory under assets/ it unpacks into, and the key the
+	// card and the routes use.
+	Name string `json:"name"`
+	// Optional is a download the owner chooses on the card; a required one
+	// is fetched at enable, and the process waits for it.
+	Optional bool   `json:"optional,omitempty"`
+	Label    Text   `json:"label"`
+	URL      string `json:"url"`
+	SHA256   string `json:"sha256"`
+	// Size is what the screen shows and the panel caps the transfer by.
+	Size int64 `json:"size"`
+	// Unpack is "" (kept as a file named after the download), "tar.gz",
+	// "tgz", "tar.bz2" or "zip".
+	Unpack string `json:"unpack,omitempty"`
+}
+
+// Download limits: a model is large, a plugin is not a mirror.
+const (
+	MaxDownloads     = 16
+	MaxDownloadBytes = int64(4) << 30
+)
+
+// UnpackKinds is the closed list of archive formats the panel unpacks,
+// each with a reader in the standard library.
+var UnpackKinds = []string{"tar.gz", "tgz", "tar.bz2", "zip"}
+
+var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+func (d DownloadSpec) validate() error {
+	if !idPattern.MatchString(d.Name) {
+		return fmt.Errorf("downloads: %q is not a name (lower-case, digits and dashes, 3-40 characters)", d.Name)
+	}
+	if d.Label.EN == "" {
+		return fmt.Errorf("downloads.%s: a label (at least en) is required", d.Name)
+	}
+	u, err := url.Parse(d.URL)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil {
+		return fmt.Errorf("downloads.%s: url is https://host/path", d.Name)
+	}
+	if !sha256Hex.MatchString(strings.ToLower(d.SHA256)) {
+		return fmt.Errorf("downloads.%s: sha256 is 64 hex characters; the hash is the approval", d.Name)
+	}
+	if d.Size <= 0 || d.Size > MaxDownloadBytes {
+		return fmt.Errorf("downloads.%s: size is the file's bytes, at most %d", d.Name, MaxDownloadBytes)
+	}
+	if d.Unpack != "" && !slices.Contains(UnpackKinds, d.Unpack) {
+		return fmt.Errorf("downloads.%s: unpack is one of %s", d.Name, strings.Join(UnpackKinds, ", "))
+	}
+	return nil
+}
+
+// Host is the download's declared host, for the screen.
+func (d DownloadSpec) Host() string {
+	u, err := url.Parse(d.URL)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Hostname())
 }
 
 // ProcessHTTPSpec is a process served through the panel at
@@ -391,6 +460,19 @@ func (m Manifest) Validate() error {
 		if err := m.Unsandboxed.validate(); err != nil {
 			return err
 		}
+	}
+	if len(m.Downloads) > MaxDownloads {
+		return fmt.Errorf("downloads: at most %d", MaxDownloads)
+	}
+	seenDownload := map[string]bool{}
+	for _, d := range m.Downloads {
+		if err := d.validate(); err != nil {
+			return err
+		}
+		if seenDownload[d.Name] {
+			return fmt.Errorf("downloads: %q is listed twice", d.Name)
+		}
+		seenDownload[d.Name] = true
 	}
 	if !m.Rungs().any() {
 		return errors.New("a plugin needs at least one of: theme, panels, server, process, unsandboxed")

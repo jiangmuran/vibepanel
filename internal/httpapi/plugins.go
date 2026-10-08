@@ -1017,4 +1017,5 @@ func (s *Server) pluginsChanged() {
 	s.prt.pluginsRev.Add(1)
 	s.notifyState()
 	s.pluginsChangedServices()
+	s.ensurePluginDownloads(s.serviceContext())
 }

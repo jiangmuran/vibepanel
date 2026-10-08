@@ -2083,6 +2083,24 @@ origins: `{origins: ["https://host[:port]", …]}`, exact, at most 20. The
 plugin's manifest cannot declare these; that right is the owner's. Audited
 `plugin.origins_changed`.
 
+### `GET /api/settings/plugins/{pluginID}/downloads`
+### `POST /api/settings/plugins/{pluginID}/downloads/{name}`
+### `DELETE /api/settings/plugins/{pluginID}/downloads/{name}`
+
+The plugin's declared downloads (`docs/plugins.md` §5): one row per
+declaration with its label, size, host, hash, whether it is on disk and
+verified, and a running job's state and bytes. `POST` starts one (202; 200
+when it is already there; 409 while it runs): the panel fetches the URL
+through the guard with up to five redirects, each hop checked, streams it
+to a temporary file with the digest computed on the way, refuses anything
+but the manifest's sha256, unpacks it with every entry kept under
+`<data>/plugins/{id}/assets/{name}/` and no links, and only then renames it
+into place. A required download starts at enable and the process waits
+for it (`waitingFor` on the process status); an optional one waits for the
+button. `DELETE` cancels a running job and removes the directory. Audited
+`plugin.download`, `plugin.download_ready`, `plugin.download_failed`,
+`plugin.download_removed`.
+
 ### `GET /api/settings/plugins/{pluginID}/process`
 ### `POST /api/settings/plugins/{pluginID}/process/restart`
 

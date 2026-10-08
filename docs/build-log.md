@@ -25344,3 +25344,50 @@ Deliberately not audited: each use of a token. The design asked for it, and
 at 120 requests a minute per token the activity log would be nothing else;
 the row's last use and the plugin's own log carry it instead.
 
+## 2026-10-08 — Plugins: declared downloads
+
+The second half of the same review: a plugin package is text, and a
+plugin that needs 239 MB of speech model should say so rather than carry
+it or fetch it itself. `downloads` in the manifest, `plugindownload.go`
+behind it.
+
+- **The hash is the approval.** It is on the install screen; the panel
+  computes the digest as the bytes stream to a temporary file and renames
+  into place only when they match. An author who swaps the upstream file
+  changes nothing on anyone's disk. The marker under the assets directory
+  names the hash, so a manifest with a new hash sees the old file as not
+  there rather than as good enough.
+- **The guard, with redirects.** The review's point 5 was that the
+  existing fetcher refuses every redirect and GitHub's release URLs always
+  302 to `objects.githubusercontent.com`. The guard became
+  `guardedClient`, one function the sources' `fetch` and the downloader
+  share; the sources keep refusing redirects (a second URL nobody
+  approved), the downloader follows up to five, each hop a fresh guarded
+  client, with `ErrUseLastResponse` so the 3xx comes back unfollowed and
+  the next URL is checked here. The first attempt let the client follow and
+  got "a source may not redirect" from its own guard, which is the test
+  doing its job.
+- **The fetcher was for a kilobyte of JSON**, read into memory under a
+  cap; this streams, and caps by the declared size with room for an author
+  who rounded. Unpacking refuses `..` as written -- `path.Clean` would have
+  quietly made `../escape` polite, and an archive that says it is hostile
+  should be refused, not corrected -- refuses links and anything that is
+  not a file or a directory, keeps absolute names under the directory, and
+  caps the total at eight times the declared size or 256 MiB, the floor
+  because a 161-byte test archive unpacking to 3 KB was over eight times.
+- **Required and optional.** A required download starts at enable and
+  the supervisor leaves the process unstarted until it is there, the card
+  saying *waiting for downloads*; the download's end goes through
+  `pluginsChanged` and the process starts. Optional ones wait for the
+  button. The process reads `VIBEPANEL_PLUGIN_ASSETS`; the directory is
+  read-only by convention, because the process runs as you and mode bits
+  are its to change.
+
+Tested against the test's own TLS server through the fetcher's hooks: a
+302 followed, the digest checked, an exec bit kept, the process waiting
+and then starting with the path in its environment, removal and the
+required download's return; a wrong hash leaving nothing, not even the
+temp file; `..` refused in three spellings and a bomb capped. The browser
+check declares a download on a host that cannot resolve, which is the one
+outcome a check without the internet can watch end in words.
+

@@ -16,8 +16,10 @@ loaded on the panel's origin behind the panel-wide switch, the `host`
 object, two slots, `host.css`, safe mode and `disable --all`; and the
 scaffold of §9: **New plugin** on the plugins page and `vibepanel plugin
 init`, five templates, `AGENTS.md` for the agent, the directory registered
-in dev mode and handed to the launch picker; and the three pins of §10: the
-SDK types against the view, the contract list, and the compat corpus. The
+in dev mode and handed to the launch picker; the three pins of §10: the
+SDK types against the view, the contract list, and the compat corpus; a
+process on the panel's port (`process.http`) with plugin access tokens;
+and declared downloads. The
 session and project action slots, `host.override`, `vibepanel plugin shot` and `plugin run` are not,
 and each section below that describes one says what it will be. This document replaces the earlier version of
 this file, which argued that the panel should not have a plugin runtime at all.
@@ -483,6 +485,37 @@ timeout; bodies are capped at 16 MiB whatever is asked.
 What this bounds is who can reach the process, not what the process can
 do. It still runs as you; the install screen's amber line and your own
 judgement of the author are what cover that, as for any rung-3 plugin.
+
+**Declared downloads.** A package carries text; a model or a native
+runtime is declared, with its hash, and the panel fetches it:
+
+```jsonc
+"downloads": [
+  { "name": "sensevoice", "optional": true,
+    "label": { "en": "Local speech model (239 MB)", "zh-CN": "本地语音识别模型（239MB）" },
+    "url": "https://github.com/…/releases/download/…/model.tar.bz2",
+    "sha256": "…", "size": 250000000, "unpack": "tar.bz2" }
+]
+```
+
+The hash on the install screen is the approval: the panel refuses any
+other bytes, so an author replacing the upstream file later changes
+nothing on the owner's disk. The URL goes through the same guard a page's
+sources use -- https, every resolved address public, the checked address
+dialled -- with one difference: redirects are followed, up to five, each
+hop through the guard again, because that is what every release host does
+and the hash makes the final host a detail (the card shows which host the
+bytes came from). The transfer streams to a temporary file with the digest
+computed on the way, capped by the declared size; the archive is unpacked
+with `..` refused as written, links refused, the total capped; and only
+then is it renamed to `<data>/plugins/<id>/assets/<name>/`, where the
+process finds it through `VIBEPANEL_PLUGIN_ASSETS`. A required download
+starts at enable and the process is not started until it is there (the
+card says *waiting for downloads*); an optional one has a button on the
+card, and *Remove* takes the directory away. The process's view of that
+directory is read-only by convention, not by enforcement: it runs as you.
+Audited `plugin.download`, `plugin.download_ready`, `plugin.download_failed`,
+`plugin.download_removed`.
 
 ## 6. Installing one
 

@@ -104,6 +104,8 @@ writeFileSync(join(PLUGIN_DIR, 'plugin.json'), JSON.stringify({
   data: { events: { type: 'counter' } },
   server: { entry: 'server.js', on: ['session.created', 'session.state'], routes: { 'GET /digest': 'digest' } },
   process: { command: ['node', 'bot.js'], capabilities: ['read:panel'], http: { auth: 'token' } },
+  downloads: [{ name: 'voices', optional: true, label: { en: 'Voice model', 'zh-CN': '语音模型' },
+    url: 'https://downloads.invalid/voices.tar.gz', sha256: 'a'.repeat(64), size: 1234567, unpack: 'tar.gz' }],
   unsandboxed: { entry: 'main.mjs', tested: '0.0.0 - 99.0.x' },
   settings: { fields: [
     { key: 'quiet', type: 'bool', default: true, label: { en: 'Quiet hours', 'zh-CN': '安静时段' } },
@@ -244,9 +246,13 @@ try {
   const page = await owner.newPage()
   const errors = []
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  let expectRefusals = false
   page.on('console', (m) => {
     // The sandbox probes are refused by CSP on purpose, and the browser logs
     // each refusal as an error; those are the pass, not a failure.
+    // A step that deliberately knocks on a door without a key sets this:
+    // the browser logs the refusal it asked for, and that is not a finding.
+    if (expectRefusals && /40[13] \(/.test(m.text())) return
     if (m.type() === 'error' && !/Content Security Policy|Refused to connect|violates|sandboxed frame/.test(m.text())) errors.push(`console: ${m.text()}`)
   })
 
@@ -526,6 +532,7 @@ try {
   await page.getByTestId('plugin-door-mint').click()
   await until(() => page.getByTestId('plugin-door-token-value').isVisible(), 5000)
   const minted = (await page.getByTestId('plugin-door-token-value').textContent()) ?? ''
+  expectRefusals = true
   const doorResult = await page.evaluate(async (tok) => {
     const bare = await fetch('/api/plugin-http/paper/x', { method: 'POST', body: 'hi' })
     const ok = await fetch('/api/plugin-http/paper/things/1?q=2', { method: 'POST', body: 'hi', headers: { Authorization: 'Bearer ' + tok } })
@@ -546,7 +553,21 @@ try {
   const afterRevoke = await page.evaluate(async (tok) => (await fetch('/api/plugin-http/paper/x', { headers: { Authorization: 'Bearer ' + tok } })).status, minted)
   if (afterRevoke !== 401) note('fail', 'door', `a revoked token still opened the door: ${afterRevoke}`)
   else pass('door', 'a revoked token is refused')
+  expectRefusals = false
   await page.screenshot({ path: join(SHOTS, 'door.png'), fullPage: true })
+
+  // A declared download: on the card with its size and host, started by
+  // the button, and its failure said in words (the host cannot resolve
+  // here, which is the one outcome a check without the internet can see).
+  const dl = page.getByTestId('plugin-download-voices')
+  if (!(await until(() => dl.isVisible(), 5000))) note('fail', 'download', 'the card has no download row')
+  const dlText = (await dl.textContent().catch(() => '')) ?? ''
+  if (!/1 MB|downloads\.invalid/.test(dlText)) note('fail', 'download', `the row does not say size and host: ${dlText}`)
+  await page.getByTestId('plugin-download-voices-start').click()
+  const dlState = page.getByTestId('plugin-download-voices-state')
+  if (!(await until(async () => /failed/.test((await dlState.textContent().catch(() => '')) ?? ''), 15000))) {
+    note('fail', 'download', `the download did not end in words: ${await dlState.textContent().catch(() => '?')}`)
+  } else pass('download', `a declared download is on the card and its outcome is said: ${await dlState.textContent()}`)
 
   // Rung 4: nothing loads until the switch is on; then the module draws into
   // the header and the rows and sees the state; ?safe=1 loads none of it.

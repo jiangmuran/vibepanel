@@ -301,12 +301,16 @@ type sourceFetcher struct {
 	serverName string
 }
 
-func (f *sourceFetcher) fetch(ctx context.Context, src pages.SourceSpec, headers map[string]string) *sourceResult {
-	res := &sourceResult{FetchedAt: time.Now().Unix()}
-	u, err := url.Parse(src.URL)
+// guardedClient is the guard as a client for one URL: https only, every
+// resolved address public (or the fake-ip exception), the checked address
+// dialled and the name used only for TLS. It never follows a redirect
+// itself; the caller decides what a redirect means, because for a source
+// it is a second URL nobody approved and for a declared download it is
+// what every release host does.
+func (f *sourceFetcher) guardedClient(ctx context.Context, rawURL string, timeout time.Duration) (*http.Client, string) {
+	u, err := url.Parse(rawURL)
 	if err != nil || u.Scheme != "https" {
-		res.Error = "only https sources are fetched"
-		return res
+		return nil, "only https sources are fetched"
 	}
 	host, port := u.Hostname(), u.Port()
 	if port == "" {
@@ -322,16 +326,12 @@ func (f *sourceFetcher) fetch(ctx context.Context, src pages.SourceSpec, headers
 	if allow == nil {
 		allow = publicAddr
 	}
-	ctx, cancel := context.WithTimeout(ctx, src.TimeoutOrDefault())
-	defer cancel()
-
 	var addrs []netip.Addr
 	resolved := false
 	if literal, perr := netip.ParseAddr(host); perr == nil {
 		addrs = []netip.Addr{literal}
 	} else if addrs, err = resolve(ctx, host); err != nil || len(addrs) == 0 {
-		res.Error = "the host does not resolve"
-		return res
+		return nil, "the host does not resolve"
 	} else {
 		resolved = true
 	}
@@ -359,18 +359,16 @@ func (f *sourceFetcher) fetch(ctx context.Context, src pages.SourceSpec, headers
 				continue
 			}
 		}
-		res.Error = "the host resolves to an address a source may not reach"
-		return res
+		return nil, "the host resolves to an address a source may not reach"
 	}
 	target := net.JoinHostPort(addrs[0].Unmap().String(), port)
 	serverName := host
 	if f.serverName != "" {
 		serverName = f.serverName
 	}
-
 	dial := f.dial
 	if dial == nil {
-		dial = (&net.Dialer{Timeout: src.TimeoutOrDefault()}).DialContext
+		dial = (&net.Dialer{Timeout: timeout}).DialContext
 	}
 	transport := &http.Transport{
 		Proxy: nil,
@@ -380,14 +378,25 @@ func (f *sourceFetcher) fetch(ctx context.Context, src pages.SourceSpec, headers
 		},
 		TLSClientConfig:        &tls.Config{ServerName: serverName, RootCAs: f.rootCAs, MinVersion: tls.VersionTLS12},
 		DisableKeepAlives:      true,
-		ResponseHeaderTimeout:  src.TimeoutOrDefault(),
+		ResponseHeaderTimeout:  timeout,
 		MaxResponseHeaderBytes: 64 << 10,
 	}
-	client := &http.Client{
+	return &http.Client{
 		Transport: transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return errors.New("a source may not redirect")
 		},
+	}, ""
+}
+
+func (f *sourceFetcher) fetch(ctx context.Context, src pages.SourceSpec, headers map[string]string) *sourceResult {
+	res := &sourceResult{FetchedAt: time.Now().Unix()}
+	ctx, cancel := context.WithTimeout(ctx, src.TimeoutOrDefault())
+	defer cancel()
+	client, problem := f.guardedClient(ctx, src.URL, src.TimeoutOrDefault())
+	if problem != "" {
+		res.Error = problem
+		return res
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, src.URL, nil)
 	if err != nil {

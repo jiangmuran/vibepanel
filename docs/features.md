@@ -437,6 +437,14 @@ a page on the panel. The process sees none of your credentials, only a
 caller name and a per-start secret that proves the request came through
 the panel.
 
+**Declared downloads.** A plugin that needs a model or a native runtime
+declares it with a hash, and the panel fetches it, follows the release
+host's redirects with every hop checked, refuses anything but that hash,
+unpacks it safely under the plugin's assets directory and hands the
+process the path. A required one is fetched when you enable the plugin and
+the process waits for it; an optional one has a *Download* button on the
+card, with the size, the host and the progress, and *Remove* takes it away.
+
 **New plugin** is the start of that loop: a name and a template -- `theme`,
 `pane`, `service`, `process` or `full` -- and the panel scaffolds the
 directory under its data directory (or one you name) with `AGENTS.md`,

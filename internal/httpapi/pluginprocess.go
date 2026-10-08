@@ -122,6 +122,9 @@ type pluginProcessStatus struct {
 	Mount    string `json:"mount"`
 	Auth     string `json:"auth"`
 	SocketUp bool   `json:"socketUp"`
+	// WaitingFor is the required downloads not yet on disk: the process is
+	// not started until they are.
+	WaitingFor []string `json:"waitingFor"`
 }
 
 // ensurePluginProcesses starts a process for every enabled plugin that
@@ -136,6 +139,12 @@ func (s *Server) ensurePluginProcesses(ctx context.Context) {
 	for _, p := range list {
 		c, ok, err := s.pluginServiceCred(ctx, p)
 		if err != nil || !ok || c.manifest.Process == nil {
+			continue
+		}
+		// A process whose required downloads are not there yet waits for
+		// them; the card says so, and the download's end brings it here
+		// again through pluginsChanged.
+		if len(s.pluginDownloadsMissing(p.ID, c.manifest)) > 0 {
 			continue
 		}
 		want[p.ID] = c
@@ -372,6 +381,9 @@ func (s *Server) runPluginProcOnce(ctx context.Context, c pluginCred, pr *plugin
 		"VIBEPANEL_PLUGIN_STATE=" + stateDir,
 		"VIBEPANEL_PLUGIN_ID=" + c.plugin.ID,
 	}
+	if len(c.manifest.Downloads) > 0 {
+		env = append(env, "VIBEPANEL_PLUGIN_ASSETS="+s.pluginAssetsDir(c.plugin.ID))
+	}
 	for i, name := range spec.Env {
 		if i >= pluginProcessEnvLimit {
 			break
@@ -507,6 +519,10 @@ func (s *Server) pluginProcessStatusFor(ctx context.Context, p store.Plugin) plu
 	out.Command = strings.Join(m.Process.Command, " ")
 	if m.Process.HTTP != nil {
 		out.Mount, out.Auth = pluginMountPath(p.ID), m.Process.HTTP.Auth
+	}
+	out.WaitingFor = s.pluginDownloadsMissing(p.ID, m)
+	if out.WaitingFor == nil {
+		out.WaitingFor = []string{}
 	}
 	lookPath := s.ppr.lookPath
 	if lookPath == nil {

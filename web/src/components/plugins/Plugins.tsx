@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { BookOpen, Cpu, DoorOpen, Download, FileUp, FolderInput, Hammer, KeyRound, Plus, Puzzle, ScrollText, ShieldCheck, SlidersHorizontal, Trash2 } from 'lucide-react'
+import { BookOpen, Cpu, DoorOpen, Download, FileUp, FolderInput, HardDriveDownload, Hammer, KeyRound, Plus, Puzzle, ScrollText, ShieldCheck, SlidersHorizontal, Trash2 } from 'lucide-react'
 
 import { t, tKey, useLang } from '../../i18n'
 import type { Lang } from '../../i18n'
 import { api } from '../../protocol/api'
-import type { NewPluginResult, PluginAccessToken, PluginDetail, PluginProcessStatus, PluginRow, PluginSourceRow, PluginTemplate, SharePageServerLogLine } from '../../protocol/wire'
+import type { NewPluginResult, PluginAccessToken, PluginDetail, PluginDownloadRow, PluginProcessStatus, PluginRow, PluginSourceRow, PluginTemplate, SharePageServerLogLine } from '../../protocol/wire'
 import { copyTextInGesture } from '../../clipboard'
 import { confirmThen } from '../ask'
 import { Chip, Empty, Field, INPUT, IconTile } from '../pages/bits'
@@ -610,7 +610,9 @@ function ProcessBlock({ id, onError }: { id: string; onError: (e: unknown) => vo
     ? t('plg.proc.running', { pid: st.pid, n: st.restarts })
     : st.stopped
       ? t('plg.proc.stopped', { why: safeText(st.stopWhy) })
-      : t('plg.proc.waiting', { exit: st.lastExit ? t('plg.proc.lastExit', { exit: safeText(st.lastExit) }) : '' })
+      : st.waitingFor.length > 0
+        ? t('plg.proc.waitingFor', { names: safeText(st.waitingFor.join(', ')) })
+        : t('plg.proc.waiting', { exit: st.lastExit ? t('plg.proc.lastExit', { exit: safeText(st.lastExit) }) : '' })
   const bin = st.command.split(' ')[0] ?? ''
   return (
     <div className="grid gap-2 border-t border-hairline p-3 @md:p-4" data-testid="plugin-process">
@@ -627,6 +629,7 @@ function ProcessBlock({ id, onError }: { id: string; onError: (e: unknown) => vo
         </button>
       </div>
       {st.mount && <DoorBlock id={id} st={st} onError={onError} />}
+      <DownloadsBlock id={id} onError={onError} />
       <h3 className="text-vp-xs font-semibold tracking-wide text-ink-3 uppercase">{t('plg.proc.output')}</h3>
       {st.output === '' ? (
         <p className="text-vp-sm text-ink-3">{t('plg.proc.noOutput')}</p>
@@ -781,7 +784,10 @@ function DoorBlock({ id, st, onError }: { id: string; st: PluginProcessStatus; o
 
   useEffect(() => {
     let cancelled = false
-    if (isToken) {
+    // The token list is re-read while the block is on screen: a token's
+    // last use is written by the door, not by this page.
+    const readTokens = () => {
+      if (!isToken || document.hidden) return
       api.pluginAccessTokens(id).then(
         (list) => {
           if (!cancelled) setTokens(list)
@@ -789,6 +795,8 @@ function DoorBlock({ id, st, onError }: { id: string; st: PluginProcessStatus; o
         () => {},
       )
     }
+    readTokens()
+    const timer = window.setInterval(readTokens, 5000)
     api.pluginOrigins(id).then(
       (o) => {
         if (!cancelled) setOrigins(o.origins.join('\n'))
@@ -797,6 +805,7 @@ function DoorBlock({ id, st, onError }: { id: string; st: PluginProcessStatus; o
     )
     return () => {
       cancelled = true
+      clearInterval(timer)
     }
   }, [id, isToken])
 
@@ -942,6 +951,130 @@ function DoorBlock({ id, st, onError }: { id: string; st: PluginProcessStatus; o
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+/** Bytes for a card: 239 MB. */
+function humanBytes(n: number): string {
+  if (n >= 1 << 30) return `${(n / (1 << 30)).toFixed(1)} GB`
+  if (n >= 1 << 20) return `${Math.round(n / (1 << 20))} MB`
+  if (n >= 1 << 10) return `${Math.round(n / (1 << 10))} KB`
+  return `${n} B`
+}
+
+/**
+ * Declared downloads (docs/plugins.md §5): one row per declaration, with
+ * the job's progress while one runs. A required one is fetched at enable;
+ * an optional one waits for the button here. Polled while on screen,
+ * faster while something is running.
+ */
+function DownloadsBlock({ id, onError }: { id: string; onError: (e: unknown) => void }) {
+  const lang = useLang()
+  const [rows, setRows] = useState<PluginDownloadRow[] | null>(null)
+  const [busy, setBusy] = useState('')
+  const running = rows?.some((r) => r.status !== '' && r.status !== 'failed') ?? false
+  useEffect(() => {
+    let cancelled = false
+    const read = () => {
+      if (document.hidden) return
+      api.pluginDownloads(id).then(
+        (list) => {
+          if (!cancelled) setRows(list)
+        },
+        () => {},
+      )
+    }
+    read()
+    const timer = window.setInterval(read, running ? 1000 : 5000)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [id, running])
+  if (!rows || rows.length === 0) return null
+  const act = async (name: string, fn: () => Promise<PluginDownloadRow[]>) => {
+    setBusy(name)
+    try {
+      setRows(await fn())
+    } catch (e) {
+      onError(e)
+    } finally {
+      setBusy('')
+    }
+  }
+  const remove = (r: PluginDownloadRow) => {
+    confirmThen(
+      {
+        title: t('plg.dl.remove'),
+        body: t('plg.dl.removeConfirm', { name: safeText(textIn(r.label, lang)) }),
+        confirm: t('plg.dl.remove'),
+        cancel: t('dir.cancel'),
+        destructive: true,
+      },
+      () => act(r.name, () => api.removePluginDownload(id, r.name)),
+    )
+  }
+  const state = (r: PluginDownloadRow): { words: string; color: string } => {
+    switch (r.status) {
+      case 'downloading':
+        return { words: t('plg.dl.downloading', { pct: r.size > 0 ? Math.min(100, Math.round((r.received / r.size) * 100)) : 0 }), color: 'var(--vp-state-working)' }
+      case 'verifying':
+        return { words: t('plg.dl.verifying'), color: 'var(--vp-state-working)' }
+      case 'unpacking':
+        return { words: t('plg.dl.unpacking'), color: 'var(--vp-state-working)' }
+      case 'failed':
+        return { words: t('plg.dl.failed', { why: safeText(r.error) }), color: 'var(--vp-state-crashed)' }
+    }
+    return r.ready ? { words: t('plg.dl.ready'), color: 'var(--vp-state-done)' } : { words: t('plg.dl.missing'), color: 'var(--vp-ink-3)' }
+  }
+  return (
+    <div className="grid gap-1.5 rounded-vp border border-hairline bg-surface-2/40 p-3" data-testid="plugin-downloads">
+      <div className="flex flex-wrap items-center gap-1.5 text-vp-sm">
+        <HardDriveDownload size={13} className="shrink-0 text-ink-3" />
+        <span className="font-medium text-ink">{t('plg.dl')}</span>
+        <span className="text-ink-3">{t('plg.dl.why')}</span>
+      </div>
+      <ul className="grid gap-1.5">
+        {rows.map((r) => {
+          const st = state(r)
+          const live = r.status !== '' && r.status !== 'failed'
+          return (
+            <li key={r.name} className="grid gap-1 text-vp-sm" data-testid={`plugin-download-${r.name}`}>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                <span className="text-ink">{safeText(textIn(r.label, lang))}</span>
+                <Chip>{t(r.optional ? 'plg.dl.optional' : 'plg.dl.required')}</Chip>
+                <span className="text-ink-3">{t('plg.dl.from', { size: humanBytes(r.size), host: safeText(r.host) })}</span>
+                <span data-testid={`plugin-download-${r.name}-state`} style={{ color: st.color }}>
+                  {st.words}
+                </span>
+                <span className="ml-auto flex items-center gap-1.5">
+                  {!r.ready && !live && (
+                    <button type="button" disabled={busy !== ''} onClick={() => void act(r.name, () => api.startPluginDownload(id, r.name))} data-testid={`plugin-download-${r.name}-start`} className="vp-outline text-vp-xs disabled:opacity-40">
+                      <Download size={11} />
+                      {t(r.status === 'failed' ? 'plg.dl.retry' : 'plg.dl.install')}
+                    </button>
+                  )}
+                  {(r.ready || live) && (
+                    <button type="button" disabled={busy !== ''} onClick={() => remove(r)} data-testid={`plugin-download-${r.name}-remove`} className="vp-outline text-vp-xs disabled:opacity-40">
+                      <Trash2 size={11} />
+                      {t('plg.dl.remove')}
+                    </button>
+                  )}
+                </span>
+              </div>
+              {r.status === 'downloading' && r.size > 0 && (
+                <div className="h-1 w-full overflow-hidden rounded-full bg-surface-2">
+                  <div className="h-full" style={{ width: `${Math.min(100, (r.received / r.size) * 100)}%`, background: 'var(--vp-accent)' }} />
+                </div>
+              )}
+              <code className="truncate font-mono text-vp-xs text-ink-3" title={r.sha256}>
+                sha256 {r.sha256.slice(0, 16)}…
+              </code>
+            </li>
+          )
+        })}
+      </ul>
     </div>
   )
 }

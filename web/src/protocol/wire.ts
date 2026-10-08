@@ -2311,6 +2311,8 @@ export interface PluginManifest {
   inbound?: { path: string; secret: string }
   process?: { command: string[]; restart?: string; capabilities?: string[]; env?: string[]; hosts?: string[] }
   unsandboxed?: { entry: string; tested: string; hosts?: string[] }
+  /** Declared downloads: what the panel fetches, verifies and unpacks for the plugin (docs/plugins.md §5). */
+  downloads?: PluginDownloadSpec[]
 }
 
 /** One plugin with everything the page draws: the row, flat, plus the rest. */
@@ -2376,6 +2378,37 @@ export interface PluginProcessStatus {
   auth: string
   /** Whether the process has opened its socket. */
   socketUp: boolean
+  /** Required downloads not on disk yet; the process is not started until they are. */
+  waitingFor: string[]
+}
+
+/** A declared download as the manifest writes it. */
+export interface PluginDownloadSpec {
+  name: string
+  optional?: boolean
+  label: PluginText
+  url: string
+  sha256: string
+  size: number
+  unpack?: string
+}
+
+/** One declared download (docs/plugins.md §5): what the card shows, with the job's progress while one runs. */
+export interface PluginDownloadRow {
+  name: string
+  label: PluginText
+  optional: boolean
+  size: number
+  host: string
+  sha256: string
+  unpack: string
+  ready: boolean
+  readyAt: number
+  /** '' | 'downloading' | 'verifying' | 'unpacking' | 'failed' */
+  status: string
+  received: number
+  error: string
+  dir: string
 }
 
 /** A plugin access token: the owner's credential for one plugin's mount, named, revocable. The token itself is shown once. */

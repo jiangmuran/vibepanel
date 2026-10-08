@@ -114,6 +114,7 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		{"PluginSourceRow", pluginSourceRow{}},
 		{"PluginProcessStatus", pluginProcessStatus{}},
 		{"PluginAccessToken", store.PluginAccessToken{}},
+		{"PluginDownloadRow", pluginDownloadRow{}},
 		{"PluginModule", pluginModule{}},
 		{"PluginTemplate", plugins.Template{}},
 		{"NewPluginResult", newPluginResult{}},
@@ -516,7 +517,12 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"plugin.token_created":   true,
 		"plugin.token_revoked":   true,
 		"plugin.origins_changed": true,
-		"plugin.rejected":        true,
+		// Declared downloads: asked for, ready, failed, removed.
+		"plugin.download":         true,
+		"plugin.download_ready":   true,
+		"plugin.download_failed":  true,
+		"plugin.download_removed": true,
+		"plugin.rejected":         true,
 		// An inbound call that failed its signature check.
 		"plugin.inbound_rejected": true,
 		// A process stopped after the failure cap; the owner restarting one.

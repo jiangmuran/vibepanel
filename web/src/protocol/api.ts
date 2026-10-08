@@ -68,6 +68,7 @@ import type {
   PluginThemeRow,
   PluginTemplate,
   PluginAccessToken,
+  PluginDownloadRow,
   NewPluginResult,
 } from './wire'
 
@@ -456,6 +457,18 @@ export const api = {
     request<{ origins: string[] }>(`/api/settings/plugins/${encodeURIComponent(id)}/origins`, {
       method: 'PUT',
       body: JSON.stringify({ origins }),
+    }),
+  // Declared downloads (docs/plugins.md §5).
+  pluginDownloads: (id: string) =>
+    request<PluginDownloadRow[]>(`/api/settings/plugins/${encodeURIComponent(id)}/downloads`),
+  startPluginDownload: (id: string, name: string) =>
+    request<PluginDownloadRow[]>(`/api/settings/plugins/${encodeURIComponent(id)}/downloads/${encodeURIComponent(name)}`, {
+      method: 'POST',
+      body: '{}',
+    }),
+  removePluginDownload: (id: string, name: string) =>
+    request<PluginDownloadRow[]>(`/api/settings/plugins/${encodeURIComponent(id)}/downloads/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
     }),
   pluginSources: (id: string) =>
     request<PluginSourceRow[]>(`/api/settings/plugins/${encodeURIComponent(id)}/sources`),

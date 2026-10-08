@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"fmt"
 	"net/url"
 	"slices"
 	"strings"
@@ -165,6 +166,14 @@ func Describe(m Manifest, granted []string, panelVersion string) Screen {
 	if m.Process != nil {
 		declared(m.Process.Hosts)
 	}
+	for _, d := range m.Downloads {
+		if h := d.Host(); h != "" && !seenHost["download:"+h] {
+			seenHost["download:"+h] = true
+			add(Line{Kind: LineHost, Tone: ToneAmber, Code: h, Text: Text{
+				EN: "downloads from " + h + " (the panel fetches it; redirects followed, every address checked)",
+				ZH: "从 " + h + " 下载（由面板抓取；跟随跳转，每一跳都检查地址）"}})
+		}
+	}
 	if m.Unsandboxed != nil {
 		declared(m.Unsandboxed.Hosts)
 	}
@@ -181,6 +190,9 @@ func Describe(m Manifest, granted []string, panelVersion string) Screen {
 	}
 	if m.Process != nil && m.Process.HTTP != nil {
 		add(Line{Kind: LineHTTP, Tone: ToneRed, Code: m.Process.HTTP.Auth, Text: HTTPLine(m.ID, m.Process.HTTP.Auth)})
+	}
+	for _, d := range m.Downloads {
+		add(Line{Kind: LineKeeps, Tone: ToneAmber, Code: "download:" + d.Name, Text: DownloadLine(d)})
 	}
 
 	// 6. What it keeps.
@@ -372,4 +384,32 @@ func HTTPLine(id, auth string) Text {
 	}
 	return Text{EN: "Accepts requests on the panel's port at " + where + ", with your sign-in.",
 		ZH: "在面板端口 " + where + " 上接受请求，凭你的登录态访问。"}
+}
+
+// DownloadLine is one declared download on the screen: what, how big, from
+// where, and that the hash on the screen is what the panel will accept.
+func DownloadLine(d DownloadSpec) Text {
+	size := HumanBytes(d.Size)
+	short := strings.ToLower(d.SHA256)[:12]
+	if d.Optional {
+		return Text{
+			EN: "May download " + d.Label.EN + " (" + size + ") from " + d.Host() + " when you choose to, verified against sha256 " + short + "….",
+			ZH: "可按你的选择下载 " + d.Label.In("zh") + "（" + size + "），来自 " + d.Host() + "，校验 sha256 " + short + "…。"}
+	}
+	return Text{
+		EN: "Needs " + d.Label.EN + " (" + size + ") from " + d.Host() + ", downloaded when enabled, verified against sha256 " + short + "….",
+		ZH: "需要 " + d.Label.In("zh") + "（" + size + "），启用时从 " + d.Host() + " 下载，校验 sha256 " + short + "…。"}
+}
+
+// HumanBytes is "239 MB" for a screen.
+func HumanBytes(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1f GB", float64(n)/float64(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.0f MB", float64(n)/float64(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.0f KB", float64(n)/float64(1<<10))
+	}
+	return fmt.Sprintf("%d B", n)
 }

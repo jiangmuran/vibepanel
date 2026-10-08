@@ -113,7 +113,9 @@ type Server struct {
 	psv pluginServiceState
 	ppr pluginProcessState
 	// phx is the door on the panel's port: pluginhttp.go.
-	phx        pluginHTTPState
+	phx pluginHTTPState
+	// pdl is the declared downloads: plugindownload.go.
+	pdl        pluginDownloadState
 	serviceCtx context.Context
 
 	// Restart asks the process to stop and be brought back by whatever
@@ -525,6 +527,7 @@ func (s *Server) Routes() http.Handler {
 			s.registerPluginServiceRoutes(r)
 			s.registerPluginProcessRoutes(r)
 			s.registerPluginHTTPOwnerRoutes(r)
+			s.registerPluginDownloadRoutes(r)
 			s.registerPluginModuleRoutes(r)
 			s.registerPluginNewRoutes(r)
 			// A plugin's own routes for the owner: /api/ext/{id}/…, under the

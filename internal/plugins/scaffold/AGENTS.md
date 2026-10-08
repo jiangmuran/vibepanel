@@ -38,6 +38,12 @@ is the design, and `vibepanel-plugin.d.ts` beside this file declares the SDK.
   install --grant …` works from here because you run as the same user; it is
   the owner's decision, made on the install screen. Leave it to them.
 
+- A **download** the plugin needs (a model, a runtime) is declared in
+  `downloads` with its sha256 and size; the panel fetches, verifies and
+  unpacks it, and the process finds it under `VIBEPANEL_PLUGIN_ASSETS`.
+  Never fetch large files yourself at runtime: what the owner approved is
+  the hash on the install screen.
+
 ## What is yours
 
 Everything else: the HTML, the styling, what the pane shows, what the
