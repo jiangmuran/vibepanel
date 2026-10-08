@@ -578,6 +578,11 @@ plugin credential or hook request reaches the settings routes that install,
 grant or enable; the existing route-list tests cover the first three, and
 `TestAPluginCredentialReachesOnlyTheseRoutes` is the fourth.
 
+A change made from a shell -- `vibepanel plugin disable`, `install`,
+`remove` -- reaches a running panel within two seconds: the panel polls a
+stamp over the plugins table and reconciles processes, services and frames
+the way the settings page does.
+
 ## 7. Rung 4: unsandboxed, and what the screen says
 
 This is the rung the earlier document refused hardest, and it is here

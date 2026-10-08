@@ -2283,6 +2283,7 @@ func (s *Server) Poll(ctx context.Context) {
 	s.ensurePluginWorkers(ctx)
 	s.ensurePluginProcesses(ctx)
 	go s.pluginServiceLoop(ctx)
+	go s.pluginStampLoop(ctx)
 	for {
 		select {
 		case <-ctx.Done():

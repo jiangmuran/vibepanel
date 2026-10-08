@@ -279,3 +279,24 @@ func TestAChangedSecretRestartsTheProcess(t *testing.T) {
 		t.Errorf("a reconcile with nothing changed restarted the process: %d → %d", pid, st.PID)
 	}
 }
+
+// `vibepanel plugin disable` writes the database and exits; the running
+// panel notices through the stamp and ends the process, rather than at its
+// next restart. The first reading is a baseline, so a panel that starts
+// with plugins in place does not "notice" them as a change.
+func TestAChangeMadeFromTheShellReachesTheRunningPanel(t *testing.T) {
+	ts, srv := newTestServer(t)
+	installProcess(t, ts, srv, []string{"read:panel"}, "sleep 60")
+	waitFor(t, "the process", 5000, func() bool { return processStatus(t, ts).Running })
+	srv.pluginStampOnce(t.Context()) // the baseline
+	srv.pluginStampOnce(t.Context())
+	if !processStatus(t, ts).Running {
+		t.Fatal("a reading with nothing changed stopped the process")
+	}
+	// What the CLI does: the row, directly.
+	if err := srv.DB.SetPluginEnabled(t.Context(), "proc", false); err != nil {
+		t.Fatal(err)
+	}
+	srv.pluginStampOnce(t.Context())
+	waitFor(t, "the process to be ended", 8000, func() bool { return !processStatus(t, ts).Running })
+}

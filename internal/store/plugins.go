@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -513,4 +514,31 @@ func (d *DB) DeletePluginSecret(ctx context.Context, id, name string) error {
 		return fmt.Errorf("store: delete plugin secret: %w", err)
 	}
 	return nil
+}
+
+// PluginsStamp is one string that changes whenever a plugin row is added,
+// removed or changed in what runs: what the running panel polls to notice a
+// change made from a shell, which writes this database directly and cannot
+// call the panel. The fields themselves rather than updated_at, which has
+// second resolution: an install and a disable in the same second would
+// read as nothing. One query over one small table, every couple of seconds.
+func (d *DB) PluginsStamp(ctx context.Context) (string, error) {
+	rows, err := d.sql.QueryContext(ctx,
+		`SELECT id, enabled, installed_version, dev, source_dir, updated_at FROM plugins ORDER BY id`)
+	if err != nil {
+		return "", fmt.Errorf("store: plugins stamp: %w", err)
+	}
+	defer rows.Close()
+	h := sha256.New()
+	for rows.Next() {
+		var id, dir string
+		var enabled, dev bool
+		var version int
+		var at int64
+		if err := rows.Scan(&id, &enabled, &version, &dev, &dir, &at); err != nil {
+			return "", fmt.Errorf("store: plugins stamp: %w", err)
+		}
+		fmt.Fprintf(h, "%s|%v|%d|%v|%s|%d\n", id, enabled, version, dev, dir, at)
+	}
+	return hex.EncodeToString(h.Sum(nil)), rows.Err()
 }

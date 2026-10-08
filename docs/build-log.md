@@ -25432,3 +25432,22 @@ same list rather than as a switch, because it is a per-origin decision and
 reads as one. Eight origins in the test say which side of the line each is
 on; removing the port-0 branch turns it red.
 
+## 2026-10-08 — Plugins: a change from the shell reaches the running panel
+
+`vibepanel plugin disable <id>` writes the database and exits, and nothing
+it can reach tells the panel: the process kept running until the panel
+restarted, and the CLI's `--all` message promised "its next poll", which
+did not exist -- the thirty-second service loop runs sources and schedules
+and never reconciled processes. Reported as 「通过命令行关闭插件 插件进程
+不会被立刻干掉」.
+
+The panel now polls one small query every two seconds, `PluginsStamp`, a
+hash of every plugin row's fields that decide what runs (id, enabled,
+installed version, dev, source directory, updated_at), and on a change runs
+the same `pluginsChanged` the settings page runs. The fields rather than
+`MAX(updated_at)`, which was the first version: `updated_at` has second
+resolution, and the test installed and disabled within one second and read
+"nothing changed". The first reading is a baseline, so a panel that starts
+with plugins in place does not reconcile them as news. With the comparison
+removed the test goes red.
+

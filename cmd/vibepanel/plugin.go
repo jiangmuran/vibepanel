@@ -352,7 +352,7 @@ func pluginSwitch(args []string, on bool) error {
 			return err
 		}
 		_ = db.Audit(ctx, store.AuditEntry{At: time.Now().Unix(), Event: "plugins.unsandboxed", Username: "cli", Detail: "off (--all)"})
-		fmt.Println("unsandboxed plugins: off. Restart the panel, or wait for its next poll, for running services to stop.")
+		fmt.Println("unsandboxed plugins: off. A running panel notices within a couple of seconds and stops what is running.")
 		return nil
 	}
 	if fs.NArg() != 1 {

@@ -57,6 +57,7 @@ const (
 	pluginEventQueue     = 256
 	pluginRouteParallel  = 4
 	pluginServiceTick    = 30 * time.Second
+	pluginStampTick      = 2 * time.Second
 	pluginInboundRate    = 60
 	pluginLogLines       = 200
 	pluginLogLineMax     = 1000
@@ -94,6 +95,8 @@ type pluginServiceState struct {
 	// fetcher is swapped by tests to reach a server on loopback.
 	fetcher *sourceFetcher
 	tick    time.Duration
+	// stamp is the plugins table as last seen by pluginStampLoop.
+	stamp   string
 	started bool
 }
 
@@ -115,6 +118,44 @@ func (s *Server) pluginServiceLoop(ctx context.Context) {
 		case <-t.C:
 			s.pluginServiceOnce(ctx)
 		}
+	}
+}
+
+// pluginStampLoop notices a change made from outside the process:
+// `vibepanel plugin disable` writes the database and exits, and nothing it
+// can reach tells the panel. Before this, a plugin disabled from a shell
+// kept its process until the panel restarted, and the CLI's own message
+// promised a poll that did not exist. The stamp is one query over the
+// plugins table every two seconds; a change runs the same pluginsChanged
+// the settings page runs.
+func (s *Server) pluginStampLoop(ctx context.Context) {
+	t := time.NewTicker(pluginStampTick)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.pluginStampOnce(ctx)
+		}
+	}
+}
+
+// pluginStampOnce compares the stamp with the last one seen and reconciles
+// on a change. The first reading is a baseline, not a change.
+func (s *Server) pluginStampOnce(ctx context.Context) {
+	stamp, err := s.DB.PluginsStamp(ctx)
+	if err != nil {
+		return
+	}
+	st := &s.psv
+	st.mu.Lock()
+	changed := st.stamp != "" && st.stamp != stamp
+	st.stamp = stamp
+	st.mu.Unlock()
+	if changed {
+		s.Log.Info("plugins changed outside the panel; reconciling")
+		s.pluginsChanged()
 	}
 }
 
