@@ -419,11 +419,15 @@ The panel starts it from the version's checked-out directory
 `HOME`, `LANG`, `VIBEPANEL_PLUGIN_URL` (`http://127.0.0.1:<port>/api/plugin/<token>/v1/`,
 the token being the whole credential), `VIBEPANEL_PLUGIN_STATE` (a directory
 of its own under `<data dir>/plugins/<id>/state/`), and each name in `env`
-filled from a secret the owner stored for this plugin. The token is a row in
+filled from a secret the owner stored for this plugin. A secret saved
+after the start, a download that arrived or a new version restarts the
+process: the supervisor keeps a fingerprint of what it was started with,
+and a reconcile with a different one stops and starts it. The token is a row in
 `plugin_tokens`, minted at enable and deleted at disable, with the granted
 capability set on the row; the same v1 routes and the same SDK (`VibePanel.plugin({ base })`
-from Node) serve it, and `GET v1/events` is a WebSocket carrying the plugin's
-view within the hub's coalesce window.
+from Node) serve it, and `GET v1/events` is an SSE stream carrying the plugin's
+view within the hub's coalesce window, and `event: settings` with the
+values whenever the owner moves one.
 
 **The supervisor** is the part the earlier document said was worth building
 and worth building last, and its tests are the ones it asked for: a process

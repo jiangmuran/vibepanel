@@ -1940,6 +1940,8 @@ project's `path` are `""` without `read:paths`. `events` is a server-sent
 stream carrying a `view` event within the panel's coalesce window of any
 change, a comment every 25 seconds, and `revoked` when the credential stops
 resolving.
+Also `event: settings` with `{values}` as `v1/settings` answers them: on
+connect, and whenever the owner changes one.
 
 ### `GET /api/plugin/{cred}/v1/projects/{h}/notes`
 ### `PUT /api/plugin/{cred}/v1/projects/{h}/notes`

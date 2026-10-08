@@ -734,6 +734,10 @@ func (s *Server) handlePluginEvents(w http.ResponseWriter, r *http.Request) {
 	h.Set("Cache-Control", "no-store")
 	h.Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
+	// The settings as last sent: a change to them is its own event, so a
+	// frame or a process does not poll v1/settings to learn that the owner
+	// moved a switch. Sent on the first message too, as the baseline.
+	var lastSettings []byte
 	send := func() bool {
 		// The credential is resolved again on every send: a grant signed out
 		// or a box unticked ends the stream or narrows the view at the next
@@ -743,6 +747,15 @@ func (s *Server) handlePluginEvents(w http.ResponseWriter, r *http.Request) {
 			_, _ = fmt.Fprint(w, "event: revoked\ndata: {}\n\n")
 			flusher.Flush()
 			return false
+		}
+		if cred.manifest.Settings != nil {
+			if body, serr := s.pluginSettingsBody(r.Context(), cred.plugin.ID, cred.manifest); serr == nil {
+				raw, _ := json.Marshal(map[string]any{"values": body.Values})
+				if !bytes.Equal(raw, lastSettings) {
+					lastSettings = raw
+					_, _ = fmt.Fprintf(w, "event: settings\ndata: %s\n\n", raw)
+				}
+			}
 		}
 		var payload []byte
 		if cred.has(plugins.CapReadPanel) || cred.has(plugins.CapReadPaths) {

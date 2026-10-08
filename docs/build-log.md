@@ -25391,3 +25391,24 @@ temp file; `..` refused in three spellings and a bomb capped. The browser
 check declares a download on a host that cannot resolve, which is the one
 outcome a check without the internet can watch end in words.
 
+## 2026-10-08 — Plugins: settings that reach a running plugin
+
+Two small things from the same review, both about a change the owner
+makes on the card not reaching a plugin that is already running.
+
+- **A settings change is an event on the stream.** `GET v1/events` sends
+  `event: settings` with the values as `v1/settings` would answer them --
+  the baseline on connect, then on every change -- so a frame or a process
+  holding the stream learns that the owner moved a switch without polling.
+  The SDK listens and replays the last values to a late `on('settings')`.
+  The stream was SSE all along; the review's text said WebSocket, and the
+  design document now says which.
+- **A process is restarted when what it was started with changes.** A
+  secret saved after the start, a download that arrived, a new version:
+  `pluginEnvFingerprint` hashes all of it (never kept in the clear; it has
+  secrets in it), the supervisor keeps the hash the process was started
+  with, and a reconcile with a different hash stops and restarts. A
+  reconcile with the same hash leaves the pid alone, which the test checks
+  too: a restart loop from a fingerprint that changed by itself would be
+  worse than the confusion this fixes.
+

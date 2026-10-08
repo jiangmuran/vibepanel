@@ -166,7 +166,9 @@ command line, Docker, and building from source.
 [sessions in a chat app](docs/features.md#on-a-phone-in-a-chat-app) through
 Telegram, 飞书 or 微信, with replies going back into the session, and
 [plugins](docs/features.md#plugins): themes, panels, services and processes,
-each installed from a screen that says in words what it may do.
+each installed from a screen that says in words what it may do; a process
+can be served on the panel's own port behind the panel's door, and declare
+the models and runtimes it needs for the panel to fetch and verify.
 ⚠️ Written by AI ⚠️
 
 ## Flags and troubleshooting

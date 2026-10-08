@@ -3,6 +3,8 @@ package httpapi
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -72,10 +74,15 @@ type pluginProc struct {
 	// per-start secret every proxied request carries (pluginhttp.go).
 	socket      string
 	proxySecret string
-	done        chan struct{}
-	ringMu      sync.Mutex
-	stateMu     sync.Mutex
-	manualEnd   bool
+	// env is the fingerprint of what the process was started with (the
+	// version, dev mode, its secrets' values, which downloads were there):
+	// a change restarts it, because a secret the owner just saved and a
+	// model that just arrived are not things a running process can see.
+	env       string
+	done      chan struct{}
+	ringMu    sync.Mutex
+	stateMu   sync.Mutex
+	manualEnd bool
 }
 
 type pluginProcessState struct {
@@ -154,10 +161,14 @@ func (s *Server) ensurePluginProcesses(ctx context.Context) {
 	if st.procs == nil {
 		st.procs = map[string]*pluginProc{}
 	}
+	fps := map[string]string{}
+	for id, c := range want {
+		fps[id] = s.pluginEnvFingerprint(ctx, c)
+	}
 	var stop []*pluginProc
 	for id, pr := range st.procs {
 		c, ok := want[id]
-		if !ok || pr.version != c.plugin.InstalledVersion || pr.dev != (c.ns == store.PageDataDraft) {
+		if !ok || pr.version != c.plugin.InstalledVersion || pr.dev != (c.ns == store.PageDataDraft) || pr.env != fps[id] {
 			stop = append(stop, pr)
 			delete(st.procs, id)
 		}
@@ -173,8 +184,31 @@ func (s *Server) ensurePluginProcesses(ctx context.Context) {
 		s.stopPluginProc(pr, "the plugin was disabled or changed")
 	}
 	for _, c := range start {
-		s.startPluginProc(ctx, c)
+		s.startPluginProc(ctx, c, fps[c.plugin.ID])
 	}
+}
+
+// pluginEnvFingerprint names everything a process is started with that
+// can change under it. Hashed, never kept in the clear: it holds secrets.
+func (s *Server) pluginEnvFingerprint(ctx context.Context, c pluginCred) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "v%d dev=%v\n", c.plugin.InstalledVersion, c.ns == store.PageDataDraft)
+	names := append([]string{}, c.manifest.Process.Env...)
+	if c.manifest.Process.HTTP != nil && c.manifest.Process.HTTP.Secret != "" {
+		names = append(names, c.manifest.Process.HTTP.Secret)
+	}
+	for _, name := range names {
+		v, err := s.pluginSecretValue(ctx, c.plugin.ID, name)
+		if err != nil {
+			v = ""
+		}
+		fmt.Fprintf(h, "%s=%s\n", name, v)
+	}
+	for _, d := range c.manifest.Downloads {
+		ready, at := s.pluginDownloadReady(c.plugin.ID, d)
+		fmt.Fprintf(h, "download %s %v %d\n", d.Name, ready, at)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // StopPluginProcesses ends every plugin process, for shutdown: SIGTERM, five
@@ -247,9 +281,9 @@ func (s *Server) checkoutPluginVersion(ctx context.Context, c pluginCred) (strin
 	return dir, os.WriteFile(filepath.Join(dir, ".complete"), []byte(time.Now().UTC().Format(time.RFC3339)), 0o600)
 }
 
-func (s *Server) startPluginProc(ctx context.Context, c pluginCred) {
+func (s *Server) startPluginProc(ctx context.Context, c pluginCred, env string) {
 	spec := c.manifest.Process
-	pr := &pluginProc{id: c.plugin.ID, version: c.plugin.InstalledVersion, dev: c.ns == store.PageDataDraft}
+	pr := &pluginProc{id: c.plugin.ID, version: c.plugin.InstalledVersion, dev: c.ns == store.PageDataDraft, env: env}
 	st := &s.ppr
 	st.mu.Lock()
 	if _, ok := st.procs[c.plugin.ID]; ok {

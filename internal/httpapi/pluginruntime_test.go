@@ -510,3 +510,64 @@ func TestThePluginViewIsBuiltOncePerChange(t *testing.T) {
 		t.Fatalf("a view after a bump built the state %d times in all, want 2", n)
 	}
 }
+
+// A setting the owner moves is an event on the stream, so a frame learns
+// it without polling v1/settings: the baseline first, the change after.
+func TestASettingsChangeIsPushedOnTheStream(t *testing.T) {
+	ts, _ := newTestServer(t)
+	manifest := `{
+  "plugin": 1, "id": "pane", "name": {"en": "Pane"}, "version": "1.0.0",
+  "panels": [{"slot": "sidepanel.pane", "entry": "pane.html", "title": {"en": "Pane"}}],
+  "capabilities": ["read:panel"],
+  "settings": {"fields": [{"key": "quiet", "type": "bool", "default": false, "label": {"en": "Quiet"}}]}
+}`
+	if status, body := postZip(t, ts, pluginZip(t, manifest, map[string]string{"pane.html": "<p>pane</p>"})); status != http.StatusCreated {
+		t.Fatalf("add: %d %s", status, body)
+	}
+	if status, _ := doJSON(t, ts, http.MethodPost, "/api/settings/plugins/pane/install", `{"caps": ["read:panel"]}`); status != http.StatusOK {
+		t.Fatal("install")
+	}
+	g := mintPane(t, ts)
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+g.API+"events", nil)
+	res, err := anonymousClient(t).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	lines := make(chan string, 64)
+	go func() {
+		sc := bufio.NewScanner(res.Body)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+		close(lines)
+	}()
+	next := func(prefix string) string {
+		t.Helper()
+		deadline := time.After(5 * time.Second)
+		for {
+			select {
+			case l, ok := <-lines:
+				if !ok {
+					t.Fatalf("the stream ended before %q", prefix)
+				}
+				if strings.HasPrefix(l, prefix) {
+					return l
+				}
+			case <-deadline:
+				t.Fatalf("no %q line within 5s", prefix)
+			}
+		}
+	}
+	next("event: settings")
+	if data := next("data:"); !strings.Contains(data, `"quiet":false`) {
+		t.Fatalf("baseline: %s", data)
+	}
+	if status, body := doJSON(t, ts, http.MethodPut, "/api/settings/plugins/pane/settings/quiet", `{"value": true}`); status != http.StatusOK && status != http.StatusNoContent {
+		t.Fatalf("set: %d %s", status, body)
+	}
+	next("event: settings")
+	if data := next("data:"); !strings.Contains(data, `"quiet":true`) {
+		t.Fatalf("after the change: %s", data)
+	}
+}

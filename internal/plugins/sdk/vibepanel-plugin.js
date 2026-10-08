@@ -275,6 +275,15 @@
           /* a frame cannot do anything with a bad message */
         }
       })
+      // The owner moved a setting: the new values, without a poll.
+      stream.addEventListener('settings', function (ev) {
+        try {
+          self.settingsValues = JSON.parse(ev.data).values || {}
+          emit('settings', self.settingsValues)
+        } catch (e) {
+          /* a frame cannot do anything with a bad message */
+        }
+      })
       stream.onerror = function () {
         // EventSource reconnects by itself; while it does, the poll covers.
         if (self.status === 'live') setStatus('reconnecting')
@@ -292,6 +301,7 @@
     this.on = function (name, fn) {
       ;(handlers[name] = handlers[name] || []).push(fn)
       if (name === 'view' && self.view) fn(self.view)
+      if (name === 'settings' && self.settingsValues) fn(self.settingsValues)
       if (name === 'context') fn(self.context)
       if (name === 'status') fn(self.status)
       return self

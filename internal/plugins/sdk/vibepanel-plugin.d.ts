@@ -83,6 +83,8 @@ export interface Client {
   on(event: 'view', fn: (v: PluginView) => void): Client
   on(event: 'context', fn: (c: Context) => void): Client
   on(event: 'status', fn: (s: Status) => void): Client
+  /** The owner changed a setting: the values as GET v1/settings would answer them. Replayed on subscribe once known. */
+  on(event: 'settings', fn: (values: Record<string, unknown>) => void): Client
   off(event: string, fn: (...args: unknown[]) => void): Client
   close(): void
   refresh(): Promise<PluginView>

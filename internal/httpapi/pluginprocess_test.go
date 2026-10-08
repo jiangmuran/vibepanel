@@ -251,3 +251,31 @@ func syscallKillProbe(pid int) error {
 	}
 	return p.Signal(syscall.Signal(0))
 }
+
+// A secret the owner saves after the process started reaches it: the
+// process is restarted with the new environment, because a running
+// process cannot see a value that arrived after its start, and "I set the
+// token and nothing changed" is the confusion this removes.
+func TestAChangedSecretRestartsTheProcess(t *testing.T) {
+	ts, srv := newTestServer(t)
+	installProcess(t, ts, srv, []string{"read:panel"}, "echo greeting=$GREETING; sleep 60")
+	waitFor(t, "the first start", 5000, func() bool {
+		st := processStatus(t, ts)
+		return st.Running && strings.Contains(st.Output, "greeting=hello-from-the-owner")
+	})
+	first := processStatus(t, ts).PID
+	if status, _ := doJSON(t, ts, http.MethodPut, "/api/settings/plugins/proc/secrets/GREETING", `{"value": "changed"}`); status != http.StatusNoContent {
+		t.Fatalf("secret: %d", status)
+	}
+	waitFor(t, "the restart with the new value", 8000, func() bool {
+		st := processStatus(t, ts)
+		return st.Running && st.PID != first && strings.Contains(st.Output, "greeting=changed")
+	})
+	// Nothing changed: nothing restarts. Reconcile again and the pid holds.
+	pid := processStatus(t, ts).PID
+	srv.ensurePluginProcesses(t.Context())
+	time.Sleep(200 * time.Millisecond)
+	if st := processStatus(t, ts); st.PID != pid {
+		t.Errorf("a reconcile with nothing changed restarted the process: %d → %d", pid, st.PID)
+	}
+}
