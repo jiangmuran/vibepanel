@@ -18,12 +18,13 @@ import type { Heading } from './screen'
  * A box the owner unticks is a capability the plugin does not get. The
  * plugin sees what was granted (`vp.caps`) and degrades; it does not ask.
  */
-const HEADING_KEY: Record<Heading, 'plg.screen.what' | 'plg.screen.rungs' | 'plg.screen.may' | 'plg.screen.reach' | 'plg.screen.runs' | 'plg.screen.keeps' | null> = {
+const HEADING_KEY: Record<Heading, 'plg.screen.what' | 'plg.screen.rungs' | 'plg.screen.may' | 'plg.screen.reach' | 'plg.screen.runs' | 'plg.screen.door' | 'plg.screen.keeps' | null> = {
   what: 'plg.screen.what',
   rung: 'plg.screen.rungs',
   cap: 'plg.screen.may',
   host: 'plg.screen.reach',
   runs: 'plg.screen.runs',
+  http: 'plg.screen.door',
   keeps: 'plg.screen.keeps',
   danger: null,
 }

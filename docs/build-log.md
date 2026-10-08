@@ -25283,3 +25283,64 @@ test -- wait for what the script prints, not for the start -- after which
 fifteen runs of every process test on one CPU pass. The product was right;
 the test asked its question too early.
 
+## 2026-10-08 — Plugins: a process on the panel's port
+
+The question was whether a plugin could mount an API of its own on the
+panel's port, and the honest answer was "a `server.js` route, yes; a real
+HTTP service, no". `internal/httpapi/pluginhttp.go` is the second answer:
+`process.http` in the manifest, and the process is served at
+`/api/plugin-http/<id>/*`. The shape is the one agreed before building,
+with the three corrections the review found written in:
+
+- **The panel guards, the process does business.** Who may call is
+  declared and on the install screen in red: `owner` (session or API
+  token), `token` (a plugin access token minted on the card, named, revoked
+  one at a time, last use shown, a fourth table `currentUser` does not
+  consult) or `hmac` (the inbound door's check). No anonymous mode. The
+  cookie and the Authorization header never reach the process; it gets the
+  caller's name in a header.
+- **The same-user hole.** The socket's directory keeps other users out and
+  nobody else: every process of this user can connect, and a coding agent
+  in a session is this user, which would have let it forge
+  `X-Vibepanel-Caller: owner`. Every forwarded request now carries
+  `X-Vibepanel-Proxy`, a secret minted at each start and handed to the
+  process in its environment; the scaffold's spec tells every author to
+  refuse a request without it, and the check's own process does.
+- **SVG is not an image here.** The response is cleaned on the way back:
+  `Set-Cookie` and every policy header removed, `nosniff` added, and
+  anything that is not JSON, an event stream, text, a raster image, audio,
+  video or bytes served under `Content-Security-Policy: sandbox` as an
+  attachment. `image/svg+xml` and anything XML fall on the attachment side,
+  because they carry script and would have been rung 4 without the switch.
+- **The socket lives in the runtime directory**, not under the data
+  directory: a unix socket path is 108 bytes on Linux and 104 on macOS, and
+  `<data>/plugins/<40-character id>/state/http.sock` under a long HOME is
+  past it. The name carries a hash of the data directory, so two panels of
+  one user do not share a socket.
+- **Across origins is the owner's list**, on the card, exact matches,
+  never the manifest's; preflights answered by the panel; Bearer only, so
+  the cookie is never a credential across origins and there is no CSRF to
+  defend. Rate limits per plugin and per caller, in-flight and stream caps,
+  an idle timeout that resets on every byte, bodies capped at 16 MiB.
+- Seven methods registered by name rather than `HandleFunc`'s everything:
+  the API-doc pin asked for CONNECT, TRACE and QUERY to be documented, and
+  the right answer was that a door should not have them.
+
+Tested with the test's own listener on the socket the panel named, so what
+is checked is the door and not a plugin: what reaches the process (no
+cookie, the caller, the secret, the cleaned path), what comes back (the
+cookie gone, HTML and SVG as attachments, PNG and CSV as themselves, the
+first SSE event while the stream is open), who gets through (a token on its
+own mount and refused on `/api/state`, `/api/ext/` and `/api/plugin/`; a
+revoked one refused; an unlisted origin refused with a good token; a cookie
+alone refused across origins), and the per-caller limit. Three mutations --
+the cookie strip, the response cleaning, the origin list -- each turn one
+test red. In the browser check the fixture's process became a Node server
+on the socket that refuses a request without the secret, and the step mints
+a token on the card, calls through it, reads what the process saw, and
+revokes it.
+
+Deliberately not audited: each use of a token. The design asked for it, and
+at 120 requests a minute per token the activity log would be nothing else;
+the row's last use and the plugin's own log carry it instead.
+

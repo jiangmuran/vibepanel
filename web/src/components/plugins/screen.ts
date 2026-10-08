@@ -18,7 +18,7 @@ export function textIn(text: PluginText | undefined, lang: Lang): string {
 }
 
 /** The heading each kind of line is drawn under, in the screen's order. */
-export const HEADINGS = ['what', 'rung', 'cap', 'host', 'runs', 'keeps', 'danger'] as const
+export const HEADINGS = ['what', 'rung', 'cap', 'host', 'runs', 'http', 'keeps', 'danger'] as const
 
 export type Heading = (typeof HEADINGS)[number]
 

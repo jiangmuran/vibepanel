@@ -1249,6 +1249,28 @@ var migrations = []func(tx *sql.Tx) error{
 		}
 		return nil
 	},
+	// A plugin access token is the owner's credential for one plugin's door
+	// on the panel's port (docs/plugins.md §5, "a process on the panel's
+	// port"): minted on the card, named, revoked one at a time. Hash only.
+	func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`CREATE TABLE IF NOT EXISTS plugin_access_tokens (
+			     id           TEXT PRIMARY KEY,
+			     plugin_id    TEXT NOT NULL REFERENCES plugins(id) ON DELETE CASCADE,
+			     name         TEXT NOT NULL,
+			     token_hash   BLOB NOT NULL UNIQUE,
+			     created_at   INTEGER NOT NULL,
+			     last_used_at INTEGER NOT NULL DEFAULT 0,
+			     revoked_at   INTEGER NOT NULL DEFAULT 0
+			 )`,
+			`CREATE INDEX IF NOT EXISTS plugin_access_tokens_plugin ON plugin_access_tokens(plugin_id)`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	},
 }
 
 // scanner is *sql.Row and *sql.Rows both, so one scan function serves a

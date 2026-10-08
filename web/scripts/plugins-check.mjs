@@ -103,7 +103,7 @@ writeFileSync(join(PLUGIN_DIR, 'plugin.json'), JSON.stringify({
   capabilities: ['read:panel', 'write:todos', 'sessions:input', 'ui:notify'],
   data: { events: { type: 'counter' } },
   server: { entry: 'server.js', on: ['session.created', 'session.state'], routes: { 'GET /digest': 'digest' } },
-  process: { command: ['sh', 'bot.sh'], capabilities: ['read:panel'] },
+  process: { command: ['node', 'bot.js'], capabilities: ['read:panel'], http: { auth: 'token' } },
   unsandboxed: { entry: 'main.mjs', tested: '0.0.0 - 99.0.x' },
   settings: { fields: [
     { key: 'quiet', type: 'bool', default: true, label: { en: 'Quiet hours', 'zh-CN': '安静时段' } },
@@ -180,7 +180,26 @@ writeFileSync(join(PLUGIN_DIR, 'main.mjs'), `export default function (host) {
   host.state.subscribe((s) => { document.documentElement.dataset.modSessions = String(s.sessions.length) })
 }
 `)
-writeFileSync(join(PLUGIN_DIR, 'bot.sh'), 'i=0; while :; do i=$((i+1)); echo "tick $i"; sleep 1; done\n')
+// The process: prints a tick a second for the card, and listens on the
+// socket the panel named so the door has something behind it. It answers
+// with what it was sent, which is how the check sees that the cookie never
+// arrives and the caller header does. It refuses a request without the
+// per-start secret, as the scaffold tells every author to.
+writeFileSync(join(PLUGIN_DIR, 'bot.js'), `
+const http = require('node:http')
+let i = 0
+setInterval(() => console.log('tick ' + (++i)), 1000)
+http.createServer((req, res) => {
+  if (req.headers['x-vibepanel-proxy'] !== process.env.VIBEPANEL_PLUGIN_PROXY_SECRET) { res.writeHead(403); return res.end('not via the panel') }
+  let body = ''
+  req.on('data', (c) => { body += c })
+  req.on('end', () => {
+    res.setHeader('Content-Type', 'application/json')
+    res.setHeader('Set-Cookie', 'vp_session=stolen')
+    res.end(JSON.stringify({ path: req.url, caller: req.headers['x-vibepanel-caller'], cookie: req.headers.cookie || '', auth: req.headers.authorization || '', body }))
+  })
+}).listen(process.env.VIBEPANEL_PLUGIN_SOCKET)
+`)
 writeFileSync(join(PLUGIN_DIR, 'section.html'), `<!doctype html><html><head><link rel="stylesheet" href="vibepanel-ui.css"><script src="vibepanel-plugin.js"></script></head>
 <body class="vp-section"><h2>Paper settings</h2><p id="s">-</p><script>var vp = VibePanel.plugin(); vp.settings().then(function (s) { document.getElementById('s').textContent = 'quiet=' + s.values.quiet })</script></body></html>`)
 writeFileSync(join(PLUGIN_DIR, 'page.html'), `<!doctype html><html><head><link rel="stylesheet" href="vibepanel-ui.css"><script src="vibepanel-plugin.js"></script></head>
@@ -493,6 +512,41 @@ try {
   if (!(await until(async () => ((await out.textContent().catch(() => '')) ?? '').includes('tick'), 8000))) note('fail', 'process', 'the process output did not reach the card')
   else pass('process', 'the supervised process runs and its output is on the card')
   await page.screenshot({ path: join(SHOTS, 'process.png'), fullPage: true })
+
+  // The door on the panel's port: the card names the mount and the socket
+  // comes up; a token minted on the card opens it, nothing else does; the
+  // cookie never reaches the process and its Set-Cookie never reaches the
+  // browser.
+  const door = page.getByTestId('plugin-door')
+  if (!(await until(() => door.isVisible(), 5000))) note('fail', 'door', 'the card has no door block')
+  if (!(await until(async () => ((await page.getByTestId('plugin-door-socket').textContent().catch(() => '')) ?? '').includes('opened'), 8000))) {
+    note('fail', 'door', `the socket did not come up: ${await page.getByTestId('plugin-door-socket').textContent().catch(() => '?')}`)
+  }
+  await page.getByTestId('plugin-door-token-name').fill('the glasses')
+  await page.getByTestId('plugin-door-mint').click()
+  await until(() => page.getByTestId('plugin-door-token-value').isVisible(), 5000)
+  const minted = (await page.getByTestId('plugin-door-token-value').textContent()) ?? ''
+  const doorResult = await page.evaluate(async (tok) => {
+    const bare = await fetch('/api/plugin-http/paper/x', { method: 'POST', body: 'hi' })
+    const ok = await fetch('/api/plugin-http/paper/things/1?q=2', { method: 'POST', body: 'hi', headers: { Authorization: 'Bearer ' + tok } })
+    const seen = ok.ok ? await ok.json() : null
+    return { bare: bare.status, ok: ok.status, seen, cookieHeader: ok.headers.get('set-cookie'), nosniff: ok.headers.get('x-content-type-options') }
+  }, minted)
+  if (doorResult.bare !== 401) note('fail', 'door', `without a token the door answered ${doorResult.bare}`)
+  if (doorResult.ok !== 200 || !doorResult.seen) note('fail', 'door', `with the token the door answered ${doorResult.ok}`)
+  else if (doorResult.seen.cookie !== '' || doorResult.seen.auth !== '' || doorResult.seen.caller !== 'token:the glasses' || doorResult.seen.path !== '/things/1?q=2' || doorResult.seen.body !== 'hi') {
+    note('fail', 'door', `what the process saw: ${JSON.stringify(doorResult.seen)}`)
+  } else if (doorResult.cookieHeader) note('fail', 'door', 'the process set a cookie on the panel')
+  else pass('door', `a token opens the door; the process saw ${JSON.stringify(doorResult.seen)}`)
+  if (!(await until(async () => ((await page.getByTestId('plugin-door-token').first().textContent().catch(() => '')) ?? '').includes('last used'), 5000))) note('warn', 'door', 'the token row does not show its last use')
+  await page.getByTestId('plugin-door-revoke').first().click()
+  const revokeDialog = page.locator('[data-vp-modal]').last()
+  await until(() => revokeDialog.isVisible())
+  await revokeDialog.getByRole('button', { name: 'Revoke' }).click()
+  const afterRevoke = await page.evaluate(async (tok) => (await fetch('/api/plugin-http/paper/x', { headers: { Authorization: 'Bearer ' + tok } })).status, minted)
+  if (afterRevoke !== 401) note('fail', 'door', `a revoked token still opened the door: ${afterRevoke}`)
+  else pass('door', 'a revoked token is refused')
+  await page.screenshot({ path: join(SHOTS, 'door.png'), fullPage: true })
 
   // Rung 4: nothing loads until the switch is on; then the module draws into
   // the header and the rows and sees the state; ?safe=1 loads none of it.

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { BookOpen, Cpu, Download, FileUp, FolderInput, Hammer, Plus, Puzzle, ScrollText, ShieldCheck, SlidersHorizontal, Trash2 } from 'lucide-react'
+import { BookOpen, Cpu, DoorOpen, Download, FileUp, FolderInput, Hammer, KeyRound, Plus, Puzzle, ScrollText, ShieldCheck, SlidersHorizontal, Trash2 } from 'lucide-react'
 
 import { t, tKey, useLang } from '../../i18n'
 import type { Lang } from '../../i18n'
 import { api } from '../../protocol/api'
-import type { NewPluginResult, PluginDetail, PluginProcessStatus, PluginRow, PluginSourceRow, PluginTemplate, SharePageServerLogLine } from '../../protocol/wire'
+import type { NewPluginResult, PluginAccessToken, PluginDetail, PluginProcessStatus, PluginRow, PluginSourceRow, PluginTemplate, SharePageServerLogLine } from '../../protocol/wire'
+import { copyTextInGesture } from '../../clipboard'
 import { confirmThen } from '../ask'
 import { Chip, Empty, Field, INPUT, IconTile } from '../pages/bits'
 import { safeText } from '../text'
@@ -625,6 +626,7 @@ function ProcessBlock({ id, onError }: { id: string; onError: (e: unknown) => vo
           {t('plg.proc.restart')}
         </button>
       </div>
+      {st.mount && <DoorBlock id={id} st={st} onError={onError} />}
       <h3 className="text-vp-xs font-semibold tracking-wide text-ink-3 uppercase">{t('plg.proc.output')}</h3>
       {st.output === '' ? (
         <p className="text-vp-sm text-ink-3">{t('plg.proc.noOutput')}</p>
@@ -757,6 +759,189 @@ function NewPlugin({
           {t('plg.create')}
         </button>
       </div>
+    </div>
+  )
+}
+
+/**
+ * The door on the panel's port (docs/plugins.md §5, "a process on the
+ * panel's port"): where it answers and who may call; for a token door, the
+ * owner's tokens, minted here and shown once; and the owner's list of
+ * origins that may call across, which is the owner's and never the plugin's.
+ */
+function DoorBlock({ id, st, onError }: { id: string; st: PluginProcessStatus; onError: (e: unknown) => void }) {
+  const [tokens, setTokens] = useState<PluginAccessToken[]>([])
+  const [name, setName] = useState('')
+  const [minted, setMinted] = useState<{ token: string; name: string } | null>(null)
+  const [copied, setCopied] = useState(false)
+  const [origins, setOrigins] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const isToken = st.auth === 'token'
+
+  useEffect(() => {
+    let cancelled = false
+    if (isToken) {
+      api.pluginAccessTokens(id).then(
+        (list) => {
+          if (!cancelled) setTokens(list)
+        },
+        () => {},
+      )
+    }
+    api.pluginOrigins(id).then(
+      (o) => {
+        if (!cancelled) setOrigins(o.origins.join('\n'))
+      },
+      () => {},
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [id, isToken])
+
+  const mint = async () => {
+    const trimmed = name.trim()
+    if (!trimmed) return
+    setBusy(true)
+    try {
+      const made = await api.createPluginAccessToken(id, trimmed)
+      setMinted({ token: made.token, name: trimmed })
+      setCopied(false)
+      setName('')
+      setTokens(await api.pluginAccessTokens(id))
+    } catch (e) {
+      onError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const revoke = (tok: PluginAccessToken) => {
+    confirmThen(
+      {
+        title: t('plg.door.revoke'),
+        body: t('plg.door.revokeConfirm', { name: safeText(tok.name) }),
+        confirm: t('plg.door.revoke'),
+        cancel: t('dir.cancel'),
+        destructive: true,
+      },
+      async () => {
+        try {
+          await api.revokePluginAccessToken(id, tok.id)
+          setTokens(await api.pluginAccessTokens(id))
+        } catch (e) {
+          onError(e)
+        }
+      },
+    )
+  }
+  const saveOrigins = async () => {
+    if (origins === null) return
+    setBusy(true)
+    try {
+      const o = await api.setPluginOrigins(id, origins.split('\n'))
+      setOrigins(o.origins.join('\n'))
+      setSaved(true)
+    } catch (e) {
+      onError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const authWord = t(`plg.door.auth.${st.auth as 'owner' | 'token' | 'hmac'}`)
+  return (
+    <div className="grid gap-2 rounded-vp border border-hairline bg-surface-2/40 p-3" data-testid="plugin-door">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-vp-sm">
+        <DoorOpen size={13} className="shrink-0 text-ink-3" />
+        <span className="font-medium text-ink">{t('plg.door')}</span>
+        <code className="font-mono text-ink" data-testid="plugin-door-mount">{st.mount}</code>
+        <span className="text-ink-2">{authWord}</span>
+        <span data-testid="plugin-door-socket" style={{ color: st.socketUp ? 'var(--vp-state-done)' : 'var(--vp-state-waiting)' }}>
+          {st.socketUp ? '●' : '○'} {t(st.socketUp ? 'plg.door.socketUp' : 'plg.door.socketDown')}
+        </span>
+      </div>
+      {isToken && (
+        <div className="grid gap-1.5">
+          <div className="flex items-center gap-1.5 text-vp-sm">
+            <KeyRound size={12} className="shrink-0 text-ink-3" />
+            <span className="font-medium text-ink">{t('plg.door.tokens')}</span>
+            <span className="text-ink-3">{t('plg.door.tokensWhy')}</span>
+          </div>
+          {tokens.length === 0 && <p className="text-vp-sm text-ink-3">{t('plg.door.noTokens')}</p>}
+          <ul className="grid gap-1" data-testid="plugin-door-tokens">
+            {tokens.map((tok) => (
+              <li key={tok.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-vp-sm" data-testid="plugin-door-token">
+                <span className="text-ink">{safeText(tok.name)}</span>
+                <span className="text-ink-3">
+                  {tok.revokedAt > 0
+                    ? t('plg.door.revoked')
+                    : tok.lastUsedAt > 0
+                      ? t('plg.door.lastUsed', { when: new Date(tok.lastUsedAt * 1000).toLocaleString() })
+                      : t('plg.door.neverUsed')}
+                </span>
+                {tok.revokedAt === 0 && (
+                  <button type="button" onClick={() => revoke(tok)} data-testid="plugin-door-revoke" className="vp-outline ml-auto text-vp-xs">
+                    {t('plg.door.revoke')}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void mint()
+              }}
+              placeholder={t('plg.door.tokenName')}
+              maxLength={64}
+              data-testid="plugin-door-token-name"
+              className={`${INPUT} flex-1`}
+            />
+            <button type="button" disabled={busy || !name.trim()} onClick={() => void mint()} data-testid="plugin-door-mint" className="vp-outline text-vp-sm disabled:opacity-40">
+              {t('plg.door.mint')}
+            </button>
+          </div>
+          {minted && (
+            <div className="flex flex-wrap items-center gap-2 rounded-vp border border-accent/40 bg-surface p-2 text-vp-sm" data-testid="plugin-door-minted">
+              <span className="text-ink-2">{t('plg.door.minted')}</span>
+              <code className="break-all font-mono text-ink" data-testid="plugin-door-token-value">{minted.token}</code>
+              <button
+                type="button"
+                onClick={() => copyTextInGesture(minted.token, (ok) => setCopied(ok))}
+                className="vp-outline text-vp-xs"
+              >
+                {copied ? t('plg.door.copied') : t('plg.door.copy')}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      {origins !== null && (
+        <div className="grid gap-1.5">
+          <div className="text-vp-sm">
+            <span className="font-medium text-ink">{t('plg.door.origins')}</span> <span className="text-ink-3">{t('plg.door.originsWhy')}</span>
+          </div>
+          <textarea
+            value={origins}
+            onChange={(e) => {
+              setOrigins(e.target.value)
+              setSaved(false)
+            }}
+            rows={2}
+            placeholder="https://glasses.example"
+            data-testid="plugin-door-origins"
+            className={`${INPUT} w-full font-mono`}
+          />
+          <div className="flex items-center gap-2">
+            <button type="button" disabled={busy} onClick={() => void saveOrigins()} data-testid="plugin-door-origins-save" className="vp-outline text-vp-sm disabled:opacity-40">
+              {t('plg.door.originsSave')}
+            </button>
+            {saved && <span className="text-vp-sm text-ink-3">{t('plg.door.originsSaved')}</span>}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

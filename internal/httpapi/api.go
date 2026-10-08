@@ -109,9 +109,11 @@ type Server struct {
 	// the services': compiled programs, logs, event workers, schedules and
 	// sources. See pluginservice.go. serviceCtx is the context the workers
 	// run under, set by Poll.
-	prt        pluginRuntime
-	psv        pluginServiceState
-	ppr        pluginProcessState
+	prt pluginRuntime
+	psv pluginServiceState
+	ppr pluginProcessState
+	// phx is the door on the panel's port: pluginhttp.go.
+	phx        pluginHTTPState
 	serviceCtx context.Context
 
 	// Restart asks the process to stop and be brought back by whatever
@@ -465,6 +467,7 @@ func (s *Server) Routes() http.Handler {
 		// Where the internet calls a plugin: verified against the plugin's
 		// declared secret before anything runs. See pluginservice.go.
 		s.registerPluginInboundRoute(r)
+		s.registerPluginHTTPRoute(r)
 
 		// Everything else needs a session. This panel hands out a writable
 		// terminal; there is no such thing as a harmless unauthenticated
@@ -521,6 +524,7 @@ func (s *Server) Routes() http.Handler {
 			s.registerPluginDevRoutes(r)
 			s.registerPluginServiceRoutes(r)
 			s.registerPluginProcessRoutes(r)
+			s.registerPluginHTTPOwnerRoutes(r)
 			s.registerPluginModuleRoutes(r)
 			s.registerPluginNewRoutes(r)
 			// A plugin's own routes for the owner: /api/ext/{id}/…, under the

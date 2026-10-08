@@ -268,7 +268,16 @@ Each of these exists because the alternative broke something real.
    process declared; restarted with backoff and stopped at ten failures in
    ten minutes; moved into a `p-<id>` leaf of the sessions' pool where one
    exists (red line 9, kept on the right side); ended at shutdown before the
-   panel goes. Rung 4, `internal/httpapi/pluginmodule.go` and
+   panel goes. A process may be mounted on the panel's port
+   (`internal/httpapi/pluginhttp.go`, `/api/plugin-http/{id}/*`, open at the
+   router for the preflight and then one of three credentials, never none):
+   the panel strips the owner's credentials, names the caller, signs each
+   forwarded request with a per-start secret the process checks, and cleans
+   the response so nothing a process returns renders as HTML or SVG on the
+   panel's origin. A plugin access token (`plugin_access_tokens`, a fourth
+   table `currentUser` does not consult) reaches that mount and nothing
+   else; `TestThePluginTokenDoor` presents one everywhere else. The
+   cross-origin list is the owner's on the card, never the manifest's. Rung 4, `internal/httpapi/pluginmodule.go` and
    `web/src/components/plugins/hostRuntime.ts`: a module is served only
    behind the panel-wide switch (`plugins.unsandboxed`, off by default,
    audited), only from an installed version and never a draft, only under

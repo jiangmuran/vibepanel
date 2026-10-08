@@ -2030,6 +2030,59 @@ create handler; `201` with the new session as the view shows it.
 into the pane and presses Enter when asked -- the two tmux calls the chat
 bridge makes. Every use is audited `plugin.input` with the byte count.
 
+### `GET /api/plugin-http/{pluginID}`
+### `GET /api/plugin-http/{pluginID}/*`
+### `HEAD /api/plugin-http/{pluginID}`
+### `HEAD /api/plugin-http/{pluginID}/*`
+### `POST /api/plugin-http/{pluginID}`
+### `POST /api/plugin-http/{pluginID}/*`
+### `PUT /api/plugin-http/{pluginID}`
+### `PUT /api/plugin-http/{pluginID}/*`
+### `PATCH /api/plugin-http/{pluginID}`
+### `PATCH /api/plugin-http/{pluginID}/*`
+### `DELETE /api/plugin-http/{pluginID}`
+### `DELETE /api/plugin-http/{pluginID}/*`
+### `OPTIONS /api/plugin-http/{pluginID}`
+### `OPTIONS /api/plugin-http/{pluginID}/*`
+
+A process on the panel's port (`docs/plugins.md` §5, rung 3): those seven
+methods, proxied to the unix socket the plugin's process listens on. Open at the
+router so a cross-origin preflight can be answered, and then one of three
+credentials is required, as `process.http.auth` declares -- `owner` (the
+session or an API token), `token` (a plugin access token minted on the
+card) or `hmac` (the plugin's declared secret, bearer or `X-Signature-256`
+as the inbound door) -- and there is no anonymous mode. Across origins only
+an origin on the owner's list is answered, exact match, and only a Bearer
+counts: the cookie is never a credential across origins. The cookie and the
+Authorization header never reach the process; it gets `X-Vibepanel-Caller`
+(`owner:<user>`, `token:<name>`, `hmac`) and `X-Vibepanel-Proxy`, a
+per-start secret it checks, so a request that did not come through the
+panel is one it refuses. The response loses `Set-Cookie` and any policy
+headers, gains `nosniff`, and anything but JSON, an event stream, text, a
+raster image, audio, video or a byte stream is served under
+`Content-Security-Policy: sandbox` as an attachment. Rate limits: 600 a
+minute per plugin, 120 per caller, 32 in flight, 8 open streams; bodies up
+to `maxBody`, 16 MiB at most; a stream ends after `idleTimeout` of silence.
+404 for a plugin with no door; 503 while its process is not running.
+
+### `GET /api/settings/plugins/{pluginID}/tokens`
+### `POST /api/settings/plugins/{pluginID}/tokens`
+### `DELETE /api/settings/plugins/{pluginID}/tokens/{tokenID}`
+
+The owner's plugin access tokens for one plugin's door. `POST {name}`
+mints one and answers `{token, row, mount}`; the token is shown once and
+the row keeps its hash, name, creation, last use and revocation. A token
+reaches `/api/plugin-http/{pluginID}/` and nothing else on the panel.
+Audited `plugin.token_created` and `plugin.token_revoked`.
+
+### `GET /api/settings/plugins/{pluginID}/origins`
+### `PUT /api/settings/plugins/{pluginID}/origins`
+
+The owner's list of origins that may call the plugin's door across
+origins: `{origins: ["https://host[:port]", …]}`, exact, at most 20. The
+plugin's manifest cannot declare these; that right is the owner's. Audited
+`plugin.origins_changed`.
+
 ### `GET /api/settings/plugins/{pluginID}/process`
 ### `POST /api/settings/plugins/{pluginID}/process/restart`
 

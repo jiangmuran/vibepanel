@@ -60,17 +60,22 @@ type pluginProc struct {
 	// stopped is the supervisor's decision: the cap was reached, or the
 	// plugin was disabled. A stopped process is not restarted until the
 	// owner asks.
-	stopped   bool
-	stopWhy   string
-	lastExit  string
-	exitedAt  time.Time
-	ring      []byte
-	version   int
-	dev       bool
-	done      chan struct{}
-	ringMu    sync.Mutex
-	stateMu   sync.Mutex
-	manualEnd bool
+	stopped  bool
+	stopWhy  string
+	lastExit string
+	exitedAt time.Time
+	ring     []byte
+	version  int
+	dev      bool
+	// socket and proxySecret exist when the manifest mounts the process on
+	// the panel's port: the unix socket the process listens on, and the
+	// per-start secret every proxied request carries (pluginhttp.go).
+	socket      string
+	proxySecret string
+	done        chan struct{}
+	ringMu      sync.Mutex
+	stateMu     sync.Mutex
+	manualEnd   bool
 }
 
 type pluginProcessState struct {
@@ -112,6 +117,11 @@ type pluginProcessStatus struct {
 	Output   string `json:"output"`
 	Command  string `json:"command"`
 	OnPath   bool   `json:"onPath"`
+	// Mount is the path on the panel's port when the manifest asks for one;
+	// SocketUp whether the process has opened its socket there.
+	Mount    string `json:"mount"`
+	Auth     string `json:"auth"`
+	SocketUp bool   `json:"socketUp"`
 }
 
 // ensurePluginProcesses starts a process for every enabled plugin that
@@ -370,6 +380,23 @@ func (s *Server) runPluginProcOnce(ctx context.Context, c pluginCred, pr *plugin
 			env = append(env, name+"="+v)
 		}
 	}
+	var sock, proxySecret string
+	if spec.HTTP != nil {
+		sock = s.pluginSocketPath(c.plugin.ID)
+		if err := os.MkdirAll(filepath.Dir(sock), 0o700); err != nil {
+			cancel()
+			return err, false
+		}
+		_ = os.Remove(sock)
+		if proxySecret, err = auth.NewToken(); err != nil {
+			cancel()
+			return err, false
+		}
+		env = append(env,
+			"VIBEPANEL_PLUGIN_SOCKET="+sock,
+			"VIBEPANEL_PLUGIN_PROXY_SECRET="+proxySecret,
+			"VIBEPANEL_PLUGIN_MOUNT="+pluginMountPath(c.plugin.ID))
+	}
 	cmd.Env = env
 	// Its own process group, so a shutdown signal reaches what it forked.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -390,8 +417,12 @@ func (s *Server) runPluginProcOnce(ctx context.Context, c pluginCred, pr *plugin
 	}
 	pr.stateMu.Lock()
 	pr.cmd, pr.cancel, pr.pid, pr.since = cmd, cancel, cmd.Process.Pid, time.Now()
+	pr.socket, pr.proxySecret = sock, proxySecret
 	pr.done = make(chan struct{})
 	pr.stateMu.Unlock()
+	if sock != "" {
+		defer os.Remove(sock) //nolint:errcheck // the next start removes it too
+	}
 	if s.Resources != nil {
 		s.Resources.PlacePlugin(c.plugin.ID, cmd.Process.Pid)
 	}
@@ -474,6 +505,9 @@ func (s *Server) pluginProcessStatusFor(ctx context.Context, p store.Plugin) plu
 	}
 	out.Declared = true
 	out.Command = strings.Join(m.Process.Command, " ")
+	if m.Process.HTTP != nil {
+		out.Mount, out.Auth = pluginMountPath(p.ID), m.Process.HTTP.Auth
+	}
 	lookPath := s.ppr.lookPath
 	if lookPath == nil {
 		lookPath = exec.LookPath
@@ -489,6 +523,10 @@ func (s *Server) pluginProcessStatusFor(ctx context.Context, p store.Plugin) plu
 	}
 	pr.stateMu.Lock()
 	out.Running = pr.pid > 0
+	if pr.socket != "" {
+		_, serr := os.Stat(pr.socket)
+		out.SocketUp = serr == nil
+	}
 	out.PID = pr.pid
 	if !pr.since.IsZero() {
 		out.Since = pr.since.Unix()

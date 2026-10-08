@@ -59,6 +59,14 @@ var openRoutes = map[string]string{
 	// verifies the body against the plugin's declared secret before any of
 	// the plugin's code runs. 404 for a plugin with no inbound route.
 	"/api/plugin-hook/{pluginID}/{path}": "a plugin's inbound route; verified against its declared secret before anything runs",
+	// A process on the panel's port (pluginhttp.go). Open at the router so
+	// the handler can answer a cross-origin preflight, which carries no
+	// credential; the handler then requires one of three -- the owner's
+	// session or API token, a plugin access token, or the plugin's HMAC
+	// secret -- and there is no anonymous mode. 404 for a plugin that
+	// declares no door.
+	"/api/plugin-http/{pluginID}":   "a plugin process's door; the handler requires the owner, a plugin token or the HMAC secret",
+	"/api/plugin-http/{pluginID}/*": "the same, under the mount",
 	// A directory preview, and the reason is measured rather than chosen.
 	//
 	// The page is served with `Content-Security-Policy: sandbox`, which is what

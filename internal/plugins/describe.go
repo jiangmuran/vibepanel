@@ -24,7 +24,16 @@ const (
 	LineRuns   = "runs"   // the argv
 	LineKeeps  = "keeps"  // data keys, settings, secrets
 	LineDanger = "danger" // the rung-4 paragraph
+	LineHTTP   = "http"   // a process on the panel's port, and who may call it
 )
+
+// LineKinds is every kind a screen may carry, in the order the page draws
+// them. web/src/components/plugins/screen.ts has the same list as HEADINGS,
+// and a kind missing there is a line the screen silently does not draw --
+// which for a permission is the failure red line 10 exists for.
+func LineKinds() []string {
+	return []string{LineWhat, LineRung, LineCap, LineHost, LineRuns, LineHTTP, LineKeeps, LineDanger}
+}
 
 // Tones. The screen draws each differently and the word changes with the
 // tone (red line 4): "enforced" and "declared" are words on the line, not
@@ -170,6 +179,9 @@ func Describe(m Manifest, granted []string, panelVersion string) Screen {
 		add(Line{Kind: LineRuns, Tone: ToneAmber, Code: strings.Join(m.Process.Command, " "), Text: Text{
 			EN: "This command, as you, from the plugin's own directory:", ZH: "这条命令，以你的身份，在插件自己的目录里："}})
 	}
+	if m.Process != nil && m.Process.HTTP != nil {
+		add(Line{Kind: LineHTTP, Tone: ToneRed, Code: m.Process.HTTP.Auth, Text: HTTPLine(m.ID, m.Process.HTTP.Auth)})
+	}
 
 	// 6. What it keeps.
 	if n := len(m.Data); n > 0 {
@@ -228,6 +240,9 @@ func (m Manifest) SecretNames() []string {
 	if m.Process != nil {
 		for _, e := range m.Process.Env {
 			put(e)
+		}
+		if m.Process.HTTP != nil {
+			put(m.Process.HTTP.Secret)
 		}
 	}
 	if m.Inbound != nil {
@@ -339,4 +354,22 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// HTTPLine is the install screen's sentence for a process on the panel's
+// port: where it answers, and who may call it. Red, because it is a door on
+// the panel's own origin, even though every call still passes the panel's
+// own checks.
+func HTTPLine(id, auth string) Text {
+	where := "/api/plugin-http/" + id + "/"
+	switch auth {
+	case "token":
+		return Text{EN: "Accepts requests on the panel's port at " + where + ", with a plugin token you mint.",
+			ZH: "在面板端口 " + where + " 上接受请求，凭你签发的插件令牌访问。"}
+	case "hmac":
+		return Text{EN: "Accepts requests on the panel's port at " + where + ", verified against its declared secret.",
+			ZH: "在面板端口 " + where + " 上接受请求，按它声明的 secret 校验。"}
+	}
+	return Text{EN: "Accepts requests on the panel's port at " + where + ", with your sign-in.",
+		ZH: "在面板端口 " + where + " 上接受请求，凭你的登录态访问。"}
 }

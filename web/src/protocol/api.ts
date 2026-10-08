@@ -67,6 +67,7 @@ import type {
   PluginSourceRow,
   PluginThemeRow,
   PluginTemplate,
+  PluginAccessToken,
   NewPluginResult,
 } from './wire'
 
@@ -439,6 +440,22 @@ export const api = {
     request<PluginProcessStatus>(`/api/settings/plugins/${encodeURIComponent(id)}/process/restart`, {
       method: 'POST',
       body: '{}',
+    }),
+  // The door on the panel's port (docs/plugins.md §5): the owner's tokens and origins.
+  pluginAccessTokens: (id: string) =>
+    request<PluginAccessToken[]>(`/api/settings/plugins/${encodeURIComponent(id)}/tokens`),
+  createPluginAccessToken: (id: string, name: string) =>
+    request<{ token: string; row: PluginAccessToken; mount: string }>(`/api/settings/plugins/${encodeURIComponent(id)}/tokens`, {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }),
+  revokePluginAccessToken: (id: string, tokenId: string) =>
+    request<void>(`/api/settings/plugins/${encodeURIComponent(id)}/tokens/${encodeURIComponent(tokenId)}`, { method: 'DELETE' }),
+  pluginOrigins: (id: string) => request<{ origins: string[] }>(`/api/settings/plugins/${encodeURIComponent(id)}/origins`),
+  setPluginOrigins: (id: string, origins: string[]) =>
+    request<{ origins: string[] }>(`/api/settings/plugins/${encodeURIComponent(id)}/origins`, {
+      method: 'PUT',
+      body: JSON.stringify({ origins }),
     }),
   pluginSources: (id: string) =>
     request<PluginSourceRow[]>(`/api/settings/plugins/${encodeURIComponent(id)}/sources`),

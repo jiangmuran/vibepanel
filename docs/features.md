@@ -426,6 +426,17 @@ frames within a second -- an agent in a session beside it edits and sees. Off,
 the installed version runs again. A draft asking for a capability you have
 not granted runs without it, and the card says so.
 
+**A process on the panel's port.** A plugin's process can be served at
+`/api/plugin-http/<id>/` instead of opening a port: it listens on a unix
+socket the panel names, and the panel does the rest -- who may call (your
+sign-in, a *plugin token* you mint on the card per device and revoke one at
+a time, or the plugin's declared secret; never nobody), which origins may
+call across (your list on the card, exact, Bearer only), the rate limits,
+and the cleaning of every response so nothing a process returns can run as
+a page on the panel. The process sees none of your credentials, only a
+caller name and a per-start secret that proves the request came through
+the panel.
+
 **New plugin** is the start of that loop: a name and a template -- `theme`,
 `pane`, `service`, `process` or `full` -- and the panel scaffolds the
 directory under its data directory (or one you name) with `AGENTS.md`,

@@ -9,7 +9,9 @@ import (
 	"path"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/jiangmuran/vibepanel/internal/pages"
@@ -157,6 +159,104 @@ type ProcessSpec struct {
 	// Hosts is what the process says it will contact. The panel cannot check
 	// it, and the install screen says so.
 	Hosts []string `json:"hosts,omitempty"`
+	// HTTP mounts the process on the panel's port: docs/plugins.md §5,
+	// "a process on the panel's port".
+	HTTP *ProcessHTTPSpec `json:"http,omitempty"`
+}
+
+// ProcessHTTPSpec is a process served through the panel at
+// /api/plugin-http/{id}/. The process listens on a unix socket the panel
+// names; the panel does the authentication, the cross-origin rules, the
+// rate limits and the response hygiene, and the process sees none of the
+// owner's credentials.
+type ProcessHTTPSpec struct {
+	// Auth is who may call: "owner" (the panel's session or API token),
+	// "token" (a plugin token the owner mints on the card) or "hmac" (a
+	// shared secret, as the inbound door: bearer or X-Signature-256).
+	Auth string `json:"auth"`
+	// Secret names the secret "hmac" verifies against.
+	Secret string `json:"secret,omitempty"`
+	// Stream allows responses that stay open: SSE, long polls. Off, a
+	// response is bounded by the request budget.
+	Stream bool `json:"stream,omitempty"`
+	// MaxBody is the largest request body, "8m", "512k"; the panel caps it
+	// at MaxProcessHTTPBody whatever is asked.
+	MaxBody string `json:"maxBody,omitempty"`
+	// IdleTimeout ends a streaming response that has sent nothing for this
+	// long, "15m"; at most an hour.
+	IdleTimeout string `json:"idleTimeout,omitempty"`
+}
+
+// MaxProcessHTTPBody is the hard cap on a proxied request body.
+const MaxProcessHTTPBody = 16 << 20
+
+// ProcessHTTPAuthModes is the closed list.
+var ProcessHTTPAuthModes = []string{"owner", "token", "hmac"}
+
+func (h ProcessHTTPSpec) validate() error {
+	if !slices.Contains(ProcessHTTPAuthModes, h.Auth) {
+		return errors.New(`process.http.auth is "owner", "token" or "hmac"; there is no anonymous mode`)
+	}
+	if h.Auth == "hmac" {
+		if !secretName.MatchString(h.Secret) {
+			return errors.New("process.http.secret names the secret (UPPER_CASE) that hmac verifies against")
+		}
+	} else if h.Secret != "" {
+		return errors.New("process.http.secret is only for auth \"hmac\"")
+	}
+	if h.MaxBody != "" {
+		n, err := ParseByteSize(h.MaxBody)
+		if err != nil || n <= 0 {
+			return errors.New(`process.http.maxBody is a size like "8m" or "512k"`)
+		}
+	}
+	if h.IdleTimeout != "" {
+		d, err := time.ParseDuration(h.IdleTimeout)
+		if err != nil || d < time.Second || d > time.Hour {
+			return errors.New(`process.http.idleTimeout is a duration from 1s to 1h, like "15m"`)
+		}
+	}
+	return nil
+}
+
+// MaxBodyBytes is the request body cap this spec asks for, under the hard cap.
+func (h ProcessHTTPSpec) MaxBodyBytes() int64 {
+	n, err := ParseByteSize(h.MaxBody)
+	if err != nil || n <= 0 || n > MaxProcessHTTPBody {
+		return MaxProcessHTTPBody
+	}
+	return n
+}
+
+// IdleTimeoutOrDefault is the stream idle timeout, fifteen minutes unless asked.
+func (h ProcessHTTPSpec) IdleTimeoutOrDefault() time.Duration {
+	d, err := time.ParseDuration(h.IdleTimeout)
+	if err != nil || d < time.Second || d > time.Hour {
+		return 15 * time.Minute
+	}
+	return d
+}
+
+// ParseByteSize reads "8m", "512k", "1g" or a plain byte count.
+func ParseByteSize(s string) (int64, error) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return 0, errors.New("empty")
+	}
+	mult := int64(1)
+	switch s[len(s)-1] {
+	case 'k':
+		mult, s = 1<<10, s[:len(s)-1]
+	case 'm':
+		mult, s = 1<<20, s[:len(s)-1]
+	case 'g':
+		mult, s = 1<<30, s[:len(s)-1]
+	}
+	n, err := strconv.ParseInt(strings.TrimSuffix(s, "b"), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return n * mult, nil
 }
 
 // UnsandboxedSpec is rung 4.
@@ -523,6 +623,11 @@ func (p ProcessSpec) validate() error {
 			return fmt.Errorf("process.env: %q is listed twice", e)
 		}
 		seen[e] = true
+	}
+	if p.HTTP != nil {
+		if err := p.HTTP.validate(); err != nil {
+			return err
+		}
 	}
 	return checkHosts("process.hosts", p.Hosts)
 }

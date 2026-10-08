@@ -2370,6 +2370,22 @@ export interface PluginProcessStatus {
   output: string
   command: string
   onPath: boolean
+  /** The path on the panel's port when the manifest mounts the process there, else ''. */
+  mount: string
+  /** Who may call the mount: 'owner' | 'token' | 'hmac'; '' when there is no mount. */
+  auth: string
+  /** Whether the process has opened its socket. */
+  socketUp: boolean
+}
+
+/** A plugin access token: the owner's credential for one plugin's mount, named, revocable. The token itself is shown once. */
+export interface PluginAccessToken {
+  id: string
+  pluginId: string
+  name: string
+  createdAt: number
+  lastUsedAt: number
+  revokedAt: number
 }
 
 /** A rung-4 module the panel's page loads (docs/plugins.md §7). */

@@ -113,6 +113,7 @@ func TestTypeScriptRowsMatchWhatIsSent(t *testing.T) {
 		{"PluginText", plugins.Text{}},
 		{"PluginSourceRow", pluginSourceRow{}},
 		{"PluginProcessStatus", pluginProcessStatus{}},
+		{"PluginAccessToken", store.PluginAccessToken{}},
 		{"PluginModule", pluginModule{}},
 		{"PluginTemplate", plugins.Template{}},
 		{"NewPluginResult", newPluginResult{}},
@@ -508,9 +509,14 @@ func TestEveryAuditEventIsAccountedFor(t *testing.T) {
 		"plugin.secret_set":          true,
 		"plugin.secret_deleted":      true,
 		// Dev mode switched; a frame credential presented after it ended.
-		"plugin.dev":      true,
-		"plugin.created":  true,
-		"plugin.rejected": true,
+		"plugin.dev":     true,
+		"plugin.created": true,
+		// The door on the panel's port: a token minted or revoked, the
+		// owner's cross-origin list changed.
+		"plugin.token_created":   true,
+		"plugin.token_revoked":   true,
+		"plugin.origins_changed": true,
+		"plugin.rejected":        true,
 		// An inbound call that failed its signature check.
 		"plugin.inbound_rejected": true,
 		// A process stopped after the failure cap; the owner restarting one.
@@ -702,4 +708,25 @@ func jsonTagOf(t *testing.T, v any, field string) string {
 		t.Fatalf("%T has no field %s", v, field)
 	}
 	return strings.Split(f.Tag.Get("json"), ",")[0]
+}
+
+// Every kind of line the install screen can carry is one the page draws.
+// The page groups lines by kind under HEADINGS and drops the rest, so a
+// kind added in Go and not there is a sentence the owner is never shown.
+func TestTheInstallScreenDrawsEveryLineKind(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "web", "src", "components", "plugins", "screen.ts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`export const HEADINGS = \[([^\]]*)\]`).FindSubmatch(src)
+	if m == nil {
+		t.Fatal("no HEADINGS in screen.ts; the shape of the file changed")
+	}
+	var headings []string
+	for _, q := range regexp.MustCompile(`'([a-z]+)'`).FindAllSubmatch(m[1], -1) {
+		headings = append(headings, string(q[1]))
+	}
+	if !reflect.DeepEqual(headings, plugins.LineKinds()) {
+		t.Errorf("screen.ts HEADINGS = %v, Go LineKinds = %v: a kind missing from the page is a line nobody sees", headings, plugins.LineKinds())
+	}
 }

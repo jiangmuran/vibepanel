@@ -173,3 +173,35 @@ func TestEveryLineIsInBothLanguages(t *testing.T) {
 		}
 	}
 }
+
+// A process on the panel's port is a red line on the screen that names the
+// path and who may call it, in both languages, for every auth mode.
+func TestTheHTTPDoorIsOnTheScreen(t *testing.T) {
+	for _, mode := range ProcessHTTPAuthModes {
+		raw := []byte(`{"plugin":1,"id":"door","name":{"en":"Door"},"version":"1.0.0",
+		  "process":{"command":["sh","run.sh"],"http":{"auth":"` + mode + `"` +
+			map[bool]string{true: `,"secret":"HOOK"`, false: ``}[mode == "hmac"] + `}}}`)
+		m, err := ParseManifest(raw)
+		if err != nil {
+			t.Fatalf("%s: %v", mode, err)
+		}
+		var found *Line
+		for _, l := range Describe(m, nil, "99.0.0").Lines {
+			if l.Kind == LineHTTP {
+				found = &l
+			}
+		}
+		if found == nil || found.Tone != ToneRed || found.Code != mode ||
+			!strings.Contains(found.Text.EN, "/api/plugin-http/door/") || !strings.Contains(found.Text.ZH, "/api/plugin-http/door/") {
+			t.Errorf("%s: %+v", mode, found)
+		}
+		if mode == "hmac" && !contains(m.SecretNames(), "HOOK") {
+			t.Error("the hmac secret is not among the names the owner is asked for")
+		}
+	}
+	for _, bad := range []string{`"auth":"anyone"`, `"auth":"owner","secret":"X"`, `"auth":"hmac"`, `"auth":"owner","maxBody":"lots"`, `"auth":"owner","idleTimeout":"3h"`} {
+		if _, err := ParseManifest([]byte(`{"plugin":1,"id":"door","name":{"en":"Door"},"version":"1.0.0","process":{"command":["sh"],"http":{` + bad + `}}}`)); err == nil {
+			t.Errorf("accepted http{%s}", bad)
+		}
+	}
+}

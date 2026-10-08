@@ -26,6 +26,14 @@ is the design, and `vibepanel-plugin.d.ts` beside this file declares the SDK.
   call. `ctx.fetch` reaches only hosts listed as `net:<host>` and granted.
 - A **process** runs as the panel's owner with a cleared environment; its
   credential is `VIBEPANEL_PLUGIN_URL`; it is ended when the panel stops.
+  With `process.http` in the manifest it is also served on the panel's port
+  at `VIBEPANEL_PLUGIN_MOUNT`: listen on the unix socket in
+  `VIBEPANEL_PLUGIN_SOCKET` and nowhere else, and **refuse any request whose
+  `X-Vibepanel-Proxy` header is not `VIBEPANEL_PLUGIN_PROXY_SECRET`** --
+  every process of this user can reach the socket, and only the panel knows
+  the secret. The panel has already checked who is calling; the name is in
+  `X-Vibepanel-Caller`. Never set cookies; answer JSON, an event stream,
+  text, images, audio or bytes -- anything else is served as a download.
 - Do not **install, grant or enable** anything yourself. `vibepanel plugin
   install --grant …` works from here because you run as the same user; it is
   the owner's decision, made on the install screen. Leave it to them.

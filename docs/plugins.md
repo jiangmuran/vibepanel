@@ -442,6 +442,48 @@ The panel ships no runtime. The install screen shows the argv verbatim and
 whether its first word is on `PATH`, and `vibepanel plugin check` says so
 from a shell.
 
+**A process on the panel's port.** A process that is itself an HTTP
+service -- a bot with a webhook, a voice assistant's backend, a phone app's
+API -- can be mounted at `/api/plugin-http/<id>/` instead of opening a port
+of its own:
+
+```jsonc
+"process": { "command": ["node", "server/main.mjs"],
+             "http": { "auth": "token", "stream": true, "maxBody": "8m", "idleTimeout": "15m" } }
+```
+
+The panel guards the door; the process does business. The process listens
+on a unix socket the panel names (`VIBEPANEL_PLUGIN_SOCKET`, in the user's
+runtime directory, 0700), so it holds no port and the LAN cannot reach it.
+Who may call is `auth`, declared and shown on the install screen in red:
+`owner` is the panel's own session or API token; `token` is a **plugin
+access token** the owner mints on the card, one per device, named, revoked
+one at a time, its last use shown, reaching this one mount and nothing
+else; `hmac` is the inbound door's check against a declared secret. There
+is no anonymous mode. Before forwarding, the panel strips the cookie and
+the Authorization header and sets `X-Vibepanel-Caller` (`owner:<user>`,
+`token:<name>`, `hmac`) and `X-Vibepanel-Proxy`, a secret minted at every
+start and handed to the process in `VIBEPANEL_PLUGIN_PROXY_SECRET`. The
+second header is what makes the first trustworthy: the socket's directory
+keeps other users out, but every process of *this* user can connect to it,
+and a coding agent in a session is this user, so a request without the
+secret is one that did not come through the panel and the process refuses
+it (the scaffold says so). After the answer, the panel removes `Set-Cookie`
+and every policy header, adds `nosniff`, and serves anything that is not
+JSON, an event stream, text, a raster image, audio, video or a byte stream
+under `Content-Security-Policy: sandbox` as an attachment -- SVG included,
+since it carries script. An HTML page a process returned, rendered on the
+panel's origin, would be rung 4 without the switch. Cross-origin calls are
+answered only for origins on the owner's list on the card, exact matches,
+never declared by the plugin, and only with a Bearer: the cookie is never a
+credential across origins, so there is no CSRF to defend. Rate limits are
+per plugin and per caller; streams are capped and end after an idle
+timeout; bodies are capped at 16 MiB whatever is asked.
+
+What this bounds is who can reach the process, not what the process can
+do. It still runs as you; the install screen's amber line and your own
+judgement of the author are what cover that, as for any rung-3 plugin.
+
 ## 6. Installing one
 
 A plugin arrives as a file, a path on the machine, or a URL the person typed,
