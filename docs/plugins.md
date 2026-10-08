@@ -482,7 +482,14 @@ since it carries script. An HTML page a process returned, rendered on the
 panel's origin, would be rung 4 without the switch. Cross-origin calls are
 answered only for origins on the owner's list on the card, exact matches,
 never declared by the plugin, and only with a Bearer: the cookie is never a
-credential across origins, so there is no CSRF to defend. Rate limits are
+credential across origins, so there is no CSRF to defend. One relaxation,
+and only where it costs the panel nothing: a loopback entry may name port
+`0` for any port, because a WebView inside an app serves its page from the
+device's own 127.0.0.1 on whatever port was free. What that admits is a
+page on that device's loopback holding a token, which is what the app
+itself is; what it does not admit is anything the panel's side can see
+differently, since a client that can forge an Origin was never bound by
+CORS to begin with. Rate limits are
 per plugin and per caller; streams are capped and end after an idle
 timeout; bodies are capped at 16 MiB whatever is asked.
 

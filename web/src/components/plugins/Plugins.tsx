@@ -939,7 +939,7 @@ function DoorBlock({ id, st, onError }: { id: string; st: PluginProcessStatus; o
               setSaved(false)
             }}
             rows={2}
-            placeholder="https://glasses.example"
+            placeholder={"https://glasses.example\nhttp://127.0.0.1:0"}
             data-testid="plugin-door-origins"
             className={`${INPUT} w-full font-mono`}
           />

@@ -2081,8 +2081,11 @@ Audited `plugin.token_created` and `plugin.token_revoked`.
 ### `PUT /api/settings/plugins/{pluginID}/origins`
 
 The owner's list of origins that may call the plugin's door across
-origins: `{origins: ["https://host[:port]", …]}`, exact, at most 20. The
-plugin's manifest cannot declare these; that right is the owner's. Audited
+origins: `{origins: ["https://host[:port]", …]}`, exact, at most 20. A
+loopback entry (`127.0.0.1`, `localhost`, `[::1]`) may name port `0` for
+any port, for a WebView inside an app that serves its page from whatever
+port was free; port 0 anywhere else is refused. The plugin's manifest
+cannot declare these; that right is the owner's. Audited
 `plugin.origins_changed`.
 
 ### `GET /api/settings/plugins/{pluginID}/downloads`

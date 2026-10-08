@@ -161,7 +161,38 @@ func cleanOrigin(raw string) (string, error) {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
 		return "", fmt.Errorf("%q is not an origin: https://host[:port], nothing after it", raw)
 	}
+	// Port 0 is "any port", and only for the machine's own loopback: a
+	// WebView inside an app serves its page from 127.0.0.1 on whatever port
+	// was free, so there is nothing to write down in advance. Anywhere else
+	// a wildcard port is a wildcard origin, which is what exact matching
+	// exists to refuse.
+	if u.Port() == "0" && !loopbackHost(u.Hostname()) {
+		return "", fmt.Errorf("%q: port 0 (any port) is only for the local machine's loopback: 127.0.0.1, localhost, [::1]", raw)
+	}
 	return strings.ToLower(u.Scheme + "://" + u.Host), nil
+}
+
+func loopbackHost(h string) bool {
+	switch strings.ToLower(h) {
+	case "127.0.0.1", "localhost", "::1":
+		return true
+	}
+	return false
+}
+
+// originAllowed is the owner's list against one Origin: exact, or a
+// loopback entry with port 0 against the same scheme and host on any port.
+func originAllowed(list []string, origin string) bool {
+	origin = strings.ToLower(origin)
+	if contains(list, origin) {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || !loopbackHost(u.Hostname()) {
+		return false
+	}
+	return contains(list, strings.ToLower(u.Scheme+"://"+u.Hostname()+":0")) ||
+		(strings.Contains(u.Hostname(), ":") && contains(list, strings.ToLower(u.Scheme+"://["+u.Hostname()+"]:0")))
 }
 
 // ─── the door ─────────────────────────────────────────────────────────────
@@ -190,7 +221,7 @@ func (s *Server) handlePluginHTTP(w http.ResponseWriter, r *http.Request) {
 	origin := strings.TrimSuffix(r.Header.Get("Origin"), "/")
 	cross := origin != "" && origin != "null" && !sameOrigin(hostOfOrigin(origin), r.Host)
 	if cross {
-		if !contains(s.pluginOrigins(ctx, p.ID), strings.ToLower(origin)) {
+		if !originAllowed(s.pluginOrigins(ctx, p.ID), origin) {
 			writeErr(w, http.StatusForbidden, "this origin is not on the plugin's list; the owner adds it on the plugin's card")
 			return
 		}

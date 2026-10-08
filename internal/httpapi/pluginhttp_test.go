@@ -477,3 +477,50 @@ func TestThePluginHTTPDoorIsOnlyItsPrefix(t *testing.T) {
 		t.Errorf("the door is %v, want %v", uniq, want)
 	}
 }
+
+// A WebView inside an app serves its page from the device's loopback on
+// whatever port was free, so the owner cannot write the port down: port 0
+// on a loopback entry means any port. Anywhere else it is refused, and a
+// host that merely begins with 127.0.0.1 is not loopback.
+func TestALoopbackOriginMayNameAnyPort(t *testing.T) {
+	ts, srv := newTestServer(t)
+	installDoor(t, ts, srv, "token")
+	_, body := doJSON(t, ts, http.MethodPost, "/api/settings/plugins/door/tokens", `{"name":"glasses"}`)
+	var made struct {
+		Token string `json:"token"`
+	}
+	_ = json.Unmarshal(body, &made)
+	anon := anonymousClient(t)
+	call := func(origin string) int {
+		t.Helper()
+		r, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/plugin-http/door/x", nil)
+		r.Header.Set("Origin", origin)
+		r.Header.Set("Authorization", "Bearer "+made.Token)
+		res, err := anon.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		return res.StatusCode
+	}
+	if status, body := doJSON(t, ts, http.MethodPut, "/api/settings/plugins/door/origins", `{"origins":["https://glasses.example:0"]}`); status != http.StatusBadRequest || !strings.Contains(string(body), "loopback") {
+		t.Errorf("any port on a public host: %d %s", status, body)
+	}
+	if status, body := doJSON(t, ts, http.MethodPut, "/api/settings/plugins/door/origins", `{"origins":["http://127.0.0.1:0","http://[::1]:0"]}`); status != http.StatusOK {
+		t.Fatalf("origins: %d %s", status, body)
+	}
+	for origin, want := range map[string]int{
+		"http://127.0.0.1:53121":           http.StatusOK,
+		"http://127.0.0.1:80":              http.StatusOK,
+		"http://127.0.0.1":                 http.StatusOK,
+		"http://[::1]:4000":                http.StatusOK,
+		"https://127.0.0.1:53121":          http.StatusForbidden, // the scheme is part of the entry
+		"http://localhost:53121":           http.StatusForbidden, // a different host, not listed
+		"http://127.0.0.1.evil.example:53": http.StatusForbidden,
+		"http://127.0.0.2:53121":           http.StatusForbidden,
+	} {
+		if got := call(origin); got != want {
+			t.Errorf("%s: %d, want %d", origin, got, want)
+		}
+	}
+}

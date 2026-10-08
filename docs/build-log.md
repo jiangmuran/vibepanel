@@ -25412,3 +25412,23 @@ makes on the card not reaching a plugin that is already running.
   too: a restart loop from a fingerprint that changed by itself would be
   worse than the confusion this fixes.
 
+## 2026-10-08 — Plugins: a loopback origin on any port
+
+A smart-glasses plugin: the glasses' app serves its page in a WebView from
+`http://127.0.0.1:<whatever port was free>`, the engine adds the `Origin`,
+and the door's exact list had nothing to be told in advance, so every call
+was a 403 with a good token. The analysis before changing anything: a
+cross-origin allowance decides which page may *read* a response, never who
+is credentialed -- the cookie is never a credential here -- so what a
+loopback-any-port entry admits is a page on that device's loopback holding
+a token, which is the app itself; and a client that can forge an Origin was
+never bound by CORS, so the panel's side sees no difference. Port-squatting
+on the device is the one real exposure, and it is the device's, bounded to
+that plugin's mount.
+
+So: port `0` on a loopback entry means any port, refused anywhere else,
+and a host that begins with `127.0.0.1` is not loopback. Written on the
+same list rather than as a switch, because it is a per-origin decision and
+reads as one. Eight origins in the test say which side of the line each is
+on; removing the port-0 branch turns it red.
+

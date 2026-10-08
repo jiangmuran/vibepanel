@@ -1996,7 +1996,7 @@ const DICT = {
   'plg.door.lastUsed': { zh: '上次使用 {when}', en: 'last used {when}' },
   'plg.door.noTokens': { zh: '还没有令牌。', en: 'No tokens yet.' },
   'plg.door.origins': { zh: '允许跨域的来源', en: 'Origins allowed across' },
-  'plg.door.originsWhy': { zh: '一行一个，精确匹配；跨域只认 Bearer，不认 cookie。', en: 'One per line, exact; across origins only a Bearer counts, never the cookie.' },
+  'plg.door.originsWhy': { zh: '一行一个，精确匹配；回环地址可写 :0 表示任意端口。', en: 'One per line, exact; a loopback entry may say :0 for any port; Bearer only across origins.' },
   'plg.door.originsSave': { zh: '保存来源', en: 'Save origins' },
   'plg.door.originsSaved': { zh: '来源已保存', en: 'Origins saved' },
   'plg.dl': { zh: '下载项', en: 'Downloads' },
