@@ -71,6 +71,10 @@ archive-check: build  ## Archiving a project: the sidebar, the list, the picker,
 render-check: build   ## Drive the real binary with a real browser
 	cd web && npm run check:render
 
+.PHONY: statusline-check
+statusline-check: build ## A passive viewer keeps a full-screen footer across session switches
+	cd web && npm run check:statusline
+
 .PHONY: pages-check
 pages-check: build    ## Share pages: the sandbox from inside a page, the editing loop, every template
 	cd web && npm run check:pages

@@ -31,6 +31,7 @@ import { findSmallTargets } from './lib/tap.mjs'
 import { findInvisibleFocus } from './lib/focus.mjs'
 import { findUnnamedControls } from './lib/names.mjs'
 import { assertFreshBuild } from './lib/fresh.mjs'
+import { checkStatusline } from './lib/statusline.mjs'
 
 /**
  * The main terminal on screen.
@@ -1134,6 +1135,10 @@ browser = await chromium.launch({ headless: true })
       }
     }
   }
+
+  // Reuse the focused regression: a passive reveal must not resize xterm or
+  // discard a quiet full-screen application's footer.
+  await checkStatusline({ browser, ctx, page, base: BASE, mkSession, authed, shots: SHOTS, note })
 
   // ── reload keeps content ─────────────────────────────────────────────────
   // A background tab is throttled and stops painting, so xterm's DOM renderer

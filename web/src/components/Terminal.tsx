@@ -778,13 +778,15 @@ export function TerminalView({
     socket.setHidden(sessionId, hidden)
   }, [socket, sessionId, hidden])
 
-  // A display:none canvas keeps stale pixels. Repaint after it becomes visible.
+  // A display:none canvas keeps stale pixels. Repaint after it becomes visible,
+  // but leave fitting to the sizing effect below. A passive viewer must keep
+  // the server's grid: fitting its max-content host can round a fractional
+  // height down by a row and discard a full-screen application's status line.
   useEffect(() => {
     if (hidden) return
     const term = termRef.current
     if (!term) return
     const frame = requestAnimationFrame(() => {
-      fitRef.current?.fit()
       term.refresh(0, term.rows - 1)
     })
     return () => cancelAnimationFrame(frame)
