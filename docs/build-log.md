@@ -26536,3 +26536,9 @@ and none of them in a text field.
 `shortcutsDialog.test.ts` the list; each guard was removed in turn and fails.
 render-check drives ⌥↓, ⌥2, ⌥/, ⌥→ with the setting on, the settings entry,
 and ⌥Tab in a context that reports a Mac.
+
+Next: Firefox on Linux binds Alt+1…8 to its own tabs. The panel's
+`preventDefault` keeps ⌥1…⌥8 in Chromium, measured; in Firefox it has not
+been, and a headless Firefox does not run the browser's own shortcuts, so the
+harness cannot say. If Firefox wins there, ⌥9 and ⌥↑⌥↓ still work, and the
+list should say so for that browser.
