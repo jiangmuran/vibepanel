@@ -26542,3 +26542,24 @@ Next: Firefox on Linux binds Alt+1…8 to its own tabs. The panel's
 been, and a headless Firefox does not run the browser's own shortcuts, so the
 harness cannot say. If Firefox wins there, ⌥9 and ⌥↑⌥↓ still work, and the
 list should say so for that browser.
+
+## 2026-10-19 — The renderer switch the comment promised
+
+`renderer.ts` said the DOM renderer was reachable from the settings page. It
+was not: nothing in the UI wrote `vibepanel.renderer`, and the only way to it
+was devtools. It came up because a screen of Chinese drew as fragments under
+WebGL -- some characters right, some two characters overlapped -- while the
+buffer underneath was correct, which is the "wrong without crashing" case the
+switch exists for. xterm.js has fixed several glyph-atlas page-merge bugs
+since `@xterm/addon-webgl` 0.19.0, and none of the fixes are in a stable
+release yet.
+
+Settings → Panel → Terminal renderer now offers GPU (WebGL) when available,
+or DOM. It is kept in this browser, like the keys, because what draws wrong
+is this machine's GPU and driver. Each terminal reads the choice as it opens,
+so the page says that open terminals change after a reload and offers the
+reload, rather than tearing live terminals down to rebuild them.
+
+`renderer.test.ts` holds the write against what the terminal reads (removing
+the write fails it); render-check chooses DOM in the settings, reloads, sees
+row elements instead of a canvas, and goes back.

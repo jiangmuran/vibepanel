@@ -6,7 +6,15 @@
  * a compositor that tears, a remote desktop that software-emulates WebGL at two
  * frames a second -- and none of those are things this panel can detect. When
  * the terminal looks wrong the answer has to be reachable from the settings
- * page rather than from a bug report.
+ * page rather than from a bug report, and it is: Panel → Terminal renderer
+ * (`settings/RendererSettings.tsx`). For a long time this comment said so
+ * while nothing on that page wrote the key, and the only way to it was
+ * devtools.
+ *
+ * The case that put it on the page: WebGL's glyph atlas, filled with
+ * thousands of distinct CJK characters, came back from a page merge with
+ * cells drawing halves of two characters over each other while the buffer
+ * underneath was right. That is exactly "wrong in a way that is not a crash".
  *
  * It is also what lets two of the browser checks measure cell geometry, which
  * only exists in the DOM renderer's output. That is a consequence, not the
@@ -22,5 +30,15 @@ export function rendererPreference(): 'auto' | 'dom' {
     // Private mode. The GPU path is the better default for someone who cannot
     // record a preference either way.
     return 'auto'
+  }
+}
+
+/** Read by each terminal as it opens, so the ones already open keep theirs. */
+export function setRendererPreference(v: 'auto' | 'dom') {
+  try {
+    if (v === 'dom') localStorage.setItem(RENDERER_KEY, 'dom')
+    else localStorage.removeItem(RENDERER_KEY)
+  } catch {
+    /* private mode: auto stays */
   }
 }

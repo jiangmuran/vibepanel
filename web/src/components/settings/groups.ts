@@ -89,6 +89,7 @@ export const SETTINGS_SECTIONS = [
   'env',
   'restart',
   'keys',
+  'renderer',
   'tour',
 ] as const
 
@@ -139,6 +140,9 @@ export const SECTION_GROUP: Record<SettingsSection, SettingsGroup> = {
   // Kept in this browser, like the theme: the keys follow the keyboard in
   // front of somebody.
   keys: 'panel',
+  // Kept in this browser for the same reason: a renderer that draws wrong is
+  // this machine's GPU and driver, not the account.
+  renderer: 'panel',
   tour: 'panel',
 }
 

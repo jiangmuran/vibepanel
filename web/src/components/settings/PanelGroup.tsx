@@ -3,6 +3,7 @@ import { TimeZone } from './TimeZone'
 import { RestartPanel } from './RestartPanel'
 import { TourAgain } from './TourAgain'
 import { KeyboardSettings } from './KeyboardSettings'
+import { RendererSettings } from './RendererSettings'
 import type { SettingsInfo } from '../../protocol/wire'
 import { t } from '../../i18n'
 import { safeText } from '../text'
@@ -113,6 +114,7 @@ export function PanelGroup({ info }: { info: SettingsInfo | null }) {
       <EnvSettings />
       <RestartPanel />
       <KeyboardSettings />
+      <RendererSettings />
       <TourAgain />
     </>
   )

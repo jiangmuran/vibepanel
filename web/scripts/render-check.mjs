@@ -2441,8 +2441,59 @@ browser = await chromium.launch({ headless: true })
     if (!(await page.locator('[data-testid="shortcuts-open"]').isVisible().catch(() => false))) {
       note('FAIL', 'alt-keys', 'the settings have no way to the list of keys')
     }
-    await page.keyboard.press('Escape')
-    await sleep(400)
+
+    // The renderer switch, through the page rather than localStorage: the
+    // comment in renderer.ts promised this for months while nothing on the
+    // page wrote the key. DOM is told apart by its row elements, which the
+    // GPU renderer does not draw.
+    const drawnBy = () =>
+      page.evaluate(() => {
+        const s = [...document.querySelectorAll('[data-testid="terminal-area"] .xterm-screen')].find((e) => e.offsetParent)
+        if (!s) return null
+        if (s.querySelector('.xterm-rows')?.children.length) return 'dom'
+        return s.querySelector('canvas') ? 'gpu' : null
+      })
+    const relogin = async () => {
+      await page.waitForSelector('[data-testid="sidebar"]', { timeout: 15000 })
+      await sleep(2000)
+    }
+    if (!(await page.locator('[data-testid="renderer-choice"]').isVisible().catch(() => false))) {
+      note('FAIL', 'renderer', 'the settings have no renderer choice')
+      await page.keyboard.press('Escape')
+      await sleep(400)
+    } else {
+      await page.keyboard.press('Escape')
+      await sleep(400)
+      const before = await drawnBy()
+      await page.locator('[data-testid="settings-open"]').click()
+      await sleep(500)
+      await page.locator('[data-testid="settings-group-panel"]').click().catch(() => {})
+      await sleep(400)
+      await page.locator('[data-testid="renderer-dom"]').check()
+      await sleep(200)
+      if (!(await page.locator('[data-testid="renderer-reload"]').isVisible().catch(() => false))) {
+        note('FAIL', 'renderer', 'choosing DOM did not say a reload is needed')
+      }
+      await Promise.all([page.waitForEvent('load'), page.locator('[data-testid="renderer-reload"]').click()])
+      await relogin()
+      const after = await drawnBy()
+      if (after !== 'dom') note('FAIL', 'renderer', `after choosing DOM and reloading the terminal is drawn by ${after}`)
+      await page.locator('[data-testid="settings-open"]').click()
+      await sleep(500)
+      await page.locator('[data-testid="settings-group-panel"]').click().catch(() => {})
+      await sleep(400)
+      if (!(await page.locator('[data-testid="renderer-dom"]').isChecked().catch(() => false))) {
+        note('FAIL', 'renderer', 'after a reload the settings no longer show DOM as chosen')
+      }
+      await page.locator('[data-testid="renderer-auto"]').check()
+      await Promise.all([page.waitForEvent('load'), page.locator('[data-testid="renderer-reload"]').click()])
+      await relogin()
+      const back = await drawnBy()
+      // Headless browsers without a GPU fall back to DOM on their own; the
+      // way back is only measurable where the GPU drew first.
+      if (before === 'gpu' && back !== 'gpu') note('FAIL', 'renderer', `back on auto the terminal is drawn by ${back}`)
+      else if (after === 'dom') note('PASS', 'renderer', `the settings switch the terminal to DOM and back (${before} → dom → ${back})`)
+    }
 
     // ⌥Tab, on a Mac. Alt+Tab anywhere else belongs to the window manager.
     const macCtx = await browser.newContext({ serviceWorkers: 'block', viewport: { width: 1440, height: 900 } })
