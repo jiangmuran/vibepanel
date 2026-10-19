@@ -37,6 +37,8 @@ import { MobileKeyBar } from './components/mobile/MobileKeyBar'
 import { ComposeInput } from './components/mobile/ComposeInput'
 import { DisconnectedBar, useDisconnected } from './components/Disconnected'
 import { neighbour, panelShortcut } from './components/shortcuts'
+import { onShortcutsRequest, shortcutOptions } from './components/keyprefs'
+import { ShortcutsDialog } from './components/ShortcutsDialog'
 import { useViewportFit } from './components/mobile/viewport'
 import { TouchControls, TouchKeys } from './components/mobile/TouchControls'
 import { SelectionCopy } from './components/mobile/SelectionCopy'
@@ -324,6 +326,9 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   // underneath the drawer.
   const [docked, setDocked] = useState(() => readStored(SIDEBAR_KEY) !== 'collapsed')
   const [drawerOpen, setDrawerOpen] = useState(false)
+  // The list of keys: ⌥/ or the settings opens it.
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  useEffect(() => onShortcutsRequest(() => setShortcutsOpen(true)), [])
 
   // The chosen height and whether the strip is showing are stored apart, so
   // that closing it does not erase the height. `bottomHeight` stays the single
@@ -1211,6 +1216,38 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
     focusTerminal(id)
   }
 
+  // ⌥Tab: the sidebar, the terminal, the side panel and the bottom strip, in
+  // the order they sit, skipping whichever is not on screen. Each is entered
+  // where it is useful -- the chosen session's row, the terminal's input, the
+  // first control of the panel -- rather than at its top-left corner.
+  const cycleRegion = (dir: 1 | -1) => {
+    const first = (root: Element | null) =>
+      root?.querySelector<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), textarea, select, [tabindex]:not([tabindex="-1"])',
+      ) ?? null
+    const regions = [
+      {
+        el: document.querySelector('[data-testid="sidebar"]'),
+        enter: () =>
+          document.querySelector<HTMLElement>('[data-testid="session-row"][aria-current="true"]')?.focus() ??
+          document.querySelector<HTMLElement>('[data-testid="session-row"]')?.focus(),
+      },
+      { el: document.querySelector('[data-testid="terminal-area"]'), enter: () => current && focusTerminal(current.id) },
+      { el: document.querySelector('[data-testid="right-panel"]'), enter: () => first(document.querySelector('[data-testid="right-panel"]'))?.focus() },
+      {
+        el: document.querySelector('[data-testid="bottom-terminals"]'),
+        enter: () => {
+          const strip = document.querySelector('[data-testid="bottom-terminals"]')
+          ;(strip?.querySelector<HTMLElement>('.xterm-helper-textarea') ?? first(strip))?.focus()
+        },
+      },
+    ].filter((r) => r.el)
+    if (regions.length === 0) return
+    const at = regions.findIndex((r) => r.el?.contains(document.activeElement))
+    const to = at < 0 ? (dir > 0 ? 0 : regions.length - 1) : (at + dir + regions.length) % regions.length
+    regions[to].enter()
+  }
+
   // The panel's keys (shortcuts.ts), on the window so they work from inside a
   // terminal too: xterm lets them past. In the order the sidebar draws, which
   // is the order the person sees, read off the rows rather than recomputed.
@@ -1222,24 +1259,53 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
   const onShortcut = useRef<(e: KeyboardEvent) => void>(() => {})
   useEffect(() => {
     onShortcut.current = (e: KeyboardEvent) => {
-      const act = panelShortcut(e)
-      if (!act) return
+      const hit = panelShortcut(e, shortcutOptions())
+      if (!hit) return
       e.preventDefault()
       const rows = [...document.querySelectorAll<HTMLElement>('[data-testid="session-row"]')]
-      if (act === 'leave') {
-        if (narrow) setDrawerOpen(true)
-        // After the drawer has had a frame to mount its rows.
-        window.requestAnimationFrame(() => {
-          const here =
-            document.querySelector<HTMLElement>('[data-testid="session-row"][aria-current="true"]') ??
-            document.querySelector<HTMLElement>('[data-testid="session-row"]')
-          here?.focus()
-        })
-        return
-      }
       const order = rows.map((r) => r.dataset.sessionId ?? '').filter(Boolean)
-      const next = neighbour(order, selected, act)
-      if (next) selectSession(next)
+      switch (hit.act) {
+        case 'leave': {
+          if (narrow) setDrawerOpen(true)
+          // After the drawer has had a frame to mount its rows.
+          window.requestAnimationFrame(() => {
+            const here =
+              document.querySelector<HTMLElement>('[data-testid="session-row"][aria-current="true"]') ??
+              document.querySelector<HTMLElement>('[data-testid="session-row"]')
+            here?.focus()
+          })
+          return
+        }
+        case 'prev':
+        case 'next': {
+          const next = neighbour(order, selected, hit.act)
+          if (next) selectSession(next)
+          return
+        }
+        case 'goto': {
+          // The N-th row as the sidebar draws it, which is the number a
+          // person counts on screen.
+          const id = order[(hit.n ?? 1) - 1]
+          if (id) selectSession(id)
+          return
+        }
+        case 'prevProject':
+        case 'nextProject': {
+          const projects = [...new Set(rows.map((r) => r.dataset.projectId ?? '').filter(Boolean))]
+          const here = rows.find((r) => r.dataset.sessionId === selected)?.dataset.projectId ?? null
+          const to = neighbour(projects, here, hit.act === 'nextProject' ? 'next' : 'prev')
+          const first = rows.find((r) => r.dataset.projectId === to)?.dataset.sessionId
+          if (first) selectSession(first)
+          return
+        }
+        case 'regionNext':
+        case 'regionPrev':
+          cycleRegion(hit.act === 'regionNext' ? 1 : -1)
+          return
+        case 'help':
+          setShortcutsOpen(true)
+          return
+      }
     }
   })
   useEffect(() => {
@@ -2124,6 +2190,8 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
           />
         </div>
       )}
+
+      {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
 
       {/* Last in the tree and z-50, so it is over the settings dialog that two
           of its questions are asked from. */}

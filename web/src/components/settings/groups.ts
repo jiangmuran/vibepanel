@@ -88,6 +88,7 @@ export const SETTINGS_SECTIONS = [
   'status',
   'env',
   'restart',
+  'keys',
   'tour',
 ] as const
 
@@ -135,6 +136,9 @@ export const SECTION_GROUP: Record<SettingsSection, SettingsGroup> = {
   timezone: 'panel',
   env: 'panel',
   restart: 'panel',
+  // Kept in this browser, like the theme: the keys follow the keyboard in
+  // front of somebody.
+  keys: 'panel',
   tour: 'panel',
 }
 

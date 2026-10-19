@@ -26506,3 +26506,33 @@ earlier point -- releases the keys it dropped, and another transcript that
 skipped them does not count them until something makes it read again. Rare,
 and it undercounts rather than double-counts; the fix is to re-read the files
 whose skipped keys were released, which needs the skipped keys recorded too.
+
+## 2026-10-19 — ⌥ / Alt keys, and a list of them
+
+Asked for by name: Option+arrows to switch sessions, Tab to move between
+areas, the number keys. The Ctrl+Shift+arrow family stays; these are added
+beside it, and all of them work from inside a terminal (xterm lets them past)
+and none of them in a text field.
+
+- **⌥↑ ⌥↓** previous and next session in sidebar order; **⌥1…⌥9** the Nth.
+  The digits are read by `code`, because a Mac's ⌥1 arrives as key "¡".
+- **⌥← ⌥→** are the terminal's by default -- they move by word in a shell
+  and in Claude Code's prompt -- and the panel's (previous and next project)
+  when Settings → Panel → Keyboard says so. Kept in this browser, like the
+  theme, because it follows the keyboard in front of somebody.
+- **⌥Tab / ⌥⇧Tab** on a Mac only: sidebar, terminal, side panel, bottom
+  terminals, skipping whatever is not on screen, each entered where it is
+  useful. Alt+Tab on Windows and most Linux desktops is the window manager's
+  and never reaches a page. Detected from `userAgentData.platform` or
+  `navigator.platform`, either one, because Chrome and Safari each have only
+  one of them right.
+- **⌥/** opens the list, which also has its own entry in the settings. It
+  writes ⌥ and ⌃ on a Mac and Alt and Ctrl elsewhere, lists ⌥Tab only where it
+  exists, and describes ⌥← ⌥→ as the setting has them.
+- Ctrl together with Alt is never taken: that is AltGr on a European Windows
+  layout, and it types characters. ⌘ is never taken: it is the browser's.
+
+`shortcuts.test.ts` covers the table, Mac characters and AltGr included, and
+`shortcutsDialog.test.ts` the list; each guard was removed in turn and fails.
+render-check drives ⌥↓, ⌥2, ⌥/, ⌥→ with the setting on, the settings entry,
+and ⌥Tab in a context that reports a Mac.

@@ -2394,6 +2394,85 @@ browser = await chromium.launch({ headless: true })
     }
   }
 
+  // ── the ⌥ / Alt keys and their list ─────────────────────────────────────
+  // Asked for by name: ⌥↑ ⌥↓ between sessions, ⌥1…⌥9 to one, ⌥/ for the list,
+  // ⌥← ⌥→ between projects when the setting says so, and ⌥Tab between the
+  // regions on a Mac. Driven from inside a real terminal, which is where they
+  // have to get past xterm.
+  {
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await sleep(600)
+    const cur = () => page.locator('[data-testid="session-row"][aria-current="true"]').getAttribute('data-session-id').catch(() => null)
+    const term = () => page.locator('[data-testid="terminal-area"] .xterm >> visible=true').first().click().catch(() => {})
+    const order = await page.locator('[data-testid="session-row"]').evaluateAll((r) => r.map((x) => x.dataset.sessionId))
+    await term()
+    const s0 = await cur()
+    await page.keyboard.press('Alt+ArrowDown')
+    await sleep(700)
+    if ((await cur()) === s0) note('FAIL', 'alt-keys', '⌥↓ inside a terminal did not move to the next session')
+    if (order.length >= 2) {
+      await term()
+      await page.keyboard.press('Alt+Digit2')
+      await sleep(700)
+      if ((await cur()) !== order[1]) note('FAIL', 'alt-keys', '⌥2 did not open the second session in the sidebar')
+    }
+    await term()
+    await page.keyboard.press('Alt+Slash')
+    await sleep(500)
+    if (!(await page.locator('[data-testid="shortcuts"]').isVisible().catch(() => false))) {
+      note('FAIL', 'alt-keys', '⌥/ did not open the list of keys')
+    } else {
+      await page.locator('[data-testid="side-arrows-panel"]').check()
+      await page.keyboard.press('Escape')
+      await sleep(400)
+      const proj = () => page.locator('[data-testid="session-row"][aria-current="true"]').getAttribute('data-project-id').catch(() => null)
+      const p0 = await proj()
+      await term()
+      await page.keyboard.press('Alt+ArrowRight')
+      await sleep(700)
+      if ((await proj()) === p0) note('FAIL', 'alt-keys', '⌥→ with the setting on did not move to the next project')
+      // Back to the default, so nothing later in this run loses its word jumps.
+      await page.evaluate(() => localStorage.removeItem('vibepanel.sideArrows'))
+    }
+    await page.locator('[data-testid="settings-open"]').click()
+    await sleep(500)
+    await page.locator('[data-testid="settings-group-panel"]').click().catch(() => {})
+    await sleep(400)
+    if (!(await page.locator('[data-testid="shortcuts-open"]').isVisible().catch(() => false))) {
+      note('FAIL', 'alt-keys', 'the settings have no way to the list of keys')
+    }
+    await page.keyboard.press('Escape')
+    await sleep(400)
+
+    // ⌥Tab, on a Mac. Alt+Tab anywhere else belongs to the window manager.
+    const macCtx = await browser.newContext({ serviceWorkers: 'block', viewport: { width: 1440, height: 900 } })
+    await macCtx.addInitScript(() => Object.defineProperty(navigator, 'platform', { get: () => 'MacIntel' }))
+    const mac = await macCtx.newPage()
+    await mac.goto(BASE, { waitUntil: 'networkidle' })
+    await mac.locator('[data-testid="auth-username"]').fill(USERNAME)
+    await mac.locator('[data-testid="auth-password"]').fill(PASSWORD)
+    await mac.locator('[data-testid="auth-submit"]').click()
+    await mac.waitForSelector('[data-testid="sidebar"]', { timeout: 15000 })
+    await sleep(2000)
+    if (!(await mac.locator('[data-testid="right-panel"]').isVisible().catch(() => false))) {
+      await mac.locator('[data-testid="right-show"]').click().catch(() => {})
+      await sleep(500)
+    }
+    await mac.locator('[data-testid="terminal-area"] .xterm >> visible=true').first().click().catch(() => {})
+    await mac.keyboard.press('Alt+Tab')
+    await sleep(300)
+    const region = await mac.evaluate(() => {
+      const a = document.activeElement
+      for (const id of ['sidebar', 'terminal-area', 'right-panel', 'bottom-terminals']) {
+        if (a?.closest(`[data-testid="${id}"]`)) return id
+      }
+      return a?.tagName ?? null
+    })
+    if (region !== 'right-panel') note('FAIL', 'alt-keys', `⌥Tab from the terminal went to ${region}, not the side panel`)
+    else note('PASS', 'alt-keys', '⌥↑↓, ⌥2, ⌥/, ⌥→ by setting, and ⌥Tab on a Mac')
+    await macCtx.close()
+  }
+
   // ── the tablet tier and the phone's way to the side panel ───────────────
   // From 768 up there was one layout, three columns, and an iPad mini in
   // portrait was left a ~215px terminal. Between 768 and 1100 the side panel

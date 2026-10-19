@@ -530,6 +530,8 @@ export function Sidebar(props: SidebarProps) {
                   // scale check waited on "any terminal has content", which is
                   // true of the one that was already on screen.
                   data-session-id={s.id}
+                  // For ⌥← ⌥→, which move between projects in the order drawn.
+                  data-project-id={p.id}
                   // Which one is on screen, said in words a screen reader and
                   // a check can both read rather than only as a background.
                   aria-current={isSelected ? 'true' : undefined}

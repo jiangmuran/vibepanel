@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { panelShortcut } from './shortcuts'
+import { shortcutOptions } from './keyprefs'
 import { attachTouchSelection, cellAt, wheelReport } from './mobile/touchSelect'
 import { wheelReports } from './wheel'
 import { sgrMouseReport, wantsReport } from './mouseReport'
@@ -291,7 +292,7 @@ export function TerminalView({
       if (isBrowserPaste(e)) return false
       // The panel's own keys go past the terminal to the window, where App
       // acts on them; see shortcuts.ts for why these and not others.
-      if (panelShortcut(e)) return false
+      if (panelShortcut(e, shortcutOptions())) return false
       // ctrl+C, only with something selected. Anything else is the interrupt,
       // and the interrupt is not negotiable: it is how a runaway agent gets
       // stopped, and the person pressing it is usually in a hurry.

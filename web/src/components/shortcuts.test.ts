@@ -13,15 +13,14 @@ const key = (k: string, mods: Partial<Record<'ctrlKey' | 'shiftKey' | 'altKey' |
 
 describe('the panel keys', () => {
   it('are Ctrl+Shift with an arrow', () => {
-    expect(panelShortcut(key('ArrowUp', { ctrlKey: true, shiftKey: true }))).toBe('prev')
-    expect(panelShortcut(key('ArrowDown', { ctrlKey: true, shiftKey: true }))).toBe('next')
-    expect(panelShortcut(key('ArrowLeft', { ctrlKey: true, shiftKey: true }))).toBe('leave')
+    expect(panelShortcut(key('ArrowUp', { ctrlKey: true, shiftKey: true }))).toEqual({ act: 'prev' })
+    expect(panelShortcut(key('ArrowDown', { ctrlKey: true, shiftKey: true }))).toEqual({ act: 'next' })
+    expect(panelShortcut(key('ArrowLeft', { ctrlKey: true, shiftKey: true }))).toEqual({ act: 'leave' })
   })
 
   it('leave every key a terminal needs to the terminal', () => {
-    // Alt+arrow is a word jump in a shell; Ctrl+K kills to the end of the
-    // line; Tab completes. The hands-on run tried the first two as panel keys.
-    expect(panelShortcut(key('ArrowDown', { altKey: true }))).toBeNull()
+    // Ctrl+K kills to the end of the line and Tab completes. (Alt+← and → move
+    // by word, and stay the terminal's by default: see the ⌥ keys below.)
     expect(panelShortcut(key('k', { ctrlKey: true }))).toBeNull()
     expect(panelShortcut(key('Tab'))).toBeNull()
     expect(panelShortcut(key('ArrowLeft', { ctrlKey: true }))).toBeNull()
@@ -68,12 +67,65 @@ describe('the panel keys in a text field', () => {
   })
 
   it("are the panel's in a terminal, whose focus sits in a textarea", () => {
-    expect(leave(el('TEXTAREA', {}, ['xterm-helper-textarea']))).toBe('leave')
+    expect(leave(el('TEXTAREA', {}, ['xterm-helper-textarea']))).toEqual({ act: 'leave' })
   })
 
   it("are the panel's on a button or a checkbox", () => {
-    expect(leave(el('BUTTON'))).toBe('leave')
-    expect(leave(el('INPUT', { type: 'checkbox' }))).toBe('leave')
-    expect(leave(null)).toBe('leave')
+    expect(leave(el('BUTTON'))).toEqual({ act: 'leave' })
+    expect(leave(el('INPUT', { type: 'checkbox' }))).toEqual({ act: 'leave' })
+    expect(leave(null)).toEqual({ act: 'leave' })
+  })
+})
+
+describe('the ⌥ / Alt keys', () => {
+  const alt = (k: string, code: string, extra: Record<string, boolean> = {}) => ({
+    ...key(k, { altKey: true, ...extra }),
+    code,
+  })
+
+  it('move between sessions with ⌥↑ and ⌥↓', () => {
+    expect(panelShortcut(alt('ArrowUp', 'ArrowUp'))).toEqual({ act: 'prev' })
+    expect(panelShortcut(alt('ArrowDown', 'ArrowDown'))).toEqual({ act: 'next' })
+  })
+
+  it('jump to a session by the digit key, whatever character a Mac makes of it', () => {
+    // ⌥1 on a Mac is "¡" and ⌥9 is "ª"; the physical key is what was meant.
+    expect(panelShortcut(alt('¡', 'Digit1'))).toEqual({ act: 'goto', n: 1 })
+    expect(panelShortcut(alt('ª', 'Digit9'))).toEqual({ act: 'goto', n: 9 })
+    expect(panelShortcut(alt('3', 'Digit3'))).toEqual({ act: 'goto', n: 3 })
+    expect(panelShortcut(alt('º', 'Digit0'))).toBeNull()
+  })
+
+  it('open the list with ⌥/, which a Mac reports as ÷', () => {
+    expect(panelShortcut(alt('÷', 'Slash'))).toEqual({ act: 'help' })
+  })
+
+  it('leave ⌥← and ⌥→ to the terminal unless the setting gives them to the panel', () => {
+    expect(panelShortcut(alt('ArrowLeft', 'ArrowLeft'))).toBeNull()
+    expect(panelShortcut(alt('ArrowRight', 'ArrowRight'), { sideArrows: 'terminal' })).toBeNull()
+    expect(panelShortcut(alt('ArrowLeft', 'ArrowLeft'), { sideArrows: 'panel' })).toEqual({ act: 'prevProject' })
+    expect(panelShortcut(alt('ArrowRight', 'ArrowRight'), { sideArrows: 'panel' })).toEqual({ act: 'nextProject' })
+  })
+
+  it('move between regions with ⌥Tab on a Mac only', () => {
+    // Alt+Tab elsewhere belongs to the window manager and never arrives.
+    expect(panelShortcut(alt('Tab', 'Tab'), { mac: true })).toEqual({ act: 'regionNext' })
+    expect(panelShortcut(alt('Tab', 'Tab', { shiftKey: true }), { mac: true })).toEqual({ act: 'regionPrev' })
+    expect(panelShortcut(alt('Tab', 'Tab'), { mac: false })).toBeNull()
+  })
+
+  it('are never AltGr, which types characters on a European Windows layout', () => {
+    expect(panelShortcut(alt('@', 'Digit2', { ctrlKey: true }))).toBeNull()
+    expect(panelShortcut(alt('ArrowUp', 'ArrowUp', { ctrlKey: true }))).toBeNull()
+  })
+
+  it('are not taken with ⌘ held, which is the browser\'s', () => {
+    expect(panelShortcut(alt('¡', 'Digit1', { metaKey: true }))).toBeNull()
+  })
+
+  it('type in a text field as usual', () => {
+    const field = { tagName: 'TEXTAREA', classList: { contains: () => false } }
+    expect(panelShortcut({ ...alt('¡', 'Digit1'), target: field })).toBeNull()
+    expect(panelShortcut({ ...alt('ArrowUp', 'ArrowUp'), target: field })).toBeNull()
   })
 })

@@ -3,17 +3,34 @@
  *
  * There were none: a keyboard could not switch sessions at all, and Tab
  * inside a terminal is the terminal's (completion, an agent's own menus), so
- * once there it could not leave either. In the hands-on run Alt+arrows and
- * Ctrl+K were tried and arrived in the agent as `^[[1;3B^K` -- which is right,
- * because Alt+arrow is a word jump in a shell and Ctrl+K kills to the end of
- * the line; neither can be taken from a terminal.
- *
- * Ctrl+Shift with an arrow is what is left: shells and the agents this panel
- * runs do not bind it, and a browser does not either outside a text field.
- * Up and down move between sessions in the order the sidebar shows them;
- * left leaves the terminal for the session list.
+ * once there it could not leave either. Ctrl+K is the terminal's too (kill to
+ * the end of the line), and ⌥/Alt + ← → move by word -- those two are only the
+ * panel's when the setting says so. See panelShortcut for the whole table.
  */
-export type PanelShortcut = 'prev' | 'next' | 'leave'
+export type PanelAction =
+  | 'prev'
+  | 'next'
+  | 'leave'
+  | 'prevProject'
+  | 'nextProject'
+  | 'goto'
+  | 'regionNext'
+  | 'regionPrev'
+  | 'help'
+
+/** What a key asks the panel to do; `n` is the session number for `goto`. */
+export interface PanelShortcut {
+  act: PanelAction
+  n?: number
+}
+
+/** What the answer depends on besides the key. */
+export interface ShortcutOptions {
+  /** ⌥Tab exists only where the window manager has not taken Alt+Tab. */
+  mac?: boolean
+  /** Whether ⌥/Alt + ← → belong to the panel or to the terminal. */
+  sideArrows?: 'terminal' | 'panel'
+}
 
 /** Enough of a DOM element to say whether it edits text. */
 export interface KeyTarget {
@@ -45,25 +62,68 @@ function editsText(t: KeyTarget | null | undefined): boolean {
   return false
 }
 
-export function panelShortcut(e: {
-  key: string
-  ctrlKey: boolean
-  shiftKey: boolean
-  altKey: boolean
-  metaKey: boolean
-  type?: string
-  target?: unknown
-}): PanelShortcut | null {
+/**
+ * The keys, in two families.
+ *
+ * Ctrl+Shift with an arrow was the first: nothing in a shell or an agent binds
+ * it. ⌥/Alt is the second, asked for by name -- ⌥↑ ⌥↓ to move between
+ * sessions, ⌥1…⌥9 to jump to one, ⌥/ for the list of keys, and on a Mac ⌥Tab to
+ * move between the sidebar, the terminal, the side panel and the bottom strip.
+ * ⌥← ⌥→ are the terminal's unless the setting gives them to the panel, where
+ * they move between projects.
+ *
+ * Read by `code` as well as `key` for the digits, the slash and Tab: on a Mac
+ * ⌥1 arrives as key "¡" and ⌥/ as "÷", and the physical key is what was meant.
+ * Ctrl together with Alt is never ours, because that is AltGr on a European
+ * Windows layout, and it types characters.
+ */
+export function panelShortcut(
+  e: {
+    key: string
+    code?: string
+    ctrlKey: boolean
+    shiftKey: boolean
+    altKey: boolean
+    metaKey: boolean
+    type?: string
+    target?: unknown
+  },
+  opts: ShortcutOptions = {},
+): PanelShortcut | null {
   if (e.type !== undefined && e.type !== 'keydown') return null
   if (editsText(e.target as KeyTarget | null | undefined)) return null
-  if (!e.ctrlKey || !e.shiftKey || e.altKey || e.metaKey) return null
+  if (e.metaKey) return null
+
+  if (e.ctrlKey && e.shiftKey && !e.altKey) {
+    switch (e.key) {
+      case 'ArrowUp':
+        return { act: 'prev' }
+      case 'ArrowDown':
+        return { act: 'next' }
+      case 'ArrowLeft':
+        return { act: 'leave' }
+    }
+    return null
+  }
+
+  if (!e.altKey || e.ctrlKey) return null
+  const code = e.code ?? ''
+  if ((code === 'Tab' || e.key === 'Tab') && opts.mac) {
+    return { act: e.shiftKey ? 'regionPrev' : 'regionNext' }
+  }
+  if (e.shiftKey) return null
+  const digit = /^Digit([1-9])$/.exec(code)
+  if (digit) return { act: 'goto', n: Number(digit[1]) }
+  if (code === 'Slash') return { act: 'help' }
   switch (e.key) {
     case 'ArrowUp':
-      return 'prev'
+      return { act: 'prev' }
     case 'ArrowDown':
-      return 'next'
+      return { act: 'next' }
     case 'ArrowLeft':
-      return 'leave'
+      return opts.sideArrows === 'panel' ? { act: 'prevProject' } : null
+    case 'ArrowRight':
+      return opts.sideArrows === 'panel' ? { act: 'nextProject' } : null
   }
   return null
 }
