@@ -26563,3 +26563,15 @@ reload, rather than tearing live terminals down to rebuild them.
 `renderer.test.ts` holds the write against what the terminal reads (removing
 the write fails it); render-check chooses DOM in the settings, reloads, sees
 row elements instead of a canvas, and goes back.
+
+## 2026-10-19 — A download that was ready and still unpacking
+
+`TestADeclaredDownloadIsFollowedVerifiedUnpackedAndWaitedFor` failed once
+beside a green run: the row said `ready: true` and `status: unpacking`. A
+row is two sources read under one lock -- the `.ready` marker on disk and
+the job's status -- and the job's status was cleared by the caller after
+the fetch returned, so the moment after the final rename and before that
+was a window in which both were true. The rename is under the lock now and
+clears the status in the same step. The window was a few hundred
+microseconds; thirty runs did not hit it before the fix either, so this is
+pinned by the ordering and not by a test.

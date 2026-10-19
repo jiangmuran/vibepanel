@@ -378,7 +378,18 @@ func (s *Server) runPluginDownload(ctx context.Context, pluginID string, d plugi
 		return err
 	}
 	_ = os.RemoveAll(target)
-	return os.Rename(staging, target)
+	// The rename and the end of "unpacking" in one step under the lock. A row
+	// is built from two sources -- the marker on disk and the job's status,
+	// read together under this lock -- and between the rename and the caller
+	// taking the job out of the map, one read saw a download that was ready
+	// and still unpacking at once.
+	s.pdl.mu.Lock()
+	defer s.pdl.mu.Unlock()
+	if err := os.Rename(staging, target); err != nil {
+		return err
+	}
+	job.Status = ""
+	return nil
 }
 
 type countingWriter struct {
