@@ -13,7 +13,7 @@
 import { chromium } from 'playwright'
 import { rows as screenRows } from './lib/screen.mjs'
 import { spawn, execSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -605,6 +605,169 @@ try {
     if (after !== 'open') {
       note('WARN', 'reconnect', `status is ${after} after an offline/online cycle`)
     }
+  }
+
+
+  // ── the GPU renderer's glyph atlas under thousands of distinct CJK glyphs ──
+  // A screen of Chinese drew as fragments under WebGL -- some characters
+  // right, some two overlapped -- while the buffer was right. xterm's WebGL
+  // renderer keeps every glyph it has drawn in texture pages and merges them
+  // when it runs out of texture units, and the fixes for bugs in that merge
+  // (xterm.js #5883, #6042, #6043, #6055) were not in addon-webgl 0.19.0.
+  //
+  // What this measures: the screen after the flood, against the same screen
+  // in a page whose atlas holds only what is on it. Anything the flooded
+  // atlas had wrong shows up as a difference. Measured red: with addon-webgl
+  // patched never to re-upload a page it had bound once, this step saw the
+  // fragments and failed on a quarter of the pixels.
+  //
+  // It is a guard, and it has never been seen red. On 0.19.0 in headless
+  // Chromium it passes too, in every shape tried (docs/build-log.md, "The
+  // glyph atlas, measured"): SwiftShader reports 32 texture units where real
+  // Intel and Apple GPUs report 16, and 0.19.0 never resets its clear-model
+  // flag after the first merge, which hides #5883's second bug. The units are
+  // made 16 here and the page is at DPR 2, which is what makes merges happen
+  // at all with this many glyphs; that much is measured.
+  {
+    const script = join(DATA, 'atlas.mjs')
+    writeFileSync(script, `
+      const chars = []
+      for (let c = 0x4e00; c <= 0x9fff; c++) chars.push(c)
+      for (let c = 0x3400; c <= 0x4dbf; c++) chars.push(c)
+      let seed = 7
+      const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff)
+      for (let i = chars.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [chars[i], chars[j]] = [chars[j], chars[i]] }
+      const cols = process.stdout.columns || 80, rows = process.stdout.rows || 24
+      const per = Math.floor(cols / 2)
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const out = (s) => new Promise((r) => process.stdout.write(s, r))
+      const screen = (from) => {
+        let s = '\\x1b[2J\\x1b[H'
+        for (let r = 0; r < rows - 1; r++) s += String.fromCodePoint(...chars.slice(from + r * per, from + (r + 1) * per)) + (r < rows - 2 ? '\\r\\n' : '')
+        return s
+      }
+      const size = per * (rows - 1)
+      // Waits for Enter, so every screen is drawn by the browser's renderer
+      // rather than arriving all at once as a replay.
+      await out('ATLAS' + 'WAIT')
+      await new Promise((r) => process.stdin.once('data', r))
+      await out('\\x1b[?25l')
+      // The primary screen, then an agent's full-screen UI on the alternate
+      // one -- the shape of xterm's own regression test -- then back.
+      let at = 0
+      for (; at + size <= chars.length / 2; at += size) { await out(screen(at)); await sleep(80) }
+      const keep = screen(0)
+      await out(keep)
+      await out('\\x1b[?1049h')
+      for (; at + size <= chars.length; at += size) { await out(screen(at)); await sleep(80) }
+      await out('\\x1b[?1049l')
+      await out('ATLAS' + 'READY')
+      await sleep(1e9)
+    `)
+    await mk([process.execPath, script], 'atlas')
+    await sleep(1500)
+    const gpu = await browser.newContext({ viewport: { width: 1200, height: 800 }, deviceScaleFactor: 2 })
+    await gpu.addInitScript(() => {
+      for (const C of [WebGLRenderingContext, WebGL2RenderingContext]) {
+        const get = C.prototype.getParameter
+        C.prototype.getParameter = function (p) {
+          // MAX_TEXTURE_IMAGE_UNITS, as an Intel or Apple GPU reports it.
+          return p === 0x8872 ? 16 : get.call(this, p)
+        }
+      }
+      // The widest atlas page made. Pages are square canvases that start at
+      // 512, and only a merge makes a wider one, so this is how the check
+      // knows it exercised a merge rather than assuming it did. Read from
+      // the canvas, not from texture uploads: a renderer that fails to
+      // rebind a merged page never uploads it, which is the bug.
+      const h = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, 'height')
+      Object.defineProperty(HTMLCanvasElement.prototype, 'height', {
+        ...h,
+        set(v) {
+          if (v === this.width && v >= 512 && (v & (v - 1)) === 0) window.__vpAtlasWidest = Math.max(window.__vpAtlasWidest ?? 0, v)
+          h.set.call(this, v)
+        },
+      })
+    })
+    const g = await gpu.newPage()
+    const gErrors = []
+    g.on('pageerror', (e) => gErrors.push(String(e)))
+    await g.goto(BASE, { waitUntil: 'networkidle' })
+    await g.locator('[data-testid="auth-username"]').fill('stress')
+    await g.locator('[data-testid="auth-password"]').fill('a sufficiently long password')
+    await g.locator('[data-testid="auth-submit"]').click()
+    await g.waitForSelector('[data-testid="sidebar"], [data-testid="sidebar-rail"]', { timeout: 15000 })
+    await sleep(1500)
+    await g.locator('[data-testid="session-row"]', { hasText: 'atlas' }).first().click()
+    await sleep(1500)
+    await g.locator('[data-testid="main-terminal"]:visible .xterm-screen').click()
+    await g.keyboard.press('Enter')
+    const end = Date.now() + 90000
+    let ready = false
+    while (Date.now() < end && !ready) {
+      ready = (await rows(g)).join('').includes('ATLASREADY')
+      if (!ready) await sleep(500)
+    }
+    const onGpu = await g.evaluate(() => !!document.querySelector('[data-testid="main-terminal"]:not(.hidden) .xterm-screen canvas') &&
+      !document.querySelector('[data-testid="main-terminal"]:not(.hidden) .xterm-rows')?.children.length)
+    if (!ready) {
+      await g.screenshot({ path: join(SHOTS, 'atlas-stuck.png') })
+      note('FAIL', 'atlas', `the glyph flood never finished: ${JSON.stringify((await rows(g)).filter(Boolean).slice(-3)).slice(0, 300)}`)
+    } else if (!onGpu) {
+      note('WARN', 'atlas', 'no WebGL in this browser; the atlas was not exercised')
+    } else if (((await g.evaluate(() => window.__vpAtlasWidest ?? 0)) ?? 0) < 1024) {
+      note('FAIL', 'atlas', `the flood never merged an atlas page (widest ${await g.evaluate(() => window.__vpAtlasWidest)}); the step measured nothing`)
+    } else {
+      await g.mouse.move(0, 0)
+      await sleep(1500)
+      const screen = g.locator('[data-testid="main-terminal"]:visible .xterm-screen')
+      const before = await screen.screenshot()
+      // The reference is the same session opened in a fresh page: same
+      // size, same DPR, same units, and an atlas holding only what is on the
+      // screen. Changing the DPR there and back was tried first, and with a
+      // renderer deliberately broken it drew the same fragments twice: the
+      // atlas for the original ratio came back from xterm's cache.
+      const g2 = await gpu.newPage()
+      g2.on('pageerror', (e) => gErrors.push(String(e)))
+      await g2.goto(BASE, { waitUntil: 'networkidle' })
+      await g2.waitForSelector('[data-testid="sidebar"], [data-testid="sidebar-rail"]', { timeout: 15000 })
+      await g2.locator('[data-testid="session-row"]', { hasText: 'atlas' }).first().click()
+      await sleep(2500)
+      await g2.mouse.move(0, 0)
+      await sleep(1000)
+      const fresh = g2.locator('[data-testid="main-terminal"]:visible .xterm-screen')
+      const after = await fresh.screenshot()
+      const diff = await g.evaluate(async ([a, b]) => {
+        const dec = async (b64) => {
+          const bm = await createImageBitmap(await (await fetch('data:image/png;base64,' + b64)).blob())
+          const c = new OffscreenCanvas(bm.width, bm.height)
+          const x = c.getContext('2d')
+          x.drawImage(bm, 0, 0)
+          return x.getImageData(0, 0, bm.width, bm.height)
+        }
+        const A = await dec(a)
+        const B = await dec(b)
+        if (A.width !== B.width || A.height !== B.height) return { n: -1, total: 0 }
+        let n = 0
+        for (let i = 0; i < A.data.length; i += 4) {
+          const d = Math.abs(A.data[i] - B.data[i]) + Math.abs(A.data[i + 1] - B.data[i + 1]) + Math.abs(A.data[i + 2] - B.data[i + 2])
+          if (d > 48) n++
+        }
+        return { n, total: A.width * A.height }
+      }, [before.toString('base64'), after.toString('base64')])
+      writeFileSync(join(SHOTS, 'atlas-before.png'), before)
+      writeFileSync(join(SHOTS, 'atlas-after.png'), after)
+      // A few hundred pixels of slack: the cursor is hidden, but a blink
+      // or the selection layer is not worth failing a run over. A broken
+      // page is thousands -- every glyph on it.
+      if (diff.n < 0 || diff.n > 300) {
+        note('FAIL', 'atlas', `after the flood the screen differs from a fresh page: ${diff.n} of ${diff.total} pixels (shots: atlas-before/after.png)`)
+      } else {
+        note('INFO', 'atlas', `matches a fresh page: ${diff.n} of ${diff.total} pixels differ, widest page ${await g.evaluate(() => window.__vpAtlasWidest)}`)
+      }
+    }
+    for (const e of gErrors) note('FAIL', 'atlas', `uncaught: ${e}`)
+    await gpu.close()
   }
 
   for (const e of pageErrors) note('FAIL', 'js', `uncaught: ${e}`)

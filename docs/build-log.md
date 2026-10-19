@@ -26575,3 +26575,51 @@ was a window in which both were true. The rename is under the lock now and
 clears the status in the same step. The window was a few hundred
 microseconds; thirty runs did not hit it before the fix either, so this is
 pinned by the ordering and not by a test.
+## 2026-10-19 — The glyph atlas, measured
+
+A screen of Chinese drew as fragments under WebGL: some characters right,
+some two overlapped. xterm.js has fixed four bugs in the WebGL glyph atlas's
+page merging since `@xterm/addon-webgl` 0.19.0 (#5883, #6042, #6043, #6055),
+all on the 6.1 beta line and none in a stable release. Before trying the
+beta, stress-check was given a step that should tell the two apart.
+
+It floods one session with all 27k characters of U+4E00–9FFF and Extension A
+in random order, a screen at a time on the primary screen and then on the
+alternate screen the way an agent's full-screen UI does (the shape of
+xterm's own regression test), comes back, and compares the result with the
+same session opened in a fresh page, whose atlas holds only what is on the
+screen.
+
+It cannot be made red on 0.19.0 in headless Chromium, and the reasons are
+worth keeping:
+
+- SwiftShader reports 32 texture units; real Intel and Apple GPUs report 16.
+  At 32, 27k glyphs at 13px fill 13–14 pages and the atlas never merges at
+  all. The step reports 16, at DPR 2, and checks that a page wider than 512
+  was made -- only a merge makes one -- so it fails as "measured nothing"
+  rather than passing when no merge happened. Back at 32 and DPR 1 it does
+  fail that way.
+- 0.19.0 sets `_requestClearModel` on a merge and never resets it, so after
+  the first merge every frame rebuilds the model. That hides #5883's second
+  bug (stale page indices in cells that did not change) and #6042 (a second
+  terminal sharing the atlas), which is close to a regression of #5883's own
+  fix. #6055 needs `clearTextureAtlas()`, which the panel never calls.
+- What is left on 0.19.0 is #5883's first bug, a merged page landing on an
+  index whose last-bound version it happens to equal, and #6043's overflow.
+  Both depend on page order and the GPU's unit count. Shapes tried in a
+  standalone page against both versions: a full-screen flood, fixed rows
+  above a scrolling region, two terminals sharing one atlas, 16 units, DPR
+  2, `maxAtlasPages` forced to 4, and upstream's alternate-screen test. All
+  were 0 pixels on both versions.
+
+That the step can see the fault at all is measured: with addon-webgl patched
+never to re-upload a page it had bound once, the screen came out as the same
+kind of fragments, and the step failed on 276,299 of 1,203,840 pixels.
+Re-rasterising by changing the DPR and back was the first reference and was
+useless: under that patch it drew the same fragments twice, because the
+atlas for the original ratio came back from xterm's cache.
+
+Whether the user's screen was the atlas at all is open. Width disagreement
+between tmux and xterm draws the same fragments; the difference is that an
+atlas fault clears when the terminal redraws (a resize, a hover) and a width
+fault does not.
