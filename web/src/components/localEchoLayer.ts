@@ -20,11 +20,28 @@ export interface LocalEcho {
   dispose(): void
 }
 
-/** Kill switch, for a device where it misbehaves: `localStorage
- *  ['vibepanel.localEcho'] = 'off'`, the same shape as the renderer one.
- *  `'debug'` keeps it on and logs every prediction dropped, and why, to the
- *  console -- which is how "it sometimes still lags" gets a reason. */
+/** On unless switched off in Settings → Panel → Local echo
+ *  (settings/LocalEchoSettings.tsx), which writes `'off'` here and removes the
+ *  key to turn it back on. Kept in this browser, like the renderer: a device
+ *  where it draws wrong is this device. `'debug'` keeps it on and logs every
+ *  prediction dropped, and why, to the console -- which is how "it sometimes
+ *  still lags" gets a reason; the settings leave that value alone. */
 export const LOCAL_ECHO_KEY = 'vibepanel.localEcho'
+
+/** Read on every keystroke (see `usable`), so a change reaches terminals
+ *  already open from the next key on, with no reload. */
+export function localEchoOn(): boolean {
+  return setting() !== 'off'
+}
+
+export function setLocalEcho(on: boolean): void {
+  try {
+    if (!on) localStorage.setItem(LOCAL_ECHO_KEY, 'off')
+    else if (localStorage.getItem(LOCAL_ECHO_KEY) === 'off') localStorage.removeItem(LOCAL_ECHO_KEY)
+  } catch {
+    /* private mode: it stays on */
+  }
+}
 
 function setting(): string {
   try {
@@ -135,7 +152,7 @@ export function attachLocalEcho(term: Xterm, agent: () => EchoAgent | null): Loc
   // frame, and a keystroke landing mid-frame must not drop the line typed so
   // far.
   const usable = () => {
-    if (!agent() || setting() === 'off' || !screenEl) return false
+    if (!agent() || !localEchoOn() || !screenEl) return false
     const buf = term.buffer.active
     return buf.viewportY === buf.baseY
   }

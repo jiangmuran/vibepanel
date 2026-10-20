@@ -26855,3 +26855,28 @@ Left as they were, and written down so the next look starts here:
   6.1 beta.
 - While a prediction is up, an IME composition is drawn by xterm at the
   server's cursor, which is behind the predicted one, and under the layer.
+
+## 2026-10-20 — Local echo, switched off from the settings
+
+The switch for local echo was a localStorage key and a comment telling
+somebody to set it from the console, which is the shape the renderer switch
+had until yesterday. It is now Settings → Panel → Local echo, on by default,
+next to the renderer. Off writes `'off'`; on removes the key, unless it says
+`'debug'`, which is on with logging and is left alone for whoever is chasing a
+reason.
+
+Unlike the renderer, no reload: `usable()` reads the key on every keystroke,
+so the next key typed into a terminal already open is drawn the new way. The
+page says so in those words.
+
+render-check had never looked at the layer at all. It now starts a program
+called `claude` (python3 under that name, as the "guessing" step does) that
+draws "❯ " and echoes each key 600 ms after it arrives, each on its own clock:
+a queue would make the fourth key a round trip and a half late, and the
+predictor now rightly drops a line the server is that far behind on. Typing
+"abc" must show "abc" on the layer and "❯ abc" in its `data-row` at once and
+nothing pending once the echo is in; switched off in the settings, "xyz" must
+draw nothing ahead; switched back on, "q" must. With `usable()` ignoring the
+switch the step fails with `switched off, typing "xyz" still drew "xyz"`.
+The session is deleted at the end of the step, because a `claude` with no hooks
+raises the "guessing" notice that a later step raises on purpose.

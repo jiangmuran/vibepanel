@@ -90,6 +90,7 @@ export const SETTINGS_SECTIONS = [
   'restart',
   'keys',
   'renderer',
+  'localEcho',
   'tour',
 ] as const
 
@@ -143,6 +144,8 @@ export const SECTION_GROUP: Record<SettingsSection, SettingsGroup> = {
   // Kept in this browser for the same reason: a renderer that draws wrong is
   // this machine's GPU and driver, not the account.
   renderer: 'panel',
+  // The same: what it draws wrong is this device's keyboard and input method.
+  localEcho: 'panel',
   tour: 'panel',
 }
 

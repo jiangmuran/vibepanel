@@ -2529,6 +2529,104 @@ browser = await chromium.launch({ headless: true })
     await macCtx.close()
   }
 
+  // ── local echo, and its switch ──────────────────────────────────────────
+  // A program called `claude` that draws Claude Code's "❯ " and echoes each
+  // key 600 ms after it arrives, as a slow link would. Every key is echoed
+  // on its own clock rather than one after another: a queue would make the
+  // fourth key a round trip late, and the predictor rightly gives up on a
+  // server that far behind. Nothing else in this run looks at the layer, so
+  // the characters drawn ahead of the server, the row as a person sees it and
+  // the settings switch are all only checked here.
+  {
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await sleep(400)
+    const dir = join(DATA, 'echo-agent')
+    mkdirSync(dir, { recursive: true })
+    execSync(`ln -sf "$(command -v python3)" ${JSON.stringify(join(dir, 'claude'))}`)
+    writeFileSync(join(dir, 'agent.py'), [
+      'import os, select, sys, time, tty',
+      'tty.setraw(0)',
+      'out = sys.stdout',
+      "out.write('\\x1b[2J\\x1b[H\\r\\n\\u276f '); out.flush()",
+      'due = []',
+      'while True:',
+      '    wait = max(0, due[0][0] - time.time()) if due else None',
+      '    r, _, _ = select.select([0], [], [], wait)',
+      '    if r:',
+      "        for ch in os.read(0, 64).decode('utf-8', 'ignore'):",
+      '            due.append((time.time() + 0.6, ch))',
+      '    while due and due[0][0] <= time.time():',
+      '        ch = due.pop(0)[1]',
+      "        if ch == '\\x7f': out.write('\\b \\b')",
+      "        elif ch in '\\r\\n': out.write('\\r\\n\\u276f ')",
+      "        elif ch >= ' ': out.write(ch)",
+      '        out.flush()',
+      '',
+    ].join('\n'))
+    const made = await mkSession([join(dir, 'claude'), join(dir, 'agent.py')], 'echo-agent')
+    await sleep(1500)
+    const id = made.id ?? (await (await authed('/api/state')).json()).sessions.find((x) => x.title === 'echo-agent')?.id
+    const layer = () =>
+      page.evaluate(() => {
+        const s = [...document.querySelectorAll('[data-testid="terminal-area"] .xterm-screen')].find((e) => e.offsetParent)
+        const l = s?.querySelector('[data-testid="local-echo"]')
+        return l ? { pending: l.dataset.pending ?? '', row: l.dataset.row ?? '' } : null
+      })
+    const typeIn = async (text) => {
+      await page.locator('[data-testid="terminal-area"] .xterm >> visible=true').first().click().catch(() => {})
+      await sleep(1200)
+      await page.keyboard.type(text, { delay: 20 })
+      return layer()
+    }
+    const panel = async () => {
+      await page.locator('[data-testid="settings-open"]').click()
+      await sleep(500)
+      await page.locator('[data-testid="settings-group-panel"]').click().catch(() => {})
+      await sleep(400)
+    }
+    await page.locator(`[data-testid="session-row"][data-session-id="${id}"]`).click().catch(() => {})
+    await sleep(1500)
+    const ahead = await typeIn('abc')
+    await sleep(2000)
+    const caught = await layer()
+    if (!ahead) note('FAIL', 'local-echo', 'the terminal has no local echo layer')
+    else if (ahead.pending !== 'abc') note('FAIL', 'local-echo', `typed "abc" into a slow claude and the layer drew "${ahead.pending}"`)
+    else if (!ahead.row.includes('❯ abc')) note('FAIL', 'local-echo', `the row as drawn is "${ahead.row.trimEnd()}", not "❯ abc"`)
+    else if (caught?.pending !== '') note('FAIL', 'local-echo', `the server echoed "abc" and the layer still draws "${caught?.pending}"`)
+
+    await panel()
+    if (!(await page.locator('[data-testid="local-echo-choice"]').isVisible().catch(() => false))) {
+      note('FAIL', 'local-echo', 'the settings have no local echo choice')
+      await page.keyboard.press('Escape')
+      await sleep(400)
+    } else {
+      await page.locator('[data-testid="local-echo-off"]').check()
+      await page.keyboard.press('Escape')
+      await sleep(400)
+      // No reload: the terminal already open reads the switch on the next key.
+      const off = await typeIn('xyz')
+      await sleep(150)
+      const offLater = await layer()
+      await sleep(2000)
+      await panel()
+      await page.locator('[data-testid="local-echo-on"]').check()
+      await page.keyboard.press('Escape')
+      await sleep(400)
+      const on = await typeIn('q')
+      await sleep(1500)
+      if (off?.pending || offLater?.pending) note('FAIL', 'local-echo', `switched off, typing "xyz" still drew "${off?.pending || offLater?.pending}" ahead of the server`)
+      else if (on?.pending !== 'q') note('FAIL', 'local-echo', `switched back on, typing "q" drew "${on?.pending}"`)
+      else if (ahead?.pending === 'abc' && caught?.pending === '') {
+        note('PASS', 'local-echo', 'drawn ahead of a 600 ms echo and taken down when it arrives; off and back on in the settings, no reload')
+      }
+    }
+    await page.evaluate(() => localStorage.removeItem('vibepanel.localEcho'))
+    // Gone again: a session named claude with no hooks raises the "guessing"
+    // notice, which the step that is about that notice raises on purpose.
+    if (id) await authed(`/api/sessions/${id}`, { method: 'DELETE' }).catch(() => {})
+    await sleep(800)
+  }
+
   // ── the tablet tier and the phone's way to the side panel ───────────────
   // From 768 up there was one layout, three columns, and an iPad mini in
   // portrait was left a ~215px terminal. Between 768 and 1100 the side panel
