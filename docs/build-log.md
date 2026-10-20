@@ -26821,3 +26821,37 @@ line showed. Two causes, found one after the other:
 Checked on all three agents: a held backspace at 30, 60 and 100 ms a press,
 three runs each, plus the mixed typing check, 33 runs, and the line only ever
 got shorter. `localEcho.test.ts` holds both cases.
+
+## 2026-10-20 — A prediction the server disagreed with stayed up
+
+Reviewing pull #27 before merging it. The predictor dropped a line on a
+confirmed match, a moved row, a key it does not predict, or two seconds after
+the last keystroke, and on nothing else. A line the server answered with
+something different stayed drawn over the real one for as long as the typing
+went on. Claude Code's vim mode is the plain case: on an empty input the first
+`i` switches to insert and draws nothing, and the panel showed "ihello" over
+"hello" until the typist stopped for two seconds. The cover runs to the end of
+the input, so whatever the program did draw there was hidden too.
+
+Once a round trip has passed since the last keystroke and the output is quiet,
+a line that does not match is now dropped and prediction waits for a pause,
+the same as after Enter. The test drives the vim case; taking the drop out
+turns it red.
+
+The paste rule had a test that passed without it: forty characters on a
+forty-column screen stopped at the edge first. It now pastes twenty on eighty
+columns.
+
+Left as they were, and written down so the next look starts here:
+
+- Which program is running is decided by the session's launch profile before
+  the pane's command. Claude Code and Codex hand `Ctrl+G` to `$EDITOR`, and
+  while vim has the pane the profile still says `claude`. Vim's insert mode
+  echoes, so it mostly matches; normal mode on an empty line is now dropped
+  after a round trip rather than at the timeout.
+- Nothing in the browser checks touches the layer. `usable()`'s scrolled-up
+  test, the cursor-hidden read through xterm's internals and the colours are
+  covered by no test at all. `coreService.isCursorHidden` is still there in the
+  6.1 beta.
+- While a prediction is up, an IME composition is drawn by xterm at the
+  server's cursor, which is behind the predicted one, and under the layer.

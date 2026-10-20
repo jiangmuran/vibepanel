@@ -244,7 +244,9 @@ describe('EchoPredictor', () => {
   })
 
   it('does not predict pastes, emoji, or past the edge', () => {
-    expect(new EchoPredictor().input('x'.repeat(40), claude(), 0)).toBe(false)
+    // Short of the edge, so that it is the length that says no: 40 on a
+    // 40-column screen stopped at the edge and passed without the paste rule.
+    expect(new EchoPredictor().input('x'.repeat(20), claude('', { cols: 80 }), 0)).toBe(false)
     expect(new EchoPredictor().input('\u{1f600}', claude(), 0)).toBe(false)
     const narrow = new EchoPredictor()
     expect(narrow.input('abcdef', claude('', { cols: 8 }), 0)).toBe(false)
@@ -258,6 +260,22 @@ describe('EchoPredictor', () => {
 
   it('does not start while the program has the cursor hidden', () => {
     expect(new EchoPredictor().input('a', claude('', { hidden: true }), 0)).toBe(false)
+  })
+
+  it('drops the line once the server has had a round trip and shows something else', () => {
+    // Claude Code's vim mode: on an empty input the first "i" switches to
+    // insert and draws nothing.
+    const p = new EchoPredictor()
+    let now = 0
+    const typed = ['', 'h', 'he', 'hel']
+    for (const [i, k] of [...'ihel'].entries()) {
+      p.input(k, claude(typed[i]), (now += 150))
+      p.output(now + 40)
+      p.settle(claude(typed[i]), now + 60)
+    }
+    p.settle(claude('hel'), now + 1000)
+    expect(p.active).toBe(false)
+    expect(p.lastReset).toContain('server disagrees')
   })
 
   it('gives up if the server never agrees', () => {

@@ -40,7 +40,8 @@ import type { Session } from '../protocol/wire'
  * enough for the server to have caught up: a prediction anchored on a screen
  * the server has not finished changing is drawn in the wrong place. The
  * failure mode is "as slow as it used to be", never a wrong line on screen for
- * longer than the timeout below.
+ * longer than a round trip once the output has caught up, or the timeout
+ * below when it never does.
  */
 
 /** Unconfirmed this long after the last keystroke, a prediction is dropped.
@@ -465,11 +466,20 @@ export class EchoPredictor {
       this.suspend(`row ${this.row}->${screen.cursorY}`)
       return true
     }
-    if (this.confirmDelay(now) === 0 && this.matches(screen)) {
-      // The server has caught up with everything typed.
-      this.lastReset = `#${++this.resets} confirmed (round trip ${Math.round(this.rtt)} ms)`
-      this.text = []
-      this.row = -1
+    if (this.confirmDelay(now) === 0) {
+      if (this.matches(screen)) {
+        // The server has caught up with everything typed.
+        this.lastReset = `#${++this.resets} confirmed (round trip ${Math.round(this.rtt)} ms)`
+        this.text = []
+        this.row = -1
+        return true
+      }
+      // A round trip after the last keystroke and the server's line is
+      // something else: a key was not a character to the program (Claude
+      // Code's vim mode reads the first "i" as insert), and the prediction
+      // is showing a line nobody typed. Waiting for the timeout kept "ihello"
+      // over "hello" for as long as the typing went on.
+      this.suspend('server disagrees')
       return true
     }
     return this.expire(now)
