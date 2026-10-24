@@ -459,6 +459,106 @@ try {
     }
   }
 
+  // ── the wheel in a full-screen TUI that never asked for the mouse ────────
+  // Issue #19: scrolling a pane that was drawing a full-screen program
+  // forwarded nothing. The program is the only thing that knows what is above
+  // the live screen, and the panel's own buffer under one is redraw fragments
+  // rather than a transcript -- scrolling that was the torn
+  // half-one-frame-half-another picture in the report. A full-screen program
+  // that did not ask for the mouse is told the scroll as arrow keys
+  // (alternate scroll), and whether it moved is what this measures: POS is a
+  // counter the fixture moves for every Up and Down it receives, so a changed
+  // number is the gesture having arrived, read straight off the fixture's own
+  // accounting. The pane is what tells the panel a full-screen program is
+  // drawing (tmux's alternate_on, polled, so the check waits for the
+  // data-fullscreen flag before touching the wheel), and it never sends a
+  // mouse report, so nothing here can pass by accident.
+  const altscrollScript = join(DATA, 'altscroll.py')
+  writeFileSync(
+    altscrollScript,
+    [
+      'import os, sys, termios, tty',
+      'out = sys.stdout',
+      'pos = 0',
+      'def draw():',
+      "    out.write('\\x1b[?1049h\\x1b[H\\x1b[2J')",
+      "    out.write('\\x1b[1;1H ALTSCROLL_READY (full screen, no mouse)')",
+      '    for r in range(4, 22):',
+      "        out.write(f'\\x1b[{r};1H FILLER_ROW_{r:02d}   ')",
+      "    out.write(f'\\x1b[23;1H POS={pos}   ')",
+      "    out.write('\\x1b[24;1H status: waiting   ')",
+      '    out.flush()',
+      'draw()',
+      'fd = sys.stdin.fileno()',
+      'old = termios.tcgetattr(fd)',
+      'tty.setraw(fd)',
+      'try:',
+      '    while True:',
+      '        b = os.read(fd, 64)',
+      '        if not b:',
+      '            break',
+      "        pos += b.count(b'\\x1b[A') + b.count(b'\\x1bOA')",
+      "        pos -= b.count(b'\\x1b[B') + b.count(b'\\x1bOB')",
+      '        draw()',
+      'except KeyboardInterrupt:',
+      '    pass',
+      'finally:',
+      '    termios.tcsetattr(fd, termios.TCSADRAIN, old)',
+      "    out.write('\\x1b[?1049l')",
+      '    out.flush()',
+    ].join('\n') + '\n',
+  )
+  await mk(['python3', '-u', altscrollScript], 'altscroll')
+  await sleep(2500)
+  await select('altscroll')
+  const posRow = async () => (await rows(page)).find((r) => r.includes('POS=')) ?? ''
+  const pos = (r) => Number((/POS=(-?\d+)/.exec(r) ?? [])[1] ?? NaN)
+  // The poller, not the byte stream, is what says a full-screen program is
+  // drawing -- the smcup@ line in vibepanel.conf keeps it out of the stream --
+  // and the poll runs every couple of seconds. Scrolling before it lands
+  // measures the old behaviour by construction.
+  const fullscreenShown = await page
+    .waitForSelector('[data-testid="main-terminal"] [data-fullscreen="true"]', { timeout: 10000 })
+    .then(() => true)
+    .catch(() => false)
+  if (!fullscreenShown) {
+    note('WARN', 'altscroll', 'the pane never reported fullscreen; not measuring without it')
+  } else {
+    const before = await posRow()
+    const box = await page.locator(MAIN_SCREEN).boundingBox()
+    if (!box || !Number.isFinite(pos(before))) {
+      note('WARN', 'altscroll', `nothing to scroll: ${JSON.stringify(before)}`)
+    } else {
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+      for (let i = 0; i < 8; i++) await page.mouse.wheel(0, -240)
+      await sleep(800)
+      let afterUp = await posRow()
+      let ok = Number.isFinite(pos(afterUp)) && pos(afterUp) > pos(before)
+      for (let i = 0; i < 5 && !ok; i++) {
+        await page.mouse.wheel(0, -240)
+        await sleep(600)
+        afterUp = await posRow()
+        ok = Number.isFinite(pos(afterUp)) && pos(afterUp) > pos(before)
+      }
+      if (!ok) {
+        note('FAIL', 'altscroll',
+          `the wheel reached a full-screen TUI as nothing: ${JSON.stringify(before)} -> ${JSON.stringify(afterUp)}`)
+      } else {
+        for (let i = 0; i < 6; i++) await page.mouse.wheel(0, 240)
+        await sleep(800)
+        const afterDown = await posRow()
+        if (!Number.isFinite(pos(afterDown)) || pos(afterDown) >= pos(afterUp)) {
+          note('FAIL', 'altscroll',
+            `wheel-up moved the TUI (POS ${pos(before)} -> ${pos(afterUp)}) but wheel-down did not: ${JSON.stringify(afterDown)}`)
+        } else {
+          note('PASS', 'altscroll',
+            `a full-screen TUI without mouse reporting was scrolled by the wheel: POS ${pos(before)} -> ${pos(afterUp)} -> ${pos(afterDown)}`)
+        }
+      }
+      await page.screenshot({ path: join(SHOTS, 'altscroll.png') })
+    }
+  }
+
   // ── a flood ──────────────────────────────────────────────────────────────
   // A build or a test run produces tens of thousands of lines in a few
   // seconds. The pump must not stall, the browser must not die, and the tail

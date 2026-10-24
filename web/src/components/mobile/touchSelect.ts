@@ -148,8 +148,15 @@ export function dragRows(dy: number, rowHeight: number, carried: number) {
  * the gesture is its business. This comes first, and the order is the whole
  * function.
  *
- * `buffer` — nobody is listening, so this is the terminal's own scrollback and
- * the panel scrolls it.
+ * `arrows` — a full-screen application that did not ask for the mouse. It
+ * still owns the scroll -- above it there is nothing a terminal may scroll --
+ * but the gesture reaches it as arrow keys (`alternateScrollKeys`), the way
+ * every terminal answers a wheel on an alternate screen. tmux's
+ * `#{alternate_on}`, which the panel polls and pushes as `fullscreen`, is what
+ * says a full-screen application is drawing: nothing in the byte stream does.
+ *
+ * `buffer` — nobody is listening and no full-screen program is drawing, so
+ * this is the terminal's own scrollback and the panel scrolls it.
  *
  * `none` — nothing to scroll and nobody to tell. The gesture is still claimed
  * by the caller, because a drag over a full-screen agent has to do nothing
@@ -178,12 +185,36 @@ export function dragRows(dy: number, rowHeight: number, carried: number) {
  * is its answer and the panel does not get to substitute a better-looking one
  * out of a buffer that does not mean anything.
  *
- * A function of two values so it can be tested: the branch it replaces could be
- * deleted without failing anything, which is how the wrong half shipped.
+ * A function of three values so it can be tested: the branch it replaces could
+ * be deleted without failing anything, which is how the wrong half shipped.
  */
-export function scrollAction(mouseTracking: string, baseY: number): 'wheel' | 'buffer' | 'none' {
+export function scrollAction(mouseTracking: string, fullscreen: boolean, baseY: number): 'wheel' | 'arrows' | 'buffer' | 'none' {
   if (mouseTracking !== 'none') return 'wheel'
+  if (fullscreen) return 'arrows'
   return baseY > 0 ? 'buffer' : 'none'
+}
+
+/**
+ * The alternate screen's scroll: arrow keys, for a full-screen application
+ * that did not ask for the mouse.
+ *
+ * Above a full-screen application there is nothing a terminal may scroll on
+ * its own, and in this panel the local buffer under one is worse than nothing
+ * -- the redraw fragments of issue #19, not a transcript. Every desktop
+ * terminal answers the wheel there with arrow keys instead (alternate scroll),
+ * handing the direction to the application, which alone knows what is above
+ * the current view.
+ *
+ * DECCKM picks the SS3 form: an application that asked for application cursor
+ * keys was promised Up and Down in that encoding, and a strict one reads the
+ * CSI form as garbage.
+ */
+export function alternateScrollKeys(up: boolean, count: number, applicationCursor: boolean): string {
+  if (count <= 0) return ''
+  const key = up
+    ? applicationCursor ? '\x1bOA' : '\x1b[A'
+    : applicationCursor ? '\x1bOB' : '\x1b[B'
+  return key.repeat(count)
 }
 
 export function wheelReport(up: boolean, col: number, row: number): string {
@@ -196,6 +227,9 @@ export function attachTouchSelection(
   host: HTMLElement,
   term: Terminal,
   send?: (data: string) => void,
+  // A getter, not a value: the attachment lives for the terminal's lifetime
+  // and a TUI starting or stopping inside the pane must not reattach it.
+  isFullscreen?: () => boolean,
 ): () => void {
   let holdTimer: number | undefined
   let anchor: Cell | null = null
@@ -321,7 +355,11 @@ export function attachTouchSelection(
       notchCarried = notch.carry
       lastY = t.clientY
       {
-        const action = scrollAction(term.modes.mouseTrackingMode, term.buffer.active.baseY)
+        const action = scrollAction(
+          term.modes.mouseTrackingMode,
+          isFullscreen?.() ?? false,
+          term.buffer.active.baseY,
+        )
         if (action === 'wheel' && send && notch.rows !== 0) {
           // The application's scroll, not the terminal's. Down reveals what
           // came before, which is wheel-up, which is which way every list on a
@@ -332,6 +370,14 @@ export function attachTouchSelection(
           for (let i = 0; i < n; i++) {
             send(wheelReport(up, cell?.col ?? 0, cell?.row ?? 0))
           }
+        } else if (action === 'arrows' && send && notch.rows !== 0) {
+          // The full-screen application's scroll, which arrives as arrows
+          // because it did not ask for the mouse. The notch rate the wheel
+          // branch uses, not the line rate, so the same swipe travels the same
+          // distance whichever way the application listens.
+          const up = notch.rows > 0
+          const n = Math.min(Math.abs(notch.rows), 10)
+          send(alternateScrollKeys(up, n, term.modes.applicationCursorKeysMode))
         } else if (action === 'buffer' && step.rows !== 0) {
           // Nobody is listening for the wheel, so this is the terminal's own
           // scrollback. Only when there is somewhere to go: the gesture is
