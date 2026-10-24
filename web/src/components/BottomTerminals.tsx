@@ -40,6 +40,13 @@ interface Props {
   touchSelect?: boolean
   /** Takes the space it is given instead of its own height: a phone's sheet. */
   fill?: boolean
+  /**
+   * The sessions whose pane is drawing a full-screen program -- the same
+   * `state.fullscreen` the main terminal gets, by the same reasoning: a
+   * scratch terminal running vim is as full-screen as an agent is, and the
+   * wheel has to know.
+   */
+  fullscreen: string[]
 }
 
 /**
@@ -273,6 +280,7 @@ export function BottomTerminals(props: Props) {
             sessionId={active.id}
             themeKey={themeKey}
             touchSelect={props.touchSelect}
+            fullscreen={props.fullscreen.includes(active.id)}
             className="h-full w-full px-2 py-1"
           />
         ) : (

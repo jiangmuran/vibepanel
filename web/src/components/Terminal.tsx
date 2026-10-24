@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { panelShortcut } from './shortcuts'
 import { shortcutOptions } from './keyprefs'
-import { attachTouchSelection, cellAt, wheelReport } from './mobile/touchSelect'
+import { alternateScrollKeys, attachTouchSelection, cellAt, wheelReport } from './mobile/touchSelect'
 import { wheelReports } from './wheel'
 import { sgrMouseReport, wantsReport } from './mouseReport'
 import { iosInputText, shouldBypassXtermKeydown } from './iosInput'
@@ -169,6 +169,10 @@ export function TerminalView({
   // resubscribes every mounted terminal, and a hidden one must not arrive as a
   // viewer claiming the grid.
   const hiddenRef = useRef(hidden)
+  // Same shape as hiddenRef: a TUI starting or ending inside the pane flips
+  // this every couple of seconds, and the wheel handler below reads it live --
+  // the terminal itself must never rebuild under a running program.
+  const fullscreenRef = useRef(fullscreen)
   // A ref for the same reason: the session's command is re-read every couple
   // of seconds, and a program starting in the pane must not rebuild the
   // terminal under it.
@@ -178,6 +182,7 @@ export function TerminalView({
     onClipboardRef.current = onClipboard
     hiddenRef.current = hidden
     predictEchoRef.current = predictEcho
+    fullscreenRef.current = fullscreen
   })
 
   // Terminal lifetime is tied to the session, never to the theme or to
@@ -486,18 +491,46 @@ export function TerminalView({
     }
     host.addEventListener('mousedown', scaledMouseDown, true)
 
-    // The wheel, for an application that asked for the mouse.
+    // The wheel, and who owns it.
     //
-    // xterm's own report is one per event; wheel.ts says why that is a third
-    // to a twentieth of what a terminal emulator sends and what that did to pi
+    // An application that asked for the mouse owns the scroll: xterm's own
+    // report is one per event; wheel.ts says why that is a third to a
+    // twentieth of what a terminal emulator sends and what that did to pi
     // 1.0's full-screen transcript. Measured in the same pixels the event is
-    // in, from the element both renderers draw into, because the DOM renderer's
-    // rows element is empty under WebGL. Returning false keeps xterm from
-    // adding its own report on top.
+    // in, from the element both renderers draw into, because the DOM
+    // renderer's rows element is empty under WebGL.
+    //
+    // A full-screen application that did NOT ask for the mouse owns it too --
+    // tmux's #{alternate_on}, pushed as `fullscreen`, says one is drawing --
+    // but there the gesture is arrow keys (`alternateScrollKeys`), the way
+    // every terminal answers a wheel on an alternate screen. Falling through
+    // to xterm scrolls this viewer's own buffer instead, and under a
+    // full-screen program that buffer is not a transcript but the redraw
+    // fragments the stream piled up, so scrolling it is the torn
+    // half-one-frame half-another picture of issue #19 and nothing reaches the
+    // pane. Only when the tracking mode is 'none': an application that asked
+    // for the mouse in the legacy encoding keeps xterm's own reports, which
+    // are correctly encoded, rather than being handed keystrokes it never
+    // asked for.
+    //
+    // A shell keeps xterm's own handling: that scrollback is real and it is
+    // the one place the panel may scroll on its own.
+    //
+    // Returning false keeps xterm from adding its own handling on top.
     let wheelCarry = 0
     term.attachCustomWheelEventHandler((ev) => {
-      // Only for SGR; a legacy-encoding app gets xterm's own, correct report.
-      if (!sgrMouse()) return true
+      // Who gets the wheel is decided before anything is measured. A shell is
+      // the commonest thing under the pointer and its scroll must not cost a
+      // layout read per event: the cheapness of that read was measured for the
+      // mouse path (2026-10-06), not for every wheel event everywhere.
+      const sgr = sgrMouse()
+      if (!sgr && !(term.modes.mouseTrackingMode === 'none' && fullscreenRef.current)) {
+        // The terminal's own scrollback. The carry belongs to the forwarded
+        // paths below; a spell of local scrolling must not hand one of them a
+        // stale head start when the pane changes hands.
+        wheelCarry = 0
+        return true
+      }
       const screen = host.querySelector('.xterm-screen')
       const box = screen?.getBoundingClientRect()
       if (!box || box.height === 0 || box.width === 0) return true
@@ -510,11 +543,18 @@ export function TerminalView({
       wheelCarry = plan.carry
       ev.preventDefault()
       if (plan.count === 0 || replayQueue.replaying) return false
-      const cell = cellAt({ x: ev.clientX, y: ev.clientY }, box, term.cols, term.rows)
-      // One frame rather than one per report: they arrive together either way,
-      // and pi treats reports closer than five milliseconds as one notch, a
-      // line each, which is the rate this was sized for.
-      socket.writeText(sessionId, wheelReport(plan.up, cell.col, cell.row).repeat(plan.count))
+      if (sgr) {
+        const cell = cellAt({ x: ev.clientX, y: ev.clientY }, box, term.cols, term.rows)
+        // One frame rather than one per report: they arrive together either way,
+        // and pi treats reports closer than five milliseconds as one notch, a
+        // line each, which is the rate this was sized for.
+        socket.writeText(sessionId, wheelReport(plan.up, cell.col, cell.row).repeat(plan.count))
+        return false
+      }
+      socket.writeText(
+        sessionId,
+        alternateScrollKeys(plan.up, plan.count, term.modes.applicationCursorKeysMode),
+      )
       return false
     })
 
@@ -722,7 +762,12 @@ export function TerminalView({
     // pointer, and it has to reach the pty the same way keystrokes from a
     // desktop do.
     const detachTouch = touchSelect
-      ? attachTouchSelection(host, term, (data) => socket.write(sessionId, encoder.encode(data)))
+      ? attachTouchSelection(
+          host,
+          term,
+          (data) => socket.write(sessionId, encoder.encode(data)),
+          () => fullscreenRef.current,
+        )
       : undefined
 
     return () => {
