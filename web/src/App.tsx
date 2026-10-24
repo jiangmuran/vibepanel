@@ -1992,6 +1992,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             socket={socket}
             near={current}
             touchSelect={narrow || coarsePointer}
+            fullscreen={state.fullscreen}
             terminals={bottomTerminals}
             themeKey={themeKey}
             height={bottomHeight}
@@ -2184,6 +2185,7 @@ export function App({ auth, onSignOut }: { auth: AuthState; onSignOut: () => voi
             socket={socket}
             near={current}
             touchSelect
+            fullscreen={state.fullscreen}
             terminals={bottomTerminals}
             themeKey={themeKey}
             height={0}

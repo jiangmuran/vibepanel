@@ -26880,3 +26880,52 @@ draw nothing ahead; switched back on, "q" must. With `usable()` ignoring the
 switch the step fails with `switched off, typing "xyz" still drew "xyz"`.
 The session is deleted at the end of the step, because a `claude` with no hooks
 raises the "guessing" notice that a later step raises on purpose.
+
+## 2026-10-24 — The wheel in a full-screen TUI that never asked for the mouse
+
+Issue #19: scrolling a pane that was drawing a full-screen program forwarded
+nothing. The reported picture was two frames stitched together -- the top half
+from the main agent's screen, the bottom half from a subagent's -- and the
+diagnosis in the report, 「the panel didn't forward and reflect the scrolling
+onto the tmux session」, is the mechanism, not the symptom: the gesture never
+left the browser.
+
+The panel forwards a wheel only when the application has asked for the mouse.
+Claude Code does, which is why the desktop mostly worked, but a full-screen
+program that did not -- and any pane whose `?1002h` a fresh viewer missed,
+before the mode replay existed -- got xterm's own scrollback scroll instead.
+Under a full-screen program that buffer is not a transcript: `vibepanel.conf`
+takes `smcup`/`rmcup` out of the client's terminfo, so the redraw frames land
+in the primary buffer line by line, and what piles up there is half-drawn
+frames and the escapes between them. Scrolling it is the tear in the
+screenshot; tmux saw nothing, `pane_in_copy_mode` and `scroll_position` both
+empty, measured on a throwaway socket.
+
+The fix answers the wheel the way every desktop terminal answers a wheel on an
+alternate screen: arrow keys. When tmux says the pane is full-screen
+(`#{alternate_on}`, already polled and pushed as `fullscreen`) and the
+application's tracking mode is 'none', `scrollAction` and the wheel handler in
+`Terminal.tsx` turn the wheel into Up/Down -- the SS3 form when the application
+has DECCKM on -- and the application decides what scrolling means. The
+mouse-report branch still wins: an application that asked for the mouse keeps
+the wheel, and one that asked in the legacy encoding keeps xterm's own reports
+rather than being handed keystrokes it never requested. A shell keeps xterm's
+own scrollback: that history is real and it is the one place the panel may
+scroll on its own.
+
+The two-second poll that carries `fullscreen` is part of the behaviour and
+said so rather than hidden: for two seconds after a TUI starts, the wheel
+still lands in the local buffer, and for two seconds after it exits, a wheel
+hands arrows to whatever is in the pane. Both windows are bounded and the
+second one is at worst a recalled history line at a prompt.
+
+`BottomTerminals` never passed `fullscreen` at all, so a scratch terminal
+running vim had the bug twice over; it takes the same `state.fullscreen` the
+main terminal does now.
+
+The stress check grew the scenario the issue is: a fixture that paints its
+alternate screen with a `POS=` counter moved by every arrow it receives, never
+a mouse report, and the wheel must move that counter both ways. It is red
+against the unfixed tree -- POS 0 -> 0 -- and reads 0 -> 128 -> 32 against the
+fixed one, which is also the measured rate: one arrow per row of travel, the
+same arithmetic the mouse-report path uses.

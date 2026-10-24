@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { cellAt, claimsVerticalDrag, selectionRun, dragRows, scrollAction, wheelReport, WHEEL_NOTCH_ROWS } from './touchSelect'
+import { alternateScrollKeys, cellAt, claimsVerticalDrag, selectionRun, dragRows, scrollAction, wheelReport, WHEEL_NOTCH_ROWS } from './touchSelect'
 
 describe('selectionRun', () => {
   it('reads left to right on one line', () => {
@@ -144,7 +144,7 @@ describe('scrollAction', () => {
     //   claude  alt=1 sgr=1 any=1
     //   codex   alt=0 sgr=0 any=0
     for (const mode of ['x10', 'vt200', 'drag', 'any']) {
-      expect(scrollAction(mode, 0)).toBe('wheel')
+      expect(scrollAction(mode, false, 0)).toBe('wheel')
     }
   })
 
@@ -165,19 +165,54 @@ describe('scrollAction', () => {
     // to the tail, that is its answer; the panel does not get to substitute a
     // better-looking one out of a buffer that does not mean anything.
     for (const mode of ['x10', 'vt200', 'drag', 'any']) {
-      expect(scrollAction(mode, 500)).toBe('wheel')
+      expect(scrollAction(mode, false, 500)).toBe('wheel')
+    }
+  })
+
+  it('sends arrows to a full-screen application that did not ask for the mouse', () => {
+    // Issue #19. Above a full-screen program there is nothing the panel may
+    // scroll: its own buffer under one is redraw fragments, and scrolling that
+    // is the torn picture the issue shows. tmux's `#{alternate_on}` -- the
+    // `fullscreen` argument -- is the only word the panel gets that a
+    // full-screen program is drawing, so it is what turns the gesture into
+    // alternate scroll. The mouse-report branch still wins: an application
+    // that asked for the mouse keeps the wheel, fullscreen or not.
+    expect(scrollAction('none', true, 0)).toBe('arrows')
+    expect(scrollAction('none', true, 500)).toBe('arrows')
+    for (const mode of ['x10', 'vt200', 'drag', 'any']) {
+      expect(scrollAction(mode, true, 0)).toBe('wheel')
     }
   })
 
   it('scrolls the buffer when nobody is listening', () => {
-    expect(scrollAction('none', 500)).toBe('buffer')
+    expect(scrollAction('none', false, 500)).toBe('buffer')
   })
 
   it('does nothing when there is nothing to scroll and nobody to tell', () => {
     // The gesture is still claimed by the caller. A drag over a full-screen
     // agent with no scrollback must do nothing visibly rather than hand the
     // browser a pull-to-refresh.
-    expect(scrollAction('none', 0)).toBe('none')
+    expect(scrollAction('none', false, 0)).toBe('none')
+  })
+})
+
+describe('alternateScrollKeys', () => {
+  it('sends one arrow per row of travel, up and down', () => {
+    expect(alternateScrollKeys(true, 3, false)).toBe('\x1b[A\x1b[A\x1b[A')
+    expect(alternateScrollKeys(false, 2, false)).toBe('\x1b[B\x1b[B')
+  })
+
+  it('uses the SS3 form for an application that asked for cursor keys', () => {
+    // DECCKM. An application that turned application cursor keys on was
+    // promised Up and Down in that encoding; vim reads the CSI form, a strict
+    // curses application reads it as garbage.
+    expect(alternateScrollKeys(true, 1, true)).toBe('\x1bOA')
+    expect(alternateScrollKeys(false, 1, true)).toBe('\x1bOB')
+  })
+
+  it('sends nothing when the travel rounds to nothing', () => {
+    expect(alternateScrollKeys(true, 0, false)).toBe('')
+    expect(alternateScrollKeys(false, -1, false)).toBe('')
   })
 })
 
