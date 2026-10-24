@@ -519,6 +519,18 @@ export function TerminalView({
     // Returning false keeps xterm from adding its own handling on top.
     let wheelCarry = 0
     term.attachCustomWheelEventHandler((ev) => {
+      // Who gets the wheel is decided before anything is measured. A shell is
+      // the commonest thing under the pointer and its scroll must not cost a
+      // layout read per event: the cheapness of that read was measured for the
+      // mouse path (2026-10-06), not for every wheel event everywhere.
+      const sgr = sgrMouse()
+      if (!sgr && !(term.modes.mouseTrackingMode === 'none' && fullscreenRef.current)) {
+        // The terminal's own scrollback. The carry belongs to the forwarded
+        // paths below; a spell of local scrolling must not hand one of them a
+        // stale head start when the pane changes hands.
+        wheelCarry = 0
+        return true
+      }
       const screen = host.querySelector('.xterm-screen')
       const box = screen?.getBoundingClientRect()
       if (!box || box.height === 0 || box.width === 0) return true
@@ -529,9 +541,9 @@ export function TerminalView({
       const rowHeight = box.height / hostScale() / term.rows
       const plan = wheelReports(ev.deltaY, ev.deltaMode, rowHeight, term.rows, wheelCarry)
       wheelCarry = plan.carry
-      if (sgrMouse()) {
-        ev.preventDefault()
-        if (plan.count === 0 || replayQueue.replaying) return false
+      ev.preventDefault()
+      if (plan.count === 0 || replayQueue.replaying) return false
+      if (sgr) {
         const cell = cellAt({ x: ev.clientX, y: ev.clientY }, box, term.cols, term.rows)
         // One frame rather than one per report: they arrive together either way,
         // and pi treats reports closer than five milliseconds as one notch, a
@@ -539,20 +551,11 @@ export function TerminalView({
         socket.writeText(sessionId, wheelReport(plan.up, cell.col, cell.row).repeat(plan.count))
         return false
       }
-      if (term.modes.mouseTrackingMode === 'none' && fullscreenRef.current) {
-        ev.preventDefault()
-        if (plan.count === 0 || replayQueue.replaying) return false
-        socket.writeText(
-          sessionId,
-          alternateScrollKeys(plan.up, plan.count, term.modes.applicationCursorKeysMode),
-        )
-        return false
-      }
-      // The terminal's own scrollback. The carry belongs to the forwarded
-      // paths above; a spell of local scrolling must not hand one of them a
-      // stale head start when the pane changes hands.
-      wheelCarry = 0
-      return true
+      socket.writeText(
+        sessionId,
+        alternateScrollKeys(plan.up, plan.count, term.modes.applicationCursorKeysMode),
+      )
+      return false
     })
 
     // iOS Chrome/Safari emits direct punctuation and space input as a keydown

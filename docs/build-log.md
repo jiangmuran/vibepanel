@@ -26901,6 +26901,10 @@ frames and the escapes between them. Scrolling it is the tear in the
 screenshot; tmux saw nothing, `pane_in_copy_mode` and `scroll_position` both
 empty, measured on a throwaway socket.
 
+The mouse-tracking half of the same symptom -- a pane whose `?1002h` a late
+viewer missed -- is the 2026-10-02 mode replay, already on main; this entry
+is the half that remained.
+
 The fix answers the wheel the way every desktop terminal answers a wheel on an
 alternate screen: arrow keys. When tmux says the pane is full-screen
 (`#{alternate_on}`, already polled and pushed as `fullscreen`) and the
