@@ -243,6 +243,7 @@ function Filters(props: {
           <option value="opencode">opencode</option>
           <option value="hermes">Hermes</option>
           <option value="pi">pi</option>
+          <option value="omp">omp</option>
         </select>
       </label>
     </div>

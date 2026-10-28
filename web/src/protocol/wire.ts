@@ -416,7 +416,7 @@ export interface UsageSample {
 // allowed to render them the same way.
 
 /** Which agent a number came from. Mirrors internal/usage.Tools. */
-export type UsageTool = 'claude' | 'codex' | 'opencode' | 'hermes' | 'pi'
+export type UsageTool = 'claude' | 'codex' | 'opencode' | 'hermes' | 'pi' | 'omp'
 
 export interface UsageTotals {
   /** Tokens sent fresh. Cache reads are counted separately, in both agents. */

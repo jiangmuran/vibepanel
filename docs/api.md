@@ -210,19 +210,20 @@ Until then there is no answer yet, which is also not zero. A `GET` starts a
 pass in the background when the last one is more than 30 seconds old, and never
 blocks on it.
 
-Counts are normalised across the five agents: `input` is what was sent
+Counts are normalised across the six agents: `input` is what was sent
 **fresh**, with cache reads in `cacheRead`. Codex's own `input_tokens` includes
-its cached part and is split here; Claude's, opencode's, Hermes' and pi's do not
-and are not. opencode reports reasoning tokens separately and they are folded
-into `output`; Hermes and pi already count them inside output, so they are not
-added again.
+its cached part and is split here; Claude's, opencode's, Hermes', pi's and omp's
+do not and are not. opencode reports reasoning tokens separately and they are
+folded into `output`; Hermes, pi and omp already count them inside output, so
+they are not added again. An omp subagent's spend is its session's, as a Claude
+Code subagent's is.
 
 `days` is the range for `byDay`, `total`, `byTool`, `projects` and `sessions`,
 clamped to 1–3660 and defaulting to 30. `heatmap` is always the last 371 days
 (53 whole weeks) and `byMonth` is always every month. A range control should
 not be able to make a year grid into a broken one. `project` is a project id,
 never a path; `tool` is `claude`, `codex`, `opencode`,
-`hermes` or `pi`. An unknown value of
+`hermes`, `pi` or `omp`. An unknown value of
 either is a 400 rather than an empty chart.
 
 A `project` filter covers the project's directory **except the projects nested

@@ -26880,3 +26880,48 @@ draw nothing ahead; switched back on, "q" must. With `usable()` ignoring the
 switch the step fails with `switched off, typing "xyz" still drew "xyz"`.
 The session is deleted at the end of the step, because a `claude` with no hooks
 raises the "guessing" notice that a later step raises on purpose.
+
+## 2026-10-28 — omp's spend, counted the way omp counts it
+
+omp (oh-my-pi, 18.6.3 here) is a fork of pi and still writes pi's session
+format under `~/.omp/agent/sessions`, and the panel did not read it at all:
+every omp session was missing from the token figures. It is a sixth source
+now, `omp`, read by `readOmp` rather than by pointing `readPi` at another
+directory, because three things differ and each one is a wrong number if it
+is missed:
+
+- **Calls on the side.** omp files the auto-thinking judge, and compaction's
+  summary call, as `model_usage` entries with a top-level `usage` and a model
+  of their own. pi has no such record. Read as pi, they were not counted.
+- **Subagents.** A `task` writes each subagent's conversation to its own file,
+  inside a directory named after the parent session's file. The walk was
+  already recursive, so those files would have been found -- as sessions of
+  their own, named after the subagent. Their spend is now the parent
+  session's, the same attribution as Claude Code's subagents. omp's summary
+  also counts a task result's `details.usage`, which is the same subagent
+  spend as reported to the parent; that is not read, so it is not counted
+  twice.
+- **Forks.** `createBranchedSession` and `forkFrom` copy the branch into the
+  new file entry for entry, ids and usage included, so every call before the
+  fork point is in two files. Each call carries a key (entry id, the call's
+  timestamp, the provider's response id), and the ingest's existing
+  held-elsewhere check counts it once, as it does for Claude's resumed
+  sessions. pi has the same fork shape and its reader still says so as a known
+  limit; that one is not changed here.
+
+`reasoningTokens` is not added. It is inside `output`: `totalTokens` is the
+four columns in all 5,250 calls on this machine, and reasoning is at most
+output in every one.
+
+Measured against the 55 files here (20 sessions, 35 subagent files): 5,194
+calls, 936,655,170 tokens, equal to the sum of omp's own `totalTokens` over
+the same records. `omp stats --json` covers a shorter window; over that window
+its input, output and cache-read totals (704,203 / 262,707 / 90,170,816) are
+the panel's to the token. Its request count is 604 to the panel's 579: the 25
+are failed or aborted calls with all-zero usage, which the panel does not count
+as requests for any agent.
+
+The tests are built from real records and each guard was taken out to watch
+one go red: the role check, `model_usage` and its own model, the zero-usage
+skip, subagent attribution and the outermost-directory rule, and the key the
+fork test needs.
