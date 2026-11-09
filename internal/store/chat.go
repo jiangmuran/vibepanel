@@ -28,7 +28,7 @@ type SessionMessage struct {
 	Kind string `json:"kind"`
 	Text string `json:"text"`
 	// Tool is which agent said it, by the panel's own name for it (claude,
-	// codex, opencode, kimi, zcode), or empty when the report did not say.
+	// codex, opencode, kimi, zcode, agy), or empty when the report did not say.
 	Tool string `json:"tool"`
 	// Menu is the menu the agent asked with, as JSON (hooks.Menu), or empty.
 	Menu string `json:"menu,omitempty"`

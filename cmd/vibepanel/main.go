@@ -1145,7 +1145,10 @@ not affect agents you start from an ordinary terminal.
 
 %s
 
-`, hooks.ClaudeSettings(script), hooks.CodexHooks(script), hooks.KimiHooks(script), hooks.ZcodeHooks(script))
+── agy (Antigravity CLI) ──  add this named hook to ~/.gemini/config/hooks.json
+
+%s
+`, hooks.ClaudeSettings(script), hooks.CodexHooks(script), hooks.KimiHooks(script), hooks.ZcodeHooks(script), hooks.AgyHooks(script))
 	return nil
 }
 
@@ -1191,6 +1194,8 @@ func hookRemove(args []string) error {
 	say("kimi", err)
 	_, err = hooks.UninstallZcode(script)
 	say("zcode", err)
+	_, err = hooks.UninstallAgy(script)
+	say("agy", err)
 	say("opencode", hooks.UninstallOpencode())
 
 	// The script itself last, and only when nothing still refers to it.
