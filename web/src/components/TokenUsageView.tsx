@@ -244,6 +244,7 @@ function Filters(props: {
           <option value="hermes">Hermes</option>
           <option value="pi">pi</option>
           <option value="omp">omp</option>
+          <option value="agy">Antigravity CLI</option>
         </select>
       </label>
     </div>

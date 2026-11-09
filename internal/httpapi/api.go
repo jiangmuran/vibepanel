@@ -1379,7 +1379,7 @@ func (s *Server) hooksAreInstalled() bool {
 			// added to Status has to be added here too; the guard walks the
 			// install functions rather than naming two of them.
 			installed = st.Installed || st.CodexInstalled || st.OpencodeInstalled ||
-				st.KimiInstalled || st.ZcodeInstalled
+				st.KimiInstalled || st.ZcodeInstalled || st.AgyInstalled
 		}
 	}
 	s.hookInstalled, s.hookCheckedAt = installed, time.Now()

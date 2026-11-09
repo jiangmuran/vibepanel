@@ -58,12 +58,12 @@ panel sees is a running process, and the session stays blue until you look. The
 first-run tour opens on this for a reason.
 
 **Settings → State reporting** has a button per agent: Claude Code, Codex, Kimi
-Code, zcode and opencode. It installs a hook into the agent's own configuration,
+Code, zcode, opencode and agy (Antigravity CLI). It installs a hook into the agent's own configuration,
 showing what it will write and backing up the file first. Each is a different
 mechanism in a different file and they fail separately, which is why there is a
 row each rather than one "turn reporting on".
 
-The panel knows five and offers three -- Claude Code, Codex and opencode. Tick
+The panel knows six and offers three -- Claude Code, Codex and opencode. Tick
 the rest below the rows; an agent whose hooks are installed is shown whatever
 the ticks say, so nothing you have turned on can be hidden from you. Two of them
 have a wrinkle worth knowing: Codex runs a hook only after `/hooks` has trusted
@@ -96,7 +96,7 @@ panel reads the session's own rollout file, which it finds through the files
 the pane's `codex` process has open, and takes the turn's start, end and
 approval requests from it.
 
-opencode takes a standalone plugin rather than a merge into its configuration.
+opencode takes a standalone plugin rather than a merge into its configuration, and agy takes a named hook block in `~/.gemini/config/hooks.json`.
 
 Any other agent can report by posting to `/api/hook/state` itself; the shape is
 in [docs/api.md](api.md).
@@ -170,14 +170,14 @@ environment to start it in. The endpoint is why it exists: the same agent
 pointed at Anthropic, at a company proxy and at a self-hosted gateway is three
 configurations differing in one variable.
 
-Four ship with the panel: a shell, `claude`, `codex` and `opencode`. Those
+Five ship with the panel: a shell, `claude`, `codex`, `opencode` and `agy`. Those
 cannot be edited; a duplicate arrives with the variable names that agent reads
 already filled in. A variable left empty is not set at all, so a half-filled
 profile runs the agent exactly as a bare terminal would.
 
 There is no "API host" field on purpose. Which variable carries the endpoint is
-each agent's decision, and opencode has none. It chooses per provider in its
-own configuration.
+each agent's decision, and opencode and agy have none. They configure endpoints
+and models in their own settings.
 
 A variable can be marked a **secret**, and then its value is never sent back to
 a browser: the settings page shows the name and says something is stored. It

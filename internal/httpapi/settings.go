@@ -428,7 +428,7 @@ func (s *Server) withCodexReports(ctx context.Context, st hooks.Status) hooks.St
 // names, the error message and the "which of these do I want to see" setting
 // were each going to grow their own copy of it, and the fifth one added in a
 // hurry is how a panel ends up offering an agent it cannot install.
-var hookAgents = []string{"claude", "codex", "kimi", "zcode", "opencode"}
+var hookAgents = []string{"claude", "codex", "kimi", "zcode", "opencode", "agy"}
 
 // hookAgentsShownDefault is what the reporting section lists on a panel nobody
 // has configured.
@@ -502,6 +502,8 @@ func (s *Server) handleHooksInstall(w http.ResponseWriter, r *http.Request) {
 		st, err = hooks.InstallKimi(script)
 	case "zcode":
 		st, err = hooks.InstallZcode(script)
+	case "agy":
+		st, err = hooks.InstallAgy(script)
 	case "opencode":
 		if err = hooks.InstallOpencode(); err == nil {
 			st, err = hooks.Inspect(script)
@@ -542,6 +544,8 @@ func (s *Server) handleHooksUninstall(w http.ResponseWriter, r *http.Request) {
 		st, err = hooks.UninstallKimi(script)
 	case "zcode":
 		st, err = hooks.UninstallZcode(script)
+	case "agy":
+		st, err = hooks.UninstallAgy(script)
 	case "opencode":
 		if err = hooks.UninstallOpencode(); err == nil {
 			st, err = hooks.Inspect(script)
@@ -650,6 +654,8 @@ func hookTarget(agent string, st hooks.Status) string {
 		return st.KimiPath
 	case "zcode":
 		return st.ZcodePath
+	case "agy":
+		return st.AgyPath
 	case "opencode":
 		return st.OpencodePath
 	default:

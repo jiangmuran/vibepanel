@@ -116,6 +116,14 @@ type Status struct {
 	// rather than whether anything ever arrived.
 	OpencodePath      string `json:"opencodePath"`
 	OpencodeInstalled bool   `json:"opencodeInstalled"`
+
+	// AgyPath is ~/.gemini/config/hooks.json; AgyInstalled says every event
+	// has a handler of ours in the panel's named hook; AgyEvents lists which
+	// ones; AgySnippet is what would be written.
+	AgyPath      string   `json:"agyPath"`
+	AgyInstalled bool     `json:"agyInstalled"`
+	AgyEvents    []string `json:"agyEvents"`
+	AgySnippet   string   `json:"agySnippet"`
 }
 
 // events maps a hook event to the state it reports.
@@ -177,6 +185,8 @@ func Inspect(scriptPath string) (Status, error) {
 	kimiEventsInstalled := kimiHookEvents(kimiPath)
 	zcodePath, _ := ZcodeConfigPath()
 	zcodeEventsInstalled := zcodeHookEvents(zcodePath)
+	agyPath, _ := AgyHooksPath()
+	agyEventsInstalled := agyHookEvents(agyPath)
 
 	st := Status{
 		SettingsPath:      settingsPath,
@@ -198,6 +208,10 @@ func Inspect(scriptPath string) (Status, error) {
 		ZcodeSnippet:      ZcodeHooks(scriptPath),
 		OpencodePath:      opencodePath,
 		OpencodeInstalled: OpencodeInstalled(),
+		AgyPath:           agyPath,
+		AgyInstalled:      len(agyEventsInstalled) == len(agyEvents),
+		AgyEvents:         agyEventsInstalled,
+		AgySnippet:        AgyHooks(scriptPath),
 		Events:            []string{},
 		// Empty here rather than normalised at the end, because there are two
 		// returns and the early one -- no settings file, which is the state of

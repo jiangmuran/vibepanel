@@ -50,6 +50,7 @@ func DefaultTools() map[string]ToolProfile {
 		"opencode": claudeLike,
 		"kimi":     claudeLike,
 		"zcode":    claudeLike,
+		"agy":      claudeLike,
 		// A shell has no prompt; Interrupt and Submit are all it needs.
 		"shell": {Interrupt: []string{"C-c"}, Submit: []string{"Enter"}},
 	}
@@ -178,7 +179,7 @@ func AgentFor(launch []string, current string) string {
 
 func agentName(cmd string) string {
 	switch filepath.Base(strings.TrimSpace(cmd)) {
-	case "claude", "codex", "opencode", "kimi", "zcode":
+	case "claude", "codex", "opencode", "kimi", "zcode", "agy":
 		return filepath.Base(strings.TrimSpace(cmd))
 	}
 	return ""

@@ -48,6 +48,7 @@ const (
 	ToolHermes   Tool = "hermes"
 	ToolPi       Tool = "pi"
 	ToolOmp      Tool = "omp"
+	ToolAgy      Tool = "agy"
 )
 
 // Tools is every source this package knows how to read, in display order.
@@ -55,7 +56,7 @@ const (
 // New agents are appended rather than inserted: this order reaches the API and
 // the browser, and a row that moves because a tool was added above it is a
 // chart that looks like it changed for a reason.
-var Tools = []Tool{ToolClaude, ToolCodex, ToolOpencode, ToolHermes, ToolPi, ToolOmp}
+var Tools = []Tool{ToolClaude, ToolCodex, ToolOpencode, ToolHermes, ToolPi, ToolOmp, ToolAgy}
 
 // Counts is one normalised reading, in tokens.
 //
@@ -695,6 +696,8 @@ type Scanner struct {
 	// OmpRoot is pi's layout under omp's directory, subagents nested inside
 	// their parent's. See readOmp.
 	OmpRoot string
+	// AgyRoot holds one directory per agy conversation. See readAgy.
+	AgyRoot string
 	// Loc decides which day a timestamp belongs to. Nil means the server's
 	// local zone, which is the right default: the machine is the user's.
 	//
@@ -717,6 +720,9 @@ func DefaultScanner(home string) *Scanner {
 		// pi writes one JSONL file per session, under a slug of the cwd.
 		PiRoot:  filepath.Join(home, ".pi", "agent", "sessions"),
 		OmpRoot: filepath.Join(home, ".omp", "agent", "sessions"),
+		// agy keeps a directory per conversation; the transcript is one file
+		// inside it. See agyTranscript.
+		AgyRoot: filepath.Join(home, ".gemini", "antigravity-cli", "brain"),
 	}
 }
 
@@ -737,6 +743,7 @@ func (s *Scanner) Roots() map[Tool]string {
 		ToolHermes:   s.HermesRoot,
 		ToolPi:       s.PiRoot,
 		ToolOmp:      s.OmpRoot,
+		ToolAgy:      s.AgyRoot,
 	}
 }
 
@@ -857,6 +864,12 @@ func (s *Scanner) Walk(tool Tool) ([]Ref, Source, error) {
 		if !d.Type().IsRegular() || !strings.HasSuffix(path, ".jsonl") {
 			return nil
 		}
+		// agy writes a shortened transcript.jsonl beside the full one, with
+		// no token counts; reading both would be reading one conversation
+		// twice for nothing.
+		if tool == ToolAgy && d.Name() != agyTranscript {
+			return nil
+		}
 		rel, rerr := filepath.Rel(resolved, path)
 		if rerr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return nil
@@ -936,6 +949,8 @@ func (s *Scanner) ReadFile(tool Tool, path string) File {
 		res, err = readPi(fh, s.loc())
 	case ToolOmp:
 		res, err = readOmp(fh, s.loc(), path)
+	case ToolAgy:
+		res, err = readAgy(fh, s.loc(), path)
 	default:
 		f.Problem = fmt.Sprintf("unknown tool %q", tool)
 		return f
