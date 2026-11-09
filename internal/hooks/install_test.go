@@ -142,6 +142,7 @@ func TestInspectNamesEveryAgentsFileAndSnippet(t *testing.T) {
 		{"kimi", st.KimiPath, st.KimiSnippet},
 		{"zcode", st.ZcodePath, st.ZcodeSnippet},
 		{"opencode", st.OpencodePath, "n/a"},
+		{"agy", st.AgyPath, st.AgySnippet},
 	} {
 		if tc.path == "" {
 			t.Errorf("%s has no file to name on the settings page", tc.agent)

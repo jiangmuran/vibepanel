@@ -18,6 +18,7 @@ export const HOOK_AGENTS: { id: HookAgent; nameKey: DictKey }[] = [
   { id: 'kimi', nameKey: 'set.kimiCode' },
   { id: 'zcode', nameKey: 'set.zcode' },
   { id: 'opencode', nameKey: 'set.opencode' },
+  { id: 'agy', nameKey: 'set.agy' },
 ]
 
 export function hookAgentName(id: HookAgent): string {
@@ -40,6 +41,8 @@ export function hookAgentInstalled(st: HookStatus, id: HookAgent): boolean {
       return st.zcodeInstalled
     case 'opencode':
       return st.opencodeInstalled
+    case 'agy':
+      return st.agyInstalled
   }
 }
 

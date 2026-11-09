@@ -30,6 +30,10 @@ function status(over: Partial<HookStatus> = {}): HookStatus {
     agentsShown: ['claude', 'codex', 'opencode'],
     opencodePath: '/h/.config/opencode/plugin/vibepanel.js',
     opencodeInstalled: false,
+    agyPath: '/h/.gemini/config/hooks.json',
+    agyInstalled: false,
+    agyEvents: [],
+    agySnippet: '',
     ...over,
   }
 }
@@ -60,5 +64,6 @@ describe('which agents the reporting section offers', () => {
     expect(hookAgentInstalled(status({ kimiInstalled: true }), 'kimi')).toBe(true)
     expect(hookAgentInstalled(status({ zcodeInstalled: true }), 'zcode')).toBe(true)
     expect(hookAgentInstalled(status({ opencodeInstalled: true }), 'opencode')).toBe(true)
+    expect(hookAgentInstalled(status({ agyInstalled: true }), 'agy')).toBe(true)
   })
 })

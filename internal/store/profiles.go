@@ -157,6 +157,10 @@ var builtinProfiles = []LaunchProfile{
 		{Name: "OPENAI_API_KEY", Secret: true},
 	}},
 	{ID: BuiltinPrefix + "opencode", Name: "opencode", Command: []string{"opencode"}},
+	// Antigravity CLI. No environment template, for opencode's reason: its
+	// model and credentials are chosen in its own settings and sign-in, and
+	// there is no single variable to name.
+	{ID: BuiltinPrefix + "agy", Name: "Antigravity CLI", Command: []string{"agy"}},
 }
 
 // BuiltinLaunchProfiles returns the catalogue.

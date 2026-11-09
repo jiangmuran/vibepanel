@@ -280,6 +280,20 @@ function agentRow(
         installed: status.opencodeInstalled,
         testid: 'opencode-hooks',
       }
+    case 'agy':
+      // A named hook in ~/.gemini/config/hooks.json: the panel owns one key,
+      // so removing it cannot take anybody else's hook with it. agy has no
+      // permission-request event, so it reports working and done and the
+      // panel reads waiting off the screen.
+      return {
+        value: status.agyInstalled
+          ? t('set.installedHooks', { n: status.agyEvents.length })
+          : t('set.notInstalled'),
+        file: status.agyPath,
+        installed: status.agyInstalled,
+        testid: 'agy-hooks',
+        snippet: status.agySnippet,
+      }
   }
 }
 

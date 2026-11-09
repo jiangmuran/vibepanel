@@ -96,7 +96,8 @@ HOOK_FILES="$HOME/.claude/settings.json
 $HOME/.codex/hooks.json
 $HOME/.codex/config.toml
 $HOME/.kimi-code/config.toml
-$HOME/.zcode/cli/config.json"
+$HOME/.zcode/cli/config.json
+$HOME/.gemini/config/hooks.json"
 
 # How many of the agents still point at the reporter.
 #

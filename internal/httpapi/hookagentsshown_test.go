@@ -182,6 +182,7 @@ func TestTheAuditEntryNamesTheFileEachAgentWasInstalledInto(t *testing.T) {
 		KimiPath:     "/h/.kimi-code/config.toml",
 		ZcodePath:    "/h/.zcode/cli/config.json",
 		OpencodePath: "/h/.config/opencode/plugin/vibepanel.js",
+		AgyPath:      "/h/.gemini/config/hooks.json",
 	}
 	want := map[string]string{
 		"claude":   st.SettingsPath,
@@ -189,6 +190,7 @@ func TestTheAuditEntryNamesTheFileEachAgentWasInstalledInto(t *testing.T) {
 		"kimi":     st.KimiPath,
 		"zcode":    st.ZcodePath,
 		"opencode": st.OpencodePath,
+		"agy":      st.AgyPath,
 	}
 	for _, agent := range hookAgents {
 		if got := hookTarget(agent, st); got != want[agent] {

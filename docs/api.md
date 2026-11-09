@@ -210,9 +210,9 @@ Until then there is no answer yet, which is also not zero. A `GET` starts a
 pass in the background when the last one is more than 30 seconds old, and never
 blocks on it.
 
-Counts are normalised across the six agents: `input` is what was sent
+Counts are normalised across the seven agents: `input` is what was sent
 **fresh**, with cache reads in `cacheRead`. Codex's own `input_tokens` includes
-its cached part and is split here; Claude's, opencode's, Hermes', pi's and omp's
+its cached part and is split here; Claude's, opencode's, Hermes', pi's, omp's and agy's
 do not and are not. opencode reports reasoning tokens separately and they are
 folded into `output`; Hermes, pi and omp already count them inside output, so
 they are not added again. An omp subagent's spend is its session's, as a Claude
@@ -223,7 +223,7 @@ clamped to 1–3660 and defaulting to 30. `heatmap` is always the last 371 days
 (53 whole weeks) and `byMonth` is always every month. A range control should
 not be able to make a year grid into a broken one. `project` is a project id,
 never a path; `tool` is `claude`, `codex`, `opencode`,
-`hermes`, `pi` or `omp`. An unknown value of
+`hermes`, `pi`, `omp` or `agy`. An unknown value of
 either is a 400 rather than an empty chart.
 
 A `project` filter covers the project's directory **except the projects nested
@@ -845,8 +845,8 @@ later cannot take anybody else's with it. `GET` shows what it would write before
 you agree to it.
 
 `POST` and `DELETE` take `?agent=`, one of `claude` (the default, and what the
-parameter-less request has always meant), `codex`, `kimi`, `zcode` or
-`opencode`. Anything else is a `400`: the value decides which file in the user's
+parameter-less request has always meant), `codex`, `kimi`, `zcode`,
+`opencode` or `agy`. Anything else is a `400`: the value decides which file in the user's
 home directory gets edited, so an unrecognised one has to be refused rather than
 resolved to whichever agent is first in the code. Claude's four events are
 merged into `~/.claude/settings.json`; Codex's hooks into `~/.codex/hooks.json`,
@@ -855,7 +855,8 @@ appended to `~/.kimi-code/config.toml`; zcode's events are merged into
 `~/.zcode/cli/config.json` behind its `hooks.enabled`, which the install turns
 on and the uninstall turns back off only if it was the one that turned it on
 *and* no events of anybody's are left in that file;
-opencode gets a plugin file of the panel's own, which it auto-discovers.
+opencode gets a plugin file of the panel's own, which it auto-discovers;
+agy gets a named hook block in `~/.gemini/config/hooks.json`.
 
 `PUT /api/settings/hooks/agents` takes `{"agents": ["claude", "codex"]}` and
 decides which of them the settings page and the first-run tour offer. `GET

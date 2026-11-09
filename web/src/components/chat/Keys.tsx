@@ -23,8 +23,8 @@ function split(s: string): string[] {
 /**
  * Which keys "allow" is, per agent, in tmux's key names.
  *
- * Shown because the defaults are guesses for three of the six: opencode,
- * Kimi Code and zcode draw their prompts like Claude Code's, and Enter and
+ * Shown because the defaults are guesses for four of the seven: opencode,
+ * Kimi Code, zcode and agy draw their prompts like Claude Code's, and Enter and
  * Escape are what that shape answers to, but nobody measured them. A person
  * who finds their agent needs "y" fixes it here rather than in a release.
  */

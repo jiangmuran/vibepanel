@@ -60,8 +60,8 @@ Code or Codex works out which session you mean, then waits for your `ok` before
 it types anything.
 
 The panel knows when an agent is actually done, not only when it has gone
-quiet: one click installs a hook into Claude Code, Codex, Kimi Code, zcode or
-opencode, showing you what it will write and backing the file up first. And
+quiet: one click installs a hook into Claude Code, Codex, Kimi Code, zcode,
+opencode or agy (Antigravity CLI), showing you what it will write and backing the file up first. And
 upgrading is a button too: Settings → Updates downloads the release, checks it
 against `SHA256SUMS`, runs the new binary once before trusting it, swaps it in
 and restarts, with every session still running afterwards.

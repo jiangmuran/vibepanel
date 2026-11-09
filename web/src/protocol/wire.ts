@@ -416,7 +416,7 @@ export interface UsageSample {
 // allowed to render them the same way.
 
 /** Which agent a number came from. Mirrors internal/usage.Tools. */
-export type UsageTool = 'claude' | 'codex' | 'opencode' | 'hermes' | 'pi' | 'omp'
+export type UsageTool = 'claude' | 'codex' | 'opencode' | 'hermes' | 'pi' | 'omp' | 'agy'
 
 export interface UsageTotals {
   /** Tokens sent fresh. Cache reads are counted separately, in both agents. */
@@ -861,7 +861,7 @@ export interface SettingsInfo {
 /** Which agent an install request is about. The server accepts exactly these
  *  and refuses anything else; it is not a free-text field because it chooses a
  *  file in the user's home directory to edit. */
-export type HookAgent = 'claude' | 'codex' | 'opencode' | 'kimi' | 'zcode'
+export type HookAgent = 'claude' | 'codex' | 'opencode' | 'kimi' | 'zcode' | 'agy'
 
 export interface HookStatus {
   settingsPath: string
@@ -910,6 +910,12 @@ export interface HookStatus {
   opencodePath: string
   /** Whether the plugin in place is this build's, not merely that one exists. */
   opencodeInstalled: boolean
+  /** ~/.gemini/config/hooks.json: whether every event has a handler of this
+   *  panel's in its named hook, which ones, and what would be written. */
+  agyPath: string
+  agyInstalled: boolean
+  agyEvents: string[]
+  agySnippet: string
 }
 
 /** A credential a program uses instead of the session cookie. */

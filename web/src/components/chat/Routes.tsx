@@ -13,7 +13,7 @@ import { INPUT, Primary, SELECT, Secondary, errText, useServerCopy } from './for
 
 const STATES = ['waiting', 'working', 'done'] as const
 const KINDS = ['prompt', 'question', 'assistant', 'notice', 'user'] as const
-const TOOLS = ['claude', 'codex', 'opencode', 'kimi', 'zcode', 'shell'] as const
+const TOOLS = ['claude', 'codex', 'opencode', 'kimi', 'zcode', 'agy', 'shell'] as const
 
 function stateLabel(s: string): string {
   switch (s) {
