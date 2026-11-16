@@ -470,7 +470,7 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 		buf = buf[:previewTextBytes]
 	}
 	text, truncated := browse.ClipText(buf, more, previewTextLines)
-	if !browse.IsText(text) {
+	if !browse.Readable(text) {
 		// Not text and none of the kinds above: the viewer shows its bytes,
 		// offset and hex and ASCII, so a binary is something to look at
 		// rather than a sentence. The first previewHexBytes, which is a

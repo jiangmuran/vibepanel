@@ -162,6 +162,36 @@ func IsText(b []byte) bool {
 	return utf8.Valid(b)
 }
 
+// Readable is IsText for the viewer: text, and not mostly control characters.
+// A separate function so IsText answers what it always did -- share pages
+// decide what a text asset may be with it.
+func Readable(b []byte) bool {
+	return IsText(b) && !controlHeavy(b)
+}
+
+// controlHeavy is the other half of "nothing anybody reads": a buffer whose
+// opening is mostly C0 control characters. A file with no NUL in it is
+// otherwise text however few of its bytes are printable, and the viewer drew
+// nine megabytes of 0x07 as two megabytes of U+FFFD on one line. More than
+// three in ten of the first 8 KiB, not counting the ones text is made of --
+// tab, newline, carriage return, form feed, and escape for a terminal log's
+// colours -- and it is shown as the bytes it is.
+func controlHeavy(b []byte) bool {
+	if len(b) > 8<<10 {
+		b = b[:8<<10]
+	}
+	if len(b) == 0 {
+		return false
+	}
+	n := 0
+	for _, c := range b {
+		if c < 0x20 && c != '\t' && c != '\n' && c != '\r' && c != '\f' && c != 0x1b {
+			n++
+		}
+	}
+	return n*10 > len(b)*3
+}
+
 // ClipText bounds what a text preview shows, and says whether it bit.
 //
 // `more` is whether the caller stopped reading before the end of the file; the

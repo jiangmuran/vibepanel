@@ -87,3 +87,27 @@ func TestEveryMediaTypeIsListed(t *testing.T) {
 		}
 	}
 }
+
+// Mostly control characters is not text, NUL or no NUL; a terminal log with
+// its escapes and a few bells is.
+func TestReadableRefusesAFileOfControlCharacters(t *testing.T) {
+	bells := make([]byte, 4096)
+	for i := range bells {
+		bells[i] = 7
+	}
+	if Readable(bells) {
+		t.Error("4 KiB of 0x07 read as text")
+	}
+	// IsText is unchanged: share pages decide with it.
+	if !IsText(bells) {
+		t.Error("IsText changed")
+	}
+	log := []byte("\x1b[32mok\x1b[0m build passed\x07\n\x1b[31mfail\x1b[0m one test\n")
+	if !Readable(log) {
+		t.Error("a coloured log read as binary")
+	}
+	tabs := []byte("a\tb\tc\r\nd\te\tf\r\n\f")
+	if !Readable(tabs) {
+		t.Error("tabs, CRLF and a form feed read as binary")
+	}
+}
