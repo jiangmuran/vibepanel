@@ -75,5 +75,7 @@ describe('viewerAction', () => {
   it('takes nothing from an IME composition', () => {
     expect(viewerAction(key('Escape', { isComposing: true }), finding)).toBeNull()
     expect(viewerAction(key('Enter', { isComposing: true }), finding)).toBeNull()
+    // Safari reports the composition only as keyCode 229.
+    expect(viewerAction(key('Enter', { keyCode: 229 }), finding)).toBeNull()
   })
 })

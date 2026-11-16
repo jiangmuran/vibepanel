@@ -15,6 +15,7 @@ import {
 import type { Project, Session } from '../protocol/wire'
 import type { PanelSocket } from '../protocol/socket'
 import { FileTree } from './panels/FileTree'
+import { projectLabel } from './label'
 import { GitPanel } from './panels/GitPanel'
 import { SystemMonitor } from './panels/SystemMonitor'
 import { Notes } from './panels/Notes'
@@ -481,6 +482,7 @@ export function RightPanel(props: Props) {
         <FileTree
           key={project.id}
           projectId={project.id}
+          projectName={projectLabel(project)}
           density={density}
           onOpenRepo={() => openDetail('repo')}
           pageLine={page && <PageLine page={page} onOpen={() => openDetail('page')} />}

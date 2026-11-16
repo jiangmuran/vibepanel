@@ -5,7 +5,9 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
-  { ignores: ['dist', '../internal/webui/dist'] },
+  // The file viewer's fixtures are files to be shown, written to exercise a
+  // highlighter, not code anybody runs.
+  { ignores: ['dist', '../internal/webui/dist', 'scripts/fixtures'] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ['**/*.{ts,tsx}'],

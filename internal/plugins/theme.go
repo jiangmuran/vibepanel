@@ -34,6 +34,7 @@ var BaseTokens = []string{
 	"--vp-hairline", "--vp-hairline-strong",
 	"--vp-ink", "--vp-ink-2", "--vp-ink-3",
 	"--vp-accent", "--vp-accent-ink", "--vp-selection",
+	"--vp-find", "--vp-find-current", "--vp-find-ring",
 	"--vp-state-waiting", "--vp-state-working", "--vp-state-done", "--vp-state-dead", "--vp-state-crashed",
 	"--vp-danger-ink",
 	"--vp-term-fg", "--vp-term-cursor",

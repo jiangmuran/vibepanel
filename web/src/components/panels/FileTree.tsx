@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import {
   ChevronLeft,
   Download,
@@ -17,7 +17,7 @@ import type { FileEntry, FileListing } from '../../protocol/wire'
 import { t, useLang } from '../../i18n'
 import type { PanelDensity } from '../chrome'
 import { filesFrom, uploadFiles } from '../upload'
-import { FilePreview } from './FilePreview'
+import { LazyFileViewer } from '../viewer/lazy'
 import { RepoLine } from './RepoLine'
 import { copyTextInGesture } from '../../clipboard'
 import { formatAgo } from './ago'
@@ -39,11 +39,14 @@ import { formatBytes } from './preview'
  */
 export function FileTree({
   projectId,
+  projectName,
   density = 'narrow',
   onOpenRepo,
   pageLine,
 }: {
   projectId: string
+  /** The viewer's breadcrumb starts here rather than at a bare `/`. */
+  projectName: string
   density?: PanelDensity
   /** Opens the repository panel from the status line above the listing. */
   onOpenRepo?: () => void
@@ -683,12 +686,23 @@ export function FileTree({
       )}
 
       {previewing && (
-        <FilePreview
-          key={previewing.path}
-          projectId={projectId}
-          entry={previewing}
-          onClose={() => setPreviewing(null)}
-        />
+        // No fallback: the chunk is local and arrives within a frame or two,
+        // and a spinner flashed for that long is noise.
+        <Suspense fallback={null}>
+          <LazyFileViewer
+            key={previewing.path}
+            projectId={projectId}
+            projectName={projectName}
+            entry={previewing}
+            files={listing?.entries.filter((e) => !e.isDir) ?? []}
+            onOpen={setPreviewing}
+            onReveal={(dir) => {
+              setPreviewing(null)
+              setPath(dir)
+            }}
+            onClose={() => setPreviewing(null)}
+          />
+        </Suspense>
       )}
     </div>
   )

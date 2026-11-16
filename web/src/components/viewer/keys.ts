@@ -1,3 +1,5 @@
+import { isEnter } from '../enter'
+
 /**
  * What a key does in the viewer: the table in docs/file-preview.md, "Keys",
  * as a function of the event and nothing else.
@@ -34,6 +36,8 @@ export interface KeyLike {
   shiftKey: boolean
   /** An IME composition in progress: the key is the composition's. */
   isComposing?: boolean
+  /** 229 is Safari's way of saying the same while `isComposing` is false. */
+  keyCode?: number
 }
 
 export interface KeyContext {
@@ -55,7 +59,7 @@ export interface KeyContext {
  * neither is "copy the path".
  */
 export function viewerAction(e: KeyLike, ctx: KeyContext): ViewerAction | null {
-  if (e.isComposing) return null
+  if (e.isComposing || e.keyCode === 229) return null
   const command = ctx.mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey
   if (command && !e.altKey) {
     const k = e.key.toLowerCase()
@@ -64,7 +68,7 @@ export function viewerAction(e: KeyLike, ctx: KeyContext): ViewerAction | null {
     return null
   }
   if (e.key === 'Escape') return ctx.findOpen ? 'closeFind' : 'close'
-  if (e.key === 'Enter' && ctx.findOpen && !e.ctrlKey && !e.metaKey && !e.altKey) {
+  if (isEnter(e) && ctx.findOpen && !e.ctrlKey && !e.metaKey && !e.altKey) {
     return e.shiftKey ? 'prevMatch' : 'nextMatch'
   }
   if (ctx.inField) return null

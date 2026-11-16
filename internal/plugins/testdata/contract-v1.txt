@@ -36,6 +36,9 @@ token --vp-control-h
 token --vp-danger-ink
 token --vp-ease
 token --vp-elevated
+token --vp-find
+token --vp-find-current
+token --vp-find-ring
 token --vp-hairline
 token --vp-hairline-strong
 token --vp-ink

@@ -81,6 +81,11 @@
   --vp-accent: #0062cc;
   --vp-accent-ink: #ffffff;
   --vp-selection: rgb(0 122 255 / 0.20);
+  /* Find in the file viewer. The current match is also outlined
+     (viewer/TextBody.tsx), so the two shades are never the only difference. */
+  --vp-find: rgb(255 204 0 / 0.35);
+  --vp-find-current: rgb(255 149 0 / 0.55);
+  --vp-find-ring: #b25000;
 
   /* Session states. Never the only signal — each is paired with a distinct
      shape in the UI, because colour alone fails for colour-blind users and in
@@ -163,6 +168,9 @@
     --vp-accent: #2e90ff;
     --vp-accent-ink: #000000;
     --vp-selection: rgb(10 132 255 / 0.30);
+    --vp-find: rgb(255 214 10 / 0.22);
+    --vp-find-current: rgb(255 159 10 / 0.45);
+    --vp-find-ring: #ffd60a;
 
     --vp-state-waiting: #ff9f0a;
     --vp-state-working: #0a84ff;
@@ -210,6 +218,9 @@
   --vp-accent: #2e90ff;
   --vp-accent-ink: #000000;
   --vp-selection: rgb(10 132 255 / 0.30);
+  --vp-find: rgb(255 214 10 / 0.22);
+  --vp-find-current: rgb(255 159 10 / 0.45);
+  --vp-find-ring: #ffd60a;
 
   --vp-state-waiting: #ff9f0a;
   --vp-state-working: #0a84ff;
