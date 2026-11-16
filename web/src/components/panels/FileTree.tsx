@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronLeft,
   Download,
@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Settings2,
   Upload,
+  X,
 } from 'lucide-react'
 import { safeText } from '../text'
 
@@ -22,6 +23,8 @@ import { RepoLine } from './RepoLine'
 import { copyTextInGesture } from '../../clipboard'
 import { formatAgo } from './ago'
 import { formatBytes } from './preview'
+import { filterEntries, moveRow, treeAction } from './treeKeys'
+import { crumbs } from '../viewer/nav'
 
 /**
  * A one-directory-at-a-time browser rather than an expanding tree.
@@ -178,9 +181,85 @@ export function FileTree({
 
   const here = listing ? listing.path || '/' : path || '/'
 
+  // The keyboard's place in the listing (docs/file-preview.md, "Keys"): one
+  // row is in the tab order and marked current, the arrows move it, typing
+  // filters by name. Both start over in every directory; coming back up lands
+  // on the directory just left, so up and back in is not a walk from the top.
+  const [filter, setFilter] = useState('')
+  const [active, setActive] = useState(0)
+  const [cameFrom, setCameFrom] = useState<string | null>(null)
+  const [shownPath, setShownPath] = useState<string | null>(null)
+  const shownEntries = useMemo(() => filterEntries(listing?.entries ?? [], filter), [listing, filter])
+  if (listing && listing.path !== shownPath) {
+    // A new directory arrived: adjusted while rendering, as React has it for
+    // state that follows a value.
+    setShownPath(listing.path)
+    setFilter('')
+    const back = cameFrom === null ? -1 : listing.entries.findIndex((x) => x.path === cameFrom)
+    setActive(Math.max(0, back))
+  }
+  const rowRefs = useRef<(HTMLButtonElement | null)[]>([])
+  // Whether the keyboard moved the row, so the focus follows it; a click or a
+  // listing arriving moves the row without taking the focus from wherever it is.
+  const keyMoved = useRef(false)
+  // The directory the focus is waiting to land in. Moving between
+  // directories replaces every row, the focused one included, and the new
+  // listing arrives a request later: focusing on the next render put it on
+  // a row that was about to go, and the focus fell to the page with it.
+  const focusIn = useRef<string | null>(null)
+  useLayoutEffect(() => {
+    if (focusIn.current !== null && listing?.path === focusIn.current) {
+      focusIn.current = null
+      rowRefs.current[active]?.focus()
+      return
+    }
+    if (!keyMoved.current) return
+    keyMoved.current = false
+    rowRefs.current[active]?.focus()
+  })
+  const goParent = () => {
+    if (listing?.parent == null) return
+    setCameFrom(listing.path)
+    focusIn.current = listing.parent
+    setPath(listing.parent)
+  }
+  const onListKey = (ev: React.KeyboardEvent) => {
+    // Not from a field: the new folder's name and the link form are typing.
+    if (ev.target instanceof HTMLInputElement || ev.target instanceof HTMLTextAreaElement) return
+    const a = treeAction(ev.nativeEvent, filter !== '')
+    if (!a) return
+    ev.preventDefault()
+    switch (a.t) {
+      case 'parent':
+        goParent()
+        return
+      case 'type':
+        setFilter((f) => f + a.char)
+        setActive(0)
+        keyMoved.current = true
+        return
+      case 'backspaceFilter':
+        setFilter((f) => [...f].slice(0, -1).join(''))
+        setActive(0)
+        keyMoved.current = true
+        return
+      case 'clearFilter':
+        setFilter('')
+        keyMoved.current = true
+        return
+      default:
+        keyMoved.current = true
+        setActive((i) => moveRow(i, shownEntries.length, a))
+    }
+  }
+
   const open = (e: FileEntry) => {
-    if (e.isDir) setPath(e.path)
-    else setPreviewing(e)
+    if (e.isDir) {
+      setCameFrom(null)
+      // Into a directory by the keyboard, the focus goes with it.
+      if (document.activeElement?.closest('[data-testid="file-entry"]')) focusIn.current = e.path
+      setPath(e.path)
+    } else setPreviewing(e)
   }
 
   // Lifted out of the button because two menu items run it. The only
@@ -257,16 +336,43 @@ export function FileTree({
         {listing?.parent != null && (
           <button
             type="button"
-            onClick={() => setPath(listing.parent ?? '')}
+            onClick={goParent}
             title={t('files.up')}
+            aria-label={t('files.up')}
             className="vp-control"
           >
             <ChevronLeft size={13} />
           </button>
         )}
-        <span className="min-w-0 flex-1 truncate text-vp-sm text-ink-2" title={safeText(here)}>
-          {safeText(here)}
-        </span>
+        {/* Where this is, from the project's name: each directory a place to go
+            back to. The root was a bare `/`, which says nothing about which
+            project this is. */}
+        <nav
+          aria-label={t('files.where')}
+          data-testid="file-crumbs"
+          className="flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden text-vp-sm text-ink-2"
+          title={safeText(here)}
+        >
+          {crumbs(`${listing?.path ?? path}/.`, projectName).map((c, i, all) =>
+            i === all.length - 1 ? (
+              <span key={c.path} aria-current="page" className="min-w-0 truncate text-ink">
+                {safeText(c.name)}
+              </span>
+            ) : (
+              <span key={c.path} className="flex min-w-0 shrink items-center gap-0.5">
+                <button
+                  type="button"
+                  onClick={() => setPath(c.path)}
+                  data-testid="file-crumb"
+                  className="min-w-0 truncate rounded-md px-0.5 hover:bg-surface-2 hover:text-ink"
+                >
+                  {safeText(c.name)}
+                </button>
+                <span aria-hidden="true">/</span>
+              </span>
+            ),
+          )}
+        </nav>
         {/* How many things are in here, which the server has always sent as
             `total` and the panel only ever read when it was capped. A count
             beside the path is the difference between "this directory is empty"
@@ -287,7 +393,7 @@ export function FileTree({
           title={t('files.choose')}
           className="vp-control"
         >
-          <Upload size={12} />
+          <Upload size={13} />
         </button>
         <input
           ref={chooserRef}
@@ -318,7 +424,7 @@ export function FileTree({
           title={t('files.newFolder')}
           className="vp-control"
         >
-          <FolderPlus size={12} />
+          <FolderPlus size={13} />
         </button>
         {/* This directory, as a page.
 
@@ -351,7 +457,7 @@ export function FileTree({
             title={t('files.preview')}
             className="vp-control"
           >
-            <ExternalLink size={12} />
+            <ExternalLink size={13} />
           </button>
           {previewMenu && (
             <div
@@ -402,7 +508,7 @@ export function FileTree({
           title={t('files.reread')}
           className="vp-control"
         >
-          <RefreshCw size={12} />
+          <RefreshCw size={13} />
         </button>
       </div>
 
@@ -557,6 +663,24 @@ export function FileTree({
         </p>
       )}
 
+      {filter !== '' && (
+        <div data-testid="file-filter" className="mx-2 my-1 flex items-center gap-2 rounded-md bg-surface-2 px-2 py-1 text-vp-sm">
+          <span className="min-w-0 flex-1 truncate font-mono text-ink">{safeText(filter)}</span>
+          <span className="tabular shrink-0 text-vp-xs text-ink-2" data-testid="file-filter-count">
+            {t('files.filtered', { n: shownEntries.length.toLocaleString(), total: (listing?.entries.length ?? 0).toLocaleString() })}
+          </span>
+          <button
+            type="button"
+            onClick={() => setFilter('')}
+            aria-label={t('files.clearFilter')}
+            title={t('files.clearFilter')}
+            className="vp-control"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      )}
+
       {error && (
         <p className="px-3 py-4 text-vp-base" style={{ color: 'var(--vp-state-waiting)' }}>
           {safeText(error)}
@@ -582,97 +706,113 @@ export function FileTree({
         </p>
       )}
 
-      {listing?.entries.map((e) => {
-        // A symlink out of the project is shown but does nothing: every
-        // endpoint behind these rows resolves symlinks and refuses what leaves
-        // the root, so descending or previewing one answers 403. The badge
-        // beside it is the explanation.
-        const reachable = !e.escapes && (e.isDir || e.readable)
-        return (
-          <div
-            key={e.path}
-            data-testid="file-entry"
-            className="group flex items-center gap-2 rounded-md px-2 py-1 text-vp-base hover:bg-surface-2"
-            title={safeText(e.path)}
-          >
-            {/* The name is the button, not the row. A row that is a button
-                cannot contain the download link — nested interactive elements
-                are invalid and a keyboard cannot reach the inner one — and
-                before this the row was a div with a click handler, which no
-                keyboard could reach at all. */}
-            <button
-              type="button"
-              data-testid="file-open"
-              disabled={!reachable}
-              onClick={() => open(e)}
-              title={
-                e.isDir
-                  ? t('preview.enter', { name: safeText(e.name) })
-                  : t('preview.open', { name: safeText(e.name) })
-              }
-              className="flex min-w-0 flex-1 items-center gap-2 rounded-md text-left disabled:cursor-default"
+      <div role="list" onKeyDown={onListKey} data-testid="file-list">
+        {shownEntries.map((e, i) => {
+          // A symlink out of the project is shown but does nothing: every
+          // endpoint behind these rows resolves symlinks and refuses what leaves
+          // the root, so descending or previewing one answers 403. The badge
+          // beside it is the explanation.
+          const reachable = !e.escapes && (e.isDir || e.readable)
+          return (
+            <div
+              key={e.path}
+              role="listitem"
+              data-testid="file-entry"
+              aria-current={i === active ? 'true' : undefined}
+              className={`group flex items-center gap-2 rounded-md px-2 py-1 text-vp-base hover:bg-surface-2 ${
+                i === active ? 'bg-surface-2/60' : ''
+              }`}
+              title={safeText(e.path)}
             >
-              {e.isDir ? (
-                <Folder size={12} className="shrink-0 text-ink-2" />
-              ) : (
-                <File size={12} className="shrink-0 text-ink-2" />
+              {/* The name is the button, not the row. A row that is a button
+                  cannot contain the download link — nested interactive elements
+                  are invalid and a keyboard cannot reach the inner one — and
+                  before this the row was a div with a click handler, which no
+                  keyboard could reach at all. */}
+              <button
+                type="button"
+                data-testid="file-open"
+                disabled={!reachable}
+                ref={(el) => {
+                  rowRefs.current[i] = el
+                }}
+                // One row in the tab order: Tab leaves the listing in one step,
+                // and the arrows move within it.
+                tabIndex={i === active ? 0 : -1}
+                onFocus={() => setActive(i)}
+                onClick={() => open(e)}
+                title={
+                  e.isDir
+                    ? t('preview.enter', { name: safeText(e.name) })
+                    : t('preview.open', { name: safeText(e.name) })
+                }
+                className="flex min-w-0 flex-1 items-center gap-2 rounded-md text-left disabled:cursor-default"
+              >
+                {e.isDir ? (
+                  <Folder size={13} className="shrink-0 text-ink-2" />
+                ) : (
+                  <File size={13} className="shrink-0 text-ink-2" />
+                )}
+                <span className={`min-w-0 flex-1 truncate ${e.isDir ? 'text-ink' : 'text-ink-2'}`}>
+                  {/* A filename is whatever an agent wrote to disk, and a
+                      directional override in it renders the extension backwards
+                      right next to the download link. See safeText. */}
+                  {safeText(e.name)}
+                  {e.symlink && <span className="text-ink-2"> ↗</span>}
+                </span>
+              </button>
+              {/* Say why this one has nothing to click. Without it a file with no
+                  download among files that have one reads as the panel failing,
+                  rather than as the file being out of bounds. */}
+              {e.escapes && (
+                <span
+                  data-testid="file-escapes"
+                  title={t('files.escapeLink')}
+                  className="shrink-0 text-vp-xs text-ink-2"
+                >
+                  {t('files.escapes')}
+                </span>
               )}
-              <span className={`min-w-0 flex-1 truncate ${e.isDir ? 'text-ink' : 'text-ink-2'}`}>
-                {/* A filename is whatever an agent wrote to disk, and a
-                    directional override in it renders the extension backwards
-                    right next to the download link. See safeText. */}
-                {safeText(e.name)}
-                {e.symlink && <span className="text-ink-2"> ↗</span>}
-              </span>
-            </button>
-            {/* Say why this one has nothing to click. Without it a file with no
-                download among files that have one reads as the panel failing,
-                rather than as the file being out of bounds. */}
-            {e.escapes && (
-              <span
-                data-testid="file-escapes"
-                title={t('files.escapeLink')}
-                className="shrink-0 text-vp-xs text-ink-2"
-              >
-                {t('files.escapes')}
-              </span>
-            )}
-            {/* `modTime` is in every listing the server has ever sent and was
-                thrown away in every one of them. In a directory agents are
-                writing into, which file changed last is most of what the
-                listing is being read for — and it is the fact a `ls` in the
-                terminal above would have given for free.
+              {/* `modTime` is in every listing the server has ever sent and was
+                  thrown away in every one of them. In a directory agents are
+                  writing into, which file changed last is most of what the
+                  listing is being read for — and it is the fact a `ls` in the
+                  terminal above would have given for free.
 
-                Only above 380px: at the narrow end the name is already
-                truncating and a second column would take from it. */}
-            {density === 'wide' && e.modTime > 0 && (
-              <span
-                data-testid="file-modified"
-                className="tabular w-16 shrink-0 text-right text-vp-xs text-ink-2"
-                title={t('files.modified')}
-              >
-                {formatAgo(e.modTime, readAt)}
-              </span>
-            )}
-            {!e.isDir && <span className="tabular shrink-0 text-vp-xs text-ink-2">{formatBytes(e.size)}</span>}
-            {!e.isDir && e.readable && !e.escapes && (
-              // A link, not a fetch-and-blob: the browser's own download machinery
-              // handles the progress, the resume and the save dialog, and a blob
-              // would hold the whole file in memory first.
-              <a
-                href={api.downloadURL(projectId, e.path)}
-                download={e.name}
-                data-testid="file-download"
-                onClick={(ev) => ev.stopPropagation()}
-                title={t('files.downloadOne', { name: safeText(e.name) })}
-                className="vp-control vp-reveal"
-              >
-                <Download size={12} />
-              </a>
-            )}
-          </div>
-        )
-      })}
+                  Only above 380px: at the narrow end the name is already
+                  truncating and a second column would take from it. */}
+              {density === 'wide' && e.modTime > 0 && (
+                <span
+                  data-testid="file-modified"
+                  className="tabular w-16 shrink-0 text-right text-vp-xs text-ink-2"
+                  title={t('files.modified')}
+                >
+                  {formatAgo(e.modTime, readAt)}
+                </span>
+              )}
+              {!e.isDir && <span className="tabular shrink-0 text-vp-xs text-ink-2">{formatBytes(e.size)}</span>}
+              {!e.isDir && e.readable && !e.escapes && (
+                // A link, not a fetch-and-blob: the browser's own download machinery
+                // handles the progress, the resume and the save dialog, and a blob
+                // would hold the whole file in memory first.
+                <a
+                  href={api.downloadURL(projectId, e.path)}
+                  download={e.name}
+                  data-testid="file-download"
+                  onClick={(ev) => ev.stopPropagation()}
+                  title={t('files.downloadOne', { name: safeText(e.name) })}
+                  // Out of the tab order with the rows: the viewer's `d` and the
+                  // pointer reach it, and Tab leaves the listing in one step.
+                  tabIndex={-1}
+                  className="vp-control vp-reveal"
+                >
+                  <Download size={13} />
+                </a>
+              )}
+            </div>
+          )
+        })}
+      </div>
 
       {dropping && (
         // pointer-events-none, or the overlay becomes the drop target and the

@@ -60,10 +60,18 @@ export function shortcutLines(mac: boolean, side: 'terminal' | 'panel'): { title
     { combo: ['D'], what: 'keys.viewerDownload' },
     { combo: ['C'], what: 'keys.viewerCopyPath' },
   ]
+  // The Files tab's, while a row has the focus (panels/treeKeys.ts).
+  const files: Line[] = [
+    { combo: ['↑', '↓'], what: 'keys.filesMove' },
+    { combo: ['Enter'], what: 'keys.filesOpen' },
+    { combo: ['←', 'Backspace'], what: 'keys.filesUp' },
+    { combo: ['a…z'], what: 'keys.filesFilter' },
+  ]
   return [
     { title: 'keys.grpSessions', lines: sessions },
     { title: 'keys.grpMove', lines: move },
     { title: 'keys.grpList', lines: list },
+    { title: 'keys.grpFiles', lines: files },
     { title: 'keys.grpViewer', lines: viewer },
     { title: 'keys.grpGeneral', lines: general },
   ]

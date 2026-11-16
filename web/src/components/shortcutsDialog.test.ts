@@ -37,4 +37,9 @@ describe('the list of keys', () => {
     // Zoom joined the list with the image body that answers it (batch 5).
     expect(whats(false, 'panel')).toContain('keys.viewerZoom')
   })
+
+  it('lists the Files tab\'s keys', () => {
+    expect(whats(false, 'panel')).toContain('keys.filesFilter')
+    expect(whats(false, 'panel')).toContain('keys.filesUp')
+  })
 })
