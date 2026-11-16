@@ -27530,3 +27530,38 @@ browser (the zoom keys, flex centring, the checkerboard, media from the
 download, the pinch's touch-action, an uncut long line, SVG in a frame,
 Ctrl-wheel). Three needed a second look: two did not compile and one, the
 download, proved the first check was asking the wrong question.
+
+## 2026-11-16 — The file viewer, batch 6: the Files tab
+
+The viewer opens from the Files tab, and the tab was the part a keyboard
+could not use: every row and every row's download link was its own tab stop,
+nothing moved between rows, and the path above the listing began with a bare
+`/` that did not say which project it was.
+
+One row is in the tab order now and marked `aria-current`; the arrows, Home
+and End move it; Enter opens, because the row is a button; Backspace or the
+left arrow goes up a level and lands on the directory just left rather than
+at the top; typing filters the listing by name with the viewer's smart case,
+a count beside it, and Escape clears it. The download links left the tab
+order with the rows -- the viewer's `d` and the pointer reach them -- so Tab
+leaves the listing in one step. The keys are `panels/treeKeys.ts`, a function
+tested as a table, and they are in the list of keys under *Files*. The path is
+a trail from the project's name, each directory a place to go back to, and
+the tab's icons are one size, 13, where they were 12 and 13.
+
+The first run found the focus lost again, the fourth time in this rebuild and
+the shape the design now names (the focus moves before the element it is on
+is replaced): Enter on a directory moved the focus on the next render, while
+the old listing was still drawn, onto a row the new listing then replaced.
+The focus waits for the directory it is going to instead, and lands once that
+listing has arrived.
+
+`preview-check` drives the tab by keyboard -- the root by name, one icon
+size, one row in the tab order, the arrows, in and back out to the directory
+left, a filter typed and cleared, Tab out in one step -- and each of those was
+taken out to watch it go red: eight key rules in vitest, six in the browser.
+`archive-check` ran as well, because it reads the same tab.
+
+This is the last batch the design numbered for now. What it lists as later --
+archives, notebooks, reading on past 2 MB, and a link in a document opening
+the file it names -- each waits for its own decision.
