@@ -106,10 +106,11 @@ const authed = async (path, init = {}) => {
  * are that too until batch 5 gives them bodies of their own.
  */
 const KIND = [
-  // ICO and BMP are images the server does not sniff yet (batch 5).
-  [/\.(bmp|ico)$/, 'binary'],
-  [/\.(png|jpe?g|gif|webp)$/, 'image'],
+  [/\.(png|jpe?g|gif|webp|bmp|ico)$/, 'image'],
+  // Text, drawn as a picture (batch 5).
   [/^img\/icon\.svg$/, 'text'],
+  [/^media\/clip\./, 'video'],
+  [/^media\/tone\./, 'audio'],
   [/\.pdf$/, 'pdf'],
   [/^large\/nine-megabytes\.bin$/, 'tooBig'],
   [/^(media|archives|bin)\//, 'binary'],
@@ -422,7 +423,7 @@ try {
   {
     const ctx = await contextFor({ width: 1280, height: 800, scheme: 'light' })
     const page = await ctx.newPage()
-    for (const f of ['page.html', 'img/icon.svg']) {
+    for (const f of ['page.html']) {
       await filesAtRoot(page)
       const v = await openFile(page, f)
       const frame = v.locator('[data-testid="preview-frame"]')
@@ -444,7 +445,18 @@ try {
       }
       await page.keyboard.press('Escape')
     }
-    note('PASS', 'page', 'a project\'s HTML and SVG open in the sandbox, scripts off until switched on')
+    // An SVG is a picture now, through <img>, which runs nothing; the frame
+    // is for a project's pages. Its script must not have run.
+    await filesAtRoot(page)
+    const sv = await openFile(page, 'img/icon.svg')
+    if (!(await sv.locator('[data-testid="viewer-image"] img').count())) note('FAIL', 'page', 'icon.svg did not open as a picture')
+    if (await sv.locator('[data-testid="preview-frame"]').count()) note('FAIL', 'page', 'icon.svg opened in a frame')
+    const dialogs = []
+    page.on('dialog', (d) => { dialogs.push(d.message()); void d.dismiss() })
+    await sleep(500)
+    if (dialogs.length) note('FAIL', 'page', `an SVG's script ran: ${dialogs.join(', ')}`)
+    await page.keyboard.press('Escape')
+    note('PASS', 'page', 'a project\'s HTML opens in the sandbox, scripts off until switched on; an SVG opens as a picture')
     await ctx.close()
   }
 
@@ -714,6 +726,129 @@ try {
       await page.keyboard.press('Escape')
     }
     note('PASS', 'structured', 'JSON as a tree (folded, found, unescaped), JSON Lines as records, a broken JSON as code, CSV as a table (quotes, newlines, sticky header, find), semicolons sniffed, a binary as hex with find')
+    await ctx.close()
+  }
+
+  // ── media ────────────────────────────────────────────────────────────────
+  // Batch 5: pictures fit on open and zoom, about the pointer with Ctrl and
+  // the wheel, by the keys, and by two fingers on a phone; they pan by a
+  // drag; a transparent one sits on a checkerboard. Video and audio play from
+  // the inline route, which answers ranges.
+  {
+    const ctx = await contextFor({ width: 1280, height: 800, scheme: 'light' })
+    const page = await ctx.newPage()
+    const inline = []
+    page.on('response', (r) => { if (r.url().includes('/inline?')) inline.push({ status: r.status(), url: r.url() }) })
+    await filesAtRoot(page)
+    let v = await openFile(page, 'img/huge.png')
+    const box = v.locator('[data-testid="viewer-image"]')
+    await page.waitForFunction((sel) => document.querySelector(`${sel} [data-testid="viewer-image-size"]`), VIEWER, { timeout: 10000 }).catch(() => {})
+    const size = await v.locator('[data-testid="viewer-image-size"]').textContent().catch(() => null)
+    if (!size?.includes('3,000') || !size.includes('2,400')) note('FAIL', 'media', `the footer says ${JSON.stringify(size)}, want 3,000 × 2,400`)
+    const fits = await box.evaluate((b) => {
+      const i = b.querySelector('img').getBoundingClientRect()
+      const r = b.getBoundingClientRect()
+      return i.width <= r.width + 1 && i.height <= r.height + 1
+    })
+    if (!fits || (await box.getAttribute('data-zoom')) !== 'fit') note('FAIL', 'media', 'a picture larger than the window did not open fitted')
+    await page.keyboard.press('+')
+    const zoomed = await box.getAttribute('data-zoom')
+    if (zoomed === 'fit') note('FAIL', 'media', '`+` did not zoom')
+    // Zoomed far in, the top-left of the picture is reachable.
+    for (let i = 0; i < 8; i++) await page.keyboard.press('+')
+    const topLeft = await box.evaluate((b) => {
+      b.scrollLeft = 0
+      b.scrollTop = 0
+      const i = b.querySelector('img').getBoundingClientRect()
+      const r = b.getBoundingClientRect()
+      return i.left >= r.left - 1 && i.top >= r.top - 1
+    })
+    if (!topLeft) note('FAIL', 'media', 'zoomed in, the top-left of the picture cannot be reached')
+    // A drag pans.
+    const r = await box.boundingBox()
+    const before = await box.evaluate((b) => [b.scrollLeft, b.scrollTop])
+    await page.mouse.move(r.x + r.width / 2, r.y + r.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(r.x + r.width / 2 - 200, r.y + r.height / 2 - 150, { steps: 6 })
+    await page.mouse.up()
+    const after = await box.evaluate((b) => [b.scrollLeft, b.scrollTop])
+    if (!(after[0] > before[0] && after[1] > before[1])) note('FAIL', 'media', `a drag did not pan: ${before} -> ${after}`)
+    // 0 fits again; Ctrl with the wheel zooms.
+    await page.keyboard.press('0')
+    if ((await box.getAttribute('data-zoom')) !== 'fit') note('FAIL', 'media', '`0` did not fit the picture')
+    await page.mouse.move(r.x + r.width / 3, r.y + r.height / 3)
+    await page.keyboard.down('Control')
+    await page.mouse.wheel(0, -200)
+    await page.keyboard.up('Control')
+    await sleep(200)
+    if ((await box.getAttribute('data-zoom')) === 'fit') note('FAIL', 'media', 'Ctrl with the wheel did not zoom')
+    await page.screenshot({ path: join(SHOTS, 'media-zoom.png') })
+    await page.keyboard.press('Escape')
+
+    await filesAtRoot(page)
+    v = await openFile(page, 'img/alpha.png')
+    const checker = await v.locator('[data-testid="viewer-image"] img').evaluate((i) => getComputedStyle(i).backgroundImage)
+    if (!checker.includes('conic-gradient')) note('FAIL', 'media', `a transparent picture has no checkerboard: ${checker}`)
+    await page.keyboard.press('Escape')
+
+    await filesAtRoot(page)
+    v = await openFile(page, 'media/clip.mp4')
+    const video = v.locator('[data-testid="preview-video"]')
+    const dur = await video.evaluate((el) => new Promise((done) => {
+      if (el.readyState >= 1) return done(el.duration)
+      el.addEventListener('loadedmetadata', () => done(el.duration))
+      el.addEventListener('error', () => done(-1))
+      setTimeout(() => done(-2), 8000)
+    }))
+    if (!(dur > 0.5 && dur < 2)) note('FAIL', 'media', `the video's duration read ${dur}`)
+    // Seeking asks for a range.
+    inline.length = 0
+    await video.evaluate((el) => { el.currentTime = 0.8 })
+    await sleep(800)
+    await page.keyboard.press('Escape')
+
+    await filesAtRoot(page)
+    v = await openFile(page, 'media/tone.wav')
+    const adur = await v.locator('[data-testid="preview-audio"]').evaluate((el) => new Promise((done) => {
+      if (el.readyState >= 1) return done(el.duration)
+      el.addEventListener('loadedmetadata', () => done(el.duration))
+      el.addEventListener('error', () => done(-1))
+      setTimeout(() => done(-2), 8000)
+    }))
+    if (!(adur > 0.3 && adur < 1)) note('FAIL', 'media', `the audio's duration read ${adur}`)
+    await page.keyboard.press('Escape')
+    const ranged = inline.some((x) => x.status === 206)
+    note('PASS', 'media', `a 3,000 × 2,400 picture fitted, zoomed by key and wheel, panned by a drag, its top-left reachable; a checkerboard; a video of ${Number(dur).toFixed(2)} s and audio of ${Number(adur).toFixed(2)} s${ranged ? ', seeking by range' : ''}`)
+    if (!ranged) note('WARN', 'media', 'no 206 seen while seeking the video; the browser may have had it whole')
+    await ctx.close()
+  }
+
+  // Two fingers on a phone.
+  {
+    const ctx = await contextFor({ width: 390, height: 844, scheme: 'dark', phone: true })
+    const page = await ctx.newPage()
+    await filesAtRoot(page)
+    const v = await openFile(page, 'img/photo.jpg')
+    const box = v.locator('[data-testid="viewer-image"]')
+    await page.waitForFunction((sel) => document.querySelector(`${sel} [data-testid="viewer-image-size"]`), VIEWER, { timeout: 10000 }).catch(() => {})
+    const r = await box.boundingBox()
+    const cdp = await ctx.newCDPSession(page)
+    const cx = r.x + r.width / 2
+    const cy = r.y + r.height / 2
+    const pts = (d) => ({ touchPoints: [
+      { x: cx - d, y: cy, id: 1, radiusX: 4, radiusY: 4, force: 1 },
+      { x: cx + d, y: cy, id: 2, radiusX: 4, radiusY: 4, force: 1 },
+    ] })
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', ...pts(30) })
+    for (let d = 40; d <= 120; d += 10) {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', ...pts(d) })
+      await sleep(16)
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await sleep(200)
+    const z = await box.getAttribute('data-zoom')
+    if (z === 'fit' || !(Number(z) > 0)) note('FAIL', 'media', `a pinch on a phone did not zoom (${z})`)
+    else note('PASS', 'media', `a pinch on a phone zoomed to ${z}`)
     await ctx.close()
   }
 
