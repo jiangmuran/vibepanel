@@ -27045,6 +27045,32 @@ client's output captured:
 
 A late viewer is no different: its replay is the same client's output.
 
+**The wheel also scrolled the panel's own buffer under the program.** The
+mutation that should have been caught first was not: taking the fullscreen
+test out of the wheel handler, so a shell's wheel went down the arrow path,
+left `stress-check`'s scrollback step green. The reason was xterm 6, not the
+check. With no mouse protocol on, its viewport listens for the wheel on its own
+element inside the host and takes the event before the custom wheel handler is
+asked; it stands down only for an event already cancelled. So the arrow path,
+which is precisely the no-protocol case, sent its arrows and the viewport
+scrolled anyway -- the torn picture of #19, back whenever there is scrollback
+above the program, which is whenever `vim` was started from a shell that had
+printed anything.
+
+The `altscroll` fixture could not see it because its pane had no history. It
+now prints 200 lines while the page is watching, then switches screens, and
+the step measures the browser's scrollback before it scrolls (170 lines) and
+fails if the program's first row leaves the screen. Printed before the page
+subscribed, the same 200 lines measured as one line of scrollback: the
+subscription replays what tmux drew, and tmux draws a client the screen, not
+every line that passed through it. Against the handler as it was, the step
+fails with the view on `HISTORY_125`; with the fix it passes.
+
+The fix decides the arrows in the capture phase on the host, ahead of the
+viewport, cancelling and stopping the event there; the custom handler keeps
+only the SGR reports, which never had the problem because xterm takes its
+viewport off the wheel itself while a protocol is on.
+
 **Asked when the pane draws** (`internal/httpapi/fullscreen.go`). Entering or
 leaving a full-screen program redraws the pane, and the redraw comes through
 the pump. A chunk on a session somebody is watching -- subscribed and not

@@ -516,24 +516,23 @@ export function TerminalView({
     // A shell keeps xterm's own handling: that scrollback is real and it is
     // the one place the panel may scroll on its own.
     //
-    // Returning false keeps xterm from adding its own handling on top.
+    // The two forwarded paths are attached in different places, and that is
+    // the measured part. While no mouse protocol is on, xterm 6's viewport
+    // listens for the wheel on its own element, inside this host, and takes
+    // the event before the custom handler below is asked; it stands down only
+    // for an event already cancelled. So the arrows, which are exactly the
+    // no-protocol case, are decided in the capture phase on the host, ahead of
+    // the viewport: there the wheel sent the arrows *and* scrolled the buffer
+    // under the program, the torn picture again (stress-check `altscroll`,
+    // with history above the program, read HISTORY_125 where the program's
+    // first row should have been). With a protocol on, xterm takes its
+    // viewport off the wheel itself, and the custom handler is where the
+    // reports were already decided.
     let wheelCarry = 0
-    term.attachCustomWheelEventHandler((ev) => {
-      // Who gets the wheel is decided before anything is measured. A shell is
-      // the commonest thing under the pointer and its scroll must not cost a
-      // layout read per event: the cheapness of that read was measured for the
-      // mouse path (2026-10-06), not for every wheel event everywhere.
-      const sgr = sgrMouse()
-      if (!sgr && !(term.modes.mouseTrackingMode === 'none' && fullscreenRef.current)) {
-        // The terminal's own scrollback. The carry belongs to the forwarded
-        // paths below; a spell of local scrolling must not hand one of them a
-        // stale head start when the pane changes hands.
-        wheelCarry = 0
-        return true
-      }
+    const wheelPlan = (ev: WheelEvent) => {
       const screen = host.querySelector('.xterm-screen')
       const box = screen?.getBoundingClientRect()
-      if (!box || box.height === 0 || box.width === 0) return true
+      if (!box || box.height === 0 || box.width === 0) return null
       // The row height is unscaled: deltaY is in page pixels the CSS transform
       // does not touch, while the box is the scaled-down size, so dividing by
       // the scaled cell height made a shrunk passive viewer scroll 1/scale too
@@ -541,20 +540,42 @@ export function TerminalView({
       const rowHeight = box.height / hostScale() / term.rows
       const plan = wheelReports(ev.deltaY, ev.deltaMode, rowHeight, term.rows, wheelCarry)
       wheelCarry = plan.carry
+      return { plan, box }
+    }
+    const arrowsWheel = (ev: WheelEvent) => {
+      // Who gets the wheel is decided before anything is measured. A shell is
+      // the commonest thing under the pointer and its scroll must not cost a
+      // layout read per event: the cheapness of that read was measured for the
+      // mouse path (2026-10-06), not for every wheel event everywhere.
+      if (sgrMouse() || term.modes.mouseTrackingMode !== 'none' || !fullscreenRef.current) return
       ev.preventDefault()
-      if (plan.count === 0 || replayQueue.replaying) return false
-      if (sgr) {
-        const cell = cellAt({ x: ev.clientX, y: ev.clientY }, box, term.cols, term.rows)
-        // One frame rather than one per report: they arrive together either way,
-        // and pi treats reports closer than five milliseconds as one notch, a
-        // line each, which is the rate this was sized for.
-        socket.writeText(sessionId, wheelReport(plan.up, cell.col, cell.row).repeat(plan.count))
-        return false
-      }
+      ev.stopPropagation()
+      const p = wheelPlan(ev)
+      if (!p || p.plan.count === 0 || replayQueue.replaying) return
       socket.writeText(
         sessionId,
-        alternateScrollKeys(plan.up, plan.count, term.modes.applicationCursorKeysMode),
+        alternateScrollKeys(p.plan.up, p.plan.count, term.modes.applicationCursorKeysMode),
       )
+    }
+    host.addEventListener('wheel', arrowsWheel, { capture: true, passive: false })
+    term.attachCustomWheelEventHandler((ev) => {
+      if (!sgrMouse()) {
+        // The terminal's own scrollback. The carry belongs to the forwarded
+        // paths; a spell of local scrolling must not hand one of them a stale
+        // head start when the pane changes hands.
+        wheelCarry = 0
+        return true
+      }
+      const p = wheelPlan(ev)
+      if (!p) return true
+      ev.preventDefault()
+      if (p.plan.count === 0 || replayQueue.replaying) return false
+      const cell = cellAt({ x: ev.clientX, y: ev.clientY }, p.box, term.cols, term.rows)
+      // One frame rather than one per report: they arrive together either way,
+      // and pi treats reports closer than five milliseconds as one notch, a
+      // line each, which is the rate this was sized for.
+      socket.writeText(sessionId, wheelReport(p.plan.up, cell.col, cell.row).repeat(p.plan.count))
+      // Returning false keeps xterm from adding its own report on top.
       return false
     })
 
@@ -785,6 +806,7 @@ export function TerminalView({
       detachTouch?.()
       host.removeEventListener('pointerup', copyOnSelect)
       host.removeEventListener('mousedown', scaledMouseDown, true)
+      host.removeEventListener('wheel', arrowsWheel, true)
       document.removeEventListener('mousemove', scaledMouseMove, true)
       document.removeEventListener('mouseup', scaledMouseUp, true)
       selSub.dispose()

@@ -391,7 +391,6 @@ try {
   // correct behaviour and it made the first version of this check pass one run
   // in three.
   await mk(['sh', '-c', 'i=1; while [ $i -le 400 ]; do echo SCROLL_$i; i=$((i+1)); done; exec sleep 300'], 'scrollback')
-  await sleep(3000)
   await select('scrollback')
 
   const topRow = async () => (await rows(page)).find((r) => r.trim()) ?? ''
@@ -480,6 +479,20 @@ try {
       'import os, sys, termios, tty',
       'out = sys.stdout',
       'pos = 0',
+      // History on the primary screen first, the way a vim started from a
+      // shell has some. With none, xterm's viewport has nothing to scroll, and
+      // a wheel that scrolled it as well as sending arrows passed: xterm 6's
+      // viewport takes the wheel before the custom handler is asked.
+      // Printed while the page watches, after Enter. Printed before anybody
+      // subscribed, it measured as one line of the browser's scrollback: the
+      // subscription replays what tmux drew, and tmux draws a client the
+      // screen rather than every line that passed through it.
+      'import time',
+      "out.write('PRESS_ENTER\\n'); out.flush()",
+      'sys.stdin.readline()',
+      'for i in range(200):',
+      "    out.write(f'HISTORY_{i}\\n'); out.flush(); time.sleep(0.005)",
+      'time.sleep(1.0)',
       'def draw():',
       "    out.write('\\x1b[?1049h\\x1b[H\\x1b[2J')",
       "    out.write('\\x1b[1;1H ALTSCROLL_READY (full screen, no mouse)')",
@@ -509,8 +522,12 @@ try {
     ].join('\n') + '\n',
   )
   await mk(['python3', '-u', altscrollScript], 'altscroll')
-  await sleep(2500)
+  await sleep(1500)
   await select('altscroll')
+  await waitForRow((r) => r.includes('PRESS_ENTER'), 10000)
+  await page.locator(MAIN_SCREEN).click()
+  await page.keyboard.press('Enter')
+  await waitForRow((r) => r.includes('ALTSCROLL_READY'), 10000)
   const posRow = async () => (await rows(page)).find((r) => r.includes('POS=')) ?? ''
   const pos = (r) => Number((/POS=(-?\d+)/.exec(r) ?? [])[1] ?? NaN)
   // The poller, not the byte stream, is what says a full-screen program is
@@ -525,6 +542,10 @@ try {
     note('WARN', 'altscroll', 'the pane never reported fullscreen; not measuring without it')
   } else {
     const before = await posRow()
+    // The precondition the history above exists for: lines in this
+    // terminal's own scrollback, which a wheel could scroll instead. Counted
+    // as the buffer beyond the screen, whatever those lines say.
+    const history = (await screenRows(page, { all: true })).length - (await rows(page)).length
     const box = await page.locator(MAIN_SCREEN).boundingBox()
     if (!box || !Number.isFinite(pos(before))) {
       note('WARN', 'altscroll', `nothing to scroll: ${JSON.stringify(before)}`)
@@ -540,7 +561,12 @@ try {
         afterUp = await posRow()
         ok = Number.isFinite(pos(afterUp)) && pos(afterUp) > pos(before)
       }
-      if (!ok) {
+      const scrolledAway = !(await rows(page)).some((r) => r.includes('ALTSCROLL_READY'))
+      if (scrolledAway) {
+        note('FAIL', 'altscroll',
+          `the wheel scrolled the panel's own buffer under a full-screen TUI (POS ${pos(before)} -> ` +
+          `${pos(afterUp)}); the top of its screen is out of view: ${JSON.stringify((await rows(page)).slice(0, 3))}`)
+      } else if (!ok) {
         note('FAIL', 'altscroll',
           `the wheel reached a full-screen TUI as nothing: ${JSON.stringify(before)} -> ${JSON.stringify(afterUp)}`)
       } else {
@@ -550,9 +576,14 @@ try {
         if (!Number.isFinite(pos(afterDown)) || pos(afterDown) >= pos(afterUp)) {
           note('FAIL', 'altscroll',
             `wheel-up moved the TUI (POS ${pos(before)} -> ${pos(afterUp)}) but wheel-down did not: ${JSON.stringify(afterDown)}`)
+        } else if (history < 50) {
+          note('WARN', 'altscroll',
+            `the arrows arrived, but this terminal had ${history} lines of scrollback, so a wheel that also ` +
+            'scrolled the panel\'s own buffer could not have been seen')
         } else {
           note('PASS', 'altscroll',
-            `a full-screen TUI without mouse reporting was scrolled by the wheel: POS ${pos(before)} -> ${pos(afterUp)} -> ${pos(afterDown)}`)
+            `a full-screen TUI without mouse reporting was scrolled by the wheel and the panel's ` +
+            `buffer (${history} lines of history) stayed put: POS ${pos(before)} -> ${pos(afterUp)} -> ${pos(afterDown)}`)
         }
       }
       await page.screenshot({ path: join(SHOTS, 'altscroll.png') })
