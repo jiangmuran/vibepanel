@@ -27391,3 +27391,66 @@ the browser (a remote image requested, an anchor that changes the URL, the
 parser in the viewer's chunk, an image by the wrong route). Two of the
 browser mutants first did not build -- an import left unused -- and are
 written so they do; the mutation script refuses one that does not.
+
+## 2026-11-16 — The file viewer, batch 4: structured text and bytes
+
+The hands-on in batch 1 found eighteen fixtures the preview answered with "not
+text, an image or a PDF", each leaving a red 415 in the console, and every
+JSON and CSV file drawn as a wall of characters. Three bodies now, and none of
+them a new way of drawing text where the line body would do.
+
+**Bytes.** A file that is none of the other kinds is answered with its first
+64 KB (`previewHexBytes`) and a 200, `X-Preview-Kind: binary`, still
+`application/octet-stream` and an attachment. The viewer turns them into
+`hexdump -C` lines -- offset, sixteen bytes in two groups, the same sixteen as
+ASCII with anything outside printable ASCII as `.` -- and draws those in the
+line body, so find and go to line work on a binary as they do on a log. A tab
+older than this sees a kind it does not know and offers the download, as it
+did; a tab newer than the server still reads the 415. Wrap and line numbers
+are hidden for bytes: the rows are a fixed width and the offsets are the line
+numbers. Media and archives are bytes too until batch 5 gives them bodies.
+
+**JSON.** A `.json`, `.jsonl` or `.ndjson` that parses opens as a tree
+(`viewer/json.ts`, `JsonTree.tsx`): nodes named by their JSON Pointer, so a
+match deep inside is revealed by opening its pointer's prefixes; small
+documents open fully and large ones at the root; arrays fold past two hundred
+items into one row that opens the rest; strings are shown as the text they
+hold, the escapes already undone. The find bar searches names and values --
+not array indexes, which would make a search for `1` find the second item of
+every array. A file that does not parse, or that the server cut (half a
+document parses to a wrong tree, when it parses at all), is the coloured code
+of batch 2 instead.
+
+**Tables.** `.csv` and `.tsv` open as a table (`viewer/csv.ts`,
+`CsvTable.tsx`): RFC 4180 quoting -- a delimiter or a newline inside quotes is
+text, `""` is a quote -- read leniently where files are commonly broken; the
+delimiter sniffed from what the first lines agree on outside quotes, so a
+spreadsheet's semicolons are read as semicolons; a sticky header and sticky
+row numbers; the first 10,000 rows, with the footer saying so. Rows are groups
+of `tbody` under `content-visibility`, the line body's blocks for a table.
+Find searches the cells and brings the current one into view.
+
+Two bugs the check found in this batch, and one in the check:
+
+- Unfolding a long array replaced the button that had the focus with the rows
+  it stood for, so the focus fell to the page and Ctrl+F reached nothing --
+  the third time in this rebuild that removing a focused element has lost the
+  keyboard (go to line in batch 1, the dialog keyed by path before it). The
+  tree takes the focus before the fold opens.
+- The find button was drawn only for the line body, so the tree and the table
+  could be searched by Ctrl+F and not by the mouse.
+- The check pressed Enter the instant it had typed into find, and the tree and
+  the table count their matches a render later; it stepped through nothing
+  about one run in three. It waits for the count, as a reader typing would.
+
+`docs/api.md` still gave the text bound as 256 KiB and 4,000 lines, from
+before batch 1; it says 2 MiB and 50,000 now, beside the new binary answer.
+
+Each guard was taken out to watch something go red: fourteen in vitest and
+Go (control bytes in the ASCII column, the short last row, a doubled quote,
+a newline inside quotes, the row bound, quotes in the sniff, a cut JSON
+drawn, the fold, opening everything, revealing past the fold, indexes as
+text, the 64 KB cut, the cut unsaid, a 415 instead of a 200) and six in the
+browser (bytes as "cannot show", no tree, the delimiter not sniffed, the
+header not sticky, the fold dropping the focus, line numbers beside the
+offsets).
