@@ -1,6 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
-import { safeText } from '../text'
+import { safeBody } from '../text'
 import { blocks as blocksOf, blockOf, type Block, type Match } from './text'
 
 /**
@@ -22,6 +22,12 @@ import { blocks as blocksOf, blockOf, type Block, type Match } from './text'
  * Selection and copy work across both shapes, because both are text, and the
  * gutter of a row is `user-select: none` so a copy is the file's lines and
  * not its line numbers.
+ *
+ * `safeBody`, never `safeText`, on everything a file contributes here.
+ * `safeText` is for one line -- a name -- and turns a newline or a tab into
+ * U+FFFD; over a file's contents it drew every line of a log run together with
+ * a black diamond between them, which is what the preview this replaced did to
+ * every plain text file (docs/build-log.md, the hands-on list).
  */
 
 /** Rows as tall as this, until a block has been laid out and says otherwise. */
@@ -89,6 +95,9 @@ export function TextBody({ lines, wrap, numbers, matches, current, scrollTo, onT
   // Go to a line: its block is drawn as rows in this render whether or not it
   // has been seen, and the row is put in the middle once it exists. Scrolling
   // the block alone would land on its estimated height, not on the line.
+  // It stays rows afterwards because it has been on screen, and the observer
+  // marks it seen like any other -- which needs each block to keep its
+  // element when it changes shape (BlockView).
   const target = scrollTo ? blockOf(scrollTo.line) : -1
   useLayoutEffect(() => {
     if (!scrollTo) return
@@ -176,17 +185,21 @@ const BlockView = memo(function BlockView({
     containIntrinsicSize: `auto ${count * ESTIMATED_ROW_PX}px`,
   } as const
   const space = wrap ? 'whitespace-pre-wrap [overflow-wrap:anywhere]' : 'whitespace-pre'
+  // The same element in both shapes: the observer that turns a block into
+  // rows is watching this one, and a block that swapped its element for
+  // another was a block it had stopped watching.
   if (!rows) {
     // One text node for the whole block. Indented by the gutter it does not
     // draw yet, so the swap to rows does not shift the text sideways.
     return (
-      <pre
-        data-block={index}
-        style={{ ...style, paddingLeft: numbers ? `calc(${gutter} + 1.5rem)` : '0.75rem' }}
-        className={`m-0 pr-3 font-mono ${space}`}
-      >
-        {safeText(lines.slice(block.start, block.end).join('\n'))}
-      </pre>
+      <div data-block={index} style={style}>
+        <pre
+          style={{ paddingLeft: numbers ? `calc(${gutter} + 1.5rem)` : '0.75rem' }}
+          className={`m-0 pr-3 font-mono ${space}`}
+        >
+          {safeBody(lines.slice(block.start, block.end).join('\n'))}
+        </pre>
+      </div>
     )
   }
   const out = []
@@ -196,8 +209,11 @@ const BlockView = memo(function BlockView({
         {numbers && (
           <span
             aria-hidden="true"
-            style={{ width: gutter }}
-            className="tabular shrink-0 select-none pr-3 pl-3 text-right text-ink-2"
+            // The digits' width plus the padding: a width of the digits
+            // alone with the padding inside it left the number no room and
+            // it ran into the line (39986line).
+            style={{ width: `calc(${gutter} + 1.5rem)` }}
+            className="tabular box-border shrink-0 select-none px-3 text-right text-ink-2"
           >
             {n + 1}
           </span>
@@ -228,12 +244,12 @@ function LineText({
 }) {
   // An empty line still has a height: without a character the row collapses
   // and the gutter's number sits against the next one.
-  if (!hits) return <>{text === '' ? '​' : safeText(text)}</>
+  if (!hits) return <>{text === '' ? '\u200b' : safeBody(text)}</>
   const parts = []
   let at = 0
   for (const i of hits) {
     const m = matches[i]
-    if (m.start > at) parts.push(safeText(text.slice(at, m.start)))
+    if (m.start > at) parts.push(safeBody(text.slice(at, m.start)))
     const isCurrent = i === current
     parts.push(
       // The current match is outlined as well as tinted: colour is never the
@@ -249,11 +265,11 @@ function LineText({
             : 'rounded-md bg-[var(--vp-find)] text-ink'
         }
       >
-        {safeText(text.slice(m.start, m.end))}
+        {safeBody(text.slice(m.start, m.end))}
       </mark>,
     )
     at = m.end
   }
-  if (at < text.length) parts.push(safeText(text.slice(at)))
+  if (at < text.length) parts.push(safeBody(text.slice(at)))
   return <>{parts}</>
 }

@@ -58,9 +58,14 @@ type View =
  * any `position: fixed` inside it -- a modal rendered there is clipped to the
  * 280 pixels it exists to escape.
  *
- * Keyed by path where it is used, so every file starts in the safe state:
- * source off, scripts off, find closed. Wrap and line numbers are the
- * browser's (prefs.ts) and carry over.
+ * Two parts, and the split is about the focus. The dialog -- portal, focus,
+ * the keyboard -- is mounted once for the whole visit; what is inside it is
+ * keyed by path, so every file starts in the safe state: source off, scripts
+ * off, find closed. Keying the whole dialog was the first version, and `]`
+ * then unmounted one dialog and mounted another: the old one's cleanup gave
+ * the focus back to the tree's row after the new one had taken it, so the
+ * next key went to the tree, and closing could not find the row any more.
+ * Wrap and line numbers are the browser's (prefs.ts) and carry over.
  *
  * Batch 1 of the rebuild: the shell -- header, breadcrumb, previous and next,
  * find, go to line, wrap and line numbers, the text body, the footer, the
@@ -68,15 +73,7 @@ type View =
  * still drawn by what drew them before, inside this shell, until the batch
  * that replaces each.
  */
-export function FileViewer({
-  projectId,
-  projectName,
-  entry,
-  files,
-  onOpen,
-  onReveal,
-  onClose,
-}: {
+interface ViewerProps {
   projectId: string
   /** The breadcrumb's root. */
   projectName: string
@@ -88,6 +85,56 @@ export function FileViewer({
   /** A breadcrumb segment: closes the viewer and moves the tree there. */
   onReveal: (dir: string) => void
   onClose: () => void
+}
+
+export function FileViewer(props: ViewerProps) {
+  useLang()
+  const boxRef = useRef<HTMLDivElement | null>(null)
+  // The current file's key handler. The content registers it on every render,
+  // so the dialog's one listener always reaches the file on screen.
+  const keysRef = useRef<((e: React.KeyboardEvent) => void) | null>(null)
+  useDialogFocus(boxRef, props.onClose, { escape: false })
+  return createPortal(
+    <div
+      className="vp-backdrop @container fixed inset-0 z-50 flex items-stretch justify-center bg-black/40"
+      onClick={props.onClose}
+      data-testid="preview-backdrop"
+    >
+      <div
+        ref={boxRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('viewer.label', { name: safeText(props.entry.name) })}
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => keysRef.current?.(e)}
+        data-testid="file-viewer"
+        // The responsive rules are this element's and not the backdrop's: the
+        // backdrop is the container, and a container query never applies to
+        // the container itself -- `@2xl:items-center` there did nothing and
+        // the dialog sat against the top edge.
+        className="vp-panel-in flex h-full w-full max-w-5xl flex-col overflow-hidden border-hairline bg-surface shadow-xl outline-none @2xl:mx-4 @2xl:h-[88vh] @2xl:self-center @2xl:rounded-vp @2xl:border"
+      >
+        <FileContent key={props.entry.path} {...props} boxRef={boxRef} keysRef={keysRef} />
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+function FileContent({
+  projectId,
+  projectName,
+  entry,
+  files,
+  onOpen,
+  onReveal,
+  onClose,
+  boxRef,
+  keysRef,
+}: ViewerProps & {
+  boxRef: React.RefObject<HTMLDivElement | null>
+  keysRef: React.RefObject<((e: React.KeyboardEvent) => void) | null>
 }) {
   useLang()
   // Answered from the listing's size before any request: the server refuses
@@ -96,7 +143,6 @@ export function FileViewer({
   const [view, setView] = useState<View>(() =>
     tooBigToPreview(entry.size) ? { kind: 'tooBig' } : { kind: 'loading' },
   )
-  const boxRef = useRef<HTMLDivElement | null>(null)
   const findRef = useRef<HTMLInputElement | null>(null)
   const gotoRef = useRef<HTMLInputElement | null>(null)
 
@@ -154,13 +200,13 @@ export function FileViewer({
 
   const found = useMemo(() => findMatches(plain ? lines : [], findOpen ? query : ''), [plain, lines, findOpen, query])
 
-  // The focus starts in the body, not on the first button: a key pressed the
-  // moment the viewer opens is meant for the file. In a layout effect so it
-  // is in place before useDialogFocus looks.
+  // The focus starts in the dialog, not on its first button: a key pressed
+  // the moment the viewer opens is meant for the file. Again on every file,
+  // because the element that had it may have been this content's and is gone.
+  // A layout effect, so it is in place before useDialogFocus looks.
   useLayoutEffect(() => {
-    boxRef.current?.focus()
-  }, [])
-  useDialogFocus(boxRef, onClose, { escape: false })
+    if (!boxRef.current?.contains(document.activeElement)) boxRef.current?.focus()
+  }, [boxRef])
 
   const { prev, next } = neighbours(files, entry.path)
 
@@ -183,11 +229,13 @@ export function FileViewer({
     // Selected, so a second Ctrl+F replaces the query instead of appending.
     requestAnimationFrame(() => findRef.current?.select())
   }
+  const focusBody = () =>
+    (boxRef.current?.querySelector<HTMLElement>('[data-testid="viewer-text"]') ?? boxRef.current)?.focus()
   const closeFind = () => {
     setFindOpen(false)
     setGotoOpen(false)
     setCurrent(-1)
-    boxRef.current?.querySelector<HTMLElement>('[data-testid="viewer-text"]')?.focus()
+    focusBody()
   }
   const step = (dir: 1 | -1) => {
     const n = found.matches.length
@@ -274,6 +322,10 @@ export function FileViewer({
     act(a)
   }
 
+  useLayoutEffect(() => {
+    keysRef.current = onKeyDown
+  })
+
   const onTopLine = useCallback((n: number) => {
     topLine.current = n
   }, [])
@@ -283,285 +335,292 @@ export function FileViewer({
     if (line === null) return
     setScrollTo({ line, seq: ++scrollSeq.current })
     setGotoOpen(false)
+    // The input that had the focus is about to go; without this it falls to
+    // the page and the next key reaches nothing in the viewer.
+    focusBody()
   }
 
   const trail = crumbs(entry.path, projectName)
 
-  return createPortal(
-    <div
-      className="vp-backdrop @container fixed inset-0 z-50 flex items-stretch justify-center bg-black/40 p-0 @2xl:items-center @2xl:p-4"
-      onClick={onClose}
-      data-testid="preview-backdrop"
-    >
-      <div
-        ref={boxRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label={t('viewer.label', { name: safeText(entry.name) })}
-        tabIndex={-1}
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={onKeyDown}
-        data-testid="file-preview"
-        data-kind={view.kind}
-        className="vp-panel-in flex h-full w-full max-w-5xl flex-col overflow-hidden border-hairline bg-surface shadow-xl outline-none @2xl:h-[88vh] @2xl:rounded-vp @2xl:border"
-      >
-        <header className="flex shrink-0 flex-col gap-1.5 border-b border-hairline px-3 py-2">
-          <div className="flex min-w-0 items-center gap-2">
-            <nav aria-label={t('viewer.path')} className="flex min-w-0 flex-1 items-center gap-0.5 text-vp-sm text-ink-2">
-              {trail.map((c, i) => (
-                // On a narrow screen only the last two directories: the file's
-                // name is the thing that has to fit.
-                <span
-                  key={c.path}
-                  className={`min-w-0 shrink items-center gap-0.5 ${i < trail.length - 2 ? 'hidden @2xl:flex' : 'flex'}`}
+  return (
+    <div data-testid="viewer-content" data-kind={view.kind} className="contents">
+      <header className="flex shrink-0 flex-col gap-1.5 border-b border-hairline px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <nav aria-label={t('viewer.path')} className="flex min-w-0 flex-1 items-center gap-0.5 text-vp-sm text-ink-2">
+            {trail.map((c, i) => (
+              // The directories nearest the file, as many as fit: one on a
+              // phone, two on a tablet, three wider. With two on a phone both
+              // shrank to a letter each and the trail read `f/r/`. The whole
+              // path is the name's tooltip.
+              <span
+                key={c.path}
+                // They do not shrink: a long name is what gets cut, not the
+                // directories beside it. At most three, each at most 30%, so
+                // the name always has a tenth of the row.
+                className={`min-w-0 max-w-[30%] shrink-0 items-center gap-0.5 ${
+                  i < trail.length - 3
+                    ? 'hidden'
+                    : i < trail.length - 2
+                      ? 'hidden @2xl:flex'
+                      : i < trail.length - 1
+                        ? 'hidden @md:flex'
+                        : 'flex'
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => onReveal(c.path)}
+                  data-testid="viewer-crumb"
+                  data-path={c.path}
+                  title={t('viewer.reveal', { name: safeText(c.name) })}
+                  className="vp-press min-w-0 truncate rounded-md px-1 hover:bg-surface-2 hover:text-ink"
                 >
+                  {safeText(c.name)}
+                </button>
+                <span aria-hidden="true">/</span>
+              </span>
+            ))}
+            <span className="min-w-0 truncate px-1 font-mono text-vp-base text-ink" title={safeText(entry.path)}>
+              {safeText(entry.name)}
+            </span>
+          </nav>
+          {/* With a unit: formatBytes leaves bytes bare, and a bare `58` next
+              to a name is not obviously a size. */}
+          <span className="tabular shrink-0 text-vp-xs text-ink-2">
+            {entry.size < 1024 ? t('viewer.bytes', { n: entry.size }) : formatBytes(entry.size)}
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            data-testid="preview-close"
+            title={t('preview.close')}
+            aria-label={t('preview.close')}
+            className="vp-control shrink-0"
+          >
+            <X size={14} />
+          </button>
+        </div>
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => prev && onOpen(prev)}
+            disabled={!prev}
+            data-testid="viewer-prev"
+            title={prev ? t('viewer.prev', { name: safeText(prev.name) }) : t('viewer.first')}
+            aria-label={t('viewer.prevShort')}
+            className="vp-control disabled:opacity-40"
+          >
+            <ChevronLeft size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={() => next && onOpen(next)}
+            disabled={!next}
+            data-testid="viewer-next"
+            title={next ? t('viewer.next', { name: safeText(next.name) }) : t('viewer.last')}
+            aria-label={t('viewer.nextShort')}
+            className="vp-control disabled:opacity-40"
+          >
+            <ChevronRight size={14} />
+          </button>
+          {rendered && (
+            <div data-testid="preview-mode" role="tablist" className="vp-segmented shrink-0">
+              {([false, true] as const).map((wantSource) => {
+                // "Page" for a document or a page; highlighted code is not a page.
+                const label = wantSource
+                  ? t('preview.source')
+                  : canRender(view.kind === 'text' ? view.markup : null) || isMarkdown(entry.name)
+                    ? t('preview.rendered.short')
+                    : t('viewer.highlighted')
+                const Icon = wantSource ? Code2 : Eye
+                return (
                   <button
+                    key={String(wantSource)}
                     type="button"
-                    onClick={() => onReveal(c.path)}
-                    data-testid="viewer-crumb"
-                    data-path={c.path}
-                    title={t('viewer.reveal', { name: safeText(c.name) })}
-                    className="vp-press min-w-0 truncate rounded-md px-1 hover:bg-surface-2 hover:text-ink"
+                    role="tab"
+                    onClick={() => setSource(wantSource)}
+                    data-testid={wantSource ? 'preview-as-source' : 'preview-as-page'}
+                    aria-selected={source === wantSource}
+                    className="vp-tab text-vp-xs"
                   >
-                    {safeText(c.name)}
+                    <Icon size={11} className="shrink-0" />
+                    {label}
                   </button>
-                  <span aria-hidden="true">/</span>
-                </span>
-              ))}
-              <span className="min-w-0 truncate px-1 font-mono text-vp-base text-ink" title={safeText(entry.path)}>
-                {safeText(entry.name)}
-              </span>
-            </nav>
-            <span className="tabular shrink-0 text-vp-xs text-ink-2">{formatBytes(entry.size)}</span>
-            <button
-              type="button"
-              onClick={onClose}
-              data-testid="preview-close"
-              title={t('preview.close')}
-              aria-label={t('preview.close')}
-              className="vp-control shrink-0"
-            >
-              <X size={14} />
-            </button>
-          </div>
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => prev && onOpen(prev)}
-              disabled={!prev}
-              data-testid="viewer-prev"
-              title={prev ? t('viewer.prev', { name: safeText(prev.name) }) : t('viewer.first')}
-              aria-label={t('viewer.prevShort')}
-              className="vp-control disabled:opacity-40"
-            >
-              <ChevronLeft size={14} />
-            </button>
-            <button
-              type="button"
-              onClick={() => next && onOpen(next)}
-              disabled={!next}
-              data-testid="viewer-next"
-              title={next ? t('viewer.next', { name: safeText(next.name) }) : t('viewer.last')}
-              aria-label={t('viewer.nextShort')}
-              className="vp-control disabled:opacity-40"
-            >
-              <ChevronRight size={14} />
-            </button>
-            {rendered && (
-              <div data-testid="preview-mode" role="tablist" className="vp-segmented shrink-0">
-                {([false, true] as const).map((wantSource) => {
-                  const label = wantSource ? t('preview.source') : t('preview.rendered.short')
-                  const Icon = wantSource ? Code2 : Eye
-                  return (
-                    <button
-                      key={String(wantSource)}
-                      type="button"
-                      role="tab"
-                      onClick={() => setSource(wantSource)}
-                      data-testid={wantSource ? 'preview-as-source' : 'preview-as-page'}
-                      aria-selected={source === wantSource}
-                      className="vp-tab text-vp-xs"
-                    >
-                      <Icon size={11} className="shrink-0" />
-                      {label}
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-            <span className="flex-1" />
-            {plain && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => (findOpen ? closeFind() : openFind())}
-                  data-testid="viewer-find-toggle"
-                  aria-pressed={findOpen}
-                  title={t('viewer.find')}
-                  className="vp-control text-vp-xs"
-                >
-                  <Search size={12} />
-                  <span className="hidden @md:inline">{t('viewer.findShort')}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={toggleWrap}
-                  data-testid="viewer-wrap"
-                  aria-pressed={wrap}
-                  title={t('viewer.wrap')}
-                  className="vp-control text-vp-xs"
-                >
-                  <WrapText size={12} />
-                  <span className="hidden @md:inline">{t('viewer.wrapShort')}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={toggleNumbers}
-                  data-testid="viewer-numbers"
-                  aria-pressed={numbers}
-                  title={t('viewer.numbers')}
-                  className="vp-control text-vp-xs"
-                >
-                  <Hash size={12} />
-                  <span className="hidden @md:inline">{t('viewer.numbersShort')}</span>
-                </button>
-              </>
-            )}
-            <button
-              type="button"
-              onClick={download}
-              data-testid="preview-download"
-              title={t('files.downloadOne', { name: safeText(entry.name) })}
-              className="vp-control text-vp-xs"
-            >
-              <Download size={12} />
-              <span className="hidden @md:inline">{t('files.download')}</span>
-            </button>
-          </div>
-          {findOpen && (
-            <div className="flex min-w-0 items-center gap-1.5" data-testid="viewer-findbar">
-              <input
-                ref={findRef}
-                value={query}
-                onChange={(e) => {
-                  setQuery(e.target.value)
-                  setCurrent(-1)
-                }}
-                autoFocus
-                spellCheck={false}
-                data-testid="viewer-find"
-                aria-label={t('viewer.find')}
-                placeholder={t('viewer.findPlaceholder')}
-                className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface-2 px-2 py-1 font-mono text-vp-sm text-ink outline-none focus:border-accent"
-              />
-              <span className="tabular shrink-0 text-vp-xs text-ink-2" data-testid="viewer-find-count" aria-live="polite">
-                {query === ''
-                  ? ''
-                  : found.matches.length === 0
-                    ? t('viewer.noMatches')
-                    : t('viewer.matchOf', {
-                        i: current < 0 ? '–' : (current + 1).toLocaleString(),
-                        n: found.matches.length.toLocaleString() + (found.capped ? '+' : ''),
-                      })}
-              </span>
-              <button type="button" onClick={() => step(-1)} className="vp-control" aria-label={t('viewer.prevMatch')} title={t('viewer.prevMatch')}>
-                <ChevronLeft size={13} className="rotate-90" />
-              </button>
-              <button type="button" onClick={() => step(1)} className="vp-control" aria-label={t('viewer.nextMatch')} title={t('viewer.nextMatch')}>
-                <ChevronRight size={13} className="rotate-90" />
-              </button>
-              <button type="button" onClick={closeFind} className="vp-control" aria-label={t('viewer.closeFind')} title={t('viewer.closeFind')}>
-                <X size={13} />
-              </button>
+                )
+              })}
             </div>
           )}
-          {gotoOpen && (
-            <form
-              className="flex min-w-0 items-center gap-1.5"
-              data-testid="viewer-gotobar"
-              onSubmit={(e) => {
-                e.preventDefault()
-                goto()
-              }}
-            >
-              <input
-                ref={gotoRef}
-                value={gotoValue}
-                onChange={(e) => setGotoValue(e.target.value)}
-                autoFocus
-                inputMode="numeric"
-                data-testid="viewer-goto"
-                aria-label={t('viewer.goto')}
-                placeholder={t('viewer.gotoPlaceholder', { n: lines.length.toLocaleString() })}
-                className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface-2 px-2 py-1 font-mono text-vp-sm text-ink outline-none focus:border-accent"
-              />
-              <button type="submit" className="vp-control text-vp-xs">
-                {t('viewer.gotoGo')}
+          <span className="flex-1" />
+          {plain && (
+            <>
+              <button
+                type="button"
+                onClick={() => (findOpen ? closeFind() : openFind())}
+                data-testid="viewer-find-toggle"
+                aria-pressed={findOpen}
+                title={t('viewer.find')}
+                className="vp-control text-vp-xs"
+              >
+                <Search size={12} />
+                <span className="hidden @md:inline">{t('viewer.findShort')}</span>
               </button>
-              <button type="button" onClick={closeFind} className="vp-control" aria-label={t('viewer.closeFind')} title={t('viewer.closeFind')}>
-                <X size={13} />
+              <button
+                type="button"
+                onClick={toggleWrap}
+                data-testid="viewer-wrap"
+                aria-pressed={wrap}
+                title={t('viewer.wrap')}
+                className="vp-control text-vp-xs"
+              >
+                <WrapText size={12} />
+                <span className="hidden @md:inline">{t('viewer.wrapShort')}</span>
               </button>
-            </form>
+              <button
+                type="button"
+                onClick={toggleNumbers}
+                data-testid="viewer-numbers"
+                aria-pressed={numbers}
+                title={t('viewer.numbers')}
+                className="vp-control text-vp-xs"
+              >
+                <Hash size={12} />
+                <span className="hidden @md:inline">{t('viewer.numbersShort')}</span>
+              </button>
+            </>
           )}
-        </header>
-
-        <Body
-          view={view}
-          entry={entry}
-          projectId={projectId}
-          scripts={scripts}
-          onScripts={setScripts}
-          plainBody={
-            <TextBody
-              lines={lines}
-              wrap={wrap}
-              numbers={numbers}
-              matches={found.matches}
-              current={current}
-              scrollTo={scrollTo}
-              onTopLine={onTopLine}
-            />
-          }
-          plain={plain}
-          download={download}
-        />
-
-        {view.kind === 'text' && (
-          <footer
-            data-testid="viewer-footer"
-            className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-hairline px-3 py-1.5 text-vp-xs text-ink-2"
+          <button
+            type="button"
+            onClick={download}
+            data-testid="preview-download"
+            title={t('files.downloadOne', { name: safeText(entry.name) })}
+            className="vp-control text-vp-xs"
           >
-            <span className="tabular" data-testid="viewer-lines">
-              {lines.length === 0
-                ? t('preview.empty')
-                : lines.length === 1
-                  ? t('preview.oneLine')
-                  : t('preview.lines', { n: lines.length.toLocaleString() })}
+            <Download size={12} />
+            <span className="hidden @md:inline">{t('files.download')}</span>
+          </button>
+        </div>
+        {findOpen && (
+          <div className="flex min-w-0 items-center gap-1.5" data-testid="viewer-findbar">
+            <input
+              ref={findRef}
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value)
+                setCurrent(-1)
+              }}
+              autoFocus
+              spellCheck={false}
+              data-testid="viewer-find"
+              aria-label={t('viewer.find')}
+              placeholder={t('viewer.findPlaceholder')}
+              className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface-2 px-2 py-1 font-mono text-vp-sm text-ink outline-none focus:border-accent"
+            />
+            <span className="tabular shrink-0 text-vp-xs text-ink-2" data-testid="viewer-find-count" aria-live="polite">
+              {query === ''
+                ? ''
+                : found.matches.length === 0
+                  ? t('viewer.noMatches')
+                  : t('viewer.matchOf', {
+                      i: current < 0 ? '–' : (current + 1).toLocaleString(),
+                      n: found.matches.length.toLocaleString() + (found.capped ? '+' : ''),
+                    })}
             </span>
-            <span aria-hidden="true">·</span>
-            <span>UTF-8</span>
-            {lineEndings(view.text) !== 'none' && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span data-testid="viewer-eol">
-                  {lineEndings(view.text) === 'mixed' ? t('viewer.eolMixed') : lineEndings(view.text)}
-                </span>
-              </>
-            )}
-            {view.truncated && (
-              <span data-testid="preview-truncated" className="min-w-0 flex-1 text-right">
-                {t('viewer.truncated', {
-                  shown: formatBytes(new TextEncoder().encode(view.text).length),
-                  size: formatBytes(entry.size),
-                })}
-              </span>
-            )}
-            {copied && <span className="text-ink">{t('viewer.pathCopied')}</span>}
-          </footer>
+            <button type="button" onClick={() => step(-1)} className="vp-control" aria-label={t('viewer.prevMatch')} title={t('viewer.prevMatch')}>
+              <ChevronLeft size={13} className="rotate-90" />
+            </button>
+            <button type="button" onClick={() => step(1)} className="vp-control" aria-label={t('viewer.nextMatch')} title={t('viewer.nextMatch')}>
+              <ChevronRight size={13} className="rotate-90" />
+            </button>
+            <button type="button" onClick={closeFind} className="vp-control" aria-label={t('viewer.closeFind')} title={t('viewer.closeFind')}>
+              <X size={13} />
+            </button>
+          </div>
         )}
-      </div>
-    </div>,
-    document.body,
+        {gotoOpen && (
+          <form
+            className="flex min-w-0 items-center gap-1.5"
+            data-testid="viewer-gotobar"
+            onSubmit={(e) => {
+              e.preventDefault()
+              goto()
+            }}
+          >
+            <input
+              ref={gotoRef}
+              value={gotoValue}
+              onChange={(e) => setGotoValue(e.target.value)}
+              autoFocus
+              inputMode="numeric"
+              data-testid="viewer-goto"
+              aria-label={t('viewer.goto')}
+              placeholder={t('viewer.gotoPlaceholder', { n: lines.length.toLocaleString() })}
+              className="min-w-0 flex-1 rounded-vp border border-hairline bg-surface-2 px-2 py-1 font-mono text-vp-sm text-ink outline-none focus:border-accent"
+            />
+            <button type="submit" className="vp-control text-vp-xs">
+              {t('viewer.gotoGo')}
+            </button>
+            <button type="button" onClick={closeFind} className="vp-control" aria-label={t('viewer.closeFind')} title={t('viewer.closeFind')}>
+              <X size={13} />
+            </button>
+          </form>
+        )}
+      </header>
+
+      <Body
+        view={view}
+        entry={entry}
+        projectId={projectId}
+        scripts={scripts}
+        onScripts={setScripts}
+        plainBody={
+          <TextBody
+            lines={lines}
+            wrap={wrap}
+            numbers={numbers}
+            matches={found.matches}
+            current={current}
+            scrollTo={scrollTo}
+            onTopLine={onTopLine}
+          />
+        }
+        plain={plain}
+        download={download}
+      />
+
+      {view.kind === 'text' && (
+        <footer
+          data-testid="viewer-footer"
+          className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-hairline px-3 py-1.5 text-vp-xs text-ink-2"
+        >
+          <span className="tabular" data-testid="viewer-lines">
+            {lines.length === 0
+              ? t('preview.empty')
+              : lines.length === 1
+                ? t('preview.oneLine')
+                : t('preview.lines', { n: lines.length.toLocaleString() })}
+          </span>
+          <span aria-hidden="true">·</span>
+          <span>UTF-8</span>
+          {lineEndings(view.text) !== 'none' && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span data-testid="viewer-eol">
+                {lineEndings(view.text) === 'mixed' ? t('viewer.eolMixed') : lineEndings(view.text)}
+              </span>
+            </>
+          )}
+          {view.truncated && (
+            <span data-testid="preview-truncated" className="min-w-0 flex-1 text-right">
+              {t('viewer.truncated', {
+                shown: formatBytes(new TextEncoder().encode(view.text).length),
+                size: formatBytes(entry.size),
+              })}
+            </span>
+          )}
+          {copied && <span className="text-ink">{t('viewer.pathCopied')}</span>}
+        </footer>
+      )}
+    </div>
   )
 }
 
@@ -632,14 +691,18 @@ function Body({
       )
     case 'text':
       if (plain) return plainBody
-      if (isMarkdown(entry.name)) {
-        return (
-          <div className="min-h-0 flex-1 overflow-auto">
-            <Markdown text={view.text} />
-          </div>
-        )
-      }
-      if (shouldHighlight(entry.name)) {
+      // The sandboxed page before either drawing of text. The preview this
+      // replaced asked the highlighter first, and the highlighter claims .html
+      // and .svg, so "Page" on a project's own page drew its source in colour
+      // and the frame below was never reached.
+      if (!canRender(view.markup)) {
+        if (isMarkdown(entry.name)) {
+          return (
+            <div className="min-h-0 flex-1 overflow-auto">
+              <Markdown text={view.text} />
+            </div>
+          )
+        }
         return (
           <div className="min-h-0 flex-1 overflow-auto p-2">
             <Code code={view.text} name={entry.name} />

@@ -689,8 +689,10 @@ export function FileTree({
         // No fallback: the chunk is local and arrives within a frame or two,
         // and a spinner flashed for that long is noise.
         <Suspense fallback={null}>
+          {/* Not keyed by path: the viewer keys its own content, and keying
+              the dialog as well would remount it on every next file and
+              lose where the focus goes back to. */}
           <LazyFileViewer
-            key={previewing.path}
             projectId={projectId}
             projectName={projectName}
             entry={previewing}
