@@ -103,6 +103,27 @@ describe('text contrast', () => {
         })
       }
 
+      // Code in the file viewer, one colour per kind of token. Read where the
+      // viewer's text sits (--vp-surface) and on the other two, because a
+      // fenced block in a document sits on --vp-surface-2.
+      const toks = [...block.matchAll(/(--vp-tok-[a-z]+):/g)].map((m) => m[1])
+      it('declares the code tokens', () => {
+        expect(toks.length).toBeGreaterThanOrEqual(13)
+      })
+      for (const tok of toks) {
+        for (const [name, bg] of surfaces) {
+          it(`${tok} on ${name} is at least 4.5:1`, () => {
+            expect(ratio(over(token(block, tok), bg), bg)).toBeGreaterThanOrEqual(4.5)
+          })
+        }
+      }
+
+      // The current find match is the ink on a tint over the surface.
+      it('--vp-ink on the current find match is at least 4.5:1', () => {
+        const bg = over(token(block, '--vp-find-current'), token(block, '--vp-surface').rgb)
+        expect(ratio(over(token(block, '--vp-ink'), bg), bg)).toBeGreaterThanOrEqual(4.5)
+      })
+
       it('--vp-accent-ink on --vp-accent is at least 4.5:1', () => {
         expect(ratio(token(block, '--vp-accent-ink').rgb, token(block, '--vp-accent').rgb)).toBeGreaterThanOrEqual(4.5)
       })

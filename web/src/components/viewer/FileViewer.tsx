@@ -26,8 +26,10 @@ import { isMac } from '../keyprefs'
 import { formatBytes, tooBigToPreview, PREVIEW_MAX_BYTES } from '../panels/preview'
 import { canRender, sandboxFor } from '../panels/render'
 import { isMarkdown } from '../panels/markdown'
-import { shouldHighlight } from '../panels/highlight'
-import { Code, Markdown } from '../panels/Rendered'
+import { Markdown } from '../panels/Rendered'
+import { looksLikeDiff } from './diff'
+import { grammarFor } from './grammars'
+import { loadGrammar } from './tokens'
 import { viewerAction, type ViewerAction } from './keys'
 import { crumbs, neighbours } from './nav'
 import {
@@ -67,11 +69,12 @@ type View =
  * next key went to the tree, and closing could not find the row any more.
  * Wrap and line numbers are the browser's (prefs.ts) and carry over.
  *
- * Batch 1 of the rebuild: the shell -- header, breadcrumb, previous and next,
- * find, go to line, wrap and line numbers, the text body, the footer, the
- * keyboard. Markdown, highlighted code, a project's HTML, images and PDFs are
- * still drawn by what drew them before, inside this shell, until the batch
- * that replaces each.
+ * The shell is batch 1 of the rebuild -- header, breadcrumb, previous and
+ * next, find, go to line, wrap and line numbers, the text body, the footer,
+ * the keyboard -- and batch 2 coloured the text body: code and diffs are the
+ * same line body as a log, with a grammar (grammars.ts, tokens.ts). Markdown,
+ * a project's HTML, images and PDFs are still drawn by what drew them before,
+ * inside this shell, until the batch that replaces each.
  */
 interface ViewerProps {
   projectId: string
@@ -191,12 +194,32 @@ function FileContent({
 
   const text = view.kind === 'text' ? view.text : ''
   const lines = useMemo(() => splitLines(text), [text])
-  const rendered =
-    view.kind === 'text' && (canRender(view.markup) || isMarkdown(entry.name) || shouldHighlight(entry.name))
-  // The plain body is what find and go to line work in. A rendered document
-  // or highlighted code is a drawing with no lines to step through yet; the
-  // batches that replace them bring find with them.
-  const plain = view.kind === 'text' && (source || !rendered)
+  // Three kinds of text. A document (Markdown) and a project's own page (HTML
+  // or SVG through the sandbox) have a drawing that is not lines; everything
+  // else is the line body, coloured when there is a grammar for it -- so find,
+  // go to line, wrap and copy work on code exactly as on a log. Source is the
+  // line body without colour, for every kind.
+  const drawn = view.kind === 'text' && (canRender(view.markup) || isMarkdown(entry.name))
+  const lang = view.kind === 'text' && !drawn ? (grammarFor(entry.name) ?? (looksLikeDiff(text) ? 'diff' : null)) : null
+  const rendered = drawn || lang !== null
+  const plain = view.kind === 'text' && (source || !drawn)
+  // The grammar, loaded the first time a file in it is opened. Until it
+  // arrives the body is plain, and colours in when it does.
+  const [loaded, setLoaded] = useState<string | null>(null)
+  useEffect(() => {
+    if (!lang) return
+    let live = true
+    loadGrammar(lang).then(
+      () => live && setLoaded(lang),
+      () => {
+        /* no colour; the text is still the text */
+      },
+    )
+    return () => {
+      live = false
+    }
+  }, [lang])
+  const colour = !source && lang !== null && loaded === lang ? lang : null
 
   const found = useMemo(() => findMatches(plain ? lines : [], findOpen ? query : ''), [plain, lines, findOpen, query])
 
@@ -581,6 +604,8 @@ function FileContent({
             current={current}
             scrollTo={scrollTo}
             onTopLine={onTopLine}
+            lang={colour}
+            diff={colour === 'diff'}
           />
         }
         plain={plain}
@@ -691,21 +716,14 @@ function Body({
       )
     case 'text':
       if (plain) return plainBody
-      // The sandboxed page before either drawing of text. The preview this
-      // replaced asked the highlighter first, and the highlighter claims .html
-      // and .svg, so "Page" on a project's own page drew its source in colour
-      // and the frame below was never reached.
+      // Not the line body, so a document or a page. The sandboxed page is
+      // asked about first: the preview this replaced asked its highlighter
+      // first, which claimed .html and .svg, so "Page" on a project's own page
+      // drew its source in colour and the frame was never reached.
       if (!canRender(view.markup)) {
-        if (isMarkdown(entry.name)) {
-          return (
-            <div className="min-h-0 flex-1 overflow-auto">
-              <Markdown text={view.text} />
-            </div>
-          )
-        }
         return (
-          <div className="min-h-0 flex-1 overflow-auto p-2">
-            <Code code={view.text} name={entry.name} />
+          <div className="min-h-0 flex-1 overflow-auto">
+            <Markdown text={view.text} />
           </div>
         )
       }

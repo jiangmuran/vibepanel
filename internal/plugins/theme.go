@@ -35,6 +35,7 @@ var BaseTokens = []string{
 	"--vp-ink", "--vp-ink-2", "--vp-ink-3",
 	"--vp-accent", "--vp-accent-ink", "--vp-selection",
 	"--vp-find", "--vp-find-current", "--vp-find-ring",
+	"--vp-tok-comment", "--vp-tok-keyword", "--vp-tok-string", "--vp-tok-number", "--vp-tok-function", "--vp-tok-type", "--vp-tok-property", "--vp-tok-tag", "--vp-tok-regex", "--vp-tok-variable", "--vp-tok-punct", "--vp-tok-inserted", "--vp-tok-deleted",
 	"--vp-state-waiting", "--vp-state-working", "--vp-state-done", "--vp-state-dead", "--vp-state-crashed",
 	"--vp-danger-ink",
 	"--vp-term-fg", "--vp-term-cursor",

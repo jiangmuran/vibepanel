@@ -41,6 +41,19 @@ describe('the bundle', () => {
 
   it('stays inside its sizes', () => {
     expect(main!.bytes, `${main!.name}`).toBeLessThanOrEqual(1_400_000)
-    expect(viewer!.bytes, `${viewer!.name}`).toBeLessThanOrEqual(48_000)
+    // 48 KB in batch 1; Prism's core joined it in batch 2, about 22 KB.
+    expect(viewer!.bytes, `${viewer!.name}`).toBeLessThanOrEqual(64_000)
+  })
+
+  it('keeps Prism out of the first paint, and each grammar in a chunk of its own', () => {
+    // A string Prism's core carries and nothing of the panel's does.
+    expect(main!.text).not.toContain('disableWorkerMessageHandler')
+    expect(viewer!.text).toContain('disableWorkerMessageHandler')
+    // One chunk per grammar, fetched when a file in it is opened. A loader
+    // written as a template string would have pulled them into one, or all
+    // of Prism's three hundred.
+    const grammars = readdirSync(DIST).filter((f) => /^prism-[a-z0-9-]+-[A-Za-z0-9_-]+\.js$/.test(f))
+    expect(grammars.length).toBeGreaterThanOrEqual(38)
+    expect(grammars.length).toBeLessThanOrEqual(60)
   })
 })

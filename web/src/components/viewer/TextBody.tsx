@@ -1,7 +1,10 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import { safeBody } from '../text'
+import { diffRow } from './diff'
 import { blocks as blocksOf, blockOf, type Block, type Match } from './text'
+import { pieces } from './pieces'
+import { blockTokens, type Tok, type TokKind } from './tokens'
 
 /**
  * A text, every line of it in the DOM, drawn in blocks the browser skips while
@@ -48,9 +51,17 @@ interface Props {
   scrollTo: ScrollRequest | null
   /** The first line on screen, reported as the reader scrolls. */
   onTopLine?: (line: number) => void
+  /**
+   * A Prism grammar that has loaded, or null for plain text. Each block is
+   * tokenised the first time it is drawn as rows, never before: a 50,000 line
+   * file does not start with half a million elements.
+   */
+  lang?: string | null
+  /** A diff: added and removed rows are tinted as well as signed. */
+  diff?: boolean
 }
 
-export function TextBody({ lines, wrap, numbers, matches, current, scrollTo, onTopLine }: Props) {
+export function TextBody({ lines, wrap, numbers, matches, current, scrollTo, onTopLine, lang = null, diff = false }: Props) {
   const all = useMemo(() => blocksOf(lines.length), [lines.length])
   const boxRef = useRef<HTMLDivElement | null>(null)
   const [seen, setSeen] = useState<ReadonlySet<number>>(() => new Set([0]))
@@ -132,6 +143,7 @@ export function TextBody({ lines, wrap, numbers, matches, current, scrollTo, onT
       data-testid="viewer-text"
       data-wrap={wrap ? 'on' : 'off'}
       data-numbers={numbers ? 'on' : 'off'}
+      data-lang={lang ?? 'plain'}
       className={`min-h-0 flex-1 overflow-auto py-2 font-mono text-vp-sm leading-5 text-ink ${wrap ? '' : 'overflow-x-auto'}`}
       tabIndex={0}
     >
@@ -148,6 +160,8 @@ export function TextBody({ lines, wrap, numbers, matches, current, scrollTo, onT
           byLine={byLine}
           matches={matches}
           current={current}
+          lang={lang}
+          diff={diff}
         />
       ))}
     </div>
@@ -165,6 +179,8 @@ interface BlockProps {
   byLine: Map<number, number[]>
   matches: readonly Match[]
   current: number
+  lang: string | null
+  diff: boolean
 }
 
 const BlockView = memo(function BlockView({
@@ -178,7 +194,16 @@ const BlockView = memo(function BlockView({
   byLine,
   matches,
   current,
+  lang,
+  diff,
 }: BlockProps) {
+  // Tokenised here, once, when the block first becomes rows. A memo rather
+  // than a cache beside it: the block's deps do not change while it is
+  // drawn, and a block that is still one text node asks for nothing.
+  const tokens = useMemo(
+    () => (rows && lang ? blockTokens(lines, block.start, block.end, lang) : null),
+    [rows, lang, lines, block.start, block.end],
+  )
   const count = block.end - block.start
   const style = {
     contentVisibility: 'auto',
@@ -205,7 +230,7 @@ const BlockView = memo(function BlockView({
   const out = []
   for (let n = block.start; n < block.end; n++) {
     out.push(
-      <div key={n} data-line={n} className="flex">
+      <div key={n} data-line={n} className={`flex ${diff ? DIFF_ROW[diffRow(lines[n])] : ''}`}>
         {numbers && (
           <span
             aria-hidden="true"
@@ -219,7 +244,13 @@ const BlockView = memo(function BlockView({
           </span>
         )}
         <span className={`min-w-0 flex-1 pr-3 ${numbers ? '' : 'pl-3'} ${space}`}>
-          <LineText text={lines[n]} hits={byLine.get(n)} matches={matches} current={current} />
+          <LineText
+            text={lines[n]}
+            tokens={tokens?.[n - block.start]}
+            hits={byLine.get(n)}
+            matches={matches}
+            current={current}
+          />
         </span>
       </div>,
     )
@@ -231,33 +262,87 @@ const BlockView = memo(function BlockView({
   )
 })
 
+/**
+ * The classes a token is drawn with: one theme token each, so the colours are
+ * the theme's (red line 5) and each is pinned at 4.5:1 by contrast.test.ts.
+ * Written out whole because Tailwind finds classes by reading the source.
+ */
+const TOK_CLASS: Record<TokKind, string> = {
+  plain: '',
+  comment: 'text-[var(--vp-tok-comment)]',
+  keyword: 'text-[var(--vp-tok-keyword)]',
+  string: 'text-[var(--vp-tok-string)]',
+  number: 'text-[var(--vp-tok-number)]',
+  function: 'text-[var(--vp-tok-function)]',
+  type: 'text-[var(--vp-tok-type)]',
+  property: 'text-[var(--vp-tok-property)]',
+  tag: 'text-[var(--vp-tok-tag)]',
+  regex: 'text-[var(--vp-tok-regex)]',
+  variable: 'text-[var(--vp-tok-variable)]',
+  punct: 'text-[var(--vp-tok-punct)]',
+  inserted: 'text-[var(--vp-tok-inserted)]',
+  deleted: 'text-[var(--vp-tok-deleted)]',
+}
+
+/**
+ * A diff row's tint. Never the only difference: the row still starts with its
+ * `+` or `-` as the file has it (red line 4), and the tint is mixed from the
+ * same token colour so a theme that changes one changes both.
+ */
+const DIFF_ROW: Record<ReturnType<typeof diffRow>, string> = {
+  add: 'bg-[color-mix(in_srgb,var(--vp-tok-inserted)_14%,transparent)]',
+  del: 'bg-[color-mix(in_srgb,var(--vp-tok-deleted)_14%,transparent)]',
+  hunk: 'bg-[color-mix(in_srgb,var(--vp-tok-type)_10%,transparent)]',
+  meta: '',
+  context: '',
+}
+
 function LineText({
   text,
+  tokens,
   hits,
   matches,
   current,
 }: {
   text: string
+  tokens: readonly Tok[] | undefined
   hits: number[] | undefined
   matches: readonly Match[]
   current: number
 }) {
   // An empty line still has a height: without a character the row collapses
   // and the gutter's number sits against the next one.
-  if (!hits) return <>{text === '' ? '\u200b' : safeBody(text)}</>
-  const parts = []
-  let at = 0
-  for (const i of hits) {
-    const m = matches[i]
-    if (m.start > at) parts.push(safeBody(text.slice(at, m.start)))
-    const isCurrent = i === current
-    parts.push(
+  if (text === '') return <>{'\u200b'}</>
+  if (!hits && !tokens) return <>{safeBody(text)}</>
+  const ps = pieces(text, tokens, hits ?? [], matches)
+  const out: React.ReactNode[] = []
+  for (let i = 0; i < ps.length; ) {
+    const m = ps[i].match
+    const run: React.ReactNode[] = []
+    for (; i < ps.length && ps[i].match === m; i++) {
+      const p = ps[i]
+      run.push(
+        p.k === 'plain' ? (
+          safeBody(p.v)
+        ) : (
+          <span key={i} className={TOK_CLASS[p.k]} data-tok={p.k}>
+            {safeBody(p.v)}
+          </span>
+        ),
+      )
+    }
+    if (m < 0) {
+      out.push(...run)
+      continue
+    }
+    const isCurrent = m === current
+    out.push(
       // The current match is outlined as well as tinted: colour is never the
       // only carrier (red line 4), and two shades of one highlight are not
       // something everybody can tell apart.
       <mark
-        key={i}
-        data-match={i}
+        key={`m${m}`}
+        data-match={m}
         data-current={isCurrent ? 'true' : undefined}
         className={
           isCurrent
@@ -265,11 +350,9 @@ function LineText({
             : 'rounded-md bg-[var(--vp-find)] text-ink'
         }
       >
-        {safeBody(text.slice(m.start, m.end))}
+        {run}
       </mark>,
     )
-    at = m.end
   }
-  if (at < text.length) parts.push(safeBody(text.slice(at)))
-  return <>{parts}</>
+  return <>{out}</>
 }
