@@ -872,6 +872,65 @@ try {
     await ctx.close()
   }
 
+  // ── the Files tab ────────────────────────────────────────────────────────
+  // Batch 6: the root is the project's name; one row is in the tab order and
+  // current; the arrows move it; Enter on a directory goes in with the focus;
+  // Backspace comes back to the directory just left; typing filters by name
+  // and Escape clears it; Tab leaves the listing in one step; one icon size.
+  {
+    const ctx = await contextFor({ width: 1280, height: 800, scheme: 'light' })
+    const page = await ctx.newPage()
+    await filesAtRoot(page)
+    const tree = page.locator('[data-testid="file-tree"]:visible').first()
+    const crumbsText = await tree.locator('[data-testid="file-crumbs"]').textContent()
+    if (crumbsText?.trim() !== 'fixtures') note('FAIL', 'tree', `the root reads ${JSON.stringify(crumbsText)}, not the project's name`)
+    const sizes = await tree.evaluate((t) => [...new Set([...t.querySelectorAll('svg')].map((s) => s.getAttribute('width')))])
+    if (sizes.length !== 1) note('FAIL', 'tree', `icons in ${sizes.length} sizes: ${sizes.join(', ')}`)
+    const tabbable = await tree.locator('[data-testid="file-open"][tabindex="0"]').count()
+    if (tabbable !== 1) note('FAIL', 'tree', `${tabbable} rows in the tab order, want 1`)
+
+    const current = () => tree.locator('[data-testid="file-entry"][aria-current="true"]').getAttribute('title')
+    const focused = () => page.evaluate(() => document.activeElement?.closest('[data-testid="file-entry"]')?.getAttribute('title') ?? null)
+    await tree.locator('[data-testid="file-open"][tabindex="0"]').focus()
+    const first = await current()
+    await page.keyboard.press('ArrowDown')
+    const second = await current()
+    if (second === first || (await focused()) !== second) note('FAIL', 'tree', `ArrowDown: ${first} -> ${second}, focus on ${await focused()}`)
+    await page.keyboard.press('End')
+    await page.keyboard.press('Home')
+    if ((await current()) !== first) note('FAIL', 'tree', 'Home did not return to the first row')
+
+    // Into a directory and back out by the keyboard.
+    for (let i = 0; i < 30 && (await current()) !== 'src'; i++) await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Enter')
+    await tree.locator('[data-testid="file-entry"][title="src/app.ts"]').waitFor({ timeout: 5000 })
+    await page.waitForFunction(() => document.activeElement?.closest('[data-testid="file-entry"]')?.getAttribute('title')?.startsWith('src/'), null, { timeout: 3000 })
+      .catch(() => note('FAIL', 'tree', 'Enter on a directory did not take the focus in with it'))
+    await page.keyboard.press('Backspace')
+    await page.waitForFunction(() => document.activeElement?.closest('[data-testid="file-entry"]')?.getAttribute('title') === 'src', null, { timeout: 3000 })
+      .catch(() => note('FAIL', 'tree', 'Backspace did not land on the directory it left'))
+
+    // Typing filters.
+    await page.keyboard.type('read')
+    await page.screenshot({ path: join(SHOTS, 'tree-filter.png') })
+    const shown = await tree.locator('[data-testid="file-entry"]').evaluateAll((rows) => rows.map((r) => r.getAttribute('title')))
+    if (shown.join(',') !== 'README.md') note('FAIL', 'tree', `typing "read" left ${shown.join(', ')}`)
+    if (!(await tree.locator('[data-testid="file-filter"]').isVisible())) note('FAIL', 'tree', 'the filter is not shown')
+    await page.keyboard.press('Escape')
+    const all = await tree.locator('[data-testid="file-entry"]').count()
+    if (all < 10) note('FAIL', 'tree', `Escape left ${all} rows`)
+    if (await tree.locator('[data-testid="file-filter"]').count()) note('FAIL', 'tree', 'Escape did not clear the filter')
+
+    // Tab leaves the listing in one step.
+    await tree.locator('[data-testid="file-open"][tabindex="0"]').focus()
+    await page.keyboard.press('Tab')
+    const left = await page.evaluate(() => !document.activeElement?.closest('[data-testid="file-list"]'))
+    if (!left) note('FAIL', 'tree', 'Tab moved to another row instead of leaving the listing')
+    await page.screenshot({ path: join(SHOTS, 'tree-keys.png') })
+    note('PASS', 'tree', 'the root by name, one icon size, one row in the tab order, arrows, Enter in and Backspace back to the directory left, typing filters and Escape clears')
+    await ctx.close()
+  }
+
   // ── 50,000 lines ─────────────────────────────────────────────────────────
   {
     const ctx = await contextFor({ width: 1280, height: 800, scheme: 'light' })
