@@ -27454,3 +27454,79 @@ text, the 64 KB cut, the cut unsaid, a 415 instead of a 200) and six in the
 browser (bytes as "cannot show", no tree, the delimiter not sniffed, the
 header not sticky, the fold dropping the focus, line numbers beside the
 offsets).
+
+## 2026-11-16 — The file viewer, batch 5: media
+
+Pictures, video and audio, and the route they stream from.
+
+**The inline route.** `GET /api/projects/{id}/inline` is the download with an
+inline disposition and ranges, typed from one list: `browse.MediaTypes`, and
+SVG for an `.svg` whose first bytes hold an `<svg` element. Anything else is
+the download's octet-stream attachment, so the route cannot be made to put a
+page on the panel's origin; `TestTheInlineRouteNamesOnlyMediaTypes` walks the
+fixtures and four files written to be the wrong answer -- HTML named `.png`,
+HTML named `.svg`, an SVG with a script, plain HTML -- and holds every answer
+to "a listed type, inline and sandboxed, or a download". Every inline response
+but a PDF is `Content-Security-Policy: sandbox`, so an SVG opened at its own
+address is a document with no scripts and no origin. The header replaces the
+panel's `frame-ancestors 'none'` rather than adding to it, which is how the
+first version was found wanting: with `'none'` a PDF in the viewer's own
+`<object>` would be refused, so it is `'self'` on all of them.
+
+What the route is for was measured rather than assumed. Same-origin `<img>`
+and `<video>` play from the download's octet-stream too -- browsers sniff
+media -- so the mutation that pointed them at the download survived the first
+check. What needs the real type is an SVG in `<img>`, which draws nothing as
+octet-stream, and a PDF in `<object>`, which would be downloaded instead of
+shown. The check now asserts both that the SVG draws and that media is
+streamed from `/inline`.
+
+**Kinds.** `browse.SniffMedia` is `SniffMagic` and then video, audio, ICO and
+BMP; `SniffMagic` itself is unchanged, because share pages decide what a
+bundle may hold with it, and `TestSniffMagicIsUnchangedBySniffMedia` holds it
+there. A BMP needs its header's file size to be the file's, since "BM" begins
+a great many text files. A bare MPEG frame must be Layer III with a real
+bitrate and sample rate: any layer was the first rule, and the full
+preview-check opened a UTF-16 text file as audio, its byte-order mark FF FE
+being a "Layer I frame". The kinds are written twice, in `browse.Kinds` and
+`PreviewKind` in `wire.ts`, and `TestThePreviewKindsMatchTheClient` compares
+them both ways.
+
+The preview route answers a medium with its kind and no body when asked
+`meta=1`, which the viewer does; without it, an image or a PDF is sent as
+before, for an older tab. With every kind bounded -- text cut at 2 MB, a
+binary at 64 KB, media streamed -- the viewer no longer refuses a file by its
+listed size before asking, and that turned up two things the refusal had been
+hiding:
+
+- Nine megabytes of 0x07 had no NUL, so it was text, and opened as two
+  megabytes of U+FFFD on one line. `browse.Readable` is `IsText` and not
+  mostly C0 controls (tab, newline, CR, form feed and ESC excepted); such a
+  file is its bytes. `IsText` is unchanged, for share pages.
+- One line of two megabytes -- a minified bundle -- took the browser more than
+  ten seconds to lay out, the page frozen. A line past 10,000 characters is
+  drawn cut, with a button for the rest, and tokenised only that far; find
+  searches all of it, and stepping to a match past the cut draws the stretch
+  around the match rather than the whole line. It opens in under a second.
+
+**Pictures** fit on open and zoom by `+`, `-` and `0`, by Ctrl with the wheel
+about the pointer, and by two fingers; a drag pans; the footer gives the size
+and the zoom; a transparent picture sits on a checkerboard of two theme
+surfaces. Zoomed in, the top-left is reachable: `m-auto` on the image, which
+the check holds by putting flex centring back and watching it fail. The
+pinch needs `touch-action: none`, and synthetic touches reach the page with or
+without it, so the check reads the property, as render-check does for the
+terminal. An SVG is drawn through `<img>`, which runs nothing; the sandboxed
+frame is for a project's pages. The zoom keys join the list of keys.
+
+**Video and audio** play from the inline route with `preload="metadata"`, so
+opening one to see what it is does not pull all of it; seeking is a range.
+
+Each guard was taken out to watch something go red: ten in Go (the allow
+list, the sandbox, SVG by name alone, PDF framing, meta ignored, a video's
+body sent, BMP by magic alone, a kind the client lacks, SniffMagic widened, a
+type not listed), the Layer III rule, the zoom arithmetic, and eight in the
+browser (the zoom keys, flex centring, the checkerboard, media from the
+download, the pinch's touch-action, an uncut long line, SVG in a frame,
+Ctrl-wheel). Three needed a second look: two did not compile and one, the
+download, proved the first check was asking the wrong question.
