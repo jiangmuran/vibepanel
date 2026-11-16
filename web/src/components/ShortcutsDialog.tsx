@@ -14,7 +14,7 @@ import { useDialogFocus } from './useDialogFocus'
 function keys(mac: boolean) {
   const alt = mac ? '⌥' : 'Alt+'
   const ctrlShift = mac ? '⌃⇧' : 'Ctrl+Shift+'
-  return { alt, ctrlShift, shift: mac ? '⇧' : 'Shift+' }
+  return { alt, ctrlShift, shift: mac ? '⇧' : 'Shift+', cmd: mac ? '⌘' : 'Ctrl+' }
 }
 
 interface Line {
@@ -46,10 +46,24 @@ export function shortcutLines(mac: boolean, side: 'terminal' | 'panel'): { title
     { combo: [`${k.alt}/`], what: 'keys.help' },
     { combo: ['Esc'], what: 'keys.close' },
   ]
+  // The file viewer's, which work while it is open (viewer/keys.ts is the
+  // table). Zoom joins this list with the image body that answers it.
+  const viewer: Line[] = [
+    { combo: ['[', ']'], what: 'keys.viewerFiles' },
+    { combo: [`${k.cmd}F`], what: 'keys.viewerFind' },
+    { combo: ['Enter', `${k.shift}Enter`], what: 'keys.viewerMatch' },
+    { combo: [`${k.cmd}G`], what: 'keys.viewerGoto' },
+    { combo: ['W'], what: 'keys.viewerWrap' },
+    { combo: ['N'], what: 'keys.viewerNumbers' },
+    { combo: ['S'], what: 'keys.viewerSource' },
+    { combo: ['D'], what: 'keys.viewerDownload' },
+    { combo: ['C'], what: 'keys.viewerCopyPath' },
+  ]
   return [
     { title: 'keys.grpSessions', lines: sessions },
     { title: 'keys.grpMove', lines: move },
     { title: 'keys.grpList', lines: list },
+    { title: 'keys.grpViewer', lines: viewer },
     { title: 'keys.grpGeneral', lines: general },
   ]
 }
