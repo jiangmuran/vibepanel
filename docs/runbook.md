@@ -274,10 +274,10 @@ What each symptom was, when it was measured:
   until PostToolUse. A question dialog (AskUserQuestion) is not released by
   keys at all; it reports itself when the last question is answered.
 
-## Kimi Code and zcode sessions never report their state
+## Kimi Code, zcode and agy sessions never report their state
 
-Both are wired through Settings → State reporting like the other agents, each
-into its own file, and each fails separately:
+All three are wired through Settings → State reporting like the other agents,
+each into its own file, and each fails separately:
 
 - Kimi Code: `[[hooks]]` blocks appended to `~/.kimi-code/config.toml`
   (UserPromptSubmit/PreToolUse → working, PermissionRequest → waiting,
@@ -293,11 +293,18 @@ into its own file, and each fails separately:
   `enabled` also gates hooks that are not in this file: zcode's workspace and
   plugin hooks. If your workspace hooks went quiet, that marker is the file
   that answers whether the panel is responsible.
+- agy (Antigravity CLI): one named hook, `vibepanel`, in
+  `~/.gemini/config/hooks.json` (SessionStart/Stop → done, PreInvocation and
+  PreToolUse/PostToolUse → working). It reports only working and done: agy
+  has no permission-request event, so waiting is read off the screen as for an
+  agent with no hook. Removal deletes that one key, and only if its commands
+  are the panel's.
 
 ```sh
 grep -A2 '\[\[hooks\]\]' ~/.kimi-code/config.toml   # are the blocks there?
 grep -A6 '"hooks"' ~/.zcode/cli/config.json         # enabled, and whose events?
 ls ~/.zcode/cli/config.json.vibepanel-enabled       # did the panel turn enabled on?
+grep -A3 '"vibepanel"' ~/.gemini/config/hooks.json  # agy: is the named hook there?
 ```
 
 If an agent has no row on that page at all, it is not turned off -- it is not
