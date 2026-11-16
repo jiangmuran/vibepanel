@@ -27228,3 +27228,13 @@ read the body with `innerText`, which leaves out every block not laid out yet,
 so the sanitiser could be swapped back for the one that eats tabs and pass; it
 reads `textContent`, and a TSV is in the sample. And the phone's trail rule
 had no assertion of its own until it was given one.
+
+The whole check is about ten minutes, most of it the 131 opens. While working
+on one section, `PREVIEW_QUICK=1` runs a single shape over the sample instead
+of every fixture, and `PREVIEW_SHAPE` names which (`1280-light` by default;
+`320-dark` for the phone's rules):
+
+    cd web && PREVIEW_QUICK=1 PREVIEW_SHAPE=320-dark node scripts/preview-check.mjs
+
+`make preview-check` and `make verify` never set either; a quick run that is
+green says nothing about the shapes it skipped.
