@@ -157,7 +157,12 @@ func TestOneCallerGivingUpDoesNotCancelTheSharedRead(t *testing.T) {
 func TestAWaiterIsNotHeldBySomebodyElsesRead(t *testing.T) {
 	c := &Cache{TTL: time.Minute}
 	release := make(chan struct{})
-	first := make(chan struct{})
+	// Buffered: the read signals it has started with a send that must not be
+	// dropped. Unbuffered, a read that got there before the test was waiting
+	// took the default, then blocked on release while the test blocked on
+	// first -- a deadlock held for the whole 30-minute timeout, under the load
+	// of `make check` with -race.
+	first := make(chan struct{}, 1)
 	fn := func(context.Context) (any, error) {
 		select {
 		case first <- struct{}{}:
