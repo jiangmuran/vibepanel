@@ -184,3 +184,19 @@ export function parseGoTo(input: string, lineCount: number): number | null {
   if (!Number.isSafeInteger(n) || n < 1) return null
   return Math.min(n, lineCount) - 1
 }
+
+/**
+ * Characters of one line drawn before it is cut.
+ *
+ * A minified bundle is one line, and two megabytes of one line is a paragraph
+ * the browser takes more than ten seconds to lay out -- the page frozen while
+ * it does, measured on a 9 MB file the viewer opened as text. Past this the
+ * line shows its start and a button for the rest; find still searches all of
+ * it, and stepping to a match past the cut opens the line.
+ */
+export const LONG_LINE = 10_000
+
+/** The lines as drawn before any is opened: each long one cut at LONG_LINE. */
+export function cutLines(lines: readonly string[]): readonly string[] {
+  return lines.some((l) => l.length > LONG_LINE) ? lines.map((l) => (l.length > LONG_LINE ? l.slice(0, LONG_LINE) : l)) : lines
+}

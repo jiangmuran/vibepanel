@@ -51,4 +51,14 @@ describe('pieces', () => {
     ]
     expect(pieces('aaaa', undefined, [0, 1], m).map((p) => p.match)).toEqual([0, 1])
   })
+
+  it('reads a window of a long line with its offset', () => {
+    // The text is the line from 100; the match is at 103..105 in the line.
+    const m = [{ line: 0, start: 103, end: 105 }]
+    expect(pieces('abcdefg', undefined, [0], m, 100)).toEqual([
+      { k: 'plain', v: 'abc', match: -1 },
+      { k: 'plain', v: 'de', match: 0 },
+      { k: 'plain', v: 'fg', match: -1 },
+    ])
+  })
 })

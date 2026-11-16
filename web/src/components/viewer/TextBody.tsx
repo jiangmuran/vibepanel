@@ -1,8 +1,9 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import { safeBody } from '../text'
+import { t } from '../../i18n'
 import { diffRow } from './diff'
-import { blocks as blocksOf, blockOf, type Block, type Match } from './text'
+import { blocks as blocksOf, blockOf, cutLines, LONG_LINE, type Block, type Match } from './text'
 import { pieces } from './pieces'
 import { blockTokens, type Tok, type TokKind } from './tokens'
 
@@ -63,6 +64,12 @@ interface Props {
 
 export function TextBody({ lines, wrap, numbers, matches, current, scrollTo, onTopLine, lang = null, diff = false }: Props) {
   const all = useMemo(() => blocksOf(lines.length), [lines.length])
+  // Long lines are drawn cut (text.ts, LONG_LINE) until opened; the cut copy
+  // is also what is tokenised, since Prism on a two-megabyte line is its own
+  // ten seconds.
+  const shown = useMemo(() => cutLines(lines), [lines])
+  const [opened, setOpened] = useState<ReadonlySet<number>>(() => new Set())
+  const open = useCallback((n: number) => setOpened((prev) => new Set(prev).add(n)), [])
   const boxRef = useRef<HTMLDivElement | null>(null)
   const [seen, setSeen] = useState<ReadonlySet<number>>(() => new Set([0]))
 
@@ -153,6 +160,9 @@ export function TextBody({ lines, wrap, numbers, matches, current, scrollTo, onT
           index={i}
           block={b}
           lines={lines}
+          shown={shown}
+          opened={opened}
+          onOpen={open}
           rows={seen.has(i) || i === target}
           wrap={wrap}
           numbers={numbers}
@@ -172,6 +182,10 @@ interface BlockProps {
   index: number
   block: Block
   lines: readonly string[]
+  /** The lines with each long one cut, as drawn until it is opened. */
+  shown: readonly string[]
+  opened: ReadonlySet<number>
+  onOpen: (line: number) => void
   rows: boolean
   wrap: boolean
   numbers: boolean
@@ -187,6 +201,9 @@ const BlockView = memo(function BlockView({
   index,
   block,
   lines,
+  shown,
+  opened,
+  onOpen,
   rows,
   wrap,
   numbers,
@@ -201,8 +218,8 @@ const BlockView = memo(function BlockView({
   // than a cache beside it: the block's deps do not change while it is
   // drawn, and a block that is still one text node asks for nothing.
   const tokens = useMemo(
-    () => (rows && lang ? blockTokens(lines, block.start, block.end, lang) : null),
-    [rows, lang, lines, block.start, block.end],
+    () => (rows && lang ? blockTokens(shown, block.start, block.end, lang) : null),
+    [rows, lang, shown, block.start, block.end],
   )
   const count = block.end - block.start
   const style = {
@@ -222,7 +239,7 @@ const BlockView = memo(function BlockView({
           style={{ paddingLeft: numbers ? `calc(${gutter} + 1.5rem)` : '0.75rem' }}
           className={`m-0 pr-3 font-mono ${space}`}
         >
-          {safeBody(lines.slice(block.start, block.end).join('\n'))}
+          {safeBody(shown.slice(block.start, block.end).join('\n'))}
         </pre>
       </div>
     )
@@ -244,13 +261,49 @@ const BlockView = memo(function BlockView({
           </span>
         )}
         <span className={`min-w-0 flex-1 pr-3 ${numbers ? '' : 'pl-3'} ${space}`}>
-          <LineText
-            text={lines[n]}
-            tokens={tokens?.[n - block.start]}
-            hits={byLine.get(n)}
-            matches={matches}
-            current={current}
-          />
+          {(() => {
+            // Which part of a long line is drawn: its start, or -- when the
+            // current match lies past the cut -- the stretch around that
+            // match, so stepping to it does not lay out the whole line. The
+            // whole line is one button away, as the reader's choice.
+            const full = lines[n]
+            const isLong = full.length > LONG_LINE && !opened.has(n)
+            let from = 0
+            let to = full.length
+            if (isLong) {
+              const cur = current >= 0 && matches[current]?.line === n ? matches[current] : undefined
+              if (cur && cur.end > LONG_LINE) {
+                from = Math.max(0, Math.min(cur.start - LONG_LINE / 2, full.length - LONG_LINE))
+                to = Math.min(full.length, from + LONG_LINE)
+              } else {
+                to = LONG_LINE
+              }
+            }
+            const more = (k: number) => (
+              <button
+                type="button"
+                onClick={() => onOpen(n)}
+                data-testid="viewer-long-line"
+                className="mx-1 rounded-md border border-hairline px-1.5 font-sans text-vp-xs text-ink-2 hover:text-ink"
+              >
+                {t('viewer.longLine', { n: k.toLocaleString() })}
+              </button>
+            )
+            return (
+              <>
+                {from > 0 && more(from)}
+                <LineText
+                  text={isLong ? full.slice(from, to) : full}
+                  offset={from}
+                  tokens={opened.has(n) || from > 0 ? undefined : tokens?.[n - block.start]}
+                  hits={byLine.get(n)}
+                  matches={matches}
+                  current={current}
+                />
+                {to < full.length && more(full.length - to)}
+              </>
+            )
+          })()}
         </span>
       </div>,
     )
@@ -299,12 +352,15 @@ const DIFF_ROW: Record<ReturnType<typeof diffRow>, string> = {
 
 function LineText({
   text,
+  offset,
   tokens,
   hits,
   matches,
   current,
 }: {
   text: string
+  /** Where `text` starts in the line, when it is a window of a long one. */
+  offset: number
   tokens: readonly Tok[] | undefined
   hits: number[] | undefined
   matches: readonly Match[]
@@ -314,7 +370,7 @@ function LineText({
   // and the gutter's number sits against the next one.
   if (text === '') return <>{'\u200b'}</>
   if (!hits && !tokens) return <>{safeBody(text)}</>
-  const ps = pieces(text, tokens, hits ?? [], matches)
+  const ps = pieces(text, tokens, hits ?? [], matches, offset)
   const out: React.ReactNode[] = []
   for (let i = 0; i < ps.length; ) {
     const m = ps[i].match

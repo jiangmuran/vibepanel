@@ -13,15 +13,22 @@ interface Piece {
  * halfway through a keyword and end halfway through a string and each part
  * keeps its colour inside the highlight.
  */
-export function pieces(text: string, tokens: readonly Tok[] | undefined, hits: readonly number[], matches: readonly Match[]): Piece[] {
+export function pieces(
+  text: string,
+  tokens: readonly Tok[] | undefined,
+  hits: readonly number[],
+  matches: readonly Match[],
+  /** Where `text` starts in its line, when it is a window of a long one. */
+  offset = 0,
+): Piece[] {
   const toks = tokens && tokens.length ? tokens : text ? [{ k: 'plain' as TokKind, v: text }] : []
   const cuts = new Set<number>()
   for (const i of hits) {
-    cuts.add(matches[i].start)
-    cuts.add(matches[i].end)
+    cuts.add(matches[i].start - offset)
+    cuts.add(matches[i].end - offset)
   }
   const matchAt = (pos: number) => {
-    for (const i of hits) if (pos >= matches[i].start && pos < matches[i].end) return i
+    for (const i of hits) if (pos >= matches[i].start - offset && pos < matches[i].end - offset) return i
     return -1
   }
   const out: Piece[] = []

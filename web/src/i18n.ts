@@ -587,6 +587,7 @@ const DICT = {
   'viewer.tree': { zh: '树', en: 'Tree' },
   'viewer.picture': { zh: '图片', en: 'Picture' },
   'viewer.fit': { zh: '适应窗口', en: 'Fit' },
+  'viewer.longLine': { zh: '还有 {n} 个字符', en: '{n} more characters' },
   'viewer.imageHelp': {
     zh: '加号和减号缩放，0 回到适应窗口，按住 Ctrl 滚动缩放，拖动平移。',
     en: 'Plus and minus zoom, 0 fits, Ctrl with the wheel zooms, drag to pan.',

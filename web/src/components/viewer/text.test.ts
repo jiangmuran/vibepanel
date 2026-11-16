@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
   BLOCK_LINES,
+  LONG_LINE,
+  cutLines,
   MAX_MATCHES,
   blockOf,
   blocks,
@@ -163,5 +165,18 @@ describe('parseGoTo', () => {
   it('refuses what is not a line', () => {
     for (const s of ['', 'abc', '0', '-3', '1.5']) expect(parseGoTo(s, 10), s).toBeNull()
     expect(parseGoTo('3', 0)).toBeNull()
+  })
+})
+
+describe('cutLines', () => {
+  it('cuts only the lines past the bound, and leaves the rest alone', () => {
+    const long = 'x'.repeat(LONG_LINE + 5)
+    const out = cutLines(['a', long, 'b'])
+    expect(out).toEqual(['a', 'x'.repeat(LONG_LINE), 'b'])
+  })
+
+  it('is the same array when nothing is long, so nothing downstream redraws', () => {
+    const lines = ['a', 'b']
+    expect(cutLines(lines)).toBe(lines)
   })
 })
