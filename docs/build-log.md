@@ -27108,3 +27108,123 @@ has forked -- while the fork is still a copy of `sh`, before it execs
 window. `spawnPane` now waits for the comm to become `sleep`, bounded at
 three seconds. Seen once before beside a render-check on this machine and
 passed on the rerun, which is the shape of a race, not a flake.
+
+## 2026-11-15 — The file viewer, batch 1: the shell
+
+docs/file-preview.md is the design. Before any of it was built, every fixture
+in `web/scripts/fixtures/preview` was opened in the preview as it shipped
+(673689a), on a 1280-wide desktop in the light theme and a 390-wide phone in
+the dark one, and what it drew was written down. "A demo with too many bugs"
+was the verdict; this is the list.
+
+- **Every plain text file was one run-on line.** The plain branch ran
+  `safeText` -- the sanitiser for a one-line name -- over the whole file, and
+  it turns a newline and a tab into U+FFFD. A log, a CSV, a TSV, a CRLF file,
+  anything without a highlighter was drawn as its lines joined by black
+  diamonds. `safeBody` exists for exactly this and was not used.
+- **A project's own page could not be reached.** "Page" on `page.html` and
+  `icon.svg` drew the source in colour: the highlighter was asked before the
+  sandboxed frame, and it claims both. The frame, its sandbox and the scripts
+  switch were unreachable, and no browser check had ever opened one.
+- **"Page | Source" on files that have no page.** A Dockerfile, a Makefile, a
+  dotfile, a file with no extension or an unknown one: "Page" was the same
+  text in colour.
+- **4,000 lines and stop.** A 50,000 line log and a 6,000 line build log
+  both showed their first 4,000, with "download it for the rest".
+- **Markdown**: nested lists flattened to one level, task lists as a literal
+  `[x]`, images as `!` followed by a link, table alignment ignored and the
+  last row's border missing. (Batch 3.)
+- **Structured text** as a wall: JSON and JSONL through the forty-word
+  highlighter, CSV and TSV as plain text, a minified bundle as one line of
+  32,032 elements. (Batches 2 and 4.)
+- **Eighteen fixtures were "not text, an image or a PDF"**: video, audio,
+  every archive and binary, ICO and BMP images, Latin-1 and UTF-16 text. Each
+  also left a red 415 in the console, because the server answers "no preview"
+  as a 4xx. (Batches 4 and 5, where those files get bodies and the answer
+  becomes a 200.)
+- **An image larger than the window** was scaled to fit with no zoom and no
+  real size: 3000 × 2400 became 330 pixels wide on the phone. (Batch 5.)
+- **The window was the size of whatever was in it**, centred, so its header
+  moved from file to file; 768 pixels wide on a 1280 window.
+- **On the phone** the header's buttons left the name `READ…`, and the
+  panel showed round the dialog's edges.
+- **The header** said the name and nothing about where the file is; the size
+  was `58` with no unit.
+- **Escape was the whole keyboard.** No next file, no find, no go to line.
+- **The dialog and the tree's "share as a page" button had the same test id**
+  (`file-preview`), so a check that located one matched both.
+
+### What is built
+
+One viewer for every file, full-window, in `components/viewer/`: a
+breadcrumb from the project's name whose segments move the tree, previous and
+next in the directory, find with a count and Enter/Shift+Enter, go to line
+(`path:line` and `line:col` accepted), wrap and line numbers kept per
+browser, a footer with lines, encoding and line endings and, for a cut file,
+how much of it is shown. The keys are `viewer/keys.ts`, a function tested as
+a table, and they are in the list of keys under their own heading. Markdown,
+highlighted code, a project's page, images and PDFs keep their old drawings
+inside the new viewer until the batch that replaces each; `FilePreview.tsx`
+is gone.
+
+The text is drawn in blocks of 256 lines under `content-visibility: auto`,
+each one text node until it is first seen and rows after, so the server's
+bound goes from 256 KB and 4,000 lines to 2 MB and 50,000. Measured in
+`preview-check` on 50,000 lines: the first line in about 820 ms, 1,215
+elements in the dialog, 61 frames a second scrolling a screen a frame, and
+go to line, find and copy all working across blocks nobody had scrolled to.
+
+The viewer is its own chunk, 27 KB, fetched the first time a file is opened;
+`bundle.test.ts` fails if anything imports it statically, and did when one
+was put back. A tab older than the bundle -- an upgrade replaced the chunk it
+knows the name of -- is told to reload, in the viewer's own place, rather than
+taking the Files tab down through the error boundary.
+
+Three tokens join the theme contract: `--vp-find`, `--vp-find-current` and
+`--vp-find-ring`. The current match is outlined as well as tinted.
+
+### What went wrong while building it
+
+The hands-on is what found most of these, and `preview-check` now holds each:
+
+- The new body made the old mistake: `safeText` per line and per unseen
+  block, which would have turned every tab into U+FFFD and every unseen
+  block into one line. The check now fails on U+FFFD in any body whose file
+  does not hold a control character, and on a first line not on screen.
+- The whole dialog was keyed by path, so `]` unmounted one dialog and mounted
+  another, and the old one's cleanup gave the focus back to the tree after the
+  new one had taken it: the next key went nowhere. The dialog is mounted once
+  per visit and only its content is keyed.
+- `@2xl:items-center` on the backdrop never applied: the backdrop is the
+  container, and a container query does not apply to the container itself.
+  The dialog sat against the top edge. The rules are on the dialog now, and
+  the check measures that it is centred.
+- The trail shrank its segments with the name, so on a phone two directories
+  were a letter each (`f/r/`), and a long name squeezed them on a desktop. They
+  do not shrink now; a phone shows the file's directory, wider screens up to
+  three.
+- The gutter's width included its padding, so a five-digit number ran into its
+  line (`39986line`).
+- A block swapped its element when it changed from one text node to rows, so
+  the observer that marks blocks seen was watching an element that was gone:
+  go to line drew its target as rows, and the next find dropped it back,
+  taking any selection in it along. A block keeps its element now. A second
+  guard -- keeping the target rows from the render -- was taken out when its
+  mutant survived: with the element kept, the observer already does it.
+- Closing go to line removed the input that had the focus, so the next key
+  reached nothing.
+- ESLint read the fixtures as source; Tailwind would have read their markup as
+  class names. Both are told to skip `scripts/fixtures`.
+
+`make preview-check` is the check: every fixture at 1280, a sample at 768 and
+320, both themes; the kind each opens as, inside the window, centred where
+there is room, nothing thrown, no header row overflowing, no line number into
+its line; every key in the table; a project's page in the sandbox with
+scripts off until switched on; the 50,000 line file.
+
+Each guard above was taken out to watch the check go red, eight in the
+browser and thirteen in vitest. Two needed the check made stronger first: it
+read the body with `innerText`, which leaves out every block not laid out yet,
+so the sanitiser could be swapped back for the one that eats tabs and pass; it
+reads `textContent`, and a TSV is in the sample. And the phone's trail rule
+had no assertion of its own until it was given one.
