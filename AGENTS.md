@@ -320,6 +320,7 @@ Each of these exists because the alternative broke something real.
   | `make archive-check` | archiving a project: the row, the archived list, the picker's shelf and restore-by-directory, the idle setting, a phone in both themes, and tmux asked that the session is still alive |
   | `make render-check` | the largest: layout, states, arbitration, panels, mobile, clipboard, passkeys |
   | `make stress-check` | wide characters, full-screen programs, scrollback, floods, dropped sockets |
+  | `make preview-check` | the file viewer (`docs/file-preview.md`): every kind of file it shows, from `web/scripts/fixtures/preview/`, at three widths in both themes; every key; the sandboxed page; a 50,000-line file's first paint and scroll rate. About ten minutes; `PREVIEW_QUICK=1 PREVIEW_SHAPE=…` runs one shape while iterating |
   | `make restart-check` | kill the backend; the sessions and the login must outlive it |
   | `make scale-check` | two dozen sessions: snapshot size, sidebar reachability, poller |
   | `make resources-check` | the Resources tab and a session that really runs out of memory: isolation, modes, the question across the console, ending a process from it, the countdown, the panel answering throughout, layout at three widths. Needs a user manager for the pressure half |
