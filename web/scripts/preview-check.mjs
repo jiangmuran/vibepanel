@@ -324,9 +324,12 @@ try {
     const focusInside = await page.evaluate((sel) => document.querySelector(sel).contains(document.activeElement), VIEWER)
     if (!focusInside) note('FAIL', 'keys', 'the focus is not in the viewer when it opens')
 
-    // Highlighted code is not the plain body yet; `s` is the way to it.
+    // Code is the line body with colour; `s` is the same body without.
+    await page.waitForFunction((sel) => document.querySelector(`${sel} [data-testid="viewer-text"]`)?.dataset.lang === 'python', VIEWER, { timeout: 10000 }).catch(() => {})
     await page.keyboard.press('s')
-    if (!(await v.locator('[data-testid="viewer-text"]').count())) note('FAIL', 'keys', '`s` did not switch a .py file to its source')
+    if ((await v.locator('[data-testid="viewer-text"]').getAttribute('data-lang')) !== 'plain') {
+      note('FAIL', 'keys', '`s` did not switch a .py file to its source')
+    }
 
     const wrapBefore = await v.locator('[data-testid="viewer-text"]').getAttribute('data-wrap')
     await page.keyboard.press('w')
@@ -444,6 +447,90 @@ try {
       await page.keyboard.press('Escape')
     }
     note('PASS', 'page', 'a project\'s HTML and SVG open in the sandbox, scripts off until switched on')
+    await ctx.close()
+  }
+
+  // ── code and diffs ───────────────────────────────────────────────────────
+  // Batch 2: code is the line body with a grammar, so find and go to line work
+  // in it; Source is the same body without colour; a diff's rows are tinted
+  // and keep their signs. Prism is asked for tokens and never for HTML: a
+  // `.token` element anywhere would be its HTML output in the page.
+  {
+    const ctx = await contextFor({ width: 1280, height: 800, scheme: 'dark' })
+    const page = await ctx.newPage()
+    // Each grammar is its own chunk, fetched when a file in it is opened: a
+    // .ts file fetches the TypeScript grammar and nothing else (its base,
+    // JavaScript, is in Prism's core). A loader rewritten as a template string,
+    // or a static import, would fetch many or all of them at once.
+    const grammarChunks = []
+    page.on('request', (r) => {
+      const m = /\/assets\/(prism-[a-z0-9-]+?)-[A-Za-z0-9_-]+\.js$/.exec(r.url())
+      if (m) grammarChunks.push(m[1])
+    })
+    await filesAtRoot(page)
+    if (grammarChunks.length) note('FAIL', 'code', `grammars fetched before any file was opened: ${grammarChunks.join(', ')}`)
+    let v = await openFile(page, 'src/app.ts')
+    const body = v.locator('[data-testid="viewer-text"]')
+    await page.waitForFunction((sel) => document.querySelector(`${sel} [data-testid="viewer-text"]`)?.dataset.lang === 'typescript', VIEWER, { timeout: 10000 })
+      .catch(() => note('FAIL', 'code', 'app.ts never coloured as typescript'))
+    const kinds = await body.evaluate((el) => [...new Set([...el.querySelectorAll('[data-tok]')].map((t) => t.dataset.tok))])
+    if (grammarChunks.join(',') !== 'prism-typescript') {
+      note('FAIL', 'code', `opening a .ts file fetched ${grammarChunks.length} grammar chunks: ${grammarChunks.join(', ')}`)
+    }
+    for (const want of ['keyword', 'string', 'comment']) {
+      if (!kinds.includes(want)) note('FAIL', 'code', `app.ts has no ${want} token: ${kinds.join(',')}`)
+    }
+    // Colours are the theme's: a keyword is not the ink.
+    const [kw, ink] = await body.evaluate((el) => [
+      getComputedStyle(el.querySelector('[data-tok="keyword"]')).color,
+      getComputedStyle(el).color,
+    ])
+    if (kw === ink) note('FAIL', 'code', `a keyword is drawn in the ink colour (${kw})`)
+    // Find works in code, and a match inside a token keeps the token's colour.
+    await page.keyboard.press('Control+f')
+    await v.locator('[data-testid="viewer-find"]').fill('xport')
+    await page.keyboard.press('Enter')
+    const inside = await v.locator('mark[data-current="true"] [data-tok="keyword"]').count()
+    if (!inside) note('FAIL', 'code', 'a match inside `export` lost the keyword colour')
+    await page.keyboard.press('Escape')
+    // Source is the same lines, no colour.
+    await page.keyboard.press('s')
+    const plainLang = await body.getAttribute('data-lang')
+    const plainToks = await body.locator('[data-tok]').count()
+    if (plainLang !== 'plain' || plainToks) note('FAIL', 'code', `Source is still coloured (${plainLang}, ${plainToks} tokens)`)
+    await page.keyboard.press('Escape')
+
+    // A diff.
+    await filesAtRoot(page)
+    v = await openFile(page, 'changes.diff')
+    await page.waitForFunction((sel) => document.querySelector(`${sel} [data-testid="viewer-text"]`)?.dataset.lang === 'diff', VIEWER, { timeout: 10000 })
+      .catch(() => note('FAIL', 'diff', 'changes.diff never coloured as a diff'))
+    const rows = await v.evaluate((d) => [...d.querySelectorAll('[data-line]')].map((r) => ({
+      text: r.textContent.replace(/^\d+/, ''),
+      bg: getComputedStyle(r).backgroundColor,
+    })))
+    const added = rows.find((r) => r.text.startsWith('+const'))
+    const context = rows.find((r) => r.text.startsWith(' import'))
+    if (!added || !context || added.bg === context.bg) {
+      note('FAIL', 'diff', `an added row is not tinted apart from context: ${JSON.stringify([added, context])}`)
+    }
+    if (added && !added.text.startsWith('+')) note('FAIL', 'diff', 'an added row lost its sign')
+    await page.keyboard.press('Escape')
+
+    // A fenced block in a document, through the same grammars.
+    await filesAtRoot(page)
+    v = await openFile(page, 'README.md')
+    await page.waitForFunction((sel) => !!document.querySelector(`${sel} [data-testid="preview-code"] [class*="--vp-tok-keyword"]`), VIEWER, { timeout: 10000 })
+      .catch(() => note('FAIL', 'code', 'the README\'s ```ts block is not coloured'))
+    await page.keyboard.press('Escape')
+
+    // Told not to highlight the page itself (viewer/prismSetup.ts). Read here
+    // because in node Prism keeps its settings where no test can set them.
+    const manual = await page.evaluate(() => window.Prism?.manual)
+    if (manual !== true) note('FAIL', 'code', `Prism.manual is ${manual}: it will write its HTML into any language-* element`)
+    const prismHtml = await page.evaluate(() => document.querySelectorAll('.token').length)
+    if (prismHtml) note('FAIL', 'code', `${prismHtml} elements with Prism's own .token class: its HTML is in the page`)
+    note('PASS', 'code', `code coloured by kind (${kinds.join(', ')}), find inside tokens, Source plain, a diff tinted with its signs, a fence coloured, no Prism HTML`)
     await ctx.close()
   }
 
