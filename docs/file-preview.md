@@ -89,9 +89,20 @@ Text, by extension in the browser:
 ### Size
 
 Text is served up to 2 MB and 50,000 lines (`previewTextBytes`,
-`previewTextLines`, up from 256 KB and 4,000), and the body is virtualised:
-only the lines in view are in the DOM, which is what makes 50,000 lines and
-find across them possible. Past the cap the footer says so and offers the
+`previewTextLines`, up from 256 KB and 4,000). The body is not windowed:
+every line is in the DOM, in blocks of 256 lines, each block
+`content-visibility: auto` with a `contain-intrinsic-size` that is corrected
+once the block has been laid out, so layout and paint skip what is off
+screen while selection, copy and wrap stay the browser's own. Windowing was
+the first idea and loses on two lines of this design at once: wrapped lines
+have no fixed height, so a window has to measure every row and still jumps
+imprecisely; and a drag or Ctrl+A across lines that are not in the DOM
+copies a hole. Highlighting is per block and lazy -- a block is tokenised
+when it first comes into view and is plain spans until then -- so a 50,000
+line file does not start with half a million elements. Go to line scrolls
+the block into view and then the line. Find searches the text, not the DOM.
+`preview-check` opens a 50,000 line file and pins the time to first paint
+and the scroll frame rate. Past the cap the footer says so and offers the
 download; a `?from=` byte offset on the preview route is the way to read on,
 and the viewer offers it as "next 2 MB" rather than loading it by itself.
 
@@ -184,10 +195,13 @@ covering browser checks and a mutation per guard, in this order because each
 later one draws inside what the earlier one built:
 
 1. **The shell**: header, breadcrumb, previous/next, find, go to line, wrap
-   and line numbers, the virtualised text body, the footer, focus and keys,
-   the phone layout, the ⌥/ entries. Plain text only. `make preview-check`
-   is born here: fixtures for every type the table names, driven at three
-   widths in both themes, with the keys.
+   and line numbers, the text body in blocks, the raised text cap, the
+   footer, focus and keys, the phone layout, the ⌥/ entries. The old
+   drawings -- markdown, the keyword highlighter, the HTML frame, image,
+   PDF -- stay inside the new shell until the batch that replaces each, with
+   find working on text only. `make preview-check` is born here: fixtures
+   for every type the table names, driven at three widths in both themes,
+   with the keys.
 2. **Code and diff**: Prism tokens to React, the grammar table, the token
    colours as theme tokens, diff.
 3. **Markdown**: mdast with GFM, images from the project, anchors.
