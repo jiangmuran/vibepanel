@@ -188,9 +188,16 @@ const previewMaxBytes = 8 << 20
 // cover: a browser will happily stream eight megabytes and then spend a minute
 // laying it out as wrapped monospace in a 280px column. See browse.ClipText,
 // which is where both bites are decided and where the line bound is argued.
+//
+// They were 256 KB and 4,000 lines while the viewer laid out every line it
+// was given. It now draws the text in blocks the browser skips while they are
+// off screen (docs/file-preview.md, "Size"), so the bound is what a person
+// reads in one sitting and what find can search at a keystroke, not what a
+// layout pass survives; preview-check pins the first paint and the scroll
+// rate of a file at both bounds.
 const (
-	previewTextBytes = 256 << 10
-	previewTextLines = 4000
+	previewTextBytes = 2 << 20
+	previewTextLines = 50000
 )
 
 // handleDownload streams one file out of a project.
