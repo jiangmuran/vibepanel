@@ -27318,3 +27318,76 @@ failed and the check ran the previous bundle -- the mutation script now
 refuses a mutant that does not build -- and loading every grammar in parallel
 broke their order, so the check went red for the colour, not for the count;
 loaded in order, it fails on 42 chunks fetched for one `.ts` file.
+
+## 2026-11-15 — The file viewer, batch 3: documents
+
+The preview drew Markdown with a parser of its own, thirteen node types and no
+images, and the hands-on in batch 1 listed what that cost: nested lists
+flattened to one level, task lists as a literal `[x]`, images as `!` and a
+link, table alignment ignored. Documents now go through mdast
+(`mdast-util-from-markdown`, with `micromark-extension-gfm` for GitHub's
+syntax and `mdast-util-gfm` for its nodes -- the design named two packages;
+the third is the half that parses) and are drawn as React elements from the
+tree, in `viewer/Markdown.tsx`: tables with their alignment, task lists as
+checkboxes, nested lists, strikethrough, autolinks, footnotes with their way
+back, link references.
+
+The line the old parser held is held the same way: a tree of data, React
+elements from it, no HTML string anywhere, no `dangerouslySetInnerHTML`; raw
+HTML in a document is a node like any other and is drawn as its text.
+`Markdown.test.ts` renders a hostile document to a string with
+`react-dom/server` and reads the string, which is exactly what a browser would
+be given: no `<script>`, no `<iframe>`, no event handler on any real tag, no
+`href` or `src` to a script.
+
+**The link rule had a hole.** The allow list checked a link's scheme with a
+regular expression and treated anything without one as relative. The URL
+parser deletes tabs and newlines anywhere in a URL, so `java\tscript:alert(1)`
+(a real tab where the `\t` is) had no scheme by the regex, passed as relative,
+and was `javascript:` to the browser -- confirmed against the old function and
+against `new URL`. It did not run: React 19 refuses `javascript:` hrefs at
+render, and its check allows for the same whitespace. So the hole was the
+panel's rule, not the panel; the rule now reads a target the way the URL
+parser will before it decides, and does not rely on React for it. Backslashes
+count as slashes for the protocol-relative refusal for the same reason.
+
+**Images.** One whose path stays in the project loads through the download
+route, relative to the document's own directory, with the same containment
+the server applies to every file; `../` past the root and its encoded forms
+are refused before a request is made. A remote image is never requested, so
+opening a document cannot tell somebody's server that it was opened and when;
+its address is shown, as a link the reader can follow. `preview-check`
+records every request the page makes and fails on one to the remote host.
+
+**Anchors.** Headings get GitHub's ids, so a link written for a README on
+GitHub lands on the same heading; they are prefixed `md-` so a document cannot
+name an id the panel uses. An `#anchor` scrolls the document and leaves the
+panel's URL alone, which the check asserts.
+
+**A link to another file** says where it points and goes nowhere. Followed as
+a URL it would leave the panel for a path the panel does not serve. Opening it
+in the viewer instead is the obvious next step and is not in this batch.
+
+The parser is a chunk of its own, 92 KB, fetched the first time a document is
+opened; the viewer's chunk went down to 48 KB with the old parser gone.
+`bundle.test.ts` keeps the parser out of both the viewer and the first paint,
+and `preview-check` that no renderer chunk is fetched before a document is
+opened. `Rendered.tsx` and `markdown.ts` are gone; the fenced code block moved
+to `viewer/CodeBlock.tsx`.
+
+The lockfile took the same care as batch 2's, with one difference: besides
+the `libc` fields the npm here drops, it adds `peer` flags the lock's writer
+did not; both are left as they were, and the two flags this change does make
+-- `debug` and `ms` are no longer dev-only, because micromark uses them -- are
+kept. Proved the same way: the two files alone, `npm ci --ignore-scripts`,
+exit 0, the lock unchanged.
+
+Each guard was taken out to watch something go red, thirteen in vitest (the
+whitespace in a target, protocol-relative, climbing out, the decoding before
+the climb is checked, repeated heading ids, raw HTML as HTML, a remote image
+fetched, an external link without `rel`, alignment, tasks, the id prefix, a
+relative link followed, footnote ids through the numbering slugger) and four in
+the browser (a remote image requested, an anchor that changes the URL, the
+parser in the viewer's chunk, an image by the wrong route). Two of the
+browser mutants first did not build -- an import left unused -- and are
+written so they do; the mutation script refuses one that does not.
