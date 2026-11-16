@@ -181,12 +181,15 @@ tab are one size (an audit finding).
 
 ## Dependencies
 
-Two libraries, both tokenisers that return trees and neither a component or
+Three libraries, all parsers that return trees and none a component or
 state library: `prismjs` (core and grammars, loaded per language on first
-use) and `mdast-util-from-markdown` with `mdast-util-gfm`. The viewer is its
-own chunk, imported when a file is first opened, so the panel's first paint
-does not pay for either; `bundle.test.ts` pins the main chunk's size and the
-viewer's.
+use), and `mdast-util-from-markdown` with `mdast-util-gfm` and
+`micromark-extension-gfm` -- the extension parses GitHub's syntax, the util
+builds its nodes, and one without the other is half a table. The viewer is
+its own chunk, imported when a file is first opened, and the document
+renderer another, imported when a document is, so the panel's first paint
+pays for none of them; `bundle.test.ts` pins the main chunk's size, the
+viewer's and the renderer's.
 
 ## Batches
 
@@ -209,7 +212,11 @@ later one draws inside what the earlier one built:
 5. **Media**: image zoom and pan, SVG as an image, the inline route with
    ranges, video and audio, the kinds table pinned against `wire.ts`.
 6. **The Files tab**: keyboard, filter, breadcrumb root, icon sizes.
-7. Later, each its own decision: archives, notebooks, "next 2 MB".
+7. Later, each its own decision: archives, notebooks, "next 2 MB", and a
+   relative link in a document (`[x](other.md)`) opening that file in the
+   viewer -- today it shows where it points and does nothing, because
+   followed as a URL it would take the whole panel to a path it does not
+   serve.
 
 The old `FilePreview.tsx`, `Rendered.tsx`, `highlight.ts` and `markdown.ts`
 go when the batch that replaces each lands; nothing is kept beside its
