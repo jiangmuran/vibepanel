@@ -26,6 +26,11 @@ import { isMac } from '../keyprefs'
 import { formatBytes, tooBigToPreview, PREVIEW_MAX_BYTES } from '../panels/preview'
 import { canRender, sandboxFor } from '../panels/render'
 import { isMarkdown } from './mdlinks'
+import { CsvTable } from './CsvTable'
+import { isDelimited, parseCsv, sniffDelimiter } from './csv'
+import { hexLines } from './hex'
+import { JsonTree } from './JsonTree'
+import { isJson, parseJson } from './json'
 import { looksLikeDiff } from './diff'
 import { grammarFor } from './grammars'
 import { loadGrammar } from './tokens'
@@ -58,6 +63,7 @@ type View =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
   | { kind: 'text'; text: string; truncated: boolean; markup: Markup | null }
+  | { kind: 'binary'; bytes: Uint8Array; truncated: boolean }
   | { kind: 'image'; url: string }
   | { kind: 'pdf'; url: string }
   | { kind: 'tooBig' }
@@ -205,16 +211,35 @@ function FileContent({
   }, [projectId, entry.path, entry.size])
 
   const text = view.kind === 'text' ? view.text : ''
-  const lines = useMemo(() => splitLines(text), [text])
+  const binary = view.kind === 'binary'
+  // A binary is drawn as hexdump -C lines in the same body, so find and go to
+  // line work on its bytes as they do on a log (hex.ts).
+  const lines = useMemo(() => (view.kind === 'binary' ? hexLines(view.bytes) : splitLines(text)), [view, text])
+  // Structured text: a JSON document as a tree, delimited text as a table.
+  // Each falls back to the line body -- code, coloured -- when it is not one:
+  // a JSON file that does not parse, or one the server cut.
+  const json = useMemo(
+    () => (view.kind === 'text' && isJson(entry.name) ? parseJson(view.text, entry.name, view.truncated) : null),
+    [view, entry.name],
+  )
+  const table = useMemo(
+    () => (view.kind === 'text' && isDelimited(entry.name) ? parseCsv(view.text, sniffDelimiter(view.text, entry.name)) : null),
+    [view, entry.name],
+  )
   // Three kinds of text. A document (Markdown) and a project's own page (HTML
   // or SVG through the sandbox) have a drawing that is not lines; everything
   // else is the line body, coloured when there is a grammar for it -- so find,
   // go to line, wrap and copy work on code exactly as on a log. Source is the
   // line body without colour, for every kind.
-  const drawn = view.kind === 'text' && (canRender(view.markup) || isMarkdown(entry.name))
+  const drawn =
+    view.kind === 'text' && (canRender(view.markup) || isMarkdown(entry.name) || json !== null || table !== null)
   const lang = view.kind === 'text' && !drawn ? (grammarFor(entry.name) ?? (looksLikeDiff(text) ? 'diff' : null)) : null
   const rendered = drawn || lang !== null
-  const plain = view.kind === 'text' && (source || !drawn)
+  const plain = (view.kind === 'text' && (source || !drawn)) || binary
+  // The tree and the table take find as well; they count their own matches.
+  const structured = view.kind === 'text' && !source && (json !== null || table !== null)
+  const [ext, setExt] = useState({ n: 0, capped: false })
+  const onCount = useCallback((n: number, capped: boolean) => setExt({ n, capped }), [])
   // The grammar, loaded the first time a file in it is opened. Until it
   // arrives the body is plain, and colours in when it does.
   const [loaded, setLoaded] = useState<string | null>(null)
@@ -234,6 +259,8 @@ function FileContent({
   const colour = !source && lang !== null && loaded === lang ? lang : null
 
   const found = useMemo(() => findMatches(plain ? lines : [], findOpen ? query : ''), [plain, lines, findOpen, query])
+  const matchCount = plain ? found.matches.length : ext.n
+  const matchCapped = plain ? found.capped : ext.capped
 
   // The focus starts in the dialog, not on its first button: a key pressed
   // the moment the viewer opens is meant for the file. Again on every file,
@@ -258,7 +285,7 @@ function FileContent({
     })
   }
   const openFind = () => {
-    if (!plain) return
+    if (!plain && !structured) return
     setGotoOpen(false)
     setFindOpen(true)
     // Selected, so a second Ctrl+F replaces the query instead of appending.
@@ -273,8 +300,13 @@ function FileContent({
     focusBody()
   }
   const step = (dir: 1 | -1) => {
-    const n = found.matches.length
+    const n = matchCount
     if (n === 0) return
+    if (!plain) {
+      // The tree and the table bring the current match into view themselves.
+      setCurrent(stepMatch(current, n, dir))
+      return
+    }
     const i = current < 0 && dir === 1 ? firstMatchFrom(found.matches, topLine.current) : stepMatch(current, n, dir)
     setCurrent(i)
     setScrollTo({ line: found.matches[i].line, seq: ++scrollSeq.current })
@@ -464,9 +496,13 @@ function FileContent({
                 // "Page" for a document or a page; highlighted code is not a page.
                 const label = wantSource
                   ? t('preview.source')
-                  : canRender(view.kind === 'text' ? view.markup : null) || isMarkdown(entry.name)
-                    ? t('preview.rendered.short')
-                    : t('viewer.highlighted')
+                  : json !== null
+                    ? t('viewer.tree')
+                    : table !== null
+                      ? t('viewer.table')
+                      : canRender(view.kind === 'text' ? view.markup : null) || isMarkdown(entry.name)
+                        ? t('preview.rendered.short')
+                        : t('viewer.highlighted')
                 const Icon = wantSource ? Code2 : Eye
                 return (
                   <button
@@ -486,19 +522,23 @@ function FileContent({
             </div>
           )}
           <span className="flex-1" />
-          {plain && (
+          {(plain || structured) && (
+            <button
+              type="button"
+              onClick={() => (findOpen ? closeFind() : openFind())}
+              data-testid="viewer-find-toggle"
+              aria-pressed={findOpen}
+              title={t('viewer.find')}
+              className="vp-control text-vp-xs"
+            >
+              <Search size={12} />
+              <span className="hidden @md:inline">{t('viewer.findShort')}</span>
+            </button>
+          )}
+          {/* Not for a binary: its rows are a fixed width and its offsets are
+              its line numbers. */}
+          {plain && !binary && (
             <>
-              <button
-                type="button"
-                onClick={() => (findOpen ? closeFind() : openFind())}
-                data-testid="viewer-find-toggle"
-                aria-pressed={findOpen}
-                title={t('viewer.find')}
-                className="vp-control text-vp-xs"
-              >
-                <Search size={12} />
-                <span className="hidden @md:inline">{t('viewer.findShort')}</span>
-              </button>
               <button
                 type="button"
                 onClick={toggleWrap}
@@ -553,11 +593,11 @@ function FileContent({
             <span className="tabular shrink-0 text-vp-xs text-ink-2" data-testid="viewer-find-count" aria-live="polite">
               {query === ''
                 ? ''
-                : found.matches.length === 0
+                : matchCount === 0
                   ? t('viewer.noMatches')
                   : t('viewer.matchOf', {
                       i: current < 0 ? '–' : (current + 1).toLocaleString(),
-                      n: found.matches.length.toLocaleString() + (found.capped ? '+' : ''),
+                      n: matchCount.toLocaleString() + (matchCapped ? '+' : ''),
                     })}
             </span>
             <button type="button" onClick={() => step(-1)} className="vp-control" aria-label={t('viewer.prevMatch')} title={t('viewer.prevMatch')}>
@@ -611,7 +651,7 @@ function FileContent({
           <TextBody
             lines={lines}
             wrap={wrap}
-            numbers={numbers}
+            numbers={numbers && !binary}
             matches={found.matches}
             current={current}
             scrollTo={scrollTo}
@@ -621,14 +661,43 @@ function FileContent({
           />
         }
         plain={plain}
+        structured={
+          !structured ? null : json !== null ? (
+            <JsonTree value={json.value} query={findOpen ? query : ''} current={current} onCount={onCount} />
+          ) : (
+            <CsvTable rows={table!.rows} more={table!.more} query={findOpen ? query : ''} current={current} onCount={onCount} />
+          )
+        }
         download={download}
       />
 
+      {view.kind === 'binary' && (
+        <footer
+          data-testid="viewer-footer"
+          className="flex shrink-0 flex-wrap items-center gap-x-2 border-t border-hairline px-3 py-1.5 text-vp-xs text-ink-2"
+        >
+          <span className="tabular">{t('viewer.binary')}</span>
+          {view.truncated && (
+            <span data-testid="preview-truncated" className="min-w-0 flex-1 text-right">
+              {t('viewer.truncated', { shown: formatBytes(view.bytes.length), size: formatBytes(entry.size) })}
+            </span>
+          )}
+          {copied && <span className="text-ink">{t('viewer.pathCopied')}</span>}
+        </footer>
+      )}
       {view.kind === 'text' && (
         <footer
           data-testid="viewer-footer"
           className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-hairline px-3 py-1.5 text-vp-xs text-ink-2"
         >
+          {table !== null && !source && (
+            <>
+              <span className="tabular" data-testid="viewer-rows">
+                {t('csv.rows', { n: Math.max(0, table.rows.length - 1).toLocaleString() })}
+              </span>
+              <span aria-hidden="true">·</span>
+            </>
+          )}
           <span className="tabular" data-testid="viewer-lines">
             {lines.length === 0
               ? t('preview.empty')
@@ -669,6 +738,7 @@ function Body({
   onScripts,
   plainBody,
   plain,
+  structured,
   download,
 }: {
   view: View
@@ -678,6 +748,7 @@ function Body({
   onScripts: (on: boolean) => void
   plainBody: React.ReactNode
   plain: boolean
+  structured: React.ReactNode
   download: () => void
 }) {
   /** What the file is, how big, and the way out. */
@@ -726,8 +797,11 @@ function Body({
           {cannotShow(t('preview.pdfFallback'))}
         </object>
       )
+    case 'binary':
+      return plainBody
     case 'text':
       if (plain) return plainBody
+      if (structured) return structured
       // Not the line body, so a document or a page. The sandboxed page is
       // asked about first: the preview this replaced asked its highlighter
       // first, which claimed .html and .svg, so "Page" on a project's own page

@@ -173,6 +173,8 @@ async function failure(res: Response): Promise<Error> {
  */
 export type FilePreview =
   | { kind: 'text'; text: string; truncated: boolean; markup: Markup | null }
+  /** The first bytes of a file that is none of the others, for the hex view. */
+  | { kind: 'binary'; bytes: Uint8Array; truncated: boolean }
   | { kind: 'image'; blob: Blob }
   | { kind: 'pdf'; blob: Blob }
   | { kind: 'tooBig' }
@@ -1426,6 +1428,13 @@ export const api = {
         text: await res.text(),
         truncated: res.headers.get('X-Preview-Truncated') === 'true',
         markup: markupOf(res.headers.get('X-Preview-Markup')),
+      }
+    }
+    if (kind === 'binary') {
+      return {
+        kind: 'binary',
+        bytes: new Uint8Array(await res.arrayBuffer()),
+        truncated: res.headers.get('X-Preview-Truncated') === 'true',
       }
     }
     // A kind this build does not know is the shape of an older tab against a
