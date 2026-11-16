@@ -35,6 +35,13 @@ func TestFilePreview(t *testing.T) {
 	// The name says text and the content does not. Deciding on the extension
 	// would send this to a <pre>.
 	write("log.txt", []byte("\x00\x01\x02gzipish"))
+	// A binary longer than the viewer is given of one.
+	big := make([]byte, previewHexBytes+4096)
+	for i := range big {
+		big[i] = byte(i * 7)
+	}
+	big[3] = 0
+	write("big.bin", big)
 
 	// A file the project must never reach, one level up.
 	outside := filepath.Join(filepath.Dir(root), "vp-preview-outside-"+filepath.Base(root))
@@ -100,13 +107,38 @@ func TestFilePreview(t *testing.T) {
 		}
 	})
 
-	t.Run("answers 415 for something it cannot show", func(t *testing.T) {
-		for _, name := range []string{"a.out", "log.txt"} {
+	t.Run("shows a binary as its bytes, with a 200", func(t *testing.T) {
+		// It used to answer 415, and the browser logs every 4xx as a failed
+		// request: opening a binary left a red line in the console each time.
+		// Now the viewer draws the bytes, so the answer is a 200 with them.
+		for name, want := range map[string][]byte{
+			"a.out":   []byte("\x7fELF\x02\x01\x01\x00\x00\x00"),
+			"log.txt": []byte("\x00\x01\x02gzipish"),
+		} {
 			res := get(name)
+			body, _ := io.ReadAll(res.Body)
 			res.Body.Close()
-			if res.StatusCode != http.StatusUnsupportedMediaType {
-				t.Errorf("%s: status = %d, want 415", name, res.StatusCode)
+			if res.StatusCode != http.StatusOK || res.Header.Get("X-Preview-Kind") != "binary" {
+				t.Errorf("%s: %d %q, want 200 binary", name, res.StatusCode, res.Header.Get("X-Preview-Kind"))
 			}
+			if !bytes.Equal(body, want) {
+				t.Errorf("%s: body %q, want the file", name, body)
+			}
+			if res.Header.Get("X-Preview-Truncated") != "" {
+				t.Errorf("%s: a whole file said it was cut", name)
+			}
+			if ct := res.Header.Get("Content-Type"); ct != "application/octet-stream" {
+				t.Errorf("%s: Content-Type %q; a project's bytes are never offered as anything a browser draws", name, ct)
+			}
+		}
+		res := get("big.bin")
+		body, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		if len(body) != previewHexBytes || !bytes.Equal(body, big[:previewHexBytes]) {
+			t.Errorf("big.bin: %d bytes, want the first %d", len(body), previewHexBytes)
+		}
+		if res.Header.Get("X-Preview-Truncated") != "true" {
+			t.Error("big.bin: cut and did not say so")
 		}
 	})
 

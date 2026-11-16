@@ -200,6 +200,10 @@ const (
 	previewTextLines = 50000
 )
 
+// previewHexBytes is how much of a binary the viewer is given: 4,096 rows of
+// sixteen bytes, a header and then some. The rest is a download away.
+const previewHexBytes = 64 << 10
+
 // handleDownload streams one file out of a project.
 //
 // Deliberately not http.FileServer over the project root: that would serve
@@ -380,7 +384,25 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	}
 	text, truncated := browse.ClipText(buf, more, previewTextLines)
 	if !browse.IsText(text) {
-		writeErr(w, http.StatusUnsupportedMediaType, "no preview for this kind of file")
+		// Not text and none of the kinds above: the viewer shows its bytes,
+		// offset and hex and ASCII, so a binary is something to look at
+		// rather than a sentence. The first previewHexBytes, which is a
+		// header and then some -- what anybody opening a binary in a panel is
+		// looking for -- and an answer of 200, not 415: the browser logs every
+		// 4xx as a failed request, and this one was not a failure.
+		//
+		// Still an attachment of octet-stream, so nothing here is anything a
+		// browser renders; the viewer reads the bytes and draws text.
+		hex := buf
+		if len(hex) > previewHexBytes {
+			hex = hex[:previewHexBytes]
+		}
+		setAttachmentHeaders(w, name)
+		w.Header().Set("X-Preview-Kind", string(browse.KindBinary))
+		if info.Size() > int64(len(hex)) {
+			w.Header().Set("X-Preview-Truncated", "true")
+		}
+		_, _ = w.Write(hex)
 		return
 	}
 	setAttachmentHeaders(w, name)

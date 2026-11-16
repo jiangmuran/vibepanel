@@ -290,8 +290,8 @@ root and are resolved through it: a path that leaves the project is refused,
 symlinks included.
 
 `preview` is `download` with a ceiling and an opinion. It answers with the
-bytes, and says what it decided they are in `X-Preview-Kind`: `text`, `image` or
-`pdf`. For an image or a PDF, `X-Preview-Type` carries the media type it
+bytes, and says what it decided they are in `X-Preview-Kind`: `text`, `image`,
+`pdf` or `binary`. For an image or a PDF, `X-Preview-Type` carries the media type it
 matched, from a short whitelist. That header is what the caller should build a
 `Blob` from, because the response itself is still `application/octet-stream`
 with `nosniff` and an `attachment` disposition. Nothing a project contains is
@@ -305,13 +305,16 @@ Three limits, and each answers differently:
 
 - Over **8 MiB** (`previewMaxBytes`), an image or a PDF is `413`. Half a picture
   draws nothing, so there is nothing useful to truncate to.
-- Text is **truncated**, never refused: at 256 KiB or 4000 lines, whichever
+- Text is **truncated**, never refused: at 2 MiB or 50,000 lines, whichever
   comes first, cut back to the last whole line. `X-Preview-Truncated: true` says
   it bit, and the panel says so on screen. A two-gigabyte log is worth clicking;
   only the top of it is ever read.
-- Anything else — a NUL byte or invalid UTF-8 in what was read — is `415`, which
-  is an answer rather than a failure: there is a file, and `download` will hand
-  it to you.
+- Anything else — a NUL byte or invalid UTF-8 in what was read — is `binary`:
+  a `200` with the first **64 KiB** (`previewHexBytes`), and
+  `X-Preview-Truncated: true` when the file is longer. The panel draws them as
+  offset, hex and ASCII. This was a `415` until the viewer could show bytes, and
+  a browser logs every 4xx as a failed request; a panel older than this treats
+  the new kind as one it cannot draw and offers the download, as it did.
 
 A directory is `400`, and so is a FIFO, a socket or a device node: opening a
 FIFO with no writer never returns, and it would take the request goroutine and
