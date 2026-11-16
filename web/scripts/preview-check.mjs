@@ -101,19 +101,19 @@ const authed = async (path, init = {}) => {
 
 /**
  * What each fixture must open as. The kinds the viewer's `data-kind` says;
- * everything not named is text. Batch 1 has no video, audio, archive or hex
- * body yet, so those are the honest "cannot show" with the download, and the
- * line changes in the batch that draws them.
+ * everything not named is text. Since batch 4 a file that is none of text, an
+ * image or a PDF is `binary`, drawn as its bytes; video, audio and archives
+ * are that too until batch 5 gives them bodies of their own.
  */
 const KIND = [
   // ICO and BMP are images the server does not sniff yet (batch 5).
-  [/\.(bmp|ico)$/, 'none'],
+  [/\.(bmp|ico)$/, 'binary'],
   [/\.(png|jpe?g|gif|webp)$/, 'image'],
   [/^img\/icon\.svg$/, 'text'],
   [/\.pdf$/, 'pdf'],
   [/^large\/nine-megabytes\.bin$/, 'tooBig'],
-  [/^(media|archives|bin)\//, 'none'],
-  [/^encodings\/(latin1|utf16)\.txt$/, 'none'],
+  [/^(media|archives|bin)\//, 'binary'],
+  [/^encodings\/(latin1|utf16)\.txt$/, 'binary'],
 ]
 const kindOf = (f) => KIND.find(([re]) => re.test(f))?.[1] ?? 'text'
 
@@ -228,9 +228,6 @@ try {
       // The sandbox refusing a page's script is the sandbox working; the page
       // section below is what checks it.
       if (text.startsWith('Blocked script execution')) return
-      // The server answers 415 for a file with no preview, and the browser
-      // logs every 4xx. Batch 4 gives those files a hex body and a 200.
-      if (text.includes('status of 415')) return
       errors.push(text)
     })
     const list = shape.name === '1280-light' && !QUICK ? files : SAMPLE
@@ -247,7 +244,8 @@ try {
         // drew every newline and tab as U+FFFD -- every log one run-on line.
         // Only a file that really holds a control character may show one.
         const body = v.locator('[data-testid="viewer-text"]')
-        if (await body.count()) {
+        // Text only: a binary is drawn as its bytes in hex, not as its lines.
+        if (kind === 'text' && (await body.count())) {
           // textContent, not innerText: innerText leaves out a block the
           // browser has not laid out, which is every block below the first
           // screen, and a check that reads only the rows on screen passed with
@@ -598,6 +596,124 @@ try {
     await page.screenshot({ path: join(SHOTS, 'markdown-anchor.png') })
     await page.keyboard.press('Escape')
     note('PASS', 'markdown', 'a document: its image from the project, no remote request, tasks, nesting, alignment, raw HTML as text, footnotes, an anchor that stays in the document')
+    await ctx.close()
+  }
+
+  // ── structured text and bytes ────────────────────────────────────────────
+  // Batch 4: a JSON document is a tree, delimited text a table, a binary its
+  // bytes as hexdump -C lines; find works in all three. A JSON file that does
+  // not parse is code again, not an error.
+  {
+    const ctx = await contextFor({ width: 1280, height: 800, scheme: 'light' })
+    const page = await ctx.newPage()
+    const bodyLang = (v) => v.locator('[data-testid="viewer-text"]').getAttribute('data-lang').catch(() => null)
+
+    await filesAtRoot(page)
+    let v = await openFile(page, 'data/config.json')
+    const tree = v.locator('[data-testid="viewer-json"]')
+    if (!(await tree.count())) note('FAIL', 'json', 'config.json did not open as a tree')
+    else {
+      // Over four hundred nodes, so it opens at its root only.
+      if (await tree.locator('[data-json-path="/nested/deep"]').count()) note('FAIL', 'json', 'a large document opened fully expanded')
+      // The long array is folded past two hundred, and opens.
+      await tree.locator('[data-json-path="/long"] [data-testid="json-toggle"]').click()
+      const more = tree.locator('[data-testid="json-more"]')
+      if (!(await more.count())) note('FAIL', 'json', 'a 500-item array is not folded')
+      else {
+        await more.click()
+        if (!(await tree.locator('[data-json-path="/long/499"]').count())) note('FAIL', 'json', 'opening the fold did not show the rest')
+      }
+      // Find reveals a match deep inside, by opening what holds it.
+      await page.keyboard.press('Control+f')
+      await v.locator('[data-testid="viewer-find"]').fill('deepest')
+      // The tree counts its matches a render later, as the table does.
+      await page.waitForFunction((sel) => /\d/.test(document.querySelector(`${sel} [data-testid="viewer-find-count"]`)?.textContent ?? ''), VIEWER, { timeout: 5000 }).catch(() => {})
+      await page.keyboard.press('Enter')
+      const found = await tree.locator('[data-json-path="/nested/deep/deeper/deepest"][data-current="true"]')
+        .waitFor({ timeout: 5000 }).then(() => true).catch(() => false)
+      if (!found) note('FAIL', 'json', 'find did not open /nested to show its match')
+      const str = await tree.locator('[data-json-path="/escaped"]').textContent()
+      if (!str?.includes('"quoted"') || str.includes('\\"')) note('FAIL', 'json', `a string is not shown as the text it holds: ${str}`)
+      await page.keyboard.press('Escape')
+    }
+    await page.keyboard.press('Escape')
+
+    await filesAtRoot(page)
+    v = await openFile(page, 'data/events.jsonl')
+    const lines = await v.locator('[data-testid="viewer-json"] [data-json-path^="/"]').evaluateAll((els) => els.filter((e) => /^\/\d+$/.test(e.dataset.jsonPath)).length)
+    if (lines !== 40) note('FAIL', 'json', `events.jsonl drew ${lines} records, want 40`)
+    await page.keyboard.press('Escape')
+
+    await filesAtRoot(page)
+    v = await openFile(page, 'data/broken.json')
+    if ((await v.locator('[data-testid="viewer-json"]').count()) || (await bodyLang(v)) !== 'json') {
+      note('FAIL', 'json', `broken.json is not code (${await bodyLang(v)})`)
+    }
+    await page.keyboard.press('Escape')
+
+    await filesAtRoot(page)
+    v = await openFile(page, 'data/table.csv')
+    const table = v.locator('[data-testid="viewer-table"]')
+    if (!(await table.count())) note('FAIL', 'csv', 'table.csv did not open as a table')
+    else {
+      const cells = await table.evaluate((t) => {
+        const rows = [...t.querySelectorAll('tbody tr')].map((r) => [...r.querySelectorAll('td')].slice(1).map((c) => c.textContent))
+        const head = [...t.querySelectorAll('thead th')].slice(1).map((c) => c.textContent)
+        return { head, r1: rows[0], r2: rows[1], r3: rows[2], count: rows.length }
+      })
+      if (cells.head.join('|') !== 'id|name|note|amount') note('FAIL', 'csv', `header ${cells.head.join('|')}`)
+      if (cells.r1?.[2] !== 'has, a comma' || cells.r2?.[2] !== 'has "quotes"' || cells.r3?.[2] !== 'spans\ntwo lines') {
+        note('FAIL', 'csv', `quoted cells read as ${JSON.stringify([cells.r1?.[2], cells.r2?.[2], cells.r3?.[2]])}`)
+      }
+      // The header stays at the top when the table scrolls.
+      const stuck = await table.evaluate((t) => {
+        t.scrollTop = 400
+        const th = t.querySelector('thead th:nth-child(2)').getBoundingClientRect()
+        return Math.abs(th.top - t.getBoundingClientRect().top) < 2
+      })
+      if (!stuck) note('FAIL', 'csv', 'the header row did not stay at the top')
+      await page.keyboard.press('Control+f')
+      await v.locator('[data-testid="viewer-find"]').fill('row4')
+      // The table counts its own matches and reports them a render later;
+      // wait for the count before stepping, as a reader typing would.
+      await page.waitForFunction((sel) => /\d/.test(document.querySelector(`${sel} [data-testid="viewer-find-count"]`)?.textContent ?? ''), VIEWER, { timeout: 5000 }).catch(() => {})
+      await page.keyboard.press('Enter')
+      const count = await v.locator('[data-testid="viewer-find-count"]').textContent()
+      if (!/\b10\b/.test(count ?? '')) note('FAIL', 'csv', `find counted ${count} for row4 (row40..row49)`)
+      if (!(await table.locator('[data-current="true"]').count())) {
+        note('FAIL', 'csv', 'no current cell after Enter')
+      }
+      await page.keyboard.press('Escape')
+    }
+    await page.keyboard.press('Escape')
+
+    await filesAtRoot(page)
+    v = await openFile(page, 'data/semicolon.csv')
+    const cols = await v.locator('[data-testid="viewer-table"] thead th').count()
+    if (cols !== 4) note('FAIL', 'csv', `semicolon.csv has ${cols - 1} columns, want 3`)
+    await page.keyboard.press('Escape')
+
+    await filesAtRoot(page)
+    v = await openFile(page, 'bin/program')
+    const first = await v.locator('[data-line="0"]').textContent()
+    if (!first?.includes('7f 45 4c 46') || !first.includes('|.ELF')) note('FAIL', 'hex', `the first row is ${JSON.stringify(first)}`)
+    if ((await v.locator('[data-testid="viewer-text"]').getAttribute('data-numbers')) !== 'off' && (await v.locator('[data-line="0"] span[aria-hidden]').count())) {
+      note('FAIL', 'hex', 'the hex body has line numbers beside its offsets')
+    }
+    await page.keyboard.press('Control+f')
+    await v.locator('[data-testid="viewer-find"]').fill('ELF')
+    await page.keyboard.press('Enter')
+    if (!(await v.locator('mark[data-current="true"]').count())) note('FAIL', 'hex', 'find did not find ELF in the bytes')
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('Escape')
+    await filesAtRoot(page)
+    for (const f of ['data/table.csv', 'bin/program', 'data/events.jsonl']) {
+      await filesAtRoot(page)
+      await openFile(page, f)
+      await page.screenshot({ path: join(SHOTS, `structured--${f.replace(/[/ ]/g, '_')}.png`) })
+      await page.keyboard.press('Escape')
+    }
+    note('PASS', 'structured', 'JSON as a tree (folded, found, unescaped), JSON Lines as records, a broken JSON as code, CSV as a table (quotes, newlines, sticky header, find), semicolons sniffed, a binary as hex with find')
     await ctx.close()
   }
 
