@@ -95,6 +95,10 @@ resources-check: build ## The Resources tab and a session that really runs out o
 stress-check: build   ## Wide characters, full-screen programs, floods, dropouts
 	cd web && npm run check:stress
 
+.PHONY: preview-check
+preview-check: build  ## The file viewer: every kind of file, three widths, both themes, the keys, 50,000 lines
+	cd web && npm run check:preview
+
 .PHONY: restart-check
 restart-check: build  ## Kill the backend and check the sessions outlive it
 	cd web && npm run check:restart

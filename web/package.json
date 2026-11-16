@@ -11,6 +11,7 @@
     "check:render": "node scripts/render-check.mjs",
     "check:statusline": "node scripts/statusline-check.mjs",
     "check:stress": "node scripts/stress-check.mjs",
+    "check:preview": "node scripts/preview-check.mjs",
     "check:restart": "node scripts/restart-check.mjs",
     "check:scale": "node scripts/scale-check.mjs",
     "check:first-run": "node scripts/first-run-check.mjs",
