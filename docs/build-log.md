@@ -27565,3 +27565,21 @@ taken out to watch it go red: eight key rules in vitest, six in the browser.
 This is the last batch the design numbered for now. What it lists as later --
 archives, notebooks, reading on past 2 MB, and a link in a document opening
 the file it names -- each waits for its own decision.
+
+## 2026-11-16 — the weixin typing test, a second race
+
+`TestTypingFetchesTheTicketOnceAndKeepsItAlive` failed once more with the
+sink's last state empty: no cursor, no ticket. It was not the clock race fixed
+before. `running` returned as soon as it had started `Run` on a goroutine, and
+the test's first `Typing` fetched a ticket and saved it before `Run` had set
+`a.sink`; `saveLocked` drops a save with no sink, so nothing reached the
+recorder. Three hundred runs under `-race` with two procs never showed it; a
+50ms sleep at the top of `Run` showed it every time, with a trace in
+`saveLocked` printing the dropped save.
+
+The adapter is right as it is. The bridge calls `Typing` only while handling
+an inbound, and an inbound arrives through the sink `Run` already holds; a
+ticket fetched earlier stays in memory and goes out with the next save. So the
+fix is in the test: `running` waits until the sink is installed, or `Run` has
+already ended for a test that expects it to. With the same sleep in `Run` the
+whole package passes, and 200 runs under `-race` with two procs do too.

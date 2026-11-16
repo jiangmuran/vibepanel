@@ -299,9 +299,6 @@ func newAdapter(t *testing.T, f *fake, state string) *Adapter {
 	return ad.(*Adapter)
 }
 
-// running starts Run with a recording sink and stops it at the end. The
-// returned stop cancels and waits; calling it twice is fine, because the
-// cleanup calls it too.
 // setClock swaps the adapter's clock under its lock. Run is polling on its
 // own goroutine and admit reads a.now() under a.mu, so a bare assignment from
 // the test is a data race -- reported once on the release runner, never
@@ -312,12 +309,39 @@ func setClock(a *Adapter, now func() time.Time) {
 	a.now = now
 }
 
+// running starts Run with a recording sink and stops it at the end. The
+// returned stop cancels and waits; calling it twice is fine, because the
+// cleanup calls it too.
+//
+// It returns only once Run has installed the sink, or has already ended.
+// Returning as soon as the goroutine was started let a test's first save
+// (the typing ticket) reach saveLocked before Run had set a.sink, so it was
+// dropped and the sink's last state was empty: a flake seen once on a loaded
+// runner, reproduced every time with a 50ms sleep at the top of Run.
 func running(t *testing.T, a *Adapter) (*recSink, func() error) {
 	t.Helper()
 	s := newSink()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- a.Run(ctx, s) }()
+	ended := make(chan struct{})
+	go func() { done <- a.Run(ctx, s); close(ended) }()
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		a.mu.Lock()
+		installed := a.sink == chat.Sink(s)
+		a.mu.Unlock()
+		if installed {
+			break
+		}
+		select {
+		case <-ended:
+		case <-time.After(time.Millisecond):
+			if time.Now().After(deadline) {
+				t.Fatal("Run did not install its sink")
+			}
+			continue
+		}
+		break
+	}
 	var once sync.Once
 	var result error
 	wait := func() {
