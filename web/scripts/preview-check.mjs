@@ -454,6 +454,14 @@ try {
     await filesAtRoot(page)
     const sv = await openFile(page, 'img/icon.svg')
     if (!(await sv.locator('[data-testid="viewer-image"] img').count())) note('FAIL', 'page', 'icon.svg did not open as a picture')
+    // And it drew: an SVG in <img> needs image/svg+xml, which only the inline
+    // route sends -- the download's octet-stream draws nothing.
+    const svgDrawn = await sv.locator('[data-testid="viewer-image"] img').evaluate((el) => new Promise((done) => {
+      if (el.complete) return done(el.naturalWidth)
+      el.addEventListener('load', () => done(el.naturalWidth))
+      el.addEventListener('error', () => done(0))
+    })).catch(() => 0)
+    if (!svgDrawn) note('FAIL', 'page', 'icon.svg did not draw as a picture')
     if (await sv.locator('[data-testid="preview-frame"]').count()) note('FAIL', 'page', 'icon.svg opened in a frame')
     const dialogs = []
     page.on('dialog', (d) => { dialogs.push(d.message()); void d.dismiss() })
@@ -755,6 +763,14 @@ try {
       return i.width <= r.width + 1 && i.height <= r.height + 1
     })
     if (!fits || (await box.getAttribute('data-zoom')) !== 'fit') note('FAIL', 'media', 'a picture larger than the window did not open fitted')
+    // Streamed from the inline route, not the download.
+    const src = await box.locator('img').getAttribute('src')
+    if (!src?.includes('/inline?')) note('FAIL', 'media', `a picture is drawn from ${src}, not the inline route`)
+    // The browser leaves two fingers to the viewer. Synthetic touches reach
+    // the page either way, so the property is read rather than inferred: on a
+    // phone without it the browser takes the pinch as its own page zoom.
+    const touch = await box.evaluate((b) => getComputedStyle(b).touchAction)
+    if (touch !== 'none') note('FAIL', 'media', `the picture declares touch-action: ${touch}; a phone would zoom the page instead`)
     await page.keyboard.press('+')
     const zoomed = await box.getAttribute('data-zoom')
     if (zoomed === 'fit') note('FAIL', 'media', '`+` did not zoom')
