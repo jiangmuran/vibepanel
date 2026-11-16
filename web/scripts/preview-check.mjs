@@ -52,6 +52,9 @@ writeFileSync(join(PROJ, 'large/fifty-thousand.log'), FIFTY.join('\n') + '\n')
 writeFileSync(join(PROJ, 'large/three-megabytes.log'),
   Array.from({ length: 40000 }, (_, i) => `${i}: ${'x'.repeat(70)}`).join('\n') + '\n')
 writeFileSync(join(PROJ, 'large/nine-megabytes.bin'), Buffer.alloc(9 * 1024 * 1024, 7))
+// A minified bundle: most of two megabytes on one line, short enough that
+// the server's 2 MB cut leaves its end -- where find has to reach -- in.
+writeFileSync(join(PROJ, 'large/bundle.min.js'), 'var a=1;'.repeat(240 * 1024) + 'var needle_at_the_end=2;\n')
 
 let cleanedUp = false
 const server = spawn(BIN, ['serve'], {
@@ -112,7 +115,8 @@ const KIND = [
   [/^media\/clip\./, 'video'],
   [/^media\/tone\./, 'audio'],
   [/\.pdf$/, 'pdf'],
-  [/^large\/nine-megabytes\.bin$/, 'tooBig'],
+  // Nine megabytes of 0x07: mostly control characters, so its bytes (batch 5).
+  [/^large\/nine-megabytes\.bin$/, 'binary'],
   [/^(media|archives|bin)\//, 'binary'],
   [/^encodings\/(latin1|utf16)\.txt$/, 'binary'],
 ]
@@ -922,6 +926,24 @@ try {
     })
     if (copied.trim() !== FIFTY[39999]) note('FAIL', 'copy', `a selected row copies as ${JSON.stringify(copied)}`)
     note('PASS', 'large', `50,000 lines: first line in ${firstPaint} ms, ${shape.nodes} elements, ${fps.toFixed(0)} fps scrolling; go to line, find and copy across unseen blocks`)
+
+    // One line of two megabytes opens without freezing the page: it is drawn
+    // cut, find still reaches its end, and stepping there opens the line.
+    await filesAtRoot(page)
+    const t1 = Date.now()
+    const lv = await openFile(page, 'large/bundle.min.js')
+    await lv.locator('[data-line="0"]').waitFor({ timeout: 15000 })
+    const longOpen = Date.now() - t1
+    if (longOpen > 3000) note('FAIL', 'large', `a two-megabyte line took ${longOpen} ms to open`)
+    if (!(await lv.locator('[data-testid="viewer-long-line"]').count())) note('FAIL', 'large', 'a two-megabyte line is not cut')
+    await page.keyboard.press('Control+f')
+    await lv.locator('[data-testid="viewer-find"]').fill('needle_at_the_end')
+    await page.keyboard.press('Enter')
+    const opened = await lv.locator('mark[data-current="true"]').waitFor({ timeout: 10000 }).then(() => true).catch(() => false)
+    if (!opened) note('FAIL', 'large', 'find did not open the long line to its match')
+    note('PASS', 'large', `a two-megabyte line opened in ${longOpen} ms, cut, with find reaching its end`)
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('Escape')
 
     // The cut file says how much of it is on screen.
     await filesAtRoot(page)
