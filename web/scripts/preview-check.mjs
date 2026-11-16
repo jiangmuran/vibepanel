@@ -534,6 +534,73 @@ try {
     await ctx.close()
   }
 
+  // ── documents ────────────────────────────────────────────────────────────
+  // Batch 3: Markdown through mdast with GitHub's extensions, drawn as React
+  // elements. An image in the project loads through the download route; a
+  // remote one is never requested, because a document must not be able to
+  // tell somebody's server it was opened. An #anchor scrolls the document and
+  // leaves the panel's own URL alone.
+  {
+    const ctx = await contextFor({ width: 1280, height: 800, scheme: 'light' })
+    const page = await ctx.newPage()
+    const requests = []
+    page.on('request', (r) => requests.push(r.url()))
+    await filesAtRoot(page)
+    await openFile(page, 'src/app.ts')
+    await page.keyboard.press('Escape')
+    if (requests.some((u) => /\/assets\/Markdown-/.test(u))) note('FAIL', 'markdown', 'the document renderer was fetched before a document was opened')
+    await filesAtRoot(page)
+    const v = await openFile(page, 'README.md')
+    const doc = v.locator('[data-testid="preview-markdown"]')
+    await doc.waitFor({ timeout: 10000 })
+    if (!requests.some((u) => /\/assets\/Markdown-/.test(u))) note('FAIL', 'markdown', 'opening a document fetched no renderer chunk')
+
+    const img = doc.locator('[data-testid="md-image"]')
+    const loaded = await img.evaluate((el) => new Promise((done) => {
+      if (el.complete) return done(el.naturalWidth)
+      el.addEventListener('load', () => done(el.naturalWidth))
+      el.addEventListener('error', () => done(0))
+    })).catch(() => 0)
+    if (!loaded) note('FAIL', 'markdown', 'the README\'s image from the project did not load')
+    if (!(await doc.locator('[data-testid="md-remote-image"]').count())) note('FAIL', 'markdown', 'the remote image has no placeholder')
+    if (requests.some((u) => u.includes('example.com'))) note('FAIL', 'markdown', `a remote address was requested: ${requests.filter((u) => u.includes('example.com')).join(', ')}`)
+
+    const facts = await doc.evaluate((d) => ({
+      tasks: d.querySelectorAll('input[type="checkbox"]').length,
+      checked: d.querySelectorAll('input[type="checkbox"]:checked').length,
+      nestedLists: d.querySelectorAll('ul ul ul').length,
+      centre: getComputedStyle(d.querySelectorAll('table tbody tr')[0].children[1]).textAlign,
+      right: getComputedStyle(d.querySelectorAll('table tbody tr')[0].children[2]).textAlign,
+      rawHtml: d.querySelector('[data-testid="md-raw-html"]')?.textContent ?? '',
+      liveRaw: d.querySelectorAll('script, iframe, div[onclick]').length,
+      footnotes: d.querySelectorAll('[data-testid="md-footnotes"] li').length,
+    }))
+    if (facts.tasks !== 2 || facts.checked !== 1) note('FAIL', 'markdown', `tasks: ${facts.tasks} boxes, ${facts.checked} ticked; want 2 and 1`)
+    if (!facts.nestedLists) note('FAIL', 'markdown', 'the nested list was flattened')
+    if (facts.centre !== 'center' || facts.right !== 'right') note('FAIL', 'markdown', `table alignment ${facts.centre}/${facts.right}`)
+    if (!facts.rawHtml.includes('onclick') || facts.liveRaw) note('FAIL', 'markdown', `raw HTML: shown as ${JSON.stringify(facts.rawHtml.slice(0, 40))}, ${facts.liveRaw} live elements`)
+    if (facts.footnotes !== 1) note('FAIL', 'markdown', `${facts.footnotes} footnotes`)
+
+    // An anchor: the document scrolls to the heading, the panel's URL stays.
+    const before = page.url()
+    const body = v.locator('[data-testid="preview-markdown"]').locator('..')
+    await body.evaluate((el) => (el.scrollTop = el.scrollHeight))
+    await doc.locator('a[href="#tables"]').first().click()
+    await sleep(300)
+    const landed = await doc.evaluate((d) => {
+      const h = d.querySelector('#md-tables')
+      const box = d.parentElement.getBoundingClientRect()
+      const r = h.getBoundingClientRect()
+      return r.top >= box.top - 2 && r.top < box.top + 80
+    })
+    if (!landed) note('FAIL', 'markdown', 'the #tables link did not bring the Tables heading to the top')
+    if (page.url() !== before) note('FAIL', 'markdown', `an anchor changed the panel's URL to ${page.url()}`)
+    await page.screenshot({ path: join(SHOTS, 'markdown-anchor.png') })
+    await page.keyboard.press('Escape')
+    note('PASS', 'markdown', 'a document: its image from the project, no remote request, tasks, nesting, alignment, raw HTML as text, footnotes, an anchor that stays in the document')
+    await ctx.close()
+  }
+
   // ── 50,000 lines ─────────────────────────────────────────────────────────
   {
     const ctx = await contextFor({ width: 1280, height: 800, scheme: 'light' })
