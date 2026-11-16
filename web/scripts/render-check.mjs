@@ -4583,6 +4583,18 @@ browser = await chromium.launch({ headless: true })
   if ((await fileRow.count()) === 0) {
     note('WARN', 'files', 'the new file did not appear in the tree; skipping the transfer check')
   } else {
+    // A size under a kilobyte says its unit, in the tree and in the viewer:
+    // a bare `22` beside a name was read as anything but a size.
+    const rowText = await fileRow.innerText()
+    if (!/\b22 B\b/.test(rowText)) note('FAIL', 'files', `the tree gives a 22-byte file as ${JSON.stringify(rowText)}`)
+    await fileRow.locator('[data-testid="file-open"]').click()
+    const viewer = page.locator('[role="dialog"][data-testid="file-viewer"]')
+    await viewer.waitFor({ timeout: 10000 }).catch(() => {})
+    const head = await viewer.locator('header').innerText().catch(() => '')
+    if (!/\b22 B\b/.test(head)) note('FAIL', 'files', `the viewer gives a 22-byte file as ${JSON.stringify(head.slice(0, 120))}`)
+    else note('PASS', 'files', 'a 22-byte file is "22 B" in the tree and in the viewer')
+    await page.keyboard.press('Escape')
+    await viewer.waitFor({ state: 'detached', timeout: 3000 }).catch(() => {})
     const [download] = await Promise.all([
       page.waitForEvent('download', { timeout: 10000 }).catch(() => null),
       fileRow.locator('[data-testid="file-download"]').click({ force: true }),

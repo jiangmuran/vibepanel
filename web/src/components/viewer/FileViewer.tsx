@@ -469,11 +469,7 @@ function FileContent({
               {safeText(entry.name)}
             </span>
           </nav>
-          {/* With a unit: formatBytes leaves bytes bare, and a bare `58` next
-              to a name is not obviously a size. */}
-          <span className="tabular shrink-0 text-vp-xs text-ink-2">
-            {entry.size < 1024 ? t('viewer.bytes', { n: entry.size }) : formatBytes(entry.size)}
-          </span>
+          <span className="tabular shrink-0 text-vp-xs text-ink-2">{formatBytes(entry.size)}</span>
           <button
             type="button"
             onClick={onClose}

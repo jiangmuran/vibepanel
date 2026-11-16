@@ -590,7 +590,6 @@ const DICT = {
   'viewer.eolMixed': { zh: '混合换行符', en: 'Mixed line endings' },
   'viewer.truncated': { zh: '显示了 {size} 中的前 {shown}', en: 'First {shown} of {size}' },
   'viewer.pathCopied': { zh: '路径已复制', en: 'Path copied' },
-  'viewer.bytes': { zh: '{n} 字节', en: '{n} B' },
   'viewer.highlighted': { zh: '高亮', en: 'Highlighted' },
   'viewer.tree': { zh: '树', en: 'Tree' },
   'viewer.picture': { zh: '图片', en: 'Picture' },

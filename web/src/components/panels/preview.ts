@@ -46,7 +46,9 @@ export function countLines(text: string): number {
  * too big to show.
  */
 export function formatBytes(n: number): string {
-  if (n < 1024) return `${n}`
+  // With its unit: a bare `742` beside a file's name is not obviously a size.
+  // The larger steps stay compact (`1.2K`), where the letter is the unit.
+  if (n < 1024) return `${n} B`
   const units = ['K', 'M', 'G', 'T']
   let v = n / 1024
   let i = 0

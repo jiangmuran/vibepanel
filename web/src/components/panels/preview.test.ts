@@ -15,8 +15,11 @@ describe('the line count under a text preview', () => {
 
 describe('a size in the shortest form that is still true', () => {
   it('climbs a unit at a time', () => {
-    expect(formatBytes(0)).toBe('0')
-    expect(formatBytes(1023)).toBe('1023')
+    // Under a kilobyte the unit is said: a bare number beside a name was
+    // read as anything but a size.
+    expect(formatBytes(0)).toBe('0 B')
+    expect(formatBytes(742)).toBe('742 B')
+    expect(formatBytes(1023)).toBe('1023 B')
     expect(formatBytes(1024)).toBe('1.0K')
     expect(formatBytes(PREVIEW_MAX_BYTES)).toBe('8.0M')
   })
