@@ -119,6 +119,19 @@ func TestEveryStateAHookReportsIsARealState(t *testing.T) {
 			t.Errorf("zcode's %s reports %q, not a state the server accepts", e.event, e.state)
 		}
 	}
+	// agy: one more table, written into ~/.gemini/config/hooks.json.
+	if len(agyEvents) == 0 {
+		t.Fatal("agyEvents is empty, so the agy half compares nothing")
+	}
+	agy := AgyHooks("/tmp/report.sh")
+	for _, e := range agyEvents {
+		if !valid[e.state] {
+			t.Errorf("agy's %s reports %q, not a state the server accepts", e.event, e.state)
+		}
+		if !strings.Contains(agy, command("/tmp/report.sh", e.state)) {
+			t.Errorf("the agy snippet does not carry %s -> %s", e.event, e.state)
+		}
+	}
 
 	// opencode's literals are the one mirror that is not a Go table: they sit
 	// in an embedded JavaScript file, so a rename of the enum or a typo there
