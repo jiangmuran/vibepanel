@@ -26925,3 +26925,39 @@ The tests are built from real records and each guard was taken out to watch
 one go red: the role check, `model_usage` and its own model, the zero-usage
 skip, subagent attribution and the outermost-directory rule, and the key the
 fork test needs.
+
+## 2026-11-15 — agy (Antigravity CLI), from a contributor
+
+PR #40 by Allen Sun: agy as a seventh agent -- a hook installer, a usage
+reader, a built-in launch profile, the chat bridge's tools and keys, and the
+settings row. Reviewed against the red lines before it went in.
+
+The hook is the simplest installer the panel has: agy's hooks.json is a map
+of *named* hooks, so the panel owns one key, `vibepanel`, and uninstall is
+deleting it -- nothing of the user's is merged into or out of. Install is
+idempotent and writes and backs up nothing the second time; uninstall leaves
+a key of that name whose commands are not the panel's. agy has no
+permission-request event, so it reports working and done and waiting is read
+off the screen, as for an agent with no hook. It is installed only from the
+settings page; nothing writes it at start.
+
+Red line 3 had one gap, closed in a follow-up: `agyEvents` is another table
+of bare state literals written into a file the panel does not own, and
+`TestEveryStateAHookReportsIsARealState` named every agent's table except
+this one -- changing Stop's state to a word the server rejects passed every
+test. It is in the walk now, with the snippet checked to carry each state.
+
+The usage reader (`internal/usage/agy.go`) reads
+`transcript_full.jsonl` under `~/.gemini/antigravity-cli/brain/<id>/` and
+skips the shortened `transcript.jsonl` beside it. The change to `usage.go`
+is gated on the new tool, so no existing reader's behaviour moved and
+`ReaderVersion` stays. Input is taken as fresh and output as including
+thinking, per the reader's comments and its tests; there is no agy install
+on the reviewing machine, so that reading of agy's counters is the
+contributor's, not verified here against a real transcript.
+
+Taken out to watch a test go red: the foreign-key guard in uninstall, the
+no-op second install, the zero-usage skip, the full-transcript-only walk,
+and (after the follow-up) a state literal. `docs/features.zh-CN.md` had been
+left naming five agents; it matches the English page now. The bundle is
+rebuilt here rather than taken from the PR, and came out byte-identical.
