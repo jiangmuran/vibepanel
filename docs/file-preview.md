@@ -133,6 +133,13 @@ walks the table.
   breadcrumb keeps its last two segments, find has its own row, images pinch.
   `render-check` measures it at 320, 768 and 1280.
 - Everything that is a word is translated; nothing explains itself.
+- **Nothing that holds the focus is removed before the focus has somewhere
+  to go.** The rebuild hit this three times -- the dialog keyed by path lost
+  the keyboard on `]`, go to line replaced the block the caret was in, and
+  unfolding a JSON array replaced its own button -- and each time the keys
+  stopped working with nothing on screen to say why. A component that
+  replaces an element moves the focus first (to itself, to the row, to the
+  dialog), and `preview-check` presses a key after every such change.
 
 ## Keys
 
