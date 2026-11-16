@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   ChevronLeft,
@@ -25,8 +25,7 @@ import { useDialogFocus } from '../useDialogFocus'
 import { isMac } from '../keyprefs'
 import { formatBytes, tooBigToPreview, PREVIEW_MAX_BYTES } from '../panels/preview'
 import { canRender, sandboxFor } from '../panels/render'
-import { isMarkdown } from '../panels/markdown'
-import { Markdown } from '../panels/Rendered'
+import { isMarkdown } from './mdlinks'
 import { looksLikeDiff } from './diff'
 import { grammarFor } from './grammars'
 import { loadGrammar } from './tokens'
@@ -40,6 +39,19 @@ import {
 } from './prefs'
 import { findMatches, firstMatchFrom, lineEndings, parseGoTo, splitLines, stepMatch } from './text'
 import { TextBody, type ScrollRequest } from './TextBody'
+
+/**
+ * The document renderer, fetched the first time a Markdown file is opened.
+ * The parser is most of a hundred kilobytes that a log or a picture never
+ * needs, so it is a chunk of its own (bundle.test.ts).
+ */
+const Markdown = lazy(() =>
+  import('./Markdown').catch(() => ({
+    // A tab older than the panel: an upgrade replaced the chunk it knows the
+    // name of. Said in the document's place, as lazy.tsx does for the viewer.
+    default: () => <p className="px-5 py-4 text-vp-base text-ink-2">{t('viewer.stale')}</p>,
+  })),
+)
 
 /** What is on screen: a file, the reason there is not one, or the wait. */
 type View =
@@ -723,7 +735,9 @@ function Body({
       if (!canRender(view.markup)) {
         return (
           <div className="min-h-0 flex-1 overflow-auto">
-            <Markdown text={view.text} />
+            <Suspense fallback={null}>
+              <Markdown text={view.text} projectId={projectId} path={entry.path} />
+            </Suspense>
           </div>
         )
       }

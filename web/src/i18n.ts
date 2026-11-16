@@ -583,6 +583,10 @@ const DICT = {
   'viewer.pathCopied': { zh: '路径已复制', en: 'Path copied' },
   'viewer.bytes': { zh: '{n} 字节', en: '{n} B' },
   'viewer.highlighted': { zh: '高亮', en: 'Highlighted' },
+  'md.anchor': { zh: '这一节的链接', en: 'Link to this section' },
+  'md.footnoteBack': { zh: '回到正文', en: 'Back to the text' },
+  'md.taskDone': { zh: '已完成', en: 'Done' },
+  'md.taskOpen': { zh: '未完成', en: 'Not done' },
   'viewer.stale': {
     zh: '面板已经更新，这个标签页要重新载入才能打开文件。',
     en: 'The panel was updated; this tab needs a reload to open files.',

@@ -54,8 +54,9 @@ describe('every module', () => {
       const base = rel.replace(/\.tsx?$/, '').split('/').pop()!
       // Relative depth varies, so what identifies an import is its tail. A
       // bare `import './x'` is an import too: it is how a module that only
-      // sets something up before another one loads is reached.
-      const re = new RegExp(`(?:from|import) '[^']*/${base}'|(?:from|import) '\\./${base}'`)
+      // sets something up before another one loads is reached. So is
+      // `import('./x')`, which is how a chunk of its own is.
+      const re = new RegExp(`(?:from |import |import\\()'[^']*/${base}'|(?:from |import |import\\()'\\./${base}'`)
       return !files.some((other) => other !== f && re.test(bodies.get(other)!))
     })
     expect(orphans.map((f) => f.slice(ROOT.length))).toEqual([])

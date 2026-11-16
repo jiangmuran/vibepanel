@@ -45,6 +45,18 @@ describe('the bundle', () => {
     expect(viewer!.bytes, `${viewer!.name}`).toBeLessThanOrEqual(64_000)
   })
 
+  it('keeps the Markdown parser in a chunk of its own', () => {
+    // Batch 3: mdast and GitHub's extensions, most of a hundred kilobytes that
+    // only a document needs, fetched the first time one is opened.
+    const md = chunk('Markdown-')
+    expect(md, 'the document renderer is not a separate chunk').not.toBeNull()
+    expect(md!.bytes, md!.name).toBeLessThanOrEqual(110_000)
+    // A node type only the parser and the renderer name.
+    expect(md!.text).toContain('footnoteDefinition')
+    expect(viewer!.text).not.toContain('footnoteDefinition')
+    expect(main!.text).not.toContain('footnoteDefinition')
+  })
+
   it('keeps Prism out of the first paint, and each grammar in a chunk of its own', () => {
     // A string Prism's core carries and nothing of the panel's does.
     expect(main!.text).not.toContain('disableWorkerMessageHandler')
