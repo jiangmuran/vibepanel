@@ -1,0 +1,12 @@
+diff --git a/src/app.ts b/src/app.ts
+index 1111111..2222222 100644
+--- a/src/app.ts
++++ b/src/app.ts
+@@ -1,5 +1,6 @@
+ import { readFileSync } from 'node:fs'
+-const OLD = 1
++const NEW = 2
++const ALSO = 3
+
+ /** A doc comment. */
+ export interface Thing {

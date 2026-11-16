@@ -1,4 +1,7 @@
 @import 'tailwindcss';
+/* The file viewer's fixtures are documents and pages written to be shown as
+   files, and Tailwind would read their markup as class names. */
+@source not '../scripts/fixtures';
 
 /* Imported here, not from the component, so that our overrides below come
    later in the sheet and win on source order. xterm.css and our rules use the
