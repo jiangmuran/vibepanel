@@ -79,7 +79,7 @@ Text, by extension in the browser:
 | | |
 |---|---|
 | code | Prism's tokeniser, one grammar per language loaded on first use, drawn as React elements from the token tree. Never Prism's HTML output and never `innerHTML`: the line markdown.ts draws for documents holds for code. Forty grammars, in `highlight.ts`'s table, which is what `langOf` consults; a file nobody listed is plain text with line numbers. |
-| diff | `.diff`, `.patch`, and a body that starts with `diff --git` or `---`/`+++`: added and removed lines carry a sign in a gutter and a tint, never the tint alone (red line 4) |
+| diff | `.diff`, `.patch`, and a body that starts with `diff --git` or `---`/`+++`: added and removed lines are tinted, and the `+` or `-` each line already carries is the shape beside the colour (red line 4). No second sign in a gutter: copy has to be the file, and a gutter copy would read `+ +foo` |
 | markdown | mdast (`mdast-util-from-markdown` + `mdast-util-gfm`) to React. GFM: tables, task lists, strikethrough, autolinks, footnotes. Nested lists. Images whose path stays inside the project load through the download route, same origin, cookie and all; a remote image is a placeholder with its address, never a request. Raw HTML in a document is shown as text. Headings get ids so `#anchors` inside the document work. |
 | json / jsonl | a tree: collapsible objects and arrays, keys and values typed and coloured by token, strings unescaped, long arrays folded past 200 items, the whole thing searchable; past 2 MB or when it does not parse, code |
 | csv / tsv | a table with a sticky header row and row numbers, quoted fields handled, the delimiter sniffed from the first lines; past 10,000 rows the first 10,000 and a footer line saying so |
