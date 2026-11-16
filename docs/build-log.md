@@ -27238,3 +27238,83 @@ of every fixture, and `PREVIEW_SHAPE` names which (`1280-light` by default;
 
 `make preview-check` and `make verify` never set either; a quick run that is
 green says nothing about the shapes it skipped.
+
+## 2026-11-15 — The file viewer, batch 2: code and diffs in colour
+
+The preview coloured code with one keyword list for every language and two
+comment markers, and the hands-on in batch 1 showed what that does: an
+apostrophe in an HTML text node opened a string to the end of the line, and a
+minified bundle came out as 32,032 elements of guesses. It also drew code in a
+table of its own, so none of batch 1 -- find, go to line, wrap, the blocks --
+reached it.
+
+Now code is the line body with a grammar. `viewer/grammars.ts` is the table:
+46 languages by name and by extension, each a Prism grammar loaded the first
+time a file in it is opened, after the grammars it extends (checked against
+Prism's own `components.json`, not copied from it by hand). `viewer/tokens.ts`
+turns Prism's token tree into lines of `{ kind, text }`, and the body draws
+those as React elements; Prism's `highlight`, which returns HTML, is never
+called, and `preview-check` fails on any element carrying Prism's own `.token`
+class. Fourteen kinds, thirteen of them colours: `--vp-tok-*`, defined under
+each theme like every other token, each at least 4.5:1 on all three surfaces
+in both themes (the lowest is 5.3 in the light theme), which
+`contrast.test.ts` now computes. `highlight.ts` and its keyword list are gone;
+a document's fenced blocks use the same grammars.
+
+Source, for code, is the same body without colour. A diff -- `.diff`,
+`.patch`, or a body that starts `diff --git` or has a `---` line followed by
+a `+++` one -- tints its added and removed rows from the same two token
+colours. The design asked for a sign in a gutter as well; the row already
+starts with its `+` or `-`, a second copy would read `+ +foo`, and a copy of
+the line has to be the line, so the sign the file has is the one drawn.
+
+**Blocks and context.** Prism keeps no state between calls, so a 256-line
+block tokenised on its own would start inside whatever was open above it: the
+middle of a block comment reads as code. Each block is tokenised with up to
+200 lines before it and their tokens dropped. A construct open for longer than
+that colours the top of a block wrongly until it closes; `tokens.test.ts`
+writes the bound down rather than pretending there is none. The alternative
+-- tokenising the whole file before the first line is drawn -- is what the
+blocks exist to avoid.
+
+**The chunks.** Each grammar is a chunk of its own, and the loaders are
+written out one by one, because a bundler splits only what it can see: a
+loader built from a template string resolves nothing or pulls in all three
+hundred of Prism's grammars. `preview-check` counts the requests: nothing
+before a file is opened, and exactly `prism-typescript` for a `.ts` file.
+Prism's core lives in the viewer's chunk, which went from 27 KB to 53 KB;
+`bundle.test.ts` pins it, pins Prism out of the first paint, and pins the
+number of grammar chunks.
+
+**Two things Prism does unless told.** It highlights every `language-*`
+element on the page when it loads, writing its HTML into them; and its grammar
+modules extend a global `Prism` that an ES module import does not create in a
+browser. `viewer/prismSetup.ts` sets `manual` before Prism loads and
+`tokens.ts` publishes the global, and a test keeps `tokens.ts` the only module
+that imports Prism, because one imported earlier would load it before the
+setting. `manual` is read in the browser by `preview-check`: in node, Prism
+keeps its settings on an object of its own, and a vitest that read it passed
+or failed on the order of the test file's imports.
+
+**The lockfile.** `npm install` here (npm 11.6.2) rewrote the lockfile while
+adding two packages, dropping every `libc` field another npm had written --
+the field `npm ci` on musl reads to choose a native binary. The two entries
+were added to the lock as it was instead, and the result was proved the way
+the release workflow uses it: `package.json` and `package-lock.json` alone in
+an empty directory, `npm ci --ignore-scripts`, exit 0, the lock's sha256 the
+same before and after. `npm audit` lists fifteen advisories on this branch;
+they are the same fifteen as on main, in the lint and build tools, and Prism
+adds none.
+
+Each guard was taken out to watch something go red: the grammar order, names
+before extensions, a kind, the alias rule (which survived until a Python
+docstring was added to the tests), the context, the line cuts, the match cuts
+inside tokens, the diff header rule and the `+++` line, a token's contrast,
+and a second module importing Prism; in the browser, a keyword drawn in the
+ink, Source left coloured, the diff tint, a fence left plain, every grammar
+loaded at once, and Prism without `manual`. Two of those first proved nothing
+and are worth the sentence: the fence mutant did not compile, so the build
+failed and the check ran the previous bundle -- the mutation script now
+refuses a mutant that does not build -- and loading every grammar in parallel
+broke their order, so the check went red for the colour, not for the count;
+loaded in order, it fails on 42 chunks fetched for one `.ts` file.
