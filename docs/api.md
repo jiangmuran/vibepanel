@@ -258,6 +258,7 @@ counts and timestamps out of those files and nothing else leaves the machine.
 ### `GET /api/projects/{id}/download?path=`
 ### `GET /api/projects/{id}/preview?path=`
 ### `GET /api/projects/{id}/preview/render?path=&scripts=`
+### `GET /api/projects/{id}/inline?path=`
 ### `POST /api/projects/{id}/upload?path=`
 ### `POST /api/projects`
 ### `PATCH /api/projects/{id}`
@@ -291,7 +292,10 @@ symlinks included.
 
 `preview` is `download` with a ceiling and an opinion. It answers with the
 bytes, and says what it decided they are in `X-Preview-Kind`: `text`, `image`,
-`pdf` or `binary`. For an image or a PDF, `X-Preview-Type` carries the media type it
+`pdf`, `video`, `audio` or `binary`. With `meta=1`, a media kind -- image,
+PDF, video, audio -- is answered with its headers and no body, whatever its
+size: the viewer then streams it from `inline`. Without it an image or a PDF
+is sent as before, for a tab older than the viewer. For an image or a PDF, `X-Preview-Type` carries the media type it
 matched, from a short whitelist. That header is what the caller should build a
 `Blob` from, because the response itself is still `application/octet-stream`
 with `nosniff` and an `attachment` disposition. Nothing a project contains is
@@ -315,6 +319,18 @@ Three limits, and each answers differently:
   offset, hex and ASCII. This was a `415` until the viewer could show bytes, and
   a browser logs every 4xx as a failed request; a panel older than this treats
   the new kind as one it cannot draw and offers the download, as it did.
+
+`inline` is `download` for the viewer's media: the same file, contained the
+same way, with `Content-Disposition: inline` and ranges, and no preview cap --
+an `<img>`, `<video>` or `<audio>` streams what it plays. The type comes from
+the bytes and from one list (`browse.MediaTypes`: PNG, JPEG, GIF, WebP, AVIF,
+ICO, BMP, PDF, MP4, QuickTime, WebM, Ogg, MP3, WAV, FLAC, M4A; and SVG: a
+`.svg` whose first bytes hold an `<svg` element). Anything else is the download's
+`application/octet-stream` attachment. Every inline response but a PDF carries
+`Content-Security-Policy: sandbox`, so an SVG opened at its own address is a
+document with no scripts and an opaque origin rather than a page on the
+panel's; a PDF is the exception because Chrome will not run its viewer in a
+sandboxed document, and its own script runs inside that viewer.
 
 A directory is `400`, and so is a FIFO, a socket or a device node: opening a
 FIFO with no writer never returns, and it would take the request goroutine and

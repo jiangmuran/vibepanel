@@ -2,6 +2,7 @@ package browse
 
 import (
 	"bytes"
+	"encoding/binary"
 	"strings"
 	"unicode/utf8"
 )
@@ -23,7 +24,83 @@ const (
 	KindText   Kind = "text"
 	KindImage  Kind = "image"
 	KindPDF    Kind = "pdf"
+	KindVideo  Kind = "video"
+	KindAudio  Kind = "audio"
 )
+
+// Kinds is every kind the preview route answers with, in the order the client
+// lists them: TestThePreviewKindsMatchTheClient compares it with PreviewKind
+// in web/src/protocol/wire.ts, so a kind added here is a kind the panel was
+// told about.
+var Kinds = []Kind{KindText, KindBinary, KindImage, KindPDF, KindVideo, KindAudio}
+
+// SniffMedia is SniffMagic and then the file viewer's further kinds: video,
+// audio, and two image formats SniffMagic leaves out. A separate function so
+// SniffMagic keeps answering exactly what it did -- share pages decide what a
+// bundle may hold with it (internal/pages), and a viewer's wider list is not
+// a reason for a page to accept a video.
+//
+// Every answer is a media type from this function's own list, and the inline
+// route serves nothing else as anything but octet-stream
+// (TestTheInlineRouteNamesOnlyMediaTypes).
+func SniffMedia(head []byte, size int64) (Kind, string) {
+	if k, mime := SniffMagic(head); k != KindBinary {
+		return k, mime
+	}
+	switch {
+	// ICO: reserved zero, type 1 (icon), and a count that is not zero.
+	case len(head) >= 6 && bytes.HasPrefix(head, []byte{0, 0, 1, 0}) && (head[4] != 0 || head[5] != 0):
+		return KindImage, "image/x-icon"
+	// BMP: "BM" alone is how plenty of text begins (SniffMagic's comment), so
+	// the header's own file size must be the file's size as well.
+	case len(head) >= 14 && bytes.HasPrefix(head, []byte("BM")) &&
+		int64(binary.LittleEndian.Uint32(head[2:6])) == size:
+		return KindImage, "image/bmp"
+	case bytes.HasPrefix(head, []byte("fLaC")):
+		return KindAudio, "audio/flac"
+	case bytes.HasPrefix(head, []byte("ID3")):
+		return KindAudio, "audio/mpeg"
+	// An MPEG audio frame with no ID3 tag: eleven sync bits, then a layer that
+	// is not the reserved 00.
+	case len(head) >= 2 && head[0] == 0xff && head[1]&0xe0 == 0xe0 && head[1]&0x06 != 0:
+		return KindAudio, "audio/mpeg"
+	case bytes.HasPrefix(head, []byte("\x1a\x45\xdf\xa3")):
+		// EBML: WebM, or Matroska, which browsers play as WebM.
+		return KindVideo, "video/webm"
+	case bytes.HasPrefix(head, []byte("OggS")):
+		// The first page names its codec: Opus or Vorbis is audio, Theora video.
+		if bytes.Contains(head, []byte("theora")) {
+			return KindVideo, "video/ogg"
+		}
+		return KindAudio, "audio/ogg"
+	}
+	if len(head) >= 12 {
+		if bytes.Equal(head[0:4], []byte("RIFF")) && bytes.Equal(head[8:12], []byte("WAVE")) {
+			return KindAudio, "audio/wav"
+		}
+		if bytes.Equal(head[4:8], []byte("ftyp")) {
+			switch string(head[8:12]) {
+			case "M4A ", "M4B ":
+				return KindAudio, "audio/mp4"
+			case "qt  ":
+				return KindVideo, "video/quicktime"
+			default:
+				// isom, mp41, mp42, avc1, iso2..iso6, dash, M4V: the MP4 family.
+				return KindVideo, "video/mp4"
+			}
+		}
+	}
+	return KindBinary, ""
+}
+
+// MediaTypes is every media type SniffMedia can answer with. The inline
+// route's whole allow list: TestTheInlineRouteNamesOnlyMediaTypes walks it.
+var MediaTypes = []string{
+	"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/x-icon", "image/bmp",
+	"application/pdf",
+	"audio/flac", "audio/mpeg", "audio/ogg", "audio/wav", "audio/mp4",
+	"video/webm", "video/ogg", "video/quicktime", "video/mp4",
+}
 
 // SniffMagic identifies the formats a browser can draw, from the leading bytes.
 //

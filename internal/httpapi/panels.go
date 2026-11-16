@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -30,6 +32,7 @@ func (s *Server) registerPanelRoutes(r chi.Router) {
 	r.Get("/projects/{id}/files", s.handleFiles)
 	r.Get("/projects/{id}/download", s.handleDownload)
 	r.Get("/projects/{id}/preview", s.handlePreview)
+	r.Get("/projects/{id}/inline", s.handleInline)
 	// A second route rather than a mode on the first, and that placement is the
 	// design. See internal/httpapi/preview_render.go: /preview can only ever
 	// answer with an attachment, and exactly one handler in this codebase can
@@ -211,24 +214,38 @@ const previewHexBytes = 64 << 10
 // requests for paths this code never validated. One file, resolved through the
 // same containment as the listing.
 func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
+	f, info, ok := s.openProjectFile(w, r)
+	if !ok {
+		return
+	}
+	defer f.Close()
+	name := filepath.Base(f.Name())
+	setAttachmentHeaders(w, name)
+	http.ServeContent(w, r, name, info.ModTime(), f)
+}
+
+// openProjectFile is the containment the download and inline routes share:
+// the project, the path resolved inside it, a regular file and nothing else.
+// It has answered the request when it returns false.
+func (s *Server) openProjectFile(w http.ResponseWriter, r *http.Request) (*os.File, os.FileInfo, bool) {
 	p, err := s.DB.GetProject(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		s.writeStoreErr(w, err)
-		return
+		return nil, nil, false
 	}
 	abs, err := browse.Resolve(p.Path, r.URL.Query().Get("path"))
 	if err != nil {
 		writeBrowseErr(w, err)
-		return
+		return nil, nil, false
 	}
 	info, err := os.Stat(abs)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "no such file")
-		return
+		return nil, nil, false
 	}
 	if info.IsDir() {
 		writeErr(w, http.StatusBadRequest, "that is a directory")
-		return
+		return nil, nil, false
 	}
 	// Regular files only, and this is not fussiness.
 	//
@@ -246,18 +263,76 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	// same problem, and none of the four is a file anyone meant to download.
 	if !info.Mode().IsRegular() {
 		writeErr(w, http.StatusBadRequest, "not a regular file")
-		return
+		return nil, nil, false
 	}
 	f, err := os.Open(abs)
 	if err != nil {
 		writeErr(w, http.StatusForbidden, "cannot read that file")
+		return nil, nil, false
+	}
+
+	return f, info, true
+}
+
+// handleInline is the download route for the viewer's media: the same file
+// with `Content-Disposition: inline`, so an <img>, a <video> or an <audio> can
+// stream it, with ranges, and with no preview cap -- the browser fetches what
+// it plays.
+//
+// The danger is the obvious one: a project's bytes, served on the panel's
+// origin with a type a browser renders. So the type comes from the bytes and
+// from one list (browse.MediaTypes, plus SVG decided as the text route decides
+// it), and anything else is the download's octet-stream attachment, never
+// anything a browser draws; TestTheInlineRouteNamesOnlyMediaTypes walks the
+// list and a file of every other kind. And every inline response but a PDF
+// carries `Content-Security-Policy: sandbox`, so the one type on the list that
+// can script -- an SVG, opened at its own URL in a tab -- is a document with an
+// opaque origin and no scripts, not a page on the panel's. A PDF is the
+// exception because Chrome will not run its viewer in a sandboxed document;
+// a PDF's own script runs inside that viewer, not on the page's origin.
+func (s *Server) handleInline(w http.ResponseWriter, r *http.Request) {
+	f, info, ok := s.openProjectFile(w, r)
+	if !ok {
 		return
 	}
 	defer f.Close()
-
-	name := filepath.Base(abs)
-	setAttachmentHeaders(w, name)
+	name := filepath.Base(f.Name())
+	head := make([]byte, 512)
+	n, _ := f.ReadAt(head, 0)
+	head = head[:n]
+	kind, mime := browse.SniffMedia(head, info.Size())
+	if kind == browse.KindBinary {
+		// The extension and an <svg element in what was read, both: an HTML
+		// page saved as .svg is text, not an image, and is downloaded.
+		if m, t := browse.SniffMarkup(name, head); m == browse.MarkupSVG && bytes.Contains(bytes.ToLower(head), []byte("<svg")) {
+			kind, mime = browse.KindImage, t
+		}
+	}
+	if !inlineType(mime) {
+		setAttachmentHeaders(w, name)
+		http.ServeContent(w, r, name, info.ModTime(), f)
+		return
+	}
+	w.Header().Set("Content-Disposition",
+		`inline; filename="`+asciiFilename(name)+`"; filename*=UTF-8''`+rfc5987(name))
+	w.Header().Set("Content-Type", mime)
+	// nosniff comes from securityHeaders, on every response. Its CSP is
+	// replaced here, not added to: `frame-ancestors 'none'` would forbid the
+	// viewer's own <object> from embedding a PDF, so it is 'self' -- the
+	// panel may embed these, nothing else may -- and everything but a PDF is
+	// a sandbox with nothing to load beyond itself.
+	if mime == "application/pdf" {
+		w.Header().Set("Content-Security-Policy", "frame-ancestors 'self'")
+	} else {
+		w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'self'")
+	}
 	http.ServeContent(w, r, name, info.ModTime(), f)
+}
+
+// inlineType is the inline route's allow list: the media SniffMedia names, and
+// SVG. Nothing else is served inline.
+func inlineType(mime string) bool {
+	return mime == "image/svg+xml" || slices.Contains(browse.MediaTypes, mime)
 }
 
 // setAttachmentHeaders names a file for the browser and forbids it from
@@ -346,7 +421,19 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	head = head[:n]
 	name := filepath.Base(abs)
 
-	if kind, mime := browse.SniffMagic(head); kind != browse.KindBinary {
+	if kind, mime := browse.SniffMedia(head, info.Size()); kind != browse.KindBinary {
+		// The viewer asks with meta=1 and streams a medium from the inline
+		// route, so here it wants the kind and nothing else -- and no cap,
+		// because nothing is read. Video and audio are answered the same way
+		// either way: a tab that predates them treats an unknown kind as one
+		// it cannot draw, and has no use for the bytes.
+		if r.URL.Query().Get("meta") == "1" || kind == browse.KindVideo || kind == browse.KindAudio {
+			setAttachmentHeaders(w, name)
+			w.Header().Set("X-Preview-Kind", string(kind))
+			w.Header().Set("X-Preview-Type", mime)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		// Half a picture draws nothing, so these are the kinds the ceiling
 		// refuses outright rather than truncating.
 		if info.Size() > previewMaxBytes {

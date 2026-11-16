@@ -28,6 +28,7 @@ func TestFilePreview(t *testing.T) {
 		}
 	}
 	write("notes.txt", []byte("hello\nfrom disk\n"))
+	write("clip.mp4", append([]byte("\x00\x00\x00\x18ftypisom\x00\x00\x02\x00"), bytes.Repeat([]byte{1}, 64)...))
 	write("shot.png", append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{7}, 100)...))
 	// A binary that is not one of the drawable formats: no magic to match, and
 	// a NUL a few bytes in.
@@ -139,6 +140,37 @@ func TestFilePreview(t *testing.T) {
 		}
 		if res.Header.Get("X-Preview-Truncated") != "true" {
 			t.Error("big.bin: cut and did not say so")
+		}
+	})
+
+	t.Run("says what a medium is, and with meta=1 only that", func(t *testing.T) {
+		// The viewer streams media from the inline route, so it asks the kind
+		// with meta=1 and wants no bytes; an older tab asks without it and
+		// still gets an image's bytes. A video is never sent here: no tab that
+		// knows the kind wants it from this route, and none that does not.
+		head := func(name, q string) (*http.Response, []byte) {
+			t.Helper()
+			res, err := ts.Client().Get(ts.URL + "/api/projects/" + project.ID + "/preview?path=" + name + q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, _ := io.ReadAll(res.Body)
+			res.Body.Close()
+			return res, b
+		}
+		res, body := head("shot.png", "&meta=1")
+		if res.StatusCode != http.StatusOK || res.Header.Get("X-Preview-Kind") != "image" || len(body) != 0 {
+			t.Errorf("png meta=1: %d %q %d bytes, want 200 image and no body", res.StatusCode, res.Header.Get("X-Preview-Kind"), len(body))
+		}
+		res, body = head("shot.png", "")
+		if res.Header.Get("X-Preview-Kind") != "image" || len(body) == 0 {
+			t.Errorf("png without meta: %q %d bytes, want the image", res.Header.Get("X-Preview-Kind"), len(body))
+		}
+		for _, q := range []string{"", "&meta=1"} {
+			res, body = head("clip.mp4", q)
+			if res.StatusCode != http.StatusOK || res.Header.Get("X-Preview-Kind") != "video" || res.Header.Get("X-Preview-Type") != "video/mp4" || len(body) != 0 {
+				t.Errorf("mp4%s: %d %q %q %d bytes", q, res.StatusCode, res.Header.Get("X-Preview-Kind"), res.Header.Get("X-Preview-Type"), len(body))
+			}
 		}
 	})
 

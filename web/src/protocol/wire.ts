@@ -416,6 +416,14 @@ export interface UsageSample {
 // allowed to render them the same way.
 
 /** Which agent a number came from. Mirrors internal/usage.Tools. */
+/**
+ * What the preview route says a file is, in `X-Preview-Kind`. The server's
+ * list is browse.Kinds, and TestThePreviewKindsMatchTheClient compares the two
+ * both ways: a kind the server sends that this does not name is a file the
+ * viewer quietly cannot show.
+ */
+export type PreviewKind = 'text' | 'binary' | 'image' | 'pdf' | 'video' | 'audio'
+
 export type UsageTool = 'claude' | 'codex' | 'opencode' | 'hermes' | 'pi' | 'omp' | 'agy'
 
 export interface UsageTotals {
