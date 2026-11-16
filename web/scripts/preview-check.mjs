@@ -278,7 +278,13 @@ try {
             // directory the file is in, and the name.
             phoneCrumbs: innerWidth >= 440 || [...document.querySelectorAll(`${sel} [data-testid="viewer-crumb"]`)]
               .filter((b) => b.getClientRects().length).length <= 1,
-            centred: innerWidth < 700 || Math.abs((d.top + d.bottom) / 2 - innerHeight / 2) < 2,
+            // By layout, not by the drawn box: the dialog scales in, and a
+            // file answered from its size alone (the 9 MB one) is measured
+            // while the transform is still moving it, which flapped.
+            centred: innerWidth < 700 || (() => {
+              const el = document.querySelector(sel)
+              return Math.abs(el.offsetTop + el.offsetHeight / 2 - innerHeight / 2) < 2
+            })(),
             // A gutter number that does not fit runs into its line.
             gutterFits: [...document.querySelectorAll(`${sel} [data-line] > span[aria-hidden]`)].slice(0, 50)
               .every((g) => g.scrollWidth <= g.clientWidth && g.getBoundingClientRect().right <= g.nextElementSibling.getBoundingClientRect().left + 0.5),
