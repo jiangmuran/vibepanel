@@ -40,12 +40,12 @@ pane 回到 shell 提示符是*已完成*。安静的会话不会被当成跑完
 也就是说**「已完成」是猜不出来的**。agent 干完活并没有退出——它停在自己的提示符上等你——
 面板看见的仍然是一个在跑的进程，所以会话会一直是蓝的。新手教程第一件事就讲这个。
 
-**设置 → 状态上报**里每个 agent 一个按钮：Claude Code、Codex、Kimi Code、zcode、opencode。
+**设置 → 状态上报**里每个 agent 一个按钮：Claude Code、Codex、Kimi Code、zcode、opencode、agy（Antigravity CLI）。
 它把一小段 hook 装进 agent 自己的配置，写之前先把内容原样显示出来，并备份被改的文件。每个
 agent 是不同的机制、不同的文件，坏也是各坏各的，所以是一行一个按钮，而不是一个「打开状态
 上报」。
 
-面板认识五个，默认只列三个：Claude Code、Codex、opencode。其余的在下面的勾选里打开；已经装
+面板认识六个，默认只列三个：Claude Code、Codex、opencode。其余的在下面的勾选里打开；已经装
 了 hook 的 agent 不管勾没勾都会显示，所以你开过的东西不会被藏起来。其中两个有额外条件：
 Codex 要在它里面执行一次 `/hooks` 信任之后才会跑；zcode 的 `hooks.enabled` 为 false 时什么
 hook 都不跑，安装会打开它，而卸载只在确认是面板打开的情况下才关回去。hook 读两个由面板注入到
@@ -69,7 +69,7 @@ hooks：装好之后在 Codex 里执行一次 `/hooks`。** 设置里那一行�
 面板顺着这个面板里 `codex` 进程打开的文件找到它自己的 rollout 记录，从里面读一轮的开始、
 结束和审批请求。
 
-opencode 装的是一个独立插件，不动它自己的配置文件。
+opencode 装的是一个独立插件，不动它自己的配置文件；agy 是在 `~/.gemini/config/hooks.json` 里加一个以面板命名的 hook 块。
 
 别的 agent 也可以自己 POST 到 `/api/hook/state`，格式见 [docs/api.md](api.md)（英文）。
 
@@ -123,12 +123,12 @@ Bark、ntfy、Server酱有现成的模板，别的就自己写请求体，里面
 它存在的理由就是 endpoint：同一个 agent 指向官方、指向公司代理、指向自建网关，
 三份配置只差一个变量。
 
-内置四个：shell、`claude`、`codex`、`opencode`，都不能改；复制一份出来，副本里那个 agent
+内置五个：shell、`claude`、`codex`、`opencode`、`agy`，都不能改；复制一份出来，副本里那个 agent
 会读的变量名已经填好了。值留空的变量**根本不会设**，所以一份填了一半的配置跑起来和裸终端
 里跑一模一样。
 
 **故意没有「API host」这个字段。** endpoint 装在哪个变量里是各家 agent 自己定的，
-opencode 干脆没有，它按 provider 在自己的配置文件里选。做成一个字段，面板就得替别人家的
+opencode 和 agy 干脆没有，它们在自己的设置里选 endpoint 和模型。做成一个字段，面板就得替别人家的
 工具维护这份映射。
 
 变量可以标成**密钥**，标了之后它的值再也不会发回浏览器：设置页只显示变量名，和「已经存了
