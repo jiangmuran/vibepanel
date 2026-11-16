@@ -27014,3 +27014,17 @@ a mouse report, and the wheel must move that counter both ways. It is red
 against the unfixed tree -- POS 0 -> 0 -- and reads 0 -> 128 -> 32 against the
 fixed one, which is also the measured rate: one arrow per row of travel, the
 same arithmetic the mouse-report path uses.
+
+The touch road had no check of its own: the swipe step in `render-check`
+drove a pane with the mouse on, and the vitest pins `scrollAction` but not
+that `attachTouchSelection` is handed the fullscreen getter at all. A step
+beside it now puts a shell on the alternate screen with `cat -v` and no mouse,
+waits for `data-fullscreen`, swipes, and wants `^[[A`/`^[[B` (or the SS3 form)
+echoed back. Whether the arrows are CSI or SS3 is not something a check
+through tmux can see: tmux decodes the key and re-encodes it for the pane's own
+cursor-key mode, so the DECCKM choice is pinned by the vitest alone.
+
+One edge is left as it is: the flag is the poller's, every two seconds, so for
+up to that long after `less` or `vim` exits the wheel still sends arrows, and
+a shell answers Up by putting the previous command on its prompt line. It is
+not run, and the next poll ends it.

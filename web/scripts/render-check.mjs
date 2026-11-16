@@ -4025,6 +4025,59 @@ browser = await chromium.launch({ headless: true })
               await sleep(500)
             }
 
+            // The third road: a full-screen program that never asked for the
+            // mouse (issue #19). The swipe reaches it as arrow keys, and only
+            // because tmux says the pane is on its alternate screen -- nothing
+            // in the stream does -- so this waits for that word to arrive
+            // before touching anything. `cat -v` under a tty that echoes shows
+            // an arrow as ^[[A or ^[OA; the panel scrolling its own buffer
+            // instead puts nothing there.
+            {
+              execSync(
+                `tmux -L ${SOCKET} send-keys -t '=${sess.tmuxName}:' ` +
+                `"printf '\\033[?1049h'; cat -v" Enter`)
+              const flagged = await touch
+                .waitForSelector('[data-fullscreen="true"]', { timeout: 10000 })
+                .then(() => true)
+                .catch(() => false)
+              const abox = await touch.locator('.xterm-screen').boundingBox()
+              if (!flagged || !abox) {
+                note('WARN', 'mobile',
+                  `the pane never reported full screen (${flagged}, ${!!abox}); the arrow path is unchecked`)
+              } else {
+                const cdp4 = await touchCtx.newCDPSession(touch)
+                const ax = abox.x + abox.width / 2
+                const ay = abox.y + abox.height - 80
+                const apt = (y) => ({ touchPoints: [{ x: ax, y, radiusX: 8, radiusY: 8, force: 1, id: 1 }] })
+                await cdp4.send('Input.dispatchTouchEvent', { type: 'touchStart', ...apt(ay) })
+                for (let i = 1; i <= 24; i++) {
+                  await cdp4.send('Input.dispatchTouchEvent', { type: 'touchMove', ...apt(ay - i * 12) })
+                  await sleep(8)
+                }
+                await cdp4.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+                let sawArrow = ''
+                for (let i = 0; i < 16; i++) {
+                  await sleep(300)
+                  const text = (await screenRows(touch)).map((r) => r.trim()).join(' ')
+                  const hit = /\^\[[[O][AB]/.exec(text)
+                  if (hit) { sawArrow = hit[0]; break }
+                }
+                if (sawArrow) {
+                  note('PASS', 'mobile', `a swipe reached a full-screen program without the mouse as ${sawArrow}`)
+                } else {
+                  const tail = (await screenRows(touch)).map((r) => r.trim()).filter((r) => r).slice(-3)
+                  note('FAIL', 'mobile',
+                    'a swipe over a full-screen program that did not ask for the mouse sent it ' +
+                    `nothing. Screen tail: ${JSON.stringify(tail.join(' | ').slice(0, 160))}`)
+                }
+              }
+              execSync(`tmux -L ${SOCKET} send-keys -t '=${sess.tmuxName}:' C-c`)
+              await sleep(300)
+              execSync(
+                `tmux -L ${SOCKET} send-keys -t '=${sess.tmuxName}:' "printf '\\033[?1049l'" Enter`)
+              await sleep(500)
+            }
+
             // And the CSS that makes the gesture above work on a real phone,
             // which this check cannot otherwise see.
             //
