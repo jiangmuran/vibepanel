@@ -24,6 +24,8 @@ func TestSniffMediaKnowsTheFixtures(t *testing.T) {
 		"docs/manual.pdf":     {"pdf", "application/pdf"},
 		"archives/bundle.zip": {"binary", ""},
 		"bin/program":         {"binary", ""},
+		// FF FE, a UTF-16 byte-order mark, looked like an MPEG frame.
+		"encodings/utf16.txt": {"binary", ""},
 	} {
 		b, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
@@ -69,7 +71,7 @@ func TestEveryMediaTypeIsListed(t *testing.T) {
 	heads := [][]byte{
 		[]byte("\x89PNG\r\n\x1a\n"), []byte("\xff\xd8\xff\xe0"), []byte("GIF89a"), []byte("%PDF-1.4"),
 		[]byte("RIFF\x00\x00\x00\x00WEBP"), []byte("\x00\x00\x00\x1cftypavif"),
-		{0, 0, 1, 0, 1, 0}, []byte("fLaC"), []byte("ID3"), {0xff, 0xfb},
+		{0, 0, 1, 0, 1, 0}, []byte("fLaC"), []byte("ID3"), {0xff, 0xfb, 0x90},
 		[]byte("\x1a\x45\xdf\xa3"), []byte("OggS....theora"), []byte("OggS....vorbis"),
 		[]byte("RIFF\x00\x00\x00\x00WAVE"), []byte("\x00\x00\x00\x18ftypM4A "),
 		[]byte("\x00\x00\x00\x18ftypqt  "), []byte("\x00\x00\x00\x18ftypmp42"),

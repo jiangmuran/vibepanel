@@ -60,9 +60,13 @@ func SniffMedia(head []byte, size int64) (Kind, string) {
 		return KindAudio, "audio/flac"
 	case bytes.HasPrefix(head, []byte("ID3")):
 		return KindAudio, "audio/mpeg"
-	// An MPEG audio frame with no ID3 tag: eleven sync bits, then a layer that
-	// is not the reserved 00.
-	case len(head) >= 2 && head[0] == 0xff && head[1]&0xe0 == 0xe0 && head[1]&0x06 != 0:
+	// An MPEG audio frame with no ID3 tag: eleven sync bits, Layer III -- what
+	// an .mp3 is -- and a bitrate and a sample rate that are not the reserved
+	// values. Any layer at all was the first rule, and a UTF-16 text file's
+	// byte-order mark, FF FE, is a "Layer I frame" by it: the viewer opened
+	// one as audio.
+	case len(head) >= 3 && head[0] == 0xff && head[1]&0xe0 == 0xe0 && head[1]&0x06 == 0x02 &&
+		head[2]>>4 != 0x0f && head[2]>>4 != 0 && (head[2]>>2)&0x03 != 0x03:
 		return KindAudio, "audio/mpeg"
 	case bytes.HasPrefix(head, []byte("\x1a\x45\xdf\xa3")):
 		// EBML: WebM, or Matroska, which browsers play as WebM.
