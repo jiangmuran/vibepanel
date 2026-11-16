@@ -27024,7 +27024,49 @@ echoed back. Whether the arrows are CSI or SS3 is not something a check
 through tmux can see: tmux decodes the key and re-encodes it for the pane's own
 cursor-key mode, so the DECCKM choice is pinned by the vitest alone.
 
-One edge is left as it is: the flag is the poller's, every two seconds, so for
-up to that long after `less` or `vim` exits the wheel still sends arrows, and
-a shell answers Up by putting the previous command on its prompt line. It is
-not run, and the next poll ends it.
+The flag was the poller's, every two seconds, and that was a window: for up
+to two seconds after `less` or `vim` exited the wheel still sent arrows, and a
+shell answers Up by putting the previous command on its prompt line. It is
+closed by asking sooner, not by asking somewhere else.
+
+**Not the browser's own buffer.** The obvious reach is xterm's
+`buffer.active.type`, which is instant and needs no server. It is `normal`
+under every program in this panel, always: vibepanel.conf removes
+`smcup`/`rmcup` from the client's terminal (the reason is in the conf), so a
+pane's switch to its alternate screen is emulated inside tmux and never reaches
+the stream the browser parses. Measured on a throwaway socket, a pane running
+`printf '\e[?1049hALT'` and a client attached with `TERM=xterm-256color`, the
+client's output captured:
+
+| config | `ALT` in the client's output | `\e[?1049h` | `\e[?47h` / `\e[?1047h` |
+|---|---|---|---|
+| vibepanel.conf | yes | no | no |
+| `-f /dev/null` | yes | yes | -- |
+
+A late viewer is no different: its replay is the same client's output.
+
+**Asked when the pane draws** (`internal/httpapi/fullscreen.go`). Entering or
+leaving a full-screen program redraws the pane, and the redraw comes through
+the pump. A chunk on a session somebody is watching -- subscribed and not
+hidden -- schedules one `display-message '#{alternate_on}'` 100 ms later, at
+most one in flight and one per 250 ms per session, and a changed answer is
+pushed in the same field and the same broadcast the poller uses. The poller
+still runs and corrects a probe that missed; where the two disagree, the one
+that asked tmux later wins, so a poll that listed the panes just before `vim`
+exited cannot put the flag back for two seconds. A probe tmux did not answer
+changes nothing, because "no answer" read as "not full screen" would hand a
+running `vim`'s wheel back to the panel's buffer.
+
+Measured in the test against real tmux with no poller running: on in 112 ms,
+off in 246 ms (the second waits out the 250 ms gap from the first), and 1.5 s
+of a shell printing every 5 ms asked tmux at most seven times. Each guard was
+taken out to watch a test go red: the kick from the pump, the watched check,
+the newer-answer rule, the gap, the in-flight bound, and the error that
+changes nothing (which also found the probe writing into a map it had not
+made).
+
+**Not pipe-pane.** Reading each pane's raw output for `?1049h`/`?1049l` would
+be instant, and it is a second byte stream per session -- a `pipe-pane`
+process each, output read twice, and a parser for sequences split across
+chunks -- to save at most a quarter of a second over a fork that runs only
+while somebody is looking.

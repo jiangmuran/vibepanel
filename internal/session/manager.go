@@ -1111,6 +1111,20 @@ func (l *Live) SetHidden(sub *Subscriber, hidden bool) {
 	}
 }
 
+// Watched reports whether somebody is looking at this session: a viewer that
+// is subscribed and not hidden. A hidden one is a terminal kept mounted off
+// screen, and nothing it would be told changes what anyone sees.
+func (l *Live) Watched() bool {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	for sub := range l.subs {
+		if !sub.hidden {
+			return true
+		}
+	}
+	return false
+}
+
 // broadcast delivers an event to every viewer, dropping any that is too far
 // behind.
 func (l *Live) broadcast(ev Event) {

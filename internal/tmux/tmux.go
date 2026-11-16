@@ -882,8 +882,19 @@ func (c *Client) Screen(ctx context.Context, name string, ansi bool) (string, er
 // false: the caller uses it to decide whether a picture is worth more than
 // text, and text is the safe answer.
 func (c *Client) AlternateOn(ctx context.Context, name string) bool {
+	on, err := c.AlternateScreen(ctx, name)
+	return err == nil && on
+}
+
+// AlternateScreen is AlternateOn for a caller to whom "tmux did not answer" and
+// "not full screen" are different things: the wheel's owner is changed on an
+// answer and left alone without one.
+func (c *Client) AlternateScreen(ctx context.Context, name string) (bool, error) {
 	out, err := c.run(ctx, "display-message", "-p", "-t", target(name), "#{alternate_on}")
-	return err == nil && strings.TrimSpace(out) == "1"
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) == "1", nil
 }
 
 // CaptureHistory returns everything above the visible screen.

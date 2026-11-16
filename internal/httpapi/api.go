@@ -153,12 +153,15 @@ type Server struct {
 	Git git.Cache
 
 	// fullscreen holds the session ids whose pane has a full-screen program
-	// drawing in it, as the poller last saw them.
+	// drawing in it, as the poller or a probe last saw them.
 	//
-	// A pointer swap rather than a lock: it is written by one goroutine every
-	// two seconds and read by every state build, and the readers only ever want
-	// the most recent whole answer.
+	// A pointer swap rather than a lock for the readers: every state build
+	// reads it and only ever wants the most recent whole answer. The two
+	// writers -- the poller and fullscreenProbe -- take fsMu; see fullscreen.go.
 	fullscreen atomic.Pointer[[]string]
+	fsMu       sync.Mutex
+	fsProbe    map[string]*fsProbeState
+	fsAsked    int // probes run, for the test that bounds them
 	// TreeSampler holds the previous per-process CPU counters, so it has to be
 	// the same one across requests: a fresh sampler per request has nothing to
 	// difference against and reports every session at zero forever.
@@ -1064,6 +1067,9 @@ func (s *Server) HandleSignals(sig session.Signals) {
 	now := time.Now()
 	if s.Detector != nil {
 		s.Detector.Observe(sig.SessionID, sig, now)
+	}
+	if sig.Bytes > 0 {
+		s.kickFullscreenProbe(sig.SessionID, now)
 	}
 	if !sig.Visible {
 		return
@@ -2496,6 +2502,10 @@ func (s *Server) markVanished(ctx context.Context, row store.Session) error {
 var pollTmuxBudget = 5 * time.Second
 
 func (s *Server) pollOnce(ctx context.Context) error {
+	// Before the question, not after the answer: a probe that ran while tmux
+	// was being listed is newer than this list for its session. See
+	// storeFullscreen.
+	listedAt := time.Now()
 	lctx, lcancel := context.WithTimeout(ctx, pollTmuxBudget)
 	infos, err := s.Tmux.List(lctx)
 	lcancel()
@@ -2689,7 +2699,7 @@ func (s *Server) pollOnce(ctx context.Context) error {
 			}
 		}
 	}
-	s.fullscreen.Store(&fullscreen)
+	s.storeFullscreen(fullscreen, listedAt)
 	return firstErr
 }
 
