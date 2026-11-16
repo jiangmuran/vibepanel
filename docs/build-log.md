@@ -27096,3 +27096,15 @@ be instant, and it is a second byte stream per session -- a `pipe-pane`
 process each, output read twice, and a parser for sequences split across
 chunks -- to save at most a quarter of a second over a fork that runs only
 while somebody is looking.
+
+## 2026-11-16 — A test's child was still `sh` when the kill named it
+
+v1.32.0's first build failed in `internal/resources`:
+`TestAKillIsRefusedForAnythingButTheProcessShown` got an action named `sh`
+where it expected `sleep`. `spawnPane` runs `sh -c 'sleep 300 & echo $!'`
+and reads the pid the shell prints, and the shell prints it the moment it
+has forked -- while the fork is still a copy of `sh`, before it execs
+`sleep`. On a two-core runner the test read `/proc/<pid>/comm` in that
+window. `spawnPane` now waits for the comm to become `sleep`, bounded at
+three seconds. Seen once before beside a render-check on this machine and
+passed on the rerun, which is the shape of a race, not a flake.

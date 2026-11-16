@@ -41,6 +41,17 @@ func spawnPane(t *testing.T) (pane, child int) {
 		t.Fatalf("child pid %q: %v", buf[:n], err)
 	}
 	t.Cleanup(func() { _ = syscall.Kill(child, syscall.SIGKILL) })
+	// `$!` is printed by the shell the moment it has forked, and the fork is
+	// still a copy of `sh` until it execs `sleep`. On the release runner a
+	// test read the child's name before that exec and the kill it then made
+	// was audited as "sh", which the test rightly refused to accept. Wait for
+	// the exec, bounded.
+	for end := time.Now().Add(3 * time.Second); time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
+		if comm, rerr := os.ReadFile("/proc/" + strconv.Itoa(child) + "/comm"); rerr == nil && strings.TrimSpace(string(comm)) == "sleep" {
+			return cmd.Process.Pid, child
+		}
+	}
+	t.Fatalf("pid %d never became sleep", child)
 	return cmd.Process.Pid, child
 }
 
