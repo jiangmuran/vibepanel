@@ -3,27 +3,27 @@
  *
  * Separate from the component because none of it needs a DOM, and vitest here
  * runs in node on purpose — anything that needs a browser is checked against a
- * real one instead. These are the parts worth getting wrong: the ceiling, and
- * the two numbers the panel puts on screen when a bound bites.
+ * real one instead: the ceiling an older server keeps, and the two numbers
+ * the panel puts on screen.
  */
 
 /**
- * The largest file a preview will fetch.
+ * The largest image or PDF the preview route sends as bytes, to a tab older
+ * than the viewer -- which asks with meta=1 and streams media from the inline
+ * route instead, with no cap. Kept because an older server still answers 413
+ * past it, and the viewer says so with this number.
  *
  * The same number as `previewMaxBytes` in internal/httpapi/panels.go, where the
  * reasoning behind it is written down, and pinned to it by
  * TestThePreviewBoundIsTheSameOnBothSides — which reads this line, so it is a
  * plain literal rather than an expression that would be clearer to read.
  *
- * This copy is not the enforcement; the server's is. It is here so that
- * clicking a two-gigabyte core dump is answered from the size the listing
- * already carries, instantly and without a request.
+ * It used to answer a two-gigabyte core dump from the listing's size, before
+ * any request. That stopped being right when every kind got a bounded answer:
+ * a binary is its first 64 KB and a medium streams, so a large file is shown
+ * rather than refused.
  */
 export const PREVIEW_MAX_BYTES = 8388608
-
-export function tooBigToPreview(size: number): boolean {
-  return size > PREVIEW_MAX_BYTES
-}
 
 /**
  * Lines in what arrived, which is what the panel puts under a text preview.

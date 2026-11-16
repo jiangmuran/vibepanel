@@ -710,6 +710,15 @@ body {
   }
 }
 
+/* Behind a picture, so transparency is something to see rather than guess:
+   squares of two surfaces the theme already defines, so the checkerboard
+   follows the theme with no colour of its own (red line 5). */
+.vp-checker {
+  background-color: var(--vp-surface);
+  background-image: conic-gradient(var(--vp-bg) 25%, transparent 0 50%, var(--vp-bg) 0 75%, transparent 0);
+  background-size: 16px 16px;
+}
+
 .vp-backdrop {
   animation: vp-backdrop-in 160ms var(--vp-ease) both;
   backdrop-filter: blur(6px) saturate(120%);

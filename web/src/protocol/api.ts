@@ -175,8 +175,8 @@ export type FilePreview =
   | { kind: 'text'; text: string; truncated: boolean; markup: Markup | null }
   /** The first bytes of a file that is none of the others, for the hex view. */
   | { kind: 'binary'; bytes: Uint8Array; truncated: boolean }
-  | { kind: 'image'; blob: Blob }
-  | { kind: 'pdf'; blob: Blob }
+  /** A medium: streamed from the inline route, so only its type comes back here. */
+  | { kind: 'image' | 'pdf' | 'video' | 'audio'; mime: string }
   | { kind: 'tooBig' }
   | { kind: 'none' }
 
@@ -195,19 +195,6 @@ function markupOf(header: string | null): Markup | null {
   return header === 'html' || header === 'svg' ? header : null
 }
 
-/**
- * The type a Blob is built with, from the kind the server named.
- *
- * A Blob's type is not a label, it is the instruction the browser follows when
- * the bytes reach an <img> or an <object>. So it is derived from the kind
- * rather than echoed from the response: this is the one place where something
- * out of a project directory could be handed to the browser as something to
- * run, and the answer is that it never gets to name its own type.
- */
-export function blobTypeFor(kind: 'image' | 'pdf', header: string | null): string {
-  if (kind === 'pdf') return 'application/pdf'
-  return header !== null && header.startsWith('image/') ? header : 'application/octet-stream'
-}
 
 /**
  * Thrown when a write would have landed on top of somebody else's.
@@ -1282,6 +1269,16 @@ export const api = {
     `/api/projects/${projectId}/download?path=${encodeURIComponent(path)}`,
 
   /**
+   * Where an <img>, <video>, <audio> or <object> streams a medium from: the
+   * download with an inline disposition and ranges, the type decided by the
+   * server from one list and anything else served as a download
+   * (internal/httpapi/panels.go, handleInline). A URL and not a fetch, so the
+   * browser streams and seeks and the response keeps the server's headers.
+   */
+  inlineURL: (projectId: string, path: string) =>
+    `/api/projects/${projectId}/inline?path=${encodeURIComponent(path)}`,
+
+  /**
    * Where an <iframe> points to draw a page out of a project.
    *
    * A URL rather than a fetch, and that is the isolation working rather than a
@@ -1408,7 +1405,9 @@ export const api = {
    * the panel's own origin.
    */
   preview: async (projectId: string, path: string): Promise<FilePreview> => {
-    const res = await fetch(`/api/projects/${projectId}/preview?path=${encodeURIComponent(path)}`)
+    // meta=1: a medium is answered with its kind and no bytes, and streamed
+    // from inlineURL. Text and bytes come back as before.
+    const res = await fetch(`/api/projects/${projectId}/preview?path=${encodeURIComponent(path)}&meta=1`)
     // Drained rather than ignored, for the reason the 204 branch above is:
     // a body nobody reads is reported by Chromium as an aborted request, which
     // turns every honest refusal into a network error in the devtools log.
@@ -1437,15 +1436,15 @@ export const api = {
         truncated: res.headers.get('X-Preview-Truncated') === 'true',
       }
     }
+    if (kind === 'image' || kind === 'pdf' || kind === 'video' || kind === 'audio') {
+      await res.arrayBuffer()
+      return { kind, mime: res.headers.get('X-Preview-Type') ?? '' }
+    }
     // A kind this build does not know is the shape of an older tab against a
     // newer server. "No preview, here is the download" is true in that case
     // too, and is better than a blank frame.
-    if (kind !== 'image' && kind !== 'pdf') {
-      await res.arrayBuffer()
-      return { kind: 'none' }
-    }
-    const type = blobTypeFor(kind, res.headers.get('X-Preview-Type'))
-    return { kind, blob: new Blob([await res.arrayBuffer()], { type }) }
+    await res.arrayBuffer()
+    return { kind: 'none' }
   },
 
   /** One directory inside a project. `path` is where, `name` is what.

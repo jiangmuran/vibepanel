@@ -30,12 +30,11 @@ describe('the list of keys', () => {
     expect(whats(true, 'panel')).not.toContain('keys.wordJump')
   })
 
-  it('lists the viewer\'s keys with the platform\'s command key, and no key that does nothing yet', () => {
+  it('lists the viewer\'s keys with the platform\'s command key', () => {
     expect(combos(true, 'panel')).toContain('⌘F')
     expect(combos(false, 'panel')).toContain('Ctrl+F')
     expect(whats(false, 'terminal')).toContain('keys.viewerFind')
-    // Zoom is in viewer/keys.ts for the image body; until that body exists the
-    // keys do nothing, and a list that names them is wrong.
-    expect(combos(true, 'panel').join(' ')).not.toMatch(/(^| )[+−-]( |$)/)
+    // Zoom joined the list with the image body that answers it (batch 5).
+    expect(whats(false, 'panel')).toContain('keys.viewerZoom')
   })
 })

@@ -23,7 +23,7 @@ import { safeText } from '../text'
 import { t, useLang } from '../../i18n'
 import { useDialogFocus } from '../useDialogFocus'
 import { isMac } from '../keyprefs'
-import { formatBytes, tooBigToPreview, PREVIEW_MAX_BYTES } from '../panels/preview'
+import { formatBytes, PREVIEW_MAX_BYTES } from '../panels/preview'
 import { canRender, sandboxFor } from '../panels/render'
 import { isMarkdown } from './mdlinks'
 import { CsvTable } from './CsvTable'
@@ -44,6 +44,8 @@ import {
 } from './prefs'
 import { findMatches, firstMatchFrom, lineEndings, parseGoTo, splitLines, stepMatch } from './text'
 import { TextBody, type ScrollRequest } from './TextBody'
+import { ImageView } from './ImageView'
+import { zoomAbout, percent, type Zoom } from './zoom'
 
 /**
  * The document renderer, fetched the first time a Markdown file is opened.
@@ -64,8 +66,8 @@ type View =
   | { kind: 'error'; message: string }
   | { kind: 'text'; text: string; truncated: boolean; markup: Markup | null }
   | { kind: 'binary'; bytes: Uint8Array; truncated: boolean }
-  | { kind: 'image'; url: string }
-  | { kind: 'pdf'; url: string }
+  /** A medium, streamed from the inline route by the element that draws it. */
+  | { kind: 'image' | 'pdf' | 'video' | 'audio'; url: string }
   | { kind: 'tooBig' }
   | { kind: 'none' }
 
@@ -158,12 +160,10 @@ function FileContent({
   keysRef: React.RefObject<((e: React.KeyboardEvent) => void) | null>
 }) {
   useLang()
-  // Answered from the listing's size before any request: the server refuses
-  // it too, which is the enforcement, but a round trip to be told what we can
-  // see from here is a round trip spent on a file nobody is going to look at.
-  const [view, setView] = useState<View>(() =>
-    tooBigToPreview(entry.size) ? { kind: 'tooBig' } : { kind: 'loading' },
-  )
+  // Every kind has a bounded answer now -- text is cut, a binary is its
+  // first bytes, a medium streams -- so there is no size to refuse at before
+  // asking; a file that is too large for one of them says so in the answer.
+  const [view, setView] = useState<View>({ kind: 'loading' })
   const findRef = useRef<HTMLInputElement | null>(null)
   const gotoRef = useRef<HTMLInputElement | null>(null)
 
@@ -185,20 +185,17 @@ function FileContent({
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
-    if (tooBigToPreview(entry.size)) return
-    // The object URL is made and revoked inside this one effect, so the bytes
-    // are owned by exactly the thing that fetched them.
-    let url: string | null = null
     let cancelled = false
     api.preview(projectId, entry.path).then(
       (p) => {
         if (cancelled) return
-        if (p.kind === 'image' || p.kind === 'pdf') {
-          url = URL.createObjectURL(p.blob)
-          setView({ kind: p.kind, url })
+        if (p.kind === 'text' || p.kind === 'binary' || p.kind === 'tooBig' || p.kind === 'none') {
+          setView(p)
           return
         }
-        setView(p)
+        // A medium: streamed by the element that draws it, from the inline
+        // route -- no copy in memory, no cap, ranges for a video to seek with.
+        setView({ kind: p.kind, url: api.inlineURL(projectId, entry.path) })
       },
       (e: unknown) => {
         if (!cancelled) setView({ kind: 'error', message: e instanceof Error ? e.message : String(e) })
@@ -206,9 +203,14 @@ function FileContent({
     )
     return () => {
       cancelled = true
-      if (url) URL.revokeObjectURL(url)
     }
-  }, [projectId, entry.path, entry.size])
+  }, [projectId, entry.path])
+
+  // The image's zoom, here rather than in the image view so the keys reach it,
+  // and its size once it has loaded, for the footer.
+  const [zoom, setZoom] = useState<Zoom>('fit')
+  const [imageSize, setImageSize] = useState<{ w: number; h: number } | null>(null)
+  const imageScale = useRef<() => number>(() => 1)
 
   const text = view.kind === 'text' ? view.text : ''
   const binary = view.kind === 'binary'
@@ -240,6 +242,10 @@ function FileContent({
   const structured = view.kind === 'text' && !source && (json !== null || table !== null)
   const [ext, setExt] = useState({ n: 0, capped: false })
   const onCount = useCallback((n: number, capped: boolean) => setExt({ n, capped }), [])
+  // An SVG is a picture: drawn as one through <img>, which runs nothing, and
+  // zoomed like one. Its source is the text it is.
+  const svg = view.kind === 'text' && view.markup === 'svg' && !source
+  const showsImage = view.kind === 'image' || svg
   // The grammar, loaded the first time a file in it is opened. Until it
   // arrives the body is plain, and colours in when it does.
   const [loaded, setLoaded] = useState<string | null>(null)
@@ -368,10 +374,13 @@ function FileContent({
       case 'copyPath':
         copyPath()
         return
-      // Zoom is the image body's, in the batch that brings one.
+      // An image's, and only while one is drawn.
       case 'zoomIn':
       case 'zoomOut':
+        if (showsImage) setZoom(zoomAbout(imageScale.current(), a === 'zoomIn' ? 1 : -1))
+        return
       case 'zoomReset':
+        if (showsImage) setZoom('fit')
         return
     }
   }
@@ -405,6 +414,15 @@ function FileContent({
     // The input that had the focus is about to go; without this it falls to
     // the page and the next key reaches nothing in the viewer.
     focusBody()
+  }
+
+  /** What the view that is not Source is called, for this file. */
+  const drawnLabel = () => {
+    if (svg || (view.kind === 'text' && view.markup === 'svg')) return t('viewer.picture')
+    if (json !== null) return t('viewer.tree')
+    if (table !== null) return t('viewer.table')
+    if (drawn) return t('preview.rendered.short')
+    return t('viewer.highlighted')
   }
 
   const trail = crumbs(entry.path, projectName)
@@ -494,15 +512,7 @@ function FileContent({
             <div data-testid="preview-mode" role="tablist" className="vp-segmented shrink-0">
               {([false, true] as const).map((wantSource) => {
                 // "Page" for a document or a page; highlighted code is not a page.
-                const label = wantSource
-                  ? t('preview.source')
-                  : json !== null
-                    ? t('viewer.tree')
-                    : table !== null
-                      ? t('viewer.table')
-                      : canRender(view.kind === 'text' ? view.markup : null) || isMarkdown(entry.name)
-                        ? t('preview.rendered.short')
-                        : t('viewer.highlighted')
+                const label = wantSource ? t('preview.source') : drawnLabel()
                 const Icon = wantSource ? Code2 : Eye
                 return (
                   <button
@@ -661,6 +671,18 @@ function FileContent({
           />
         }
         plain={plain}
+        imageBody={
+          showsImage ? (
+            <ImageView
+              url={api.inlineURL(projectId, entry.path)}
+              alt={t('preview.imageAlt', { name: safeText(entry.name) })}
+              zoom={zoom}
+              onZoom={setZoom}
+              onSize={(w, h) => setImageSize({ w, h })}
+              scaleRef={imageScale}
+            />
+          ) : null
+        }
         structured={
           !structured ? null : json !== null ? (
             <JsonTree value={json.value} query={findOpen ? query : ''} current={current} onCount={onCount} />
@@ -671,6 +693,27 @@ function FileContent({
         download={download}
       />
 
+      {showsImage && view.kind === 'image' && (
+        <footer
+          data-testid="viewer-footer"
+          className="flex shrink-0 flex-wrap items-center gap-x-2 border-t border-hairline px-3 py-1.5 text-vp-xs text-ink-2"
+        >
+          {imageSize && (
+            <>
+              <span className="tabular" data-testid="viewer-image-size">
+                {imageSize.w.toLocaleString()} × {imageSize.h.toLocaleString()}
+              </span>
+              <span aria-hidden="true">·</span>
+            </>
+          )}
+          <span className="tabular">{formatBytes(entry.size)}</span>
+          <span aria-hidden="true">·</span>
+          <span className="tabular" data-testid="viewer-zoom">
+            {zoom === 'fit' ? t('viewer.fit') : percent(zoom)}
+          </span>
+          {copied && <span className="text-ink">{t('viewer.pathCopied')}</span>}
+        </footer>
+      )}
       {view.kind === 'binary' && (
         <footer
           data-testid="viewer-footer"
@@ -738,6 +781,7 @@ function Body({
   onScripts,
   plainBody,
   plain,
+  imageBody,
   structured,
   download,
 }: {
@@ -748,6 +792,7 @@ function Body({
   onScripts: (on: boolean) => void
   plainBody: React.ReactNode
   plain: boolean
+  imageBody: React.ReactNode
   structured: React.ReactNode
   download: () => void
 }) {
@@ -777,31 +822,37 @@ function Body({
     case 'none':
       return cannotShow(t('preview.none', { size: formatBytes(entry.size) }))
     case 'image':
-      return (
-        // `m-auto` on the image, not centring on the box: flex centring puts
-        // the overflow of a picture larger than the window at negative offsets
-        // a scroll container cannot reach, and its top-left is then gone
-        // (「图片预览有bug 没法看到开头」).
-        <div className="flex min-h-0 flex-1 overflow-auto bg-surface-2 p-3">
-          <img
-            src={view.url}
-            alt={t('preview.imageAlt', { name: safeText(entry.name) })}
-            data-testid="preview-image"
-            className="m-auto max-h-full max-w-full object-contain"
-          />
-        </div>
-      )
+      return imageBody
     case 'pdf':
       return (
         <object data={view.url} type="application/pdf" data-testid="preview-pdf" className="min-h-0 flex-1 bg-surface-2">
           {cannotShow(t('preview.pdfFallback'))}
         </object>
       )
+    case 'video':
+      return (
+        <div className="flex min-h-0 flex-1 bg-surface-2 p-3">
+          {/* metadata only until it is played: a viewer opened to see what a
+              file is should not pull the whole of it. */}
+          <video src={view.url} controls preload="metadata" data-testid="preview-video" className="m-auto max-h-full max-w-full">
+            {cannotShow(t('preview.mediaFallback'))}
+          </video>
+        </div>
+      )
+    case 'audio':
+      return (
+        <div className="flex min-h-0 flex-1 items-center justify-center bg-surface-2 p-6">
+          <audio src={view.url} controls preload="metadata" data-testid="preview-audio" className="w-full max-w-xl">
+            {cannotShow(t('preview.mediaFallback'))}
+          </audio>
+        </div>
+      )
     case 'binary':
       return plainBody
     case 'text':
       if (plain) return plainBody
       if (structured) return structured
+      if (imageBody) return imageBody
       // Not the line body, so a document or a page. The sandboxed page is
       // asked about first: the preview this replaced asked its highlighter
       // first, which claimed .html and .svg, so "Page" on a project's own page

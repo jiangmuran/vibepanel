@@ -47,7 +47,7 @@ export function shortcutLines(mac: boolean, side: 'terminal' | 'panel'): { title
     { combo: ['Esc'], what: 'keys.close' },
   ]
   // The file viewer's, which work while it is open (viewer/keys.ts is the
-  // table). Zoom joins this list with the image body that answers it.
+  // table).
   const viewer: Line[] = [
     { combo: ['[', ']'], what: 'keys.viewerFiles' },
     { combo: [`${k.cmd}F`], what: 'keys.viewerFind' },
@@ -56,6 +56,7 @@ export function shortcutLines(mac: boolean, side: 'terminal' | 'panel'): { title
     { combo: ['W'], what: 'keys.viewerWrap' },
     { combo: ['N'], what: 'keys.viewerNumbers' },
     { combo: ['S'], what: 'keys.viewerSource' },
+    { combo: ['+', '−', '0'], what: 'keys.viewerZoom' },
     { combo: ['D'], what: 'keys.viewerDownload' },
     { combo: ['C'], what: 'keys.viewerCopyPath' },
   ]
