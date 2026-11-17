@@ -274,7 +274,8 @@ built, and Go's standard library (`archive/zip`, `archive/tar`,
 - **7b notebooks, fonts, encodings**: client side except the server's
   decoding of UTF-16 and Latin-1, which `X-Preview-Encoding` names.
 - **7c archives and SQLite**: the server's two listings
-  (`GET /api/projects/{id}/archive?path=` and `/sqlite?path=&table=`) with
+  (`GET /api/projects/{id}/archive-entries?path=` -- not `/archive`, which
+  is the `POST` that archives a project -- and `/sqlite?path=&table=`) with
   their bounds pinned by tests against crafted files -- a zip whose central
   directory claims a gigabyte, a tar with a path that climbs, a database
   with a trigger -- and the viewer's two tables.
