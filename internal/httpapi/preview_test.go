@@ -360,3 +360,85 @@ func TestThePreviewBoundIsTheSameOnBothSides(t *testing.T) {
 			"how big a file may be before a preview is refused", want)
 	}
 }
+
+// Text in another encoding is decoded here, and the header says what it was.
+// Decoded before the cut and cut afterwards: the cut looks for a newline byte,
+// and in UTF-16 a newline is two bytes, so a UTF-16 file cut first would end
+// half a character in.
+func TestPreviewDecodesOtherEncodings(t *testing.T) {
+	ts, _ := newTestServer(t)
+	root := t.TempDir()
+	utf16le := func(s string) []byte {
+		out := []byte{0xFF, 0xFE}
+		for _, r := range s {
+			out = append(out, byte(r), byte(r>>8))
+		}
+		return out
+	}
+	files := map[string][]byte{
+		"utf16.txt":  utf16le("UTF-16 text\n中文\n"),
+		"latin1.txt": []byte("caf\xe9 na\xefve\n"),
+		// Past the byte budget in UTF-16: two bytes a character, so the read
+		// stops a million characters in, mid-line.
+		"long16.txt": utf16le(strings.Repeat("a line of UTF-16 text\n", previewTextBytes/40)),
+		// One line of more 0x0A bytes than the line cap allows lines: U+010A
+		// is 0A 01. Two lines once decoded, and whole.
+		"dotted16.txt": utf16le(strings.Repeat("Ċ", previewTextLines+10) + "\nend\n"),
+		// Under the budget as read, over it as UTF-8: every é is one byte in
+		// Latin-1 and two in UTF-8. Long lines, so the line cap is not what
+		// stops it -- with short ones it was, and the budget went untested.
+		"wide1.txt": bytes.Repeat(append(bytes.Repeat([]byte{0xe9}, 1000), '\n'), (previewTextBytes-100)/1001),
+	}
+	for name, b := range files {
+		if err := os.WriteFile(filepath.Join(root, name), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	project := postJSON[store.Project](t, ts, "/api/projects", `{"path":"`+root+`","name":"enc"}`)
+	get := func(name string) (*http.Response, string) {
+		t.Helper()
+		res, err := ts.Client().Get(ts.URL + "/api/projects/" + project.ID + "/preview?path=" + name + "&meta=1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		return res, string(b)
+	}
+	for name, want := range map[string][2]string{
+		"utf16.txt":  {"UTF-16 text\n中文\n", "UTF-16 LE"},
+		"latin1.txt": {"café naïve\n", "Latin-1"},
+	} {
+		res, body := get(name)
+		if res.Header.Get("X-Preview-Kind") != "text" || body != want[0] || res.Header.Get("X-Preview-Encoding") != want[1] {
+			t.Errorf("%s: %q %q encoding %q, want text %q in %s", name, res.Header.Get("X-Preview-Kind"), body,
+				res.Header.Get("X-Preview-Encoding"), want[0], want[1])
+		}
+		if ct := res.Header.Get("Content-Type"); ct != "application/octet-stream" {
+			t.Errorf("%s: Content-Type %q; decoded or not, it is never something a browser draws", name, ct)
+		}
+	}
+	res, body := get("long16.txt")
+	if res.Header.Get("X-Preview-Truncated") != "true" || res.Header.Get("X-Preview-Encoding") != "UTF-16 LE" {
+		t.Errorf("long16.txt: truncated %q encoding %q", res.Header.Get("X-Preview-Truncated"), res.Header.Get("X-Preview-Encoding"))
+	}
+	if !strings.HasSuffix(body, "a line of UTF-16 text\n") || strings.ContainsRune(body, '�') {
+		t.Errorf("long16.txt: does not end on a whole line, or carries U+FFFD: ...%q", body[max(0, len(body)-40):])
+	}
+	res, body = get("dotted16.txt")
+	if !strings.HasSuffix(body, "\nend\n") || res.Header.Get("X-Preview-Truncated") != "" {
+		t.Errorf("dotted16.txt: cut by the 0x0A bytes inside its characters: truncated %q, ends %q",
+			res.Header.Get("X-Preview-Truncated"), body[max(0, len(body)-12):])
+	}
+	res, body = get("wide1.txt")
+	if len(body) > previewTextBytes || res.Header.Get("X-Preview-Truncated") != "true" {
+		t.Errorf("wide1.txt: %d bytes decoded, truncated %q; the budget is %d", len(body), res.Header.Get("X-Preview-Truncated"), previewTextBytes)
+	}
+	// UTF-8 says nothing about its encoding: that is every other text file.
+	if err := os.WriteFile(filepath.Join(root, "plain.txt"), []byte("plain\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if res, _ := get("plain.txt"); res.Header.Get("X-Preview-Encoding") != "" {
+		t.Errorf("UTF-8 named an encoding: %q", res.Header.Get("X-Preview-Encoding"))
+	}
+}
