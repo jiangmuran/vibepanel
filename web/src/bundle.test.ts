@@ -44,7 +44,8 @@ describe('the bundle', () => {
     // 48 KB in batch 1; Prism's core joined it in batch 2, about 22 KB; 7a's
     // page keys, footer and the PDF view's wiring, about 2 KB; 7b's notebook
     // parser -- needed here, to know a notebook is one before drawing it --
-    // and the wiring for notebooks and encodings, about 3 KB.
+    // and the wiring for notebooks, fonts and encodings, about 4 KB. The
+    // font's name parser is in the specimen's chunk, not this one.
     expect(viewer!.bytes, `${viewer!.name}`).toBeLessThanOrEqual(72_000)
   })
 
@@ -104,10 +105,16 @@ describe('the bundle', () => {
     }
   })
 
-  it('keeps the notebook in a chunk of its own', () => {
-    // 7b: small, and only a notebook ever needs it.
+  it('keeps the notebook and the font specimen in chunks of their own', () => {
+    // 7b: each is small, and only a notebook or a font ever needs it.
     const nb = chunk('NotebookView-')
+    const font = chunk('FontSpecimen-')
     expect(nb, 'the notebook view is not a separate chunk').not.toBeNull()
+    expect(font, 'the font specimen is not a separate chunk').not.toBeNull()
     expect(nb!.bytes, nb!.name).toBeLessThanOrEqual(6_000)
+    expect(font!.bytes, font!.name).toBeLessThanOrEqual(6_000)
+    // The specimen's pangram is in its chunk and not the viewer's.
+    expect(font!.text).toContain('quick brown fox')
+    expect(viewer!.text).not.toContain('quick brown fox')
   })
 })

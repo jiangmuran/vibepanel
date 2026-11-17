@@ -32,6 +32,7 @@ import { hexLines } from './hex'
 import { JsonTree } from './JsonTree'
 import { isJson, parseJson } from './json'
 import { isNotebook, parseNotebook } from './notebook'
+import { FONT_MAX_BYTES, fontFormat } from './fontkind'
 import { looksLikeDiff } from './diff'
 import { grammarFor } from './grammars'
 import { loadGrammar } from './tokens'
@@ -68,6 +69,13 @@ const Markdown = lazy(() =>
  */
 const Notebook = lazy(() =>
   import('./NotebookView').catch(() => ({
+    default: () => <p className="px-5 py-4 text-vp-base text-ink-2">{t('viewer.stale')}</p>,
+  })),
+)
+
+/** A font's specimen: small, but only a font file ever needs it. */
+const FontSpecimen = lazy(() =>
+  import('./FontSpecimen').catch(() => ({
     default: () => <p className="px-5 py-4 text-vp-base text-ink-2">{t('viewer.stale')}</p>,
   })),
 )
@@ -282,8 +290,11 @@ function FileContent({
     view.kind === 'text' &&
     (canRender(view.markup) || isMarkdown(entry.name) || json !== null || table !== null || notebook !== null)
   const lang = view.kind === 'text' && !drawn ? (grammarFor(entry.name) ?? (looksLikeDiff(text) ? 'diff' : null)) : null
-  const rendered = drawn || lang !== null
-  const plain = (view.kind === 'text' && (source || !drawn)) || binary
+  // A font is a binary drawn as a specimen; Source is its bytes. One past the
+  // cap is only its bytes: a specimen loads the whole file.
+  const font = view.kind === 'binary' && entry.size <= FONT_MAX_BYTES ? fontFormat(view.bytes) : null
+  const rendered = drawn || lang !== null || font !== null
+  const plain = (view.kind === 'text' && (source || !drawn)) || (binary && (source || font === null))
   // The tree and the table take find as well; they count their own matches.
   const structured = view.kind === 'text' && !source && (json !== null || table !== null)
   const [ext, setExt] = useState({ n: 0, capped: false })
@@ -481,6 +492,7 @@ function FileContent({
     if (svg || (view.kind === 'text' && view.markup === 'svg')) return t('viewer.picture')
     if (json !== null) return t('viewer.tree')
     if (notebook !== null) return t('viewer.notebook')
+    if (font !== null) return t('viewer.specimen')
     if (table !== null) return t('viewer.table')
     if (drawn) return t('preview.rendered.short')
     return t('viewer.highlighted')
@@ -737,6 +749,10 @@ function FileContent({
             <Suspense fallback={null}>
               <Notebook doc={notebook} projectId={projectId} path={entry.path} />
             </Suspense>
+          ) : font !== null && !source ? (
+            <Suspense fallback={null}>
+              <FontSpecimen url={api.downloadURL(projectId, entry.path)} fileName={entry.name} format={font} />
+            </Suspense>
           ) : null
         }
         pdfBody={
@@ -827,7 +843,9 @@ function FileContent({
           data-testid="viewer-footer"
           className="flex shrink-0 flex-wrap items-center gap-x-2 border-t border-hairline px-3 py-1.5 text-vp-xs text-ink-2"
         >
-          <span className="tabular">{t('viewer.binary')}</span>
+          <span className="tabular" data-testid="viewer-format">
+            {font !== null && !source ? font : t('viewer.binary')}
+          </span>
           {view.truncated && (
             <span data-testid="preview-truncated" className="min-w-0 flex-1 text-right">
               {t('viewer.truncated', { shown: formatBytes(view.bytes.length), size: formatBytes(entry.size) })}
@@ -965,7 +983,7 @@ function Body({
         </div>
       )
     case 'binary':
-      return plainBody
+      return plain ? plainBody : drawnBody
     case 'text':
       if (plain) return plainBody
       if (drawnBody) return drawnBody

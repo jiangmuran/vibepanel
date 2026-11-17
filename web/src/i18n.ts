@@ -599,6 +599,8 @@ const DICT = {
   'preview.mediaFallback': { zh: '这个浏览器播放不了这个文件。', en: 'This browser cannot play this file.' },
   'viewer.table': { zh: '表格', en: 'Table' },
   'viewer.notebook': { zh: '笔记本', en: 'Notebook' },
+  'viewer.specimen': { zh: '字样', en: 'Specimen' },
+  'font.failed': { zh: '浏览器没能加载这个字体。', en: 'The browser could not load this font.' },
   'nb.cells': { zh: '{n} 个单元格', en: '{n} cells' },
   'nb.stderr': { zh: '标准错误', en: 'stderr' },
   'nb.picture': { zh: '单元格输出的图片', en: 'A picture a cell output' },
