@@ -75,7 +75,7 @@ const PdfView = lazy(() =>
 type View =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
-  | { kind: 'text'; text: string; truncated: boolean; markup: Markup | null }
+  | { kind: 'text'; text: string; truncated: boolean; markup: Markup | null; encoding: string | null }
   | { kind: 'binary'; bytes: Uint8Array; truncated: boolean }
   /** A medium, streamed from the inline route by the element that draws it. */
   | { kind: 'image' | 'pdf' | 'video' | 'audio'; url: string }
@@ -831,7 +831,7 @@ function FileContent({
                 : t('preview.lines', { n: lines.length.toLocaleString() })}
           </span>
           <span aria-hidden="true">·</span>
-          <span>UTF-8</span>
+          <span data-testid="viewer-encoding">{view.encoding ?? 'UTF-8'}</span>
           {lineEndings(view.text) !== 'none' && (
             <>
               <span aria-hidden="true">·</span>
