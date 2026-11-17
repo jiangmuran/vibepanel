@@ -27583,3 +27583,123 @@ ticket fetched earlier stays in memory and goes out with the next save. So the
 fix is in the test: `running` waits until the sink is installed, or `Run` has
 already ended for a test that expects it to. With the same sleep in `Run` the
 whole package passes, and 200 runs under `-race` with two procs do too.
+
+## 2026-11-16 — The file viewer, 7a: PDF
+
+A PDF was an `<object>`: on most phones a grey box, and on a desktop
+somebody else's viewer with keys of its own, inside ours. It is pdf.js now
+(`viewer/PdfView.tsx`), the first part of the seventh batch.
+
+**Pages.** One under another, each drawn to a canvas when it comes within
+half a screen of the view and given back -- a zero-sized canvas holds no
+pixels -- when it goes further, so a long document holds a few canvases and
+not one per page; after scrolling through 200 pages the check counts what is
+held. A page is drawn off screen and swapped in, so zooming shows the old
+drawing stretched until the new one is ready, 150 ms after the zoom settles
+rather than at every step of a pinch. One canvas is at most 16 million pixels,
+past which it is stretched rather than drawn larger: iOS refuses a canvas
+above about 16.7 million, and at sixteen times on a dense screen one page
+would be gigabytes. The page is white in both themes, being paper.
+
+**Text.** pdf.js's text layer lies over each page, so text selects and
+copies. Find reads every page's text the first time something is searched
+for, in order, and the count says `+` until it has; a match is marked inside
+the run it is in, with the light theme's find colours in both themes because
+the paper is white in both, and the current one outlined (red line 4). The
+items find searches and the runs the layer draws come from one
+`getTextContent` per page, so an offset into one is an offset into the other;
+the joining and the mapping are `pdftext.ts`, tested without pdf.js.
+
+**Keys.** PgUp and PgDn turn pages, `g` and `G` go to the first and last,
+only in a PDF -- elsewhere PgUp and PgDn are the browser's scroll, and a log
+needs them. Ctrl+G is go to page. The zoom is the picture's: the keys, Ctrl
+with the wheel about the pointer, two fingers on a phone. One finger scrolls,
+natively: the box is `touch-action: pan-x pan-y` and a pinch is touch events
+with a non-passive `touchmove`, where the picture uses pointer capture and
+`none` -- a document is mostly scrolled, and scrolling by hand-written
+dragging loses the momentum a phone's own scroll has. The footer gives the
+page, the size and the zoom. "A page strip" in the design became the page
+counter and go to page before any code: thumbnails would draw every page,
+which is what drawing pages as they come into view exists to avoid.
+
+**What it will not do.** There is no annotation layer, so a link or a form in
+a PDF is not something that can be clicked: a document cannot take the panel
+anywhere. A PDF behind a password says so and offers the download; one pdf.js
+cannot read says what pdf.js said.
+
+**The inline route's exception is gone.** A PDF response was the one inline
+response without `Content-Security-Policy: sandbox`, because Chrome will not
+run its viewer in a sandboxed document. pdf.js reads the bytes with `fetch`,
+which a response's sandbox does nothing to, so the PDF is sandboxed like the
+rest and `TestTheInlineRouteNamesOnlyMediaTypes` asserts it of every medium.
+The route's `frame-ancestors 'self'` existed for that `<object>` and went with
+it: an `<img>`, `<video>` or `<audio>` is not a frame, so every inline
+response keeps the panel's `'none'`. pdf.js asks in ranges, so a long
+document's first page is drawn before its last is read.
+
+**The dependency.** `pdfjs-dist` 6.4.299, pinned. pdf.js is the `PdfView`
+chunk, about 430 KB, fetched by the first PDF; its worker is a file of its
+own, about 1.2 MB, which the browser loads as a worker. `bundle.test.ts` holds
+both: the chunk's size, pdf.js's display layer in it and in no other chunk,
+the worker's parser (`XRefParseException`) in the worker's file and in no
+`.js` chunk. The viewer's own chunk passed its 64 KB line by 2 KB with the
+page keys, the footer and the wiring, and the line is 68 KB.
+
+pdfjs-dist has an optional dependency, `@napi-rs/canvas`, which it loads only
+under Node: eleven platform packages in the lock, of which `npm ci` installs
+the one for the machine -- `canvas-linux-x64-gnu` here, 35 MB in
+`node_modules`, none of it in the bundle. Its name does appear once in the
+`PdfView` chunk, as a string in pdf.js's Node-only branch
+(`createRequire(...)('@napi-rs/canvas')`) that a browser never takes, so the
+test that keeps it out looks for the package's code instead: its loader names
+the native binaries `skia.<platform>.node`, and no chunk may hold that.
+
+npm 11 on this machine dropped the `libc` field from the new packages, as it
+does from every package (batches 2 and 3 above). The new entries were merged into the old lock by hand with `libc`
+restored from the registry, glibc and musl for the four Linux builds that
+have them, and the result proved self-consistent: `package.json` and the lock
+alone in an empty directory, `npm ci --ignore-scripts` exits 0 and the lock's
+sha256 is unchanged (`747ad670…`).
+
+**Fixtures.** `docs/manual.pdf` is three pages now, still hand-written by
+`make.py`: text on each, "lighthouse" on page two only, a picture from an
+image XObject on page three. `docs/locked.pdf` is the same behind a password,
+written with pypdf, and `docs/broken.pdf` is the magic and noise. A
+200-page PDF with a line at the top and the bottom of every page is made at
+run time.
+
+**What went wrong.** The first run was green and its screenshots were not:
+with page 2 filling the view the footer said page 1. The pages' `offsetTop`
+was measured from the dialog rather than from the scroll box, which is not
+positioned, so every page was the header's height lower than it was;
+`relative` on the box fixed it. The check had scrolled page 2 to the very top
+of the view, where the error is too small to show, so the case it checks now
+puts the page a quarter of the way down. Stepping to a match on a page already
+drawn did not centre it, read before it ran: a child's effects run before its
+parent's, so the page marked the match before the view had recorded which
+match it was looking for. The view centres a match it can already see; a page
+that was far centres it once it is drawn.
+
+`preview-check` has a PDF section: three pages and first paint, ink on page
+one and the picture's colour on page three, the text layer's words, the
+sandbox on the bytes, no `<object>`, every page key, go to page and the focus
+after it, the footer after a scroll by hand, find counted, marked and in view,
+zoom drawn again at the new size, Ctrl with the wheel, the password and
+unreadable messages, 200 pages' first paint and the canvases held after
+scrolling through them, a match at the bottom of page 150 brought into view;
+and on a 320-wide phone, fitted to the width, `pan-x pan-y`, and a pinch.
+
+Each guard was taken out to watch something go red: in the browser, a far
+page keeping its canvas (all 200 held), pages measured from the dialog, the
+canvas never drawn again on zoom, `touch-action` left to the browser, the
+pinch, Ctrl with the wheel, the page keys, go to page, find in a PDF, the
+match not marked, a step not bringing its page, a far match never centred,
+the password not named, and the bytes unsandboxed; in Go, the sandbox and
+`frame-ancestors 'none'`; in vitest, the page keys outside a PDF, the find's
+smart case, line ends and cap, and the PDF view imported statically
+(`bundle.test.ts`). Five needed a second look. Four did not compile -- a bare
+`return` makes what follows unreachable and TypeScript stops narrowing it --
+and were written again as returns behind a condition. One survived: the check
+for the password message looked for "password", and without the branch the
+message is pdf.js's own reason, "No password given". It looks for the
+viewer's sentence now.
